@@ -601,6 +601,63 @@ test("counts", () => {
   return <div>{arguments.length}</div>;
 }
 `,
+    // Also the `arguments` of a function in the component, and the one that nothing binds.
+    "arguments-in-functions.jsx": `function useArrow() {
+  useState(0);
+  return () => arguments[0];
+}
+
+function Component(props) {
+  const log = function () {
+    console.log(arguments[0]);
+  };
+  const object = {
+    method() {
+      return arguments.length;
+    },
+  };
+  return <div onClick={log}>{object.method()}{props.a}</div>;
+}
+
+const Unbound = () => {
+  return <div>{typeof arguments}</div>;
+};
+`,
+    // The lowering does not go into a class, a getter, a `finally` without a `catch` or the operand of a `yield`.
+    "arguments-not-reached.jsx": `function InClass(props) {
+  class Inner {
+    method() {
+      return arguments[0];
+    }
+  }
+  return <div>{props.a}</div>;
+}
+
+function InGetter(props) {
+  const object = {
+    get first() {
+      return arguments[0];
+    },
+  };
+  return <div>{object.first}{props.a}</div>;
+}
+
+function InFinally(props) {
+  try {
+    props.f();
+  } finally {
+    console.log(arguments);
+  }
+  return <div />;
+}
+
+function InYield(props) {
+  const generate = function* () {
+    yield arguments;
+  };
+  return <div onClick={generate}>{props.a}</div>;
+}
+`,
     "virtual.jsx": `import { useWindowVirtualizer } from "@tanstack/react-virtual";
 
 function Component(props) {
@@ -731,6 +788,13 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   "react-by-its-name.jsx": reactByItsName,
   "fbt.jsx": duplicateFbtTags,
   "callback-of-map.jsx": callbackOfMap,
+  // To the compiler of the plugin `arguments` is any global: nothing is said of it.
+  "arguments.jsx": `function Component() {
+  const ref = useRef(null);
+  const value = ref.current;
+  return <div>{value}{arguments.length}</div>;
+}
+`,
   "disabled.jsx": readsRef("// eslint-disable-next-line react-hooks/refs"),
   "flow-hook.jsx": readsRef("// $FlowFixMe[react-rule-hook]"),
   "flow-ref.jsx": readsRef("// $FlowFixMe[react-rule-unsafe-ref]"),

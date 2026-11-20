@@ -331,6 +331,8 @@ The `options` argument accepts:
 - `{ compress: "gzip" }` - Enable gzip compression at level 6
 - `{ compress: "gzip", level: number }` - Gzip with custom level 1-12 (1 = fastest, 12 = smallest)
 
+Bun also reads an archive that was gzipped more than once. `files()` and `extract()` reject once the inner gzip layers decompress to more than 1,032 times the size of the archive as it was given. A single layer never goes past that ratio. Bun always reads up to 64 MiB from the inner layers.
+
 ## Examples
 
 ### Bundle Project Files

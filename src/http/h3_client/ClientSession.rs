@@ -179,7 +179,7 @@ impl ClientSession {
         }
     }
 
-    /// The consumer of the stream's response body takes bytes again.
+    /// See [`crate::HTTPClient::send_held_body`].
     pub(crate) fn resume_receive(stream_ptr: NonNull<Stream>) {
         let stream = stream_mut(stream_ptr.as_ptr());
         let Some(client) = &mut stream.client else {
@@ -189,7 +189,7 @@ impl ClientSession {
             return stream.session_mut().fail(stream_ptr.as_ptr(), err);
         }
         if let Some(qs) = stream.qstream {
-            quic_stream_mut(qs.as_ptr()).hold_window(client.holds_stream_window());
+            quic_stream_mut(qs.as_ptr()).hold_window(client.holds_off_receiving());
         }
     }
 

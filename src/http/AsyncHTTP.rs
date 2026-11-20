@@ -37,7 +37,6 @@ pub struct AsyncHTTP<'a> {
     pub(crate) next: bun_threading::Link<AsyncHTTP<'static>>,
 
     pub client: HTTPClient<'a>,
-    pub async_http_id: u64,
 
     pub elapsed: u64,
 }
@@ -143,6 +142,7 @@ fn make_client<'a>(
 ) -> HTTPClient<'a> {
     HTTPClient {
         result_callback,
+        async_http_id: crate::ASYNC_HTTP_ID_MONOTONIC.fetch_add(1, Ordering::Relaxed),
         holds_slot: false,
         method,
         header_entries,
@@ -359,8 +359,6 @@ impl<'a> AsyncHTTP<'a> {
         redirect_type: FetchRedirect,
         options: Options<'a>,
     ) -> Box<AsyncHTTP<'a>> {
-        let async_http_id = crate::ASYNC_HTTP_ID_MONOTONIC.fetch_add(1, Ordering::Relaxed);
-
         let client = make_client(
             method,
             url.clone(),
@@ -383,7 +381,6 @@ impl<'a> AsyncHTTP<'a> {
             original: None,
             next: bun_threading::Link::new(),
             client,
-            async_http_id,
             elapsed: 0,
         });
         if let Some(val) = options.unix_socket_path {
@@ -583,7 +580,7 @@ impl InFlightRequest {
     pub(crate) fn start(http: Box<AsyncHTTP<'static>>) {
         let mut this = Self::new(http.into());
         let in_flight = &mut crate::http_thread().in_flight;
-        bun_core::handle_oom(in_flight.put(this.async_http_id(), this.http.as_non_null()));
+        bun_core::handle_oom(in_flight.put(this.async_http_id, this.http.as_non_null()));
         this.http.on_start();
         this.connect();
     }
@@ -605,14 +602,18 @@ impl InFlightRequest {
         self.into_inner().into_non_null()
     }
 
-    pub(crate) fn async_http_id(&self) -> u64 {
-        self.http.async_http_id
+    /// See [`crate::HTTPClientResult::left_transport`].
+    pub(crate) fn release_request_body(&mut self) {
+        self.http.request_body = HTTPRequestBody::Bytes(b"");
+        self.state.request_body = bun_ptr::RawSlice::EMPTY;
+        self.state.original_request_body = HTTPRequestBody::Bytes(b"");
+        self.compressed_request_body = Vec::new();
     }
 
-    /// Until the consumer asks for the rest of the body.
+    /// Until the next resume.
     pub(crate) fn hold(self) {
         debug_assert!(matches!(self.carrier, crate::Carrier::None));
-        bun_core::handle_oom(crate::http_thread().held.put(self.async_http_id(), self));
+        bun_core::handle_oom(crate::http_thread().held.put(self.async_http_id, self));
     }
 
     pub(crate) fn take_held(async_http_id: u64) -> Self {
@@ -635,7 +636,7 @@ impl InFlightRequest {
         self.hold_slot(false);
 
         let in_flight = &mut crate::http_thread().in_flight;
-        let removed = in_flight.swap_remove(&self.async_http_id());
+        let removed = in_flight.swap_remove(&self.async_http_id);
         assert!(removed, "in flight");
         release_past_peak(in_flight);
         let mut this = self.into_inner().into_box();

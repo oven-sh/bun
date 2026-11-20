@@ -619,7 +619,7 @@ pub(crate) fn execute_simple_s3_request(
             ..Default::default()
         },
     );
-    task.async_http_id = async_http.async_http_id;
+    task.async_http_id = async_http.client.async_http_id;
     // queue http request
     bun_http::http_thread::init(&Default::default());
     // Out on the HTTP thread until its final callback: its context aborts it

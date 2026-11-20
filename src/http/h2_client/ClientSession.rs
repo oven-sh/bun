@@ -246,7 +246,7 @@ impl ClientSession {
     /// A request in `pending_attach` was aborted.
     pub(crate) fn abort_parked(session: NonNull<ClientSession>, async_http_id: u64) {
         Self::enter(Self::this_ptr(session), |s| {
-            let i = (s.pending_attach.iter()).position(|c| c.async_http_id() == async_http_id);
+            let i = (s.pending_attach.iter()).position(|c| c.async_http_id == async_http_id);
             (s.pending_attach)
                 .remove(i.expect("named by its carrier"))
                 .fail(crate::Error::Aborted);
@@ -261,7 +261,7 @@ impl ClientSession {
         });
     }
 
-    /// The consumer of the stream's response body takes bytes again.
+    /// See [`crate::HTTPClient::send_held_body`].
     pub(crate) fn resume_receive(stream: NonNull<Stream>) {
         Self::enter(Self::of_stream(stream), |s| {
             let Some(client) = &mut stream_mut(stream.as_ptr()).client else {
@@ -272,8 +272,11 @@ impl ClientSession {
                 s.rearm_timeout();
                 return s.maybe_release();
             }
+            let waits_for_origin = !client.holds_off_receiving();
             s.replenish_window();
-            s.rearm_timeout();
+            if waits_for_origin {
+                s.rearm_timeout();
+            }
             if let Err(err) = s.flush() {
                 s.fail_all(err);
             }
@@ -626,14 +629,14 @@ impl ClientSession {
         self.socket.set_timeout(want);
     }
 
-    /// False while every response waits for its reader.
+    /// False while every response waits for its reader or its decoder.
     fn waits_for_origin(&self) -> bool {
         !self.pending_attach.is_empty()
             || self
                 .streams
                 .values()
                 .iter()
-                .any(|s| s.client.as_ref().is_some_and(|c| !c.holds_stream_window()))
+                .any(|s| s.client.as_ref().is_some_and(|c| !c.holds_off_receiving()))
     }
 
     /// New request body bytes (or end-of-body) are available in the request's
@@ -678,7 +681,7 @@ impl ClientSession {
             if !s.recv_window.needs_update() || s.remote_closed() {
                 continue;
             }
-            if s.client.as_ref().is_some_and(|c| c.holds_stream_window()) {
+            if s.client.as_ref().is_some_and(|c| c.holds_off_receiving()) {
                 continue;
             }
             updates.push((s.id, s.recv_window.take_update()));

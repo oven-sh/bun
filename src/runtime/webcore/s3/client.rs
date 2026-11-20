@@ -334,7 +334,7 @@ pub(crate) fn list_objects(
             ..Default::default()
         },
     );
-    task.async_http_id = http.async_http_id;
+    task.async_http_id = http.client.async_http_id;
 
     // queue http request
     bun_http::http_thread::init(&Default::default());
@@ -644,6 +644,7 @@ fn download_stream(
             mutex: Default::default(),
             request_error: None,
             reported_response_buffer: MutableString::default(),
+            is_out_of_memory: false,
             // `State::default()` sets
             // `has_more = true` (bit 48). Passing 0 here would start the task with
             // `has_more == false`, tripping the `assert(state.has_more)` in
@@ -696,7 +697,7 @@ fn download_stream(
             ..Default::default()
         },
     );
-    task.async_http_id = http.async_http_id;
+    task.async_http_id = http.client.async_http_id;
     task.wrapper.task.set(task_ptr);
     // enable streaming
     http.enable_response_body_streaming();

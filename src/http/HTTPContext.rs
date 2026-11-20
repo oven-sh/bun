@@ -476,7 +476,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         self.pending_h2_connects
             .iter_mut()
             .find_map(|pc| {
-                let i = (pc.waiters.iter()).position(|w| w.async_http_id() == async_http_id)?;
+                let i = (pc.waiters.iter()).position(|w| w.async_http_id == async_http_id)?;
                 Some(pc.waiters.remove(i))
             })
             .expect("named by its carrier")

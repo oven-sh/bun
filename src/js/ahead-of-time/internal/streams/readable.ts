@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/readable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 26a4a653d8f942a822a4a5b79b8005d8725ed9562c1b0e5b742392e74be9e862.
+// Written against that file with the SHA-256 9faa63793e4302a8922fe12016b93bf25babeb1552a2c919ca44401bb3531d6f.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 "use strict";
@@ -1227,7 +1227,14 @@ Readable.prototype.pipe = function (this: $Node.Readable, destination: $Node.Str
     // flowing again.
     // So, if this is awaiting a drain, then we just call it now.
     // If we don't know, then assume that we are waiting for one.
-    if (ondrain && state.awaitDrainWriters && (!dest._writableState || dest._writableState.needDrain)) ondrain();
+    // nodejs/node#64310 removed the needDrain test. A destroyed source keeps it: Bun's resume() still runs on one.
+    if (
+      ondrain &&
+      state.awaitDrainWriters &&
+      ((state[kState] & Flag.Destroyed) === 0 || !dest._writableState || dest._writableState.needDrain)
+    ) {
+      ondrain();
+    }
   }
 
   function pause() {

@@ -65,6 +65,17 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
 {
 }
 
+ExceptionOr<void> validateFileURLHost(JSC::JSGlobalObject* globalObject, const WTF::URL& urlObject)
+{
+    if (!Bun::isForbiddenFileURLHost(urlObject)) [[likely]]
+        return {};
+    // Throw path only: ExceptionOr callers cannot run a destructed ThrowScope's exception check.
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::throwIfInvalidFileURLHost(scope, globalObject, urlObject);
+    return Exception { ExceptionCode::ExistingExceptionError };
+}
+
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
 {
     ASSERT(context.isContextThread());
@@ -74,6 +85,9 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         WTF::URL urlObject { url };
         if (!urlObject.isValid())
             return Exception { TypeError, makeString("Invalid file URL: \""_s, urlInit, '"') };
+        auto hostCheck = validateFileURLHost(context.jsGlobalObject(), urlObject);
+        if (hostCheck.hasException())
+            return hostCheck.releaseException();
         url = urlObject.fileSystemPath();
     }
 

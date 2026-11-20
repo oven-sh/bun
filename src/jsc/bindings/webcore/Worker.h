@@ -36,11 +36,17 @@ class JSGlobalObject;
 class JSValue;
 }
 
+namespace WTF {
+class URL;
+}
+
 namespace WebCore {
 
 class ScriptExecutionContext;
 struct StructuredSerializeOptions;
 struct WorkerOptions;
+
+ExceptionOr<void> validateFileURLHost(JSC::JSGlobalObject*, const WTF::URL&);
 
 // The script-visible Worker object. Lives entirely on the thread that constructed it; everything
 // that involves the worker thread goes through m_contextProxy.

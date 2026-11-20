@@ -1299,8 +1299,13 @@ impl EventLoop {
                 drop(entered);
                 after_call();
             };
-            let Some(result) =
-                callback.call_with_test_deadline(global_object, this_value, arguments, deadline, after_call)?
+            let Some(result) = callback.call_with_test_deadline(
+                global_object,
+                this_value,
+                arguments,
+                deadline,
+                after_call,
+            )?
             else {
                 return Ok(None);
             };

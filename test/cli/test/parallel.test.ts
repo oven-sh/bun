@@ -191,6 +191,53 @@ test("--parallel marks a file whose worker exits mid-run as failed (no retry)", 
   expect(exitCode).toBe(1);
 });
 
+// https://github.com/oven-sh/bun/issues/49339
+test.concurrent.each([
+  ["runs", `while (true) {}`],
+  // The loop of the issue holds on to everything it allocates. This one lets go of all but the last few
+  // thousand nodes, for a build that never stops it.
+  [
+    "allocates",
+    `const held = [];
+     let node = {};
+     for (let i = 0; ; i++) {
+       node = { next: i % 4096 ? node : null, payload: new Array(1024).fill(1) };
+       held[i % 4096] = node;
+     }`,
+  ],
+])(
+  "--parallel: a test that %s without a return to the event loop times out, and its worker goes on",
+  async (_, loop) => {
+    using dir = tempDir("parallel-sync-loop", {
+      "loop.test.js": `import {test} from "bun:test";
+        test("loops", () => { ${loop} });
+        test("after the loop", () => {});`,
+      "pass.test.js": `import {test} from "bun:test"; test("fast pass", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--timeout=250"],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const results = (stdout + stderr)
+      .split("\n")
+      .filter(line => /^\((pass|fail)\) |^  \^ |^✗ /.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, ""))
+      .sort();
+    expect({ results, signalCode: proc.signalCode, exitCode }).toEqual({
+      results: ["  ^ this test timed out after 250ms.", "(fail) loops", "(pass) after the loop", "(pass) fast pass"],
+      signalCode: null,
+      exitCode: 1,
+    });
+  },
+  20_000,
+);
+
 // The label must use the OS's name for the number the worker died from. Signal
 // 16 on Linux is SIGSTKFLT (it used to be labeled "SIG16"). SIGUSR2 is 31 on
 // macOS, where 31 used to be read with Linux numbering as SIGSYS, a crash

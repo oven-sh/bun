@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
+import { totalmem } from "node:os";
 import { GCProfiler, getHeapStatistics, isStringOneByteRepresentation } from "node:v8";
 import { Worker } from "node:worker_threads";
 
@@ -345,8 +346,8 @@ describe("v8.getHeapStatistics", () => {
   });
 
   // total_heap_size_executable is half of the used size. A 32-bit shift wraps it from 2 GiB, and again from 4 GiB.
-  // The pages of the buffers are not written, so they take no memory. Windows commits them, so it does not run this.
-  test.concurrent.skipIf(isWindows)("reports sizes above 2 GiB", async () => {
+  // The pages of the two buffers are not written, so the test is cheap. A small host can still refuse to reserve them.
+  test.concurrent.skipIf(totalmem() < 8 * 1024 ** 3)("reports sizes above 2 GiB", async () => {
     const size = 2 ** 31 + 4096;
     const readings = (await runChild(/* js */ `
       const { getHeapStatistics } = require("node:v8");

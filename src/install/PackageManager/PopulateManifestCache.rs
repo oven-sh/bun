@@ -98,6 +98,7 @@ pub enum Packages<'a> {
     /// The direct dependencies of these workspace packages; a required one failing is an error, see [`print_fetch_failures`].
     Ids(&'a [PackageID]),
     /// The manifests of these packages themselves (by name), not of their dependencies; best-effort, so failures are warnings.
+    /// A shipped package in the list gets the manifest of the registry's package of its name.
     Exact(&'a [PackageID]),
 }
 
@@ -271,9 +272,9 @@ pub fn populate_manifest_cache(
         }
         Packages::Exact(ids) => {
             for &pkg_id in ids {
-                if pkg_resolutions[pkg_id as usize].tag != ResolutionTag::Npm
-                    || pkg_metas[pkg_id as usize].is_shipped()
-                {
+                // The caller asks for the manifest of the name. `bun audit fix` passes a shipped
+                // package to report the release of the registry that fixes its advisory.
+                if pkg_resolutions[pkg_id as usize].tag != ResolutionTag::Npm {
                     continue;
                 }
                 let package_name = pkg_names[pkg_id as usize].slice(string_buf);

@@ -1105,6 +1105,7 @@ impl Parser<'_> {
             let raw_label: Box<[u8]> = Box::from(result.label);
             let dest_dupe: Box<[u8]> = Box::from(result.dest);
             let title_dupe: Box<[u8]> = Box::from(result.title);
+            let has_escape = result.has_escape;
             let end_pos = result.end_pos;
 
             let norm_label = self.normalize_label(&raw_label);
@@ -1119,6 +1120,7 @@ impl Parser<'_> {
                 self.ref_defs.push(crate::ref_defs::RefDef {
                     dest: dest_dupe,
                     title: title_dupe,
+                    has_escape,
                 });
             }
 

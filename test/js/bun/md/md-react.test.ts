@@ -79,6 +79,27 @@ describe("Bun.markdown.react", () => {
     expect(link.props.children).toEqual(["click"]);
   });
 
+  // https://github.com/oven-sh/bun/issues/31936
+  test.each([
+    // [markdown, parser options, href, link text]
+    ["<email@example.com>", undefined, "mailto:email@example.com", "email@example.com"],
+    ["email@example.com", { autolinks: true }, "mailto:email@example.com", "email@example.com"],
+    ["www.example.com", { autolinks: true }, "http://www.example.com", "www.example.com"],
+    ["<https://example.com>", undefined, "https://example.com", "https://example.com"],
+    ["https://example.com", { autolinks: true }, "https://example.com", "https://example.com"],
+    ["<mailto:email@example.com>", undefined, "mailto:email@example.com", "mailto:email@example.com"],
+    // Not an autolink: the destination stays as written.
+    ["[text](email@example.com)", { autolinks: true }, "email@example.com", "text"],
+    ["[text](www.example.com)", { autolinks: true }, "www.example.com", "text"],
+  ])("href of %j has the same scheme as in html()", (md, opts, href, text) => {
+    const link = children(md + "\n", undefined, opts)[0].props.children[0];
+    expect({ type: link.type, href: link.props.href, children: link.props.children }).toEqual({
+      type: "a",
+      href,
+      children: [text],
+    });
+  });
+
   test("image has src and alt in props", () => {
     const img = children("![alt](img.png)\n")[0].props.children[0];
     expect(img.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
@@ -124,6 +145,92 @@ describe("Bun.markdown.react", () => {
       src: "https://example.com/img.png",
       title: "the title",
       alt: "alt text",
+    });
+  });
+
+  // A backslash escape and a character reference in a link destination or a
+  // link title stand for a character (CommonMark 6.3). The props hold that
+  // character, like the attributes that html() writes.
+  describe("href, src and title have escapes and character references resolved", () => {
+    /** The props of every `a` and `img` in the document, without their children. */
+    function props(md: string | Buffer, opts?: any) {
+      const found: [string, object][] = [];
+      const walk = (node: any) => {
+        if (Array.isArray(node)) return node.forEach(walk);
+        if (node == null || typeof node !== "object") return;
+        const { children, ...rest } = node.props;
+        if (node.type === "a" || node.type === "img") found.push([node.type, rest]);
+        walk(children);
+      };
+      walk(Markdown.react(md as string, undefined, opts));
+      return found;
+    }
+
+    test.each([
+      [
+        "inline link",
+        String.raw`[wiki](<https://example.com/wiki/Foo_\(bar\)> "R&amp;D \"notes\"")`,
+        [["a", { href: "https://example.com/wiki/Foo_(bar)", title: 'R&D "notes"' }]],
+      ],
+      [
+        "character references",
+        String.raw`[a](/?a=1&amp;b=2&#38;c&#x3D;3 "&ouml;&#246;&#xF6;")`,
+        [["a", { href: "/?a=1&b=2&c=3", title: "ööö" }]],
+      ],
+      ["image", String.raw`![logo](a\_b.png "t\*t")`, [["img", { src: "a_b.png", title: "t*t", alt: "logo" }]]],
+      [
+        "image in a link",
+        String.raw`[![alt](i\_1.png)](/u&amp;v)`,
+        [
+          ["a", { href: "/u&v" }],
+          ["img", { src: "i_1.png", alt: "alt" }],
+        ],
+      ],
+      [
+        "full, collapsed and shortcut reference",
+        "[t][r] [r][] [r]\n\n" + String.raw`[r]: </a\_b> 'x &copy; y'`,
+        [
+          ["a", { href: "/a_b", title: "x © y" }],
+          ["a", { href: "/a_b", title: "x © y" }],
+          ["a", { href: "/a_b", title: "x © y" }],
+        ],
+      ],
+      [
+        "image by reference",
+        "![alt][r]\n\n" + String.raw`[r]: a\_b.png "R&amp;D"`,
+        [["img", { src: "a_b.png", title: "R&D", alt: "alt" }]],
+      ],
+      [
+        "what is not an escape or a character reference stays",
+        String.raw`[a](a\b&nosuch;&c "\a&#;") [b](/x\&amp;y) [c](/x\\y)`,
+        [
+          ["a", { href: String.raw`a\b&nosuch;&c`, title: String.raw`\a&#;` }],
+          ["a", { href: "/x&amp;y" }],
+          ["a", { href: String.raw`/x\y` }],
+        ],
+      ],
+      // CommonMark 6.5: "Backslash-escapes do not work inside autolinks".
+      [
+        "a backslash in an autolink",
+        String.raw`<https://example.com/a\_b>`,
+        [["a", { href: String.raw`https://example.com/a\_b` }]],
+      ],
+    ] as const)("%s", (_, md, expected) => {
+      expect(props(md)).toEqual(expected as any);
+      expect(props(Buffer.from(md))).toEqual(expected as any);
+    });
+
+    // Same as html() today: it does not resolve a character reference in an
+    // autolink, and nothing in the target of a wiki link.
+    test("an autolink and the target of a wiki link are what html() writes", () => {
+      const unescaped = (attribute: string) =>
+        attribute.replaceAll("&quot;", '"').replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+      const autolink = String.raw`<https://example.com/a?x=1&amp;y=2>`;
+      const href = /href="([^"]*)"/.exec(Markdown.html(autolink))![1];
+      expect(props(autolink)).toEqual([["a", { href: unescaped(href) }]]);
+      const wikiLink = String.raw`[[a\_b&amp;c|label]]`;
+      const target = /data-target="([^"]*)"/.exec(Markdown.html(wikiLink, { wikiLinks: true }))![1];
+      expect(props(wikiLink, { wikiLinks: true })).toEqual([["a", { target: unescaped(target) }]]);
     });
   });
 

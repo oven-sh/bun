@@ -169,8 +169,7 @@ unsafe extern "C" {
     );
 }
 
-/// How many threads a debugger keeps from running: a thread paused at a breakpoint (`BunInspectorConnection::runWhilePaused`),
-/// or one that waits for a debugger to connect.
+/// How many threads a debugger keeps from running: paused at a breakpoint, or waiting for a debugger to connect.
 #[unsafe(no_mangle)]
 #[allow(non_upper_case_globals)]
 static Bun__Debugger__heldThreads: AtomicU32 = AtomicU32::new(0);

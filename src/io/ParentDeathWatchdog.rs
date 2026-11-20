@@ -388,8 +388,7 @@ fn kill_descendants() {
     }
 }
 
-/// [`kill_descendants`] for a thread that ends the process while its other threads still run.
-/// A child that one of them starts during the walk is not killed.
+/// [`kill_descendants`] while other threads still run: a child that one of them starts during the walk survives.
 pub fn kill_descendants_while_other_threads_run() {
     kill_descendants();
 }

@@ -1,11 +1,4 @@
-//! Ends a `bun test` process whose JavaScript thread no longer comes back to the test runner.
-//!
-//! The timeout of a test or hook is a timer of the event loop. Code that does not return to the
-//! event loop (a loop without an end, a native call that blocks) keeps that timer from firing, so
-//! nothing on the JavaScript thread can end it. The runner publishes the deadline it waits for, and
-//! a thread that runs no JavaScript ends the process when the runner is `grace_ms` late for it.
-//! The process ends, and not the test alone: JavaScript that another thread interrupts leaves
-//! modules half loaded and promises unsettled for the tests after it.
+//! Ends a `bun test` process whose JavaScript thread is `grace_ms` late for the deadline that the test runner waits for.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
@@ -21,8 +14,7 @@ use super::jest::FileHeader;
 
 /// What a `--parallel` worker exits with. See `Coordinator::reap_worker`.
 pub(crate) const WORKER_EXIT_CODE: u8 = 124;
-/// In what the process prints before it ends. With `WORKER_EXIT_CODE` it tells the coordinator that
-/// the watch ended the worker, and not a test that called `process.exit(124)`.
+/// Printed before the process ends. With `WORKER_EXIT_CODE` it tells the coordinator that the watch ended the worker.
 pub(crate) const MESSAGE: &str = "still blocked the event loop";
 
 pub(crate) struct Config {
@@ -39,8 +31,7 @@ pub(crate) struct Config {
 
 struct State {
     config: Config,
-    /// Under `--watch` a change of a file restarts a run that is blocked, and the end of the
-    /// process would end the watch. The watch says what blocks, and no more.
+    /// Under `--watch`, where a change of a file restarts a blocked run: the watch reports what blocks and ends nothing.
     only_reports: bool,
     /// What the JavaScript thread is due back for, in nanoseconds on the clock of `Timespec::now`. 0: nothing.
     deadline: u64,
@@ -68,8 +59,7 @@ static STATE: Guarded<State> = Guarded::new(State {
     label_key: 0,
     unprinted_header: None,
 });
-/// Whether `STATE.deadline` is not 0. Only the JavaScript thread writes the deadline, so it reads this
-/// without the lock, and takes the lock only to change what is published.
+/// Whether `STATE.deadline` is not 0, for the JavaScript thread, its only writer, to read without the lock.
 static HAS_DEADLINE: AtomicBool = AtomicBool::new(false);
 static IS_WATCHING: AtomicBool = AtomicBool::new(false);
 
@@ -151,9 +141,7 @@ pub(crate) fn calling(deadline: Timespec, entry: Entry<'_>) {
     publish(deadline, true, Some(entry));
 }
 
-/// The JavaScript thread is in the code of the runner: a test or hook returned to it, or the event loop
-/// called it. What it does there, like the report of a result, has no timeout.
-/// Does not return once the watch ends the process.
+/// The JavaScript thread is in the runner's own code, which has no timeout. Does not return once the watch ends the process.
 #[inline]
 pub(crate) fn in_runner() {
     if HAS_DEADLINE.load(Ordering::Relaxed) {
@@ -161,8 +149,7 @@ pub(crate) fn in_runner() {
     }
 }
 
-/// The JavaScript thread goes back to the event loop, and the runner expects it back by `deadline`
-/// (`Timespec::EPOCH`: at no time). `entry`: the only test or hook that is running.
+/// The JavaScript thread goes back to the event loop, due back by `deadline`. `entry`: the only test or hook that runs.
 pub(crate) fn waiting(deadline: Timespec, entry: Option<Entry<'_>>) {
     publish(deadline, false, entry);
 }
@@ -213,20 +200,7 @@ fn publish(deadline: Timespec, is_in_callback: bool, entry: Option<Entry<'_>>) {
     }
 }
 
-/// Ends the process once it has seen one deadline stay published, and in the past, through
-/// `grace_ms` of its own sleeps.
-///
-/// It counts its sleeps and not the clock: while the whole process is stopped (SIGSTOP, a native
-/// debugger, a suspended machine) a deadline can pass by any amount, and the JavaScript thread
-/// handles it as soon as the process runs again. So a sleep counts for no more than it asked for,
-/// however long it took. That is also what a sleep counts for on a machine whose processors are all
-/// busy, where the thread wakes up late every time.
-///
-/// The count starts again after a sleep in which the JavaScript thread could not run for a reason
-/// that is not the test's: see `waits_for_somebody_else`.
-///
-/// The JavaScript thread never wakes it, so that a test pays no system call for it: it looks at what
-/// is published a few times per `grace_ms`.
+/// Ends the process once one deadline has stayed published, and in the past, through `grace_ms` of its own sleeps.
 fn watch() {
     const LOOKS_PER_GRACE: u64 = 4;
     const SLEEPS_PER_GRACE: u64 = 8;
@@ -247,6 +221,7 @@ fn watch() {
         };
         let before = now();
         if deadline == 0 || before < deadline {
+            // The JavaScript thread never wakes the watch, so a test pays no system call for it.
             let until_deadline = if deadline == 0 { u64::MAX } else { deadline - before };
             std::thread::sleep(Duration::from_nanos(until_deadline.min(grace_ns / LOOKS_PER_GRACE)));
             continue;
@@ -280,14 +255,13 @@ fn watch() {
         if waits_for_somebody_else(is_held, writes) {
             overdue.1 = 0;
         } else {
+            // A sleep that ends late counts for what it asked: the process may have been stopped (SIGSTOP, a suspended machine).
             overdue.1 = overdue.1.saturating_add(slept_ns.min(sleep_ns));
         }
     }
 }
 
-/// Whether the JavaScript thread spent a sleep of the watch, before which `was_held` and `writes` were
-/// read, in the hands of somebody who may keep it for as long as they like: a debugger that has paused
-/// it, or whatever reads the output of the process and has stopped reading (`bun test | less`).
+/// Whether a debugger, or a reader of the output that stopped reading (`bun test | less`), kept the JavaScript thread through a sleep.
 fn waits_for_somebody_else(was_held: bool, writes: bun_sys::stdio_writes::Seen) -> bool {
     was_held || bun_jsc::debugger::holds_a_thread() || bun_sys::stdio_writes::has_one_lasted_since(writes)
 }

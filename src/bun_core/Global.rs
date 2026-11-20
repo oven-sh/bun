@@ -719,9 +719,7 @@ pub fn exit(code: u32) -> ! {
     }
 }
 
-/// [`exit`] for a thread that ends the process while its other threads still run.
-/// It skips what the C library does on `exit()`: static destructors and a leak check
-/// would run under those threads.
+/// [`exit`] without the C library's exit handlers, for a thread that ends the process while its other threads still run.
 pub fn exit_while_other_threads_run(code: u32) -> ! {
     #[cfg(windows)]
     {

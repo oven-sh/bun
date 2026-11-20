@@ -746,8 +746,7 @@ pub fn is_debugger_present() -> bool {
     IsDebuggerPresent() != FALSE
 }
 
-/// Lets the calling thread run ahead of the threads of normal priority, for a thread that sleeps nearly all the time.
-/// Windows lets a busy thread finish its time slice before one that wakes up gets its processor.
+/// Lets the calling thread, which mostly sleeps, preempt busy threads: Windows otherwise lets them finish their time slice.
 pub fn raise_priority_of_current_thread() {
     const THREAD_PRIORITY_HIGHEST: c_int = 2;
     unsafe extern "system" {

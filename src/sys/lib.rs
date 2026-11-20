@@ -8769,8 +8769,7 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
 // OUTPUT_SINK — bun_core's stderr vtable, installed by us at init (B-0 hook).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Whether a call of [`write_all_to_stdio`] is stuck, for `bun test`: a test that waits for whatever reads
-/// its output does not block the event loop by itself.
+/// Tells `bun test` whether a [`write_all_to_stdio`] is stuck: a test that waits for the reader of its output is not blocked.
 pub mod stdio_writes {
     use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 

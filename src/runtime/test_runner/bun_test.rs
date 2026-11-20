@@ -1116,16 +1116,15 @@ impl BunTest {
         Ok(())
     }
 
-    /// Tells `deadline_watch` what the runner waits for when it goes back to the event loop. It is due
-    /// back when every test that runs has timed out. `step_timeout`: for when none runs.
-    fn publish_wait(&self, step_timeout: &Timespec) {
+    /// Tells `deadline_watch` when the runner is due back from the event loop: when every test that runs has timed out.
+    fn publish_wait(&self, due_if_none_runs: &Timespec) {
         let running = (self.phase.get() == Phase::Execution).then(|| self.execution.active_group()).flatten();
         let mut running = running.into_iter().flat_map(|group| group.sequences(&self.execution)).filter_map(|sequence| {
             let entry = sequence.running_entry()?;
             Some((sequence, entry, self.sequence_entry(entry).timespec.get()))
         });
         match (running.next(), running.next()) {
-            (None, _) => deadline_watch::waiting(*step_timeout, None),
+            (None, _) => deadline_watch::waiting(*due_if_none_runs, None),
             (Some((sequence, entry, deadline)), None) => {
                 deadline_watch::waiting(deadline, Some(self.watched_entry(sequence, entry, self.entry_of(entry))));
             }

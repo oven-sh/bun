@@ -895,7 +895,7 @@ function getSimdCargoTestStep(platform: Platform): CommandStep {
 
 /** Times the kernels of src/simd on an otherwise idle machine. The tables are in the log. */
 function getSimdBenchmarkStep(platform: Platform, options: PipelineOptions, buildId: string | undefined): CommandStep {
-  const step = getTestBunStep({ ...platform, tests: ["internal/simd.test.ts"] }, options, { buildId });
+  const step = getTestBunStep({ ...platform, tests: ["internal/simd-integration-temp.test.ts"] }, options, { buildId });
   return {
     ...step,
     key: `${getPlatformKey(platform)}-simd-benchmark`,

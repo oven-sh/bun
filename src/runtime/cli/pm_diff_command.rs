@@ -3530,26 +3530,23 @@ fn rebase_key_onto(
     shown: &Shown,
     display: &normalize::Normalized,
 ) {
-    let mut at: bun_collections::HashMap<(u32, u32), (u32, u32)> =
-        bun_collections::HashMap::default();
-    at.reserve(display.map.len());
-    for m in display.map.iter().rev() {
-        if m.gen_line >= shown.skipped {
-            at.insert(
-                (m.orig_line, m.orig_col),
-                (m.gen_line + shown.banner - shown.skipped, m.gen_col),
-            );
-        }
-    }
-    key.map
-        .retain_mut(|m| match at.get(&(m.orig_line, m.orig_col)) {
-            Some(&(line, col)) => {
-                m.orig_line = line;
+    // Sorted by source position. The first print of a position comes first.
+    let mut at: Vec<_> = (display.map.iter())
+        .filter(|m| m.gen_line >= shown.skipped)
+        .map(|m| ((m.orig_line, m.orig_col), (m.gen_line, m.gen_col)))
+        .collect();
+    at.sort_unstable();
+    key.map.retain_mut(|m| {
+        let original = (m.orig_line, m.orig_col);
+        match at.get(at.partition_point(|it| it.0 < original)) {
+            Some(&(found, (line, col))) if found == original => {
+                m.orig_line = line + shown.banner - shown.skipped;
                 m.orig_col = col;
                 true
             }
-            None => false,
-        });
+            _ => false,
+        }
+    });
 }
 
 /// Printed line → original `line:col` of the first thing on it, for gutters in the un-minified view.

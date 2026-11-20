@@ -325,6 +325,37 @@ If a file imports only some of them, the rest are still available as globals.
 - `0`: All tests passed, no unhandled errors
 - `1`: Test failures or unhandled errors occurred
 
+### Exit Listeners
+
+`bun test` doesn't run the `process.on("exit")` listeners that test files register, as in Jest and Vitest. The run ends when the tests finish.
+
+```ts title="drain.test.ts" icon="/icons/typescript.svg"
+import { test } from "bun:test";
+
+process.on("exit", code => console.log("exit:" + code));
+
+test("body", () => {
+  console.log("body");
+});
+```
+
+```bash terminal icon="terminal"
+# Prints "body". The exit listener doesn't run.
+bun test ./drain.test.ts
+
+# Prints "body", then "exit:0".
+BUN_TEST_DRAIN_EVENT_LOOP=1 bun test ./drain.test.ts
+```
+
+With `BUN_TEST_DRAIN_EVENT_LOOP=1`, Bun does two things:
+
+- After each file, it waits for the event loop to empty. Timers and other pending work from the file finish, and `beforeExit` listeners run.
+- When the run ends, it runs the `exit` listeners that the files registered.
+
+If a file registers a test with `node:test`, Bun runs the `exit` listeners without the variable. Importing `node:test` alone leaves the `exit` listeners off. Only the variable makes Bun wait for the event loop to empty.
+
+A call to `process.exit()` in a test file runs the `exit` listeners with or without the variable.
+
 ### Signal Handling
 
 The test runner handles common signals:

@@ -22,6 +22,34 @@ use smallvec::SmallVec;
 use std::any::Any;
 use std::borrow::Cow;
 
+/// The built-in config's `import/*` settings, which the `import` rules also use with an oxlint config.
+pub mod import_defaults {
+    /// `import/extensions`
+    pub const EXTENSIONS: [&[u8]; 8] = [
+        b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx",
+    ];
+    /// `import/core-modules`: Bun's own modules.
+    pub const CORE_MODULES: [&[u8]; 6] = [
+        b"bun",
+        b"bun:bundle",
+        b"bun:ffi",
+        b"bun:jsc",
+        b"bun:sqlite",
+        b"bun:test",
+    ];
+    /// `import/external-module-folders`
+    pub const EXTERNAL_MODULE_FOLDERS: [&[u8]; 2] = [b"node_modules", b"node_modules/@types"];
+
+    /// One of the lists as JSON.
+    pub fn json(items: &[&[u8]]) -> Vec<u8> {
+        let quoted: Vec<Vec<u8>> = items
+            .iter()
+            .map(|it| [b"\"", *it, b"\""].concat())
+            .collect();
+        [b"[", &quoted.join(&b", "[..])[..], b"]"].concat()
+    }
+}
+
 /// The tool whose definition of a module's imports is followed. It's the same for every file of a run.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Flavor {
@@ -142,9 +170,11 @@ pub struct IndirectExportEntry {
 /// Builds a file's [`Record`].
 pub type MakeRecord = for<'a> fn(&'a File<'a>) -> Record;
 
-/// One of eslint-plugin-import's resolvers.
+/// One of eslint-plugin-import's resolvers, or oxlint's.
 #[derive(Clone, Debug)]
 pub enum Lookup<'e> {
+    /// The graph's [`Flavor::Oxlint`] resolution: what oxlint's `import` rules resolve with.
+    Oxlint,
     /// eslint-import-resolver-typescript, with its `project` option verbatim.
     TypeScript(SmallVec<[&'e [u8]; 1]>),
     /// eslint-import-resolver-node, with its `extensions`.

@@ -4,7 +4,7 @@ use super::block_statement::is_empty_block;
 use super::import_declaration::FormatStringLiteral;
 use super::intersection_type::groups_single_type_intersection;
 use super::program::FormatStatements;
-use super::semicolon::OptionalSemicolon;
+use super::semicolon::{BodilessDeclarationSemicolon, OptionalSemicolon};
 use super::ts_types::{entity_name, write_ts_interface_signatures};
 use super::type_parameters::{FormatTSTypeParametersOptions, type_parameters};
 use super::union_type::{
@@ -559,7 +559,7 @@ pub(crate) fn write_ts_module_declaration<'a>(
     }
 
     let Some(span) = body_span else {
-        return write!(f, OptionalSemicolon);
+        return write!(f, BodilessDeclarationSemicolon(statement));
     };
     let body = AstNodes::TSModuleBlock(statement);
     write_space_before_body(body, f);

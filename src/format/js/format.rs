@@ -898,12 +898,15 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
     }
     let needs_leading_semicolon =
         print::statements::ignored_statement_needs_semicolon(statement, span.start, f);
+    let keeps_terminator =
+        has_semicolon && print::semicolon::block_follows_bodiless_declaration(statement);
     f.track_cursor(span, |f| {
         write!(
             f,
             [
                 needs_leading_semicolon.then_some(";"),
-                FormatSuppressedNode(span)
+                FormatSuppressedNode(span),
+                keeps_terminator.then_some(";")
             ]
         )
     });
@@ -942,12 +945,15 @@ fn write_ignored_statement_without_terminator<'a>(
     let needs_leading_semicolon =
         print::statements::ignored_statement_needs_semicolon(statement, content.start, f)
             && !print::statements::follows_type_cast_comment(content.start, f);
+    let keeps_terminator = ends_with_terminator(statement)
+        && print::semicolon::block_follows_bodiless_declaration(statement);
     f.track_cursor(content, |f| {
         write!(
             f,
             [
                 needs_leading_semicolon.then_some(";"),
-                FormatSuppressedNode(content)
+                FormatSuppressedNode(content),
+                keeps_terminator.then_some(";")
             ]
         )
     });
@@ -961,20 +967,18 @@ fn ends_with_terminator(statement: Stmt<'_>) -> bool {
     }
     let mut last = statement;
     loop {
-        last = match last.kind() {
-            StmtKind::If { yes, no, .. } => no.unwrap_or(yes),
-            StmtKind::For { body, .. }
-            | StmtKind::ForIn { body, .. }
-            | StmtKind::ForOf { body, .. }
-            | StmtKind::While { body, .. }
-            | StmtKind::With { body, .. }
-            | StmtKind::Labeled { body, .. } => body,
+        if let Some(tail) = print::semicolon::tail_statement(last) {
+            last = tail;
+            continue;
+        }
+        return match last.kind() {
             StmtKind::TypeAlias(_)
             | StmtKind::ImportEquals(_)
             | StmtKind::ExportAssign(_)
-            | StmtKind::ExportAsNamespace(_) => return true,
-            StmtKind::Fn(func) => return !func.has_body(),
-            _ => return ends_before_semicolon(last),
+            | StmtKind::ExportAsNamespace(_) => true,
+            StmtKind::Fn(func) => !func.has_body(),
+            StmtKind::Module(module) => !module.innermost().has_body(),
+            _ => ends_before_semicolon(last),
         };
     }
 }

@@ -517,7 +517,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * it between ticks is what we are avoiding. */
     const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
     if (!handed_off && will_idle_inside_event_loop) {
-        static const uint64_t idle_sweep_interval_ns = 1000 * 1000000ULL;
+        static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
         static _Thread_local uint64_t last_idle_sweep_ns = 0;
         const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
         if (sweep_now_ns >= last_idle_sweep_ns + idle_sweep_interval_ns) {

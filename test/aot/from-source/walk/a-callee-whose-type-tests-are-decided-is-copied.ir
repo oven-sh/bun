@@ -1,20 +1,16 @@
 # -- source: main.cjs
-# function hash(key) {
-#   switch (typeof key) {
-#     case "undefined": return 0;
-#     case "object": if (!key) return 0;
-#     case "function": return key.hashCode();
-#     case "boolean": return key | 0;
-#     case "number": if ((key | 0) == key) return key; key = "" + key;
-#     case "string": var h = 0; for (var i = 0; i < key.length; i++) h = (((31 * h) | 0) + key.charCodeAt(i)) | 0; return h;
-#     default: throw new Error("bad");
-#   }
+# function toll(thing) {
+#   if (typeof thing === "boolean") return thing ? 7 : 1;
+#   if (typeof thing === "number") return (thing & 1023) === thing ? thing * 2 - 1 : 900;
+#   if (typeof thing === "string") { let climb = 3; for (let at = thing.length - 1; at > 0; at--) climb += thing.charCodeAt(at) - thing.charCodeAt(at - 1) * 2; return climb; }
+#   if (typeof thing === "function") return thing.pays(2);
+#   return thing === null || thing === undefined ? 0 : thing.toll | 0;
 # }
-# function whole() { let sum = 0; for (let i = 0; i < 400; i++) sum += hash(i & 255); return sum; }
-# function strings() { let sum = 0; for (let i = 0; i < 40; i++) sum += hash("k" + (i & 1)); return sum; }
-# print(whole(), strings());
+# function wholes() { let sum = 0; for (let i = 0; i < 400; i++) sum += toll(i & 255); return sum; }
+# function names() { let sum = 0; for (let i = 0; i < 40; i++) sum += toll("kite" + (i & 1)); return sum; }
+# print(wholes(), names());
 # -- end of source
-# The call passes an int32, so one comparison is left of the callee and its loop is not walked. For a string its loop is left, and it is called. f1 = hash, f2 = whole, f3 = strings
+# The call passes an int32, so one comparison is left of the callee and its loop is not walked. For a string its loop is left, and it is called. f1 = toll, f2 = wholes, f3 = names
 # RUN(WHOLE): walk f2:Body mechanisms=all
 # WHOLE-LABEL: code f2:Body
 # WHOLE: callee=f1
@@ -24,4 +20,4 @@
 # STRINGS-LABEL: code f3:Body
 # STRINGS: function=f1
 # RUN(ANSWERS): run-in-shell mechanisms=all
-# ANSWERS: 42936 134620
+# ANSWERS: 85472 -19380

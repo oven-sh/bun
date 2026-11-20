@@ -1,72 +1,82 @@
-// Stores by key as the well-known merging libraries do: one `object[key] = value` for every object and every name of the program.
-function baseAssignValue(object, key, value) {
-  if (key == "__proto__") Object.defineProperty(object, key, { configurable: true, enumerable: true, value, writable: true });
-  else object[key] = value;
-}
-function eq(a, b) { return a === b || (a !== a && b !== b); }
-function assignMergeValue(object, key, value) {
-  if ((value !== undefined && !eq(object[key], value)) || (value === undefined && !(key in object))) baseAssignValue(object, key, value);
-}
-function safeGet(object, key) {
-  if (key === "constructor" && typeof object[key] === "function") return;
-  if (key == "__proto__") return;
-  return object[key];
-}
-function isObject(value) { const type = typeof value; return value != null && (type == "object" || type == "function"); }
-function keysIn(object) { const keys = []; for (const key in object) keys.push(key); return keys; }
-function baseFor(object, iteratee) {
-  const keys = keysIn(object);
-  for (let i = 0; i < keys.length; i++) iteratee(object[keys[i]], keys[i]);
-}
-function baseMerge(object, source, customizer, depth) {
-  if (object === source) return;
-  baseFor(source, (sourceValue, key) => {
-    const present = safeGet(object, key);
-    let value = customizer ? customizer(present, sourceValue, key + "", object, source) : undefined;
-    if (value === undefined) {
-      if (isObject(sourceValue) && !Array.isArray(sourceValue) && typeof sourceValue != "function" && depth < 4) {
-        value = isObject(present) ? present : {};
-        baseMerge(value, sourceValue, customizer, depth + 1);
-      } else value = sourceValue;
-    }
-    assignMergeValue(object, key, value);
-  });
-}
-export function mergeWith(object, ...sources) {
-  const customizer = typeof sources[sources.length - 1] == "function" ? sources.pop() : undefined;
-  for (const source of sources) if (source) baseMerge(object, source, customizer, 0);
+// A package that lays what one object holds on another. The application and the tests hand it objects of every image, and it stores into them under keys that it does not know.
+const isPlain = value => value !== null && typeof value === "object" && !Array.isArray(value);
+
+export function set(object, key, value) {
+  object[key] = value;
   return object;
 }
+
 export function assignAll(object, source) {
-  const keys = Object.keys(source);
-  for (let i = 0; i < keys.length; i++) baseAssignValue(object, keys[i], source[keys[i]]);
+  for (const key of Object.keys(source)) if (key !== "__proto__") set(object, key, source[key]);
   return object;
 }
-export function set(object, key, value) { object[key] = value; return object; }
-export function makeTheirs(i) { const object = { a: i, b: "s" + i }; if (i & 1) object.c = { d: i }; return object; }
-export class Theirs { constructor(i) { this.a = i; if (i & 1) this.b = "b"; this.nested = {}; } }
-const packageDefaults = { a: 1, b: "b", flag: false, n: 0 };
+
+function layOver(below, above, choose) {
+  for (const key of Object.keys(above)) {
+    if (key === "__proto__") continue;
+    const old = below[key];
+    const given = above[key];
+    const chosen = choose === undefined ? undefined : choose(old, given, key, below, above);
+    if (chosen !== undefined) set(below, key, chosen);
+    else if (isPlain(given)) set(below, key, layOver(isPlain(old) ? old : {}, given, choose));
+    else if (Array.isArray(given)) set(below, key, Array.isArray(old) ? given.concat(old.slice(given.length)) : given.slice());
+    else if (given !== undefined) set(below, key, given);
+    else if (!(key in below)) set(below, key, undefined);
+  }
+  return below;
+}
+
+export function mergeWith(object, ...sourcesAndCustomizer) {
+  const last = sourcesAndCustomizer.at(-1);
+  const choose = typeof last === "function" ? sourcesAndCustomizer.pop() : undefined;
+  for (const source of sourcesAndCustomizer) if (source !== null && source !== undefined) layOver(object, source, choose);
+  return object;
+}
+
+export function makeTheirs(i) {
+  return i & 1 ? { a: i, b: "theirs", nested: { x: i } } : { a: i, nested: {} };
+}
+
+export class Theirs {
+  constructor(i) {
+    this.a = i;
+    if (i & 2) this.b = "b" + i;
+    this.nested = { x: i, list: [i] };
+  }
+}
+
+const defaults = { a: 0, b: "default", nested: null, n: 1 };
 export const copiers = {
   copy: object => ({ ...object }),
-  overDefaults: object => ({ ...packageDefaults, ...object }),
-  underDefaults: object => ({ ...object, ...packageDefaults }),
+  overDefaults: object => ({ ...defaults, ...object }),
+  underDefaults: object => ({ ...object, ...defaults }),
   assign: object => Object.assign({ n: 0 }, object),
-  assignTwo: object => Object.assign({}, packageDefaults, object),
-  rest: object => { const { a, ...others } = object; return [a, others]; },
+  assignTwo: object => Object.assign({}, defaults, object),
+  rest: object => {
+    const { a, ...others } = object;
+    return [a, others];
+  },
   entries: object => Object.fromEntries(Object.entries(object)),
 };
+
 export const packageText = "text of the package";
-export const packageTextReadAboveFirst = "nobody in the package reads this";
+export const packageTextReadAboveFirst = "text that a file above reads first";
 export let packageMode = "one";
-export function setPackageMode(mode) { packageMode = mode; }
-// Validators and the like make code out of text at run time.
+export function setPackageMode(mode) {
+  packageMode = mode;
+}
+
 export const codeFromText = (parameters, body) => new Function(...parameters, body);
-// Loaders of plugins and of configuration are handed the path of a file.
-import { createRequire } from "node:module";
-const requireFromThePackage = createRequire(import.meta.url);
 export const importByPath = path => import(path);
-export const requireByPath = path => requireFromThePackage(path);
-// A payload as a validator library hands it round, and what reads it.
+export const requireByPath = path => require(path);
+
 export const payloadOfThePackage = value => ({ value, issues: [] });
-export const readPayloadInThePackage = payload => [payload.value, payload.issues.length, Object.keys(payload).join()];
-export class StaticsOfThePackage { static limit = 3; static label = "package"; static twice() { return this.limit * 2; } }
+export const readPayloadInThePackage = payload => [payload.value, payload.issues, payload.issues.length];
+
+export class StaticsOfThePackage {
+  static limit = 3;
+  static label = "package";
+  static twice() {
+    return this.limit * 2;
+  }
+}

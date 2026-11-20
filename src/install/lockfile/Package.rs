@@ -290,6 +290,8 @@ pub trait ResolverContext {
         false
     }
 
+    /// Returns true if a row that `bundleDependencies` names gets `Behavior::BUNDLED`. A void
+    /// resolver is asked too.
     fn check_bundled_dependencies(&self) -> bool {
         false
     }
@@ -3066,7 +3068,7 @@ impl Package<u64> {
 
         let mut bundled_deps = StringSet::init();
         let mut bundle_all_deps = false;
-        if !resolver.is_void() && resolver.check_bundled_dependencies() {
+        if resolver.check_bundled_dependencies() {
             if let Some(bundled_deps_expr) = json
                 .get(b"bundleDependencies")
                 .or_else(|| json.get(b"bundledDependencies"))

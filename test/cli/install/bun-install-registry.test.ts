@@ -2730,6 +2730,8 @@ describe.concurrent("tarballs of a fresh resolve", () => {
   const packages: Record<string, object> = {
     // The tarball of outer ships bd and tr in its node_modules.
     "outer": { dependencies: { bd: "1.0.0" }, bundleDependencies: ["bd"] },
+    // The tarball of flat ships bd, which it bundles, and tr, which it depends on and does not bundle.
+    "flat": { dependencies: { bd: "1.0.0", tr: "1.0.0" }, bundleDependencies: ["bd"] },
     "bd": { dependencies: { tr: "1.0.0" } },
     // No CI machine has this cpu.
     "uses-native": { optionalDependencies: { "native-wasm": "1.0.0" } },
@@ -2747,6 +2749,10 @@ describe.concurrent("tarballs of a fresh resolve", () => {
       "node_modules/bd/index.js": `module.exports = "bundled bd, " + require("tr");`,
       "node_modules/tr/package.json": packageJsonOf("tr"),
       "node_modules/tr/index.js": `module.exports = "bundled tr";`,
+    },
+    "flat": {
+      "node_modules/bd/package.json": packageJsonOf("bd"),
+      "node_modules/tr/package.json": packageJsonOf("tr"),
     },
     "bd": { "index.js": `module.exports = "registry bd, " + require("tr");\n` },
     "tr": { "index.js": `module.exports = "registry tr";\n` },
@@ -3000,6 +3006,59 @@ index 0000000..1111111 100644
         manifests: ["outer"],
         tarballs: ["outer"],
       });
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  // A tarball and a `file:` folder are read before their turn, to ask early for
+  // what they depend on. The turn of flat binds bd and tr to the folders that
+  // its tarball ships, so neither name is sent to the registry. A folder ships
+  // only what it bundles.
+  const bundlersOffTheRegistry: Record<
+    string,
+    { dependencies: (registry: string) => Record<string, string>; asked: { manifests: string[]; tarballs: string[] } }
+  > = {
+    "a remote tarball": {
+      dependencies: registry => ({ flat: `${registry}flat-1.0.0.tgz` }),
+      asked: { manifests: [], tarballs: ["flat"] },
+    },
+    "a local tarball": {
+      dependencies: () => ({ flat: "./flat-1.0.0.tgz" }),
+      asked: { manifests: [], tarballs: [] },
+    },
+    // The folder is read while the manifest of leaf, which comes before it, is on its way.
+    "a file: folder": {
+      dependencies: () => ({ leaf: "1.0.0", local: "file:./local" }),
+      asked: { manifests: ["leaf"], tarballs: ["leaf"] },
+    },
+  };
+  for (const [bundler, { dependencies, asked }] of Object.entries(bundlersOffTheRegistry)) {
+    test(`the registry is not asked for what ${bundler} bundles`, async () => {
+      const requests: Requests = { tarballs: [], manifests: new Set() };
+      await using registry = serveRegistry(requests);
+      using dir = tempDir("fresh-resolve-tarballs", {
+        "package.json": JSON.stringify({ name: "foo", dependencies: dependencies(registry.url.href) }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url.href } }),
+        "flat-1.0.0.tgz": Buffer.from(tarballs["flat"]),
+        "local/package.json": JSON.stringify({
+          name: "local",
+          version: "1.0.0",
+          dependencies: { bd: "1.0.0" },
+          bundleDependencies: ["bd"],
+        }),
+        "local/node_modules/bd/package.json": JSON.stringify({ name: "bd", version: "1.0.0" }),
+      });
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+        env: envFor(String(dir)),
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect({ manifests: [...requests.manifests].toSorted(), tarballs: requests.tarballs }).toEqual(asked);
       expect(exitCode).toBe(0);
     });
   }

@@ -18,7 +18,7 @@ use crate::repository_real::{RepositoryExt as _, locked_scp_like};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
     Dependency, DependencyID, ExtractData, ExtractDataJson, Features, INVALID_PACKAGE_ID,
-    PackageID, Resolution, TaskCallbackContext, dependency,
+    PackageID, PackageNameHash, Resolution, TaskCallbackContext, dependency,
 };
 
 /// The dependencies of a package.json, parsed into a separate lockfile. `LookAhead` reads it to
@@ -30,7 +30,11 @@ pub(crate) struct ListedDependencies {
 }
 
 /// Parses a package.json for `ListedDependencies`, where the package's resolution does not matter.
-pub(crate) struct OnlyDependencies;
+pub(crate) struct OnlyDependencies {
+    /// What `check_bundled_dependencies` returns for the resolver that parses the package at its
+    /// turn. `look_ahead_from` asks for nothing that a bundled row names.
+    pub(crate) marks_bundled: bool,
+}
 
 impl ResolverContext for OnlyDependencies {
     fn is_void(&self) -> bool {
@@ -38,7 +42,7 @@ impl ResolverContext for OnlyDependencies {
     }
 
     fn check_bundled_dependencies(&self) -> bool {
-        true
+        self.marks_bundled
     }
 
     fn resolve(
@@ -48,6 +52,19 @@ impl ResolverContext for OnlyDependencies {
     ) -> Result<ResolutionType<u64>, crate::Error> {
         Ok(ResolutionType::default())
     }
+}
+
+/// The names of the folders in the `node_modules` of a package that names bundled dependencies.
+/// At the package's turn `Lockfile::bind_bundle` binds a row with such a name to the folder,
+/// whether or not `bundleDependencies` has the name, so no manifest is requested for it.
+fn names_shipped_by(bundle: Option<&BundleContents>) -> Vec<PackageNameHash> {
+    let Some(bundle) = bundle else {
+        return Vec::new();
+    };
+    (bundle.folders.iter())
+        .filter(|folder| folder.parent.is_none())
+        .map(|folder| bun_semver::string::Builder::string_hash(folder.folder_name()))
+        .collect()
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -536,11 +553,15 @@ impl PackageManager {
                 self,
                 &mut bun_ast::Log::init(),
                 &source,
-                &mut OnlyDependencies,
+                // As `GitResolver` and `TarballResolver` do.
+                &mut OnlyDependencies {
+                    marks_bundled: true,
+                },
                 Features::NPM,
             );
             if parsed.is_ok() {
-                enqueue::look_ahead_from(self, &listed, &[]);
+                let shipped = names_shipped_by(data.bundle.as_deref());
+                enqueue::look_ahead_from(self, &listed, &shipped);
             }
         }
         let data = ExtractData {

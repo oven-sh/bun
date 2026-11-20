@@ -415,6 +415,12 @@ pub(crate) fn listed_dependencies(
         .ok()?;
     let (source, json) = (entry.source.clone(), entry.root);
     let mut listed = ListedDependencies::default();
+    // As `NewResolver` does for the folder. The runtime's auto-install resolves a bundled
+    // dependency that an import misses, so its look-ahead still asks for one.
+    let mut resolver = OnlyDependencies {
+        marks_bundled: tag != dependency::version::Tag::Workspace
+            && !manager.options.runtime_auto_install,
+    };
     // These features register no `npm:` alias, which would change how other rows are resolved.
     let parsed = listed.package.parse_with_json(
         &mut listed.lockfile,
@@ -422,7 +428,7 @@ pub(crate) fn listed_dependencies(
         &mut log,
         &source,
         json,
-        &mut OnlyDependencies,
+        &mut resolver,
         Features::FOLDER,
     );
     parsed.ok().map(|()| listed)

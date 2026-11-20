@@ -1,8 +1,24 @@
 declare module "bun" {
+  namespace __internal {
+    interface FallbackWebAssemblyTag {
+      readonly [Symbol.toStringTag]: "WebAssembly.Tag";
+    }
+    // An empty interface, not `{}`: an interface without members is read as its base, and `{}` is an object literal type.
+    interface LibWebAssemblyTag {}
+    // lib.dom's `Tag` is empty. It stays empty with lib.dom, so that a cast of an export to `WebAssembly.Tag` is legal.
+    type LibOrFallbackWebAssemblyTag = LibDomIsLoaded extends true ? LibWebAssemblyTag : FallbackWebAssemblyTag;
+  }
+
   namespace WebAssembly {
     type ImportExportKind = "function" | "global" | "memory" | "table" | "tag";
     type TableKind = "anyfunc" | "externref";
-    type ExportValue = Function | Global | WebAssembly.Memory | WebAssembly.Table;
+    // Every value fits lib.dom's empty `Tag`, so with lib.dom a tag is no export value, as in lib.dom itself.
+    type ExportValue =
+      | Function
+      | Global
+      | WebAssembly.Memory
+      | WebAssembly.Table
+      | (__internal.LibDomIsLoaded extends true ? never : Tag);
     type Exports = Record<string, ExportValue>;
     type ImportValue = ExportValue | number;
     type Imports = Record<string, ModuleImports>;
@@ -95,6 +111,55 @@ declare module "bun" {
       instance: Instance;
       module: Module;
     }
+
+    interface TagType {
+      /** The value types of the values that an exception with this tag carries. */
+      parameters: ValueType[];
+    }
+
+    interface ExceptionOptions {
+      /** Give the exception a `stack` property with a stack trace. Defaults to `false`. */
+      traceStack?: boolean | undefined;
+    }
+
+    /**
+     * The type of a WebAssembly exception: the value types of the values that
+     * the exception carries.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Tag)
+     */
+    interface Tag extends __internal.LibOrFallbackWebAssemblyTag {}
+
+    /**
+     * An exception that WebAssembly code throws to JavaScript, or that
+     * JavaScript throws to WebAssembly code. It is not an instance of `Error`.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Exception)
+     */
+    interface Exception {
+      /**
+       * A stack trace, if the exception was created with `traceStack: true`.
+       * Otherwise `undefined`.
+       *
+       * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Exception/stack)
+       */
+      readonly stack: string | undefined;
+      /**
+       * Returns the value at `index` among the values that the exception carries.
+       *
+       * Throws a `TypeError` if `exceptionTag` is not the tag of the exception,
+       * and a `RangeError` if `index` is out of range.
+       *
+       * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Exception/getArg)
+       */
+      getArg(exceptionTag: Tag, index: number): any;
+      /**
+       * Returns `true` if `exceptionTag` is the tag of the exception.
+       *
+       * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Exception/is)
+       */
+      is(exceptionTag: Tag): boolean;
+    }
   }
 }
 
@@ -171,6 +236,31 @@ declare namespace WebAssembly {
       };
     }
   >["Module"];
+
+  interface TagType extends Bun.WebAssembly.TagType {}
+  interface ExceptionOptions extends Bun.WebAssembly.ExceptionOptions {}
+
+  interface Tag extends Bun.WebAssembly.Tag {}
+  var Tag: {
+    prototype: Tag;
+    new (type: TagType): Tag;
+  };
+
+  interface Exception extends Bun.WebAssembly.Exception {}
+  var Exception: {
+    prototype: Exception;
+    /**
+     * @param exceptionTag The tag of the exception. `WebAssembly.JSTag` is not accepted.
+     * @param payload One value for each of the `parameters` of the tag
+     */
+    new (exceptionTag: Tag, payload: any[], options?: ExceptionOptions): Exception;
+  };
+
+  /**
+   * The tag of a value that JavaScript throws. WebAssembly code that imports
+   * this tag can catch such a value as an `externref`.
+   */
+  var JSTag: Tag;
 
   interface Table extends Bun.WebAssembly.Table {}
   var Table: {

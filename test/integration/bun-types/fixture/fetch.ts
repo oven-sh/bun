@@ -387,3 +387,17 @@ if (typeof process !== "undefined") {
   // @ts-expect-error crl takes PEM contents
   fetch("https://example.com", { tls: { crl: 1 } });
 }
+
+{
+  // `new Request`, `Response.redirect`, `URL.canParse` and `URL.parse` take a URL object
+  const url = new URL("https://example.com");
+  new Request(url);
+  new Request(url, { method: "POST" });
+  new Request(url as string | URL | Request);
+  Response.redirect(url);
+  Response.redirect(url, 302);
+  URL.canParse(url);
+  URL.canParse("/path", url);
+  URL.parse(url);
+  URL.parse("/path", url);
+}

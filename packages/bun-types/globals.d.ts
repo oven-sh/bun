@@ -152,10 +152,18 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
     prototype: ReadableStream;
     new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
     new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
-    new <R extends Uint8Array = Uint8Array<ArrayBuffer>>(
-      underlyingSource: import("node:stream/web").UnderlyingByteSource,
+    // A call without type arguments infers `K` as `"bytes"`. Else `K` is `never`, and this returns `ReadableStream<R>`.
+    new <
+      R = any,
+      K extends "bytes" = never,
+      B extends ([K] extends [never] ? unknown : Uint8Array) = [K] extends [never] ? R : Uint8Array<ArrayBuffer>,
+    >(
+      // Always `UnderlyingByteSource`. The other branch is where a call infers `K`.
+      underlyingSource: [K] extends ["bytes"]
+        ? import("node:stream/web").UnderlyingByteSource
+        : import("node:stream/web").UnderlyingByteSource & { type: K },
       strategy?: { highWaterMark?: number },
-    ): ReadableStream<R>;
+    ): ReadableStream<B>;
   }
 >;
 
@@ -1746,7 +1754,7 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
      * @param url - The URL to check.
      * @param base - The base URL to use.
      */
-    canParse(url: string, base?: string): boolean;
+    canParse(url: string | URL, base?: string | URL): boolean;
     /**
      * Create a `blob:` URL for a {@link Blob}.
      *
@@ -1766,7 +1774,7 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
      * @param url - The URL to parse.
      * @param base - The base URL to use.
      */
-    parse(url: string, base?: string): URL | null;
+    parse(url: string | URL, base?: string | URL): URL | null;
   }
 >;
 
@@ -1990,8 +1998,8 @@ declare var Request: Bun.__internal.UseLibDomIfAvailable<
   {
     prototype: Request;
     new (requestInfo: string, init?: RequestInit): Request;
-    new (requestInfo: RequestInit & { url: string }): Request;
-    new (requestInfo: Request, init?: RequestInit): Request;
+    new (requestInfo: RequestInit & { url: string | URL }): Request;
+    new (requestInfo: string | URL | Request, init?: RequestInit): Request;
   }
 >;
 
@@ -2029,7 +2037,7 @@ declare var Response: Bun.__internal.UseLibDomIfAvailable<
      * @param url The URL to redirect to
      * @param status The HTTP status code to use for the redirect
      */
-    redirect(url: string, status?: number): Response;
+    redirect(url: string | URL, status?: number): Response;
 
     /**
      * Create a new {@link Response} that redirects to `url`.
@@ -2037,7 +2045,7 @@ declare var Response: Bun.__internal.UseLibDomIfAvailable<
      * @param url The URL to redirect to
      * @param init Options for the response
      */
-    redirect(url: string, init?: ResponseInit): Response;
+    redirect(url: string | URL, init?: ResponseInit): Response;
 
     /**
      * Create a new {@link Response} that represents a network error.

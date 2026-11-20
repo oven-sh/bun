@@ -6,6 +6,8 @@ use bun_core::strings;
 use bun_jsc::bindgen::{self, JsHeap};
 use bun_semver::{SlicedString, Version, query};
 
+use crate::generated_bindgen::semver_object::SatisfiesOptions;
+
 pub(crate) fn order<'a>(
     heap: &JsHeap<'a>,
     left: &'a [u8],
@@ -36,7 +38,11 @@ pub(crate) fn order<'a>(
     )
 }
 
-pub(crate) fn satisfies<'a>(version: &'a [u8], range: &'a [u8]) -> bindgen::Result<'a, bool> {
+pub(crate) fn satisfies<'a>(
+    version: &'a [u8],
+    range: &'a [u8],
+    options: &SatisfiesOptions,
+) -> bindgen::Result<'a, bool> {
     if !strings::is_all_ascii(version) || !strings::is_all_ascii(range) {
         return Ok(false);
     }
@@ -45,13 +51,22 @@ pub(crate) fn satisfies<'a>(version: &'a [u8], range: &'a [u8]) -> bindgen::Resu
         return Ok(false);
     };
 
-    let group = query::parse(range, SlicedString::init(range, range))?;
+    let sliced = SlicedString::init(range, range);
+    let group = if options.include_prerelease {
+        query::parse_including_prerelease(range, sliced)?
+    } else {
+        query::parse(range, sliced)?
+    };
 
     if let Some(exact_version) = group.get_exact_version() {
         return Ok(parsed_version.eql(exact_version));
     }
 
-    Ok(group.satisfies(parsed_version, range, version))
+    Ok(if options.include_prerelease {
+        group.satisfies_including_prerelease(parsed_version, range, version)
+    } else {
+        group.satisfies(parsed_version, range, version)
+    })
 }
 
 /// `bun:internal-for-testing`: `Group::intersects` on two range strings.

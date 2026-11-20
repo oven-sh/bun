@@ -11,7 +11,7 @@ description: Use Bun's semantic versioning API
 
 The API provides two functions:
 
-## `Bun.semver.satisfies(version: string, range: string): boolean`
+## `Bun.semver.satisfies(version: string, range: string, options?: { includePrerelease?: boolean }): boolean`
 
 Returns `true` if `version` satisfies `range`, otherwise `false`.
 
@@ -35,6 +35,15 @@ semver.satisfies("1.0.0", "1.0.0 - 1.0.1"); // true
 ```
 
 `satisfies` returns `false` if `version` is invalid, or if either argument contains a non-ASCII character. Bun ignores the parts of `range` that it cannot parse. A `range` with no parseable part behaves like `*`.
+
+A prerelease version, such as `27.0.0-alpha.0`, only satisfies a range that has a prerelease at the same `major.minor.patch`. This is the `node-semver` rule. Pass `{ includePrerelease: true }` to let a prerelease satisfy the comparators alone, like `node-semver` does with the same option:
+
+```typescript
+semver.satisfies("27.0.0-alpha.0", ">=26.0.0"); // false
+semver.satisfies("27.0.0-alpha.0", ">=26.0.0", { includePrerelease: true }); // true
+semver.satisfies("26.1.0-beta.1", "^26.0.0", { includePrerelease: true }); // true
+semver.satisfies("27.0.0-alpha.0", "^26.0.0", { includePrerelease: true }); // false: `^26.0.0` ends at `<27.0.0-0`
+```
 
 A major, minor, or patch number above 2^64 - 1 makes a version invalid. No version satisfies a `range` that has such a number before any wildcard.
 

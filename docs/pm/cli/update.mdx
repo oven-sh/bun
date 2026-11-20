@@ -38,6 +38,7 @@ Updated packages appear in the install summary as `↑ name old → new`, with `
 
 - Bun never widens ranges. A package that depends on `foo@^1.0.0` never gets `foo@2.x`.
 - A package that an [`overrides`](/pm/overrides) rule sets stays on the version the rule selects. `--latest` does not move it.
+- A dependency that links a [workspace](/pm/workspaces) package stays on it. That includes a plain range such as `"ui": "*"` and a `catalog:` entry whose range the workspace package satisfies. `--latest` leaves such a catalog entry as written and does not ask the registry for the name.
 - A transitive dependency that shares the copy your own `package.json` entry resolves to (in the root or in a workspace) stays on that copy and moves with it. With `@types/node: ~20` in your `package.json`, the `@types/node: *` that `@types/ws` declares keeps using your `~20` copy instead of nesting the newest major under `@types/ws`. Bun updates a transitive range on its own when it rejects the version your entry moves to, or when you removed the entry.
 - Bun does not add a version that another one covers. Two dependencies declaring `foo@^1` and `foo@*` share one `1.x` copy, as on `bun install`. Versions already in `bun.lock` and your own `package.json` entries are never moved to save a copy.
 - Versions in `patchedDependencies` stay put as long as their range allows. Bun reports them as `kept name@version (patched, v1.2.3 available)`. `--latest` and [`bun audit fix`](/pm/cli/audit#bun-audit-fix) do move them; re-create the patch with [`bun patch`](/pm/cli/patch) afterwards.

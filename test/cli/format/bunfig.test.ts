@@ -1051,7 +1051,7 @@ insertFinalNewline = false
     // An empty list frees the entry's files from the plugin that [fmt] lists.
     expect(exempt.files).toMatchObject({ "a.js": "a  ;\n", "legacy/b.js": "b;\n" });
     expect(exempt.stderr).toContain(
-      `${left}  Put the plugin in a [[fmt.overrides]] entry with "files" to send only those files to your installed Prettier, or use --allow-unsupported to format it without the plugins.`,
+      `${left}  Put the plugin in a [[fmt.overrides]] entry with "files" and the plugin's "parser" to send those files to your installed Prettier, or use --allow-unsupported to format it without the plugins.`,
     );
     expect(exempt.exitCode).toBe(2);
   });
@@ -1093,6 +1093,32 @@ insertFinalNewline = false
     );
   });
 
+  // Only the installed Prettier knows which options its plugins have. Some are one letter from a key of [fmt], or have
+  // the name of another tool's key.
+  test("`options` takes the options that real plugins have, next to the plugin", async () => {
+    const accepted = [
+      [`@prettier/plugin-pug`, `pugPrintWidth = 120, pugSingleQuote = true`],
+      [`@prettier/plugin-xml`, `xmlWhitespaceSensitivity = "ignore"`],
+      [`@prettier/plugin-php`, `trailingCommaPHP = false`],
+      [`@prettier/plugin-ruby`, `rubySingleQuote = true`],
+      [`prettier-plugin-apex`, `apexInsertFinalNewline = false`],
+      [`prettier-plugin-sql`, `formatter = "sql-formatter"`],
+      // A misspelled key of [fmt] looks like one of them. Prettier refuses it for a file of the entry.
+      [`prettier-plugin-astro`, `tabWidht = 8`],
+    ];
+    const results = await Promise.all(
+      accepted.map(([plugin, keys]) =>
+        format({
+          "bunfig.toml": `[[fmt.overrides]]\nfiles = ["*.nothing"]\noptions = { plugins = ["${plugin}"], ${keys} }\n`,
+          "a.js": "a  ;\n",
+        }),
+      ),
+    );
+    expect(results.map(it => ({ stderr: it.stderr, text: it.files["a.js"], exitCode: it.exitCode }))).toEqual(
+      accepted.map(() => ({ stderr: "", text: "a;\n", exitCode: 0 })),
+    );
+  });
+
   const unknownInOptions = (key: string) => `Unknown key "${key}" in [fmt.overrides.options]\n`;
   const options = (text: string) => `overrides = [{ files = "a", options = { ${text} } }]`;
 
@@ -1122,29 +1148,22 @@ insertFinalNewline = false
       unknownInOptions("astroAllowShorthand"),
     ],
     [options(`parser = "babel", astroAllowShorthand = true`), unknownInOptions("astroAllowShorthand")],
-    // Next to a plugin, a misspelled key is still an error, and so is a [fmt] key that isn't for an entry.
+    // Next to a plugin, a [fmt] key or a flag in another case is still an error, and so is one that isn't for an entry.
     [
       options(`plugins = ["prettier-plugin-astro"], printwidth = 100`),
       `${unknownInOptions("printwidth")}  Did you mean "printWidth"?`,
     ],
     [options(`printwidth = 100, parser = "astro"`), `${unknownInOptions("printwidth")}  Did you mean "printWidth"?`],
-    [options(`plugins = ["prettier-plugin-astro"], threads = 1`), unknownInOptions("threads")],
-    // A letter replaced, two letters swapped, and another case.
-    [
-      options(`plugins = ["prettier-plugin-astro"], tabWidtg = 8`),
-      `${unknownInOptions("tabWidtg")}  Did you mean "tabWidth"?`,
-    ],
-    [
-      options(`plugins = ["prettier-plugin-astro"], tabWidht = 8`),
-      `${unknownInOptions("tabWidht")}  Did you mean "tabWidth"?`,
-    ],
-    [options(`tabWidht = 8, parser = "astro"`), `${unknownInOptions("tabWidht")}  Did you mean "tabWidth"?`],
     [options(`plugins = ["prettier-plugin-astro"], PRINTWIDTH = 100`), unknownInOptions("PRINTWIDTH")],
-    // A plugin's option that is as close to a [fmt] key as a misspelling is refused too.
-    [
-      options(`plugins = ["@prettier/plugin-pug"], pugPrintWidth = 120`),
-      `${unknownInOptions("pugPrintWidth")}  Did you mean "printWidth"?`,
-    ],
+    [options(`plugins = ["prettier-plugin-astro"], threads = 1`), unknownInOptions("threads")],
+    [options(`plugins = ["prettier-plugin-astro"], rangeStart = 1`), unknownInOptions("rangeStart")],
+    // Without a plugin, a misspelled key gets its suggestion.
+    [options(`tabWidht = 8`), `${unknownInOptions("tabWidht")}  Did you mean "tabWidth"?`],
+    // JSON, which is what Prettier gets, has no such number.
+    [options(`plugins = ["./plugin.js"], fooDepth = inf`), "fooDepth must be a finite number"],
+    [options(`plugins = ["./plugin.js"], fooDepth = -inf`), "fooDepth must be a finite number"],
+    [options(`plugins = ["./plugin.js"], fooDepth = nan`), "fooDepth must be a finite number"],
+    [options(`plugins = ["./plugin.js"], fooDepth = 1e400`), "fooDepth must be a finite number"],
     [`overides = []`, `Unknown key "overides" in [fmt]\n  Did you mean "overrides"?`],
   ])("rejects %s with: %s", async (line, message) => {
     const result = await format({ ...bunfig(line), "a.js": "a  ;\n" });

@@ -196,14 +196,6 @@ fn not_a_key(key: &[u8], section: &[u8], meant: Option<&[u8]>) -> Vec<u8> {
     message
 }
 
-/// The one of `keys` that `key` is most likely a misspelling of.
-fn closest_key(key: &[u8], keys: impl Iterator<Item = Vec<u8>>) -> Option<Vec<u8>> {
-    keys.map(|it| (strings::edit_distance(key.iter().copied(), &it[..]), it))
-        .min_by_key(|it| it.0)
-        .filter(|it| it.0 <= key.len().max(3) / 3)
-        .map(|it| it.1)
-}
-
 /// Rejects `key`, which isn't one of `keys` (all the keys of the `section` table), and suggests the closest one.
 fn unknown_key<T>(
     key: &[u8],
@@ -211,8 +203,12 @@ fn unknown_key<T>(
     section: &[u8],
     keys: impl Iterator<Item = Vec<u8>>,
 ) -> Result<T, BunfigError> {
-    let closest = closest_key(key, keys);
-    reject(at, &[&not_a_key(key, section, closest.as_deref())])
+    let closest = keys
+        .map(|it| (strings::edit_distance(key.iter().copied(), &it[..]), it))
+        .min_by_key(|it| it.0)
+        .filter(|it| it.0 <= key.len().max(3) / 3);
+    let closest = closest.as_ref().map(|it| &it.1[..]);
+    reject(at, &[&not_a_key(key, section, closest)])
 }
 
 fn at(value: &Expr) -> impl Fn(UsageError) -> BunfigError {
@@ -624,10 +620,9 @@ fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, BunfigError> {
 }
 
 /// Reads the `options` table of an entry of `[[fmt.overrides]]` into `it`. A key that isn't one of its own is an option
-/// of a plugin. It's only taken if [`crate::fmt::cli::Override::may_use_plugin`] and it doesn't look like a misspelled
-/// `[fmt]` key or flag: one in another case, or one that [`closest_key`] has a suggestion for. So an option that a
-/// plugin names after a `[fmt]` key, like `pugPrintWidth`, is refused too. That's decided after every key is read, so
-/// the order of the keys doesn't matter.
+/// of a plugin. It's only taken if [`crate::fmt::cli::Override::may_use_plugin`] and it isn't a `[fmt]` key or flag in
+/// any case of its letters. That's decided after every key is read, so the order of the keys doesn't matter. A name
+/// that no plugin has is found by the installed Prettier, once a file of the entry goes to it.
 fn set_override_options(
     table: &Expr,
     it: &mut crate::fmt::cli::Override,
@@ -660,10 +655,12 @@ fn set_override_options(
     // Prettier has options with the name of a flag (`rangeStart`), so those must not reach it as a plugin's.
     let known = || FORMAT.keys().chain(FORMAT.flag_keys()).chain(keys());
     for (key, value) in others {
-        let is_misspelled = known().any(|it| it.eq_ignore_ascii_case(&key.name))
-            || closest_key(&key.name, known()).is_some();
-        if !may_use_plugin || is_misspelled {
+        if !may_use_plugin || known().any(|it| it.eq_ignore_ascii_case(&key.name)) {
             return unknown_key(&key.name, key.at, b"fmt.overrides.options", keys());
+        }
+        // JSON has no such number, so Prettier would get `null` and use the plugin's default.
+        if matches!(&value.data, Data::ENumber(number) if !number.value().is_finite()) {
+            return reject(value.loc, &[&key.name, b" must be a finite number"]);
         }
         let mut json = Vec::new();
         write_json(&mut json, &json_of(value)?);

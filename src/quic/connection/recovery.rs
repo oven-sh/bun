@@ -15,6 +15,8 @@ use crate::time::{Duration, Instant};
 pub(super) const INITIAL_PACKET_THRESHOLD: u64 = 3;
 /// In round trips.
 const MAX_LATENESS: u64 = 4;
+/// After how many in a row the thresholds start over (RFC 8985 §6.2).
+const MAX_LOSSES_IN_ORDER: u8 = 16;
 const PERSISTENT_CONGESTION_THRESHOLD: u64 = 3;
 const MIN_PROBE_TIMEOUT: Duration = Duration::from_millis(10);
 const MAX_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -67,7 +69,7 @@ impl Connection {
             self.congestion.on_late(late.len);
         }
 
-        let mut has_news = false;
+        let (mut has_news, mut is_reordered) = (false, late.is_some());
         let Sent {
             packets, frames, ..
         } = &mut space.sent;
@@ -79,6 +81,7 @@ impl Connection {
             for packet in packets.range_mut(positions).filter(|it| it.is_in_flight()) {
                 packet.fate = Fate::Acked;
                 has_news = true;
+                is_reordered |= Some(packet.number) < previous_largest;
                 if packet.number == ack.largest {
                     largest_sent_at = Some(packet.flight.at);
                 }
@@ -115,6 +118,9 @@ impl Connection {
         }
         if has_news {
             space.probes = 0;
+        }
+        if is_reordered {
+            self.losses_in_order = 0;
         }
         if id == SpaceId::Initial && self.side.is_server() && space.crypto_send.is_acked() {
             self.resend_all(id);
@@ -179,7 +185,7 @@ impl Connection {
 
     #[inline]
     fn detect_lost(&mut self, now: Instant, id: SpaceId) {
-        let delay = self.rtt.loss_delay();
+        let (delay, lost_before) = (self.rtt.loss_delay(), self.stats.packets_lost);
         let (mut at, mut lost_since) = (0, Instant::NEVER);
         loop {
             let space = self.spaces.open(id);
@@ -209,6 +215,13 @@ impl Connection {
                     self.congestion.on_persistent_congestion();
                     self.rtt.forget_min();
                 }
+            }
+        }
+        if self.stats.packets_lost > lost_before {
+            self.losses_in_order = self.losses_in_order.saturating_add(1);
+            if self.losses_in_order == MAX_LOSSES_IN_ORDER {
+                self.packet_threshold = INITIAL_PACKET_THRESHOLD;
+                self.rtt.forget_lateness();
             }
         }
         self.spaces.open(id).sent.remove_settled();

@@ -144,6 +144,8 @@ pub struct Connection {
     may_probe_early: bool,
     delivery: recovery::Delivery,
     packet_threshold: u64,
+    /// How many times packets were lost since one was overtaken.
+    losses_in_order: u8,
     ack_policy: ack_frequency::Policy,
     ack_controller: Option<ack_frequency::Controller>,
     ack_only_packets: u32,
@@ -258,6 +260,7 @@ impl Connection {
             may_probe_early: true,
             delivery: Default::default(),
             packet_threshold: recovery::INITIAL_PACKET_THRESHOLD,
+            losses_in_order: 0,
             ack_policy: Default::default(),
             ack_controller: None,
             ack_only_packets: 0,

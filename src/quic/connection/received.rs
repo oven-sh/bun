@@ -6,7 +6,7 @@ use crate::frame::{Ack, kind};
 use crate::range_set::RangeSet;
 use crate::time::Instant;
 
-const MAX_RANGES: usize = 1024;
+const MAX_RANGES: usize = 1000;
 /// After the first. They are counted in one byte.
 const MAX_RANGES_IN_FRAME: usize = 63;
 /// So many of them are those at the top, and so many those below a packet that was late.

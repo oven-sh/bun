@@ -138,6 +138,38 @@ fn packet_threshold_has_no_limit() {
     }
 }
 
+#[test]
+fn thresholds_start_over_if_packets_are_only_lost() {
+    for (losses, is_overtaken, is_lost) in
+        [(15, false, false), (16, false, true), (16, true, false)]
+    {
+        let mut raw = Raw::client().with("max_streams_uni=99").connected();
+        let mut miss_first = |data: &str, arrives: bool| {
+            let first = raw.received[2].last().unwrap() + 1;
+            raw.request_packets(data);
+            raw.advance(RTT);
+            raw.received[2].remove(&first);
+            raw.send("ack");
+            let frames = raw.frames();
+            raw.advance(RTT);
+            if arrives {
+                raw.received[2].insert(first);
+            }
+            raw.send("ack");
+            raw.forget();
+            !frames.is_empty()
+        };
+        assert!(miss_first("abcde", true));
+        for number in 0..losses {
+            assert!(miss_first("abcdefg", false));
+            if is_overtaken && number == 8 {
+                assert!(!miss_first("ab", true));
+            }
+        }
+        assert_eq!(miss_first("abcd", true), is_lost, "{losses} {is_overtaken}");
+    }
+}
+
 /// RFC 9000 §13.3.
 #[test]
 fn what_is_lost_is_sent_again() {

@@ -74,4 +74,8 @@ impl Rtt {
         let excess = (needed.min(*TIME_THRESHOLDS.end())).saturating_sub(*TIME_THRESHOLDS.start());
         self.time_threshold_excess = self.time_threshold_excess.max(excess);
     }
+
+    pub(crate) fn forget_lateness(&mut self) {
+        self.time_threshold_excess = 0;
+    }
 }

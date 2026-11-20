@@ -245,6 +245,7 @@ impl<'a> Options<'a> {
                 unwrap_commonjs_packages: f.unwrap_commonjs_packages,
                 commonjs_at_runtime: f.commonjs_at_runtime,
                 unwrap_commonjs_to_esm: f.unwrap_commonjs_to_esm,
+                target_has_require: f.target_has_require,
                 emit_decorator_metadata: f.emit_decorator_metadata,
                 standard_decorators: f.standard_decorators,
                 remove_cjs_module_wrapper: f.remove_cjs_module_wrapper,

@@ -243,6 +243,8 @@ pub mod Runtime {
         /// See `defer_requires.rs`. Needs `lists_loads`.
         pub defers_requires: bool,
         pub unwrap_commonjs_to_esm: bool,
+        /// The bundle's `__require` works for this file: the target of its graph is not `browser`.
+        pub target_has_require: bool,
 
         pub emit_decorator_metadata: bool,
         pub standard_decorators: bool,
@@ -317,6 +319,7 @@ pub mod Runtime {
                 lists_loads: false,
                 defers_requires: false,
                 unwrap_commonjs_to_esm: false,
+                target_has_require: false,
                 emit_decorator_metadata: false,
                 standard_decorators: false,
                 remove_cjs_module_wrapper: false,

@@ -59,7 +59,7 @@ impl Pacer {
         self.time_per_byte = per.as_micros().saturating_mul(1 << FRACTION_BITS) / len.max(1);
         self.max_lag = rtt.probe_timeout();
         // The shorter the path, the less it takes to make up for a burst that gets lost.
-        self.bonus = match rtt.has_sample() {
+        self.bonus = match rtt.has_sample() && !self.is_shared {
             true => MAX_QUANTUM >> (rtt.min.as_micros() / MICROS_PER_HALVING).min(63),
             false => 0,
         }

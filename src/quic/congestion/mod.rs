@@ -324,7 +324,9 @@ impl Controller {
         if feedback.lost > 0 {
             self.pacer.on_loss();
         }
-        if feedback.is_overflow {
+        if feedback.is_overflow
+            || matches!(&self.model, Model::Cubic(cubic) if cubic.is_congested(&feedback))
+        {
             self.pacer.on_overflow();
         }
         match &mut self.model {

@@ -455,6 +455,19 @@ fn pacer_sends_in_proportion_to_the_rate_while_bursts_lose_their_starts() {
 }
 
 #[test]
+fn pacer_adds_nothing_for_a_short_path_in_a_shared_queue() {
+    for (lost, expected) in [(5, 3), (6, 1)] {
+        let mut pacer = pacer_at(1000, millis(2));
+        (0..5).for_each(|_| pacer.on_overflow());
+        (0..lost).for_each(|_| pacer.on_start_settled(true));
+        let mut rtt = Rtt::default();
+        rtt.update(millis(1), Duration::ZERO);
+        pacer.set_rate(1000, millis(2), &rtt);
+        assert_eq!(pacer.quantum().div_ceil(1000), expected);
+    }
+}
+
+#[test]
 fn pacer_looks_further_ahead_in_a_shared_queue() {
     for (lost, early, is_permitted) in [
         (0, 31, true),
@@ -472,7 +485,7 @@ fn pacer_looks_further_ahead_in_a_shared_queue() {
 }
 
 #[test]
-fn bursts_that_lose_their_ends_get_shorter() {
+fn bursts_that_lose_their_ends_overflow_a_queue() {
     for (bursts, is_overflow) in [
         (&["...xxx"][..], true),
         (&["....xx"], false),
@@ -500,9 +513,24 @@ fn bursts_that_lose_their_ends_get_shorter() {
                 _ => sender.controller.on_acked(flight),
             }
         }
-        sender.controller.end_ack(sender.now, &sender.rtt);
-        let max_turn = sender.controller.max_turn();
-        assert_eq!(max_turn < usize::MAX, is_overflow, "{bursts:?}");
+        let feedback = &sender.controller.feedback;
+        assert_eq!(feedback.is_overflow, is_overflow, "{bursts:?}");
+    }
+}
+
+#[test]
+fn bursts_get_shorter_after_an_overflow_and_whenever_cubic_backs_off() {
+    for (algorithm, max_turns) in [
+        (Algorithm::Cubic, [8, 8, 4]),
+        (Algorithm::Bbr, [usize::MAX, usize::MAX, 8]),
+    ] {
+        let mut sender = Sender::new(algorithm);
+        sender.fill().wait(millis(10));
+        let lose_one = |is_overflow| {
+            sender.controller.feedback.is_overflow = is_overflow;
+            sender.feedback(1, 1).controller.max_turn()
+        };
+        assert_eq!([false, false, true].map(lose_one), max_turns);
     }
 }
 

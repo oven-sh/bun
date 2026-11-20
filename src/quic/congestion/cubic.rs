@@ -74,8 +74,12 @@ impl Cubic {
         }
     }
 
+    pub(super) fn is_congested(&self, feedback: &Feedback) -> bool {
+        feedback.newest_lost > self.recovery_end
+    }
+
     pub(super) fn on_feedback(&mut self, now: Instant, feedback: &Feedback, rtt: &Rtt) {
-        let is_congested = feedback.newest_lost > self.recovery_end;
+        let is_congested = self.is_congested(feedback);
         if is_congested {
             self.reduce(feedback.last_sent);
         }

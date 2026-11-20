@@ -224,7 +224,8 @@ impl Connection {
                 break;
             }
             packet.fate = Fate::Lost;
-            let ends_burst = (space.sent.packets.get(at)).is_some_and(|it| it.flight.starts_burst);
+            let ends_burst =
+                (space.sent.packets.get(at)).is_some_and(|it| it.flight.starts_burst());
             if self.on_lost(id, &before, ends_burst) && sent_at > self.first_sample_at {
                 lost_since = lost_since.min(sent_at);
                 if sent_at - lost_since > self.probe_timeout() * PERSISTENT_CONGESTION_THRESHOLD {

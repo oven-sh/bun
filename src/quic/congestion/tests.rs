@@ -218,7 +218,7 @@ impl Path {
                 self.rtt.update(self.now - flight.at, Duration::ZERO);
                 self.delivered += 1;
             } else {
-                let ends_burst = self.pending.front().is_some_and(|it| it.1.starts_burst);
+                let ends_burst = self.pending.front().is_some_and(|it| it.1.starts_burst());
                 self.controller.on_lost(&flight, ends_burst);
                 self.lost += 1;
                 self.unsent += 1;
@@ -412,20 +412,26 @@ fn pacer_makes_up_for_waking_late() {
 fn pacer_starts_a_burst_after_three_packets_or_a_quarter_of_a_millisecond() {
     for (per, pause) in [(micros(16), 48), (micros(64), 192), (micros(128), 250)] {
         let mut pacer = pacer_at(1024, per);
-        assert!(pacer.on_sent(START, 1024));
-        assert!(!pacer.on_sent(START + micros(pause), 1024));
-        assert!(pacer.on_sent(START + micros(2 * pause + 1), 1024));
+        assert_ne!(pacer.on_sent(START, 1024), Place::Later);
+        assert_eq!(pacer.on_sent(START + micros(pause), 1024), Place::Later);
+        assert_ne!(
+            pacer.on_sent(START + micros(2 * pause + 1), 1024),
+            Place::Later
+        );
         pacer.on_idle_restart(START, false);
-        assert!(pacer.on_sent(START + micros(3 * pause + 2), 1024));
+        assert_ne!(
+            pacer.on_sent(START + micros(3 * pause + 2), 1024),
+            Place::Later
+        );
     }
 }
 
 #[test]
-fn pacer_does_not_start_a_burst_while_the_last_one_may_be_leaving() {
-    for (pause, starts_burst) in [(479, false), (480, true)] {
+fn pacer_knows_when_the_last_burst_may_still_be_leaving() {
+    for (pause, place) in [(479, Place::First), (480, Place::FirstAfterGap)] {
         let mut pacer = pacer_at(1024, micros(16));
-        assert_eq!((0..40).filter(|_| pacer.on_sent(START, 1024)).count(), 1);
-        assert_eq!(pacer.on_sent(START + micros(pause), 1024), starts_burst);
+        (0..40).for_each(|_| _ = pacer.on_sent(START, 1024));
+        assert_eq!(pacer.on_sent(START + micros(pause), 1024), place);
     }
 }
 

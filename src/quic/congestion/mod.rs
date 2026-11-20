@@ -9,7 +9,7 @@ mod windowed_filter;
 
 use bbr::Bbr;
 use cubic::Cubic;
-use pacer::Pacer;
+use pacer::{Pacer, Place};
 pub(crate) use rtt::{GRANULARITY, Rtt};
 
 use crate::time::Instant;
@@ -35,7 +35,7 @@ pub enum Algorithm {
 pub(crate) struct Flight {
     pub(crate) at: Instant,
     pub(crate) len: u16,
-    pub(crate) starts_burst: bool,
+    place: Place,
     /// Counts from 1, across the packet number spaces.
     sequence: u64,
     /// The low bits of the number of bytes delivered before.
@@ -48,6 +48,13 @@ pub(crate) struct Flight {
 }
 
 const _: () = assert!(size_of::<Flight>() == 32);
+
+impl Flight {
+    #[inline]
+    pub(crate) fn starts_burst(&self) -> bool {
+        self.place != Place::Later
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Permit {
@@ -202,7 +209,7 @@ impl Controller {
         let mut flight = Flight {
             at: now,
             len,
-            starts_burst: self.pacer.on_sent(now, len),
+            place: self.pacer.on_sent(now, len),
             sequence: self.last_sent,
             ..Flight::default()
         };
@@ -254,7 +261,7 @@ impl Controller {
     #[inline]
     pub(crate) fn on_acked(&mut self, flight: &Flight) {
         if self.discard(flight) {
-            if flight.starts_burst {
+            if flight.place == Place::FirstAfterGap {
                 self.pacer.on_start_settled(false);
             }
             self.feedback.acked += u64::from(flight.len);
@@ -269,12 +276,12 @@ impl Controller {
     #[inline]
     pub(crate) fn on_lost(&mut self, flight: &Flight, ends_burst: bool) {
         if self.discard(flight) {
-            if flight.starts_burst {
+            if flight.place == Place::FirstAfterGap {
                 self.pacer.on_start_settled(true);
             }
             self.lost_run = match flight.sequence == self.last_lost + 1 {
                 true => self.lost_run.map(|it| it + 1),
-                false => (!flight.starts_burst).then_some(1),
+                false => (!flight.starts_burst()).then_some(1),
             };
             self.last_lost = flight.sequence;
             if ends_burst && let Some(len) = self.lost_run {

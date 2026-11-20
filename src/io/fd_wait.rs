@@ -279,7 +279,8 @@ impl Io {
 /// Never closed.
 #[derive(Clone, Copy)]
 struct Poller {
-    fd: Fd,
+    /// The epoll or kqueue.
+    watcher: Fd,
     waker: &'static Waker,
 }
 
@@ -302,9 +303,9 @@ impl Poller {
             };
             sys::Error::from_code(errno, sys::Tag::open)
         })?;
-        let fd = Self::watch(&waker)?;
+        let watcher = Self::watch(&waker)?;
         let waker = Box::leak(Box::new(waker));
-        Ok(Self { fd, waker })
+        Ok(Self { watcher, waker })
     }
 
     #[cfg(not(all(test, target_os = "linux")))]
@@ -370,13 +371,13 @@ impl Changes {
         let events = match interest {
             Interest::Readable => EPOLL::IN,
             Interest::Writable => EPOLL::OUT,
-        };
+        } | EPOLL::ONESHOT;
         let op = match fd {
             Idle::New(_) => EPOLL::CTL_ADD,
             Idle::WasArmed(_) => EPOLL::CTL_MOD,
         };
         let Self(poller) = *self;
-        let added = epoll_ctl(poller.fd, op, fd.get(), events | EPOLL::ONESHOT, key);
+        let added = epoll_ctl(poller.watcher, op, fd.get(), events, key);
         match (added, fd) {
             (Err(err), fd) => Err((self.remove(fd, interest), err)),
             (Ok(()), Idle::WasArmed(armed)) => Ok(armed),
@@ -424,7 +425,7 @@ fn epoll_ctl(epoll: Fd, op: i32, fd: Fd, events: u32, key: Key) -> sys::Result<(
 #[cfg(any(all(not(test), target_os = "linux"), target_os = "android"))]
 impl Poller {
     fn remove(self, fd: Fd) {
-        let _ = sys::linux::epoll_ctl_del(self.fd.native(), fd.native());
+        let _ = sys::linux::epoll_ctl_del(self.watcher.native(), fd.native());
     }
 
     fn wait(self) {
@@ -434,7 +435,12 @@ impl Poller {
             Changes(self).arm_queued(&mut jobs);
             // SAFETY: `events` is writable for its length.
             let rc = unsafe {
-                libc::epoll_wait(self.fd.native(), events.as_mut_ptr(), events.len() as _, -1)
+                libc::epoll_wait(
+                    self.watcher.native(),
+                    events.as_mut_ptr(),
+                    events.len() as _,
+                    -1,
+                )
             };
             match sys::get_errno(rc) {
                 E::EINTR => continue,
@@ -578,7 +584,7 @@ impl Poller {
             // Room for a failure of each change.
             events.resize(changes.1.len().max(256), bun_core::ffi::zeroed());
             events.shrink_to_fit();
-            let count = kevent(self.fd, &changes.1, &mut events)
+            let count = kevent(self.watcher, &changes.1, &mut events)
                 .unwrap_or_else(|err| bun_core::Output::panic(format_args!("{err}")));
             for event in &events[..count] {
                 let outcome = match event.flags & libc::EV_ERROR {

@@ -25,9 +25,7 @@ pub enum Unformatted {
     Message(Vec<u8>),
     /// None of the plugins that Prettier loaded has a parser for the file.
     NoParser,
-    /// The thrown error, formatted like `handleError` in Prettier's CLI. Or the worker's own one-line message: no listed
-    /// plugin declares an option of `[[fmt.overrides]]`. Unlike [`Message`](Unformatted::Message), it's an error in
-    /// every mode.
+    /// The thrown error, formatted like `handleError` in Prettier's CLI, or the worker's own one-line message.
     Thrown(Vec<u8>),
 }
 

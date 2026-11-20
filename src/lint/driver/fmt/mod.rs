@@ -1238,8 +1238,7 @@ struct LeftForPlugins<'a> {
     count: usize,
     /// The files that are skipped for a plugin of the Prettier config, and those plugins.
     for_config: LeftForSide<'a>,
-    /// The files that are skipped for a plugin of `--plugin`, `[fmt]` or `[[fmt.overrides]]`, and those plugins. A file
-    /// can be in both.
+    /// The same for a plugin of `--plugin`, `[fmt]` or `[[fmt.overrides]]`. A file can be in both.
     for_flags: LeftForSide<'a>,
 }
 
@@ -1251,8 +1250,7 @@ struct LeftForSide<'a> {
 }
 
 impl<'a> LeftForSide<'a> {
-    /// Who lists the plugins of `--plugin`, `[fmt]` and `[[fmt.overrides]]`, and what to do. Such a plugin applies to
-    /// every file unless an override lists it, and only a `parser` gives it files.
+    /// Who lists the plugins of the flags, and what to do: only an override with a `parser` gives a plugin files.
     const FLAGS: (&'static str, &'static str) = (
         "--plugin or [fmt] plugins lists",
         "Put the plugin in a [[fmt.overrides]] entry with \"files\" and the plugin's \"parser\" to send those files to your installed Prettier, or use",
@@ -1696,9 +1694,7 @@ impl Run<'_> {
         packages
     }
 
-    /// Formats standard input in a plugin's language. See `prettier.rs`. `path` is `None` if it has no file name, and
-    /// `scope` is where its configuration applies. `display_name` is its name in error messages, and `language` is
-    /// what [`Run::report_unsupported`] calls its language.
+    /// Formats standard input in a plugin's language. `language` is its name for [`Run::report_unsupported`].
     fn format_stdin_with_prettier(
         mut self,
         configs: &Configs,
@@ -2184,8 +2180,7 @@ impl Run<'_> {
                     .extend_from_slice(&paths::relative(cwd, &target.path));
                 self.out.stdout.push(b'\n');
             }
-            // A plugin of `--plugin` or `bunfig.toml` that isn't included is an error in every mode. The files that
-            // are left out for a plugin of the Prettier config are not listed, and nothing more is said about them.
+            // Only the flags' side: files left out for a plugin of the Prettier config have never been reported here.
             self.report_skipped_for(
                 &left_for_plugins.for_flags,
                 LeftForSide::FLAGS.0,
@@ -2561,8 +2556,7 @@ impl Run<'_> {
         self.report_skipped_for(&left.for_flags, LeftForSide::FLAGS.0, LeftForSide::FLAGS.1);
     }
 
-    /// Reports the files of `side`, if there are any. `who` lists the plugins, and `advice` starts the sentence about
-    /// `--allow-unsupported`.
+    /// Reports the files of `side`, if any. `who` lists the plugins. `advice` starts the `--allow-unsupported` line.
     fn report_skipped_for(&mut self, side: &LeftForSide, who: &str, advice: &str) {
         let count = side.count;
         let (noun, it) = match count {

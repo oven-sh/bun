@@ -619,10 +619,7 @@ fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, BunfigError> {
     }
 }
 
-/// Reads the `options` table of an entry of `[[fmt.overrides]]` into `it`. A key that isn't one of its own is an option
-/// of a plugin. It's only taken if [`crate::fmt::cli::Override::may_use_plugin`] and it isn't a `[fmt]` key or flag in
-/// any case of its letters. That's decided after every key is read, so the order of the keys doesn't matter. A name
-/// that no plugin has is found by the installed Prettier, once a file of the entry goes to it.
+/// Reads the `options` of an entry of `[[fmt.overrides]]` into `it`. A key that isn't its own is a plugin's option.
 fn set_override_options(
     table: &Expr,
     it: &mut crate::fmt::cli::Override,
@@ -654,6 +651,7 @@ fn set_override_options(
     let may_use_plugin = it.may_use_plugin();
     // Prettier has options with the name of a flag (`rangeStart`), so those must not reach it as a plugin's.
     let known = || FORMAT.keys().chain(FORMAT.flag_keys()).chain(keys());
+    // Decided after every key is read, so the order of the keys doesn't matter. Prettier finds a name no plugin has.
     for (key, value) in others {
         if !may_use_plugin || known().any(|it| it.eq_ignore_ascii_case(&key.name)) {
             return unknown_key(&key.name, key.at, b"fmt.overrides.options", keys());
@@ -686,9 +684,7 @@ fn non_finite_in(value: &Expr) -> Option<&Expr> {
     }
 }
 
-/// Parses `[[fmt.overrides]]`. Same shape as in a `.prettierrc`. `options` takes the `[fmt]` keys that affect output,
-/// `parser` and `plugins`. If it lists a plugin that isn't built in, or sets a `parser` that Prettier doesn't have,
-/// it also takes the options of plugins. Those are kept apart from the rest, for the installed Prettier.
+/// Parses `[[fmt.overrides]]`. Same shape as in a `.prettierrc`. See [`set_override_options`] for `options`.
 fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, BunfigError> {
     let items = tables_of(value, b"fmt")?;
     let one = |item: &Expr| {

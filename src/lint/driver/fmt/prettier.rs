@@ -88,8 +88,7 @@ impl<'e> Prettier<'e> {
         self.host.for_each(count, is_heavy, work);
     }
 
-    /// Formats the file at `path`. `config` is its config file. With `writes`, the file is written if it changes.
-    /// Returns whether it changed.
+    /// Formats the file at `path`, and with `writes` writes it if it changes. Returns whether it changed.
     pub(crate) fn format_file(
         &self,
         (path, display_name): (&[u8], &[u8]),
@@ -118,7 +117,7 @@ impl<'e> Prettier<'e> {
     }
 
     /// Returns Prettier's output for `text`, the contents of the file at `path`. `path` is `None` if it has no file
-    /// name. `config` is its config file. `file` holds what `bunfig.toml` and the command line say for it.
+    /// name. `config` is its config file.
     pub(crate) fn format(
         &self,
         path: Option<&[u8]>,
@@ -127,8 +126,7 @@ impl<'e> Prettier<'e> {
         text: &[u8],
     ) -> Result<Vec<u8>, Unformatted> {
         let mut how = self.run.clone();
-        // A name that is set twice keeps its last value when the worker parses this. So an override wins over `[fmt]`
-        // and the command line, as it does for the built-in formatter.
+        // The worker keeps the last value of a name that is set twice, so an override wins over `[fmt]` and the flags.
         let mut flags = self.flags.clone();
         flags.extend((file.overrides.iter()).map(|it| (it.0.to_vec(), flag_value(it.1))));
         let of_plugins = &file.passthrough;

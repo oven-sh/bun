@@ -44,9 +44,8 @@ async function optionNamesWith(prettier, plugins) {
 
 // `getOptionsForFile` of Prettier's command line, and `format`. The message: the length of what follows as JSON, that, the text.
 // The JSON: `path`, or `null` for text that has no file name, `config`: the configuration file, or `null`, `usesConfig`: not `--no-config`, `editorconfig`, `flags`: the options
-// that the command line and `bunfig.toml` set for the file, `plugins`: the plugins that they list for it, a path among them being
-// absolute, `passThrough`: the names in `flags` that one of those plugins must have, `precedence`: `--config-precedence`, `looksAtStdin`:
-// the text is standard input, with `--check` or `--list-different`.
+// that the command line sets, `precedence`: `--config-precedence`, `looksAtStdin`: the text is standard input, with `--check` or
+// `--list-different`.
 async function formatWithPrettier() {
   const headLength = messageWords(1)[0];
   const {
@@ -55,7 +54,9 @@ async function formatWithPrettier() {
     usesConfig,
     editorconfig,
     flags,
+    // The plugins that the command line and `bunfig.toml` list for the file. A path is absolute.
     plugins = [],
+    // The names in `flags` that one of those plugins must have.
     passThrough = [],
     precedence,
     looksAtStdin,
@@ -72,9 +73,7 @@ async function formatWithPrettier() {
   // `prefer-file` with a configuration file: no flag is used.
   const dropsFlags = precedence === "prefer-file" && Boolean(ofFiles);
   if (dropsFlags) options = ofFiles;
-  // The other side sends a file here for a plugin in either list, whatever `precedence` is. So both lists are loaded, always.
-  // Prettier's command line lets one replace the other. The list that wins for an option comes last: Prettier takes a
-  // parser from the last plugin that has it. `resolveConfig` returns a path in its list as the system writes it.
+  // Both lists are loaded in every mode. The winner comes last: Prettier takes a parser from the last plugin with it.
   if (plugins.length > 0) {
     const ofFlags = plugins.map(it => (nodePath.isAbsolute(it) ? nativePath(it, nodePath) : it));
     const ofConfig = ofFiles?.plugins ?? [];
@@ -93,8 +92,7 @@ async function formatWithPrettier() {
     }
     return DONE + (await prettier.format(text, { ...options, filepath }));
   } catch (error) {
-    // Prettier throws the first for a file whose name no plugin knows, and the second for a `parser` that no plugin has.
-    // Text without a file name gets its parser from `--parser`, and there Prettier's own message is the answer.
+    // Thrown for a name or a `parser` that no plugin has. Text without a file name keeps Prettier's own message.
     const isOfNoPlugin =
       error?.name === "UndefinedParserError" ||
       (error?.name === "ConfigError" && String(error.message).startsWith("Couldn't resolve parser"));

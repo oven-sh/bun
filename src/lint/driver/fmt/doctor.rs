@@ -39,17 +39,14 @@ pub(super) struct Sorted<'s> {
 #[derive(Default)]
 struct Plugins {
     built_in: Vec<Vec<u8>>,
-    /// Plugins that the project's own Prettier loads: those that add a language, and every other one that is only
-    /// listed for files that go there.
+    /// Plugins that add a language, and every other one that is only listed for files that go to Prettier.
     for_languages: Vec<Vec<u8>>,
-    /// Plugins that `bun fmt` doesn't include, listed for a file that it formats itself. Such a plugin is only in this
-    /// list, also if a file that lists it goes to Prettier: this is the one to act on.
+    /// Plugins that `bun fmt` doesn't include, listed for a file that it formats itself. Never also in another list.
     not_supported: Vec<Vec<u8>>,
 }
 
 impl Plugins {
-    /// `goes_to_prettier` is true if the file that lists `name` goes to the project's own Prettier, which loads the
-    /// whole list.
+    /// `goes_to_prettier`: the file that lists `name` goes to the project's Prettier, which loads the whole list.
     #[optimize(size)]
     fn add(&mut self, name: &[u8], goes_to_prettier: bool) {
         let list = if config::is_built_in_plugin(name) {

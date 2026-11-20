@@ -275,14 +275,12 @@ pub struct Override {
     pub format: Vec<(&'static [u8], Vec<u8>)>,
     /// `None` without a `plugins` key. An empty list replaces the one of `[fmt]` with nothing.
     pub plugins: Option<Vec<Vec<u8>>>,
-    /// The options of plugins, each with its value as JSON. Only the installed Prettier reads them, so they are never
-    /// in `format`.
+    /// The options of plugins, each with its value as JSON. Only the installed Prettier reads them.
     pub passthrough: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 impl Override {
-    /// True if the installed Prettier may format a file of this entry with a plugin: it lists a plugin that isn't built
-    /// in, or sets a `parser` that Prettier doesn't have.
+    /// True if it lists a plugin that isn't built in, or sets a `parser` that Prettier doesn't have.
     pub(crate) fn may_use_plugin(&self) -> bool {
         let mut plugins = self.plugins.iter().flatten();
         let parser = self.format.iter().rfind(|it| it.0 == b"parser");

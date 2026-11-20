@@ -188,13 +188,11 @@ struct Plugins {
     is_left_to_oxfmt: AtomicBool,
 }
 
-/// The plugins that apply to one file. A Prettier config lists one side, the flags list the other. On each side the
-/// last list that applies replaces the others. `--config-precedence` never drops a side.
+/// The plugins of one file: the last list of the Prettier config that applies, and the last one of the flags.
 pub(crate) struct PluginView<'a> {
     config: Option<&'a Plugins>,
     flags: &'a Plugins,
-    /// True if the flags list one of [`PluginView::missing`]. Never where the file is formatted like oxfmt, which has
-    /// no plugins to miss.
+    /// True if the flags list one of [`PluginView::missing`]. Never under oxfmt, which has no plugins to miss.
     has_missing_from_flags: bool,
     /// True if the flags list a plugin that isn't built in, and the file is formatted like oxfmt.
     is_left_to_oxfmt: bool,
@@ -230,8 +228,7 @@ impl<'a> PluginView<'a> {
         self.has_missing_from_flags
     }
 
-    /// To be called for a file that Bun formats itself. If the flags list plugins for it that then change nothing,
-    /// [`Configs::warn_about_unused_flag_plugins`] names them.
+    /// For a file that Bun formats itself: [`Configs::warn_about_unused_flag_plugins`] names its unused flag plugins.
     pub(crate) fn note_formatted_here(&self) {
         let unused = match (self.is_left_to_oxfmt, self.has_missing_from_flags) {
             (true, _) => &self.flags.is_left_to_oxfmt,
@@ -298,8 +295,7 @@ impl<'a> PluginView<'a> {
 /// [`Configs::passthrough_for`]
 #[derive(Default)]
 pub(crate) struct Passthrough<'a> {
-    /// From the entries before the one whose `plugins` the file has. They can be options of a plugin that the file
-    /// doesn't list anymore, and Prettier ignores an option that none of its plugins has.
+    /// From the entries before the one whose `plugins` the file has, so maybe of a plugin it no longer lists.
     pub(crate) earlier: Vec<(&'a [u8], &'a [u8])>,
     /// From that entry and the ones after it. A name among these that none of the file's plugins has is a mistake.
     pub(crate) current: Vec<(&'a [u8], &'a [u8])>,
@@ -1021,9 +1017,7 @@ impl Plugins {
     }
 }
 
-/// Returns `select(override)` for the last of `overrides` that matches the file at `path`, considering only those for
-/// which `select` returns `Some`. Their patterns are relative to `directory()`, which is only asked for if there is
-/// such an override.
+/// `select(override)` of the last of `overrides` with `Some` that matches `path`, relative to the lazy `directory()`.
 fn in_last_override<'s, 'd, T>(
     overrides: &'s [Override],
     directory: impl Fn() -> &'d [u8],
@@ -1423,8 +1417,7 @@ impl<'c> Configs<'c> {
         [&self.plugins].into_iter().chain(of_overrides)
     }
 
-    /// Warns that `names`, which `--plugin`, `[fmt]` or `[[fmt.overrides]]` lists, change nothing: oxfmt loads no
-    /// plugin, `is_oxfmt`, or else Bun lacks them.
+    /// Warns that the flag plugins `names` change nothing: oxfmt loads no plugin (`is_oxfmt`), or else Bun lacks them.
     fn warn_about_flag_plugins<'n>(
         &self,
         names: impl Iterator<Item = &'n Vec<u8>>,
@@ -1446,8 +1439,7 @@ impl<'c> Configs<'c> {
         self.warn(&[&names, b" in --plugin or [fmt] plugins", end]);
     }
 
-    /// Warns about the plugins of `--plugin`, `[fmt]` and `[[fmt.overrides]]` that changed nothing for a file of
-    /// [`PluginView::note_formatted_here`]. To be called after the last of those.
+    /// Warns about the flag plugins of [`PluginView::note_formatted_here`]. To be called after the last of those.
     pub(crate) fn warn_about_unused_flag_plugins(&self) {
         // A run that is like oxfmt as a whole has warned at its start.
         if self.flavor != Flavor::Oxfmt {
@@ -1932,9 +1924,7 @@ impl<'c> Configs<'c> {
             || (self.config_of(scope).ok().flatten()).is_some_and(|config| config.is_oxfmt)
     }
 
-    /// The plugins that apply to the file at `path` in `scope`. A `path` of `None` means text without a file name,
-    /// which no override matches. Every file asks, so this allocates nothing and takes no lock while no override has
-    /// `plugins` and no flag lists one.
+    /// The plugins of the file at `path` (`None`: text without a name) in `scope`. Every file asks: no allocation.
     pub(crate) fn plugin_view<'s>(
         &'s self,
         scope: &'s Scope,
@@ -1962,8 +1952,7 @@ impl<'c> Configs<'c> {
         }
     }
 
-    /// True if a `parser` that Bun doesn't have can be a plugin's, for a file in `scope` whose plugins are `plugins`:
-    /// one of them isn't built in. Never where the file is formatted like oxfmt, which loads no plugin.
+    /// True if a `parser` that Bun lacks can be a plugin's: one of `plugins` isn't built in, and `scope` isn't oxfmt's.
     pub(crate) fn plugin_may_have_parser(&self, scope: &Scope, plugins: &PluginView) -> bool {
         plugins.lists_unknown() && !self.is_oxfmt_for(scope)
     }
@@ -1983,16 +1972,14 @@ impl<'c> Configs<'c> {
             .collect()
     }
 
-    /// The options of Prettier's that `[[fmt.overrides]]` sets for the file at `path`, in the order they apply. To the
-    /// installed Prettier they're flags, like those of `[fmt]` and the command line.
+    /// The options of Prettier's that `[[fmt.overrides]]` sets for the file at `path`, in the order they apply.
     pub(crate) fn bunfig_overrides_for(&self, path: &[u8]) -> Vec<(&[u8], &[u8])> {
         let mut settings = self.in_bunfig_overrides(path, |it| &it.settings);
         settings.retain(|it| is_prettier_option(it.0));
         settings
     }
 
-    /// The options of plugins that `[[fmt.overrides]]` sets for the file at `path`, in the order they apply. Values
-    /// are JSON text, and strings have quotes.
+    /// The options of plugins that `[[fmt.overrides]]` sets for the file at `path`, in order. Values are JSON text.
     pub(crate) fn passthrough_for(&self, path: &[u8]) -> Passthrough<'_> {
         if self.overrides.iter().all(|it| it.passthrough.is_empty()) {
             return Passthrough::default();
@@ -2055,8 +2042,7 @@ impl<'c> Configs<'c> {
         self.formats_svelte_with(scope, path, self.svelte_from_flags(path), None)
     }
 
-    /// [`Configs::formats_svelte`], given `flags_value` as the value from the flags and `[fmt]`. `plugins` is the
-    /// file's [`Configs::plugin_view`], if the caller has it.
+    /// [`Configs::formats_svelte`] with the value of the flags and `[fmt]`, and the file's `plugin_view` if known.
     fn formats_svelte_with(
         &self,
         scope: &Scope,

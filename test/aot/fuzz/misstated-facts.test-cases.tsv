@@ -88,7 +88,6 @@ ParameterType	facts-ended-by-one-statement/callback-kept-in-a-field.mjs
 ParameterTypeAsExpected	a-text-that-comes-late-to-a-spread/boolean-first.mjs
 FieldType	facts-ended-by-one-statement/field-deleted-before-loops.js
 FieldTypeAsExpected	object-literals/a-value-behind-a-filler-is-read-back.ts
-AppendedFieldType	key-orders-of-makers/a-maker-is-called-through-another-name.ts
 VariableType	facts-ended-by-one-statement/callback-kept-in-a-field.mjs
 VariableTypeAsExpected	an-es-module-that-a-require-loads-does-not-run-inside-a-file-that-it-imports/every-file-says-where-it-begins-and-ends/main.mjs
 CaptureType	copies-in-line-of-list-methods/what-is-made-goes-on.mjs

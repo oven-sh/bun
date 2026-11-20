@@ -352,7 +352,9 @@ impl StandaloneModuleGraph {
                 compiled_program::is_removed_by_program(key)
                     && compiled_program::find_written_file(key).is_none()
             };
-            if !is_compiled_entry_point(index) && !is_removed() && !self.has_file_vanished(key) {
+            let is_listed_below =
+                || is_compiled_entry_point(index) && self.find_file_record(key).is_none();
+            if !is_listed_below() && !is_removed() && !self.has_file_vanished(key) {
                 push(key, false);
             }
         }

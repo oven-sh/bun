@@ -464,7 +464,7 @@ Converts an absolute path to a `file://` URL.
 
 ```ts
 const url = Bun.pathToFileURL("/foo/bar.txt");
-console.log(url); // "file:///foo/bar.txt"
+console.log(url.href); // "file:///foo/bar.txt"
 ```
 
 ---

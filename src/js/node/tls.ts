@@ -16,6 +16,7 @@ const {
   processPfxOptions,
   stripTls13CipherNames,
   validateSecureContextOptions,
+  validateSession,
   SSL_OP_CIPHER_SERVER_PREFERENCE,
 } = require("internal/tls");
 const {
@@ -725,7 +726,10 @@ function TLSSocket(socket?, options?) {
     validateFunction(checkServerIdentityOption, "options.checkServerIdentity");
   }
   this[kcheckServerIdentity] = checkServerIdentityOption || checkServerIdentity;
-  this[ksession] = options.session || null;
+  const session = options.session;
+  // Node reads the option only for a client: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/tls/wrap.js#L1000-L1001
+  if (!isServer) validateSession(session, "options.session");
+  this[ksession] = session || null;
 
   // Both upgrades live in net.ts (module-private state); _handle stays unset until one hands back the TLS handle.
   if (isNetSocketOrDuplex) {
@@ -955,6 +959,7 @@ TLSSocket.prototype.setServername = function setServername(name) {
 };
 
 TLSSocket.prototype.setSession = function setSession(session) {
+  validateSession(session, "session");
   this[ksession] = session;
   if (typeof session === "string") session = Buffer.from(session, "latin1");
   return this._handle?.setSession?.(session);

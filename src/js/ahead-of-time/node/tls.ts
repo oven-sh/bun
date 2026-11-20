@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ee5ac146f5e92a0a2950d437cd7548198b4a2f79feaf5905835737dbf1d982eb.
+// Written against that file with the SHA-256 20bf100e5fd74604811bd06262b906ee832cf6f8005c81359bf593667ca6a5d6.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
@@ -31,6 +31,7 @@ const {
   processPfxOptions,
   stripTls13CipherNames,
   validateSecureContextOptions,
+  validateSession,
   SSL_OP_CIPHER_SERVER_PREFERENCE,
 } = require("internal/tls");
 const {
@@ -865,7 +866,10 @@ function TLSSocket(this: $Node.TLSSocket, socket?, options?) {
     validateFunction(checkServerIdentityOption, "options.checkServerIdentity");
   }
   this[kcheckServerIdentity] = checkServerIdentityOption || checkServerIdentity;
-  this[ksession] = options.session || null;
+  const session = options.session;
+  // Node reads the option only for a client: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/tls/wrap.js#L1000-L1001
+  if (!isServer) validateSession(session, "options.session");
+  this[ksession] = session || null;
 
   // Both upgrades live in net.ts (module-private state); _handle stays unset until one hands back the TLS handle.
   if (isNetSocketOrDuplex) {
@@ -1104,6 +1108,7 @@ TLSSocket.prototype.setServername = function setServername(this: $Node.TLSSocket
 };
 
 TLSSocket.prototype.setSession = function setSession(this: $Node.TLSSocket, session: string | Uint8Array) {
+  validateSession(session, "session");
   this[ksession] = session;
   if (typeof session === "string") session = Buffer.from(session, "latin1");
   return this._handle?.setSession?.(session);

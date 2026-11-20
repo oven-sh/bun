@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d6861dbd59c52394231c89ff7bae0bcff81e31756f79b40db9ee7cee0562b4a5.
+// Written against that file with the SHA-256 c4db118b140632dc8e009c9ee728a1b1b4c5d92f4dd2def75e9284898e25be71.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -285,6 +285,7 @@ declare global {
       [kSetKeepAliveInitialDelay]: number;
       [kSetTOS]?: number;
       [khandlers]: InternalSocketHandler<ConnectData>;
+      [kReportsThrows]?: boolean;
       [kBytesWritten]: number | undefined;
       [kclosed]: boolean;
       [kended]: boolean;
@@ -511,6 +512,7 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
+const ObjectKeys = Object.keys;
 const reportError = globalThis.reportError;
 
 interface UVErrnos {
@@ -669,6 +671,8 @@ const kOwesRawClose = Symbol("kOwesRawClose");
 const kReadError = Symbol("kReadError");
 // The verdict on the peer let the session through, so the application can have written over it.
 const kSessionAccepted = Symbol("kSessionAccepted");
+// On a socket made with a `signal` that is not aborted yet, and on the socket under such a TLS socket: what a listener of the caller throws is reported.
+const kReportsThrows = Symbol("kReportsThrows");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
@@ -745,6 +749,24 @@ function failRejectedWrite(self: $Node.Socket) {
   failWriteWith(self, er, self[kwriteCallback]);
   return true;
 }
+// This can run under a destroy() that an 'uncaughtException' listener made, so the report waits for that call to return.
+function failWriteCallbackOf(self: $Node.Socket, callback: WriteCallback, er: Error) {
+  try {
+    callback(er);
+  } catch (e) {
+    if (!self[kReportsThrows]) throw e;
+    process.nextTick(reportError, e);
+  }
+}
+// The handlers of the socket under a TLS socket made with a `signal` are not wrapped, so what a 'session' or 'keylog' listener throws is reported here.
+function emitUnderHandle(self: $Node.Socket, name: "session" | "keylog", value: unknown) {
+  try {
+    self.emit(name, value);
+  } catch (e) {
+    if (!self[kReportsThrows]) throw e;
+    reportError(e);
+  }
+}
 function failWriteWith(self: $Node.Socket, er: Error, callback: WriteCallback | null | undefined) {
   self._pendingData = null;
   self[kwriteCallback] = null;
@@ -755,7 +777,9 @@ function failWriteWith(self: $Node.Socket, er: Error, callback: WriteCallback | 
     // 'close' still fire even when every write had a callback. Only handing
     // the error to a callback that ignores it left the socket alive forever
     // (test-net-stream's server never observed its peer vanish).
-    callback(er);
+    // An open socket stays open when this throws, as in Node. A closed one has no other way to its destroy().
+    if (self[kclosed]) failWriteCallbackOf(self, callback, er);
+    else callback(er);
     if (!self.destroyed && !self._hadError) {
       // _hadError is the cross-path once-guard: the native error dispatch
       // (SocketHandlers.error) can deliver the same failure, and node emits
@@ -861,6 +885,10 @@ function linkUpgraded(self: $Node.TLSSocket, connection: $Node.Socket) {
   destroyWhenUpgradedCloses(self, connection);
   connection.on("error", onUpgradedError.bind(null, self));
   self.connecting = isSocket && (connection.connecting || !connection._handle);
+  // The 'error' of each socket under `self` goes on to `self`, where the listener that addAbortSignal() added takes it. Their handlers stay: the catch blocks that test the marker report.
+  if (self[kReportsThrows])
+    for (let under: $Node.Socket | null = connection; under instanceof Socket; under = under[kupgraded])
+      under[kReportsThrows] = true;
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
 function onUpgradedConnect(self: $Node.Socket, connection: $Node.Socket) {
@@ -981,15 +1009,37 @@ function closeOwedRaw(self: $Node.Socket, upgraded: $Node.Socket | null) {
   self[kOwesRawClose] = false;
   if (!upgraded!.destroyed) self[kCloseRawConnection]();
 }
-let addAbortListener: typeof import("internal/abort_listener").default.addAbortListener | undefined;
-function destroyWhenAborted(this: $Node.Socket, err?: object) {
-  if (!this.destroyed) {
-    // node's stream layer (addAbortSignal) destroys the socket with an AbortError (code
-    // ABORT_ERR) carrying the signal's reason as `cause`, not with the raw reason itself.
-    this.destroy(
-      $makeAbortError(undefined, { cause: (err as { target?: AbortSignal | null } | undefined)?.target?.reason }),
-    );
+let addAbortSignal: typeof import("internal/streams/add-abort-signal").default.addAbortSignal | undefined;
+let signalHandlers: InternalSocketHandler<ConnectData> | undefined;
+let signalFdHandlers: typeof SocketHandlers | undefined;
+function reportingHandler(handler: (this: unknown, ...args: any[]) => unknown) {
+  return function (this: unknown, socket: $Node.SocketHandle) {
+    // The socket went to another process, which leaves its handle without an owner until the receiver's ack closes it.
+    if (socket.data === undefined) return;
+    try {
+      return handler.$apply(this, arguments);
+    } catch (e) {
+      reportError(e);
+    }
+  };
+}
+// As in Node, what a listener throws under a handle's callback is uncaught and leaves the socket as it is: https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L2068-L2069
+function reportingHandlers<Handlers extends object>(handlers: Handlers): Handlers {
+  const wrapped = { ...handlers };
+  for (const name of ObjectKeys(handlers)) {
+    // pushDataToSocket has the catch for `data`. What the other two throw refuses the handshake, as what they return decides it.
+    if (name === "data" || name === "alpnCallback" || name === "serverName") continue;
+    if ($isCallable(handlers[name])) wrapped[name] = reportingHandler(handlers[name]);
   }
+  return wrapped;
+}
+function reportThrowsOn(socket: $Node.Socket) {
+  const handlers = socket[khandlers];
+  socket[kReportsThrows] = true;
+  socket[khandlers] =
+    handlers === SocketHandlers2
+      ? (signalHandlers ??= reportingHandlers(SocketHandlers2))
+      : reportingHandlers(handlers);
 }
 // in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
 function onSocketEnd(this: $Node.Socket) {
@@ -1238,7 +1288,13 @@ const SocketHandlers = {
         self._unrefTimer();
         self[kLastWriteQueueSize] = 0;
         unrefAfterDrain(self, socket);
-        callback(null);
+        try {
+          callback(null);
+        } catch (e) {
+          // The socket under a TLS socket made with a `signal` has the marker, and its handlers are not wrapped.
+          if (!self[kReportsThrows]) throw e;
+          reportError(e);
+        }
       } else {
         self._pendingData = null;
       }
@@ -1260,7 +1316,7 @@ const SocketHandlers = {
     const self = socket.data;
     if (!self) return;
     if (self._secureEstablished) {
-      self.emit("session", session);
+      emitUnderHandle(self, "session", session);
     } else {
       self[kpendingSession] = session;
     }
@@ -1268,7 +1324,7 @@ const SocketHandlers = {
   keylog(socket, line) {
     const self = socket.data;
     if (!self) return;
-    self.emit("keylog", line);
+    emitUnderHandle(self, "keylog", line);
     if (tlsKeylogPath !== undefined) appendTlsKeylog(tlsKeylogPath, line);
     self.server?.emit?.("keylog", line, self);
   },
@@ -1380,8 +1436,14 @@ function finishSocketEnd(self: $Node.Socket) {
   if (self[kended]) return;
   self[kended] = true;
   if (!self.allowHalfOpen) self.write = writeAfterFIN;
-  self.push(null);
-  Duplex.prototype.read.$call(self, 0);
+  try {
+    self.push(null);
+    Duplex.prototype.read.$call(self, 0);
+  } catch (e) {
+    if (!self[kReportsThrows]) throw e;
+    // Node's handle lets go of the event loop before its callback runs the listener that threw: https://github.com/nodejs/node/blob/v26.12.1/deps/uv/src/unix/stream.c#L931-L938
+    reportError(e);
+  }
   // The peer's FIN means kernel reads are over for good. In libuv a stream handle only holds
   // the loop while reading or with a write in flight, so node lets the process exit even if
   // the (half-open) writable side stays open and the readable side was never consumed. Mirror
@@ -1484,7 +1546,7 @@ function SocketEmitEndNT(self: $Node.Socket, _err?: NativeSocketError) {
   const pendingWrite = self[kwriteCallback];
   if (pendingWrite && (self[kclosed] || self.destroyed)) {
     self[kwriteCallback] = null;
-    pendingWrite(_err ?? $ERR_SOCKET_CLOSED());
+    failWriteCallbackOf(self, pendingWrite, _err ?? $ERR_SOCKET_CLOSED());
   }
 }
 
@@ -1555,7 +1617,7 @@ const ServerHandlers = {
   keylog(socket, line) {
     const { data: self } = socket;
     if (!self) return;
-    self.emit("keylog", line);
+    emitUnderHandle(self, "keylog", line);
     if (tlsKeylogPath !== undefined) appendTlsKeylog(tlsKeylogPath, line);
     self.server?.emit?.("keylog", line, self);
   },
@@ -2072,7 +2134,12 @@ const SocketHandlers2 = {
     }
     startNameCheckInHandshake(self, socket);
     if (!self[kupgraded]) req.oncomplete(0, self._handle, req, true, true);
-    socket.data.req = undefined;
+    try {
+      socket.data.req = undefined;
+    } catch (e) {
+      // A listener sent the socket to another process, which took `data` off the handle.
+      if (!self[kReportsThrows]) throw e;
+    }
   },
   data(socket, buffer) {
     $debug("Bun.Socket data");
@@ -2100,7 +2167,13 @@ const SocketHandlers2 = {
         self._unrefTimer();
         self[kLastWriteQueueSize] = 0;
         unrefAfterDrain(self, socket);
-        callback(null);
+        try {
+          callback(null);
+        } catch (e) {
+          // The socket under a TLS socket made with a `signal` has the marker, and its handlers are not wrapped.
+          if (!self[kReportsThrows]) throw e;
+          reportError(e);
+        }
       } else {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = null;
@@ -2118,7 +2191,7 @@ const SocketHandlers2 = {
     const { self } = socket.data;
     if (!self) return;
     if (self._secureEstablished) {
-      self.emit("session", session);
+      emitUnderHandle(self, "session", session);
     } else {
       self[kpendingSession] = session;
     }
@@ -2126,7 +2199,7 @@ const SocketHandlers2 = {
   keylog(socket, line) {
     const { self } = socket.data;
     if (!self) return;
-    self.emit("keylog", line);
+    emitUnderHandle(self, "keylog", line);
     if (tlsKeylogPath !== undefined) appendTlsKeylog(tlsKeylogPath, line);
   },
   close(socket, err?: NativeSocketError) {
@@ -2174,7 +2247,7 @@ const SocketHandlers2 = {
     const pendingWrite = self[kwriteCallback];
     if (pendingWrite) {
       self[kwriteCallback] = null;
-      pendingWrite($ERR_SOCKET_CLOSED());
+      failWriteCallbackOf(self, pendingWrite, $ERR_SOCKET_CLOSED());
     }
   },
   handshake(socket: $Node.SocketHandle<ConnectData<$Node.TLSSocket>>, success, verifyError) {
@@ -2229,7 +2302,12 @@ const SocketHandlers2 = {
     // after destroy(err)'s 'error'. Not deferred here: it would land on a connect() made right
     // after destroy() and fail that one.
     // An attempt that timed out was closed with its `oncomplete` cleared.
-    req.oncomplete?.(error.errno, self._handle, req, true, true);
+    try {
+      req.oncomplete?.(error.errno, self._handle, req, true, true);
+    } catch (e) {
+      if (!self[kReportsThrows]) throw e;
+      reportError(e);
+    }
   },
 } satisfies InternalSocketHandler<ConnectData>;
 
@@ -2581,11 +2659,11 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
     if (signal.aborted) {
       process.nextTick(destroyNT, this, $makeAbortError(undefined, { cause: signal.reason }));
     } else {
-      // addAbortListener registers a once listener; the close hook detaches it when the socket
-      // goes away first (mirrors node's addAbortSignal + eos cleanup).
-      addAbortListener ??= require("internal/abort_listener").addAbortListener;
-      const disposable = addAbortListener(signal, destroyWhenAborted.bind(this));
-      this.once("close", disposable[Symbol.dispose]);
+      // Node's Duplex constructor does this: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/duplex.js#L123-L124
+      addAbortSignal ??= require("internal/streams/add-abort-signal").addAbortSignal;
+      addAbortSignal(signal, this);
+      // The 'error' listener that addAbortSignal() added would take what a listener of the caller throws: the native dispatch gives that to `error`.
+      reportThrowsOn(this);
     }
   }
   const optsBlockList = opts.blockList;
@@ -2722,7 +2800,7 @@ Socket.prototype.connect = function connect(this: $Node.Socket, ...args) {
         data: this,
         fd: fd,
         ...(options.fdIsRawSocket === true ? { fdIsRawSocket: true } : {}),
-        socket: SocketHandlers,
+        socket: this[kReportsThrows] ? (signalFdHandlers ??= reportingHandlers(SocketHandlers)) : SocketHandlers,
         // Always half-open natively; see kConnect.
         allowHalfOpen: true,
         pauseOnConnect,
@@ -2769,6 +2847,7 @@ Socket.prototype.connect = function connect(this: $Node.Socket, ...args) {
       if (tls) {
         applyRejectUnauthorized(this, tls, rejectUnauthorized);
         tls.requestCert = true;
+        if (session) require("internal/tls").validateSession(session, "options.session");
         tls.session = session || tls.session;
         this.servername = tls.servername;
         if (checkServerIdentity !== undefined) {
@@ -3093,6 +3172,8 @@ Socket.prototype[
 ] = function (this: $Node.TLSSocket, connection: $Node.Socket, tls: TLSConnectOptions) {
   linkUpgraded(this, connection);
   const options = { data: this, tls, socket: serverHandlersFor(this), isServer: true };
+  // Its `error` destroys the socket with what a listener threw, and the first 'error' listener of a TLSSocket takes that.
+  if (this[kReportsThrows]) options.socket = reportingHandlers(options.socket);
   const socket = connection._handle;
   if (!socket || connection.encrypted || isNamedPipeSocket(socket) || hasUnflushedWrites(connection)) {
     // No adoptable fd (generic Duplex, named pipe, never dialed), TLS over TLS (the fd belongs to the
@@ -4069,8 +4150,19 @@ function afterConnect(
     const pausedBeforeConnect = self.isPaused() || (self.readableEnded && self[kOnreadBuffer] === undefined);
     if (pausedBeforeConnect && !self.encrypted) readStop(self, self._handle);
 
-    self.emit("connect");
-    self.emit("ready");
+    let connectListenersRan = false;
+    try {
+      self.emit("connect");
+      connectListenersRan = true;
+      self.emit("ready");
+    } catch (e) {
+      if (!self[kReportsThrows]) throw e;
+      // Node has not started to read, and so does not hold the loop. Its TLS socket starts from a 'connect' listener.
+      if (!self._readableState.reading && !(self.encrypted && connectListenersRan)) readStop(self, self._handle);
+      // The handlers of the socket under a TLS socket made with a `signal` are not wrapped, so the report is here.
+      reportError(e);
+      return;
+    }
 
     if (self[kPerfHooksNetConnectContext] && hasObserver("net")) {
       stopPerf(self, kPerfHooksNetConnectContext);

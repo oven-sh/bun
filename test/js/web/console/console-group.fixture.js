@@ -87,3 +87,11 @@ console.group('Tab\tNewline\nQuote"Backslash');
 console.log("Special chars");
 console.groupEnd();
 console.groupEnd();
+
+// A multi-line string returned by an inspect.custom hook is indented to the
+// group level, and to the nesting level inside an object.
+const multiLine = { [Symbol.for("nodejs.util.inspect.custom")]: () => "X {\n  y: 1\n}" };
+console.group("Custom inspect");
+console.log(multiLine);
+console.log({ c: multiLine });
+console.groupEnd();

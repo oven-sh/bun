@@ -157,6 +157,88 @@ for (const [name, inspect] of process.versions.bun
 
     expect(() => inspect(obj)).toThrow();
   });
+
+  // A hook formats its value as if it were printed at the top level. When the
+  // value is nested, every line after the first has to be indented to the
+  // nesting level, or the continuation lines end up in column 0.
+  describe(name + " indents a multi-line string returned by inspect.custom", () => {
+    const multiLine = { [customSymbol]: () => "X {\n  y: 1\n}" };
+
+    test("top level is printed as returned", () => {
+      expect(inspect(multiLine)).toBe("X {\n  y: 1\n}");
+    });
+
+    test("object property", () => {
+      expect(inspect({ c: multiLine })).toBe(
+        isBunInspect ? "{\n  c: X {\n    y: 1\n  },\n}" : "{\n  c: X {\n    y: 1\n  }\n}",
+      );
+    });
+
+    test("two levels deep", () => {
+      expect(inspect({ a: { c: multiLine } })).toBe(
+        isBunInspect
+          ? "{\n  a: {\n    c: X {\n      y: 1\n    },\n  },\n}"
+          : "{\n  a: {\n    c: X {\n      y: 1\n    }\n  }\n}",
+      );
+    });
+
+    test("array element", () => {
+      expect(inspect([multiLine])).toBe("[\n  X {\n    y: 1\n  }\n]");
+    });
+
+    test("Map value", () => {
+      expect(inspect(new Map([["k", multiLine]]))).toBe(
+        isBunInspect ? 'Map(1) {\n  "k": X {\n    y: 1\n  },\n}' : "Map(1) {\n  'k' => X {\n    y: 1\n  }\n}",
+      );
+    });
+
+    test("Set entry", () => {
+      expect(inspect(new Set([multiLine]))).toBe(
+        isBunInspect ? "Set(1) {\n  X {\n    y: 1\n  },\n}" : "Set(1) {\n  X {\n    y: 1\n  }\n}",
+      );
+    });
+
+    test("hook returned by a hook", () => {
+      const outer = { [customSymbol]: () => multiLine };
+      expect(inspect({ c: outer })).toBe(
+        isBunInspect ? "{\n  c: X {\n    y: 1\n  },\n}" : "{\n  c: X {\n    y: 1\n  }\n}",
+      );
+    });
+
+    test("latin1 and utf16 text", () => {
+      const latin1 = { [customSymbol]: () => "é {\n  ü: 1\n}" };
+      const utf16 = { [customSymbol]: () => "日本 {\n  語: 1\n}" };
+      expect(inspect({ a: latin1, b: utf16 })).toBe(
+        isBunInspect
+          ? "{\n  a: é {\n    ü: 1\n  },\n  b: 日本 {\n    語: 1\n  },\n}"
+          : "{\n  a: é {\n    ü: 1\n  },\n  b: 日本 {\n    語: 1\n  }\n}",
+      );
+    });
+
+    test("every newline is followed by the indentation, including a trailing one", () => {
+      const text = { [customSymbol]: () => "a\r\nb\n" };
+      expect(inspect([text])).toBe("[\n  a\r\n  b\n  \n]");
+    });
+
+    test("compact: the indentation does not depend on the values printed before the hook", () => {
+      const compact = { compact: true };
+      // Node's compact layout indents an object property by 3, Bun's by 2.
+      const inObject = isBunInspect ? "X {\n    y: 1\n  }" : "X {\n     y: 1\n   }";
+      expect(inspect({ d: multiLine }, compact)).toBe(`{ d: ${inObject} }`);
+      expect(inspect({ a: { x: 1 }, b: { x: 1 }, d: multiLine }, compact)).toBe(
+        `{ a: { x: 1 }, b: { x: 1 }, d: ${inObject} }`,
+      );
+      expect(inspect({ a: { p: { q: 1 } }, d: multiLine }, compact)).toBe(`{ a: { p: { q: 1 } }, d: ${inObject} }`);
+      expect(inspect([{ x: 1 }, multiLine], compact)).toBe("[ { x: 1 }, X {\n    y: 1\n  } ]");
+    });
+
+    test("built-in hook (URL)", () => {
+      const url = new URL("http://example.com/path");
+      const nested = inspect(url).replaceAll("\n", "\n  ");
+      expect(nested).toContain("\n");
+      expect(inspect({ url })).toBe(isBunInspect ? `{\n  url: ${nested},\n}` : `{\n  url: ${nested}\n}`);
+    });
+  });
 }
 
 describe("Web Streams [nodejs.util.inspect.custom]", () => {

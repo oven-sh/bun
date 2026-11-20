@@ -108,7 +108,7 @@ pub fn build_url_with_printer<R, E>(
     let registry = strings::trim_right(registry_, b"/");
 
     let mut name = full_name;
-    if name[0] == b'@' {
+    if name.first() == Some(&b'@') {
         if let Some(i) = strings::index_of_char(name, b'/') {
             name = &name[i as usize + 1..];
         }

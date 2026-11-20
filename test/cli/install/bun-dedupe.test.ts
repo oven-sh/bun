@@ -2093,15 +2093,19 @@ test.concurrent("exits 1 and keeps bun.lock when the install after deduplicating
     port: 0,
     fetch: () => new Response("tarballs are unavailable", { status: 500 }),
   });
-  // Tarball URLs are recorded per package, so the lockfile is what points the install at the failing server.
-  expect(lockfile).toContain(registry.registryUrl());
+  // The registry's tarball URLs are written as "" (the configured registry). An explicit
+  // tarball URL per package is what points the install at the failing server.
+  expect(lockfile).toContain('", "", ');
+  const pointedAtServer = lockfile.replaceAll(
+    /\["((?:@[^/"]+\/)?([^"@/]+))@([^"]+)", ""/g,
+    (_, name, basename, version) =>
+      `["${name}@${version}", "http://localhost:${server.port}/${name}/-/${basename}-${version}.tgz"`,
+  );
+  expect(pointedAtServer).not.toContain('", "", ');
   await Promise.all([
     rm(join(packageDir, "node_modules"), { recursive: true }),
     rm(join(packageDir, ".bun-cache"), { recursive: true }),
-    write(
-      join(packageDir, "bun.lock"),
-      lockfile.replaceAll(registry.registryUrl(), `http://localhost:${server.port}/`),
-    ),
+    write(join(packageDir, "bun.lock"), pointedAtServer),
   ]);
 
   const { stdout, stderr, exitCode } = await dedupe(packageDir);

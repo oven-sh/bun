@@ -2554,12 +2554,9 @@ function bunTestOptions(options: TestOptions) {
 }
 
 function bunTestHookTimeout(timeout: number | undefined) {
-  // A hook without a `timeout` keeps the runner default (`--timeout`).
   if (typeof timeout !== "number") return undefined;
   if (timeout === Infinity) return kBunTestNoTimeout;
-  // runHook's timer ends the hook at its own `timeout`, as in Node. bun:test's
-  // deadline is 5s behind it, so it only ends a hook that blocks the event
-  // loop, where runHook's timer cannot fire (a spawnSync that does not exit).
+  // 5s behind runHook's timer: bun:test only ends a hook that blocks the event loop.
   return timeout + kBunTestDefaultTimeoutMs;
 }
 

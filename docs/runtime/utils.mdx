@@ -478,7 +478,7 @@ const buf = Buffer.from("hello".repeat(100)); // Buffer extends Uint8Array
 const compressed = Bun.gzipSync(buf);
 
 buf; // => Uint8Array(500)
-compressed; // => Uint8Array(30)
+compressed; // => Uint8Array(32)
 ```
 
 Optionally, pass a parameters object as the second argument:
@@ -565,7 +565,7 @@ const buf = Buffer.from("hello".repeat(100));
 const compressed = Bun.deflateSync(buf);
 
 buf; // => Buffer(500)
-compressed; // => Uint8Array(12)
+compressed; // => Uint8Array(14)
 ```
 
 The second argument supports the same set of configuration options as [`Bun.gzipSync`](#bun-gzipsync).

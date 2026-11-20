@@ -5335,7 +5335,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     result->putDirectOffset(vm, 1, JSC::jsNumber(usage.total));
     result->putDirectOffset(vm, 2, JSC::jsNumber(usage.used));
 
-    // Cells report their extra memory when a collection visits them: until the first one this counts only array buffers.
+    // Array buffers and deprecatedReportExtraMemory() bytes count when reported. A cell's own extra memory counts once a collection visits it.
     result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
 
     // JSC won't count this number until vm.heap.addReference() is called.

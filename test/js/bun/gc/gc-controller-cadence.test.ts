@@ -692,7 +692,7 @@ describe("a sleeping Worker with an unfinished collection does not keep the mark
   const mainWork = `
     process._rawDebug("\\nMARK start");
     let cursor = 0;
-    for (let made = 0; made < 700_000; made += 2000) {
+    for (let made = 0; made < 1_400_000; made += 2000) {
       let junk = [];
       for (let i = 0; i < 2000; i++) junk.push({ i, a: [i, i + 1] });
       for (let i = 0; i < 500; i++) live[(cursor = (cursor + 7919) % live.length)].a = [made, i];
@@ -728,7 +728,7 @@ describe("a sleeping Worker with an unfinished collection does not keep the mark
           onmessage = ({ data: ia }) => {
             globalThis.keep = make(200_000);
             Bun.gc(true); // No collection is in flight now.
-            globalThis.fresh = make(100_000);
+            globalThis.fresh = make(30_000); // Little to mark: the helper is soon done, also in a debug build.
             Bun.gc(false); // Requests an eden collection. This thread conducts it.
             globalThis.big = new Array(200_000).fill(0); // An allocation slow path: the collection starts.
             Atomics.add(ia, 1, 1);

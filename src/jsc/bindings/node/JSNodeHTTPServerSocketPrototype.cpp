@@ -330,6 +330,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterIsSecureEstablished, (JSC::
 }
 
 // SNI hostname the client sent, as a string; null when not TLS / no SNI.
+// One code unit per byte: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1359-L1373
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterServername, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
@@ -340,7 +341,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterServername, (JSC::JSGlobalO
     if (!servername || !*servername) {
         return JSValue::encode(JSC::jsNull());
     }
-    return JSValue::encode(JSC::jsString(globalObject->vm(), WTF::String::fromUTF8(servername)));
+    return JSValue::encode(JSC::jsString(globalObject->vm(), WTF::String::fromLatin1(servername)));
 }
 
 // X.509 verification error code for the peer certificate; null when verified

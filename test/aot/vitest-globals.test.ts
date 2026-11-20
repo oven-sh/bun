@@ -42,6 +42,47 @@ describe.concurrent("the globals of vitest", () => {
     expect(await printedBy(files, ...flags, "--aot")).toEqual(plain);
   });
 
+  // The runner stores the names itself, and the build is given no file in its place. A test finds none. With a second test file the project is the
+  // folder that the files of the run share, so the compiled program is asked about every path below it.
+  const looksForFilesOfTheRun = `
+    import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+    test("one", () => {
+      const packages = import.meta.dir + "/node_modules";
+      const cache = packages + "/.cache";
+      const found = [packages, cache].map(path => existsSync(path));
+      console.log(">", "1 finds", found.join(), "beside", readdirSync(import.meta.dir).sort().join());
+      // As a tool does that keeps its files there.
+      if (!existsSync(cache)) mkdirSync(cache, { recursive: true });
+      writeFileSync(cache + "/written.txt", "text");
+      console.log(">", "2 wrote", readdirSync(cache).join());
+    });
+  `;
+  const anotherTestFile = `test("two", () => {});`;
+  const findsNoFileOfTheRun = {
+    lines: ["> 1 finds false,false beside a.test.js,b.test.js", "> 2 wrote written.txt"],
+    exitCode: 0,
+  };
+
+  test("put no file and no folder into the project", async () => {
+    const files = { "a.test.js": looksForFilesOfTheRun, "b.test.js": anotherTestFile };
+    expect(await printedBy(files, "--globals=vitest")).toEqual(findsNoFileOfTheRun);
+    expect(await printedBy(files, "--globals=vitest", "--aot")).toEqual(findsNoFileOfTheRun);
+  });
+
+  const besideFileThatAsksForWindow = {
+    "a.test.js": "/** @vitest-environment happy-dom */" + looksForFilesOfTheRun,
+    "b.test.js": anotherTestFile,
+  };
+
+  test("nor beside a test file that asks for a DOM", async () => {
+    expect(await printedBy(besideFileThatAsksForWindow, "--globals=vitest")).toEqual(findsNoFileOfTheRun);
+  });
+
+  // For the window of a DOM the build reads a file of its own from memory, node_modules/.cache/bun-test-window.ts, and the program answers for that name.
+  test.failing("nor there in a compiled run: the file that stands in for the window is found", async () => {
+    expect(await printedBy(besideFileThatAsksForWindow, "--globals=vitest", "--aot")).toEqual(findsNoFileOfTheRun);
+  });
+
   const comparesNames = (name: string) => `
     console.log(">", "${name}", vitest === vi, suite === describe, test === it);
     test("one", () => {});

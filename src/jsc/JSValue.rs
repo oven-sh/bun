@@ -2324,7 +2324,7 @@ impl JSValue {
             JSC__JSValue__forEach(self, global, ctx, callback)
         })
     }
-    /// `for (const item of self) each(item)`. Returns the first `Err`, but only a pending exception ends the loop.
+    /// `for (const item of self) each(item)`, up to the first `Err`. Only a pending exception ends the loop itself.
     pub fn try_for_each<F: FnMut(JSValue) -> JsResult<()>>(
         self,
         global: &JSGlobalObject,
@@ -2342,8 +2342,8 @@ impl JSValue {
         ) {
             // SAFETY: `iteration` is the `Iteration` below, which outlives the `for_each` call.
             let iteration = unsafe { &mut *iteration.cast::<Iteration<F>>() };
-            if let Err(error) = (iteration.each)(item) {
-                iteration.result = iteration.result.and(Err(error));
+            if iteration.result.is_ok() {
+                iteration.result = (iteration.each)(item);
             }
         }
         let mut iteration = Iteration {

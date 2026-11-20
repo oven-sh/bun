@@ -255,6 +255,20 @@ fn who_has_waited_longest_sends_first() {
 }
 
 #[test]
+fn timers_that_are_stopped_do_not_wake_the_application() {
+    let mut raw = Raw::client().connected();
+    raw.advance(1000);
+    raw.forget();
+    let idle = raw.peer.endpoint.timeout().unwrap();
+    raw.send("ping");
+    assert_eq!(raw.packets(), "");
+    assert!(raw.peer.endpoint.timeout().unwrap() < idle);
+    raw.send("ping");
+    assert_eq!(raw.packets(), "1[ack 0-2]");
+    assert!(raw.peer.endpoint.timeout().unwrap() >= idle);
+}
+
+#[test]
 fn clients_are_answered_two_at_a_time() {
     let mut raw = Raw::client();
     raw.waits = false;
@@ -345,8 +359,7 @@ fn a_connection_ends_even_if_it_never_gets_to_send() {
     let now = raw.now;
     raw.connection().abort(now, Transport, 1, b"");
     assert!(!raw.peer.poll(now));
-    let idle = raw.peer.endpoint.timeout().unwrap();
-    raw.peer.endpoint.handle_timeouts(idle);
+    (raw.peer.endpoint).handle_timeouts(now + Duration::from_millis(100));
     let end = raw.peer.endpoint.timeout().unwrap();
     assert!(end > now + Duration::from_millis(3 * (RTT + 25)));
     raw.peer.endpoint.handle_timeouts(end);

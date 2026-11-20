@@ -160,13 +160,26 @@ describe("node:test", () => {
   });
 
   test.concurrent("should end a before() hook that never settles at its own timeout", async () => {
-    const { exitCode, stderr } = await runTests(["42-hook-own-timeout-expires.js"]);
+    const { exitCode, stderr } = await runTests(["42-hook-own-timeout-expires.js"], {}, ["--timeout", "10"]);
     expect(stderr).toContain("test timed out after 50ms");
     expect(stderr).not.toContain("hook timed out");
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("should not kill the process of an after() hook that has its own timeout", async () => {
+  test.concurrent(
+    "should end a before() hook with its own timeout that blocks in spawnSync",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["44-hook-own-timeout-blocks.js"]);
+      expect(stdout).toContain("child: SIGTERM");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("0 pass"),
+      });
+    },
+    20_000,
+  );
+
+  test.concurrent("should not kill a process when a timer fires in an after() hook with an Infinity timeout", async () => {
     const { exitCode, stdout, stderr } = await runTests(["43-hook-own-timeout-child.js"], {}, ["--timeout", "300"]);
     expect(stdout).toContain("child: SIGKILL");
     expect(stderr).not.toContain("dangling process");

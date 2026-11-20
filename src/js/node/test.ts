@@ -2553,11 +2553,17 @@ function bunTestOptions(options: TestOptions) {
   return undefined;
 }
 
+function bunTestHookTimeout(timeout: number | undefined) {
+  // A hook without a `timeout` keeps the runner default (`--timeout`).
+  if (typeof timeout !== "number") return undefined;
+  if (timeout === Infinity) return kBunTestNoTimeout;
+  // runHook's timer ends the hook at its own `timeout`, as in Node. bun:test's
+  // deadline is 5s behind it, so it only ends a hook that blocks the event
+  // loop, where runHook's timer cannot fire (a spawnSync that does not exit).
+  return timeout + kBunTestDefaultTimeoutMs;
+}
+
 function registerOwnerHook(kind: "beforeAll" | "afterAll", hook: Hook, owner: TestNode, fallbackMessage: string) {
-  // runHook's timer is the only deadline of a hook that has its own `timeout`,
-  // as in Node. A hook without one keeps the runner default (`--timeout`).
-  // A test cannot use 0 (see bunTestOptions): its bun:test entry also runs the
-  // beforeEach and afterEach hooks, and one without a `timeout` has no timer.
   const register: RegisterHook = bunTest()[kind];
   register(
     (done: Done) => {
@@ -2566,7 +2572,7 @@ function registerOwnerHook(kind: "beforeAll" | "afterAll", hook: Hook, owner: Te
         err => done(err ?? new Error(fallbackMessage)),
       );
     },
-    typeof hook.timeout === "number" ? kBunTestNoTimeout : undefined,
+    bunTestHookTimeout(hook.timeout),
   );
 }
 

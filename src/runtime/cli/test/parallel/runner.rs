@@ -865,6 +865,7 @@ pub(crate) fn decode_test_case<'a>(
         message: rd.str().to_vec(),
         body: rd.str().to_vec(),
         uncaught: rd.u32() != 0,
+        ..Default::default()
     };
     let earlier_failures: Vec<_> = (0..earlier).map(|_| read_failure()).collect();
     let failure = has_failure.then(read_failure);

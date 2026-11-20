@@ -148,23 +148,99 @@ For an example GitHub Actions workflow, see [CI/CD integration](/pm/cli/install#
 
 ---
 
+## NDJSON Reporter
+
+`--reporter=ndjson` writes each event of the run to `--reporter-outfile` as it happens, one JSON object per line. It's meant for editors and other tools that show test results live: they can read it without running code of their own inside `bun test`. The console reporter still prints.
+
+```bash terminal icon="terminal"
+bun test --reporter=ndjson --reporter-outfile=./events.ndjson
+```
+
+```toml title="bunfig.toml" icon="settings"
+[test.reporter]
+ndjson = "./events.ndjson"
+```
+
+The events are the same ones a [reporter module](#custom-reporters) gets, with a `type` field that names the event:
+
+```json events.ndjson icon="file-code"
+{"type":"runStart","files":["/project/math.test.ts"]}
+{"type":"fileStart","file":"/project/math.test.ts"}
+{"type":"fileCollected","file":"/project/math.test.ts","tests":[{"type":"describe","name":"math","parentId":null,"line":3,"column":1,"mode":"normal","only":false,"concurrent":false,"id":"d2"},{"type":"test","name":"adds","parentId":"d2","line":4,"column":3,"mode":"normal","only":false,"concurrent":false,"id":"t2"}]}
+{"type":"testStart","file":"/project/math.test.ts","id":"t2","attempt":1}
+{"type":"testEnd","file":"/project/math.test.ts","id":"t2","name":"adds","fullName":"math > adds","parentId":"d2","status":"fail","duration":0.61,"assertions":1,"attempt":1,"errors":[{"name":"AssertionError","message":"expect(received).toBe(expected)\n\nExpected: 3\nReceived: 2\n","stack":"AssertionError: expect(received).toBe(expected)\n\nExpected: 3\nReceived: 2\n\n      at math.test.ts:5:19\n","expected":"3","actual":"2","uncaught":false}],"earlierAttemptErrors":[]}
+{"type":"fileEnd","file":"/project/math.test.ts","duration":13.45,"failedToLoad":false}
+{"type":"runEnd","pass":0,"fail":1,"skip":0,"todo":0,"filtered":0,"files":1,"duration":64.05}
+```
+
+`--reporter=ndjson` and `--reporter=junit` can't share `--reporter-outfile`. To use both, set one of them in `bunfig.toml`.
+
+---
+
 ## Custom Reporters
 
-You can implement custom test reporters with Bun's testing-specific extensions to the WebKit Inspector Protocol, which report detailed information about test execution in real time.
+Pass the path or package name of a module to `--reporter` to report the run your own way. Its default export is an object with a hook for each event it handles, or a class that `bun test` constructs. The module is loaded from the working directory before any test file runs, and it gets the events in the order they happen:
 
-### Inspector Protocol for Testing
+```ts title="reporter.ts" icon="/icons/typescript.svg"
+import type { Reporter } from "bun:test";
 
-Bun extends the standard WebKit Inspector Protocol with two custom domains:
+export default {
+  onTestEnd(event) {
+    if (event.status === "fail") {
+      for (const error of event.errors) {
+        console.log(`${event.fullName} failed at ${event.file}`);
+        if (error.expected !== undefined) console.log(`expected ${error.expected}, received ${error.actual}`);
+      }
+    }
+  },
+  async onRunEnd(event) {
+    await Bun.write("summary.json", JSON.stringify(event));
+  },
+} satisfies Reporter;
+```
 
-1. **TestReporter**: Reports test discovery, execution start, and completion events
-2. **LifecycleReporter**: Reports errors and exceptions during test execution
+```bash terminal icon="terminal"
+bun test --reporter=./reporter.ts
+```
 
-### Key Events
+```toml title="bunfig.toml" icon="settings"
+[test.reporter]
+modules = ["./reporter.ts"]
+```
 
-Custom reporters can listen for these events:
+`--reporter` can be given more than once, so a module can run next to `junit`, `ndjson` or `dots`. The console reporter still prints.
 
-- `TestReporter.found`: Emitted when a test is discovered
-- `TestReporter.start`: Emitted when a test starts running
-- `TestReporter.end`: Emitted when a test completes
-- `Console.messageAdded`: Emitted when console output occurs during a test
-- `LifecycleReporter.error`: Emitted when an error or exception occurs
+### Events
+
+| Hook               | Event            | When                                                                                                                                                                     |
+| ------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `onRunStart`       | `runStart`       | Before the first file, with the `files` that will run                                                                                                                    |
+| `onFileStart`      | `fileStart`      | Before a file loads                                                                                                                                                      |
+| `onFileCollected`  | `fileCollected`  | After a file has declared its tests: every `test()` and `describe()`, with its `id`, `parentId`, `line` and `column`. Again for each run of the file with `--rerun-each` |
+| `onTestStart`      | `testStart`      | Before each attempt of a test that runs                                                                                                                                  |
+| `onTestEnd`        | `testEnd`        | After the last attempt of a test, including skipped and todo tests                                                                                                       |
+| `onHookFailure`    | `hookFailure`    | A `beforeAll()` or `afterAll()` hook failed                                                                                                                              |
+| `onUnhandledError` | `unhandledError` | An error that no test caught, such as one thrown by a timer between tests                                                                                                |
+| `onFileEnd`        | `fileEnd`        | After a file's tests, once even with `--rerun-each`                                                                                                                      |
+| `onRunEnd`         | `runEnd`         | After the last file, with the counts of the run                                                                                                                          |
+
+Tests have ids like `"t3"` and `describe()` blocks ids like `"d2"`. An id is unique within its file and the same on every run of the file, so an editor can match the `testEnd` of a test to the place in `fileCollected` where the test is declared. `duration` is in milliseconds.
+
+`testEnd` has a `status` of `"pass"`, `"fail"`, `"skip"` or `"todo"`, and a `reason` when that isn't explained by a thrown error or by `.skip`, such as `"timeout"` or `"filtered"`. Each of its `errors` has the `name`, `message` and `stack` that `bun test` prints. When a matcher such as `toEqual()` compared two values, the error also has them as `expected` and `actual`, formatted as `expect()` prints them, so an editor can show a diff. A test that passed on a retry lists the errors of its failed attempts in `earlierAttemptErrors`.
+
+The `Reporter` and `ReporterEvents` types are exported from `bun:test`.
+
+### Errors and promises
+
+A hook that throws, or a promise of one that rejects, prints the error and fails the run, and the module gets no events after that. A module that can't be loaded stops `bun test` before any test runs.
+
+`bun test` waits for the promises that hooks return at the end of each file and at the end of the run, so `onFileEnd` and `onRunEnd` can write or upload results.
+
+### Limitations
+
+- `--parallel` doesn't support `--reporter=ndjson` or reporter modules yet.
+- A test's `console.log()` output isn't part of its events.
+
+### Inspector Protocol
+
+Bun also reports test discovery, start and end to debuggers through its `TestReporter` domain of the WebKit Inspector Protocol, which the VS Code extension uses. A reporter module gets more detail about each test and needs no debugger connection.

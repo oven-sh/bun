@@ -70,7 +70,7 @@ pub(crate) fn make_formatter(global: &JSGlobalObject) -> ConsoleObject::Formatte
     formatter
 }
 
-fn show(global: &JSGlobalObject, value: JSValue) -> impl fmt::Display {
+pub(crate) fn show(global: &JSGlobalObject, value: JSValue) -> impl fmt::Display {
     fmt::from_fn(move |f| fmt::Display::fmt(&value.to_fmt(&mut make_formatter(global)), f))
 }
 

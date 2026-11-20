@@ -579,12 +579,16 @@ impl TestGlobals {
     }
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Clone)]
 pub struct Reporters {
     pub dots: bool,
     pub only_failures: bool,
     pub junit: bool,
     pub junit_suites: Option<JunitSuites>,
+    /// `--reporter=ndjson`: where each event goes, as a line of JSON.
+    pub ndjson_outfile: Option<Box<[u8]>>,
+    /// `--reporter=<module>`: the modules to load, as given, to resolve from the working directory.
+    pub modules: Vec<Box<[u8]>>,
 }
 
 #[derive(Copy, Clone, Default, Eq, PartialEq)]

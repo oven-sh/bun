@@ -960,6 +960,159 @@ declare module "bun:test" {
    * @param milliseconds the default timeout in milliseconds
    */
   export function setDefaultTimeout(milliseconds: number): void;
+
+  /**
+   * The default export of a module given to `bun test --reporter=<module>`, or a class that `bun test` constructs.
+   * Each hook gets one event of the run. `--reporter=ndjson` writes the same events, a line of JSON each.
+   *
+   * A hook that throws, or a promise of one that rejects, fails the run, and the module gets no more events.
+   * The promises that hooks return are waited for at the end of each file and of the run.
+   *
+   * @example
+   * ```ts
+   * import type { Reporter } from "bun:test";
+   *
+   * export default {
+   *   onTestEnd(event) {
+   *     console.log(event.fullName, event.status);
+   *   },
+   * } satisfies Reporter;
+   * ```
+   */
+  export interface Reporter {
+    onRunStart?(event: ReporterEvents.RunStart): void;
+    onFileStart?(event: ReporterEvents.FileStart): void;
+    onFileCollected?(event: ReporterEvents.FileCollected): void;
+    onTestStart?(event: ReporterEvents.TestStart): void;
+    onTestEnd?(event: ReporterEvents.TestEnd): void;
+    onHookFailure?(event: ReporterEvents.HookFailure): void;
+    onUnhandledError?(event: ReporterEvents.UnhandledError): void;
+    onFileEnd?(event: ReporterEvents.FileEnd): void | Promise<unknown>;
+    onRunEnd?(event: ReporterEvents.RunEnd): void | Promise<unknown>;
+  }
+
+  /**
+   * The events of {@link Reporter}. `file` is an absolute path. `duration` is in milliseconds.
+   */
+  export namespace ReporterEvents {
+    /** `"t<n>"` for a test, `"d<n>"` for a `describe()` block. Unique within its file, and the same on every run of the file. */
+    type Id = string;
+
+    interface Error {
+      name: string;
+      message: string;
+      /** The message and the stack, as `bun test` prints them, with paths relative to the working directory. */
+      stack: string;
+      /** The values a failed matcher such as `toEqual()` compared, formatted as `expect()` prints them. */
+      expected?: string;
+      actual?: string;
+      /** The error was thrown outside of the test function, such as by a timer, while the test ran. */
+      uncaught: boolean;
+    }
+
+    interface RunStart {
+      type: "runStart";
+      files: string[];
+    }
+
+    interface FileStart {
+      type: "fileStart";
+      file: string;
+    }
+
+    interface CollectedTest {
+      type: "test" | "describe";
+      id: Id;
+      /** The enclosing `describe()` block, or `null` at the top level of the file. */
+      parentId: Id | null;
+      name: string;
+      /** 1-based, of the `test()` or `describe()` call. */
+      line: number;
+      column: number;
+      mode: "normal" | "skip" | "todo" | "failing" | "fails" | "filtered_out";
+      only: boolean;
+      concurrent: boolean;
+    }
+
+    /** Every `test()` and `describe()` of the file, in the order they were declared, parents first. */
+    interface FileCollected {
+      type: "fileCollected";
+      file: string;
+      tests: CollectedTest[];
+    }
+
+    interface TestStart {
+      type: "testStart";
+      file: string;
+      id: Id;
+      /** 1 for the first try, then 2 and up for each `retry`. */
+      attempt: number;
+    }
+
+    type Status = "pass" | "fail" | "skip" | "todo";
+
+    type Reason =
+      "filtered" | "timeout" | "hookTimeout" | "failingTestPassed" | "todoPassed" | "noAssertions" | "assertionCount";
+
+    interface TestEnd {
+      type: "testEnd";
+      file: string;
+      id: Id;
+      name: string;
+      /** The names of the enclosing `describe()` blocks and of the test, joined by `" > "`. */
+      fullName: string;
+      parentId: Id | null;
+      status: Status;
+      /** Why a test failed or was skipped, when it wasn't by a thrown error or `.skip`. */
+      reason?: Reason;
+      duration: number;
+      assertions: number;
+      attempt: number;
+      errors: Error[];
+      /** The errors of the attempts before the last one, oldest first. */
+      earlierAttemptErrors: Error[];
+    }
+
+    /** A `beforeAll()` or `afterAll()` hook failed. */
+    interface HookFailure {
+      type: "hookFailure";
+      file: string;
+      parentId: Id | null;
+      status: "fail";
+      reason?: Reason;
+      duration: number;
+      assertions: number;
+      attempt: number;
+      errors: Error[];
+      earlierAttemptErrors: Error[];
+    }
+
+    /** An error that no test caught, thrown between tests or while the file loaded. */
+    interface UnhandledError {
+      type: "unhandledError";
+      file: string;
+      error: Error;
+    }
+
+    interface FileEnd {
+      type: "fileEnd";
+      file: string;
+      duration: number;
+      failedToLoad: boolean;
+    }
+
+    interface RunEnd {
+      type: "runEnd";
+      pass: number;
+      fail: number;
+      skip: number;
+      todo: number;
+      filtered: number;
+      files: number;
+      duration: number;
+    }
+  }
+
   export interface TestOptions {
     /**
      * Sets the timeout for the test in milliseconds.

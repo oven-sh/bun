@@ -167,6 +167,70 @@ describe("bun test", () => {
     });
   });
 
+  describe("<file>:<line>", () => {
+    const source = `import { describe, test } from "bun:test";
+describe("outer", () => {
+  test("first", () => {});
+  test("second", () => {});
+  describe("inner", () => {
+    test("third", () => {});
+  });
+});
+test("fourth", () => {});
+`;
+    async function runAt(args: string[]) {
+      using dir = tempDir("bun-test-location", { "a.test.ts": source, "b.test.ts": source });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        env: { ...bunEnv, AGENT: "0" },
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const ran = [...stderr.matchAll(/^\(pass\) (.+?)(?: \[[\d.]+m?s\])?$/gm)].map(match => match[1]);
+      return { ran, stderr, exitCode };
+    }
+
+    test.concurrent.each([
+      [["./a.test.ts:3"], ["outer > first"]],
+      [["a.test.ts:9"], ["fourth"]],
+      [["./a.test.ts:5"], ["outer > inner > third"]],
+      [["./a.test.ts:2"], ["outer > first", "outer > second", "outer > inner > third"]],
+      [
+        ["./a.test.ts:3", "./a.test.ts:4"],
+        ["outer > first", "outer > second"],
+      ],
+    ])("%j runs the tests declared at the line, or in the describe() declared at it", async (args, expected) => {
+      const { ran, exitCode } = await runAt(args);
+      expect(ran).toEqual(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("only filters the file it names", async () => {
+      const { ran, exitCode } = await runAt(["./a.test.ts:3", "./b.test.ts"]);
+      expect(ran.sort()).toEqual(
+        ["fourth", "outer > first", "outer > inner > third", "outer > second", "outer > first"].sort(),
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("fails when no test is declared at the line", async () => {
+      const { ran, stderr, exitCode } = await runAt(["./a.test.ts:1"]);
+      expect(ran).toEqual([]);
+      expect(stderr).toContain("error: no test or describe() is declared at a.test.ts:1.");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("is not supported with --parallel", async () => {
+      const { stderr, exitCode } = await runAt(["--parallel=2", "./a.test.ts:3"]);
+      expect(stderr).toContain(
+        "--parallel does not support running the tests at a line of a file, as in a.test.ts:12, yet",
+      );
+      expect(exitCode).toBe(1);
+    });
+  });
+
   test("works with require", () => {
     const stderr = runTest({
       args: [],

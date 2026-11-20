@@ -339,8 +339,9 @@ pub struct VirtualMachine {
     /// When set, `print_error_instance_body` calls this with the remapped
     /// `ZigException` (same lifecycle as the GitHub Actions annotation hook),
     /// so observers can read name/message/stack without re-running the
-    /// formatter. Installed by `bun test --reporter=junit`.
-    pub on_print_error_zig_exception: Cell<Option<fn(&ZigException<'_>)>>,
+    /// formatter. The `JSValue` is the error itself, or empty when only the
+    /// exception was given. Installed by `bun test` when a reporter needs failure details.
+    pub on_print_error_zig_exception: Cell<Option<fn(&ZigException<'_>, JSValue)>>,
     pub(crate) is_handling_uncaught_exception: Cell<bool>,
     pub(crate) exit_on_uncaught_exception: Cell<bool>,
     /// An earlier `--hot` run ended with an unhandled error. Its `beforeExit` listeners are still registered.
@@ -6643,7 +6644,7 @@ impl VirtualMachine {
                 debugger.lifecycle_reporter_agent.report_error(exception);
             }
             if let Some(cb) = self.on_print_error_zig_exception.get() {
-                cb(exception);
+                cb(exception, error_instance);
             }
         }
 

@@ -51,6 +51,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTestEnvironmentModuleOfLastingRealm, (JSC::JS
     return Bun__TestEnvironment__setupFunction(lastingRealm(JSC::getVM(globalObject)));
 }
 
+} // namespace Bun
+
+// The `--reporter` modules outlive the global of each test file under --isolate.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__TestReporter__loadFunctionOfLastingRealm(Zig::GlobalObject* globalObject)
+{
+    auto* realm = Bun::lastingRealm(JSC::getVM(globalObject));
+    auto& vm = JSC::getVM(realm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(Bun::DeclaredModuleLoad::requireForCommandLine(realm, Bun::InternalModuleRegistry::InternalTestReporter)));
+}
+
+namespace Bun {
+
 // Whether every change to an own property of `object` changes its structure or one of its property slots.
 static bool showsChangesInSlots(JSC::VM& vm, JSC::JSObject* object, JSC::Structure* structure)
 {

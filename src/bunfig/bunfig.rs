@@ -610,6 +610,39 @@ impl<'a> Parser<'a, '_> {
                         self.ctx.test_options.reporters.dots =
                             dots_expr.as_bool().expect("infallible: type checked");
                     }
+                    if let Some(ndjson_expr) = expr.get(b"ndjson") {
+                        self.expect_string(&ndjson_expr)?;
+                        if let ExprData::EString(s) = &ndjson_expr.data
+                            && s.len() > 0
+                        {
+                            // --reporter=ndjson is parsed first and wins.
+                            let reporters = &mut self.ctx.test_options.reporters;
+                            if reporters.ndjson_outfile.is_none() {
+                                reporters.ndjson_outfile = Some(estring_to_owned(s, self.bump));
+                            }
+                        }
+                    }
+                    if let Some(modules_expr) = expr.get(b"modules") {
+                        self.expect(&modules_expr, ExprTag::EArray)?;
+                        let arr = modules_expr
+                            .data
+                            .e_array()
+                            .expect("infallible: variant checked");
+                        let mut modules: Vec<Box<[u8]>> =
+                            Vec::with_capacity(arr.items.slice().len());
+                        for item in arr.items.slice() {
+                            self.expect_string(item)?;
+                            if let ExprData::EString(s) = &item.data
+                                && s.len() > 0
+                            {
+                                modules.push(estring_to_owned(s, self.bump));
+                            }
+                        }
+                        // Reporter modules given to --reporter replace these.
+                        if self.ctx.test_options.reporters.modules.is_empty() {
+                            self.ctx.test_options.reporters.modules = modules;
+                        }
+                    }
                 }
 
                 if let Some(expr) = test.get(b"coverageReporter") {

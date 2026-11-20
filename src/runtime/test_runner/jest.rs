@@ -116,8 +116,9 @@ pub(crate) struct TestRunner {
     pub(crate) resets_before_each_test: [Option<bool>; RESETS_BEFORE_EACH_TEST.len()],
     pub(crate) environment: Option<TestEnvironment>,
     pub(crate) coverage_skips_test_files: bool,
+    /// Whether test locations and failure details are recorded: for `--reporter=junit` and the event reporters.
     /// Also true in a `--parallel` worker, whose records the coordinator replays into its own `JunitReporter`.
-    pub(crate) reports_to_junit: bool,
+    pub(crate) records_test_details: bool,
 
     pub(crate) snapshots: RefCell<Snapshots>,
 
@@ -131,6 +132,8 @@ pub(crate) struct TestRunner {
 
     /// Used for --test-name-pattern to reduce allocations.
     pub(crate) filter_regex: Option<&'static RegularExpression>,
+    /// `bun test <file>:<line>`: the files, as absolute paths, and the lines of the `test()` or `describe()` calls to run in them.
+    pub(crate) location_filters: Vec<(Box<[u8]>, u32)>,
 
     pub(crate) unhandled_errors_between_tests: Cell<u32>,
     pub(crate) summary: Cell<Summary>,
@@ -1070,11 +1073,20 @@ pub(crate) fn format_vitest_title(global: &JSGlobalObject, template: &[u8], item
     Ok(title)
 }
 
-pub(crate) fn capture_test_line_number(global_this: &JSGlobalObject) -> u32 {
+/// The 1-based (line, column) of the `describe()` or `test()` call, or (0, 0) when no reporter needs it.
+pub(crate) fn capture_test_location(global_this: &JSGlobalObject) -> (u32, u32) {
     if let Some(runner) = Jest::runner() {
-        if runner.reports_to_junit {
-            return bun_jsc::cpp::JSC__JSGlobalObject__getCallerLineNumber(global_this);
+        if runner.records_test_details {
+            let mut column: u32 = 0;
+            // SAFETY: `global_this` is a live global and `column` a local the call writes before it returns.
+            let line = unsafe {
+                bun_jsc::cpp::JSC__JSGlobalObject__getCallerLineColumn(
+                    core::ptr::from_ref(global_this).cast_mut(),
+                    &raw mut column,
+                )
+            };
+            return (line, column);
         }
     }
-    0
+    (0, 0)
 }

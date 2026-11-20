@@ -34,6 +34,7 @@ cfg_jsc! {
     #[path = "test_context_around.rs"] pub(crate) mod test_context_around;
     #[path = "test_context_fixtures.rs"] pub(crate) mod test_context_fixtures;
     #[path = "test_context_parameter.rs"] mod test_context_parameter;
+    #[path = "TestEventReporter.rs"] pub(crate) mod test_event_reporter;
     #[path = "vi_utils.rs"]       pub(crate) mod vi_utils;
     #[path = "vi_wait.rs"]        pub(crate) mod vi_wait;
 }

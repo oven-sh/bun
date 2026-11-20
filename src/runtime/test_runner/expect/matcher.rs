@@ -279,13 +279,14 @@ impl<'a> Matcher<'a> {
     #[cold]
     #[optimize(size)]
     pub(super) fn fail_expected(&self, expected: JSValue, received: JSValue) -> Verdict {
-        fail!(
+        let verdict = fail!(
             self,
             "Expected: {}<green>{}<r>\nReceived: <red>{}<r>\n",
             self.not_word(),
             self.show(expected),
             self.show(received)
-        )
+        );
+        self.with_compared_values(verdict, expected, received)
     }
 
     #[cold]
@@ -305,6 +306,24 @@ impl<'a> Matcher<'a> {
     #[optimize(size)]
     pub(super) fn fail_diff(&self, expected: JSValue, received: JSValue) -> Verdict {
         let diff = DiffFormatter::new(self.global, received, expected, self.not())?;
-        Err(self.fail(format_args!("{diff}\n")))
+        self.with_compared_values(Err(self.fail(format_args!("{diff}\n"))), expected, received)
+    }
+
+    /// Sets `expected` and `actual` on the error a failure threw, as Node's `AssertionError` has them, so reporters can show a diff.
+    /// They are not enumerable, so the error prints as it did without them.
+    fn with_compared_values(&self, verdict: Verdict, expected: JSValue, received: JSValue) -> Verdict {
+        let Err(JsError::Thrown) = verdict else {
+            return verdict;
+        };
+        if self.not() {
+            return verdict;
+        }
+        let exception = self.global.take_exception(JsError::Thrown);
+        let error = exception.to_error().unwrap_or(exception);
+        if error.is_object() {
+            error.put_non_enumerable(self.global, b"expected", expected);
+            error.put_non_enumerable(self.global, b"actual", received);
+        }
+        Err(self.global.throw_value(exception))
     }
 }

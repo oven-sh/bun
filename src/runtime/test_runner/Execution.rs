@@ -714,6 +714,10 @@ impl Execution {
                 bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)"))
             );
             super::vi_utils::before_each_attempt(global_this, entry.calling.is_vitest());
+            if let (Some(events), Some(id)) = (&buntest.reporter.events, sequence.test_entry) {
+                let attempt = (entry.retry_count - sequence.remaining_retry_count.get()) + 1;
+                events.test_start(buntest, buntest.sequence_entry(id).entry, attempt);
+            }
 
             if entry.base.test_id_for_debugger.get() != 0 {
                 if let Some(debugger) = VirtualMachine::get().debugger.get() {
@@ -799,7 +803,7 @@ impl Execution {
 
     /// Saves a failed attempt's failure before a retry, so it's reported with the test's final result.
     fn save_attempt_failure(buntest: &BunTest, sequence: &ExecutionSequence) {
-        if !buntest.reporter.jest.reports_to_junit {
+        if !buntest.reporter.jest.records_test_details {
             return;
         }
         let failure = sequence

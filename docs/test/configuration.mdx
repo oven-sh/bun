@@ -233,6 +233,18 @@ This complements the `--reporter=junit` and `--reporter-outfile` CLI flags:
 bun test --reporter=junit --reporter-outfile=./junit.xml
 ```
 
+### NDJSON Reporter and Reporter Modules
+
+Write every event of the run to a file as a line of JSON, and load [reporter modules](/test/reporters#custom-reporters), from the config file:
+
+```toml title="bunfig.toml" icon="settings"
+[test.reporter]
+ndjson = "path/to/events.ndjson"  # Output path for the events
+modules = ["./reporter.ts"]        # Loaded from the working directory
+```
+
+A module given to `--reporter` on the command line replaces the `modules` of `bunfig.toml`, and `--reporter=ndjson` with `--reporter-outfile` replaces its `ndjson` path.
+
 #### Multiple Reporters
 
 You can use multiple reporters simultaneously:

@@ -526,6 +526,15 @@ impl ScopeId {
     pub(crate) const ROOT: ScopeId = ScopeId(NonZeroU32::MIN);
     /// The parent of `ROOT`.
     const PRELOAD: ScopeId = ScopeId(NonZeroU32::MAX);
+
+    pub(crate) fn is_preload(self) -> bool {
+        self == Self::PRELOAD
+    }
+
+    /// Unique among the file's scopes, the same on every run of the file.
+    pub(crate) fn index(self) -> u32 {
+        self.0.get()
+    }
 }
 
 /// Index into `BunTest::entries`, or `Preload::entries` with `PRELOAD_BIT`, plus one.
@@ -534,6 +543,11 @@ pub(crate) struct EntryId(NonZeroU32);
 
 impl EntryId {
     const PRELOAD_BIT: u32 = 1 << 31;
+
+    /// Unique among the file's entries, the same on every run of the file.
+    pub(crate) fn index(self) -> u32 {
+        self.0.get()
+    }
 }
 
 /// Index into `BunTest::sequence_entries`, plus one.
@@ -1149,6 +1163,9 @@ impl BunTest {
             Phase::Collection => {
                 self.phase.set(Phase::Execution);
                 debug::dump_describe(self, self.scope(ScopeId::ROOT))?;
+                if let Some(events) = &self.reporter.events {
+                    events.file_collected(self);
+                }
 
                 let jest = &self.reporter.jest;
                 // Derive a per-file shuffle seed from (seed, file_path) so a
@@ -1450,7 +1467,7 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
-        let recording_target = if !self.reporter.jest.reports_to_junit {
+        let recording_target = if !self.reporter.jest.records_test_details {
             None
         } else if handle_status == HandleUncaughtExceptionResult::ShowHandledError {
             Some(RecordingTarget::Sequence(*user_data))
@@ -1510,11 +1527,11 @@ impl BunTest {
 
     /// `VirtualMachine::on_print_error_zig_exception`
     #[optimize(size)]
-    pub(crate) fn record_printed_error(exception: &jsc::ZigException<'_>) {
+    pub(crate) fn record_printed_error(exception: &jsc::ZigException<'_>, error: JSValue) {
         if let Some(this) = clone_active_strong()
             && let Some(slot) = this.recording_slot()
         {
-            slot.with_taken(|slot| TestFailure::record(slot, exception));
+            slot.with_taken(|slot| TestFailure::record(slot, exception, error));
         }
     }
 }
@@ -1777,6 +1794,7 @@ pub(crate) struct BaseScopeCfg {
     pub(crate) self_shuffle: bool,
     pub(crate) test_id_for_debugger: i32,
     pub(crate) line_no: u32,
+    pub(crate) column_no: u32,
 }
 impl BaseScopeCfg {
     /// returns None if the other already has the value
@@ -1859,8 +1877,9 @@ pub(crate) struct BaseScope {
     pub(crate) has_callback: Cell<bool>,
     /// this value is 0 unless the debugger is active and the scope has a debugger id
     pub(crate) test_id_for_debugger: Cell<i32>,
-    /// only available if using junit reporter, otherwise 0
+    /// 1-based. Only recorded when `TestRunner::records_test_details`, otherwise 0.
     pub(crate) line_no: u32,
+    pub(crate) column_no: u32,
 }
 impl BaseScope {
     fn init(
@@ -1886,6 +1905,7 @@ impl BaseScope {
             has_callback: Cell::new(has_callback),
             test_id_for_debugger: Cell::new(cfg.test_id_for_debugger),
             line_no: cfg.line_no,
+            column_no: cfg.column_no,
             parent: parent.map(|p| p.id),
         }
     }

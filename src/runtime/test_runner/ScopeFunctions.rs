@@ -328,7 +328,7 @@ pub(crate) fn call_as_function<'a>(
     let Some(this) = this_value.as_class_ref::<ScopeFunctions>() else {
         return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
     };
-    let line_no = jest::capture_test_line_number(global);
+    let location = jest::capture_test_location(global);
 
     let buntest = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(&this))?;
 
@@ -437,7 +437,7 @@ pub(crate) fn call_as_function<'a>(
                         Calling::Jest { done: callback_length > args_list.len() }
                     },
                     parameter.as_ref(),
-                    line_no,
+                    location,
                 )
             })?;
 
@@ -452,7 +452,7 @@ pub(crate) fn call_as_function<'a>(
             &args.options,
             if is_vitest { Calling::Vitest { context: true } } else { Calling::Jest { done: callback_length >= 1 } },
             parameter.as_ref(),
-            line_no,
+            location,
         )?;
     }
 
@@ -500,6 +500,18 @@ fn filter_names<R: WriteEnd>(rem: &mut R, description: Option<&[u8]>, bun_test: 
     }
 }
 
+/// Whether a test declared at `line` runs under `bun test <file>:<line>`: the test, or a `describe()` around it, is declared at a given line of its file.
+fn matches_location_filter(bun_test: &BunTest, line: u32) -> bool {
+    let mut lines = bun_test.reporter.jest.location_filters.iter().filter(|(path, _)| **path == *bun_test.file.path).map(|&(_, line)| line).peekable();
+    if lines.peek().is_none() {
+        return true;
+    }
+    lines.any(|wanted| {
+        wanted == line
+            || bun_test.scopes_from(Some(bun_test.collection.active_scope.get())).any(|scope| scope.base.line_no == wanted)
+    })
+}
+
 impl ScopeFunctions {
     #[optimize(size)]
     fn enqueue_describe_or_test_callback(
@@ -511,7 +523,7 @@ impl ScopeFunctions {
         options: &ParseArgumentsOptions,
         calling: Calling,
         parameter: Option<&SharedContextParameter>,
-        line_no: u32,
+        (line_no, column_no): (u32, u32),
     ) -> JsResult<()> {
         let _g = group_log::begin();
 
@@ -563,6 +575,7 @@ impl ScopeFunctions {
             base.self_mode = SelfMode::Todo;
         }
         base.line_no = line_no;
+        base.column_no = column_no;
         base.test_id_for_debugger = test_id_for_debugger;
         // Use the file's default concurrent setting (determined once when entering the file)
         // or the global concurrent flag from the runner
@@ -607,6 +620,10 @@ impl ScopeFunctions {
 
                     filter_buffer.clear();
                     bun_test.collection.filter_buffer.set(filter_buffer);
+                }
+
+                if matches_filter {
+                    matches_filter = matches_location_filter(bun_test, line_no);
                 }
 
                 if !matches_filter {

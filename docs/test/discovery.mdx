@@ -50,6 +50,12 @@ To run a specific file in the test runner, make sure the path starts with `./` o
 bun test ./test/specific-file.test.ts
 ```
 
+To run only the tests declared at a line of a file, add `:<line>`. A line with a `test()` runs that test, and a line with a `describe()` runs every test inside it. The line must be where the call starts; if no test or `describe()` starts at it, `bun test` exits with an error. `--parallel` doesn't support this yet:
+
+```bash terminal icon="terminal"
+bun test ./test/specific-file.test.ts:12
+```
+
 To run a list of files that is too long for a command line (Windows allows 32,767 characters), write one path per line to a file and pass it with `--files-from`. Every line is read as a path, with or without a leading `./`. Further paths may stand on the command line; a filter there is an error:
 
 ```bash terminal icon="terminal"

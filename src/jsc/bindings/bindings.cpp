@@ -7505,8 +7505,10 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] void Bun__JSValue__setPrototypeDirect(JSC::E
     return;
 }
 
-CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int JSC__JSGlobalObject__getCallerLineNumber(JSC::JSGlobalObject* globalObject)
+// The 1-based line and column of the nearest frame of user code, source-mapped, or line 0 if there is none.
+CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int JSC__JSGlobalObject__getCallerLineColumn(JSC::JSGlobalObject* globalObject, [[ZIG_NONNULL]] unsigned int* column)
 {
+    *column = 0;
     auto& vm = JSC::getVM(globalObject);
     JSC::LineColumn lineColumn;
     String sourceURL;
@@ -7529,15 +7531,17 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int JSC__JSGlobalObject__getCallerLine
 
     if (!sourceURL.isEmpty() && lineColumn.line > 0) {
         ZigStackFrame remappedFrame;
-        remappedFrame.position.line_zero_based = lineColumn.line - 1;
-        remappedFrame.position.column_zero_based = lineColumn.column;
+        remappedFrame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+        remappedFrame.position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
         Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
 
-        return remappedFrame.position.line_zero_based + 1;
+        *column = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.column_zero_based).oneBasedInt();
+        return OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
     }
 
+    *column = lineColumn.column;
     return lineColumn.line;
 }
 

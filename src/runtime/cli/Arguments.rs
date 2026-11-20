@@ -952,7 +952,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex."
     ),
     parse_param!(
-        "--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output."
+        "--reporter <STR>...              Test output reporter format. Available: 'junit' and 'ndjson' (require --reporter-outfile), 'dots', or the path or package name of a reporter module. Default: console output."
     ),
     parse_param!(
         "--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter)."
@@ -2197,7 +2197,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         ctx.test_options.reporters.junit_suites = Some(suites);
     }
 
-    if let Some(reporter) = args.option(b"--reporter") {
+    for &reporter in args.options(b"--reporter") {
         if reporter == b"junit" {
             // A `--parallel` worker only collects for the coordinator's file.
             if ctx.test_options.reporter_outfile.is_none() && !args.flag(b"--test-worker") {
@@ -2208,15 +2208,33 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
                 Global::crash();
             }
             ctx.test_options.reporters.junit = true;
+        } else if reporter == b"ndjson" {
+            let Some(outfile) = ctx.test_options.reporter_outfile.clone() else {
+                Output::err_generic(
+                    "--reporter=ndjson requires --reporter-outfile [file] to specify where to write the events",
+                    (),
+                );
+                Global::crash();
+            };
+            ctx.test_options.reporters.ndjson_outfile = Some(outfile);
         } else if reporter == b"dots" || reporter == b"dot" {
             ctx.test_options.reporters.dots = true;
-        } else {
+        } else if reporter.is_empty() {
             Output::err_generic(
-                "unsupported reporter format '{}'. Available options: 'junit' (for XML test results), 'dots'",
-                format_args!("{}", BStr::new(reporter)),
+                "--reporter expects 'junit', 'ndjson', 'dots', or the path or package name of a reporter module",
+                (),
             );
             Global::crash();
+        } else {
+            ctx.test_options.reporters.modules.push(reporter.into());
         }
+    }
+    if ctx.test_options.reporters.junit && ctx.test_options.reporters.ndjson_outfile.is_some() {
+        Output::err_generic(
+            "--reporter=junit and --reporter=ndjson can't both write to --reporter-outfile. Set one of them in bunfig.toml instead",
+            (),
+        );
+        Global::crash();
     }
 
     // Handle --dots flag as shorthand for --reporter=dots

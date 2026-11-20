@@ -756,6 +756,7 @@ if (name === \"\\0never\") (globalThis as any)[name] = require(name);
 use crate::test_runner::environment::Environment;
 use crate::test_runner::jest::{self, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
+use crate::test_runner::test_event_reporter::TestEventReporter;
 use bun_collections::index_sort;
 
 mod bun_test {
@@ -859,6 +860,9 @@ pub(crate) struct TestFailure {
     pub(crate) body: Vec<u8>,
     /// An uncaught exception or unhandled rejection while the test was running, not an error from the test function's own call.
     pub(crate) uncaught: bool,
+    /// The values a failed matcher compared, as `expect()` prints them, from the first error that has them.
+    pub(crate) expected: Option<Vec<u8>>,
+    pub(crate) actual: Option<Vec<u8>>,
 }
 
 /// How a test file is named in the JUnit document: relative to the project
@@ -1034,6 +1038,30 @@ impl JunitReporter {
 }
 
 impl TestFailure {
+    /// `expected` and `actual` of an error that `expect()` threw. A getter that throws leaves the exception for the error printer to show.
+    fn record_compared_values(&mut self, error: jsc::JSValue) {
+        if !error.is_object() {
+            return;
+        }
+        let global = VirtualMachine::get().global();
+        let show = |name: &'static str| -> Option<Vec<u8>> {
+            let value = error
+                .get_own(global, &bun_core::String::static_(name))
+                .ok()??;
+            use core::fmt::Write as _;
+            let mut shown = String::new();
+            write!(shown, "{}", crate::test_runner::expect::show(global, value)).ok()?;
+            let mut stripped = Vec::with_capacity(shown.len());
+            push_stripping_ansi(&mut stripped, shown.as_bytes());
+            Some(stripped)
+        };
+        let (Some(expected), Some(actual)) = (show("expected"), show("actual")) else {
+            return;
+        };
+        self.expected = Some(expected);
+        self.actual = Some(actual);
+    }
+
     /// Returns the failure to report for a result that has no thrown error, like a timeout.
     pub(crate) fn from_result(
         result: bun_test::Execution::Result,
@@ -1069,8 +1097,15 @@ impl TestFailure {
     /// Fold in a `ZigException` that `print_error_instance_body` has already
     /// populated. A test can throw more than once (body, then `afterEach`);
     /// the first name/message win and every stack is appended.
-    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException<'_>) {
+    pub(crate) fn record(
+        slot: &mut Option<TestFailure>,
+        exception: &jsc::ZigException<'_>,
+        error: jsc::JSValue,
+    ) {
         let failure = slot.get_or_insert_default();
+        if failure.expected.is_none() && !error.is_empty() {
+            failure.record_compared_values(error.to_error().unwrap_or(error));
+        }
         let name = exception.name.to_utf8();
         let raw_message = exception.message.to_utf8();
         let mut message = Vec::with_capacity(raw_message.slice().len());
@@ -1777,6 +1812,40 @@ pub(crate) fn react_compiler_filter(
 /// would before exiting; the vendored-node-test runner opts in via
 /// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
 /// completed async work. Off by default: bun suites keep exit-after-tests.
+/// Takes the `:<line>` off each `bun test <file>:<line>` argument whose file exists, so the file is scanned as usual.
+fn take_location_filters(positionals: &mut [Box<[u8]>]) -> Vec<(Box<[u8]>, u32)> {
+    let mut filters = Vec::new();
+    let cwd = crate::cli::check_command::working_directory();
+    // positionals[0] is "test".
+    for positional in positionals.iter_mut().skip(1) {
+        let Some(colon) = strings::last_index_of_char(positional, b':') else {
+            continue;
+        };
+        let Ok(line) = strings::parse_int::<u32>(&positional[colon + 1..], 10) else {
+            continue;
+        };
+        let path = &positional[..colon];
+        if line == 0 || path.is_empty() {
+            continue;
+        }
+        let absolute = bun_core::ZBox::from_vec(
+            resolve_path::join_abs_string::<bun_paths::platform::Auto>(&cwd, &[path]).to_vec(),
+        );
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        // As the runner names the file, with symbolic links resolved.
+        let Ok(real) = bun_sys::realpath(&absolute, &mut buffer) else {
+            continue;
+        };
+        filters.push((Box::<[u8]>::from(real), line));
+        *positional = Box::from(path);
+    }
+    filters
+}
+
+fn elapsed_since_start() -> u64 {
+    u64::try_from(bun::time::nano_timestamp() - bun::start_time()).unwrap_or(0)
+}
+
 fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
@@ -1805,6 +1874,8 @@ pub(crate) struct CommandLineReporter {
 
     pub(crate) reporters: ReportersConfig,
     reporter_outfile: Option<Box<[u8]>>,
+    /// `--reporter=ndjson` and the reporter modules.
+    pub(crate) events: Option<TestEventReporter>,
 
     /// `--timings`: loaded before the run, updated per file, written back under `--update-timings`.
     pub(crate) timings: Cell<Option<Box<Timings>>>,
@@ -2075,6 +2146,9 @@ impl CommandLineReporter {
 
     /// An error outside of any test fails the run, so structured reporters get it as a failed test case of its file.
     pub(crate) fn record_unhandled_error(&self, file_path: &[u8], failure: TestFailure) {
+        if let Some(events) = &self.events {
+            events.unhandled_error(file_path, &failure);
+        }
         let report = TestCaseReport {
             file: junit_file_name(file_path),
             scopes: Vec::new(),
@@ -2195,13 +2269,20 @@ impl CommandLineReporter {
         }
         let formatted_line = &output_buf[initial_length..];
 
-        let report = this.jest.reports_to_junit.then(|| {
+        let report = this.jest.records_test_details.then(|| {
             let failure = sequence.failure.take();
             let earlier = sequence.earlier_failures.take();
             Self::test_case_report(
                 result, buntest, sequence, test_entry, elapsed_ns, failure, earlier,
             )
         });
+        if let (Some(events), Some(report)) = (&this.events, &report) {
+            let test = sequence
+                .test_entry
+                .map(|id| buntest.sequence_entry(id).entry);
+            let attempt = (test_entry.retry_count - sequence.remaining_retry_count.get()) + 1;
+            events.test_end(buntest, test, test_entry, report, attempt);
+        }
         if let Some(worker) = this.worker.get() {
             ParallelRunner::worker_emit_test_done(worker, formatted_line, report.as_ref());
         } else {
@@ -2282,6 +2363,9 @@ impl CommandLineReporter {
             if self.jest.bail == 1 { "" } else { "s" }
         );
         Output::flush();
+        if let Some(events) = &self.events {
+            events.run_end(&self.summary(), elapsed_since_start());
+        }
         self.write_junit_report_if_needed();
         self.write_timings_if_needed();
 
@@ -2731,6 +2815,28 @@ impl TestCommand {
             core::sync::atomic::Ordering::Relaxed,
         );
 
+        let location_filters = take_location_filters(&mut ctx.positionals);
+        if ctx.test_options.parallel > 0 && !location_filters.is_empty() {
+            Output::err_generic(
+                "--parallel does not support running the tests at a line of a file, as in a.test.ts:12, yet",
+                (),
+            );
+            Global::exit(1);
+        }
+        let reporters = &ctx.test_options.reporters;
+        if ctx.test_options.parallel > 0
+            && (reporters.ndjson_outfile.is_some() || !reporters.modules.is_empty())
+        {
+            Output::err_generic(
+                "--parallel does not support --reporter=ndjson or reporter modules yet",
+                (),
+            );
+            Global::exit(1);
+        }
+        let events = TestEventReporter::init(
+            ctx.test_options.reporters.ndjson_outfile.as_deref(),
+            core::mem::take(&mut ctx.test_options.reporters.modules).into_boxed_slice(),
+        );
         let reporter: &'static CommandLineReporter = Box::leak(Box::new(CommandLineReporter {
             jest: TestRunner {
                 default_timeout_ms: ctx.test_options.default_timeout_ms,
@@ -2755,7 +2861,10 @@ impl TestCommand {
                 resets_before_each_test: ctx.test_options.resets_before_each_test,
                 environment: ctx.test_options.environment,
                 coverage_skips_test_files: ctx.test_options.coverage.skip_test_files,
-                reports_to_junit: ctx.test_options.reporters.junit,
+                records_test_details: ctx.test_options.reporters.junit
+                    || events.is_some()
+                    || !location_filters.is_empty(),
+                location_filters,
                 // `test_filter_regex` is an erased `*mut RegularExpression` (see
                 // options_types::context).
                 filter_regex: ctx
@@ -2795,6 +2904,7 @@ impl TestCommand {
                 ),
             },
             reporter_outfile: ctx.test_options.reporter_outfile.take(),
+            events,
             timings: Cell::new(
                 if ctx.test_options.test_worker || ctx.test_options.timings_files.is_empty() {
                     None
@@ -2830,7 +2940,7 @@ impl TestCommand {
             .set(Some(&reporter.jest));
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload.set(ctx.preloads.clone());
-        if reporter.jest.reports_to_junit {
+        if reporter.jest.records_test_details {
             vm.on_print_error_zig_exception
                 .set(Some(bun_test::BunTest::record_printed_error));
         }
@@ -3240,6 +3350,13 @@ impl TestCommand {
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
         let mut ran_parallel = false;
 
+        if let Some(events) = &reporter.events {
+            vm.run_with_api_lock(|| {
+                events.load_modules(vm);
+                events.run_start(test_files);
+            });
+        }
+
         if !test_files.is_empty() {
             // Randomize the order of test files if --randomize flag is set
             if let Some(mut rand) = random_instance {
@@ -3536,10 +3653,10 @@ impl TestCommand {
                 }
 
                 reporter.print_summary();
-            } else {
+            } else if let Some(pattern) = ctx.test_options.test_filter_pattern.as_ref() {
                 pretty_error!(
                     "<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {} file{} (skipping {} test{}) ",
-                    bun_fmt::quote(ctx.test_options.test_filter_pattern.as_ref().unwrap()),
+                    bun_fmt::quote(pattern),
                     summary.files,
                     if summary.files == 1 { "" } else { "s" },
                     summary.skipped_because_label,
@@ -3548,6 +3665,23 @@ impl TestCommand {
                     } else {
                         "s"
                     },
+                );
+                Output::print_start_end(ctx.start_time, bun::time::nano_timestamp());
+            } else {
+                let top_level_dir = FileSystem::get().top_level_dir();
+                pretty_error!("<red>error<r><d>:<r> no test or describe() is declared at");
+                for (i, (path, line)) in reporter.jest.location_filters.iter().enumerate() {
+                    pretty_error!(
+                        "{} <b>{}:{}<r>",
+                        if i == 0 { "" } else { "," },
+                        bstr::BStr::new(resolve_path::relative(top_level_dir, path)),
+                        line
+                    );
+                }
+                pretty_error!(
+                    ". Searched {} file{} ",
+                    summary.files,
+                    if summary.files == 1 { "" } else { "s" }
                 );
                 Output::print_start_end(ctx.start_time, bun::time::nano_timestamp());
             }
@@ -3673,6 +3807,9 @@ impl TestCommand {
         }
         Output::flush();
 
+        if let Some(events) = &reporter.events {
+            vm.run_with_api_lock(|| events.run_end(&reporter.summary(), elapsed_since_start()));
+        }
         reporter.write_junit_report_if_needed();
         if !test_files.is_empty() || ctx.test_options.shard.is_some() {
             reporter.write_timings_if_needed();
@@ -3693,6 +3830,10 @@ impl TestCommand {
             || !write_snapshots_success
             || !write_coverage_success
             || reporter.jest.unhandled_errors_between_tests.get() > 0
+            || reporter
+                .events
+                .as_ref()
+                .is_some_and(|events| events.failed.get())
         {
             vm.exit_handler.exit_code.set(1);
         }
@@ -3928,6 +4069,11 @@ impl TestCommand {
             .set(jest::on_unhandled_rejection::on_unhandled_rejection);
         vm.is_running_vitest_entry.set(false);
         let mut environment = Environment::of_file(file_path, reporter.jest.environment);
+        let file_started_ns = bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns();
+        let mut any_failed_to_load = false;
+        if let Some(events) = &reporter.events {
+            events.file_start(file_path);
+        }
 
         while repeat_index < repeat_count {
             // Clear the module cache before re-running (except for the first run)
@@ -4108,6 +4254,7 @@ impl TestCommand {
             }
 
             if failed_to_load {
+                any_failed_to_load = true;
                 reporter.update_summary(|summary| summary.fail += 1);
                 // It has no test to list under "N tests failed:".
                 if !reporter.reporters.dots && !reporter.reporters.only_failures {
@@ -4168,6 +4315,11 @@ impl TestCommand {
         reporter.with_junit(|junit| {
             let _ = junit.end_file(Some(junit_file_name(file_path)), None);
         });
+        if let Some(events) = &reporter.events {
+            let elapsed_ns =
+                bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns() - file_started_ns;
+            events.file_end(file_path, elapsed_ns, any_failed_to_load);
+        }
         Ok(())
     }
 }

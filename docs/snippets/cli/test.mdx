@@ -81,12 +81,13 @@ bun test <patterns>
 ### Reporting
 
 <ParamField path="--reporter" type="string">
-  Test output reporter format. Available: <code>junit</code> (requires --reporter-outfile), <code>dots</code>. Default:
-  console output.
+  Test output reporter format, repeatable. Available: <code>junit</code> and <code>ndjson</code> (require
+  --reporter-outfile), <code>dots</code>, or the path or package name of a{" "}
+  <a href="/test/reporters#custom-reporters">reporter module</a>. Default: console output
 </ParamField>
 
 <ParamField path="--reporter-outfile" type="string">
-  Output file path for the reporter format (required with --reporter=junit)
+  Output file path for the reporter format (required with --reporter=junit and --reporter=ndjson)
 </ParamField>
 
 <ParamField path="--reporter-junit-suites" type="string">

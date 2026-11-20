@@ -13,6 +13,8 @@ import {
   type Matchers,
   mock,
   type Mock,
+  type Reporter,
+  type ReporterEvents,
   spyOn,
   test,
   type TestOptions,
@@ -789,3 +791,15 @@ describe.todo(class Foo {});
 // @ts-expect-error
 describe.skip({ name: "label" });
 describe.skip(class Foo {}, () => {});
+
+const reporter = {
+  onTestEnd(event) {
+    expectType<ReporterEvents.Status>(event.status);
+    expectType<string | undefined>(event.errors[0]?.expected);
+    expectType<string | null>(event.parentId);
+  },
+  async onRunEnd(event) {
+    expectType<number>(event.pass);
+  },
+} satisfies Reporter;
+void reporter;

@@ -179,15 +179,18 @@ describe("node:test", () => {
     20_000,
   );
 
-  test.concurrent("should not kill a process when a timer fires in an after() hook with an Infinity timeout", async () => {
-    const { exitCode, stdout, stderr } = await runTests(["43-hook-own-timeout-child.js"], {}, ["--timeout", "300"]);
-    expect(stdout).toContain("child: SIGKILL");
-    expect(stderr).not.toContain("dangling process");
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      stderr: expect.stringContaining("0 fail"),
-    });
-  });
+  test.concurrent(
+    "should not kill a process when a timer fires in an after() hook with an Infinity timeout",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["43-hook-own-timeout-child.js"], {}, ["--timeout", "300"]);
+      expect(stdout).toContain("child: SIGKILL");
+      expect(stderr).not.toContain("dangling process");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+  );
 
   test("should not leak file-level beforeEach hooks across files in one process", async () => {
     const { exitCode, stderr } = await runTests(["14-root-hooks-a.js", "14-root-hooks-b.js"]);

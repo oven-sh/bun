@@ -2565,15 +2565,12 @@ function bunTestHookTimeout(timeout: number | undefined) {
 
 function registerOwnerHook(kind: "beforeAll" | "afterAll", hook: Hook, owner: TestNode, fallbackMessage: string) {
   const register: RegisterHook = bunTest()[kind];
-  register(
-    (done: Done) => {
-      Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
-        () => done(),
-        err => done(err ?? new Error(fallbackMessage)),
-      );
-    },
-    bunTestHookTimeout(hook.timeout),
-  );
+  register((done: Done) => {
+    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
+      () => done(),
+      err => done(err ?? new Error(fallbackMessage)),
+    );
+  }, bunTestHookTimeout(hook.timeout));
 }
 
 function currentCollectionParent(): TestNode {

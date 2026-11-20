@@ -1875,6 +1875,7 @@ describe.skipIf(!isLinux).concurrent("Bun.write() to a pipe that is full", () =>
         read += fs.readSync(fifo.reader, page);
       } catch (error) {
         if (error.code !== "EAGAIN") throw error;
+        await Bun.sleep(1);
       }
     }
     await untilWatched(fifo.writer);

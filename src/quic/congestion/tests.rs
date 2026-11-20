@@ -777,12 +777,29 @@ fn trial_that_cannot_be_judged_is_called_off() {
 }
 
 #[test]
+fn trial_that_is_interrupted_is_called_off() {
+    let (mut trial, mut now) = (Trial::default(), START);
+    judge(&mut trial, &mut now, 1024, 0, true);
+    assert_eq!(judge(&mut trial, &mut now, 2000, 0, true), 1);
+    trial.update(now, &Feedback::default(), None, 0);
+    assert_eq!(judge(&mut trial, &mut now, 2000, 0, true), 0);
+}
+
+#[test]
 fn pause_ends_a_trial() {
-    let mut periods = Periods::new();
-    assert_eq!(periods.run(1, |_| (110, 10)), [4]);
-    (periods.pacer).on_idle_restart(periods.now + millis(151), false);
-    (0..10).for_each(|_| periods.pacer.on_start_settled(true));
-    assert_eq!(periods.run(1, |_| (110, 10)), [8]);
+    for lost in [10, 90] {
+        let mut periods = Periods::new();
+        assert_eq!(periods.run(1, |_| (110, 10)), [4]);
+        let feedback = Feedback {
+            lost: 3 * lost * SEGMENT,
+            ..Feedback::default()
+        };
+        (periods.pacer).try_longer_bursts(periods.now, &feedback, Some(false));
+        (periods.pacer).on_idle_restart(periods.now + millis(151), false);
+        (0..10).for_each(|_| periods.pacer.on_start_settled(true));
+        (periods.pacer).set_rate(16 * 1024, millis(1), &Rtt::default());
+        assert_eq!(periods.pacer.quantum(), 8192);
+    }
 }
 
 #[test]

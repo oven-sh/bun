@@ -749,7 +749,7 @@ assert.throws(
     }, { code: 'ERR_INVALID_ARG_TYPE', message: /The "key\.key" property must be of type object/ });
     assert.throws(() => {
       crypto.createSign('sha256').sign({ key, format: 'jwk' });
-    }, { code: 'ERR_INVALID_ARG_TYPE', message: /The "key\.key" property must be of type object/ });
+    }, { code: 'ERR_INVALID_ARG_TYPE', message: /The "privateKey\.key" property must be of type object/ });
   }
 }
 

@@ -2117,6 +2117,8 @@ pub(crate) struct ExpectMatcherUtils {
     pub(crate) testers_file: Cell<u32>,
     pub(crate) serializers_of_file: bun_jsc::JsCell<Vec<bool>>,
     pub(crate) serializers_file: Cell<u32>,
+    /// The two values of the testers' last no, until the diff of a failed match takes them. Only compared with: nothing keeps them alive.
+    pub(crate) refused_by_testers: Cell<[JSValue; 2]>,
 }
 
 impl ExpectMatcherUtils {

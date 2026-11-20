@@ -258,6 +258,7 @@ CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__get(JSC::EncodedJSValue rows,
 CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__getIndex(JSC::EncodedJSValue rows, uint32_t place, uint32_t index, uint32_t* childPlace);
 CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__forSerializers(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue rows, uint32_t place);
 CPP_DECL void Bun__JestMatchedRows__ofFailedEquals(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue received, JSC::EncodedJSValue expected, JSC::EncodedJSValue* rows);
+CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__ofComparisonAlone(JSC::EncodedJSValue rows);
 
 #pragma mark - JSC::VM
 

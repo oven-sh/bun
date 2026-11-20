@@ -677,6 +677,7 @@ static bool mayBeAsymmetricMatcher(JSValue value)
 }
 
 extern "C" int8_t Expect__runEqualityTesters(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue a, JSC::EncodedJSValue b);
+extern "C" void Expect__pairThatTestersRefused(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue* a, JSC::EncodedJSValue* b);
 
 static ALWAYS_INLINE bool hasEqualityTesters(JSGlobalObject* globalObject)
 {
@@ -890,7 +891,16 @@ static NEVER_INLINE std::optional<bool> domNodesDequal(JSGlobalObject* globalObj
 namespace Bun {
 bool oneAnswersByAsymmetricMatch(JSGlobalObject* globalObject, JSValue a, JSValue b)
 {
+    DisallowVMEntry noUserCode(globalObject->vm());
     return oneMayHaveAsymmetricMatchMethod(globalObject, a, b) && !asymmetricMatchMethod(globalObject, a) != !asymmetricMatchMethod(globalObject, b);
+}
+
+std::pair<JSValue, JSValue> pairThatTestersRefused(JSGlobalObject* globalObject)
+{
+    std::pair<EncodedJSValue, EncodedJSValue> refused {};
+    if (hasEqualityTesters(globalObject))
+        Expect__pairThatTestersRefused(globalObject, &refused.first, &refused.second);
+    return { JSValue::decode(refused.first), JSValue::decode(refused.second) };
 }
 
 std::optional<bool> askMatcherOfDiff(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* matcher, JSValue value)

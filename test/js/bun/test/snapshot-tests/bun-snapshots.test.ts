@@ -1,4 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "path";
 
 test("it will create a snapshot file if it doesn't exist", () => {
   expect({ a: { b: { c: false } }, c: 2, jkfje: 99238 }).toMatchSnapshot({ a: { b: { c: expect.any(Boolean) } } });
@@ -29,6 +31,28 @@ test("ArrayBuffer values are serialized like typed arrays", () => {
         4,
         5,
       ],
+    }
+  `);
+});
+
+test("a module namespace is serialized without an export that is not set yet", async () => {
+  // The module throws halfway through its body, so `later` stays in its temporal dead zone.
+  using dir = tempDir("snapshot-namespace-unset-export", {
+    "stops.mjs": `
+      import * as self from "./stops.mjs";
+      export function hoisted() {}
+      (() => {
+        throw Object.assign(new Error("stops here"), { namespace: self });
+      })();
+      export const later = 1;
+    `,
+  });
+  const namespace = await import(join(String(dir), "stops.mjs")).catch(error => error.namespace);
+  expect({ namespace }).toMatchInlineSnapshot(`
+    {
+      "namespace": Module Module {
+        "hoisted": [Function: hoisted],
+      },
     }
   `);
 });

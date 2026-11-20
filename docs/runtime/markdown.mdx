@@ -67,7 +67,7 @@ All available options:
 | `permissiveAtxHeaders` | `false` | ATX headers without space after `#`                         |
 | `noIndentedCodeBlocks` | `false` | Disable indented code blocks                                |
 | `noHtmlBlocks`         | `false` | Disable HTML blocks                                         |
-| `noHtmlSpans`          | `false` | Disable inline HTML                                         |
+| `noHtmlSpans`          | `false` | Treat inline HTML as text. See [Inline HTML](#inline-html)  |
 | `tagFilter`            | `false` | GFM tag filter for disallowed HTML tags                     |
 
 #### Autolinks
@@ -96,6 +96,31 @@ Bun.markdown.html("## Hello World", { headings: true });
 // Enable only heading IDs (no autolink)
 Bun.markdown.html("## Hello World", { headings: { ids: true } });
 // '<h2 id="hello-world">Hello World</h2>\n'
+```
+
+#### Inline HTML
+
+With `noHtmlSpans: true`, Bun treats inline HTML as text. `Bun.markdown.html()` escapes a tag such as `<b>`.
+
+An autolink in angle brackets, such as `<https://example.com>` or `<me@example.com>`, is a link with and without the option.
+
+```ts
+Bun.markdown.html("<b>*raw*</b> and <https://example.com>", { noHtmlSpans: true });
+// '<p>&lt;b&gt;<em>raw</em>&lt;/b&gt; and <a href="https://example.com">https://example.com</a></p>\n'
+```
+
+A tag that starts a line can open an HTML block. Set `noHtmlBlocks` too to escape those tags.
+
+`noHtmlSpans` does not filter the scheme of a link. `[x](javascript:alert(1))` and `<javascript:alert(1)>` are links with and without the option.
+
+`Bun.markdown.render()` and `Bun.markdown.react()` do not escape text, with or without the option. In `render()` an inline tag reaches the `text` callback. In `react()` it is a string child. To build HTML with `render()`, escape in the `text` callback:
+
+```ts
+Bun.markdown.render("<img src=x onerror=alert(1)> *hi*", {
+  emphasis: children => `<em>${children}</em>`,
+  text: text => Bun.escapeHTML(text),
+});
+// '&lt;img src=x onerror=alert(1)&gt; <em>hi</em>'
 ```
 
 ---

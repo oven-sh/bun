@@ -23,6 +23,12 @@
 #include <netinet/ip.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#if defined(__linux__)
+#include <netdb.h>
+#include <stdio.h>
+#include <sys/utsname.h>
+#include <unistd.h>
+#endif
 #else
 #include <ws2tcpip.h>
 #endif
@@ -113,6 +119,10 @@ struct us_quic_socket_context_s : us_allocated_t {
      * before the UDP fd disappears (otherwise abrupt stop just black-holes
      * the peer until idle timeout). */
     struct us_quic_socket_s *conns;
+    /* A listener of this context pins its connections, see "a port that servers share". */
+    int shares_port;
+    /* A listener that pins leaves the port when the running UDP dispatch is over. */
+    int leave_port_pending;
 
     void (*on_open)(us_quic_socket_t *);
     void (*on_hsk_done)(us_quic_socket_t *, int);
@@ -136,6 +146,9 @@ struct us_quic_listen_socket_s : us_allocated_t {
     /* us_quic_listen_socket_close ran while `processing` was set;
      * us_quic_engine_leave closes the fd. */
     int close_pending;
+    /* Each connection gets a pin. `udp` can then close before the connections do. */
+    int pins_conns;
+    int ipv6_only;
 };
 
 struct us_quic_socket_s : us_allocated_t {
@@ -148,6 +161,8 @@ struct us_quic_socket_s : us_allocated_t {
     int reject_unauthorized;
     int going_away;
     us_unique_ptr<char, us_free> hostname;
+    /* Server only: the UDP socket connected to this peer, see "a port that servers share". */
+    struct us_udp_socket_t *pin;
     /* ext follows */
 };
 
@@ -354,7 +369,17 @@ static int us_quic_sendmmsg(int fd, struct mmsghdr *mm, unsigned k) {
  *     attributable to that connection.
  *   - With EAGAIN, lsquic pauses the whole engine until on_drain. The socket
  *     is still writable, so on_drain fires at once, the send fails the same
- *     way, and the loop spins while every other peer on the engine waits. */
+ *     way, and the loop spins while every other peer on the engine waits.
+ *
+ * A datagram with no socket left to carry it is counted as sent too. With an
+ * error, lsquic offers that datagram first on every retry, and the connections
+ * behind it that still have a socket (their pins) never send. */
+static struct us_udp_socket_t *us_quic_out_socket(const struct lsquic_out_spec *spec) {
+    us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) spec->peer_ctx;
+    if (ls->udp) return ls->udp;
+    return spec->conn_ctx ? ((us_quic_socket_t *) spec->conn_ctx)->pin : NULL;
+}
+
 static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *specs, unsigned n) {
     (void) out_ctx;
     unsigned sent = 0;
@@ -364,10 +389,13 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
     struct mmsghdr mm[BATCH];
     while (sent < n) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
-        if (!ls->udp) { errno = EBADF; break; }
-        int fd = us_poll_fd((struct us_poll_t *) ls->udp);
+        struct us_udp_socket_t *out = us_quic_out_socket(&specs[sent]);
+        if (!out) { sent++; continue; }
+        int fd = us_poll_fd((struct us_poll_t *) out);
         unsigned k = 0;
-        while (k < BATCH && sent + k < n && specs[sent + k].peer_ctx == (void *) ls) {
+        /* One listener is one socket. Once it closed, one connection is one socket. */
+        while (k < BATCH && sent + k < n && specs[sent + k].peer_ctx == (void *) ls
+            && (ls->udp || specs[sent + k].conn_ctx == specs[sent].conn_ctx)) {
             const struct lsquic_out_spec *sp = &specs[sent + k];
             memset(&mm[k], 0, sizeof(mm[k]));
             mm[k].msg_hdr.msg_name = (void *) sp->dest_sa;
@@ -398,9 +426,9 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
     }
 #else
     for (; sent < n; sent++) {
-        us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
-        if (!ls->udp) { errno = EBADF; break; }
-        LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *) ls->udp);
+        struct us_udp_socket_t *out = us_quic_out_socket(&specs[sent]);
+        if (!out) continue;
+        LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *) out);
         if (us_quic_send_one(fd, &specs[sent]) < 0) {
             int stop = us_quic_send_would_block(errno) || errno == EMSGSIZE;
             /* One retry, as above. If it fails the same way, specs[sent] is dropped. */
@@ -412,16 +440,13 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
 #endif
 
     /* EMSGSIZE goes to lsquic as it is. Everything else that stops the loop is
-     * backpressure, or a UDP socket that is already closed: report EAGAIN, so
-     * the engine pauses and resumes from on_drain → send_unsent_packets (or
-     * from its one-second failsafe when there is no socket left to poll). */
+     * backpressure: report EAGAIN, so the engine pauses and resumes from
+     * on_drain → send_unsent_packets. */
     if (sent < n && errno != EMSGSIZE) {
         errno = EAGAIN;
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
-        if (ls->udp) {
-            us_poll_change((struct us_poll_t *) ls->udp, ls->ctx->loop,
-                LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-        }
+        us_poll_change((struct us_poll_t *) us_quic_out_socket(&specs[sent]), ls->ctx->loop,
+            LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
     return (int) sent;
 }
@@ -464,6 +489,278 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
     closed->next = std::move(ctx->closed_listeners);
     ctx->closed_listeners = std::move(closed);
 }
+
+/* ───── a port that servers share (Linux SO_REUSEPORT) ─────
+ *
+ * Linux picks the socket for each datagram to a reuseport group from a hash of
+ * the 4-tuple over the group's sockets. So a server that joins or leaves the
+ * port moves established QUIC connections to a server that does not know
+ * them. A connected socket that matches the 4-tuple wins before the group is
+ * asked, so a server that shares its port gives each connection one: its pin.
+ * The pin receives. The listener sends, in one batch, until it closes.
+ *
+ * A server that is alone on its port has no pins. Only one bind of a port
+ * succeeds without SO_REUSEPORT, so the first server binds without it and sets
+ * it afterwards. A later server sees that bind fail, sends us_quic_join_hello
+ * to the port and joins. The hello makes the first server pin: the connections
+ * it has, and each new one. A server that started beside another pins from the
+ * start. A server that pins closes its listener when it stops gracefully, and
+ * the kernel gives every new connection to the servers that remain. */
+
+static void us_quic_unpin(us_quic_socket_t *qs) {
+    if (qs->pin) us_udp_socket_close(std::exchange(qs->pin, nullptr));
+}
+
+#if defined(__linux__)
+
+static void us_quic_set_dontfrag(struct us_udp_socket_t *udp);
+
+/* Shorter than a QUIC packet, and a short header without the fixed bit: a
+ * server that does not look for it drops it. */
+static const unsigned char us_quic_join_hello[16] = { 0x00, 'b', 'u', 'n', '-', 'h', '3', '-', 'j', 'o', 'i', 'n', '-', 'v', '1', 0 };
+
+static int us_quic_same_address(const struct sockaddr *a, const struct sockaddr *b) {
+    if (a->sa_family != b->sa_family) return 0;
+    if (a->sa_family == AF_INET6) {
+        const struct sockaddr_in6 *a6 = (const struct sockaddr_in6 *) a, *b6 = (const struct sockaddr_in6 *) b;
+        return a6->sin6_port == b6->sin6_port && !memcmp(&a6->sin6_addr, &b6->sin6_addr, sizeof(a6->sin6_addr));
+    }
+    const struct sockaddr_in *a4 = (const struct sockaddr_in *) a, *b4 = (const struct sockaddr_in *) b;
+    return a4->sin_port == b4->sin_port && a4->sin_addr.s_addr == b4->sin_addr.s_addr;
+}
+
+static int us_quic_is_wildcard(const struct sockaddr_storage *local) {
+    if (local->ss_family == AF_INET6) return IN6_IS_ADDR_UNSPECIFIED(&((const struct sockaddr_in6 *) local)->sin6_addr);
+    return ((const struct sockaddr_in *) local)->sin_addr.s_addr == htonl(INADDR_ANY);
+}
+
+/* Before 5.4 the group's pick could win over a connected socket (Linux acdcecc61285). */
+static int us_quic_kernel_prefers_connected(void) {
+    static int known = -1;
+    if (known < 0) {
+        struct utsname name;
+        char *end = NULL;
+        long major = uname(&name) == 0 ? strtol(name.release, &end, 10) : 0;
+        long minor = end && *end == '.' ? strtol(end + 1, NULL, 10) : 0;
+        known = major > 5 || (major == 5 && minor >= 4);
+    }
+    return known;
+}
+
+static void us_quic_pin_on_data(struct us_udp_socket_t *u, void *recvbuf, int npackets) {
+    us_quic_socket_t *qs = (us_quic_socket_t *) us_udp_socket_user(u);
+    struct us_udp_packet_buffer_t *buf = (struct us_udp_packet_buffer_t *) recvbuf;
+    us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) lsquic_conn_get_peer_ctx(qs->conn, NULL);
+    const struct sockaddr *local, *conn_peer;
+    lsquic_conn_get_sockaddr(qs->conn, &local, &conn_peer);
+    for (int i = 0; i < npackets; i++) {
+        struct sockaddr *peer = (struct sockaddr *) us_udp_packet_buffer_peer(buf, i);
+        /* Between its bind() and its connect() the pin took every datagram to
+         * the port. One that starts a connection here would start it on a
+         * server the kernel sends none of the later ones to. Its sender
+         * retransmits it, and that one goes where the others go. */
+        if (!us_quic_same_address(peer, conn_peer)) continue;
+        lsquic_engine_packet_in(qs->ctx->engine.get(),
+            (unsigned char *) us_udp_packet_buffer_payload(buf, i),
+            (size_t) us_udp_packet_buffer_payload_length(buf, i),
+            (struct sockaddr *) &ls->local, peer, ls, 0);
+    }
+}
+
+static void us_quic_pin_on_drain(struct us_udp_socket_t *u) {
+    us_quic_send_unsent(((us_quic_socket_t *) us_udp_socket_user(u))->ctx);
+}
+
+static void us_quic_pin_on_close(struct us_udp_socket_t *u) {
+    (void) u;
+}
+
+/* An ICMP error for a connected socket fails its next recvmmsg once. With this
+ * callback the loop reports it here and keeps the socket. lsquic's timers end
+ * a connection whose peer is gone. */
+static void us_quic_pin_on_recv_error(struct us_udp_socket_t *u, int err, int is_errqueue) {
+    (void) u; (void) err; (void) is_errqueue;
+}
+
+/* A socket bound as `ls` is, with SO_REUSEADDR, which the listener has too. */
+static us_fd_t us_quic_socket_beside(us_quic_listen_socket_t *ls, int join_group) {
+    int err = 0;
+    us_fd_t fd{bsd_create_socket(ls->local.ss_family, SOCK_DGRAM, 0, &err)};
+    if (!fd) return {};
+    const int on = 1;
+    setsockopt(fd.get(), SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    if (join_group) setsockopt(fd.get(), SOL_SOCKET, SO_REUSEPORT, &on, sizeof(on));
+    if (ls->local.ss_family == AF_INET6)
+        setsockopt(fd.get(), IPPROTO_IPV6, IPV6_V6ONLY, &ls->ipv6_only, sizeof(ls->ipv6_only));
+    if (bind(fd.get(), (struct sockaddr *) &ls->local, sa_len((struct sockaddr *) &ls->local)) != 0) {
+        /* The port is below 1024 and the process gave up the right to bind it: no connection can get a pin. */
+        if (errno == EACCES) ls->pins_conns = 0;
+        return {};
+    }
+    return fd;
+}
+
+/* The pin is not in the listener's group. A connected socket in the group
+ * takes the new flows that hash to it away from the listener after it, and
+ * each one that joins or leaves moves flows like a server does. */
+static void us_quic_pin(us_quic_listen_socket_t *ls, us_quic_socket_t *qs) {
+    if (qs->pin || !ls->udp) return;
+    const struct sockaddr *local, *peer;
+    lsquic_conn_get_sockaddr(qs->conn, &local, &peer);
+    us_fd_t fd = us_quic_socket_beside(ls, 0);
+    if (!fd || connect(fd.get(), peer, sa_len(peer)) != 0) return;
+    int err = 0;
+    struct us_udp_socket_t *pin = us_create_udp_socket_from_fd(ls->ctx->loop,
+        us_quic_pin_on_data, us_quic_pin_on_drain, us_quic_pin_on_close, us_quic_pin_on_recv_error,
+        fd.get(), 0, &err, qs);
+    if (!pin) return;
+    (void) fd.release();
+    us_poll_change((struct us_poll_t *) pin, ls->ctx->loop, LIBUS_SOCKET_READABLE);
+    us_quic_set_dontfrag(pin);
+    qs->pin = pin;
+}
+
+/* Returns 1 if each connection of `ls` has a pin now. */
+static int us_quic_pin_all(us_quic_listen_socket_t *ls) {
+    int all = 1;
+    for (us_quic_socket_t *qs = ls->ctx->conns; qs; qs = qs->next) {
+        if (lsquic_conn_get_peer_ctx(qs->conn, NULL) != ls) continue;
+        if (ls->pins_conns) us_quic_pin(ls, qs);
+        if (!qs->pin) all = 0;
+    }
+    return all;
+}
+
+static void us_quic_unpin_all(us_quic_listen_socket_t *ls) {
+    for (us_quic_socket_t *qs = ls->ctx->conns; qs; qs = qs->next) {
+        if (qs->pin && lsquic_conn_get_peer_ctx(qs->conn, NULL) == ls) us_quic_unpin(qs);
+    }
+}
+
+/* Graceful stop. New connections go to the servers that remain on the port. */
+static void us_quic_leave_port(us_quic_socket_context_t *ctx) {
+    for (us_quic_listen_socket_t *ls = ctx->listeners.get(); ls; ) {
+        us_quic_listen_socket_t *next = ls->next.get();
+        if (ls->pins_conns && us_quic_pin_all(ls)) us_udp_socket_close(ls->udp);
+        ls = next;
+    }
+}
+
+/* A listener with its own address shares one hash chain with its pins, and at
+ * the first group member in the chain the kernel returns the group's pick. It
+ * only goes on to the pins behind that member if the group had a connected
+ * member at some time (reuseport_has_conns, udp4_lib_lookup2). This is that
+ * member. A wildcard listener does not need it: connect() gives its pins their
+ * local address, and the kernel looks at sockets with a local address first. */
+static void us_quic_group_had_connected_member(us_quic_listen_socket_t *ls) {
+    if (us_quic_is_wildcard(&ls->local)) return;
+    us_fd_t fd = us_quic_socket_beside(ls, 1);
+    if (fd) connect(fd.get(), (struct sockaddr *) &ls->local, sa_len((struct sockaddr *) &ls->local));
+}
+
+static void us_quic_start_pinning(us_quic_listen_socket_t *ls) {
+    us_quic_socket_context_t *ctx = ls->ctx;
+    ls->pins_conns = 1;
+    ctx->shares_port = 1;
+    ls->udp->on_data = us_quic_udp_on_data;
+    us_quic_group_had_connected_member(ls);
+    us_quic_pin_all(ls);
+    /* The graceful stop came before the other server. */
+    if (ctx->closing) ctx->leave_port_pending = 1;
+}
+
+static int us_quic_sent_from_this_host(const struct sockaddr *peer, const struct sockaddr_storage *local) {
+    if (peer->sa_family == AF_INET6) {
+        const struct in6_addr *a = &((const struct sockaddr_in6 *) peer)->sin6_addr;
+        if (IN6_IS_ADDR_LOOPBACK(a)) return 1;
+        if (IN6_IS_ADDR_V4MAPPED(a)) return a->s6_addr[12] == 127;
+        return local->ss_family == AF_INET6 && IN6_ARE_ADDR_EQUAL(a, &((const struct sockaddr_in6 *) local)->sin6_addr);
+    }
+    in_addr_t a = ((const struct sockaddr_in *) peer)->sin_addr.s_addr;
+    return (ntohl(a) >> 24) == 127
+        || (local->ss_family == AF_INET && a == ((const struct sockaddr_in *) local)->sin_addr.s_addr);
+}
+
+/* on_data of the server that bound the port alone. */
+static void us_quic_udp_on_data_alone(struct us_udp_socket_t *u, void *recvbuf, int npackets) {
+    us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) us_udp_socket_user(u);
+    struct us_udp_packet_buffer_t *buf = (struct us_udp_packet_buffer_t *) recvbuf;
+    int joined = 0;
+    for (int i = 0; i < npackets && !joined; i++) {
+        joined = us_udp_packet_buffer_payload_length(buf, i) == (int) sizeof(us_quic_join_hello)
+            && !memcmp(us_udp_packet_buffer_payload(buf, i), us_quic_join_hello, sizeof(us_quic_join_hello))
+            && us_quic_sent_from_this_host((struct sockaddr *) us_udp_packet_buffer_peer(buf, i), &ls->local);
+    }
+    us_quic_udp_on_data(u, recvbuf, npackets);
+    if (joined) us_quic_start_pinning(ls);
+}
+
+static void us_quic_send_join_hello(const char *host, int port) {
+    struct addrinfo hints, *result = NULL;
+    memset(&hints, 0, sizeof(hints));
+    /* Not AI_PASSIVE: with no host the hello goes to this host. */
+    hints.ai_socktype = SOCK_DGRAM;
+    char port_string[16];
+    snprintf(port_string, sizeof(port_string), "%d", port);
+    if (getaddrinfo(host, port_string, &hints, &result) != 0) return;
+    for (struct addrinfo *a = result; a; a = a->ai_next) {
+        int err = 0;
+        us_fd_t fd{bsd_create_socket(a->ai_family, SOCK_DGRAM, 0, &err)};
+        if (fd) sendto(fd.get(), us_quic_join_hello, sizeof(us_quic_join_hello), 0, a->ai_addr, a->ai_addrlen);
+    }
+    freeaddrinfo(result);
+}
+
+/* The first server sets SO_REUSEPORT one system call after its bind. */
+#define US_QUIC_JOIN_BIND_TRIES 8
+#define US_QUIC_JOIN_BIND_WAIT_US 250
+
+static struct us_udp_socket_t *us_quic_listen_on_shared_port(us_quic_socket_context_t *ctx,
+    us_quic_listen_socket_t *ls, const char *host, int port, int flags, int *alone)
+{
+    int err = 0;
+    struct us_udp_socket_t *udp = us_create_udp_socket(ctx->loop,
+        us_quic_udp_on_data_alone, us_quic_udp_on_drain, us_quic_udp_on_close, NULL,
+        host, (unsigned short) port, flags & ~(LIBUS_LISTEN_REUSE_PORT | LIBUS_LISTEN_REUSE_ADDR), &err, ls);
+    if (udp) {
+        const int on = 1;
+        LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *) udp);
+        setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &on, sizeof(on));
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+        *alone = 1;
+        return udp;
+    }
+    if (err != EADDRINUSE) return NULL;
+    *alone = 0;
+    us_quic_send_join_hello(host, port);
+    for (int tries = 0; tries < US_QUIC_JOIN_BIND_TRIES; tries++) {
+        udp = us_create_udp_socket(ctx->loop,
+            us_quic_udp_on_data, us_quic_udp_on_drain, us_quic_udp_on_close, NULL,
+            host, (unsigned short) port, flags, &err, ls);
+        if (udp || err != EADDRINUSE) break;
+        usleep(US_QUIC_JOIN_BIND_WAIT_US);
+    }
+    return udp;
+}
+
+static void us_quic_on_path_switch(lsquic_conn_t *conn, int validated, int is_preferred,
+    const struct sockaddr *new_local, const struct sockaddr *new_peer,
+    const struct sockaddr *old_local, const struct sockaddr *old_peer)
+{
+    (void) validated; (void) is_preferred; (void) new_local; (void) old_local; (void) old_peer;
+    us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
+    if (!qs || !qs->pin) return;
+    /* The client has a new address, and the pin follows it. */
+    if (connect(us_poll_fd((struct us_poll_t *) qs->pin), new_peer, sa_len(new_peer)) != 0) us_quic_unpin(qs);
+}
+
+#else
+
+static void us_quic_pin(us_quic_listen_socket_t *, us_quic_socket_t *) {}
+static void us_quic_unpin_all(us_quic_listen_socket_t *) {}
+static void us_quic_leave_port(us_quic_socket_context_t *) {}
+
+#endif
 
 /* ───── SSL ───── */
 
@@ -659,6 +956,10 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     us_internal_enable_sweep_timer(ctx->loop);
     qs->next = ctx->conns;
     ctx->conns = qs.get();
+    if (ctx->shares_port) {
+        us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) lsquic_conn_get_peer_ctx(conn, NULL);
+        if (ls->pins_conns) us_quic_pin(ls, qs.get());
+    }
     if (ctx->on_open) ctx->on_open(qs.get());
     return (lsquic_conn_ctx_t *) qs.release();
 }
@@ -669,6 +970,7 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     us_quic_socket_context_t *ctx = qs->ctx;
     if (ctx->on_close) ctx->on_close(qs.get());
     lsquic_conn_set_ctx(conn, NULL);
+    us_quic_unpin(qs.get());
     for (us_quic_socket_t **pp = &ctx->conns; *pp; pp = &(*pp)->next) {
         if (*pp == qs.get()) { *pp = qs->next; break; }
     }
@@ -797,6 +1099,9 @@ static const struct lsquic_stream_if us_quic_stream_if = {
     .on_close = us_quic_on_close,
     .on_hsk_done = us_quic_on_hsk_done,
     .on_reset = us_quic_on_reset,
+#if defined(__linux__)
+    .on_path_switch = us_quic_on_path_switch,
+#endif
 };
 
 static const struct lsquic_hset_if us_quic_hset_if = {
@@ -933,6 +1238,8 @@ static void us_quic_socket_context_finish_shutdown(us_quic_socket_context_t *ctx
     /* Nothing to drain — release the UDP fd now so the loop can exit. */
     if (ctx->conn_count == 0) {
         while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
+    } else if (ctx->shares_port) {
+        us_quic_leave_port(ctx);
     }
 }
 
@@ -1011,8 +1318,16 @@ static void us_quic_release_pending_port(struct us_loop_t *loop, int port) {
             if (!ls->close_pending || us_quic_listen_socket_port(ls) != port) { ls = ls->next.get(); continue; }
             ls->close_pending = 0;
             us_udp_socket_close(ls->udp);
+            us_quic_unpin_all(ls);
             /* udp_on_close unlinked `ls`; restart from the head. */
             ls = ctx->listeners.get();
+        }
+        if (!ctx->shares_port) continue;
+        /* After a graceful stop the pins are what holds the port. */
+        for (us_quic_listen_socket_t *ls = ctx->closed_listeners.get(); ls; ls = ls->next.get()) {
+            if (!ls->close_pending || us_quic_listen_socket_port(ls) != port) continue;
+            ls->close_pending = 0;
+            us_quic_unpin_all(ls);
         }
     }
 }
@@ -1028,8 +1343,15 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
     auto ls = us_quic_new<us_quic_listen_socket_t>();
     if (!ls) return NULL;
     ls->ctx = ctx;
+    ls->ipv6_only = (flags & LIBUS_SOCKET_IPV6_ONLY) != 0;
 
     int err = 0;
+#if defined(__linux__)
+    int alone = 1;
+    if ((flags & LIBUS_LISTEN_REUSE_PORT) && us_quic_kernel_prefers_connected()) {
+        ls->udp = us_quic_listen_on_shared_port(ctx, ls.get(), host, port, flags, &alone);
+    } else
+#endif
     ls->udp = us_create_udp_socket(ctx->loop,
         us_quic_udp_on_data, us_quic_udp_on_drain, us_quic_udp_on_close, NULL,
         host, (unsigned short) port, flags, &err, ls.get());
@@ -1039,6 +1361,9 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
     /* Record actual bound address — packet_in needs sa_local. */
     socklen_t sl = sizeof(ls->local);
     getsockname(us_poll_fd((struct us_poll_t *) ls->udp), (struct sockaddr *) &ls->local, &sl);
+#if defined(__linux__)
+    if (!alone) us_quic_start_pinning(ls.get());
+#endif
 
     ls->next = std::move(ctx->listeners);
     ctx->listeners = std::move(ls);
@@ -1053,10 +1378,16 @@ static void us_quic_listen_socket_finish_close(us_quic_listen_socket_t *ls) {
     }
     /* on_conn_closed releases every fd when the last conn of a closing ctx goes. */
     if (ls->udp) us_udp_socket_close(ls->udp);
+    if (ls->pins_conns) {
+        /* A connection that is still closing holds the port through its pin. */
+        us_quic_unpin_all(ls);
+        ls->pins_conns = 0;
+    }
 }
 
 void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
-    if (!ls || !ls->udp) return;
+    /* After a graceful stop, a listener that pins has connections and no fd. */
+    if (!ls || (!ls->udp && !ls->pins_conns)) return;
     /* Send CONNECTION_CLOSE on every live conn before the fd disappears;
      * cooldown alone only schedules GOAWAY, which leaves peers waiting on
      * in-flight streams that this abrupt close will never serve.
@@ -1092,6 +1423,16 @@ static void us_quic_finish_pending_closes(us_quic_socket_context_t *ctx) {
         us_quic_listen_socket_finish_close(ls);
         /* udp_on_close unlinked `ls`; restart from the head. */
         ls = ctx->listeners.get();
+    }
+    if (!ctx->shares_port) return;
+    for (us_quic_listen_socket_t *ls = ctx->closed_listeners.get(); ls; ls = ls->next.get()) {
+        if (!ls->close_pending) continue;
+        ls->close_pending = 0;
+        us_quic_listen_socket_finish_close(ls);
+    }
+    if (ctx->leave_port_pending) {
+        ctx->leave_port_pending = 0;
+        us_quic_leave_port(ctx);
     }
 }
 

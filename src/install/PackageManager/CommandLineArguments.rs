@@ -90,7 +90,7 @@ const RUNTIME_FLAGS_PARAM: ParamType = clap::param!(
 );
 
 const SHARED_HEAD_PARAMS: &[ParamType] = &[
-    clap::param!("-c, --config <STR>?                   Specify path to config file (bunfig.toml)"),
+    clap::param!("-c, --config <STR>                    Specify path to config file (bunfig.toml)"),
     clap::param!("-y, --yarn                            Write a yarn.lock file (yarn v1)"),
 ];
 

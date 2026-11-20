@@ -488,7 +488,7 @@ Bun lazily resolves and loads each plugin and uses them to bundle your routes.
 
 ## Inline Environment Variables
 
-Bun can replace `process.env.*` references in your frontend JavaScript and TypeScript with their values at build time. Configure the `env` option in your `bunfig.toml`:
+Bun can replace `process.env.*` and `import.meta.env.*` references in your frontend JavaScript and TypeScript with their values at build time. Configure the `env` option in your `bunfig.toml`:
 
 ```toml title="bunfig.toml" icon="settings"
 [serve.static]
@@ -498,11 +498,11 @@ env = "PUBLIC_*"  # only inline env vars starting with PUBLIC_ (recommended)
 ```
 
 <Note>
-  Bun only replaces literal `process.env.FOO` references, not `import.meta.env` or indirect access like `const env =
-  process.env; env.FOO`.
+  Bun only replaces literal `process.env.FOO` and `import.meta.env.FOO` references, not indirect access like `const
+  env = process.env; env.FOO`.
 
-If an environment variable is not set, you may see runtime errors like `ReferenceError: process
-  is not defined` in the browser.
+If an environment variable is not set, `process.env.FOO` stays in the code and you may see runtime errors like
+`ReferenceError: process is not defined` in the browser. `import.meta.env.FOO` reads `undefined` instead.
 
 </Note>
 

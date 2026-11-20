@@ -54,6 +54,26 @@ for (let backend of ["api", "cli"] as const) {
       },
     });
 
+    // `import.meta.env.FOO` is the documented alias of `process.env.FOO` and inlines the same way.
+    itBundled("env/inline system import.meta.env", {
+      env: {
+        [systemKey]: systemValue,
+      },
+      backend: backend,
+      dotenv: "inline",
+      files: {
+        "/a.js": `
+        console.log(import.meta.env.${systemKey});
+      `,
+      },
+      run: {
+        env: {
+          [systemKey]: "the run-time value, which inlining should have replaced",
+        },
+        stdout: systemValue + "\n",
+      },
+    });
+
     // Test disable mode - no env vars are inlined
     itBundled("env/disable", {
       env: {
@@ -97,6 +117,30 @@ for (let backend of ["api", "cli"] as const) {
             PUBLIC_BAR: "BAD_BAR",
           },
           stdout: "public_value\nanother_public\nundefined\n",
+        },
+      });
+
+    // `import.meta.env.FOO` is the documented alias of `process.env.FOO`, so the prefix inlines both spellings.
+    if (backend === "cli")
+      itBundled("env/import-meta-env-pattern-matching", {
+        env: {
+          PUBLIC_FOO: "public_value",
+          PRIVATE_SECRET: "secret_value",
+        },
+        dotenv: "PUBLIC_*",
+        backend: backend,
+        files: {
+          "/a.js": `
+        console.log(import.meta.env.PUBLIC_FOO);
+        console.log(process.env.PUBLIC_FOO);
+        console.log(import.meta.env.PRIVATE_SECRET);
+      `,
+        },
+        run: {
+          env: {
+            PUBLIC_FOO: "BAD_FOO",
+          },
+          stdout: "public_value\npublic_value\nundefined\n",
         },
       });
 

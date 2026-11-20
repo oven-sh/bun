@@ -262,7 +262,7 @@ Then, reference TailwindCSS in your HTML with a `<link>` tag, an `@import` in CS
 
 ## Inline environment variables
 
-Bun can replace `process.env.*` references in your JavaScript and TypeScript with their actual values at build time. Use this to inject configuration like API URLs or feature flags into your frontend code.
+Bun can replace `process.env.*` and `import.meta.env.*` references in your JavaScript and TypeScript with their actual values at build time. Use this to inject configuration like API URLs or feature flags into your frontend code.
 
 ### Dev server (runtime)
 
@@ -276,11 +276,12 @@ env = "PUBLIC_*"  # only inline env vars starting with PUBLIC_ (recommended)
 ```
 
 <Note>
-  Inlining only works with literal `process.env.FOO` references, not `import.meta.env` or indirect access like `const env =
-  process.env; env.FOO`.
+  Inlining only works with literal `process.env.FOO` and `import.meta.env.FOO` references, not indirect access like
+  `const env = process.env; env.FOO`.
 
-If an environment variable is not set, you may see runtime errors like `ReferenceError: process
-  is not defined` in the browser.
+If an environment variable is not set, `process.env.FOO` stays in the code and you may see runtime errors like
+`ReferenceError: process is not defined` in the browser. In a page the dev server or `Bun.serve` bundles,
+`import.meta.env.FOO` reads `undefined` instead. `bun build` leaves it in the code.
 
 </Note>
 

@@ -925,7 +925,7 @@ pub(crate) fn defines_from_transform_options(
     };
 
     let mut user_defines: defines::RawDefines = defines::RawDefines::default();
-    user_defines.reserve(input_keys.len() + 4);
+    user_defines.reserve(input_keys.len() + 6);
     for (i, key) in input_keys.iter().enumerate() {
         user_defines.insert(key.as_ref(), input_values[i].clone());
     }
@@ -991,8 +991,19 @@ pub(crate) fn defines_from_transform_options(
             Box::from(b"\"development\"".as_slice())
         };
 
-        user_defines.get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?;
-        user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?;
+        let node_env: Box<[u8]> = user_defines
+            .get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?
+            .value_ptr
+            .clone();
+        let bun_env: Box<[u8]> = user_defines
+            .get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?
+            .value_ptr
+            .clone();
+        // A browser has no `import.meta.env`. On the Bun runtime it is the live `process.env`.
+        if target == Target::Browser {
+            user_defines.get_or_put_value(b"import.meta.env.NODE_ENV", node_env)?;
+            user_defines.get_or_put_value(b"import.meta.env.BUN_ENV", bun_env)?;
+        }
 
         // Automatically set `process.browser` to `true` for browsers and false for node+js
         // This enables some extra dead code elimination

@@ -652,7 +652,7 @@ Controls how environment variables are handled during bundling. Internally, this
 
 #### env: "inline"
 
-Injects environment variables into the bundled output by converting `process.env.FOO` references to string literals containing the actual environment variable values.
+Injects environment variables into the bundled output by converting `process.env.FOO` and `import.meta.env.FOO` references to string literals containing the actual environment variable values.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -689,7 +689,7 @@ console.log("123");
 
 #### env: "PUBLIC\_\*" (prefix)
 
-Inlines environment variables matching the given prefix (the part before the `*` character), replacing `process.env.FOO` with the actual environment variable value. Use a prefix to inline public values, like public-facing URLs or client-side tokens, without injecting private credentials into output bundles.
+Inlines environment variables matching the given prefix (the part before the `*` character), replacing `process.env.FOO` and `import.meta.env.FOO` with the actual environment variable value. Use a prefix to inline public values, like public-facing URLs or client-side tokens, without injecting private credentials into output bundles.
 
 <Tabs>
   <Tab title="JavaScript">

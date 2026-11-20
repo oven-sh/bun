@@ -4,16 +4,7 @@ pub use crate::posix::S;
 
 #[repr(u16)]
 #[derive(
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    Hash,
-    Debug,
-    strum::IntoStaticStr,
-    strum::EnumString,
-    strum::FromRepr,
-    enum_map::Enum,
+    Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::FromRepr, enum_map::Enum,
 )]
 pub enum SystemErrno {
     SUCCESS = 0,

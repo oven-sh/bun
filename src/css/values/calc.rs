@@ -12,8 +12,7 @@ use crate::values::protocol::{IsCompatible, ToCss, TryOpTo};
 
 use core::cmp::Ordering;
 
-#[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
-#[strum(serialize_all = "lowercase")]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum CalcUnit {
     Abs,
     Acos,

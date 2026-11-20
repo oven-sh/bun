@@ -20,16 +20,11 @@ pub struct Binding {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Tag {
-    // strum serialize = snake_case tag names (JSON/snapshot compat).
-    #[strum(serialize = "b_identifier")]
     BIdentifier,
-    #[strum(serialize = "b_array")]
     BArray,
-    #[strum(serialize = "b_object")]
     BObject,
-    #[strum(serialize = "b_missing")]
     BMissing,
 }
 

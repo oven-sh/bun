@@ -436,7 +436,6 @@ dependencies = [
  "bstr",
  "bun_clap_macros",
  "bun_core",
- "strum",
  "thiserror",
 ]
 
@@ -1749,7 +1748,6 @@ dependencies = [
  "bun_http_types",
  "bun_ptr",
  "bun_sha_hmac",
- "strum",
  "thiserror",
 ]
 
@@ -2056,7 +2054,6 @@ dependencies = [
  "const_format",
  "libc",
  "scopeguard",
- "strum",
  "thiserror",
 ]
 

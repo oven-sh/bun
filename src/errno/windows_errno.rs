@@ -388,7 +388,6 @@ for_each_uv_errno! { __errno_enum_with_uv_tail {
     Hash,
     Debug,
     strum::IntoStaticStr,
-    strum::EnumString,
     strum::FromRepr,
     enum_map::Enum,
 )]

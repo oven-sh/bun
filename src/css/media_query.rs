@@ -125,14 +125,6 @@ pub struct MediaList<'bump> {
     pub media_queries: Vec<MediaQuery<'bump>, ArenaPtr<'bump>>,
 }
 
-impl Default for MediaList<'_> {
-    fn default() -> Self {
-        Self {
-            media_queries: Vec::new_in(ArenaPtr::global()),
-        }
-    }
-}
-
 /// A [media query](https://drafts.csswg.org/mediaqueries/#media).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MediaQuery<'bump> {

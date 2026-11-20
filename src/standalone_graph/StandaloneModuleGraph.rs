@@ -2330,7 +2330,7 @@ pub enum CompileError {
     Reason(CompileErrorReason),
 }
 
-#[derive(Clone, Copy, strum::IntoStaticStr)]
+#[derive(Clone, Copy)]
 pub enum CompileErrorReason {
     NoEntryPoint,
     NoOutputFiles,

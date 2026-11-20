@@ -2645,7 +2645,9 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
         // optional dependencies under `dependencies`.
         b"dependencies" => {
             let optional = install_view(json, b"optionalDependencies", bump);
-            pairs.retain(|(name, _)| !optional.iter().any(|(other, _)| other == name));
+            pairs.retain(|(name, _)| {
+                (optional.binary_search_by(|(other, _)| other.cmp(name))).is_err()
+            });
         }
         _ => {}
     }
@@ -2706,14 +2708,14 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
     };
     // When a key appears twice, which value wins depends on the tool that reads the file.
     if let Some(object) = new.file.data.e_object() {
-        let keys: Vec<&[u8]> = object
+        let keys = object
             .properties
             .slice()
             .iter()
-            .filter_map(|p| p.key.as_ref()?.as_string(&bump))
-            .collect();
-        for (i, key) in keys.iter().enumerate() {
-            if keys[..i].contains(key) {
+            .filter_map(|p| p.key.as_ref()?.as_string(&bump));
+        let mut seen = BTreeSet::new();
+        for key in keys {
+            if !seen.insert(key) {
                 notes.push(note!(
                     colors,
                     "<b>{}<r> listed more than once in package.json",
@@ -2763,9 +2765,13 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
         let is_range = |version: &[u8]| {
             dependency::Tag::infer(version) == dependency::Tag::Npm && !version.starts_with(b"npm:")
         };
+        // Of several entries with one name the first counts, so it is inserted last.
+        let mut old_versions = BTreeMap::new();
+        old_versions.extend(o.iter().rev().map(|(name, ver)| (name, ver)));
+        let new_names: BTreeSet<_> = n.iter().map(|(name, _)| name).collect();
         let mut bumps: Vec<String> = Vec::new();
         for (name, ver) in &n {
-            match o.iter().find(|(on, _)| on == name) {
+            match old_versions.get(name) {
                 None => notes.push(note!(
                     colors,
                     "{} added: <b>{}<r>@{}",
@@ -2775,7 +2781,7 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
                         (BStr::new(ver)).to_string(),
                     ],
                 )),
-                Some((_, ov)) if ov != ver => {
+                Some(&ov) if ov != ver => {
                     let list = if is_range(ov) && is_range(ver) {
                         &mut bumps
                     } else {
@@ -2807,7 +2813,7 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
         }
         notes.append(&mut bumps);
         for (name, _) in &o {
-            if !n.iter().any(|(nn, _)| nn == name) {
+            if !new_names.contains(name) {
                 notes.push(note!(
                     colors,
                     "{} removed: <b>{}<r>",

@@ -9,6 +9,7 @@ use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 
 use crate as jsc;
+use crate::js_value::PropertyOrder;
 use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult};
 use bun_collections::HashMap;
@@ -4337,6 +4338,11 @@ pub mod formatter {
                         && (self.always_newline_scope || self.good_time_for_a_new_line());
                     let single_line = self.single_line;
                     let global_this = self.global_this;
+                    let order = if self.ordered_properties {
+                        PropertyOrder::Sorted
+                    } else {
+                        PropertyOrder::Insertion
+                    };
                     let mut iter = PropertyIteratorCtx::<C> {
                         formatter: self,
                         writer: writer_,
@@ -4347,6 +4353,7 @@ pub mod formatter {
                     };
                     value.for_each_property_non_indexed(
                         global_this,
+                        order,
                         (&raw mut iter).cast::<c_void>(),
                         PropertyIteratorCtx::<C>::for_each,
                     )?;

@@ -15,15 +15,12 @@
 
 #![warn(unused_must_use)]
 
-use core::cell::Cell;
-use core::ffi::c_void;
 use core::marker::PhantomData;
-use core::ptr::NonNull;
 
 pub use bun_jsc::{
-    ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator, JSGlobalObject,
-    JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
-    Strong, StrongOptional, bun_string_jsc,
+    AutoFlusher, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator,
+    JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult,
+    MarkedArgumentBuffer, StringJsc, Strong, StrongOptional, bun_string_jsc,
 };
 
 pub use bun_jsc::IntegerRange;
@@ -287,30 +284,15 @@ pub use bun_event_loop::EventLoopTimer::{
 };
 
 /// A connection that writes what one turn of JS queued on it in one flush, at the end of the turn.
-pub(crate) trait AutoFlush: Sized {
+pub(crate) trait AutoFlush: bun_jsc::AutoFlush {
     fn vm(&self) -> &VirtualMachine;
-    fn auto_flush_registered(&self) -> &Cell<bool>;
+    fn auto_flusher(&self) -> &AutoFlusher;
     /// Connected, without backpressure, and with something to write.
     fn can_flush(&self) -> bool;
-    /// Returns what it left in `auto_flush_registered`: whether to run again after the next turn.
-    fn on_auto_flush(&self) -> bool;
 
     fn register_auto_flusher(&self) {
-        extern "C" fn run<T: AutoFlush>(ctx: *mut c_void) -> bool {
-            let this = NonNull::new(ctx.cast::<T>()).expect("auto-flush ctx non-null");
-            bun_ptr::ParentRef::from(this).on_auto_flush()
-        }
-        if !self.auto_flush_registered().get() && self.can_flush() {
-            let tasks = &self.vm().event_loop().deferred_tasks;
-            tasks.post_task(Some(NonNull::from(self).cast()), run::<Self>);
-            self.auto_flush_registered().set(true);
-        }
-    }
-
-    fn unregister_auto_flusher(&self) {
-        if self.auto_flush_registered().replace(false) {
-            let tasks = &self.vm().event_loop().deferred_tasks;
-            tasks.unregister_task(Some(NonNull::from(self).cast()));
+        if !self.auto_flusher().is_registered() && self.can_flush() {
+            AutoFlusher::register(self, self.vm());
         }
     }
 }

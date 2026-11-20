@@ -18,9 +18,9 @@ use bun_uws as uws;
 use crate::generated_bindgen::sink::{
     ArrayBufferSinkStartOptions, SinkPath, js_ReadableSinkController as js,
 };
+use crate::webcore::ByteListPool;
 use crate::webcore::blob::Any as AnyBlob;
 use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
-use crate::webcore::{AutoFlusher, ByteListPool};
 
 // (`Log`: the name without it is the type's.)
 bun_core::declare_scope!(HTTPServerWritableLog, visible);
@@ -938,7 +938,7 @@ pub struct HTTPServerWritable<const SSL: bool> {
     pub(crate) on_first_write: Option<fn(Option<*mut c_void>)>,
     pub ctx: Option<*mut c_void>,
 
-    pub(crate) auto_flusher: AutoFlusher,
+    auto_flusher: bun_jsc::AutoFlusher,
 }
 
 impl<const SSL: bool> Drop for HTTPServerWritable<SSL> {
@@ -949,7 +949,16 @@ impl<const SSL: bool> Drop for HTTPServerWritable<SSL> {
         self.pending.run();
         // Still checked out if `finalize` has not run (`assign_to_stream` failed).
         self.release_pooled_buffer();
-        self.unregister_auto_flusher();
+    }
+}
+
+bun_core::intrusive_field!([const SSL: bool] HTTPServerWritable<SSL>, auto_flusher: bun_jsc::AutoFlusher);
+
+// SAFETY: boxed before the first write.
+unsafe impl<const SSL: bool> bun_jsc::AutoFlush for HTTPServerWritable<SSL> {
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: fn contract.
+        unsafe { (*this).on_auto_flush() }
     }
 }
 
@@ -980,7 +989,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             ended_response: false,
             on_first_write: Some(on_first_write),
             ctx: Some(ctx),
-            auto_flusher: AutoFlusher::default(),
+            auto_flusher: Default::default(),
         }
     }
 
@@ -1146,19 +1155,19 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     }
 
     fn send(&mut self, buf: &[u8]) -> bool {
-        self.unregister_auto_flusher();
+        self.auto_flusher.unregister();
         self.send_without_auto_flusher(buf)
     }
 
     /// `self.send(&self.readable_slice()[from..])` without laundering a slice
     /// of `self.buffer` through `from_raw_parts` to dodge the `&mut self`
     /// borrow. Mirrors `send_without_auto_flusher` but re-slices `self.buffer`
-    /// after each `&mut self` step; `unregister_auto_flusher` and the
+    /// after each `&mut self` step; `AutoFlusher::unregister` and the
     /// `on_first_write` callback (RequestContext.renderMetadata) only touch
     /// uWS response state, never `self.buffer`/`self.offset`, so the re-slice
     /// observes the same bytes the laundered slice would have.
     fn send_readable(&mut self, from: usize) -> bool {
-        self.unregister_auto_flusher();
+        self.auto_flusher.unregister();
         self.send_readable_without_auto_flusher(from)
     }
 
@@ -1407,7 +1416,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
         bun_core::scoped_log!(HTTPServerWritableLog, "flushFromJS({})", wait);
-        self.unregister_auto_flusher();
+        self.auto_flusher.unregister();
 
         if !wait {
             return self.flush_from_js_no_wait();
@@ -1580,7 +1589,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
     pub(crate) fn mark_done(&mut self) {
         self.set_done();
-        self.unregister_auto_flusher();
+        self.auto_flusher.unregister();
     }
 
     /// `controller.close()`: flush and end like `controller.end()`; the owner awaits any parked `pending_flush`.
@@ -1649,7 +1658,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     pub(crate) fn revoke_response(&mut self) {
         self.state = HTTPServerWritableState::Aborted;
         self.res = None;
-        self.unregister_auto_flusher();
+        self.auto_flusher.unregister();
     }
 
     /// Takes `*mut Self`, not `&mut self`: closing the signal runs the controller's
@@ -1677,44 +1686,32 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         source.abort(CommonAbortReason::ConnectionClosed);
     }
 
-    fn unregister_auto_flusher(&mut self) {
-        if self.auto_flusher.registered.get() {
-            let vm = self.global_this.bun_vm();
-            AutoFlusher::unregister_deferred_microtask_with_type_unchecked::<Self>(self, vm);
-        }
-    }
-
     fn register_auto_flusher(&mut self) {
         let Some(res) = self.any_res() else { return };
         // Reset per-enqueue so a long stream of
         // sub-highWaterMark writes between auto-flushes still bumps the idle
         // timeout.
         res.reset_timeout();
-        if !self.auto_flusher.registered.get() {
-            let vm = self.global_this.bun_vm();
-            AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, vm);
+        if !self.auto_flusher.is_registered() {
+            bun_jsc::AutoFlusher::register(self, self.global_this.bun_vm());
         }
     }
 
-    pub(crate) fn on_auto_flush(&mut self) -> bool {
+    fn on_auto_flush(&mut self) -> bool {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAutoFlush()");
         if self.is_done() {
-            self.auto_flusher.registered.set(false);
             return false;
         }
 
         let readable_len = self.readable_slice().len();
 
         if self.has_backpressure_and_is_try_end() || readable_len == 0 {
-            self.auto_flusher.registered.set(false);
             return false;
         }
 
         if !self.send_readable_without_auto_flusher(0) {
-            self.auto_flusher.registered.set(true);
             return true;
         }
-        self.auto_flusher.registered.set(false);
 
         if self.requested_end {
             debug_assert!(self.ended_response);
@@ -1747,7 +1744,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     pub fn finalize(&mut self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "finalize()");
         if !self.is_done() {
-            self.unregister_auto_flusher();
+            self.auto_flusher.unregister();
             if let Some(res) = self.any_res() {
                 // The body is finished; drop the drain callback so the owning
                 // RequestContext is not re-entered for a sink that will never

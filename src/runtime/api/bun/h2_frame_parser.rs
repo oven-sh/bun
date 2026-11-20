@@ -6,9 +6,7 @@
 )]
 
 use core::cell::{Cell, OnceCell, Ref, RefCell};
-use core::ffi::c_void;
 use core::mem::ManuallyDrop;
-use core::ptr::NonNull;
 use std::borrow::Cow;
 
 use crate::api::h2::connection::HeaderFields;
@@ -1076,8 +1074,7 @@ pub(crate) struct H2FrameParser {
     tx_tracker: Cell<TxFrameTracker>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
 
-    /// Held while the deferred flush is registered.
-    auto_flush_ref: Cell<Option<RefPtr<Self>>>,
+    auto_flusher: bun_jsc::AutoFlusher<RefPtr<Self>>,
     padding_strategy: Cell<PaddingStrategy>,
 
     // ---- from-scratch rewrite engine (src/runtime/api/bun/h2) ----
@@ -2585,24 +2582,13 @@ impl H2FrameParser {
     }
 
     fn register_auto_flush(&self) {
-        if self.auto_flush_ref.with_taken(|r| r.is_some()) {
-            return;
+        if !self.auto_flusher.is_registered() {
+            let vm = self.global_this.bun_vm();
+            bun_jsc::AutoFlusher::register_holding(self, vm, || self.ref_guard());
         }
-        self.auto_flush_ref.set(Some(self.ref_guard()));
-        let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let found_existing = self
-            .global_this
-            .bun_vm()
-            .event_loop()
-            .deferred_tasks
-            .post_task(ctx, on_auto_flush_trampoline);
-        debug_assert!(!found_existing);
     }
 
     fn unregister_auto_flush(&self) {
-        if self.auto_flush_ref.with_taken(|r| r.is_none()) {
-            return;
-        }
         // A write that drains the buffer must not cancel the deferred tick that a pending session
         // error, the close of a rejected transport or an eviction is waiting on; on_auto_flush
         // releases the registration.
@@ -2612,15 +2598,7 @@ impl H2FrameParser {
         {
             return;
         }
-        let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let removed = self
-            .global_this
-            .bun_vm()
-            .event_loop()
-            .deferred_tasks
-            .unregister_task(ctx);
-        debug_assert!(removed);
-        self.auto_flush_ref.set(None);
+        self.auto_flusher.unregister();
     }
 
     /// The `write_maybe_corked` in `write_to_socket` returned a fatal
@@ -2689,7 +2667,7 @@ impl H2FrameParser {
         handler.close(bun_uws::CloseCode::Normal);
     }
 
-    pub(crate) fn on_auto_flush(&self) -> bool {
+    fn on_auto_flush(&self) -> bool {
         // An empty write buffer here means a later write in the same flush()
         // cycle already drained the bytes the failing send left behind (racy
         // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered, and
@@ -2698,12 +2676,6 @@ impl H2FrameParser {
             self.transport_write_fatal.set(false);
         }
         if self.transport_write_fatal.get() {
-            // Returning `false` makes DeferredTaskQueue::run remove the entry
-            // itself, so only the registration's ref is released here. It is
-            // cleared before the close so the teardown paths the close re-enters
-            // (detach -> unregister_auto_flush) see an unregistered flusher and
-            // early-return instead of removing a map entry run() still owns.
-            self.auto_flush_ref.set(None);
             self.close_transport_after_fatal_write();
             return false;
         }
@@ -2719,10 +2691,6 @@ impl H2FrameParser {
             );
             let _ = self.flush();
             self.pending_header_compression_error.set(false);
-            // Terminal: release the registration's ref so the retained
-            // parser ref does not persist. Returning false lets run() drop the
-            // map entry it owns.
-            self.auto_flush_ref.set(None);
             return false;
         }
         if self.pending_stream_eviction.replace(false)
@@ -2967,12 +2935,14 @@ impl H2FrameParser {
     }
 }
 
-/// # Safety
-/// `ctx` is the live parser that registered this task.
-unsafe extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
-    // SAFETY: fn contract.
-    let parser = unsafe { RefPtr::init_ref(ctx.cast::<H2FrameParser>()) };
-    parser.on_auto_flush()
+bun_core::intrusive_field!(H2FrameParser, auto_flusher: bun_jsc::AutoFlusher<RefPtr<H2FrameParser>>);
+
+// SAFETY: refcounted on the heap.
+unsafe impl bun_jsc::AutoFlush<RefPtr<Self>> for H2FrameParser {
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: fn contract.
+        unsafe { RefPtr::init_ref(this) }.on_auto_flush()
+    }
 }
 
 // (`JsValueArrayPush` / `VmReportExtraMemory` shims removed —
@@ -6807,7 +6777,7 @@ impl H2FrameParser {
             engine_frames_received: Cell::new(0),
             engine_frames_sent: Cell::new(0),
             tx_tracker: Cell::new(TxFrameTracker::default()),
-            auto_flush_ref: Cell::new(None),
+            auto_flusher: Default::default(),
             padding_strategy: Cell::new(PaddingStrategy::None),
             engine: core::cell::RefCell::new(None),
             rewrite_tail: Cell::new(Vec::new()),

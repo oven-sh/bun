@@ -4,7 +4,6 @@
 //! and ship a `Result` back to the bundler thread.
 
 use core::ffi::c_void;
-use core::mem::offset_of;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::Error as AnyError;
@@ -72,7 +71,7 @@ pub enum ContentsOrFd<'a> {
 // ParseTask
 // ───────────────────────────────────────────────────────────────────────────
 
-/// `'a` is the bundle's arena lifetime. A worker sees a `ParseTask<'static>` (see `task_callback`).
+/// `'a` is the bundle's arena lifetime. A worker sees a `ParseTask<'static>` (see `into_batch`).
 pub struct ParseTask<'a> {
     pub(crate) path: Fs::Path<'a>,
     pub(crate) secondary_path_for_commonjs_interop: Option<Fs::Path<'a>>,
@@ -83,10 +82,6 @@ pub struct ParseTask<'a> {
     pub(crate) jsx: options::jsx::Pragma,
     pub(crate) source_index: Index,
     pub task: ThreadPoolLib::Task,
-
-    // Split this into a different task so that we don't accidentally run the
-    // tasks for io on the threads that are meant for parsing.
-    pub(crate) io_task: ThreadPoolLib::Task,
 
     // Used for splitting up the work between the io and parse steps.
     pub(crate) stage: ParseTaskStage<'a>,
@@ -126,6 +121,7 @@ pub struct Result<'a> {
     /// returned source code by the plugin. After `value`, which may borrow it.
     pub(crate) external: ExternalFreeFunction,
 }
+bun_core::intrusive_field!(['a] Result<'a>, task: AnyTaskWithExtraContext);
 impl BoxedTask for Result<'static> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2ParseTaskResult;
     /// The VM that runs the bundle is going: the result goes to nobody.
@@ -276,14 +272,7 @@ impl<'a> ParseTask<'a> {
             secondary_path_for_commonjs_interop: None,
             external_free_function: ExternalFreeFunction::NONE,
             loader: None,
-            task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
-                callback: task_callback,
-            },
-            io_task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
-                callback: io_task_callback,
-            },
+            task: ThreadPoolLib::Task::default(),
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
             on_load_decides_html_import: false,
@@ -310,14 +299,7 @@ impl Default for ParseTask<'_> {
             loader: None,
             jsx: Default::default(),
             source_index: Index::INVALID,
-            task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
-                callback: task_callback,
-            },
-            io_task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
-                callback: io_task_callback,
-            },
+            task: ThreadPoolLib::Task::default(),
             stage: ParseTaskStage::NeedsSourceCode,
             known_target: options::Target::default(),
             module_type: options::ModuleType::Unknown,
@@ -332,36 +314,31 @@ impl Default for ParseTask<'_> {
     }
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// taskCallback / ioTaskCallback — thread-pool entry points. Safe-fn wrappers
-// (coerce to the `ThreadPoolLib::Task.callback` field type at the struct-init
-// sites); bodies dispatch to `parse_worker::run_from_thread_pool`.
-// ───────────────────────────────────────────────────────────────────────────
+bun_threading::owned_task!(ParseTask<'static>, task);
 
-/// # Safety
-/// `task` is the `io_task` field of the box that `ThreadPool::schedule` gave to the pool.
-unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
-    // SAFETY: fn contract. `'static`: see `task_callback`.
-    let parse_task = unsafe {
-        bun_core::heap::take(bun_core::from_field_ptr!(ParseTask<'static>, io_task, task))
-    };
-    // Teardown waits for this callback (`wait_for_io_tasks`), so the bundle is live.
-    let ctx = parse_task.ctx.expect("ParseTask.ctx unset");
-    let pool: *const crate::ThreadPool = ctx.graph.pool();
-    parse_worker::run_from_thread_pool(parse_task);
-    // SAFETY: `pool` scheduled this task, and this is the last access to the bundle.
-    unsafe { crate::ThreadPool::finish_io_task(pool) };
+impl ParseTask<'_> {
+    pub(crate) fn into_batch(self: Box<Self>) -> ThreadPoolLib::Batch {
+        // SAFETY: the bundle waits for every task it scheduled (`pending_items`) before it frees
+        // anything `'a` covers, and the result goes back to that same bundle.
+        ThreadPoolLib::Batch::from_owned(unsafe {
+            core::mem::transmute::<Box<Self>, Box<ParseTask<'static>>>(self)
+        })
+    }
 }
 
-/// # Safety
-/// `task` is the `task` field of the box that `ThreadPool::schedule_with` gave to the pool.
-unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
-    // SAFETY: fn contract. Erasing the bundle's `'a` to `'static` is sound because the bundle
-    // waits for every task it scheduled (`pending_items`) before it frees anything
-    // `'a` covers, and the result goes back to that same bundle.
-    let parse_task =
-        unsafe { bun_core::heap::take(bun_core::from_field_ptr!(ParseTask<'static>, task, task)) };
-    parse_worker::run_from_thread_pool(parse_task);
+impl ParseTask<'static> {
+    fn run_owned(self: Box<Self>) {
+        let ctx = self.ctx.expect("ParseTask.ctx unset");
+        let pool = ctx.graph.pool();
+        if pool.io_pool_for(&self).is_none() {
+            return parse_worker::run_from_thread_pool(self);
+        }
+        // Teardown waits for this call (`wait_for_io_tasks`), so the bundle is live.
+        let pool: *const crate::ThreadPool = pool;
+        parse_worker::run_from_thread_pool(self);
+        // SAFETY: `pool` scheduled this task, and this is the last access to the bundle.
+        unsafe { crate::ThreadPool::finish_io_task(pool) };
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -584,14 +561,7 @@ pub mod parse_worker {
             // defaults:
             secondary_path_for_commonjs_interop: None,
             external_free_function: ExternalFreeFunction::NONE,
-            task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
-                callback: task_callback,
-            },
-            io_task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
-                callback: io_task_callback,
-            },
+            task: ThreadPoolLib::Task::default(),
             stage: ParseTaskStage::NeedsSourceCode,
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
@@ -2667,22 +2637,10 @@ pub mod parse_worker {
                 poster.post_boxed(result);
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
-                // SAFETY: `task` is the field at that offset; `on_complete_mini` takes the box back.
-                unsafe {
-                    mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
-                        bun_core::heap::into_raw(result),
-                        on_complete_mini,
-                        offset_of!(Result, task),
-                    );
-                }
+                // SAFETY: the bundle is running the loop.
+                unsafe { mini.enqueue_boxed(result, BundleV2::on_parse_task_complete) };
             }
         }
-    }
-
-    fn on_complete_mini(result: *mut Result<'static>, ctx: *mut BundleV2<'static>) {
-        // SAFETY: the box that `post_result` queued, and the bundle that is running the loop.
-        let (bundle, result) = unsafe { (&mut *ctx, bun_core::heap::take(result)) };
-        BundleV2::on_parse_task_complete(result, bundle);
     }
 
     /// # Safety

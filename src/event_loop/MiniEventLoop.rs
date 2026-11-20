@@ -262,6 +262,22 @@ impl MiniEventLoop {
         // SAFETY: `task` was just initialized above and is non-null (derived from `ctx`).
         self.enqueue_task_concurrent(unsafe { NonNull::new_unchecked(task) });
     }
+
+    /// SAFETY: the context that this loop ticks with is a `P` that nothing else borrows meanwhile.
+    pub unsafe fn enqueue_boxed<C: bun_core::IntrusiveField<AnyTaskWithExtraContext>, P>(
+        &self,
+        task: Box<C>,
+        callback: fn(Box<C>, &mut P),
+    ) {
+        // SAFETY: a `Box` and a `&mut` are passed as thin pointers are, and `callback` runs once.
+        unsafe {
+            self.enqueue_task_concurrent_with_extra_ctx::<C, P>(
+                bun_core::heap::into_raw(task),
+                bun_core::cast_fn_ptr::<fn(Box<C>, &mut P), fn(*mut C, *mut P)>(callback),
+                C::OFFSET,
+            );
+        }
+    }
 }
 
 // ───────────── EventLoopCtx adapter (bun_io cycle-break) ─────────────────

@@ -32,7 +32,7 @@ bun_output::declare_scope!(Listener, visible);
 /// socket it accepts, or by one `Bun.connect` socket and its reconnects.
 ///
 /// Held as `Rc<Handlers>` by each owner (the `Listener`, each `NewSocket`, and
-/// each in-flight callback [`Scope`]), so a socket that closes while a callback
+/// each in-flight callback `Scope`), so a socket that closes while a callback
 /// frame still holds it cannot free it out from under that frame.
 pub(crate) struct Handlers {
     /// The cell holding every callback and the pending connect promise. Read
@@ -50,7 +50,7 @@ pub(crate) struct Handlers {
     pub(crate) global_object: GlobalRef,
     /// The context of the script that gave these handlers: a socket event is dispatched inside it.
     context: bun_jsc::ContextId,
-    /// Live sockets plus in-flight callback [`Scope`]s. Drives the listener's
+    /// Live sockets plus in-flight callback `Scope`s. Drives the listener's
     /// idle release; ownership itself is the `Rc`.
     pub(crate) active_connections: Cell<u32>,
     pub(crate) mode: SocketMode,
@@ -192,19 +192,8 @@ impl Handlers {
             .set(self.active_connections.get() + 1);
     }
 
-    /// Bumps `active_connections`, enters the JS event-loop scope, and returns
-    /// a [`Scope`] whose exit halves undo both. The scope holds its own `Rc`, so
-    /// a socket that closes and drops its reference mid-callback cannot free
-    /// the `Handlers` the callback is still reading from.
-    #[inline]
-    pub(crate) fn enter(self: &Rc<Self>) -> Scope {
-        self.mark_active();
-        let context = self.vm.enter_context(self.context);
-        self.vm.event_loop().enter();
-        Scope {
-            handlers: Rc::clone(self),
-            _context: context,
-        }
+    pub(crate) fn enter_context(&self) -> bun_jsc::virtual_machine::ContextScope<'static> {
+        self.vm.enter_context(self.context)
     }
 
     // corker: Corker = .{},
@@ -411,33 +400,6 @@ impl Handlers {
         let wrapped = Self::wrap_with_context(global_object, &reloaded.callbacks);
         self.cell.set_callbacks(global_object, &wrapped);
         self.binary_type.set(reloaded.binary_type);
-    }
-}
-
-/// One in-flight dispatch into JS. Holds an `Rc` so the callbacks it is about
-/// to invoke outlive a `close()` from inside them.
-pub(crate) struct Scope {
-    pub(crate) handlers: Rc<Handlers>,
-    _context: bun_jsc::virtual_machine::ContextScope<'static>,
-}
-
-impl Scope {
-    /// The event-loop `exit()` half, balancing the `enter()` in
-    /// [`Handlers::enter`]. Split from the `active_connections` bookkeeping
-    /// because draining microtasks here can synchronously reconnect or
-    /// `upgradeTLS` the socket, so the caller must observe the resulting
-    /// `handlers` state before deciding whether to decrement.
-    pub(crate) fn exit_event_loop(&self) {
-        self.handlers.vm.event_loop().exit();
-    }
-
-    /// The `active_connections` half: decrements and, on reaching zero,
-    /// releases the listener (server mode). Returns true when the socket
-    /// should drop its own `Rc` — see [`Handlers::mark_inactive`].
-    ///
-    /// Consumes `self`: a `Scope` is single-use (one `enter` ↔ one exit).
-    pub(crate) fn mark_inactive(self) -> bool {
-        self.handlers.mark_inactive()
     }
 }
 

@@ -8,7 +8,7 @@ use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
 use bun_collections::VecExt;
 
 use bun_ast::{Loc, Log, Source};
-use bun_threading::thread_pool::Task as ThreadPoolTask;
+use bun_threading::thread_pool::{Batch, Task as ThreadPoolTask};
 
 use bun_ast::ast_result::NamedExports;
 use bun_ast::{B, Binding, E, G, S, Stmt, symbol};
@@ -53,25 +53,28 @@ pub struct ClientEntryWrapper {
     pub(crate) path: Box<[u8]>,
 }
 
-/// Raw thread-pool callback. Takes the `ServerComponentParseTask` back from the
-/// intrusive `task` field and dispatches the parse, then posts the result back
-/// to the owning event loop.
+bun_threading::owned_task!(ServerComponentParseTask<'static>, task);
+
+impl ServerComponentParseTask<'_> {
+    pub(crate) fn into_batch(self: Box<Self>) -> Batch {
+        // SAFETY: as in `ParseTask::into_batch`.
+        Batch::from_owned(unsafe {
+            core::mem::transmute::<Box<Self>, Box<ServerComponentParseTask<'static>>>(self)
+        })
+    }
+}
+
+impl ServerComponentParseTask<'static> {
+    fn run_owned(self: Box<Self>) {
+        run_from_thread_pool(self);
+    }
+}
+
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `ServerComponentParseTask` (heap-allocated, scheduled exactly once). Writes:
 // own fields + `Log` (local) + result is posted via
 // `ctx.loop_.enqueue_task_concurrent` (MPSC). Reads `ctx: &BundleV2` shared.
-fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
-    // SAFETY: `thread_pool_task` points to the `task` field of the boxed
-    // `ServerComponentParseTask` that BundleV2 gave to the pool, which runs it once.
-    // The bundle's `'a` is erased to `'static`: see `parse_task::task_callback`.
-    let mut task = unsafe {
-        bun_core::heap::take(bun_core::from_field_ptr!(
-            ServerComponentParseTask<'static>,
-            task,
-            thread_pool_task
-        ))
-    };
-
+fn run_from_thread_pool(mut task: Box<ServerComponentParseTask<'static>>) {
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2 (set at enqueue).
     let ctx = task
         .ctx
@@ -155,10 +158,7 @@ impl Default for ServerComponentParseTask<'_> {
     /// via FRU and rely on this for the intrusive `task` link.
     fn default() -> Self {
         Self {
-            task: ThreadPoolTask {
-                node: Default::default(),
-                callback: task_callback_wrap,
-            },
+            task: ThreadPoolTask::default(),
             data: Data::ClientEntryWrapper(ClientEntryWrapper {
                 path: Box::default(),
             }),

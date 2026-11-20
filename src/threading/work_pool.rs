@@ -1,5 +1,7 @@
 use std::sync::OnceLock;
 
+use bun_ptr::AliasableBox;
+
 use crate::ThreadPool;
 
 pub use crate::thread_pool::Batch;
@@ -126,6 +128,18 @@ impl Batch {
         // SAFETY: `raw` is a live heap allocation, which the batch now owns. The `Task` is
         // projected from the raw pointer, so that it covers the whole allocation.
         Batch::from(unsafe { T::field_of(raw) })
+    }
+}
+
+impl crate::thread_pool::Thread {
+    /// [`OwnedTask::run`] gets it on this thread, which can still be using it until it is idle.
+    pub fn push_idle_owned<T: OwnedTask>(&self, owned: AliasableBox<T>) {
+        // SAFETY: as in `Batch::from_owned`, and nothing but the `Task` is touched.
+        self.push_idle_task(unsafe {
+            let task = T::field_of(owned.into_raw());
+            (*task).callback = T::__callback;
+            task
+        });
     }
 }
 

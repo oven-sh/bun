@@ -18,7 +18,7 @@ use crate::generated_bindgen::file_sink::{
 use crate::webcore::jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsError, JsResult};
 use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
-use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
+use crate::webcore::{self, PathOrFileDescriptor, streams};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
@@ -58,7 +58,7 @@ pub struct FileSink {
     pub(crate) is_socket: Cell<bool>,
     pub(crate) fd: Cell<Fd>,
 
-    pub(crate) auto_flusher: AutoFlusher,
+    auto_flusher: bun_jsc::AutoFlusher,
     run_pending_armed: Cell<bool>,
 
     /// While `assign_to_stream` (spawn stdin) or `pipe_stream` (`Bun.write`) pipes a stream in: the controller cell that holds the stream, `pipe_stream`'s done-promise and a JS failure value.
@@ -150,10 +150,16 @@ impl Drop for FileSink {
     fn drop(&mut self) {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         self.release_pipe_with(ReadableSinkController::detach_dropped_sink);
-        if let Some(global) = self.js_global() {
-            let vm = global.bun_vm();
-            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self, vm);
-        }
+    }
+}
+
+bun_core::intrusive_field!(FileSink, auto_flusher: bun_jsc::AutoFlusher);
+
+// SAFETY: refcounted on the heap.
+unsafe impl bun_jsc::AutoFlush for FileSink {
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: fn contract.
+        unsafe { !(*this).end_unneeded_auto_flush() && (*this).ref_guard().on_auto_flush() }
     }
 }
 
@@ -252,7 +258,7 @@ impl WriteHandler for FileSink {
         if has_pending_data {
             if let Some(vm) = self.js_vm() {
                 if !vm.is_inside_deferred_task_queue.get() {
-                    AutoFlusher::register_deferred_microtask_with_type::<Self>(self, vm);
+                    bun_jsc::AutoFlusher::register(self, vm);
                 }
             }
         }
@@ -746,22 +752,17 @@ impl FileSink {
     }
 
     /// `true` if it did. Runs no JS.
-    pub(crate) fn end_unneeded_auto_flush(&self) -> bool {
+    fn end_unneeded_auto_flush(&self) -> bool {
         if !self.writer.has_pending_data() {
             self.update_ref(false);
-            self.auto_flusher.registered.set(false);
             return true;
         }
         // After `end()` the writable poll drains the tail and drops the ref.
-        if self.done.get() {
-            self.auto_flusher.registered.set(false);
-            return true;
-        }
-        false
+        self.done.get()
     }
 
     /// `AutoFlusher` deferred-microtask tick.
-    pub(crate) fn on_auto_flush(&self) -> bool {
+    fn on_auto_flush(&self) -> bool {
         let amount_buffered = self.writer.queued_len();
 
         match self.writer.flush(self) {
@@ -776,7 +777,6 @@ impl FileSink {
                 }
                 self.writer.end(self);
                 self.run_pending_later();
-                self.auto_flusher.registered.set(false);
                 return false;
             }
             WriteResult::Done(_) => {
@@ -796,9 +796,7 @@ impl FileSink {
             }
         }
 
-        let is_registered = !self.writer.has_pending_data();
-        self.auto_flusher.registered.set(is_registered);
-        is_registered
+        !self.writer.has_pending_data()
     }
 
     pub(crate) fn flush_from_js(
@@ -1351,7 +1349,7 @@ impl FileSink {
             force_sync: Cell::new(false),
             is_socket: Cell::new(false),
             fd: Cell::new(fd),
-            auto_flusher: AutoFlusher::default(),
+            auto_flusher: Default::default(),
             run_pending_armed: Cell::new(false),
             pipe: JsCell::new(streams::PipeCell::default()),
             stream_error: JsCell::new(None),

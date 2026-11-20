@@ -614,6 +614,39 @@ describe("event loop routing around macros", () => {
     expect({ lines, stderr }).toEqual({ lines: ["1 chained"], stderr: "" });
     expect(exitCode).toBe(0);
   });
+
+  // A buffered write queues a flush on the current loop, which need not be current when the sink goes.
+  const abandonSinks = `for (let i = 0; i < 8; i++) Bun.file(import.meta.dir + "/out-" + i).writer().write("x");`;
+
+  test.concurrent("a FileSink that the program wrote to can be collected during a macro", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": `export function collect() {\n  Bun.gc(true);\n  return 1;\n}\n`,
+      "with-macro.ts": `import { collect } from "./m.ts" with { type: "macro" };\nexport const value = collect();\n`,
+      "index.ts": [
+        abandonSinks,
+        `const { value } = require("./with-macro.ts");`,
+        `setImmediate(() => console.log(value));`,
+      ].join("\n"),
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["1"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a FileSink that a macro wrote to can be collected before the next macro loads", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "first.ts": `export function first() {\n  ${abandonSinks}\n  return 1;\n}\n`,
+      "second.ts": `export function second() {\n  return 2;\n}\n`,
+      "with-first.ts": `import { first } from "./first.ts" with { type: "macro" };\nexport const value = first();\n`,
+      "with-second.ts": `import { second } from "./second.ts" with { type: "macro" };\nexport const value = second();\n`,
+      "index.ts": [
+        `const { value } = require("./with-first.ts");`,
+        `Bun.gc(true);`,
+        `console.log(value, require("./with-second.ts").value);`,
+      ].join("\n"),
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["1 2"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // A module that is not the entry point is transpiled on a worker thread, where no VM exists yet. The

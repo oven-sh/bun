@@ -41,35 +41,28 @@ use core::ptr::NonNull;
 
 use bun_collections::ArrayHashMap;
 
-// Declared `extern "C"` so the
-// same fn-pointer type can flow across the FFI boundary (e.g.
-// `Bun__VM__postDeferredTask`) without an ABI-crossing fn-ptr cast. All in-tree
-// producers go through monomorphic `extern "C"` trampolines (see
-// `AutoFlusher::erase_flush_callback`).
-pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
+pub struct DeferredTask {
+    /// `false` takes the entry out of the queue.
+    pub run: unsafe fn(NonNull<c_void>) -> bool,
+    /// Called once it has.
+    pub removed: unsafe fn(NonNull<c_void>),
+}
 
 #[derive(Default)]
 pub struct DeferredTaskQueue {
     /// No borrow spans a callback, which reaches this queue again.
-    map: UnsafeCell<ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>>,
+    map: UnsafeCell<ArrayHashMap<NonNull<c_void>, &'static DeferredTask>>,
 }
 
 impl DeferredTaskQueue {
-    pub fn post_task(&self, ctx: Option<NonNull<c_void>>, task: DeferredRepeatingTask) -> bool {
+    /// SAFETY: `task` can be called with `ctx` for as long as the entry is in the queue.
+    pub unsafe fn post_task(&self, ctx: NonNull<c_void>, task: &'static DeferredTask) {
         // SAFETY: no callback runs in this borrow, and `run` holds none while it calls one.
-        let map = unsafe { &mut *self.map.get() };
-        // `ArrayHashMap` is currently aliased to std `HashMap`; the entry API
-        // gives insert-if-absent + report-existing semantics.
-        match map.entry(ctx) {
-            bun_collections::hash_map::Entry::Occupied(_) => true,
-            bun_collections::hash_map::Entry::Vacant(v) => {
-                v.insert(task);
-                false
-            }
-        }
+        let existing = unsafe { &mut *self.map.get() }.insert(ctx, task);
+        debug_assert!(existing.is_none());
     }
 
-    pub fn unregister_task(&self, ctx: Option<NonNull<c_void>>) -> bool {
+    pub fn unregister_task(&self, ctx: NonNull<c_void>) -> bool {
         // Order is irrelevant for this map's contract (see file doc), so
         // swap-remove is fine and O(1).
         // SAFETY: no callback runs in this borrow, and `run` holds none while it calls one.
@@ -87,23 +80,21 @@ impl DeferredTaskQueue {
         while remaining > 0 && i < map.len() {
             remaining -= 1;
             let key = map.keys()[i];
-            let Some(nn) = key else {
-                map.swap_remove_at(i);
-                continue;
-            };
-
             let task = map.values()[i];
-            // SAFETY: `nn` is the live `*mut T` registered by the caller; the
-            // callback contract (`HasAutoFlusher::on_auto_flush`) is that
-            // `task` may be invoked with exactly that pointer until it returns
-            // `false` or is explicitly unregistered.
-            let keep = unsafe { task(nn.as_ptr()) };
+            // SAFETY: the contract of `post_task`.
+            let keep = unsafe { (task.run)(key) };
             // SAFETY: the callback has returned; the borrow ends before the next one.
             map = unsafe { &mut *self.map.get() };
             if !keep {
                 // `key` may already be gone (callback unregistered it) or may
                 // have moved; remove by key, not index.
-                map.swap_remove(&key);
+                if let Some((key, task)) = map.fetch_swap_remove(&key) {
+                    // SAFETY: it was in the queue until now. `map` is borrowed anew, as above.
+                    unsafe {
+                        (task.removed)(key);
+                        map = &mut *self.map.get();
+                    }
+                }
             } else if map.keys().get(i) == Some(&key) {
                 i += 1;
             }
@@ -123,30 +114,40 @@ mod tests {
         calls: Box<[Cell<u32>; 32]>,
     }
 
-    unsafe extern "C" fn count(ctx: *mut c_void) -> bool {
-        // SAFETY: posted with an element of `Fixture::calls`, which outlives `run`.
-        unsafe { &*ctx.cast::<Cell<u32>>() }.update(|n| n + 1);
-        false
-    }
+    const COUNT: DeferredTask = DeferredTask {
+        run: |ctx| {
+            // SAFETY: posted with an element of `Fixture::calls`, which outlives `run`.
+            unsafe { ctx.cast::<Cell<u32>>().as_ref() }.update(|n| n + 1);
+            false
+        },
+        // SAFETY: as above.
+        removed: |ctx| unsafe { ctx.cast::<Cell<u32>>().as_ref() }.update(|n| n + 100),
+    };
 
-    unsafe extern "C" fn grow(ctx: *mut c_void) -> bool {
-        // SAFETY: posted with the `Fixture`, which outlives `run`.
-        let fixture = unsafe { &*ctx.cast::<Fixture>() };
-        fixture.grow_calls.update(|n| n + 1);
-        for calls in fixture.calls.iter() {
-            let ctx = NonNull::from(calls).cast();
-            fixture.queue.post_task(Some(ctx), count);
-        }
-        true
-    }
+    const GROW: DeferredTask = DeferredTask {
+        run: |ctx| {
+            // SAFETY: posted with the `Fixture`, which outlives `run`.
+            let fixture = unsafe { ctx.cast::<Fixture>().as_ref() };
+            fixture.grow_calls.update(|n| n + 1);
+            for calls in &fixture.calls[1..] {
+                // SAFETY: as above.
+                unsafe { fixture.queue.post_task(NonNull::from(calls).cast(), &COUNT) };
+            }
+            true
+        },
+        removed: |_| unreachable!(),
+    };
 
     #[test]
     fn a_task_that_grows_the_queue_does_not_take_the_turn_of_the_next() {
         let fixture = Fixture::default();
         let queue = &fixture.queue;
-        queue.post_task(Some(NonNull::from(&fixture).cast()), grow);
-        queue.post_task(Some(NonNull::from(&fixture.calls[0]).cast()), count);
+        // SAFETY: `fixture` outlives `run`.
+        unsafe {
+            queue.post_task(NonNull::from(&fixture).cast(), &GROW);
+            queue.post_task(NonNull::from(&fixture.calls[0]).cast(), &COUNT);
+        }
         queue.run();
-        assert_eq!((fixture.grow_calls.get(), fixture.calls[0].get()), (1, 1));
+        assert_eq!((fixture.grow_calls.get(), fixture.calls[0].get()), (1, 101));
     }
 }

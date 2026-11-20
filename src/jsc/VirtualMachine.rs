@@ -4669,21 +4669,8 @@ impl VirtualMachine {
         let specifier_clone = specifier.to_utf8();
         let referrer_clone = referrer.to_utf8();
 
+        let mut blob_to_use = None;
         let mut virtual_source_to_use: Option<bun_ast::Source> = None;
-        // The blob crosses
-        // the bundler↔runtime boundary as an erased `OpaqueBlob`; deinit goes
-        // through the same `VmLoaderCtx` that produced it.
-        struct BlobDeinit(
-            Option<bun_bundler::options::OpaqueBlob>,
-            bun_bundler::options::VmLoaderCtx,
-        );
-        impl Drop for BlobDeinit {
-            fn drop(&mut self) {
-                if let Some(blob) = self.0.take() {
-                    self.1.blob_deinit(blob);
-                }
-            }
-        }
         // SAFETY: `jsc_vm` outlives this stack frame.
         let loader_ctx = unsafe {
             bun_bundler::options::VmLoaderCtx::new(
@@ -4691,12 +4678,11 @@ impl VirtualMachine {
                 std::ptr::from_ref::<VirtualMachine>(jsc_vm).cast_mut(),
             )
         };
-        let mut blob_to_deinit = BlobDeinit(None, loader_ctx);
         let lr = match bun_bundler::options::get_loader_and_virtual_source(
             specifier_clone.slice(),
             &loader_ctx,
             &mut virtual_source_to_use,
-            &mut blob_to_deinit.0,
+            &mut blob_to_use,
             None,
         ) {
             Ok(lr) => lr,

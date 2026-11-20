@@ -110,7 +110,7 @@ impl ThreadPool {
         self.io_tasks_in_flight.wait();
     }
 
-    /// Marks one IO task as finished. `io_task_callback` calls this last.
+    /// Marks one IO task as finished. `ParseTask::run_owned` calls this last.
     ///
     /// # Safety
     /// `this` must have scheduled the task. `this` may be freed as soon as this
@@ -158,21 +158,22 @@ impl ThreadPool {
                 file: None,
             });
         }
-        let io_pool = self
-            .io_pool
-            .filter(|_| matches!(parse_task.stage, ParseTaskStage::NeedsSourceCode));
-
-        let parse_task = bun_core::heap::into_raw(parse_task);
-        let (pool, task) = match io_pool {
+        let pool = match self.io_pool_for(&parse_task) {
             Some(io) => {
                 self.io_tasks_in_flight.add_one();
-                // SAFETY: a field of the box above, which the task's callback takes back.
-                (io, unsafe { &raw mut (*parse_task).io_task })
+                io
             }
-            // SAFETY: as above.
-            None => (self.worker_pool(), unsafe { &raw mut (*parse_task).task }),
+            None => self.worker_pool(),
         };
-        schedule_fn(pool, ThreadPoolLib::Batch::from(task));
+        schedule_fn(pool, parse_task.into_batch());
+    }
+
+    pub(crate) fn io_pool_for(
+        &self,
+        parse_task: &ParseTask<'_>,
+    ) -> Option<&'static ThreadPoolLib::ThreadPool> {
+        self.io_pool
+            .filter(|_| matches!(parse_task.stage, ParseTaskStage::NeedsSourceCode))
     }
 
     pub(crate) fn schedule(&self, parse_task: Box<ParseTask<'_>>) {
@@ -241,9 +242,7 @@ impl Drop for ThreadPool {
         for worker in workers {
             // One without a pool thread drops here: this thread made it, or one that has been joined.
             if let Some(thread) = worker.thread {
-                let worker = worker.into_raw();
-                // SAFETY: a field of the box above, which the task's callback takes back.
-                thread.push_idle_task(unsafe { &raw mut (*worker).drop_task });
+                thread.push_idle_owned(worker);
             }
         }
         self.wake_for_idle_events();
@@ -334,11 +333,12 @@ impl Drop for Worker {
     }
 }
 
+bun_threading::owned_task!(Worker, drop_task);
+
 impl Worker {
-    /// Runs on the worker's own thread.
-    fn drop_callback(task: *mut ThreadPoolLib::Task) {
-        // SAFETY: `task` is the `drop_task` field of the box that `ThreadPool::drop` gave up.
-        unsafe { bun_core::heap::destroy(bun_core::from_field_ptr!(Worker, drop_task, task)) };
+    /// Drops it on its own thread.
+    fn run_owned(self: Box<Self>) {
+        drop(self);
     }
 
     // holds `&'static mut` (detached) — the `Worker` is
@@ -373,10 +373,7 @@ impl Worker {
             // Shares `heap` with the parser: mimalloc caches only the last heap a thread touched.
             ast_memory_store: bun_ast::ASTMemoryAllocator::borrowing(arena),
             thread: NonNull::new(ThreadPoolLib::Thread::current()).map(bun_ptr::ParentRef::from),
-            drop_task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
-                callback: Worker::drop_callback,
-            },
+            drop_task: ThreadPoolLib::Task::default(),
             heap,
         });
 

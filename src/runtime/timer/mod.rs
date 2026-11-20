@@ -33,7 +33,7 @@ mod immediate_object;
 pub(crate) use immediate_object::ImmediateObject;
 
 mod js_timer;
-pub(crate) use js_timer::call_catching;
+pub(crate) use js_timer::{LoopHold, WaitsIn, call_catching};
 
 #[path = "DateHeaderTimer.rs"]
 mod date_header_timer_draft;
@@ -724,7 +724,7 @@ impl All {
     }
 
     /// `uws_loop` is the calling VM's uws loop.
-    pub(crate) fn increment_timer_ref(&self, delta: i32, uws_loop: &bun_uws_sys::Loop) {
+    fn increment_timer_ref(&self, delta: i32, uws_loop: &bun_uws_sys::Loop) {
         let old = self.active_timer_count.get();
         let new = old + delta;
         debug_assert!(new >= 0);

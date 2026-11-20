@@ -117,8 +117,7 @@ pub(crate) struct NodeHTTPResponse {
     /// buffers the underlying ArrayBuffer is additionally `pin()`ed.
     pending_pinned_write_owner: JsCell<crate::node::StringOrBuffer<'static>>,
 
-    /// Held while the deferred flush is registered.
-    auto_flush_ref: JsCell<Option<RefPtr<Self>>>,
+    auto_flusher: jsc::AutoFlusher<RefPtr<Self>>,
 }
 
 bitflags! {
@@ -326,11 +325,15 @@ fn on_drain_shim(this: *mut NodeHTTPResponse, off: u64, resp: uws::AnyResponse) 
     unsafe { (*this.cast_const()).on_drain(off, resp) }
 }
 
-extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
-    // SAFETY: `ctx` is the `*const NodeHTTPResponse` registered by
-    // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
-    // on the JS thread. `on_auto_flush` takes `&self`.
-    unsafe { (*(ctx.cast_const().cast::<NodeHTTPResponse>())).on_auto_flush() }
+bun_core::intrusive_field!(NodeHTTPResponse, auto_flusher: jsc::AutoFlusher<RefPtr<NodeHTTPResponse>>);
+
+// SAFETY: refcounted on the heap.
+unsafe impl jsc::AutoFlush<RefPtr<Self>> for NodeHTTPResponse {
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: fn contract.
+        unsafe { (*this.cast_const()).uncork() };
+        false
+    }
 }
 
 /// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.
@@ -722,7 +725,7 @@ impl NodeHTTPResponse {
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
 
         self.poll_ref.unref(vm);
-        self.unregister_auto_flush();
+        self.auto_flusher.unregister();
     }
 
     /// Unroots `promise`.
@@ -2404,40 +2407,13 @@ impl NodeHTTPResponse {
         )
     }
 
-    fn on_auto_flush(&self) -> bool {
+    fn uncork(&self) {
         let flags = self.flags.get();
         if !flags.contains(Flags::UPGRADED) && !self.is_socket_closed_or_closing() {
             if let Some(raw_response) = self.writer() {
                 raw_response.uncork();
             }
         }
-        self.auto_flush_ref.set(None);
-        false
-    }
-
-    fn register_auto_flush(&self) {
-        if self.auto_flush_ref.get().is_some() {
-            return;
-        }
-        self.auto_flush_ref.set(Some(self.ref_guard()));
-        let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let found_existing = VirtualMachine::get()
-            .event_loop()
-            .deferred_tasks
-            .post_task(ctx, on_auto_flush_trampoline);
-        debug_assert!(!found_existing);
-    }
-
-    fn unregister_auto_flush(&self) {
-        let Some(_auto_flush_ref) = self.auto_flush_ref.take() else {
-            return;
-        };
-        let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let removed = VirtualMachine::get()
-            .event_loop()
-            .deferred_tasks
-            .unregister_task(ctx);
-        debug_assert!(removed);
     }
 
     pub(crate) fn flush_headers(&self) {
@@ -2447,7 +2423,8 @@ impl NodeHTTPResponse {
                 // Don't flush immediately; queue a microtask to uncork the socket.
                 raw_response.flush_headers(false);
                 if raw_response.is_corked() {
-                    self.register_auto_flush();
+                    let vm = VirtualMachine::get();
+                    jsc::AutoFlusher::register_holding(self, vm, || self.ref_guard());
                 }
             }
         }
@@ -2723,7 +2700,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         bytes_written: Cell::new(0),
         pending_pinned_write: Cell::new(PendingPinnedWrite::default()),
         pending_pinned_write_owner: JsCell::new(crate::node::StringOrBuffer::EMPTY),
-        auto_flush_ref: JsCell::new(None),
+        auto_flusher: Default::default(),
     });
     response
         .pending_ref

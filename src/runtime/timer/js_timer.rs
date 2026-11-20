@@ -18,7 +18,7 @@ unsafe extern "C" {
 }
 
 #[derive(Copy, Clone)]
-pub(super) enum WaitsIn {
+pub(crate) enum WaitsIn {
     Heap,
     ImmediateQueue,
 }
@@ -61,11 +61,11 @@ impl Armed {
 }
 
 /// Keeps the event loop alive until dropped.
-struct LoopHold(WaitsIn);
+pub(crate) struct LoopHold(WaitsIn);
 
 impl LoopHold {
     #[inline]
-    fn new(vm: &VirtualMachine, waits_in: WaitsIn) -> Self {
+    pub(crate) fn new(vm: &VirtualMachine, waits_in: WaitsIn) -> Self {
         Self::count(vm, waits_in, 1);
         Self(waits_in)
     }

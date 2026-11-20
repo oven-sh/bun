@@ -1188,7 +1188,7 @@ fn spawn_maybe_sync(
         weak_file_sink_stdin_ptr: Cell::new(None),
         abort_handle: bun_jsc::AbortHandle::for_owner::<SubprocessT<'static>>(),
         context: cx.context().id(),
-        event_loop_timer_refd: Cell::new(false),
+        timer_hold: Cell::new(None),
         event_loop_timer: crate::timer::EventLoopTimer::init_paused(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
         ),
@@ -1423,7 +1423,8 @@ fn spawn_maybe_sync(
             // owned by the boxed `Subprocess` and stays at a stable address
             // until `Subprocess::finalize` removes it from the heap.
             unsafe { jsc_vm.timer_insert(&raw const subprocess.event_loop_timer) };
-            subprocess.set_event_loop_timer_refd(true);
+            let hold = crate::timer::LoopHold::new(jsc_vm, crate::timer::WaitsIn::Heap);
+            subprocess.timer_hold.set(Some(hold));
         }
 
         debug_assert!(out != JSValue::ZERO);

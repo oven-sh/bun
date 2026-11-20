@@ -6,7 +6,7 @@ use core::sync::atomic::Ordering;
 
 use crate::jsc::api::server_config::SSLConfig;
 use crate::jsc::{
-    self as jsc, AutoFlush, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine,
+    self as jsc, AutoFlush, AutoFlusher, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine,
     VirtualMachineSqlExt as _, bun_string_jsc, run_callback,
 };
 use bun_boringssl as BoringSSL;
@@ -109,7 +109,7 @@ pub struct PostgresSQLConnection {
 
     flags: Cell<ConnectionFlags>,
     timers: ConnectionTimers,
-    auto_flush_registered: Cell<bool>,
+    auto_flusher: AutoFlusher,
 
     /// Interned notification channel names; see `channel_name_js`.
     channel_names: JsCell<Vec<InternedChannel>>,
@@ -144,7 +144,6 @@ bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
 impl Drop for PostgresSQLConnection {
     fn drop(&mut self) {
         self.timers.stop();
-        self.unregister_auto_flusher();
         if self.is_ready() {
             self.close_socket();
         }
@@ -280,30 +279,34 @@ impl TimedConnection for PostgresSQLConnection {
     }
 }
 
+bun_core::intrusive_field!(PostgresSQLConnection, auto_flusher: AutoFlusher);
+
+// SAFETY: refcounted on the heap.
+unsafe impl bun_jsc::AutoFlush for PostgresSQLConnection {
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: fn contract.
+        let this = unsafe { RefPtr::init_ref(this) };
+        // With backpressure, onWritable drains.
+        if !this.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
+            this.drain_internal();
+        }
+        this.can_flush()
+    }
+}
+
 impl AutoFlush for PostgresSQLConnection {
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }
 
-    fn auto_flush_registered(&self) -> &Cell<bool> {
-        &self.auto_flush_registered
+    fn auto_flusher(&self) -> &AutoFlusher {
+        &self.auto_flusher
     }
 
     fn can_flush(&self) -> bool {
         self.is_ready()
             && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
             && self.write_buffer.get().len() > 0
-    }
-
-    fn on_auto_flush(&self) -> bool {
-        let _guard = self.ref_guard();
-        // With backpressure, onWritable drains.
-        if !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
-            self.drain_internal();
-        }
-        let again = self.can_flush();
-        self.auto_flush_registered.set(again);
-        again
     }
 }
 
@@ -502,7 +505,7 @@ impl PostgresSQLConnection {
     }
 
     fn handle_socket_failure(&self, fail: impl FnOnce(&Self)) {
-        self.unregister_auto_flusher();
+        self.auto_flusher.unregister();
         let _entered = self.event_loop().enter_scope();
         self.poll_ref.unref(self.vm_ctx());
         fail(self);
@@ -912,7 +915,7 @@ fn open(
             EventLoopTimerTag::PostgresSQLConnectionTimeout,
             EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
         ),
-        auto_flush_registered: Cell::new(false),
+        auto_flusher: AutoFlusher::default(),
         channel_names: JsCell::new(Vec::new()),
         copy_out: JsCell::new(Vec::new()),
     });
@@ -1078,7 +1081,7 @@ impl PostgresSQLConnection {
             Phase::Closed { .. } => {}
             _ => self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed),
         }
-        self.unregister_auto_flusher();
+        self.auto_flusher.unregister();
         self.abandon_incomplete_request();
         self.write_buffer.with_mut(|b| b.clear_and_free());
     }

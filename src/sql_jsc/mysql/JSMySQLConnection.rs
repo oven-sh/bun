@@ -6,8 +6,8 @@ use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use crate::generated_bindgen::js_my_sql_connection::js_MySQLConnection as js;
 use crate::jsc::api::server_config::SSLConfig;
 use crate::jsc::{
-    AutoFlush, EventLoopTimerTag, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
-    VirtualMachine, VirtualMachineSqlExt as _, run_callback,
+    AutoFlush, AutoFlusher, EventLoopTimerTag, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef,
+    JsResult, VirtualMachine, VirtualMachineSqlExt as _, run_callback,
 };
 use crate::shared::cached_structure::{column_name_to_js, transform_name};
 use crate::shared::connection_ctor_args::ConnectionCtorArgs;
@@ -70,7 +70,7 @@ pub struct JSMySQLConnection {
     /// The handshake finished during this read; `onconnect` runs at the end of it.
     on_connect_pending: Cell<bool>,
 
-    auto_flush_registered: Cell<bool>,
+    auto_flusher: AutoFlusher,
     timers: ConnectionTimers,
 }
 
@@ -86,12 +86,6 @@ bun_event_loop::impl_timer_owner!(JSMySQLConnection;
     from_timer_ptr => timers.timer,
     from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
 );
-
-impl Drop for JSMySQLConnection {
-    fn drop(&mut self) {
-        self.unregister_auto_flusher();
-    }
-}
 
 impl JSMySQLConnection {
     /// verify-full's name check, asked inside the handshake.
@@ -178,30 +172,34 @@ impl TimedConnection for JSMySQLConnection {
     }
 }
 
+bun_core::intrusive_field!(JSMySQLConnection, auto_flusher: AutoFlusher);
+
+// SAFETY: refcounted on the heap.
+unsafe impl bun_jsc::AutoFlush for JSMySQLConnection {
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: fn contract.
+        let this = unsafe { RefPtr::init_ref(this) };
+        // With backpressure, onWritable drains.
+        if !this.has_backpressure.get() {
+            this.drain_internal();
+        }
+        this.can_flush()
+    }
+}
+
 impl AutoFlush for JSMySQLConnection {
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }
 
-    fn auto_flush_registered(&self) -> &Cell<bool> {
-        &self.auto_flush_registered
+    fn auto_flusher(&self) -> &AutoFlusher {
+        &self.auto_flusher
     }
 
     fn can_flush(&self) -> bool {
         !self.has_backpressure.get()
             && self.is_connected()
             && (!self.write_buffer.get().is_empty() || self.queue.is_waiting_to_write())
-    }
-
-    fn on_auto_flush(&self) -> bool {
-        let _guard = self.ref_guard();
-        // With backpressure, onWritable drains.
-        if !self.has_backpressure.get() {
-            self.drain_internal();
-        }
-        let again = self.can_flush();
-        self.auto_flush_registered.set(again);
-        again
     }
 }
 
@@ -445,7 +443,7 @@ impl JSMySQLConnection {
             reading: Cell::new(Reading::Idle),
             on_connect_pending: Cell::new(false),
             socket_ref: Cell::new(None),
-            auto_flush_registered: Cell::new(false),
+            auto_flusher: AutoFlusher::default(),
             timers: ConnectionTimers::new(
                 args.idle_timeout_ms,
                 args.connection_timeout_ms,

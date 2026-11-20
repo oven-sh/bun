@@ -3,7 +3,6 @@ use core::ffi::c_void;
 use std::rc::Rc;
 
 use crate::socket::{SSLConfig, SSLConfigFromJs};
-use crate::webcore::{AutoFlusher, HasAutoFlusher};
 use bun_boringssl as boringssl;
 use bun_core::{Utf8Bytes, strings};
 use bun_event_loop::EventLoopTimer as Timer;
@@ -11,8 +10,8 @@ use bun_io::JsKeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue,
-    JsCell, JsResult, Strong,
+    self as jsc, AutoFlush, AutoFlusher, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise,
+    JSPromiseStrong, JSValue, JsCell, JsResult, Strong,
 };
 use bun_ptr::{AsCtxPtr, RefPtr};
 use bun_uws as uws;
@@ -285,23 +284,19 @@ impl Drop for JSValkeyClient {
     fn drop(&mut self) {
         debug_assert!(self.timer.held_ref.get().is_none());
         debug_assert!(self.reconnect_timer.held_ref.get().is_none());
-        AutoFlusher::unregister_deferred_microtask_with_type(self, self.vm);
         self.ref_count.assert_no_refs();
     }
 }
 
-impl HasAutoFlusher for JSValkeyClient {
-    #[inline]
-    fn auto_flusher(&self) -> &AutoFlusher {
-        &self.auto_flusher
-    }
+bun_core::intrusive_field!(JSValkeyClient, auto_flusher: AutoFlusher);
+
+// SAFETY: refcounted on the heap.
+unsafe impl AutoFlush for JSValkeyClient {
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: unregistered before `this` is freed.
-        let this = unsafe { &*this };
-        let _guard = this.ref_guard();
+        // SAFETY: fn contract.
+        let this = unsafe { RefPtr::init_ref(this) };
         let has_more = this.client.with_mut(Client::batch);
         this.flush();
-        this.auto_flusher.registered.set(has_more);
         has_more
     }
 }
@@ -808,7 +803,7 @@ impl JSValkeyClient {
 
     fn send_next_command(&self) {
         if self.client.with_mut(Client::advance) {
-            AutoFlusher::register_deferred_microtask_with_type(self, self.vm);
+            AutoFlusher::register(self, self.vm);
         }
         self.flush();
     }
@@ -847,7 +842,7 @@ impl JSValkeyClient {
                 .with_mut(|client| client.send(name, args, reply, promise))
             {
                 Sent::Buffered => self.flush(),
-                Sent::Batched => AutoFlusher::register_deferred_microtask_with_type(self, self.vm),
+                Sent::Batched => AutoFlusher::register(self, self.vm),
                 Sent::Queued => {}
             }
         }
@@ -1008,7 +1003,7 @@ impl JSValkeyClient {
         failure: Option<&Strong>,
     ) -> JsResult<()> {
         let _update = UpdatePollRefOnDrop(self, object);
-        AutoFlusher::unregister_deferred_microtask_with_type(self, self.vm);
+        self.auto_flusher.unregister();
         let owner_is_gone = self.context_stopped();
         let lost = self
             .client

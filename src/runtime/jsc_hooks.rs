@@ -1109,23 +1109,29 @@ pub(crate) fn ipc_child_singleton_deinit() {
 // `bun_bundler::options::{normalize_specifier, get_loader_and_virtual_source}`.
 // The low-tier `VirtualMachine::fetch_without_on_load_plugins` constructs a
 // `VmLoaderCtx { vm: vm.cast(), vtable: hooks.vm_loader_vtable }` and threads
-// it through; every fn pointer here recovers the concrete `*const
-// VirtualMachine` / `*mut Blob` from the erased `*const ()` / `OpaqueBlob`.
+// it through; every fn pointer here gets the `*const VirtualMachine` back from `*const ()`.
 // ────────────────────────────────────────────────────────────────────────────
 
 mod vm_loader_ctx {
     use super::*;
     use crate::webcore::Blob;
-    use bun_bundler::options::OpaqueBlob;
+    use bun_bundler::options::ResolvedBlob;
 
-    /// Recover an [`OpaqueBlob`] as a shared `&Blob` (live until `blob_deinit`).
-    ///
-    /// # Safety
-    /// `b` was produced by `resolve_blob` and not yet passed to `blob_deinit`.
-    #[inline]
-    unsafe fn blob(b: OpaqueBlob) -> &'static Blob {
-        // SAFETY: per fn contract.
-        unsafe { &*b.cast::<Blob>() }
+    struct RegisteredBlob(Blob);
+
+    impl ResolvedBlob for RegisteredBlob {
+        fn loader(&self) -> Option<Loader> {
+            self.0.get_loader(VirtualMachine::get())
+        }
+        fn store_path(&self) -> Option<&[u8]> {
+            self.0.store_path()
+        }
+        fn needs_to_read_file(&self) -> bool {
+            self.0.needs_to_read_file()
+        }
+        fn shared_view(&self) -> &[u8] {
+            self.0.shared_view()
+        }
     }
 
     bun_bundler::link_impl_VmLoaderCtx! {
@@ -1153,18 +1159,7 @@ mod vm_loader_ctx {
             resolve_blob(spec) => {
                 crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
                     .resolve_and_dupe(spec, &*(*this).global.get())
-                    .map(|b| bun_core::heap::into_raw(Box::new(b)).cast::<()>())
-            },
-            blob_loader(b) => blob(b).get_loader(&*this),
-            // Returned slices borrow blob heap storage that lives until
-            // `blob_deinit`; erased to `'static` per the interface signature —
-            // sound because the bundler caller drops them before `blob_deinit`.
-            blob_store_path(b) => blob(b).store_path(),
-            blob_needs_read_file(b) => blob(b).needs_to_read_file(),
-            blob_shared_view(b) => blob(b).shared_view(),
-            blob_deinit(b) => {
-                // SAFETY: `b` is the live boxed `Blob`; sole owner.
-                drop(bun_core::heap::take(b.cast::<Blob>()))
+                    .map(|blob| Box::new(RegisteredBlob(blob)) as Box<dyn ResolvedBlob>)
             },
         }
     }

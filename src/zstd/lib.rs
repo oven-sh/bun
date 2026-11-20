@@ -10,7 +10,7 @@ use core::mem::MaybeUninit;
 
 use bun_zstd_decoder::{ContentSize, Dictionary, FrameLen};
 
-pub use bun_zstd_decoder::{Decoder, Error, Output, Status, may_start_frame};
+pub use bun_zstd_decoder::{Decoder, Error, Output, SpareTables, Status, may_start_frame};
 pub use bun_zstd_encoder::{DEFAULT_LEVEL, Encoder, EndDirective, compress, compress_bound};
 pub use embed::{inflate_embedded, inflate_embedded_nul};
 pub use streaming_decoder::StreamingDecoder;
@@ -56,12 +56,14 @@ fn with_capacity(capacity: usize) -> Result<Vec<u8>, ZstdError> {
 }
 
 fn decompress_sized(
+    spare: &mut SpareTables,
     src: &[u8],
     size: usize,
     dictionary: Option<&Dictionary<'_>>,
 ) -> Result<Vec<u8>, ZstdError> {
     let mut output = with_capacity(size)?;
-    bun_zstd_decoder::decompress(
+    bun_zstd_decoder::decompress_with(
+        spare,
         src,
         &mut Output::spare_capacity(&mut output, size),
         dictionary,
@@ -72,24 +74,33 @@ fn decompress_sized(
 
 /// Decompresses one or more frames.
 pub fn decompress_alloc(src: &[u8]) -> Result<Vec<u8>, ZstdError> {
+    decompress_alloc_with(&mut SpareTables::default(), src)
+}
+
+/// [`decompress_alloc`] with the memory that an earlier call left in `spare`.
+pub fn decompress_alloc_with(spare: &mut SpareTables, src: &[u8]) -> Result<Vec<u8>, ZstdError> {
     let mut output = match bun_zstd_decoder::decompressed_size(src) {
         ContentSize::Invalid => return Err(ZstdError::InvalidZstdData),
         ContentSize::Known(size) if size <= MAX_PREALLOCATE_SIZE as u64 => {
-            return decompress_sized(src, size as usize, None);
+            return decompress_sized(spare, src, size as usize, None);
         }
         ContentSize::Known(_) => with_capacity(MAX_PREALLOCATE_SIZE)?,
         // A frame's output is rarely smaller than its input.
         ContentSize::Unknown => with_capacity(src.len().clamp(4096, MAX_PREALLOCATE_SIZE))?,
     };
-    StreamingDecoder::new().decompress(src, &mut output, usize::MAX, true)?;
-    Ok(output)
+    let mut stream = StreamingDecoder::new();
+    stream.decoder.swap_tables(spare);
+    let result = stream.decompress(src, &mut output, usize::MAX, true);
+    stream.decoder.swap_tables(spare);
+    result.map(|_| output)
 }
 
 /// One frame that has `prefix` as its raw dictionary, and a size of at most 16 MB in its header.
 pub fn decompress_alloc_with_prefix(src: &[u8], prefix: &[u8]) -> Result<Vec<u8>, ZstdError> {
     match bun_zstd_decoder::decompressed_size(src) {
         ContentSize::Known(size) if size <= MAX_PREALLOCATE_SIZE as u64 => {
-            decompress_sized(src, size as usize, Some(&Dictionary::raw(prefix)))
+            let (spare, prefix) = (&mut SpareTables::default(), Dictionary::raw(prefix));
+            decompress_sized(spare, src, size as usize, Some(&prefix))
         }
         _ => Err(ZstdError::InvalidZstdData),
     }

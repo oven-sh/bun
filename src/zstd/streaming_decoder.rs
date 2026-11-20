@@ -4,7 +4,7 @@ use crate::{Decoder, Status, ZstdError};
 
 /// Decodes the chunks of a body, one or more frames, into a growing `Vec`.
 pub struct StreamingDecoder {
-    decoder: Decoder,
+    pub(crate) decoder: Decoder,
     state: State,
     /// The decoder filled the room it was given and may hold more. `max_output` can end a call there.
     output_full: bool,

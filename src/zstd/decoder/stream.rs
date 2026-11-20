@@ -1,6 +1,6 @@
 //! Decompression of input that comes in pieces, into output that is taken in pieces.
 
-use crate::block::BlockDecoder;
+use crate::block::{BlockDecoder, SpareTables};
 use crate::decompress::decompress_frame;
 use crate::destination::{Destination, OVERSHOOT};
 use crate::dictionary::Dictionary;
@@ -162,6 +162,11 @@ impl Decoder {
         self.stage = Stage::Idle;
         self.idle_steps = 0;
         self.error = None;
+    }
+
+    /// A frame in progress has no tables to repeat any more.
+    pub fn swap_tables(&mut self, spare: &mut SpareTables) {
+        self.blocks.swap_tables(spare);
     }
 
     /// How many steps in a row got nowhere behind the header of a frame.

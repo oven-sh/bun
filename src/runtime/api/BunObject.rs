@@ -1846,8 +1846,11 @@ pub(crate) mod JSZstd {
         }
     }
 
-    fn decompress_to_box(input: &[u8]) -> Result<Box<[u8]>, Failure> {
-        bun_zstd::decompress_alloc(input)
+    fn decompress_to_box(
+        spare: &mut bun_zstd::SpareTables,
+        input: &[u8],
+    ) -> Result<Box<[u8]>, Failure> {
+        bun_zstd::decompress_alloc_with(spare, input)
             .map(Vec::into_boxed_slice)
             .map_err(Failure::from)
     }
@@ -1866,7 +1869,9 @@ pub(crate) mod JSZstd {
         heap: &JsHeap<'a>,
         data: &[u8],
     ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
-        let output = decompress_to_box(data).map_err(|failure| failure.into_error(heap))?;
+        let output = (crate::jsc_hooks::runtime_state().zstd_tables)
+            .with_mut(|spare| decompress_to_box(spare, data))
+            .map_err(|failure| failure.into_error(heap))?;
         heap.create_buffer_from_box(output)
     }
 
@@ -1894,7 +1899,7 @@ pub(crate) mod JSZstd {
             this.result = if this.is_compress {
                 compress_to_box(input, this.level)
             } else {
-                decompress_to_box(input)
+                decompress_to_box(&mut bun_zstd::SpareTables::default(), input)
             };
             Some(done)
         }

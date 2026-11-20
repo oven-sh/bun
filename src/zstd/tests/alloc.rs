@@ -45,6 +45,8 @@ fn a_frame_without_a_prefix_has_any_size() {
     let frames = [ABC, ABC_WITHOUT_SIZE].concat();
     assert_eq!(decompress_alloc(&frames).as_deref(), Ok(&b"abcabc"[..]));
     assert_eq!(decompress_alloc(b"not a frame"), Err(InvalidZstdData));
+    let cut_off = &ABC_WITHOUT_SIZE[..11];
+    assert_eq!(decompress_alloc(cut_off), Err(ZstdDecompressionError));
 }
 
 #[test]

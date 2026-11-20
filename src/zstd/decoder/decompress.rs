@@ -1,6 +1,6 @@
 //! Frames that are all there, into an output that has room for all of their content.
 
-use crate::block::BlockDecoder;
+use crate::block::{BlockDecoder, SpareTables};
 use crate::destination::Destination;
 use crate::dictionary::Dictionary;
 use crate::error::{Error, Result};
@@ -15,16 +15,30 @@ pub fn decompress(
     out: &mut Output<'_>,
     dictionary: Option<&Dictionary<'_>>,
 ) -> Result<()> {
+    decompress_with(&mut SpareTables::default(), src, out, dictionary)
+}
+
+/// [`decompress`] with the memory that an earlier call left in `spare`.
+pub fn decompress_with(
+    spare: &mut SpareTables,
+    src: &[u8],
+    out: &mut Output<'_>,
+    dictionary: Option<&Dictionary<'_>>,
+) -> Result<()> {
     let written = out.written();
-    decompress_frames(src, out, dictionary).inspect_err(|_| out.rewind(written))
+    let mut blocks = BlockDecoder::default();
+    blocks.swap_tables(spare);
+    let result = decompress_frames(&mut blocks, src, out, dictionary);
+    blocks.swap_tables(spare);
+    result.inspect_err(|_| out.rewind(written))
 }
 
 fn decompress_frames(
+    blocks: &mut BlockDecoder,
     mut src: &[u8],
     out: &mut Output<'_>,
     dictionary: Option<&Dictionary<'_>>,
 ) -> Result<()> {
-    let mut blocks = BlockDecoder::default();
     let mut is_first = true;
     while !src.is_empty() {
         src = match &Header::read(src) {
@@ -35,7 +49,7 @@ fn decompress_frames(
             _ if !can_hold_headers(src) => return Err(Error::SrcSizeWrong),
             Ok(Header::Frame(header)) => {
                 is_first = false;
-                decompress_frame(&mut blocks, header, src, false, out, dictionary)?
+                decompress_frame(blocks, header, src, false, out, dictionary)?
             }
             Err(Error::PrefixUnknown) if !is_first => return Err(Error::SrcSizeWrong),
             &Err(error) => return Err(error),

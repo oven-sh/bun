@@ -29,7 +29,8 @@ mod sequences;
 mod stream;
 mod xxhash;
 
-pub use decompress::decompress;
+pub use block::SpareTables;
+pub use decompress::{decompress, decompress_with};
 pub use dictionary::Dictionary;
 pub use error::{Error, Result};
 pub use frame::{

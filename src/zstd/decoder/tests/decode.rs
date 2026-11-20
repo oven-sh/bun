@@ -4,9 +4,9 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
 use bun_zstd_decoder::{
-    ContentSize, Decoder, Dictionary, Error, FrameLen, Output, Result, Status, TableDescription,
-    XxHash64, decompress, decompressed_size, frame_content_size, frame_len, may_start_frame,
-    read_huffman_weights, read_normalized_counts,
+    ContentSize, Decoder, Dictionary, Error, FrameLen, Output, Result, SpareTables, Status,
+    TableDescription, XxHash64, decompress, decompress_with, decompressed_size, frame_content_size,
+    frame_len, may_start_frame, read_huffman_weights, read_normalized_counts,
 };
 
 thread_local! {
@@ -37,14 +37,11 @@ unsafe impl GlobalAlloc for Refusing {
 #[global_allocator]
 static ALLOCATOR: Refusing = Refusing;
 
-/// Whether all was granted, on a thread that has kept no memory from earlier calls.
-fn with_grants<T: Send>(grants: usize, run: impl FnOnce() -> T + Send) -> (bool, T) {
-    let run = || {
-        GRANTS.set(Some(grants));
-        let result = run();
-        (GRANTS.take().is_some(), result)
-    };
-    std::thread::scope(|scope| scope.spawn(run).join().unwrap())
+/// Whether all was granted.
+fn with_grants<T>(grants: usize, run: impl FnOnce() -> T) -> (bool, T) {
+    GRANTS.set(Some(grants));
+    let result = run();
+    (GRANTS.take().is_some(), result)
 }
 
 const DICTIONARY: &[u8] = include_bytes!("fixtures/dictionary");
@@ -229,15 +226,19 @@ fn raw_literals_take_no_memory() {
 }
 
 #[test]
-fn the_memory_of_tables_passes_to_the_next_decoder() {
-    let frame = hex("28b52ffd 0000 200000 61626364 3d0000 00 01 54 000200 07");
-    for grants in [None, Some(0)] {
+fn the_memory_of_tables_passes_to_the_next_call() {
+    let frame = |block| hex(&format!("28b52ffd 0000 200000 61626364 {block}"));
+    let mut spare = SpareTables::default();
+    let mut decode = |grants, frame: &[u8]| {
         let mut out = [0; 7];
-        GRANTS.set(grants);
-        let result = decompress(&frame, &mut Output::slice(&mut out), None);
-        GRANTS.set(None);
-        assert_eq!((result, &out), (Ok(()), b"abcdabc"));
-    }
+        let (_, result) = with_grants(grants, || {
+            decompress_with(&mut spare, frame, &mut Output::slice(&mut out), None)
+        });
+        result.map(|()| out)
+    };
+    let valid = frame("3d0000 00 01 54 000200 07");
+    assert_eq!(decode(0, &valid), Err(Error::MemoryAllocation));
+    assert_eq!(decode(1, &valid), Ok(*b"abcdabc"));
     // One kind of table after the other is repeated, then all.
     for block in [
         "350000 00 01 d4 0200 07",
@@ -245,10 +246,34 @@ fn the_memory_of_tables_passes_to_the_next_decoder() {
         "350000 00 01 5c 0002 07",
         "250000 00 01 fc 07",
     ] {
-        let frame = hex(&format!("28b52ffd 0000 200000 61626364 {block}"));
-        assert_eq!(at_once(&frame, 7), Err(Error::CorruptionDetected));
-        assert_eq!(byte_by_byte(&frame), Err(Error::CorruptionDetected));
+        let repeats = frame(block);
+        assert_eq!(decode(0, &repeats), Err(Error::CorruptionDetected));
+        assert_eq!(decode(0, &valid), Ok(*b"abcdabc"));
+        let both = [&valid[..], &repeats].concat();
+        assert_eq!(byte_by_byte(&both), Err(Error::CorruptionDetected));
     }
+}
+
+#[test]
+fn a_stream_repeats_no_tables_that_were_swapped() -> Result<()> {
+    let frame = hex("28b52ffd 0000 200000 61626364 3c0000 00 01 54 000200 07 250000 00 01 fc 07");
+    let used = || {
+        let (mut decoder, mut spare) = (Decoder::new(), SpareTables::default());
+        let (_, status) = decoder.step_growing(&frame, &mut Vec::new(), usize::MAX);
+        decoder.swap_tables(&mut spare);
+        status.map(|_| spare)
+    };
+    let (mut decoder, mut out) = (Decoder::new(), Vec::with_capacity(4096));
+    decoder.swap_tables(&mut used()?);
+    let (_, (_, status)) = with_grants(0, || decoder.step_growing(&frame, &mut out, usize::MAX));
+    assert_eq!((status?, &out[..]), (Status::Complete, &b"abcdabcdab"[..]));
+
+    let (start, last_block) = frame.split_at(frame.len() - 7);
+    decoder.step_growing(start, &mut out, usize::MAX).1?;
+    decoder.swap_tables(&mut used()?);
+    let (_, status) = decoder.step_growing(last_block, &mut out, usize::MAX);
+    assert_eq!(status, Err(Error::CorruptionDetected));
+    Ok(())
 }
 
 #[test]

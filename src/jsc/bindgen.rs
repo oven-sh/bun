@@ -1095,6 +1095,13 @@ impl<'a, T> JsWrapper<'a, T> {
         JsWrapper(cell, PhantomData, PhantomData)
     }
 
+    /// SAFETY: `T` is `refCounted`, and the object has its pointer at `offset`.
+    #[doc(hidden)]
+    pub unsafe fn wrapped_at(self, offset: usize) -> &'a T {
+        // SAFETY: forwarded. The object holds a ref.
+        unsafe { self.0.byte_add(offset).cast::<&'a T>().read() }
+    }
+
     #[inline(always)]
     pub fn as_value(self) -> JsLocal<'a, JSObject> {
         JsLocal::from_raw(self.to_js())

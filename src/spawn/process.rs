@@ -156,9 +156,9 @@ impl Drop for Process {
 pub struct ProcessHandle(RefPtr<Process>);
 
 impl core::ops::Deref for ProcessHandle {
-    type Target = Process;
+    type Target = RefPtr<Process>;
     #[inline]
-    fn deref(&self) -> &Process {
+    fn deref(&self) -> &RefPtr<Process> {
         &self.0
     }
 }
@@ -187,11 +187,6 @@ impl ProcessHandle {
     /// [`watch_or_reap`](Self::watch_or_reap)).
     pub fn on_exit(&self, status: Status, rusage: &Rusage) {
         Process::on_exit(self.this_ptr(), status, rusage)
-    }
-
-    /// For a call that may run an exit handler which drops or overwrites this handle.
-    pub fn this_ptr(&self) -> ThisPtr<Process> {
-        self.0.this_ptr()
     }
 }
 
@@ -544,7 +539,7 @@ impl Process {
         self.with_handle(|p| p.ref_());
     }
 
-    pub fn detach(&self) {
+    fn detach(&self) {
         self.close();
         self.exit_handler.set(None);
     }
@@ -1275,13 +1270,8 @@ impl WindowsStdioResult {
 
 #[cfg(windows)]
 impl WindowsSpawnResult {
-    pub fn to_process(&mut self, _event_loop: impl Sized) -> RefPtr<Process> {
-        self.process.take().unwrap()
-    }
-
-    /// [`to_process`](Self::to_process) as the exit-handler owner's handle.
-    pub fn to_process_handle(&mut self, event_loop: impl Sized) -> ProcessHandle {
-        ProcessHandle(self.to_process(event_loop))
+    pub fn to_process_handle(&mut self, _event_loop: impl Sized) -> ProcessHandle {
+        ProcessHandle(self.process.take().unwrap())
     }
 }
 
@@ -1380,20 +1370,14 @@ pub enum WindowsStdio {
 
 /// Event-loop-aware extension on the raw [`PosixSpawnResult`] from
 /// `bun_spawn_sys`. The result type itself lives in the leaf `-sys` crate (no
-/// `Process`/`EventLoopHandle` dependency); `to_process` is added here as a
-/// trait method so callers keep the `.to_process(loop_, sync)` spelling.
+/// `Process`/`EventLoopHandle` dependency).
 pub trait SpawnResultExt: Sized {
-    fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process>;
-
-    /// [`to_process`](Self::to_process) as the exit-handler owner's handle.
-    fn to_process_handle(self, event_loop: EventLoopHandle) -> ProcessHandle {
-        ProcessHandle(self.to_process(event_loop))
-    }
+    fn to_process_handle(self, event_loop: EventLoopHandle) -> ProcessHandle;
 }
 
 #[cfg(unix)]
 impl SpawnResultExt for PosixSpawnResult {
-    fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process> {
+    fn to_process_handle(self, event_loop: EventLoopHandle) -> ProcessHandle {
         let mut status = OnceCell::new();
         if self.has_exited {
             let mut rusage = rusage_zeroed();
@@ -1402,7 +1386,7 @@ impl SpawnResultExt for PosixSpawnResult {
                 status = OnceCell::from(reaped);
             }
         }
-        RefPtr::new(Process {
+        ProcessHandle(RefPtr::new(Process {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             pid: self.pid,
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1412,7 +1396,7 @@ impl SpawnResultExt for PosixSpawnResult {
             poller: JsCell::new(Poller::Detached),
             status,
             exit_handler: Cell::default(),
-        })
+        }))
     }
 }
 
@@ -2160,10 +2144,10 @@ mod spawn_process_body {
             };
             // The only path to `this` until the callbacks are done.
             let this_ptr = &raw mut this;
-            let process = spawned.to_process(());
+            let process = spawned.to_process_handle(());
             // SAFETY: `this` outlives the dispatch of the exit.
             let handler = unsafe { ProcessExit::new(ProcessExitKind::SyncWindows, this_ptr) };
-            process.set_exit_handler(handler);
+            Process::set_exit_handler(&process, handler);
             process.enable_keeping_event_loop_alive();
 
             for (tag, stdio) in [

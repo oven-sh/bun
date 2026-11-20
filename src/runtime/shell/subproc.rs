@@ -509,7 +509,7 @@ impl ShellSubprocess {
 
         let stdio0 = core::mem::replace(&mut spawn_args.stdio[0], Stdio::Ignore);
 
-        // `to_process` consumes the result for pid/pidfd; pull the fd handles out first.
+        // `to_process_handle` consumes the result for pid/pidfd; pull the fd handles out first.
         let spawn_stdin = spawn_result.stdin.take();
         let spawn_stdout = spawn_result.stdout.take();
         let spawn_stderr = spawn_result.stderr.take();

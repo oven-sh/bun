@@ -533,6 +533,9 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "a refCounted class has no mutates",
   );
   expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize is only for a refCounted class");
+  expect(() => b.class({ rustPath: "T", thisValue: "x", proto: { x: { mutates: true } } })).toThrow(
+    "a class with thisValue has no mutates",
+  );
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
   expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
   // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.
@@ -3139,6 +3142,24 @@ describe("classes", () => {
       expect(TestRefCounted.alive()).toBe(before - 1);
     });
 
+    it("thisValue refers to the object until it is collected", () => {
+      const keepOne = () => {
+        const object = new TestRefCounted(1);
+        object.keep();
+        expect(TestRefCounted.keptObject()).toBe(object);
+      };
+      for (let i = 0; i < 100 && TestRefCounted.kept()[1] !== 1; i++) {
+        keepOne();
+        Bun.gc(true);
+      }
+      expect(TestRefCounted.kept()).toEqual([1, 1]);
+      // These take the cell that the object had.
+      const others = Array.from({ length: 1000 }, () => new TestRefCounted(2));
+      expect(TestRefCounted.keptObject()).toBeUndefined();
+      expect(others).toHaveLength(1000);
+      TestRefCounted.release();
+    });
+
     it("drops the struct when the object is collected and nothing else holds a ref", () => {
       const count = 1000;
       let all: unknown[] | null = Array.from({ length: count }, (_, i) => new TestRefCounted(i));
@@ -3160,7 +3181,7 @@ describe("classes", () => {
 
     it("the size of the object includes the struct", () => {
       // The cell, then size_of::<TestRefCounted>().
-      expect(estimateShallowMemoryUsageOf(new TestRefCounted(1))).toBe(48 + 12);
+      expect(estimateShallowMemoryUsageOf(new TestRefCounted(1))).toBe(48 + 32);
     });
   });
 });

@@ -38,8 +38,8 @@ pub use tagged_pointer::TaggedPtr;
 
 pub mod ref_count;
 pub use ref_count::{
-    AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ThreadSafeRefCount,
-    ThreadSafeRefCounted,
+    AnyRefCounted, Attached, CellRefCounted, Detach, RefCount, RefCounted, RefPtr,
+    ThreadSafeRefCount, ThreadSafeRefCounted,
 };
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
@@ -553,7 +553,7 @@ unsafe impl<T: ?Sized + Sync, P> Sync for BackRef<T, P> {}
 // of one synchronous call; the handler needs to expose `X` to re-entrant code
 // (JS host-fns) that can only reach it through `&self` on a long-lived wrapper.
 // The handler erases the lifetime and parks the pointer with [`set`]; host-fns
-// read it via [`get_mut`]; a scopeguard calls [`detach`] before the closure
+// read it via [`get_mut`]; a guard calls [`detach`] before the closure
 // returns the borrow to the library. A detached slot reads as `None`, so a
 // wrapper retained past its handler scope never reaches a dangling pointer.
 //

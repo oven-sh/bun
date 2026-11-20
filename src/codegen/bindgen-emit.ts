@@ -2168,6 +2168,23 @@ const rustImplJsClass = (type: ClassType, toJS: string) => `impl bun_jsc::JsClas
     }
 }`;
 
+const rustImplHasJsRef = (type: ClassType) =>
+  type.thisValue
+    ? `// SAFETY: see the finalizer.
+unsafe impl bun_jsc::HasJsRef for ${type.rustPath} {
+    #[inline]
+    fn js_ref(&self) -> &bun_jsc::JsCell<bun_jsc::JsRef> {
+        &self.${type.thisValue}
+    }
+    #[inline]
+    fn wrapped_by(object: bindgen::JsWrapper<'_, Self>) -> &Self {
+        // SAFETY: ${type.refCounted ? "the offset is \`static_assert\`ed against the C++ cell" : "no member takes \`&mut self\`"}.
+        unsafe { object.${type.refCounted ? `wrapped_at(${offsetOfPayload(type)})` : "payload_ref()"} }
+    }
+}
+`
+    : "";
+
 /** Thunks call the struct's inherent methods by path. */
 function rustForClass(type: ClassType, scope: RustScope): string {
   const { rustPath, refCounted } = type;
@@ -2344,9 +2361,11 @@ const _: () = assert!(${offsetOfPayload(type)} + size_of::<${rustPath}>() <= ${m
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${rustPath}) {
     // SAFETY: the sweeper calls this once, on an initialized payload nothing refers to.
-    unsafe { core::ptr::drop_in_place(payload) }
+    unsafe {
+        ${type.thisValue ? "bun_jsc::HasJsRef::finalize_js_ref(&*payload);\n        " : ""}core::ptr::drop_in_place(payload)
+    }
 }
-`;
+${rustImplHasJsRef(type)}`;
 }
 
 function rustForRefCounted(type: ClassType): string {
@@ -2363,9 +2382,9 @@ unsafe extern "C" {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ${classSymbolName(type, "finalize")}(wrapped: bun_ptr::RefPtr<${rustPath}>) {
-    ${type.finalize ? `<${rustPath}>::finalize(&wrapped);\n    ` : ""}drop(wrapped);
+    ${type.thisValue ? "bun_jsc::HasJsRef::finalize_js_ref(&*wrapped);\n    " : ""}${type.finalize ? `<${rustPath}>::finalize(&wrapped);\n    ` : ""}drop(wrapped);
 }
-${type.overridesToJS ? "" : rustImplJsClass(type, `js_${name}::to_js(bun_ptr::RefPtr::new(self), global)`)}
+${rustImplHasJsRef(type)}${type.overridesToJS ? "" : rustImplJsClass(type, `js_${name}::to_js(bun_ptr::RefPtr::new(self), global)`)}
 `;
 }
 

@@ -7,15 +7,19 @@
 //!    graph (transitive imports) without linking or emitting code.
 //! 3. Starting from each changed file that appears in the graph, walk the
 //!    reverse import edges to find every test entry point that can reach it.
+//!    A changed file that is not in the graph starts from the files whose
+//!    import of it no longer resolves (it was deleted or renamed).
 //!
-//! Only those test entry points are returned.
+//! Only those test entry points are returned. Preloads are entry points of
+//! the scan too: every test file runs them, so a change that reaches one
+//! selects every test file. A changed path that selects nothing is reported.
 
 use bun_bundler::mal_prelude::*;
 
 use bstr::BStr;
 
 use bun_alloc::Arena;
-use bun_ast::Index;
+use bun_ast::{ImportRecordFlags, Index};
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
@@ -37,6 +41,7 @@ use bun_which::which;
 
 use crate::Command;
 use crate::api::bun_process::sync as spawn_sync;
+use crate::cli::test_command::find_files_of_preloads;
 
 // `core::result::Result` is fully qualified throughout this file to avoid the
 // shadow.
@@ -54,7 +59,14 @@ pub(crate) struct Result<'a> {
     /// files that would not otherwise be loaded when a subset of tests runs.
     /// Owned by the caller; each element is individually allocated.
     pub(crate) module_graph_files: Vec<Box<[u8]>>,
+    /// Number of changed files that no test file and no preload reaches.
+    pub(crate) unreached_count: usize,
+    /// Up to `UNREACHED_SAMPLE` of them, relative to the top-level dir.
+    /// Filled only when no test file is selected.
+    pub(crate) unreached: Vec<Box<[u8]>>,
 }
+
+const UNREACHED_SAMPLE: usize = 5;
 
 /// Filter `test_files` in place to only the entries whose module graph
 /// reaches a changed file. On success, `test_files` is compacted (preserving
@@ -101,6 +113,8 @@ pub(crate) fn filter<'a>(
             changed_count: changed_files.count(),
             total_tests: 0,
             module_graph_files: Vec::new(),
+            unreached_count: 0,
+            unreached: Vec::new(),
         });
     }
 
@@ -113,11 +127,16 @@ pub(crate) fn filter<'a>(
             changed_count: 0,
             total_tests: total,
             module_graph_files: Vec::new(),
+            unreached_count: 0,
+            unreached: Vec::new(),
         });
     }
 
+    let preloads = files_of_preloads(vm, &ctx.preloads, top_level_dir);
+
     // Convert the interned-path list to []const []const u8 for the bundler.
-    let entry_points: Vec<&[u8]> = test_files.iter().map(|p| p.as_bytes()).collect();
+    let mut entry_points: Vec<&[u8]> = test_files.iter().map(|p| p.as_bytes()).collect();
+    entry_points.extend(preloads.iter().map(|p| &**p));
 
     // Build a dedicated transpiler for scanning. We do not reuse the VM's
     // transpiler because BundleV2.init takes ownership of the allocator and
@@ -179,6 +198,8 @@ pub(crate) fn filter<'a>(
                 changed_count: changed_files.count(),
                 total_tests: total,
                 module_graph_files: Vec::new(),
+                unreached_count: 0,
+                unreached: Vec::new(),
             });
         }
     };
@@ -227,9 +248,50 @@ pub(crate) fn filter<'a>(
         graph_files.push(Box::<[u8]>::from(path_text));
     }
 
+    // BFS backward from every changed file that participates in the graph.
+    let mut affected = bun_core::handle_oom(DynamicBitSet::init_empty(sources.len()));
+    let mut queue: Vec<u32> = Vec::new();
+    // Per entry of `changed_files`: whether it selected something.
+    let mut reached = vec![false; changed_files.count()];
+
+    for (idx, source) in sources.iter().enumerate() {
+        if !source.path.is_file() {
+            continue;
+        }
+        if let Some(changed) = changed_files.map.get_index(source.path.text) {
+            reached[changed] = true;
+            affected.set(idx);
+            queue.push(u32::try_from(idx).unwrap());
+        }
+    }
+
+    // Changed paths the scan did not parse. One of them is a deleted or
+    // renamed file when an import that no longer resolves names it.
+    let not_in_graph: Vec<usize> = (0..reached.len()).filter(|&i| !reached[i]).collect();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+
     for (idx, records) in import_records.iter().enumerate() {
         let importer = u32::try_from(idx).unwrap();
         for record in records.as_slice() {
+            if !not_in_graph.is_empty()
+                && record.flags.contains(ImportRecordFlags::WAS_UNRESOLVED)
+                && sources[idx].path.is_file()
+                && !bun_paths::is_package_path(record.path.text)
+            {
+                let dir = resolve_path::dirname::<platform::Auto>(sources[idx].path.text);
+                let target = resolve_path::join_abs_string_buf::<platform::Auto>(
+                    dir,
+                    &mut path_buf.0,
+                    &[record.path.text],
+                );
+                if mark_resolvable_from(target, &changed_files, &not_in_graph, &mut reached)
+                    && !affected.is_set(idx)
+                {
+                    affected.set(idx);
+                    queue.push(importer);
+                }
+                continue;
+            }
             let dep = record.source_index;
             if !dep.is_valid() || dep.is_runtime() {
                 continue;
@@ -250,17 +312,6 @@ pub(crate) fn filter<'a>(
         *out = path_to_index.get(tf.as_bytes()).copied();
     }
 
-    // BFS backward from every changed file that participates in the graph.
-    let mut affected = bun_core::handle_oom(DynamicBitSet::init_empty(sources.len()));
-    let mut queue: Vec<u32> = Vec::new();
-
-    for (idx, source) in sources.iter().enumerate() {
-        if source.path.is_file() && changed_files.contains(source.path.text) {
-            affected.set(idx);
-            queue.push(u32::try_from(idx).unwrap());
-        }
-    }
-
     while let Some(idx) = queue.pop() {
         for &importer in &importers[idx as usize] {
             if affected.is_set(importer as usize) {
@@ -271,9 +322,20 @@ pub(crate) fn filter<'a>(
         }
     }
 
+    // Every test file runs the preloads. A preload the scan did not parse
+    // does not exist: it is matched like an import that does not resolve.
+    let mut preload_affected = false;
+    for preload in &preloads {
+        preload_affected |= match path_to_index.get(&**preload) {
+            Some(&src) => affected.is_set(src as usize),
+            None => mark_resolvable_from(preload, &changed_files, &not_in_graph, &mut reached),
+        };
+    }
+
     // A test file is selected if (a) its entry point source index is marked
-    // affected, or (b) the test file itself is in the changed set (covers
-    // test files that failed to enter the graph for any reason).
+    // affected, (b) the test file itself is in the changed set (covers
+    // test files that failed to enter the graph for any reason), or (c) a
+    // preload is affected.
     let mut write: usize = 0;
     // reshaped for borrowck — capture len before re-borrowing test_files
     let total = test_files.len();
@@ -281,12 +343,26 @@ pub(crate) fn filter<'a>(
     for i in 0..total {
         let tf = test_files[i];
         let maybe_source = slot_to_source[i];
-        let keep = changed_files.contains(tf.as_bytes())
+        let changed = changed_files.map.get_index(tf.as_bytes());
+        if let Some(changed) = changed {
+            reached[changed] = true;
+        }
+        let keep = preload_affected
+            || changed.is_some()
             || maybe_source.is_some_and(|src| affected.is_set(src as usize));
 
         if keep {
             test_files[write] = tf;
             write += 1;
+        }
+    }
+
+    let unreached_count = reached.iter().filter(|&&r| !r).count();
+    let mut unreached: Vec<Box<[u8]>> = Vec::new();
+    if write == 0 {
+        let paths = changed_files.keys().iter().zip(&reached);
+        for (path, _) in paths.filter(|&(_, &r)| !r).take(UNREACHED_SAMPLE) {
+            unreached.push(Box::from(resolve_path::relative(top_level_dir, path)));
         }
     }
 
@@ -301,7 +377,82 @@ pub(crate) fn filter<'a>(
         changed_count: changed_files.count(),
         total_tests: total,
         module_graph_files: graph_files,
+        unreached_count,
+        unreached,
     })
+}
+
+/// The files of the preloads that the scan can reach: absolute, and not in
+/// node_modules (a change there is not a local edit). A preload written as a
+/// path that does not resolve keeps the path it names, so that a deleted
+/// preload still matches the changed set.
+fn files_of_preloads(
+    vm: &VirtualMachine,
+    preloads: &[Box<[u8]>],
+    top_level_dir: &[u8],
+) -> Vec<Box<[u8]>> {
+    if preloads.is_empty() {
+        return Vec::new();
+    }
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut files = find_files_of_preloads(vm, preloads);
+    files.retain_mut(|file| {
+        if bun_paths::is_package_path(file) {
+            return false;
+        }
+        if !bun_paths::is_absolute(file) {
+            let abs = resolve_path::join_abs_string_buf::<platform::Auto>(
+                top_level_dir,
+                &mut buf.0,
+                &[&**file],
+            );
+            *file = Box::from(abs);
+        }
+        !bun_paths::string_paths::path_contains_node_modules_folder(file)
+    });
+    files
+}
+
+/// `target` is the path an import names and no file answers. Marks the
+/// entries of `candidates` that the resolver could have picked for it while
+/// they existed, and reports whether there is one.
+fn mark_resolvable_from(
+    target: &[u8],
+    changed_files: &StringSet,
+    candidates: &[usize],
+    reached: &mut [bool],
+) -> bool {
+    let target = strings::without_trailing_slash(target);
+    let mut any = false;
+    for &i in candidates {
+        if is_resolvable_from(target, &changed_files.keys()[i]) {
+            reached[i] = true;
+            any = true;
+        }
+    }
+    any
+}
+
+/// Whether an import of `target` could have resolved to `path`: the file
+/// itself, the file with an extension added or replaced (`./lib.js` finds
+/// `lib.ts`), or a file of the directory `target` (its index, or the entry
+/// its package.json names).
+fn is_resolvable_from(target: &[u8], path: &[u8]) -> bool {
+    let stem = without_extension(path);
+    path == target
+        || stem == target
+        || stem == without_extension(target)
+        || (path.len() > target.len()
+            && path.starts_with(target)
+            && bun_paths::is_sep_any(path[target.len()]))
+}
+
+fn without_extension(path: &[u8]) -> &[u8] {
+    let name = resolve_path::basename(path);
+    match strings::last_index_of_char(name, b'.') {
+        Some(dot) if dot > 0 => &path[..path.len() - (name.len() - dot)],
+        _ => path,
+    }
 }
 
 #[cfg(not(windows))]
@@ -358,8 +509,8 @@ pub(crate) fn init_watch_trigger() -> Option<ZBox> {
 /// If the previous process's watcher recorded which files triggered
 /// this restart, read the newline-separated absolute-path list out of
 /// the trigger file, delete the file, and return the set. Returns null
-/// if the file is absent, empty, or every path no longer exists (in
-/// which case the caller falls back to querying git).
+/// if the file is absent or empty (in which case the caller falls back
+/// to querying git).
 fn consume_watch_trigger() -> Option<StringSet> {
     #[cfg(windows)]
     {
@@ -385,18 +536,8 @@ fn consume_watch_trigger() -> Option<StringSet> {
 
         let mut set = StringSet::new();
         for path in strings::tokenize_any(&contents, b"\r\n") {
-            // The watcher may see a file disappear (delete/rename). A path
-            // that no longer exists cannot appear in the module graph this
-            // run, so drop it; its importers will still be picked up if the
-            // importer file itself was touched.
-            if !sys::exists(path) {
-                continue;
-            }
             let _ = set.insert(path); // OOM-only Result
         }
-        // If every triggering path was a deletion, fall back to git so the
-        // user at least gets the same behaviour as the initial run rather
-        // than "0 changed files, nothing to run".
         if set.count() == 0 {
             return None;
         }
@@ -417,8 +558,8 @@ pub(crate) enum GitError {
 /// With `since == ""` this is the union of unstaged, staged, and
 /// untracked files. With a ref, it is `git diff --name-only <since>`
 /// unioned with untracked files (a brand-new file is "changed since"
-/// any prior commit). Paths that do not exist on disk (deletions) are
-/// skipped since they cannot appear in the module graph.
+/// any prior commit). A deleted file is listed, and so is the old name
+/// of a renamed one: their importers are affected.
 fn get_changed_files(
     top_level_dir: &[u8],
     since: &[u8],
@@ -462,12 +603,16 @@ fn get_changed_files(
         match run_git(
             git_path,
             top_level_dir,
-            &[b"diff", b"--name-only", b"HEAD", b"--"],
+            &[b"diff", b"--name-only", b"--no-renames", b"HEAD", b"--"],
         ) {
             GitResult::SpawnFailed => return Err(GitError::GitFailed),
             GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
             GitResult::ExitError { .. } => {
-                match run_git(git_path, top_level_dir, &[b"diff", b"--name-only", b"--"]) {
+                match run_git(
+                    git_path,
+                    top_level_dir,
+                    &[b"diff", b"--name-only", b"--no-renames", b"--"],
+                ) {
                     GitResult::SpawnFailed => return Err(GitError::GitFailed),
                     GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
                     GitResult::ExitError { .. } => {}
@@ -476,7 +621,7 @@ fn get_changed_files(
                 match run_git(
                     git_path,
                     top_level_dir,
-                    &[b"diff", b"--name-only", b"--cached", b"--"],
+                    &[b"diff", b"--name-only", b"--no-renames", b"--cached", b"--"],
                 ) {
                     GitResult::SpawnFailed => return Err(GitError::GitFailed),
                     GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
@@ -488,7 +633,7 @@ fn get_changed_files(
         match run_git(
             git_path,
             top_level_dir,
-            &[b"diff", b"--name-only", since, b"--"],
+            &[b"diff", b"--name-only", b"--no-renames", since, b"--"],
         ) {
             GitResult::SpawnFailed => return Err(GitError::GitFailed),
             GitResult::ExitError { stderr } => {
@@ -603,7 +748,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
 }
 
 /// Parse newline-delimited repo-relative paths from git output, join each
-/// with the repository root, and insert existing files into `set`.
+/// with the repository root, and insert it into `set`.
 fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
     let mut buf = bun_paths::path_buffer_pool::get();
     for line in strings::tokenize_any(stdout, b"\r\n") {
@@ -612,10 +757,6 @@ fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
             continue;
         }
         let abs = resolve_path::join_abs_string_buf::<platform::Auto>(git_root, &mut buf.0, &[rel]);
-        // Skip deletions; the bundler can only parse files that exist.
-        if !sys::exists(abs) {
-            continue;
-        }
         // `StringSet.insert` dupes the key internally; abort on OOM rather
         // than propagating so the set can never be left holding a pointer
         // into our stack `buf` on the errdefer cleanup path.

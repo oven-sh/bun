@@ -11,7 +11,7 @@ import {
   tmpdirSync,
   untilEveryThreadIs,
 } from "harness";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -59,9 +59,10 @@ function initRepo(cwd: string) {
 async function runTestChanged(
   cwd: string,
   extra: string[] = [],
+  changed = "--changed",
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--changed", ...extra],
+    cmd: [bunExe(), "test", changed, ...extra],
     cwd,
     env: gitEnv,
     stdout: "pipe",
@@ -149,8 +150,231 @@ describe.concurrent("bun test --changed", () => {
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
     expect(ranFiles(stderr, names)).toEqual([]);
-    expect(stderr).toContain("no test files are affected");
+    expect(stderr).toContain("1 changed file, but no test files are affected");
+    expect(stderr).toContain("no test file or preload imports README.md\n");
     expect(exitCode).toBe(0);
+  });
+
+  test("a run of some test files counts the changed files that selected none", async () => {
+    using dir = tempDir("test-changed-count-unreached", fixture);
+    initRepo(String(dir));
+
+    appendFileSync(join(String(dir), "src", "other.ts"), "// touched\n");
+    appendFileSync(join(String(dir), "README.md"), "more\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, names)).toEqual(["b.test.ts"]);
+    expect(stderr).toContain("2 changed files, running 1/3 test files (1 not imported by a test file or preload)");
+    expect(exitCode).toBe(0);
+  });
+
+  test("more than five changed files that select nothing are named in part", async () => {
+    using dir = tempDir("test-changed-many-unreached", fixture);
+    initRepo(String(dir));
+
+    for (let i = 0; i < 7; i++) writeFileSync(join(String(dir), `note-${i}.md`), "note\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, names)).toEqual([]);
+    expect(stderr).toContain("7 changed files, but no test files are affected");
+    expect(stderr).toMatch(/no test file or preload imports (note-\d\.md, ){4}note-\d\.md and 2 more\n/);
+    expect(exitCode).toBe(0);
+  });
+
+  describe("a deleted or renamed import selects its importers", () => {
+    const lib = `export const v = 1;\n`;
+    const importing = (specifier: string) =>
+      `import { test, expect } from "bun:test";\nimport { v } from "${specifier}";\ntest("uses", () => expect(v).toBe(1));\n`;
+    const deletionFixture = {
+      "package.json": JSON.stringify({ name: "deleted", type: "module" }),
+      "lib.ts": lib,
+      "unused.ts": lib,
+      "uses.test.ts": importing("./lib"),
+      "other.test.ts": `import { test, expect } from "bun:test";\ntest("other", () => expect(1).toBe(1));\n`,
+    };
+    const deletionNames = ["uses.test.ts", "other.test.ts"];
+
+    test("git rm", async () => {
+      using dir = tempDir("test-changed-git-rm", deletionFixture);
+      initRepo(String(dir));
+      git(String(dir), "rm", "-q", "lib.ts");
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, deletionNames)).toEqual(["uses.test.ts"]);
+      expect(stderr).toContain("1 changed file, running 1/2 test files\n");
+      expect(exitCode).toBe(1);
+    });
+
+    test("rm without git", async () => {
+      using dir = tempDir("test-changed-rm", deletionFixture);
+      initRepo(String(dir));
+      rmSync(join(String(dir), "lib.ts"));
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, deletionNames)).toEqual(["uses.test.ts"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a deletion committed since --changed=<ref>", async () => {
+      using dir = tempDir("test-changed-rm-ref", deletionFixture);
+      initRepo(String(dir));
+      git(String(dir), "rm", "-q", "lib.ts");
+      git(String(dir), "commit", "-q", "-m", "remove lib");
+
+      const { stderr, exitCode } = await runTestChanged(String(dir), [], "--changed=HEAD~1");
+      expect(ranFiles(stderr, deletionNames)).toEqual(["uses.test.ts"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("git mv with the importer left as it was", async () => {
+      using dir = tempDir("test-changed-git-mv", deletionFixture);
+      initRepo(String(dir));
+      git(String(dir), "mv", "lib.ts", "renamed.ts");
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, deletionNames)).toEqual(["uses.test.ts"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("git mv with the importer updated selects only that importer", async () => {
+      using dir = tempDir("test-changed-git-mv-updated", deletionFixture);
+      initRepo(String(dir));
+      git(String(dir), "mv", "lib.ts", "renamed.ts");
+      writeFileSync(join(String(dir), "uses.test.ts"), importing("./renamed"));
+      git(String(dir), "add", "-A");
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, deletionNames)).toEqual(["uses.test.ts"]);
+      // The old name is the one that selects nothing.
+      expect(stderr).toContain("3 changed files, running 1/2 test files (1 not imported by a test file or preload)");
+      expect(exitCode).toBe(0);
+    });
+
+    test("an import that names another extension", async () => {
+      using dir = tempDir("test-changed-rm-js-extension", {
+        ...deletionFixture,
+        "uses.test.ts": importing("./lib.js"),
+      });
+      initRepo(String(dir));
+      rmSync(join(String(dir), "lib.ts"));
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, deletionNames)).toEqual(["uses.test.ts"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("the index file of an imported directory", async () => {
+      using dir = tempDir("test-changed-rm-index", {
+        ...deletionFixture,
+        "pkg/index.ts": lib,
+        "uses.test.ts": importing("./pkg"),
+      });
+      initRepo(String(dir));
+      rmSync(join(String(dir), "pkg", "index.ts"));
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, deletionNames)).toEqual(["uses.test.ts"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a transitive import", async () => {
+      using dir = tempDir("test-changed-rm-transitive", {
+        ...deletionFixture,
+        "middle.ts": `export { v } from "./lib";\n`,
+        "uses.test.ts": importing("./middle"),
+      });
+      initRepo(String(dir));
+      rmSync(join(String(dir), "lib.ts"));
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, deletionNames)).toEqual(["uses.test.ts"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a deleted file that nothing imports selects nothing and is named", async () => {
+      using dir = tempDir("test-changed-rm-unused", deletionFixture);
+      initRepo(String(dir));
+      rmSync(join(String(dir), "unused.ts"));
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, deletionNames)).toEqual([]);
+      expect(stderr).toContain("1 changed file, but no test files are affected");
+      expect(stderr).toContain("no test file or preload imports unused.ts\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("a change that reaches a preload selects every test file", () => {
+    const preloadFixture = {
+      "package.json": JSON.stringify({ name: "preloads", type: "module" }),
+      "bunfig.toml": `[test]\npreload = ["./setup.ts"]\n`,
+      "setup.ts": `import { value } from "./setup-dep";\nglobalThis.fromSetup = value;\n`,
+      "setup-dep.ts": `export const value = 1;\n`,
+      "cli-setup.ts": `globalThis.fromCli = 1;\n`,
+      "lib.ts": `export const v = 1;\n`,
+      "one.test.ts": `import { test, expect } from "bun:test";\nimport { v } from "./lib";\ntest("one", () => expect(v).toBe(1));\n`,
+      "two.test.ts": `import { test, expect } from "bun:test";\ntest("two", () => expect(globalThis.fromSetup).toBe(1));\n`,
+    };
+    const preloadNames = ["one.test.ts", "two.test.ts"];
+
+    test("[test] preload in bunfig.toml", async () => {
+      using dir = tempDir("test-changed-preload-bunfig", preloadFixture);
+      initRepo(String(dir));
+      appendFileSync(join(String(dir), "setup.ts"), "// touched\n");
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, preloadNames)).toEqual(preloadNames);
+      expect(stderr).toContain("1 changed file, running 2/2 test files\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a file the preload imports", async () => {
+      using dir = tempDir("test-changed-preload-import", preloadFixture);
+      initRepo(String(dir));
+      writeFileSync(join(String(dir), "setup-dep.ts"), `export const value = 2;\n`);
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, preloadNames)).toEqual(preloadNames);
+      // two.test.ts imports nothing and reads what the preload set.
+      expect(stderr).toContain("(fail) two");
+      expect(exitCode).toBe(1);
+    });
+
+    test("--preload", async () => {
+      using dir = tempDir("test-changed-preload-cli", preloadFixture);
+      initRepo(String(dir));
+      appendFileSync(join(String(dir), "cli-setup.ts"), "// touched\n");
+
+      {
+        const { stderr, exitCode } = await runTestChanged(String(dir));
+        expect(ranFiles(stderr, preloadNames)).toEqual([]);
+        expect(stderr).toContain("no test file or preload imports cli-setup.ts\n");
+        expect(exitCode).toBe(0);
+      }
+      const { stderr, exitCode } = await runTestChanged(String(dir), ["--preload", "./cli-setup.ts"]);
+      expect(ranFiles(stderr, preloadNames)).toEqual(preloadNames);
+      expect(exitCode).toBe(0);
+    });
+
+    test("a deleted preload", async () => {
+      using dir = tempDir("test-changed-preload-deleted", preloadFixture);
+      initRepo(String(dir));
+      rmSync(join(String(dir), "setup.ts"));
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(stderr).toContain("1 changed file, running 2/2 test files\n");
+      expect(exitCode).toBe(1);
+    });
+
+    test("a change that reaches no preload selects by the imports alone", async () => {
+      using dir = tempDir("test-changed-preload-untouched", preloadFixture);
+      initRepo(String(dir));
+      appendFileSync(join(String(dir), "lib.ts"), "// touched\n");
+
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, preloadNames)).toEqual(["one.test.ts"]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   test("multiple changes select the union of affected tests", async () => {
@@ -630,6 +854,68 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     proc.kill("SIGCONT");
     expect(await nextSummary()).toBe("Ran 12 tests across 12 files.");
   });
+
+  // Reads the `Ran N tests across M files.` line of each run.
+  function summaries(cwd: string) {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
+      cwd,
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+      killSignal: "SIGKILL",
+    });
+    const lines = forEachLine(proc.stderr);
+    return {
+      proc,
+      async next() {
+        while (true) {
+          const { value, done } = await lines.next();
+          if (done || value.startsWith("Ran ")) return value?.replace(/ \[.*/, "");
+        }
+      },
+    };
+  }
+
+  test("an edit of a preload restarts a run of no test files and reruns every test file", async () => {
+    using dir = tempDir("test-changed-watch-preload", {
+      "package.json": JSON.stringify({ name: "watch", type: "module" }),
+      "bunfig.toml": `[test]\npreload = ["./setup.ts"]\n`,
+      "setup.ts": `globalThis.fromSetup = 1;\n`,
+      "wa.test.ts": `import { test, expect } from "bun:test";\ntest("wa", () => expect(1).toBe(1));\n`,
+      "wb.test.ts": `import { test, expect } from "bun:test";\ntest("wb", () => expect(2).toBe(2));\n`,
+    });
+    initRepo(String(dir));
+
+    const run = summaries(String(dir));
+    await using proc = run.proc;
+    expect(await run.next()).toBe("Ran 0 tests across 0 files.");
+
+    appendFileSync(join(String(dir), "setup.ts"), "// touched\n");
+    expect(await run.next()).toBe("Ran 2 tests across 2 files.");
+  }, 60_000);
+
+  test.skipIf(!isLinux)(
+    "a deleted dependency reruns its importer",
+    async () => {
+      using dir = tempDir("test-changed-watch-delete", {
+        "package.json": JSON.stringify({ name: "watch", type: "module" }),
+        "dep-a.ts": `export const A = 1;\n`,
+        "wa.test.ts": `import { test, expect } from "bun:test";\nimport { A } from "./dep-a";\ntest("wa", () => expect(A).toBe(1));\n`,
+        "wb.test.ts": `import { test, expect } from "bun:test";\ntest("wb", () => expect(2).toBe(2));\n`,
+      });
+      initRepo(String(dir));
+
+      const run = summaries(String(dir));
+      await using proc = run.proc;
+      expect(await run.next()).toBe("Ran 0 tests across 0 files.");
+
+      rmSync(join(String(dir), "dep-a.ts"));
+      expect(await run.next()).toBe("Ran 1 test across 1 file.");
+    },
+    60_000,
+  );
 
   test("trigger file path handed to restarted runs has a 128-bit random hex suffix", async () => {
     using dir = tempDir("test-changed-watch-trigger-name", {

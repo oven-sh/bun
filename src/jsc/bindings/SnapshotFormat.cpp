@@ -1,5 +1,6 @@
 #include "root.h"
 
+#include "JSDOMURL.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/JSFunctionInlines.h>
@@ -350,6 +351,13 @@ extern "C" bool SnapshotFormat__forEachOfCollection(JSGlobalObject* globalObject
         return true;
     }
     return false;
+}
+
+// The string that `url.href` returns, or an empty value for anything but a URL. Runs no JS.
+extern "C" EncodedJSValue SnapshotFormat__hrefOf(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
+{
+    auto* url = dynamicDowncast<WebCore::JSDOMURL>(JSValue::decode(encodedValue));
+    return JSValue::encode(url ? url->href(*globalObject) : JSValue());
 }
 
 extern "C" bool SnapshotFormat__includes(EncodedJSValue encodedList, uint32_t length, EncodedJSValue encodedValue)

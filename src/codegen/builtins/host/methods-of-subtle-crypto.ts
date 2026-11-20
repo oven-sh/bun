@@ -1,0 +1,20 @@
+// JSSubtleCryptoPrototypeTableValues in webcrypto/JSSubtleCrypto.cpp.
+export const methodsOfSubtleCrypto = [
+  "decapsulateBits",
+  "decapsulateKey",
+  "decrypt",
+  "deriveBits",
+  "deriveKey",
+  "digest",
+  "encapsulateBits",
+  "encapsulateKey",
+  "encrypt",
+  "exportKey",
+  "generateKey",
+  "getPublicKey",
+  "importKey",
+  "sign",
+  "unwrapKey",
+  "verify",
+  "wrapKey",
+];

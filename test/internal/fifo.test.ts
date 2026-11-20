@@ -48,7 +48,7 @@ class DequeueList<T> {
 }
 
 describe("Given an empty queue", () => {
-  let queue: Dequeue<number>;
+  let queue: InstanceType<typeof Dequeue>;
 
   beforeEach(() => {
     queue = new Dequeue();
@@ -107,7 +107,7 @@ describe("Given an empty queue", () => {
 
 describe("grow boundary conditions", () => {
   describe.each([3, 4, 16])("when %d items are pushed", n => {
-    let queue: Dequeue<number>;
+    let queue: InstanceType<typeof Dequeue>;
 
     beforeEach(() => {
       queue = new Dequeue();
@@ -146,7 +146,7 @@ describe("grow boundary conditions", () => {
 }); // </grow boundary conditions>
 
 describe("adding and removing items", () => {
-  let queue: Dequeue<number>;
+  let queue: InstanceType<typeof Dequeue>;
   let expected: DequeueList<number>;
 
   describe("when 10k items are pushed", () => {

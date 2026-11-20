@@ -1,0 +1,9 @@
+# -- source: a-closure-whose-first-cell-is-dead-where-the-second-is-made-is-let-by.ts
+# function run(sources: Array<{ x: number; y: number }>): string { const said: Array<number | boolean> = []; for (let i = 0; i < sources.length; i++) { said.push(i); const made = { tag: i, ...sources[i], read: function self(): unknown { return self; } }; said.push(made.read() === made.read, made.read.name === "self"); } return said.join(" "); }
+# console.log(run([{ x: 1, y: 2 }, { x: 3, y: 4 }, JSON.parse('{"y":7,"q":8}')]));
+# -- end of source
+# What the judge of cells lets by, as users build. The one user of the closure is the definition on the copy, so it may stand between the copy and that definition and is walked twice: in front of the tests and in the
+# closed arm. Both cells are needed and the first stands above the second, but on the way through the closed arm nobody reads the first: one cell stands for the operation at a time. Two records, and no diagnostic.
+# OPTIONS: check=Validate
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-COUNT-2: = NewClosure

@@ -1,0 +1,17 @@
+# -- source: closure-made-in-front-of-a-loop-is-one-cell-for-every-call-in-the-loop.ts
+# declare function print(...values: unknown[]): void;
+# const seen = new Set<unknown>();
+# function each(list: number[], visit: (x: number) => void): void { seen.add(visit); for (let i = 0; i < list.length; i++) visit(list[i]); }
+# function sum(lists: number[][]): number { let total = 0; const add = (x: number) => { total += x; }; for (let i = 0; i < lists.length; i++) each(lists[i], add); return total; }
+# const like: any = { length: 2, 0: 7, 1: 8 };
+# print(sum([[1, 2], like, [3], like]), seen.size);
+# -- end of source
+# The program writes one closure and hands it over at every turn of the loop, and the helper can tell: it keeps what it is handed. A cell made anew on the failing side of each turn would be another object each time.
+# So only a closure that the block of the call itself makes goes to the failing side.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewClosure
+# CHECK: isLoopHead=true
+# CHECK-NOT: = NewClosure
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 36 1

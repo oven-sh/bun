@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+try {
+} catch /* prettier-ignore */ e {}
+
+try {
+} catch // prettier-ignore
+{ a,   b } {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+try {
+} catch /* prettier-ignore */ e {}
+
+try {
+} catch // prettier-ignore
+{ a,   b } {}
+
+===================== End =====================

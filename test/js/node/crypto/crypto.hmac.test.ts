@@ -21,7 +21,7 @@ function testHmac(algo, key, data, expected) {
 
 describe("crypto.Hmac", () => {
   test("Hmac is expected to return a new instance", async () => {
-    const instance = Hmac("sha256", "Node");
+    const instance = (Hmac as any)("sha256", "Node");
     expect(instance instanceof Hmac).toBe(true);
   });
 
@@ -49,7 +49,9 @@ describe("crypto.Hmac", () => {
   });
 
   test("createHmac should throw when using invalid options", async () => {
+    // @ts-expect-error
     expect(() => createHmac(null)).toThrow('The "hmac" argument must be of type string. Received null');
+    // @ts-expect-error
     expect(() => createHmac("sha1", null)).toThrow(
       'The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey. Received null',
     );
@@ -418,8 +420,8 @@ describe("crypto.Hmac", () => {
       }
       {
         const h = createHmac("sha1", "key").update("data");
-        expect(h.digest("buffer")).toEqual(Buffer.from(expected, "latin1"));
-        expect(h.digest("buffer")).toEqual(Buffer.from(""));
+        expect((h as any).digest("buffer")).toEqual(Buffer.from(expected, "latin1"));
+        expect((h as any).digest("buffer")).toEqual(Buffer.from(""));
       }
     }
     {
@@ -433,8 +435,8 @@ describe("crypto.Hmac", () => {
       }
       {
         const h = createHmac("sha1", "key");
-        expect(h.digest("buffer")).toEqual(Buffer.from(expected, "latin1"));
-        expect(h.digest("buffer")).toEqual(Buffer.from(""));
+        expect((h as any).digest("buffer")).toEqual(Buffer.from(expected, "latin1"));
+        expect((h as any).digest("buffer")).toEqual(Buffer.from(""));
       }
     }
   });

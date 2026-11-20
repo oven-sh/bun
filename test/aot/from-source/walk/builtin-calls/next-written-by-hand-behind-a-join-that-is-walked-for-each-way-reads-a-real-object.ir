@@ -1,0 +1,19 @@
+# a join of two literals stands in front of the step, so the block with the call is walked once for each way, and the two results meet in a parameter of the next block. Each walk makes its own step and its own object: what the reads behind the join find is a real object
+# -- source: next-written-by-hand-behind-a-join-that-is-walked-for-each-way-reads-a-real-object.ts
+# declare function sink(...values: unknown[]): void;
+# function* count(n: number): Generator<number, number, number | undefined> { let sum = 0; for (let i = 0; i < n; i++) sum += (yield i * 10) ?? 0; return sum; }
+# function take(wide: boolean, at: number, walk: Generator<number, number, number | undefined>): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; const options = wide ? { step: at } : { step: at + 1 }; const sent = options.step; const { value, done } = walk.next(sent); if (done) return 1000 + value; return value + work; }
+# const walk = count(3);
+# sink(take(true, 1, walk), take(false, 2, walk));
+# -- end of source
+# f1 = count, f2 = take
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = StepGenerator
+# CHECK: [[one]]: {{*}} = NewObject {{*}}layout=L(IteratorResult)
+# CHECK: Jump -> next b{{*}}([[one]], 
+# CHECK: = StepGenerator
+# CHECK: [[other]]: {{*}} = NewObject {{*}}layout=L(IteratorResult)
+# CHECK: Jump -> next b{{*}}([[other]], 
+# CHECK: = PropGet [[met]] key="value"
+# CHECK-NEXT: = PropGet [[met]] key="done"

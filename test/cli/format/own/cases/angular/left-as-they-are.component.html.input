@@ -1,0 +1,19 @@
+@if (one two
+three) {}
+@let one = () =>
+{ two };
+@error (let one; retry
+
+= two) {}
+<a [x]="one two
+three"></a>
+<a (x)="one | two"></a>
+<a [x]="one = two"></a>
+<a [x]="one; two"></a>
+<a [x]="call(one,)"></a>
+<a [x]="-one ** two"></a>
+<a [x]="one?.two = three"></a>
+<a [x]="one.#two"></a>
+<a [x]="/one/gg"></a>
+<a [x]="{{ one }}"></a>
+<a x="{{ one two }} {{ three  }}"></a>

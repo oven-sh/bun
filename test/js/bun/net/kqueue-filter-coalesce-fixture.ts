@@ -52,7 +52,7 @@ const server = Bun.listen({
   },
 });
 
-const clients = [];
+const clients: Bun.Socket[] = [];
 for (let i = 0; i < 10; i++) {
   clients.push(
     await Bun.connect({

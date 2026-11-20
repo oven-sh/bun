@@ -1,0 +1,8 @@
+interface A { [key // a
+// b
+: string]: number }
+type B = { [key // c
+: string /**
+ * d
+ */ ]: number };
+type C = { [key /* c */ : string]: number };

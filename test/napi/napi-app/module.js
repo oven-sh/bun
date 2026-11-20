@@ -405,7 +405,6 @@ nativeTests.test_get_all_property_names_throwing_proxy_traps = () => {
       napi_key_keep_numbers,
     ),
   );
-
 };
 
 nativeTests.test_get_all_property_names_get_prototype_throws_in_descriptor_walk = () => {
@@ -1410,7 +1409,9 @@ nativeTests.test_napi_get_prototype_proxy = () => {
   dump("plain object again", {});
 };
 
-nativeTests.test_get_value_string = () => {
+nativeTests.test_get_value_string = async () => {
+  // The addon writes to stdout itself, and Node queues what a full pipe doesn't take.
+  const print = line => new Promise(resolve => process.stdout.write(line + "\n", resolve));
   function to16Bit(string) {
     if (typeof Bun != "object") return string;
     const jsc = require("bun:jsc");
@@ -1443,9 +1444,9 @@ nativeTests.test_get_value_string = () => {
     // ["\ud801", "unpaired high surrogate"],
     // ["\udc02", "unpaired low surrogate"],
   ]) {
-    console.log(`test napi_get_value_string on ${string} (${description})`);
+    await print(`test napi_get_value_string on ${string} (${description})`);
     for (const encoding of ["latin1", "utf8", "utf16"]) {
-      console.log(encoding);
+      await print(encoding);
       const fn = nativeTests[`test_get_value_string_${encoding}`];
       fn(string);
     }
@@ -1834,6 +1835,41 @@ nativeTests.test_threadsafe_function_abort_hands_queued_items_back = async () =>
   writeSync(1, `finalized: ${nativeTests.threadsafe_function_with_queued_items_finalized()}\n`);
 };
 
+nativeTests.test_threadsafe_function_ref_and_unref = (_, ...calls) => {
+  nativeTests.queue_threadsafe_function_items(() => {}, 0, /* print_finalize */ false);
+  // From a timer, so that nothing but the function is left to keep the loop alive.
+  setTimeout(() => {
+    for (const call of calls) {
+      const status = nativeTests.set_threadsafe_function_referenced(!call.includes("unref"), call.includes("thread"));
+      console.log(`${call}: ${status}`);
+    }
+    let turns = 0;
+    const interval = setInterval(() => {
+      // The loop can finish the turn that it is in.
+      if (++turns < 3) return;
+      console.log("kept alive");
+      clearInterval(interval);
+      nativeTests.abort_threadsafe_function_with_queued_items();
+    }, 1).unref();
+  });
+};
+
+nativeTests.test_threadsafe_function_unref_before_poll = () => {
+  nativeTests.queue_threadsafe_function_items(() => {}, 0, /* print_finalize */ false);
+  setImmediate(() => console.log(nativeTests.set_threadsafe_function_referenced(false, true)));
+};
+
+nativeTests.test_threadsafe_function_unref_from_worker = async () => {
+  const { Worker } = require("node:worker_threads");
+  const addon = JSON.stringify(require.resolve("./build/Debug/napitests.node"));
+  nativeTests.queue_threadsafe_function_items(() => {}, 0, /* print_finalize */ false);
+  const worker = new Worker(`process.exit(require(${addon}).set_threadsafe_function_referenced(false, false))`, {
+    eval: true,
+  });
+  const [status] = await require("node:events").once(worker, "exit");
+  return status;
+};
+
 // When napi_create_threadsafe_function is given no JS func, the call_js
 // callback receives a null js_callback (addons test `if (js_callback != NULL)`).
 nativeTests.test_tsfn_null_js_callback_driver = async () => {
@@ -1948,6 +1984,38 @@ nativeTests.test_ungated_calls_worker_terminate = async () => {
     });
     console.log("terminate() resolved with", await worker.terminate());
   }
+};
+
+nativeTests.test_async_work_worker_terminate = async () => {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const report = new Int32Array(new SharedArrayBuffer(8));
+  const worker = new Worker(
+    `globalThis.buffer = require(${JSON.stringify(path.join(__dirname, "build/Debug/napitests.node"))})
+      .async_work_with_external_buffer(require("node:worker_threads").workerData);`,
+    { eval: true, workerData: report },
+  );
+  const { promise: failed, reject } = Promise.withResolvers();
+  worker.once("error", reject);
+  while (Atomics.load(report, 0) === 0) await Promise.race([failed, new Promise(resolve => setImmediate(resolve))]);
+  console.log("terminate() resolved with", await worker.terminate());
+  console.log("finalized during execute():", report[1]);
+};
+
+nativeTests.test_gated_calls_worker_terminate = async () => {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const report = new Int32Array(new SharedArrayBuffer(12));
+  const worker = new Worker(
+    `require(${JSON.stringify(path.join(__dirname, "build/Debug/napitests.node"))})
+      .gated_calls_until_terminated(require("node:worker_threads").workerData);`,
+    { eval: true, workerData: report },
+  );
+  const { promise: failed, reject } = Promise.withResolvers();
+  worker.once("error", reject);
+  while (Atomics.load(report, 0) === 0) await Promise.race([failed, new Promise(resolve => setImmediate(resolve))]);
+  console.log("terminate() resolved with", await worker.terminate());
+  console.log("napi_throw:", report[1], "exception pending:", report[2]);
 };
 
 // See ungated_calls_through_timeout in standalone_tests.cpp: 600ms of ungated

@@ -2,7 +2,10 @@
 //! collection. This type implies there is always a valid value held.
 //! For a strong that may be empty (to reuse allocation), use `Optional`.
 
+use core::cell::Cell;
 use core::ptr::NonNull;
+
+use bun_ptr::CellExt as _;
 
 use crate::{JSGlobalObject, JSValue};
 
@@ -33,16 +36,6 @@ impl Strong {
     pub fn set(&mut self, global: &JSGlobalObject, new_value: JSValue) {
         debug_assert!(!new_value.is_empty());
         Impl::set(self.handle, global, new_value);
-    }
-
-    /// Adopt an `Impl` handle allocated externally (e.g. by C++ bindgen glue),
-    /// taking ownership. The handle will be destroyed on `Drop`.
-    ///
-    /// # Safety
-    /// `handle` must have been produced by `Bun__StrongRef__new` (or equivalent)
-    /// and must not be owned by any other `Strong`/`Optional`.
-    pub(crate) unsafe fn adopt(handle: NonNull<Impl>) -> Strong {
-        Strong { handle }
     }
 }
 
@@ -121,14 +114,6 @@ impl Optional {
         Some(result)
     }
 
-    /// Explicit teardown. Idempotent; equivalent to dropping in place and
-    /// leaving `self` empty so `Drop` is a no-op.
-    pub fn deinit(&mut self) {
-        let Some(r) = self.handle.take() else { return };
-        // SAFETY: `r` came from `Impl::init` and is consumed exactly once here.
-        unsafe { Impl::destroy(r) };
-    }
-
     pub fn set(&mut self, global: &JSGlobalObject, value: JSValue) {
         let Some(r) = self.handle else {
             if value.is_empty() {
@@ -147,6 +132,34 @@ impl Drop for Optional {
         let Some(r) = self.handle.take() else { return };
         // SAFETY: `r` came from `Impl::init` and is consumed exactly once here.
         unsafe { Impl::destroy(r) };
+    }
+}
+
+/// An optional `Strong` that is set and cleared through `&self`.
+#[derive(Default)]
+pub struct StrongCell(Cell<Option<Strong>>);
+
+impl From<Option<Strong>> for StrongCell {
+    fn from(value: Option<Strong>) -> StrongCell {
+        StrongCell(Cell::new(value))
+    }
+}
+
+impl StrongCell {
+    pub fn get(&self) -> Option<JSValue> {
+        self.0.with_taken(|value| value.as_ref().map(Strong::get))
+    }
+
+    pub fn is_some(&self) -> bool {
+        self.0.with_taken(|value| value.is_some())
+    }
+
+    pub fn set(&self, value: Strong) {
+        self.0.set(Some(value));
+    }
+
+    pub fn clear(&self) {
+        self.0.set(None);
     }
 }
 
@@ -210,9 +223,7 @@ impl Impl {
         // slot release is the whole of teardown. The Rust VM TLS outlives ~VM.
         match crate::virtual_machine::VirtualMachine::get_or_null() {
             Some(vm) => {
-                // SAFETY: `get_or_null` returns the thread-local pointer set by
-                // `init()`; the allocation outlives the thread.
-                if unsafe { (*vm).is_shutting_down() } {
+                if vm.is_shutting_down() {
                     return;
                 }
             }

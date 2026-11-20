@@ -8,8 +8,8 @@
 //! Provides `DEFAULT_SHAPES` (built-in object shapes) and `DEFAULT_GLOBALS`
 //! (global variable types including React hooks and JS built-ins).
 
+use crate::collections::FxHashMap as HashMap;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use crate::hir::Effect;
@@ -120,7 +120,7 @@ impl GlobalRegistry {
     pub fn new() -> Self {
         Self {
             base: false,
-            entries: HashMap::new(),
+            entries: HashMap::default(),
         }
     }
 
@@ -128,7 +128,7 @@ impl GlobalRegistry {
     pub fn with_base() -> Self {
         Self {
             base: true,
-            entries: HashMap::new(),
+            entries: HashMap::default(),
         }
     }
 
@@ -149,21 +149,6 @@ impl GlobalRegistry {
     pub fn contains_key(&self, key: &str) -> bool {
         self.entries.contains_key(key)
             || (self.base && BASE_GLOBAL_INDEX.contains_key(key.as_bytes()))
-    }
-
-    /// Iterate over all keys in the registry (base + extras).
-    /// Keys in extras that shadow base keys appear only once.
-    pub fn keys(&self) -> impl Iterator<Item = &str> {
-        let entries = &self.entries;
-        let base_keys = self
-            .base
-            .then(|| BASE_GLOBAL_INDEX.keys())
-            .into_iter()
-            .flatten()
-            // SAFETY: comptime_string_map! keys are ASCII byte-string literals.
-            .map(|k| unsafe { core::str::from_utf8_unchecked(k) })
-            .filter(move |k| !entries.contains_key(*k));
-        entries.keys().map(|k| &**k).chain(base_keys)
     }
 
     /// Consume the registry and return the inner HashMap.
@@ -1402,7 +1387,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
         None,
         false,
     );
-    let mut mixed_props: HashMap<&'static str, Type> = HashMap::new();
+    let mut mixed_props: HashMap<&'static str, Type> = HashMap::default();
     mixed_props.insert("toString", mixed_to_string);
     mixed_props.insert("indexOf", mixed_index_of);
     mixed_props.insert("includes", mixed_includes);

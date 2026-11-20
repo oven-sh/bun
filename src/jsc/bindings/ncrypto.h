@@ -180,7 +180,7 @@ struct Result final {
         , openssl_error(WTF::move(openssl_error))
     {
     }
-    inline operator bool() const { return has_value; }
+    inline explicit operator bool() const { return has_value; }
 };
 
 // ============================================================================
@@ -257,7 +257,7 @@ public:
 
     inline const EVP_MD* get() const { return md_; }
     inline operator const EVP_MD*() const { return md_; }
-    inline operator bool() const { return md_ != nullptr; }
+    inline explicit operator bool() const { return md_ != nullptr; }
 
     static const Digest FromName(WTF::StringView name);
 
@@ -286,7 +286,7 @@ public:
 
     inline const EVP_CIPHER* get() const { return cipher_; }
     inline operator const EVP_CIPHER*() const { return cipher_; }
-    inline operator bool() const { return cipher_ != nullptr; }
+    inline explicit operator bool() const { return cipher_ != nullptr; }
 
     int getNid() const;
     int getMode() const;
@@ -321,6 +321,7 @@ public:
     struct CipherParams {
         int padding;
         Digest digest;
+        Digest mgf1_digest;
         const Buffer<const void> label;
     };
 
@@ -357,7 +358,7 @@ public:
     Dsa(OSSL3_CONST DSA* dsa);
     NCRYPTO_DISALLOW_COPY_AND_MOVE(Dsa)
 
-    inline operator bool() const { return dsa_ != nullptr; }
+    inline explicit operator bool() const { return dsa_ != nullptr; }
     inline operator OSSL3_CONST DSA*() const { return dsa_; }
 
     const BIGNUM* getP() const;
@@ -378,7 +379,7 @@ public:
     Rsa(OSSL3_CONST RSA* rsa);
     NCRYPTO_DISALLOW_COPY_AND_MOVE(Rsa)
 
-    inline operator bool() const { return rsa_ != nullptr; }
+    inline explicit operator bool() const { return rsa_ != nullptr; }
     inline operator OSSL3_CONST RSA*() const { return rsa_; }
 
     struct PublicKey {
@@ -401,6 +402,8 @@ public:
 
     const PublicKey getPublicKey() const;
     const PrivateKey getPrivateKey() const;
+    // Check that n is the product of all private-key prime factors.
+    bool checkPrimeProduct() const;
     const std::optional<PssParams> getPssParams() const;
 
     bool setPublicKey(BignumPointer&& n, BignumPointer&& e);
@@ -419,7 +422,7 @@ private:
 
 class Ec final {
 public:
-    static int GetCurveIdFromName(const char* name);
+    static int GetCurveIdFromName(WTF::StringView name);
 };
 
 // A managed pointer to a buffer of data. When destroyed the underlying
@@ -448,7 +451,7 @@ public:
     ~DataPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return data_ == nullptr; }
-    inline operator bool() const { return data_ != nullptr; }
+    inline explicit operator bool() const { return data_ != nullptr; }
 
     template<typename T = void>
     inline T* get() const noexcept
@@ -509,7 +512,7 @@ public:
     ~BIOPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return bio_ == nullptr; }
-    inline operator bool() const { return bio_ != nullptr; }
+    inline explicit operator bool() const { return bio_ != nullptr; }
     inline BIO* get() const noexcept { return bio_.get(); }
 
     inline operator BUF_MEM*() const
@@ -545,7 +548,7 @@ public:
 
     int operator<=>(const BignumPointer& other) const noexcept;
     int operator<=>(const BIGNUM* other) const noexcept;
-    inline operator bool() const { return bn_ != nullptr; }
+    inline explicit operator bool() const { return bn_ != nullptr; }
     inline BIGNUM* get() const noexcept { return bn_.get(); }
     void reset(BIGNUM* bn = nullptr);
     void reset(const unsigned char* data, size_t len);
@@ -610,7 +613,7 @@ public:
     {
         return ctx_ == nullptr;
     }
-    inline operator bool() const { return ctx_ != nullptr; }
+    inline explicit operator bool() const { return ctx_ != nullptr; }
     inline EVP_CIPHER_CTX* get() const { return ctx_.get(); }
     inline operator EVP_CIPHER_CTX*() const { return ctx_.get(); }
     void reset(EVP_CIPHER_CTX* ctx = nullptr);
@@ -662,7 +665,7 @@ public:
     {
         return ctx_ == nullptr;
     }
-    inline operator bool() const { return ctx_ != nullptr; }
+    inline explicit operator bool() const { return ctx_ != nullptr; }
     inline EVP_PKEY_CTX* get() const { return ctx_.get(); }
     void reset(EVP_PKEY_CTX* ctx = nullptr);
     EVP_PKEY_CTX* release();
@@ -673,6 +676,7 @@ public:
     bool setEcParameters(int curve, int encoding);
 
     bool setRsaOaepMd(const Digest& md);
+    bool setRsaMgf1Md(const Digest& md);
     bool setRsaPadding(int padding);
     bool setRsaKeygenPubExp(BignumPointer&& e);
     bool setRsaKeygenBits(int bits);
@@ -803,7 +807,7 @@ public:
     {
         return pkey_ == nullptr;
     }
-    inline operator bool() const { return pkey_ != nullptr; }
+    inline explicit operator bool() const { return pkey_ != nullptr; }
     inline EVP_PKEY* get() const { return pkey_.get(); }
     void reset(EVP_PKEY* pkey = nullptr);
     EVP_PKEY* release();
@@ -813,6 +817,8 @@ public:
 
     int id() const;
     int base_id() const;
+    bool hasSmallOrderEdDsaPoint(
+        const Buffer<const unsigned char>& signature) const;
     size_t size() const;
 
     size_t rawPublicKeySize() const;
@@ -874,7 +880,7 @@ public:
     ~DHPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return dh_ == nullptr; }
-    inline operator bool() const { return dh_ != nullptr; }
+    inline explicit operator bool() const { return dh_ != nullptr; }
     inline DH* get() const { return dh_.get(); }
     void reset(DH* dh = nullptr);
     DH* release();
@@ -897,14 +903,9 @@ public:
 
     enum class CheckPublicKeyResult {
         NONE,
-#ifndef OPENSSL_IS_BORINGSSL
-        // Boringssl does not define DH_R_CHECK_PUBKEY_TOO_SMALL or TOO_LARGE
-        TOO_SMALL = DH_R_CHECK_PUBKEY_TOO_SMALL,
-        TOO_LARGE = DH_R_CHECK_PUBKEY_TOO_LARGE,
-        INVALID = DH_R_CHECK_PUBKEY_INVALID,
-#else
-        INVALID = DH_R_INVALID_PUBKEY,
-#endif
+        TOO_SMALL,
+        TOO_LARGE,
+        INVALID,
         CHECK_FAILED = 512,
     };
     // Check to see if the given public key is suitable for this DH instance.
@@ -945,7 +946,7 @@ public:
     inline operator const X509*() const { return cert_; }
 
     inline bool operator==(std::nullptr_t) noexcept { return cert_ == nullptr; }
-    inline operator bool() const { return cert_ != nullptr; }
+    inline explicit operator bool() const { return cert_ != nullptr; }
 
     BIOPointer toPEM() const;
     BIOPointer toDER() const;
@@ -958,6 +959,8 @@ public:
     BIOPointer getValidTo() const;
     std::optional<std::string_view> getSignatureAlgorithm() const;
     std::optional<std::string> getSignatureAlgorithmOID() const;
+    std::optional<int64_t> getValidFromTime() const;
+    std::optional<int64_t> getValidToTime() const;
     DataPointer getSerialNumber() const;
     Result<EVPKeyPointer, int> getPublicKey() const;
     StackOfASN1 getKeyUsage() const;
@@ -988,7 +991,7 @@ public:
     };
     CheckMatch checkHost(const std::span<const char> host,
         int flags,
-        DataPointer* peerName = nullptr) const;
+        WTF::String* peerName = nullptr) const;
     CheckMatch checkEmail(const std::span<const char> email, int flags) const;
     CheckMatch checkIp(const char* ip, int flags) const;
 
@@ -1010,7 +1013,7 @@ public:
     ~X509Pointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return cert_ == nullptr; }
-    inline operator bool() const { return cert_ != nullptr; }
+    inline explicit operator bool() const { return cert_ != nullptr; }
     inline X509* get() const { return cert_.get(); }
     inline operator X509*() const { return cert_.get(); }
     inline operator const X509*() const { return cert_.get(); }
@@ -1037,7 +1040,7 @@ public:
     ~ECDSASigPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return sig_ == nullptr; }
-    inline operator bool() const { return sig_ != nullptr; }
+    inline explicit operator bool() const { return sig_ != nullptr; }
     inline ECDSA_SIG* get() const { return sig_.get(); }
     inline operator ECDSA_SIG*() const { return sig_.get(); }
     void reset(ECDSA_SIG* sig = nullptr);
@@ -1070,7 +1073,7 @@ public:
     ~ECGroupPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return group_ == nullptr; }
-    inline operator bool() const { return group_ != nullptr; }
+    inline explicit operator bool() const { return group_ != nullptr; }
     inline EC_GROUP* get() const { return group_.get(); }
     inline operator EC_GROUP*() const { return group_.get(); }
     void reset(EC_GROUP* group = nullptr);
@@ -1093,7 +1096,7 @@ public:
     ~ECPointPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return point_ == nullptr; }
-    inline operator bool() const { return point_ != nullptr; }
+    inline explicit operator bool() const { return point_ != nullptr; }
     inline EC_POINT* get() const { return point_.get(); }
     inline operator EC_POINT*() const { return point_.get(); }
     void reset(EC_POINT* point = nullptr);
@@ -1121,7 +1124,7 @@ public:
     ~ECKeyPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return key_ == nullptr; }
-    inline operator bool() const { return key_ != nullptr; }
+    inline explicit operator bool() const { return key_ != nullptr; }
     inline EC_KEY* get() const { return key_.get(); }
     inline operator EC_KEY*() const { return key_.get(); }
     void reset(EC_KEY* key = nullptr);
@@ -1161,7 +1164,7 @@ public:
     ~EVPMDCtxPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return ctx_ == nullptr; }
-    inline operator bool() const { return ctx_ != nullptr; }
+    inline explicit operator bool() const { return ctx_ != nullptr; }
     inline EVP_MD_CTX* get() const { return ctx_.get(); }
     inline operator EVP_MD_CTX*() const { return ctx_.get(); }
     void reset(EVP_MD_CTX* ctx = nullptr);
@@ -1207,7 +1210,7 @@ public:
     ~HMACCtxPointer();
 
     inline bool operator==(std::nullptr_t) noexcept { return ctx_ == nullptr; }
-    inline operator bool() const { return ctx_ != nullptr; }
+    inline explicit operator bool() const { return ctx_ != nullptr; }
     inline HMAC_CTX* get() const { return ctx_.get(); }
     inline operator HMAC_CTX*() const { return ctx_.get(); }
     void reset(HMAC_CTX* ctx = nullptr);
@@ -1258,6 +1261,14 @@ Buffer<char> ExportChallenge(const char* input, size_t length);
 
 const EVP_MD* getDigestByName(const WTF::StringView name);
 const EVP_CIPHER* getCipherByName(const WTF::StringView name);
+
+// Not upstream.
+struct DigestName {
+    WTF::ASCIILiteral name;
+    const EVP_MD* (*digest)();
+};
+// The names in getHashes(). getDigestByName() looks through them first.
+std::span<const DigestName> getDigestNames();
 
 // Verify that the specified HKDF output length is valid for the given digest.
 // The maximum length for HKDF output for a given digest is 255 times the

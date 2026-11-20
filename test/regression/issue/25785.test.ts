@@ -30,7 +30,7 @@ test("CSS bundler should preserve logical border-radius properties", async () =>
     outdir: `${dir}/dist`,
     experimentalCss: true,
     minify: false,
-  });
+  } as Bun.BuildConfig);
 
   expect(result.success).toBe(true);
   expect(result.outputs.length).toBe(1);
@@ -83,7 +83,7 @@ test("CSS bundler should handle logical border-radius with targets that compile 
     minify: false,
     // Target older browsers that don't support logical properties
     target: "browser",
-  });
+  } as Bun.BuildConfig);
 
   expect(result.success).toBe(true);
   expect(result.outputs.length).toBe(1);

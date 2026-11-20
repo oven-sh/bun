@@ -16,8 +16,8 @@ pub(crate) mod assert {
 #[path = "node/types.rs"]
 pub(crate) mod types;
 pub(crate) use types::{
-    BlobOrStringOrBuffer, Dirent, Encoding, FileBlobs, Flavor, PathLike, PathOrBlob,
-    PathOrFileDescriptor, StringObjects, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg,
+    BlobOrStringOrBuffer, Dirent, Encoding, FileBlobs, PathLike, PathOrBlob, PathOrFileDescriptor,
+    StringObjects, StringOrBuffer, ThreadIsolated,
 };
 
 #[path = "node/path.rs"]
@@ -25,16 +25,14 @@ pub(crate) mod path;
 
 #[path = "node/node_os.rs"]
 pub(crate) mod os;
-// codegen (`generated_js2native.rs`) addresses this by its file-stem name.
-pub(crate) use os as node_os;
 
 #[path = "node/node_process.rs"]
 pub(crate) mod process;
+// codegen (`generated_js2native.rs`) addresses this by its file-stem name.
+pub(crate) use process as node_process;
 
 #[path = "node/node_crypto_binding.rs"]
 pub(crate) mod crypto;
-// codegen (`generated_js2native.rs`) addresses this by its file-stem name.
-pub(crate) use crypto as node_crypto_binding;
 
 #[cfg(target_os = "macos")]
 #[path = "node/fs_events.rs"]
@@ -51,9 +49,6 @@ pub(crate) mod statfs;
 #[path = "node/time_like.rs"]
 pub(crate) mod time_like;
 
-#[path = "node/dir_iterator.rs"]
-pub(crate) mod dir_iterator;
-
 #[path = "node/node_fs_constant.rs"]
 pub(crate) mod node_fs_constant;
 
@@ -69,7 +64,7 @@ pub(crate) mod util {
 }
 pub(crate) use util::validators;
 
-// `crate::node::dirent::Kind` shim for dir_iterator.rs / node_fs.rs —
+// `crate::node::dirent::Kind` shim for node_fs.rs —
 // callers reach `.Kind` through `Dirent`. Rust can't hang an associated
 // module off a struct re-export, so expose a tiny module mirroring that shape.
 pub(crate) mod dirent {
@@ -103,11 +98,11 @@ pub(crate) mod node_fs_watcher;
 #[path = "node/uv_signal_handle_windows.rs"]
 pub(crate) mod uv_signal_handle_windows;
 
-// Type defs + non-JSC FFI bodies are live; every `#[bun_jsc::host_fn]` /
-// `#[bun_jsc::JsClass]` item is wrapped in ` mod _impl` inside
-// each file. dgram/tls/tty have no `.rs` ports yet — nothing to wire.
 #[path = "node/buffer.rs"]
 pub(crate) mod buffer;
+
+#[path = "node/histogram.rs"]
+pub(crate) mod histogram;
 
 #[path = "node/node_cluster_binding.rs"]
 pub(crate) mod node_cluster_binding;
@@ -123,6 +118,9 @@ pub(crate) mod quic;
 
 #[path = "node/node_http_binding.rs"]
 pub(crate) mod node_http_binding;
+
+#[path = "node/node_http_parser.rs"]
+pub(crate) mod node_http_parser;
 
 #[path = "node/node_util_binding.rs"]
 pub(crate) mod node_util_binding;

@@ -126,8 +126,8 @@ describe("expect().toEqual on Temporal values", () => {
 
   it("ignores extra own properties in toEqual and toStrictEqual, matching Date", () => {
     const withExtra = Object.assign(Temporal.PlainDate.from("2024-06-15"), { extra: 1 });
-    expect(withExtra).toEqual(Temporal.PlainDate.from("2024-06-15"));
-    expect(withExtra).toStrictEqual(Temporal.PlainDate.from("2024-06-15"));
+    expect<Temporal.PlainDate>(withExtra).toEqual(Temporal.PlainDate.from("2024-06-15"));
+    expect<Temporal.PlainDate>(withExtra).toStrictEqual(Temporal.PlainDate.from("2024-06-15"));
     expect(Temporal.PlainDate.from("2024-06-15")).toEqual(withExtra);
   });
 });

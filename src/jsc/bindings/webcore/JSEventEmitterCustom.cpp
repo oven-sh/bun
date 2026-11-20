@@ -16,21 +16,10 @@
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "BunClientData.h"
+#include "ObjectBindings.h"
 
 namespace WebCore {
 using namespace JSC;
-
-JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<EventEmitter>&& value)
-{
-    return createWrapper<EventEmitter>(globalObject, WTF::move(value));
-}
-
-EventEmitter* JSEventEmitter::toWrapped(VM& vm, JSValue value)
-{
-    if (value.inherits<JSEventEmitter>())
-        return &uncheckedDowncast<JSEventEmitter>(asObject(value))->wrapped();
-    return nullptr;
-}
 
 JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
 {
@@ -64,7 +53,8 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     auto result = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(impl));
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-    thisObject->putDirect(vm, name, result, 0);
+    Bun::defineOwnDataProperty(lexicalGlobalObject, thisObject, name, result, 0);
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     return uncheckedDowncast<JSEventEmitter>(asObject(result));
 }

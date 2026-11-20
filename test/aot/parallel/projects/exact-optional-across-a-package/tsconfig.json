@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "typeRoots": [
+      "./no-types-here"
+    ]
+  }
+}

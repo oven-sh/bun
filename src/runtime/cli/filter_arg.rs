@@ -1,13 +1,11 @@
-use core::ptr::NonNull;
-
 use bstr::BStr;
 use bun_ast::{self, ExprData, Log};
 use bun_core::Global;
 use bun_core::Output;
-use bun_core::{ZStr, strings};
+use bun_core::strings;
 use bun_glob as glob;
 use bun_install::package_manager::workspace_selection::{
-    self, Candidate, RootSelection, WorkspaceGraph,
+    self, Candidate, NegatedWorkspaces, RootSelection, WorkspaceGraph,
 };
 use bun_parsers::json;
 use bun_paths::path_buffer_pool;
@@ -43,12 +41,11 @@ fn glob_ignore_fn(val: &[u8]) -> bool {
 // `DirEntryAccessor` lives in `bun_resolver` (it depends on the resolver's
 // DirEntry cache).
 type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
-// Borrows the `OwnedWalker` stored next to it in `ActiveWalk`, with the lifetime erased.
-type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
 
 fn get_candidate_package_patterns<'a>(
     log: &mut Log,
     out_patterns: &mut Vec<Box<[u8]>>,
+    negated: &mut NegatedWorkspaces,
     workdir_: &[u8],
     root_buf: &'a mut PathBuffer,
 ) -> Result<&'a [u8], crate::Error> {
@@ -63,11 +60,14 @@ fn get_candidate_package_patterns<'a>(
     'walk: loop {
         'body: {
             let mut name_buf = bun_paths::path_buffer_pool::get();
-            let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+            // Treat a path that's too long like a missing package.json and try the parent.
+            let Some(json_path) = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
                 workdir,
                 &mut name_buf[..],
                 &[b"package.json".as_slice()],
-            );
+            ) else {
+                break 'body;
+            };
 
             log.msgs.clear();
             log.errors = 0;
@@ -107,6 +107,9 @@ fn get_candidate_package_patterns<'a>(
                 match item {
                     bun_ast::e::JsonValue::String(pattern_str) => {
                         let pattern_bytes = pattern_str.slice();
+                        if negated.take(pattern_bytes) {
+                            continue;
+                        }
                         let size = pattern_bytes.len() + b"/package.json".len();
                         let mut pattern = vec![0u8; size].into_boxed_slice();
                         pattern[0..pattern_bytes.len()].copy_from_slice(pattern_bytes);
@@ -165,24 +168,25 @@ pub(crate) fn select_packages(
     };
 
     let mut glob_patterns: Vec<Box<[u8]>> = Vec::new();
+    let mut negated = NegatedWorkspaces::default();
     let mut root_buf = bun_paths::path_buffer_pool::get();
     let root_dir: Box<[u8]> = get_candidate_package_patterns(
         // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded and no other `&mut Log` is live.
         unsafe { ctx.log_mut() },
         &mut glob_patterns,
+        &mut negated,
         cwd,
         &mut root_buf,
     )?
     .into();
 
-    let mut iter = PackageFilterIterator::init(&glob_patterns, &root_dir)?;
     let mut discovered: Vec<WorkspacePackage> = Vec::new();
-    while let Some(package_json_path) = iter.next()? {
+    for_each_package_json(&glob_patterns, &negated, &root_dir, |package_json_path| {
         let dir = strings::without_trailing_slash(resolve_path::dirname::<platform::Auto>(
             &package_json_path,
         ));
         if ctx.workspaces && dir == &*root_dir {
-            continue;
+            return;
         }
         let Some(json) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
             resolver,
@@ -195,14 +199,14 @@ pub(crate) fn select_packages(
                 "Failed to read {}, skipping this workspace package\n",
                 bun_core::fmt::quote(&*package_json_path),
             );
-            continue;
+            return;
         };
         discovered.push(WorkspacePackage {
             dir: dir.into(),
             package_json_path,
             json,
         });
-    }
+    })?;
 
     let mut path_buf = path_buffer_pool::get();
     let posix_dirs: Vec<Box<[u8]>> = discovered
@@ -233,7 +237,7 @@ pub(crate) fn select_packages(
             let names: Vec<&[u8]> = discovered.iter().map(|p| &p.json.name[..]).collect();
             WorkspaceGraph::from_dependency_names(&names, |i| {
                 let deps = &discovered[i].json.dependencies;
-                let buf = deps.source_buf;
+                let buf: &[u8] = &deps.source_buf;
                 deps.map.keys().iter().map(move |k| k.slice(buf))
             })
         });
@@ -311,90 +315,42 @@ impl SelectedPackages {
     }
 }
 
-// Heap-allocated so the walker keeps its address while the `PackageFilterIterator` moves. Held as
-// a `NonNull` rather than a `Box` because moving a `Box` asserts unique access, which the
-// `GlobWalkerIterator` borrowing the walker would violate.
-struct OwnedWalker(NonNull<GlobWalker>);
-
-impl Drop for OwnedWalker {
-    fn drop(&mut self) {
-        // SAFETY: allocated by `heap::alloc_nn` in `start_walk` and freed only here; the
-        // `GlobWalkerIterator` borrowing it is always dropped first (see `ActiveWalk`).
-        unsafe { bun_core::heap::destroy(self.0.as_ptr()) };
-    }
-}
-
-// Field order is drop order: `iter` borrows `_walker`, so it must go first.
-struct ActiveWalk {
-    iter: GlobWalkerIterator,
-    _walker: OwnedWalker,
-}
-
-struct PackageFilterIterator<'a> {
-    patterns: &'a [Box<[u8]>],
-    pattern_idx: usize,
-    root_dir: &'a [u8],
-    /// The walk for `patterns[pattern_idx]`; `None` until `next` starts it.
-    active: Option<ActiveWalk>,
-}
-
-impl<'a> PackageFilterIterator<'a> {
-    fn init(
-        patterns: &'a [Box<[u8]>],
-        root_dir: &'a [u8],
-    ) -> Result<PackageFilterIterator<'a>, crate::Error> {
-        Ok(PackageFilterIterator {
-            patterns,
-            pattern_idx: 0,
-            root_dir,
-            active: None,
-        })
-    }
-
-    fn start_walk(&self) -> Result<ActiveWalk, crate::Error> {
-        // pattern_idx < patterns.len() checked by caller.
-        let pattern: &[u8] = &self.patterns[self.pattern_idx];
-        // bun_glob copies `pattern`/`cwd` internally.
-        // outer `?` propagates the error, inner converts `Maybe(Self)` to a Result.
-        let walker = OwnedWalker(bun_core::heap::alloc_nn(GlobWalker::init_with_cwd(
+fn for_each_package_json(
+    patterns: &[Box<[u8]>],
+    negated: &NegatedWorkspaces,
+    root_dir: &[u8],
+    mut found: impl FnMut(glob::walk::MatchedPath),
+) -> Result<(), crate::Error> {
+    for pattern in patterns {
+        let mut walker = GlobWalker::init_with_cwd(
             pattern,
-            self.root_dir,
+            root_dir,
             true,
             true,
             false,
             true,
             true,
             Some(glob_ignore_fn),
-        )??));
-        // SAFETY: `walker` does not touch the allocation until it frees it, and `iter` is dropped
-        // before that on every path (as the later local here, as the earlier field of `ActiveWalk`
-        // afterwards), so this is the only access to the walker while the erased borrow is live.
-        let mut iter: GlobWalkerIterator =
-            glob::walk::Iterator::new(unsafe { &mut *walker.0.as_ptr() });
+        )??;
+        let mut iter = glob::walk::Iterator::new(&mut walker);
         iter.init()??;
-        Ok(ActiveWalk {
-            iter,
-            _walker: walker,
-        })
-    }
-
-    fn next(&mut self) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
         loop {
-            let Some(active) = &mut self.active else {
-                if self.pattern_idx >= self.patterns.len() {
-                    return Ok(None);
-                }
-                self.active = Some(self.start_walk()?);
-                continue;
-            };
-            match active.iter.next()? {
-                Ok(Some(path)) => return Ok(Some(path)),
-                Ok(None) => {
-                    self.active = None;
-                    self.pattern_idx += 1;
-                }
+            match iter.next()? {
+                // As in `bun install`, a `!` entry never removes a path that's listed literally.
+                Ok(Some(path))
+                    if glob::detect_glob_syntax(pattern)
+                        && negated.excludes(resolve_path::relative_platform::<
+                            platform::Auto,
+                            false,
+                        >(
+                            root_dir,
+                            resolve_path::dirname::<platform::Auto>(&path),
+                        )) => {}
+                Ok(Some(path)) => found(path),
+                Ok(None) => break,
                 Err(err) => bun_core::pretty_errorln!("Error: {}", err),
             }
         }
     }
+    Ok(())
 }

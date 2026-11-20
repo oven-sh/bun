@@ -68,11 +68,11 @@ pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Optio
             Some(lvl) if !lvl.is_undefined_or_null() => {
                 let (min, max, default) = match encoding {
                     CompressEncoding::Gzip | CompressEncoding::Deflate => {
-                        (0, 12, DEFAULT_DEFLATE_LEVEL)
+                        (0, bun_deflate::Level::MAX.into(), DEFAULT_DEFLATE_LEVEL)
                     }
                     CompressEncoding::Brotli => (
-                        bun_brotli::c::BROTLI_MIN_QUALITY,
-                        bun_brotli::c::BROTLI_MAX_QUALITY,
+                        bun_brotli::MIN_QUALITY,
+                        bun_brotli::MAX_QUALITY,
                         DEFAULT_BROTLI_QUALITY,
                     ),
                     CompressEncoding::Zstd => (1, 22, DEFAULT_ZSTD_LEVEL),
@@ -84,7 +84,6 @@ pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Optio
                         min: i128::from(min),
                         max: i128::from(max),
                         field_name: b"compress.level",
-                        always_allow_zero: false,
                     },
                 )?)
             }

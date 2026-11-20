@@ -1,0 +1,26 @@
+# As built the closure of `maker` lies in a frame. Under DisableFrameCells, one of the two words of --aot-harden=proof-checks, a build takes the mechanism CellsInFrames away (withoutMechanismsThatOptionsWithhold()).
+# testaot's staged commands did not: `walk` laid the cell in a frame, the emitter refused it, and no unit was printed. They ask the same function now: what they print under the word is what a build compiles.
+# f2 = maker
+# RUN(BUILT): walk f2 mechanisms=all-Inlining
+# BUILT-LABEL: code f2:Body
+# BUILT: = NewClosure {{*}}storage=Frame
+# RUN(KEPT): walk f2 mechanisms=all-Inlining testing=DisableFrameCells
+# KEPT-LABEL: code f2:Body
+# KEPT: = NewClosure
+# KEPT-NOT: storage=Frame
+# -- source: main.ts
+# declare function print(value: any): void;
+# function twice(run: () => number): number {
+#   let work = 0;
+#   for (let i = 0; i < 2; i++) work = (work + i) | 0;
+#   const sum = run() + run() + work;
+#   if (sum > 100) throw new RangeError("full");
+#   return sum;
+# }
+# function maker(first: any, second: any): number {
+#   let s = 0;
+#   try { s += twice(() => first.length + second.length); } catch { s++; }
+#   return s;
+# }
+# print(maker("a", "bc"));
+# -- end of source

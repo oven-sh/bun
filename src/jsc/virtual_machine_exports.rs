@@ -1,11 +1,8 @@
 use core::ffi::c_void;
 
-use crate::plugin_runner::PluginRunner;
 use crate::{
-    CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
-    VirtualMachineRef as VirtualMachine,
+    JSGlobalObject, JSPromise, JSValue, Strong, Task, VirtualMachineRef as VirtualMachine,
 };
-use bun_bundler::transpiler::PluginResolver;
 use bun_core::String as BunString;
 use bun_sourcemap::SourceProviderMap;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
@@ -37,7 +34,7 @@ pub fn get_vm() -> *mut VirtualMachine {
 // HOST_EXPORT(Bun__readOriginTimer, c)
 pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     // Check if performance.now() is overridden (for fake timers)
-    if let Some(overridden) = vm.overridden_performance_now {
+    if let Some(overridden) = vm.overridden_performance_now.get() {
         return overridden;
     }
     vm.origin_timer.elapsed().as_nanos() as u64
@@ -46,7 +43,7 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
 // HOST_EXPORT(Bun__readOriginTimerStart, c)
 pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
     // Fake timers reset performance.now() to 0, so the origin moves with them.
-    if let Some(overridden) = vm.overridden_time_origin {
+    if let Some(overridden) = vm.overridden_time_origin.get() {
         return overridden;
     }
     // timespce to milliseconds
@@ -55,12 +52,34 @@ pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
 }
 
 // HOST_EXPORT(Bun__VirtualMachine__exitDuringUncaughtException, c)
-pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
-    this.exit_on_uncaught_exception = true;
+pub fn exit_during_uncaught_exception(this: &VirtualMachine) {
+    this.exit_on_uncaught_exception.set(true);
 }
 
-// `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
-// `do_send` — names the `bun_runtime::Listener` type; LAYERING).
+fn absolute_directory(directory: &BunString) -> Box<[u8]> {
+    let directory = directory.to_owned_slice();
+    let directory = if bun_paths::is_absolute(&directory) {
+        directory
+    } else {
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        match bun_sys::getcwd_z(&mut cwd_buf) {
+            Ok(cwd) => bun_paths::resolve_path::join::<bun_paths::resolve_path::platform::Auto>(&[
+                cwd.as_bytes(),
+                &directory,
+            ])
+            .to_vec(),
+            Err(_) => directory,
+        }
+    };
+    directory.into_boxed_slice()
+}
+
+/// Makes the path absolute now, because the report is written at exit and the working directory may change before then.
+// HOST_EXPORT(Bun__VirtualMachine__setSamplingProfilerDirectory, c)
+pub fn set_sampling_profiler_directory(this: &VirtualMachine, directory: &BunString) {
+    this.sampling_profiler_directory
+        .set(Some(absolute_directory(directory)));
+}
 
 // HOST_EXPORT(Bun__reportUnhandledError, c)
 pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
@@ -69,10 +88,7 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
     // A TerminationException is not an error to report, and not this frame's to take: it stays pending for
     // the frames still unwinding above the caller, up to the landing frame (WebCore::reportException alike).
     if !value.is_termination_exception() {
-        let _ = global
-            .bun_vm()
-            .as_mut()
-            .uncaught_exception(global, value, false);
+        let _ = global.bun_vm().uncaught_exception(global, value, false);
     }
 }
 
@@ -81,7 +97,7 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
 // HOST_EXPORT(Bun__VM__queueTask, c)
 pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
-    this.event_loop_mut().enqueue_task(Task::init(task));
+    this.event_loop().enqueue_task(Task::init(task));
 }
 
 /// [`vm_queue_task`] for a task that must let the loop poll I/O and timers
@@ -89,23 +105,7 @@ pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask)
 // HOST_EXPORT(Bun__VM__queueTaskAfterYield, c)
 pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
-    this.event_loop_mut()
-        .enqueue_task_after_yield(Task::init(task));
-}
-
-/// Off-thread counterpart of [`vm_queue_task`] (`postTaskConcurrently`: the
-/// debugger and signal threads, work no script initiated), so it lands on the
-/// regular loop: see [`crate::VmHandle::post_cpp_task`].
-// HOST_EXPORT(Bun__VmHandle__queueTaskConcurrently, c)
-#[allow(clippy::not_unsafe_ptr_arg_deref)] // the C ABI boundary is the unsafe part
-pub fn vm_handle_queue_task_concurrently(
-    r: *const crate::vm_handle::Shared,
-    task: *mut crate::cpp_task::CppTask,
-) {
-    crate::mark_binding!();
-    // SAFETY: C++ passes the reference its ScriptExecutionContext holds, and
-    // hands over a live heap EventLoopTask.
-    unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(crate::LoopKind::Regular, task) };
+    this.event_loop().enqueue_task_after_yield(Task::init(task));
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
@@ -119,7 +119,7 @@ pub fn handle_rejected_promise(
     crate::mark_binding!();
 
     let result = promise.result(global.vm());
-    let jsc_vm = global.bun_vm().as_mut();
+    let jsc_vm = global.bun_vm();
 
     // this seems to happen in some cases when GC is running
     if result.is_empty() {
@@ -145,21 +145,15 @@ impl HandledPromiseTask {
     pub fn run(self: Box<Self>) {
         let global: &JSGlobalObject = &self.global_this;
         // JSGlobalObject::bun_vm contract.
-        let _ = global
-            .bun_vm()
-            .as_mut()
-            .handled_promise(global, self.promise.get());
+        let _ = global.bun_vm().handled_promise(global, self.promise.get());
     }
 }
 
-impl bun_event_loop::Taskable for HandledPromiseTask {
+impl bun_event_loop::BoxedTask for HandledPromiseTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::HandledPromise;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — boxed in `handle_handled_promise`.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -170,7 +164,7 @@ pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
     let promise_js = promise.to_js();
     global
         .bun_vm()
-        .event_loop_mut()
+        .event_loop()
         .enqueue_task(bun_event_loop::Task::from_boxed(Box::new(
             HandledPromiseTask {
                 global_this: global.into(),
@@ -179,40 +173,22 @@ pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
         )));
 }
 
-// HOST_EXPORT(Bun__onDidAppendPlugin, c)
-pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject) {
-    if jsc_vm.plugin_runner.is_some() {
-        return;
-    }
-
-    // `Option::insert` returns `&mut PluginRunner` into the VM-owned slot;
-    // `plugin_runner` and `transpiler` are disjoint fields so the split borrow
-    // is fine. The slot is embedded in `*jsc_vm` and stable for the VM's
-    // lifetime, so taking a raw pointer into it for the linker BACKREF is sound.
-    let runner = jsc_vm.plugin_runner.insert(PluginRunner {
-        global_object: bun_ptr::BackRef::new(global),
-    });
-    jsc_vm.transpiler.linker.plugin_runner = Some(std::ptr::from_mut::<dyn PluginResolver>(runner));
-}
-
 #[cfg(windows)]
 #[unsafe(no_mangle)]
-extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *mut c_void {
+extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &VirtualMachine) -> *mut c_void {
     jsc_vm.uv_loop().cast()
 }
 
 // HOST_EXPORT(Bun__setTLSRejectUnauthorizedValue, c)
 pub fn set_tls_reject_unauthorized_value(value: i32) {
-    // SAFETY: VM singleton is process-lifetime.
     VirtualMachine::get()
-        .as_mut()
-        .default_tls_reject_unauthorized = Some(value != 0);
+        .default_tls_reject_unauthorized
+        .set(Some(value != 0));
 }
 
 // HOST_EXPORT(Bun__getTLSRejectUnauthorizedValue, c)
 pub fn get_tls_reject_unauthorized_value() -> i32 {
-    // SAFETY: VM singleton is process-lifetime.
-    if VirtualMachine::get().as_mut().get_tls_reject_unauthorized() {
+    if VirtualMachine::get().get_tls_reject_unauthorized() {
         1
     } else {
         0
@@ -257,14 +233,14 @@ pub fn get_verbose_fetch_value() -> i32 {
     }
 }
 
-// `Bun__addBakeSourceProviderSourceMap` / `Bun__addDevServerSourceProvider` /
-// `Bun__removeDevServerSourceProvider` live in
+// `Bun__{add,remove}BakeSourceProviderSourceMap` /
+// `Bun__{add,remove}DevServerSourceProvider` live in
 // `bun_runtime::bake::source_provider_exports` (their callers are bake's C++
 // source providers; LAYERING).
 
 // HOST_EXPORT(Bun__addSourceProviderSourceMap, c)
 pub fn add_source_provider_source_map(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
@@ -281,7 +257,7 @@ pub fn add_source_provider_source_map(
 
 // HOST_EXPORT(Bun__removeSourceProviderSourceMap, c)
 pub fn remove_source_provider_source_map(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
@@ -290,31 +266,11 @@ pub fn remove_source_provider_source_map(
         .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
-#[crate::host_fn(export = "Bun__setSyntheticAllocationLimitForTesting")]
-pub fn Bun__setSyntheticAllocationLimitForTesting(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let [arg] = frame.arguments_as_array::<1>();
-    if frame.arguments_count() < 1 {
-        return Err(global.throw_not_enough_arguments(
-            "setSyntheticAllocationLimitForTesting",
-            1,
-            frame.arguments_count() as usize,
-        ));
-    }
-
-    if !arg.is_number() {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "setSyntheticAllocationLimitForTesting expects a number"
-        )));
-    }
-
-    let limit: usize =
-        usize::try_from(arg.coerce_to_int64(global)?.max(1024 * 1024)).expect("int cast");
+pub(crate) fn set_synthetic_allocation_limit_for_testing(limit: f64) -> usize {
+    let limit: usize = usize::try_from((limit as i64).max(1024 * 1024)).expect("int cast");
     let prev = crate::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT
         .swap(limit, core::sync::atomic::Ordering::Relaxed);
     crate::virtual_machine::STRING_ALLOCATION_LIMIT
         .store(limit, core::sync::atomic::Ordering::Relaxed);
-    Ok(JSValue::js_number(prev as f64))
+    prev
 }

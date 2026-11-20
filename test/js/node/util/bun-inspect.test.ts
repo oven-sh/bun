@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import stripAnsi from "strip-ansi";
 
 describe("Bun.inspect", () => {
@@ -24,12 +25,12 @@ describe("Bun.inspect", () => {
   });
 
   it("supports colors: false, via 2nd arg", () => {
-    const output = Bun.inspect({ a: 1 }, null, null);
+    const output = (Bun.inspect as any)({ a: 1 }, null, null);
     expect(stripAnsi(output)).toBe(output);
   });
 
   it("supports colors: true, via 2nd arg", () => {
-    const output = Bun.inspect({ a: 1 }, true, 2);
+    const output = (Bun.inspect as any)({ a: 1 }, true, 2);
     expect(stripAnsi(output)).not.toBe(output);
   });
 
@@ -62,7 +63,7 @@ describe("Bun.inspect", () => {
     };
     const inspectedPositional = (depth: number) => {
       try {
-        return Bun.inspect(obj, depth);
+        return Bun.inspect(obj, depth as any);
       } catch (e) {
         return "threw: " + (e as Error).message;
       }
@@ -116,7 +117,7 @@ describe("Bun.inspect", () => {
   }
 
   it("stack overflow is thrown when it should be for objects", () => {
-    var object = { a: { b: { c: { d: 1 } } } };
+    var object: object = { a: { b: { c: { d: 1 } } } };
     for (let i = 0; i < 16 * 1024; i++) {
       object = { a: object };
     }
@@ -127,10 +128,10 @@ describe("Bun.inspect", () => {
   });
 
   it("stack overflow is thrown when it should be for Error", () => {
-    var object = { a: { b: { c: { d: 1 } } } };
+    var object: object = { a: { b: { c: { d: 1 } } } };
     for (let i = 0; i < 16 * 1024; i++) {
       const err = new Error("hello");
-      err.object = object;
+      (err as any).object = object;
       object = err;
     }
 
@@ -141,5 +142,50 @@ describe("Bun.inspect", () => {
 
   it("depth = 0", () => {
     expect(Bun.inspect({ a: { b: { c: { d: 1 } } } }, { depth: 0 })).toEqual("{\n  a: [Object ...],\n}");
+  });
+
+  // Like Node, whose printers keep using the `inspect` that node:util started with.
+  it.concurrent.each([
+    `util.inspect = 5;`,
+    `util.inspect = {};`,
+    `util.inspect = "str";`,
+    `util.inspect = undefined;`,
+    `util.inspect = null;`,
+    `util.inspect = () => "replaced";`,
+    `delete util.inspect;`,
+    `Object.defineProperty(util, "inspect", { get() { throw new Error("getter"); } });`,
+  ])("native printers do not read node:util's inspect: %s", async replace => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const util = require("node:util");
+        ${replace}
+        const custom = Symbol.for("nodejs.util.inspect.custom");
+        const channel = new BroadcastChannel("x");
+        console.log(channel);
+        channel.close();
+        console.log({ [custom]: (depth, options, inspect) => inspect({ a: 1 }) });
+        console.log(Bun.inspect({ [custom]: (depth, options, inspect) => options.stylize("s", "string") }, { colors: true }) === "\\x1b[32ms\\x1b[39m");
+        console.log(new URLSearchParams("a=1")[custom](2, {}));
+        console.log(new ReadableStream());
+        Bun.gc(true);
+        console.log({ [custom]: (depth, options, inspect) => inspect({ b: 2 }) });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")).toEqual([
+      "BroadcastChannel { name: 'x', active: true }",
+      "{ a: 1 }",
+      "true",
+      "URLSearchParams { 'a' => '1' }",
+      "ReadableStream { locked: false, state: 'readable', supportsBYOB: false }",
+      "{ b: 2 }",
+      "",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });

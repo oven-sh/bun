@@ -582,6 +582,50 @@ test("disconnect() on a cluster.Worker built around a plain object does not abor
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
 });
 
+// cluster._getServer() copies every key of its options into the worker's queryServer message.
+// Node compares `ack` and `addressType` with ===, so each of these queries binds IPv4 and gets a handle.
+const malformedQueryFixture = `
+const cluster = require("node:cluster");
+const fs = require("node:fs");
+
+// Under SCHED_NONE the primary binds the address itself, which is where it reads addressType.
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", reply => {
+    // If it were treated as a pipe (addressType -1), "127.0.0.1" would be a unix socket in the cwd.
+    console.log(JSON.stringify({ ...reply, unixSocket: fs.existsSync("127.0.0.1") }));
+    worker.kill();
+    process.exit(0);
+  });
+  worker.on("exit", (code, signal) => {
+    console.error("worker exited before the primary answered (" + code + ", " + signal + ")");
+    process.exit(1);
+  });
+} else {
+  const query = { address: "127.0.0.1", port: 0, addressType: 4, fd: -1, ...JSON.parse(process.env.MALFORMED) };
+  cluster._getServer({ once() {} }, query, (errno, handle) => {
+    process.send({ errno, handle: handle != null });
+  });
+}
+`;
+
+test.concurrent.each([{ ack: {} }, { addressType: {} }, { addressType: false }])(
+  "primary handles %j in a worker's queryServer message like node",
+  async malformed => {
+    using dir = tempDir("cluster-malformed-query", { "fixture.js": malformedQueryFixture });
+    const { stdout, stderr, exitCode } = await bunRun(joinP(String(dir), "fixture.js"), {
+      MALFORMED: JSON.stringify(malformed),
+    });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ errno: 0, handle: true, unixSocket: false }),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 const listeningPayloadFixture = `
 const cluster = require("node:cluster");
 
@@ -932,21 +976,19 @@ if (cluster.isPrimary) {
   },
 );
 
-test.skipIf(isWindows)("dgram worker releases a shared fd it failed to adopt", async () => {
-  using dir = tempDir("cluster-dgram-adopt-fail", {
+test.skipIf(isWindows)("dgram bind({ fd }) on a stream socket doesn't close the primary's server", async () => {
+  using dir = tempDir("cluster-dgram-stream-fd", {
     "main.ts": `
 const cluster = require("node:cluster");
 const dgram = require("node:dgram");
 const net = require("node:net");
 
 if (cluster.isPrimary) {
-  // A stream socket passes the primary's fd check but cannot be adopted as a dgram socket in the worker.
   const tcp = net.createServer().listen(0, "127.0.0.1", () => {
     const { port } = tcp.address();
     const worker = cluster.fork();
     worker.on("message", m => {
       console.log("worker error code:", m.code);
-      // Refused once both processes closed their copy; a leaked copy in either keeps the socket accepting.
       const probe = net.connect(port, "127.0.0.1");
       probe.on("connect", () => { console.log("probe: connected"); probe.destroy(); finish(); });
       probe.on("error", err => { console.log("probe:", err.code); finish(); });
@@ -976,7 +1018,109 @@ if (cluster.isPrimary) {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr }).toEqual({
-    stdout: "worker error code: EINVAL\nprobe: ECONNREFUSED",
+    stdout: "worker error code: EINVAL\nprobe: connected",
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows)("dgram worker releases a shared fd it failed to adopt", async () => {
+  using dir = tempDir("cluster-dgram-adopt-fail", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const dgram = require("node:dgram");
+const fs = require("node:fs");
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    console.log("worker error code:", m.code);
+    // The port is free once both processes have closed their copy.
+    const probe = dgram.createSocket("udp4");
+    probe.on("listening", () => { console.log("probe: listening"); probe.close(finish); });
+    probe.on("error", err => { console.log("probe:", err.code); finish(); });
+    probe.bind(Number(process.env.PORT), "127.0.0.1");
+  });
+  function finish() {
+    worker.kill();
+    worker.on("exit", () => process.exit(0));
+  }
+} else {
+  // A worker can adopt any datagram socket the primary shares, so point the handle at a regular file to make it fail.
+  const getServer = cluster._getServer;
+  cluster._getServer = (socket, options, callback) =>
+    getServer(socket, options, (err, handle) => {
+      if (handle) handle.sharedFd = fs.openSync(__filename, "r");
+      callback(err, handle);
+    });
+  const socket = dgram.createSocket("udp4");
+  socket.on("listening", () => process.send({ code: "listening" }));
+  socket.on("error", err => process.send({ code: err.code }));
+  socket.bind({ fd: 3 });
+}
+`,
+  });
+  const udp = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: { ...bunEnv, PORT: String(udp.port) },
+    cwd: String(dir),
+    // Becomes fd 3 in the primary.
+    stdio: ["ignore", "pipe", "pipe", (udp as typeof udp & { fd: number }).fd],
+  });
+  // Close this process's copy, which would otherwise keep the port bound.
+  udp.close();
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: "worker error code: ENOTSOCK\nprobe: listening",
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows)("a second listen({ fd }) on an fd that a handle already owns fails with EEXIST", async () => {
+  using dir = tempDir("cluster-fd-held", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const fs = require("node:fs");
+const net = require("node:net");
+
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", second => {
+    console.log("second listen:", second);
+    try {
+      fs.fstatSync(3);
+      console.log("primary's fd: open");
+    } catch (err) {
+      console.log("primary's fd:", err.code);
+    }
+    worker.kill();
+    worker.on("exit", () => process.exit(0));
+  });
+} else {
+  net.createServer().listen({ fd: 3 }, () => {
+    const second = net.createServer();
+    second.on("listening", () => process.send("listening"));
+    second.on("error", err => process.send(err.code));
+    second.listen({ fd: 3 });
+  });
+}
+`,
+  });
+  using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    // Becomes fd 3 in the primary.
+    stdio: ["ignore", "pipe", "pipe", (listener as typeof listener & { fd: number }).fd],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: "second listen: EEXIST\nprimary's fd: open",
     stderr: "",
   });
   expect(exitCode).toBe(0);

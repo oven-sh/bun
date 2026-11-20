@@ -1,14 +1,14 @@
 import { createTest } from "node-harness";
 import nodefs from "node:fs";
 import https from "node:https";
+import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 const { expect } = createTest(import.meta.path);
 
 await using server = https.createServer(
   {
-    key: nodefs.readFileSync(path.join(import.meta.dir, "../../..", "node/http/fixtures", "openssl.key")),
-    cert: nodefs.readFileSync(path.join(import.meta.dir, "../../..", "node/http/fixtures", "openssl.crt")),
-    passphrase: "123123123",
+    key: nodefs.readFileSync(path.join(import.meta.dir, "../../..", "node/tls/fixtures", "agent1-key.pem")),
+    cert: nodefs.readFileSync(path.join(import.meta.dir, "../../..", "node/tls/fixtures", "agent1-cert.pem")),
   },
   (req, res) => {
     res.write("Hello from https server");
@@ -16,7 +16,7 @@ await using server = https.createServer(
   },
 );
 server.listen(0, "127.0.0.1");
-const address = server.address();
+const address = server.address() as AddressInfo;
 
 try {
   let url_address = address.address;
@@ -30,7 +30,7 @@ try {
   });
   await res.text();
   expect.unreachable();
-} catch (err) {
+} catch (err: any) {
   expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
   expect(err.message).toBe("unable to verify the first certificate");
 }

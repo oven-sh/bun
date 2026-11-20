@@ -7,12 +7,13 @@ import { once } from "node:events";
 import { statSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { createSecureServer } from "node:http2";
+import { createSecureServer, type ServerHttp2Stream } from "node:http2";
 import { createServer as createHttpsServer } from "node:https";
 import { connect, createServer as createTcpServer } from "node:net";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import type { ReadableStreamDefaultReader } from "node:stream/web";
 import { createServer as createTlsServer } from "node:tls";
 import {
   brotliCompressSync,
@@ -23,6 +24,15 @@ import {
   constants as zlibConstants,
   zstdCompressSync,
 } from "node:zlib";
+import {
+  Bits,
+  FIXED,
+  fixedDistanceCodes,
+  fixedLiteralCodes,
+  gzipHeader,
+  header,
+  putTokens,
+} from "../../node/zlib/zlib-golden/write";
 
 const CHUNK = 64 * 1024;
 const COUNT = 256; // 16 MiB
@@ -84,7 +94,7 @@ function progress(wire: number) {
   return {
     add(n: number) {
       sent += n;
-      for (let i = waiters.length; i--; ) if (sent >= waiters[i][0]) waiters.splice(i, 1)[0][1]();
+      for (let i = waiters.length; i--;) if (sent >= waiters[i][0]) waiters.splice(i, 1)[0][1]();
       if (sent >= wire) finished.resolve();
     },
     // A write that did not go through once the server is past MARK. A client holds MARK before it
@@ -102,7 +112,7 @@ function progress(wire: number) {
       async settled() {
         await Promise.race([blocked.promise, finished.promise]);
         let last = -1;
-        for (let stable = 0; stable < 3; ) {
+        for (let stable = 0; stable < 3;) {
           await Bun.sleep(10);
           stable = sent === last ? stable + 1 : 0;
           last = sent;
@@ -123,7 +133,7 @@ async function serve(kind: Kind, count = COUNT): Promise<Server> {
       sockets.add(s);
       s.on("close", () => sockets.delete(s));
     });
-    srv.on("stream", stream => {
+    srv.on("stream", (stream: ServerHttp2Stream) => {
       stream.respond({ ":status": 200, "content-type": "application/octet-stream" });
       stream.on("error", () => {});
       stream.on("close", p.close);
@@ -712,6 +722,39 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     expect(total).toBe(300_000);
   });
 
+  // The same, with a budget that ends in the last match of the packet.
+  test("gzip: output the decoder still holds arrives without another packet", async () => {
+    const matches = Math.ceil(MARK / 258);
+    const tokens = [7, ...Array(matches).fill({ length: 258, distance: 1 })];
+    const expected = Buffer.alloc(1 + matches * 258, 7);
+    const block = putTokens(header(new Bits(), FIXED, false), tokens, fixedLiteralCodes, fixedDistanceCodes);
+    const wire = Buffer.concat([gzipHeader(), block.end()]);
+    await using server = await listening(
+      createTcpServer(s => {
+        s.on("error", () => {});
+        s.once("data", () =>
+          s.write(
+            Buffer.concat([
+              Buffer.from(`HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n`),
+              Buffer.from(wire.length.toString(16) + "\r\n"),
+              wire,
+              Buffer.from("\r\n"),
+            ]),
+          ),
+        );
+      }),
+    );
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    const reader = res.body!.getReader();
+    const chunks: Uint8Array[] = [];
+    for (let total = 0; total < expected.length; total += chunks.at(-1)!.length) {
+      chunks.push((await reader.read()).value!);
+    }
+    await reader.cancel();
+    expect(chunks.at(-1)!.length).toBe(expected.length - MARK);
+    expect(expected.equals(Buffer.concat(chunks))).toBe(true);
+  });
+
   // `await (await fetch(url)).text()` turns the consumer to BufferAll, possibly while the HTTP
   // thread is inside a pass it began under the reader's budget. A paused consumer asks for the
   // rest of such a pass; one that has just stopped being a reader never does, and without the
@@ -780,7 +823,7 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
               ? brotliCompressSync(raw, { params: { [q]: 0 } })
               : kind === "br-hq"
                 ? brotliCompressSync(Buffer.alloc(SIZE), { params: { [q]: 4 } })
-                : zstdCompressSync(raw, { level: 1 }));
+                : zstdCompressSync(raw, { level: 1 } as any));
     }
 
     // Content-Length bodies end with the origin's FIN, which reaches a client that still holds
@@ -1213,7 +1256,7 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
       let total = 0;
       let foreign = 0;
       const err = await (async () => {
-        for (let r; !(r = await reader.read()).done; ) {
+        for (let r; !(r = await reader.read()).done;) {
           total += r.value.byteLength;
           if (!isAllA(r.value)) foreign++;
         }
@@ -1241,7 +1284,7 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
       await server.settled();
       const hasher = new Bun.CryptoHasher("md5").update(first.value!);
       let total = first.value!.byteLength;
-      for (let r; !(r = await reader.read()).done; ) {
+      for (let r; !(r = await reader.read()).done;) {
         total += r.value.byteLength;
         hasher.update(r.value);
       }
@@ -1275,7 +1318,7 @@ async function serveByHand() {
     response,
     [Symbol.asyncDispose]: () => {
       srv.closeAllConnections();
-      return new Promise(r => srv.close(() => r(undefined)));
+      return new Promise<void>(r => srv.close(() => r(undefined)));
     },
   };
 }
@@ -1393,7 +1436,7 @@ async function rawOrigin(framing: Framing, length: number, holdTail = false) {
     let pending = "";
     socket.on("data", data => {
       pending += data.toString("latin1");
-      for (let end; (end = pending.indexOf("\r\n\r\n")) !== -1; ) {
+      for (let end; (end = pending.indexOf("\r\n\r\n")) !== -1;) {
         pending = pending.slice(end + 4);
         requested++;
         for (const [n, resolve] of requestWaiters) if (requested >= n) resolve();
@@ -1697,7 +1740,7 @@ describe.concurrent("S3 receive backpressure", () => {
     // partSize 5 MiB × queueSize 1: with the first part held, the sink fills and the origin has
     // to stop long before its 1 GiB is out.
     const written = Bun.write(
-      bucket.s3.file("up", { partSize: 5 * 1024 * 1024, queueSize: 1 }),
+      bucket.s3.file("up", { partSize: 5 * 1024 * 1024, queueSize: 1 }) as any,
       await fetch(origin.url, { signal: abort.signal }),
     );
     await bucket.firstPart;
@@ -1719,7 +1762,7 @@ describe.concurrent("S3 receive backpressure", () => {
   test("Bun.write(s3file, res) resolves with the byte count", async () => {
     await using origin = await serve("h1");
     await using bucket = await fakeUploadBucket();
-    expect(await Bun.write(bucket.s3.file("up"), await fetch(origin.url))).toBe(TOTAL);
+    expect(await Bun.write(bucket.s3.file("up") as any, await fetch(origin.url))).toBe(TOTAL);
     expect({ uploaded: bucket.uploaded(), foreign: bucket.foreign(), completed: bucket.completed() }).toEqual({
       uploaded: TOTAL,
       foreign: 0,
@@ -2006,7 +2049,7 @@ describe.serial("fetch() receive backpressure — an abandoned body stream under
       "a reader loop",
       async res => {
         let total = 0;
-        for (let r, reader = res.body!.getReader(); !(r = await reader.read()).done; ) total += r.value.byteLength;
+        for (let r, reader = res.body!.getReader(); !(r = await reader.read()).done;) total += r.value.byteLength;
         return total;
       },
     ],

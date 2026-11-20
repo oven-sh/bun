@@ -21,9 +21,44 @@ declare module "bun" {
     | import("bun").Image;
 
   namespace __internal {
-    type LibOrFallbackHeaders = LibDomIsLoaded extends true ? {} : import("undici-types").Headers;
-    type LibOrFallbackRequest = LibDomIsLoaded extends true ? {} : import("undici-types").Request;
-    type LibOrFallbackResponse = LibDomIsLoaded extends true ? {} : import("undici-types").Response;
+    type UndiciBody = import("undici-types").BodyMixin;
+    type UndiciHeaders = import("undici-types").Headers;
+
+    interface FallbackBody {
+      arrayBuffer(): ReturnType<UndiciBody["arrayBuffer"]>;
+      blob(): ReturnType<UndiciBody["blob"]>;
+      bytes(): ReturnType<UndiciBody["bytes"]>;
+      formData(): ReturnType<UndiciBody["formData"]>;
+      json(): ReturnType<UndiciBody["json"]>;
+      text(): ReturnType<UndiciBody["text"]>;
+    }
+
+    interface FallbackHeaders {
+      append(name: string, value: string): void;
+      delete(name: string): void;
+      get(name: string): string | null;
+      has(name: string): boolean;
+      set(name: string, value: string): void;
+      getSetCookie(): string[];
+      forEach(callbackfn: (value: string, key: string, iterable: UndiciHeaders) => void, thisArg?: unknown): void;
+      keys(): ReturnType<UndiciHeaders["keys"]>;
+      values(): ReturnType<UndiciHeaders["values"]>;
+      entries(): ReturnType<UndiciHeaders["entries"]>;
+      [Symbol.iterator](): ReturnType<UndiciHeaders["entries"]>;
+    }
+
+    interface FallbackRequest extends Omit<import("undici-types").Request, keyof FallbackBody | "clone">, FallbackBody {
+      clone(): Request;
+    }
+
+    interface FallbackResponse
+      extends Omit<import("undici-types").Response, keyof FallbackBody | "clone">, FallbackBody {
+      clone(): Response;
+    }
+
+    type LibOrFallbackHeaders = LibDomIsLoaded extends true ? {} : FallbackHeaders;
+    type LibOrFallbackRequest = LibDomIsLoaded extends true ? {} : FallbackRequest;
+    type LibOrFallbackResponse = LibDomIsLoaded extends true ? {} : FallbackResponse;
     type LibOrFallbackResponseInit = LibDomIsLoaded extends true ? {} : import("undici-types").ResponseInit;
     type LibOrFallbackRequestInit = LibDomIsLoaded extends true
       ? {}

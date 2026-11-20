@@ -14,7 +14,7 @@
 
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Config } from "./config.ts";
+import { webkitVersionName, type Config } from "./config.ts";
 import { allDeps } from "./deps/index.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Source } from "./source.ts";
@@ -52,11 +52,9 @@ function computeVersions(cfg: Config): [string, string][] {
     const source = dep.source(cfg);
     const id = sourceIdentifier(source);
     // WebKit special case: prebuilt.identity carries the artifact suffix, but
-    // process.versions wants the version. Strip the autobuild- prefix so tags
-    // report the clean sha and previews report preview-pr-<N>-<sha8>.
+    // process.versions wants the version.
     if (dep.name === "WebKit") {
-      const v = cfg.webkitVersion;
-      versions.push([dep.versionMacro, v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v]);
+      versions.push([dep.versionMacro, webkitVersionName(cfg.webkitVersion)]);
     } else if (id !== undefined) {
       versions.push([dep.versionMacro, id]);
     }
@@ -74,9 +72,9 @@ function computeVersions(cfg: Config): [string, string][] {
   versions.push(["ZIG", "04e7f6ac1e009525bc00934f20199c68f04e0a24"]);
 
   // NOTE: cmake's GenerateDependencyVersions.cmake also extracted semantic
-  // versions (LIBDEFLATE_VERSION="1.19", ZLIB_VERSION="1.2.8") from vendor
-  // headers. Those macros were never consumed — BunProcess.cpp only reads
-  // the _HASH (commit) macros for process.versions. The extraction is also
+  // versions (ZLIB_VERSION="1.2.8") from vendor headers. Those macros
+  // were never consumed — of this header BunProcess.cpp only reads the
+  // commit macros for process.versions. The extraction is also
   // a chicken-and-egg: it runs at configure time but vendor headers exist
   // only after fetch, so on a clean checkout the header content flips on
   // the second configure → spurious rebuild. Dropping the dead code.

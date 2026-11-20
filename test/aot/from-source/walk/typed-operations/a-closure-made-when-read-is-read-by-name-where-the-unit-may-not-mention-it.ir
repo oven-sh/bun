@@ -1,0 +1,19 @@
+# -- source: a-closure-made-when-read-is-read-by-name-where-the-unit-may-not-mention-it.js
+# class Row { constructor(n) { this.n = n; } [Symbol.iterator]() { let i = 0; const n = this.n; return { next() { return i < n ? { done: false, value: i++ } : { done: true, value: undefined }; }, return() { i = n; return { done: true, value: undefined }; } }; } }
+# function drive(it) { let out = ""; for (;;) { const step = it.next; const stop = it.return; const r = step.call(it); if (r.done) break; out += r.value; if (out.length > 3) { stop.call(it); break; } } return out; }
+# let sum = 0; for (const v of new Row(4)) sum += v;
+# const strange = new Function("let i = 0; return { next() { return i < 6 ? { done: false, value: i++ } : { done: true, value: undefined }; }, return() { return {}; } };");
+# print(sum, drive(strange()), drive(strange()));
+# -- end of source
+# The literal's two closures are made when they are read: its slots hold a mark, and code that reads such a slot typed names the function.
+# The front end expects the literal in `drive`, by the names asked there. Nothing of the program brings it there, so nothing in Link leads from `drive` to `next`:
+# the build stopped by its own net ("the code of function 1 'drive' .. mentions function 4 'next' .. and LinkTables::referrers does not lead from the one to the other").
+# Where the unit may not mention the function, the read goes by name.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: GetDeferredClosureSlot
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "next" DeferredClosure
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 6 0123 0123
+# ANSWERS-NEXT: exited with 0

@@ -39,7 +39,7 @@ test("createHmac works with various algorithm names", () => {
   for (const algo of algorithms) {
     // Both ways of creating HMAC should work
     const hmac1 = crypto.createHmac(algo, key);
-    const hmac2 = new crypto.Hmac(algo, key);
+    const hmac2 = new (crypto.Hmac as any)(algo, key);
 
     hmac1.update(input);
     hmac2.update(input);
@@ -56,7 +56,7 @@ test("createHmac throws on invalid algorithm", () => {
 
 test("Hmac throws on invalid algorithm", () => {
   expect(() => {
-    new crypto.Hmac("invalid-algo", "key");
+    new (crypto.Hmac as any)("invalid-algo", "key");
   }).toThrow();
 });
 

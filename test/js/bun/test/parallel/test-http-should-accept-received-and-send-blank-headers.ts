@@ -17,7 +17,7 @@ await once(server, "listening");
 
 const socket = createConnection((server.address() as AddressInfo).port, "localhost", () => {
   socket.write(
-    `GET / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\nEmpty-Header:\r\n\r\n`,
+    `GET / HTTP/1.1\r\nHost: localhost:${(server.address() as AddressInfo).port}\r\nConnection: close\r\nEmpty-Header:\r\n\r\n`,
   );
 });
 

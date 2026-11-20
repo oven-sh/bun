@@ -1,0 +1,27 @@
+------------------
+{ printWidth: 80 }
+------------------
+function a(this: A): asserts /* c */ this {}
+function b(this: A): this /* c */ is B {}
+function c(this: A): asserts /* c */ this is B {}
+function d(this: A): asserts this /* c */ is B {}
+class E {
+  f(): this /* c */ is B {}
+  g(): asserts /* c */ this {}
+}
+let h: (this: void) => asserts /* c */ this;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function a(this: A): asserts /* c */ this {}
+function b(this: A): this /* c */ is B {}
+function c(this: A): asserts /* c */ this is B {}
+function d(this: A): asserts this /* c */ is B {}
+class E {
+  f(): this /* c */ is B {}
+  g(): asserts /* c */ this {}
+}
+let h: (this: void) => asserts /* c */ this;
+
+===================== End =====================

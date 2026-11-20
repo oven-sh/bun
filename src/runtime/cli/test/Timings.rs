@@ -4,7 +4,14 @@
 //! under `--parallel`. Several files (one per CI shard) are unioned on read;
 //! under `--shard` a run writes only the files it ran, so those per-shard
 //! outputs are disjoint and next run's union of them is the whole table.
+//!
+//! A compiled run (`--aot`) under `--parallel` also measures by how much each file's worker grew, with what it started, and writes
+//! `"memory": { "relative/path.test.ts": megabytes }` beside `"files"`. The next such run keeps the files that took over a
+//! gigabyte apart: those that run at once took no more together than the largest of them took alone. It also writes
+//! `"workers": count`, how many test files ran at once while the times were taken: `--shard` under `--aot` weighs a shard's build
+//! and its longest file against the sum of its times by that, which every shard reads alike, and not by its own `--parallel`.
 
+use core::ops::Range;
 use std::io::Write as _;
 
 use bun_collections::StringArrayHashMap;
@@ -15,7 +22,6 @@ use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{Fd, File};
 
-use super::parallel::file_range::FileRange;
 use bun_collections::index_sort;
 
 pub(crate) struct Timings {
@@ -25,6 +31,11 @@ pub(crate) struct Timings {
     map: StringArrayHashMap<u32>,
     /// Just this run's measurements; what a `--shard` run writes.
     measured: StringArrayHashMap<u32>,
+    /// The same keys → the megabytes by which the file's worker grew at most while it ran the file, with what it started.
+    growth: StringArrayHashMap<u32>,
+    measured_growth: StringArrayHashMap<u32>,
+    /// How many test files ran at once while the times were taken: the most that a file read says. 0: none says.
+    workers: u32,
     /// Cost assigned to files with no entry when packing shards.
     median: u32,
 }
@@ -33,8 +44,10 @@ impl Timings {
     /// Missing files are not an error (the first `--update-timings` run creates one); malformed ones are.
     pub(crate) fn load(paths: &[Box<[u8]>]) -> Timings {
         let mut map: StringArrayHashMap<u32> = StringArrayHashMap::new();
+        let mut growth: StringArrayHashMap<u32> = StringArrayHashMap::new();
+        let mut workers = 0;
         for path in paths {
-            Self::load_one(path, &mut map);
+            Self::load_one(path, &mut map, &mut growth, &mut workers);
         }
         let median = {
             let mut known: Vec<u32> = map.values().to_vec();
@@ -45,11 +58,19 @@ impl Timings {
             path: paths[0].clone(),
             map,
             measured: StringArrayHashMap::new(),
+            growth,
+            measured_growth: StringArrayHashMap::new(),
+            workers,
             median,
         }
     }
 
-    fn load_one(path: &[u8], map: &mut StringArrayHashMap<u32>) {
+    fn load_one(
+        path: &[u8],
+        map: &mut StringArrayHashMap<u32>,
+        growth: &mut StringArrayHashMap<u32>,
+        workers: &mut u32,
+    ) {
         let contents = match File::read_from(Fd::cwd(), path) {
             Ok(contents) => contents,
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => return,
@@ -71,9 +92,7 @@ impl Timings {
         let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
             Ok(p) => p,
             Err(_) => {
-                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                    Output::error_writer(),
-                ));
+                let _ = log.print(Output::error_writer());
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: --timings file <b>{}<r> is not valid JSON",
                     bstr::BStr::new(path)
@@ -92,16 +111,37 @@ impl Timings {
             );
             bun_core::Global::exit(1);
         };
-        files.for_each_property(|key, _, value| {
-            if let Some(ms) = value.as_number()
-                && ms.is_finite()
-                && ms >= 0.0
-            {
-                let _ = map.put(key, ms.round().min(u32::MAX as f64) as u32);
-            }
-        });
+        for (numbers, into) in [(Some(files), map), (root.get_object(b"memory"), growth)] {
+            let Some(numbers) = numbers else {
+                continue;
+            };
+            numbers.for_each_property(|key, _, value| {
+                if let Some(number) = value.as_number()
+                    && number.is_finite()
+                    && number >= 0.0
+                {
+                    let _ = into.put(key, number.round().min(u32::MAX as f64) as u32);
+                }
+            });
+        }
+        let count = root.as_property(b"workers");
+        if let Some(count) = count.and_then(|count| count.expr.as_number())
+            && count.is_finite()
+            && count >= 0.0
+        {
+            *workers = (*workers).max(count.round().min(u32::MAX as f64) as u32);
+        }
         bun_ast::Expr::data_store_reset();
         bun_ast::Stmt::data_store_reset();
+    }
+
+    pub(crate) fn workers(&self) -> u32 {
+        self.workers
+    }
+
+    /// Only a compiled run says, and only a compiled run writes it.
+    pub(crate) fn record_workers(&mut self, workers: u32) {
+        self.workers = workers;
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -109,7 +149,7 @@ impl Timings {
     }
 
     fn key_for(abs_path: &[u8]) -> Vec<u8> {
-        let rel = bun_paths::resolve_path::relative(FileSystem::get().top_level_dir, abs_path);
+        let rel = bun_paths::resolve_path::relative(FileSystem::get().top_level_dir(), abs_path);
         let mut key = rel.to_vec();
         if cfg!(windows) {
             bun_paths::resolve_path::platform_to_posix_in_place(&mut key[..]);
@@ -126,11 +166,45 @@ impl Timings {
         let key = Self::key_for(abs_path);
         let _ = self.map.put(&key, ms);
         let _ = self.measured.put(&key, ms);
+        if crate::cli::run_compiled::runs_compiled_code()
+            && let Some(&megabytes) = self.growth.get(&key)
+        {
+            let _ = self.measured_growth.put(&key, megabytes);
+        }
+    }
+
+    pub(crate) fn growth_of(&self, abs_path: &[u8]) -> Option<u32> {
+        self.growth.get(&Self::key_for(abs_path)).copied()
+    }
+
+    /// Its worker grew by over a gigabyte when the file was last measured.
+    pub(crate) fn is_heavy(&self, abs_path: &[u8]) -> bool {
+        self.growth_of(abs_path)
+            .is_some_and(|megabytes| bun_test_schedule::is_heavy(megabytes.into()))
+    }
+
+    pub(crate) fn record_growth(&mut self, abs_path: &[u8], megabytes: u32) {
+        let key = Self::key_for(abs_path);
+        let _ = self.growth.put(&key, megabytes);
+        let _ = self.measured_growth.put(&key, megabytes);
     }
 
     pub(crate) fn record_since(&mut self, abs_path: &[u8], started_ms: i64) {
         let elapsed = (bun_core::time::milli_timestamp() - started_ms).max(0);
         self.record(abs_path, u32::try_from(elapsed).unwrap_or(u32::MAX));
+    }
+
+    /// For a file that did not run to its end: its worker crashed. How long that took says nothing about the
+    /// file, and a time that is too short starts it late in the next run, where it runs alone at the end. It keeps the time that
+    /// the table has, if any.
+    pub(crate) fn keep(&mut self, abs_path: &[u8]) {
+        let key = Self::key_for(abs_path);
+        if let Some(&ms) = self.map.get(&key) {
+            let _ = self.measured.put(&key, ms);
+        }
+        if let Some(&megabytes) = self.growth.get(&key) {
+            let _ = self.measured_growth.put(&key, megabytes);
+        }
     }
 
     fn cost(&self, abs_path: &[u8]) -> u64 {
@@ -146,7 +220,7 @@ impl Timings {
     /// of their imports) land in the same process and hit its module cache;
     /// by duration so a directory of slow integration tests is spread over
     /// several runs instead of becoming one shard's tail.
-    pub(crate) fn partition(&self, files: &[Interned], k: u32) -> Vec<FileRange> {
+    pub(crate) fn partition(&self, files: &[Interned], k: u32) -> Vec<Range<usize>> {
         let costs = self.costs(files);
         let n = files.len() as u32;
         let mut remaining: u64 = costs.iter().sum();
@@ -166,7 +240,7 @@ impl Timings {
                 i += 1;
             }
             remaining -= load;
-            ranges.push(FileRange { lo, hi: i });
+            ranges.push(lo as usize..i as usize);
         }
         ranges
     }
@@ -175,9 +249,9 @@ impl Timings {
     /// front of `files`; returns how many were kept.
     pub(crate) fn select_shard(&self, files: &mut [Interned], shard: Shard) -> usize {
         index_sort::sort_slice_by(files, |a, b| strings::order(a.as_bytes(), b.as_bytes()));
-        let r = self.partition(files, shard.count)[(shard.index - 1) as usize];
-        files.copy_within(r.lo as usize..r.hi as usize, 0);
-        (r.hi - r.lo) as usize
+        let r = self.partition(files, shard.count)[(shard.index - 1) as usize].clone();
+        files.copy_within(r.clone(), 0);
+        r.len()
     }
 
     /// Slowest first; files with no recorded duration go before everything
@@ -203,33 +277,43 @@ impl Timings {
     /// run ran; otherwise everything read is carried through so a local partial
     /// run doesn't shrink the table.
     pub(crate) fn write(&mut self, only_measured: bool) {
-        let map = if only_measured {
-            &mut self.measured
-        } else {
-            &mut self.map
+        let workers = match crate::cli::run_compiled::runs_compiled_code() {
+            true => self.workers,
+            false => 0,
         };
-        map.sort(|keys, ms, a, b| {
-            ms[b]
-                .cmp(&ms[a])
-                .then_with(|| strings::order(&keys[a], &keys[b]))
-                .is_lt()
-        });
-        let mut out: Vec<u8> = Vec::with_capacity(map.count() * 48 + 40);
-        out.extend_from_slice(b"{\n  \"version\": 1,\n  \"files\": {");
-        for (i, (key, ms)) in map.iter().enumerate() {
-            let _ = write!(
-                &mut out,
-                "{}\n    {}: {}",
-                if i > 0 { "," } else { "" },
-                bun_core::fmt::format_json_string_utf8(key, Default::default()),
-                ms
-            );
-        }
-        out.extend_from_slice(if map.count() > 0 {
-            b"\n  }\n}\n"
+        let (map, growth) = if only_measured {
+            (&mut self.measured, &mut self.measured_growth)
         } else {
-            b"}\n}\n"
-        });
+            (&mut self.map, &mut self.growth)
+        };
+        let mut out: Vec<u8> = Vec::with_capacity((map.count() + growth.count()) * 48 + 60);
+        out.extend_from_slice(b"{\n  \"version\": 1");
+        if workers != 0 {
+            let _ = write!(&mut out, ",\n  \"workers\": {workers}");
+        }
+        for (name, numbers) in [("files", map), ("memory", growth)] {
+            if name == "memory" && numbers.count() == 0 {
+                continue;
+            }
+            numbers.sort(|keys, numbers, a, b| {
+                numbers[b]
+                    .cmp(&numbers[a])
+                    .then_with(|| strings::order(&keys[a], &keys[b]))
+                    .is_lt()
+            });
+            let _ = write!(&mut out, ",\n  \"{name}\": {{");
+            for (i, (key, number)) in numbers.iter().enumerate() {
+                let _ = write!(
+                    &mut out,
+                    "{}\n    {}: {}",
+                    if i > 0 { "," } else { "" },
+                    bun_core::fmt::format_json_string_utf8(key, Default::default()),
+                    number
+                );
+            }
+            out.extend_from_slice(if numbers.count() > 0 { b"\n  }" } else { b"}" });
+        }
+        out.extend_from_slice(b"\n}\n");
 
         let mut tmp: Vec<u8> = self.path.to_vec();
         let _ = write!(&mut tmp, ".{}.tmp", std::process::id());

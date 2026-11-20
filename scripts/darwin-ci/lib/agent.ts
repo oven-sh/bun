@@ -58,7 +58,8 @@ export async function installTartAgent({ release, spawn: workers }: TartAgentOpt
       `hooks-path="${hooks}"`,
       `build-path="${builds}"`,
       `spawn=${workers}`,
-      `cancel-grace-period=30`,
+      // the unit is required: the agent reads a bare number as 0 and kills a cancelled job at once
+      `cancel-signal-timeout=30s`,
       "",
     ].join("\n"),
     "600",

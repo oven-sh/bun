@@ -2,5 +2,5 @@ import { createTest } from "node-harness";
 import { ServerResponse } from "node:http";
 const { expect } = createTest(import.meta.path);
 
-const sr = new ServerResponse({});
+const sr = new ServerResponse({} as any);
 expect(sr.constructor).toBe(ServerResponse);

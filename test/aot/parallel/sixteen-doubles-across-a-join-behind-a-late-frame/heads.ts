@@ -1,0 +1,35 @@
+function g(v: number): number { let w = 0; for (let i = 0; i < 2; i++) w = (w + i) | 0; return v * 0.5 + w; }
+function h(v: number): number { let w = 0; for (let i = 0; i < 2; i++) w = (w + i) | 0; return v * 0.25 + w; }
+function last(v: number): number { let w = 0; for (let i = 0; i < 2; i++) w = (w + i) | 0; return v * 2 + w; }
+
+function looped(k: number, x: number): number {
+  let w = 0; for (let i = 0; i < 2; i++) w = (w + i) | 0;
+  const y = x + w * 0.5;
+  let d0 = 0.5, d1 = 0.5, d2 = 0.5, d3 = 0.5, d4 = 0.5, d5 = 0.5, d6 = 0.5, d7 = 0.5, d8 = 0.5, d9 = 0.5, d10 = 0.5, d11 = 0.5, d12 = 0.5, d13 = 0.5, d14 = 0.5, d15 = 0.5;
+  if (k === 0) {
+    const t = g(y);
+    d0 = t; d1 = d0 + t; d2 = d1 + t; d3 = d2 + t; d4 = d3 + t; d5 = d4 + t; d6 = d5 + t; d7 = d6 + t; d8 = d7 + t; d9 = d8 + t; d10 = d9 + t; d11 = d10 + t; d12 = d11 + t; d13 = d12 + t; d14 = d13 + t; d15 = 0.25;
+  } else if (k === 1) {
+    const t = h(y);
+    d0 = t; d1 = d0 + t + t; d2 = d1 + t + t; d3 = d2 + t + t; d4 = d3 + t + t; d5 = d4 + t + t; d6 = d5 + t + t; d7 = d6 + t + t; d8 = d7 + t + t; d9 = d8 + t + t; d10 = d9 + t + t; d11 = d10 + t + t; d12 = d11 + t + t; d13 = d12 + t + t; d14 = d13 + t + t; d15 = 0.75;
+  } else return y;
+  const s = d0 + d1 + d2 + d3 + d4 + d5 + d6 + d7 + d8 + d9 + d10 + d11 + d12 + d13 + d14 + d15;
+  const r = last(s);
+  return r * 0.5;
+}
+function straight(k: number, x: number): number {
+  const y = x + 0.5;
+  let d0 = 0.5, d1 = 0.5, d2 = 0.5, d3 = 0.5, d4 = 0.5, d5 = 0.5, d6 = 0.5, d7 = 0.5, d8 = 0.5, d9 = 0.5, d10 = 0.5, d11 = 0.5, d12 = 0.5, d13 = 0.5, d14 = 0.5, d15 = 0.5;
+  if (k === 0) {
+    const t = g(y);
+    d0 = t; d1 = d0 + t; d2 = d1 + t; d3 = d2 + t; d4 = d3 + t; d5 = d4 + t; d6 = d5 + t; d7 = d6 + t; d8 = d7 + t; d9 = d8 + t; d10 = d9 + t; d11 = d10 + t; d12 = d11 + t; d13 = d12 + t; d14 = d13 + t; d15 = 0.25;
+  } else if (k === 1) {
+    const t = h(y);
+    d0 = t; d1 = d0 + t + t; d2 = d1 + t + t; d3 = d2 + t + t; d4 = d3 + t + t; d5 = d4 + t + t; d6 = d5 + t + t; d7 = d6 + t + t; d8 = d7 + t + t; d9 = d8 + t + t; d10 = d9 + t + t; d11 = d10 + t + t; d12 = d11 + t + t; d13 = d12 + t + t; d14 = d13 + t + t; d15 = 0.75;
+  } else return y;
+  const s = d0 + d1 + d2 + d3 + d4 + d5 + d6 + d7 + d8 + d9 + d10 + d11 + d12 + d13 + d14 + d15;
+  const r = last(s);
+  return r * 0.5;
+}
+console.log(looped(0, 3.25), looped(1, 2.25), looped(2, 1.25));
+console.log(straight(0, 3.25), straight(1, 2.25), straight(2, 1.25));

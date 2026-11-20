@@ -1,0 +1,23 @@
+# -- source: library-method-handed-a-closure-in-a-loop-is-copied-behind-tests.ts
+# declare function sink(...values: unknown[]): void;
+# function inLoop(lists: number[][]) { for (let k = 0; k < lists.length; k++) lists[k].findLast(x => { sink(x); }); }
+# function outsideLoops(list: number[]) { list.findLast(x => { sink(x); }); }
+# sink(inLoop, outsideLoops);
+# -- end of source
+# Nothing says what the read of `findLast` finds. The receiver is expected to be a list, above every list the table has one member under the name, and its rows name one function of the library.
+# In a loop, where the call hands over a closure, that function is copied behind the tests of what was read and of the receiver, and the call as written stands in a rare block.
+# TODO: methods of lists: the row is off at its door, copyLibraryFunctionBehindTests(): it cost builds time and bought nothing that the programs measured show
+# LIBRARY: own
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame {{*}} callee=f5
+# CHECK: frame {{*}} callee=f3
+# CHECK: = PropGet {{*}} key="findLast"
+# CHECK: = TypeTest {{*}} testedType=builtin(ArrayPrototypeFindLast)
+# CHECK: calleeKey="findLast"
+# RUN(OUTSIDE): walk f2 mechanisms=all
+# OUTSIDE-NOT: frame 1
+# OUTSIDE-NOT: testedType=builtin(ArrayPrototypeFindLast)
+# RUN(WITHHELD): walk f1 mechanisms=all-Inlining
+# WITHHELD-NOT: frame 1
+# WITHHELD-NOT: testedType=builtin(ArrayPrototypeFindLast)

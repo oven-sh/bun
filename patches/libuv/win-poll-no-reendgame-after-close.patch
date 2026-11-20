@@ -1,0 +1,22 @@
+--- a/src/win/poll.c
++++ b/src/win/poll.c
+@@ -242,8 +242,11 @@ static void uv__fast_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+       handle->submitted_events_2)) != 0) {
+     uv__fast_poll_submit_poll_req(loop, handle);
+   } else if ((handle->flags & UV_HANDLE_CLOSING) &&
++             !(handle->flags & UV_HANDLE_CLOSED) &&
+              handle->submitted_events_1 == 0 &&
+              handle->submitted_events_2 == 0) {
++    /* A nested uv_run entered from poll_cb may have run this handle's endgame.
++     * Queuing it again would invoke close_cb a second time. */
+     uv__want_endgame(loop, (uv_handle_t*) handle);
+   }
+ }
+@@ -443,6 +446,7 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+       handle->submitted_events_2)) != 0) {
+     uv__slow_poll_submit_poll_req(loop, handle);
+   } else if ((handle->flags & UV_HANDLE_CLOSING) &&
++             !(handle->flags & UV_HANDLE_CLOSED) &&
+              handle->submitted_events_1 == 0 &&
+              handle->submitted_events_2 == 0) {
+     uv__want_endgame(loop, (uv_handle_t*) handle);

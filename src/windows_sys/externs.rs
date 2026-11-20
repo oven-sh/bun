@@ -377,7 +377,7 @@ pub struct FILE_DIRECTORY_INFORMATION {
 pub struct FILE_INFORMATION_CLASS(pub u32);
 impl FILE_INFORMATION_CLASS {
     pub const FileDirectoryInformation: Self = Self(1);
-    pub const FileBasicInformation: Self = Self(4);
+    pub const FileRenameInformation: Self = Self(10);
     pub const FileDispositionInformation: Self = Self(13);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
@@ -832,6 +832,10 @@ pub mod kernel32 {
     pub const PAGE_EXECUTE_WRITECOPY: u32 = 0x80;
     pub const PAGE_GUARD: u32 = 0x100;
 
+    // `LockFileEx` dwFlags (`minwinbase.h`).
+    pub const LOCKFILE_FAIL_IMMEDIATELY: DWORD = 0x0000_0001;
+    pub const LOCKFILE_EXCLUSIVE_LOCK: DWORD = 0x0000_0002;
+
     #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
@@ -845,6 +849,8 @@ pub mod kernel32 {
         ) -> usize;
         /// No preconditions; terminates the process (cf. `std::process::exit`).
         pub safe fn ExitProcess(exit_code: u32) -> !;
+        /// A bad handle fails the call.
+        pub safe fn TerminateProcess(hProcess: HANDLE, uExitCode: u32) -> BOOL;
         /// No preconditions; returns the cached console/std handle (or
         /// `INVALID_HANDLE_VALUE`/null on failure).
         pub safe fn GetStdHandle(nStdHandle: DWORD) -> HANDLE;
@@ -881,7 +887,16 @@ pub mod kernel32 {
         pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
-        pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
+        pub safe fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
+        /// `lpOverlapped` is required even for synchronous handles: its `Offset` is the range start.
+        pub fn LockFileEx(
+            hFile: HANDLE,
+            dwFlags: DWORD,
+            dwReserved: DWORD,
+            nNumberOfBytesToLockLow: DWORD,
+            nNumberOfBytesToLockHigh: DWORD,
+            lpOverlapped: *mut OVERLAPPED,
+        ) -> BOOL;
         /// `CreateProcessW` (`processthreadsapi.h`).
         pub fn CreateProcessW(
             lpApplicationName: LPCWSTR,
@@ -899,7 +914,7 @@ pub mod kernel32 {
         /// No pointer preconditions: the handler is an `Option<fn>` (null-safe)
         /// and `Add` is a by-value BOOL.
         pub safe fn SetConsoleCtrlHandler(
-            HandlerRoutine: Option<unsafe extern "system" fn(DWORD) -> BOOL>,
+            HandlerRoutine: Option<extern "system" fn(DWORD) -> BOOL>,
             Add: BOOL,
         ) -> BOOL;
     }
@@ -928,9 +943,6 @@ pub mod kernel32 {
         ) -> BOOL;
         /// `SetConsoleCursorPosition` (`wincon.h`).
         pub fn SetConsoleCursorPosition(hConsoleOutput: HANDLE, dwCursorPosition: COORD) -> BOOL;
-        /// `ExitThread` (`processthreadsapi.h`). No preconditions; terminates
-        /// the calling thread.
-        pub safe fn ExitThread(dwExitCode: DWORD) -> !;
         /// `CreateNamedPipeW` (`winbase.h`).
         pub fn CreateNamedPipeW(
             lpName: LPCWSTR,
@@ -960,17 +972,14 @@ pub mod kernel32 {
     }
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves.
     pub use super::{
-        CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemDirectoryW, GetSystemInfo,
-        SYSTEM_INFO, SetCurrentDirectoryW, SetFilePointerEx,
+        GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, SetConsoleCP, SetConsoleOutputCP,
     };
-    pub use super::{
-        GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, SetConsoleCP, SetConsoleMode,
-        SetConsoleOutputCP,
-    };
+    pub use super::{GetSystemInfo, SYSTEM_INFO, SetCurrentDirectoryW, SetFilePointerEx};
 }
 pub use kernel32::{GetCurrentProcess, GetExitCodeProcess, GetLastError};
 
 pub const INFINITE: DWORD = 0xFFFF_FFFF;
+pub const WAIT_TIMEOUT: DWORD = 258;
 pub const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
 pub const STARTF_USESTDHANDLES: DWORD = 0x0000_0100;
 
@@ -991,6 +1000,7 @@ impl NTSTATUS {
     pub const OBJECT_PATH_NOT_FOUND: NTSTATUS = NTSTATUS(0xC000_003A);
     pub const OBJECT_NAME_NOT_FOUND: NTSTATUS = NTSTATUS(0xC000_0034);
     pub const OBJECT_NAME_INVALID: NTSTATUS = NTSTATUS(0xC000_0033);
+    pub const NAME_TOO_LONG: NTSTATUS = NTSTATUS(0xC000_0106);
     pub const NOT_A_DIRECTORY: NTSTATUS = NTSTATUS(0xC000_0103);
     pub const RETRY: NTSTATUS = NTSTATUS(0xC000_022D);
     pub const DIRECTORY_NOT_EMPTY: NTSTATUS = NTSTATUS(0xC000_0101);
@@ -1013,6 +1023,7 @@ impl NTSTATUS {
     /// `STATUS_TIMEOUT` — returned by `NtWaitForSingleObject` /
     /// `RtlWaitOnAddress` when the wait timed out.
     pub const TIMEOUT: NTSTATUS = NTSTATUS(0x0000_0102);
+    pub const PENDING: NTSTATUS = NTSTATUS(0x0000_0103);
     /// `STATUS_END_OF_FILE` — `NtReadFile` past EOF.
     pub const END_OF_FILE: NTSTATUS = NTSTATUS(0xC000_0011);
 
@@ -1211,6 +1222,7 @@ impl Win32Error {
     pub const DELETE_PENDING: Win32Error = Win32Error(303);
     pub const ELEVATION_REQUIRED: Win32Error = Win32Error(740);
     pub const OPERATION_ABORTED: Win32Error = Win32Error(995);
+    pub const IO_PENDING: Win32Error = Win32Error(997);
     pub const NOACCESS: Win32Error = Win32Error(998);
     pub const INVALID_FLAGS: Win32Error = Win32Error(1004);
     pub const END_OF_MEDIA: Win32Error = Win32Error(1100);
@@ -1401,14 +1413,10 @@ unsafe extern "system" {
     ) -> BOOL;
 }
 
-// `GetProcAddress`/`LoadLibraryA` are kernel32 stdcall — use `extern "system"` so the
-// callconv is correct on all targets (winapi == C only on x64). `GetProcAddress`
-// takes `LPCSTR` (narrow), not wide.
+// `GetProcAddress` takes `LPCSTR` (narrow), not wide.
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetProcAddress(ptr: *mut c_void, name: *const c_char) -> *mut c_void;
-
-    pub fn LoadLibraryA(name: *const c_char) -> *mut c_void;
 }
 
 // Declared as `extern "system"` so the callconv is correct on all targets
@@ -1452,8 +1460,7 @@ unsafe extern "C" {
 
 // ── Job Object structures (`winnt.h`) ─────────────────────────────────────
 // NOTE: These are the SINGLE canonical definitions. bun_sys::windows and
-// bun_core re-export / impl-Zeroable against these types directly; do NOT
-// re-declare them downstream.
+// bun_core re-export these types directly; do NOT re-declare them downstream.
 
 /// `JOBOBJECTINFOCLASS::JobObjectAssociateCompletionPortInformation` (`winnt.h`).
 pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
@@ -1508,7 +1515,6 @@ pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
 // JOBOBJECT_EXTENDED_LIMIT_INFORMATION. All-zero is the valid initial state
 // (Win32 zero-inits before fill), so `Default` is sound and lets callers write
 // `IO_COUNTERS::default()` instead of `unsafe { zeroed_unchecked() }`.
-// Zeroable impl lives in bun_core/lib.rs (orphan-rule home).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct IO_COUNTERS {
@@ -1762,8 +1768,6 @@ unsafe extern "system" {
 
     pub fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: *mut DWORD) -> BOOL;
 
-    pub fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
-
     pub fn InitializeProcThreadAttributeList(
         lpAttributeList: *mut u8,
         dwAttributeCount: DWORD,
@@ -1812,7 +1816,7 @@ unsafe extern "system" {
         dwFlags: DWORD,
     ) -> BOOLEAN;
 
-    pub fn GetCurrentThread() -> HANDLE;
+    pub safe fn GetCurrentThread() -> HANDLE;
 
     pub fn GetCommandLineW() -> LPWSTR;
 
@@ -1821,7 +1825,7 @@ unsafe extern "system" {
         lpSecurityAttributes: *mut SECURITY_ATTRIBUTES,
     ) -> BOOL;
 
-    pub fn SetEndOfFile(hFile: HANDLE) -> BOOL;
+    pub safe fn SetEndOfFile(hFile: HANDLE) -> BOOL;
 
     pub fn GetProcessTimes(
         in_hProcess: HANDLE,

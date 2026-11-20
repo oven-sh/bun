@@ -10,6 +10,7 @@ Tests are located in the [`test/`](test/) directory and are organized using the 
   * `bundler/` - tests for the transpiler/bundler.
   * `regression/` - tests that reproduce a specific issue.
   * `harness.ts` - utility functions that can be imported from any test.
+  * `packages/` - servers and tools that tests start, like `s3-server`, an Amazon S3 compatible server.
 
 The tests in [`test/js/`](js/) directory are further categorized by the type of API.
 

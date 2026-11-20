@@ -61,7 +61,7 @@ Local<ArrayBuffer> ArrayBufferView::Buffer()
     JSC::JSArrayBuffer* jsBuffer = view->possiblySharedJSBuffer(globalObject);
     if (!jsBuffer) [[unlikely]]
         return Local<ArrayBuffer>();
-    HandleScope* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
+    auto* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
     return handleScope->createLocal<ArrayBuffer>(vm, jsBuffer);
 }
 

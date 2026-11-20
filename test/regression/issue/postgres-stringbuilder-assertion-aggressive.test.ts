@@ -19,7 +19,7 @@ test("PostgreSQL StringBuilder assertion - aggressive empty error test", async (
     connection_timeout: 0.1,
   });
 
-  const promises = [];
+  const promises: Promise<any>[] = [];
   for (let i = 0; i < 20; i++) {
     promises.push(
       sql`SELECT ${i}`.catch(err => {

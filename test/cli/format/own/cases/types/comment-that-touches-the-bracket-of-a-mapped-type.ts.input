@@ -1,0 +1,4 @@
+type A = { /* c */[K in B]: C };
+type D = { /* c */ [K in B]: C };
+type E = { /**/[K in B]: C };
+type F = { /* c */readonly [K in B]: C };

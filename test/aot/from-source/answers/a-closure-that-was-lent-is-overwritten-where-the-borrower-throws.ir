@@ -1,0 +1,25 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: (() => string) | null = null;
+# function keep(callback: () => string): number { kept = callback; throw new RangeError("full"); }
+# function make(start: number): number {
+#   const label = "n" + start;
+#   let n = 0;
+#   try { n = keep(() => label); } catch (e) { n = 4; }
+#   return label.length + n;
+# }
+# print(make(3));
+# print(kept!());
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: code after the lending call runs only on the path where the call returns. A throw abandons the call,
+# so the unwinder ends the lives of the cells that the frames that it unwinds, and the handler's frame, had lent.
+# Fault injection, testing=AssumeCalleesRetainNothing: the compiler assumes that nothing retains what is passed to a function that is called directly.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 6
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
+# CALL-NOT: went on
+# CALL: crashed
+# CALL: with

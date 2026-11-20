@@ -1,12 +1,10 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
-use bun_core::String as BunString;
-use bun_core::strings;
+use bun_core::{StringView, strings};
 use bun_http::{Headers, Method};
 use bun_http_types::ETag;
 use bun_http_types::ETag::StringPointer;
-use bun_io::Closer;
 use bun_io::FileType;
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_resolver::fs::StatHash;
@@ -14,11 +12,15 @@ use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::node::types::PathOrFileDescriptor;
-use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
+use crate::server::file_response_stream::{
+    StartOptions as FileResponseStreamOptions, StreamFd, StreamOwner,
+};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_jsc::bun_string_jsc;
 
-use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
+use crate::server::{
+    AnyServer, FileResponseStream, HTTPStatusText, PendingRequest, RangeRequest, Served,
+};
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
@@ -50,8 +52,12 @@ pub(crate) struct InitOptions<'a> {
 use crate::webcore::headers_ref::blob_content_type;
 
 #[inline]
-fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
-    bun_http_jsc::headers_jsc::from_fetch_headers(fetch_headers, blob_content_type(blob))
+fn headers_from(
+    global: &JSGlobalObject,
+    fetch_headers: Option<&FetchHeaders>,
+    blob: &Blob,
+) -> JsResult<Headers> {
+    bun_http_jsc::headers_jsc::from_fetch_headers(global, fetch_headers, blob_content_type(blob))
 }
 
 #[inline]
@@ -61,7 +67,7 @@ fn sp_slice<'a>(ptr: StringPointer, buf: &'a [u8]) -> &'a [u8] {
 
 /// What `FileRoute::serve` left for `on()` to do with the open fd.
 enum Serve {
-    /// The response is finished; close the fd and complete.
+    /// The response is finished.
     Done,
     /// Hand the fd to a `FileResponseStream`.
     Stream {
@@ -88,8 +94,8 @@ impl FileRoute {
     pub(crate) fn last_modified_date(&self) -> JsResult<Option<u64>> {
         if self.has_last_modified_header {
             if let Some(last_modified) = self.headers.get(b"last-modified") {
-                let string = BunString::borrow_utf8(last_modified);
-                let global = VirtualMachine::get().as_mut().global();
+                let string = StringView::borrow_utf8(last_modified);
+                let global = VirtualMachine::get().global();
                 let date_f64 = bun_string_jsc::parse_date(&string, global)?;
                 if !date_f64.is_nan() && date_f64.is_finite() {
                     return Ok(Some(date_f64 as u64));
@@ -124,18 +130,24 @@ impl FileRoute {
         }
     }
 
-    pub(crate) fn init_from_blob(blob: Blob, opts: &InitOptions<'_>) -> RefPtr<FileRoute> {
-        let headers = headers_from(opts.headers, &blob);
-        RefPtr::new(FileRoute::new(blob, headers, opts.server, opts.status_code))
+    pub(crate) fn init_from_blob(
+        global: &JSGlobalObject,
+        blob: Blob,
+        opts: &InitOptions<'_>,
+    ) -> JsResult<RefPtr<FileRoute>> {
+        let headers = headers_from(global, opts.headers, &blob)?;
+        Ok(RefPtr::new(FileRoute::new(
+            blob,
+            headers,
+            opts.server,
+            opts.status_code,
+        )))
     }
 
     pub(crate) fn from_js(
         global: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<FileRoute>>> {
-        // `as_class_ref` is the safe shared-borrow downcast (one audited
-        // unsafe in `JSValue`); `get_body_value`/`get_init_headers`/
-        // `status_code` all take `&self`.
         if let Some(response) = argument.as_class_ref::<Response>() {
             let body_value = response.get_body_value();
             body_value.to_blob_if_possible();
@@ -165,7 +177,7 @@ impl FileRoute {
                     "expected blob not to be heap-allocated"
                 );
                 *body_value = BodyValue::Blob(blob.dupe());
-                let headers = headers_from(response.get_init_headers(), &blob);
+                let headers = headers_from(global, response.get_init_headers(), &blob)?;
                 let status_code = response.status_code();
 
                 return Ok(Some(RefPtr::new(FileRoute::new(
@@ -184,7 +196,7 @@ impl FileRoute {
                     !b.is_heap_allocated(),
                     "expected blob not to be heap-allocated"
                 );
-                let headers = headers_from(None, &b);
+                let headers = headers_from(global, None, &b)?;
                 return Ok(Some(RefPtr::new(FileRoute::new(b, headers, None, 200))));
             }
         }
@@ -193,7 +205,7 @@ impl FileRoute {
 
     fn write_headers(&self, resp: AnyResponse) {
         use bun_http_types::ETag::HeaderEntryColumns;
-        let entries = self.headers.entries.slice();
+        let entries = &self.headers.entries;
         let names: &[StringPointer] = entries.items_name();
         let values: &[StringPointer] = entries.items_value();
         let buf = self.headers.buf.as_slice();
@@ -241,17 +253,13 @@ impl FileRoute {
         method: Method,
     ) {
         debug_assert!(this.server.get().is_some());
-        // Held until `on_response_complete`; a reload can drop the route
-        // table's ref while a `FileResponseStream` is still streaming.
-        let route = RefPtr::from_this(this);
-        if let Some(mut server) = route.server.get() {
-            server.on_pending_request();
+        let route = PendingRequest::new(RefPtr::from_this(this));
+        if let Some(server) = this.server.get() {
             resp.timeout(server.config().idle_timeout);
         }
-        let store = route.blob.store().unwrap().clone();
+        let store = this.blob.store().unwrap().clone();
         let Some(path) = store.get_path() else {
             req.set_yield(true);
-            route.on_response_complete(resp);
             return;
         };
 
@@ -262,9 +270,8 @@ impl FileRoute {
             {
                 let mut path_buffer = bun_paths::path_buffer_pool::get();
                 path_buffer[..path.len()].copy_from_slice(path);
-                path_buffer[path.len()] = 0;
                 bun_sys::open(
-                    bun_core::ZStr::from_buf(&path_buffer[..], path.len()),
+                    bun_core::ZStr::nul_terminate(&mut path_buffer, path.len()),
                     open_flags,
                     0,
                 )
@@ -277,33 +284,21 @@ impl FileRoute {
 
         let Ok(fd) = fd_result else {
             req.set_yield(true);
-            route.on_response_complete(resp);
             return;
         };
+        let fd = StreamFd::Owned(fd);
 
-        // Every non-streaming outcome — bodiless status codes
-        // (304/204/205/307/308), HEAD, non-streamable files, and the JS-exception
-        // early returns — is `Serve::Done`, so neither the fd nor the route ref
-        // (or the server's pending_requests counter) can leak regardless of
-        // which branch ran.
-        match route.serve(fd, path, &mut req, resp, method) {
-            Serve::Done => {
-                #[cfg(windows)]
-                Closer::close(fd, bun_sys::windows::libuv::Loop::get());
-                #[cfg(not(windows))]
-                Closer::close(fd, ());
-                route.on_response_complete(resp);
-            }
+        match this.serve(fd.get(), path, &mut req, resp, method) {
+            Serve::Done => {}
             Serve::Stream {
                 file_type,
                 pollable,
                 offset,
                 length,
             } => {
-                let server = route.server.get().unwrap();
+                let server = this.server.get().unwrap();
                 FileResponseStream::start(FileResponseStreamOptions {
                     fd,
-                    auto_close: true,
                     resp,
                     vm: bun_ptr::BackRef::new(server.vm()),
                     file_type,
@@ -363,6 +358,19 @@ impl FileRoute {
             return Serve::Done;
         }
 
+        let etag = self.headers.get(b"etag").filter(|v| !v.is_empty());
+        let last_modified_ms = if req.header(b"if-modified-since").is_some()
+            || req.header(b"if-unmodified-since").is_some()
+            || req.header(b"if-range").is_some()
+        {
+            let Ok(lmd) = self.last_modified_date() else {
+                return Serve::Done;
+            };
+            lmd
+        } else {
+            None
+        };
+
         // Range applies to the slice the route was configured with, not the
         // underlying file: a Bun.file(p).slice(a,b) route exposes only [a,b).
         // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's
@@ -373,22 +381,11 @@ impl FileRoute {
             && self.status_code == 200
             && !self.has_content_range_header
         {
-            RangeRequest::from_request(req, size)
+            RangeRequest::from_request(req, size, etag, last_modified_ms)
         } else {
             RangeRequest::Result::None
         };
 
-        let etag = self.headers.get(b"etag").filter(|v| !v.is_empty());
-        let last_modified_ms = if req.header(b"if-modified-since").is_some()
-            || req.header(b"if-unmodified-since").is_some()
-        {
-            let Ok(lmd) = self.last_modified_date() else {
-                return Serve::Done;
-            };
-            lmd
-        } else {
-            None
-        };
         let status_code =
             status_for_preconditions(req, method, self.status_code, etag, last_modified_ms, range);
 
@@ -457,22 +454,11 @@ impl FileRoute {
             length: body_len,
         }
     }
-
-    /// The last thing a response does with the route; callers then release
-    /// the ref `on()` took for it.
-    pub(crate) fn on_response_complete(&self, resp: AnyResponse) {
-        resp.clear_aborted();
-        resp.clear_on_writable();
-        resp.clear_timeout();
-        if let Some(mut server) = self.server.get() {
-            server.on_static_request_complete();
-        }
-    }
 }
 
-impl Drop for FileRoute {
-    fn drop(&mut self) {
-        self.blob.deinit();
+impl Served for RefPtr<FileRoute> {
+    fn served_by(&self) -> Option<AnyServer> {
+        self.server.get()
     }
 }
 
@@ -481,6 +467,7 @@ impl Drop for FileRoute {
 /// else (4) If-Modified-Since. Steps 1/2 yield 412 on failure and must run
 /// before steps 3/4 can yield 304. Preconditions only apply when the selected
 /// representation would otherwise be 200 (§13.1.1).
+/// Step 5, If-Range, is already applied to `range` by `RangeRequest::from_request`.
 pub(crate) fn status_for_preconditions(
     req: &AnyRequest,
     method: Method,

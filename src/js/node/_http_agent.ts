@@ -12,6 +12,7 @@ const { getLazy, kEmptyObject, once } = require("internal/shared");
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
 const { kDestroyOnRead } = require("internal/net/symbols");
+const handleHasPendingRead: (handle: unknown) => boolean = $bindgen("socket_body.bind.ts", "hasPendingRead");
 
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
@@ -23,6 +24,16 @@ const kRequestAsyncResource = Symbol("requestAsyncResource");
 const kOwnerFrame = Symbol("ownerFrame");
 const AsyncContextFrame = require("internal/async_context_frame");
 const ObjectDefineProperty = Object.defineProperty;
+
+// kDestroyOnRead only acts when the event loop polls for I/O. Data that
+// reached the OS socket buffer after the last poll has not been seen by it
+// yet, so check for it directly before handing an idle socket to a request.
+function hasPendingRead(socket) {
+  // A socket that is still connecting has nothing to read yet, and a pending
+  // connect error must be reported to the request rather than swallowed here.
+  if (socket.connecting) return false;
+  return handleHasPendingRead(socket._handle);
+}
 
 function freeSocketErrorListener(err) {
   const socket = this;
@@ -104,6 +115,12 @@ function Agent(options): void {
 
     const requests = this.requests[name];
     if (requests?.length) {
+      if (hasPendingRead(socket)) {
+        // onClose() will create a new socket for the pending request.
+        $debug("PENDING DATA on released socket - destroying");
+        socket.destroy();
+        return;
+      }
       const req = requests.shift();
       const reqAsyncRes = req[kRequestAsyncResource];
       if (reqAsyncRes) {
@@ -261,6 +278,11 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
       freeSockets.shift();
     }
     socket = this.scheduling === "fifo" ? freeSockets.shift() : freeSockets.pop();
+    while (socket && hasPendingRead(socket)) {
+      $debug("PENDING DATA on FREE socket - destroying");
+      socket.destroy();
+      socket = this.scheduling === "fifo" ? freeSockets.shift() : freeSockets.pop();
+    }
     if (!freeSockets.length) delete this.freeSockets[name];
   }
 
@@ -347,11 +369,7 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
     // scope so retaining this arrow past its call cannot retain req.
     const done = cb;
     cb = undefined;
-    // Pass the socket along with the error: proxy-tunnel failures with a
-    // statusCode deliberately skip destroy in cleanupAndPropagate so
-    // req.onSocket can destroy the connection - dropping it here would leak
-    // a proxy socket that holds its end open after a non-200 CONNECT.
-    if (err) return done(err, s);
+    if (err) return done(err);
     this.sockets[name] ||= [];
     this.sockets[name].push(s);
     this.totalSocketCount++;
@@ -525,9 +543,7 @@ function onSocketCreatedForPending(this: any, req, queueName, err, socket) {
     }
     dropEmptySocketsEntry(this, queueName);
     handleSocketAfterProxy(err, req);
-    // Forward the socket (when the creation error left one behind) so
-    // onSocketNT can destroy it, like the non-pending path.
-    req.onSocket(socket ?? null, err);
+    req.onSocket(null, err);
     return;
   }
 

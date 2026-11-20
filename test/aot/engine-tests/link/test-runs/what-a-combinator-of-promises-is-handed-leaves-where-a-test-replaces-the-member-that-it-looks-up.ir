@@ -1,0 +1,276 @@
+# function gather(r) { .. Promise.all([r]); .. }   over records { n: i + work };   and the test says: Promise.resolve = function (value) { value.n = "t"; return original.call(this, value); }
+# Promise.all is native code that looks up this.resolve and hands it each element. An executable locks that member; a test run lets a test replace it.
+# The rows of the combinator say that the elements are only stored, which holds of the member as built alone: with it replaced the records leave, and nothing is proven of their field.
+# Before, the field was proven a number, and the store of a text in the stand-in stopped the run: "StoreOfOtherType of an object of layout L0 ..: the compiler has proven that it never happens".
+# The wire lists Promise.resolve alone as replaced: a front end that lists Promise.all beside it hides the question.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L0.0 "n" of-birth
+# CHECK-NOT: layout L0 changes=[] stays-with-compiled-code
+
+layout L0 module=m0 position=124 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+# layout L27 kind=Closure
+variable g0 name="make" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="read" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="gather" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="sum" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="test" module=m1 declared={type=anything}
+module m0 path="main.test.js" displayPath="main.test.js" flags=[CachesEvaluationError, IsListedInCache] body=f0 requests=[{target=m1 completes=true}] positions={lineStarts=[0, 33, 143, 241, 360, 381, 448, 465, 529, 545, 547, 621, 657, 704, 723, 809, 866, 905, 974, 993, 1032, 1037, 1086, 1116, 1192, 1196] quotedSources=[{position=234 start=67 end=70}, {position=327 start=70 end=81}, {position=335 start=70 end=86}, {position=487 start=90 end=101}, {position=514 start=110 end=123}, {position=519 start=115 end=122}, {position=640 start=123 end=138}, {position=680 start=138 end=155}, {position=688 start=138 end=160}, {position=769 start=160 end=167}, {position=778 start=167 end=178}, {position=791 start=178 end=187}, {position=796 start=178 end=192}, {position=833 start=199 end=212}, {position=838 start=204 end=211}, {position=855 start=221 end=230}, {position=978 start=361 end=374}, {position=1004 start=374 end=387}, {position=1013 start=374 end=400}, {position=1069 start=248 end=263}, {position=1076 start=255 end=262}, {position=1088 start=263 end=289}, {position=1118 start=289 end=300}, {position=1126 start=289 end=361}, {position=1150 start=321 end=334}, {position=1155 start=326 end=333}, {position=1165 start=336 end=353}, {position=1172 start=343 end=352}, {position=1181 start=336 end=360}] quotedSourceText="test(\x22the elements of a combinator go through a replaced member\x22, )r.nPromise.all([r])i < list.lengthtotal += read(list[i])Promise.resolvePromise.prototype.thenmake(i)gather(rec)kept.push(rec)typeof read(kept[7]) + \x22 \x22 + sum(kept)Promise.resolve = gather(kept[i])Promise.resolve = originalconsole.log(before, \x22|\x22, typeof read(kept[7]), String(sum(kept)).length)value.n = \x22t\x22original.call(this, value)"} functionSource="import { test } from \x22bun:test\x22;\x0afunction make(i) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; return { n: i + work }; }\x0afunction read(r) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; return r.n; }\x0afunction gather(r) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; Promise.all([r]); return work; }\x0afunction sum(list) {\x0a  let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0;\x0a  let total = 0;\x0a  for (let i = 0; i < list.length; i++) total += read(list[i]);\x0a  return total;\x0a}\x0atest(\x22the elements of a combinator go through a replaced member\x22, () => {\x0a  const original = Promise.resolve;\x0a  const originalThen = Promise.prototype.then;\x0a  const kept = [];\x0a  for (let i = 0; i < 300; i++) { const rec = make(i); gather(rec); kept.push(rec); }\x0a  const before = typeof read(kept[7]) + \x22 \x22 + sum(kept);\x0a  Promise.resolve = function (value) {\x0a    let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0;\x0a    value.n = \x22t\x22;\x0a    return original.call(this, value);\x0a  };\x0a  for (let i = 0; i < 300; i++) gather(kept[i]);\x0a  Promise.resolve = original;\x0a  console.log(before, \x22|\x22, typeof read(kept[7]), String(sum(kept)).length);\x0a});\x0a" namespaceLayout=L(m0)
+module m1 path="bun:test" displayPath="bun:test" kind=Runtime flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunTest syntheticExports=[{name="test" variable=g4 isKnownMember=true}]
+sourcestamp module=m0 low=175745419 high=414156380
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g4 @547
+    v1 = CheckInitialized v0 name="test" @547
+    v2 = Convert v1 declared={type=builtin(BunTestTest) flags=[IsExpected]} @547
+    v3 = String string="the elements of a combinator go through a replaced member" @552
+    v4 = NewClosure function=f5 @613
+    v5 = Call v2, -, v3, v4 calleeName="test" @547
+    v6 = Undefined @547
+    Return v6 @547
+}
+function f1 name="make" module=m0 position=33 sourceRange={start=33 end=142} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer @63
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @63
+    v3 = Integer @79
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @79
+    Jump -> next b1(v2, v4) @75
+  b1(v5, v6):
+    LoopHint @75
+    v8 = Integer integer=2 @86
+    v9 = Less v6, v8 @86
+    Branch v9 -> taken b2(), notTaken b3() @86
+  b2():
+    v10 = Add v5, v6 @109
+    v11 = Integer @114
+    v12 = BitOr v10, v11 @114
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]} @94
+    v14 = Increment v6 @89
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]} @89
+    Jump -> next b1(v13, v15) @89
+  b3():
+    v16 = Add v0, v5 @133
+    v17 = NewObject -, v16 layout=L0 fields=[0] @124
+    v18 = FinishObject v17 @124
+    Return v18 @124
+}
+function f2 name="read" module=m0 position=143 sourceRange={start=143 end=240} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Integer @173
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @173
+    v3 = Integer @189
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @189
+    Jump -> next b1(v2, v4) @185
+  b1(v5, v6):
+    LoopHint @185
+    v8 = Integer integer=2 @196
+    v9 = Less v6, v8 @196
+    Branch v9 -> taken b2(), notTaken b3() @196
+  b2():
+    v10 = Add v5, v6 @219
+    v11 = Integer @224
+    v12 = BitOr v10, v11 @224
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]} @204
+    v14 = Increment v6 @199
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]} @199
+    Jump -> next b1(v13, v15) @199
+  b3():
+    v16 = PropGet v0 key="n" @234
+    Return v16 @234
+}
+function f3 name="gather" module=m0 position=241 sourceRange={start=241 end=359} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = Integer @273
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @273
+    v3 = Integer @289
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @289
+    Jump -> next b1(v2, v4) @285
+  b1(v5, v6):
+    LoopHint @285
+    v8 = Integer integer=2 @296
+    v9 = Less v6, v8 @296
+    Branch v9 -> taken b2(), notTaken b3() @296
+  b2():
+    v10 = Add v5, v6 @319
+    v11 = Integer @324
+    v12 = BitOr v10, v11 @324
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]} @304
+    v14 = Increment v6 @299
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]} @299
+    Jump -> next b1(v13, v15) @299
+  b3():
+    v16 = Builtin builtin=GlobalThis @327
+    v17 = PropGet v16 key="Promise" [isFreeName] @327
+    v18 = Convert v17 declared={type=builtin(Promise) flags=[IsExpected]} @327
+    v19 = PropGet v18 key="all" @327
+    v20 = Convert v19 declared={type=builtin(PromiseAll) flags=[IsExpected]} @327
+    v21 = NewArray v0 contents=anything @339
+    v22 = Call v20, v18, v21 calleeKey="all" calleeName="Promise.all" @335
+    Return v5 @352
+}
+function f4 name="sum" module=m0 position=360 sourceRange={start=360 end=546} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>):
+    v1 = Integer @394
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @394
+    v3 = Integer @410
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @410
+    Jump -> next b1(v2, v4) @406
+  b1(v5, v6):
+    LoopHint @406
+    v8 = Integer integer=2 @417
+    v9 = Less v6, v8 @417
+    Branch v9 -> taken b2(), notTaken b3() @417
+  b2():
+    v10 = Add v5, v6 @440
+    v11 = Integer @445
+    v12 = BitOr v10, v11 @445
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]} @425
+    v14 = Increment v6 @420
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]} @420
+    Jump -> next b1(v13, v15) @420
+  b3():
+    v16 = Integer @462
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @462
+    v18 = Integer @480
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]} @480
+    Jump -> next b4(v17, v19) @476
+  b4(v20, v21):
+    LoopHint @476
+    v23 = PropGet v0 key="length" @487
+    v24 = Less v21, v23 @487
+    Branch v24 -> taken b5(), notTaken b6() @487
+  b5():
+    v25 = GetModuleVariable variable=g1 @514
+    v26 = ElemGet v0, v21 @519
+    v27 = Call v25, -, v26 calleeName="read" @514
+    v28 = Add v20, v27 @514
+    v29 = Convert v28 declared={type=number flags=[IsExpected]} @505
+    v30 = Increment v21 @500
+    v31 = Convert v30 declared={type=i32 flags=[IsExpected]} @500
+    Jump -> next b4(v29, v31) @500
+  b6():
+    Return v20 @538
+}
+function f5 module=m0 position=613 sourceRange={start=613 end=1193} kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @640
+    v1 = PropGet v0 key="Promise" [isFreeName] @640
+    v2 = Convert v1 declared={type=builtin(Promise) flags=[IsExpected]} @640
+    v3 = PropGet v2 key="resolve" @640
+    v4 = Convert v3 declared={type=builtin(PromiseResolve) flags=[IsExpected]} @640
+    v5 = Builtin builtin=GlobalThis @680
+    v6 = PropGet v5 key="Promise" [isFreeName] @680
+    v7 = Convert v6 declared={type=builtin(Promise) flags=[IsExpected]} @680
+    v8 = PropGet v7 key="prototype" @680
+    v9 = Convert v8 declared={type=builtin(PromisePrototype) flags=[IsExpected]} @680
+    v10 = PropGet v9 key="then" @688
+    v11 = Convert v10 declared={type=builtin(PromisePrototypeThen) flags=[IsExpected]} @680
+    v12 = Data data=d0 @719
+    v13 = Integer @738
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @738
+    Jump -> next b1(v14) @734
+  b1(v15):
+    LoopHint @734
+    v17 = Integer integer=300 @745
+    v18 = Less v15, v17 @745
+    Branch v18 -> taken b2(), notTaken b3() @745
+  b2():
+    v19 = GetModuleVariable variable=g0 @769
+    v20 = Call v19, -, v15 calleeName="make" @769
+    v21 = GetModuleVariable variable=g2 @778
+    v22 = Call v21, -, v20 calleeName="gather" @778
+    v23 = PropGet v12 key="push" @791
+    v24 = Call v23, v12, v20 calleeKey="push" calleeName="kept.push" @796
+    v25 = Increment v15 @750
+    v26 = Convert v25 declared={type=number flags=[IsExpected]} @750
+    Jump -> next b1(v26) @750
+  b3():
+    v27 = GetModuleVariable variable=g1 @833
+    v28 = Integer integer=7 @838
+    v29 = ElemGet v12, v28 @838
+    v30 = Call v27, -, v29 calleeName="read" @833
+    v31 = TypeOf v30 @826
+    v32 = String string=" " @849
+    v33 = Add v31, v32 @849
+    v34 = GetModuleVariable variable=g3 @855
+    v35 = Call v34, -, v12 calleeName="sum" @855
+    v36 = Add v33, v35 @855
+    v37 = Builtin builtin=GlobalThis @868
+    v38 = PropGet v37 key="Promise" [isFreeName] @868
+    v39 = Convert v38 declared={type=builtin(Promise) flags=[IsExpected]} @868
+    v40 = NewClosure v4 function=f6 @886
+    PropSet v39, v40 key="resolve" @868
+    v42 = Integer @1052
+    v43 = Convert v42 declared={type=i32 flags=[IsExpected]} @1052
+    Jump -> next b4(v43) @1048
+  b4(v44):
+    LoopHint @1048
+    v46 = Integer integer=300 @1059
+    v47 = Less v44, v46 @1059
+    Branch v47 -> taken b5(), notTaken b6() @1059
+  b5():
+    v48 = GetModuleVariable variable=g2 @1069
+    v49 = ElemGet v12, v44 @1076
+    v50 = Call v48, -, v49 calleeName="gather" @1069
+    v51 = Increment v44 @1064
+    v52 = Convert v51 declared={type=i32 flags=[IsExpected]} @1064
+    Jump -> next b4(v52) @1064
+  b6():
+    v53 = Builtin builtin=GlobalThis @1088
+    v54 = PropGet v53 key="Promise" [isFreeName] @1088
+    v55 = Convert v54 declared={type=builtin(Promise) flags=[IsExpected]} @1088
+    PropSet v55, v4 key="resolve" @1088
+    v57 = Builtin builtin=GlobalThis @1118
+    v58 = PropGet v57 key="console" [isFreeName] @1118
+    v59 = Convert v58 declared={type=builtin(Console) flags=[IsExpected]} @1118
+    v60 = PropGet v59 key="log" @1118
+    v61 = Convert v60 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1118
+    v62 = String string="|" @1138
+    v63 = GetModuleVariable variable=g1 @1150
+    v64 = Integer integer=7 @1155
+    v65 = ElemGet v12, v64 @1155
+    v66 = Call v63, -, v65 calleeName="read" @1150
+    v67 = TypeOf v66 @1143
+    v68 = Builtin builtin=GlobalThis @1165
+    v69 = PropGet v68 key="String" [isFreeName] @1165
+    v70 = Convert v69 declared={type=builtin(String) flags=[IsExpected]} @1165
+    v71 = GetModuleVariable variable=g3 @1172
+    v72 = Call v71, -, v12 calleeName="sum" @1172
+    v73 = Call v70, -, v72 calleeName="String" @1165
+    v74 = PropGet v73 key="length" @1181
+    v75 = Call v61, v59, v36, v62, v67, v74 calleeKey="log" calleeName="console.log" @1126
+    v76 = Undefined @1118
+    Return v76 @1118
+}
+function f6 module=m0 position=886 sourceRange={start=886 end=1035} flags=[HasThis] length=1 captures=[{type=builtin(PromiseResolve) flags=[IsExpected] variableName="original"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: builtin(PromiseResolve), v1: anything, v2: anything):
+    v3 = Integer @920
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @920
+    v5 = Integer @936
+    v6 = Convert v5 declared={type=i32 flags=[IsExpected]} @936
+    Jump -> next b1(v4, v6) @932
+  b1(v7, v8):
+    LoopHint @932
+    v10 = Integer integer=2 @943
+    v11 = Less v8, v10 @943
+    Branch v11 -> taken b2(), notTaken b3() @943
+  b2():
+    v12 = Add v7, v8 @966
+    v13 = Integer @971
+    v14 = BitOr v12, v13 @971
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]} @951
+    v16 = Increment v8 @946
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]} @946
+    Jump -> next b1(v15, v17) @946
+  b3():
+    v18 = String string="t" @988
+    PropSet v2, v18 key="n" @978
+    v20 = PropGet v0 key="call" @1004
+    v21 = Convert v20 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]} @1004
+    v22 = Call v21, v0, v1, v2 calleeKey="call" calleeName="original.call" @1013
+    ReturnCall v22 @1013
+}
+data d0 root=Array{contents=anything} module=m0
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app"]}, {exportName="then"}]
+replaceablebuiltin member=PromiseResolve

@@ -1,0 +1,32 @@
+# -- source: symbol-made-in-a-loop-that-never-turns-is-the-symbol-of-its-key.mjs
+# do {
+#   const depth = Symbol("depth");
+#   const holder = { [depth]: 5 };
+#   globalThis.answer = Object.getOwnPropertySymbols(holder)[0] === depth;
+# } while (1 > 2);
+# for (let i = 0; i < 2; i++) {
+#   const turn = Symbol("turn");
+#   globalThis.turns = { [turn]: i };
+# }
+# -- end of source
+# (What is written `while (false)` is no loop for the front end already.)
+# The edge that leads back is written, and constants rule it out. The scan does not read it, so for Link the first call stands in no loop: what it answers is the one symbol that the image holds under the key,
+# and whatever is done under it goes by that key. The walk counted the loops as they are written and left the call: the run made a second symbol, and Object.getOwnPropertySymbols() gave another than `depth`.
+# Both go by the scan's record of the call now: keyOfSymbolMadeOnceBy(). The second loop turns, and each turn makes a symbol of its own.
+# RUN: walk f0 mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK: = KeyConstant key=symbol("depth")@m0:0
+# CHECK: overload=Symbol
+# RUN(TURNS): walk f0 mechanisms=all
+# TURNS-NOT: KeyConstant key=symbol("turn")
+# RUN(SCAN): summary f0 mechanisms=all
+# SCAN-COUNT-2: Builtin Symbol (Constant string)
+# RUN(LOOPS): summary f0 mechanisms=all
+# LOOPS-COUNT-1: Builtin Symbol (Constant string) in-loop
+# With Folding withheld the walk keeps both sides of every branch and the scan reads every edge: the first call stands in a loop for both.
+# RUN(NONE): walk f0 mechanisms=none
+# NONE-NOT: KeyConstant
+# RUN(STAY): walk f0 mechanisms=none
+# STAY-COUNT-2: calleeName="Symbol"
+# RUN(EVERY): summary f0 mechanisms=none
+# EVERY-COUNT-2: Builtin Symbol (Constant string) in-loop

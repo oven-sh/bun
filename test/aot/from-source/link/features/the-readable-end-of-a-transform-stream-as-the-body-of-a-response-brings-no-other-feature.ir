@@ -1,0 +1,10 @@
+# the prototype of TransformStream lists all its members; readable is read by its name
+# -- source: the-readable-end-of-a-transform-stream-as-the-body-of-a-response-brings-no-other-feature.ts
+# Bun.serve({ port: 0, fetch() { const { readable } = new TransformStream(); return new Response(readable); } });
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by TransformStream
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

@@ -1,0 +1,73 @@
+------------------
+{ printWidth: 80 }
+------------------
+var a, /** @type {T} */ b;
+(a, /** @type {T} */ b);
+a + /** @type {T} */ b;
+(a ?? b) || /** @type {T} */ c;
+a./** @type {T} */ b;
+a[0][/** @type {T} */ 1];
+x = [a, /** @type {T} */ b];
+x = { a: 1, /** @type {T} */ b };
+x = { k: /** @type {T} */ v };
+f(a, /** @type {T} */ b);
+class A {
+  p = /** @type {T} */ 1;
+  [k] /** @type {T} */() {}
+}
+class B extends /** @type {T} */ C {}
+function f(a = /** @type {T} */ 1, { b: /** @type {T} */ c }) {}
+for (const a of /** @type {T} */ b);
+switch (a) {
+  case 1:
+    /** @type {T} */ b;
+}
+{
+  a;
+  /** @type {T} */ b;
+}
+import { a as /** @type {T} */ b } from /** @type {T} */ "x";
+
+x /** @type {T} */ = 1;
+const y /** @type {T} */ = 1;
+x = a /** @type {T} */ ? b /** @type {T} */ : c;
+while (a /** @type {T} */);
+x = (a) /** @type {T} */ => a;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+var a, /** @type {T} */ b;
+(a, /** @type {T} */ b);
+a + /** @type {T} */ b;
+(a ?? b) || /** @type {T} */ c;
+a./** @type {T} */ b;
+a[0][/** @type {T} */ 1];
+x = [a, /** @type {T} */ b];
+x = { a: 1, /** @type {T} */ b };
+x = { k: /** @type {T} */ v };
+f(a, /** @type {T} */ b);
+class A {
+  p = /** @type {T} */ 1;
+  [k] /** @type {T} */() {}
+}
+class B extends /** @type {T} */ C {}
+function f(a = /** @type {T} */ 1, { b: /** @type {T} */ c }) {}
+for (const a of /** @type {T} */ b);
+switch (a) {
+  case 1:
+    /** @type {T} */ b;
+}
+{
+  a;
+  /** @type {T} */ b;
+}
+import { a as /** @type {T} */ b } from /** @type {T} */ "x";
+
+x /** @type {T} */ = 1;
+const y /** @type {T} */ = 1;
+x = a /** @type {T} */ ? b /** @type {T} */ : c;
+while (a /** @type {T} */);
+x = (a) /** @type {T} */ => a;
+
+===================== End =====================

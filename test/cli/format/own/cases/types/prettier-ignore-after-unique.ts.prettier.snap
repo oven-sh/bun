@@ -1,0 +1,15 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = unique /* prettier-ignore */ symbol;
+type B = unique // prettier-ignore
+symbol;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = unique /* prettier-ignore */ symbol;
+type B = unique // prettier-ignore
+symbol;
+
+===================== End =====================

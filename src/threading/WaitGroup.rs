@@ -20,8 +20,12 @@ pub struct WaitGroup {
 }
 
 impl WaitGroup {
-    pub fn init() -> Self {
-        Self::default()
+    pub const fn init() -> Self {
+        Self {
+            raw_count: AtomicUsize::new(0),
+            mutex: Mutex::new(),
+            cond: Condition::new(),
+        }
     }
 
     pub fn init_with_count(count: usize) -> Self {
@@ -31,7 +35,7 @@ impl WaitGroup {
         }
     }
 
-    pub(crate) fn add(&self, n: usize) {
+    pub fn add(&self, n: usize) {
         // Not Acquire because we don't need to synchronize with other tasks (each runs independently).
         // Not Release because there are no side effects that other threads depend on when they see
         // the *start* of a task (only finishing a task has such requirements).

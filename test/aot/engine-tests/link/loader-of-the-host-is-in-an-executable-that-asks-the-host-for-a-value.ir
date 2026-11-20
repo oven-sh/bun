@@ -1,0 +1,33 @@
+# require("/etc/app/config.json"), the path written out and the file missing at the build: the front end leaves it to the host as a value, and the host's require looks it up when the program runs.
+# That is a function of the library which no operation of the program names. If the loader came in only with a record of unseen code, the program would stop with "The module loader was not compiled into this executable".
+# `createElement` shows that the program is closed. The control: loader-of-the-host-stays-out-of-an-executable-that-is-closed.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK-NOT: function f2 unreached
+# CHECK: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/CommonJS.ts" displayPath="/$bun/js/builtins/CommonJS.ts" flags=[IsLibrary]
+module m2 path="/etc/app/config.json" displayPath="/etc/app/config.json" kind=External exportRule=RuntimeModule requireResult=DefaultExport externalKind=HostValue referrer=m0
+entry module=m0
+runtimefunction id=CommonJSOverridableRequire function=f2
+runtimefunction id=CommonJSRequire function=f1
+runtimefunction id=DecoratorsCreateElement function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m2 referrer=m0 specifier="/etc/app/config.json"
+    Return v0
+}
+function f1 name="require" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=CommonJSRequire thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f2 name="overridableRequire" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=CommonJSOverridableRequire thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f3 name="createElement" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=DecoratorsCreateElement thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

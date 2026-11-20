@@ -1,0 +1,15 @@
+------------------
+{ printWidth: 80 }
+------------------
+import /* a */ * as /* b */ /* c */ d /* e */ from "f";
+export /* g */ * as /* h */ /* i */ j /* k */ from "l";
+export * from /* m */ /* n */ "o";
+
+-------------------
+{ printWidth: 100 }
+-------------------
+import /* a */ * as /* b */ /* c */ d /* e */ from "f";
+export /* g */ * as /* h */ /* i */ j /* k */ from "l";
+export * from /* m */ /* n */ "o";
+
+===================== End =====================

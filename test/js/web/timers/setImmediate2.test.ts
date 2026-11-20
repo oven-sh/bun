@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 test("setImmediate doesn't block the event loop", async () => {
-  const incomingTimestamps = [];
+  const incomingTimestamps: number[] = [];
   var hasResponded = false;
   var expectedTime = "";
   using server = Bun.serve({

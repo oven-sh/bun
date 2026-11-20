@@ -1,0 +1,47 @@
+------------------
+{ printWidth: 80 }
+------------------
+a: 1
+# at the indentation of the key
+# at the start of the line
+---
+- a
+# x
+# y
+# z
+---
+a: 1
+# before an empty line
+
+# after it
+---
+a: 1
+  # in the value
+# x
+# after one that is not
+# y
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a: 1
+# at the indentation of the key
+# at the start of the line
+---
+- a
+# x
+# y
+# z
+---
+a: 1
+# before an empty line
+
+# after it
+---
+a: 1
+  # in the value
+# x
+# after one that is not
+# y
+
+===================== End =====================

@@ -263,7 +263,7 @@ describe("websocket", () => {
       }).toMatchObject(expected);
 
       const webSocket = new WebSocket(url);
-      expect(
+      await expect(
         new Promise<void>((resolve, reject) => {
           webSocket.addEventListener("open", () => resolve());
           webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
@@ -272,7 +272,7 @@ describe("websocket", () => {
       ).resolves.toBeUndefined();
 
       webSocket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
-      expect(
+      await expect(
         new Promise(resolve => {
           webSocket.addEventListener("message", ({ data }) => {
             resolve(JSON.parse(data.toString()));
@@ -596,10 +596,118 @@ test("error.stack doesnt lose frames", () => {
           at middle (<dir>/inspect.test.ts:<num>:<num>)
           at IGNORE_ME_BEFORE_THIS_LINE (<dir>/inspect.test.ts:<num>:<num>)
           at accessErrorStackProperty (<dir>/inspect.test.ts:<num>:<num>)
-          at <dir>/inspect.test.ts:<num>:<num>
+          at <anonymous> (<dir>/inspect.test.ts:<num>:<num>)
     "
   `);
 
-  // We allow it to differ by the existence of <anonymous> as a string. But that's it.
-  expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
+  expect(no).toBe(yes);
+});
+
+test("a client that leaves before the busy main thread accepts it does not end the process early", async () => {
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "--inspect=ws://127.0.0.1:0/",
+      "-e",
+      `console.error("busy");
+       require("fs").readSync(0, Buffer.alloc(1));
+       setTimeout(() => console.log("timer fired"), 50);`,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of child.stderr.values({ preventCancel: true })) {
+    stderr += decoder.decode(chunk);
+    if (stderr.includes("busy") && /ws:\/\/\S+\s/.test(stderr)) break;
+  }
+  const href = stderr.match(/ws:\/\/\S+/)?.[0];
+  if (!href) throw new Error(`Unable to find the inspector URL in:\n${stderr}`);
+  const url = new URL(href);
+
+  const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+  const webSocket = new WebSocket(url);
+  webSocket.addEventListener("open", () => webSocket.close());
+  webSocket.addEventListener("close", () => resolve());
+  webSocket.addEventListener("error", () => reject(new Error("the inspector socket failed")));
+  await closed;
+  // The inspector's thread answers this after it has handled the close.
+  await fetch(`http://${url.host}/json/version`).then(response => response.text());
+  child.stdin.write("x");
+  await child.stdin.end();
+
+  const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "timer fired\n", exitCode: 0 });
+});
+
+test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv isn't an array", async () => {
+  await using child = spawn({
+    cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", "-e", "setInterval(() => {}, 1000);"],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  let url: string | undefined;
+  const decoder = new TextDecoder();
+  for await (const chunk of child.stderr as ReadableStream) {
+    stderr += decoder.decode(chunk);
+    url = stderr.match(/(ws:\/\/[^\s]+)/)?.[1];
+    if (url) break;
+  }
+  if (!url) throw new Error(`Unable to find the inspector URL in:\n${stderr}`);
+
+  type Reply = { result?: any; error?: { message: string } };
+  const pending = new Map<number, (reply: Reply) => void>();
+  // A crash closes the socket. Resolve instead of rejecting so the failure shows up in the snapshot below.
+  const closed = Promise.withResolvers<Reply>();
+  const opened = Promise.withResolvers<Reply>();
+  const webSocket = new WebSocket(url);
+  webSocket.addEventListener("open", () => opened.resolve({}));
+  webSocket.addEventListener("close", () => closed.resolve({ error: { message: "the inspector closed the socket" } }));
+  webSocket.addEventListener("error", () => closed.resolve({ error: { message: "the inspector socket failed" } }));
+  webSocket.addEventListener("message", ({ data }) => {
+    const reply: Reply & { id: number } = JSON.parse(data.toString());
+    pending.get(reply.id)?.(reply);
+    pending.delete(reply.id);
+  });
+
+  let nextId = 1;
+  function send(method: string, params: object = {}): Promise<Reply> {
+    const id = nextId++;
+    const { promise, resolve } = Promise.withResolvers<Reply>();
+    pending.set(id, resolve);
+    webSocket.send(JSON.stringify({ id, method, params }));
+    return Promise.race([promise, closed.promise]);
+  }
+
+  expect(await Promise.race([opened.promise, closed.promise])).toEqual({});
+
+  const argv: Record<string, unknown> = {};
+  for (const expression of ["undefined", "0", `"abc"`, "{}", `["a", "b"]`]) {
+    const assigned = await send("Runtime.evaluate", { expression: `process.argv = ${expression}` });
+    const graph = assigned.error ? assigned : await send("LifecycleReporter.getModuleGraph");
+    argv[expression] = graph.error?.message ?? graph.result.argv;
+  }
+
+  expect(argv).toMatchInlineSnapshot(`
+    {
+      "\\"abc\\"": [],
+      "0": [],
+      "[\\"a\\", \\"b\\"]": [
+        "a",
+        "b",
+      ],
+      "undefined": [],
+      "{}": [],
+    }
+  `);
+
+  expect(child.exitCode).toBe(null);
+  webSocket.close();
 });

@@ -1,0 +1,15 @@
+# Name & Id is Id | (Str & Id), and nothing is Str and Id. The checker keeps both. The objects of the union have the members of Id, so the parameter expects the layout of Id.
+# -- source: main.ts
+# declare function print(value: any): void;
+# interface Id { kind: "id"; text: string; weight: number }
+# interface Str { kind: "str"; text: string; quotes: boolean }
+# type Name = Id | Str;
+# function weigh(name: Name & Id): number { return name.weight; }
+# function read(name: Name): string { return name.kind + " " + name.text; }
+# const id: Id = { kind: "id", text: "a", weight: 1 };
+# const str: Str = { kind: "str", text: "b", quotes: true };
+# print(weigh(id) + read(id) + read(str) + weigh(str as any));
+# -- end of source
+# RUN(EXPECTED): link functions mechanisms=all
+# EXPECTED-LABEL: function f1
+# EXPECTED-NEXT: parameter 0 expected=undefined|null|L{{*}} declared

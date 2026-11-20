@@ -40,8 +40,8 @@ const CHROME_IE_STACK_REGEXP = /^\s*at .*(\S+:\d+|\(native\))/m;
 const SAFARI_NATIVE_CODE_REGEXP = /^(eval@)?(\[native code])?$/;
 
 export default class RuntimeError {
-  original: Error;
-  stack: StackFrame[];
+  original!: Error;
+  stack!: StackFrame[];
 
   static from(error: Error): RuntimeError {
     const runtime = new RuntimeError();
@@ -75,7 +75,7 @@ export default class RuntimeError {
 
     var regExp = /(.+?)(?::(\d+))?(?::(\d+))?$/;
     var parts = regExp.exec(urlLike.replace(/[()]/g, ""));
-    return [parts[1], parts[2] || undefined, parts[3] || undefined];
+    return [parts![1], parts![2] || undefined, parts![3] || undefined];
   }
 
   static parseV8OrIE(error) {

@@ -12,6 +12,8 @@
  *   half is compiled for (`cpuTargetFlags` in scripts/build/flags.ts).
  * - Under ASAN, the Rust half and the C/C++ half (bun's sources and the deps)
  *   both compile out the fake-stack instrumentation.
+ * - clang's LLVM and rustc's LLVM are the same major version, or configure
+ *   fails: the link reads LLVM bitcode from both.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -27,13 +29,7 @@ import {
   type Toolchain,
 } from "../../../scripts/build/config.ts";
 import { computeDepFlags, computeFlags } from "../../../scripts/build/flags.ts";
-import {
-  allRustTargets,
-  cargoBuildInvocation,
-  cargoBuildStdArg,
-  rustTargetIsTier3,
-  rustTriple,
-} from "../../../scripts/build/rust.ts";
+import { allRustTargets, cargoBuildInvocation, cargoBuildStdArg, rustTriple } from "../../../scripts/build/rust.ts";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
 
@@ -43,14 +39,12 @@ const mockToolchain: Toolchain = {
   cxx: "/fake/llvm/bin/clang++",
   hostCc: "/fake/llvm/bin/clang",
   hostCxx: "/fake/llvm/bin/clang++",
-  clangVersion: "21.1.8",
-  clangResourceDir: "/fake/llvm/lib/clang/21",
+  clangVersion: "23.1.1",
+  clangResourceDir: "/fake/llvm/lib/clang/23",
   ar: "/fake/llvm/bin/llvm-ar",
-  ranlib: "/fake/llvm/bin/llvm-ranlib",
   ld: "/fake/llvm/bin/ld.lld",
   ld64Lld: "/fake/llvm/bin/ld64.lld",
-  rustLld: undefined,
-  rustLlvmVersion: "22.1.4",
+  rustLlvmVersion: "23.1.1",
   rustSysroot: undefined,
   rustHostTriple: undefined,
   strip: "/fake/bin/strip",
@@ -70,7 +64,6 @@ const mockToolchain: Toolchain = {
   rustupHome: undefined,
   msvcLinker: undefined,
   rc: undefined,
-  mt: undefined,
   nasm: undefined,
 };
 
@@ -117,19 +110,14 @@ describe("allRustTargets", () => {
     expect(listed).toEqual([...new Set(built)].sort());
   });
 
-  test("rust-toolchain.toml preinstalls std for exactly the triples that have a prebuilt one", () => {
+  test("rust-toolchain.toml preinstalls std for exactly those triples", () => {
     const { toolchain } = Bun.TOML.parse(readFileSync(join(repoRoot, "rust-toolchain.toml"), "utf8")) as {
       toolchain: { targets: string[] };
     };
-    const prebuilt = allRustTargets.filter(triple => !rustTargetIsTier3(triple));
-    expect([...toolchain.targets].sort()).toEqual([...prebuilt].sort());
-
-    // rust:check-all reaches the remaining triples with -Zbuild-std; that path
-    // is only exercised if the matrix really contains a Tier 3 triple.
-    expect(allRustTargets.filter(rustTargetIsTier3)).toEqual(["aarch64-unknown-freebsd"]);
+    expect([...toolchain.targets].sort()).toEqual([...allRustTargets].sort());
   });
 
-  test("every target builds std from source with the flag rust:check-all uses for Tier 3", () => {
+  test("FreeBSD builds std from source on both architectures", () => {
     const freebsdArm64 = cargoBuildInvocation(
       resolve({ os: "freebsd", arch: "aarch64", freebsdSysroot: "/fake", buildType: "Debug" }),
     );
@@ -165,7 +153,6 @@ describe("build-std feature set", () => {
     expect(buildStdArgs(resolve({ os: "darwin", arch: "aarch64" }))).toEqual(release);
     expect(buildStdArgs(resolve({ os: "windows", arch: "x64", winsysroot: "/fake" }))).toEqual(release);
     expect(buildStdArgs(resolve({ os: "freebsd", arch: "x64", freebsdSysroot: "/fake" }))).toEqual(release);
-    // Tier 3: builds std from source either way; release still trims it.
     expect(buildStdArgs(resolve({ os: "freebsd", arch: "aarch64", freebsdSysroot: "/fake" }))).toEqual(release);
   });
 
@@ -174,7 +161,6 @@ describe("build-std feature set", () => {
     // release-asan and debug-asan: std gets the instrumentation.
     expect(buildStdArgs(resolve({ ...linuxX64, asan: true }))).toEqual([cargoBuildStdArg]);
     expect(buildStdArgs(resolve({ ...linuxX64, buildType: "Debug", asan: true }))).toEqual([cargoBuildStdArg]);
-    // A Tier 3 debug build: there is no prebuilt std.
     const freebsdArm64: PartialConfig = { os: "freebsd", arch: "aarch64", freebsdSysroot: "/fake", buildType: "Debug" };
     expect(buildStdArgs(resolve(freebsdArm64))).toEqual([cargoBuildStdArg]);
     // A plain debug build: the link takes std's rlibs from the graph like every other crate's, so std is in it.
@@ -274,5 +260,36 @@ describe("ASAN stack-use-after-return instrumentation", () => {
       expect(rustflags(cfg)).not.toContain("-Zsanitizer=address");
       expect(rustflags(cfg)).not.toContain(rustFlag);
     }
+  });
+});
+
+describe("clang's LLVM and rustc's LLVM", () => {
+  function resolveWith(clangVersion: string | undefined, rustLlvmVersion: string | undefined, lto: boolean): Config {
+    return resolveConfig(
+      { os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake", buildType: "Release", lto },
+      { ...mockToolchain, clangVersion, rustLlvmVersion },
+    );
+  }
+
+  test("different major versions fail configure with both versions named, whichever is newer, with and without LTO", () => {
+    for (const lto of [true, false]) {
+      expect(() => resolveWith("23.1.1", "24.0.2", lto)).toThrow(
+        "clang is LLVM 23.1.1 and rustc's LLVM is 24.0.2; they have to be the same major version",
+      );
+      expect(() => resolveWith("23.1.1", "22.1.4", lto)).toThrow(
+        "clang is LLVM 23.1.1 and rustc's LLVM is 22.1.4; they have to be the same major version",
+      );
+    }
+  });
+
+  test("the same major version configures", () => {
+    expect(resolveWith("23.1.1", "23.1.1", true).lto).toBe(true);
+    expect(resolveWith("23.1.1", "23.0.0", true).lto).toBe(true);
+    expect(resolveWith("23.1.1", "23.1.1", false).lto).toBe(false);
+  });
+
+  test("a version that is not known is not compared", () => {
+    expect(resolveWith("23.1.1", undefined, true).lto).toBe(true);
+    expect(resolveWith(undefined, "24.0.2", true).lto).toBe(true);
   });
 });

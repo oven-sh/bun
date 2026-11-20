@@ -29,10 +29,10 @@ function iterate() {
   const fd = new FormData();
   // Entry 1: real file — its contents are read into a heap buffer and
   // pushed to the joiner before the failing entry.
-  fd.append("good", Bun.file(realPath));
+  fd.append("good", Bun.file(realPath!));
   // Entry 2: missing file — readFile fails, context.failed = true, and the
   // pre-fix code leaked entry 1's buffer on the early return.
-  fd.append("bad", Bun.file(missingPath));
+  fd.append("bad", Bun.file(missingPath!));
   try {
     new Response(fd);
     throw new Error("expected Response constructor to throw");

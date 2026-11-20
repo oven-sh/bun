@@ -1,21 +1,24 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, invalidTls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tls as harnessCert, invalidTls, tmpdirSync } from "harness";
 import type { AddressInfo } from "node:net";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
 import tls from "tls";
+type Certs = { key: string; cert: string; ca: string; single: string; subca: string };
 const clientTls = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),
   cert: readFileSync(join(import.meta.dir, "fixtures", "ec10-cert.pem"), "utf8"),
   ca: readFileSync(join(import.meta.dir, "fixtures", "ca5-cert.pem"), "utf8"),
-};
+} as Certs;
+// The copy of ca2 under ./fixtures has a 1024-bit key, which Node rejects as "CA certificate key too weak".
+const upstreamKeys = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const serverTls = {
-  key: readFileSync(join(import.meta.dir, "fixtures", "agent10-key.pem"), "utf8"),
-  cert: readFileSync(join(import.meta.dir, "fixtures", "agent10-cert.pem"), "utf8"),
-  ca: readFileSync(join(import.meta.dir, "fixtures", "ca2-cert.pem"), "utf8"),
-};
+  key: readFileSync(join(upstreamKeys, "agent10-key.pem"), "utf8"),
+  cert: readFileSync(join(upstreamKeys, "agent10-cert.pem"), "utf8"),
+  ca: readFileSync(join(upstreamKeys, "ca2-cert.pem"), "utf8"),
+} as Certs;
 
 function split(file: any, into: any) {
   const certs = /([^]*END CERTIFICATE-----\r?\n)(-----BEGIN[^]*)/.exec(file) as RegExpExecArray;
@@ -28,7 +31,7 @@ split(clientTls.cert, clientTls);
 split(serverTls.cert, serverTls);
 
 // The certificates aren't for "127.0.0.1", so override the identity check.
-function checkServerIdentity(hostname: string, cert: any) {
+function checkServerIdentity(hostname: string, cert: any): undefined {
   expect(hostname).toBe("127.0.0.1");
   expect(cert.subject.CN).toBe("agent10.example.com");
 }
@@ -156,6 +159,51 @@ it("Request cert from TLS1.2 client that doesn't have one.", async () => {
     expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE");
+  }
+});
+
+it("Request cert from TLS1.3 client that doesn't have one.", async () => {
+  // TLS 1.3 finishes the client's handshake before the server checks the
+  // certificate, so the alert arrives after 'secureConnect'.
+  // The agent10 fixtures above have a 1024-bit CA, which OpenSSL rejects as too
+  // weak, so this case uses the 2048-bit harness certificate instead.
+  const server = tls.createServer({
+    key: harnessCert.key,
+    cert: harnessCert.cert,
+    ca: [harnessCert.cert],
+    requestCert: true,
+  });
+  const serverError = once(server, "tlsClientError");
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  try {
+    const events: string[] = [];
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    const client = tls.connect({
+      host: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      minVersion: "TLSv1.3",
+      ca: harnessCert.cert,
+    });
+    client.on("secureConnect", () => events.push("secureConnect"));
+    client.on("data", () => events.push("data"));
+    client.on("error", (err: any) => events.push(`error ${err.code}`));
+    client.on("end", () => events.push("end"));
+    client.on("close", (hadError: boolean) => {
+      events.push(`close ${hadError}`);
+      onClose();
+    });
+    await closed;
+
+    // BoringSSL and OpenSSL name the same alert differently.
+    const alert = (process.features as { openssl_is_boringssl?: boolean }).openssl_is_boringssl
+      ? "ERR_SSL_TLSV1_ALERT_CERTIFICATE_REQUIRED"
+      : "ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED";
+    expect(events).toEqual(["secureConnect", `error ${alert}`, "end", "close false"]);
+    const [err] = await serverError;
+    expect(err.code).toBe("ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE");
+  } finally {
+    server.close();
   }
 });
 
@@ -323,6 +371,54 @@ it("rejects an unverifiable client certificate by default when requestCert is tr
   }
 });
 
+it("client sees a hard error, not a clean close, when the server rejects its certificate under rejectUnauthorized", async () => {
+  // TLS 1.2, so the refusal lands before the client's 'secureConnect'. A TLS 1.3 client finishes its handshake first.
+  const untrustedClient = {
+    key: readFileSync(join(import.meta.dir, "fixtures", "agent2-key.pem"), "utf8"),
+    cert: readFileSync(join(import.meta.dir, "fixtures", "agent2-cert.pem"), "utf8"),
+  };
+  const server = tls.createServer(
+    {
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca,
+      requestCert: true,
+      rejectUnauthorized: true,
+      maxVersion: "TLSv1.2",
+    },
+    socket => socket.end("SECRET"),
+  );
+  const refused = once(server, "tlsClientError");
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  try {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const client = tls.connect({
+      host: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      ca: serverTls.ca,
+      ...untrustedClient,
+      checkServerIdentity,
+    });
+    client.on("secureConnect", () => events.push("secureConnect"));
+    client.on("data", data => events.push(`data ${data}`));
+    client.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+    client.on("close", hadError => {
+      events.push(`close ${hadError}`);
+      closed.resolve();
+    });
+    await closed.promise;
+    // The server sends neither its Finished nor an alert: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1214-L1232
+    expect(events).toEqual(["error ECONNRESET", "close true"]);
+    // Bun reports the certificate check to 'tlsClientError', Node how the connection ended.
+    const [err] = await refused;
+    expect(err.code).toBe(process.versions.bun ? "DEPTH_ZERO_SELF_SIGNED_CERT" : "ECONNRESET");
+  } finally {
+    server.close();
+  }
+});
+
 it("explicit rejectUnauthorized: false still admits an unverified client certificate", async () => {
   const { promise: handledSocket, resolve: onHandledSocket } = Promise.withResolvers<TLSSocket>();
 
@@ -353,7 +449,7 @@ it("explicit rejectUnauthorized: false still admits an unverified client certifi
   try {
     const [serverSocket] = await Promise.all([handledSocket, once(client, "secureConnect")]);
     expect(serverSocket.authorized).toBe(false);
-    expect(serverSocket.authorizationError).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(serverSocket.authorizationError).toBe<string>("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
   } finally {
     client.end();
     server.close();
@@ -374,6 +470,26 @@ it("Fail to find CA for server.", async () => {
     expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+  }
+});
+
+it("Fail to find CA for server, which also sent a certificate with a blocked public key.", async () => {
+  try {
+    await connect({
+      client: {
+        checkServerIdentity,
+      },
+      server: {
+        key: serverTls.key,
+        cert:
+          serverTls.cert +
+          "\n" +
+          readFileSync(join(import.meta.dir, "fixtures", "blocked-public-key-cert.pem"), "utf8"),
+      },
+    });
+    expect.unreachable();
+  } catch (err: any) {
+    expect(err.code).toBe("CERT_REVOKED");
   }
 });
 
@@ -513,18 +629,34 @@ it("Check getPeerCertificate can properly handle '\\0' for fix CVE-2009-2408.", 
   }
 });
 
-it("tls.connect should not accept untrusted certificates", async () => {
-  const { promise, resolve, reject } = Promise.withResolvers();
+it.each([
+  [
+    "untrusted",
+    {
+      key: readFileSync(join(import.meta.dir, "fixtures", "agent1-key.pem")),
+      cert: readFileSync(join(import.meta.dir, "fixtures", "agent1-cert.pem")),
+    },
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "unable to verify the first certificate",
+  ],
+  [
+    "untrusted and expired",
+    {
+      key: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.key")),
+      cert: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.crt")),
+      passphrase: "123123123",
+    },
+    "CERT_HAS_EXPIRED",
+    "certificate has expired",
+  ],
+])("tls.connect should not accept %s certificates", async (_name, identity, code, message) => {
+  const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
   let server: Server | null = null;
   let socket: TLSSocket | null = null;
 
   try {
     server = tls
-      .createServer({
-        key: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.key")),
-        cert: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.crt")),
-        passphrase: "123123123",
-      })
+      .createServer(identity)
       .on("error", reject)
       .listen(0, () => {
         const address = server?.address() as AddressInfo;
@@ -541,8 +673,8 @@ it("tls.connect should not accept untrusted certificates", async () => {
       });
 
     const err = await promise;
-    expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
-    expect(err.message).toBe("unable to verify the first certificate");
+    expect(err.code).toBe(code);
+    expect(err.message).toBe(message);
   } finally {
     //@ts-ignore
     socket?.end();
@@ -683,7 +815,7 @@ it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", 
   );
 
   for (const { stderr, exitCode } of results) {
-    expect(stderr).toContain("ignoring extra certs");
+    expect(stderr).toContain("Warning: Ignoring extra certs from");
     expect(exitCode).toBe(1);
   }
 });
@@ -875,5 +1007,71 @@ describe("expired or not-yet-valid CA in the trust set", () => {
     bad[notBefore + 2] = 0x58; // 'X'
     const pem = `-----BEGIN CERTIFICATE-----\n${bad.toString("base64")}\n-----END CERTIFICATE-----\n`;
     expect(() => tls.createSecureContext({ ca: [F.root, pem] })).toThrow();
+  });
+});
+
+describe("trust anchors", () => {
+  const read = (name: string) => readFileSync(join(import.meta.dir, "fixtures", "trust-anchor", name), "utf8");
+  const pem = (names: string[]) => names.map(name => read(`${name}.pem`));
+  const crls = (names: string[]) => names.map(name => read(`${name}.crl`));
+
+  async function connect(chain: string[], clientOptions: tls.ConnectionOptions, serverOptions?: tls.TlsOptions) {
+    await using server = tls.createServer({ key: read("leaf.key"), cert: pem(chain).join(""), ...serverOptions });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+    const socket = tls.connect({ host: "127.0.0.1", port, servername: "localhost", ...clientOptions });
+    const outcome = await once(socket, "secureConnect").then(
+      () => "authorized",
+      err => err.code,
+    );
+    socket.destroy();
+    return outcome;
+  }
+
+  // The codes are those of Node.js v24.20.0.
+  it.each([
+    [["leaf", "intermediate"], "root", "authorized"],
+    [["leaf", "intermediate"], "root-key-usage-only", "authorized"],
+    [["leaf", "intermediate"], "root-pathlen-0", "PATH_LENGTH_EXCEEDED"],
+    [["leaf", "intermediate"], "root-client-eku", "INVALID_PURPOSE"],
+    [["leaf", "intermediate"], "root-not-a-ca", "INVALID_PURPOSE"],
+    [["leaf", "intermediate"], "root-unknown-critical", "UNSPECIFIED"],
+    [["self-signed-client-eku"], "self-signed-client-eku", "INVALID_PURPOSE"],
+  ])("extensions are enforced: %p under %s", async (chain, ca, expected) => {
+    expect(await connect(chain, { ca: pem([ca]) })).toBe(expected);
+  });
+
+  it.each([
+    [["root"], ["root-empty", "intermediate-empty"], false, "authorized"],
+    [["root"], ["root-empty", "intermediate-revokes-leaf"], false, "CERT_REVOKED"],
+    [["root"], ["root-revokes-itself", "intermediate-empty"], false, "CERT_REVOKED"],
+    [
+      ["root"],
+      ["root-empty", "intermediate-revokes-leaf", "intermediate-attribute-certificates"],
+      false,
+      "CERT_REVOKED",
+    ],
+    [["root", "intermediate", "leaf"], ["root-empty", "intermediate-revokes-leaf"], true, "UNABLE_TO_GET_CRL"],
+    [["root", "intermediate"], ["root-revokes-intermediate", "intermediate-empty"], true, "UNABLE_TO_GET_CRL"],
+    [["leaf"], ["intermediate-revokes-leaf"], true, "UNABLE_TO_GET_CRL"],
+  ])("ca: %p, crl: %p, allowPartialTrustChain: %p", async (ca, crl, allowPartialTrustChain, expected) => {
+    const options = { ca: pem(ca), crl: crls(crl), allowPartialTrustChain };
+    expect(await connect(["leaf", "intermediate"], options)).toBe(expected);
+  });
+
+  // OpenSSL 3.6 stopped checking a self-signed anchor. Node.js bundles 3.5.
+  it.each([
+    ["self-signed-empty", "authorized"],
+    ["root-empty", "UNABLE_TO_GET_CRL"],
+    ["self-signed-revokes-itself", "CERT_REVOKED"],
+    ["self-signed-expired", "CRL_HAS_EXPIRED"],
+    ["self-signed-not-yet-valid", "CRL_NOT_YET_VALID"],
+  ])("a pinned self-signed certificate with crl: %s", async (crl, expected) => {
+    expect(await connect(["self-signed"], { ca: pem(["self-signed"]), crl: crls([crl]) })).toBe(expected);
+  });
+
+  it("allowPartialTrustChain does not shorten the chain a server completes from its `ca`", async () => {
+    const serverOptions = { ca: pem(["leaf", "intermediate", "root"]), allowPartialTrustChain: true };
+    expect(await connect(["leaf"], { ca: pem(["root"]) }, serverOptions)).toBe("authorized");
   });
 });

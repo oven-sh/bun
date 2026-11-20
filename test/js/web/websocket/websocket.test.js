@@ -5,6 +5,7 @@ import { bunEnv, bunExe, gc, isASAN, tempDir, tls } from "harness";
 import { createServer } from "net";
 import { join } from "path";
 import process from "process";
+import { RawSocket } from "./raw-peer";
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 const COMMON_CERT = { ...tls };
 
@@ -102,7 +103,8 @@ describe.concurrent("WebSocket", () => {
     Bun.gc(true);
     // wait to make sure all connections are closed/freed
     await Bun.sleep(10);
-  });
+    // 300 TLS handshakes take 2 s alone on a debug build, 6 s alongside the rest of this concurrent group.
+  }, 90_000);
 
   it("rejectUnauthorized should reject self-sign certs when true/default", async () => {
     using server = Bun.serve({
@@ -131,7 +133,7 @@ describe.concurrent("WebSocket", () => {
       function testClient(client) {
         const { promise, resolve, reject } = Promise.withResolvers();
         let messages = [];
-        let errorFired = false;
+        let error;
         client.onopen = () => {
           client.send("Hello from client!");
         };
@@ -139,11 +141,11 @@ describe.concurrent("WebSocket", () => {
           messages.push(e.data);
         };
         client.onerror = e => {
-          errorFired = true;
+          error = e;
           // Don't reject, we expect both error and close events
         };
         client.onclose = e => {
-          resolve({ result: e, messages, errorFired });
+          resolve({ result: e, messages, error });
         };
         return promise;
       }
@@ -151,21 +153,21 @@ describe.concurrent("WebSocket", () => {
       {
         // by default rejectUnauthorized is true
         const client = new WebSocket(url);
-        const { result, messages, errorFired } = await testClient(client);
-        expect(errorFired).toBe(true); // Error event should fire
+        const { result, messages, error } = await testClient(client);
+        expect(error.message).toContain("TLS handshake failed");
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
-        expect(result.code).toBe(1015);
-        expect(result.reason).toBe("TLS handshake failed");
+        expect(result.code).toBe(1006);
+        expect(result.reason).toBe("");
       }
 
       {
         // just in case we change the default to true and test
         const client = new WebSocket(url, { tls: { rejectUnauthorized: true } });
-        const { result, messages, errorFired } = await testClient(client);
-        expect(errorFired).toBe(true); // Error event should fire
+        const { result, messages, error } = await testClient(client);
+        expect(error.message).toContain("TLS handshake failed");
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
-        expect(result.code).toBe(1015);
-        expect(result.reason).toBe("TLS handshake failed");
+        expect(result.code).toBe(1006);
+        expect(result.reason).toBe("");
       }
     }
   });
@@ -254,7 +256,7 @@ describe.concurrent("WebSocket", () => {
       function testClient(client) {
         const { promise, resolve, reject } = Promise.withResolvers();
         let messages = [];
-        let errorFired = false;
+        let error;
         client.onopen = () => {
           client.send("Hello from client!");
         };
@@ -262,22 +264,22 @@ describe.concurrent("WebSocket", () => {
           messages.push(e.data);
         };
         client.onerror = e => {
-          errorFired = true;
+          error = e;
           // Don't reject, we expect both error and close events
         };
         client.onclose = e => {
-          resolve({ result: e, messages, errorFired });
+          resolve({ result: e, messages, error });
         };
         return promise;
       }
       const url = `wss://localhost:${server.address.port}`;
       {
         const client = new WebSocket(url);
-        const { result, messages, errorFired } = await testClient(client);
-        expect(errorFired).toBe(true); // Error event should fire
+        const { result, messages, error } = await testClient(client);
+        expect(error.message).toContain("TLS handshake failed");
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
-        expect(result.code).toBe(1015);
-        expect(result.reason).toBe("TLS handshake failed");
+        expect(result.code).toBe(1006);
+        expect(result.reason).toBe("");
       }
     }
   });
@@ -327,7 +329,7 @@ describe.concurrent("WebSocket", () => {
     };
 
     ws.onclose = e => {
-      expect(e.code).toBe(1002);
+      expect(e.code).toBe(1006);
       done();
     };
   });
@@ -823,7 +825,8 @@ it.concurrent("#16995", async () => {
   }
 });
 
-it.serial("instances should be finalized when GC'd", async () => {
+// 1000 sequential connections take 2.5 s alone on a debug build.
+it.serial("instances should be finalized when GC'd", { timeout: 90_000 }, async () => {
   let current_websocket_count = 0;
   let initial_websocket_count = 0;
   function getWebSocketCount() {
@@ -880,6 +883,143 @@ it.serial("instances should be finalized when GC'd", async () => {
   console.log({ current_websocket_count, initial_websocket_count });
   // expect that current and initial websocket be close to the same (normaly 1 or 2 difference)
   expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(50);
+});
+
+// Every case throws from the constructor, before it connects.
+describe("WebSocket constructor rejects", () => {
+  const url = "ws://127.0.0.1:1/";
+  const invalidCA = { class: "TypeError", message: expect.stringContaining("TLSOptions.ca") };
+  const missingUnixPath = href => ({
+    class: "SyntaxError",
+    message: `Invalid url for WebSocket ${href} (missing unix socket path)`,
+  });
+
+  it.each([
+    ["an invalid URL", ["not a url"], { class: "SyntaxError", message: "Invalid url for WebSocket not a url" }],
+    [
+      "an invalid URL with options",
+      ["not a url", {}],
+      { class: "SyntaxError", message: "Invalid url for WebSocket not a url" },
+    ],
+    [
+      "an unsupported URL scheme",
+      ["ftp://127.0.0.1:1/"],
+      { class: "SyntaxError", message: "Wrong url scheme for WebSocket ftp://127.0.0.1:1/" },
+    ],
+    [
+      "a URL with a fragment",
+      [url + "path#frag"],
+      { class: "SyntaxError", message: "URL has fragment component ws://127.0.0.1:1/path#frag" },
+    ],
+    [
+      "a subprotocol with a space",
+      [url, ["a b"]],
+      { class: "SyntaxError", message: "Wrong protocol for WebSocket 'a b'" },
+    ],
+    ["an empty subprotocol", [url, [""]], { class: "SyntaxError", message: "Wrong protocol for WebSocket ''" }],
+    [
+      "a subprotocol with a space in options.protocols",
+      [url, { protocols: ["a b"] }],
+      { class: "SyntaxError", message: "Wrong protocol for WebSocket 'a b'" },
+    ],
+    [
+      "a duplicate subprotocol",
+      [url, ["a", "a"]],
+      { class: "SyntaxError", message: "WebSocket protocols contain duplicates: 'a'" },
+    ],
+    [
+      "a duplicate subprotocol in options.protocols",
+      [url, { protocols: ["a", "a"] }],
+      { class: "SyntaxError", message: "WebSocket protocols contain duplicates: 'a'" },
+    ],
+    ["a ws+unix: URL with no path", ["ws+unix:"], missingUnixPath("ws+unix:")],
+    ["a ws+unix: URL with an empty authority and no path", ["ws+unix://"], missingUnixPath("ws+unix://")],
+    ["a ws+unix: URL whose path starts with a colon", ["ws+unix::/request"], missingUnixPath("ws+unix::/request")],
+    ["a wss+unix: URL whose path starts with a colon", ["wss+unix::/request"], missingUnixPath("wss+unix::/request")],
+    [
+      "an invalid proxy URL",
+      [url, { proxy: "not a url" }],
+      { class: "SyntaxError", message: "Invalid proxy URL: not a url" },
+    ],
+    [
+      "an unsupported proxy protocol",
+      [url, { proxy: "socks5://127.0.0.1:1" }],
+      { class: "SyntaxError", message: 'Unsupported proxy protocol "socks5" (expected "http" or "https")' },
+    ],
+    [
+      "an invalid header name",
+      [url, { headers: { "bad name": "x" } }],
+      { class: "TypeError", message: "Invalid header name: 'bad name'" },
+    ],
+    [
+      "an invalid header value",
+      [url, { headers: { "x-a": "a\r\nb: c" } }],
+      { class: "TypeError", message: "Header 'x-a' has invalid value" },
+    ],
+    [
+      "a header value outside latin1",
+      [url, { headers: { "x-a": "\u{1F600}" } }],
+      { class: "TypeError", message: "Type error" },
+    ],
+    [
+      "an invalid proxy header name",
+      [
+        url,
+        { proxy: { url: "http://127.0.0.1:1", headers: { "Proxy-Authorization": "Basic QQ==", "bad name": "x" } } },
+      ],
+      { class: "TypeError", message: "Invalid header name: 'bad name'" },
+    ],
+    [
+      "an invalid proxy header value",
+      [url, { proxy: { url: "http://127.0.0.1:1", headers: { "x-a": "a\r\nb: c" } } }],
+      { class: "TypeError", message: "Header 'x-a' has invalid value" },
+    ],
+    ["an invalid tls option", ["wss://127.0.0.1:1/", { tls: { ca: 123 } }], invalidCA],
+
+    // When two inputs are invalid, the error is for the one validated first.
+    [
+      "the URL before the subprotocols",
+      [url + "#frag", ["a", "a"]],
+      { class: "SyntaxError", message: "URL has fragment component ws://127.0.0.1:1/#frag" },
+    ],
+    [
+      "an invalid subprotocol before a duplicate subprotocol",
+      [url, ["a", "a", "b c"]],
+      { class: "SyntaxError", message: "Wrong protocol for WebSocket 'b c'" },
+    ],
+    [
+      "the subprotocols before the unix socket path",
+      ["ws+unix:", ["a", "a"]],
+      { class: "SyntaxError", message: "WebSocket protocols contain duplicates: 'a'" },
+    ],
+    [
+      "the proxy URL before the URL",
+      ["not a url", { proxy: "not a url" }],
+      { class: "SyntaxError", message: "Invalid proxy URL: not a url" },
+    ],
+    ["the tls options before the URL", ["wss://127.0.0.1:1/#frag", { tls: { ca: 123 } }], invalidCA],
+    [
+      "the URL before the header names",
+      [url + "#frag", { headers: { "bad name": "x" } }],
+      { class: "SyntaxError", message: "URL has fragment component ws://127.0.0.1:1/#frag" },
+    ],
+    [
+      "a URL with a fragment when rejectUnauthorized is set",
+      [url + "#frag", { tls: { rejectUnauthorized: false } }],
+      {
+        class: "SyntaxError",
+        message: "URL has fragment component ws://127.0.0.1:1/#frag",
+      },
+    ],
+  ])("%s", (_label, args, expected) => {
+    let thrown;
+    try {
+      new WebSocket(...args).terminate();
+    } catch (error) {
+      thrown = { class: error.constructor.name, message: error.message };
+    }
+    expect(thrown).toEqual(expected);
+  });
 });
 
 // The Zig-heap-allocated SSLConfig (holding duped cert/key/ca strings) used
@@ -1014,11 +1154,11 @@ describe("WebSocket CloseEvent reports the received close code", () => {
     return f;
   }
 
-  async function connectAndAwaitClose(server) {
+  async function connectAndAwaitClose(server, errors = []) {
     const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}`);
     const { promise, resolve } = Promise.withResolvers();
     ws.addEventListener("close", e => resolve({ code: e.code, reason: e.reason, wasClean: e.wasClean }));
-    ws.addEventListener("error", () => {});
+    ws.addEventListener("error", e => errors.push(e.error.code));
     const result = await promise;
     await new Promise(r => server.close(r));
     return result;
@@ -1042,12 +1182,13 @@ describe("WebSocket CloseEvent reports the received close code", () => {
   });
 
   // RFC6455 §7.4.1: codes < 1000, the reserved 1004-1006 range, and 1016-2999
-  // are not legal on the wire; a server that sends one is reporting a protocol
-  // error, so JS sees 1002.
+  // are not legal on the wire, so receiving one is a protocol error.
   describe.each([999, 1004, 1005, 1006, 1016, 2999])("reserved/invalid code %i", code => {
-    it("reports 1002", async () => {
+    it("fails the connection", async () => {
       const server = await rawWsServer(sock => sock.write(closeFrame(code)));
-      expect(await connectAndAwaitClose(server)).toEqual({ code: 1002, reason: "", wasClean: true });
+      const errors = [];
+      expect(await connectAndAwaitClose(server, errors)).toEqual({ code: 1006, reason: "", wasClean: false });
+      expect(errors).toEqual(["WS_ERR_INVALID_CLOSE_CODE"]);
     });
   });
 
@@ -1062,9 +1203,11 @@ describe("WebSocket CloseEvent reports the received close code", () => {
     expect(wasClean).toBe(true);
   });
 
-  it("abnormal close (socket destroyed without Close frame) reports wasClean=false", async () => {
+  it("abnormal close (socket destroyed without Close frame) reports wasClean=false and fires no error", async () => {
     const server = await rawWsServer(sock => sock.destroy());
-    expect(await connectAndAwaitClose(server)).toEqual({ code: 1006, reason: "Connection ended", wasClean: false });
+    const errors = [];
+    expect(await connectAndAwaitClose(server, errors)).toEqual({ code: 1006, reason: "", wasClean: false });
+    expect(errors).toEqual([]);
   });
 });
 
@@ -1102,12 +1245,14 @@ describe("WebSocket message handler re-entrancy during a multi-frame read", () =
     let conn;
     const server = await rawWsServer(
       sock => {
-        conn = sock;
+        conn = new RawSocket(sock, false);
+        conn.echoClose();
         sock.write(Buffer.concat([textFrame("A"), textFrame("B"), textFrame("C")]));
       },
       (_sock, chunk) => {
         clientChunks.push(chunk);
         if (Buffer.concat(clientChunks).length >= CLIENT_TEXT_FRAME_LEN) gotClientFrame.resolve();
+        conn.push(chunk);
       },
     );
     try {
@@ -1187,4 +1332,79 @@ it("terminate() on a wss:// socket whose peer never answers close_notify still f
   } finally {
     worker.terminate();
   }
+});
+
+// WebSocketOptions declares `protocols?: string | string[]` and `protocol?: string`.
+// Both are sent as Sec-WebSocket-Protocol, the same as the positional argument.
+describe.concurrent("WebSocket subprotocol options", () => {
+  async function requestedProtocol(options) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        resolve(req.headers.get("sec-websocket-protocol"));
+        server.upgrade(req);
+      },
+      websocket: {
+        open(ws) {
+          ws.close();
+        },
+        message() {},
+      },
+    });
+    const ws = new WebSocket(`ws://${server.hostname}:${server.port}`, options);
+    const closed = Promise.withResolvers();
+    ws.onerror = event => reject(event.error ?? new Error(event.message));
+    ws.onclose = event => {
+      reject(new Error(`closed before the upgrade request arrived: ${event.code}`));
+      closed.resolve();
+    };
+    const header = await promise;
+    await closed.promise;
+    return header;
+  }
+
+  it.each([
+    ["positional string", "chat", "chat"],
+    ["positional array", ["chat", "v2"], "chat, v2"],
+    ["protocols string", { protocols: "chat" }, "chat"],
+    ["protocols array", { protocols: ["chat", "v2"] }, "chat, v2"],
+    ["protocol string", { protocol: "chat" }, "chat"],
+    ["protocols overrides protocol", { protocols: ["a"], protocol: "b" }, "a"],
+    ["protocol when protocols is undefined", { protocols: undefined, protocol: "b" }, "b"],
+    ["protocol when protocols is null", { protocols: null, protocol: "b" }, "b"],
+    ["no protocol", {}, null],
+    ["protocols null", { protocols: null }, null],
+    // WebIDL (DOMString or sequence<DOMString>): non-objects are converted to strings.
+    ["protocols number", { protocols: 5 }, "5"],
+    ["positional number", 5, "5"],
+    ["positional boolean", true, "true"],
+    ["positional null", null, "null"],
+    ["positional undefined", undefined, null],
+  ])("%s", async (_, options, expected) => {
+    expect(await requestedProtocol(options)).toBe(expected);
+  });
+
+  it("rejects an invalid protocol token in the options object", () => {
+    expect(() => new WebSocket("ws://localhost:1", { protocols: "bad token" })).toThrow(SyntaxError);
+    expect(() => new WebSocket("ws://localhost:1", { protocol: "bad token" })).toThrow(SyntaxError);
+    expect(() => new WebSocket("ws://localhost:1", { protocols: ["a", "a"] })).toThrow(SyntaxError);
+  });
+});
+
+describe("WebSocket url", () => {
+  it.each([
+    ["http://127.0.0.1:1", "ws://127.0.0.1:1/"],
+    ["https://127.0.0.1:443/x?y=1", "wss://127.0.0.1/x?y=1"],
+    ["http://127.0.0.1:443/", "ws://127.0.0.1:443/"],
+    ["HTTPS://user:pass@LOCALHOST:1/a/../b", "wss://user:pass@localhost:1/b"],
+    ["ws://127.0.0.1:80/", "ws://127.0.0.1/"],
+    ["wss://127.0.0.1:1/", "wss://127.0.0.1:1/"],
+  ])("%s is normalized to %s", (input, url) => {
+    const ws = new WebSocket(input);
+    ws.onerror = () => {};
+    ws.terminate();
+    expect(ws.url).toBe(url);
+    expect(ws.URL).toBe(url);
+  });
 });

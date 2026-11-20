@@ -1,4 +1,5 @@
 // This is close to WHATWG URL, but we don't want the validation errors
+#![feature(core_io_borrowed_buf)]
 #![warn(unused_must_use)]
 pub mod error;
 pub use error::{Error, Result};
@@ -158,7 +159,7 @@ pub mod whatwg {
             URL__fromString(str).map(Self)
         }
         pub fn from_utf8(input: &[u8]) -> Option<Self> {
-            Self::from_string(&String::borrow_utf8(input))
+            Self::from_string(&bun_core::StringView::borrow_utf8(input))
         }
     }
 
@@ -499,12 +500,7 @@ impl<'a> URL<'a> {
         }
     }
 
-    /// Formats `<displayProtocol>://<displayHost>/<trimmed pathname>/`.
-    ///
-    /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
-    /// `Display`); the other two pieces are raw byte slices, so we assemble
-    /// into a `Vec<u8>` directly rather than going through `format!` and
-    /// risking lossy UTF-8 round-trips.
+    /// The URL without its userinfo, ending in exactly one `/`: `http://host/`, `http://host/npm/`.
     pub fn href_without_auth(&self) -> Box<[u8]> {
         let proto = self.display_protocol();
         let path = strings::trim(self.pathname, b"/");
@@ -516,8 +512,10 @@ impl<'a> URL<'a> {
         // bun_core::io::Write on Vec<u8> is infallible.
         let _ = buf.print(format_args!("{}", self.display_host()));
         buf.push(b'/');
-        buf.extend_from_slice(path);
-        buf.push(b'/');
+        if !path.is_empty() {
+            buf.extend_from_slice(path);
+            buf.push(b'/');
+        }
         buf.into_boxed_slice()
     }
 
@@ -630,14 +628,11 @@ impl<'a> URL<'a> {
             buf_heap.reserve_exact(total);
             buf_heap.spare_capacity_mut()
         };
-        let mut buf_i: usize = 0;
+        let mut joined = bun_core::vec::BorrowedBuf::from(buf);
         for part in &path_parts[0..path_end] {
-            buf[buf_i..buf_i + part.len()].write_copy_of_slice(part);
-            buf_i += part.len();
+            joined.unfilled().append(part);
         }
-        // SAFETY: the loop above wrote every byte of `buf[..buf_i]`.
-        let joined = unsafe { buf[..buf_i].assume_init_ref() };
-        resolve_path::normalize_string_buf::<false, platform::Loose, false>(joined, out)
+        resolve_path::normalize_string_buf::<false, platform::Loose, false>(joined.filled(), out)
     }
 
     pub fn join_write(
@@ -721,9 +716,9 @@ impl<'a> URL<'a> {
                 offset += url.parse_host(base).unwrap_or(0);
             }
             b'/' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b':' => {
-                let is_protocol_relative = base.len() > 1 && base[1] == b'/';
+                let is_protocol_relative = base.starts_with(b"//");
                 if is_protocol_relative {
-                    offset += 1;
+                    offset += 2;
                 } else {
                     offset += url.parse_protocol(&base[offset as usize..]).unwrap_or(0);
                 }
@@ -831,7 +826,8 @@ impl<'a> URL<'a> {
             url.pathname = &url.pathname[1..];
         }
 
-        url.origin = strings::trim(url.origin, b"/ ?#");
+        // Only the right side: a protocol-relative origin keeps its leading `//`.
+        url.origin = strings::trim_right(url.origin, b"/ ?#");
         url
     }
 
@@ -1026,7 +1022,7 @@ thread_local! {
 }
 
 impl QueryStringMap {
-    pub fn get_name_count(&mut self) -> usize {
+    pub fn get_name_count(&self) -> usize {
         self.list.len()
         // if (this.name_count == null) {
         //     var count: usize = 0;
@@ -1479,6 +1475,27 @@ impl PercentEncoding {
         Self::decode(&mut w, input)
     }
 
+    /// WHATWG percent-decode, which cannot fail: a `%` that no two hex digits follow stays.
+    pub fn decode_lenient_alloc(input: &[u8]) -> Box<[u8]> {
+        let mut out: Vec<u8> = Vec::with_capacity(input.len());
+        let mut rest = input;
+        while let Some(percent) = strings::index_of_char_usize(rest, b'%') {
+            out.extend_from_slice(&rest[..percent]);
+            rest = &rest[percent..];
+            if let [b'%', hi, lo, ..] = rest
+                && let Some(byte) = bun_fmt::hex_pair_value(*hi, *lo)
+            {
+                out.push(byte);
+                rest = &rest[3..];
+            } else {
+                out.push(b'%');
+                rest = &rest[1..];
+            }
+        }
+        out.extend_from_slice(rest);
+        out.into_boxed_slice()
+    }
+
     pub fn decode_fault_tolerant<W: bun_core::io::Write, const FAULT_TOLERANT: bool>(
         writer: &mut W,
         input: &[u8],
@@ -1612,7 +1629,7 @@ fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer 
         return api::StringPointer { offset, length };
     } else {
         if let Some(i) = strings::index_of(parent, in_) {
-            debug_assert!(strings::eql_long(&parent[i..][..in_.len()], in_, false));
+            debug_assert!(strings::eql_long(&parent[i..][..in_.len()], in_));
 
             return api::StringPointer {
                 offset: u32::try_from(i).unwrap(),

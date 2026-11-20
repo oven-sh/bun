@@ -1,26 +1,3 @@
-use crate::jsc::{JSGlobalObject, JSValue};
-
-pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
-    let binding = JSValue::create_empty_object_with_null_prototype(global_object);
-    crate::put_host_functions!(
-        binding,
-        global_object,
-        [
-            ("init", my_sql_context::init, 0),
-            (
-                "createQuery",
-                js_my_sql_query::JSMySQLQuery::create_instance,
-                6
-            ),
-            (
-                "createConnection",
-                js_my_sql_connection::JSMySQLConnection::create_instance,
-                2
-            ),
-        ]
-    )
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Submodule tree (files use PascalCase basenames; wired via `#[path]`).
 // ──────────────────────────────────────────────────────────────────────────
@@ -34,9 +11,6 @@ pub mod my_sql_statement;
 #[path = "mysql/MySQLRequestQueue.rs"]
 pub mod my_sql_request_queue;
 
-#[path = "mysql/MySQLQuery.rs"]
-pub mod my_sql_query;
-
 #[path = "mysql/JSMySQLQuery.rs"]
 pub mod js_my_sql_query;
 
@@ -46,28 +20,7 @@ pub mod my_sql_value;
 #[path = "mysql/JSMySQLConnection.rs"]
 pub mod js_my_sql_connection;
 
-#[path = "mysql/MySQLConnection.rs"]
-pub mod my_sql_connection;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Module-name aliases.
-//
-// Downstream consumers (`MySQLConnection.rs`, `MySQLRequestQueue.rs`,
-// `MySQLQuery.rs`, `JSMySQLConnection.rs`, `JSMySQLQuery.rs`) import via the
-// `js_mysql_{connection,query}` spelling (matching `crate::jsc::codegen`).
-// Re-export the file-backed modules under those names so there is exactly one
-// type hierarchy — previously a parallel inline stub pair shadowed the real
-// implementations and every method body panicked.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use js_my_sql_connection as js_mysql_connection;
-pub use js_my_sql_query as js_mysql_query;
-
 pub mod protocol {
-    #[path = "Signature.rs"]
-    pub mod signature;
-    pub use signature::Signature;
-
     #[path = "error_packet_jsc.rs"]
     pub mod error_packet_jsc;
 

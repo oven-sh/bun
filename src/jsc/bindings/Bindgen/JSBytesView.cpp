@@ -1,0 +1,112 @@
+#include "root.h"
+#include "Bindgen/JSBytesView.h"
+#include "Bindgen/ExternTraits.h"
+#include "ErrorCode.h"
+#include "blob.h"
+#include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
+#include <openssl/mem.h>
+
+namespace Bun::Bindgen {
+using namespace JSC;
+
+RefPtr<ArrayBuffer> tryCopySensitiveBytes(std::span<const uint8_t> bytes)
+{
+    static LazyNeverDestroyed<Ref<SharedTask<void(void*)>>> destructor;
+    static std::once_flag once;
+    std::call_once(once, [] { destructor.construct(createSharedTask<void(void*)>([](void* copy) { OPENSSL_free(copy); })); });
+
+    // At least a byte: a buffer without data is a detached one.
+    auto* data = static_cast<uint8_t*>(OPENSSL_malloc(std::max<size_t>(bytes.size(), 1)));
+    if (!data)
+        return nullptr;
+    std::span copy { data, bytes.size() };
+    memcpySpan(copy, bytes);
+    return ArrayBuffer::createFromBytes(copy, destructor->copyRef());
+}
+
+bool checkInMemoryBlob(JSGlobalObject& globalObject, JSValue value)
+{
+    if (!WebCore::mayHoldBlob(value))
+        return false;
+    const uint8_t* data = nullptr;
+    size_t length = 0;
+    auto bytes = WebCore::Blob__sharedView(JSValue::encode(value), &data, &length);
+    if (bytes == WebCore::BlobBytes::NotInMemory) {
+        auto scope = DECLARE_THROW_SCOPE(getVM(&globalObject));
+        Bun::throwError(&globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "File blob cannot be used here"_s);
+        return false;
+    }
+    return bytes == WebCore::BlobBytes::InMemory;
+}
+
+static ALWAYS_INLINE std::span<const uint8_t> bytesAndIsShared(JSValue value, bool& isShared)
+{
+    std::span<const uint8_t> bytes;
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
+        bytes = view->span();
+        isShared = view->isShared();
+    } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value)) {
+        bytes = buffer->impl()->span();
+        isShared = buffer->impl()->isShared();
+    } else {
+        const uint8_t* data = nullptr;
+        size_t length = 0;
+        WebCore::Blob__sharedView(JSValue::encode(value), &data, &length);
+        bytes = { data, length };
+    }
+    // A Rust slice has no null data.
+    if (!bytes.data())
+        return byteCast<uint8_t>(WTF::nonNullEmptyUTF8Span());
+    return bytes;
+}
+
+std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value)
+{
+    bool isShared = false;
+    return bytesAndIsShared(value, isShared);
+}
+
+std::span<const uint8_t> bytesOfBlobOrBuffer(JSValue value, bool& isShared)
+{
+    return bytesAndIsShared(value, isShared);
+}
+
+bool isSharedBuffer(JSValue value)
+{
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value))
+        return view->isShared();
+    if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value))
+        return buffer->impl()->isShared();
+    return false;
+}
+
+bool copyBytes(JSGlobalObject& globalObject, std::span<const uint8_t>& bytes, BytesCopy& copy)
+{
+    if (bytes.empty())
+        return true;
+    // Not a Vector, which holds less than a buffer can.
+    copy = MallocSpan<uint8_t>::tryMalloc(bytes.size());
+    if (!*copy) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(getVM(&globalObject));
+        throwOutOfMemoryError(&globalObject, scope);
+        return false;
+    }
+    memcpySpan(copy->mutableSpan(), bytes);
+    bytes = copy->span();
+    return true;
+}
+
+}
+
+extern "C" Bun::Bindgen::ExternBytes Bun__Bindgen__bytesOfBlobOrBuffer(JSC::EncodedJSValue value)
+{
+    auto bytes = Bun::Bindgen::bytesOfBlobOrBuffer(JSC::JSValue::decode(value));
+    return { bytes.data(), bytes.size() };
+}
+
+extern "C" Bun::Bindgen::ExternBytes Bun__Bindgen__bytesOfBlobOrBufferAndIsShared(JSC::EncodedJSValue value, bool* isShared)
+{
+    *isShared = Bun::Bindgen::isSharedBuffer(JSC::JSValue::decode(value));
+    return Bun__Bindgen__bytesOfBlobOrBuffer(value);
+}

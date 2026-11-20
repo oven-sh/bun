@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "bun --hot src/index.ts",
     "start": "NODE_ENV=production bun src/index.ts",
-    "build": "bun run build.ts"
+    "build": "bun run build.ts",
+    "typecheck": "bun check"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.7",

@@ -19,6 +19,10 @@ pub(crate) struct JSONLineBuffer {
     pub(crate) newline_pos: Option<u32>,
     /// How far we've scanned for newlines relative to head.
     pub(crate) scanned_pos: u32,
+    /// Maximum line length, not counting the newline. Capped so a line plus its newline fits in a `u32`.
+    max_line: u32,
+    /// True once a line exceeds `max_line`. The buffer is freed and later bytes are dropped.
+    too_long: bool,
 }
 
 /// Return type of [`JSONLineBuffer::next`]: a complete message slice plus its newline offset.
@@ -31,14 +35,27 @@ impl JSONLineBuffer {
     /// Compact the buffer when head exceeds this threshold.
     const COMPACTION_THRESHOLD: u32 = 16 * 1024 * 1024; // 16 MB
 
+    pub(crate) fn new(max_line: usize) -> Self {
+        Self {
+            // Consuming a line also consumes its newline, so `max_line + 1` must not overflow.
+            max_line: max_line.min(u32::MAX as usize - 1) as u32,
+            ..Self::default()
+        }
+    }
+
     /// Get the active (unconsumed) portion of the buffer.
     fn active_slice(&self) -> &[u8] {
         &self.data.slice()[self.head as usize..]
     }
 
-    /// Scan for newline in unscanned portion of the buffer.
+    /// True if a line exceeded `max_line`. `next` returns `None` from then on.
+    pub(crate) fn is_too_long(&self) -> bool {
+        self.too_long
+    }
+
+    /// Scan the unscanned bytes for a newline, and reject the line if it's longer than `max_line`.
     fn scan_for_newline(&mut self) {
-        if self.newline_pos.is_some() {
+        if self.too_long || self.newline_pos.is_some() {
             return;
         }
         let slice = self.active_slice();
@@ -47,13 +64,22 @@ impl JSONLineBuffer {
         }
 
         let unscanned = &slice[self.scanned_pos as usize..];
-        if let Some(local_idx) = strings::index_of_char(unscanned, b'\n') {
-            let pos = self.scanned_pos.saturating_add(local_idx);
-            self.newline_pos = Some(pos);
-            self.scanned_pos = pos.saturating_add(1); // Only scanned up to (and including) the newline
-        } else {
-            debug_assert!((slice.len() as u64) <= u32::MAX as u64);
-            self.scanned_pos = u32::try_from(slice.len()).expect("int cast"); // No newline, scanned everything
+        let newline = strings::index_of_char_usize(unscanned, b'\n')
+            .map(|local_idx| self.scanned_pos as usize + local_idx);
+        // Without a newline, all the unconsumed bytes are one unfinished line.
+        let line_len = newline.unwrap_or(slice.len());
+        if line_len > self.max_line as usize {
+            *self = Self::new(self.max_line as usize);
+            self.too_long = true;
+            return;
+        }
+        // `line_len <= max_line <= u32::MAX - 1`, so neither cast truncates.
+        match newline {
+            Some(pos) => {
+                self.newline_pos = Some(pos as u32);
+                self.scanned_pos = pos as u32 + 1; // Only scanned up to (and including) the newline
+            }
+            None => self.scanned_pos = line_len as u32, // No newline, scanned everything
         }
     }
 
@@ -68,6 +94,9 @@ impl JSONLineBuffer {
 
     /// Append bytes to the buffer, scanning only new data for newline.
     pub(crate) fn append(&mut self, bytes: &[u8]) {
+        if self.too_long {
+            return;
+        }
         let _ = self.data.write(bytes);
         self.scan_for_newline();
     }
@@ -121,7 +150,7 @@ impl JSONLineBuffer {
     }
 
     /// Notify the buffer that `nread` bytes were written directly into the
-    /// tail of `data` (via `data.uv_alloc_spare_u8()`).
+    /// tail of `data` (via `data.uv_alloc_spare()`).
     ///
     /// Takes a length, not a `&[u8]`, because the only caller's slice would
     /// alias `&mut self.data` — and only the length is used here. Passing the
@@ -129,7 +158,7 @@ impl JSONLineBuffer {
     /// `on_read` refactor removed.
     #[cfg(windows)]
     pub(crate) fn notify_written(&mut self, nread: usize) {
-        // SAFETY: caller (libuv on_read) wrote `nread` bytes into the uv_alloc_spare* slice.
+        // SAFETY: caller (libuv on_read) wrote `nread` bytes into the uv_alloc_spare slice.
         unsafe { self.data.uv_commit(nread) };
         self.scan_for_newline();
     }

@@ -9,8 +9,8 @@
 
 use crate::diagnostics::CompilerError;
 use crate::hir::{
-    EvaluationOrder, FunctionId, Place, PrunedReactiveScopeBlock, ReactiveBlock, ReactiveFunction,
-    ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveTerminal,
+    EvaluationOrder, InstructionValue, Place, PrunedReactiveScopeBlock, ReactiveBlock,
+    ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveTerminal,
     ReactiveTerminalStatement, ReactiveValue, environment::Environment,
 };
 
@@ -40,49 +40,14 @@ pub(crate) trait ReactiveFunctionVisitor {
 
     fn visit_param(&self, _place: &Place, _state: &mut Self::State) {}
 
-    /// Walk an inner HIR function, visiting params, instructions (with lvalues,
-    /// value-lvalues and operands), and terminal operands.
-    /// TS: `visitHirFunction`
-    /// Nested functions are left to the visitor's `visit_value` override; upstream also recurses here, which walks depth `d` 2^d times.
-    fn visit_hir_function(&self, func_id: FunctionId, state: &mut Self::State) {
-        let inner_func = &self.env().functions[func_id.0 as usize];
-        for param in &inner_func.params {
-            let place = param.place();
-            self.visit_param(place, state);
-        }
-        let block_ids: Vec<_> = inner_func.body.blocks.keys().copied().collect();
-        for block_id in block_ids {
-            let inner_func = &self.env().functions[func_id.0 as usize];
-            let block = &inner_func.body.blocks[&block_id];
-            let instr_ids = block.instructions.clone();
-            let terminal_operands: Vec<Place> =
-                crate::hir::visitors::each_terminal_operand(&block.terminal);
-            let terminal_id = block.terminal.evaluation_order();
-
-            for instr_id in &instr_ids {
-                let inner_func = &self.env().functions[func_id.0 as usize];
-                let instr = &inner_func.instructions[instr_id.0 as usize];
-                // Build a temporary ReactiveInstruction for the visitor
-                let reactive_instr = ReactiveInstruction {
-                    id: instr.id,
-                    lvalue: Some(instr.lvalue.clone()),
-                    value: ReactiveValue::Instruction(instr.value.clone()),
-                    effects: None,
-                    loc: instr.loc,
-                };
-                self.visit_instruction(&reactive_instr, state);
-            }
-            for operand in &terminal_operands {
-                self.visit_place(terminal_id, operand, state);
-            }
-        }
-    }
-
     fn visit_value(&self, id: EvaluationOrder, value: &ReactiveValue, state: &mut Self::State) {
         self.traverse_value(id, value, state);
     }
 
     fn traverse_value(&self, id: EvaluationOrder, value: &ReactiveValue, state: &mut Self::State) {
+        if !self.env().has_stack() {
+            return;
+        }
         match value {
             ReactiveValue::OptionalExpression { value: inner, .. } => {
                 self.visit_value(id, inner, state);
@@ -113,9 +78,7 @@ pub(crate) trait ReactiveFunctionVisitor {
                 self.visit_value(*seq_id, inner, state);
             }
             ReactiveValue::Instruction(instr_value) => {
-                let operands =
-                    crate::hir::visitors::each_instruction_value_operand(instr_value, self.env());
-                for place in &operands {
+                for place in crate::hir::visitors::operands(instr_value, &self.env().functions) {
                     self.visit_place(id, place, state);
                 }
             }
@@ -134,8 +97,8 @@ pub(crate) trait ReactiveFunctionVisitor {
         }
         // Visit value-level lvalues (TS: eachInstructionValueLValue)
         if let ReactiveValue::Instruction(iv) = &instruction.value {
-            for place in crate::hir::visitors::each_instruction_value_lvalue(iv) {
-                self.visit_lvalue(instruction.id, &place, state);
+            for place in crate::hir::visitors::value_lvalues(iv) {
+                self.visit_lvalue(instruction.id, place, state);
             }
         }
         self.visit_value(instruction.id, &instruction.value, state);
@@ -276,6 +239,9 @@ pub(crate) trait ReactiveFunctionVisitor {
     }
 
     fn traverse_block(&self, block: &ReactiveBlock, state: &mut Self::State) {
+        if !self.env().has_stack() {
+            return;
+        }
         for stmt in block {
             match stmt {
                 ReactiveStatement::Instruction(instr) => {
@@ -378,6 +344,9 @@ pub(crate) trait ReactiveFunctionTransform {
         value: &mut ReactiveValue,
         state: &mut Self::State,
     ) -> Result<(), CompilerError> {
+        if !self.env().has_stack() {
+            return Err(crate::lowering::nested_too_deeply().into());
+        }
         match value {
             ReactiveValue::OptionalExpression { value: inner, .. } => {
                 self.transform_value(id, inner, state)?;
@@ -408,12 +377,21 @@ pub(crate) trait ReactiveFunctionTransform {
                 }
                 self.transform_value(seq_id, inner, state)?;
             }
-            ReactiveValue::Instruction(instr_value) => {
+            ReactiveValue::Instruction(
+                InstructionValue::FunctionExpression { lowered_func, .. }
+                | InstructionValue::ObjectMethod { lowered_func, .. },
+            ) => {
                 // Collect operands before visiting to avoid borrow conflict
                 // (self.env() borrows self immutably, self.visit_place() needs &mut self).
-                let operands =
-                    crate::hir::visitors::each_instruction_value_operand(instr_value, self.env());
-                for place in &operands {
+                let context = self.env().functions[lowered_func.func.0 as usize]
+                    .context
+                    .clone();
+                for place in &context {
+                    self.visit_place(id, place, state)?;
+                }
+            }
+            ReactiveValue::Instruction(instr_value) => {
+                for place in crate::hir::visitors::operands(instr_value, &[]) {
                     self.visit_place(id, place, state)?;
                 }
             }
@@ -450,8 +428,8 @@ pub(crate) trait ReactiveFunctionTransform {
         }
         // Visit value-level lvalues (TS: eachInstructionValueLValue)
         if let ReactiveValue::Instruction(iv) = &instruction.value {
-            for place in crate::hir::visitors::each_instruction_value_lvalue(iv) {
-                self.visit_lvalue(instruction.id, &place, state)?;
+            for place in crate::hir::visitors::value_lvalues(iv) {
+                self.visit_lvalue(instruction.id, place, state)?;
             }
         }
         self.transform_value(instruction.id, &mut instruction.value, state)?;
@@ -669,24 +647,25 @@ pub(crate) trait ReactiveFunctionTransform {
         block: &mut ReactiveBlock,
         state: &mut Self::State,
     ) -> Result<(), CompilerError> {
+        if !self.env().has_stack() {
+            return Err(crate::lowering::nested_too_deeply().into());
+        }
+        // `block` is discarded once there is a `next_block`.
+        fn take(statement: &mut ReactiveStatement) -> ReactiveStatement {
+            let placeholder = ReactiveStatement::Instruction(ReactiveInstruction {
+                id: EvaluationOrder(0),
+                lvalue: None,
+                value: ReactiveValue::Instruction(InstructionValue::Debugger { loc: None }),
+                effects: None,
+                loc: None,
+            });
+            std::mem::replace(statement, placeholder)
+        }
         let mut next_block: Option<Vec<ReactiveStatement>> = None;
         let len = block.len();
         for i in 0..len {
-            // Take the statement out temporarily
-            let mut stmt = std::mem::replace(
-                &mut block[i],
-                // Placeholder — will be overwritten or discarded
-                ReactiveStatement::Instruction(ReactiveInstruction {
-                    id: EvaluationOrder(0),
-                    lvalue: None,
-                    value: ReactiveValue::Instruction(crate::hir::InstructionValue::Debugger {
-                        loc: None,
-                    }),
-                    effects: None,
-                    loc: None,
-                }),
-            );
-            let transformed = match &mut stmt {
+            // In its place: what fails deep down has little stack left, and drops nothing of the tree there.
+            let transformed = match &mut block[i] {
                 ReactiveStatement::Instruction(instr) => {
                     self.transform_instruction(instr, state)?
                 }
@@ -701,28 +680,21 @@ pub(crate) trait ReactiveFunctionTransform {
             match transformed {
                 Transformed::Keep => {
                     if let Some(ref mut nb) = next_block {
-                        nb.push(stmt);
-                    } else {
-                        // Put it back
-                        block[i] = stmt;
+                        nb.push(take(&mut block[i]));
                     }
                 }
                 Transformed::Remove => {
-                    if next_block.is_none() {
-                        next_block = Some(block[..i].to_vec());
-                    }
+                    next_block.get_or_insert_with(|| block[..i].iter_mut().map(take).collect());
                 }
                 Transformed::Replace(replacement) => {
-                    if next_block.is_none() {
-                        next_block = Some(block[..i].to_vec());
-                    }
-                    next_block.as_mut().unwrap().push(replacement);
+                    next_block
+                        .get_or_insert_with(|| block[..i].iter_mut().map(take).collect())
+                        .push(replacement);
                 }
                 Transformed::ReplaceMany(replacements) => {
-                    if next_block.is_none() {
-                        next_block = Some(block[..i].to_vec());
-                    }
-                    next_block.as_mut().unwrap().extend(replacements);
+                    next_block
+                        .get_or_insert_with(|| block[..i].iter_mut().map(take).collect())
+                        .extend(replacements);
                 }
             }
         }

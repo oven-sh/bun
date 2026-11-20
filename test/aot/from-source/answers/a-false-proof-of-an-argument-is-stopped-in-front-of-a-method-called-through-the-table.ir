@@ -1,0 +1,24 @@
+# -- source: a-false-proof-of-an-argument-is-stopped-in-front-of-a-method-called-through-the-table.ts
+# declare function id(value: unknown): any;
+# declare function print(...values: unknown[]): void;
+# interface Scale { by(factor: number): number }
+# class Inch implements Scale { n: number; constructor(n: number) { this.n = n; } by(factor: number) { return this.n * factor; } }
+# class Foot implements Scale { n: number; constructor(n: number) { this.n = n; } by(factor: number) { return this.n * 12 * factor; } }
+# const scales: Scale[] = [new Inch(1), new Foot(2)];
+# function all() { let said = ""; for (let turn = 0; turn < 4; turn++) said += scales[turn & 1].by(id("3")) + ";"; return said; }
+# print(all());
+# print("went on");
+# -- end of source
+# The entry check on an argument that is passed through the method table, in a user's build: no switch that checks proofs is set.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, so it proves that `factor` is undefined in both methods, but a string arrives.
+# A slot of the table holds the direct entry point of its method only if the method assumes nothing about its arguments.
+# These two methods assume something, so their slots hold table entry points, and a table entry point checks what it passes on.
+# When the proof was trusted unchecked, `1 * "3"` gave NaN instead of 3 and the program continued.
+# f1 = all
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(FORM): walk f1 mechanisms=all-Inlining
+# FORM: = CallTable
+# RUN(STOPS): run-in-shell mechanisms=all-Inlining
+# STOPS: found string in an argument
+# STOPS-NOT: went on
+# STOPS: crashed with

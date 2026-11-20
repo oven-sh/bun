@@ -87,7 +87,7 @@ template<> const ClassInfo JSTextEncoderDOMConstructor::s_info = { "TextEncoder"
 static const HashTableValue JSTextEncoderPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSTextEncoderPrototype::constructorGetter, 0 } },
     { "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsTextEncoder_encoding, 0 } },
-    { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTextEncoderPrototypeFunction_encode, 1 } },
+    { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTextEncoderPrototypeFunction_encode, 0 } },
     { "encodeInto"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTextEncoderPrototypeFunction_encodeInto, 2 } },
 };
 

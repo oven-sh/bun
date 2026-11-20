@@ -3425,7 +3425,7 @@ util[TextEncoder][prototype][constructor] c-w function
 util[TextEncoder][prototype][constructor] = util[TextEncoder]
 util[TextEncoder][prototype][encoding] cea accessor get=function set=undefined
 util[TextEncoder][prototype][encode] cew function
-util[TextEncoder][prototype][encode]: function native name="encode" length=1 above=Function extensible=true
+util[TextEncoder][prototype][encode]: function native name="encode" length=0 above=Function extensible=true
 util[TextEncoder][prototype][encode][length] c-- number
 util[TextEncoder][prototype][encode][name] c-- string
 util[TextEncoder][prototype][encodeInto] cew function

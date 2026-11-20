@@ -1,4 +1,6 @@
 export default {
+  // On the TLSSocket a tls.Server accepted: that server, until its 'connection' listener has seen the socket.
+  kAcceptedTLS: Symbol("kAcceptedTLS"),
   kArmHandshakeTimeout: Symbol("kArmHandshakeTimeout"),
   // Set while a socket must receive nothing (an idle socket in an http.Agent
   // pool): the read path destroys the socket instead of delivering the bytes.

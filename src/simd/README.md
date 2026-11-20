@@ -201,7 +201,7 @@ fn with_tables(a: &[u64], b: &[u64]) -> u64 {
 # fn main() {}
 ```
 
-Scalar code that is generic cannot be exported. `with_bmi2` takes it as a closure, and compiles what is inlined into that a second time, with BMI1, BMI2 and LZCNT. It checks at each call, in about a nanosecond:
+Scalar code that is generic cannot be exported. `with_bmi2` takes it as a closure, and compiles what is inlined into that a second time, with BMI1, BMI2 and LZCNT. It tests three cached words at each call:
 
 ```rust
 #![forbid(unsafe_code)]

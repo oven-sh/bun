@@ -180,25 +180,24 @@ impl Version {
         if list.is_empty() {
             return Target::ALL.map(|it| Self(it, Vec::new())).into();
         }
+        let has = |start| list.split(',').any(|it| it.starts_with(start));
+        let is_implied = |it: &Target| match it {
+            Target::Portable64 => has("avx512") && !has("portable64"),
+            Target::Portable32 => has("avx2") && !has("portable32"),
+            _ => false,
+        };
         let mut all = Vec::new();
         for (name, more) in list
             .split_terminator(',')
             .map(|it| it.split_once('+').unwrap_or((it, "")))
         {
-            let has_name =
-                |it: &Target| it.name() == name || it.arch().is_none() && name == "portable";
+            let has_name = |it: &Target| it.name() == name || name == "portable" && is_implied(it);
             assert!(Target::ALL.iter().any(has_name), "`{name}` is no target");
             let more = more.split_terminator('+').map(|it| it.trim_matches('"'));
             let targets = Target::ALL.into_iter().filter(has_name);
             let features_of = |it| more.clone().map(|name| feature_of(it, name)).collect();
             all.extend(targets.map(|it| Self(it, features_of(it))));
         }
-        let has = |start| list.split(',').any(|it| it.starts_with(start));
-        all.retain(|it| match it.0 {
-            Target::Portable64 => has("avx512") || has("portable64"),
-            Target::Portable32 => has("avx2") || has("portable32"),
-            _ => true,
-        });
         for (i, a) in all.iter().enumerate() {
             let is_better = |b: &Self| match a.0.arch().filter(|_| a.0.arch() == b.0.arch()) {
                 Some(_) => a.0 as u8 <= b.0 as u8 && a.bits() & !b.bits() != 0,

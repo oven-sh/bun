@@ -592,9 +592,9 @@ impl Table {
 
     #[inline(never)]
     fn compress_in_vectors(&self, symbols: &[u8], out: &mut [u8]) -> Option<usize> {
-        let codes = self.codes.map(Code::short);
-        let has_code = |&it| (1..=12).contains(&(codes.at(usize::from(it)) % 16));
+        let has_code = |&it| (1..=12).contains(&self.code_len(usize::from(it)));
         debug_assert!(symbols.iter().all(has_code));
+        let codes = self.codes.map(Code::short);
         compress_4_streams(symbols, out, |symbols, out| {
             match write_codes(symbols, &codes, out) {
                 Some(written) => finish_written(&written, out),

@@ -279,8 +279,21 @@ mod only_portable_simd {
     }
 }
 
+#[bun_simd::foreach_target(avx512_icl, avx2, sse4, neon, portable64, portable)]
+mod named_and_implied {
+    #[export]
+    pub fn len() -> usize {
+        isa::U8::LEN
+    }
+}
+
 #[test]
 fn portable_widths_by_name() {
+    let lens = [Target::Portable64, Target::Portable32, Target::Portable].map(|target| {
+        limit_to(target);
+        named_and_implied::len()
+    });
+    assert_eq!(lens, [64, 32, 16]);
     for target in Target::ALL.into_iter().filter(|it| it.is_supported()) {
         limit_to(target);
         let want = match target {
@@ -314,6 +327,7 @@ fn closures_with_bmi2() {
     );
     let runs_with_bmi2 = || caller() != plain;
     let has_all = FEATURES.map(|name| bun_simd::detected().names().any(|it| it == name));
+    assert_eq!(runs_with_bmi2(), has_all == [true; 3]);
     for target in Target::ALL.into_iter().filter(|it| it.is_supported()) {
         let is_x86 = target.arch() == Some("x86_64");
         limit_to(target);

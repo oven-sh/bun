@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isASAN, isCI, isDebug, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isBuildKite, isCI, isDebug, isLinux, isMacOS, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { availableParallelism, cpus } from "node:os";
 import { join, resolve } from "node:path";
@@ -53,12 +53,13 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
   });
 
   // An emulator shows the file of its host.
-  test.skipIf(!isLinux || !isCI || isArm64)("agrees with /proc/cpuinfo", () => {
+  test.skipIf(!isLinux || !isBuildKite || isArm64)("agrees with /proc/cpuinfo", () => {
     const flags = readFileSync("/proc/cpuinfo", "utf8").match(/^flags.*/m)![0];
     const has = (names: string) => names.split(" ").every(it => flags.split(" ").includes(it));
+    const skx = "popcnt bmi1 bmi2 abm pclmulqdq avx2 fma f16c avx512f avx512bw avx512cd avx512dq avx512vl";
     expect([targets.includes("avx512_icl"), probe!.values("feature").includes("avx512bf16")]).toEqual([
-      has("avx512vbmi avx512_vbmi2 avx512_vnni avx512_bitalg avx512_vpopcntdq gfni vpclmulqdq"),
-      has("avx512_bf16"),
+      has(`${skx} avx512vbmi avx512_vbmi2 avx512_vnni avx512_bitalg avx512_vpopcntdq gfni vpclmulqdq`),
+      has("avx2 fma f16c avx512f avx512bw avx512_bf16"),
     ]);
   });
 
@@ -67,9 +68,10 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
     ["avx512_icl+avx512bf16", true],
     ["avx512_icl", false],
     ["avx2+avx512bf16", false],
-  ])("with the limit %j, zstd can use its kernels: %p", async (limit, isAllowed) => {
-    const { values } = await run(limit, ["probe"]);
+  ])("zstd uses its kernels only with BF16, under the limit %j", async (limit, isAllowed) => {
+    const { values, exitCode } = await run(limit, ["probe"]);
     expect(values("zstd")).toEqual([`[false, ${isAllowed && canRun("avx512_icl+avx512bf16")}]`]);
+    expect(exitCode).toBe(0);
   });
 
   // It takes 1200 to put each short length at both ends of a page.

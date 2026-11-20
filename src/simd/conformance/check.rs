@@ -540,7 +540,7 @@ impl Round<'_> {
             }
         }
         let missing = random.below(2);
-        let out = b.copy_of(&vec![0; before_last + 128 - missing], self.offset);
+        let out = b.copy_of(&vec![0xA5; before_last + 128 - missing], self.offset);
         let codes = c.copy_of(&[codes], self.offset);
         let got = zstd::write_codes(text, &codes[0], out);
         let got = got.map(|it| (&out[..it.len], it.bits, it.bit_count));
@@ -549,7 +549,7 @@ impl Round<'_> {
         digests.fails_unless(is_ok, "zstd::write_codes");
 
         codes[0].fill_with(|| random.next() as u16);
-        let out = b.copy_of(&vec![0; random.below(2 * text.len() + 200)], self.offset);
+        let out = b.copy_of(&vec![0xA5; random.below(2 * text.len() + 200)], self.offset);
         let got = zstd::write_codes(text, &codes[0], out);
         let is_ok = got.is_none_or(|it| it.len <= out.len() && it.bit_count < 8);
         digests.fails_unless(is_ok, "zstd::write_codes, of any codes");

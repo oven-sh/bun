@@ -36,12 +36,15 @@ lodashish.merge = function merge(target, ...sources) {
   }
   return target;
 };
-lodashish.isEqual = function isEqual(a, b) {
-  if (Object.is(a, b)) return true;
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-  if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false;
-  const keys = Object.keys(a);
-  return keys.length === Object.keys(b).length && keys.every(key => isEqual(a[key], b[key]));
+lodashish.isEqual = function isEqual(one, other) {
+  const isThing = value => value !== null && typeof value === "object";
+  if (!isThing(other) || !isThing(one)) return Object.is(one, other);
+  let left = Object.keys(other).length;
+  for (const [name, held] of Object.entries(one)) {
+    if (!isEqual(held, other[name])) return false;
+    left--;
+  }
+  return left === 0 && Object.getPrototypeOf(other) === Object.getPrototypeOf(one);
 };
 lodashish.groupBy = function (list, f) { const out = {}; for (const each of list) (out[typeof f === "function" ? f(each) : each[f]] ||= []).push(each); return out; };
 lodashish.pick = function (object, ...keys) { const out = {}; for (const key of keys) if (key in object) out[key] = object[key]; return out; };

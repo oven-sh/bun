@@ -1,20 +1,18 @@
 // The rest of a value is a new object, whatever the value is: an instance of a class that arrives there keeps its properties, and other code may go on reading them by their place.
-class Builder {
-  config;
-  list = [];
-  constructor(name) {
-    this.config = { name, notNull: false, value: undefined, count: 0 };
+class Journey {
+  plan;
+  stops = [];
+  constructor(title) {
+    this.plan = { title, done: false, given: undefined, turns: 0 };
   }
-  identity(sequence) {
-    if (sequence) {
-      const { name, ...options } = sequence;
-      this.config.value = { name, options };
-    }
-    return this;
+  take(value) {
+    let { title, ...remainder } = value ?? this.plan;
+    this.plan.given = [title, remainder];
   }
-  build() {
-    this.config.count = this.config.count + 1;
-    return this.config.name.length + this.config.count;
+  turn() {
+    const { plan } = this;
+    plan.turns++;
+    return plan.turns * 2 + plan.title.length;
   }
 }
 class Named {
@@ -25,15 +23,16 @@ class Named {
   }
 }
 const show = value => JSON.stringify(value, (_, held) => (held === undefined ? "undefined" : held));
-const builders = [new Builder("id"), new Builder("text")];
-const unknown = JSON.parse('{"method":"identity","name":"given","other":[1]}');
+const journeys = [new Journey("coast"), new Journey("hills")];
+const unknown = JSON.parse('{"deed":"take","title":"given","other":[1]}');
 let total = 0;
 for (let k = 0; k < 1000; k++) {
-  const builder = builders[k & 1];
-  total += builder.build();
-  if (k % 250 === 249) {
-    builder[unknown.method](k & 2 ? builders[0] : unknown);
-    console.log(Object.keys(builder.config.value.options).join(), builder.config.value.name, builders[0].config.name, builders[0].list.length);
+  const journey = journeys[k & 1];
+  total += journey.turn();
+  if (k % 200 === 199) {
+    journey[unknown.deed]([unknown, journeys[0], undefined][(k + 1) / 200 % 3]);
+    const [title, remainder] = journey.plan.given;
+    console.log(Object.keys(remainder).join(), title, journeys[0].plan.title, journeys[0].stops.length);
   }
 }
 console.log(total);

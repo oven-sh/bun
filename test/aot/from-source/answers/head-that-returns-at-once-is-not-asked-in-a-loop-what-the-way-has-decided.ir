@@ -1,43 +1,45 @@
 # -- source: decided.ts
 # declare function id<T>(value: T): T;
 # declare function report(value: string): void;
-# namespace Watch {
-#   export function sure(holds: boolean, note?: string, more?: string | (() => string)): void {
-#     if (!holds) {
-#       note = note ? "not so: " + note : "not so.";
-#       if (more) note += "\n" + (typeof more === "string" ? more : more());
-#       for (let turn = 0; turn < 3; turn++) report(note + turn);
-#       const failure = new Error(note);
-#       report(String(failure.message.length));
-#       throw failure;
-#     }
+# namespace Gate {
+#   export function opens(isFree: boolean, coins?: number, sign?: string | string[]): void {
+#     if (isFree) return;
+#     let toll = 4;
+#     if (coins !== undefined) toll -= coins;
+#     const words = typeof sign === "string" ? [sign] : sign || [];
+#     for (let left = toll; left > 0; left--) report(left + (words.length > 0 ? " " + words.join("-") : ""));
+#     const shut = new Error("shut " + toll);
+#     report(String(shut.message.length + words.length));
+#     throw shut;
 #   }
 # }
-# function starts(text: string, place: number): boolean { Watch.sure(place === 0); return text.length > place; }
-# function make(text: string, first: any) {
-#   let place: any = first;
-#   function step(): number {
-#     while (true) {
-#       const mark = text.charCodeAt(place);
-#       if (place === 0) { if (mark === 35 && starts(text, place)) { place = place + 1; continue; } }
-#       return place;
+# function passes(road: string, mile: number): boolean { Gate.opens(mile === 0); return road.length > mile; }
+# function walker(road: string, first: any) {
+#   let mile: any = first;
+#   function walks(): number {
+#     let seen = 0;
+#     for (let turn = 0; turn < 4; turn++) {
+#       seen += road.charCodeAt(turn & 1) & 7;
+#       if (mile === 0 && seen > 3) { if (passes(road, mile)) mile = seen * 2; else seen -= 3; }
 #     }
+#     return mile === 0 ? seen : mile;
 #   }
-#   return step;
+#   return walks;
 # }
-# report(String(make(id("#!"), id(0))() + make(id("#!"), id(-0))() * 10 + make(id("##"), id(1))() * 100 + make(id("!#"), id(0))() * 1000 + make(id("#"), id(0.5))() * 10000));
-# try { starts(id("#!"), id(1)); } catch (failure) { report("caught " + (failure as Error).message); }
+# report(String(walker(id("#!"), id(0))() + walker(id("#!"), id(-0))() * 10 + walker(id("##"), id(1))() * 100 + walker(id("!#"), id(0))() * 1000 + walker(id("#"), id(0.5))() * 10000));
+# try { passes(id("#!"), id(1)); } catch (shut) { report("caught " + (shut as Error).message); }
 # -- end of source
 # In a loop a comparison that is found again keeps its name, and the head of the long callee, which returns at once where its argument holds, laid a second test of it with the call behind.
-# The way has decided the argument: no test is laid and the call is gone. f3 = sure, f4 = step
+# The way has decided the argument: no test is laid and the call is gone. f3 = opens, f4 = walks
 # RUN: walk f4 mechanisms=all
 # CHECK-LABEL: code f4:Body
 # CHECK-NOT: function=f3
 # RUN(RUNS): run-in-shell mechanisms=all globalThis.id = value => value; globalThis.report = value => print(String(value));
-# RUNS: 5111
-# RUNS: not so.0
-# RUNS: not so.1
-# RUNS: not so.2
-# RUNS: 7
-# RUNS: caught not so.
+# RUNS: 13188
+# RUNS: 4
+# RUNS: 3
+# RUNS: 2
+# RUNS: 1
+# RUNS: 6
+# RUNS: caught shut 4
 # RUNS: exited with 0

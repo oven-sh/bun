@@ -90,6 +90,23 @@ describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
     expect(signal).toBeNull();
   });
 
+  test("changing result order evicts cached addresses packed under the old order", async () => {
+    const { out, stderr, exitCode, signal } = await run(/* js */ `
+      const { setDefaultResultOrder } = require("node:dns");
+      const before = Bun.dns.getCacheStats().size;
+      dnsCacheSeed("dns-order-cache.test", ["127.0.0.1", "::1"]);
+      const seeded = Bun.dns.getCacheStats().size;
+      setDefaultResultOrder("ipv6first");
+      const after = Bun.dns.getCacheStats().size;
+      console.log(JSON.stringify({ seeded: seeded - before, evicted: seeded - after }));
+      process.exit(0);
+    `);
+    expect(out).toEqual({ seeded: 1, evicted: 1 });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(signal).toBeNull();
+  });
+
   test("fetch() through a seeded 4xAAAA + 4xA entry connects via the interleaved order", async () => {
     const { out, stderr, exitCode, signal } = await run(/* js */ `
       using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });

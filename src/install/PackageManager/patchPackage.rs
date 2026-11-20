@@ -245,9 +245,7 @@ fn resolve_target(
         let (name, version) = read_name_and_version(manager, &folder);
         let pkg = match package_for_folder(lockfile, string_hash(&name), &version) {
             Ok(pkg) => pkg,
-            Err(_) if ships_package(lockfile, string_hash(&name), &version) => {
-                crash_bundled(&name)
-            }
+            Err(_) if ships_package(lockfile, string_hash(&name), &version) => crash_bundled(&name),
             Err(err) => folder_lookup_error(err, command, &folder, &name, &version),
         };
         if !installed.is_set(pkg.meta.id as usize) {

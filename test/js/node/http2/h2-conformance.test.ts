@@ -1776,6 +1776,34 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 9113 §4.3.1)", () => {
   });
 });
 
+// RFC 7541 §6.2.3: a never-indexed literal starts with 0001 and stays out of the dynamic table, so
+// the second block repeats the first one. An indexed field would shrink to one byte there.
+test("a sensitive header whose name is all digits is a never-indexed literal in every block", async () => {
+  const raw = await RawH2Server.listen();
+  const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+  client.on("error", () => {});
+  try {
+    const blocks: string[] = [];
+    for (const id of [1, 3]) {
+      const headers = {
+        ":authority": "a",
+        "123": "b",
+        "007": "c",
+        [http2.sensitiveHeaders]: [":authority", "123", "007"],
+      };
+      client.request(headers).on("error", () => {});
+      const block = await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === id);
+      blocks.push(block.payload.toString("hex"));
+    }
+    // :authority: a, then :method, :scheme and :path from the static table, 123: b, 007: c.
+    const expected = "11811f" + "828684" + "10820899818f" + "1082001d8127";
+    expect(blocks).toEqual([expected, expected]);
+  } finally {
+    client.destroy();
+    raw.close();
+  }
+});
+
 test.each([
   ["respond", 0],
   ["pushStream", 0],

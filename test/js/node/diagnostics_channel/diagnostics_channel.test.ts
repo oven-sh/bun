@@ -596,6 +596,32 @@ describe("Channel", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/49270
+  test("subscribed channel survives GC without a user reference", async () => {
+    const name = "gc-keeps-subscribers";
+    let delivered = false;
+    const subscriber = () => {
+      delivered = true;
+    };
+    channel(name).subscribe(subscriber);
+    const before = hasSubscribers(name);
+
+    // Drop the channel reference and collect on a fresh stack, like the
+    // reporter's repro. The subscription alone must keep it alive.
+    await new Promise<void>(resolve => {
+      setImmediate(() => {
+        gc(true);
+        resolve();
+      });
+    });
+
+    const after = hasSubscribers(name);
+    channel(name).publish({});
+    unsubscribe(name, subscriber);
+
+    expect({ before, after, delivered }).toEqual({ before: true, after: true, delivered: true });
+  });
+
   // https://github.com/oven-sh/bun/issues/43086
   test.concurrent("a subscriber by name receives what is published in a later turn, after a collection", async () => {
     await using proc = Bun.spawn({

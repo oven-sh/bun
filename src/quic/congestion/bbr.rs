@@ -85,6 +85,7 @@ pub(super) struct Bbr {
     ran_dry_at: u64,
     acked_in_round: u64,
     lost_in_round: u64,
+    acked_in_last_round: u64,
     is_pipe_filled: bool,
     is_last_sample_limited: bool,
     is_restarting: bool,
@@ -120,6 +121,7 @@ impl Bbr {
             ran_dry_at: 0,
             acked_in_round: 0,
             lost_in_round: 0,
+            acked_in_last_round: 0,
             is_pipe_filled: false,
             is_last_sample_limited: false,
             is_restarting: false,
@@ -352,11 +354,16 @@ impl Bbr {
         if self.is_last_sample_limited && !is_loss_high {
             return;
         }
+        let acked_to_beat =
+            Gain::PROBE_UP.of(core::mem::replace(&mut self.acked_in_last_round, acked));
+        // The window is on its way back to where the bandwidth was measured.
+        let is_catching_up =
+            self.window() < self.window && acked > acked_to_beat && !self.is_last_sample_limited;
         let bandwidth = self.bandwidth.get();
         if bandwidth >= self.bandwidth_to_beat {
             self.bandwidth_to_beat = Gain::PROBE_UP.of(bandwidth);
             self.rounds_without_growth = 0;
-        } else {
+        } else if !is_catching_up {
             self.rounds_without_growth += 1;
             self.is_pipe_filled = self.rounds_without_growth >= ROUNDS_WITHOUT_GROWTH;
         }

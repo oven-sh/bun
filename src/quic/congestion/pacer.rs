@@ -12,6 +12,15 @@ const MAX_OVERFLOWS: u32 = 5;
 const QUANTA_PER_OVERFLOW: u64 = 256;
 /// In packets.
 const CAUTIOUS_TURN: usize = 16;
+/// A burst starts after the time that this many packets take, or else after `MAX_PAUSE`.
+const PAUSE: u64 = 3;
+const MAX_PAUSE: Duration = Duration::from_micros(250);
+const STARTS_AVERAGED: u32 = 512;
+/// The shares of lost starts, in millionths, at which a queue is taken to be shared, and at which it is not any more.
+const SHARED_ABOVE: u32 = 10_000;
+const SHARED_DOWN_TO: u32 = 3_000;
+const MIN_SHARED_QUANTUM: u64 = 4096;
+const MAX_SHARED_OVERFLOWS: u32 = 2;
 const FRACTION_BITS: u32 = 24;
 
 #[derive(Default)]
@@ -35,6 +44,12 @@ pub(super) struct Pacer {
     /// Of a queue on the path. Each one halves the bursts.
     overflows: u32,
     sent_since_overflow: u64,
+    last_sent_at: Instant,
+    /// The share of bursts whose first packet was lost, in millionths.
+    lost_starts: u32,
+    /// Others fill the queue as well. It takes in more of those that wake up more often, unless all of them send
+    /// bursts in proportion to their rates.
+    is_shared: bool,
 }
 
 impl Pacer {
@@ -48,9 +63,11 @@ impl Pacer {
         }
         .min(self.max_quantum());
         let steady = len.saturating_mul(GRANULARITY.as_micros()) / per.as_micros().max(1);
-        self.quantum = steady
-            .saturating_add(self.bonus)
-            .clamp(1, self.max_quantum());
+        let limit = match self.is_shared {
+            true => (steady / 2).clamp(MIN_SHARED_QUANTUM, MAX_QUANTUM),
+            false => 0,
+        };
+        self.quantum = (steady.saturating_add(self.bonus)).clamp(1, self.max_quantum().max(limit));
     }
 
     #[inline]
@@ -71,10 +88,24 @@ impl Pacer {
         self.bonus
     }
 
+    pub(super) fn quantum(&self) -> u64 {
+        self.quantum
+    }
+
+    /// How early a quantum may go out.
+    #[inline]
+    fn lead(&self) -> Duration {
+        let halvings = match self.is_shared {
+            true => self.overflows.min(MAX_SHARED_OVERFLOWS),
+            false => self.overflows,
+        };
+        GRANULARITY / (1 << halvings)
+    }
+
     /// Returns when to try again, if it is too early.
     #[inline]
     pub(super) fn delay(&mut self, now: Instant) -> Option<Instant> {
-        if self.rest == 0 && self.next <= now + GRANULARITY / (1 << self.overflows) {
+        if self.rest == 0 && self.next <= now + self.lead() {
             self.rest = self.quantum;
         }
         if self.rest > 0 {
@@ -96,11 +127,16 @@ impl Pacer {
         }
     }
 
+    /// Returns whether the packet starts a burst.
     #[inline]
-    pub(super) fn on_sent(&mut self, now: Instant, len: u16) {
+    pub(super) fn on_sent(&mut self, now: Instant, len: u16) -> bool {
+        let time = self.time_per_byte.saturating_mul(len.into());
+        let pause = Duration::from_micros(time.saturating_mul(PAUSE) >> FRACTION_BITS);
+        let starts_burst = now - self.last_sent_at > pause.min(MAX_PAUSE);
+        self.last_sent_at = now;
         if self.burst_tokens > 0 {
             self.burst_tokens -= 1;
-            return;
+            return starts_burst;
         }
         self.rest = self.rest.saturating_sub(len.into());
         self.sent_since_overflow += u64::from(len);
@@ -110,9 +146,22 @@ impl Pacer {
         if now > self.catch_up_until {
             self.next = self.next.max(now);
         }
-        let time = (self.time_per_byte.saturating_mul(len.into())).saturating_add(self.remainder);
+        let time = time.saturating_add(self.remainder);
         self.remainder = time % (1 << FRACTION_BITS);
         self.next = self.next + Duration::from_micros(time >> FRACTION_BITS);
+        starts_burst
+    }
+
+    /// For the first packet of a burst, which finds room in a queue that has only this sender to fill it.
+    #[inline]
+    pub(super) fn on_start_settled(&mut self, is_lost: bool) {
+        self.lost_starts -= self.lost_starts / STARTS_AVERAGED;
+        self.lost_starts += u32::from(is_lost) * (1_000_000 / STARTS_AVERAGED);
+        self.is_shared = self.lost_starts
+            > match self.is_shared {
+                true => SHARED_DOWN_TO,
+                false => SHARED_ABOVE,
+            };
     }
 
     pub(super) fn on_loss(&mut self) {

@@ -203,7 +203,8 @@ impl Connection {
                 break;
             }
             packet.fate = Fate::Lost;
-            if self.on_lost(id, &before) && sent_at > self.first_sample_at {
+            let ends_burst = (space.sent.packets.get(at)).is_some_and(|it| it.flight.starts_burst);
+            if self.on_lost(id, &before, ends_burst) && sent_at > self.first_sample_at {
                 lost_since = lost_since.min(sent_at);
                 if sent_at - lost_since > self.probe_timeout() * PERSISTENT_CONGESTION_THRESHOLD {
                     self.congestion.on_persistent_congestion();
@@ -219,13 +220,13 @@ impl Connection {
     }
 
     /// Returns whether that is a sign of congestion (RFC 9000 §14.4).
-    fn on_lost(&mut self, id: SpaceId, packet: &SentPacket) -> bool {
+    fn on_lost(&mut self, id: SpaceId, packet: &SentPacket, ends_burst: bool) -> bool {
         if self.requeue(id, packet, Fate::Lost) {
             self.congestion.discard(&packet.flight);
             return false;
         }
         self.stats.packets_lost += 1;
-        self.congestion.on_lost(&packet.flight);
+        self.congestion.on_lost(&packet.flight, ends_burst);
         self.path.mtu.on_lost(&packet.flight);
         self.spaces.open(id).sent.remember_lost(packet);
         true
@@ -277,7 +278,7 @@ impl Connection {
 
     /// For when the peer has moved.
     pub(super) fn lose_all(&mut self, now: Instant) {
-        self.give_up_on_flight(SpaceId::Data, Controller::on_lost);
+        self.give_up_on_flight(SpaceId::Data, |it, flight| it.on_lost(flight, false));
         self.congestion.end_ack(now, &self.rtt);
     }
 

@@ -18,8 +18,10 @@ use crate::time::Instant;
 const SEGMENT: u64 = 1460;
 const INITIAL_WINDOW: u64 = 32 * SEGMENT;
 const MAX_WINDOW: u64 = 16 * 1024 * 1024;
-/// To lose this many packets in a row after its start is what happens to a burst that is too long for a queue.
+/// To lose their ends is what happens to bursts that are too long for a queue. It takes this many packets to tell, no
+/// more than `OVERFLOW_SPAN` bursts apart.
 const OVERFLOW_LEN: u64 = 3;
+const OVERFLOW_SPAN: u64 = 4;
 const MICROS_PER_SECOND: u64 = 1_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,8 +91,11 @@ pub(crate) struct Controller {
     /// The last packet that took another path.
     last_foreign: u64,
     last_lost: u64,
-    /// The packet that makes an overflow if there is no gap between it and `last_lost`.
-    overflow_at: u64,
+    /// How many packets in a row were lost up to `last_lost`, unless the first of them started a burst.
+    lost_run: Option<u64>,
+    /// How many packets the last bursts have lost at their ends, and the last of them.
+    lost_ends: u64,
+    last_lost_end: u64,
     feedback: Feedback,
 }
 
@@ -113,7 +118,9 @@ impl Controller {
             last_sent: 0,
             last_foreign: 0,
             last_lost: 0,
-            overflow_at: 0,
+            lost_run: None,
+            lost_ends: 0,
+            last_lost_end: 0,
             feedback: Feedback::default(),
         }
     }
@@ -192,10 +199,10 @@ impl Controller {
         self.in_flight += u64::from(len);
         self.prior_in_flight = self.in_flight;
         self.last_sent += 1;
-        self.pacer.on_sent(now, len);
         let mut flight = Flight {
             at: now,
             len,
+            starts_burst: self.pacer.on_sent(now, len),
             sequence: self.last_sent,
             ..Flight::default()
         };
@@ -247,6 +254,9 @@ impl Controller {
     #[inline]
     pub(crate) fn on_acked(&mut self, flight: &Flight) {
         if self.discard(flight) {
+            if flight.starts_burst {
+                self.pacer.on_start_settled(false);
+            }
             self.feedback.acked += u64::from(flight.len);
             let newest = self.feedback.newest_acked.get_or_insert(*flight);
             if newest.sequence < flight.sequence {
@@ -257,19 +267,34 @@ impl Controller {
 
     /// Likewise.
     #[inline]
-    pub(crate) fn on_lost(&mut self, flight: &Flight) {
+    pub(crate) fn on_lost(&mut self, flight: &Flight, ends_burst: bool) {
         if self.discard(flight) {
-            if flight.sequence != self.last_lost + 1 {
-                self.overflow_at = match flight.starts_burst {
-                    true => 0,
-                    false => flight.sequence + OVERFLOW_LEN - 1,
-                };
+            if flight.starts_burst {
+                self.pacer.on_start_settled(true);
             }
+            self.lost_run = match flight.sequence == self.last_lost + 1 {
+                true => self.lost_run.map(|it| it + 1),
+                false => (!flight.starts_burst).then_some(1),
+            };
             self.last_lost = flight.sequence;
+            if ends_burst && let Some(len) = self.lost_run {
+                self.on_end_lost(flight, len);
+            }
             let feedback = &mut self.feedback;
-            feedback.is_overflow |= flight.sequence == self.overflow_at;
             feedback.lost += u64::from(flight.len);
             feedback.newest_lost = feedback.newest_lost.max(flight.sequence);
+        }
+    }
+
+    fn on_end_lost(&mut self, last: &Flight, len: u64) {
+        let burst = self.pacer.quantum().div_ceil(last.len.max(1).into());
+        if last.sequence > self.last_lost_end + OVERFLOW_SPAN * burst {
+            self.lost_ends = 0;
+        }
+        self.last_lost_end = last.sequence;
+        self.lost_ends += len;
+        if self.lost_ends >= OVERFLOW_LEN {
+            (self.lost_ends, self.feedback.is_overflow) = (0, true);
         }
     }
 

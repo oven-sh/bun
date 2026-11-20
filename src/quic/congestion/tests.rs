@@ -97,7 +97,7 @@ impl Sender {
     /// The oldest packets are lost, and those that follow are acknowledged.
     fn feedback(&mut self, lost: usize, acked: usize) -> &mut Self {
         for flight in self.flights.drain(..lost) {
-            self.controller.on_lost(&flight);
+            self.controller.on_lost(&flight, false);
         }
         for flight in self.flights.drain(..acked.min(self.flights.len())) {
             self.controller.on_acked(&flight);
@@ -218,7 +218,8 @@ impl Path {
                 self.rtt.update(self.now - flight.at, Duration::ZERO);
                 self.delivered += 1;
             } else {
-                self.controller.on_lost(&flight);
+                let ends_burst = self.pending.front().is_some_and(|it| it.1.starts_burst);
+                self.controller.on_lost(&flight, ends_burst);
                 self.lost += 1;
                 self.unsent += 1;
             }
@@ -408,6 +409,95 @@ fn pacer_makes_up_for_waking_late() {
 }
 
 #[test]
+fn pacer_starts_a_burst_after_three_packets_or_a_quarter_of_a_millisecond() {
+    for (per, pause) in [(micros(16), 48), (micros(64), 192), (millis(5), 250)] {
+        let mut pacer = pacer_at(1024, per);
+        assert!(pacer.on_sent(START, 1024));
+        assert!(!pacer.on_sent(START + micros(pause), 1024));
+        assert!(pacer.on_sent(START + micros(2 * pause + 1), 1024));
+        pacer.on_idle_restart(START, false);
+        assert!(pacer.on_sent(START + micros(3 * pause + 2), 1024));
+    }
+}
+
+#[test]
+fn pacer_sends_in_proportion_to_the_rate_while_bursts_lose_their_starts() {
+    for (per, alone, shared) in [
+        (micros(1), 3, 66),
+        (micros(50), 3, 10),
+        (micros(200), 3, 5),
+        (micros(500), 2, 2),
+    ] {
+        let mut pacer = pacer_at(1000, per);
+        let mut burst = |overflows, lost, arrived| {
+            (0..overflows).for_each(|_| pacer.on_overflow());
+            (0..lost).for_each(|_| pacer.on_start_settled(true));
+            (0..arrived).for_each(|_| pacer.on_start_settled(false));
+            let mut rtt = Rtt::default();
+            rtt.update(millis(20), Duration::ZERO);
+            pacer.set_rate(1000, per, &rtt);
+            pacer.quantum().div_ceil(1000)
+        };
+        assert_eq!(burst(5, 5, 0), alone);
+        assert_eq!(burst(0, 1, 0), shared);
+        assert_eq!(burst(0, 0, 600), shared);
+        assert_eq!(burst(0, 0, 150), alone);
+    }
+}
+
+#[test]
+fn pacer_looks_further_ahead_in_a_shared_queue() {
+    for (lost, early, is_permitted) in [
+        (0, 31, true),
+        (0, 32, false),
+        (6, 250, true),
+        (6, 251, false),
+    ] {
+        let mut pacer = pacer_at(1000, millis(5));
+        (0..5).for_each(|_| pacer.on_overflow());
+        (0..lost).for_each(|_| pacer.on_start_settled(true));
+        let (_, delay) = pace(&mut pacer, START);
+        let result = pacer.delay(START + delay - micros(early));
+        assert_eq!(result.is_none(), is_permitted, "{lost} {early}");
+    }
+}
+
+#[test]
+fn bursts_that_lose_their_ends_get_shorter() {
+    for (bursts, is_overflow) in [
+        (&["...xxx"][..], true),
+        (&["....xx"], false),
+        (&["..xxx."], false),
+        (&["xxxxxx"], false),
+        (&["xxx.xx"], false),
+        (&["....xx", ".....x"], true),
+        (&[".....x", ".....x", ".....x"], true),
+        (&["....xx", "......", "......", "......", ".....x"], true),
+        (
+            &["....xx", "......", "......", "......", "......", ".....x"],
+            false,
+        ),
+        (&[".....x", "xxxxxx"], true),
+    ] {
+        let mut sender = Sender::new(Algorithm::Cubic);
+        sender.rtt.update(millis(11), Duration::ZERO);
+        for _ in bursts {
+            sender.wait(millis(1)).send(6);
+        }
+        assert_eq!(sender.controller.pacer.quantum().div_ceil(SEGMENT), 6);
+        for (at, fate) in bursts.concat().bytes().enumerate() {
+            match fate {
+                b'x' => (sender.controller).on_lost(&sender.flights[at], at % 6 == 5),
+                _ => sender.controller.on_acked(&sender.flights[at]),
+            }
+        }
+        sender.controller.end_ack(sender.now, &sender.rtt);
+        let max_turn = sender.controller.max_turn();
+        assert_eq!(max_turn < usize::MAX, is_overflow, "{bursts:?}");
+    }
+}
+
+#[test]
 fn sampler_takes_the_lower_of_both_rates() {
     // The second packet follows the delivery of the first.
     for (first_rtt, gap, second_rtt, expected) in [
@@ -585,6 +675,15 @@ fn links_are_filled() {
 }
 
 #[test]
+fn links_are_filled_through_short_queues() {
+    for (delay, buffer) in [(micros(200), 3), (millis(1), 3), (millis(20), 4)] {
+        let mut path = Path::new(Algorithm::Bbr, micros(100), delay, buffer);
+        path.saturate(millis(1000), |_| {});
+        assert_within(path.saturate(millis(2000), |_| {}), 88..=100);
+    }
+}
+
+#[test]
 fn links_are_filled_by_senders_that_wake_late() {
     for algorithm in ALGORITHMS {
         for wake_period in [1000, 5000, 30_000] {
@@ -660,7 +759,7 @@ fn any_sequence_of_calls_is_fine() {
                     };
                     match fate {
                         44 => assert_eq!(controller.discard(&flight), counts),
-                        45..48 => controller.on_lost(&flight),
+                        45..48 => controller.on_lost(&flight, fate == 45),
                         _ => controller.on_acked(&flight),
                     }
                     in_flight -= u64::from(flight.len) * u64::from(counts);
@@ -818,6 +917,25 @@ fn bbr_starts_up_until_the_bandwidth_stops_growing() {
             sender.rounds_of(segments, 1, millis(10));
         }
         assert_eq!(sender.pacing_rate() < 100 * 100 * SEGMENT, is_over);
+    }
+}
+
+#[test]
+fn bbr_starts_up_for_longer_if_recovery_holds_it_back() {
+    for (rounds, is_over) in [
+        (&[8, 8, 8][..], false),
+        (&[8, 8, 8, 8], true),
+        (&[8, 10, 12, 15], true),
+        (&[8, 11, 14, 18, 18, 18], false),
+        (&[8, 11, 14, 18, 18, 18, 18], true),
+    ] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(200, 1, millis(10));
+        for &segments in rounds {
+            sender.send(segments + 1).wait(millis(10));
+            sender.feedback(1, usize::MAX);
+        }
+        assert_eq!(sender.pacing_rate() < 400 * 100 * SEGMENT, is_over);
     }
 }
 

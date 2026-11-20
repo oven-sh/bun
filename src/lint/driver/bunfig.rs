@@ -147,6 +147,12 @@ impl Table {
         (explicit_keys.map(<[u8]>::to_vec)).chain(self.flags.iter().map(|flag| key_of(flag)))
     }
 
+    /// The key that each flag has or would have. `--semi` and `--no-semi` are both `semi`.
+    fn flag_keys(&self) -> impl Iterator<Item = Vec<u8>> {
+        let flags = self.params.iter().filter_map(|it| it.names.long);
+        flags.map(|flag| key_of(flag.strip_prefix(b"no-").unwrap_or(flag)))
+    }
+
     /// The flag that `key` sets the default for.
     fn param_of(&self, key: &[u8], at: Loc) -> Result<&'static Param, BunfigError> {
         let renamed = self.renamed.iter().find(|it| it.0 == key).map(|it| it.1);
@@ -305,6 +311,7 @@ const FORMAT: Table = Table {
     renamed: &[
         (b"config", b"config"),
         (b"ignorePatterns", b"ignore-pattern"),
+        (b"plugins", b"plugin"),
     ],
     without_flag: &[b"overrides"],
     actions: &[
@@ -344,7 +351,6 @@ const FORMAT: Table = Table {
         b"no-color",
         b"script",
         b"parser",
-        b"plugin",
         b"jsx-bracket-same-line",
         b"cache",
         b"cache-location",
@@ -613,36 +619,87 @@ fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, BunfigError> {
     }
 }
 
-/// Parses `[[fmt.overrides]]`. Same shape as in a `.prettierrc`. `options` takes the `[fmt]` keys that affect output.
+/// Reads the `options` of an entry of `[[fmt.overrides]]` into `it`. A key that isn't its own is a plugin's option.
+fn set_override_options(
+    table: &Expr,
+    it: &mut crate::fmt::cli::Override,
+) -> Result<(), BunfigError> {
+    let is_option = |flag: &&&[u8]| crate::fmt::cli::option_of(flag).is_some();
+    let option_keys = || FORMAT.flags.iter().filter(is_option).map(|it| key_of(it));
+    // `parser` only makes sense for some files, so it's allowed here and not at the top level.
+    let keys = || option_keys().chain([b"parser".to_vec(), b"plugins".to_vec()]);
+    let mut options = crate::fmt::cli::Options::default();
+    let (mut has_plugins, mut others) = (false, Vec::new());
+    for (key, value) in entries(table)? {
+        let flag: Option<&[u8]> = match &key.name[..] {
+            b"parser" => Some(&b"parser"[..]),
+            b"plugins" => Some(&b"plugin"[..]),
+            _ => None,
+        };
+        if let Some(flag) = flag {
+            let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);
+            apply_value(FORMAT.param(flag), value, set)?;
+            has_plugins |= flag == b"plugin";
+        } else if option_keys().any(|it| it == key.name) {
+            set_in_format(&key, value, &mut options)?;
+        } else {
+            others.push((key, value));
+        }
+    }
+    it.format = options.format;
+    it.plugins = has_plugins.then_some(options.plugins);
+    let may_use_plugin = it.may_use_plugin();
+    // Prettier has options with the name of a flag (`rangeStart`), so those must not reach it as a plugin's.
+    let known = || FORMAT.keys().chain(FORMAT.flag_keys()).chain(keys());
+    // Decided after every key is read, so the order of the keys doesn't matter. Prettier finds a name no plugin has.
+    for (key, value) in others {
+        if !may_use_plugin || known().any(|it| it.eq_ignore_ascii_case(&key.name)) {
+            return unknown_key(&key.name, key.at, b"fmt.overrides.options", keys());
+        }
+        // Only the installed Prettier would get it, and Bun does such a plugin's work for the files it formats.
+        if let Some(own) = crate::fmt::cli::own_key_for_plugin_option(&key.name) {
+            let why: &[u8] = b"\" is an option of a plugin that is built into bun fmt, which only reads it from a Prettier config\n  \"";
+            let advice: &[u8] = b"\" does the same for the files that bun fmt formats. For a file that goes to your installed Prettier, set the option in a Prettier config.";
+            return reject(key.at, &[b"\"", &key.name, why, own, advice]);
+        }
+        let value_as_json = json_of(value)?;
+        // JSON has no such number, so Prettier would get `null` and use the plugin's default.
+        if let Some(number) = non_finite_in(value) {
+            let message: &[u8] = match std::ptr::eq(number, value) {
+                true => b" must be a finite number",
+                false => b" must only have finite numbers",
+            };
+            return reject(number.loc, &[&key.name, message]);
+        }
+        let mut json = Vec::new();
+        write_json(&mut json, &value_as_json);
+        it.passthrough.push((key.name, json));
+    }
+    Ok(())
+}
+
+/// The first `inf` or `nan` in `value`, also inside an array or a table. [`json_of`] has checked how deep `value` goes.
+fn non_finite_in(value: &Expr) -> Option<&Expr> {
+    match &value.data {
+        Data::ENumber(number) if !number.value().is_finite() => Some(value),
+        Data::EArray(items) => items.slice().iter().find_map(non_finite_in),
+        Data::EObject(table) => (table.properties.iter())
+            .filter_map(|it| it.value.as_ref())
+            .find_map(non_finite_in),
+        _ => None,
+    }
+}
+
+/// Parses `[[fmt.overrides]]`. Same shape as in a `.prettierrc`. See [`set_override_options`] for `options`.
 fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, BunfigError> {
     let items = tables_of(value, b"fmt")?;
-    // `parser` only makes sense for some files, so it's allowed here and not at the top level.
-    let is_option = |flag: &&&[u8]| crate::fmt::cli::option_of(flag).is_some();
-    let options_of = |table: &Expr| {
-        let mut options = crate::fmt::cli::Options::default();
-        for (key, value) in entries(table)? {
-            if key.name == b"parser" {
-                let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);
-                apply_value(FORMAT.param(b"parser"), value, set)?;
-                continue;
-            }
-            let mut keys = FORMAT.flags.iter().filter(is_option).map(|it| key_of(it));
-            if !keys.any(|it| it == key.name) {
-                let keys = FORMAT.flags.iter().filter(is_option).map(|it| key_of(it));
-                let keys = keys.chain([b"parser".to_vec()]);
-                return unknown_key(&key.name, key.at, b"fmt.overrides.options", keys);
-            }
-            set_in_format(&key, value, &mut options)?;
-        }
-        Ok(options.format)
-    };
     let one = |item: &Expr| {
         let mut it = crate::fmt::cli::Override::default();
         for (key, value) in entries(item)? {
             match &key.name[..] {
                 b"files" => it.files = patterns(value)?,
                 b"excludeFiles" => it.excluded = patterns(value)?,
-                b"options" => it.format = options_of(value)?,
+                b"options" => set_override_options(value, &mut it)?,
                 _ => {
                     let keys = [&b"files"[..], b"excludeFiles", b"options"];
                     let keys = keys.iter().map(|it| it.to_vec());

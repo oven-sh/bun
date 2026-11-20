@@ -149,9 +149,16 @@ describe.concurrent("bun fmt", () => {
       format({ "a.js": formatted }, [...flags, "--allow-unsupported"]),
       format({ "a.js": formatted, ".prettierrc": "{}\n" }, flags),
     ]);
-    expect(rejected.stderr).toStartWith("error: bun fmt does not include the plugin prettier-plugin-x\n");
-    expect(allowed.stderr).toStartWith("warn: --plugin has no effect ");
-    expect(withPrettier.stderr).toStartWith("error: bun fmt does not include the plugin prettier-plugin-x\n");
+    const skipped = (count: string, it: string) =>
+      `error: ${count} not formatted because --plugin or [fmt] plugins lists plugins that bun fmt does not include: prettier-plugin-x\n` +
+      `  Put the plugin in a [[fmt.overrides]] entry with "files" and the plugin's "parser" to send those files to your installed Prettier, or use --allow-unsupported to format ${it} without the plugins.`;
+    // The error follows the line that counts the formatted files.
+    expect(rejected.stderr).toContain(skipped("1 file was", "it"));
+    expect(allowed.stderr).toStartWith(
+      "warn: prettier-plugin-x in --plugin or [fmt] plugins has no effect because bun fmt does not include that plugin\n",
+    );
+    // The second file is the .prettierrc.
+    expect(withPrettier.stderr).toContain(skipped("2 files were", "them"));
     expect([rejected.exitCode, allowed.exitCode, withPrettier.exitCode]).toEqual([2, 0, 2]);
   });
 

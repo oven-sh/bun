@@ -312,7 +312,7 @@ If `package.json` has a `fmt` script, `bun fmt` runs that script. Inside the scr
 
 Writing a tool that calls Bun in projects you don't control? Pass `--no-script`: `bun fmt --no-script` is always the formatter.
 
-Astro isn't built in. If your `.prettierrc` lists its plugin, Bun sends those files to your installed Prettier. To see which files those are, and which packages you can uninstall:
+Astro isn't built in. If `plugins` in your `.prettierrc` or in [`[fmt]`](/runtime/bunfig#format-plugins) lists its plugin, Bun sends those files to your installed Prettier. A plugin that Bun doesn't know, or one of your own, goes in an override with `files` and the plugin's `parser`, and the files that match go to Prettier too. To see which files those are, and which packages you can uninstall:
 
 ```bash terminal icon="terminal"
 bun fmt --doctor

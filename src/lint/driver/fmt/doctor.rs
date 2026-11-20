@@ -1,7 +1,8 @@
 //! `bun fmt --doctor`. See [`crate::doctor`].
 
 use super::config::{self, Configs, Flavor};
-use super::files::{Expanded, Target};
+use super::files::{Expanded, Language, Target};
+use super::language_of;
 use crate::doctor::{
     How, Kinds, Modules, Need, Packages, is_for_formatting, sorted, texts, write_count, write_notes,
 };
@@ -28,30 +29,32 @@ pub(super) struct Sorted<'s> {
     pub(super) handed_over: &'s [(usize, &'s Target)],
     /// Files in a language `bun fmt` doesn't support that can't go to Prettier either, as (extension, count) pairs.
     pub(super) others: &'s [(&'s [u8], usize)],
-    /// Number of files skipped because their config uses plugins that `bun fmt` doesn't include.
+    /// Number of files skipped because a plugin listed for them is one that `bun fmt` doesn't include.
     pub(super) left_for_plugins: usize,
     /// Packages to install so that more files can be sent to Prettier.
     pub(super) not_installed: &'s [&'s [u8]],
 }
 
-/// The plugins that the config lists for the files in this run.
+/// The plugins that the config, `bunfig.toml` and `--plugin` list for the files in this run.
 #[derive(Default)]
 struct Plugins {
     built_in: Vec<Vec<u8>>,
-    /// Plugins that add a language. Files in that language go to the project's own Prettier.
+    /// Plugins that add a language, and every other one that is only listed for files that go to Prettier.
     for_languages: Vec<Vec<u8>>,
+    /// Plugins that `bun fmt` doesn't include, listed for a file that it formats itself. Never also in another list.
     not_supported: Vec<Vec<u8>>,
 }
 
 impl Plugins {
+    /// `goes_to_prettier`: the file that lists `name` goes to the project's Prettier, which loads the whole list.
     #[optimize(size)]
-    fn add(&mut self, name: &[u8], is_built_in: bool) {
-        let list = if is_built_in {
+    fn add(&mut self, name: &[u8], goes_to_prettier: bool) {
+        let list = if config::is_built_in_plugin(name) {
             &mut self.built_in
-        } else if config::is_missing_plugin(name) {
-            &mut self.not_supported
-        } else {
+        } else if goes_to_prettier || !config::is_missing_plugin(name) {
             &mut self.for_languages
+        } else {
+            &mut self.not_supported
         };
         if !list.iter().any(|it| it == name) {
             list.push(name.to_vec());
@@ -80,22 +83,32 @@ pub(super) fn report(
     let (mut plugins, mut nested) = (Plugins::default(), Vec::new());
     for target in found {
         let (scope, path) = (&target.scope, &target.path);
-        let named = configs.plugin_packages(scope, Some(path));
-        let missing = configs.missing_plugins(scope, Some(path)).iter();
+        let view = configs.plugin_view(scope, Some(path));
         // With `svelte = false`, nothing does the Svelte plugin's job, so it isn't in use.
         let is_in_use = |it: &&[u8]| !(is_svelte_off && config::is_svelte_plugin(it));
-        named
-            .chain(missing.map(|it| &it[..]))
-            .filter(is_in_use)
-            .for_each(|it| plugins.add(it, config::is_built_in_plugin(it)));
+        let listed = view.packages().chain(view.missing());
+        let mut listed = listed.filter(is_in_use).peekable();
+        let lists_any = listed.peek().is_some();
+        let goes_to_prettier = lists_any && language_of(configs, scope, path) == Language::Plugin;
+        // oxfmt loads no Prettier plugins, so those of `--plugin` and `[fmt]` do nothing for a file it formats.
+        let is_left_to_oxfmt = lists_any && !goes_to_prettier && configs.is_oxfmt_for(scope);
+        let unused: &[Vec<u8>] = match is_left_to_oxfmt {
+            true => view.flag_names(),
+            false => &[],
+        };
+        listed
+            .filter(|it| !unused.iter().any(|name| name == it))
+            .for_each(|it| plugins.add(it, goes_to_prettier));
         nested.extend(configs.config_file_path(scope).map(to_relative));
     }
+    let not_supported = &plugins.not_supported;
+    (plugins.for_languages).retain(|it| !not_supported.contains(it));
     let mut nested = sorted(nested);
     nested.retain(|it| Some(it) != file.as_ref());
-    // Prettier loads every plugin listed in a file's config, so all of them have to stay installed.
+    // Prettier loads every plugin listed for a file, so all of them have to stay installed.
     let for_files = files.handed_over.iter().flat_map(|(_, target)| {
-        let named = configs.plugin_packages(&target.scope, Some(&target.path));
-        std::iter::once(&b"prettier"[..]).chain(named)
+        let view = configs.plugin_view(&target.scope, Some(&target.path));
+        std::iter::once(&b"prettier"[..]).chain(view.packages())
     });
     // Packages that aren't installed yet are needed too. They're the reason some files can't go to Prettier.
     let prettier = files.not_installed.first().map(|_| &b"prettier"[..]);

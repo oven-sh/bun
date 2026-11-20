@@ -55,6 +55,10 @@ describe("Bun.deepMatch", () => {
       [{}, "foo", 1],
       [{}, "foo", 1],
     ],
+    // NOTE: a hole is the same as `undefined`, in either array
+    [[, 1], [undefined, 1]],
+    [[undefined, 1], [, 1]],
+    [{ a: [[, 1]] }, { a: [[undefined, 1]], b: 2 }],
 
     // Maps
     [new Map(), new Map()],
@@ -99,6 +103,9 @@ describe("Bun.deepMatch", () => {
     [[null], [undefined]],
     [[], [undefined]],
     [["a", "b", "c"], ["a", "b", "d"]],
+    [[, 1], [null, 1]], // NOTE: a hole is the same as nothing but `undefined`
+    [[0, 1], [, 1]],
+    [[, 1], [{}, 1]],
 
     // Maps
     // FIXME: I assume this is incorrect but I need confirmation on expected behavior.

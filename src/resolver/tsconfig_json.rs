@@ -159,8 +159,10 @@ pub struct TSConfigJSON {
 
     pub(crate) preserve_imports_not_used_as_values: Option<bool>,
 
-    pub emit_decorator_metadata: bool,
-    pub experimental_decorators: bool,
+    /// `None` = unset.
+    pub(crate) emit_decorator_metadata: Option<bool>,
+    /// `None` = unset.
+    pub(crate) experimental_decorators: Option<bool>,
     /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,
     pub(crate) has_compiler_options: bool,
@@ -183,8 +185,8 @@ impl Default for TSConfigJSON {
             jsx: options::jsx::Pragma::default(),
             jsx_flags: JsxFieldSet::empty(),
             preserve_imports_not_used_as_values: Some(false),
-            emit_decorator_metadata: false,
-            experimental_decorators: false,
+            emit_decorator_metadata: None,
+            experimental_decorators: None,
             use_define_for_class_fields: None,
             has_compiler_options: false,
         }
@@ -211,6 +213,37 @@ bun_core::comptime_string_map! {
 // `destroy(TSConfigJSON)` lines to assert the extends-chain merge frees intermediates.
 bun_core::declare_scope!(alloc, hidden);
 
+/// `current` with the fields of `jsx` that `flags` names written over it.
+fn merge_jsx_fields(
+    jsx: &options::jsx::Pragma,
+    flags: JsxFieldSet,
+    current: options::jsx::Pragma,
+) -> options::jsx::Pragma {
+    let mut out = current;
+
+    if flags.contains(JsxField::Factory) {
+        out.factory = jsx.factory.clone();
+    }
+
+    if flags.contains(JsxField::Fragment) {
+        out.fragment = jsx.fragment.clone();
+    }
+
+    if flags.contains(JsxField::ImportSource) {
+        out.import_source = jsx.import_source.clone();
+    }
+
+    if flags.contains(JsxField::Runtime) {
+        out.runtime = jsx.runtime;
+    }
+
+    if flags.contains(JsxField::Development) {
+        out.development = jsx.development;
+    }
+
+    out
+}
+
 impl TSConfigJSON {
     #[inline]
     pub(crate) fn new(v: Self) -> Box<Self> {
@@ -228,6 +261,54 @@ impl TSConfigJSON {
             bun_core::scoped_log!(alloc, "destroy(TSConfigJSON) = {:p}", boxed.as_ref());
         }
         drop(boxed);
+    }
+
+    pub fn emit_decorator_metadata(&self) -> bool {
+        self.emit_decorator_metadata.unwrap_or(false)
+    }
+
+    pub fn experimental_decorators(&self) -> bool {
+        self.experimental_decorators.unwrap_or(false)
+    }
+
+    /// Takes every option this config does not set from `base`, the config it extends.
+    pub(crate) fn inherit(&mut self, mut base: Box<Self>) {
+        let Self {
+            abs_path: _,
+            base_url,
+            base_url_for_paths,
+            extends: _,
+            paths,
+            jsx,
+            jsx_flags,
+            preserve_imports_not_used_as_values,
+            emit_decorator_metadata,
+            experimental_decorators,
+            use_define_for_class_fields,
+            has_compiler_options,
+        } = &mut *base;
+
+        if self.base_url.is_empty() {
+            self.base_url = core::mem::take(base_url);
+        }
+        // `base_url_for_paths` is set when the `paths` key is present, even as `{}`, which clears them.
+        if self.base_url_for_paths.is_empty() {
+            self.paths = core::mem::take(paths);
+            self.base_url_for_paths = core::mem::take(base_url_for_paths);
+        }
+        self.jsx = merge_jsx_fields(&self.jsx, self.jsx_flags, core::mem::take(jsx));
+        self.jsx_flags.insert_all(*jsx_flags);
+        self.preserve_imports_not_used_as_values =
+            (self.preserve_imports_not_used_as_values).or(*preserve_imports_not_used_as_values);
+        self.emit_decorator_metadata = self.emit_decorator_metadata.or(*emit_decorator_metadata);
+        self.experimental_decorators = self.experimental_decorators.or(*experimental_decorators);
+        self.use_define_for_class_fields = self
+            .use_define_for_class_fields
+            .or(*use_define_for_class_fields);
+        self.has_compiler_options |= *has_compiler_options;
+
+        // `destroy` logs what tsconfig-extends-leak.test.ts counts.
+        Self::destroy(base);
     }
 
     pub(crate) fn has_base_url(&self) -> bool {
@@ -276,30 +357,9 @@ impl TSConfigJSON {
         longest_match
     }
 
+    /// `current` with the JSX options that this config sets written over it.
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
-        let mut out = current;
-
-        if self.jsx_flags.contains(JsxField::Factory) {
-            out.factory = self.jsx.factory.clone();
-        }
-
-        if self.jsx_flags.contains(JsxField::Fragment) {
-            out.fragment = self.jsx.fragment.clone();
-        }
-
-        if self.jsx_flags.contains(JsxField::ImportSource) {
-            out.import_source = self.jsx.import_source.clone();
-        }
-
-        if self.jsx_flags.contains(JsxField::Runtime) {
-            out.runtime = self.jsx.runtime;
-        }
-
-        if self.jsx_flags.contains(JsxField::Development) {
-            out.development = self.jsx.development;
-        }
-
-        out
+        merge_jsx_fields(&self.jsx, self.jsx_flags, current)
     }
 
     /// Support ${configDir}, but avoid allocating when possible.
@@ -487,12 +547,12 @@ impl TSConfigJSON {
 
             // Parse "emitDecoratorMetadata"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = emit_decorator_metadata_v {
-                result.emit_decorator_metadata = val;
+                result.emit_decorator_metadata = Some(val);
             }
 
             // Parse "experimentalDecorators"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = experimental_decorators_v {
-                result.experimental_decorators = val;
+                result.experimental_decorators = Some(val);
             }
 
             // Parse "useDefineForClassFields"
@@ -850,4 +910,94 @@ impl TSConfigJSON {
 
     // `Box<TSConfigJSON>` drop handles cleanup: PathsMap has Drop, and Box
     // frees the allocation. No explicit Drop needed.
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use super::*;
+
+    fn config(write: impl FnOnce(&mut TSConfigJSON)) -> Box<TSConfigJSON> {
+        let mut config = TSConfigJSON::default();
+        write(&mut config);
+        Box::new(config)
+    }
+
+    fn paths(key: &[u8], value: &[u8]) -> PathsMap {
+        let mut paths = PathsMap::default();
+        paths
+            .put(Box::from(key), vec![Box::from(value)])
+            .expect("OOM");
+        paths
+    }
+
+    #[test]
+    fn extending_config_keeps_the_options_it_sets() {
+        let mut merged = config(|child| {
+            child.abs_path = Box::from(&b"/p/tsconfig.json"[..]);
+            child.emit_decorator_metadata = Some(false);
+            child.use_define_for_class_fields = Some(false);
+            child.jsx.import_source.production = Cow::Borrowed(b"preact");
+            child.jsx_flags = JsxField::ImportSource.into();
+            child.paths = paths(b"@leaf/*", b"./leaf/*");
+            child.base_url_for_paths = Box::from(&b"/p/leaf"[..]);
+            child.has_compiler_options = true;
+        });
+        merged.inherit(config(|base| {
+            base.abs_path = Box::from(&b"/p/base.json"[..]);
+            base.base_url = Box::from(&b"/p"[..]);
+            base.emit_decorator_metadata = Some(true);
+            base.experimental_decorators = Some(true);
+            base.use_define_for_class_fields = Some(true);
+            base.jsx.runtime = options::jsx::Runtime::Classic;
+            base.jsx_flags = JsxField::Runtime.into();
+            base.paths = paths(b"@base/*", b"./base/*");
+            base.base_url_for_paths = Box::from(&b"/p"[..]);
+        }));
+        assert_eq!(&*merged.abs_path, b"/p/tsconfig.json");
+        assert_eq!(&*merged.base_url, b"/p");
+        assert_eq!(merged.emit_decorator_metadata, Some(false));
+        assert_eq!(merged.experimental_decorators, Some(true));
+        assert_eq!(merged.use_define_for_class_fields, Some(false));
+        assert_eq!(merged.jsx.runtime, options::jsx::Runtime::Classic);
+        assert_eq!(&*merged.jsx.import_source.production, b"preact");
+        assert_eq!(merged.jsx_flags, JsxField::Runtime | JsxField::ImportSource);
+        assert_eq!(merged.paths.keys(), [Box::from(&b"@leaf/*"[..])]);
+        assert_eq!(&*merged.base_url_for_paths, b"/p/leaf");
+        assert!(merged.has_compiler_options);
+    }
+
+    #[test]
+    fn options_the_extending_config_leaves_unset_come_from_the_nearest_base_that_sets_them() {
+        let mut middle = config(|middle| {
+            middle.emit_decorator_metadata = Some(false);
+        });
+        middle.inherit(config(|base| {
+            base.emit_decorator_metadata = Some(true);
+            base.experimental_decorators = Some(true);
+            base.paths = paths(b"@base/*", b"./base/*");
+            base.base_url_for_paths = Box::from(&b"/p"[..]);
+            base.has_compiler_options = true;
+        }));
+        let mut merged = config(|_| {});
+        merged.inherit(middle);
+        assert_eq!(merged.emit_decorator_metadata, Some(false));
+        assert_eq!(merged.experimental_decorators, Some(true));
+        assert_eq!(merged.paths.keys(), [Box::from(&b"@base/*"[..])]);
+        assert!(merged.has_compiler_options);
+    }
+
+    #[test]
+    fn empty_paths_in_the_extending_config_clear_the_inherited_ones() {
+        let mut merged = config(|child| {
+            child.base_url_for_paths = Box::from(&b"/p/child"[..]);
+        });
+        merged.inherit(config(|base| {
+            base.paths = paths(b"@base/*", b"./base/*");
+            base.base_url_for_paths = Box::from(&b"/p"[..]);
+        }));
+        assert!(merged.paths.is_empty());
+        assert_eq!(&*merged.base_url_for_paths, b"/p/child");
+    }
 }

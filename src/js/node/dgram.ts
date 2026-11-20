@@ -803,7 +803,8 @@ Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , 
       return;
     }
 
-    startBunSocket(this, state, { hostname: ip, port: port || 0, flags });
+    // Node reads ToUint32(port) as a u16: https://github.com/nodejs/node/blob/v26.3.0/src/udp_wrap.cc#L318-L323
+    startBunSocket(this, state, { hostname: ip, port: (port || 0) & 0xffff, flags });
   });
 
   return this;

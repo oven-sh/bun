@@ -57,11 +57,13 @@ class UDP {
     flags: number | null | undefined,
     ipv6: boolean,
   ) {
+    // Read as bind() of node:dgram reads it. Outside the try: Node's handle throws what the conversion throws.
+    port = (port || 0) & 0xffff;
     try {
       if (this.#fd < 0) {
         this.#fd = newSocketFd(ipv6, false);
       }
-      bindFd(this.#fd, address || (ipv6 ? "::" : "0.0.0.0"), port || 0, flags || 0);
+      bindFd(this.#fd, address || (ipv6 ? "::" : "0.0.0.0"), port, flags || 0);
       return 0;
     } catch (err) {
       return uvErrno(err, UV_EINVAL);

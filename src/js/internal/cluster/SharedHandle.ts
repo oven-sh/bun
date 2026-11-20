@@ -44,7 +44,14 @@ export default class SharedHandle {
       }
       return;
     }
-    const rval = clusterRawBind(addressType, address, typeof port === "number" ? port : 0, flags | 0);
+    // A number, string or boolean reads as in node:dgram's bind(). No other port of a worker is converted: that can throw.
+    const type = typeof port;
+    const rval = clusterRawBind(
+      addressType,
+      address,
+      type === "number" || type === "string" || type === "boolean" ? port & 0xffff : 0,
+      flags | 0,
+    );
     if (typeof rval === "number") this.errno = rval;
     else {
       this.handle = rval;

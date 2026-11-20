@@ -29,9 +29,12 @@ import {
   wrapped,
 } from "./link-macho-support.ts";
 import {
+  allRecordsOfCallsWithoutEffect,
   buildGuardCrate,
   builtinUsing,
   callAll,
+  callersWithoutEffectMain,
+  canBuildRustFor,
   compileRust,
   cxxFlags,
   embedderSource,
@@ -46,13 +49,16 @@ import {
   guardHeader,
   guardHeaderSkipReason,
   indexOf,
+  keepCallOfEntryPoint,
   mainEnteringBuiltin,
   manyFunctions,
   mixingFunction,
   Other,
   plainSpellingsSource,
+  recordsOfCallsWithoutEffect,
   reviewFiles,
   run,
+  rustCallsWithoutEffect,
   rustSource,
   skipNotice,
   spelledBuiltin,
@@ -910,5 +916,36 @@ describeEachMachine("Mach-O $name", machine => {
         70, 70,
       ]);
     });
+
+    test.skipIf(!canBuildRustFor(rustTarget))(
+      "a function of call_removable! or call_removable_or! that has no side effect is still called where it starts with keep_call_of_entry_point()",
+      async () => {
+        using dir = tempDir("trim-macho-stubs", {
+          ...sources,
+          "embedder.c": embedderSource("macho", { stateFromRust: true, exit: exits }),
+          "toy.rs": rustSource + rustCallsWithoutEffect(keepCallOfEntryPoint),
+          "main.c": callersWithoutEffectMain,
+        });
+        const folder = String(dir);
+        const rustc = Bun.which("rustc")!;
+        const crate = await buildGuardCrate(folder, rustc, rustTarget);
+        expect(crate).toBeDefined();
+        const archive = await compileRust(folder, rustc, crate!, "toy.rs", { target: rustTarget });
+        const { entryAddresses, featuresAt, programResult, trimmedResult } = await linked(machine, folder, {
+          objects: ["feature_code", "embedder", "main"],
+          inputs: [archive],
+          linkFlags,
+        });
+        expect(recordsOfCallsWithoutEffect(entryPointsText(folder, "program"))).toEqual(allRecordsOfCallsWithoutEffect);
+        expect([...entryAddresses].map(featuresAt)).toEqual([...entryAddresses].map(() => [Extra]));
+        expectCleanRuns({ programResult, trimmedResult });
+        if (programResult === undefined || trimmedResult === undefined) return;
+        expect(programResult.stdout).toBe("63 64\n");
+        expect(trimmedResult.stdout).toBe("57 -2\n");
+        // Without the feature the aborting caller does not come back with its result.
+        expect(await exitCodeOf(folder, "whole", ["a"])).toBe(62);
+        expect(await exitCodeOf(folder, "trimmed", ["a"])).not.toBe(62);
+      },
+    );
   });
 });

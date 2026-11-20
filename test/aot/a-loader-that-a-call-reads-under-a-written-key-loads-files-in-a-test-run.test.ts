@@ -44,9 +44,18 @@ test("a guest", async () => {
     expect({
       flags,
       said: (ran.stdout + "\n" + ran.stderr).split("\n").filter(line => line.startsWith("SAID")),
+      results: [...ran.stderr.matchAll(/^\((pass|fail|skip|todo)\) (.*?)(?: \[.*\])?$/gm)].map(
+        match => `${match[1]} ${match[2]}`,
+      ),
+      exitCode: ran.exitCode,
+      // A run that ended badly says why only there.
+      stderr: ran.exitCode ? ran.stderr : "",
     }).toEqual({
       flags,
       said: ["SAID 42"],
+      results: ["pass a guest"],
+      exitCode: 0,
+      stderr: "",
     });
   }
 });

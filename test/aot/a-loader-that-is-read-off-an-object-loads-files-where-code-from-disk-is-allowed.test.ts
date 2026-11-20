@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { isHardened } from "./hardened";
+import { built } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
 // One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
@@ -63,6 +64,22 @@ const expected = [
   "SAID the program's own, afterwards state 3,old 2",
 ];
 
+type Ran = Awaited<ReturnType<typeof run>>;
+/** What the test file said, and what the run made of its tests. */
+const reported = ({ stdout, stderr, exitCode }: Ran) => ({
+  said: said(stdout + "\n" + stderr),
+  results: [...stderr.matchAll(/^\((pass|fail|skip|todo)\) (.*?)(?: \[.*\])?$/gm)].map(
+    match => `${match[1]} ${match[2]}`,
+  ),
+  exitCode,
+  // A run that ended badly says why only there.
+  stderr: exitCode ? stderr : "",
+});
+const passed = (lines: string[], name: string) => ({ said: lines, results: [`pass ${name}`], exitCode: 0, stderr: "" });
+/** What a program said, what it wrote beside that, and how it ended. */
+const ended = ({ stdout, stderr, exitCode }: Ran) => ({ said: said(stdout), stderr, exitCode });
+const endedWell = (lines: string[]) => ({ said: lines, stderr: "", exitCode: 0 });
+
 let ofTestRuns: ReturnType<typeof tempDir> | undefined;
 beforeAll(() => {
   ofTestRuns = tempDir("aot-module-graph-loads-files", files);
@@ -76,18 +93,17 @@ test.each<[string, string[]]>([
 ])("in a test run: %s", async (_, flags) => {
   const directory = String(ofTestRuns);
   const ran = await run([bunExe(), "test", ...flags, "./a.test.ts"], directory, { ...bunEnv, BUN_TMPDIR: directory });
-  expect(said(ran.stdout + "\n" + ran.stderr)).toEqual(expected);
+  expect(reported(ran)).toEqual(passed(expected, "graphs"));
 });
 
 test("in an executable that stays beside its files", async () => {
   using dir = tempDir("aot-module-graph-loads-files-in-place", files);
   const directory = String(dir);
-  expect(said((await run([bunExe(), "main.ts"], directory)).stdout)).toEqual(expected);
+  expect(ended(await run([bunExe(), "main.ts"], directory))).toEqual(endedWell(expected));
   const outfile = join(directory, "program");
   const flags = ["--compile", "--aot", "--compile-in-place", "--aot-allow-code-from-disk"];
-  const built = await run([bunExe(), "build", ...flags, "main.ts", "--outfile", outfile], directory);
-  expect(built.exitCode).toBe(0);
-  expect(said((await run([outfile], directory)).stdout)).toEqual(expected);
+  built(await run([bunExe(), "build", ...flags, "main.ts", "--outfile", outfile], directory));
+  expect(ended(await run([outfile], directory))).toEqual(endedWell(expected));
 });
 
 // It does not hold the text of what it has compiled, and says so. Every other file loads.
@@ -107,23 +123,27 @@ test("in an executable that holds its files", async () => {
     "SAID the same file once more " + refused,
     "SAID a CommonJS file that the program holds " + refused,
   ];
-  expect((await build("--aot-allow-code-from-disk")).exitCode).toBe(0);
-  expect(said((await run([outfile], directory)).stdout)).toEqual([
-    ...filesOfProgramAreRefused,
-    "SAID a file that was just written none made",
-    "SAID in a second graph none made",
-    expected[6],
-    expected[7],
-  ]);
+  built(await build("--aot-allow-code-from-disk"));
+  expect(ended(await run([outfile], directory))).toEqual(
+    endedWell([
+      ...filesOfProgramAreRefused,
+      "SAID a file that was just written none made",
+      "SAID in a second graph none made",
+      expected[6],
+      expected[7],
+    ]),
+  );
   // Without the flag no code comes from the disk.
-  expect((await build()).exitCode).toBe(0);
-  expect(said((await run([outfile], directory)).stdout)).toEqual([
-    ...filesOfProgramAreRefused,
-    "SAID a file that was just written " + refused,
-    "SAID in a second graph " + refused,
-    "SAID what the files left on the global object undefined",
-    expected[7],
-  ]);
+  built(await build());
+  expect(ended(await run([outfile], directory))).toEqual(
+    endedWell([
+      ...filesOfProgramAreRefused,
+      "SAID a file that was just written " + refused,
+      "SAID in a second graph " + refused,
+      "SAID what the files left on the global object undefined",
+      expected[7],
+    ]),
+  );
 });
 
 // The handlers of require.extensions load the file that they are handed, and nothing else of this program loads by a name that the build does not know.
@@ -146,10 +166,9 @@ test("a handler", () => {
 `,
   });
   const directory = String(dir);
-  const ask = async (...flags: string[]) => {
-    const ran = await run([bunExe(), "test", ...flags, "./a.test.ts"], directory, { ...bunEnv, BUN_TMPDIR: directory });
-    return said(ran.stdout + "\n" + ran.stderr);
-  };
-  expect(await ask()).toEqual(["SAID 42"]);
-  expect(await ask("--aot")).toEqual(["SAID 42"]);
+  const ask = async (...flags: string[]) =>
+    reported(await run([bunExe(), "test", ...flags, "./a.test.ts"], directory, { ...bunEnv, BUN_TMPDIR: directory }));
+  const loaded = passed(["SAID 42"], "a handler");
+  expect(await ask()).toEqual(loaded);
+  expect(await ask("--aot")).toEqual(loaded);
 });

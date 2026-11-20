@@ -57,6 +57,13 @@ if (mode === "child") {
         time(`compress ${name}`, plain, "Bun.zstdCompressSync(x[0], x[1])", 5e7);
         if (kind.length < 5 || kind === "skewed") time(`decompress ${name}`, packed, "Bun.zstdDecompressSync(x)", 5e7);
       }
+  for (const kind of ["skewed", "ascii", "and", "json"] as const)
+    for (const size of [5000, 6000, 7000, 8000, 8500, 9001, 10000, 12000, 16000, 20000]) {
+      const plain = pieces(data[kind], size).map(it => [it, { level: 1 }] as const);
+      time(`sizes ${kind} ${size}`, plain, "Bun.zstdCompressSync(x[0], x[1])", 5e7);
+    }
+  for (const size of [8, 32, 64, 300, 4096, 100000])
+    time(`hash xxHash64 ${size}`, pieces(data.md, size), "Bun.hash.xxHash64(x)", 5e7);
   const C = zlib.constants;
   for (const [what, params] of Object.entries({
     checksum: { [C.ZSTD_c_compressionLevel]: 1, [C.ZSTD_c_checksumFlag]: 1 },
@@ -75,7 +82,7 @@ if (mode === "child") {
   const testing = require("bun:internal-for-testing");
   const nanoseconds = (run: () => void, n: number) => {
     let least = Infinity;
-    for (let turn = 0; turn < 40; turn++) {
+    for (let turn = 0; turn < 20; turn++) {
       const t = Bun.nanoseconds();
       for (let i = 0; i < n; i++) run();
       least = Math.min(least, (Bun.nanoseconds() - t) / n);
@@ -84,7 +91,8 @@ if (mode === "child") {
   };
   const whole = readFileSync(require.resolve("typescript", { paths: [join(repo, "test")] }));
   const js = whole.subarray(whole.length >> 1);
-  if (testing.highwayStringsForTesting) {
+  if (process.arch !== "x64") {
+  } else if (testing.highwayStringsForTesting) {
     const old = testing.highwayStringsForTesting;
     const room = new Uint8Array(24 + 512 + (1 << 18));
     new Uint16Array(room.buffer, 24, 256).forEach((_, symbol, codes) => (codes[symbol] = 3 + (symbol % 7)));
@@ -97,7 +105,7 @@ if (mode === "child") {
       ] as const)
         for (const n of [1024, 4159, 32768, 131072]) {
           const some = text.subarray(0, n);
-          const times = Math.ceil(2e5 / n);
+          const times = Math.ceil(5e5 / n);
           const count = nanoseconds(() => old("zstdCountBytes", some, counts), times) - call;
           const write = nanoseconds(() => old("zstdWriteCodes", some, room), times) - call;
           console.log(`zstd::count_bytes ${n}, ${name}\t${count.toFixed(1)}`);

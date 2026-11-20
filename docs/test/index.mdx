@@ -241,6 +241,8 @@ Use the `--rerun-each` flag to run each test multiple times. This surfaces flaky
 bun test --rerun-each 100
 ```
 
+Each run loads the test file again. What the file imports stays loaded, so hooks and tests that a module registers when the test file first imports it exist in the first run alone. Define tests in the test file, and hooks in the test file or in a preload script.
+
 ## Randomize test execution order
 
 Use the `--randomize` flag to run tests in a random order. This helps detect tests that depend on shared state or execution order.
@@ -331,7 +333,7 @@ Bun supports the following lifecycle hooks:
 | `aroundEach` | Wraps each test.            |
 | `aroundAll`  | Wraps all tests.            |
 
-Define hooks inside test files, or in a separate file preloaded with the `--preload` flag.
+Define hooks inside test files, or in a separate file preloaded with the `--preload` flag. A module that a test file imports registers its hooks once, for the first test file that imports it. Without [`--isolate`](/test/parallel#--isolate), the next test file that imports the module doesn't get them. A module that a preload script imports registers them for every file.
 
 ```sh terminal icon="terminal"
 bun test --preload ./setup.ts

@@ -1,0 +1,452 @@
+import type { S3Options } from "bun";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+
+// What `S3File.bucket`, `Bun.inspect(file)` and `Bun.inspect(client)` report as
+// the bucket. Each case puts them beside the URL that presign() makes, to show
+// where the request goes. presign() signs offline, so no case uses the network.
+
+type Case = {
+  /** How the file is made. The default is `new S3Client(client).file(key, file)`. */
+  via?: "Bun.s3.file" | "S3Client.file" | "Bun.file" | "slice";
+  client?: S3Options;
+  file?: S3Options;
+  /** The default is "dir/f.txt". */
+  key?: string;
+};
+
+type Report = {
+  /** Host and path of the presigned URL, or the code of the error that presign() throws. */
+  url: string;
+  bucket: string | null;
+  /** `Bun.inspect(file)`, up to the `{`. */
+  file: string;
+  /** `Bun.inspect(client)`, up to the `{`, when the case makes a client. */
+  client?: string;
+};
+
+const virtualHosted = { virtualHostedStyle: true } as const;
+const aws = { ...virtualHosted, endpoint: "https://prod-bucket.s3.us-east-1.amazonaws.com" } as const;
+
+// Each jurisdiction that R2 has: https://developers.cloudflare.com/r2/reference/data-location/#available-jurisdictions
+// `guess_bucket` in src/s3_signing/credentials.rs has the same list.
+const r2Jurisdictions = ["eu", "fedramp", "us"] as const;
+const r2 = (labels: string) => `https://${labels}.r2.cloudflarestorage.com`;
+
+/**
+ * A virtual-hosted client on `endpoint`, with the key "dir/f.txt". `inHost` is the
+ * bucket that Bun reads in the host of the endpoint, or null. `option` is the
+ * `bucket` option of the client. `S3File.bucket` is the option, or else `inHost`.
+ * Both inspects show `inHost`, or else the option.
+ */
+function hosted(endpoint: string, inHost: string | null, option?: string): [Case, Report] {
+  const { host, pathname } = new URL(endpoint);
+  const shown = inHost ?? option;
+  return [
+    { client: { ...virtualHosted, endpoint, ...(option && { bucket: option }) } },
+    {
+      url: `${host}${pathname === "/" ? "" : pathname}/dir/f.txt`,
+      bucket: option ?? inHost,
+      file: shown ? `S3Ref ("${shown}/dir/f.txt")` : 'S3Ref ("dir/f.txt")',
+      client: shown ? `S3Client ("${shown}")` : "S3Client",
+    },
+  ];
+}
+
+const probe = /* js */ `
+  const credentials = { accessKeyId: "a", secretAccessKey: "b", region: "us-east-1" };
+  const head = value => Bun.inspect(value).split(" {")[0];
+  const reports = {};
+  for (const [name, { via, client: clientOptions, file: fileOptions, key = "dir/f.txt" }] of Object.entries(cases)) {
+    const options = { ...credentials, ...clientOptions };
+    let client, file;
+    if (via === "Bun.s3.file") file = Bun.s3.file(key, options);
+    else if (via === "S3Client.file") file = Bun.S3Client.file(key, options);
+    else if (via === "Bun.file") file = Bun.file(key, options);
+    else {
+      client = new Bun.S3Client(options);
+      file = fileOptions ? client.file(key, fileOptions) : client.file(key);
+      if (via === "slice") file = file.slice(1);
+    }
+    let url;
+    try {
+      const { host, pathname } = new URL(file.presign());
+      url = host + pathname;
+    } catch (error) {
+      url = error.code;
+    }
+    reports[name] = { url, bucket: file.bucket ?? null, file: head(file), client: client && head(client) };
+  }
+  console.log(JSON.stringify(reports));
+`;
+
+// The cases run in a child process: `S3Client` and `Bun.s3` take a bucket and an
+// endpoint from the environment, so each test sets its own.
+function testCases(
+  title: string,
+  env: { S3_BUCKET?: string; S3_ENDPOINT?: string },
+  cases: Record<string, [Case, Report]>,
+) {
+  test.concurrent(title, async () => {
+    const entries = Object.entries(cases);
+    const inputs = Object.fromEntries(entries.map(([name, [input]]) => [name, input]));
+    const expected = Object.fromEntries(entries.map(([name, [, report]]) => [name, report]));
+
+    // An empty directory: no .env file gives the child a bucket or an endpoint.
+    using dir = tempDir("s3-bucket", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const cases = ${JSON.stringify(inputs)};${probe}`],
+      env: {
+        ...bunEnv,
+        S3_BUCKET: undefined,
+        AWS_BUCKET: undefined,
+        S3_ENDPOINT: undefined,
+        AWS_ENDPOINT: undefined,
+        ...env,
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+}
+
+testCases(
+  "virtual-hosted style with an endpoint: the bucket in the host of the endpoint",
+  {},
+  {
+    "AWS host": hosted(aws.endpoint, "prod-bucket"),
+    "AWS host, key with one segment": [
+      { client: aws, key: "f.txt" },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/f.txt",
+        bucket: "prod-bucket",
+        file: 'S3Ref ("prod-bucket/f.txt")',
+        client: 'S3Client ("prod-bucket")',
+      },
+    ],
+    "AWS host, s3:// key: the bucket of the URL is a part of the key": [
+      { client: aws, key: "s3://scratch-bucket/dir/f.txt" },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/scratch-bucket/dir/f.txt",
+        bucket: "prod-bucket",
+        file: 'S3Ref ("prod-bucket/scratch-bucket/dir/f.txt")',
+        client: 'S3Client ("prod-bucket")',
+      },
+    ],
+    "AWS host, bucket option with the same name": hosted(aws.endpoint, "prod-bucket", "prod-bucket"),
+    // The request ignores the option. `S3File.bucket` still reports it, and the inspects show the host.
+    "AWS host, bucket option with another name": hosted(aws.endpoint, "prod-bucket", "opt-bucket"),
+    "AWS host, endpoint with a port and a path": hosted(
+      "https://prod-bucket.s3.us-east-1.amazonaws.com:8443/prefix",
+      "prod-bucket",
+    ),
+    "AWS host without a region": hosted("https://prod-bucket.s3.amazonaws.com", "prod-bucket"),
+    "AWS dual-stack host": hosted("https://prod-bucket.s3.dualstack.eu-west-1.amazonaws.com", "prod-bucket"),
+    "AWS China host": hosted("https://prod-bucket.s3.cn-north-1.amazonaws.com.cn", "prod-bucket"),
+    "AWS host, bucket name with .s3. in it": hosted("https://a.s3.b.s3.us-east-1.amazonaws.com", "a.s3.b"),
+    "R2 host": hosted(r2("my-bucket.acct123"), "my-bucket"),
+    // The bucket label is in front of the account for each jurisdiction, also for one that Bun does not know.
+    ...Object.fromEntries(
+      [...r2Jurisdictions, "a-new-one"].map(jurisdiction => [
+        `R2 host in the ${jurisdiction} jurisdiction`,
+        hosted(r2(`my-bucket.acct123.${jurisdiction}`), "my-bucket"),
+      ]),
+    ),
+    // A dot at the end is the fully qualified form of the same host.
+    "AWS host, fully qualified": hosted("https://prod-bucket.s3.us-east-1.amazonaws.com.", "prod-bucket"),
+    "R2 host, fully qualified": hosted("https://my-bucket.acct123.r2.cloudflarestorage.com.", "my-bucket"),
+  },
+);
+
+testCases(
+  "virtual-hosted style with an endpoint: the bucket option when the host names no bucket",
+  {},
+  {
+    "custom domain, no bucket option": hosted("https://files.example.com", null),
+    "custom domain, bucket option": hosted("https://files.example.com", null, "opt-bucket"),
+    "host of another provider, bucket option with the same name": hosted(
+      "https://my-bucket.oss-cn-hangzhou.aliyuncs.com",
+      null,
+      "my-bucket",
+    ),
+    // Bun does not read this host, so it cannot see that the option names another bucket.
+    "host of another provider, bucket option with another name": hosted(
+      "http://real-bucket.localhost:9000",
+      null,
+      "other-bucket",
+    ),
+    "R2 account host": hosted(r2("acct123"), null),
+    "R2 account host, bucket option": hosted(r2("acct123"), null, "opt-bucket"),
+    // The account is not a bucket.
+    ...Object.fromEntries(
+      r2Jurisdictions.map(jurisdiction => [
+        `R2 account host in the ${jurisdiction} jurisdiction`,
+        hosted(r2(`acct123.${jurisdiction}`), null),
+      ]),
+    ),
+    // An R2 bucket name has no dot, so a label too many is not a bucket host.
+    "R2 host with a label too many": hosted(r2("a.b.acct123.eu"), null),
+    "AWS PrivateLink host": hosted(
+      "https://prod-bucket.bucket.vpce-0a1b2c3d-abcd.s3.us-east-1.vpce.amazonaws.com",
+      null,
+    ),
+    "AWS path-style host": hosted("https://s3.us-east-1.amazonaws.com", null),
+    "AWS host with an empty bucket label": hosted("https://.s3.us-east-1.amazonaws.com", null),
+    "a path that looks like an AWS host": hosted(
+      "https://files.example.com/prod-bucket.s3.us-east-1.amazonaws.com",
+      null,
+    ),
+    // The request goes to the bucket in the path of the endpoint. Bun reads only the host.
+    "AWS path-style host, bucket in the path of the endpoint": hosted(
+      "https://s3.us-east-1.amazonaws.com/my-bucket",
+      null,
+    ),
+    "AWS path-style host, bucket in the path of the endpoint, bucket option with the same name": hosted(
+      "https://s3.us-east-1.amazonaws.com/my-bucket",
+      null,
+      "my-bucket",
+    ),
+  },
+);
+
+testCases(
+  "virtual-hosted style without an endpoint: the bucket option makes the host",
+  {},
+  {
+    "bucket option": [
+      { client: { ...virtualHosted, bucket: "opt-bucket" } },
+      {
+        url: "opt-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "opt-bucket",
+        file: 'S3Ref ("opt-bucket/dir/f.txt")',
+        client: 'S3Client ("opt-bucket")',
+      },
+    ],
+    "no bucket option: no request is possible": [
+      { client: virtualHosted },
+      { url: "ERR_S3_INVALID_ENDPOINT", bucket: null, file: 'S3Ref ("dir/f.txt")', client: "S3Client" },
+    ],
+    "no bucket option, s3:// key: the bucket of the URL makes no host": [
+      { client: virtualHosted, key: "s3://my-bucket/file.txt" },
+      { url: "ERR_S3_INVALID_ENDPOINT", bucket: null, file: 'S3Ref ("my-bucket/file.txt")', client: "S3Client" },
+    ],
+  },
+);
+
+testCases(
+  "path style: the bucket option, or else the first segment of the path",
+  {},
+  {
+    "no bucket option": [
+      {},
+      { url: "s3.us-east-1.amazonaws.com/dir/f.txt", bucket: "dir", file: 'S3Ref ("dir/f.txt")', client: "S3Client" },
+    ],
+    "no bucket option, key with one segment: no request is possible": [
+      { key: "f.txt" },
+      { url: "ERR_S3_INVALID_PATH", bucket: null, file: 'S3Ref ("f.txt")', client: "S3Client" },
+    ],
+    "no bucket option, key that starts with //": [
+      { key: "//dir/f.txt" },
+      { url: "s3.us-east-1.amazonaws.com/dir/f.txt", bucket: "dir", file: 'S3Ref ("/dir/f.txt")', client: "S3Client" },
+    ],
+    "no bucket option, key that starts with ///: the first segment is empty": [
+      { key: "///f.txt" },
+      { url: "s3.us-east-1.amazonaws.com//f.txt", bucket: null, file: 'S3Ref ("//f.txt")', client: "S3Client" },
+    ],
+    "no bucket option, s3:// key": [
+      { key: "s3://scratch-bucket/dir/f.txt" },
+      {
+        url: "s3.us-east-1.amazonaws.com/scratch-bucket/dir/f.txt",
+        bucket: "scratch-bucket",
+        file: 'S3Ref ("scratch-bucket/dir/f.txt")',
+        client: "S3Client",
+      },
+    ],
+    "bucket option": [
+      { client: { bucket: "opt-bucket" } },
+      {
+        url: "s3.us-east-1.amazonaws.com/opt-bucket/dir/f.txt",
+        bucket: "opt-bucket",
+        file: 'S3Ref ("opt-bucket/dir/f.txt")',
+        client: 'S3Client ("opt-bucket")',
+      },
+    ],
+    "bucket option, s3:// key": [
+      { client: { bucket: "opt-bucket" }, key: "s3://scratch-bucket/dir/f.txt" },
+      {
+        url: "s3.us-east-1.amazonaws.com/opt-bucket/scratch-bucket/dir/f.txt",
+        bucket: "opt-bucket",
+        file: 'S3Ref ("opt-bucket/scratch-bucket/dir/f.txt")',
+        client: 'S3Client ("opt-bucket")',
+      },
+    ],
+    "endpoint, no bucket option": [
+      { client: { endpoint: "https://minio.example.com:9000" } },
+      { url: "minio.example.com:9000/dir/f.txt", bucket: "dir", file: 'S3Ref ("dir/f.txt")', client: "S3Client" },
+    ],
+    "endpoint with an AWS bucket host, no bucket option": [
+      { client: { endpoint: aws.endpoint } },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "dir",
+        file: 'S3Ref ("dir/f.txt")',
+        client: "S3Client",
+      },
+    ],
+    "endpoint and bucket option": [
+      { client: { endpoint: "https://minio.example.com:9000", bucket: "opt-bucket" } },
+      {
+        url: "minio.example.com:9000/opt-bucket/dir/f.txt",
+        bucket: "opt-bucket",
+        file: 'S3Ref ("opt-bucket/dir/f.txt")',
+        client: 'S3Client ("opt-bucket")',
+      },
+    ],
+  },
+);
+
+testCases(
+  "the options of a file replace the options of its client",
+  {},
+  {
+    "path-style client, virtual-hosted file": [
+      { file: aws },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "prod-bucket",
+        file: 'S3Ref ("prod-bucket/dir/f.txt")',
+        client: "S3Client",
+      },
+    ],
+    "path-style client with a bucket option, virtual-hosted file: the file has the option of its client": [
+      { client: { bucket: "opt-bucket" }, file: aws },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "opt-bucket",
+        file: 'S3Ref ("prod-bucket/dir/f.txt")',
+        client: 'S3Client ("opt-bucket")',
+      },
+    ],
+    "virtual-hosted client, path-style file": [
+      { client: aws, file: { virtualHostedStyle: false, bucket: "file-bucket" } },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/file-bucket/dir/f.txt",
+        bucket: "file-bucket",
+        file: 'S3Ref ("file-bucket/dir/f.txt")',
+        client: 'S3Client ("prod-bucket")',
+      },
+    ],
+  },
+);
+
+testCases(
+  "each way to make a file",
+  {},
+  {
+    "Bun.s3.file()": [
+      { via: "Bun.s3.file", client: aws },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "prod-bucket",
+        file: 'S3Ref ("prod-bucket/dir/f.txt")',
+      },
+    ],
+    "S3Client.file()": [
+      { via: "S3Client.file", client: aws },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "prod-bucket",
+        file: 'S3Ref ("prod-bucket/dir/f.txt")',
+      },
+    ],
+    "Bun.file()": [
+      { via: "Bun.file", client: aws, key: "s3://scratch-bucket/dir/f.txt" },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/scratch-bucket/dir/f.txt",
+        bucket: "prod-bucket",
+        file: 'S3Ref ("prod-bucket/scratch-bucket/dir/f.txt")',
+      },
+    ],
+    "file.slice()": [
+      { via: "slice", client: aws },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "prod-bucket",
+        file: 'S3Ref ("prod-bucket/dir/f.txt")',
+        client: 'S3Client ("prod-bucket")',
+      },
+    ],
+  },
+);
+
+testCases(
+  "S3_ENDPOINT in the environment",
+  { S3_ENDPOINT: aws.endpoint },
+  {
+    "virtual-hosted style: the bucket in the host of the endpoint": [
+      { client: virtualHosted },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "prod-bucket",
+        file: 'S3Ref ("prod-bucket/dir/f.txt")',
+        client: 'S3Client ("prod-bucket")',
+      },
+    ],
+    "Bun.s3.file(), virtual-hosted style": [
+      { via: "Bun.s3.file", client: virtualHosted },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "prod-bucket",
+        file: 'S3Ref ("prod-bucket/dir/f.txt")',
+      },
+    ],
+  },
+);
+
+testCases(
+  "S3_BUCKET and S3_ENDPOINT in the environment: S3_BUCKET is a bucket option",
+  { S3_BUCKET: "env-bucket", S3_ENDPOINT: aws.endpoint },
+  {
+    "path style": [
+      {},
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/env-bucket/dir/f.txt",
+        bucket: "env-bucket",
+        file: 'S3Ref ("env-bucket/dir/f.txt")',
+        client: 'S3Client ("env-bucket")',
+      },
+    ],
+    "virtual-hosted style": [
+      { client: virtualHosted },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "env-bucket",
+        file: 'S3Ref ("prod-bucket/dir/f.txt")',
+        client: 'S3Client ("prod-bucket")',
+      },
+    ],
+    "virtual-hosted style, endpoint option with a host that names no bucket": [
+      { client: { ...virtualHosted, endpoint: "https://files.example.com" } },
+      {
+        url: "files.example.com/dir/f.txt",
+        bucket: "env-bucket",
+        file: 'S3Ref ("env-bucket/dir/f.txt")',
+        client: 'S3Client ("env-bucket")',
+      },
+    ],
+    "Bun.s3.file(), virtual-hosted style": [
+      { via: "Bun.s3.file", client: virtualHosted },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "env-bucket",
+        file: 'S3Ref ("prod-bucket/dir/f.txt")',
+      },
+    ],
+  },
+);

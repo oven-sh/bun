@@ -20,37 +20,37 @@ const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 const attempt = f => { try { return f(); } catch (error) { return error.constructor.name; } };
 const thrownBy = f => { try { f(); return "nothing"; } catch (error) { return error.constructor.name; } };
 
-class Context {
-  #raw;
-  #request;
-  env = {};
-  #variables;
-  finalized = false;
-  error;
-  #status = 200;
-  #headers;
-  #path;
-  constructor(raw, options) {
-    this.#raw = raw;
-    if (options) {
-      this.env = options.env;
-      this.#path = options.path;
+class Locker {
+  opened = false;
+  #place;
+  #weight = 40;
+  #owner;
+  note;
+  #guest;
+  tags = {};
+  #seal;
+  #keys;
+  constructor(owner, given) {
+    if (given) {
+      this.tags = given.tags;
+      this.#place = given.place;
     }
+    this.#owner = owner;
   }
-  #respond(body, type) { return this.#status + " " + type + " " + body + " " + this.#path + " " + this.#raw; }
-  get #kind() { return this.#headers ? "with headers" : "bare"; }
-  set #kind(value) { this.#headers = value; }
-  text = body => this.#respond(body, "text");
-  json = body => this.#respond(JSON.stringify(body), "json");
-  status = status => { this.#status = status; return this; };
-  header = value => { this.#kind = value; return this.#kind; };
-  kind = () => this.#kind;
-  static has(object) { return [#raw in object, #respond in object, #kind in object, #path in object].join(); }
-  static assignToMethod(object) { object.#respond = 1; }
+  get #state() { return this.#seal ? "sealed" : "bare"; }
+  set #state(wax) { this.#seal = wax; }
+  #told(what, how) { return how + ": " + what + " of " + this.#owner + " at " + this.#place + ", " + this.#weight; }
+  state = () => this.#state;
+  sealed = wax => { this.#state = wax; return this.#state; };
+  shown = what => this.#told(what, "shown");
+  listed = things => this.#told(JSON.stringify(things), "listed");
+  weighs = weight => { this.#weight = weight; return this; };
+  static has(object) { return [#owner in object, #told in object, #state in object, #place in object].join(); }
+  static storeIntoMethod(object) { object.#told = 1; }
 }
-const describe = c => Object.keys(c).join() + " | " + JSON.stringify(c) + " | " + c.text("a") + " | " + c.status(201).json({ b: 1 }) + " | " + c.kind() + " " + c.header(1) + " | " + Context.has(c);
-const env = { name: "env" };
-const make = i => new Context("raw" + (i & 1), i & 2 ? { env, path: "/p" } : undefined);
+const describe = l => Object.keys(l).join() + " | " + JSON.stringify(l) + " | " + l.shown("a") + " | " + l.weighs(51).listed({ b: 1 }) + " | " + l.state() + " " + l.sealed(1) + " | " + Locker.has(l);
+const tags = { name: "tags" };
+const make = i => new Locker("owner" + (i & 1), i & 2 ? { tags, place: "row" } : undefined);
 const seen = new Set();
 const atNone = countsSoFar();
 for (let i = 0; i < 60; i++) seen.add(describe(make(i)));
@@ -69,7 +69,7 @@ if (calls >= 100) console.log("1,000 objects were made with " + calls + " calls 
 collect();
 console.log(describe(make(3)));
 console.log(JSON.stringify(Object.getOwnPropertyDescriptors(make(0)), (key, value) => typeof value === "function" ? "function " + value.name : value));
-console.log(Reflect.ownKeys(make(0)).length, make(0).text !== make(0).text, thrownBy(() => Context.assignToMethod(make(0))), thrownBy(() => Context.assignToMethod({})), Context.has({}));
+console.log(Reflect.ownKeys(make(0)).length, make(0).shown !== make(0).shown, thrownBy(() => Locker.storeIntoMethod(make(0))), thrownBy(() => Locker.storeIntoMethod({})), Locker.has({}));
 
 // The object comes from somewhere else: a base class that returns what it is handed.
 class Returns { constructor(object) { return object; } }
@@ -174,9 +174,9 @@ for (let i = 0; i < 200; i++) total += new Many().sum();
 console.log(total);
 
 // The prototype changes under a class whose objects have been made many times.
-Object.defineProperty(Context.prototype, "finalized", { set(value) { throw new Error("a definition calls no setter"); }, configurable: true });
+Object.defineProperty(Locker.prototype, "opened", { set(value) { throw new Error("a definition calls no setter"); }, configurable: true });
 console.log(describe(make(3)));
-Object.setPrototypeOf(Context.prototype, { get error() { return "inherited"; } });
-console.log(describe(make(2)), make(2).error);
+Object.setPrototypeOf(Locker.prototype, { get note() { return "inherited"; } });
+console.log(describe(make(2)), make(2).note);
 collect();
 console.log(describe(make(1)));

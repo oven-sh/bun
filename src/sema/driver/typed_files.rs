@@ -157,6 +157,16 @@ fn parse<'s>(
     } else {
         ScriptKind::Ts
     };
+    parse_as(kind, session, atoms, path, text)
+}
+
+fn parse_as<'s>(
+    kind: ScriptKind,
+    session: &'s Session,
+    atoms: &Interner<'s>,
+    path: &[u8],
+    text: &[u8],
+) -> Result<File<'s>, TypedFilesError> {
     let file = bun_sema_parser::summarize_as(
         Dialect::default(),
         session.arena(),
@@ -691,6 +701,39 @@ impl<'a, 's> Syntax<'a, 's> {
                 }),
         );
         lists
+    }
+
+    fn type_arguments_in_expressions(&self) -> Vec<u32> {
+        let file = self.file;
+        let lists = file.exprs.iter().filter_map(|expr| match expr.kind {
+            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
+                Some(file[call].type_args)
+            }
+            ExprKind::Instantiation { type_args, .. } => Some(type_args),
+            _ => None,
+        });
+        let mut starts: Vec<u32> = lists
+            .filter_map(|list| Some(self.type_arguments_span(file.list_at(list))?.0))
+            .collect();
+        starts.sort_unstable();
+        starts
+    }
+
+    fn comparisons(&self, sorted_operators: Option<&[u32]>) -> Vec<(u32, u32)> {
+        let file = self.file;
+        let comparisons = (0..file.exprs.len()).filter_map(|index| {
+            let expr = ExprId(index as u32);
+            let ExprKind::Binary { op, left, right } = file[expr].kind else {
+                return None;
+            };
+            let (start, end) = self.outer_span(left);
+            let is_wanted = match sorted_operators {
+                Some(operators) => operators.binary_search(&self.after_trivia(end)).is_ok(),
+                None => matches!(op, BinOp::Lt) && self.parentheses(expr).is_empty(),
+            };
+            is_wanted.then(|| (start, self.outer_span(right).1))
+        });
+        comparisons.collect()
     }
 
     fn missing_line_breaks(&self) -> Vec<u32> {
@@ -1296,6 +1339,12 @@ impl Mappings {
         }
         entries.shared_sort_by_key(|entry| entry.0);
         Ok(Mappings { entries })
+    }
+
+    fn move_behind(&mut self, sorted_offsets: &[u32]) {
+        for entry in &mut self.entries {
+            entry.0 += sorted_offsets.partition_point(|&offset| offset <= entry.0) as u32;
+        }
     }
 
     fn original(&self, generated: u32) -> Option<(u32, u32)> {
@@ -2830,6 +2879,52 @@ fn link(
     linked
 }
 
+fn with_comparisons_in_parentheses<'s>(
+    session: &'s Session,
+    atoms: &Interner<'s>,
+    path: &[u8],
+    javascript: &[u8],
+    mappings: &mut Mappings,
+) -> Result<(Vec<u8>, File<'s>), TypedFilesError> {
+    let typescript_path = [path, b".ts"].concat();
+    let mut text = javascript.to_vec();
+    loop {
+        let as_typescript = parse(session, atoms, &typescript_path, &text);
+        let type_arguments = as_typescript.as_ref().ok().map(|file| {
+            let syntax = Syntax { file, text: &text };
+            syntax.type_arguments_in_expressions()
+        });
+        if type_arguments.as_ref().is_some_and(Vec::is_empty) {
+            return Ok((text, as_typescript?));
+        }
+        let as_javascript = parse_as(ScriptKind::Js, session, atoms, path, &text)?;
+        let comparisons = Syntax {
+            file: &as_javascript,
+            text: &text,
+        }
+        .comparisons(type_arguments.as_deref());
+        if comparisons.is_empty() {
+            return Err(TypedFilesError::NotTypeScript {
+                path: typescript_path,
+                offset: match as_typescript {
+                    Err(TypedFilesError::NotTypeScript { offset, .. }) => offset,
+                    _ => type_arguments.map_or(0, |starts| starts[0]),
+                },
+            });
+        }
+        let mut insertions = Insertions { list: Vec::new() };
+        for &(start, end) in &comparisons {
+            insertions.add(start, Order::Open(0), b"(".to_vec());
+            insertions.add(end, Order::Close(0), b")".to_vec());
+        }
+        let ends = comparisons.iter().flat_map(|&(start, end)| [start, end]);
+        let mut offsets: Vec<u32> = ends.collect();
+        offsets.sort_unstable();
+        mappings.move_behind(&offsets);
+        text = insertions.apply(&text);
+    }
+}
+
 fn add_types(
     path: &[u8],
     javascript: &[u8],
@@ -2840,7 +2935,9 @@ fn add_types(
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let mut mappings = Mappings::decode(mappings, javascript, sources)?;
-    let mut output_file = parse(&session, &atoms, &[path, b".ts"].concat(), javascript)?;
+    let (javascript, mut output_file) =
+        with_comparisons_in_parentheses(&session, &atoms, path, javascript, &mut mappings)?;
+    let javascript = &javascript[..];
     let line_breaks = Syntax {
         file: &output_file,
         text: javascript,
@@ -2852,9 +2949,7 @@ fn add_types(
     }
     let javascript = &insertions.apply(javascript)[..];
     if !line_breaks.is_empty() {
-        for entry in &mut mappings.entries {
-            entry.0 += line_breaks.partition_point(|&offset| offset <= entry.0) as u32;
-        }
+        mappings.move_behind(&line_breaks);
         output_file = parse(&session, &atoms, &[path, b".ts"].concat(), javascript)?;
     }
     let output = Syntax {
@@ -3001,6 +3096,7 @@ fn add_types(
     transfer.type_enum_and_namespace_objects();
     transfer.copy_statements();
     transfer.copy_directives();
+    transfer.load_what_javascript_loads();
     transfer.copy_members();
     transfer.finish()
 }
@@ -3524,6 +3620,36 @@ impl<'a> Transfer<'_, 'a, '_> {
                 );
                 insertions.add(end, Order::Close(end - start), suffix);
             }
+        }
+    }
+
+    fn load_what_javascript_loads(&mut self) {
+        let (javascript, output, file) = (self.javascript, self.output, self.output.file);
+        let nested = output.nested_names();
+        let used: FxHashSet<&[u8]> = (output.used_names())
+            .map(|at| output.word(at))
+            .filter(|name| !nested.contains(name))
+            .collect();
+        let imports = file.imports.iter();
+        for import in imports.filter(|import| !import.type_only && !import.is_deferred) {
+            let named = import.named.iter().map(|specifier| file[specifier].pos);
+            let default = import.default.is_some().then_some(import.default_pos);
+            let namespace = import.namespace.is_some().then_some(import.namespace_pos);
+            let is_bare = !import.has_named_imports && default.is_none() && namespace.is_none();
+            let mut names = named.chain(default).chain(namespace);
+            if is_bare || names.any(|at| used.contains(output.word(at))) {
+                continue;
+            }
+            let from = output.after_trivia(import.clause_end);
+            let specifier = output.after_trivia(output.token_end(from));
+            let statement = &file[import.stmt];
+            let loaded = &javascript[specifier as usize..statement.loc.end as usize];
+            let end: &[u8] = if loaded.ends_with(b";") { b" " } else { b"; " };
+            self.insertions.add(
+                statement.start,
+                Order::MemberStart,
+                [&b"import "[..], loaded, end].concat(),
+            );
         }
     }
 

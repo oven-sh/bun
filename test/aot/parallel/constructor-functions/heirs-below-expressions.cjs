@@ -3,29 +3,29 @@
 "use strict";
 const out = [];
 const show = (run) => { try { return String(run()); } catch (error) { return error.constructor.name; } };
-function Cursor(text) { this.text = text; this.pos = 0; this.type = "eof"; this.last = null; }
-Cursor.prototype.all = function () { let n = 0; while (this.pos < this.text.length) n += this.text.charCodeAt(this.pos++); this.type = "end"; return n; };
+function Cursor(words) { this.words = words; this.mark = 0; this.mood = "new"; this.past = null; }
+Cursor.prototype.all = function () { let n = 0; while (this.mark < this.words.length) n += this.words.charCodeAt(this.mark++); this.mood = "end"; return n; };
 Cursor.prototype.kind = function () { return "cursor"; };
 const registry = new Map([["cursor", Cursor]]), lib = { tools: {} };
 const found = registry.get("cursor"); lib.tools.Cursor = registry.get("cursor");
 let chosen = null; if (process.argv.length > 0) chosen = [found][0];
 const util = require("util");
-function inherits(child, parent) { child.super_ = parent; child.prototype = Object.create(parent.prototype, { constructor: { value: child, enumerable: false, writable: true, configurable: true } }); }
+function under(child, parent) { const own = { configurable: true, value: child, writable: true }; child.prototype = Object.create(parent.prototype, { constructor: own }); child.above = parent; }
 
-function First(text) { found.call(this, text); this.one = 1; }
+function First(words) { found.call(this, words); this.one = 1; }
 First.prototype = Object.create(found.prototype); First.prototype.constructor = First;
-function Second(text) { lib.tools.Cursor.apply(this, arguments); this.two = [2]; }
+function Second(words) { lib.tools.Cursor.apply(this, arguments); this.two = [2]; }
 util.inherits(Second, lib.tools.Cursor);
-function Third(text) { this.three = 3; chosen.call(this, text); }
-inherits(Third, chosen); Third.prototype.kind = function () { return "third " + chosen.prototype.kind.call(this); };
-function Fourth(text) { const self = found.call(this, text) || this; self.four = 4; return self; }
+function Third(words) { this.three = 3; chosen.call(this, words); }
+under(Third, chosen); Third.prototype.kind = function () { return "third " + chosen.prototype.kind.call(this); };
+function Fourth(words) { const self = found.call(this, words) || this; self.four = 4; return self; }
 Object.setPrototypeOf(Fourth.prototype, found.prototype); Object.setPrototypeOf(Fourth, found);
-function Fifth(text) { found.call(this, text); this.five = 5; this.pos = 1; }
+function Fifth(words) { found.call(this, words); this.five = 5; this.mark = 1; }
 Fifth.prototype = new found(""); Fifth.prototype.constructor = Fifth;
 // Nothing above these is a constructor function of the program, or nothing at all.
 const { EventEmitter } = require("events"), streams = require("stream");
 function Emits() { EventEmitter.call(this); this.n = 0; } util.inherits(Emits, EventEmitter);
-function Writes() { streams.Writable.call(this); this.chunks = []; } inherits(Writes, streams.Writable); Writes.prototype._write = function (chunk, encoding, done) { this.chunks.push(String(chunk)); done(); };
+function Writes() { streams.Writable.call(this); this.chunks = []; } under(Writes, streams.Writable); Writes.prototype._write = function (chunk, encoding, done) { this.chunks.push(String(chunk)); done(); };
 function Bare(a) { this.a = a; } Bare.prototype = Object.create(null); Bare.prototype.get = function () { return this.a; };
 function Root(a) { this.a = a; this.b = 1; } Root.prototype = Object.create(Object.prototype); Root.prototype.sum = function () { return this.a + this.b; };
 const literal = { prototype: { where() { return "literal" + this.a; } } };
@@ -38,9 +38,9 @@ out.push(total);
 for (const C of classes) {
   const o = new C("xyz");
   out.push(C.name, JSON.stringify(o), o.all(), o.kind(), Object.keys(o).join(), o instanceof Cursor, o instanceof C, Object.getPrototypeOf(o) === C.prototype, o.constructor === C);
-  o.text = 5; o.pos = 1.5; o.type = { t: 1 }; delete o.last; o.late = 1;
+  o.words = 5; o.mark = 1.5; o.mood = { t: 1 }; delete o.past; o.late = 1;
   const keys = []; for (const key in o) keys.push(key);
-  out.push(keys.join(), JSON.stringify(o), "last" in o, JSON.stringify({ ...o }), show(() => Object.freeze(o).all()));
+  out.push(keys.join(), JSON.stringify(o), "past" in o, JSON.stringify({ ...o }), show(() => Object.freeze(o).all()));
 }
 const e = new Emits(); e.on("x", function (v) { this.n += v; }); e.emit("x", 3); e.emit("x", 4); out.push(e.n, e instanceof EventEmitter, Object.keys(e).includes("n"));
 const w = new Writes(); w.write("p"); w.write("q"); out.push(w.chunks.join(), w instanceof streams.Writable);

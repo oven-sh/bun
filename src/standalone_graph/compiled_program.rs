@@ -1652,7 +1652,7 @@ impl StandaloneModuleGraph {
         found.is_some_and(|found| found.size_without_bytes.is_some())
     }
 
-    fn find_file_record(&self, key: &[u8]) -> Option<FoundForFileSystemAlone> {
+    pub(crate) fn find_file_record(&self, key: &[u8]) -> Option<FoundForFileSystemAlone> {
         let found = self.find_for_file_system_alone(key);
         found.or_else(|| self.find_record_above_root(key))
     }

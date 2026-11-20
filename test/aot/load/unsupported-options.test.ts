@@ -65,7 +65,6 @@ const accepted = [
     "--footer=/* a footer */",
     "--format=esm",
     "--target=bun",
-    "--bytecode",
     "--bytecode-depth=1",
     "--bytecode-order=app.order",
     "--splitting",

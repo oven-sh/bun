@@ -176,6 +176,57 @@ describe("the global of a node:vm context compares by its properties", () => {
   });
 });
 
+// JavaScriptCore keeps, in a TypeError that it makes, the type of the value that the operation failed on.
+// It drops the type when it quotes the failed code in the message. These two TypeErrors have no code to quote.
+describe("a TypeError from the engine equals a TypeError with its message", () => {
+  // The job queue calls Object.keys, so no JavaScript frame made the call.
+  async function rejectedByAHostFunction() {
+    return (await Promise.resolve<any>(undefined)
+      .then(Object.keys)
+      .catch(error => error)) as TypeError;
+  }
+
+  function thrownWithoutFrames() {
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
+    try {
+      (undefined as any).property;
+    } catch (error) {
+      return error as TypeError;
+    } finally {
+      Error.stackTraceLimit = limit;
+    }
+    throw new Error("unreachable");
+  }
+
+  const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+  const entryPoints: [name: string, equal: (a: unknown, b: unknown) => void][] = [
+    ["Bun.deepEquals", (a, b) => expect(deepEquals(a, b)).toBe(true)],
+    ["Bun.deepEquals strict", (a, b) => expect(deepEquals(a, b, true)).toBe(true)],
+    ["Bun.deepEquals strict, skipPrototype", (a, b) => expect(deepEquals(a, b, true, true)).toBe(true)],
+    ["util.isDeepStrictEqual", (a, b) => expect(isDeepStrictEqual(a, b)).toBe(true)],
+    ["util.isDeepStrictEqual, skipPrototype", (a, b) => expect(isDeepStrictEqual(a, b, true as any)).toBe(true)],
+    ["assert.deepEqual", (a, b) => assert.deepEqual(a, b)],
+    ["assert.deepStrictEqual", (a, b) => assert.deepStrictEqual(a, b)],
+    ["toEqual", (a, b) => expect(a).toEqual(b)],
+    ["toStrictEqual", (a, b) => expect(a).toStrictEqual(b)],
+  ];
+
+  describe.each(entryPoints)("%s", (_, equal) => {
+    it.each([
+      ["a host function that the job queue called", rejectedByAHostFunction],
+      ["code that ran with Error.stackTraceLimit = 0", thrownWithoutFrames],
+    ])("for a TypeError from %s", async (_, make) => {
+      const thrown = await make();
+      expect(thrown).toBeInstanceOf(TypeError);
+      const twin = new TypeError(thrown.message);
+      equal(thrown, twin);
+      equal(twin, thrown);
+      equal({ nested: [thrown] }, { nested: [twin] });
+    });
+  });
+});
+
 // The cases documented at https://bun.sh/docs/api/utils#bun-deepequals as the
 // differences between the default and strict modes.
 describe("Bun.deepEquals strict mode", () => {

@@ -109,6 +109,26 @@ function argumentsObject(...values: unknown[]) {
   )(...values);
 }
 
+// JavaScriptCore keeps, in a TypeError that it makes, the type of the value that the operation failed on.
+// It drops the type when it quotes the failed code in the message. These two TypeErrors have no code to quote.
+// The job queue calls Object.keys, so no JavaScript frame made the call.
+const rejectedByAHostFunction: TypeError = await Promise.resolve<any>(undefined)
+  .then(Object.keys)
+  .catch(error => error);
+
+function thrownWithoutFrames() {
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 0;
+  try {
+    (undefined as any).property;
+  } catch (error) {
+    return error as TypeError;
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
+  throw new Error("unreachable");
+}
+
 const ecKeys = [generateKeyPairSync("ec", { namedCurve: "P-256" }), generateKeyPairSync("ec", { namedCurve: "P-256" })];
 const rsaPublicKey = generateKeyPairSync("rsa", { modulusLength: 1024 }).publicKey;
 const secretCryptoKey = (
@@ -681,6 +701,20 @@ const cases: Case[] = [
     b: () => new Error("y"),
     strict: false,
     loose: false,
+  },
+  {
+    name: "a TypeError that a host function threw to the job queue and a TypeError with its message",
+    a: () => rejectedByAHostFunction,
+    b: () => new TypeError(rejectedByAHostFunction.message),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a TypeError thrown with no frames and a TypeError with its message",
+    a: () => thrownWithoutFrames(),
+    b: () => new TypeError(thrownWithoutFrames().message),
+    strict: true,
+    loose: true,
   },
   {
     name: "an Error and a TypeError",

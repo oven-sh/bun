@@ -1392,9 +1392,7 @@ export const linkerFlags: Flag[] = [
       // stat-family inline → real symbol (2.33)
       "fstat",
       "fstat64",
-      "fstatat",
       "fstatat64",
-      "mknod",
       // syscall wrappers (2.27/2.28)
       "copy_file_range",
       "memfd_create",

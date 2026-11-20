@@ -43,8 +43,6 @@ interface NativeReadable extends $Node.Readable {
 }
 
 interface NativePtr {
-  onClose: () => void;
-  onDrain: (chunk: any) => void;
   start: (highWaterMark: number) => number;
   drain: () => any;
   pull: (view: any, closer: any) => any;

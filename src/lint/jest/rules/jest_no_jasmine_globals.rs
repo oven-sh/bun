@@ -68,7 +68,7 @@ impl NoJasmineGlobals {
                 && let ExprKind::Number(number) = value.kind()
                 && !value.is_parenthesized()
             {
-                report.fix(|fixer| fixer.replace(expr, format!("jest.setTimeout({number})")));
+                report.fix_where_safe(|| jest::has_value(b"jest", target), |fixer| fixer.replace(expr, format!("jest.setTimeout({number})")));
             }
         }
     }
@@ -84,7 +84,7 @@ impl NoJasmineGlobals {
                 b"any" | b"anything" | b"arrayContaining" | b"objectContaining" | b"stringMatching" => {
                     (report.data("what", [b"`".as_slice(), property_name.bytes(), b"`".as_slice()].concat()))
                         .data("api", [b"expect.".as_slice(), property_name.bytes()].concat())
-                        .fix(|fixer| fixer.replace(object, "expect"))
+                        .fix_where_safe(|| jest::has_value(b"expect", object), |fixer| fixer.replace(object, "expect"))
                 }
                 b"addMatchers" | b"createSpy" => {
                     report

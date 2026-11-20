@@ -384,8 +384,10 @@ pub(crate) mod prefer_to_have_been_called_times {
             && name.is("mock")
             && let Some(mocked) = mock.object()
         {
-            ctx.report(possible_jest_node.node, PREFER_TO_HAVE_BEEN_CALLED_TIMES)
-                .fix(|fixer| {
+            let call = possible_jest_node.node;
+            let has_value = || parsed_expect_call.writes_expect_with_value(ctx.runner, call);
+            ctx.report(call, PREFER_TO_HAVE_BEEN_CALLED_TIMES)
+                .fix_where_safe(has_value, |fixer| {
                     let (expect, rest) = parsed_expect_call.expect_prefix_and_suffix(ctx.runner);
                     let mut code = [expect, b"(".as_slice(), outer_text(mocked), rest].concat();
                     for modifier in parsed_expect_call.modifiers() {
@@ -435,7 +437,8 @@ pub(crate) mod prefer_to_have_length {
             && is_equality_matcher(matcher)
             && let Some(measured) = static_mem_expr.object()
         {
-            ctx.report(matcher.span, USE_TO_HAVE_LENGTH).fix(|fixer| {
+            let has_value = || parsed_expect_call.writes_expect_with_value(ctx.runner, node);
+            (ctx.report(matcher.span, USE_TO_HAVE_LENGTH)).fix_where_safe(has_value, |fixer| {
                 let file = fixer.file();
                 let after_matcher = Span::after(matcher.span, node.span().end);
                 let open_paren = find_next_token_within(file, after_matcher, b"(")?;

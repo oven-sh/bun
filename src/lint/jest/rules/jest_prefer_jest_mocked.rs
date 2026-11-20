@@ -35,7 +35,7 @@ impl Rule for PreferJestMocked {
         {
             let report = cx.report(node, USE_JEST_MOCKED);
             if can_fix(node) {
-                report.fix(|fixer| {
+                report.fix_where_safe(|| jest::has_value(b"jest", node), |fixer| {
                     fixer.replace(node, [b"jest.mocked(".as_slice(), get_inner_expression(expr).text(), b")".as_slice()].concat())
                 });
             }

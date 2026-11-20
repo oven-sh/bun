@@ -58,6 +58,7 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
                 .help_with(|| format!("Substitute the assertion with `{}`.", std::str::from_utf8(&code).unwrap_or_default())),
             Runner::Jest | Runner::Vitest => ctx.report(possible_jest_node.node, PREFER_EXPECT_TYPE_OF).data("code", code.clone()),
         };
-        report.fix(|fixer| fixer.replace(possible_jest_node.node, code));
+        let has_value = || expect_call.writes_expect_with_value(ctx.runner, possible_jest_node.node);
+        report.fix_where_safe(has_value, |fixer| fixer.replace(possible_jest_node.node, code));
     }
 }

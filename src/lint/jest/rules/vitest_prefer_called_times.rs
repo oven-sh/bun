@@ -38,7 +38,8 @@ fn run<'a>(jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         Some(b"toHaveBeenCalledOnce") => "toHaveBeenCalledTimes",
         _ => return,
     };
-    ctx.report(jest_node.node, PREFER_CALLED_TIMES).fix(|fixer| {
+    let has_value = || parsed_expect_call.writes_expect_with_value(ctx.runner, jest_node.node);
+    ctx.report(jest_node.node, PREFER_CALLED_TIMES).fix_where_safe(has_value, |fixer| {
         let file = fixer.file();
         let expect_argument = parsed_expect_call.expect_arguments.and_then(List::first);
         let (expect, rest) = parsed_expect_call.expect_prefix_and_suffix(ctx.runner);

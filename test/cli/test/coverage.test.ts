@@ -1558,3 +1558,125 @@ test("reports an error for a coverage directory longer than the path buffer", as
   expect(stderr).toContain("ENAMETOOLONG: File name too long: Failed to write lcov.info");
   expect(exitCode).toBe(1);
 });
+
+describe("coverageThreshold is a fraction from 0 to 1", () => {
+  // The test calls one of the three functions of sum.ts: 33.33% function coverage.
+  async function run(bunfig: string, args: string[] = []) {
+    using dir = tempDir("coverage-threshold-range", {
+      "bunfig.toml": bunfig,
+      "sum.ts": `export function sum(a: number, b: number) { return a + b; }
+export function subtract(a: number, b: number) { return a - b; }
+export function multiply(a: number, b: number) { return a * b; }
+`,
+      "sum.test.ts": `
+        import { test, expect } from "bun:test";
+        import { sum } from "./sum";
+        test("sum", () => { expect(sum(1, 2)).toBe(3); });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const output = stdout + stderr;
+    return {
+      rangeError: stderr.match(/^error: (test\.coverageThreshold.*)$/m)?.[1],
+      ranTests: output.includes("(pass) sum"),
+      printedTable: output.includes("% Funcs"),
+      exitCode,
+      stderr: normalizeBunSnapshot(stderr, dir),
+    };
+  }
+  const rangeError = (key: string, value: string) => `${key} must be a fraction between 0 and 1, got ${value}`;
+
+  test.concurrent("the error points at the value", async () => {
+    const { stderr, exitCode } = await run(`[test]\ncoverage = true\ncoverageThreshold = 10\n`);
+    expect(stderr).toMatchInlineSnapshot(`
+"3 | coverageThreshold = 10
+                        ^
+error: test.coverageThreshold must be a fraction between 0 and 1, got 10
+    at <dir>/bunfig.toml:3:21
+
+note: use 0.1 for 10%
+
+Invalid Bunfig: failed to load bunfig"
+`);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent.each([
+    ["70", "test.coverageThreshold", "70"],
+    ["1.0000001", "test.coverageThreshold", "1.0000001"],
+    ["inf", "test.coverageThreshold", "inf"],
+    ["nan", "test.coverageThreshold", "NaN"],
+    ["-1", "test.coverageThreshold", "-1"],
+    ["{ lines = 80 }", "test.coverageThreshold.lines", "80"],
+    ["{ functions = 80 }", "test.coverageThreshold.functions", "80"],
+    ["{ lines = 0.5, functions = 50 }", "test.coverageThreshold.functions", "50"],
+  ])("coverage = true rejects coverageThreshold = %s", async (threshold, key, value) => {
+    expect(await run(`[test]\ncoverageThreshold = ${threshold}\ncoverage = true\n`)).toMatchObject({
+      rangeError: rangeError(key, value),
+      ranTests: false,
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent.each([["--coverage"], ["--coverage-reporter=lcov"]])(
+    "%s rejects coverageThreshold = 70",
+    async flag => {
+      expect(await run(`[test]\ncoverageThreshold = 70\n`, [flag])).toMatchObject({
+        rangeError: rangeError("test.coverageThreshold", "70"),
+        ranTests: false,
+        exitCode: 1,
+      });
+    },
+  );
+
+  test.concurrent("rejects coverageThreshold = 70 when the coverage report has no files", async () => {
+    const bunfig = `[test]
+coverage = true
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = "sum.ts"
+coverageThreshold = 70
+`;
+    expect(await run(bunfig)).toMatchObject({
+      rangeError: rangeError("test.coverageThreshold", "70"),
+      ranTests: false,
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent.each([
+    ["0", 0],
+    ["0.2", 0],
+    ["1", 1],
+    ["{ lines = 0.3, functions = 0.3 }", 0],
+    ["{ lines = 1.0, functions = 1.0 }", 1],
+    // Nothing compares `statements` today, so its range is not checked.
+    ["{ statements = 50, lines = 0.1, functions = 0.1 }", 0],
+  ])("coverage = true accepts coverageThreshold = %s", async (threshold, exitCode) => {
+    expect(await run(`[test]\ncoverage = true\ncoverageThreshold = ${threshold}\n`)).toMatchObject({
+      rangeError: undefined,
+      ranTests: true,
+      printedTable: true,
+      exitCode,
+    });
+  });
+
+  test.concurrent.each([
+    ["coverage = false", `[test]\ncoverage = false\ncoverageThreshold = 70\n`],
+    ["no coverage key", `[test]\ncoverageThreshold = 70\n`],
+    ["no coverage key and an object", `[test]\ncoverageThreshold = { lines = 70, functions = 80 }\n`],
+  ])("a run without coverage ignores coverageThreshold = 70: %s", async (_, bunfig) => {
+    expect(await run(bunfig)).toMatchObject({
+      rangeError: undefined,
+      ranTests: true,
+      printedTable: false,
+      exitCode: 0,
+    });
+  });
+});

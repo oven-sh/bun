@@ -1470,6 +1470,27 @@ impl Log {
         )
     }
 
+    #[cold]
+    pub fn add_error_fmt_opts_with_notes(
+        &mut self,
+        args: fmt::Arguments<'_>,
+        opts: AddErrorOptions<'_>,
+        notes: Box<[Data]>,
+    ) {
+        let text = alloc_print(args);
+        self.add_formatted_msg(
+            Kind::Err,
+            opts.source,
+            Range {
+                loc: opts.loc,
+                len: opts.len,
+            },
+            text,
+            notes,
+            opts.redact_sensitive_information,
+        )
+    }
+
     /// Use a bun.sys.Error's message in addition to some extra context.
     pub fn add_sys_error(&mut self, e: &bun_sys::Error, args: fmt::Arguments<'_>) {
         let Some((tag_name, sys_errno)) = e.get_error_code_tag_name() else {

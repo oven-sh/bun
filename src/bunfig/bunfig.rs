@@ -224,6 +224,25 @@ impl<'a> Parser<'a, '_> {
         Err(crate::Error::InvalidBunfig)
     }
 
+    fn add_error_format_with_note(
+        &mut self,
+        loc: bun_ast::Loc,
+        args: core::fmt::Arguments<'_>,
+        note: &'static [u8],
+    ) -> crate::Result<()> {
+        self.log.add_error_fmt_opts_with_notes(
+            args,
+            bun_ast::ErrorOpts {
+                source: Some(self.source),
+                loc,
+                redact_sensitive_information: true,
+                ..Default::default()
+            },
+            Box::new([bun_ast::range_data(None, bun_ast::Range::NONE, note)]),
+        );
+        Err(crate::Error::InvalidBunfig)
+    }
+
     fn expect_string(&mut self, expr: &Expr) -> crate::Result<()> {
         match &expr.data {
             ExprData::EString(_) => Ok(()),
@@ -250,6 +269,19 @@ impl<'a> Parser<'a, '_> {
             )?;
         }
         Ok(())
+    }
+
+    fn coverage_threshold(&mut self, expr: &Expr, key: &str) -> crate::Result<f64> {
+        self.expect(expr, ExprTag::ENumber)?;
+        let value = expr.as_number().expect("infallible: type checked");
+        if self.ctx.test_options.coverage.enabled && !(0.0..=1.0).contains(&value) {
+            self.add_error_format_with_note(
+                expr.loc,
+                format_args!("{key} must be a fraction between 0 and 1, got {value}"),
+                b"use 0.1 for 10%",
+            )?;
+        }
+        Ok(value)
     }
 
     fn expect(&mut self, expr: &Expr, token: ExprTag) -> crate::Result<()> {
@@ -646,8 +678,8 @@ impl<'a> Parser<'a, '_> {
 
                 if let Some(expr) = test.get(b"coverageThreshold") {
                     'outer: {
-                        if let ExprData::ENumber(n) = expr.data {
-                            let v = n.value();
+                        if let ExprData::ENumber(_) = expr.data {
+                            let v = self.coverage_threshold(&expr, "test.coverageThreshold")?;
                             self.ctx.test_options.coverage.fractions.functions = v;
                             self.ctx.test_options.coverage.fractions.lines = v;
                             self.ctx.test_options.coverage.fractions.stmts = v;
@@ -657,15 +689,16 @@ impl<'a> Parser<'a, '_> {
 
                         self.expect(&expr, ExprTag::EObject)?;
                         if let Some(functions) = expr.get(b"functions") {
-                            self.expect(&functions, ExprTag::ENumber)?;
-                            self.ctx.test_options.coverage.fractions.functions =
-                                functions.as_number().expect("infallible: type checked");
+                            self.ctx.test_options.coverage.fractions.functions = self
+                                .coverage_threshold(
+                                    &functions,
+                                    "test.coverageThreshold.functions",
+                                )?;
                             self.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
                         if let Some(lines) = expr.get(b"lines") {
-                            self.expect(&lines, ExprTag::ENumber)?;
                             self.ctx.test_options.coverage.fractions.lines =
-                                lines.as_number().expect("infallible: type checked");
+                                self.coverage_threshold(&lines, "test.coverageThreshold.lines")?;
                             self.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
                         if let Some(stmts) = expr.get(b"statements") {

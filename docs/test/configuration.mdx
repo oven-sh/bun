@@ -388,6 +388,8 @@ coverageThreshold = { lines = 0.9, functions = 0.8 }
 
 Setting a threshold makes `bun test` exit with code 1 when coverage is enabled and any file's line or function coverage is below it. Bun accepts the `statements` key but does not currently enforce it. The check applies with any coverage reporter.
 
+The single number, `lines` and `functions` are fractions from 0 to 1, so `0.1` means 10%. When coverage is enabled, one of these values outside that range is a configuration error and `bun test` does not run.
+
 #### Threshold Examples
 
 ```toml title="bunfig.toml" icon="settings"

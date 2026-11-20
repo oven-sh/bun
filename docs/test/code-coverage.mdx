@@ -52,6 +52,8 @@ coverageSkipTestFiles = false  # default true
 
 Set a coverage threshold in `bunfig.toml`. If your test suite does not meet or exceed it, `bun test` exits with a non-zero exit code.
 
+The single number, `lines` and `functions` are fractions from 0 to 1, so `0.1` means 10%. When coverage is enabled, one of these values outside that range is a configuration error and `bun test` does not run.
+
 ### Simple Threshold
 
 ```toml title="bunfig.toml" icon="settings"

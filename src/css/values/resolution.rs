@@ -1,17 +1,9 @@
 use crate::css_parser as css;
-use crate::css_parser::{CssResult as Result, Maybe, Parser, PrintErr, Printer, Token};
+use crate::css_parser::{CssResult as Result, Parser, PrintErr, Printer, Token};
 use crate::values::number::CSSNumber;
 
 /// A CSS `<resolution>` value.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    crate::generics::CssEql,
-    crate::generics::CssHash,
-    crate::generics::DeepClone,
-)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Resolution {
     /// A resolution in dots per inch.
     Dpi(CSSNumber),
@@ -24,9 +16,6 @@ pub enum Resolution {
 // ~toCssImpl
 
 impl Resolution {
-    // css.implementHash / css.implementEql — provided by
-    // `#[derive(CssHash, CssEql)]` above (f32-payload enum).
-
     pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Resolution> {
         // TODO: calc?
         let location = input.current_source_location();
@@ -42,22 +31,6 @@ impl Resolution {
             }};
         }
         Err(location.new_unexpected_token_error(tok))
-    }
-
-    pub(crate) fn try_from_token(token: &Token) -> Maybe<Resolution, ()> {
-        match token {
-            Token::Dimension(dim) => {
-                let value = dim.num.value;
-                let unit = dim.unit;
-                crate::match_ignore_ascii_case! { unit, {
-                    b"dpi" => Ok(Resolution::Dpi(value)),
-                    b"dpcm" => Ok(Resolution::Dpcm(value)),
-                    b"dppx" | b"x" => Ok(Resolution::Dppx(value)),
-                    _ => Err(()),
-                }}
-            }
-            _ => Err(()),
-        }
     }
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {

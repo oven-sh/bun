@@ -330,44 +330,39 @@ pub(crate) fn copy_file_range(
         && !copy_file_state.contains(LinuxCopyFileState::HAS_SEEN_EXDEV)
         && !copy_file_state.contains(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED)
     {
-        loop {
-            let rc = crate::linux::copy_file_range(in_, None, out, None, len, flags);
-            crate::syslog!("copy_file_range({}, {}, {}) = {}", in_, out, len, rc);
-            match crate::get_errno(rc) {
-                E::SUCCESS => return Ok(rc as usize),
-                // these may not be regular files, try fallback
-                E::EINVAL => {
-                    copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
-                }
-                // support for cross-filesystem copy added in Linux 5.3
-                // and even then, it is frequently not supported.
-                E::EXDEV => {
-                    copy_file_state.insert(LinuxCopyFileState::HAS_SEEN_EXDEV);
-                    copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
-                }
-                // syscall added in Linux 4.5, use fallback
-                // On Linux EOPNOTSUPP == ENOTSUP.
-                E::ENOTSUP | E::ENOSYS => {
-                    copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
-                    bun_core::scoped_log!(debug, "copy_file_range is NOT supported");
-                    CAN_USE_COPY_FILE_RANGE.store(-1, Ordering::Relaxed);
-                }
-                E::EINTR => continue,
-                _ => {
-                    // failed for some other reason
-                    copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
-                }
+        let rc = crate::linux::copy_file_range(in_, None, out, None, len, flags);
+        crate::syslog!("copy_file_range({}, {}, {}) = {}", in_, out, len, rc);
+        match crate::get_errno(rc) {
+            E::SUCCESS => return Ok(rc as usize),
+            // these may not be regular files, try fallback
+            E::EINVAL => {
+                copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
             }
-            break;
+            // support for cross-filesystem copy added in Linux 5.3
+            // and even then, it is frequently not supported.
+            E::EXDEV => {
+                copy_file_state.insert(LinuxCopyFileState::HAS_SEEN_EXDEV);
+                copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
+            }
+            // syscall added in Linux 4.5, use fallback
+            // On Linux EOPNOTSUPP == ENOTSUP.
+            E::ENOTSUP | E::ENOSYS => {
+                copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
+                bun_core::scoped_log!(debug, "copy_file_range is NOT supported");
+                CAN_USE_COPY_FILE_RANGE.store(-1, Ordering::Relaxed);
+            }
+            _ => {
+                // failed for some other reason
+                copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
+            }
         }
     }
 
-    while !copy_file_state.contains(LinuxCopyFileState::HAS_SENDFILE_FAILED) {
+    if !copy_file_state.contains(LinuxCopyFileState::HAS_SENDFILE_FAILED) {
         let rc = crate::linux::sendfile(out, in_, None, len);
         crate::syslog!("sendfile({}, {}, {}) = {}", in_, out, len, rc);
         match crate::get_errno(rc) {
             E::SUCCESS => return Ok(rc as usize),
-            E::EINTR => continue,
             // these may not be regular files, try fallback
             E::EINVAL => {
                 copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
@@ -387,7 +382,6 @@ pub(crate) fn copy_file_range(
                 copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
             }
         }
-        break;
     }
 
     if !copy_file_state.contains(LinuxCopyFileState::HAS_HINTED_SEQUENTIAL) {

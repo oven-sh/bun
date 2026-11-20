@@ -3203,6 +3203,8 @@ describe.concurrent("bin in the published manifest", () => {
     [{ bin: "cli.js\u0000" }, {}],
     [{ bin: { x: "cli.js", y: "cli.js\u0000", z: "..\u0000" } }, { x: "cli.js" }],
     [{ directories: { bin: "bins\u0000" } }, undefined],
+    [{ directories: { bin: ".Git" } }, undefined],
+    [{ directories: { bin: ".bun-pac\u212a.y.tmp" } }, undefined],
   ])("%j", async (fields, expected) => {
     let captured: any = null;
     using mock = Bun.serve({
@@ -3229,6 +3231,8 @@ describe.concurrent("bin in the published manifest", () => {
       write(join(packageDir, "cli.js"), "#!/usr/bin/env node\n"),
       write(join(packageDir, "lib", "a.js"), "module.exports = 1;"),
       write(join(packageDir, "bins", "a.js"), "#!/usr/bin/env node\n"),
+      write(join(packageDir, ".git", "a.js"), "#!/usr/bin/env node\n"),
+      write(join(packageDir, ".bun-pack.y.tmp", "a.js"), "#!/usr/bin/env node\n"),
     ]);
 
     const { err, exitCode } = await publish(env, packageDir);

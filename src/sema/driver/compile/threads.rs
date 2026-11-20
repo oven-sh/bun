@@ -475,6 +475,35 @@ mod tests {
     }
 
     #[test]
+    fn every_task_of_a_region_gets_a_thread() {
+        set_up_output();
+        let pool = pool_without_spare_threads();
+        for round in 0..300 {
+            let count = 1 + round % 4;
+            let barrier = std::sync::Barrier::new(count);
+            pool.each(&barrier, |it, (), _| _ = it.wait(), &mut vec![(); count]);
+        }
+    }
+
+    #[test]
+    fn regions_of_several_callers_with_more_tasks_than_threads() {
+        set_up_output();
+        let (pool, done) = (pool_without_spare_threads(), AtomicUsize::new(0));
+        pool.limit_threads(3);
+        std::thread::scope(|scope| {
+            for _ in 0..3 {
+                scope.spawn(|| {
+                    for round in 0..270 {
+                        let add = |it: &&AtomicUsize, (), _| _ = it.fetch_add(1, Ordering::Relaxed);
+                        pool.each(&done, add, &mut vec![(); round % 9]);
+                    }
+                });
+            }
+        });
+        assert_eq!(done.into_inner(), 3 * 30 * 36);
+    }
+
+    #[test]
     fn region_on_a_limited_pool_visits_each_index_once() {
         set_up_output();
         let pool = pool_without_spare_threads();

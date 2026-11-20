@@ -31,7 +31,7 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 ///   • jpeg/png/webp decode+encode → static codecs (bun_jpeg/bun_png/bun_webp).
 ///     Profiling on M-series found ImageIO no faster: Huffman/inflate
 ///     dominate and aren't AMX-amenable, and ImageIO bottoms out in stock
-///     libz vs our zlib-ng. Keeping these static also makes output bytes
+///     libz (measured against zlib-ng). Keeping these static also makes output bytes
 ///     and the `quality` scale match Linux.
 ///   • lanczos3 resize, rotate90, flip → vImage (AMX, ~3-6× the Highway
 ///     kernel on the geometry step).
@@ -267,7 +267,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<
         Format::Webp => webp::decode(bytes, max_pixels),
         // Static codecs cover everything we ship; profiling on M-series showed
         // ImageIO is no faster (for JPEG, Huffman is the
-        // bottleneck and isn't vectorisable; for PNG, zlib-ng beats ImageIO's
+        // bottleneck and isn't vectorisable; for PNG, zlib-ng beat ImageIO's
         // system libz). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
         // out of even that so behaviour is identical to Linux.

@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/hardened-zstd.test.ts": {
+    "default": 2000,
+    "asan": 8000
+  },
   "aot/what-a-build-says-is-written-at-once.test.ts": {
     "default": 60000,
     "asan": 240000

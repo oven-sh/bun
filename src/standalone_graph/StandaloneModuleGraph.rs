@@ -3044,20 +3044,17 @@ pub(crate) fn download_to_path(
             }
 
             {
+                use bun_zlib::{Inflater, inflate};
                 refresher.start(b"Decompressing", 0);
-                let gunzip_result = (|| -> crate::Result<()> {
-                    let mut gunzip = bun_zlib::ZlibReaderArrayList::init(
-                        compressed_archive_bytes.list.as_slice(),
-                        &mut tarball_bytes,
-                    )
-                    .map_err(|_| crate::Error::InvalidResponse)?;
-                    gunzip
-                        .read_all(true)
-                        .map_err(|_| crate::Error::InvalidResponse)?;
-                    Ok(())
-                })();
+                let status = Inflater::new(inflate::Container::ZlibOrGzip).inflate_to_vec(
+                    &mut compressed_archive_bytes.list.as_slice(),
+                    &mut tarball_bytes,
+                    usize::MAX,
+                );
                 refresher.end();
-                gunzip_result?;
+                if status != Ok(inflate::Status::StreamEnd) {
+                    return Err(crate::Error::InvalidResponse);
+                }
             }
             refresher.refresh();
 
@@ -3906,21 +3903,12 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 
         let offset = string_payload.len();
 
-        let bound = bun_zstd::compress_bound(utf8.len());
-        // `ZSTD_compressBound` returns an *error code* (a value near
-        // `usize::MAX`) when the input size exceeds `ZSTD_MAX_INPUT_SIZE`;
-        // feeding that to `Vec::reserve` below would abort with a capacity
-        // overflow instead of failing the build.
-        if bun_zstd::is_error(bound) {
-            return Err(crate::Error::SourceMapTooLarge);
-        }
-        string_payload.reserve(bound);
-        if let bun_zstd::Result::Err(err_msg) =
-            bun_zstd::compress_append(string_payload, utf8, Some(1))
-        {
+        // Not just what this one needs, as more follow.
+        string_payload
+            .reserve(bun_zstd::compress_bound(utf8.len()).ok_or(crate::Error::SourceMapTooLarge)?);
+        if let Err(err) = bun_zstd::compress_append(string_payload, utf8, 1) {
             Output::panic(format_args!(
-                "Unexpected error compressing sourcemap: {}",
-                bstr::BStr::new(err_msg.as_bytes())
+                "Unexpected error compressing sourcemap: {err}"
             ));
         }
 

@@ -1576,6 +1576,48 @@ it("prints an actionable error for a lockfile version newer than this build supp
   expect(await exited).toBe(0);
 });
 
+it("indents the caret under the printed excerpt when a one-line bun.lock has many warnings", async () => {
+  const count = 300;
+  const lock =
+    `{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "one-line-lockfile" } },\n  "packages": { ` +
+    Array.from({ length: count }, (_, i) => `"p${i}": ["p${i}@1.0.0", "", {}, "sha512-x"]`).join(", ") +
+    ` }\n}\n`;
+  using dir = tempDir("one-line-lockfile", {
+    "package.json": JSON.stringify({ name: "one-line-lockfile", dependencies: {} }),
+    "bun.lock": lock,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const lines = err.split(/\r?\n/);
+  const carets = lines.filter(line => /^ *\^$/.test(line));
+  expect(carets.length).toBe(count);
+
+  // Each caret points at the `"` that opens the bad integrity string in the
+  // excerpt above it. Before the fix it was padded to the column in the full
+  // line, so the caret lines alone grew quadratically with the entry count.
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^ *\^$/.test(lines[i])) continue;
+    const excerpt = lines[i - 1];
+    expect(excerpt).toMatch(/^4 \| /);
+    const caretAt = lines[i].indexOf("^");
+    expect(caretAt).toBeLessThan(excerpt.length);
+    expect(excerpt.slice(caretAt, caretAt + 8)).toBe('"sha512-');
+    // The line has 12,996 bytes, so the two warnings in its last 80 bytes get an excerpt too.
+    expect(excerpt.length).toBeLessThanOrEqual("4 | ".length + 120);
+  }
+  // Linear in the entry count: each warning prints an excerpt of at most 120 bytes.
+  expect(err.length).toBeLessThan(count * 500);
+  expect(exitCode).toBe(0);
+});
+
 // The parse errors of an ignored lockfile are dropped even when nothing prints them.
 it.concurrent("--silent ignores a bun.lock that fails to parse and writes a new one", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();

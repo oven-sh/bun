@@ -45,4 +45,90 @@ exports[`toThrowErrorMatchingSnapshot with a cause 1`] = `
 Cause: inner"
 `;
 
+exports[`toThrowErrorMatchingSnapshot with a cause that is a DOMException 1`] = `
+"outer
+Cause: inner"
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is a Proxy of an Error 1`] = `
+"outer
+Cause: inner"
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is a Proxy that is its own prototype for 500 calls, then answers Error.prototype 1`] = `
+"outer
+Cause: inner"
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is a Proxy whose getPrototypeOf trap answers Error.prototype 1`] = `
+"outer
+Cause: inner"
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is a Proxy whose getPrototypeOf trap throws 1`] = `"the matcher that threw took no entry"`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is a String object 1`] = `"outer"`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is a String object that inherits Error.prototype 1`] = `
+"outer
+Cause: "
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is a String object with a cause 1`] = `"outer"`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is a function that inherits Error.prototype 1`] = `
+"outer
+Cause: inner"
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is a plain object 1`] = `"outer"`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is a plain object with a cause 1`] = `"outer"`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is a string 1`] = `
+"outer
+Cause: inner"
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is an Error of another realm 1`] = `
+"outer
+Cause: inner"
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is an Error without a prototype 1`] = `
+"outer
+Cause: inner"
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is an instance of an ES5 class that inherits from Error 1`] = `
+"outer
+Cause: inner"
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is an object tagged Error 1`] = `"outer"`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is an object that inherits Error.prototype 1`] = `
+"outer
+Cause: inner"
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is an object that inherits Error.prototype, through .rejects and .resolves 1`] = `
+"outer
+Cause: inner"
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is an object that inherits Error.prototype, through .rejects and .resolves 2`] = `
+"outer
+Cause: inner"
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is an object that inherits the Error.prototype of another realm 1`] = `"outer"`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause that is the first of a chain 1`] = `
+"outer
+Cause: second
+Cause: third
+Cause: fourth"
+`;
+
 exports[`toThrowErrorMatchingSnapshot with a hint: the hint 1`] = `"hinted"`;

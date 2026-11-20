@@ -466,6 +466,72 @@ devTest("browser field is used", {
   },
 });
 
+devTest("browser console forwarding prints a key of an array that is not an array index", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const mid = [1, 2, 3];
+      mid[mid.length / 2] = "mid";
+      const numeric = { "": 1, "01": 2, "1.5": 3 };
+      console.log("drop-probe", mid, Object.assign([5, 6], numeric), numeric);
+      console.log("length-probe", Object.assign([5], { "1.5": 1, "01": 2 }));
+      console.log("range-probe", Object.assign([5], { "4294967295": "far", "-1": -1 }));
+      const long = new Array(150).fill(0);
+      long["120.5"] = "a";
+      long["099"] = "b";
+      console.log("long-probe", long);
+      console.log("nested-probe", { list: Object.assign([5, 6], { "1.5": 1 }) });
+      console.log("newline-probe", Object.assign([5], { "\\n": 1 }));
+      console.log("hole-probe", Object.assign([1, , , 4], { "01": 1, "1.5": 2 }));
+      console.log("label-probe", Object.assign([5], { "a b": 1, ok: 2 }), "xabcx".match(/abc/));
+    `,
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: {
+          "/": html,
+        },
+        development: {
+          console: true,
+        },
+        fetch(req) {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(
+      "drop-probe",
+      "length-probe",
+      "range-probe",
+      "long-probe",
+      "nested-probe",
+      "newline-probe",
+      "hole-probe",
+      "label-probe",
+    );
+    await dev.output.waitForLine(/\[browser\].*label-probe/);
+    const forwarded = dev.output.lines.filter(line => line.includes("[browser]")).map(line => Bun.stripANSI(line));
+    expect(forwarded).toEqual([
+      "[browser] drop-probe [ 1, 2, 3, '1.5': 'mid' ] [ 5, 6, '': 1, '01': 2, '1.5': 3 ] { '': 1, '01': 2, '1.5': 3 }",
+      "[browser] length-probe [ 5, '1.5': 1, '01': 2 ]",
+      "[browser] range-probe [ 5, '4294967295': 'far', '-1': -1 ]",
+      // The first 100 elements, then the rest as a count, then the named keys.
+      `[browser] long-probe [ ${Buffer.alloc(300, "0, ").toString()}... 50 more items, '120.5': 'a', '099': 'b' ]`,
+      "[browser] nested-probe { list: [ 5, 6, '1.5': 1 ] }",
+      "[browser] newline-probe [ 5, '\\n': 1 ]",
+      // Two holes and two named keys: the array has as many own keys as elements.
+      "[browser] hole-probe [ 1, empty, empty, 4, '01': 1, '1.5': 2 ]",
+      "[browser] label-probe [ 5, 'a b': 1, ok: 2 ] [ 'abc', index: 1, input: 'xabcx', groups: undefined ]",
+    ]);
+  },
+});
+
 devTest("browser console forwarding strips terminal control bytes", {
   files: {
     "index.html": emptyHtmlFile({

@@ -3877,6 +3877,8 @@ fn transpile_file<const DATA_ONLY: bool>(
 
             let aot_package_config = (jsc_vm.transpiler)
                 .with_mut(|t| t.find_aot_package_config(lr.path.text, concurrent_loader));
+            let extra_cjs_extensions =
+                (jsc_vm.transpiler.get().resolver.opts.extra_cjs_extensions).clone();
             return jsc_vm.transpiler_store.transpile(
                 jsc_vm,
                 global,
@@ -3886,6 +3888,7 @@ fn transpile_file<const DATA_ONLY: bool>(
                 concurrent_loader,
                 lr.package_json,
                 aot_package_config,
+                extra_cjs_extensions,
                 module_loader,
             );
         }

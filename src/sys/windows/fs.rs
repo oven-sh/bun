@@ -722,12 +722,14 @@ pub fn unlink(path: &ZStr) -> Maybe<()> {
     at_path(result, Tag::unlink, path)
 }
 
+fn remove_directory(name: &Name) -> Result<()> {
+    let options = w::FILE_DIRECTORY_FILE | w::FILE_OPEN_REPARSE_POINT;
+    delete(&win32(open_existing(name.parts(), w::DELETE, options))?)
+}
+
 /// [`crate::rmdir`] has other rules for paths and other errors.
 pub fn rmdir(path: &ZStr) -> Maybe<()> {
-    let result = name_of(path).and_then(|name| {
-        let options = w::FILE_DIRECTORY_FILE | w::FILE_OPEN_REPARSE_POINT;
-        delete(&win32(open_existing(name.parts(), w::DELETE, options))?)
-    });
+    let result = name_of(path).and_then(|name| remove_directory(&name));
     at_path(result, Tag::rmdir, path)
 }
 
@@ -773,9 +775,8 @@ pub fn junction(target: &ZStr, link: &ZStr) -> Maybe<()> {
                 JunctionError::TooLong => Win32Error::FILENAME_EXCED_RANGE,
             })
         })?;
-        let (root, name) = name.parts();
         let options = NtCreateFileOptions {
-            access_mask: w::GENERIC_WRITE | w::DELETE | w::SYNCHRONIZE,
+            access_mask: w::GENERIC_WRITE | w::SYNCHRONIZE,
             disposition: w::FILE_CREATE,
             options: w::FILE_DIRECTORY_FILE
                 | w::FILE_OPEN_REPARSE_POINT
@@ -784,9 +785,12 @@ pub fn junction(target: &ZStr, link: &ZStr) -> Maybe<()> {
             attributes: w::FILE_ATTRIBUTE_NORMAL,
             sharing_mode: 0,
         };
-        let directory = win32(NtCreateFile(root, name, options))?;
-        win32(nt::set_reparse_point(directory.as_raw_handle(), &data))
-            .inspect_err(|_| _ = delete(&directory))
+        let (root, relative) = name.parts();
+        let directory = win32(NtCreateFile(root, relative, options))?;
+        let result = win32(nt::set_reparse_point(directory.as_raw_handle(), &data));
+        // The share of WSL does not delete through the handle that created the directory.
+        drop(directory);
+        result.inspect_err(|_| _ = remove_directory(&name))
     });
     at_path(result, Tag::symlink, target).map_err(|error| error.with_dest(link.as_bytes()))
 }

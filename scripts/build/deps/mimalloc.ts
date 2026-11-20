@@ -95,7 +95,7 @@ export const mimalloc: Dependency = {
     commit: MIMALLOC_COMMIT,
   }),
 
-  patches: ["patches/mimalloc/pace-idle-sweeps.patch", "patches/mimalloc/purge-delay.patch"],
+  patches: ["patches/mimalloc/pace-idle-sweeps.patch"],
 
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───

@@ -576,7 +576,7 @@ test.skipIf(!isLinux || isASAN)(
             const held = rss();
             // transfer(0) frees the 8 MB here and now, no collection involved. They stay resident until they are purged.
             for (const array of arrays) array.buffer.transfer(0);
-            // Wait for the purge thread to start on them, which it does once the purge delay (100 ms here) has passed. A round in
+            // Wait for the purge thread to start on them, which it does once the purge delay (100 ms) has passed. A round in
             // which it was not seen at work says nothing about the two at once, so it does not count as passed.
             const deadline = performance.now() + 1000;
             let started = false;
@@ -587,7 +587,7 @@ test.skipIf(!isLinux || isASAN)(
           console.log(JSON.stringify(rounds));
         `,
       ],
-      env: { ...bunEnv, MIMALLOC_PURGE_DELAY: "100" },
+      env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",
     });

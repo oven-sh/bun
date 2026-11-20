@@ -111,6 +111,50 @@ struct Question {
     is_written_elsewhere: bool,
 }
 
+impl Question {
+    fn name_of_package(&self) -> Option<&[u8]> {
+        match (self.read_as, &self.names[..]) {
+            (ReadAs::Import | ReadAs::Require, [(name, None)]) => {
+                Some(&name[..]).filter(|name| bun_paths::is_package_path(name))
+            }
+            _ => None,
+        }
+    }
+}
+
+struct NameAsked {
+    file_name: Vec<u8>,
+    name: Vec<u8>,
+    is_require: bool,
+    keys_of_answer: Vec<Vec<u8>>,
+}
+
+/// What a load that may also get an unknown name finds by a name that the program writes.
+pub(crate) struct NameOfLoad {
+    pub asked_in: FileId,
+    pub name: Vec<u8>,
+    pub is_require: bool,
+    pub leads_to: FileId,
+}
+
+/// `path` lies in `node_modules/<the package of name>` beside the file or further up: no link leads there.
+fn lies_where_name_is_looked_for(file_name: &[u8], name: &[u8], path: &[u8]) -> bool {
+    let parts = if name.starts_with(b"@") { 2 } else { 1 };
+    let mut ends = (0..name.len()).filter(|&at| name[at] == b'/');
+    let package = &name[..ends.nth(parts - 1).unwrap_or(name.len())];
+    let folder = [&b"/node_modules/"[..], package, b"/"].concat();
+    let mut looked_up_to = 0;
+    while let Some(at) = strings::index_of(&path[looked_up_to..], &folder) {
+        let above = &path[..looked_up_to + at];
+        let below = file_name.strip_prefix(above);
+        if below.is_some_and(|below| below.starts_with(b"/")) {
+            return true;
+        }
+        looked_up_to += at + 1;
+    }
+    false
+}
+
 enum Named {
     ByName(Question),
     File {
@@ -168,6 +212,7 @@ struct FoundSoFar {
     named_by_more_than_workers: FxHashSet<Vec<u8>>,
     named_as_what_a_worker_may_start: FxHashSet<Vec<u8>>,
     names_written: Vec<EntryPointPaths>,
+    names_asked: Vec<NameAsked>,
     names_left_out: Vec<NameLeftOut>,
 }
 
@@ -1576,6 +1621,20 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 found.named_otherwise.extend(keys_of_answer.iter().cloned());
             }
             if let Some(question) = question {
+                if named_by.is_some()
+                    && let Some(name) = question.name_of_package()
+                {
+                    let asked_in = self.key_of(&question.file_name);
+                    let mut keys = keys_of_answer.iter();
+                    if keys.any(|key| !lies_where_name_is_looked_for(&asked_in, name, key)) {
+                        found.names_asked.push(NameAsked {
+                            file_name: asked_in,
+                            name: name.to_vec(),
+                            is_require: question.read_as == ReadAs::Require,
+                            keys_of_answer: keys_of_answer.clone(),
+                        });
+                    }
+                }
                 found.asked.insert(question, keys_of_answer);
             }
         }
@@ -1639,7 +1698,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         mut self,
         files: &Files<'_>,
         written_count: usize,
-    ) -> (Vec<FoundEntryPoint>, Vec<(FileId, ExprId)>) {
+    ) -> (Vec<FoundEntryPoint>, Vec<(FileId, ExprId)>, Vec<NameOfLoad>) {
         let found = take(self.found.get_mut());
         let told = found.entry_points.iter();
         let told: FxHashMap<&[u8], &FoundEntryPoint> = told
@@ -1670,7 +1729,28 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             let of_workers = of_workers.filter(|it| it.because.is_for_worker());
             crate::test_run_report::say_load_goes_on(of_workers.count());
         }
-        (entry_points, followed_workers)
+        let names_of_loads = self.list_names_of_loads(files, found.names_asked);
+        (entry_points, followed_workers, names_of_loads)
+    }
+
+    fn list_names_of_loads(&self, files: &Files<'_>, asked: Vec<NameAsked>) -> Vec<NameOfLoad> {
+        if asked.is_empty() {
+            return Vec::new();
+        }
+        let compiled = files.compiled_files().iter();
+        let compiled: FxHashMap<Vec<u8>, FileId> = compiled
+            .map(|&file| (self.key_of(files.module(file).file_name()), file))
+            .collect();
+        let asked = asked.into_iter().filter_map(|asked| {
+            let mut answers = asked.keys_of_answer.iter();
+            Some(NameOfLoad {
+                asked_in: *compiled.get(&asked.file_name)?,
+                leads_to: answers.find_map(|key| compiled.get(key).copied())?,
+                name: asked.name,
+                is_require: asked.is_require,
+            })
+        });
+        asked.collect()
     }
 
     /// Returns the constructions whose known names led to entry points, and those that start from known code. A construction that may also get an unknown name isn't one of them.

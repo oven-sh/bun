@@ -284,18 +284,21 @@ impl FdOp for ReadFile {
                 // It may never end.
                 Ok(_) if self.could_block => return Ok(Step::Again),
                 Ok(_) => {}
-                Err(err) if err.get_errno() == bun_sys::E::EAGAIN => {
-                    self.could_block = true;
-                    return Ok(Step::Again);
-                }
-                Err(err) => {
+                Err(err) if err.get_errno() != bun_sys::E::EAGAIN => {
+                    self.buffer = Vec::new();
                     let mut err = Box::<SystemError>::from(err);
                     err.path = self.path_for_error();
                     return Err(err);
                 }
+                Err(_) => {
+                    self.could_block = true;
+                    return Ok(Step::Again);
+                }
             }
         }
-        self.buffer.shrink_to_fit();
+        if self.buffer.len() + 16_000 < self.buffer.capacity() {
+            self.buffer.shrink_to_fit();
+        }
         Ok(Step::Done)
     }
 

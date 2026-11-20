@@ -21,6 +21,8 @@ pub(crate) mod js_socket_handlers;
 #[path = "Listener.rs"]
 pub(crate) mod listener;
 
+pub(crate) mod pending_writes;
+
 #[path = "UpgradedDuplex.rs"]
 pub(crate) mod upgraded_duplex;
 

@@ -1,8 +1,10 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
 import { once } from "node:events";
 import net from "node:net";
+import { bytesWrittenUntil, patterned, receive } from "./unsent-bytes-helpers";
 
 // Windows uses the libuv eventing backend; bsd_recv/bsd_send are still the
 // chokepoints there but errno semantics differ. Land POSIX coverage first.
@@ -460,5 +462,288 @@ describe.skipIf(skip)("node:net seeded syscall fuzz", () => {
       await once(p.client, "close").catch(() => {});
       expect(p.client.destroyed).toBe(true);
     }
+  });
+});
+
+// A short send leaves the rest of the chunk in the handle's queue of unsent
+// bytes, and each writable event sends more of it.
+describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => {
+  for (const side of ["client", "server"] as const) {
+    test(`a write that writable events drain arrives intact (${side} writer)`, async () => {
+      using p = await connectedPair();
+      const writer = side === "client" ? p.client : p.serverSock;
+      const reader = side === "client" ? p.serverSock : p.client;
+      const handle = (writer as any)._handle;
+      const payload = patterned(1024 * 1024);
+      const state = receive(reader, payload);
+      const idle = estimateShallowMemoryUsageOf(handle);
+
+      fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+      const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+      writer.write(payload, err => (err ? reject(err) : resolve()));
+      const queued = estimateShallowMemoryUsageOf(handle) - idle;
+      const bytesWritten = await bytesWrittenUntil(written, handle);
+      const allocatedAfterDrain = estimateShallowMemoryUsageOf(handle) - idle;
+      writer.end();
+      await once(reader, "end");
+
+      expect({ queued, bytesWritten, allocatedAfterDrain, ...state }).toEqual({
+        queued: payload.length - 16384,
+        bytesWritten: [payload.length],
+        allocatedAfterDrain: 0,
+        received: payload.length,
+        intact: true,
+      });
+    });
+  }
+
+  // Socket.prototype._write reaches the native write while a tail is queued,
+  // as the inspector's socket transport does. On a plain socket one writev
+  // then carries the tail and the chunk.
+  test.each([
+    // The writev stops inside the tail: the chunk goes behind the rest of it.
+    { clamp: "below", writev: 1024 },
+    // The writev takes the tail and 17,408 bytes of the chunk.
+    { clamp: "above", writev: 32768 },
+  ])("a write behind a queued tail arrives in order (writev clamp $clamp the tail)", async ({ writev }) => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(16384);
+    const second = patterned(65536, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    fault.set({ syscall: "writev", action: "short", bytes: writev, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(first, "buffer", () => {});
+    const queuedTail = estimateShallowMemoryUsageOf(handle) - idle;
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    const bytesWritten = await bytesWrittenUntil(written, handle);
+    const allocatedAfterDrain = estimateShallowMemoryUsageOf(handle) - idle;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ queuedTail, bytesWritten, allocatedAfterDrain, ...state }).toEqual({
+      queuedTail: first.length - 1024,
+      bytesWritten: [expected.length],
+      allocatedAfterDrain: 0,
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  // Writable events send from the tail before the second write arrives, so the
+  // second chunk goes behind a tail whose front the socket already took.
+  test("a write behind a tail that writable events partly sent arrives in order", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(256 * 1024);
+    const second = patterned(1024 * 1024, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    fault.set({ syscall: "writev", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(first, "buffer", () => {});
+    // The write itself sent 1,024 bytes. What arrives beyond them left in a writable event.
+    while (state.received <= 1024) await once(p.serverSock, "data");
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+    const bytesWritten = await bytesWrittenUntil(written, handle);
+    const allocatedAfterDrain = estimateShallowMemoryUsageOf(handle) - idle;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ bytesWritten, allocatedAfterDrain, ...state }).toEqual({
+      bytesWritten: [expected.length],
+      allocatedAfterDrain: 0,
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  // A write that brings no bytes still sends from the front of a queued tail:
+  // net.ts retries a pending write with "". TLS and Windows take this arm for
+  // each write behind a tail, because only a plain POSIX socket has the writev.
+  test("an empty write behind a queued tail sends from the front of the tail", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const payload = patterned(41 * 1024);
+    const state = receive(p.serverSock, payload);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(payload, "buffer", () => {});
+    const queuedTail = estimateShallowMemoryUsageOf(handle) - idle;
+    const errors: Error[] = [];
+    // Each of these sends 1,024 bytes more of the tail. The queue frees its
+    // allocation when the last one takes the last byte, and not before.
+    let allocatedBeforeLastWrite = 0;
+    for (let i = 0; i < 40; i++) {
+      if (i === 39) allocatedBeforeLastWrite = estimateShallowMemoryUsageOf(handle) - idle;
+      (p.client as any)._write(Buffer.alloc(0), "buffer", (err?: Error | null) => {
+        if (err) errors.push(err);
+      });
+    }
+    expect({
+      queuedTail,
+      allocatedBeforeLastWrite,
+      allocatedAfterWrites: estimateShallowMemoryUsageOf(handle) - idle,
+      bytesWritten: handle.bytesWritten,
+      errors,
+    }).toEqual({
+      queuedTail: payload.length - 1024,
+      allocatedBeforeLastWrite: payload.length - 1024,
+      allocatedAfterWrites: 0,
+      bytesWritten: payload.length,
+      errors: [],
+    });
+
+    p.client.end();
+    await once(p.serverSock, "end");
+    expect({ errors, ...state }).toEqual({ errors: [], received: payload.length, intact: true });
+  });
+
+  // One writev takes the tail and 4,096 bytes of the chunk. The rest of the
+  // chunk goes into the allocation that held the tail.
+  test("a writev that takes the tail and part of the chunk keeps the allocation of the tail", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(65536);
+    const second = patterned(8192, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: 1, fd: handle.fd });
+    fault.set({ syscall: "writev", action: "short", bytes: first.length - 1024 + 4096, repeat: 1, fd: handle.fd });
+    (p.client as any)._write(first, "buffer", () => {});
+    const allocatedBefore = estimateShallowMemoryUsageOf(handle) - idle;
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    const allocatedAfter = estimateShallowMemoryUsageOf(handle) - idle;
+    const bytesWritten = await bytesWrittenUntil(written, handle);
+    const allocatedAfterDrain = estimateShallowMemoryUsageOf(handle) - idle;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ allocatedBefore, allocatedAfter, allocatedAfterDrain, bytesWritten, ...state }).toEqual({
+      allocatedBefore: first.length - 1024,
+      allocatedAfter: first.length - 1024,
+      allocatedAfterDrain: 0,
+      bytesWritten: [expected.length],
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  // The queue drops its sent prefix when a chunk arrives behind a tail that is
+  // more than half sent. The chunk then fits in the allocation of the tail.
+  test("a write behind a tail that is mostly sent does not grow the allocation", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(256 * 1024);
+    const second = patterned(65536, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 4096, repeat: -1, fd: handle.fd });
+    fault.set({ syscall: "writev", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(first, "buffer", () => {});
+    while (state.received <= (first.length * 3) / 4) await once(p.serverSock, "data");
+    const allocatedBefore = estimateShallowMemoryUsageOf(handle) - idle;
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    const allocatedAfter = estimateShallowMemoryUsageOf(handle) - idle;
+    const bytesWritten = await bytesWrittenUntil(written, handle);
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ allocatedBefore, allocatedAfter, bytesWritten, ...state }).toEqual({
+      allocatedBefore: first.length - 4096,
+      allocatedAfter: first.length - 4096,
+      bytesWritten: [expected.length],
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  // 64 chunks of 64 KiB go behind a tail that never empties. About 4 chunks
+  // wait in the queue at a time, so the allocation does not follow the total.
+  test("writes behind a tail that never empties keep the allocation near the unsent bytes", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const chunk = 65536;
+    const count = 64;
+    const expected = patterned(count * chunk);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 8192, repeat: -1, fd: handle.fd });
+    fault.set({ syscall: "writev", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    let peak = 0;
+    let emptied = 0;
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    for (let i = 0; i < count; i++) {
+      const last = i === count - 1;
+      // An empty queue holds no allocation.
+      if (i > 0 && estimateShallowMemoryUsageOf(handle) === idle) emptied++;
+      (p.client as any)._write(expected.subarray(i * chunk, (i + 1) * chunk), "buffer", (err?: Error | null) =>
+        err ? reject(err) : last && resolve(),
+      );
+      peak = Math.max(peak, estimateShallowMemoryUsageOf(handle) - idle);
+      while ((i + 1) * chunk - state.received > 4 * chunk) await once(p.serverSock, "data");
+    }
+    await written;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ emptied, ...state }).toEqual({ emptied: 0, received: expected.length, intact: true });
+    expect(peak).toBeLessThan(16 * chunk);
+  });
+
+  // Each run sends 1,024 times, 1 KiB per send. The second queue holds 16 times
+  // the bytes of the first. A queue that moves its unsent bytes to the front
+  // after each send takes many times the CPU time for the second run.
+  test("the CPU time of a send does not follow the bytes still queued", async () => {
+    const sends = 1024;
+    const bytesPerSend = 1024;
+
+    // The CPU time from the return of write() until the peer has what `sends` sends carry.
+    async function cpuTimeOfSends(queued: number) {
+      using p = await connectedPair();
+      const handle = (p.client as any)._handle;
+      const { promise: sent, resolve } = Promise.withResolvers<void>();
+      let received = 0;
+      p.serverSock.on("data", chunk => {
+        received += chunk.length;
+        if (received >= sends * bytesPerSend) resolve();
+      });
+
+      fault.set({ syscall: "send", action: "short", bytes: bytesPerSend, repeat: -1, fd: handle.fd });
+      p.client.write(Buffer.alloc(queued, 0x61));
+      const before = process.cpuUsage();
+      await sent;
+      const { user, system } = process.cpuUsage(before);
+      fault.clear();
+      return user + system;
+    }
+
+    const small = sends * bytesPerSend;
+    const large = 16 * small;
+    // The first run pays for what the later runs find warm.
+    await cpuTimeOfSends(small);
+    const smallTimes: number[] = [];
+    const largeTimes: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      smallTimes.push(await cpuTimeOfSends(small));
+      largeTimes.push(await cpuTimeOfSends(large));
+    }
+    expect(Math.min(...largeTimes) / Math.min(...smallTimes)).toBeLessThan(5);
   });
 });

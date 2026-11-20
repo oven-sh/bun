@@ -117,7 +117,7 @@ extern "C" unsigned int Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t now
             // scavenger across the poll instead, so this thread never does the sweep itself.
             // The libuv loop has no handoff: uv_run() dispatches completions right after its poll,
             // inside the same call, and libuv allocates from mimalloc. So it keeps paying for it here.
-            static constexpr uint64_t idleSweepIntervalNs = 100 * 1000000ULL;
+            static constexpr uint64_t idleSweepIntervalNs = 1000 * 1000000ULL;
             static thread_local uint64_t lastIdleSweepNs = 0;
             if (nowNs >= lastIdleSweepNs + idleSweepIntervalNs) {
                 lastIdleSweepNs = nowNs;

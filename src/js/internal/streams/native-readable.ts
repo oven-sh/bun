@@ -56,11 +56,14 @@ interface NativePtr {
 let debugId = 0;
 
 function constructNativeReadable(readableStream: ReadableStream, options: $Node.ReadableOptions): NativeReadable {
-  $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
+  // Ahead of makeNativeReadable(): a getter of `options` is the caller's code, and it can use `readableStream`.
   const bunNativePtr = readableStream.$bunNativePtr;
-  // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
-  $assert(bunNativePtr === undefined || typeof bunNativePtr === "object", "Invalid native ptr");
+  return attachNativeReadable(makeNativeReadable(options), readableStream, bunNativePtr);
+}
 
+// The part of a NativeReadable that needs no native handle. child_process makes the stdout and stderr
+// streams of a child while no child runs yet. The stream must not be read before attachNativeReadable().
+function makeNativeReadable(options: $Node.ReadableOptions): NativeReadable {
   const stream = new Readable(options) as NativeReadable;
   stream._read = read;
   stream._destroy = destroy;
@@ -69,9 +72,6 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
     stream.debugId = ++debugId;
   }
 
-  // Define the own property directly: an ordinary put would walk the prototype
-  // chain, which user code can graft onto ReadableStream.prototype's accessors.
-  $putByIdDirectPrivate(stream, "bunNativePtr", bunNativePtr);
   stream[kRefCount] = 0;
   stream[kConstructed] = false;
   stream[kPendingRead] = false;
@@ -87,6 +87,22 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
     // Only used by node:tty on Windows
     stream.$start = ensureConstructed;
   }
+
+  return stream;
+}
+
+function attachNativeReadable(
+  stream: NativeReadable,
+  readableStream: ReadableStream,
+  bunNativePtr: NativePtr | undefined = readableStream.$bunNativePtr,
+): NativeReadable {
+  $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
+  // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
+  $assert(bunNativePtr === undefined || typeof bunNativePtr === "object", "Invalid native ptr");
+
+  // Define the own property directly: an ordinary put would walk the prototype
+  // chain, which user code can graft onto ReadableStream.prototype's accessors.
+  $putByIdDirectPrivate(stream, "bunNativePtr", bunNativePtr);
 
   // https://github.com/oven-sh/bun/pull/12801
   // https://github.com/oven-sh/bun/issues/9555
@@ -299,4 +315,4 @@ function unref(this: NativeReadable) {
   }
 }
 
-export default { constructNativeReadable };
+export default { constructNativeReadable, makeNativeReadable, attachNativeReadable };

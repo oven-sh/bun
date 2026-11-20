@@ -937,10 +937,12 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 fd: i32 = event.fd.native(),
                 readable: bool = event.flags.contains(PollFlag::Readable),
                 writable: bool = event.flags.contains(PollFlag::Writable),
+                failed: bool = event.is_hup() || event.flags.contains(PollFlag::Eof),
             ) {
                 // SAFETY: tag set with this pointee type at `OwnedFilePoll::new`.
                 let resolver = unsafe { &*resolver };
-                resolver.on_dns_poll(fd, readable, writable);
+                // A poll that failed or hung up reports no direction; c-ares gets both, like Node: https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+                resolver.on_dns_poll(fd, readable || failed, writable || failed);
             }
         ),
         #[cfg(target_os = "macos")]

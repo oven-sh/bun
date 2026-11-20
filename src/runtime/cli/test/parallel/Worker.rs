@@ -58,7 +58,7 @@ pub(crate) struct SpawnContext<'a> {
     pub(crate) argv: bun_core::CStrList<'a>,
     pub(crate) envps: &'a [bun_core::CStringList],
     /// Windows hands it over as an inherited handle, which the worker's arguments name.
-    #[cfg_attr(windows, expect(dead_code))]
+    #[cfg_attr(all(windows, not(test)), expect(dead_code))]
     pub(crate) compiled_program: Option<bun_sys::Fd>,
     #[cfg(windows)]
     pub(crate) windows_job: Option<&'a OwnedHandle>,

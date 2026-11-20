@@ -3373,9 +3373,7 @@ static JSC::EncodedJSValue bufferWriteVarWidth(JSC::JSGlobalObject* lexicalGloba
     if (!checkedOffset)
         return {};
 
-    // The stored bytes are the JS arithmetic of lib/internal/buffer.js: the low 32 bits are
-    // ToInt32(value); the high bytes (5/6-byte widths) are ToInt32(Math.floor(value * 2 ** -32));
-    // for 3 bytes the high byte is Math.floor(value * 2 ** -16).
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/buffer.js#L663-L724
     uint8_t bytes[8] = {};
     auto putLittleEndian = [&](size_t at, uint64_t chunk, size_t width) {
         for (size_t i = 0; i < width; ++i)
@@ -3384,16 +3382,14 @@ static JSC::EncodedJSValue bufferWriteVarWidth(JSC::JSGlobalObject* lexicalGloba
     switch (byteLength) {
     case 1:
     case 2:
+    case 3:
     case 4:
         putLittleEndian(0, static_cast<uint32_t>(JSC::toInt32(number)), byteLength);
-        break;
-    case 3:
-        putLittleEndian(0, static_cast<uint32_t>(JSC::toInt32(number)), 2);
-        putLittleEndian(2, static_cast<uint32_t>(JSC::toInt32(std::floor(number / 65536.0))), 1);
         break;
     case 5:
     case 6:
         putLittleEndian(0, static_cast<uint32_t>(JSC::toInt32(number)), 4);
+        // Node floors the value with its fraction here: -0.5 stores -4294967296 in 5 and 6 bytes.
         putLittleEndian(4, static_cast<uint32_t>(JSC::toInt32(std::floor(number / 4294967296.0))), byteLength - 4);
         break;
     }

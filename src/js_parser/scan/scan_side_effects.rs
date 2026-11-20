@@ -277,6 +277,8 @@ impl SideEffects {
             }
 
             ExprData::EBinary(mut bin) => {
+                // `bin` at `loc` is `expr`, until the loop for `&&`, `||` and `??` moves both.
+                let mut loc = expr.loc;
                 match bin.op {
                     // These operators must not have any type conversions that can execute code
                     // such as "toString" or "valueOf". They must also never throw any exceptions.
@@ -301,6 +303,10 @@ impl SideEffects {
                                 &bin.right.data,
                             )
                         {
+                            // A chain of these nests in `left`: the loop for `===` takes it.
+                            if matches!(bin.left.data, ExprData::EBinary(_)) {
+                                return Self::simplify_unused_binary_comma_expr(p, expr);
+                            }
                             let left = bin.left;
                             let right = bin.right;
                             let left_simplified = Self::simplify_unused_expr(p, left);
@@ -337,7 +343,7 @@ impl SideEffects {
 
                     Op::Code::BinLogicalAnd
                     | Op::Code::BinLogicalOr
-                    | Op::Code::BinNullishCoalescing => {
+                    | Op::Code::BinNullishCoalescing => loop {
                         let right = bin.right;
                         bin.right = Self::simplify_unused_expr(p, right)
                             .unwrap_or_else(|| right.to_empty());
@@ -345,10 +351,28 @@ impl SideEffects {
                         // the right expression can be completely removed. Otherwise, the left
                         // expression is important for the branch.
 
-                        if bin.right.is_empty() {
-                            return Self::simplify_unused_expr(p, bin.left);
+                        if !bin.right.is_empty() {
+                            return Some(Expr {
+                                data: ExprData::EBinary(bin),
+                                loc,
+                            });
                         }
-                    }
+                        // A chain of these nests in `left`: the next pass takes that link.
+                        match bin.left.data {
+                            ExprData::EBinary(left)
+                                if matches!(
+                                    left.op,
+                                    Op::Code::BinLogicalAnd
+                                        | Op::Code::BinLogicalOr
+                                        | Op::Code::BinNullishCoalescing
+                                ) =>
+                            {
+                                loc = bin.left.loc;
+                                bin = left;
+                            }
+                            _ => return Self::simplify_unused_expr(p, bin.left),
+                        }
+                    },
 
                     _ => {}
                 }
@@ -516,7 +540,15 @@ impl SideEffects {
         };
         debug_assert!(matches!(
             root_bin.op,
-            Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma
+            Op::Code::BinStrictEq
+                | Op::Code::BinStrictNe
+                | Op::Code::BinComma
+                | Op::Code::BinLooseEq
+                | Op::Code::BinLooseNe
+                | Op::Code::BinLt
+                | Op::Code::BinGt
+                | Op::Code::BinLe
+                | Op::Code::BinGe
         ));
 
         // This function recurses through `simplify_unused_expr`, so each frame
@@ -529,13 +561,27 @@ impl SideEffects {
         let mut left: Expr = root_bin.left;
         while let ExprData::EBinary(left_bin) = left.data {
             match left_bin.op {
-                Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma => {
-                    p.binary_expression_simplify_stack
-                        .push(BinaryExpressionSimplifyVisitor { bin: left_bin });
-                    left = left_bin.left;
-                }
+                Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma => {}
+                Op::Code::BinLooseEq
+                | Op::Code::BinLooseNe
+                | Op::Code::BinLt
+                | Op::Code::BinGt
+                | Op::Code::BinLe
+                | Op::Code::BinGe
+                    if Self::is_primitive_with_side_effects(
+                        p,
+                        left_bin.left.loc,
+                        &left_bin.left.data,
+                    ) && Self::is_primitive_with_side_effects(
+                        p,
+                        left_bin.right.loc,
+                        &left_bin.right.data,
+                    ) => {}
                 _ => break,
             }
+            p.binary_expression_simplify_stack
+                .push(BinaryExpressionSimplifyVisitor { bin: left_bin });
+            left = left_bin.left;
         }
 
         // Ride the stack downwards
@@ -720,7 +766,7 @@ impl SideEffects {
     }
 
     pub(crate) fn is_primitive_with_side_effects<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
+        p: &mut P<'a, TS, SCAN>,
         loc: bun_ast::Loc,
         data: &ExprData,
     ) -> bool {
@@ -772,8 +818,36 @@ impl SideEffects {
                 Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr | Op::Code::BinNullishCoalescing
                 | Op::Code::BinLogicalAndAssign | Op::Code::BinLogicalOrAssign
                 | Op::Code::BinNullishCoalescingAssign => {
-                    Self::is_primitive_with_side_effects(p, e.left.loc, &e.left.data)
-                        && Self::is_primitive_with_side_effects(p, e.right.loc, &e.right.data)
+                    // A chain of these nests in `left`, so its links are taken in a loop.
+                    let stack_bottom = p.binary_expression_simplify_stack.len();
+                    let mut e = *e;
+                    while let ExprData::EBinary(left) = e.left.data
+                        && matches!(
+                            left.op,
+                            Op::Code::BinLogicalAnd
+                                | Op::Code::BinLogicalOr
+                                | Op::Code::BinNullishCoalescing
+                                | Op::Code::BinLogicalAndAssign
+                                | Op::Code::BinLogicalOrAssign
+                                | Op::Code::BinNullishCoalescingAssign
+                        )
+                    {
+                        p.binary_expression_simplify_stack
+                            .push(BinaryExpressionSimplifyVisitor { bin: e });
+                        e = left;
+                    }
+                    let mut is_primitive =
+                        Self::is_primitive_with_side_effects(p, e.left.loc, &e.left.data);
+                    loop {
+                        is_primitive = is_primitive
+                            && Self::is_primitive_with_side_effects(p, e.right.loc, &e.right.data);
+                        if !is_primitive || p.binary_expression_simplify_stack.len() == stack_bottom {
+                            break;
+                        }
+                        e = p.binary_expression_simplify_stack.pop().unwrap().bin;
+                    }
+                    p.binary_expression_simplify_stack.truncate(stack_bottom);
+                    is_primitive
                 }
                 Op::Code::BinComma => {
                     Self::is_primitive_with_side_effects(p, e.right.loc, &e.right.data)

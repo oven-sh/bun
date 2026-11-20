@@ -519,6 +519,60 @@ enum class ModuleMockFunction : uint8_t {
     JestDoMock,
 };
 
+// A spy on an export may be restored before the mock over it ends, so the mock saves the spy as a tuple with what it replaced. No tuple is handed to script.
+static JSValue savedSpy(Zig::GlobalObject* globalObject, const Bun::InstalledSpy& spy)
+{
+    return JSC::InternalFieldTuple::create(globalObject->vm(), globalObject->internalFieldTupleStructure(), spy.spy, spy.replaced);
+}
+
+// Of what a mock saved: the spy until its restore and while it `isOnThatPlace`, then what it replaced.
+template<typename IsOnThatPlace>
+static JSValue whatStandsOfSaved(JSValue saved, const IsOnThatPlace& isOnThatPlace)
+{
+    auto* spyAndReplaced = saved ? dynamicDowncast<JSC::InternalFieldTuple>(saved) : nullptr;
+    if (!spyAndReplaced)
+        return saved;
+    auto spy = Bun::installedSpy(spyAndReplaced->getInternalField(0));
+    return spy && isOnThatPlace(*spy) ? JSValue(spy->spy) : spyAndReplaced->getInternalField(1);
+}
+
+// For a reader. Where the value is written back, the caller also asks whether the spy is on the place written to: its restore reaches no other.
+static JSValue whatStandsOfSaved(JSValue saved)
+{
+    return whatStandsOfSaved(saved, [](const Bun::InstalledSpy&) { return true; });
+}
+
+static bool isSpyOnModuleExports(JSC::VM& vm, const Bun::InstalledSpy& spy, Bun::JSCommonJSModule* moduleObject)
+{
+    return spy.target == moduleObject && spy.key == Bun::builtinNames(vm).exportsPublicName();
+}
+
+// `module.exports` as a mock found it. What was saved is private, so that a saved spy is only read as what stands of it.
+class SavedModuleExports {
+public:
+    explicit operator bool() const { return !!m_saved; }
+    void clear() { m_saved.clear(); }
+    void set(JSC::VM& vm, const JSC::JSCell* owner, JSValue exports) { m_saved.set(vm, owner, exports); }
+    void inherit(JSC::VM& vm, const JSC::JSCell* owner, const SavedModuleExports& earlier) { m_saved.set(vm, owner, earlier.m_saved.get()); }
+    // Of the module object whose `module.exports` a mock is about to replace.
+    void save(Zig::GlobalObject* globalObject, const JSC::JSCell* owner, Bun::JSCommonJSModule* moduleObject, JSValue exports)
+    {
+        auto& vm = globalObject->vm();
+        auto spy = Bun::installedSpy(exports);
+        set(vm, owner, spy && isSpyOnModuleExports(vm, *spy, moduleObject) ? savedSpy(globalObject, *spy) : exports);
+    }
+    JSValue stands() const { return whatStandsOfSaved(m_saved.get()); }
+    // What goes back into `moduleObject`. After `delete require.cache[key]` that is another module object, and the spy is not on it.
+    JSValue standsOn(JSC::VM& vm, Bun::JSCommonJSModule* moduleObject) const
+    {
+        return whatStandsOfSaved(m_saved.get(), [&](const Bun::InstalledSpy& spy) { return isSpyOnModuleExports(vm, spy, moduleObject); });
+    }
+    template<typename Visitor> void visit(Visitor& visitor) { visitor.append(m_saved); }
+
+private:
+    JSC::WriteBarrier<JSC::Unknown> m_saved;
+};
+
 // Also the liveExportsSource() of the ES module it's loaded as, which is why it overrides getOwnPropertySlot.
 class JSModuleMock final : public JSC::JSNonFinalObject {
 public:
@@ -540,8 +594,9 @@ public:
     WriteBarrier<JSString> specifier;
     WriteBarrier<JSString> writtenSpecifier;
     // Set when a loaded ES module is patched in place. Maps export name to the overwritten value, or to this object if there was none yet.
+    // A spy that was on the export is saved as savedSpy() makes it.
     WriteBarrier<JSObject> originalExports;
-    WriteBarrier<Unknown> originalCommonJSExports;
+    SavedModuleExports originalCommonJSExports;
     WriteBarrier<Unknown> commonJSExportsOfOriginal;
     WriteBarrier<JSC::JSObject> esmExportsOfOriginal;
     WriteBarrier<JSObject> originalNamespace;
@@ -959,6 +1014,41 @@ static ExportVariable findExportVariable(JSC::JSGlobalObject* globalObject, JSC:
     return { resolution.moduleRecord, resolution.localName, entry.scopeOffset() };
 }
 
+// A spy can reach one variable through the namespace of any module that exports it.
+static bool isSpyOnExport(Zig::GlobalObject* globalObject, const Bun::InstalledSpy& spy, const ExportVariable& variable)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* spiedNamespace = dynamicDowncast<JSC::JSModuleNamespaceObject>(spy.target);
+    if (!spiedNamespace)
+        return false;
+    ExportVariable spied = findExportVariable(globalObject, spiedNamespace, spy.key);
+    RETURN_IF_EXCEPTION(scope, false);
+    return spied.record == variable.record && spied.offset == variable.offset;
+}
+
+static JSValue savedExportThatMayBeSpy(Zig::GlobalObject* globalObject, const ExportVariable& variable, JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto spy = Bun::installedSpy(value);
+    if (!spy)
+        return value;
+    // The spy of another export is a value that the module exports here.
+    bool isOnThisExport = isSpyOnExport(globalObject, *spy, variable);
+    RETURN_IF_EXCEPTION(scope, {});
+    return isOnThisExport ? savedSpy(globalObject, *spy) : value;
+}
+
+// What overrideLoadedModuleExports() saves of an export whose variable holds `value`.
+static inline JSValue savedExport(Zig::GlobalObject* globalObject, const ExportVariable& variable, JSValue value)
+{
+    // A mock function is an InternalFunction, and most exports are not: they cost one compare here.
+    if (!value.isCell() || value.asCell()->type() != JSC::InternalFunctionType) [[likely]]
+        return value;
+    return savedExportThatMayBeSpy(globalObject, variable, value);
+}
+
 static JSC::JSPromise* importModuleKey(Zig::GlobalObject* globalObject, const String& key)
 {
     if (globalObject->onLoadPlugins.loadRoots.add(key).isNewEntry)
@@ -1166,6 +1256,7 @@ __attribute__((minsize)) static JSObject* esmExportsBeforePatches(Zig::GlobalObj
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (value == overwritten)
             continue;
+        value = whatStandsOfSaved(value);
         if (!value) {
             value = loaded.esmNamespace->get(globalObject, name);
             RETURN_IF_EXCEPTION(scope, nullptr);
@@ -1518,7 +1609,7 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
     UNUSED_PARAM(hasAlreadyWaited);
 #endif
     if (!exports && mock->originalCommonJSExports && !isCompiledESModule) {
-        exports = esmExportsOfCommonJSExports(globalObject, mock->originalCommonJSExports.get());
+        exports = esmExportsOfCommonJSExports(globalObject, mock->originalCommonJSExports.stands());
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 #if ENABLE(AOT)
@@ -1792,7 +1883,7 @@ static JSValue requireOriginalModule(Zig::GlobalObject* globalObject, JSModuleMo
     if (auto file = mock->isFromPreload && mock->state == JSModuleMock::State::Running && globalObject->aotInstance() ? Bun::compiledModuleForPath(mock->specifier->tryGetValue().data) : std::nullopt; file && JSC::AOT::isESModule(*file) && JSC::AOT::wasOriginalRunForStatement(globalObject, *file))
         JSC::AOT::didRequireOwnOriginal(globalObject, *file);
 #endif
-    if (JSValue exports = mock->originalCommonJSExports.get(); exports && !exports.inherits<JSC::JSModuleNamespaceObject>())
+    if (JSValue exports = mock->originalCommonJSExports.stands(); exports && !exports.inherits<JSC::JSModuleNamespaceObject>())
         return exports;
     JSObject* exports = esmExportsBeforePatches(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, {});
@@ -2133,7 +2224,7 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
 #endif
 
     if (!factoryValue) {
-        JSValue commonJSExports = originalCommonJSExports.get();
+        JSValue commonJSExports = originalCommonJSExports.stands();
         if (!commonJSExports || commonJSExports.inherits<JSC::JSModuleNamespaceObject>()) {
             JSObject* exports = esmExportsBeforePatches(globalObject, this);
             RETURN_IF_EXCEPTION(scope, {});
@@ -3249,7 +3340,9 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
                 if (!variable.record)
                     continue;
                 JSValue original = variable.record->moduleEnvironment()->readVariable(vm, variable.offset);
-                overwritten->putDirectMayBeIndex(globalObject, name, original ? original : JSValue(overwritten));
+                JSValue saved = original ? savedExport(globalObject, variable, original) : JSValue(overwritten);
+                RETURN_IF_EXCEPTION(scope, );
+                overwritten->putDirectMayBeIndex(globalObject, name, saved);
                 RETURN_IF_EXCEPTION(scope, );
             }
         }
@@ -3874,7 +3967,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 // Undo the patch now, because unmockModule() can't find the module once it's evicted.
                 auto* mock = registeredModuleMock(globalObject, key);
                 if (auto* patched = mock && mock->originalCommonJSExports ? dynamicDowncast<Bun::JSCommonJSModule>(commonJSModule) : nullptr)
-                    patched->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), mock->originalCommonJSExports.get(), 0);
+                    patched->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), mock->originalCommonJSExports.standsOn(vm, patched), 0);
             }
             JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(keyString));
             RETURN_IF_EXCEPTION(scope, );
@@ -3957,7 +4050,9 @@ static void restoreOverwrittenExports(Zig::GlobalObject* globalObject, JSC::JSMo
         JSValue original = overwritten->get(globalObject, name);
         RETURN_IF_EXCEPTION(scope, );
         if (original != overwritten) {
-            moduleNamespace->overrideExportValue(globalObject, name, original);
+            // The restore of a spy reaches the export through the namespace object that the spy was laid on.
+            JSValue stands = whatStandsOfSaved(original, [](const Bun::InstalledSpy& spy) { return !!spy.target; });
+            moduleNamespace->overrideExportValue(globalObject, name, stands);
             RETURN_IF_EXCEPTION(scope, );
             continue;
         }
@@ -4259,10 +4354,8 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     // A record with live exports was loaded as a mock, so it isn't the module that was patched.
     JSObject* overwritten = loaded.esmNamespace && loaded.esmNamespace->moduleRecord()->hasLiveExports() ? nullptr : mock->originalExports.get();
 
-    if (JSValue original = mock->originalCommonJSExports.get()) {
-        if (loaded.commonJSModule)
-            loaded.commonJSModule->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), original, 0);
-    }
+    if (mock->originalCommonJSExports && loaded.commonJSModule)
+        loaded.commonJSModule->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), mock->originalCommonJSExports.standsOn(vm, loaded.commonJSModule), 0);
 
     if (!overwritten && !mock->originalCommonJSExports) {
         if (loaded.esmNamespace || loaded.staleESMEntry || loaded.commonJSModule || hadActiveCompiledMock)
@@ -4678,6 +4771,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionPatchedModuleDidRun, __attrib
             JSValue original = variable.record ? variable.record->moduleEnvironment()->readVariable(vm, variable.offset) : JSValue();
             if (!original)
                 continue;
+            original = savedExport(globalObject, variable, original);
+            RETURN_IF_EXCEPTION(scope, {});
             overwritten->putDirectMayBeIndex(globalObject, name, original);
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -6358,8 +6453,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         mock->patchedNamespace.setMayBeNull(vm, mock, previous->patchedNamespace.get());
         mock->originalExportsOfEvictedModule.setMayBeNull(vm, mock, previous->originalExportsOfEvictedModule.get());
         mock->patchOrder = previous->patchOrder;
-        if (JSValue exports = previous->originalCommonJSExports.get())
-            mock->originalCommonJSExports.set(vm, mock, exports);
+        if (previous->originalCommonJSExports)
+            mock->originalCommonJSExports.inherit(vm, mock, previous->originalCommonJSExports);
 #if ENABLE(AOT)
         mock->unevaluatedCompiledModule = previous->unevaluatedCompiledModule;
         mock->lostCommonJSExportsToReset = previous->lostCommonJSExportsToReset;
@@ -6375,7 +6470,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         if (loaded.commonJSModule) {
             JSValue exports = loaded.commonJSModule->exportsObject();
             RETURN_IF_EXCEPTION(scope, {});
-            mock->originalCommonJSExports.set(vm, mock, exports);
+            mock->originalCommonJSExports.save(globalObject, mock, loaded.commonJSModule, exports);
         }
 #if ENABLE(AOT)
         // The program keeps the require.cache entry of a compiled require() of a built-in module.
@@ -8297,7 +8392,7 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(mock->specifier);
     visitor.append(mock->writtenSpecifier);
     visitor.append(mock->originalExports);
-    visitor.append(mock->originalCommonJSExports);
+    mock->originalCommonJSExports.visit(visitor);
     visitor.append(mock->commonJSExportsOfOriginal);
     visitor.append(mock->esmExportsOfOriginal);
     visitor.append(mock->originalNamespace);

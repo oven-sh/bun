@@ -2480,6 +2480,211 @@ describe("bundler", () => {
     run: { file: "/out/entry.js", stdout: "late2 b late1 b" },
   });
 
+  // A chunk has one order (docs/bundler/index.mdx, "Evaluation order in a shared chunk"). worker.js and the import() in
+  // index.js share the chunk of p.js, q.js and a.js. a.js imports p.js first, for what it sets, so index.js prints
+  // "ok aqP" from source. worker.js runs q.js first. An entry point of the build comes before the target of an
+  // import(), so the chunk follows worker.js.
+  const oneOrder = {
+    "/index.js": `import("./a.js").then(m => console.log("ok", m.a));`,
+    "/worker.js": `import { q } from "./q.js"; import { a } from "./a.js"; console.log("worker", q, a);`,
+    "/a.js": `import "./p.js"; import { q } from "./q.js"; export const a = "a" + q;`,
+    "/p.js": `globalThis.P = { v: "P" };`,
+    "/q.js": `export const q = "q" + (globalThis.P?.v ?? "-noP");`,
+  };
+  for (const [name, options] of Object.entries<Partial<Parameters<typeof itBundled>[1]>>({
+    "": {},
+    "EntriesSwapped": { entryPoints: ["/worker.js", "/index.js"] },
+    "Browser": { target: "browser" },
+    "HashedEntry": {
+      entryNaming: "[name].entry-[hash].[ext]",
+      onAfterBundle(api) {
+        launchHashedEntry(api, "index");
+        launchHashedEntry(api, "worker");
+      },
+    },
+  })) {
+    itBundled("splitting/SharedChunkFollowsEntryPointBeforeImportCall" + name, {
+      files: oneOrder,
+      entryPoints: ["/index.js", "/worker.js"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      ...options,
+      run: [
+        { file: "/out/index.js", stdout: "ok aq-noP" },
+        { file: "/out/worker.js", stdout: "worker q-noP aq-noP" },
+      ],
+    });
+  }
+
+  // The same with the import() in the second entry point: the chunk follows index.js.
+  itBundled("splitting/SharedChunkFollowsEntryPointBeforeImportCallOfLaterEntryPoint", {
+    files: {
+      ...oneOrder,
+      "/index.js": `import { q } from "./q.js"; import { a } from "./a.js"; console.log("index", q, a);`,
+      "/worker.js": `import("./a.js").then(m => console.log("ok", m.a));`,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/index.js", stdout: "index q-noP aq-noP" },
+      { file: "/out/worker.js", stdout: "ok aq-noP" },
+    ],
+  });
+
+  // The same in an executable: the main thread loads the chunk with import(), the worker with its own imports.
+  itBundled("splitting/SharedChunkFollowsEntryPointBeforeImportCallInExecutable", {
+    backend: "cli",
+    compile: true,
+    splitting: true,
+    files: {
+      ...oneOrder,
+      "/index.js": /* js */ `
+        const m = await import("./a.js");
+        console.log("ok", m.a);
+        new Worker("./worker.js");
+      `,
+    },
+    entryPointsRaw: ["./index.js", "./worker.js"],
+    outfile: "dist/out",
+    run: { file: "dist/out", stdout: "ok aq-noP\nworker q-noP aq-noP" },
+  });
+
+  // Two entry points of the build share the chunk: it follows the one that the build names first.
+  for (const [name, entryPoints, stdout] of [
+    ["", ["/e1.js", "/e2.js"], ["e1 qP", "e2 qP"]],
+    ["EntriesSwapped", ["/e2.js", "/e1.js"], ["e1 q-noP", "e2 q-noP"]],
+  ] as const) {
+    itBundled("splitting/SharedChunkFollowsFirstEntryPoint" + name, {
+      files: {
+        "/e1.js": `import "./p.js"; import { q } from "./q.js"; console.log("e1", q);`,
+        "/e2.js": `import { q } from "./q.js"; import "./p.js"; console.log("e2", q);`,
+        "/p.js": oneOrder["/p.js"],
+        "/q.js": oneOrder["/q.js"],
+      },
+      entryPoints: [...entryPoints],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      run: [
+        { file: "/out/e1.js", stdout: stdout[0] },
+        { file: "/out/e2.js", stdout: stdout[1] },
+      ],
+    });
+  }
+
+  // Two pages share the chunk: it follows the first page.
+  itBundled("splitting/SharedChunkFollowsFirstHTMLEntryPoint", {
+    files: {
+      "/one.html": `<!DOCTYPE html><html><head><script type="module" src="./one.js"></script></head><body></body></html>`,
+      "/two.html": `<!DOCTYPE html><html><head><script type="module" src="./two.js"></script></head><body></body></html>`,
+      "/one.js": `import "./p.js"; import { q } from "./q.js"; console.log("one", q);`,
+      "/two.js": `import { q } from "./q.js"; import "./p.js"; console.log("two", q);`,
+      "/p.js": oneOrder["/p.js"],
+      "/q.js": oneOrder["/q.js"],
+    },
+    entryPoints: ["/one.html", "/two.html"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      for (const page of ["one", "two"]) {
+        const script = api.readFile(`/out/${page}.html`).match(/<script type="module" crossorigin src="([^"]+)">/)![1];
+        api.writeFile(`/out/run-${page}.js`, `import "${script}";`);
+      }
+    },
+    run: [
+      { file: "/out/run-one.js", stdout: "one qP" },
+      { file: "/out/run-two.js", stdout: "two qP" },
+    ],
+  });
+
+  // a.js and b.js are import() targets of one entry point. Their chunk follows a.js, whose import() the build reaches
+  // first. From source, `index.js b` prints "b bq-noP" and "a aq-noP".
+  itBundled("splitting/SharedChunkFollowsFirstImportCall", {
+    files: {
+      "/index.js": /* js */ `
+        const load = name => (name === "a" ? import("./a.js") : import("./b.js"));
+        const [first, second] = process.argv[2] === "b" ? ["b", "a"] : ["a", "b"];
+        load(first).then(m => (console.log(first, m.v), load(second))).then(m => console.log(second, m.v));
+      `,
+      "/a.js": `import "./p.js"; import { q } from "./q.js"; export const v = "a" + q;`,
+      "/b.js": `import { q } from "./q.js"; import "./p.js"; export const v = "b" + q;`,
+      "/p.js": oneOrder["/p.js"],
+      "/q.js": oneOrder["/q.js"],
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/index.js", args: ["a"], stdout: "a aqP\nb bqP" },
+      { file: "/out/index.js", args: ["b"], stdout: "b bqP\na aqP" },
+    ],
+  });
+
+  // The example of "Evaluation order in a shared chunk" in docs/bundler/index.mdx, then the same with the remedy of
+  // that section: q.ts uses a value that p.ts exports. With admin.ts as an entry point, p.ts and q.ts are in two chunks.
+  const docsExample = {
+    "index.ts": `import("./a.ts");`,
+    "worker.ts": `import "./q.ts";\nimport "./a.ts";`,
+    "a.ts": `import "./p.ts";\nimport "./q.ts";`,
+    "p.ts": `process.env.APP_MODE = "production";`,
+    "q.ts": `console.log(process.env.APP_MODE);`,
+    "admin.ts": `import "./p.ts";\nconsole.log("admin");`,
+  };
+  const docsRemedy = {
+    ...docsExample,
+    "p.ts": `process.env.APP_MODE = "production";\nexport const mode = process.env.APP_MODE;`,
+    "q.ts": `import { mode } from "./p.ts";\nconsole.log(mode);`,
+  };
+  // The example prints APP_MODE: it must not get one from the environment of the test run.
+  const docsEnv: typeof env = { ...env };
+  delete docsEnv.APP_MODE;
+  for (const [name, files, entries, chunks, source, build] of [
+    ["Example", docsExample, ["index.ts", "worker.ts"], 1, ["production", "undefined"], ["undefined", "undefined"]],
+    ["Remedy", docsRemedy, ["index.ts", "worker.ts"], 1, ["production", "production"], ["production", "production"]],
+    [
+      "RemedyInTwoChunks",
+      docsRemedy,
+      ["index.ts", "worker.ts", "admin.ts"],
+      2,
+      ["production", "production"],
+      ["production", "production"],
+    ],
+  ] as const) {
+    test("splitting/SharedChunkOrderOfDocs" + name, async () => {
+      using dir = tempDir("splitting-order-docs", files);
+      const cwd = String(dir);
+      const result = await Bun.build({
+        entrypoints: entries.map(entry => join(cwd, entry)),
+        outdir: join(cwd, "out"),
+        splitting: true,
+        target: "bun",
+      });
+      expect(result.success).toBe(true);
+      // The output files that hold p.ts and q.ts: one chunk, or two.
+      const holders: string[] = [];
+      for (const output of result.outputs) {
+        if (/^\/\/ .*\b[pq]\.ts$/m.test(await output.text())) holders.push(output.path);
+      }
+      expect(holders).toHaveLength(chunks);
+      const runAll = (paths: string[]) => Promise.all(paths.map(path => run([bunExe(), path], cwd, docsEnv)));
+      const [fromSource, fromBuild] = await Promise.all([
+        runAll(["index.ts", "worker.ts"]),
+        runAll([join("out", "index.js"), join("out", "worker.js")]),
+      ]);
+      const prints = (lines: readonly string[]) =>
+        lines.map(line => ({ stdout: line + "\n", stderr: "", exitCode: 0 }));
+      expect({ fromSource, fromBuild }).toEqual({ fromSource: prints(source), fromBuild: prints(build) });
+    });
+  }
+
   // The namespace object of barrel.js names a before b, but b.js runs first: the shared chunk follows late_b.js.
   itBundled("splitting/SharedChunkOwnerIgnoresNamespaceExportOrder", {
     files: {

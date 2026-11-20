@@ -61,7 +61,7 @@ public:
         // builds; ICU item sizes are only 4-aligned, so round up.
         size_t alloc = WTF::roundUpToMultipleOf<16>(static_cast<size_t>(size));
         std::unique_ptr<void, decltype([](void* block) { MimallocMalloc::free(block); })> buf { MimallocMalloc::tryAlignedMalloc(alloc, 16) };
-        if (!buf || !decompressICUItem(p, *length, buf.get(), size))
+        if (!buf || !decompressICUItem(m_dictionary, p, *length, buf.get(), size))
             return p;
 
         m_cache.add(p, buf.get());
@@ -76,6 +76,7 @@ private:
 
     WTF::Lock m_lock;
     WTF::HashMap<const void*, void*> m_cache WTF_GUARDED_BY_LOCK(m_lock);
+    ICUDictionary* m_dictionary WTF_GUARDED_BY_LOCK(m_lock) { nullptr };
 };
 
 } // namespace Bun

@@ -2037,6 +2037,7 @@ extern "C" const void* bun_icu_maybe_decompress(const void* item, int32_t* lengt
 
     static std::mutex lock;
     [[clang::no_destroy]] static std::unordered_map<const void*, void*> decompressed;
+    static Bun::ICUDictionary* dictionary;
 
     std::lock_guard<std::mutex> locker(lock);
     int32_t size = Bun__ICUItem__size(item, *length);
@@ -2046,7 +2047,7 @@ extern "C" const void* bun_icu_maybe_decompress(const void* item, int32_t* lengt
     void*& kept = decompressed[item];
     if (!kept) {
         void* buffer = std::malloc(static_cast<size_t>(size));
-        if (!buffer || !Bun::decompressICUItem(item, *length, buffer, size)) {
+        if (!buffer || !Bun::decompressICUItem(dictionary, item, *length, buffer, size)) {
             std::free(buffer);
             return item;
         }

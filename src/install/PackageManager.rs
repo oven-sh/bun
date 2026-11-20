@@ -426,14 +426,25 @@ pub(crate) struct RemotePackages {
         HashMap<Task::Id, ArrivedPackage, bun_collections::IdentityContext<Task::Id>>,
 }
 
-/// Which package `append_next_remote_package` may add.
+/// Whose turn `take_next_turn` may take.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemoteTurn {
     /// Only the package that the lowest waiting dependency needs.
     InOrder,
     /// No task is running, so a package that hasn't arrived never will. Add the lowest one that has
-    /// arrived.
+    /// arrived. A bundler takes its turn whether or not its tarball was extracted.
     NothingElseArrives,
+}
+
+/// A package that this resolve added and that has bundled dependencies. Which packages its rows
+/// bind to depends on what its tarball ships, so the rows are not queued when the package is
+/// added. They are queued in the package's turn, which comes when the queue is empty, in the order
+/// of the dependencies that are bound to the waiting packages: `take_next_turn`.
+pub(crate) struct WaitingBundler {
+    pub(crate) package_id: PackageID,
+    /// The task of this resolve that extracts the package's tarball. `None` once the task has
+    /// ended, or if there is none.
+    pub(crate) extracts: Option<Task::Id>,
 }
 
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
@@ -661,6 +672,7 @@ pub struct PackageManager {
         HashMap<Task::Id, ManifestFailure, bun_collections::IdentityContext<Task::Id>>,
     pub(crate) look_ahead: LookAhead,
     pub(crate) remote_packages: RemotePackages,
+    pub(crate) waiting_bundlers: Vec<WaitingBundler>,
 
     // bun dedupe: printed by dedupe::print_dedupe_summary in place of the install summary.
     pub(crate) dedupe_report: Option<crate::dedupe::Report>,
@@ -1546,6 +1558,7 @@ fn allocate_package_manager(
         wr!(manifest_failures, HashMap::default());
         wr!(look_ahead, LookAhead::default());
         wr!(remote_packages, RemotePackages::default());
+        wr!(waiting_bundlers, Vec::new());
         wr!(dedupe_report, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);

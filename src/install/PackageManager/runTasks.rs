@@ -79,6 +79,9 @@ impl Caller<'_, '_> {
         url: &[u8],
     ) -> Option<bool> {
         manager.mark_network_task_failed(task_id);
+        if manager.waits_for_bundles() {
+            manager.bundle_arrived(task_id);
+        }
         // A linker queues a tarball once, for the first dependency that reaches it.
         let is_required = if self.is_linker() {
             let package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
@@ -956,6 +959,9 @@ pub(crate) fn run_tasks(
 
                 manager.extracted_count += 1;
                 bun_core::analytics::Features::extracted_packages_inc();
+                if manager.waits_for_bundles() {
+                    manager.bundle_arrived(task.id);
+                }
 
                 if let Caller::HoistedLinker(installer) = &mut caller {
                     installer.fix_cached_lockfile_package_slices();
@@ -1730,7 +1736,8 @@ impl PackageManager {
             let Some(head) = queue.head() else {
                 // A package can be downloaded while the one whose turn comes first has failed in
                 // a way that left its dependency waiting. Nothing else arrives, so it is added now.
-                if self.append_next_remote_package(RemoteTurn::NothingElseArrives) {
+                // A bundler whose tarball never came takes its turn as well.
+                if self.take_next_turn(RemoteTurn::NothingElseArrives) {
                     continue;
                 }
                 break;

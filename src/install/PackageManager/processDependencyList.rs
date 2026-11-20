@@ -9,7 +9,9 @@ use crate::dependency::{TagExt as _, VersionTag};
 use crate::lockfile_real::package::{Diff, Package, PackageColumns, ResolverContext};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
 use crate::package_manager_real::options::LogLevel;
-use crate::package_manager_real::{ArrivedPackage, PackageManager, RemoteTurn, enqueue, run_tasks};
+use crate::package_manager_real::{
+    ArrivedPackage, PackageManager, RemoteTurn, WaitingBundler, enqueue, run_tasks,
+};
 use crate::package_manager_task as Task;
 use crate::repository_real::{RepositoryExt as _, locked_scp_like};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
@@ -217,13 +219,18 @@ impl PackageManager {
             *package_id = package.meta.id;
         }
 
-        bun_core::handle_oom(
-            (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
-                rows: package.dependencies,
-                install_peer: false,
-                from_command: false,
-            }),
-        );
+        if self.is_bundler(&package) {
+            // The package is extracted, so nothing is left to wait for but its turn.
+            self.wait_for_bundle(package.meta.id, None);
+        } else {
+            bun_core::handle_oom(
+                (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
+                    rows: package.dependencies,
+                    install_peer: false,
+                    from_command: false,
+                }),
+            );
+        }
 
         package
     }
@@ -575,10 +582,10 @@ impl PackageManager {
     }
 
     /// Adds the next git, GitHub or tarball package to the lockfile and resolves the dependencies
-    /// that were waiting for it. Only call this when the queue is empty, because it queues the
-    /// package's own dependencies. Returns false if no package was added.
+    /// that were waiting for it. Only `take_next_turn` calls this, which decides whether a bundler
+    /// comes first. Returns false if no package was added.
     #[cold]
-    pub(crate) fn append_next_remote_package(&mut self, turn: RemoteTurn) -> bool {
+    fn append_next_remote_package(&mut self, turn: RemoteTurn) -> bool {
         if self.remote_packages.arrived.is_empty() {
             return false;
         }
@@ -616,6 +623,116 @@ impl PackageManager {
             self.set_preinstall_state(package_id, crate::PreinstallState::Done);
         }
         true
+    }
+
+    /// Returns true if the rows of `package`, which this resolve has just added, wait for the
+    /// package's turn. See `WaitingBundler`. The runtime's auto-install writes no lockfile, and
+    /// resolves a bundled dependency that an import misses like any other.
+    pub(crate) fn is_bundler(&self, package: &Package) -> bool {
+        !self.options.runtime_auto_install
+            && !matches!(
+                package.resolution.tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            )
+            && (package.dependencies)
+                .get(self.lockfile.buffers.dependencies.as_slice())
+                .iter()
+                .any(|row| row.behavior.is_bundled())
+    }
+
+    /// Keeps the rows of a bundler out of the queue until its turn. `extracts` is the task of this
+    /// resolve that extracts its tarball, if there is one.
+    #[cold]
+    pub(crate) fn wait_for_bundle(&mut self, package_id: PackageID, extracts: Option<Task::Id>) {
+        // A package that `bun update` reads again can be added by more than one task.
+        if (self.waiting_bundlers.iter()).any(|bundler| bundler.package_id == package_id) {
+            return;
+        }
+        self.waiting_bundlers.push(WaitingBundler {
+            package_id,
+            extracts,
+        });
+    }
+
+    /// The task that extracts a bundler's tarball has ended. A failed one leaves nothing to read,
+    /// and the bundler's turn still comes.
+    #[cold]
+    pub(crate) fn bundle_arrived(&mut self, task_id: Task::Id) {
+        for bundler in &mut self.waiting_bundlers {
+            if bundler.extracts == Some(task_id) {
+                bundler.extracts = None;
+            }
+        }
+    }
+
+    /// Returns true if a bundler's rows still have to be queued.
+    #[inline]
+    pub(crate) fn waits_for_bundles(&self) -> bool {
+        !self.waiting_bundlers.is_empty()
+    }
+
+    /// Returns the waiting bundler that the lowest dependency is bound to, as that dependency and
+    /// an index into `waiting_bundlers`. The order does not depend on which tarball is extracted
+    /// first. A bundler that no dependency is bound to any more comes last.
+    fn next_bundler_waiting(&self) -> Option<(DependencyID, usize)> {
+        let waiting = self.waiting_bundlers.as_slice();
+        let index_of = |package_id: PackageID| {
+            waiting
+                .iter()
+                .position(|bundler| bundler.package_id == package_id)
+        };
+        let bound = (self.lockfile.buffers.resolutions.iter().enumerate())
+            .find_map(|(row, &package_id)| Some((row as DependencyID, index_of(package_id)?)));
+        bound.or_else(|| {
+            let lowest = waiting.iter().map(|bundler| bundler.package_id).min()?;
+            Some((DependencyID::MAX, index_of(lowest)?))
+        })
+    }
+
+    /// The turn of the next git, GitHub or tarball package, or of the next bundler: the one that
+    /// the lowest waiting dependency belongs to. Only call this when the queue is empty. Returns
+    /// false if it was nobody's turn.
+    pub(crate) fn take_next_turn(&mut self, turn: RemoteTurn) -> bool {
+        if self.waiting_bundlers.is_empty() {
+            return self.append_next_remote_package(turn);
+        }
+        self.take_next_turn_with_bundlers(turn)
+    }
+
+    #[cold]
+    fn take_next_turn_with_bundlers(&mut self, turn: RemoteTurn) -> bool {
+        let Some((bundler_row, index)) = self.next_bundler_waiting() else {
+            return self.append_next_remote_package(turn);
+        };
+        let has_arrived = |task_id: &Task::Id| self.remote_packages.arrived.contains_key(task_id);
+        let remote_row = self
+            .remote_rows_waiting()
+            .filter(|(_, task_id)| turn == RemoteTurn::InOrder || has_arrived(task_id))
+            .map(|(row, _)| row)
+            .min();
+        if remote_row.is_some_and(|row| row < bundler_row) {
+            return self.append_next_remote_package(turn);
+        }
+        // A tarball that is still being extracted keeps its bundler's turn, and every turn behind
+        // it, waiting. With no task running there is nothing to wait for.
+        if turn == RemoteTurn::InOrder && self.waiting_bundlers[index].extracts.is_some() {
+            return false;
+        }
+        self.take_bundle_turn(index);
+        true
+    }
+
+    /// Queues the rows of a bundler, as `on_first_resolution` queues those of any other package.
+    fn take_bundle_turn(&mut self, index: usize) {
+        let bundler = self.waiting_bundlers.swap_remove(index);
+        let rows = self.lockfile.packages.items_dependencies()[bundler.package_id as usize];
+        bun_core::handle_oom(
+            (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
+                rows,
+                install_peer: false,
+                from_command: false,
+            }),
+        );
     }
 
     pub(crate) fn process_dependency_list_item(
@@ -664,12 +781,13 @@ impl PackageManager {
 
     /// Returns true if `process_peer_dependency_list` has something to do. The peers that were
     /// found while the queue was being resolved wait until it's empty, so that they all see the
-    /// same tree. A git, GitHub or tarball package brings its own dependencies, so the peers wait
-    /// for it too.
+    /// same tree. A git, GitHub or tarball package brings its own dependencies, and so does a
+    /// bundler whose turn has not come, so the peers wait for those too.
     pub(crate) fn has_peers_to_process(&self) -> bool {
         self.peer_dependencies.readable_length() > 0
             && self.lockfile.scratch.dependency_list_queue.is_empty()
             && !self.waits_for_remote_package()
+            && !self.waits_for_bundles()
     }
 
     /// Returns true if the deferred peers are all that's left to resolve, and are worth resolving.

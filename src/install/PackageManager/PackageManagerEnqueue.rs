@@ -62,6 +62,7 @@ fn bind_existing(
         // Read this after `success_fn`, which can change the packages array.
         package: *this.lockfile.packages.get(package_id as usize),
         is_first_time: false,
+        may_bundle: false,
         task: None,
     }))
 }
@@ -216,11 +217,12 @@ pub(crate) fn advance(this: &mut PackageManager) {
             (this.lockfile.scratch.dependency_list_queue).finish_rows_before(head, head.rows.end());
         }
 
-        // The queue is empty, so it is the turn of the next git, GitHub or tarball package.
-        if this.remote_packages.tasks.is_empty() {
+        // The queue is empty, so it is the turn of the next git, GitHub or tarball package, or of
+        // the next bundler.
+        if this.remote_packages.tasks.is_empty() && !this.waits_for_bundles() {
             return;
         }
-        if !this.append_next_remote_package(RemoteTurn::InOrder) {
+        if !this.take_next_turn(RemoteTurn::InOrder) {
             // While the queue waits for that package, the look-ahead goes on from the others.
             request_ahead(this);
             return;
@@ -1652,11 +1654,14 @@ pub(crate) fn look_ahead_from(
     }
 }
 
+/// Queues the rows of a package that this resolve has just added. A bundler's rows wait for its
+/// turn instead: `take_next_turn`.
 fn on_first_resolution(
     this: &mut PackageManager,
     version: &dependency::Version,
-    package: &Package,
+    result: &ResolvedPackageResult,
 ) -> crate::Result<()> {
+    let package = &result.package;
     if verbose_install() {
         bun_core::pretty_errorln!(
             "   -> \"{}\": \"{}\" -> {}@{}",
@@ -1668,6 +1673,16 @@ fn on_first_resolution(
                 bun_fmt::PathSep::Auto
             )),
         );
+    }
+    if result.may_bundle && this.is_bundler(package) {
+        let extracts = match &result.task {
+            // SAFETY: `generate_network_task_for_tarball` initialized the task, and nothing else
+            // holds it until `enqueue_resolved_task` queues it.
+            Some(ResolvedPackageTask::NetworkTask(task)) => Some(unsafe { (**task).task_id }),
+            _ => None,
+        };
+        this.wait_for_bundle(package.meta.id, extracts);
+        return Ok(());
     }
     (this.lockfile.scratch.dependency_list_queue).push(Lockfile::QueuedRows {
         rows: package.dependencies,
@@ -1977,7 +1992,7 @@ pub(crate) fn bind_row(
 
                     if let Some(result) = resolve_result {
                         if result.is_first_time {
-                            on_first_resolution(this, version, &result.package)?;
+                            on_first_resolution(this, version, &result)?;
                         }
                         if let Some(task) = result.task {
                             enqueue_resolved_task(this, result.package.meta.id, task);
@@ -2329,7 +2344,7 @@ fn bind_row_without_manifest(
 
             if let Some(result) = _result {
                 if result.is_first_time {
-                    on_first_resolution(this, version, &result.package)?;
+                    on_first_resolution(this, version, &result)?;
                 }
 
                 // should not trigger a network call
@@ -3049,6 +3064,9 @@ pub(crate) struct ResolvedPackageResult {
     /// Is this the first time we've seen this package?
     pub is_first_time: bool,
 
+    /// The package was added just now and can have bundled dependencies. Its rows tell.
+    pub(crate) may_bundle: bool,
+
     pub task: Option<ResolvedPackageTask>,
 }
 
@@ -3425,6 +3443,8 @@ fn get_or_put_resolved_package_with_find_result(
         Ok(Some(ResolvedPackageResult {
             package,
             is_first_time: true,
+            // The length is `u32::MAX` if the version bundles every dependency.
+            may_bundle: find_result.package.bundled_dependencies.len != 0,
             task,
         }))
     })();
@@ -3940,6 +3960,7 @@ fn resolved_folder_package(
     Ok(Some(ResolvedPackageResult {
         package: *this.lockfile.packages.get(package_id as usize),
         is_first_time,
+        may_bundle: is_first_time,
         task: None,
     }))
 }

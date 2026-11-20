@@ -5,18 +5,6 @@ pub mod api {
     /// Canonical definition lives in bun_dotenv (lower tier).
     pub use bun_dotenv::DotEnvBehavior;
 
-    #[repr(u32)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum MessageLevel {
-        #[default]
-        _none = 0,
-        Err = 1,
-        Warn = 2,
-        Note = 3,
-        Info = 4,
-        Debug = 5,
-    }
-
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum UnhandledRejections {
@@ -103,8 +91,6 @@ pub mod api {
         pub disable_hmr: bool,
         /// port
         pub port: Option<u16>,
-        /// logLevel
-        pub log_level: Option<MessageLevel>,
         /// source_map
         pub source_map: Option<SourceMapMode>,
         /// conditions

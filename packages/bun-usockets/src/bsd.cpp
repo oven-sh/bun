@@ -1860,14 +1860,18 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
     }
 }
 
-static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr, size_t namelen)
+/* Returns 0 for a connect that is established or in progress. *connected
+ * tells the two apart: it is 1 only when connect() itself returned 0. */
+static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr, size_t namelen, int *connected)
 {
     ssize_t injected = 0; int unused = 0;
+    *connected = 0;
     if (US_FAULT_CHECK(US_FAULT_CONNECT, fd, injected, unused)) return errno;
     (void)injected; (void)unused;
 #ifdef _WIN32
     while (1) {
         if (connect(fd, (struct sockaddr *)addr, namelen) == 0) {
+            *connected = 1;
             return 0;
         }
 
@@ -1905,6 +1909,7 @@ static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr,
         return errno;
     }
 
+    *connected = r == 0;
     return 0;
 #endif
 }
@@ -2000,7 +2005,9 @@ us_fd_t bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr
     }
 
 #endif
-    int rc = bsd_do_connect_raw(fd.get(), (struct sockaddr*) addr, addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6));
+    /* Unused: only bsd_create_connect_socket_unix reports it. */
+    int connected;
+    int rc = bsd_do_connect_raw(fd.get(), (struct sockaddr*) addr, addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6), &connected);
 
     if (rc != 0) {
         return {};
@@ -2008,7 +2015,7 @@ us_fd_t bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr
     return fd;
 }
 
-static us_fd_t internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen) {
+static us_fd_t internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen, int *connected) {
     us_fd_t fd{bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL)};
 
     if (!fd) {
@@ -2017,7 +2024,7 @@ static us_fd_t internal_bsd_create_connect_socket_unix(const char *server_path, 
 
     win32_set_nonblocking(fd.get());
 
-    int rc = bsd_do_connect_raw(fd.get(), (struct sockaddr *)server_address, addrlen);
+    int rc = bsd_do_connect_raw(fd.get(), (struct sockaddr *)server_address, addrlen, connected);
     if (rc != 0) {
         return {};
     }
@@ -2025,7 +2032,7 @@ static us_fd_t internal_bsd_create_connect_socket_unix(const char *server_path, 
     return fd;
 }
 
-us_fd_t bsd_create_connect_socket_unix(const char *server_path, size_t len, int options) {
+us_fd_t bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, int *connected) {
     struct sockaddr_un server_address;
     size_t addrlen = 0;
     us_fd_t dirfd_workaround_for_unix_path_len;
@@ -2042,7 +2049,7 @@ us_fd_t bsd_create_connect_socket_unix(const char *server_path, size_t len, int 
     }
 #endif
 
-    us_fd_t fd = internal_bsd_create_connect_socket_unix(server_path, len, options, &server_address, addrlen);
+    us_fd_t fd = internal_bsd_create_connect_socket_unix(server_path, len, options, &server_address, addrlen, connected);
 
 #if defined(__APPLE__)
     if (dirfd_workaround_for_unix_path_len) {

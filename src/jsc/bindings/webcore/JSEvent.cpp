@@ -349,11 +349,8 @@ static inline JSValue jsEvent_timeStampGetter(JSGlobalObject& lexicalGlobalObjec
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* context = (thisObject).globalObject()->scriptExecutionContext();
-    if (!context) [[unlikely]]
-        return jsUndefined();
     auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLDouble>(lexicalGlobalObject, throwScope, impl.timeStampForBindings(*context))));
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLDouble>(lexicalGlobalObject, throwScope, impl.timeStamp())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsEvent_timeStamp, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))

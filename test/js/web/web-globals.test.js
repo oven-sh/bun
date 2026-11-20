@@ -760,3 +760,37 @@ test("dispatchEvent skips a listener that is a WebAssembly GC object", () => {
   target.dispatchEvent(new Event("a"));
   expect(calls).toBe(1);
 });
+
+describe("Event.prototype.timeStamp", () => {
+  test("is the performance.now() value at construction", () => {
+    const before = performance.now();
+    const event = new Event("x");
+    const after = performance.now();
+    expect(event.timeStamp).toBeGreaterThanOrEqual(before);
+    expect(event.timeStamp).toBeLessThanOrEqual(after);
+  });
+
+  test("grows between two events and survives dispatch", () => {
+    const first = new Event("x");
+    const target = new EventTarget();
+    let seen = -1;
+    target.addEventListener("x", e => (seen = e.timeStamp));
+    target.dispatchEvent(first);
+    expect(first.timeStamp).toBeGreaterThan(0);
+    expect(seen).toBe(first.timeStamp);
+    expect(new Event("x").timeStamp).toBeGreaterThanOrEqual(first.timeStamp);
+  });
+
+  test("every Event subclass and native event has it", () => {
+    const before = performance.now();
+    const events = [new CustomEvent("c"), new MessageEvent("m"), new ErrorEvent("e"), new CloseEvent("k")];
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", e => events.push(e));
+    controller.abort();
+    expect(events).toHaveLength(5);
+    for (const e of events) {
+      expect(e.timeStamp).toBeGreaterThanOrEqual(before);
+      expect(e.timeStamp).toBeLessThanOrEqual(performance.now());
+    }
+  });
+});

@@ -69,7 +69,9 @@ export const libuv: Dependency = {
   //
   // win-poll-no-reendgame-after-close: doesn't queue the endgame after poll_cb
   // if a nested uv_run inside poll_cb already ran it. Otherwise close_cb runs
-  // twice.
+  // twice. usockets relies on it: us_poll_stop calls uv_close at once, also
+  // from inside the handle's own poll_cb, so that a socket closed from a
+  // handler releases its port before the handler returns.
   patches: [
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-abort-with-disconnect.patch",

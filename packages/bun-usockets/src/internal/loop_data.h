@@ -96,10 +96,11 @@ struct us_internal_loop_data_t {
     /* We do not care if this flips or not, it doesn't matter */
     size_t iteration_nr;
     void* jsc_vm;
-    /* Reentrancy depth of us_loop_run / us_loop_run_bun_tick (and us_loop_pump
-     * on libuv). When >1, we are inside a nested tick (e.g. waitForPromise from
-     * a poll callback). Freeing closed sockets must be deferred to the
-     * outermost tick so the outer dispatch doesn't read a freed poll. */
+    /* Reentrancy depth of us_loop_run / us_loop_run_bun_tick (and, on libuv,
+     * us_loop_pump and each poll_cb dispatch). When >1, we are inside a nested
+     * tick (e.g. waitForPromise from a poll callback). Freeing closed sockets
+     * must be deferred to the outermost tick so the outer dispatch doesn't
+     * read a freed poll. */
     int tick_depth;
     /* Filled by us_socket_resume(), closed by us_internal_loop_post(). */
     int num_unresumable_sockets;

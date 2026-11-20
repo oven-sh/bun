@@ -141,7 +141,11 @@ pub(crate) fn find_roads_by_module_objects(application: &Files<'_>) -> RoadsToNa
             })
         })
     };
-    match application.compiled_files().iter().any(hands_module_object_on) {
+    match application
+        .compiled_files()
+        .iter()
+        .any(hands_module_object_on)
+    {
         true => RoadsToNamespaces::all(),
         false => RoadsToNamespaces::empty(),
     }

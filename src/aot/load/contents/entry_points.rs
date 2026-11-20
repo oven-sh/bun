@@ -1698,11 +1698,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         mut self,
         files: &Files<'_>,
         written_count: usize,
-    ) -> (
-        Vec<FoundEntryPoint>,
-        Vec<(FileId, ExprId)>,
-        Vec<NameOfLoad>,
-    ) {
+    ) -> (Vec<FoundEntryPoint>, Vec<(FileId, ExprId)>, Vec<NameOfLoad>) {
         let found = take(self.found.get_mut());
         let told = found.entry_points.iter();
         let told: FxHashMap<&[u8], &FoundEntryPoint> = told

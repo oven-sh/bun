@@ -2,12 +2,11 @@
 
 use bun_core::strings;
 use bun_semver::{SlicedString, Version};
-use bun_sys::{self as sys, Dir, EntryKind};
+use bun_sys::{self as sys, Dir, EntryKind, O};
 
 use crate::bun_json::{E, ExprData, ParsedJson};
 use crate::dependency::is_safe_lockfile_package_name;
 use crate::package_installer::alias_is_safe_install_target;
-use crate::prune::descend;
 
 /// The levels of `node_modules` that are read below one bundler.
 pub const MAX_DEPTH: usize = 32;
@@ -21,6 +20,9 @@ pub struct BundleContents {
     pub folders: Box<[ShippedFolder]>,
     /// `MAX_DEPTH` or `MAX_FOLDERS` ended the walk before it had read everything.
     pub truncated: bool,
+    /// The first read that failed for another reason than that its entry is absent. The walk
+    /// ended there and `folders` is empty: what the package ships is not known.
+    pub error: Option<sys::Error>,
 }
 
 pub struct ShippedFolder {
@@ -66,10 +68,17 @@ pub fn read_bundle(dir: &Dir, only_names: Option<&[&[u8]]>) -> BundleContents {
         looked_at: 0,
         truncated: false,
     };
-    reader.read_node_modules(dir, None, 0, only_names);
-    BundleContents {
-        folders: reader.folders.into_boxed_slice(),
-        truncated: reader.truncated,
+    match reader.read_node_modules(dir, None, 0, only_names) {
+        Ok(()) => BundleContents {
+            folders: reader.folders.into_boxed_slice(),
+            truncated: reader.truncated,
+            error: None,
+        },
+        Err(error) => BundleContents {
+            folders: Box::default(),
+            truncated: false,
+            error: Some(error),
+        },
     }
 }
 
@@ -88,13 +97,13 @@ impl Reader {
         parent: Option<u32>,
         depth: usize,
         only_names: Option<&[&[u8]]>,
-    ) {
-        let Some(node_modules) = descend(package, NODE_MODULES) else {
-            return;
+    ) -> sys::Maybe<()> {
+        let Some(node_modules) = open_folder(package, NODE_MODULES)? else {
+            return Ok(());
         };
         if depth == MAX_DEPTH {
             self.truncated = true;
-            return;
+            return Ok(());
         }
         let mut names: Vec<Vec<u8>> = match only_names {
             Some(names) => names
@@ -102,7 +111,7 @@ impl Reader {
                 .filter(|name| is_folder_name(name))
                 .map(|name| name.to_vec())
                 .collect(),
-            None => folder_names(&node_modules),
+            None => folder_names(&node_modules)?,
         };
         // The order in which a directory lists its entries is not defined.
         names.sort_unstable();
@@ -118,10 +127,10 @@ impl Reader {
                 break;
             }
             self.looked_at += 1;
-            let Some(folder) = descend(&node_modules, name) else {
+            let Some(folder) = open_folder(&node_modules, name)? else {
                 continue;
             };
-            let Some(manifest) = read_manifest(&folder, name) else {
+            let Some(manifest) = read_manifest(&folder, name)? else {
                 continue;
             };
             self.path.extend_from_slice(name);
@@ -137,10 +146,11 @@ impl Reader {
                 parent,
             });
             self.path.push(b'/');
-            self.read_node_modules(&folder, Some(index), depth + 1, None);
+            self.read_node_modules(&folder, Some(index), depth + 1, None)?;
             self.path.truncate(folder_name_at);
         }
         self.path.truncate(package_path_len);
+        Ok(())
     }
 }
 
@@ -149,17 +159,17 @@ fn is_folder_name(name: &[u8]) -> bool {
     alias_is_safe_install_target(name) && is_safe_lockfile_package_name(name)
 }
 
-fn folder_names(node_modules: &Dir) -> Vec<Vec<u8>> {
+fn folder_names(node_modules: &Dir) -> sys::Maybe<Vec<Vec<u8>>> {
     let mut names: Vec<Vec<u8>> = Vec::new();
     each_folder(node_modules, |name| {
         if name[0] != b'@' {
             if is_folder_name(name) {
                 names.push(name.to_vec());
             }
-            return;
+            return Ok(());
         }
-        let Some(scope) = descend(node_modules, name) else {
-            return;
+        let Some(scope) = open_real_subdir(node_modules, name)? else {
+            return Ok(());
         };
         each_folder(&scope, |unscoped| {
             let mut scoped = Vec::with_capacity(name.len() + 1 + unscoped.len());
@@ -169,23 +179,78 @@ fn folder_names(node_modules: &Dir) -> Vec<Vec<u8>> {
             if is_folder_name(&scoped) {
                 names.push(scoped);
             }
-        });
-    });
-    names
+            Ok(())
+        })
+    })?;
+    Ok(names)
 }
 
-/// An entry whose kind the listing does not know is passed on: `descend` opens real folders only.
-fn each_folder(dir: &Dir, mut each: impl FnMut(&[u8])) {
+/// An entry whose kind the listing does not know is passed on: `open_folder` opens real folders
+/// only.
+fn each_folder(dir: &Dir, mut each: impl FnMut(&[u8]) -> sys::Maybe<()>) -> sys::Maybe<()> {
     let mut entries = sys::iterate_dir(dir.fd());
-    while let Ok(Some(entry)) = entries.next() {
+    while let Some(entry) = entries.next()? {
         let name = entry.name.slice_u8();
         if matches!(name.first(), None | Some(b'.')) {
             continue;
         }
         if matches!(entry.kind, EntryKind::Directory | EntryKind::Unknown) {
-            each(name);
+            each(name)?;
         }
     }
+    Ok(())
+}
+
+/// `name` or `@scope/name` below `dir`. `None`: no real folder is there.
+fn open_folder(dir: &Dir, alias: &[u8]) -> sys::Maybe<Option<Dir>> {
+    match strings::split_once_char(alias, b'/') {
+        Some((scope, name)) if alias.first() == Some(&b'@') => {
+            match open_real_subdir(dir, scope)? {
+                Some(scope_dir) => open_real_subdir(&scope_dir, name),
+                None => Ok(None),
+            }
+        }
+        _ => open_real_subdir(dir, alias),
+    }
+}
+
+fn open_real_subdir(dir: &Dir, name: &[u8]) -> sys::Maybe<Option<Dir>> {
+    if kind_of(dir, name)? != Some(EntryKind::Directory) {
+        return Ok(None);
+    }
+    unless_absent(dir.open_at_with(name, O::RDONLY | O::CLOEXEC | O::NOFOLLOW))
+}
+
+/// Of `name` itself, not of what a link there leads to. `None`: nothing is there.
+fn kind_of(dir: &Dir, name: &[u8]) -> sys::Maybe<Option<EntryKind>> {
+    Ok(unless_absent(lstat(dir, name))?.map(|st| sys::kind_from_mode(st.st_mode as sys::Mode)))
+}
+
+/// Only an entry that is absent is one that the package does not ship.
+fn unless_absent<T>(result: sys::Maybe<T>) -> sys::Maybe<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(err) if matches!(err.get_errno(), sys::E::ENOENT | sys::E::ENOTDIR) => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+#[cfg(not(windows))]
+fn lstat(dir: &Dir, name: &[u8]) -> sys::Maybe<sys::Stat> {
+    sys::lstatat(dir.fd(), &bun_core::ZBox::from_bytes(name))
+}
+
+// `sys::lstatat` fstats the opened reparse point, which reports junctions as directories.
+#[cfg(windows)]
+fn lstat(dir: &Dir, name: &[u8]) -> sys::Maybe<sys::Stat> {
+    let mut dir_buf = bun_paths::path_buffer_pool::get();
+    let dir_path = dir.get_fd_path(&mut dir_buf)?;
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    let path = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Auto>(
+        &mut path_buf[..],
+        &[&*dir_path, name],
+    );
+    sys::lstat(path)
 }
 
 struct Manifest {
@@ -195,9 +260,23 @@ struct Manifest {
     optional_dependencies: Box<[DeclaredDependency]>,
 }
 
-fn read_manifest(folder: &Dir, folder_name: &[u8]) -> Option<Manifest> {
-    let contents = crate::git_runner::read_package_json_in(folder).ok()?;
-    let source = bun_ast::Source::init_path_string("package.json", &contents[..]);
+/// `None`: the folder is not a package that a lockfile can record.
+fn read_manifest(folder: &Dir, folder_name: &[u8]) -> sys::Maybe<Option<Manifest>> {
+    let contents = match crate::git_runner::read_package_json_in(folder) {
+        Ok(contents) => contents,
+        // A package.json that is a link or a folder is content of the package, not a failed read.
+        Err(err) => {
+            return match kind_of(folder, b"package.json")? {
+                Some(EntryKind::File) => Err(err),
+                _ => Ok(None),
+            };
+        }
+    };
+    Ok(parse_manifest(&contents, folder_name))
+}
+
+fn parse_manifest(contents: &[u8], folder_name: &[u8]) -> Option<Manifest> {
+    let source = bun_ast::Source::init_path_string("package.json", contents);
     // Its locations borrow `contents`.
     let mut log = bun_ast::Log::init();
     let parsed = ParsedJson::parse_package_json(&source, &mut log).ok()?;

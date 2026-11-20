@@ -35,6 +35,7 @@ use bun_install_types::DependencyVersionTag;
 use super::PackageIDSlice;
 use super::override_map::ScopedOverride;
 use super::override_selector::{PackageSelector, parse_package_segment};
+use super::package::meta::ShippedIdentity;
 use super::package::{Meta, PackageColumns as _, value_loc_of};
 use super::{
     CatalogMap, DependencySlice, LoadResult, Lockfile as BinaryLockfile, OverrideMap, Package,
@@ -103,10 +104,16 @@ pub enum Version {
 
     /// `overrides` values may be objects holding scoped rules (parent-scoped or `name@range` targets); stamped while such rules exist and the package walk in `Stringifier::version_to_write` is v2-clean (object rows themselves parse at every version)
     V3 = 3,
+
+    /// A folder that the tarball of a bundling package ships has an entry at its path,
+    /// `["name@version", "", { "bundled": true }, ""]`: an npm package without a registry and
+    /// without a hash, which nothing downloads. A bundled dependency whose folder the tarball
+    /// lacks is listed as "unresolved". Earlier versions read both as registry packages.
+    V4 = 4,
 }
 
 impl Version {
-    pub(crate) const CURRENT: Version = Version::V3;
+    pub(crate) const CURRENT: Version = Version::V4;
 
     #[inline]
     pub(crate) const fn current() -> Version {
@@ -119,6 +126,7 @@ impl Version {
             1 => Some(Version::V1),
             2 => Some(Version::V2),
             3 => Some(Version::V3),
+            4 => Some(Version::V4),
             _ => None,
         }
     }
@@ -992,7 +1000,7 @@ impl Stringifier {
                     && pkg_map.map.len() > 0
                 {
                     if pkg_map
-                        .find_resolution(pkg_path, dep, buf, path_buf, None)
+                        .find_resolution(pkg_path, dep, buf, path_buf, Walk::ToRoot)
                         .is_err()
                     {
                         optional_peers_buf.push(dep.name);
@@ -1541,6 +1549,162 @@ enum RowEvidence {
     Unprovided,
 }
 
+/// How far `PkgMap::find_resolution` walks up from a package's path, and what it may find.
+#[derive(Clone, Copy)]
+enum Walk<'a> {
+    /// Up to the root.
+    ToRoot,
+    /// One level above the nearest bundled package, as the hoister's.
+    ///
+    /// Only `"bundled": true` entries bound the walk: a transitive dependency
+    /// of a bundled package also inherits the bundle's hoist root in
+    /// `Tree.rs`, but its lockfile path (`a/c`, no bundled marker) is
+    /// indistinguishable from an ordinary conflict-nested package whose hoist
+    /// root is the lockfile root.
+    AboveBundled(&'a PkgPathSet),
+    /// A bundled dependency is the folder below its package, or nothing.
+    OwnFolder,
+    /// For a dependency of a shipped package: up to the `node_modules` of the package that
+    /// bundles it, which is the nearest path that is not in this set, and only to a shipped
+    /// package. Nothing outside the tarball is a part of the bundle.
+    InsideBundle(&'a PkgPathSet),
+    /// Up to the root, past the shipped packages in this set: a package that bun installs does
+    /// not depend on a folder inside another package's tarball.
+    PastShipped(&'a PkgPathSet),
+}
+
+impl Walk<'_> {
+    fn may_bind(self, path: &[u8]) -> bool {
+        match self {
+            Walk::InsideBundle(shipped_pkgs) => shipped_pkgs.contains(path),
+            Walk::PastShipped(shipped_pkgs) => !shipped_pkgs.contains(path),
+            Walk::ToRoot | Walk::AboveBundled(_) | Walk::OwnFolder => true,
+        }
+    }
+}
+
+/// The entries of a bun.lock at `Version::V4` that are shipped packages.
+struct ShippedEntries<'a> {
+    /// Their paths.
+    paths: PkgPathSet,
+    /// For a path, the entries that are one folder below it.
+    below: StringHashMap<ShippedBelow<'a>>,
+}
+
+#[derive(Default)]
+struct ShippedBelow<'a> {
+    /// Whether the path is an entry, and not of the root or a workspace: those install what they
+    /// bundle.
+    is_bundler: bool,
+    entries: Vec<ShippedEntry<'a>>,
+}
+
+struct ShippedEntry<'a> {
+    path: &'a [u8],
+    /// The last part of `path`.
+    folder: &'a [u8],
+    /// From `folder` and the entry's `name@version`.
+    identity: ShippedIdentity<'a>,
+}
+
+impl<'a> ShippedEntries<'a> {
+    fn init() -> Self {
+        Self {
+            paths: PkgPathSet::init(),
+            below: StringHashMap::default(),
+        }
+    }
+
+    /// Records the entry at `pkg_path` if it has the form of a shipped package's: an npm package
+    /// marked bundled, with no registry and no hash, one folder below another entry. An entry
+    /// that `ShippedIdentity` refuses is not one: the resolver records no such folder.
+    fn add_if_shipped(
+        &mut self,
+        pkg_path: &'a [u8],
+        pkg_info: &'a [JSON::E::JsonValue],
+    ) -> Result<(), bun_alloc::AllocError> {
+        let [resolution, registry, info, integrity, ..] = pkg_info else {
+            return Ok(());
+        };
+        if registry.as_str().is_none_or(|url| !url.is_empty())
+            || integrity.as_str().is_none_or(|hash| !hash.is_empty())
+            || !matches!(
+                info.as_object().and_then(|info| info.get(b"bundled")),
+                Some(JSON::E::JsonValue::Boolean(true))
+            )
+        {
+            return Ok(());
+        }
+        let Some(Ok((name, version))) = resolution.as_str().map(dependency::split_name_and_version)
+        else {
+            return Ok(());
+        };
+        let Some((parent, folder)) = split_last_folder(pkg_path) else {
+            return Ok(());
+        };
+        let Some(identity) = ShippedIdentity::new(folder, Some(name), version) else {
+            return Ok(());
+        };
+        let below = self.below.get_or_put(parent)?.value_ptr;
+        below.entries.push(ShippedEntry {
+            path: pkg_path,
+            folder,
+            identity,
+        });
+        Ok(())
+    }
+
+    /// Call once every entry is added. Keeps the ones below a package that can bundle them.
+    fn keep_below_bundlers(
+        &mut self,
+        pkg_rows: &[JSON::E::PropertyJSON],
+    ) -> Result<(), bun_alloc::AllocError> {
+        if self.below.is_empty() {
+            return Ok(());
+        }
+        for row in pkg_rows {
+            let Some(below) = self.below.get_mut(row.key.slice()) else {
+                continue;
+            };
+            let resolution = (row.value.as_array())
+                .and_then(|pkg_info| pkg_info.items().first())
+                .and_then(|resolution| resolution.as_str())
+                .unwrap_or(b"");
+            let in_project = strings::has_prefix(resolution, b"@root:")
+                || dependency::split_name_and_version(resolution).is_ok_and(|(_, version)| {
+                    version.starts_with(b"root:") || version.starts_with(b"workspace:")
+                });
+            below.is_bundler = !in_project;
+        }
+        self.below.retain(|_, below| below.is_bundler);
+        for below in self.below.values() {
+            for entry in &below.entries {
+                self.paths.map.put(entry.path, ())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.paths.map.is_empty()
+    }
+}
+
+/// Splits `a/b/@scope/c` into `a/b`, the package whose `node_modules` has the last folder, and
+/// `@scope/c`, that folder's name. `None` for a path at the root.
+fn split_last_folder(pkg_path: &[u8]) -> Option<(&[u8], &[u8])> {
+    let slash = strings::last_index_of_char(pkg_path, b'/')?;
+    let above = &pkg_path[..slash];
+    let last_start = strings::last_index_of_char(above, b'/').map_or(0, |slash| slash + 1);
+    let parent_end = if above[last_start..].starts_with(b"@") {
+        last_start.checked_sub(1)?
+    } else {
+        slash
+    };
+    let (parent, folder) = (&pkg_path[..parent_end], &pkg_path[parent_end + 1..]);
+    (!parent.is_empty() && !folder.is_empty()).then_some((parent, folder))
+}
+
 impl<T> PkgMap<T> {
     fn init() -> Self {
         Self {
@@ -1570,20 +1734,14 @@ impl<T> PkgMap<T> {
         self.map.contains_key(path)
     }
 
-    /// With `bundled_pkgs`, the walk stops one level above a bundled package, as the hoister's.
-    ///
-    /// Only `"bundled": true` entries bound the walk: a transitive dependency
-    /// of a bundled package also inherits the bundle's hoist root in
-    /// `Tree.rs`, but its lockfile path (`a/c`, no bundled marker) is
-    /// indistinguishable from an ordinary conflict-nested package whose hoist
-    /// root is the lockfile root.
+    /// Looks for `dep` below `pkg_path`, then below each path above it, as far as `walk` allows.
     fn find_resolution(
         &self,
         pkg_path: &[u8],
         dep: &Dependency,
         string_buf: &[u8],
         path_buf: &mut [u8],
-        bundled_pkgs: Option<&PkgPathSet>,
+        walk: Walk<'_>,
     ) -> Result<(&T, RowEvidence), ResolveError> {
         let dep_name = dep.name.slice(string_buf);
 
@@ -1595,13 +1753,15 @@ impl<T> PkgMap<T> {
         path_buf[pkg_path.len()] = b'/';
         let mut offset = pkg_path.len() + 1;
 
-        let mut at_bundle_root = false;
+        let mut at_last_level = matches!(walk, Walk::OwnFolder);
         let mut valid = true;
         while valid {
             path_buf[offset..offset + dep_name.len()].copy_from_slice(dep_name);
             let res_path = &path_buf[0..offset + dep_name.len()];
 
-            if let Some(entry) = self.map.get(res_path) {
+            if let Some(entry) = self.map.get(res_path)
+                && walk.may_bind(res_path)
+            {
                 let evidence = if offset == pkg_path.len() + 1 {
                     RowEvidence::OwnEntry
                 } else if offset == 0 {
@@ -1612,12 +1772,20 @@ impl<T> PkgMap<T> {
                 return Ok((entry, evidence));
             }
 
-            if offset == 0 || at_bundle_root {
+            if offset == 0 || at_last_level {
                 return Err(ResolveError::Unresolvable);
             }
 
-            if let Some(bundled_pkgs) = bundled_pkgs {
-                at_bundle_root = bundled_pkgs.contains(&path_buf[0..offset - 1]);
+            // The package whose `node_modules` had no `dep`.
+            let searched = &path_buf[0..offset - 1];
+            match walk {
+                Walk::AboveBundled(bundled_pkgs) => {
+                    at_last_level = bundled_pkgs.contains(searched);
+                }
+                Walk::InsideBundle(shipped_pkgs) if !shipped_pkgs.contains(searched) => {
+                    return Err(ResolveError::Unresolvable);
+                }
+                _ => {}
             }
 
             let Some(slash) = strings::last_index_of_char(&path_buf[0..offset - 1], b'/') else {
@@ -2230,6 +2398,7 @@ pub(crate) fn parse_into_binary_lockfile(
             &mut optional_peers_buf,
             &mut unresolved_rows,
             None,
+            None,
             Some(member_rows.as_slice()),
             true,
         )?;
@@ -2290,6 +2459,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 &mut unresolved_rows,
                 None,
                 None,
+                None,
                 true,
             )?;
 
@@ -2319,6 +2489,10 @@ pub(crate) fn parse_into_binary_lockfile(
         }
         let pkg_rows: &[JSON::E::PropertyJSON] = pkgs_expr.as_ref().map_or(&[], object_rows);
         pkg_map.map.reserve(pkg_rows.len());
+
+        // Before `Version::V4`, an entry in the form of a shipped package's is a registry package.
+        let reads_shipped = lockfile_version.at_least(Version::V4);
+        let mut shipped = ShippedEntries::init();
 
         // find the bundle roots.
         //
@@ -2355,7 +2529,12 @@ pub(crate) fn parse_into_binary_lockfile(
                 continue;
             }
             bundled_pkgs.put(pkg_path, ());
+            if reads_shipped {
+                shipped.add_if_shipped(pkg_path, pkg_info.items())?;
+            }
         }
+        shipped.keep_below_bundlers(pkg_rows)?;
+        let has_shipped = !shipped.is_empty();
 
         'next_pkg_key: for row in pkg_rows {
             let key_loc = row.key_loc;
@@ -2428,6 +2607,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 }
             };
 
+            let is_shipped =
+                has_shipped && res.tag == ResolutionTag::Npm && shipped.paths.contains(pkg_path);
+
             let mut npm_url_needs_integrity = false;
             if res.tag == ResolutionTag::Npm {
                 if i >= pkg_info.len() {
@@ -2454,7 +2636,11 @@ pub(crate) fn parse_into_binary_lockfile(
                     .map_or(Npm::Registry::DEFAULT_URL.as_bytes(), |mgr| {
                         mgr.scope_for_package_name(name_str).url.href()
                     });
-                if registry_str.is_empty() {
+                if is_shipped {
+                    // Nothing downloads a shipped package, so its URL stays empty. It has no hash,
+                    // and the check below for a tarball outside the registry is not about it.
+                    debug_assert!(registry_str.is_empty());
+                } else if registry_str.is_empty() {
                     let url = ExtractTarball::build_url(
                         configured_registry,
                         name.slice(lockfile.buffers.string_bytes.as_slice()),
@@ -2580,6 +2766,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             &mut optional_peers_buf,
                             &mut unresolved_rows,
                             Some((pkg_path, &bundled_pkgs)),
+                            reads_shipped.then_some(&shipped),
                             None,
                             res.tag == ResolutionTag::Workspace,
                         )?;
@@ -2736,7 +2923,13 @@ pub(crate) fn parse_into_binary_lockfile(
             pkg.name_hash = name_hash;
             pkg.resolution = res;
 
-            let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
+            let pkg_id = if is_shipped {
+                // Two shipped packages of one name and version are two folders.
+                pkg.meta.mark_shipped();
+                lockfile.append_package(&pkg)?.meta.id
+            } else {
+                lockfile.append_package_dedupe(&mut pkg)?
+            };
 
             // The root's `bin` is recorded nowhere else.
             if pkg_id == 0 && res.tag == ResolutionTag::Root {
@@ -2768,6 +2961,7 @@ pub(crate) fn parse_into_binary_lockfile(
         let pkg_names = pkgs.items_name();
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
+        let pkg_metas: &[Meta] = pkgs.items_meta();
         let members = workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len;
 
         // Populated by `append_package_dedupe` while the packages object was
@@ -2941,6 +3135,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 continue;
             }
 
+            // A shipped package has what its bundle has. Nothing else is resolved for it.
+            let owner_is_shipped = has_shipped && pkg_metas[pkg_id as usize].is_shipped();
+
             // find resolutions. iterate up to root through the pkg path.
             let deps = pkg_deps[pkg_id as usize];
             'deps: for dep_id in deps.begin()..deps.end() {
@@ -2953,7 +3150,9 @@ pub(crate) fn parse_into_binary_lockfile(
 
                 // A registry package's peer prefers a published version in range over a workspace
                 // of that name, because its dependent may use the published one.
-                let by_version = if res.tag == ResolutionTag::Workspace {
+                let by_version = if owner_is_shipped {
+                    None
+                } else if res.tag == ResolutionTag::Workspace {
                     own_peer(dep)
                 } else {
                     peer_by_version(dep)
@@ -2961,15 +3160,27 @@ pub(crate) fn parse_into_binary_lockfile(
                 let res_id = match by_version {
                     Some(id) => id,
                     None => {
-                        // Bounded so the loaded lockfile binds optional peers
-                        // exactly like the hoister that re-derives them after
-                        // `Package::clone` resets them.
+                        let walk = if reads_shipped && dep.behavior.is_bundled() {
+                            Walk::OwnFolder
+                        } else if owner_is_shipped {
+                            Walk::InsideBundle(&shipped.paths)
+                        } else if dep.behavior.is_optional_peer() {
+                            // Bounded so the loaded lockfile binds optional peers
+                            // exactly like the hoister that re-derives them after
+                            // `Package::clone` resets them.
+                            Walk::AboveBundled(&bundled_pkgs)
+                        } else if has_shipped && !dep.behavior.is_peer() {
+                            // A peer may share the copy that its package's dependent bundles.
+                            Walk::PastShipped(&shipped.paths)
+                        } else {
+                            Walk::ToRoot
+                        };
                         match pkg_map.find_resolution(
                             pkg_path,
                             dep,
                             string_buf,
                             &mut path_buf[..],
-                            dep.behavior.is_optional_peer().then_some(&bundled_pkgs),
+                            walk,
                         ) {
                             Ok((&id, mut evidence)) => {
                                 let own_entry = evidence == RowEvidence::OwnEntry;
@@ -3002,7 +3213,11 @@ pub(crate) fn parse_into_binary_lockfile(
                                     bound_by[dep_id as usize] = RowEvidence::Unprovided;
                                     resolutions[dep_id as usize] = invalid_package_id;
                                 }
-                                if may_stay_unresolved(dep) {
+                                // The tarball lacks the folder of a bundled dependency, or a
+                                // bundle lacks what one of its packages needs.
+                                if may_stay_unresolved(dep)
+                                    || matches!(walk, Walk::OwnFolder | Walk::InsideBundle(_))
+                                {
                                     continue 'deps;
                                 }
                                 return Err(dependency_resolution_failure(
@@ -3348,10 +3563,13 @@ fn parse_append_dependencies(
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
     optional_peers_buf: &mut HashMap<u64, ()>,
-    // Receives the optional dependencies that `obj` lists as "unresolved".
+    // Receives the optional dependencies that `obj` lists as "unresolved" and, with `shipped`, the
+    // bundled ones.
     unresolved_rows: &mut Vec<DependencyID>,
     // For an entry of `packages`: its path, and the paths that are marked bundled.
     bundled: Option<(&[u8], &PkgPathSet)>,
+    // For an entry of `packages` in a file at `Version::V4`.
+    shipped: Option<&ShippedEntries<'_>>,
     // Only for the root: the workspaces, each of which is added as a workspace dependency.
     member_rows: Option<&[&JSON::E::PropertyJSON]>,
     catalogs_apply: bool,
@@ -3482,8 +3700,32 @@ fn parse_append_dependencies(
                     }
                 }
 
+                // A bundled dependency whose folder the tarball lacks. An optional dependency in
+                // that list is one that did not resolve, as before `Version::V4`.
+                if shipped.is_some()
+                    && !dep.behavior.is_optional()
+                    && unresolved_names.contains(&dep.name_hash)
+                {
+                    dep.behavior.insert(Behavior::BUNDLED);
+                }
+
                 lockfile.buffers.dependencies.push(dep);
             }
+        }
+    }
+
+    // A folder that the tarball ships without the package declaring its name has no row in `obj`.
+    if let (Some((pkg_path, _)), Some(shipped)) = (bundled, shipped)
+        && let Some(below) = shipped.below.get(pkg_path)
+    {
+        for entry in &below.entries {
+            let folder_hash = StringBuilder::string_hash(entry.folder);
+            let declared = &lockfile.buffers.dependencies[off..];
+            if declared.iter().any(|dep| dep.name_hash == folder_hash) {
+                continue;
+            }
+            let row = entry.identity.synthetic_row(&mut sbuf!(lockfile))?;
+            lockfile.buffers.dependencies.push(row);
         }
     }
 
@@ -3528,8 +3770,9 @@ fn parse_append_dependencies(
     if !unresolved_names.is_empty() {
         unresolved_rows.extend((off..end).filter_map(|id| {
             let dep = &lockfile.buffers.dependencies[id];
-            (dep.behavior.is_optional() && unresolved_names.contains(&dep.name_hash))
-                .then_some(id as DependencyID)
+            let listed =
+                dep.behavior.is_optional() || (shipped.is_some() && dep.behavior.is_bundled());
+            (listed && unresolved_names.contains(&dep.name_hash)).then_some(id as DependencyID)
         }));
     }
 

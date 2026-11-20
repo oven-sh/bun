@@ -1546,7 +1546,8 @@ impl Run<'_> {
             false => Vec::new(),
         };
         if language == Language::Plugin && !is_ignored && not_installed.is_empty() {
-            return self.format_stdin_with_prettier(configs, &scope, Some(&path), (name, &text));
+            let named = (name, extension_or_name(&path), &text[..]);
+            return self.format_stdin_with_prettier(configs, &scope, Some(&path), named);
         }
         let mut options = match configs.options_for(&scope, &path) {
             Ok(options) => options,
@@ -1645,7 +1646,8 @@ impl Run<'_> {
             // The parser can only come from a plugin.
             let not_installed = self.not_installed(configs, &scope, None);
             if not_installed.is_empty() {
-                return self.format_stdin_with_prettier(configs, &scope, None, (b"stdin", &text));
+                let unnamed = (&b"stdin"[..], &parser[..], &text[..]);
+                return self.format_stdin_with_prettier(configs, &scope, None, unnamed);
             }
             self.report_unsupported(&mut [(&parser, 1)], &not_installed);
             if self.options.allow_unsupported && !is_read_only {
@@ -1688,13 +1690,14 @@ impl Run<'_> {
     }
 
     /// Formats standard input in a plugin's language. See `prettier.rs`. `path` is `None` if it has no file name, and
-    /// `scope` is where its configuration applies. `display_name` is its name in error messages.
+    /// `scope` is where its configuration applies. `display_name` is its name in error messages, and `language` is
+    /// what [`Run::report_unsupported`] calls its language.
     fn format_stdin_with_prettier(
         mut self,
         configs: &Configs,
         scope: &config::Scope,
         path: Option<&[u8]>,
-        (display_name, text): (&[u8], &[u8]),
+        (display_name, language, text): (&[u8], &[u8], &[u8]),
     ) -> Outcome {
         let is_read_only = self.options.check || self.options.list_different;
         let size = (1, text.len() as u64);
@@ -1715,8 +1718,14 @@ impl Run<'_> {
                 self.error(&message);
                 self.out.exit_code = 0;
             }
-            // For a `ConfigError`, such as a parser that no plugin provides, Prettier's `handleError` prints only
-            // `error.message`.
+            // Same as for a file whose language no listed plugin adds.
+            Err(Unformatted::NoParser) => {
+                self.report_unsupported(&mut [(language, 1)], &[]);
+                if self.options.allow_unsupported && !is_read_only {
+                    self.out.stdout = text.to_vec();
+                }
+            }
+            // For a `ConfigError`, Prettier's `handleError` prints only `error.message`.
             Err(Unformatted::Thrown(why)) if why.starts_with(b"ConfigError: ") => {
                 let message = &why[b"ConfigError: ".len()..];
                 let end = strings::index_of(message, b"\n    at ").unwrap_or(message.len());
@@ -2250,7 +2259,10 @@ impl Run<'_> {
                 }
             }
         }
+        let mut by_prettier = handed_over.len();
         if let Some(bridge) = &bridge {
+            // The files among `handed_over` that no plugin has a parser for, by their place in it.
+            let mut without_parser: Guarded<Vec<usize>> = Guarded::new(Vec::new());
             let is_heavy = |at: usize| handed_over[at].1.size >= HEAVY as u64;
             bridge.for_each(handed_over.len(), &is_heavy, &|at| {
                 let (index, target) = handed_over[at];
@@ -2270,13 +2282,26 @@ impl Run<'_> {
                 let writes = !is_read_only && !is_partly_staged(target);
                 let formatted =
                     bridge.format_file(file, (config, &for_file), writes, only.as_ref());
-                results.lock()[index] = Some(match formatted {
-                    Ok(true) if !is_read_only && !writes => Done::PartlyStaged,
-                    Ok(true) => Done::Different(began.elapsed()),
-                    Ok(false) => Done::Unchanged,
-                    Err(error) => Done::Failed(error),
-                });
+                results.lock()[index] = match formatted {
+                    Ok(true) if !is_read_only && !writes => Some(Done::PartlyStaged),
+                    Ok(true) => Some(Done::Different(began.elapsed())),
+                    Ok(false) => Some(Done::Unchanged),
+                    Err(prettier::Left::Failed(error)) => Some(Done::Failed(error)),
+                    Err(prettier::Left::NoParser) => {
+                        without_parser.lock().push(at);
+                        None
+                    }
+                };
             });
+            // Such a file is in a language that nothing here supports, like one that was never handed over.
+            for &at in without_parser.get_mut().iter() {
+                by_prettier -= 1;
+                let kind = extension_or_name(&handed_over[at].1.path);
+                match others.iter_mut().find(|it| it.0 == kind) {
+                    Some(entry) => entry.1 += 1,
+                    None => others.push((kind, 1)),
+                }
+            }
         }
         let formatting = started.elapsed();
         let scratches = std::mem::take(&mut *scratches.lock());
@@ -2469,16 +2494,11 @@ impl Run<'_> {
                 took
             );
         }
-        if options.log_level >= LogLevel::Log && !handed_over.is_empty() {
-            let noun = if handed_over.len() == 1 {
-                "file"
-            } else {
-                "files"
-            };
+        if options.log_level >= LogLevel::Log && by_prettier > 0 {
+            let noun = if by_prettier == 1 { "file" } else { "files" };
             let _ = writeln!(
                 self.out.stderr,
-                "Used your installed Prettier for {} {noun} in a language that needs a plugin",
-                handed_over.len(),
+                "Used your installed Prettier for {by_prettier} {noun} in a language that needs a plugin",
             );
         }
         if options.timing {

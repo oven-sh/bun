@@ -7,6 +7,8 @@ const FORMAT_WITH_PRETTIER = 30;
 
 // `error.message` of what `prettier.format` has thrown.
 const MESSAGE_OF_PRETTIER = "7";
+// None of the plugins has a parser for the file.
+const NO_PARSER = "8";
 
 // By the directory that it is looked for from: the package, or `null` if it is not installed.
 const prettierPackages = new Map();
@@ -67,16 +69,18 @@ async function formatWithPrettier() {
   const ofFiles = usesConfig ? await prettier.resolveConfig(filepath, { config: configFile, editorconfig }) : null;
   let options = { ...ofFiles, ...flags };
   if (precedence === "file-override") options = { ...flags, ...ofFiles };
-  // `prefer-file` with a configuration file: neither `flags` nor `plugins` is used.
+  // `prefer-file` with a configuration file: no flag is used.
   const dropsFlags = precedence === "prefer-file" && Boolean(ofFiles);
   if (dropsFlags) options = ofFiles;
-  // The other side sends a file here for a plugin in either list, so both lists are loaded. Prettier's command line lets one
-  // replace the other. `resolveConfig` returns a path in its list as the system writes it.
-  if (plugins.length > 0 && !dropsFlags) {
+  // The other side sends a file here for a plugin in either list, whatever `precedence` is. So both lists are loaded, always.
+  // Prettier's command line lets one replace the other. The list that wins for an option comes last: Prettier takes a
+  // parser from the last plugin that has it. `resolveConfig` returns a path in its list as the system writes it.
+  if (plugins.length > 0) {
     const ofFlags = plugins.map(it => (nodePath.isAbsolute(it) ? nativePath(it, nodePath) : it));
     const ofConfig = ofFiles?.plugins ?? [];
     const both = precedence === "file-override" ? [...ofFlags, ...ofConfig] : [...ofConfig, ...ofFlags];
-    options = { ...options, plugins: [...new Set(both)] };
+    // Of a plugin that is in the list twice, the last one stays.
+    options = { ...options, plugins: both.filter((it, at) => !both.includes(it, at + 1)) };
   }
   try {
     if (passThrough.length > 0 && !dropsFlags) {
@@ -89,8 +93,11 @@ async function formatWithPrettier() {
     }
     return DONE + (await prettier.format(text, { ...options, filepath }));
   } catch (error) {
-    // `FAILED` without a stack. `MESSAGE_OF_PRETTIER` would exit with 0 for standard input.
-    if (error?.name === "UndefinedParserError") return FAILED + "No listed plugin has a parser for this file";
+    // Prettier throws the first for a file whose name no plugin knows, and the second for a `parser` that no plugin has.
+    const isOfNoPlugin =
+      error?.name === "UndefinedParserError" ||
+      (error?.name === "ConfigError" && String(error.message).startsWith("Couldn't resolve parser"));
+    if (isOfNoPlugin) return NO_PARSER;
     if (!looksAtStdin) throw error;
     // As `listDifferent` of Prettier's command line shows it.
     return MESSAGE_OF_PRETTIER + error.message;

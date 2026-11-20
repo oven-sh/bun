@@ -13,6 +13,8 @@ mod call {
 
 /// A first byte of the call's result, in addition to those in `wire.rs`. It means [`Unformatted::Message`].
 const MESSAGE: u8 = b'7';
+/// It means [`Unformatted::NoParser`].
+const NO_PARSER: u8 = b'8';
 
 /// Why Prettier didn't return formatted text.
 #[derive(Debug)]
@@ -21,9 +23,11 @@ pub enum Unformatted {
     NotInstalled,
     /// With `looksAtStdin`: the `error.message` of the error that `prettier.format` threw.
     Message(Vec<u8>),
+    /// None of the plugins that Prettier loaded has a parser for the file.
+    NoParser,
     /// The thrown error, formatted like `handleError` in Prettier's CLI. Or the worker's own one-line message: no listed
-    /// plugin has a parser for the file, or no listed plugin declares an option of `[[fmt.overrides]]`. Unlike
-    /// [`Message`](Unformatted::Message), it's an error in every mode.
+    /// plugin declares an option of `[[fmt.overrides]]`. Unlike [`Message`](Unformatted::Message), it's an error in
+    /// every mode.
     Thrown(Vec<u8>),
 }
 
@@ -51,6 +55,7 @@ impl Host<'_> {
             Some((&result::DONE, formatted)) => Ok(formatted.to_vec()),
             Some((&NOT_INSTALLED, _)) => Err(Unformatted::NotInstalled),
             Some((&MESSAGE, message)) => Err(Unformatted::Message(message.to_vec())),
+            Some((&NO_PARSER, _)) => Err(Unformatted::NoParser),
             Some((&result::FAILED, why)) => Err(why.to_vec().into()),
             _ => Err(PLUGIN_PROTOCOL_ERROR.to_vec().into()),
         }

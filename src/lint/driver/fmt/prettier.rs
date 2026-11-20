@@ -90,20 +90,24 @@ impl<'e> Prettier<'e> {
     }
 
     /// Formats the file at `path`. `config` is its config file. With `writes`, the file is written if it changes.
-    /// Returns whether it changed. `Err` is the message to print.
+    /// Returns whether it changed.
     pub(crate) fn format_file(
         &self,
         (path, display_name): (&[u8], &[u8]),
         (config, file): (Option<&[u8]>, &ForFile),
         writes: bool,
         only: Option<&git::Files>,
-    ) -> Result<bool, Vec<u8>> {
-        let fail =
-            |what: &[u8], why: &[u8]| [what, b" file \"", display_name, b"\":\n", why].concat();
+    ) -> Result<bool, Left> {
+        let fail = |what: &[u8], why: &[u8]| {
+            Left::Failed([what, b" file \"", display_name, b"\":\n", why].concat())
+        };
         let text = git::read(only, path)
             .map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
-        let formatted = (self.format(Some(path), config, file, &text))
-            .map_err(|why| [display_name, b": ", &describe(why)].concat())?;
+        let formatted =
+            (self.format(Some(path), config, file, &text)).map_err(|why| match why {
+                Unformatted::NoParser => Left::NoParser,
+                why => Left::Failed([display_name, b": ", &describe(why)].concat()),
+            })?;
         if formatted == text {
             return Ok(false);
         }
@@ -167,10 +171,19 @@ fn passthrough_value(text: &[u8]) -> Json {
     bun_lint::json::parse(text).unwrap_or_else(|| Json::String(text.to_vec()))
 }
 
+/// Why [`Prettier::format_file`] left a file as it was.
+pub(crate) enum Left {
+    /// [`Unformatted::NoParser`]. The file is in a language that nothing here supports.
+    NoParser,
+    /// The message to print.
+    Failed(Vec<u8>),
+}
+
 /// The message to print after the file name.
 pub(crate) fn describe(why: Unformatted) -> Vec<u8> {
     match why {
         Unformatted::NotInstalled => b"prettier is not installed".to_vec(),
+        Unformatted::NoParser => b"no listed plugin has a parser for it".to_vec(),
         Unformatted::Message(why) | Unformatted::Thrown(why) => why,
     }
 }

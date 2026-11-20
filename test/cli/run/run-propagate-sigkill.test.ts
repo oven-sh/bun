@@ -4,7 +4,7 @@
 // have their disposition changed, so libc returns `EINVAL` there — that
 // must not reach `std.posix.sigaction`'s `else => unreachable`.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isGlibc, isLinux, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isGlibc, isLinux, isPosix, tempDir } from "harness";
 import { constants } from "os";
 import { join } from "path";
 
@@ -120,5 +120,28 @@ describe.concurrent.skipIf(!cc || !isGlibc)("exits 128 + signo when the re-raise
 
     expect(await proc.exited).toBe(128 + constants.signals.SIGINT);
     expect(proc.signalCode).toBeNull();
+  });
+
+  // bun handles SIGSYS itself, for seccomp traps, and re-raises one that was sent with kill(2).
+  // bun is not PID 1 here. A real PID 1 ignores that signal: see fs-stat-seccomp-linux.test.ts.
+  test("a SIGSYS sent with kill(2) that nothing listens for", async () => {
+    const { dir, env } = project();
+    using _ = dir;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.kill(process.pid, "SIGSYS"); console.log("survived");`],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // An ASAN build can warn on stderr when a handler on the alternate signal stack ends the process.
+    expect({ stdout, stderr: isASAN ? "" : stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: "",
+      stderr: "",
+      signalCode: null,
+      exitCode: 128 + constants.signals.SIGSYS,
+    });
   });
 });

@@ -1092,7 +1092,7 @@ impl BunTest {
         while let Some(result) = this.result_queue.with_taken(VecDeque::pop_front) {
             global_this.clear_termination_exception();
             if stepped.replace(Some(Timespec::EPOCH)).is_none() {
-                deadline_watch::running();
+                deadline_watch::in_runner();
             }
             let step_result: StepResult = match this.phase.get() {
                 Phase::Collection => Collection::step(this, global_this, &result)?,
@@ -1326,7 +1326,7 @@ impl BunTest {
                 move || drop(on_stack),
             )
             .and_then(|returned| Self::promise_of_thenable(global_this, returned));
-        deadline_watch::returned();
+        deadline_watch::in_runner();
         let result: JSValue = match returned {
             Ok(v) => v,
             Err(_) => {

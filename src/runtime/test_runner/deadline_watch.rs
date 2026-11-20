@@ -149,13 +149,10 @@ pub(crate) fn calling<Name: FnOnce(&mut Label)>(deadline: Timespec, entry: Optio
     publish(deadline, true, entry);
 }
 
-/// That test or hook returned. What the runner does next, like the report of a result, has no timeout.
-pub(crate) fn returned() {
-    publish(Timespec::EPOCH, false, None::<Entry<fn(&mut Label)>>);
-}
-
-/// The runner handles what happened to a test. Does not return once the watch ends the process.
-pub(crate) fn running() {
+/// The JavaScript thread is in the code of the runner: a test or hook returned to it, or the event loop
+/// called it. What it does there, like the report of a result, has no timeout.
+/// Does not return once the watch ends the process.
+pub(crate) fn in_runner() {
     publish(Timespec::EPOCH, false, None::<Entry<fn(&mut Label)>>);
 }
 
@@ -195,7 +192,7 @@ fn publish<Name: FnOnce(&mut Label)>(deadline: Timespec, is_in_callback: bool, e
 
     if has_deadline && !IS_WATCHING.swap(true, Ordering::Relaxed) {
         // Without the thread, a test that blocks the event loop hangs, as it did before there was one.
-        let _ = std::thread::Builder::new().name("TestTimeout".into()).stack_size(256 << 10).spawn(watch);
+        let _ = std::thread::Builder::new().name("TestTimeout".into()).spawn(watch);
     }
 }
 
@@ -306,7 +303,8 @@ fn report(state: &State, now: u64, ends_process: bool) {
     if state.config.prints_dots {
         bun_core::pretty_error!("<r>\n");
     }
-    if let Some(header) = &state.unprinted_header {
+    // A run that goes on prints the header with its next line.
+    if let Some(header) = state.unprinted_header.as_ref().filter(|_| ends_process) {
         header.print();
     }
     Output::flush();

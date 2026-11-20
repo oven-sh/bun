@@ -39,6 +39,37 @@ describe("node:test", () => {
     });
   });
 
+  // 62 node:test cases in one child: run it like the large fixtures above.
+  test.concurrent(
+    "should find the function when the name or the options argument has another type",
+    async () => {
+      // A function that the parser drops is a test that passes, so the fixture
+      // counts the functions that ran and prints the total.
+      const { exitCode, stdout, stderr } = await runTests(["31-optional-positionals.js"]);
+      expect(stdout).toContain("functions run: 46 of 46\n");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("\n 56 pass\n 6 skip\n 0 fail\n"),
+      });
+    },
+    30_000,
+  );
+
+  // The fixture states what Node does, so Node runs it too.
+  test.concurrent.skipIf(!Bun.which("node"))("should find the function the same way on node", async () => {
+    await using proc = spawn({
+      cmd: [Bun.which("node")!, "--test", join(import.meta.dirname, "fixtures", "31-optional-positionals.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({
+      stdout: expect.stringContaining("functions run: 46 of 46"),
+      exitCode: 0,
+    });
+  });
+
   test("should run async tests", async () => {
     const { exitCode, stderr } = await runTests(["04-async-tests.js"]);
     expect({ exitCode, stderr }).toMatchObject({

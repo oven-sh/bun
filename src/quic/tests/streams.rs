@@ -4,6 +4,7 @@ use bun_quic::transport_code::*;
 use bun_quic::{Batch, Duration, StreamId};
 
 use crate::harness::crypto::Random;
+use crate::harness::network::Network;
 use crate::harness::priority;
 use crate::harness::raw::Kind::Initial;
 use crate::harness::raw::{RTT, Raw};
@@ -610,6 +611,7 @@ fn streams_do_not_write_out_of_turn() {
     assert!(raw.peer.poll(raw.now));
     assert_eq!(raw.peer.log.pop().unwrap(), "2 writable");
     assert_eq!(raw.connection().write(ids[0], &data), Some(20_000));
+    raw.connection().want_write(ids[0]);
     assert_eq!(raw.connection().write(ids[1], &data), Some(0));
 }
 
@@ -736,6 +738,137 @@ fn long_streams_are_not_passed_for_ever() {
         raw.send("ack");
         let passed_by = ids(turns(&mut raw)).iter().position(|&it| it == 3);
         assert_eq!(passed_by, Some(expected));
+    }
+}
+
+#[test]
+fn long_streams_let_an_older_one_finish() {
+    for (urgency, is_incremental, last) in
+        [(3, false, (7, 2)), (3, true, (7, 5)), (2, false, (3, 19))]
+    {
+        let mut raw = sending(false, 100_000);
+        let id = raw.peer.open(Unidirectional);
+        (raw.connection()).set_priority(StreamId(id), priority(urgency, is_incremental));
+        raw.peer.send(id, &filler(0, 1_000_000), true);
+        raw.advance(RTT);
+        raw.send("ack");
+        assert_eq!(turns(&mut raw).last(), Some(&last));
+    }
+}
+
+#[test]
+fn short_streams_pass_many_long_ones() {
+    for (len, expected) in [(20_000, 27), (50_000, 59)] {
+        let mut raw = sending(false, 100_000);
+        for len in [300_000; 12].into_iter().chain([len]) {
+            let id = raw.peer.open(Unidirectional);
+            raw.peer.send(id, &filler(0, len), true);
+        }
+        raw.advance(RTT);
+        raw.send("ack");
+        let last = ids(turns(&mut raw)).iter().rposition(|&it| it == 55);
+        assert_eq!(last, Some(expected));
+    }
+}
+
+#[test]
+fn long_streams_get_their_share_of_a_busy_path() {
+    let mut network = Network::new(1);
+    network.config(|it| {
+        it.sends_in_order = false;
+        it.parameters.initial_max_streams_uni = 900;
+        it.parameters.initial_max_stream_data_uni = 900_000;
+    });
+    network.bytes_per_second = 5_000_000;
+    network.connect();
+    for is_reset in [false, true].repeat(20) {
+        let id = StreamId(network.client.open(Unidirectional));
+        let connection = network.client.connection();
+        connection.write(id, &filler(0, 300_000));
+        match is_reset {
+            true => connection.reset(id, 0),
+            false => connection.finish(id),
+        }
+    }
+    network.run_for(Duration::from_secs(1));
+    let long = network.client.open(Unidirectional);
+    network.client.send(long, &filler(0, 600_000), true);
+    let is_done =
+        |it: &Network, id| (it.server.streams.get(&id)).is_some_and(|it| it.is_read_to_end);
+    let (mut short, mut passed_by) = (Vec::new(), 0);
+    while !is_done(&network, long) && passed_by < 800 {
+        short.retain(|&id| !is_done(&network, id));
+        while short.len() < 20 {
+            let id = network.client.open(Unidirectional);
+            network.client.send(id, &filler(0, 40_000), true);
+            short.push(id);
+            passed_by += 1;
+        }
+        network.run_for(Duration::from_millis(1));
+    }
+    assert!(passed_by < 105, "{passed_by}");
+}
+
+#[test]
+fn the_end_of_a_long_stream_does_not_wait() {
+    let mut raw = Raw::server().connected();
+    let ids = [(); 20].map(|()| raw.peer.open(Unidirectional));
+    raw.peer.send(ids[0], &filler(0, 200_000), false);
+    turns(&mut raw);
+    for &id in &ids[1..] {
+        raw.peer.send(id, &filler(0, 8_000), false);
+    }
+    raw.connection().finish(StreamId(ids[0]));
+    raw.process();
+    assert_eq!(turns(&mut raw)[0], (ids[0], 12));
+}
+
+#[test]
+fn only_short_streams_write_ahead_of_one_that_waits() {
+    let mut raw = Raw::server().connected();
+    raw.peer.polls = false;
+    let ids = [(); 3].map(|()| StreamId(raw.peer.open(Unidirectional)));
+    let data = filler(0, 300_000);
+    assert!(raw.connection().write(ids[0], &data) < Some(150_000));
+    raw.process();
+    for _ in 0..2 {
+        raw.advance(RTT);
+        raw.send("ack");
+    }
+    assert_eq!(raw.connection().write(ids[1], &data), Some(8192));
+    assert_eq!(
+        raw.connection().write(ids[2], &data[..20_000]),
+        Some(20_000)
+    );
+}
+
+#[test]
+fn long_streams_that_come_in_pieces_are_passed_as_well() {
+    for (before, expected) in [(100_000, "2 writable"), (140_000, "6 writable")] {
+        let mut raw = Raw::server().connected();
+        let ids = [(); 3].map(|()| raw.peer.open(Unidirectional));
+        raw.peer.send(ids[0], &filler(0, before), false);
+        turns(&mut raw);
+        raw.peer.log.clear();
+        for (id, len) in [(ids[2], 900_000), (ids[0], 60_000), (ids[1], 60_000)] {
+            raw.peer.send(id, &filler(0, len), false);
+        }
+        raw.process();
+        turns(&mut raw);
+        assert_eq!(raw.peer.log[0], expected);
+    }
+}
+
+#[test]
+fn incremental_streams_do_not_write_shares() {
+    for (is_incremental, expected) in [(false, (2, 19)), (true, (2, 8))] {
+        let mut raw = Raw::server().connected();
+        for _ in 0..2 {
+            let id = raw.peer.open(Unidirectional);
+            (raw.connection()).set_priority(StreamId(id), priority(3, is_incremental));
+            raw.peer.send(id, &filler(0, 400_000), false);
+        }
+        assert_eq!(turns(&mut raw)[4], expected);
     }
 }
 

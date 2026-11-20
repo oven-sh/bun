@@ -2,6 +2,26 @@
 
 use std::sync::LazyLock;
 
+/// Temporary: `BUN_TMP_TUNE=0=1,3=4096` replaces defaults, to measure variants.
+pub fn tune(index: usize, default: u64) -> u64 {
+    static VALUES: LazyLock<[Option<u64>; 16]> = LazyLock::new(|| {
+        let mut values = [None; 16];
+        let text = bun_core::getenv_z(bun_core::zstr!("BUN_TMP_TUNE")).unwrap_or_default();
+        for pair in bun_core::strings::split(text, b",") {
+            if let Some((key, value)) = bun_core::strings::split_once_char(pair, b'=')
+                && let Ok(key) = bun_core::fmt::parse_int::<usize>(key, 10)
+            {
+                values[key] = bun_core::fmt::parse_int(value, 10).ok();
+            }
+        }
+        values
+    });
+    if cfg!(test) {
+        return default;
+    }
+    VALUES[index].unwrap_or(default)
+}
+
 /// Enough for two other threads to wake up, one after the other, and answer.
 const AWAKE_NS: u64 = 75_000;
 const BUSY_NS: u64 = 150_000;
@@ -51,7 +71,7 @@ impl Spin {
     pub fn limit_ns(&self) -> u64 {
         if self.is_awake && has_other_cpu() {
             // What is so much later than for a thread that sleeps may be waiting for this CPU.
-            AWAKE_NS.min(2 * self.pace_asleep_ns)
+            AWAKE_NS.min(tune(4, 2) * self.pace_asleep_ns)
         } else {
             0
         }
@@ -60,7 +80,7 @@ impl Spin {
     /// With the time asleep, if it came to that after `awake_ns`.
     pub fn waited(&mut self, from_ns: u64, to_ns: u64, awake_ns: u64) {
         let ns = to_ns.saturating_sub(from_ns);
-        if self.is_awake && awake_ns > 0 {
+        if self.is_awake && awake_ns > 0 && tune(5, 1) == 1 {
             self.misses = if ns > awake_ns { self.misses + 1 } else { 0 };
         }
         let is_lost = self.misses == MAX_MISSES;
@@ -83,7 +103,7 @@ impl Spin {
             self.begin(true, TRIAL);
         } else if is_lost || pace_ns * 8 > self.pace_asleep_ns * 7 {
             self.begin(false, self.next_len_asleep);
-            self.next_len_asleep = (self.len * 2).min(MAX_ASLEEP);
+            self.next_len_asleep = (self.len * 2).min(tune(11, MAX_ASLEEP.into()) as u16);
         } else if self.len < MAX_AWAKE {
             if self.len > TRIAL {
                 self.next_len_asleep = TRIAL;

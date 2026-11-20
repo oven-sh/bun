@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_threading::spin::{Spin, has_other_cpu};
+use bun_threading::spin::{Spin, has_other_cpu, tune};
 use bun_threading::{Condition, Guarded};
 use bun_windows_sys::Win32Error;
 
@@ -115,6 +115,7 @@ pub struct Port {
     /// When the last turn ended, or a wait for which nothing was ready.
     busy_since_ns: Cell<u64>,
     expects_more: Cell<bool>,
+    is_stream: Cell<bool>,
     /// How many turns in a row have only received what was there at once, and when the last one began.
     flood: Cell<(u32, u64)>,
     /// The time when it is deferred, and the key and context of the packet.
@@ -153,6 +154,7 @@ impl Port {
             next_turn: RefCell::default(),
             busy_since_ns: Cell::new(now_ns()),
             expects_more: Cell::new(false),
+            is_stream: Cell::new(false),
             flood: Cell::new((0, 0)),
             delayed: RefCell::default(),
             holds: Cell::new(0),
@@ -189,6 +191,7 @@ impl Port {
     /// A writer has been waiting for room, and is about to go on.
     pub fn expect_more(&self) {
         self.expects_more.set(true);
+        self.is_stream.set(tune(10, 0) == 1);
     }
 
     pub fn did_send(&self) {
@@ -277,17 +280,21 @@ impl Port {
         let may_be_flood = only_receives && timeout_ns != Some(0);
         if may_be_flood && turns >= TURNS_TO_FLOOD && has_other_cpu() {
             // A sender pays for every time that it has to tell us.
-            while now_ns() < began_at + FLOOD_TURN_NS {
+            while now_ns() < began_at + tune(2, FLOOD_TURN_NS) {
                 core::hint::spin_loop();
             }
         }
         let mut is_at_once = true;
+        let start = if tune(6, 0) == 1 { now_ns() } else { 0 };
         if timeout_ns == Some(0) || self.has_work() {
             self.fill_batch(Timeout::Now);
         } else {
             self.shared.is_parked.store(true, Ordering::SeqCst);
             is_at_once = self.park(timeout_ns, only_receives);
             self.shared.is_parked.store(false, Ordering::SeqCst);
+        }
+        if tune(6, 0) == 1 {
+            is_at_once = now_ns() - start < 10_000;
         }
         if may_be_flood && is_at_once {
             // After a pause there is always something, so it has to show itself again.
@@ -303,7 +310,12 @@ impl Port {
         let next_due = self.delayed.borrow().peek().map(|entry| entry.0.0);
         let deadline = (timeout_ns.map_or(u64::MAX, |timeout| start.saturating_add(timeout)))
             .min(next_due.unwrap_or(u64::MAX));
-        let awake_ns = if only_receives { 0 } else { spin.limit_ns() };
+        let awake_ns = if only_receives || self.is_stream.take() {
+            0
+        } else {
+            spin.limit_ns() * tune(0, 1)
+        };
+        let only_receives = only_receives && tune(6, 0) == 0;
         let (mut now, awake_until, mut is_first) = (start, start + awake_ns, true);
         loop {
             let timeout = match deadline {
@@ -415,7 +427,7 @@ impl Port {
     /// `false` if nothing has come, or something else is first.
     fn dispatch_soon(&self, on_event: &impl Fn(Event)) -> bool {
         const SOON_NS: u64 = 50_000;
-        if self.has_work() || !has_other_cpu() {
+        if self.has_work() || !has_other_cpu() || tune(3, 1) == 0 {
             return false;
         }
         let deadline = now_ns() + SOON_NS;
@@ -529,4 +541,9 @@ impl Drop for Hold {
     fn drop(&mut self) {
         self.set(false);
     }
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn us_tmp_hands_off() -> i32 {
+    tune(9, 1) as i32
 }

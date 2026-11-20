@@ -317,8 +317,34 @@ impl Inner {
             }
             // It would wait for the write, which starts it when it has ended.
             Some(Io::Synchronous) | None if self.write.is_some() => {}
+            Some(Io::Synchronous)
+                if take == Take::Now
+                    && bun_threading::spin::tune(12, 0) > 0
+                    && (named_pipe::is_idle(self.handle.raw())
+                        || bun_threading::spin::tune(13, 0) == 1) =>
+            {
+                match named_pipe::has_input(self.handle.raw()) {
+                    Ok(true) => self.read_here(max_len),
+                    _ => self.read_on_thread(max_len, Take::OnceThereIsSome),
+                }
+            }
             Some(Io::Synchronous) | None => self.read_on_thread(max_len, take),
         }
+    }
+
+    fn read_here(self: &Rc<Self>, max_len: usize) {
+        let max_len = max_len.min(bun_threading::spin::tune(12, 0) as usize);
+        let mut buffer = self.endpoint.buffer(max_len);
+        if buffer.capacity() >= BUSY_SIZE {
+            buffer.reserve(max_len);
+        }
+        let status =
+            named_pipe::read(self.handle.raw(), &mut buffer, max_len).unwrap_or_else(|it| it);
+        self.started_read(Err(Completion {
+            status,
+            transferred: buffer.len(),
+            buffer,
+        }));
     }
 
     fn read_overlapped(
@@ -428,7 +454,8 @@ impl Inner {
         let (request, remote) = Request::remote(&self.endpoint.port, done);
         let (handle, cancel) = (Arc::clone(&self.handle), Cancel::default());
         let has_more = self.has_more.take();
-        let max_len = max_len.min(if has_more { THREAD_SIZE } else { BUSY_SIZE });
+        let thread_size = bun_threading::spin::tune(8, THREAD_SIZE as u64) as usize;
+        let max_len = max_len.min(if has_more { thread_size } else { BUSY_SIZE });
         let (mut buffer, thread) = (self.endpoint.buffer(max_len), cancel.clone());
         if has_more {
             buffer.reserve(max_len);

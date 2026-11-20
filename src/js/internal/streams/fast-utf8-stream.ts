@@ -1,5 +1,5 @@
-// Ported from Node.js lib/internal/streams/fast-utf8-stream.js, which is itself
-// derived from the SonicBoom module (MIT, Copyright (c) 2017 Matteo Collina).
+// Ported from Node.js v26.12.1 lib/internal/streams/fast-utf8-stream.js, which is
+// itself derived from the SonicBoom module (MIT, Copyright (c) 2017 Matteo Collina).
 const {
   validateBoolean,
   validateFunction,
@@ -8,9 +8,12 @@ const {
   validateString,
   validateUint32,
 } = require("internal/validators");
+const { kEmptyObject } = require("internal/shared");
 
 const EventEmitter = require("node:events");
 const path = require("node:path");
+const { clearInterval, clearTimeout, setInterval, setTimeout } = require("node:timers");
+const { isArrayBufferView } = require("node:util/types");
 
 // Resolved lazily: node:fs itself exposes Utf8Stream, so requiring it at module
 // scope would re-enter this module while node:fs is still being constructed.
@@ -27,6 +30,38 @@ const kMaxWrite = 16 * 1024;
 const kContentModeBuffer = "buffer";
 const kContentModeUtf8 = "utf8";
 const kNullPrototype = { __proto__: null };
+const kFlush = Symbol("kFlush");
+
+// States returned by #beginFlushSync().
+// No write is in flight.
+const kFlushSyncIdle = 0;
+// An EAGAIN/EBUSY retry timer was pending and has been cancelled. Nothing is
+// in flight, so the remainder of #writingBuf can be written synchronously.
+const kFlushSyncRetry = 1;
+// Called from a 'write' listener. The completed write has been released and
+// nothing is in flight, so the remainder of #writingBuf can be written
+// synchronously.
+const kFlushSyncInWriteEvent = 2;
+// An asynchronous fs.write() of #writingBuf is in flight. Only the queued
+// buffers can be written; ordering relative to the in-flight chunk is not
+// guaranteed.
+const kFlushSyncInFlight = 3;
+
+// fsync() error codes meaning the file descriptor cannot be synchronized
+// (e.g. it is a pipe, socket, or TTY) or has already been closed. These are
+// not treated as flush failures.
+function isIgnorableFsyncError(err) {
+  switch (err?.code) {
+    case "EBADF":
+    case "EINVAL":
+    case "ENOTSUP":
+    case "EOPNOTSUPP":
+    case "EROFS":
+      return true;
+    default:
+      return false;
+  }
+}
 
 // A synchronous sleep, used only on the EAGAIN/EBUSY retry paths.
 function sleep(ms) {
@@ -63,7 +98,11 @@ class Utf8Stream extends EventEmitter {
   #ending = false;
   #reopening = false;
   #asyncDrainScheduled = false;
-  #flushPending = false;
+  #flushPending = 0;
+  #flushInProgress = 0;
+  #emittingFlush = false;
+  #emittingWrite = false;
+  #retryTimer: NodeJS.Timeout | null = null;
   #hwm = 16387; // 16 KB
   #file = null;
   #destroyed = false;
@@ -79,9 +118,11 @@ class Utf8Stream extends EventEmitter {
   #mode;
   #retryEAGAIN: (err: unknown, writeBufferLen: number, remainingBufferLen: number) => boolean = () => true;
   #mkdir = false;
+  #maxWriteRetries = 0;
+  #writeRetries = 0;
   #writingBuf: any = "";
-  #write: (data: string | Uint8Array) => boolean;
-  #flush: (cb: FlushCallback | null) => void;
+  #write: (data: string | NodeJS.ArrayBufferView) => boolean;
+  #flush: (cb: FlushCallback) => void;
   #flushSync: () => void;
   #actualWrite: () => void;
   #fsWriteSync: () => number;
@@ -101,11 +142,12 @@ class Utf8Stream extends EventEmitter {
       append = true,
       mkdir,
       retryEAGAIN,
+      maxWriteRetries,
       fsync,
       contentMode = kContentModeUtf8,
       mode,
       // Provides for a custom fs implementation. Mostly useful for testing.
-      fs: overrideFs = {},
+      fs: overrideFs = kEmptyObject,
     } = options as any;
 
     super();
@@ -134,12 +176,14 @@ class Utf8Stream extends EventEmitter {
     this.#mode = mode;
     this.#retryEAGAIN = retryEAGAIN || (() => true);
     this.#mkdir = mkdir || false;
+    this.#maxWriteRetries = maxWriteRetries || 0;
 
     validateUint32(this.#hwm, "options.hwm");
     validateUint32(this.#minLength, "options.minLength");
     validateUint32(this.#maxLength, "options.maxLength");
     validateUint32(this.#maxWrite, "options.maxWrite");
     validateUint32(this.#periodicFlush, "options.periodicFlush");
+    validateUint32(this.#maxWriteRetries, "options.maxWriteRetries");
     validateBoolean(this.#sync, "options.sync");
     validateBoolean(this.#fsync, "options.fsync");
     validateBoolean(this.#append, "options.append");
@@ -200,7 +244,11 @@ class Utf8Stream extends EventEmitter {
     });
 
     if (this.#periodicFlush !== 0) {
-      this.#periodicFlushTimer = setInterval(() => this.flush(null), this.#periodicFlush);
+      this.#periodicFlushTimer = setInterval(() => {
+        if (this.#flushPending === 0 && this.#flushInProgress === 0) {
+          this.flush();
+        }
+      }, this.#periodicFlush);
       this.#periodicFlushTimer!.unref();
     }
   }
@@ -209,7 +257,7 @@ class Utf8Stream extends EventEmitter {
     return this.#write(data);
   }
 
-  flush(cb: ((err?: Error | null) => void) | null = function (_err) {}) {
+  flush(cb: FlushCallback = function (_err) {}) {
     this.#flush(cb);
   }
 
@@ -223,7 +271,9 @@ class Utf8Stream extends EventEmitter {
     }
 
     if (this.#opening) {
-      this.once("ready", () => this.reopen(file));
+      this.once("ready", () => {
+        if (!this.#destroyed) this.reopen(file);
+      });
       return;
     }
 
@@ -265,7 +315,7 @@ class Utf8Stream extends EventEmitter {
 
     if (this.#opening) {
       this.once("ready", () => {
-        this.end();
+        if (!this.#destroyed) this.end();
       });
       return;
     }
@@ -283,7 +333,7 @@ class Utf8Stream extends EventEmitter {
     if (this.#len > 0 && this.#fd >= 0) {
       this.#actualWrite();
     } else {
-      this.#actualClose();
+      this.#finishEnding();
     }
   }
 
@@ -291,7 +341,11 @@ class Utf8Stream extends EventEmitter {
     if (this.#destroyed) {
       return;
     }
+    const opening = this.#opening;
     this.#actualClose();
+    if (opening && this.#flushPending > 0) {
+      this.emit("error", $ERR_INVALID_STATE("Utf8Stream is destroyed"));
+    }
   }
 
   get mode() {
@@ -348,8 +402,15 @@ class Utf8Stream extends EventEmitter {
 
   #release(err?, n?) {
     if (err) {
+      const isRetryableErr = err.code === "EAGAIN" || err.code === "EBUSY";
+      if (isRetryableErr) {
+        this.#writeRetries++;
+      }
+      const retriesExhausted = this.#maxWriteRetries > 0 && this.#writeRetries > this.#maxWriteRetries;
+
       if (
-        (err.code === "EAGAIN" || err.code === "EBUSY") &&
+        isRetryableErr &&
+        !retriesExhausted &&
         this.#retryEAGAIN(err, this.#writingBuf.length, this.#len - this.#writingBuf.length)
       ) {
         if (this.#sync) {
@@ -364,7 +425,7 @@ class Utf8Stream extends EventEmitter {
           }
         } else {
           // Let's give the destination some time to process the chunk.
-          setTimeout(() => this.#fsWrite(), BUSY_WRITE_TIMEOUT);
+          this.#retryTimer = setTimeout(Utf8Stream.#retryWrite, BUSY_WRITE_TIMEOUT, this);
         }
       } else {
         this.#writing = false;
@@ -374,10 +435,26 @@ class Utf8Stream extends EventEmitter {
       return;
     }
 
-    this.emit("write", n);
+    // Reset the retry counter only once real forward progress (n > 0) is
+    // confirmed. Otherwise a stuck destination would never accumulate past
+    // one retry and `maxWriteRetries` could never trigger.
+    if (n > 0) {
+      this.#writeRetries = 0;
+    }
+
     const releasedBufObj = releaseWritingBuf(this.#writingBuf, this.#len, n);
     this.#len = releasedBufObj.len;
     this.#writingBuf = releasedBufObj.writingBuf;
+
+    // Emit 'write' after the written bytes have been released so that a
+    // listener calling flushSync() sees a consistent state with no I/O in
+    // flight. flushSync() may consume the remainder of #writingBuf.
+    this.#emittingWrite = true;
+    try {
+      this.emit("write", n);
+    } finally {
+      this.#emittingWrite = false;
+    }
 
     if (this.#writingBuf.length) {
       if (!this.#sync) {
@@ -398,6 +475,18 @@ class Utf8Stream extends EventEmitter {
       }
     }
 
+    if (this.#destroyed) {
+      this.#writing = false;
+      if (this.#flushPending > 0) {
+        if (this.#len === 0) {
+          this.#scheduleDrain();
+        } else {
+          this.emit("error", $ERR_INVALID_STATE("Utf8Stream is destroyed"));
+        }
+      }
+      return;
+    }
+
     if (this.#fsync) {
       this.#fs.fsyncSync(this.#fd);
     }
@@ -407,26 +496,31 @@ class Utf8Stream extends EventEmitter {
       this.#writing = false;
       this.#reopening = false;
       this.reopen();
-    } else if (len > this.#minLength) {
+    } else if (len > 0 && (len > this.#minLength || this.#flushPending)) {
       this.#actualWrite();
     } else if (this.#ending) {
       if (len > 0) {
         this.#actualWrite();
       } else {
         this.#writing = false;
-        this.#actualClose();
+        this.#finishEnding();
       }
     } else {
       this.#writing = false;
-      if (this.#sync) {
-        if (!this.#asyncDrainScheduled) {
-          this.#asyncDrainScheduled = true;
-          process.nextTick(() => this.#emitDrain());
-        }
-      } else {
-        this.emit("drain");
-      }
+      this.#scheduleDrain();
     }
+  }
+
+  // Node schedules these two with an arrow function at the call site. A static
+  // method keeps #release() and #scheduleDrain() free of a closure, so a
+  // completed write allocates no scope for it.
+  static #retryWrite(stream: Utf8Stream) {
+    stream.#retryTimer = null;
+    stream.#fsWrite();
+  }
+
+  static #drainTick(stream: Utf8Stream) {
+    stream.#emitDrain();
   }
 
   #openFile(file) {
@@ -473,14 +567,12 @@ class Utf8Stream extends EventEmitter {
       }
 
       // start
-      if ((!this.#writing && this.#len > this.#minLength) || this.#flushPending) {
+      if (!this.#writing && (this.#len > this.#minLength || this.#flushPending)) {
         this.#actualWrite();
-      } else if (reopening) {
-        // A 'ready' listener may have started a write; that write's completion
-        // emits 'drain', so don't announce an empty buffer while it is in flight.
-        process.nextTick(() => {
-          if (!this.#writing) this.emit("drain");
-        });
+      } else if (reopening && !this.#writing) {
+        // Do not emit 'drain' if a 'ready' listener started a write:
+        // #release() will emit the real 'drain' when that write completes.
+        process.nextTick(Utf8Stream.#drainTick, this);
       }
     };
 
@@ -506,16 +598,60 @@ class Utf8Stream extends EventEmitter {
     }
   }
 
+  #scheduleDrain() {
+    if (this.#sync) {
+      if (!this.#asyncDrainScheduled) {
+        this.#asyncDrainScheduled = true;
+        process.nextTick(Utf8Stream.#drainTick, this);
+      }
+    } else {
+      this.#emitDrain();
+    }
+  }
+
   #emitDrain() {
+    this.#asyncDrainScheduled = false;
+    if (this.#writing) return;
+    // Node emits kFlush here without the test. Only a pending flush() listens
+    // for it, so the test saves an emit() per completed write.
+    if (this.#flushPending > 0) this.#emitFlush();
+    if (this.#writing || this.#destroyed) return;
     const hasListeners = this.listenerCount("drain") > 0;
     if (!hasListeners) return;
-    this.#asyncDrainScheduled = false;
     this.emit("drain");
   }
 
+  #finishEnding() {
+    if (!this.#ending || this.#writing || this.#destroyed) return;
+    if (this.#len > 0) {
+      this.#actualWrite();
+      return;
+    }
+    if (this.#flushPending > 0) this.#emitFlush();
+    if (this.#flushPending === 0 && this.#flushInProgress === 0 && !this.#writing && this.#len === 0) {
+      this.#actualClose();
+    }
+  }
+
+  #emitFlush() {
+    if (this.#emittingFlush) return;
+    this.#emittingFlush = true;
+    try {
+      this.emit(kFlush);
+    } finally {
+      this.#emittingFlush = false;
+    }
+  }
+
   #actualClose() {
+    if (this.#destroyed) return;
+
     if (this.#fd === -1) {
-      this.once("ready", () => this.#actualClose());
+      this.#destroyed = true;
+      this.once("ready", () => {
+        this.#destroyed = false;
+        this.#actualClose();
+      });
       return;
     }
 
@@ -591,7 +727,12 @@ class Utf8Stream extends EventEmitter {
     }
   }
 
-  #flushBufferSync() {
+  /**
+   * Validates that flushSync() can run and determines how it must interact
+   * with any write already in progress.
+   * @returns One of the kFlushSync* states.
+   */
+  #beginFlushSync() {
     if (this.#destroyed) {
       throw $ERR_INVALID_STATE("Utf8Stream is destroyed");
     }
@@ -600,46 +741,113 @@ class Utf8Stream extends EventEmitter {
       throw $ERR_INVALID_STATE("Invalid file descriptor");
     }
 
-    if (!this.#writing && this.#writingBuf.length > 0) {
+    // While reopening, #writing is set but no write is in flight and #fd still
+    // refers to the previous file, which is only closed once the new file is
+    // ready. Flush the buffered data to it.
+    if (!this.#writing || this.#opening) {
+      return kFlushSyncIdle;
+    }
+
+    if (this.#retryTimer !== null) {
+      clearTimeout(this.#retryTimer);
+      this.#retryTimer = null;
+      return kFlushSyncRetry;
+    }
+
+    if (this.#emittingWrite) {
+      return kFlushSyncInWriteEvent;
+    }
+
+    return kFlushSyncInFlight;
+  }
+
+  /**
+   * Called after flushSync() has taken over a write whose retry timer it
+   * cancelled. Resumes whatever #release() would have done once that write
+   * completed.
+   */
+  #endFlushSyncRetry() {
+    this.#writing = false;
+    process.nextTick(() => {
+      if (this.#destroyed || this.#writing) return;
+      if (this.#reopening) {
+        this.#reopening = false;
+        this.reopen();
+      } else if (this.#ending) {
+        this.#finishEnding();
+      } else if (this.#len > 0 && (this.#len > this.#minLength || this.#flushPending)) {
+        this.#actualWrite();
+      } else {
+        this.#emitDrain();
+      }
+    });
+  }
+
+  #flushBufferSync() {
+    const state = this.#beginFlushSync();
+
+    // Unless an fs.write() of #writingBuf is in flight, its unwritten
+    // remainder must be written first to preserve ordering.
+    if (state !== kFlushSyncInFlight && this.#writingBuf.length > 0) {
       this.#bufs.unshift([this.#writingBuf]);
+      this.#lens.unshift(this.#writingBuf.length);
       this.#writingBuf = kEmptyBuffer;
     }
 
-    let buf: Buffer = kEmptyBuffer;
-    while (this.#bufs.length || buf.length) {
-      if (buf.length <= 0) {
-        buf = mergeBuf(this.#bufs[0], this.#lens[0]);
-      }
-      try {
-        const n = this.#fs.writeSync(this.#fd, buf);
-        buf = buf.subarray(n);
-        this.#len = Math.max(this.#len - n, 0);
+    try {
+      let buf: Buffer = kEmptyBuffer;
+      while (this.#bufs.length || buf.length) {
         if (buf.length <= 0) {
-          this.#bufs.shift();
-          this.#lens.shift();
+          buf = mergeBuf(this.#bufs[0], this.#lens[0]);
         }
-      } catch (err) {
-        const shouldRetry =
-          (err as NodeJS.ErrnoException).code === "EAGAIN" || (err as NodeJS.ErrnoException).code === "EBUSY";
-        if (shouldRetry && !this.#retryEAGAIN(err, buf.length, this.#len - buf.length)) {
-          throw err;
-        }
+        try {
+          const n = this.#fs.writeSync(this.#fd, buf);
+          this.#writeRetries = 0;
+          buf = buf.subarray(n);
+          this.#len = Math.max(this.#len - n, 0);
+          if (buf.length <= 0) {
+            this.#bufs.shift();
+            this.#lens.shift();
+          }
+        } catch (err) {
+          const shouldRetry =
+            (err as NodeJS.ErrnoException).code === "EAGAIN" || (err as NodeJS.ErrnoException).code === "EBUSY";
+          if (shouldRetry) {
+            this.#writeRetries++;
+          }
+          const retriesExhausted = this.#maxWriteRetries > 0 && this.#writeRetries > this.#maxWriteRetries;
+          if (!shouldRetry || retriesExhausted || !this.#retryEAGAIN(err, buf.length, this.#len - buf.length)) {
+            throw err;
+          }
 
-        sleep(BUSY_WRITE_TIMEOUT);
+          sleep(BUSY_WRITE_TIMEOUT);
+        }
       }
+    } finally {
+      if (state === kFlushSyncRetry) this.#endFlushSyncRetry();
     }
   }
 
   #flushSyncUtf8() {
-    if (this.#destroyed) {
-      throw $ERR_INVALID_STATE("Utf8Stream is destroyed");
+    const state = this.#beginFlushSync();
+
+    try {
+      this.#flushSyncUtf8Bufs(state);
+    } finally {
+      if (state === kFlushSyncRetry) this.#endFlushSyncRetry();
     }
 
-    if (this.#fd < 0) {
-      throw $ERR_INVALID_STATE("Invalid file descriptor");
+    try {
+      this.#fs.fsyncSync(this.#fd);
+    } catch {
+      // Skip the error. The fd might not support fsync.
     }
+  }
 
-    if (!this.#writing && this.#writingBuf.length > 0) {
+  #flushSyncUtf8Bufs(state: number) {
+    // Unless an fs.write() of #writingBuf is in flight, its unwritten
+    // remainder must be written first to preserve ordering.
+    if (state !== kFlushSyncInFlight && this.#writingBuf.length > 0) {
       this.#bufs.unshift(this.#writingBuf);
       this.#writingBuf = "";
     }
@@ -651,6 +859,7 @@ class Utf8Stream extends EventEmitter {
       }
       try {
         const n = this.#fs.writeSync(this.#fd, buf, "utf8");
+        this.#writeRetries = 0;
         const releasedBufObj = releaseWritingBuf(buf, this.#len, n);
         buf = releasedBufObj.writingBuf;
         this.#len = releasedBufObj.len;
@@ -660,57 +869,77 @@ class Utf8Stream extends EventEmitter {
       } catch (err) {
         const shouldRetry =
           (err as NodeJS.ErrnoException).code === "EAGAIN" || (err as NodeJS.ErrnoException).code === "EBUSY";
-        if (shouldRetry && !this.#retryEAGAIN(err, buf.length, this.#len - buf.length)) {
+        if (shouldRetry) {
+          this.#writeRetries++;
+        }
+        const retriesExhausted = this.#maxWriteRetries > 0 && this.#writeRetries > this.#maxWriteRetries;
+        if (!shouldRetry || retriesExhausted || !this.#retryEAGAIN(err, buf.length, this.#len - buf.length)) {
           throw err;
         }
 
         sleep(BUSY_WRITE_TIMEOUT);
       }
     }
-
-    try {
-      this.#fs.fsyncSync(this.#fd);
-    } catch {
-      // Skip the error. The fd might not support fsync.
-    }
   }
 
   #callFlushCallbackOnDrain(cb: FlushCallback) {
-    this.#flushPending = true;
+    this.#flushPending++;
+    let waiting = true;
+    let completed = false;
+    let flushing = false;
+    const stopWaiting = () => {
+      if (!waiting) return false;
+      waiting = false;
+      this.off(kFlush, onDrain);
+      this.off("error", onError);
+      return true;
+    };
+    const complete = (err?: Error | null, finish = true) => {
+      if (completed) return;
+      completed = true;
+      if (flushing) this.#flushInProgress--;
+      try {
+        cb(err);
+      } finally {
+        if (finish) this.#finishEnding();
+      }
+    };
     const onDrain = () => {
+      if (!stopWaiting()) return;
+      this.#flushPending--;
+      this.#flushInProgress++;
+      flushing = true;
       // Only if fsync is false to avoid double fsync
       if (!this.#fsync && !this.#destroyed) {
         try {
           this.#fs.fsync(this.#fd, err => {
-            this.#flushPending = false;
-            // If the fd is closed, we ignore the error.
-            if (err?.code === "EBADF") {
-              cb();
+            // Ignore errors meaning the fd is closed or cannot be synced
+            // (e.g. stdout/stderr attached to a pipe or TTY). A regular
+            // file, including a redirected stdout/stderr, is still synced.
+            if (isIgnorableFsyncError(err)) {
+              complete();
               return;
             }
-            cb(err);
+            complete(err);
           });
         } catch (err) {
-          this.#flushPending = false;
-          cb(err as Error);
+          complete(err as Error);
         }
       } else {
-        this.#flushPending = false;
-        cb();
+        complete();
       }
-      this.off("error", onError);
     };
     const onError = (err: Error) => {
-      this.#flushPending = false;
-      cb(err);
-      this.off("drain", onDrain);
+      if (!stopWaiting()) return;
+      this.#flushPending--;
+      complete(err, false);
     };
 
-    this.once("drain", onDrain);
+    this.once(kFlush, onDrain);
     this.once("error", onError);
   }
 
-  #flushBuffer(cb: FlushCallback | null) {
+  #flushBuffer(cb: FlushCallback) {
     validateFunction(cb, "cb");
 
     if (this.#destroyed) {
@@ -723,7 +952,7 @@ class Utf8Stream extends EventEmitter {
       throw error;
     }
 
-    if (this.#minLength <= 0) {
+    if (this.#minLength <= 0 && !this.#writing && this.#len === 0) {
       cb?.();
       return;
     }
@@ -744,7 +973,7 @@ class Utf8Stream extends EventEmitter {
     this.#actualWrite();
   }
 
-  #flushUtf8(cb: FlushCallback | null) {
+  #flushUtf8(cb: FlushCallback) {
     validateFunction(cb, "cb");
 
     if (this.#destroyed) {
@@ -757,7 +986,7 @@ class Utf8Stream extends EventEmitter {
       throw error;
     }
 
-    if (this.#minLength <= 0) {
+    if (this.#minLength <= 0 && !this.#writing && this.#len === 0) {
       cb?.();
       return;
     }
@@ -782,8 +1011,14 @@ class Utf8Stream extends EventEmitter {
       throw $ERR_INVALID_STATE("Utf8Stream is destroyed");
     }
 
+    if (!isArrayBufferView(data)) {
+      throw $ERR_INVALID_ARG_TYPE("data", ["Buffer", "TypedArray", "DataView"], data);
+    }
     if (!Buffer.isBuffer(data)) {
-      throw $ERR_INVALID_ARG_TYPE("data", "Buffer", data);
+      // Reinterpret the view as a byte-oriented Buffer without copying, so that
+      // `data.length` below (and everywhere else `bufs`/`lens` are consumed)
+      // reflects the byte length rather than the element count.
+      data = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
     }
 
     const dataLength = data.length;
@@ -797,7 +1032,7 @@ class Utf8Stream extends EventEmitter {
     }
 
     if (bufs.length === 0 || lens[lens.length - 1] + dataLength > this.#maxWrite) {
-      bufs.push([]);
+      bufs.push([data]);
       lens.push(dataLength);
     } else {
       (bufs[bufs.length - 1] as Uint8Array[]).push(data);
@@ -850,11 +1085,15 @@ class Utf8Stream extends EventEmitter {
 function releaseWritingBuf<T extends string | Buffer>(writingBuf: T, len: number, n: number) {
   if (typeof writingBuf === "string") {
     const byteLength = Buffer.byteLength(writingBuf);
-    if (byteLength !== n) {
-      // Since fs.write returns the number of bytes written, we need to find
-      // how many complete characters fit within those n bytes. If a partial
-      // write splits a multi-byte UTF-8 character, we must back up to the
-      // start of that character to avoid data corruption.
+    // `fs.write` returns the number of bytes written, but `len` is tracked in
+    // characters and `writingBuf` is sliced by character index below, so `n`
+    // must be converted from bytes to characters in both cases.
+    if (byteLength === n) {
+      // The whole string was written: advance past every character.
+      n = writingBuf.length;
+    } else {
+      // A partial write may split a multi-byte UTF-8 character, so we must back
+      // up to the start of that character to avoid data corruption.
       const buf: Buffer = Buffer.from(writingBuf);
       // UTF-8 continuation bytes have the pattern 10xxxxxx (0x80-0xBF).
       while (n > 0 && (buf[n] & 0xc0) === 0x80) {

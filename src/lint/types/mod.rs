@@ -89,6 +89,7 @@
 //!   TypeScript has a signature without parameters that returns `any`. For an optional call, the signature returns what
 //!   the function returns, without the chain's `undefined`.
 //! - A union has one `undefined` where TypeScript 6 can also have the missing type.
+//! - [`Types::resolve_name`] and [`Types::get_symbol_in_scope`] don't find what the node that is asked about declares.
 //! - [`TsNode`]: tokens, `ParenthesizedType` and `EndOfFileToken` aren't nodes. [`TsNode::span`] and
 //!   [`TsNode::get_source_text`] are empty in the default library, whose text isn't retained.
 //! - [`SourceFile::package_name`] also works for a package file that's only reachable through a `/// <reference path>`,
@@ -206,7 +207,7 @@ macro_rules! queries {
         /// which is the result when there are no types.
         ///
         /// Rules don't call this. [`Type`], [`TsSymbol`] and the other handles are built on it.
-        pub trait Queries<'a> {
+        pub(crate) trait Queries<'a> {
             $($(#[$doc])* fn $name(&mut self, $($arg: $ty),*) -> $ret {
                 $(let _ = $arg;)*
                 Absent::absent()
@@ -325,7 +326,7 @@ pub struct Checker<'a> {
 }
 
 impl<'a> Checker<'a> {
-    pub fn new(queries: &'a mut dyn Queries<'a>) -> Self {
+    pub(crate) fn new(queries: &'a mut dyn Queries<'a>) -> Self {
         Checker {
             options: queries.compiler_options(),
             file: queries.current_file(),
@@ -457,6 +458,19 @@ impl<'a> Types<'a> {
     ) -> Option<TsSymbol<'a>> {
         let (file, node) = (self.file, node.locate(self.file).raw());
         let symbol = file.query(|q| q.symbol_in_scope(node, meaning, name))?;
+        Some(TsSymbol::new(file, symbol))
+    }
+
+    /// `checker.resolveName(name, node, meaning, excludeGlobals)`, for one identifier. An import stays the alias.
+    pub fn resolve_name(
+        self,
+        node: impl Locate<'a>,
+        name: &[u8],
+        meaning: SymbolFlags,
+        exclude_globals: bool,
+    ) -> Option<TsSymbol<'a>> {
+        let (file, node) = (self.file, node.locate(self.file).raw());
+        let symbol = file.query(|q| q.resolve_name(node, name, meaning, exclude_globals))?;
         Some(TsSymbol::new(file, symbol))
     }
 

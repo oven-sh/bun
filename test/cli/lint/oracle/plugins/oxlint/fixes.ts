@@ -17,6 +17,8 @@ export interface Case {
   also?: string[];
   /** Extra `compilerOptions` for the `tsconfig.json`. */
   compilerOptions?: object;
+  /** The other files of its project, by their names. */
+  others?: Record<string, string>;
 }
 
 export const flagSets = { fix: ["--fix"], suggestions: ["--fix-suggestions"], dangerously: ["--fix-dangerously"] };
@@ -503,6 +505,22 @@ export const cases: Case[] = [
     "prefer-ts-expect-error",
     "// @ts-ignore @ts-ignore\na;\n//// @ts-ignore\na;\n/* / * @ts-ignore @ts-ignore */\na;\n<!-- @ts-ignore\na;",
   ),
+  // tsgolint asks the checker what the name of an enum means where the member is. In D it is a type parameter, in E a number.
+  typed(
+    "prefer-readonly",
+    'declare global {\n  enum Mode { Off = 0, On = 1 }\n}\nexport namespace Ui {\n  export enum Side { Left, Right }\n}\nexport namespace Ui {\n  export class Panel { private side = Side.Left; constructor(right: boolean) { if (right) this.side = Side.Right; } }\n}\nnamespace Levels { export enum Level { Low, High } }\nimport Level = Levels.Level;\nnamespace Phase { export const first = 0; }\nenum Phase { Idle, Busy }\nenum Tone { Low = "l", High = "h" }\nconst off = Mode.Off;\nconst low = Tone.Low;\nexport class A { private mode = Mode.Off; constructor(on: boolean) { if (on) this.mode = Mode.On; } }\nexport class B { private level = Level.Low; constructor(high: boolean) { if (high) this.level = Level.High; } }\nexport class C { private phase = Phase.Idle; constructor(busy: boolean) { if (busy) this.phase = Phase.Busy; } }\nexport class D<Mode> { private mode = off; constructor(public other: Mode) { this.mode = off; } }\nexport namespace Sound {\n  export type Tone = number;\n}\nexport namespace Sound {\n  export class E { private tone = low; constructor() { this.tone = low; } }\n}',
+  ),
+  {
+    ...typed(
+      "prefer-readonly",
+      'import Shape from "./shape";\nexport class A { private level = Level.Debug; constructor(info: boolean) { if (info) this.level = Level.Info; } }\nexport class B { private flag = Flag.Off; constructor(on: boolean) { if (on) this.flag = Flag.On; } }\nexport class C { private phase = Phase.Idle; constructor(busy: boolean) { if (busy) this.phase = Phase.Busy; } }\nexport class D { private shape = Shape.Round; constructor(square: boolean) { if (square) this.shape = Shape.Square; } }',
+    ),
+    others: {
+      "globals.d.ts": "declare enum Level { Debug = 0, Info = 1 }\ndeclare const enum Flag { Off, On }\n",
+      "phase.ts": "enum Phase { Idle, Busy }\n",
+      "shape.ts": "enum Shape { Round, Square }\nexport default Shape;\n",
+    },
+  },
 ];
 
 /** Returns a case's directory. Each case has its own config file. */
@@ -516,6 +534,7 @@ export const filesOf = ({
   options,
   also = [],
   compilerOptions,
+  others,
 }: Case): Record<string, string> => ({
   ".oxlintrc.json": JSON.stringify({
     plugins: ["typescript"],
@@ -523,6 +542,7 @@ export const filesOf = ({
     rules: { [rule]: options ? ["error", options] : "error", ...Object.fromEntries(also.map(it => [it, "error"])) },
   }),
   [file]: text,
+  ...others,
   ...(typed && {
     "tsconfig.json": JSON.stringify({
       compilerOptions: { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"], ...compilerOptions },

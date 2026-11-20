@@ -28,9 +28,6 @@ pub use line_offset_table::{LineOffsetTable, LineOffsetTableColumns};
 pub use mapping::Mapping;
 pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
-// SAFETY: only `mappings` is not `Sync`, for its `MultiArrayList`. `&mapping::List` only reads it.
-unsafe impl Sync for ParsedSourceMap {}
-
 // `bun.Ordinal = OrdinalT(c_int)` lives in bun_core (lower tier). Re-export so
 // `bun_sourcemap::Ordinal` and `bun_core::Ordinal` are the same type — callers
 // in higher tiers (bun_jsc) pass values straight through without conversion.
@@ -105,10 +102,7 @@ pub struct ParseFail {
 
 /// The sourcemap spec says line and column offsets are zero-based.
 ///
-/// `repr(C)` pins the field order to `[lines, columns]` so the SIMD mappings
-/// decoder (highway_sourcemap.cpp) can write `[i32; 2]` pairs that are
-/// byte-compatible with this struct and bulk-copy them into the
-/// `MultiArrayList` column.
+/// `mapping::List` stores it as `[lines, columns]`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct LineColumnOffset {
@@ -117,6 +111,11 @@ pub struct LineColumnOffset {
     /// The zero-based column offset
     pub columns: Ordinal,
 }
+bun_core::impl_any_bit_pattern!(LineColumnOffset);
+const _: () = assert!(
+    size_of::<LineColumnOffset>() == size_of::<[i32; 2]>()
+        && core::mem::offset_of!(LineColumnOffset, lines) == 0
+);
 
 // Field defaults are `START`, not invalid
 // (bun_core::Ordinal::default() is INVALID, so derive(Default) would be wrong).
@@ -957,7 +956,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
             ..
         } = hint
         {
-            if matches!(map_data.mappings.r#impl, mapping::ListValue::WithNames(_)) {
+            if map_data.mappings.has_names() {
                 if let Some(names) = json.get(b"names") {
                     if let bun_ast::ExprData::EArrayJSON(arr) = names.data {
                         let arr = arr.get();

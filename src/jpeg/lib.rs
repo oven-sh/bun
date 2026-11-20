@@ -79,7 +79,7 @@ fn batches(len: usize, size: usize) -> impl Iterator<Item = [usize; 2]> {
     starts.map(move |start| [start, size.min(len - start)])
 }
 
-/// What `Bun.Image` cannot reach. The kernels are only linked into the full binary, so this runs under Miri and calls none.
+/// What `Bun.Image` cannot reach.
 #[cfg(test)]
 mod tests {
     use super::*;

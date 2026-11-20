@@ -456,6 +456,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "server.bind.ts": "{ ServerWebSocket: Class<Required<Bun.ServerWebSocket>> }",
   "server_body.bind.ts": null,
   "shell_body.bind.ts": null,
+  "simd_testing.bind.ts": null,
   "socket_body.bind.ts": null,
   "sourcemap.bind.ts": null,
   "subprocess.bind.ts": null,

@@ -25,6 +25,14 @@ it(`Bun.hash.adler32() of known inputs`, () => {
     1, 0x620062, 0xbc002ed, 0x06780401, 0x0a7a0402, 0x707f15b2, 0x5af38d6e,
   ]);
 });
+it(`Bun.hash.adler32() of shared buffers`, () => {
+  const shared = new Uint8Array(new SharedArrayBuffer(6000));
+  shared.forEach((_, i) => (shared[i] = i));
+  expect(Bun.hash.adler32(shared)).toBe(0x5af38d6e);
+  expect([1024, 1025, 5553].map(len => Bun.hash.adler32(shared.fill(1).subarray(3, 3 + len)))).toEqual([
+    0x06780401, 0x0a7a0402, 0x707f15b2,
+  ]);
+});
 // The kernel takes rows of 64, 128 or 256 bytes, reduces after 5376 or 5504, and aligns inputs of more than 65536.
 it.each([
   ["varied", Buffer.from(Uint8Array.from({ length: 251 }, (_, i) => (i * 7919) >> 5))],
@@ -127,7 +135,7 @@ it(`Bun.hash.rapidhash()`, () => {
   expect(Bun.hash.rapidhash(new TextEncoder().encode("hello world"))).toBe(0x58a89bdcee89c08cn);
 });
 // Bun.hash.xxHash3 is backed by a runtime-dispatched SIMD kernel
-// (src/jsc/bindings/xxhash3.cpp). The `len <= 16` case above only exercises
+// (src/simd/kernels/xxhash.rs). The `len <= 16` case above only exercises
 // the scalar short-key branch; these cover every length branch (16 / 128 / 240
 // cutoffs, 64-byte stripes, multi-block long inputs) and the seeded
 // custom-secret path. Expected values come from the xxHash reference
@@ -165,7 +173,7 @@ describe("xxHash3 SIMD kernel", () => {
     [239, 0n, 0x5e6dd82b298c64d5n],
     [240, 0n, 0x744366c87a6954e9n],
     [240, 2882400001n, 0xdc5d0fd70f358c69n],
-    // Long-input path (> 240): the Highway-dispatched stripe loop.
+    // Long-input path (> 240): the dispatched stripe loop.
     [241, 0n, 0xdc3fc1135592d6e6n],
     [256, 0n, 0xd3a2265cf3c76bccn],
     [257, 0n, 0xf11e5731791d1209n],
@@ -218,8 +226,7 @@ describe("xxHash3 SIMD kernel", () => {
   });
 });
 
-// XXH32 and XXH64 are now C++ (src/jsc/bindings/xxhash3.cpp) — scalar, no SIMD
-// form in the reference. These vectors pin the output bit-identical to the
+// XXH32 and XXH64 are scalar: there is no SIMD form in the reference. These vectors pin the output bit-identical to the
 // xxHash reference (and the retired twox-hash crate) across every length branch
 // (16/32-byte stripes, trailing 4-/1-byte tails) and a seeded case. Input byte
 // i = (i * 191 + 17) & 0xff.

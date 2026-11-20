@@ -758,7 +758,7 @@ pub struct Parts<'t> {
     text: &'t [u8],
     scratch: Option<Box<Scratch>>,
     /// Swapped in for `scratch.stops` while parsing the text of one part.
-    part_stops: bun_highway::ScannerStopsBuffer,
+    part_stops: bun_core::strings::ScannerStopsBuffer,
 }
 
 impl<'t> Parts<'t> {

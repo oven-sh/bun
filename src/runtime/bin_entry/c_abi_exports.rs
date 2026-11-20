@@ -37,3 +37,24 @@ extern "C" fn Bun__loopInitFailed(err: core::ffi::c_int) -> ! {
         _ => bun_core::output::panic(format_args!("failed to create the event loop: errno {err}")),
     }
 }
+
+/// Replaces the one of libc for the C and C++ in this executable.
+///
+/// # Safety
+/// Each pointer is valid for reading its length, and nothing writes there meanwhile.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+#[unsafe(no_mangle)]
+// An import by ThinLTO brings rustc's `RtLibUseGOT` flag (x64 Linux) into the caller's module, whose functions then stop folding with their twins.
+#[inline(never)]
+unsafe extern "C" fn memmem(
+    haystack: *const u8,
+    haystack_len: usize,
+    needle: *const u8,
+    needle_len: usize,
+) -> *const u8 {
+    use bun_core::ffi::slice;
+    // SAFETY: the caller's.
+    let (text, needle) = unsafe { (slice(haystack, haystack_len), slice(needle, needle_len)) };
+    let found = bun_core::strings::memmem(text, needle);
+    found.map_or(core::ptr::null(), |at| haystack.wrapping_add(at))
+}

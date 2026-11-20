@@ -1,0 +1,16 @@
+[package]
+name = "bun_simd_kernels"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_simd.workspace = true
+
+[dev-dependencies]
+bun_simd = { workspace = true, features = ["test_support"] }

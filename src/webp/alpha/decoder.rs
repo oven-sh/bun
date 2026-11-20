@@ -1,6 +1,6 @@
 //! The alpha channel, a row at a time.
 
-use bun_highway::webp::ROW_STEP;
+use bun_simd_kernels::webp::ROW_STEP;
 
 use super::{Filter, LOSSLESS_COMPRESSION, NO_COMPRESSION, gradient};
 use crate::error::{Error, Result};

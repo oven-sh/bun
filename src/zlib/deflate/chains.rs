@@ -2,7 +2,7 @@
 
 use bun_core::ffi::try_boxed_zeroed;
 use bun_deflate::format::MIN_MATCH_LEN;
-use bun_highway::zlib::subtract_saturating;
+use bun_simd_kernels::zlib::subtract_saturating;
 
 use super::window::chunk;
 use crate::array::At;

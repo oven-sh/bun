@@ -1,14 +1,11 @@
 #pragma once
 
 #include "root.h"
+#include "SIMDKernels.h"
 #include <span>
 #include <string_view>
 #include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
-
-// SIMD kernels defined in highway_strings.cpp.
-extern "C" size_t highway_first_non_ascii16(const uint16_t* input, size_t len);
-extern "C" void highway_copy_u16_to_u8(const uint16_t* input, size_t count, uint8_t* output);
 
 namespace Bun {
 
@@ -26,12 +23,11 @@ public:
         }
 
         const auto span = string.span16();
-        const auto* input = reinterpret_cast<const uint16_t*>(span.data());
         m_buffer.grow(span.size());
         uint8_t* output = m_buffer.mutableSpan().data();
 
-        const size_t asciiPrefix = highway_first_non_ascii16(input, span.size());
-        highway_copy_u16_to_u8(input, asciiPrefix, output);
+        const size_t asciiPrefix = Bun__simd__indexOfNonASCII16(span.data(), span.size());
+        Bun__simd__narrowTo8Bit(span.data(), asciiPrefix, output, span.size());
         // Header validation rejects code units above 0xFF; '?' matches String::latin1() if one gets through.
         for (size_t i = asciiPrefix; i < span.size(); i++)
             output[i] = isLatin1(span[i]) ? static_cast<uint8_t>(span[i]) : '?';

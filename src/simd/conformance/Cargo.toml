@@ -1,0 +1,17 @@
+[package]
+name = "bun_simd_conformance"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_simd.workspace = true
+bun_simd_kernels.workspace = true
+bun_core.workspace = true
+bun_sys.workspace = true
+libc.workspace = true

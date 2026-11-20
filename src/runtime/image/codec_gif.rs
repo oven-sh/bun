@@ -4,8 +4,8 @@
 //! built from all prior codes — so the bitstream decode is scalar by
 //! construction. The post-LZW palette→RGBA expand is a 4-byte gather per
 //! pixel; on the sizes GIF is actually used at it's memory-bandwidth-bound
-//! and a tight scalar loop already saturates that, so no Highway kernel here
-//! (the existing `NearestPaletteImpl` covers the encode-side colour match if
+//! and a tight scalar loop already saturates that, so no SIMD kernel here
+//! (the existing `nearest_in_palette` covers the encode-side colour match if
 //! we add `.gif()` later).
 //!
 //! Scope: single-image, first frame; honours interlace and the GCE
@@ -403,7 +403,7 @@ fn decode_frame(
 }
 
 /// One row of palette indices → RGBA slots. Scalar 4-byte copy per pixel — see file
-/// comment for why this isn't a Highway kernel.
+/// comment for why this isn't a SIMD kernel.
 #[inline]
 fn expand_row(idx: &[u8], out: &mut [[MaybeUninit<u8>; 4]], pal: &[[u8; 4]; 256]) {
     for (x, &c) in idx.iter().enumerate() {

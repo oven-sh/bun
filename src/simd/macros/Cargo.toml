@@ -1,0 +1,17 @@
+[package]
+name = "bun_simd_macros"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+proc-macro = true
+
+[features]
+test_support = []
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_simd_trusted.workspace = true

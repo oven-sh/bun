@@ -11,6 +11,7 @@ use bun_jsc::{
     ArrayBuffer, Completion, ErrorCode, JSGlobalObject, JSValue, Job, JobContext, JsError,
     JsResult, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
 };
+use bun_simd::SharedU8;
 
 // ─── type defs ────────────────────────────────────────────────────────────
 
@@ -81,8 +82,8 @@ fn jsv_to_u32(v: JSValue) -> u32 {
     v.as_number() as u32
 }
 
-pub(crate) fn crc32(data: &[u8], value: u32) -> u32 {
-    bun_highway::crc32(value, data)
+pub(crate) fn crc32(data: &[SharedU8], value: u32) -> u32 {
+    bun_simd_kernels::crc32_shared(value, data)
 }
 
 // ─── CompressionStream mixin trait ────────────────────────────────────────

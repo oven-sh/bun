@@ -1,4 +1,4 @@
-//! `path.posix` for 8-bit characters. What looks at all of them is a kernel of `bun_highway`.
+//! `path.posix` for 8-bit characters. What looks at all of them is a kernel of `bun_simd_kernels`.
 
 use core::mem::MaybeUninit;
 use core::ops::Range;
@@ -54,14 +54,15 @@ fn is_dots_at(path: &[u8], start: usize) -> bool {
 pub fn is_tidy_ascii_posix(path: &[u8]) -> bool {
     !path.is_empty()
         && !(path[0] == DOT && is_dots_at(path, 0))
-        && bun_highway::index_of_untidy_slash_or_non_ascii(path).is_none()
+        && bun_simd_kernels::index_of_untidy_slash_or_non_ascii(path).is_none()
 }
 
 /// Where the parts from `start` on that are kept as they are end: at a '/' in front of a part that is empty, "." or "..", or at `limit`, which is not behind a slash.
 #[inline(always)]
 fn end_of_tidy_parts(path: &[u8], start: usize, limit: usize) -> usize {
     // Only slashes follow `limit`, so a part that ends there ends there in `path` too.
-    bun_highway::index_of_untidy_slash(&path[start..limit]).map_or(limit, |found| start + found)
+    bun_simd_kernels::index_of_untidy_slash(&path[start..limit])
+        .map_or(limit, |found| start + found)
 }
 
 /// `normalize_string_t` in the crate root, with '/'.
@@ -168,12 +169,12 @@ pub fn resolve_absolute_posix_latin1<'b>(
 
 #[inline(always)]
 fn last_slash(path: &[u8], end: usize) -> Option<usize> {
-    bun_highway::last_index_of_slash(&path[..end])
+    bun_simd_kernels::last_index_of_slash(&path[..end])
 }
 
 #[inline(always)]
 fn last_slash_or_dot(path: &[u8], end: usize) -> Option<usize> {
-    bun_highway::last_index_of_slash_or_dot(&path[..end])
+    bun_simd_kernels::last_index_of_slash_or_dot(&path[..end])
 }
 
 /// `path.len()` less the slashes at its end, but at least `least`.
@@ -298,7 +299,7 @@ pub fn relative_posix_latin1(from: &[u8], to: &[u8]) -> RelativePosixLatin1 {
     debug_assert!(is_resolved_ascii_posix(from) && is_resolved_ascii_posix(to));
     // Where the names of `from` start that are not in `to`, if there are any, and `rest`.
     let (left_from, rest) = 'found: {
-        let common = bun_highway::common_prefix_length(from, to);
+        let common = bun_simd_kernels::common_prefix_len(from, to);
         if common == from.len() {
             if common == to.len() {
                 break 'found (None, common);
@@ -325,7 +326,7 @@ pub fn relative_posix_latin1(from: &[u8], to: &[u8]) -> RelativePosixLatin1 {
     };
     RelativePosixLatin1 {
         ups: match left_from {
-            Some(start) => 1 + bun_highway::count_slashes(&from[start..]),
+            Some(start) => 1 + bun_simd_kernels::count_slashes(&from[start..]),
             None => 0,
         },
         rest,

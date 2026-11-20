@@ -1868,9 +1868,7 @@ pub(crate) fn windows_export_socket_hex(fd: Fd, peer_pid: u32) -> Option<Box<[u8
         return None;
     }
     let mut hex = vec![0u8; size * 2];
-    let n = bun_core::strings::encode_bytes_to_hex(&mut hex, &info);
-    debug_assert!(n == size * 2);
-    hex.truncate(n);
+    bun_core::fmt::bytes_to_hex_lower(&info, &mut hex);
     Some(hex.into_boxed_slice())
 }
 
@@ -1892,7 +1890,8 @@ fn import_windows_socket_payload(
     let hex = hex_view.to_utf8();
     let expected = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
     let mut info = vec![0u8; expected];
-    let decoded = strings::decode_hex_to_bytes_truncate(&mut info, hex.slice());
+    let pairs = hex.slice().as_chunks().0;
+    let decoded = bun_simd_kernels::decode_hex(pairs, info.as_mut_slice().into()).len();
     if decoded != expected {
         log!(
             "importWindowsSocketPayload: bad blob length {} (want {})",

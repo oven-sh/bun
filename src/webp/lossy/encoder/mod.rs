@@ -13,7 +13,7 @@ mod picture;
 mod segments;
 mod tokens;
 
-use bun_highway::webp::Scratch;
+use bun_simd_kernels::webp::Scratch;
 
 use self::bool_writer::BoolWriter;
 use self::cost::Costs;

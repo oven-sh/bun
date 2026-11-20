@@ -222,7 +222,11 @@ pub(crate) struct OddBlocks(Vec<u64>);
 
 impl OddBlocks {
     pub(crate) fn mark(&mut self, source: &[u8]) {
-        bun_highway::odd_blocks(source, &mut self.0);
+        self.0.clear();
+        let words = source.len().div_ceil(64 * BLOCK);
+        bun_simd::extend_vec(&mut self.0, words, |out| {
+            bun_simd_kernels::odd_blocks(source, out)
+        });
     }
 
     /// True if the text from `start` to `end`, which has no tab or line break, is as many columns wide as it has bytes

@@ -5,7 +5,7 @@ import path from "path";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
 
 // Byte / substring search over `&[u8]` must go through `bun_core::strings`
-// (highway, runtime-dispatched SIMD), not libcore's element-generic slice and
+// (runtime-dispatched SIMD), not libcore's element-generic slice and
 // iterator methods, which compile to one-byte-at-a-time scalar loops (or, for
 // `<[u8]>::contains`, a usize-at-a-time SWAR loop with no vector registers).
 //
@@ -29,17 +29,20 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // A comparand held in a variable (`|&b| b == sep`) is invisible to this lint;
 // use the `strings::` form anyway.
 //
-// Highway is also the only SIMD in the Rust sources. `std::simd` and the
+// `bun_simd` is also the only SIMD in use in the Rust sources. `std::simd` and the
 // `core::arch` intrinsics are compiled for the baseline CPU, with no runtime
 // dispatch, and would be a second set of kernels to keep correct on every
 // target. clippy.toml bans `Simd`, `Mask` and their constructors, but a `u8x16`
 // made with `.into()` gets past it. Nothing gets past the feature gate, so that
-// is banned here. New kernels go in src/jsc/bindings/highway_strings.cpp or a
-// highway_*.cpp beside it, with a wrapper in src/highway/lib.rs.
+// is banned here. New kernels go in src/simd/kernels/.
+//
+// `bun_simd` (src/simd/) is made of both, and depends on nothing of Bun's. The
+// kernels that are written with it get no exemption, only their tests.
+const isBunSimd = (rel: string) => /^src\/simd\/(?!(?:kernels|conformance)\/(?!tests\/))/.test(rel);
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 // Proc-macro crates and cargo build scripts run on the host at compile time and
-// cannot link the highway C++ objects, so libcore is all they have. Both are
+// cannot link what `bun_core` needs, so libcore is all they have. Both are
 // read off each crate's Cargo.toml rather than guessed from its name.
 const hostOnly: string[] = [];
 for (const manifest of new Bun.Glob("src/*/Cargo.toml").scanSync({ cwd: root })) {
@@ -52,7 +55,7 @@ for (const manifest of new Bun.Glob("src/*/Cargo.toml").scanSync({ cwd: root }))
 const rustSources = globAllSources().rust.filter(abs => {
   if (!abs.endsWith(".rs")) return false;
   const rel = path.relative(root, abs).replaceAll(path.sep, "/");
-  return !hostOnly.some(h => (h.endsWith("/") ? rel.startsWith(h) : rel === h));
+  return !isBunSimd(rel) && !hostOnly.some(h => (h.endsWith("/") ? rel.startsWith(h) : rel === h));
 });
 
 // Only scan files tracked in HEAD (a `git stash` round-trip can leave stray
@@ -124,22 +127,18 @@ const BANNED: { name: string; re: RegExp; hint: string }[] = [
   {
     name: "portable SIMD",
     re: /\bportable_simd\b|\b(?:std|core)::simd\b/g,
-    hint: "a highway kernel (bun_highway, bun_core::strings)",
+    hint: "a kernel on bun_simd (bun_simd_kernels, bun_core::strings)",
   },
   {
     name: "SIMD intrinsics",
     re: /\b(?:std|core)::arch::(?:x86|x86_64|arm|aarch64)\b/g,
-    hint: "a highway kernel (bun_highway, bun_core::strings)",
+    hint: "a kernel on bun_simd (bun_simd_kernels, bun_core::strings)",
   },
 ];
 
 // Documented, ratcheted exceptions: `file: count`. Prefer converting over
 // adding an entry here.
-const ALLOW: Record<string, number> = {
-  // `#[cfg(test)]` unit test built only by `cargo test -p bun_collections`,
-  // which does not link the highway objects.
-  "src/collections/linear_fifo.rs": 1,
-};
+const ALLOW: Record<string, number> = {};
 
 const counts: Record<string, number> = {};
 const offenders: string[] = [];
@@ -170,7 +169,7 @@ test("scans a non-empty set of tracked Rust sources", () => {
   expect(scanned).toBeGreaterThan(0);
 });
 
-test("byte search goes through bun_core::strings (highway), not libcore scalar loops", () => {
+test("byte search goes through bun_core::strings, not libcore scalar loops", () => {
   expect(offenders).toEqual([]);
 });
 

@@ -440,7 +440,6 @@ export type DepName =
   | "WebKit"
   | "boringssl"
   | "cares"
-  | "highway"
   | "libuv"
   | "lolhtml"
   | "lsqpack"

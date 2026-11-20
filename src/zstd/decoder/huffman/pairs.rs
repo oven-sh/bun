@@ -1,6 +1,6 @@
 //! Up to two symbols at a time.
 
-use bun_highway::with_bmi2;
+use bun_simd::with_bmi2;
 
 use super::ranks::Ranks;
 use super::streams::{LOOKUPS, Lane, ROUNDS_MAX, Stream, Windows, interleave, prefetch, unload};

@@ -38,6 +38,7 @@ src/lint/linter/deprecated.txt text eol=lf
 src/lint/linter/schema/schemas.txt text eol=lf
 src/lint/oxlint_help.txt text eol=lf
 src/sema/messages.txt text eol=lf
+src/simd/conformance/digests.txt text eol=lf
 
 *.lockb binary diff=lockb
 

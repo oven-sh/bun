@@ -2,7 +2,7 @@
 
 use core::array::from_fn;
 
-use bun_highway::brotli::find_switches;
+use bun_simd_kernels::brotli::{TOO_MUCH, find_switches};
 
 use super::cluster::{BATCH, Clusters, Combiner, max_at_once, renumber};
 use super::histogram::{DISTANCE_SYMBOLS, Indexed, count_symbols};
@@ -168,7 +168,6 @@ fn sample(data: &[u16], tuning: &Tuning, histograms: &mut [u32]) {
 }
 
 const LANES: usize = 8;
-const TOO_MUCH: f64 = 1e99;
 
 /// One for each of so many histograms.
 type Costs = [f64; LANES];

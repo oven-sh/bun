@@ -1264,6 +1264,7 @@ describe("stringWidth SIMD fast paths", () => {
 
     test("emoji embedded in long ASCII runs", () => {
       expect(Bun.stringWidth(repeat("a", 40) + "😀" + repeat("b", 40))).toBe(82);
+      expect(Bun.stringWidth("😀" + repeat("a\x1f  ~~~~\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f", 96) + "😀")).toBe(46);
       expect(Bun.stringWidth("👩‍👩‍👧‍👦".repeat(10))).toBe(20);
       expect(Bun.stringWidth("ok 👍🏽 done, 🇺🇸 flag")).toBe(19);
     });
@@ -1647,13 +1648,13 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
   });
 });
 
-// The UTF-16 path has a SIMD bulk kernel (highway_visible_utf16_width) that
+// The UTF-16 path has a SIMD bulk kernel (visible_utf16_width) that
 // counts runs of codepoints which are always their own grapheme cluster with
 // a fixed width, bailing to the scalar grapheme loop for everything else.
 // These tests pin the kernel's allowlisted ranges against the scalar
 // classifier and the clustering behavior at the bail points.
 describe("UTF-16 bulk width fast path", () => {
-  // Must mirror the ranges in ClassifyBulkUTF16Unit (highway_strings.cpp).
+  // Must mirror STARTS and ENDS in src/simd/kernels/width.rs.
   const narrowRanges: Array<[number, number]> = [
     [0x20, 0x7e],
     [0xa0, 0x2ff],

@@ -162,6 +162,7 @@ const bytesOfThenWith = (options: Omit<BytesOptions, "from">, rustName: string) 
   });
 export const bytesOfThen = bytesOfThenWith({}, "bytes_of_then");
 export const bytesOfThenCopyingShared = bytesOfThenWith({ shared: "copied" }, "bytes_of_then");
+export const bytesOfThenAtomic = bytesOfThenWith({ shared: "atomic" }, "bytes_of_then_atomic");
 export const bytesOfThenCopied = bytesOfThenWith({ held: "copied" }, "bytes_of_then_copied");
 /** Given one value twice: whether both are its own memory, and not a copy each. */
 const bytesOfAreSameMemoryWith = (shared: BytesOptions["shared"]) => {

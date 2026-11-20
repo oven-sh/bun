@@ -3,7 +3,7 @@
 use core::cell::Cell;
 use core::convert::Infallible;
 
-use bun_highway::{out_of_line, with_bmi2};
+use bun_simd::{out_of_line, with_bmi2};
 
 use bun_zstd_decoder::bounded::Bounded;
 

@@ -6,7 +6,6 @@
 #![feature(thread_local)]
 #![feature(adt_const_params)]
 #![feature(core_io_borrowed_buf, borrowed_buf_init)]
-#![feature(vec_fallible_shrink)]
 // The unit-test harness leaves out `bin_entry` (below), the root that keeps
 // this crate's `pub(crate)` items alive, so in a test build most of the crate
 // reads as dead code. `dead_code` is checked by the crate's own build.
@@ -67,6 +66,8 @@ pub(crate) mod read_ahead;
 pub(crate) mod removed_feature;
 #[path = "../bun.js.rs"]
 pub(crate) mod run_main;
+pub(crate) mod simd_exports;
+pub(crate) mod simd_testing;
 pub(crate) mod timer;
 pub(crate) mod typescript_front;
 

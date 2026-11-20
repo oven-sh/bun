@@ -27,6 +27,8 @@ const { values } = parseArgs({
     emulator: { type: "string" },
     "jit-stress": { type: "boolean", default: false },
     "skip-emulation": { type: "boolean", default: false },
+    // Runs the tests of src/simd, which a canary build has, on CPUs of many generations.
+    "simd-cpus": { type: "boolean", default: false },
   },
   strict: true,
 });
@@ -108,6 +110,12 @@ interface RunTestOptions {
   /** Tee output live to the console while still capturing it for analysis */
   live?: boolean;
   executable?: string;
+  /** Overrides the baseline CPU. */
+  cpu?: string;
+  /** What QEMU reports as the release of Linux. */
+  release?: string;
+  /** Has to be in the output. */
+  expected?: string;
 }
 
 /** Read a stream, write each chunk to a writable, and return the full text. */
@@ -125,7 +133,13 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
 
   const start = performance.now();
   const live = options?.live ?? false;
-  const proc = Bun.spawn([...config.runnerCmd, options?.executable ?? binary, ...binaryArgs], {
+  const { cpu, release = "6.12.0", expected = "" } = options ?? {};
+  const runnerCmd = !cpu
+    ? config.runnerCmd
+    : isWindows
+      ? [emulatorPath, `-${cpu}`, "--"]
+      : [emulatorPath, "-cpu", cpu, "-r", release];
+  const proc = Bun.spawn([...runnerCmd, options?.executable ?? binary, ...binaryArgs], {
     // config.cwd takes priority — SDE on Windows must run from its own directory for Pin DLL resolution
     cwd: config.cwd ?? options?.cwd,
     stdout: "pipe",
@@ -153,7 +167,7 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
   const elapsed = ((performance.now() - start) / 1000).toFixed(1);
   const output = stdout + "\n" + stderr;
 
-  if (exitCode === 0) {
+  if (exitCode === 0 && stdout.includes(expected)) {
     if (!live && stdout.trim()) console.log(stdout.trim());
     console.log(`    PASS (${elapsed}s)`);
     passed++;
@@ -175,7 +189,7 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
     failedTests.push(label);
   } else {
     if (!live && output.trim()) console.log(output.trim());
-    const how = exitCode === null ? `signal ${signalCode}` : `exit code ${exitCode}`;
+    const how = exitCode === null ? `signal ${signalCode}` : exitCode ? `exit code ${exitCode}` : `no "${expected}"`;
     console.log(`    FAIL: ${how} (${elapsed}s, not a CPU instruction issue)`);
     otherFailures++;
     failedTests.push(label);
@@ -251,6 +265,34 @@ if (values["skip-emulation"]) {
       await runTest("Ahead-of-time compiled program", [], { executable: aotExecutable });
   } finally {
     rmSync(aotDir, { recursive: true, force: true });
+  }
+}
+
+if (values["simd-cpus"] && !values["skip-emulation"]) {
+  // +bmi1: QEMU 9.1 decodes `lzcnt` only with BMI1. The real CPU has both.
+  const [bestTargets, others]: [Record<string, string>, string] = isWindows
+    ? [{ nhm: "sse4", hsw: "avx2", skx: "avx512_skx", icx: "avx512_icl" }, "snb tnt cnl adl arl spr gnr dmr"]
+    : isAarch64
+      ? [{ "cortex-a53": "neon", "neoverse-v1": "neon", "neoverse-n2": "sve2", max: "sve2" }, "cortex-a76 a64fx"]
+      : [{ Nehalem: "sse4", Haswell: "avx2" }, "Westmere SandyBridge Opteron_G5,+bmi1 EPYC-Rome max"];
+  const runner = ["test", "--run-simd-tests"];
+  for (const cpu of [...Object.keys(bestTargets), ...others.split(" ")]) {
+    await runTest(`bun_simd on ${cpu}: features`, [...runner, "probe"], { cpu });
+  }
+  for (const [cpu, target] of Object.entries(bestTargets)) {
+    const expected = ` ${target}\nrounds: 1200`;
+    await runTest(`bun_simd on ${cpu}: kernels`, [...runner, "check", "1200"], { cpu, expected });
+  }
+  // The checksums have copies for features beyond a target.
+  for (const cpu of others.split(" ")) {
+    await runTest(`bun_simd on ${cpu}: checksums`, [...runner, "check-only", "checksums", "1200"], {
+      cpu,
+      expected: "rounds: 1200",
+    });
+  }
+  if (isAarch64) {
+    const options = { cpu: "neoverse-n2", release: "6.1.0", expected: " neon\nrounds: 3" };
+    await runTest("bun_simd on Linux 6.1", [...runner, "check", "3"], options);
   }
 }
 

@@ -197,7 +197,7 @@ pub enum Goal {
 #[derive(Default)]
 pub struct Scratch {
     names: names::Names,
-    stops: bun_highway::ScannerStopsBuffer,
+    stops: bun_core::strings::ScannerStopsBuffer,
     stacks: parser::Stacks,
     declared: parser::Declared,
     /// A file that's no longer needed. The next file reuses its lists and its box. It's boxed because a `FileBuilder`

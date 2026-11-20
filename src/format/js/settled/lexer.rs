@@ -1,8 +1,7 @@
 //! Tokens. Anything unusual is a [`T::Unknown`], which no rule of the parser accepts.
 
 use crate::js::utils::number::format_trimmed_number;
-use bun_core::strings;
-use bun_highway::ScannerStops;
+use bun_core::strings::{self, ScannerStops};
 
 macro_rules! tokens {
     ($($plain:ident)* ; $($word:ident $text:literal)*) => {
@@ -372,7 +371,7 @@ impl<'a> Lexer<'a> {
         buffers.comments.clear();
         buffers.long_lines.clear();
         buffers.wide_lines.clear();
-        bun_highway::byte_bits(src, b'\n', &mut buffers.line_feeds);
+        bun_simd_kernels::byte_bits(src, b'\n', &mut buffers.line_feeds);
         let mut was_not_name = 1;
         buffers.blocks.clear();
         buffers

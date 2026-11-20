@@ -21,6 +21,8 @@ use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject};
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
+use bun_simd::{Out, SharedU8};
+use bun_simd_kernels::websocket as kernels;
 use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
@@ -121,7 +123,7 @@ struct Unmask {
 
 impl Unmask {
     fn copy(&mut self, output: &mut [u8], input: &[u8]) {
-        bun_highway::fill_with_skip_mask(self.key, output, input, false);
+        kernels::mask(self.key, input, (&mut output[..input.len()]).into());
         self.key.rotate_left(input.len() % 4);
     }
 }
@@ -1004,7 +1006,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let mut payload = self.control_payload.get();
         if self.options.is_server {
             let key = self.unmask.get().key;
-            bun_highway::fill_with_skip_mask_inplace(key, &mut payload[..payload_len], false);
+            kernels::mask_in_place(key, &mut payload[..payload_len]);
         }
         self.control_frame_started.set(false);
         Some((payload, payload_len))
@@ -1142,7 +1144,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         // The compressor consumes UTF-8/raw bytes, so transcode first.
-        let utf8_storage: Vec<u8>;
+        let mut utf8_storage: Vec<u8>;
         let content_to_compress: &[u8] = match bytes {
             Copy::Utf16(utf16) => {
                 utf8_storage = strings::to_utf8_alloc(utf16);
@@ -1159,6 +1161,14 @@ impl<const SSL: bool> WebSocket<SSL> {
                 }
             }
             Copy::Bytes(b) => b,
+            Copy::Shared(shared) => {
+                utf8_storage = Vec::new();
+                bun_core::handle_oom(utf8_storage.try_reserve_exact(shared.len()));
+                bun_simd::extend_vec(&mut utf8_storage, shared.len(), |out| {
+                    bun_simd::copy_from_shared(shared, out)
+                });
+                &utf8_storage
+            }
         };
 
         let mut compressed: Vec<u8> = Vec::new();
@@ -1429,7 +1439,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.send_data(bytes, !self.has_backpressure(), kind);
     }
 
-    pub(crate) fn write_binary_data(this: ThisPtr<Self>, slice: &[u8], op: u8, flags: u8) {
+    pub(crate) fn write_binary_data(this: ThisPtr<Self>, slice: &[SharedU8], op: u8, flags: u8) {
         // In tunnel mode, SSLWrapper.writeData() can synchronously fire
         // onClose → handle_tunnel_close() → finish() and release the refs on
         // `this` while enqueue_encoded_bytes/send_buffer_out still run.
@@ -1440,7 +1450,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         this.send_frame(
-            Copy::Bytes(slice),
+            Copy::Shared(slice),
             slice.len(),
             FrameKind::from_ffi(op, flags, !this.options.is_server),
         );
@@ -1982,7 +1992,7 @@ pub fn bun__websocketclient__memory_cost(this: &crate::websocket_client::WebSock
 // HOST_EXPORT(Bun__WebSocketClient__writeBinaryData, c)
 pub fn bun__websocketclient__write_binary_data(
     this: ThisPtr<crate::websocket_client::WebSocketClient>,
-    bytes: &[u8],
+    bytes: &[SharedU8],
     op: u8,
     flags: u8,
 ) {
@@ -2089,7 +2099,7 @@ pub fn bun__websocketclienttls__memory_cost(
 // HOST_EXPORT(Bun__WebSocketClientTLS__writeBinaryData, c)
 pub fn bun__websocketclienttls__write_binary_data(
     this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
-    bytes: &[u8],
+    bytes: &[SharedU8],
     op: u8,
     flags: u8,
 ) {
@@ -2217,40 +2227,6 @@ impl ErrorCode {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Mask
-// ──────────────────────────────────────────────────────────────────────────
-
-struct Mask;
-
-impl Mask {
-    fn generate(global_this: &JSGlobalObject) -> [u8; 4] {
-        global_this.bun_vm().rare_data().entropy()
-    }
-
-    fn fill(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], output: &mut [u8], input: &[u8]) {
-        *mask_buf = Self::generate(global_this);
-        let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
-        if input.is_empty() {
-            bun_core::hint::cold();
-            return;
-        }
-        bun_highway::fill_with_skip_mask(*mask_buf, output, input, skip_mask);
-    }
-
-    /// In-place variant for when output and input alias the same buffer
-    /// (borrowck forbids `&mut [u8]` + `&[u8]` aliasing in `fill`).
-    fn fill_in_place(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], buf: &mut [u8]) {
-        *mask_buf = Self::generate(global_this);
-        let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
-        if buf.is_empty() {
-            bun_core::hint::cold();
-            return;
-        }
-        bun_highway::fill_with_skip_mask_inplace(*mask_buf, buf, skip_mask);
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // ReceiveState / DataType
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -2373,6 +2349,8 @@ enum Copy<'a> {
     Utf16(&'a [u16]),
     Latin1(&'a [u8]),
     Bytes(&'a [u8]),
+    /// Those of a JS buffer.
+    Shared(&'a [SharedU8]),
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -2462,6 +2440,7 @@ impl Copy<'_> {
             Copy::Utf16(utf16) => strings::element_length_utf16_into_utf8(utf16),
             Copy::Latin1(latin1) => strings::element_length_latin1_into_utf8(latin1),
             Copy::Bytes(bytes) => bytes.len(),
+            Copy::Shared(bytes) => bytes.len(),
         };
         (WebsocketHeader::frame_size(byte_len, masked), byte_len)
     }
@@ -2513,9 +2492,15 @@ impl Copy<'_> {
             .write_header(&mut parts.header, content_byte_len)
             .expect("unreachable");
 
+        let mask = parts.mask.map(|mask| {
+            *mask = global_this.bun_vm().rare_data().entropy();
+            *mask
+        });
+
         match self {
             Copy::Utf16(utf16) => {
-                let encoded = strings::copy_utf16_into_utf8_impl::<true>(parts.payload, utf16);
+                let payload = Out::from(&mut *parts.payload).into_shared();
+                let encoded = strings::copy_utf16_into_utf8_impl::<true>(payload, utf16);
                 debug_assert_eq!(encoded.written, content_byte_len);
                 debug_assert_eq!(encoded.read, utf16.len());
             }
@@ -2526,15 +2511,25 @@ impl Copy<'_> {
                 debug_assert_eq!(encoded.read, latin1.len());
             }
             Copy::Bytes(bytes) => {
-                match parts.mask {
-                    Some(mask) => Mask::fill(global_this, mask, parts.payload, bytes),
+                assert_eq!(parts.payload.len(), bytes.len());
+                match mask {
+                    Some(mask) => _ = kernels::mask(mask, bytes, parts.payload.into()),
                     None => parts.payload.copy_from_slice(bytes),
                 }
                 return;
             }
+            Copy::Shared(bytes) => {
+                assert_eq!(parts.payload.len(), bytes.len());
+                let payload = parts.payload.into();
+                match mask {
+                    Some(mask) => kernels::mask_from_shared(mask, bytes, payload),
+                    None => bun_simd::copy_from_shared(bytes, payload),
+                };
+                return;
+            }
         }
-        if let Some(mask) = parts.mask {
-            Mask::fill_in_place(global_this, mask, parts.payload);
+        if let Some(mask) = mask {
+            kernels::mask_in_place(mask, parts.payload);
         }
     }
 }

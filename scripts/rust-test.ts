@@ -14,8 +14,8 @@
  * `cargo test` runs one test program behind another. For the whole list each program starts when cargo has linked it,
  * beside those that still run and beside the rest of the build. What a program prints is shown when it ends.
  *
- * TESTAOT=<testaot>: the engine reads what the front end writes in some tests of bun_aot. With it, and in CI, a test that
- * the engine did not see fails. Without it such a test leaves that part out.
+ * TESTAOT=<testaot>: the engine reads what the front end writes in some tests of bun_aot. With it, and for the whole list in
+ * CI, a test that the engine did not see fails. Without it such a test leaves that part out.
  *
  * BUN_UNDER_TEST=<bun>: beside the crates it builds and runs the programs of test/aot/library-sweeps, which compile all of
  * Bun's library or much of it. This step has the processors for them, and no shard of the tests waits for it.
@@ -63,6 +63,9 @@ const crates = [
   "bun_sema_standalone",
   "bun_shell_parser",
   "bun_shim_impl",
+  "bun_simd",
+  "bun_simd_kernels",
+  "bun_simd_trusted",
   "bun_sort_by_number",
   "bun_sql",
   "bun_sql_jsc",
@@ -92,14 +95,16 @@ async function run(cmd: string, args: string[], env: NodeJS.ProcessEnv = process
   process.exit(status ?? 1);
 }
 
-const requiresEngine = !!process.env.TESTAOT || !!process.env.CI;
+const extraArgs = process.argv.slice(2);
+const isWholeListInCI = !!process.env.CI && !extraArgs.length;
+const requiresEngine = !!process.env.TESTAOT || isWholeListInCI;
 if (requiresEngine && !process.env.TESTAOT) {
   console.error("TESTAOT is not set: in CI the step downloads testaot from the build (.buildkite/ci.ts)");
   process.exit(1);
 }
 
 const bunUnderTest = process.env.BUN_UNDER_TEST;
-if (process.env.CI && !bunUnderTest) {
+if (isWholeListInCI && !bunUnderTest) {
   console.error("BUN_UNDER_TEST is not set: in CI the step downloads Bun from the build (.buildkite/ci.ts)");
   process.exit(1);
 }
@@ -133,7 +138,6 @@ function start(name: string, command: string, args: string[], options: { cwd: st
   });
 }
 
-const extraArgs = process.argv.slice(2);
 const programs: Promise<TestProgram>[] = [];
 const running = new Set<ChildProcess>();
 
@@ -181,7 +185,7 @@ if (extraArgs.length) {
 }
 
 // The crates of the list whose documentation has examples that run. `--no-run` builds none of them.
-const cratesWithExamples = ["bun_collections", "bun_pod"];
+const cratesWithExamples = ["bun_collections", "bun_pod", "bun_simd"];
 
 // It asks for a path below `/` that a test cannot create.
 const programArgs = ["--skip", "realpath_under_the_marked_root_stays_under_it"];

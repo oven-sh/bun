@@ -1,3 +1,4 @@
+use bun_simd::SharedOutU8;
 use core::io::BorrowedCursor;
 
 #[repr(C)]
@@ -219,6 +220,23 @@ pub mod convert {
                             result
                         }
                     }
+
+                    /// To the bytes of a JS buffer, which an error does not leave as they were.
+                    pub fn le_to_shared(
+                        input: WithUtf8Len<'_, u16>,
+                        output: &[SharedOutU8],
+                    ) -> SIMDUTFResult {
+                        assert!(input.utf8_len <= output.len());
+                        // SAFETY: simdutf writes at most `utf8_len` bytes and reads none of them, so
+                        // another thread cannot mislead it. No CPU tears a byte that it stores.
+                        unsafe {
+                            simdutf__convert_utf16le_to_utf8_with_errors(
+                                input.slice.as_ptr(),
+                                input.slice.len(),
+                                output.as_ptr().cast_mut().cast(),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -239,6 +257,20 @@ pub mod convert {
                         output.as_mut().as_mut_ptr().cast(),
                     );
                     output.advance(written);
+                }
+            }
+
+            /// [`utf8`] for the bytes of a JS buffer. Returns the count.
+            pub fn shared_utf8(input: WithUtf8Len<'_, u8>, output: &[SharedOutU8]) -> usize {
+                assert!(input.utf8_len <= output.len());
+                // SAFETY: simdutf writes `utf8_len` bytes and reads none of them, so another thread
+                // cannot mislead it. No CPU tears a byte that it stores.
+                unsafe {
+                    simdutf__convert_latin1_to_utf8(
+                        input.slice.as_ptr(),
+                        input.slice.len(),
+                        output.as_ptr().cast_mut().cast(),
+                    )
                 }
             }
         }

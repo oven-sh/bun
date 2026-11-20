@@ -11,7 +11,8 @@ workspace = true
 
 # Nothing of Bun's C++ is called: JavaScriptCore's programs link this crate without it.
 [dependencies]
-bun_highway.workspace = true
+bun_simd.workspace = true
+bun_simd_kernels.workspace = true
 
 [[test]]
 name = "decode"

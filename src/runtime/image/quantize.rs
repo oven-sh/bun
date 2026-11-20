@@ -10,6 +10,7 @@
 //! Floyd–Steinberg error diffusion (`dither: true`).
 
 use bun_alloc::AllocError;
+use bun_simd_kernels::image::nearest_in_palette;
 
 pub(crate) struct QuantizeResult {
     /// `[colors][4]u8` RGBA palette, of at most the requested `colors`.
@@ -45,11 +46,6 @@ impl ColorBox {
         }
         best
     }
-}
-
-unsafe extern "C" {
-    fn bun_image_nearest_palette(palette: *const u8, k: u32, r: i32, g: i32, b: i32, a: i32)
-    -> u32;
 }
 
 #[derive(Clone, Copy)]
@@ -133,24 +129,10 @@ pub(crate) fn quantize(
 
     let mut indices = vec![0u8; n as usize];
     if opts.dither {
-        map_floyd_steinberg(rgba, w, h, &palette, k, &mut indices)?;
+        map_floyd_steinberg(rgba, w, h, &palette, &mut indices)?;
     } else {
-        // Direct nearest-entry mapping. k ≤ 256; the inner search is the
-        // highway-dispatched kernel so it runs under the best -march.
-        for px in 0..n as usize {
-            let p = &rgba[px * 4..][..4];
-            // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
-            indices[px] = u8::try_from(unsafe {
-                bun_image_nearest_palette(
-                    palette.as_ptr(),
-                    u32::from(k),
-                    i32::from(p[0]),
-                    i32::from(p[1]),
-                    i32::from(p[2]),
-                    i32::from(p[3]),
-                )
-            })
-            .unwrap();
+        for (index, &pixel) in indices.iter_mut().zip(rgba.as_chunks().0) {
+            *index = nearest_in_palette(palette.as_chunks().0, pixel);
         }
     }
 
@@ -173,13 +155,12 @@ pub(crate) fn quantize(
 /// Serpentine scan (alternate L→R / R→L per row) so the diffusion direction
 /// flips each row, avoiding the directional artefacts a fixed scan produces.
 /// The diffusion itself can't be vectorised (data dependence on the previous
-/// pixel), but the per-pixel palette search goes through the highway kernel.
+/// pixel), but the per-pixel palette search goes through the SIMD kernel.
 fn map_floyd_steinberg(
     rgba: &[u8],
     w: u32,
     h: u32,
     palette: &[u8],
-    k: u16,
     indices: &mut [u8],
 ) -> Result<(), AllocError> {
     // Two rows of accumulated error, ×4 channels. i32 not i16: when the
@@ -210,18 +191,8 @@ fn map_floyd_steinberg(
                 cand[c] = i32::from(rgba[px * 4 + c]) + cur[off + c];
             }
 
-            // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
-            let idx: u8 = u8::try_from(unsafe {
-                bun_image_nearest_palette(
-                    palette.as_ptr(),
-                    u32::from(k),
-                    clamp255(cand[0]),
-                    clamp255(cand[1]),
-                    clamp255(cand[2]),
-                    clamp255(cand[3]),
-                )
-            })
-            .unwrap();
+            let clamped = cand.map(|channel| channel.clamp(0, 255) as u8);
+            let idx = nearest_in_palette(palette.as_chunks().0, clamped);
             indices[px] = idx;
 
             for c in 0..4usize {
@@ -252,11 +223,6 @@ fn map_floyd_steinberg(
     }
 
     Ok(())
-}
-
-#[inline]
-fn clamp255(v: i32) -> i32 {
-    v.clamp(0, 255)
 }
 
 /// Recompute a box's tight min/max over its pixel slice.

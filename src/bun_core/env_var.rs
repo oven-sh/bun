@@ -304,7 +304,7 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH, "BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK, "BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK", {});
     // Fall back to the scalar byte-at-a-time VLQ decode in
-    // bun_sourcemap::mapping::parse (skips the Highway-dispatched path).
+    // bun_sourcemap::mapping::parse (skips the SIMD kernel).
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP, "BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP", {});
     // Set by the test harness so stderr assertions don't flake on slow CI filesystems.
     new_feature_flag!(pub BUN_DISABLE_SLOW_FILESYSTEM_WARNING, "BUN_DISABLE_SLOW_FILESYSTEM_WARNING", {});

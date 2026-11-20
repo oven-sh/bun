@@ -257,8 +257,13 @@ pub fn sort_vec_unstable_by<T>(items: &mut Vec<T>, mut cmp: impl FnMut(&T, &T) -
 /// without a scratch `Vec`; `order` must be a permutation of `0..items.len()` and is consumed.
 pub fn apply_permutation_in_place<T>(items: &mut [T], order: &mut [u32]) {
     debug_assert_eq!(items.len(), order.len());
+    apply_permutation_by_swaps(order, |a, b| items.swap(a, b));
+}
+
+/// [`apply_permutation_in_place`] for items that are not in one slice.
+pub fn apply_permutation_by_swaps(order: &mut [u32], mut swap: impl FnMut(usize, usize)) {
     const DONE: u32 = u32::MAX;
-    for start in 0..items.len() {
+    for start in 0..order.len() {
         if order[start] == DONE {
             continue;
         }
@@ -271,7 +276,7 @@ pub fn apply_permutation_in_place<T>(items: &mut [T], order: &mut [u32]) {
             if next == start {
                 break;
             }
-            items.swap(cur, next);
+            swap(cur, next);
             cur = next;
         }
     }

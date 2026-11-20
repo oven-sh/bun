@@ -1,46 +1,19 @@
-use bun_collections::VecExt;
+use bun_collections::{VecExt, index_sort};
 use core::mem::size_of;
+use std::collections::TryReserveError;
 
 use bun_ast::Loc;
-use bun_collections::MultiArrayList;
 use bun_core::{self, Utf8Bytes};
 use bun_core::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
+use bun_simd::spare_capacity;
+use bun_simd_kernels::sourcemap::{Columns, MappingsState, count_delimiters, parse_mappings};
 
 use crate::vlq::decode as decode_vlq;
 use crate::{LineColumnOffset, Ordinal, ParseFail, ParseResult, ParsedSourceMap};
 
 declare_scope!(SourceMap, visible);
 
-// Typed SoA column accessors — thin wrappers over the reflection-backed
-// `MultiArrayList::items::<"field", T>()` so callers don't repeat the type.
-trait MappingColumns {
-    fn items_generated(&self) -> &[LineColumnOffset];
-    fn items_original(&self) -> &[LineColumnOffset];
-    fn items_source_index(&self) -> &[i32];
-}
-impl MappingColumns for MultiArrayList<MappingWithoutName> {
-    fn items_generated(&self) -> &[LineColumnOffset] {
-        self.items::<"generated", LineColumnOffset>()
-    }
-    fn items_original(&self) -> &[LineColumnOffset] {
-        self.items::<"original", LineColumnOffset>()
-    }
-    fn items_source_index(&self) -> &[i32] {
-        self.items::<"source_index", i32>()
-    }
-}
-impl MappingColumns for MultiArrayList<Mapping> {
-    fn items_generated(&self) -> &[LineColumnOffset] {
-        self.items::<"generated", LineColumnOffset>()
-    }
-    fn items_original(&self) -> &[LineColumnOffset] {
-        self.items::<"original", LineColumnOffset>()
-    }
-    fn items_source_index(&self) -> &[i32] {
-        self.items::<"source_index", i32>()
-    }
-}
 #[derive(Clone, Copy)]
 pub struct Mapping {
     pub generated: LineColumnOffset,
@@ -49,96 +22,30 @@ pub struct Mapping {
     pub name_index: i32, // = -1
 }
 
-/// Optimization: if we don't care about the "names" column, then don't store the names.
-#[derive(Clone, Copy, Default)]
-pub struct MappingWithoutName {
-    pub(crate) generated: LineColumnOffset,
-    pub(crate) original: LineColumnOffset,
-    pub(crate) source_index: i32,
-}
-
-impl MappingWithoutName {
-    fn to_named(&self) -> Mapping {
-        Mapping {
-            generated: self.generated,
-            original: self.original,
-            source_index: self.source_index,
-            name_index: -1,
-        }
-    }
-}
-
-pub enum ListValue {
-    WithoutNames(MultiArrayList<MappingWithoutName>),
-    WithNames(MultiArrayList<Mapping>),
-}
-
-impl Default for ListValue {
-    fn default() -> Self {
-        ListValue::WithoutNames(MultiArrayList::default())
-    }
-}
-
-/// Dispatch a single body over both `ListValue` arms. `$body` is duplicated
-/// textually so each arm monomorphizes over its own `MultiArrayList<T>`; the
-/// arms therefore need NOT have a common element type, only a common `$body`
-/// result type. Match-ergonomics governs the borrow: pass `&v` / `&mut v` and
-/// `$l` binds by-ref / by-ref-mut accordingly. Mirrors `any_dispatch!` at
-/// src/uws_sys/Response.rs:581.
-macro_rules! both_lists {
-    ($v:expr, |$l:ident| $body:expr) => {
-        match $v {
-            ListValue::WithoutNames($l) => $body,
-            ListValue::WithNames($l) => $body,
-        }
-    };
-}
-
-impl ListValue {
-    fn memory_cost(&self) -> usize {
-        both_lists!(self, |list| list.memory_cost())
-    }
-
-    fn ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_alloc::AllocError> {
-        both_lists!(self, |list| list.ensure_total_capacity(count))
-    }
-}
-
+/// A column for each field of [`Mapping`]. They are equally long.
 #[derive(Default)]
 pub struct List {
-    pub(crate) r#impl: ListValue,
+    generated: Vec<[i32; 2]>,
+    original: Vec<[i32; 2]>,
+    source_index: Vec<i32>,
+    /// Optimization: if we don't care about the "names" column, then don't store the names.
+    name_index: Option<Vec<i32>>,
     pub(crate) names: Box<[SemverString]>,
     pub(crate) names_buffer: Vec<u8>,
 }
 
 impl List {
-    fn ensure_with_names(&mut self) -> Result<(), bun_alloc::AllocError> {
-        if matches!(self.r#impl, ListValue::WithNames(_)) {
-            return Ok(());
+    pub(crate) fn has_names(&self) -> bool {
+        self.name_index.is_some()
+    }
+
+    fn ensure_with_names(&mut self) -> Result<(), TryReserveError> {
+        if self.name_index.is_none() {
+            let mut name_index = Vec::new();
+            name_index.try_reserve_exact(self.source_index.capacity())?;
+            name_index.resize(self.len(), -1);
+            self.name_index = Some(name_index);
         }
-
-        // Move the without_names list out, build the with_names list, then
-        // assign back (satisfies the borrow checker). The old list drops at
-        // end of scope.
-        let ListValue::WithoutNames(without_names) = core::mem::replace(
-            &mut self.r#impl,
-            ListValue::WithNames(MultiArrayList::default()),
-        ) else {
-            unreachable!()
-        };
-
-        let mut with_names: MultiArrayList<Mapping> = MultiArrayList::default();
-        with_names.ensure_total_capacity(without_names.len())?;
-        // `without_names` drops at end of scope (was `defer without_names.deinit(allocator)`).
-
-        // MultiArrayList has no
-        // public `set_len`; rebuild element-wise (capacity already reserved, so no
-        // realloc). PERF: revisit once typed mut-column accessors exist.
-        for i in 0..without_names.len() {
-            with_names.append_assume_capacity(without_names.get(i).to_named());
-        }
-
-        self.r#impl = ListValue::WithNames(with_names);
         Ok(())
     }
 
@@ -173,70 +80,57 @@ impl List {
         None
     }
 
+    /// By the generated position. Ties keep their order.
     pub(crate) fn sort(&mut self) {
-        both_lists!(&mut self.r#impl, |list| {
-            list.sort_by_column::<"generated", LineColumnOffset>(|a, b| {
-                (a.lines.zero_based(), a.columns.zero_based())
-                    .cmp(&(b.lines.zero_based(), b.columns.zero_based()))
-            });
-        })
+        let mut order = index_sort::identity(self.len());
+        index_sort::sort_indices(&mut order, &mut |a, b| {
+            self.generated[a as usize].cmp(&self.generated[b as usize])
+        });
+        index_sort::apply_permutation_by_swaps(&mut order, |a, b| {
+            self.generated.swap(a, b);
+            self.original.swap(a, b);
+            self.source_index.swap(a, b);
+            if let Some(name_index) = &mut self.name_index {
+                name_index.swap(a, b);
+            }
+        });
     }
 
-    pub(crate) fn append(&mut self, mapping: &Mapping) -> Result<(), bun_alloc::AllocError> {
-        match &mut self.r#impl {
-            ListValue::WithoutNames(list) => {
-                list.append(MappingWithoutName {
-                    generated: mapping.generated,
-                    original: mapping.original,
-                    source_index: mapping.source_index,
-                })?;
-            }
-            ListValue::WithNames(list) => {
-                list.append(*mapping)?;
-            }
+    pub(crate) fn append(&mut self, mapping: &Mapping) {
+        let pair = |at: LineColumnOffset| [at.lines.zero_based(), at.columns.zero_based()];
+        self.generated.push(pair(mapping.generated));
+        self.original.push(pair(mapping.original));
+        self.source_index.push(mapping.source_index);
+        if let Some(name_index) = &mut self.name_index {
+            name_index.push(mapping.name_index);
         }
-        Ok(())
     }
 
     pub(crate) fn len(&self) -> usize {
-        both_lists!(&self.r#impl, |list| list.len())
+        self.source_index.len()
     }
 
     pub fn find(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
-        match &self.r#impl {
-            ListValue::WithoutNames(list) => {
-                if let Some(i) =
-                    Self::find_index_from_generated(list.items_generated(), line, column)
-                {
-                    return Some(list.get(i).to_named());
-                }
-            }
-            ListValue::WithNames(list) => {
-                if let Some(i) =
-                    Self::find_index_from_generated(list.items_generated(), line, column)
-                {
-                    return Some(*list.get(i));
-                }
-            }
-        }
-
-        None
+        let i = Self::find_index_from_generated(self.generated(), line, column)?;
+        Some(Mapping {
+            generated: self.generated()[i],
+            original: self.original()[i],
+            source_index: self.source_index[i],
+            name_index: self.name_index.as_ref().map_or(-1, |column| column[i]),
+        })
     }
 
     pub fn generated(&self) -> &[LineColumnOffset] {
-        both_lists!(&self.r#impl, |list| list.items_generated())
+        bun_core::cast_slice(&self.generated)
     }
 
     pub fn original(&self) -> &[LineColumnOffset] {
-        both_lists!(&self.r#impl, |list| list.items_original())
+        bun_core::cast_slice(&self.original)
     }
 
     pub(crate) fn source_index(&self) -> &[i32] {
-        both_lists!(&self.r#impl, |list| list.items_source_index())
+        &self.source_index
     }
-
-    // `deinit` dropped: all fields (`MultiArrayList`, `Vec<u8>`, `Box<[SemverString]>`)
-    // own their storage and free on Drop.
 
     pub fn get_name(&self, index: i32) -> Option<&[u8]> {
         if index < 0 {
@@ -248,7 +142,7 @@ impl List {
             return None;
         }
 
-        if matches!(self.r#impl, ListValue::WithNames(_)) {
+        if self.has_names() {
             let str: &SemverString = &self.names[i];
             return Some(str.slice(self.names_buffer.slice()));
         }
@@ -257,16 +151,22 @@ impl List {
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
-        self.r#impl.memory_cost()
+        self.generated.memory_cost()
+            + self.original.memory_cost()
+            + self.source_index.memory_cost()
+            + self.name_index.as_ref().map_or(0, VecExt::memory_cost)
             + self.names_buffer.memory_cost()
             + (self.names.len() * size_of::<SemverString>())
     }
 
-    pub(crate) fn ensure_total_capacity(
-        &mut self,
-        count: usize,
-    ) -> Result<(), bun_alloc::AllocError> {
-        self.r#impl.ensure_total_capacity(count)
+    fn reserve(&mut self, additional: usize) -> Result<(), TryReserveError> {
+        self.generated.try_reserve_exact(additional)?;
+        self.original.try_reserve_exact(additional)?;
+        self.source_index.try_reserve_exact(additional)?;
+        if let Some(name_index) = &mut self.name_index {
+            name_index.try_reserve_exact(additional)?;
+        }
+        Ok(())
     }
 }
 
@@ -397,8 +297,8 @@ const HALF_USIZE: usize = size_of::<usize>() / 2;
 const SEMICOLON_RUN: [u8; HALF_USIZE] = [b';'; HALF_USIZE];
 
 /// Below this input size the scalar loop is used unconditionally; above it,
-/// the Highway kernel classifies whole blocks and the scalar loop only
-/// handles the tail / anomalies. One block is 16–64 bytes depending on the
+/// the SIMD kernel classifies whole blocks and the scalar loop only
+/// handles the tail / anomalies. One block is 16–32 bytes depending on the
 /// runtime-dispatched ISA; 128 bytes guarantees at least two full blocks.
 const SIMD_THRESHOLD: usize = 128;
 
@@ -414,7 +314,7 @@ pub fn parse(
     // `errdefer mapping.deinit(allocator)` deleted: `List: Drop` and this fn returns no error union.
 
     if let Some(count) = estimated_mapping_count {
-        if mapping.ensure_total_capacity(count).is_err() {
+        if mapping.reserve(count).is_err() {
             return Err(ParseFail {
                 err: crate::Error::Alloc(bun_alloc::AllocError),
                 loc: Loc::default(),
@@ -440,35 +340,28 @@ pub fn parse(
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP::get()
             .unwrap_or(false)
     {
-        match parse_simd(bytes, &mut mapping, sources_count, options) {
-            SimdResult::Done {
-                resume_at,
-                state,
-                has_names: simd_has_names,
-            } => {
-                generated.lines = Ordinal::from_zero_based(state.gen_line);
-                generated.columns = Ordinal::from_zero_based(state.gen_col);
-                original.lines = Ordinal::from_zero_based(state.orig_line);
-                original.columns = Ordinal::from_zero_based(state.orig_col);
-                source_index = state.src_idx;
-                name_index = state.name_idx;
-                needs_sort = state.needs_sort != 0;
-                has_names = simd_has_names;
-                remain = &bytes[resume_at..];
-                scoped_log!(
-                    SourceMap,
-                    "simd consumed {}/{} bytes",
-                    resume_at,
-                    bytes.len()
-                );
-            }
-            SimdResult::OutOfMemory => {
-                return Err(ParseFail {
-                    err: crate::Error::Alloc(bun_alloc::AllocError),
-                    loc: Loc::default(),
-                });
-            }
+        let Ok((resume_at, state)) = parse_simd(bytes, &mut mapping, sources_count, options) else {
+            return Err(ParseFail {
+                err: crate::Error::Alloc(bun_alloc::AllocError),
+                loc: Loc::default(),
+            });
+        };
+        generated.lines = Ordinal::from_zero_based(state.gen_line);
+        generated.columns = Ordinal::from_zero_based(state.gen_col);
+        original.lines = Ordinal::from_zero_based(state.orig_line);
+        original.columns = Ordinal::from_zero_based(state.orig_col);
+        source_index = state.src_idx;
+        needs_sort = state.needs_sort;
+        if options.allow_names {
+            (name_index, has_names) = (state.name_idx, state.has_names);
         }
+        remain = &bytes[resume_at..];
+        scoped_log!(
+            SourceMap,
+            "simd consumed {}/{} bytes",
+            resume_at,
+            bytes.len()
+        );
     }
 
     while remain.len() > 0 {
@@ -667,22 +560,13 @@ pub fn parse(
                 }
             }
         }
-        // `catch |err| bun.handleOom(err)` → panic on OOM; do not silently drop the mapping.
-        mapping
-            .append(&Mapping {
-                generated,
-                original,
-                source_index,
-                // Rows before any 5-field segment surface as name_index -1.
-                // Without the SIMD pre-pass this happens implicitly: the
-                // list is WithoutNames so append discards this field, and
-                // find()/ensure_with_names() later fill it with -1 via
-                // to_named(). The SIMD pre-pass promotes to WithNames up
-                // front when allow_names is true, so this loop's rows must
-                // carry -1 explicitly until the first 5-field segment.
-                name_index: if has_names { name_index } else { -1 },
-            })
-            .expect("OOM");
+        mapping.append(&Mapping {
+            generated,
+            original,
+            source_index,
+            // The SIMD pre-pass adds the column before any segment has a name.
+            name_index: if has_names { name_index } else { -1 },
+        });
     }
 
     if needs_sort && options.sort {
@@ -694,157 +578,38 @@ pub fn parse(
     Ok(psm)
 }
 
-enum SimdResult {
-    Done {
-        resume_at: usize,
-        state: bun_highway::ParseMappingsState,
-        has_names: bool,
-    },
-    OutOfMemory,
-}
-
-/// SIMD fast path for `parse`: count delimiters to bound the row count,
-/// reserve the `MultiArrayList` once, then decode the whole input in one
-/// `bun_highway::parse_mappings` call that writes directly into the
-/// column arrays (no intermediate buffer, no chunking, no
-/// geometric-growth reallocs). Returns the byte offset and accumulator
-/// state at which the scalar loop should take over (the tail, or the
-/// first anomaly).
+/// SIMD fast path for `parse`: reserves the columns once and decodes into them. Returns the byte
+/// offset and the state at which the scalar loop takes over (the tail, or the first anomaly).
 fn parse_simd(
     bytes: &[u8],
     mapping: &mut List,
     sources_count: i32,
     options: ParseOptions,
-) -> SimdResult {
-    use bun_highway::{ParseMappingsOut, ParseMappingsState};
-
-    // `LineColumnOffset` is `#[repr(C)]` over two `#[repr(transparent)]`
-    // i32s, so its column storage is byte-identical to `[[i32; 2]]`. That
-    // lets the kernel write `{line, col}` pairs straight into the SoA
-    // column with no per-row Rust copy.
-    const _: () = assert!(size_of::<LineColumnOffset>() == size_of::<[i32; 2]>());
-    const _: () = assert!(align_of::<LineColumnOffset>() == align_of::<[i32; 2]>());
-
-    // Segments on a line are comma-separated and lines are semicolon-
-    // separated, so `delims + 1` upper-bounds the segment count (and
-    // therefore the row count). This is within a few percent of the
-    // actual count on real maps and lets us reserve exactly once instead
-    // of paying ~log1.5(N) geometric-growth memcpys (the dominant cost of
-    // the scalar path on large inputs). The final list is the same size
-    // the scalar path ends up at; we just skip the intermediate copies.
-    let seg_bound = bun_highway::count_mapping_delims(bytes).saturating_add(1);
-
-    // When the caller wants names, switch to the with-names variant
-    // before reserving so the reserve lands on the right list. This uses
-    // 24 bytes/row instead of 20 even when the input turns out to have no
-    // 5-field segments; in exchange there is no mid-stream copy-on-
-    // promotion and no name-index scratch buffer. Rows before the first
-    // 5-field segment still get name_index == -1 (the kernel writes -1
-    // until has_names flips), matching scalar's `to_named()` behaviour.
+) -> Result<(usize, MappingsState), TryReserveError> {
+    // 24 bytes a row instead of 20 even if no segment has a name, but nothing to add halfway.
     if options.allow_names {
-        if mapping.ensure_with_names().is_err() {
-            return SimdResult::OutOfMemory;
-        }
+        mapping.ensure_with_names()?;
     }
+    // A comma or a semicolon follows each segment but the last.
+    mapping.reserve(count_delimiters(bytes) + 1)?;
 
-    let mut state = ParseMappingsState::default();
-    let mut err_at: usize = 0;
-
-    let base = mapping.len();
-    let rows = match &mut mapping.r#impl {
-        ListValue::WithoutNames(list) => {
-            if list
-                .ensure_total_capacity(base.saturating_add(seg_bound))
-                .is_err()
-            {
-                return SimdResult::OutOfMemory;
-            }
-            // SAFETY: `ensure_total_capacity(base + seg_bound)` guarantees
-            // every column has at least that many slots. `items_raw`
-            // returns the column base; the kernel writes only indices
-            // [base, base + cap). `LineColumnOffset` is repr(C) over two
-            // i32s so reinterpreting as `*mut [i32; 2]` is sound. The
-            // three column ranges are disjoint (separate SoA columns).
-            let r = unsafe {
-                bun_highway::parse_mappings(
-                    bytes,
-                    &ParseMappingsOut {
-                        generated: list
-                            .items_raw::<"generated", LineColumnOffset>()
-                            .add(base)
-                            .cast::<[i32; 2]>(),
-                        original: list
-                            .items_raw::<"original", LineColumnOffset>()
-                            .add(base)
-                            .cast::<[i32; 2]>(),
-                        src_idx: list.items_raw::<"source_index", i32>().add(base),
-                        name_idx: core::ptr::null_mut(),
-                        cap: seg_bound,
-                    },
-                    sources_count,
-                    &mut state,
-                    &mut err_at,
-                )
-            };
-            // SAFETY: capacity reserved above; every slot in
-            // `base..base+r` was just initialized by the kernel.
-            unsafe { list.set_len(base + r) };
-            r
-        }
-        ListValue::WithNames(list) => {
-            if list
-                .ensure_total_capacity(base.saturating_add(seg_bound))
-                .is_err()
-            {
-                return SimdResult::OutOfMemory;
-            }
-            // SAFETY: as above, plus the name_index column.
-            let r = unsafe {
-                bun_highway::parse_mappings(
-                    bytes,
-                    &ParseMappingsOut {
-                        generated: list
-                            .items_raw::<"generated", LineColumnOffset>()
-                            .add(base)
-                            .cast::<[i32; 2]>(),
-                        original: list
-                            .items_raw::<"original", LineColumnOffset>()
-                            .add(base)
-                            .cast::<[i32; 2]>(),
-                        src_idx: list.items_raw::<"source_index", i32>().add(base),
-                        name_idx: list.items_raw::<"name_index", i32>().add(base),
-                        cap: seg_bound,
-                    },
-                    sources_count,
-                    &mut state,
-                    &mut err_at,
-                )
-            };
-            // SAFETY: capacity reserved above; every slot in
-            // `base..base+r` was just initialized by the kernel.
-            unsafe { list.set_len(base + r) };
-            r
-        }
+    let (generated, to_generated) = spare_capacity(&mut mapping.generated);
+    let (original, to_original) = spare_capacity(&mut mapping.original);
+    let (src_idx, to_src_idx) = spare_capacity(&mut mapping.source_index);
+    let (name_idx, to_name_idx) = mapping.name_index.as_mut().map(spare_capacity).unzip();
+    let out = Columns {
+        generated,
+        original,
+        src_idx,
+        name_idx,
     };
-
-    scoped_log!(
-        SourceMap,
-        "simd rows={} seg_bound={} fast={} slow={} blocks",
-        rows,
-        seg_bound,
-        state.fast_blocks,
-        state.slow_blocks
-    );
-
-    // When !allow_names, the scalar path never accumulates name_index (it
-    // decodes the 5th field but discards it), so it stays 0.
-    if !options.allow_names {
-        state.name_idx = 0;
+    let mut state = MappingsState::default();
+    let (rows, resume_at) = parse_mappings(bytes, out, sources_count, &mut state);
+    to_generated.append(rows.generated);
+    to_original.append(rows.original);
+    to_src_idx.append(rows.src_idx);
+    if let Some((to_name_idx, name_idx)) = to_name_idx.zip(rows.name_idx) {
+        to_name_idx.append(name_idx);
     }
-
-    SimdResult::Done {
-        resume_at: err_at,
-        state,
-        has_names: options.allow_names && state.has_names != 0,
-    }
+    Ok((resume_at, state))
 }

@@ -13528,13 +13528,6 @@
     "windows": 100,
     "windows-aarch64": 100
   },
-  "js/bun/util/highway-strings.test.ts": {
-    "default": 500,
-    "asan": 12200,
-    "musl": 400,
-    "windows": 600,
-    "windows-aarch64": 400
-  },
   "js/bun/util/index-of-line.test.ts": {
     "default": 100,
     "asan": 1000,
@@ -13625,6 +13618,13 @@
     "musl": 100,
     "windows": 300,
     "windows-aarch64": 200
+  },
+  "js/bun/util/simd-strings.test.ts": {
+    "default": 500,
+    "asan": 12200,
+    "musl": 400,
+    "windows": 600,
+    "windows-aarch64": 400
   },
   "js/bun/util/sleep.test.ts": {
     "default": 100,

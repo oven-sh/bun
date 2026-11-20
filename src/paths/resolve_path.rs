@@ -2650,84 +2650,9 @@ pub fn posix_to_platform_in_place<T: PathChar>(path_buffer: &mut [T]) {
 pub use crate::PathChar;
 
 // Run with `cargo test -p bun_paths` (also the Miri lane, `bun run rust:miri -p bun_paths`).
-// Normalizing reaches `bun_core::strings`' byte searches, whose highway kernels
-// are only linked into the full binary, so the ones they reference are satisfied
-// below with scalar stubs (the simdutf counterparts live in string_paths.rs).
-// Under Miri the wrappers take their own scalar path and never call these.
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Returns `haystack_len` when `needle` does not occur, like the kernel.
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_index_of_char(
-        haystack: *const u8,
-        haystack_len: usize,
-        needle: u8,
-    ) -> usize {
-        // SAFETY: test stub; callers pass a valid (ptr, len) pair.
-        let haystack = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
-        haystack
-            .iter()
-            .position(|&b| b == needle)
-            .unwrap_or(haystack_len)
-    }
-
-    /// Returns `text_len` when no byte of `chars` occurs, like the kernel.
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_index_of_any_char(
-        text: *const u8,
-        text_len: usize,
-        chars: *const u8,
-        chars_len: usize,
-    ) -> usize {
-        // SAFETY: test stub; callers pass valid (ptr, len) pairs.
-        let (text, chars) = unsafe {
-            (
-                core::slice::from_raw_parts(text, text_len),
-                core::slice::from_raw_parts(chars, chars_len),
-            )
-        };
-        text.iter()
-            .position(|b| chars.contains(b))
-            .unwrap_or(text_len)
-    }
-
-    /// `n` when `c` does not occur, like the kernel.
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_last_index_of_char(h: *const u8, n: usize, c: u8) -> usize {
-        // SAFETY: test stub; callers pass a valid (ptr, len) pair.
-        let h = unsafe { core::slice::from_raw_parts(h, n) };
-        h.iter().rposition(|&b| b == c).unwrap_or(n)
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_count_char(h: *const u8, n: usize, c: u8) -> usize {
-        // SAFETY: test stub; callers pass a valid (ptr, len) pair.
-        let h = unsafe { core::slice::from_raw_parts(h, n) };
-        h.iter().filter(|&&b| b == c).count()
-    }
-
-    /// `usize::MAX` when `nd` does not occur, like the kernel.
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_memrmem16(
-        h: *const u16,
-        n: usize,
-        nd: *const u16,
-        k: usize,
-    ) -> usize {
-        // SAFETY: test stub; callers pass valid (ptr, len) pairs.
-        let (h, nd) = unsafe {
-            (
-                core::slice::from_raw_parts(h, n),
-                core::slice::from_raw_parts(nd, k),
-            )
-        };
-        let last = n
-            .checked_sub(k)
-            .and_then(|end| (0..=end).rev().find(|&i| h[i..i + k] == *nd));
-        last.unwrap_or(usize::MAX)
-    }
 
     #[test]
     fn normalize_string_spill_leaves_spill_untouched_when_the_input_fits() {

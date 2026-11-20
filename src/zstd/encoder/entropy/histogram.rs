@@ -1,6 +1,6 @@
 //! Counting symbols.
 
-use bun_highway::zstd::{are_quicker_for, count_bytes};
+use bun_simd_kernels::zstd::{are_quicker_for, count_bytes};
 use bun_zstd_decoder::array::At;
 use bun_zstd_decoder::bounded::Bounded;
 
@@ -100,10 +100,12 @@ fn count_interleaved<const SETS: usize>(symbols: &[u8]) -> [u32; 256] {
 
 #[test]
 fn what_the_kernel_refuses_is_counted_without_it() {
-    for bytes in [&b"refused"[..], b"accepted"] {
-        let mut expected = [0; _];
-        add(&mut expected, bytes);
-        assert_eq!(count_bytes(bytes).is_some(), bytes == b"accepted");
+    use bun_simd::{Target, limit_to};
+    let (bytes, mut expected) = (b"accepted or refused", [0; _]);
+    add(&mut expected, bytes);
+    for (target, has_kernel) in [(Target::Portable, false), (Target::Portable64, true)] {
+        limit_to(target);
+        assert_eq!(count_bytes(bytes).is_some(), has_kernel);
         assert_eq!(count_in_vectors(bytes), expected);
     }
 }

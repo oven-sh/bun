@@ -9,7 +9,7 @@
 //! `decode()` → PNG-encode → `data:` URL, all on the work pool. The hash
 //! itself is exposed as the intermediate so a future `as: "hash"` option is
 //! one switch away. The encode/decode are scalar f32 and tiny (≤100²·7² mults
-//! at the absolute most); not worth a Highway kernel.
+//! at the absolute most); not worth a SIMD kernel.
 
 use core::f32::consts::PI;
 

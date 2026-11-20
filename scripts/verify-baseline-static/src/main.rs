@@ -646,6 +646,25 @@ fn symbol_for(syms: &[Sym], ip: u64) -> Option<&Sym> {
 /// checkpoint where someone asks "did the gate also get updated?"
 type Allowlist = HashMap<String, Option<HashSet<String>>>;
 
+/// Whether an allowlist entry names `symbol`. A `*` in it stands for any text.
+fn entry_matches(entry: &str, symbol: &str) -> bool {
+    let Some((first, rest)) = entry.split_once('*') else {
+        return entry == symbol;
+    };
+    let (middle, last) = rest.rsplit_once('*').unwrap_or(("", rest));
+    let Some(mut between) = symbol
+        .strip_prefix(first)
+        .and_then(|s| s.strip_suffix(last))
+    else {
+        return false;
+    };
+    middle.split('*').all(|part| {
+        let after = between.split_once(part).map(|(_, after)| after);
+        between = after.unwrap_or("");
+        after.is_some()
+    })
+}
+
 /// The name of the entry for a symbol: its canonical form or, for an instance of a generic function, what precedes
 /// the arguments followed by `<generic-args>`.
 fn allowlist_key(symbol: &str, allowlist: &Allowlist) -> String {
@@ -772,11 +791,18 @@ fn record(
     //   in allowlist, ceiling contains this feat   → suppressed
     //   in allowlist, ceiling DOESN'T contain it   → violation (the
     //     "symbol grew past its gate" case — the whole point of ceilings)
-    let bucket = match allowlist.get(&canon) {
-        None => violations,
-        Some(None) => allowlisted,
-        Some(Some(ceiling)) if ceiling.contains(feature) => allowlisted,
-        Some(Some(_)) => violations,
+    let allows =
+        |ceiling: &Option<HashSet<String>>| ceiling.as_ref().is_none_or(|c| c.contains(feature));
+    let is_allowlisted = match allowlist.get(&canon) {
+        Some(ceiling) => allows(ceiling),
+        None => allowlist
+            .iter()
+            .any(|(entry, ceiling)| allows(ceiling) && entry_matches(entry, &canon)),
+    };
+    let bucket = if is_allowlisted {
+        allowlisted
+    } else {
+        violations
     };
     let entry = bucket.entry(raw_sym).or_default();
     entry.features.insert(feature);
@@ -1216,7 +1242,7 @@ fn run() -> Result<bool, String> {
         .collect();
     let mut stale: Vec<_> = allowlist
         .keys()
-        .filter(|k| !hit_canon.contains(*k))
+        .filter(|k| !hit_canon.contains(*k) && !hit_canon.iter().any(|s| entry_matches(k, s)))
         .collect();
     stale.sort();
     if !stale.is_empty() {
@@ -1286,6 +1312,20 @@ mod tests {
         ));
         assert!(!is_listed("_RNvCs2b_3bar3run"));
         assert!(!is_listed("plain_too"));
+    }
+
+    #[test]
+    fn a_star_stands_for_any_text() {
+        for symbol in ["a::simd::f", "a::simd::", "a::b::simd::c::simd::f"] {
+            assert!(entry_matches("a*::simd::*", symbol));
+        }
+        for symbol in ["b::simd::f", "a::simd", "a::simd:f", "::simd::a"] {
+            assert!(!entry_matches("a*::simd::*", symbol));
+        }
+        assert!(entry_matches("a*b*c*d", "a.b.c.d"));
+        assert!(!entry_matches("a*b*c*d", "a.c.b.d"));
+        assert!(!entry_matches("ab*ba", "aba"));
+        assert!(!entry_matches("plain", "plain_too"));
     }
 
     #[test]

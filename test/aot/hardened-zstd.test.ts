@@ -1,5 +1,5 @@
 // In a hardened build, Rust's arithmetic and the standard library check more than elsewhere, and end the process if they find
-// something. src/jsc/bindings/highway_zstd.cpp is compiled with other flags. No other test of zstd runs on such a build.
+// something. No other test of zstd runs on such a build.
 import { describe, expect, test } from "bun:test";
 import { crc32 } from "node:zlib";
 import { decodeDifferences, encodeDifferences, inParts, loadCases } from "../js/bun/util/zstd-golden/observe";

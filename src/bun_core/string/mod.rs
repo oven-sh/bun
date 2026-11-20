@@ -24,7 +24,7 @@ pub mod wtf;
 pub mod write;
 pub use write::Write;
 
-// SIMD-backed scanners over highway/simdutf FFI. Public as
+// SIMD-backed scanners over `bun_simd_kernels` and simdutf. Public as
 // `bun_core::strings` (the alias in lib.rs); `immutable` is the module name.
 #[path = "immutable.rs"]
 pub mod immutable;

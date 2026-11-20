@@ -73,6 +73,7 @@ use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 use bun_shell_parser::braces as Braces;
+use bun_simd::SharedU8;
 use bun_sys::{self as sys, Fd};
 use bun_zlib::{Inflater, deflate, inflate};
 
@@ -984,14 +985,12 @@ pub(crate) fn bun_resolve_sync_with_source_if_exists(
     })
 }
 
-pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
+pub(crate) fn index_of_line(buffer: &[SharedU8], offset: f64) -> f64 {
     // The cast saturates: NaN and a negative offset are 0.
     let offset = offset as usize;
     // 0x0A never appears inside a multi-byte UTF-8 sequence.
-    // SAFETY: readable. `index_of_char` asserts that the byte it found is still there, and another thread can write a shared buffer.
-    match buffer.get(offset..).and_then(|rest| unsafe {
-        bun_highway::index_of_char_raw(rest.as_ptr(), rest.len(), b'\n')
-    }) {
+    let rest = buffer.get(offset..).unwrap_or_default();
+    match bun_simd_kernels::index_of_char_shared(rest, b'\n') {
         Some(i) => (offset + i) as f64,
         None => -1.0,
     }

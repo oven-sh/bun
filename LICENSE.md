@@ -43,8 +43,7 @@ Bun statically links these libraries:
 | [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) (not linked: the JPEG codec is derived from parts of it, and so based in part on the work of the Independent JPEG Group) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
 | [`libspng`](https://github.com/randy408/libspng) (not linked: `src/png` is derived from parts of it) | BSD 2-Clause |
 | [`stb_image`](https://github.com/nothings/stb) (not linked: the PNG codec finds the Paeth predictor its way) | MIT or public domain |
-| [`libwebp`](https://github.com/webmproject/libwebp) (not linked: `src/webp` is derived from parts of it) | BSD 3-Clause |
-| [`highway`](https://github.com/google/highway) | Apache 2.0 |
+| [`libwebp`](https://github.com/webmproject/libwebp) (not linked: the WebP codec is derived from parts of it) | BSD 3-Clause |
 | [`uucode`](https://github.com/jacobsandlund/uucode) | MIT |
 | A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets) | Apache 2.0 licensed |
 | Parts of [Tigerbeetle's IO code](https://github.com/tigerbeetle/tigerbeetle/blob/532c8b70b9142c17e07737ab6d3da68d7500cbca/src/io/windows.zig#L1) | Apache 2.0 licensed |

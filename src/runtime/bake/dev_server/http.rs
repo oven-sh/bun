@@ -413,7 +413,7 @@ impl UnrefSourceMapRequest {
             return Err(crate::Error::InvalidRequest);
         }
         let mut generation_bytes = [0u8; 4];
-        strings::decode_hex_to_bytes(&mut generation_bytes, body)
+        strings::decode_hex_to_bytes(generation_bytes.as_mut_slice().into(), body)
             .map_err(|_| crate::Error::InvalidRequest)?;
         let generation = u32::from_ne_bytes(generation_bytes);
         let source_map_key = source_map_store::Key::init((generation as u64) << 32);

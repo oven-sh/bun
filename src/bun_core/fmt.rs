@@ -2817,28 +2817,6 @@ pub fn hex_upper(bytes: &[u8]) -> HexBytes<'_, false> {
 const LOWER_HEX_TABLE: [u8; 16] = *b"0123456789abcdef";
 const UPPER_HEX_TABLE: [u8; 16] = *b"0123456789ABCDEF";
 
-/// Sentinel returned by [`HEX_DECODE_TABLE`] for non-hex-digit bytes.
-pub const HEX_INVALID: u8 = 0xff;
-
-/// 256-entry ASCII-hex-digit → nibble (0..=15) lookup. Non-hex bytes map to
-/// [`HEX_INVALID`]. Decode-side counterpart of [`LOWER_HEX_TABLE`] /
-/// [`UPPER_HEX_TABLE`].
-pub const HEX_DECODE_TABLE: [u8; 256] = {
-    let mut t = [HEX_INVALID; 256];
-    let mut i = 0u8;
-    while i < 10 {
-        t[(b'0' + i) as usize] = i;
-        i += 1;
-    }
-    let mut i = 0u8;
-    while i < 6 {
-        t[(b'a' + i) as usize] = 10 + i;
-        t[(b'A' + i) as usize] = 10 + i;
-        i += 1;
-    }
-    t
-};
-
 /// Decode a single ASCII hex digit (`0-9`, `a-f`, `A-F`) to its nibble value `0..=15`.
 ///
 /// Returns `None` for any other byte. Callers needing a wider int cast with `as u16/u32`

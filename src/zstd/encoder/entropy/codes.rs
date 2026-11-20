@@ -1,6 +1,6 @@
 //! The sequences section.
 
-use bun_highway::with_bmi2;
+use bun_simd::with_bmi2;
 use bun_zstd_decoder::array::{At, get_or_allocate};
 use bun_zstd_decoder::format::{
     CodeKind, DEFAULT_LITERAL_LENGTHS, DEFAULT_MATCH_LENGTHS, DEFAULT_OFFSETS, Distribution,

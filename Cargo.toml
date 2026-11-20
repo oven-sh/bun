@@ -47,6 +47,11 @@ members = [
   "src/format",
   "src/format/conformance",
   "src/semver",
+  "src/simd",
+  "src/simd/conformance",
+  "src/simd/kernels",
+  "src/simd/macros",
+  "src/simd/trusted",
   "src/sourcemap",
   "src/sql",
   "src/sys",
@@ -69,7 +74,6 @@ members = [
   "src/sort_by_number",
   "src/trim",
   "src/trim/removable_features",
-  "src/highway",
   "src/histogram",
   "src/hpack",
   "src/http1",
@@ -450,7 +454,6 @@ bun_exe_format = { path = "src/exe_format" }
 bun_sort_by_number = { path = "src/sort_by_number" }
 bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
-bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
 bun_hpack = { path = "src/hpack" }
 bun_http1 = { path = "src/http1" }
@@ -518,12 +521,17 @@ bun_zstd_encoder = { path = "src/zstd/encoder" }
 bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
+bun_simd = { path = "src/simd" }
+bun_simd_conformance = { path = "src/simd/conformance" }
+bun_simd_kernels = { path = "src/simd/kernels" }
+bun_simd_macros = { path = "src/simd/macros" }
+bun_simd_trusted = { path = "src/simd/trusted" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_webp = { path = "src/webp" }
 bun_which = { path = "src/which" }
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
-# checks stay on. scripts/build/flags.ts does the same for highway_png.cpp, highway_jpeg.cpp and highway_webp_*.cpp.
+# checks stay on.
 [profile.dev.package.bun_png]
 opt-level = 3
 [profile.dev.package.bun_jpeg]
@@ -559,6 +567,23 @@ opt-level = 3
 # It stands in for vector code that every test program runs over each byte it parses.
 [profile.dev.package.bun_sema_standalone]
 opt-level = 3
+
+# An op is a function, and its instructions are picked where it is inlined. Tests have to see those.
+[profile.dev.package.bun_simd]
+opt-level = 3
+
+# LLVM does not inline `core`'s generics from another unit.
+[profile.dev.package.bun_simd_kernels]
+opt-level = 3
+codegen-units = 1
+
+# Its checks of the kernels run in debug builds too.
+[profile.dev.package.bun_simd_conformance]
+opt-level = 3
+
+# scripts/build/rust.ts raises the number for this profile in ASan builds.
+[profile.release.package.bun_simd_kernels]
+codegen-units = 1
 
 [profile.release.package.bun_react_compiler]
 opt-level = "s"

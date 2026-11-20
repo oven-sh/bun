@@ -18,8 +18,8 @@ pub(super) use small::{MAX_SMALL_INPUT_SIZE, Small};
 
 use core::hint::{Locality, prefetch_read};
 
-use bun_highway::brotli::short_codes;
-use bun_highway::common_prefix_length;
+use bun_simd_kernels::brotli::short_codes;
+use bun_simd_kernels::common_prefix_len;
 
 use super::input_block::InputBlock;
 use super::log2::log2_floor;
@@ -111,7 +111,7 @@ const LONG_MATCH: usize = 64;
 #[cold]
 #[inline(never)]
 extern "rust-cold" fn long_match_length(a: &[u8], b: &[u8]) -> usize {
-    LONG_MATCH + common_prefix_length(&a[LONG_MATCH..], &b[LONG_MATCH..])
+    LONG_MATCH + common_prefix_len(&a[LONG_MATCH..], &b[LONG_MATCH..])
 }
 
 impl<'a> Search<'a> {

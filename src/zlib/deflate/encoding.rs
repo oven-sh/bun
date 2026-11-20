@@ -4,7 +4,6 @@ use bun_deflate::format::{
     Codeword, END_OF_BLOCK, FIRST_LENGTH_SYMBOL, MIN_MATCH_LEN, length_slot, length_slot_of,
     offset_slot, static_litlen_codeword, static_offset_codeword,
 };
-use bun_highway::with_bmi2;
 
 use super::huffman::Code;
 use super::pending::{Bits, Pending};
@@ -151,19 +150,21 @@ impl Encoding {
         symbols: &[Symbol],
         matches: usize,
     ) {
-        put_symbols(self, pending, max_len, symbols, matches);
+        simd::put_symbols(self, pending, max_len, symbols, matches);
         pending.put(self.end_of_block());
     }
 }
 
-with_bmi2! {
-    fn put_symbols(
+#[bun_simd::foreach_target(sse4 + "bmi2", sse4, neon, portable)]
+mod simd {
+    #[export]
+    pub fn put_symbols(
         encoding: &Encoding,
         pending: &mut Pending,
         max_len: usize,
         symbols: &[Symbol],
         matches: usize,
-    ) -> () {
+    ) {
         // A branch only pays if it mostly goes the same way.
         if matches * 8 < symbols.len() {
             pending.put_all(max_len, symbols, |symbol| match symbol.literal() {

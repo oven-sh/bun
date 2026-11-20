@@ -1,5 +1,6 @@
 use bun_core::vec::BorrowedCursor;
-use bun_highway::checksums::{adler32, copy_and_adler32, copy_and_crc32, crc32};
+use bun_simd::extend_cursor;
+use bun_simd_kernels::{adler32, copy_and_adler32, copy_and_crc32, crc32};
 
 const ADLER32_START: u32 = 1;
 /// For more, glibc's `memcpy` may take `rep movsb`.
@@ -50,9 +51,9 @@ impl Checksum {
         match self {
             Self::None if bytes.len() <= MAX_COPIED_BY_VECTORS => out.append(bytes),
             Self::None => append_long(bytes, out),
-            Self::Adler32(adler) => *adler = copy_and_adler32(*adler, bytes, out),
+            Self::Adler32(adler) => extend_cursor(out, |out| copy_and_adler32(adler, bytes, out)),
             Self::Crc32 { crc, len } => {
-                *crc = copy_and_crc32(*crc, bytes, out);
+                extend_cursor(out, |out| copy_and_crc32(crc, bytes, out));
                 *len = len.wrapping_add(bytes.len() as u32);
             }
         }

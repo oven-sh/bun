@@ -19,7 +19,7 @@ mod window;
 use bun_core::vec::{BorrowedCursor, append_with};
 use bun_deflate::format::{MIN_MATCH_LEN, STATIC};
 use bun_deflate::gzip;
-use bun_highway::adler32;
+use bun_simd_kernels::adler32;
 
 use crate::checksum::Checksum;
 use crate::error::{Error, Result};
@@ -326,7 +326,7 @@ impl Deflater {
             return Ok(());
         }
         self.phase = Phase::Header {
-            dictionary_id: (self.container == Container::Zlib).then(|| adler32(dictionary)),
+            dictionary_id: (self.container == Container::Zlib).then(|| adler32(1, dictionary)),
         };
         let start = dictionary.len().saturating_sub(self.window.size as usize);
         let used = dictionary.get(start..).unwrap_or_default();

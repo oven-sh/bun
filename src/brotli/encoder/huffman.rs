@@ -2,7 +2,7 @@
 
 use core::hint::select_unpredictable;
 
-use bun_highway::brotli::{LEAF_SLACK, sort_leaves};
+use bun_simd_kernels::brotli::{LEAF_SLACK, sort_leaves};
 
 use super::bit_writer::{BitWriter, Code};
 use super::matching::put_bytes;
@@ -372,7 +372,7 @@ impl TreeBuilder {
 
 /// The higher symbols come first in `unsorted`.
 #[inline(always)]
-fn sort(unsorted: &[u64], count: usize, ties: Ties, sorted: &mut [u64]) {
+fn sort(unsorted: &mut [u64], count: usize, ties: Ties, sorted: &mut [u64]) {
     const MIN_FOR_GAPS: usize = 13;
     /// Without gaps, the kernel compares each leaf with each.
     const MAX_FOR_KERNEL: usize = 128;

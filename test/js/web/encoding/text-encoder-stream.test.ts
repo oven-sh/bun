@@ -14,6 +14,7 @@ const astralCharacterEncoded = [0xf0, 0x9f, 0x92, 0x99];
 const leading = astralCharacter[0];
 const trailing = astralCharacter[1];
 const replacementEncoded = [0xef, 0xbf, 0xbd];
+const ascii = Array.from({ length: 70 }, (_, i) => 0x30 + i);
 
 // These tests assume that the implementation correctly classifies leading and
 // trailing surrogates and treats all the code units in each set equivalently.
@@ -120,6 +121,11 @@ const testCases = [
     input: ["A"],
     output: [[65]],
     description: "a plain ASCII chunk should be converted",
+  },
+  {
+    input: [String.fromCharCode(...ascii) + leading + String.fromCharCode(...ascii.toReversed())],
+    output: [[...ascii, ...replacementEncoded, ...ascii.toReversed()]],
+    description: "long runs of ASCII around an unpaired surrogate should be kept",
   },
   {
     input: ["\xff"],

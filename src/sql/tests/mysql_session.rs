@@ -54,13 +54,6 @@ unsafe extern "C" fn RSA_public_encrypt(len: usize, from: *const u8, to: *mut u8
     len as i32
 }
 
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_index_of_char(text: *const u8, len: usize, needle: u8) -> usize {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    let text = unsafe { core::slice::from_raw_parts(text, len) };
-    text.iter().take_while(|&&byte| byte != needle).count()
-}
-
 const PROTOCOL_41: u32 = 1 << 9;
 const SSL: u32 = 1 << 11;
 const SECURE_CONNECTION: u32 = 1 << 15;

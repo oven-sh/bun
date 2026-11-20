@@ -8,7 +8,6 @@ use crate::decode_tables::{
 use crate::format::{DYNAMIC, MAX_CODEWORD_LEN, MAX_MATCH_LEN, STATIC, STORED};
 use crate::output::{MAX_STEP, Output, Sink};
 use crate::{Error, Result, chunk_at, gzip, wrapped};
-use bun_highway::with_bmi2;
 use core::cell::Cell;
 use core::hint::{Locality, cold_path, prefetch_write};
 
@@ -31,12 +30,14 @@ pub struct Decompressed {
 
 /// A raw DEFLATE stream.
 pub fn inflate(input: &[u8], output: Output<'_>) -> Result<Decompressed> {
-    with_sink(input, output, |sink| decode_blocks(input, sink, false))
+    with_sink(input, output, |sink| {
+        simd::decode_blocks(input, sink, false)
+    })
 }
 
 /// A raw stream that may also end where the length of a stored block would start, like a WebSocket message (RFC 7692 7.2.1).
 pub fn inflate_message(input: &[u8], output: Output<'_>) -> Result<Decompressed> {
-    with_sink(input, output, |sink| decode_blocks(input, sink, true))
+    with_sink(input, output, |sink| simd::decode_blocks(input, sink, true))
 }
 
 /// The first member of a gzip file.
@@ -44,7 +45,7 @@ pub fn gunzip(input: &[u8], output: Output<'_>) -> Result<Decompressed> {
     with_sink(input, output, |sink| {
         let before_trailer = input.len().saturating_sub(gzip::TRAILER_LEN);
         let stream = gzip::skip_header(input.split_at(before_trailer).0)?;
-        let Decompressed { read, written } = decode_blocks(stream, sink, false)?;
+        let Decompressed { read, written } = simd::decode_blocks(stream, sink, false)?;
         let end = before_trailer - stream.len() + read;
         let data = sink.bytes().get(..written).unwrap_or_default();
         match chunk_at(input, end) == Some(&gzip::trailer(data)) {
@@ -69,8 +70,31 @@ fn with_sink(
     result
 }
 
-with_bmi2! {
-    fn decode_blocks(input: &[u8], sink: &mut Sink<'_>, is_message: bool) -> Result<Decompressed> {
+// The copies for the targets look alike.
+#[cfg_attr(mordant, allow(reimplemented_helper))]
+#[bun_simd::foreach_target(sse4 + "bmi2", sse4, neon, portable)]
+mod simd {
+    /// In a function of its own, the loop has all registers to itself.
+    #[inline(never)]
+    fn decode_dynamic(
+        tables: &DynamicTables,
+        input: &[u8],
+        state: &mut Bits,
+        output: &mut [u8],
+        written: &mut usize,
+    ) -> Result<bool> {
+        let (mut bits, mut position) = (*state, *written);
+        let has_ended = decode_fast(tables, input, &mut bits, output, &mut position);
+        (*state, *written) = (bits, position);
+        has_ended
+    }
+
+    #[export]
+    pub fn decode_blocks(
+        input: &[u8],
+        sink: &mut Sink<'_>,
+        is_message: bool,
+    ) -> Result<Decompressed> {
         let input = Input::new(input);
         let (mut bits, mut written) = (Bits::default(), 0);
         let mut dynamic = None;
@@ -92,16 +116,28 @@ with_bmi2! {
                 STATIC => {
                     bits.consume(3);
                     // These tend to be too short for a call.
-                    let inlined = #[inline(always)]
-                    |tables: &_, input: &_, bits: &mut _, output: &mut _, position: &mut _| {
-                        decode_fast(tables, input, bits, output, position)
-                    };
-                    decode_block(&STATIC_TABLES, inlined, &input, &mut bits, sink, &mut written)?;
+                    let inlined =
+                        #[inline(always)]
+                        |tables: &_, input: &_, bits: &mut _, output: &mut _, position: &mut _| {
+                            decode_fast(tables, input, bits, output, position)
+                        };
+                    decode_block(
+                        &STATIC_TABLES,
+                        inlined,
+                        &input,
+                        &mut bits,
+                        sink,
+                        &mut written,
+                    )?;
                 }
                 DYNAMIC => {
                     let tables = dynamic.get_or_insert_with(DynamicTables::new);
                     bits = tables.read_header(bits, &input)?;
-                    decode_block(tables, decode_dynamic, &input, &mut bits, sink, &mut written)?;
+                    let called =
+                        |tables: &_, input: &_, bits: &mut _, output: &mut _, position: &mut _| {
+                            decode_dynamic(tables, input, bits, output, position)
+                        };
+                    decode_block(tables, called, &input, &mut bits, sink, &mut written)?;
                 }
                 _ => return Err(Error::BadData),
             }
@@ -163,22 +199,6 @@ fn decode_block<const N: usize>(
             false => output.len(),
         };
         sink.extend(needed_len)?;
-    }
-}
-
-with_bmi2! {
-    /// In a function of its own, the loop has all registers to itself.
-    fn decode_dynamic(
-        tables: &DynamicTables,
-        input: &[u8],
-        state: &mut Bits,
-        output: &mut [u8],
-        written: &mut usize,
-    ) -> Result<bool> {
-        let (mut bits, mut position) = (*state, *written);
-        let has_ended = decode_fast(tables, input, &mut bits, output, &mut position);
-        (*state, *written) = (bits, position);
-        has_ended
     }
 }
 

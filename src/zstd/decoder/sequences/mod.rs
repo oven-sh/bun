@@ -6,7 +6,7 @@ mod tables;
 
 use core::hint::cold_path;
 
-use bun_highway::with_bmi2;
+use bun_simd::with_bmi2;
 
 use crate::array::At;
 use crate::bits::{BackwardBits, Width};

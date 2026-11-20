@@ -1,7 +1,7 @@
 //! Huffman codes for literals.
 
-use bun_highway::with_bmi2;
-use bun_highway::zstd::{Written, are_quicker_for, write_codes};
+use bun_simd::with_bmi2;
+use bun_simd_kernels::zstd::{Written, are_quicker_for, write_codes};
 use bun_zstd_decoder::array::At;
 use bun_zstd_decoder::bounded::Bounded;
 use bun_zstd_decoder::format::HUFFMAN_TABLE_LOG_MAX;
@@ -592,6 +592,8 @@ impl Table {
 
     #[inline(never)]
     fn compress_in_vectors(&self, symbols: &[u8], out: &mut [u8]) -> Option<usize> {
+        let has_code = |&it| (1..=12).contains(&self.code_len(usize::from(it)));
+        debug_assert!(symbols.iter().all(has_code));
         let codes = self.codes.map(Code::short);
         compress_4_streams(symbols, out, |symbols, out| {
             match write_codes(symbols, &codes, out) {
@@ -646,6 +648,7 @@ impl Description {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bun_simd::{Target, limit_to};
 
     fn with_all_lengths() -> (Table, Vec<u8>) {
         let mut table = Table::EMPTY;
@@ -677,27 +680,31 @@ mod tests {
         assert_eq!(table.compress(&symbols, &mut expected, false), Some(268));
         for room in 260..400 {
             let mut out = vec![0; room];
+            limit_to(Target::Portable64);
             let len = table.compress_in_vectors(&symbols, &mut out);
+            limit_to(Target::Portable);
             assert_eq!(len, table.compress(&symbols, &mut vec![0; room], false));
             assert!(len.is_none_or(|len| out.get(..len) == expected.get(..len)));
         }
     }
 
     #[test]
-    fn what_the_kernel_writes_is_finished() {
+    fn what_the_kernel_writes_is_finished() -> Result<()> {
         let (table, symbols) = with_all_lengths();
+        limit_to(Target::Portable64);
         for count in 0..40 {
             let (symbols, mut out) = (symbols.split_at(300 - count).1, [0; 128]);
             let written = write_codes(symbols, &table.codes.map(Code::short), &mut out);
-            let written = written.unwrap_or_default();
+            let written = written.ok_or(Error::DstSizeTooSmall)?;
             for more in 0..12 {
-                let out = out.split_at_mut(written.len as usize + more).0;
+                let out = out.split_at_mut(written.len + more).0;
                 let mut expected = vec![0; out.len()];
                 let len = table.compress(symbols, &mut expected, true);
                 assert_eq!(finish_written(&written, out), len);
                 assert!(len.is_none_or(|len| out.get(..len) == expected.get(..len)));
             }
         }
+        Ok(())
     }
 
     #[test]

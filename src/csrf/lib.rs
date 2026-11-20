@@ -165,12 +165,10 @@ pub fn verify(options: &VerifyOptions<'_>) -> bool {
             if decoded_len > buf.len() {
                 return false;
             }
-            let result = strings::decode_hex_to_bytes_truncate(&mut buf[0..decoded_len], token);
-            if result == decoded_len {
-                decoded_len
-            } else {
+            if strings::decode_hex_to_bytes((&mut buf[..decoded_len]).into(), token).is_err() {
                 return false;
             }
+            decoded_len
         }
     };
     let decoded: &[u8] = &buf[0..decoded_len];

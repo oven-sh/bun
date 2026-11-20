@@ -1,6 +1,6 @@
 //! Access to what the kernels make of a block with each prediction mode.
 
-use bun_highway::webp::Candidates;
+use bun_simd_kernels::webp::Candidates;
 
 use super::border::{Border, joined};
 use super::cost::LevelCosts;

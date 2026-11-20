@@ -1,6 +1,6 @@
 //! What was done to the pixels to make them compress better, and how it is undone.
 
-use bun_highway::webp::{undo_cross_color, undo_prediction};
+use bun_simd_kernels::webp::{undo_cross_color, undo_prediction};
 
 use super::Rgba;
 use super::bit_reader::BitReader;
@@ -60,7 +60,7 @@ impl Transform {
             Self::Predictor(_) => {}
             Self::CrossColor(tiles) => {
                 for (row, along) in rows.chunks_exact_mut(width).zip(tiles.along_rows(y)) {
-                    undo_cross_color(row, along, tiles.bits);
+                    known(undo_cross_color(row, along, tiles.bits));
                 }
             }
             Self::SubtractGreen => {
@@ -101,7 +101,7 @@ pub(super) fn undo(transforms: &[Transform], pixels: &mut [Rgba], width: usize) 
         let mut above = band_above.rchunks_exact(width).next();
         for (row, along) in band.chunks_exact_mut(width).zip(modes.along_rows(y)) {
             match above {
-                Some(above) => undo_prediction(row, above, along, modes.bits),
+                Some(above) => _ = known(undo_prediction(row, above, along, modes.bits)),
                 None => add_up(row, BLACK.to_le_bytes()),
             }
             above = Some(row);

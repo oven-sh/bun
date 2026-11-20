@@ -1768,7 +1768,7 @@ describe("Bun.Image.backend", () => {
 
   // Same input → both backends → both must round-trip pixels exactly. The
   // system path goes through ImageIO/WIC + vImage; the bun path is
-  // bun_png/bun_webp + Highway. Reflect/rotate are pure permutations so byte
+  // bun_png/bun_webp + bun_simd. Reflect/rotate are pure permutations so byte
   // equality holds; resize uses lanczos3 (the only filter the system path
   // accepts) so we just check dimensions and that it's not all-black.
   test.each(["bun", "system"] as const)("backend=%s pipeline parity", async backend => {

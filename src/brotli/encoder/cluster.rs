@@ -2,7 +2,7 @@
 
 use core::ops::RangeInclusive;
 
-use bun_highway::brotli::{PAIR_GROUP, remove_pairs};
+use bun_simd_kernels::brotli::{PAIR_GROUP, TOO_MUCH, remove_pairs};
 
 use super::histogram::{Estimator, Histogram, Indexed, IndexedList};
 use super::log2::fast_log2;
@@ -105,7 +105,7 @@ struct Pairs {
 }
 
 impl Pairs {
-    const NO_LIMIT: f64 = 1e99;
+    const NO_LIMIT: f64 = TOO_MUCH;
 
     fn start_over(&mut self, cluster_count: usize) -> Result<()> {
         self.count = 0;

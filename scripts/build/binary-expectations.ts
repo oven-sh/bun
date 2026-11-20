@@ -17,13 +17,13 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { linksWithLld, type Config } from "./config.ts";
+import type { Config } from "./config.ts";
 import {
   overridesDarwinAllocator,
   replacedLibcAllocationSymbols,
   replacedOperatorNewSymbols,
 } from "./deps/mimalloc.ts";
-import { definesLibcFunctions, libcFunctionsScriptPath, rustLtoInLink, versionScriptPath } from "./flags.ts";
+import { definesLibcFunctions, libcFunctionsScriptPath, versionScriptPath } from "./flags.ts";
 
 export type BinaryFormat = "elf" | "macho" | "pe";
 
@@ -123,7 +123,7 @@ export interface BinaryExpectations {
    *
    * A match means that something reachable calls it: find the caller. In the
    * engine it belongs under `#if ASSERT_ENABLED`, in Rust behind the feature.
-   * It also has what LTO has to inline: see `inlinedSymbols()`.
+   * It also has what has to be inlined: see `inlinedSymbols()`.
    */
   forbiddenSymbols?: string[];
   elf?: {
@@ -406,12 +406,9 @@ function testOnlySymbols(cfg: Config): string[] | undefined {
   ];
 }
 
-/**
- * An `always_inline` C++ function that only Rust calls. It stays behind if the CPU features of the two halves do not
- * let LTO inline it: rustCpuTargetFlags() in rust.ts.
- */
+/** One instruction in an inner loop. It has `#[target_feature]`, so rustc takes no more than `#[inline]` for it. */
 function inlinedSymbols(cfg: Config): string[] {
-  return cfg.lto && rustLtoInLink(cfg) && linksWithLld(cfg) && !cfg.hardened ? ["*highway_brotli_short_codes"] : [];
+  return cfg.hardened ? [] : ["*6brotli7matches4simd*6lookup*"];
 }
 
 /**

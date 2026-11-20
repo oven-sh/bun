@@ -1,6 +1,6 @@
 //! One symbol at a time.
 
-use bun_highway::with_bmi2;
+use bun_simd::with_bmi2;
 
 use super::streams::{LOOKUPS, Lane, ROUNDS_MAX, Stream, Windows, interleave, prefetch, unload};
 use super::{QUICK_LEN, QUICK_LOG};

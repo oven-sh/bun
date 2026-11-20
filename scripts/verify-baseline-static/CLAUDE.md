@@ -145,8 +145,8 @@ executed. Real bug, will SIGILL on baseline hardware. Fix the compile flags.
 ### Deciding which
 
 **Identify the dependency.** Demangle the symbol (`c++filt`, or recognize the
-prefix: `_ZN7simdutf` = simdutf, `_ZN3bun` + `N_AVX2`/`N_SVE` = Bun's Highway
-code, `_RNv` + `memchr` = Rust memchr, etc). Search the allowlist for that
+prefix: `_ZN7simdutf` = simdutf, `_R` + `4simd4avx2` = a copy for a target of
+`bun_simd`, `_RNv` + `memchr` = Rust memchr, etc). Search the allowlist for that
 dependency — if neighbors are there under an existing `# Gate: ...` header,
 this is almost certainly (A).
 
@@ -157,9 +157,7 @@ table, an HWCAP test. Known patterns:
 | Dependency                            | Gate                                                        | Where                                 |
 | ------------------------------------- | ----------------------------------------------------------- | ------------------------------------- |
 | simdutf                               | `set_best()` — CPUID first call, cached atomic ptr          | `vendor/` or WebKit's bundled copy    |
-| Highway (Bun)                         | `BUN_HWY_DISPATCH` → `hwy::SupportedTargets()`              | `src/jsc/bindings/highway_dispatch.h` |
-| `with_bmi2!` (Bun)                    | `is_x86_feature_detected!("bmi2")`                          | `src/highway/lib.rs`                  |
-| `with_bmi2()` (Bun)                   | `is_x86_feature_detected!()`                                | `src/highway/lib.rs`                  |
+| `bun_simd`                            | `if_supported!` → `bun_simd::detected()`                    | `src/simd/trusted/gate.rs`            |
 | BoringSSL                             | `OPENSSL_ia32cap_P` global, set at init                     | `vendor/boringssl/crypto/cpu_intel.c` |
 | Rust `memchr`                         | `is_x86_feature_detected!()`                                | (via lolhtml dep)                     |
 | compiler-rt outline-atomics (aarch64) | `__aarch64_have_lse_atomics` (= `AT_HWCAP & HWCAP_ATOMICS`) | compiler-rt builtin                   |
@@ -241,6 +239,10 @@ Either form works (the tool canonicalizes both before comparing), but
 
 **Rust generics — `<generic-args>`.** An entry that ends in it covers every instance of a generic function, for a gate
 that takes a closure.
+
+**Patterns.** A `*` in an entry stands for any text. Use one only where the name
+of a symbol proves its gate, as the module of a `bun_simd` target does. An exact
+entry wins over a pattern.
 
 **Windows `<lib:NAME.lib>` / `<lib:NAME.obj>`.** When PDB has no per-function
 record for a hit (stripped CRT objects, anonymized staticlib helpers, an asm

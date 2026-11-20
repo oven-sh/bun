@@ -10,7 +10,6 @@ use crate::format::{
 use crate::huffman::{codeword_lens, codewords};
 use crate::output::Sink;
 use crate::{Error, Result, copy_prefix, wrapped, wrapped_mut};
-use bun_highway::with_bmi2;
 use core::array::from_fn;
 use core::hint::{cold_path, select_unpredictable};
 
@@ -340,7 +339,7 @@ impl<'s, 'o> Stream<'s, 'o> {
             &dynamic_codewords
         };
         writer.flush(output);
-        let writer = write_body(writer, output, data, sequences, codewords);
+        let writer = simd::write_body(writer, output, data, sequences, codewords);
         if writer.end_after(0) + SLACK > output.len() {
             return Err(Error::InsufficientSpace);
         }
@@ -357,8 +356,10 @@ struct OffsetCode {
     len: u16,
 }
 
-with_bmi2! {
-    fn write_body(
+#[bun_simd::foreach_target(sse4 + "bmi2", sse4, neon, portable)]
+mod simd {
+    #[export]
+    pub fn write_body(
         writer: BitWriter,
         output: &mut [u8],
         data: &[u8],

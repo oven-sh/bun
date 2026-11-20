@@ -1,0 +1,21 @@
+[package]
+name = "bun_simd"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[features]
+# Each thread picks its own target, among them the portable ones of every width.
+test_support = ["bun_simd_macros/test_support"]
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_simd_macros.workspace = true
+bun_simd_trusted.workspace = true
+
+[dev-dependencies]
+bun_simd = { workspace = true, features = ["test_support"] }

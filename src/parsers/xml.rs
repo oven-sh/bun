@@ -32,15 +32,16 @@ use bun_ast::{self as ast, E, Expr, Loc, Log, Source, StoreRef};
 use bun_collections::HashMap;
 use bun_core::vec::BorrowedBuf;
 use bun_core::{StackCheck, strings};
+use bun_simd::Out;
+use bun_simd_kernels::xml::{self as kernels, class};
 use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
 
 use crate::xml_index::StructuralIndex;
-use crate::xml_index::byte_class::{CLASS_ALWAYS, CLASS_GT, CLASS_LT, CLASS_TAG, XML_BYTE_CLASS};
 
 /// Scalar stop classes for the contexts that skip ahead (see `Scanner::next_stop`).
-const STOP_CONTENT: u8 = CLASS_LT | CLASS_GT | CLASS_ALWAYS;
-const STOP_ATT_VALUE: u8 = CLASS_LT | CLASS_GT | CLASS_ALWAYS | CLASS_TAG;
-const STOP_SKIPPED: u8 = CLASS_ALWAYS;
+const STOP_CONTENT: u8 = class::LT | class::GT | class::ANYWHERE;
+const STOP_ATT_VALUE: u8 = class::LT | class::GT | class::ANYWHERE | class::IN_TAG;
+const STOP_SKIPPED: u8 = class::ANYWHERE;
 
 // ── public entry point ──────────────────────────────────────────────────────
 
@@ -177,13 +178,13 @@ pub trait Unit: Copy + Eq + Ord + core::hash::Hash + Default + 'static {
     fn bytes(units: &[Self]) -> &[u8];
     /// Bytes (a transcoded document) as the unit type, which is `u8` wherever this is reached.
     fn from_bytes(bytes: &[u8]) -> &[Self];
-    /// The highway structural-index kernel for this width.
-    fn structural_index_chunk(
+    /// The structural-index kernel for this width.
+    fn structural_index_chunk<'a>(
         chunk: &[Self],
         base_offset: usize,
-        out: &mut [core::mem::MaybeUninit<u32>],
-        state: &mut [u64; 3],
-    ) -> usize;
+        out: Out<'a, u32>,
+        state: &mut kernels::State,
+    ) -> &'a mut [u32];
     /// The fixed keys of the two output shapes, in this unit type.
     const KEY_TEXT: &'static [Self];
     const KEY_NAME: &'static [Self];
@@ -219,13 +220,13 @@ impl Unit for u8 {
     fn from_bytes(bytes: &[u8]) -> &[Self] {
         bytes
     }
-    fn structural_index_chunk(
+    fn structural_index_chunk<'a>(
         chunk: &[Self],
         base_offset: usize,
-        out: &mut [core::mem::MaybeUninit<u32>],
-        state: &mut [u64; 3],
-    ) -> usize {
-        bun_highway::xml_structural_index_chunk(chunk, base_offset, out, state)
+        out: Out<'a, u32>,
+        state: &mut kernels::State,
+    ) -> &'a mut [u32] {
+        kernels::index_chunk(chunk, base_offset, out, state)
     }
     const KEY_TEXT: &'static [Self] = b"#text";
     const KEY_NAME: &'static [Self] = b"name";
@@ -279,13 +280,13 @@ impl Unit for u16 {
     fn from_bytes(_: &[u8]) -> &[Self] {
         unreachable!("Unit::from_bytes on u16")
     }
-    fn structural_index_chunk(
+    fn structural_index_chunk<'a>(
         chunk: &[Self],
         base_offset: usize,
-        out: &mut [core::mem::MaybeUninit<u32>],
-        state: &mut [u64; 3],
-    ) -> usize {
-        bun_highway::xml_structural_index16_chunk(chunk, base_offset, out, state)
+        out: Out<'a, u32>,
+        state: &mut kernels::State,
+    ) -> &'a mut [u32] {
+        kernels::index_chunk16(chunk, base_offset, out, state)
     }
     const KEY_TEXT: &'static [Self] = utf16!(b"#text");
     const KEY_NAME: &'static [Self] = utf16!(b"name");
@@ -858,7 +859,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
     #[inline]
     fn scalar_stop(&self, mask: u8) -> usize {
         let mut p = self.pos;
-        while p < self.src.len() && XML_BYTE_CLASS[self.src[p].low() as usize] & mask == 0 {
+        while p < self.src.len() && class::OF_BYTE[self.src[p].low() as usize] & mask == 0 {
             p += 1;
         }
         p

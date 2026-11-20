@@ -2832,6 +2832,11 @@ describe("readFileSync", () => {
       expect(text[i]).toBe(encoded[i]);
     }
   });
+
+  it("returns a file of over 256 KiB as hex", () => {
+    using dir = tempDir("fs-read-large-hex", { "large.bin": Buffer.alloc(300_000, "007fab", "hex") });
+    expect(readFileSync(join(String(dir), "large.bin"), "hex")).toBe(Buffer.alloc(600_000, "007fab").toString());
+  });
 });
 
 describe("readFile", () => {

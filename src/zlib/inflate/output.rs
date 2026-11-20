@@ -3,7 +3,8 @@
 use core::cell::Cell;
 
 use bun_core::vec::{BorrowedBuf, append_behind, append_with};
-use bun_highway::zlib::{Appender, NEXT_MATCH_OFFSET};
+use bun_simd::Appender;
+use bun_simd_kernels::zlib::NEXT_MATCH_OFFSET;
 
 use super::Status;
 use super::bits::BitReader;

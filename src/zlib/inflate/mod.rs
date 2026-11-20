@@ -13,7 +13,7 @@ use bun_core::strings;
 use bun_core::vec::BorrowedCursor;
 use bun_deflate::format::{DYNAMIC, MAX_MATCH_LEN, STATIC, STORED};
 use bun_deflate::gzip;
-use bun_highway::{adler32, crc32};
+use bun_simd_kernels::{adler32, crc32};
 
 use crate::checksum::Checksum;
 use crate::error::{Damage, Error, Result};
@@ -242,7 +242,7 @@ impl Inflater {
     /// After [`Status::NeedsDictionary`], or in front of a raw stream.
     pub fn set_dictionary(&mut self, dictionary: &[u8]) -> Result<()> {
         match self.state {
-            State::Dictionary(id) if id != adler32(dictionary) => {
+            State::Dictionary(id) if id != adler32(1, dictionary) => {
                 return Err(Error::WrongDictionary);
             }
             State::Dictionary(_) => self.state = State::BlockBoundary,

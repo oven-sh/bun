@@ -4,8 +4,8 @@ use core::cell::Cell;
 use core::hint::cold_path;
 
 use bun_deflate::format::MAX_MATCH_LEN;
-use bun_highway::with_bmi2;
-use bun_highway::zlib::{Appender, Span, copy_match};
+use bun_simd::Appender;
+use bun_simd_kernels::zlib::{Span, copy_match, push_match};
 
 use super::Status;
 use super::bits::{BitReader, REFILLED_BITS};
@@ -70,7 +70,7 @@ impl Tape for Appender<'_> {
 
     #[inline(always)]
     fn copy(&mut self, distance: usize, len: usize) -> bool {
-        self.copy(distance, len)
+        push_match(self, distance, len)
     }
 }
 
@@ -158,59 +158,55 @@ impl Drop for Lap<'_> {
     }
 }
 
-macro_rules! fast_decoder {
-    ($(#[$meta:meta])* $name:ident($($arg:ident: $type:ty),*; $reach:ident) => $tape:expr) => {
-        $(#[$meta])*
-        #[inline(always)]
-        pub(super) fn $name(
-            tables: &Tables,
-            bits: &mut BitReader<'_>,
-            $($arg: $type,)*
-            $reach: Reach,
-            last_distance: &Cell<usize>,
-        ) -> Result<Stop> {
-            with_bmi2! {
-                /// The mask takes a register, of which there are too few.
-                fn unmasked(
-                    tables: &Tables,
-                    bits: &mut BitReader<'_>,
-                    $($arg: $type,)*
-                    $reach: Reach,
-                    last_distance: &Cell<usize>,
-                ) -> Result<Stop> {
-                    decode_fast::<false>(tables, bits, $tape, $reach, last_distance)
-                }
-            }
-            with_bmi2! {
-                fn masked(
-                    tables: &Tables,
-                    bits: &mut BitReader<'_>,
-                    $($arg: $type,)*
-                    $reach: Reach,
-                    last_distance: &Cell<usize>,
-                ) -> Result<Stop> {
-                    decode_fast::<true>(tables, bits, $tape, $reach, last_distance)
-                }
-            }
-            if tables.literal_length_mask == u64::MAX {
-                unmasked(tables, bits, $($arg,)* $reach, last_distance)
-            } else {
-                masked(tables, bits, $($arg,)* $reach, last_distance)
-            }
-        }
-    };
+/// The mask takes a register, of which there are too few.
+#[inline(always)]
+fn decode_either(
+    tables: &Tables,
+    bits: &mut BitReader<'_>,
+    tape: impl Tape,
+    reach: Reach,
+    last_distance: &Cell<usize>,
+) -> Result<Stop> {
+    if tables.literal_length_mask == u64::MAX {
+        decode_fast::<false>(tables, bits, tape, reach, last_distance)
+    } else {
+        decode_fast::<true>(tables, bits, tape, reach, last_distance)
+    }
 }
 
-fast_decoder! {
+pub(super) use simd::{decode_to_slice, decode_to_vec};
+
+#[cfg_attr(mordant, allow(reimplemented_helper))] // The copies for the targets look alike.
+#[bun_simd::foreach_target(sse4 + "bmi2", sse4, neon, portable)]
+mod simd {
     /// The arguments of `Lap::new()`.
-    decode_to_slice(slice: (&mut [u8], &mut usize), limit: usize, output_offset: usize; reach)
-        => Lap::new(slice, limit, Some(output_offset))?
-}
+    #[export]
+    pub fn decode_to_slice(
+        tables: &Tables,
+        bits: &mut BitReader<'_>,
+        slice: (&mut [u8], &mut usize),
+        limit: usize,
+        output_offset: usize,
+        reach: Reach,
+        last_distance: &Cell<usize>,
+    ) -> Result<Stop> {
+        let tape = Lap::new(slice, limit, Some(output_offset))?;
+        decode_either(tables, bits, tape, reach, last_distance)
+    }
 
-fast_decoder! {
     /// Positions count from the first byte that is within reach.
-    decode_to_vec(vec: &mut Vec<u8>, room: usize; reach)
-        => Appender::new(vec, reach.from, room)
+    #[export]
+    pub fn decode_to_vec(
+        tables: &Tables,
+        bits: &mut BitReader<'_>,
+        vec: &mut Vec<u8>,
+        room: usize,
+        reach: Reach,
+        last_distance: &Cell<usize>,
+    ) -> Result<Stop> {
+        let tape = Appender::new(vec, reach.from, room);
+        decode_either(tables, bits, tape, reach, last_distance)
+    }
 }
 
 enum Exit {

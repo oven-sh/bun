@@ -2087,7 +2087,9 @@ impl<'a> Lexer<'a> {
         loop {
             // Find index of newline (ASCII/Unicode), non-ASCII, '#', or '@'.
             if let Some(relative_index) =
-                bun_highway::index_of_newline_or_non_ascii_or_hash_or_at(&contents[self.current..])
+                bun_simd_kernels::index_of_newline_or_non_ascii_or_hash_or_at(
+                    &contents[self.current..],
+                )
             {
                 let absolute_index = self.current + relative_index;
                 self.current = absolute_index; // Move TO the interesting char
@@ -2131,7 +2133,7 @@ impl<'a> Lexer<'a> {
                     }
                 }
             } else {
-                // Highway found nothing until EOF
+                // Nothing until EOF
                 // Consume the rest of the line.
                 self.end = contents.len();
                 self.current = contents.len();
@@ -3560,11 +3562,12 @@ impl PragmaArg {
 /// the rest of the input has no such byte — the comment is unterminated, so
 /// the caller's next `step()` lands on EOF and reports the error.
 fn skip_to_interesting_character_in_multiline_comment(text_: &[u8]) -> usize {
-    bun_highway::index_of_interesting_character_in_multiline_comment(text_).unwrap_or(text_.len())
+    bun_simd_kernels::index_of_interesting_character_in_multiline_comment(text_)
+        .unwrap_or(text_.len())
 }
 
 fn index_of_interesting_character_in_string_literal(text_: &[u8], quote: u8) -> Option<usize> {
-    bun_highway::index_of_interesting_character_in_string_literal(text_, quote)
+    bun_simd_kernels::index_of_interesting_character_in_string_literal(text_, quote)
 }
 
 struct InvalidEscapeSequenceFormatter {

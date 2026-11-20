@@ -183,17 +183,20 @@ let js: JSValue = s.into_js(global)?;      // hands `s`'s ref to the JSString
 let s = bun_core::String::from_js(value, global)?;
 ```
 
-`bun_core::strings` is the SIMD-backed `&[u8]` toolkit (Google Highway kernels
+`bun_core::strings` is the SIMD-backed `&[u8]` toolkit (kernels on `bun_simd`,
 with runtime CPU dispatch). Byte and substring search **must** go through it —
 `str::find`/`contains`/`split*`, `slice::windows`, `memchr::*` and
 `bstr::ByteSlice::find*` are denied in `clippy.toml`, and the byte-literal forms
 of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and
 `.split(|b| ..)` are rejected by `test/internal/source-lints/byte-search.test.ts`.
-Highway is the only SIMD in the Rust sources: both also ban `std::simd`, and the
-source lint bans the `core::arch` intrinsics. A new kernel goes in
-`src/jsc/bindings/highway_strings.cpp`, or in a `highway_*.cpp` of its own beside it, which
-`noUnify` in `scripts/build/unified.ts` has to list. Its safe wrapper goes in `src/highway/lib.rs`,
-or in a module of that crate if it brings types or code of its own (`webp.rs`, `checksums.rs`).
+`bun_simd` (`src/simd/README.md`) is the only SIMD in use in the Rust sources: both also ban
+`std::simd`, and the source lint bans the `core::arch` intrinsics. A new kernel goes in
+`src/simd/kernels/`. C++ calls one through `src/runtime/simd_exports.rs` and `SIMDKernels.h`.
+Other threads can write the bytes of a JS buffer, so a kernel gets them as `&[SharedU8]` to read
+(`shared: "atomic"` in bindgen), as `&[SharedOutU8]` to write and as `&[AtomicU8]` to change in place.
+A `HOST_EXPORT` function can take all three.
+In debug and canary builds, `BUN_SIMD_TARGET=avx2` (or `sse4`, `sse4+pclmulqdq`, `avx512_icl`) runs the kernels of an older CPU. A name that
+is no target is ignored.
 
 ```rust
 use bun_core::strings;

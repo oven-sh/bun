@@ -9,7 +9,8 @@ use crate::BoundedArray;
 use crate::CrateError as Error;
 use crate::vec::{BorrowedBuf, BorrowedCursor};
 use bun_alloc::AllocError;
-use bun_highway as highway;
+use bun_simd::Out;
+use bun_simd_kernels as kernels;
 use bun_simdutf_sys::simdutf::{self, WithUtf16Len};
 
 pub use self::unicode::{
@@ -43,6 +44,9 @@ mod icu_normalize;
 mod unicode_draft;
 pub use icu_collation::{locale_compare, locale_compare_numeric_base};
 pub use icu_normalize::{NormalizationForm, normalize};
+#[path = "immutable/scanner_stops.rs"]
+mod scanner_stops;
+pub use scanner_stops::{ScannerStops, ScannerStopsBuffer};
 #[path = "immutable/utf16_offsets.rs"]
 mod utf16_offsets;
 pub use utf16_offsets::Utf16OffsetTable;
@@ -74,8 +78,7 @@ pub use crate::strings_impl::{
 // `bun_core::strings::*` callers (e.g. runtime/webcore/encoding.rs) resolve.
 pub use unicode_draft::{
     BOM, UTF16Replacement, allocate_latin1_into_utf8, copy_cp1252_into_utf16,
-    copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii, copy_latin1_into_utf16,
-    copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
+    copy_latin1_into_ascii, copy_latin1_into_utf16, copy_u8_into_u16, copy_utf16_into_utf8_impl,
     element_length_cp1252_into_utf16, element_length_utf8_into_utf16, push_codepoint_wtf8,
     to_utf8_list_with_type_bun, to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail,
     utf8_codepoint_with_fffd, utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
@@ -302,17 +305,14 @@ pub fn without_utf8_bom(bytes: &[u8]) -> &[u8] {
 /// `&'static [u16]` would require leaking. Re-export of the crate-root `w!`.
 pub use crate::string::w;
 pub use crate::strings_impl::{
-    EncodeIntoResult, copy_latin1_into_utf8, copy_utf16_into_utf8,
+    EncodeIntoResult, copy_ascii_prefix_to_shared, copy_latin1_into_shared_utf8,
+    copy_latin1_into_utf8, copy_utf16_into_shared_utf8, copy_utf16_into_utf8,
     copy_utf16_into_utf8_with_utf8_len, element_length_latin1_into_utf8,
     element_length_utf16_into_utf8, encode_surrogate_pair, push_codepoint_utf16, to_utf8_alloc_z,
     to_utf8_from_latin1_z, u16_lead, u16_trail,
 };
 
-/// memmem — `highway_memmem` (HWY_DYNAMIC_DISPATCH MemMemImpl), same on all platforms.
-#[inline]
-pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    highway::memmem(haystack, needle)
-}
+pub use kernels::{count_char, index_of_char as index_of_char_usize, last_index_of_char, memmem};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Encoding {
@@ -357,7 +357,7 @@ pub fn contains_char(self_: &[u8], char: u8) -> bool {
 pub fn contains_char_t<T: PathByte>(self_: &[T], char: u8) -> bool {
     match T::units(self_) {
         CodeUnits::U8(s) => contains_char(s, char),
-        CodeUnits::U16(s) => highway::memmem16(s, &[u16::from(char)]).is_some(),
+        CodeUnits::U16(s) => kernels::index_of_char16(s, char.into()).is_some(),
     }
 }
 
@@ -366,23 +366,12 @@ pub fn contains(self_: &[u8], str: &[u8]) -> bool {
     index_of(self_, str).is_some()
 }
 
-/// The kernels compare against at most this many set bytes per pass.
-const ANY_CHAR_SET_MAX: usize = 16;
-
-/// Index of the first byte in `slice` that appears in `chars` (SIMD via
-/// highway). Returns `usize` (unlike the `u32`-returning single-char
-/// scanners above) so callers can index with the result directly.
+/// Index of the first byte in `slice` that appears in `chars`.
 #[inline]
 pub fn index_of_any(slice: &[u8], chars: &[u8]) -> Option<usize> {
-    match chars.len() {
-        0 => None,
-        1 => index_of_char_usize(slice, chars[0]),
-        2..=ANY_CHAR_SET_MAX => highway::index_of_any_char(slice, chars),
-        // Larger sets (none today): one pass per 16-byte chunk, earliest hit wins.
-        _ => chars
-            .chunks(ANY_CHAR_SET_MAX)
-            .filter_map(|set| index_of_any(slice, set))
-            .min(),
+    match *chars {
+        [char] => kernels::index_of_char(slice, char),
+        _ => kernels::index_of_any_char(slice, chars),
     }
 }
 
@@ -394,21 +383,16 @@ pub fn index_of_any_pos(slice: &[u8], chars: &[u8], start_index: usize) -> Optio
     index_of_any(&slice[start_index..], chars).map(|i| i + start_index)
 }
 
-/// Index of the last byte in `slice` that appears in `chars` (SIMD via highway).
+/// Index of the last byte in `slice` that appears in `chars`.
 #[inline]
 pub fn last_index_of_any(slice: &[u8], chars: &[u8]) -> Option<usize> {
-    match chars.len() {
-        0 => None,
-        1 => last_index_of_char(slice, chars[0]),
-        2..=ANY_CHAR_SET_MAX => highway::last_index_of_any_char(slice, chars),
-        _ => chars
-            .chunks(ANY_CHAR_SET_MAX)
-            .filter_map(|set| last_index_of_any(slice, set))
-            .max(),
+    match *chars {
+        [char] => kernels::last_index_of_char(slice, char),
+        _ => kernels::last_index_of_any_char(slice, chars),
     }
 }
 
-/// Whether any byte of `slice` appears in `chars` (SIMD via highway).
+/// Whether any byte of `slice` appears in `chars`.
 #[inline]
 pub fn contains_any(slice: &[u8], chars: &[u8]) -> bool {
     index_of_any(slice, chars).is_some()
@@ -422,7 +406,7 @@ pub fn index_of_any_t<T: PathByte>(str: &[T], chars: &[T]) -> Option<usize> {
     if let (CodeUnits::U8(s), CodeUnits::U8(c)) = (T::units(str), T::units(chars)) {
         return index_of_any(s, c);
     }
-    // No multi-needle highway kernel for u16; `chars` is a short constant set.
+    // No multi-needle kernel for u16; `chars` is a short constant set.
     str.iter().position(|c| chars.iter().any(|d| d == c))
 }
 
@@ -530,11 +514,6 @@ pub fn last_index_before_char(in_: &[u8], char: u8, before: u8) -> Option<usize>
     last_index_of_char(&in_[0..before_pos], char)
 }
 
-#[inline]
-pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
-    highway::last_index_of_char(self_, char)
-}
-
 /// Width-generic [`last_index_of_char`].
 #[inline]
 pub fn last_index_of_char_t<T: PathByte>(self_: &[T], char: T) -> Option<usize> {
@@ -544,13 +523,13 @@ pub fn last_index_of_char_t<T: PathByte>(self_: &[T], char: T) -> Option<usize> 
 /// Start index of the last occurrence of `str`. Empty needle → `Some(len)`.
 #[inline]
 pub fn last_index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
-    highway::memrmem(self_, str)
+    kernels::memrmem(self_, str)
 }
 
 /// [`last_index_of`] over UTF-16 code units.
 #[inline]
 pub fn last_index_of_utf16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
-    highway::memrmem16(haystack, needle)
+    kernels::memrmem16(haystack, needle)
 }
 
 pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
@@ -668,7 +647,7 @@ pub fn tokenize_any<'a>(self_: &'a [u8], chars: &'a [u8]) -> TokenizeAnyIterator
 }
 
 /// `<[u8]>::split` with a multi-byte predicate — `s.split(|b| b == x || b == y)`
-/// — as a highway scan: every byte that appears in `chars` is a delimiter.
+/// — as a SIMD scan: every byte that appears in `chars` is a delimiter.
 pub fn split_any<'a>(self_: &'a [u8], chars: &'a [u8]) -> SplitAnyIterator<'a> {
     SplitAnyIterator {
         buffer: self_,
@@ -949,13 +928,6 @@ pub fn eql_any_comptime(self_: &[u8], list: &'static [&'static [u8]]) -> bool {
     list.contains(&self_)
 }
 
-/// Count the occurrences of a character in an ASCII byte array
-/// uses SIMD
-#[inline]
-pub fn count_char(self_: &[u8], char: u8) -> usize {
-    highway::count_char(self_, char)
-}
-
 /// `std.mem.count` — number of non-overlapping occurrences of `needle`.
 /// An empty needle counts as zero occurrences.
 pub fn count(self_: &[u8], needle: &[u8]) -> usize {
@@ -1189,7 +1161,7 @@ pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;
 // fast path (`Chunk.rs::update_generated_line_and_column`) and the per-rune
 // fast-forward inside its slow loop; it's also the LineOffsetTable scan step.
 // Without the hint LLVM emits a cross-crate `call` (the body is a couple of
-// branches plus a tail-call into the SIMD `highway` routine), so the
+// branches plus a tail-call into the SIMD kernel), so the
 // `is_none()` fast path doesn't fold into the caller. Same rationale as
 // `str_utf8` above.
 #[inline]
@@ -1209,7 +1181,7 @@ pub fn index_of_space_or_newline_or_non_ascii(slice_: &[u8], offset: u32) -> Opt
         return Some(offset);
     }
 
-    let i = highway::index_of_space_or_newline_or_non_ascii(remaining)?;
+    let i = kernels::index_of_space_or_newline_or_non_ascii(remaining)?;
     // Wrapping cast instead of try_from().unwrap(), which would panic on
     // >4GB inputs.
     Some(i as u32 + offset)
@@ -1234,27 +1206,21 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
         }
     }
 
-    let i = highway::index_of_newline_or_non_ascii(remaining)?;
+    let i = kernels::index_of_newline_or_non_ascii(remaining)?;
     // Wrapping cast instead of try_from().unwrap(), which would panic on
     // >4GB inputs.
     Some(i as u32 + offset)
 }
 
-pub use highway::ByteSet;
-pub use highway::contains_newline_or_non_ascii_or_quote;
-pub use highway::line_starts;
-pub use highway::{ScannerStops, ScannerStopsBuffer};
-pub use highway::{pack_words, unpack_words};
+pub use kernels::{ByteSet, contains_newline_or_non_ascii_or_quote, line_starts};
 
 /// Supports:
 /// - `"`
 /// - `'`
 /// - "`"
 pub fn index_of_needs_escape_for_java_script_string(slice: &[u8], quote_char: u8) -> Option<u32> {
-    if slice.is_empty() {
-        return None;
-    }
-    highway::index_of_needs_escape_for_javascript_string(slice, quote_char)
+    // Wrapping cast.
+    kernels::index_of_needs_escape_for_javascript_string(slice, quote_char).map(|i| i as u32)
 }
 
 pub(crate) fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
@@ -1282,7 +1248,7 @@ pub(crate) fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
         return Some(0);
     }
 
-    // PERF: scalar loop; consider a highway entry point if hot.
+    // PERF: scalar loop; consider a SIMD kernel if hot.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127
             || char < 0x20
@@ -1306,7 +1272,7 @@ pub(crate) fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
 }
 
 pub fn index_of_char_z(slice_z: &crate::string::ZStr, char: u8) -> Option<u64> {
-    highway::index_of_char(slice_z.as_bytes(), char).map(|i| i as u64)
+    index_of_char_usize(slice_z.as_bytes(), char).map(|i| i as u64)
 }
 
 pub fn index_of_char(slice: &[u8], char: u8) -> Option<u32> {
@@ -1314,15 +1280,11 @@ pub fn index_of_char(slice: &[u8], char: u8) -> Option<u32> {
     index_of_char_usize(slice, char).map(|i| i as u32)
 }
 
-pub fn index_of_char_usize(slice: &[u8], char: u8) -> Option<usize> {
-    highway::index_of_char(slice, char)
-}
-
 pub fn index_of_char_pos(slice: &[u8], char: u8, start_index: usize) -> Option<usize> {
     if start_index >= slice.len() {
         return None;
     }
-    let result = highway::index_of_char(&slice[start_index..], char)?;
+    let result = index_of_char_usize(&slice[start_index..], char)?;
     debug_assert!(slice.len() > result + start_index);
     Some(result + start_index)
 }
@@ -1337,10 +1299,8 @@ pub fn index_of_not_char(slice: &[u8], char: u8) -> Option<u32> {
     }
 
     // Wrapping cast.
-    highway::index_of_not_char(slice, char).map(|i| i as u32)
+    kernels::index_of_not_char(slice, char).map(|i| i as u32)
 }
-
-use crate::fmt::{HEX_DECODE_TABLE as HEX_TABLE, HEX_INVALID as INVALID_CHAR};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum DecodeHexError {
@@ -1348,138 +1308,17 @@ pub enum DecodeHexError {
     InvalidByteSequence,
 }
 
-/// Source character types accepted by the hex decoder: `u8` (Latin-1) and
-/// `u16` (UTF-16). The associated function routes full pairs through the
-/// matching Highway kernel while `_decode_hex_to_bytes` keeps the generic
-/// scalar path for short inputs.
-///
-/// A UTF-16 code unit is classified by its low byte, which is what Node's
-/// `Buffer` hex decoder does (`Buffer.from("\uff41", "hex")` sees `'A'`):
-/// a unit above 0xFF decodes when its low byte is a hex digit and stops the
-/// decode when it is not. The Highway kernels apply the same narrowing.
-pub trait HexChar: Copy {
-    /// The byte the decoder classifies and looks up in `HEX_TABLE`.
-    fn hex_byte(self) -> u8;
-
-    /// Decode up to `min(src.len() / 2, dst.len())` hex pairs with SIMD,
-    /// stopping at the first pair containing a non-hex character.
-    /// Returns the number of bytes written.
-    fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize;
-}
-
-impl HexChar for u8 {
-    #[inline(always)]
-    fn hex_byte(self) -> u8 {
-        self
+/// Fills `destination`, or decodes all of `source`.
+pub fn decode_hex_to_bytes<'a>(
+    destination: Out<'a, u8>,
+    source: &[u8],
+) -> Result<&'a mut [u8], DecodeHexError> {
+    let room = destination.len();
+    let decoded = kernels::decode_hex(source.as_chunks().0, destination);
+    if decoded.len() < room && decoded.len() * 2 < source.len() {
+        return Err(DecodeHexError::InvalidByteSequence);
     }
-
-    #[inline(always)]
-    fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
-        highway::decode_hex(src, dst)
-    }
-}
-
-impl HexChar for u16 {
-    #[inline(always)]
-    fn hex_byte(self) -> u8 {
-        self as u8
-    }
-
-    #[inline(always)]
-    fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
-        highway::decode_hex_u16(src, dst)
-    }
-}
-
-pub fn decode_hex_to_bytes<Char: HexChar>(
-    destination: &mut [u8],
-    source: &[Char],
-) -> Result<usize, DecodeHexError> {
-    _decode_hex_to_bytes::<Char, false>(destination, source)
-}
-
-pub fn decode_hex_to_bytes_truncate<Char: HexChar>(
-    destination: &mut [u8],
-    source: &[Char],
-) -> usize {
-    _decode_hex_to_bytes::<Char, true>(destination, source).unwrap_or(0)
-}
-
-#[inline]
-fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
-    destination: &mut [u8],
-    source: &[Char],
-) -> Result<usize, DecodeHexError> {
-    // Highway fast path: decode whole pairs in bulk, stopping at the first
-    // invalid pair — the same semantics as the scalar loop below. Short inputs
-    // stay scalar; the dynamically-dispatched FFI call isn't worth it for a
-    // handful of pairs.
-    const HIGHWAY_MIN_PAIRS: usize = 16;
-    let pairs = destination.len().min(source.len() / 2);
-    if pairs >= HIGHWAY_MIN_PAIRS {
-        let written = Char::decode_hex_highway(&source[..pairs * 2], &mut destination[..pairs]);
-        if written < pairs {
-            // Stopped at an invalid character.
-            if TRUNCATE {
-                return Ok(written);
-            }
-            return Err(DecodeHexError::InvalidByteSequence);
-        }
-        if !TRUNCATE && destination.len() > pairs && source.len() > pairs * 2 {
-            // Destination space left over with a trailing lone hex digit
-            // (mirrors the `!remain.is_empty() && !input.is_empty()` check below).
-            return Err(DecodeHexError::InvalidByteSequence);
-        }
-        return Ok(pairs);
-    }
-
-    let dest_len = destination.len();
-    let mut remain = &mut destination[..];
-    let mut input = source;
-
-    while !remain.is_empty() && input.len() > 1 {
-        let a = HEX_TABLE[input[0].hex_byte() as usize];
-        let b = HEX_TABLE[input[1].hex_byte() as usize];
-        if a == INVALID_CHAR || b == INVALID_CHAR {
-            if TRUNCATE {
-                break;
-            }
-            return Err(DecodeHexError::InvalidByteSequence);
-        }
-        remain[0] = (a << 4) | b;
-        remain = &mut remain[1..];
-        input = &input[2..];
-    }
-
-    if !TRUNCATE {
-        if !remain.is_empty() && !input.is_empty() {
-            return Err(DecodeHexError::InvalidByteSequence);
-        }
-    }
-
-    Ok(dest_len - remain.len())
-}
-
-pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
-    debug_assert!(!destination.is_empty());
-    debug_assert!(!source.is_empty());
-    let to_write = if destination.len() < source.len() * 2 {
-        destination.len() - destination.len() % 2
-    } else {
-        source.len() * 2
-    };
-
-    let to_read = to_write / 2;
-
-    // Runtime-dispatched SIMD kernel for bulk encodes (Buffer.toString("hex"));
-    // the scalar LUT loop wins below this size because of the dispatch overhead.
-    const HIGHWAY_MIN_LEN: usize = 64;
-    if to_read >= HIGHWAY_MIN_LEN {
-        highway::encode_hex_lower(&source[..to_read], &mut destination[..to_write]);
-        return to_write;
-    }
-
-    crate::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_write])
+    Ok(decoded)
 }
 
 /// Leave a single leading char
@@ -1690,7 +1529,7 @@ pub fn get_lines_in_text<const LINE_RANGE_COUNT: usize>(
 }
 
 pub fn first_non_ascii16(slice: &[u16]) -> Option<u32> {
-    // PERF: scalar loop; consider a highway kernel or a simdutf utf16 validator if hot.
+    // PERF: scalar loop; consider a SIMD kernel or a simdutf utf16 validator if hot.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127 {
             // Wrapping cast.

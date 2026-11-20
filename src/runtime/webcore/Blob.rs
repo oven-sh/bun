@@ -2867,10 +2867,8 @@ fn encode_form_data_component(bytes: &[u8], component: FormDataComponent) -> Opt
     // `"` stays literal and must not force a copy.
     let needles: &'static [u8] = if escape { b"\"\r\n" } else { b"\r\n" };
 
-    // SIMD scan; the first hit doubles as the "needs a copy at all?" fast
-    // path. `highway` directly: `bun_core::immutable::index_of_any` narrows
-    // the index to `u32`, which a multi-GiB string value can overflow.
-    let mut i = bun_highway::index_of_any_char(bytes, needles)?;
+    // The first hit doubles as the "needs a copy at all?" fast path.
+    let mut i = strings::index_of_any(bytes, needles)?;
     let mut remain = bytes;
     let mut out = Vec::with_capacity(bytes.len() + 8);
     loop {
@@ -2891,7 +2889,7 @@ fn encode_form_data_component(bytes: &[u8], component: FormDataComponent) -> Opt
             _ => out.extend_from_slice(b"%0A"),
         }
         remain = &remain[i + consumed..];
-        match bun_highway::index_of_any_char(remain, needles) {
+        match strings::index_of_any(remain, needles) {
             Some(next) => i = next,
             None => break,
         }

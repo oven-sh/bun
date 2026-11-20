@@ -691,8 +691,8 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
   });
 });
 
-// From Zen 4 and Sapphire Rapids on, src/jsc/bindings/highway_zstd.cpp takes blocks with 4096 or more. It counts them
-// in batches of 3712 and groups of 128, by their 2 highest bits, and writes 64 codes at a time to each of 4 streams.
+// From Zen 4 and Sapphire Rapids on, src/simd/kernels/zstd.rs takes blocks with 4096 or more. It counts them
+// in batches of 3968 and groups of 128, by their 2 highest bits, and writes 64 codes at a time to each of 4 streams.
 describe("literals compress to what zstd 1.5.7 makes of them", () => {
   function generate(length: number, byte: (below: (limit: number) => number) => number) {
     let state = 1;
@@ -709,20 +709,20 @@ describe("literals compress to what zstd 1.5.7 makes of them", () => {
   const lengths = [
     ...Array.from({ length: 40 }, (_, i) => 4090 + 7 * i),
     ...Array.from({ length: 60 }, (_, i) => 7400 + 13 * i),
-    ...[-1, 0, 1, 63, 64, 65, 127, 128].map(more => 3 * 3712 + more),
+    ...[-1, 0, 1, 63, 64, 65, 127, 128].map(more => 3 * 3968 + more),
     40_000,
   ];
   it.each<[string, Parameters<typeof generate>[1], string]>([
-    ["below 64", below => below(1 + below(64)), "bb725258"],
-    ["from 64", below => 64 + below(1 + below(64)), "a54c637c"],
-    ["from 128", below => 128 + below(1 + below(64)), "ea4e0340"],
-    ["from 192", below => 255 - below(1 + below(64)), "fd4b71c2"],
-    ["below 128", below => below(1 + below(128)), "2692621f"],
-    ["seldom from 64", below => (below(200) ? below(1 + below(64)) : 64 + below(192)), "608ac342"],
-    ["seldom from 128", below => (below(200) ? 32 + below(1 + below(95)) : 128 + below(128)), "9c5e2c5e"],
-    ["long codes", below => below(1 + below(1 + below(256))), "163887a6"],
-    ["a code of 1 bit", below => (below(16) < 9 ? 200 : below(256)), "71317cdd"],
-    ["nothing to gain, and no room left", below => (below(140) ? below(256) : 200), "404d578e"],
+    ["below 64", below => below(1 + below(64)), "8f06716d"],
+    ["from 64", below => 64 + below(1 + below(64)), "32c00e63"],
+    ["from 128", below => 128 + below(1 + below(64)), "f59c2a39"],
+    ["from 192", below => 255 - below(1 + below(64)), "5774d1ce"],
+    ["below 128", below => below(1 + below(128)), "b6ac0add"],
+    ["seldom from 64", below => (below(200) ? below(1 + below(64)) : 64 + below(192)), "136b4c4c"],
+    ["seldom from 128", below => (below(200) ? 32 + below(1 + below(95)) : 128 + below(128)), "36542b44"],
+    ["long codes", below => below(1 + below(1 + below(256))), "65d7cce7"],
+    ["a code of 1 bit", below => (below(16) < 9 ? 200 : below(256)), "9939d0a8"],
+    ["nothing to gain, and no room left", below => (below(140) ? below(256) : 200), "e80f5745"],
   ])("%s", (_, byte, expected) => {
     // Short codes where the streams start and end.
     const common = byte(() => 0);
@@ -737,8 +737,8 @@ describe("literals compress to what zstd 1.5.7 makes of them", () => {
   });
 
   it("a byte that only the last batch has", () => {
-    const bytes = generate(3 * 3712 + 1, below => below(1 + below(64))).fill(255, -1);
-    expect(summary([3712, 0].map(less => zstdCompressSync(bytes.subarray(less), { level: 1 })))).toBe("2ea935b9");
+    const bytes = generate(3 * 3968 + 64, below => below(1 + below(64))).fill(255, -1);
+    expect(summary([3968, 0].map(less => zstdCompressSync(bytes.subarray(less), { level: 1 })))).toBe("924b74dc");
   });
 
   it("where a block is split, before anything is known about matches", () => {

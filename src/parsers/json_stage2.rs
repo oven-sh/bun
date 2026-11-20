@@ -141,7 +141,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     #[inline(always)]
     fn any_string_needs_scan(&self) -> bool {
-        self.idx.flags & (jidx::FLAG_HAS_BACKSLASH_IN_STRING | jidx::FLAG_HAS_CTRL_IN_STRING) != 0
+        self.idx.flags & (jidx::HAS_BACKSLASH_IN_STRING | jidx::HAS_CONTROL_IN_STRING) != 0
     }
 
     #[inline(always)]

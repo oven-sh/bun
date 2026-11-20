@@ -23,9 +23,6 @@ mod _impl {
                 return true;
             }
 
-            // SAFETY: caller guarantees buf_ptr[0..fill_length] is a valid writable buffer.
-            let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, fill_length) };
-
             // Per Node docs, `'ascii'` on encode is equivalent to `'latin1'` (verbatim
             // byte copy, no 7-bit masking). The shared write_u8::<Ascii> helper masks
             // because the ascii decode path reuses it; fold ascii → latin1 here so
@@ -42,26 +39,27 @@ mod _impl {
             // `ALLOW_PARTIAL_WRITE = true`: Node's `Fill` (node_buffer.cc) copies
             // `min(encodedLength, fillLength)` raw bytes of the encoding, so the
             // repeat loop below always doubles a seed equal to the full encoding.
-            // SAFETY: `s` and `buf` are valid slices derived above; the source/destination
-            // pointers and lengths passed to the encoder are exactly those slice bounds.
-            let result = if str.is_16bit() {
-                let s = str.utf16_slice();
-                dispatch_encoding!(encoding, {
-                    // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
-                    Encoding::Ucs2 => unsafe { encoder::write_u16::<{ Encoding::Utf16le as u8 }, true>(
-                        s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(),
-                    ) },
-                // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
-                }, |E| unsafe { encoder::write_u16::<E, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()) })
-            } else {
-                let s = str.slice();
-                dispatch_encoding!(encoding, {
-                    Encoding::Ucs2 => encoder::write_u8::<{ Encoding::Utf16le as u8 }, true>(s, buf),
-                }, |E| encoder::write_u8::<E, true>(s, buf))
+            // SAFETY: forwarded from this fn's contract.
+            let result = unsafe {
+                if str.is_16bit() {
+                    let s = str.utf16_slice();
+                    dispatch_encoding!(encoding, {
+                        Encoding::Ucs2 => encoder::write_u16::<{ Encoding::Utf16le as u8 }, true>(
+                            s.as_ptr(), s.len(), buf_ptr, fill_length,
+                        ),
+                    }, |E| encoder::write_u16::<E, true>(s.as_ptr(), s.len(), buf_ptr, fill_length))
+                } else {
+                    let s = str.slice();
+                    dispatch_encoding!(encoding, {
+                        Encoding::Ucs2 => encoder::write_u8::<{ Encoding::Utf16le as u8 }, true>(s, buf_ptr, fill_length),
+                    }, |E| encoder::write_u8::<E, true>(s, buf_ptr, fill_length))
+                }
             };
             let Ok(written) = result else {
                 return false;
             };
+            // SAFETY: caller guarantees buf_ptr[0..fill_length] is a valid writable buffer.
+            let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, fill_length) };
 
             if written == 0 && !str.is_empty() {
                 return false;

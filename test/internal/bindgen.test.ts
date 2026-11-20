@@ -246,6 +246,9 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     'held: "pinned" pins a shared buffer; it does not copy one',
   );
   expect(() => b.bytes({ from: ["blob"], held: "pinned" })).toThrow('held: "pinned" does not take a Blob');
+  expect(() => b.bytes({ from: ["buffer"], shared: "atomic", held: "handle" })).toThrow(
+    'shared: "atomic" is only with held: "borrowed"',
+  );
   const pinned = b.bytes({ from: ["string", "buffer"], held: "pinned" });
   expect(() => b.fn({ args: { data: pinned, more: pinned } })).toThrow(
     'held: "pinned": if one fails, nothing releases the string of the next',
@@ -2108,7 +2111,7 @@ describe("a string or a buffer, as bytes", () => {
     ).toThrow(new RangeError("from toString"));
   });
 
-  it.each(["bytesOfThen", "bytesOfThenCopyingShared", "bytesOfThenCopied"] as const)(
+  it.each(["bytesOfThen", "bytesOfThenCopyingShared", "bytesOfThenAtomic", "bytesOfThenCopied"] as const)(
     "%s reads a buffer after every argument is converted",
     name => {
       const then = (buffer: ArrayBufferView | ArrayBufferLike, during: () => void) =>
@@ -2174,6 +2177,14 @@ describe("a string or a buffer, as bytes", () => {
       expect(bindgen.bytesOfThenCopyingShared(buffer, 0)).toEqual(eight);
     for (const buffer of buffers([], SharedArrayBuffer))
       expect(bindgen.bytesOfThenCopyingShared(buffer, 0)).toEqual([]);
+  });
+
+  it('shared: "atomic" reads every kind', () => {
+    for (const data of [...buffers(eight), ...buffers(eight, SharedArrayBuffer), new Blob([new Uint8Array(eight)])])
+      expect(bindgen.bytesOfThenAtomic(data, 0)).toEqual(eight);
+    for (const data of [...buffers([]), ...buffers([], SharedArrayBuffer), new Blob([]), ""])
+      expect(bindgen.bytesOfThenAtomic(data, 0)).toEqual([]);
+    expect(bindgen.bytesOfThenAtomic("a\xe9", 0)).toEqual([0x61, 0xc3, 0xa9]);
   });
 
   describe('held: "handle", in a function that can run JavaScript', () => {

@@ -6674,7 +6674,7 @@ describe("parse error flood", () => {
 
 describe("multi-line comment scanning", () => {
   // The lexer's block-comment scanner switches to a SIMD skip
-  // (bun_highway::index_of_interesting_character_in_multiline_comment) when at
+  // (bun_simd_kernels::index_of_interesting_character_in_multiline_comment) when at
   // least 512 bytes of input remain, so cover sizes on both sides of that
   // threshold and around vector-width boundaries, plus every byte class the
   // skip has to stop at ('*', '\r', '\n', non-ASCII).

@@ -1298,7 +1298,7 @@ export interface BytesOptions {
   otherwise?: "throw" | "toString";
   refuse?: readonly ("undefined" | "null" | "stringObject")[];
   string?: "utf8" | "asIs";
-  shared?: "borrowed" | "copied";
+  shared?: "borrowed" | "copied" | "atomic";
   held?: "borrowed" | "handle" | "copied" | "pinned";
 }
 
@@ -1330,6 +1330,7 @@ export class BytesType extends Type {
     assert(string === "utf8" || shared === "borrowed", 'string: "asIs" does not copy a shared buffer');
     assert(shared === "borrowed" || held !== "pinned", 'held: "pinned" pins a shared buffer; it does not copy one');
     assert(held !== "pinned" || !from.includes("blob"), 'held: "pinned" does not take a Blob');
+    assert(shared !== "atomic" || held === "borrowed", 'shared: "atomic" is only with held: "borrowed"');
   }
   /** C++ converts a string to UTF-8 in the frame. Otherwise Rust gets the string. */
   get #isView(): boolean {
@@ -1391,6 +1392,7 @@ export class BytesType extends Type {
     return this.#options.held === "borrowed";
   }
   canBe(modifier: OptionalType["modifier"]): boolean {
+    if (this.#options.shared === "atomic") return false;
     return this.#options.held === "borrowed" || (this.#options.string === "asIs" && modifier === "nullable");
   }
   get nullRepresentation() {
@@ -1436,6 +1438,7 @@ export class BytesType extends Type {
   #rust(argument: string): readonly [type: string, fromExtern: string] {
     const stringOrBytes = `bindgen::StringOrJsBytes::from_extern(${argument}, heap)`;
     if (this.#options.string === "asIs") return ["bindgen::StringOrJsBytes<'a>", stringOrBytes];
+    if (this.#options.shared === "atomic") return ["&'a [bun_core::ffi::SharedU8]", `${argument}.get_atomic(heap)`];
     return (
       {
         borrowed: ["&'a [u8]", `${argument}.get(heap)`],

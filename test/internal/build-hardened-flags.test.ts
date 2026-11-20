@@ -307,7 +307,24 @@ test("--hardened=on strips with llvm-strip, which keeps PT_GNU_RELRO, or not at 
   expect(linuxConfig({}, String(dir), mockToolchain({ llvmStrip: undefined })).strip).toEndWith("strip");
 });
 
-test("the kernels of zstd, which never call back into JavaScript, keep their arrays on a second stack", () => {
+test("all overrides for a file apply", () => {
+  using dir = tempDir("build-hardened-flags-overrides", {});
+  const entry = (flag: string, applies: boolean) => ({
+    file: "a.cpp",
+    extraFlags: [flag],
+    when: () => applies,
+    desc: "",
+  });
+  const before = fileOverrides.length;
+  fileOverrides.push(entry("-a", true), entry("-b", false), entry("-c", true));
+  try {
+    expect(extraFlagsFor(linuxConfig({}, String(dir)), "a.cpp")).toEqual(["-a", "-c"]);
+  } finally {
+    fileOverrides.length = before;
+  }
+});
+
+test("threads have a second stack, and nothing that can call back into JavaScript keeps its arrays there", () => {
   using dir = tempDir("build-hardened-flags-safe-stack", {});
   const on = linuxConfig({ hardened: true }, String(dir));
   const off = linuxConfig({}, String(dir));
@@ -317,10 +334,7 @@ test("the kernels of zstd, which never call back into JavaScript, keep their arr
       fileOverrides.map(it => it.file).filter(file => extraFlagsFor(cfg, file).includes("-fsanitize=safe-stack")),
     ),
   ];
-  expect(filesWithIt(on)).toEqual(["src/jsc/bindings/highway_zstd.cpp"]);
-  expect(filesWithIt({ ...on, debug: true })).toEqual(filesWithIt(on));
-  expect(filesWithIt(off)).toEqual([]);
-  expect(filesWithIt(withAddressSanitizer)).toEqual([]);
+  for (const cfg of [on, { ...on, debug: true }, off, withAddressSanitizer]) expect(filesWithIt(cfg)).toEqual([]);
   expect(everyFlagOf(on).cxx).toContain("-DBUN_SAFE_STACK=1");
   expect(Object.values(everyFlagOf(on)).flat()).not.toContain("-fsanitize=safe-stack");
   expect(Object.values(everyFlagOf(off)).flat()).not.toContain("-DBUN_SAFE_STACK=1");

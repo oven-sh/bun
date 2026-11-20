@@ -177,6 +177,35 @@ test("SourceMap with invalid name index has undefined name property", () => {
   `);
 });
 
+test.each([1, 40])("SourceMap sorts columns that go back, and ties keep their order (%d lines)", lines => {
+  // Columns 4, 2, 2, 0. All other fields are 0 again at the end of the line. The last lines, which are decoded one
+  // segment at a time, are in order.
+  const mappings = [...Array(lines).fill("ICGCG,FDFDF,ACCCC,FDFDF"), ...Array(lines).fill("AAAA")].join(";");
+  const map = new SourceMap({ version: 3, sources: ["a", "b"], names: ["w", "x", "y", "z"], mappings });
+  for (let generatedLine = 0; generatedLine < lines; generatedLine++) {
+    expect([0, 2, 4].map(column => map.findEntry(generatedLine, column))).toEqual([
+      { generatedLine, generatedColumn: 0, originalSource: "a", originalLine: 0, originalColumn: 0, name: "w" },
+      { generatedLine, generatedColumn: 2, originalSource: "b", originalLine: 2, originalColumn: 1, name: "y" },
+      { generatedLine, generatedColumn: 4, originalSource: "b", originalLine: 3, originalColumn: 1, name: "z" },
+    ]);
+  }
+});
+
+test("SourceMap sorts columns that each belong where another one is", () => {
+  // Columns 2, 3, 1, 5, 4, from lines 0 to 4.
+  const map = new SourceMap({ version: 3, sources: ["a"], names: [], mappings: "EAAA,CACA,FACA,IACA,DACA" });
+  expect([1, 2, 3, 4, 5].map(column => map.findEntry(0, column).originalLine)).toEqual([2, 0, 1, 4, 3]);
+});
+
+test("SourceMap sorts by nothing but the generated line and column", () => {
+  // Columns 256, 1, 1, from lines 2, 1, 0 of b, b, a.
+  const map = new SourceMap({ version: 3, sources: ["a", "b"], names: [], mappings: "gQCEA,/PADA,ADDA" });
+  expect([1, 256].map(column => map.findEntry(0, column))).toMatchObject([
+    { originalSource: "a", originalLine: 0 },
+    { originalSource: "b", originalLine: 2 },
+  ]);
+});
+
 test("SourceMap handles mappings with truncated VLQ segments without crashing", async () => {
   await using proc = Bun.spawn({
     cmd: [

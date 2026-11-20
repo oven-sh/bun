@@ -1,6 +1,6 @@
 //! Sorts the macroblocks into segments by how well they take being quantized.
 
-use bun_highway::webp::{self, Block, Histograms, Macroblock};
+use bun_simd_kernels::webp::{self, Block, Histograms, Macroblock};
 
 use super::border::{self, Border};
 use super::memo::Memo;

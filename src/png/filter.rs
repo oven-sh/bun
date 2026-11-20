@@ -1,4 +1,4 @@
-//! The five scanline filters, whose loops are in src/jsc/bindings/highway_png.cpp. Above the image (or pass) are zeros.
+//! The five scanline filters, whose loops are in src/simd/kernels/png.rs. Above the image (or pass) are zeros.
 //!
 //! A line is a row behind the byte that says which filter it has, its filter type.
 
@@ -30,7 +30,7 @@ pub(crate) fn unfilter(
         return Err(Error::Internal);
     }
     if filter_type != NONE {
-        bun_highway::png_unfilter(filter_type, bytes_per_pixel, row, above);
+        bun_simd_kernels::png::unfilter(filter_type, bytes_per_pixel, row, above);
     }
     Ok(())
 }
@@ -88,8 +88,9 @@ impl CandidateLines {
         let [_, filtered @ ..] = &mut self.lines;
         let filtered = filtered
             .each_mut()
-            .map(|line| line.get_mut(1..).unwrap_or_default());
-        let sums = bun_highway::png_filter_rgba(row, above, filtered);
+            .map(|line| line.get_mut(1..).unwrap_or_default().as_chunks_mut().0);
+        let (row, above) = (row.as_chunks().0, above.as_chunks().0);
+        let sums = bun_simd_kernels::png::filter_rgba(row, above, filtered);
         // The first of equals.
         let best = self.lines.iter().zip(sums).min_by_key(|&(_, sum)| sum);
         best.map(|(line, _)| line.as_slice()).unwrap_or_default()

@@ -1,9 +1,11 @@
 //! Thin Rust wrappers over the statically-linked image codecs and the
-//! highway resize/rotate kernels. Everything works on RGBA8 — decoders are
+//! SIMD resize/rotate kernels. Everything works on RGBA8 — decoders are
 //! told to emit RGBA, encoders are fed RGBA, so Image.rs never branches on
 //! channel layout.
 
-use core::ffi::c_int;
+use bun_simd::Out;
+use bun_simd_kernels::image as kernels;
+use std::collections::TryReserveError;
 
 // Per-format implementations live in their own files; codecs.rs is the
 // dispatch surface only.
@@ -33,11 +35,11 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 ///     dominate and aren't AMX-amenable, and ImageIO bottoms out in stock
 ///     libz (measured against zlib-ng). Keeping these static also makes output bytes
 ///     and the `quality` scale match Linux.
-///   • lanczos3 resize, rotate90, flip → vImage (AMX, ~3-6× the Highway
+///   • lanczos3 resize, rotate90, flip → vImage (AMX, ~3-6× the SIMD
 ///     kernel on the geometry step).
 ///   • heic/avif decode+encode → ImageIO/WIC (no static codec).
 ///
-/// `.bun` skips the OS layer entirely (Highway geometry, heic/avif throw)
+/// `.bun` skips the OS layer entirely (SIMD geometry, heic/avif throw)
 /// so behaviour is byte-identical to a Linux build.
 ///
 /// Unsynchronised: written from JS, read from WorkPool — a torn read of a
@@ -502,21 +504,9 @@ pub(crate) fn encode(
     }
 }
 
-// ───────────────────────────── highway kernels ──────────────────────────────
+// ─────────────────────────────── SIMD kernels ───────────────────────────────
 
-#[repr(i32)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum Filter {
-    Box = 0,
-    Bilinear = 1,
-    Lanczos3 = 2,
-    Mitchell = 3,
-    Nearest = 4,
-    Cubic = 5, // Catmull-Rom
-    Lanczos2 = 6,
-    Mks2013 = 7, // Magic Kernel Sharp
-    Mks2021 = 8,
-}
+pub(crate) use kernels::Filter;
 
 bun_core::comptime_string_map! {
     /// `JSValue.toEnum` lookup table. Hand-listed (not `ComptimeEnumMap`) so
@@ -529,49 +519,40 @@ bun_core::comptime_string_map! {
         b"lanczos3" => Filter::Lanczos3,
         b"mitchell" => Filter::Mitchell,
         b"nearest" => Filter::Nearest,
-        b"cubic" => Filter::Cubic,
+        b"cubic" => Filter::CatmullRom,
         b"lanczos2" => Filter::Lanczos2,
         b"mks2013" => Filter::Mks2013,
         b"mks2021" => Filter::Mks2021,
     };
 }
 
-unsafe extern "C" {
-    safe fn bun_image_resize_scratch_size(
-        src_w: i32,
-        src_h: i32,
-        dst_w: i32,
-        dst_h: i32,
-        filter: i32,
-    ) -> usize;
-    fn bun_image_resize_rgba8(
-        src: *const u8,
-        src_w: i32,
-        src_h: i32,
-        dst: *mut u8,
-        dst_w: i32,
-        dst_h: i32,
-        filter: i32,
-        scratch: *mut u8,
-    ) -> c_int;
-    fn bun_image_rotate_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, deg: i32);
-    fn bun_image_flip_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, horiz: i32);
-    fn bun_image_modulate_rgba8(buf: *mut u8, len: usize, brightness: f32, saturation: f32);
-}
-
 /// In-place brightness/saturation. brightness multiplies V (so 1.0 is
 /// identity); saturation linearly interpolates each channel toward the pixel's
 /// luma (0 = greyscale, 1 = identity, >1 = boost).
 pub(crate) fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
-    // SAFETY: ptr+len from a valid slice; C++ kernel writes within bounds.
-    unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
+    kernels::modulate(rgba.as_chunks_mut().0, brightness, saturation);
 }
 
-fn try_with_capacity(capacity: usize) -> Result<Vec<u8>, Error> {
-    let mut vec = Vec::new();
-    vec.try_reserve_exact(capacity)
+/// The kernels panic on an image that is empty or larger than they have room for.
+fn pixels(rgba: &[u8], width: u32, height: u32) -> Result<&[[u8; 4]], Error> {
+    let pixels = rgba.as_chunks().0.get(..width as usize * height as usize);
+    pixels
+        .filter(|it| !it.is_empty())
+        .ok_or(Error::DecodeFailed)
+}
+
+fn new_image(
+    width: u32,
+    height: u32,
+    fill: impl FnOnce(Out<'_, [u8; 4]>) -> Result<&mut [[u8; 4]], TryReserveError>,
+) -> Result<Vec<u8>, Error> {
+    let (mut pixels, len) = (Vec::new(), width as usize * height as usize);
+    pixels
+        .try_reserve_exact(len)
         .map_err(|_| Error::OutOfMemory)?;
-    Ok(vec)
+    let (room, rest) = bun_simd::spare_capacity(&mut pixels);
+    rest.append(fill(room.take(len)).map_err(|_| Error::OutOfMemory)?);
+    Ok(pixels.into_flattened())
 }
 
 pub(crate) fn resize(
@@ -592,42 +573,13 @@ pub(crate) fn resize(
             Err(e) => return Err(e),
         }
     }
-    // ONE allocation for output + the kernel's scratch arena (intermediate
-    // dst_w×src_h×4 row buffer + spans/weights tables). Zero mallocs in the
-    // C++; mimalloc here is faster than libc, and the over-allocation rounds
-    // into the same size class as the row buffer alone.
-    let out_sz: usize = (dw as usize) * (dh as usize) * 4;
-    let scratch_sz = bun_image_resize_scratch_size(
-        i32::try_from(sw).expect("int cast"),
-        i32::try_from(sh).expect("int cast"),
-        i32::try_from(dw).expect("int cast"),
-        i32::try_from(dh).expect("int cast"),
-        f as i32,
-    );
-    let mut block = try_with_capacity(out_sz + scratch_sz)?;
-    // SAFETY: capacity = dst [0..out_sz) + scratch; the kernel fills scratch before reading it.
-    let rc = unsafe {
-        bun_image_resize_rgba8(
-            src.as_ptr(),
-            i32::try_from(sw).expect("int cast"),
-            i32::try_from(sh).expect("int cast"),
-            block.as_mut_ptr(),
-            i32::try_from(dw).expect("int cast"),
-            i32::try_from(dh).expect("int cast"),
-            f as i32,
-            block.as_mut_ptr().add(out_sz),
-        )
-    };
-    if rc != 0 {
-        return Err(Error::OutOfMemory);
+    let src = pixels(src, sw, sh)?;
+    if dw == 0 || dh == 0 {
+        return Err(Error::EncodeFailed);
     }
-    // SAFETY: rc 0 means the vertical pass stored all dst_w×dst_h pixels, i.e. out_sz bytes.
-    unsafe { bun_core::vec::commit_spare(&mut block, out_sz) };
-    // Drop the scratch tail; mimalloc's shrink is in-place when the new size
-    // fits the same block, so this is free.
-    let _ = block.try_shrink_to_fit();
-    // PERF: Vec::shrink_to_fit may not be in-place — profile if hot.
-    Ok(block)
+    new_image(dw, dh, |out| {
+        kernels::resize(f, src, sw as usize, out, dw as usize)
+    })
 }
 
 pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error> {
@@ -651,20 +603,13 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
             Err(e) => return Err(e),
         }
     }
-    let out_len = (dw as usize) * (dh as usize) * 4;
-    let mut out = try_with_capacity(out_len)?;
-    // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes of capacity; degrees is multiple of 90.
-    unsafe {
-        bun_image_rotate_rgba8(
-            src.as_ptr(),
-            i32::try_from(w).expect("int cast"),
-            i32::try_from(h).expect("int cast"),
-            out.as_mut_ptr(),
-            i32::try_from(degrees).expect("int cast"),
-        )
-    };
-    // SAFETY: the rotate kernel is a permutation that stores every one of the dw*dh dst pixels.
-    unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
+    let src = pixels(src, w, h)?;
+    let out = new_image(dw, dh, |out| match degrees {
+        90 => Ok(kernels::rotate_90(src, w as usize, out)),
+        180 => Ok(kernels::rotate_180(src, out)),
+        270 => Ok(kernels::rotate_270(src, w as usize, out)),
+        _ => unreachable!("rotate: {degrees} degrees"),
+    })?;
     Ok(Decoded {
         rgba: out,
         width: dw,
@@ -682,19 +627,9 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
             Err(e) => return Err(e),
         }
     }
-    let out_len = (w as usize) * (h as usize) * 4;
-    let mut out = try_with_capacity(out_len)?;
-    // SAFETY: src has w*h*4 bytes; out has w*h*4 bytes of capacity.
-    unsafe {
-        bun_image_flip_rgba8(
-            src.as_ptr(),
-            i32::try_from(w).expect("int cast"),
-            i32::try_from(h).expect("int cast"),
-            out.as_mut_ptr(),
-            horizontal as i32,
-        )
-    };
-    // SAFETY: the flip kernel is a permutation that stores every one of the w*h dst pixels.
-    unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
-    Ok(out)
+    let src = pixels(src, w, h)?;
+    new_image(w, h, |out| match horizontal {
+        true => Ok(kernels::flip_horizontally(src, w as usize, out)),
+        false => Ok(kernels::flip_vertically(src, w as usize, out)),
+    })
 }

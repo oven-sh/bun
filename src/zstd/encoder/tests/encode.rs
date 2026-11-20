@@ -5,7 +5,7 @@ mod common;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use bun_highway::zstd::COUNT_MIN;
+use bun_simd::{Target, limit_to};
 use bun_zstd_decoder::{Dictionary, Error, Output, Result, Status, XxHash64, decompress};
 use bun_zstd_encoder::EndDirective::{Continue, End, Flush};
 use bun_zstd_encoder::{DEFAULT_LEVEL, Encoder, compress, compress_bound};
@@ -197,8 +197,8 @@ fn literals_fit_in_as_little_room_with_kernels() -> Result<()> {
         drop(out);
         Ok(summary(&room[..len]))
     };
-    for count_min in [usize::MAX, 4096] {
-        COUNT_MIN.set(count_min);
+    for target in [Target::Portable, Target::Portable64] {
+        limit_to(target);
         assert_eq!(fits(3700), Err(Error::DstSizeTooSmall));
         for room in 3701..3900 {
             assert_eq!(fits(room)?, (3694, 0x5E63_B143));
@@ -213,8 +213,12 @@ fn kernels_do_not_change_the_output() -> Result<()> {
     for parameters in [[(LEVEL, 1)], [(LEVEL, 17)], [(TARGET_BLOCK_LEN, 1340)]] {
         for dictionary in [&[], DICTIONARY] {
             let [mut without, mut with] = [0; 2].map(|_| Vec::with_capacity(4 * input.len()));
-            for (count_min, out) in [(usize::MAX, &mut without), (0, &mut with)] {
-                COUNT_MIN.set(count_min);
+            let both = [
+                (Target::Portable, &mut without),
+                (Target::Portable64, &mut with),
+            ];
+            for (target, out) in both {
+                limit_to(target);
                 three_frames(&mut encoder(&parameters, dictionary)?, &input, out)?;
             }
             assert!(with == without);

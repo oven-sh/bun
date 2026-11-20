@@ -5,8 +5,8 @@ mod two_pass;
 
 use core::ops::{ControlFlow, Range};
 
-use bun_highway::with_bmi2;
 use one_pass::OnePass;
+use simd::{write_items, write_literals};
 use two_pass::TwoPass;
 
 use super::bit_stream::{write_empty_last, write_uncompressed};
@@ -118,15 +118,17 @@ impl ItemCodes {
     }
 }
 
-with_bmi2! {
-    fn write_literals(literals: &[u8], codes: &ItemCodes, writer: &mut BitWriter) {
-        writer.write_codes::<5, _>(literals, |literal| codes.0[usize::from(literal)]);
+#[cfg_attr(mordant, allow(reimplemented_helper))] // The copies for the targets look alike.
+#[bun_simd::foreach_target(sse4 + "bmi2", sse4, neon, portable)]
+mod simd {
+    #[export]
+    pub fn write_literals(literals: &[u8], codes: &ItemCodes, writer: &mut BitWriter) {
+        writer.write_codes::<5, _>(literals, move |literal| codes.0[usize::from(literal)]);
     }
-}
 
-with_bmi2! {
-    fn write_items(items: &[Item], codes: &ItemCodes, writer: &mut BitWriter) {
-        writer.write_codes::<4, _>(items, |item| {
+    #[export]
+    pub fn write_items(items: &[Item], codes: &ItemCodes, writer: &mut BitWriter) {
+        writer.write_codes::<4, _>(items, move |item| {
             codes.0[item.index()].plus(u64::from(item.0) << (u64::BITS - Item::EXTRA_BITS))
         });
     }

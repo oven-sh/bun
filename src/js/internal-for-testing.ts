@@ -40,53 +40,20 @@ export const takeBoringSSLErrorQueueForTesting: () => string[] = $newCppFunction
   0,
 );
 
-// Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
-// directly so tests can exercise the Highway path independent of Bun.hash.
-export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) => bigint = $newCppFunction(
-  "xxhash3_testing.cpp",
-  "Bun__xxhash3_64_forTesting",
-  2,
-);
+export const xxHash3ForTesting = $bindgen("simd_testing.bind.ts", "xxHash3") as (
+  view: ArrayBufferView,
+  seed?: number | bigint,
+) => bigint;
 
-// Runtime-dispatched SIMD byte-search kernels (src/jsc/bindings/highway_strings.cpp)
-// behind `bun_core::strings`, driven directly so tests can sweep lengths and
-// alignments. Returns the kernel's raw result: an index (`haystack.length` =
-// not found), a count, or for memmem/memrmem the offset with -1 = not found.
-// scannerRunStops fills `arg` with its three bitmaps and returns 0. lineStarts
-// fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
-// with uint64 words and returns 0, and so does byteBits, for `byte`.
-// byteSetPrefixLength takes a set of 32 bytes.
-// Those for zstd are only there on x64, and return 1 or 0.
-export const highwayStringsForTesting: (
-  op:
-    | "indexOfChar"
-    | "lastIndexOfChar"
-    | "indexOfNotChar"
-    | "countChar"
-    | "indexOfAny"
-    | "lastIndexOfAny"
-    | "indexOfUntidySlash"
-    | "indexOfUntidySlashOrNonAscii"
-    | "lastIndexOfSlash"
-    | "lastIndexOfSlashOrDot"
-    | "commonPrefixLength"
-    | "countSlashes"
-    | "memmem"
-    | "memrmem"
-    | "memmem16"
-    | "memrmem16"
-    | "scannerRunStops"
-    | "lineStarts"
-    | "oddBlocks"
-    | "byteBits"
-    | "byteSetPrefixLength"
-    | "zstdIsQuicker"
-    | "zstdCountBytes"
-    | "zstdWriteCodes",
-  haystack: Uint8Array,
-  arg: number | Uint8Array,
-  byte?: number,
-) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
+// The kernels behind `bun_core::strings` and `Buffer`, driven directly so tests can sweep lengths and alignments.
+export const simdStringsForTesting = {
+  search: $bindgen("simd_testing.bind.ts", "search"),
+  searchShared: $bindgen("simd_testing.bind.ts", "searchShared"),
+  scannerRunStops: $bindgen("simd_testing.bind.ts", "scannerRunStops"),
+  lineStarts: $bindgen("simd_testing.bind.ts", "lineStarts"),
+  byteBits: $bindgen("simd_testing.bind.ts", "byteBits"),
+  oddBlocks: $bindgen("simd_testing.bind.ts", "oddBlocks"),
+};
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 export const setSQLiteColumnNameTransform = (
@@ -327,6 +294,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   bytesOfRefusingUndefined: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingUndefined"),
   bytesOfThen: $bindgen("bindgen_test.bind.ts", "bytesOfThen"),
   bytesOfThenCopyingShared: $bindgen("bindgen_test.bind.ts", "bytesOfThenCopyingShared"),
+  bytesOfThenAtomic: $bindgen("bindgen_test.bind.ts", "bytesOfThenAtomic"),
   bytesOfThenCopied: $bindgen("bindgen_test.bind.ts", "bytesOfThenCopied"),
   bytesOfAreSameMemory: $bindgen("bindgen_test.bind.ts", "bytesOfAreSameMemory"),
   bytesOfAreSameMemoryCopyingShared: $bindgen("bindgen_test.bind.ts", "bytesOfAreSameMemoryCopyingShared"),

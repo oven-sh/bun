@@ -374,6 +374,15 @@ export const calls: Record<string, string[]> = {
   "native:Bindgen:node_util_binding.bind.ts:parseEnv": ['import { parseEnv } from "node:util";\nparseEnv("FIRST=1\\nSECOND=two")'],
   "native:Bindgen:node_path.bind.ts:parsePosix": ['import { posix } from "node:path";\nposix.parse("/a/b.c")'],
   "native:Bindgen:node_path.bind.ts:parseWin32": ['import { win32 } from "node:path";\nwin32.parse("C:\\\\a\\\\b.c")'],
+  "native:Bindgen:simd_testing.bind.ts:byteBits": [
+    'import { simdStringsForTesting } from "bun:internal-for-testing";\nsimdStringsForTesting.byteBits(new Uint8Array(1), 0)',
+  ],
+  "native:Bindgen:simd_testing.bind.ts:lineStarts": [
+    'import { simdStringsForTesting } from "bun:internal-for-testing";\nsimdStringsForTesting.lineStarts(new Uint8Array(1))',
+  ],
+  "native:Bindgen:simd_testing.bind.ts:oddBlocks": [
+    'import { simdStringsForTesting } from "bun:internal-for-testing";\nsimdStringsForTesting.oddBlocks(new Uint8Array(1))',
+  ],
   "native:Bindgen:socket_body.bind.ts:createSocketPair": [
     'import { createSocketPair } from "bun:internal-for-testing";\nimport { closeSync } from "node:fs";\nconst pair = createSocketPair();\npair.forEach(each => closeSync(each));\npair',
   ],

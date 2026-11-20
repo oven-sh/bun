@@ -232,7 +232,7 @@ impl Residuals {
                 let short = mask(TWO_OR_THREE) | to_transform & !with_more;
                 return self.transform_short_apart(to_transform, short);
             }
-            bun_highway::webp::inverse_dct(&mut self.rows, to_transform);
+            bun_simd_kernels::webp::inverse_dct(&mut self.rows, to_transform);
         }
     }
 
@@ -243,7 +243,7 @@ impl Residuals {
     #[inline(never)]
     fn transform_short_apart(&mut self, to_transform: u32, short: u32) {
         let coefficients = self.rows;
-        bun_highway::webp::inverse_dct(&mut self.rows, to_transform);
+        bun_simd_kernels::webp::inverse_dct(&mut self.rows, to_transform);
         for i in (0..24).filter(|i| short >> i & 1 != 0) {
             spread_three(coefficients.at(i / 4), self.rows.at_mut(i / 4), i % 4);
         }

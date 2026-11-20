@@ -4,7 +4,7 @@ use core::array::from_fn;
 use core::hint::select_unpredictable;
 use core::ops::RangeInclusive;
 
-use bun_highway::brotli::{self, Place, SLOT_SHIFT, Ways};
+use bun_simd_kernels::brotli::{self, CostByCopyLength, Place, SLOT_SHIFT, Ways};
 
 use super::command::{
     Command, Commands, DISTANCE_CODE_OFFSET, DistancePrefix, codes_of_short_lengths,
@@ -82,12 +82,10 @@ impl Node {
 
 const LANES: usize = 4;
 
-type CostByCopyLength = [f32; SHORT_COPY_END + LANES];
-
 const SHORT_COPY_CODES: [u8; SHORT_COPY_END + LANES] = codes_of_short_lengths(&COPY_LENGTH_CODES);
 
 static COPY_EXTRA_BITS: CostByCopyLength = {
-    let (mut bits, mut length) = ([0.0; _], 0);
+    let (mut bits, mut length) = ([0.0; SHORT_COPY_CODES.len()], 0);
     while length < bits.len() {
         bits[length] = COPY_LENGTH_CODES[SHORT_COPY_CODES[length] as usize].extra_bits as f32;
         length += 1;

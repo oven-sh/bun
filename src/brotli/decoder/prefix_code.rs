@@ -2,7 +2,7 @@
 
 use core::hint::select_unpredictable;
 
-use bun_highway::with_bmi2;
+use simd::read_symbol_lengths;
 
 use super::Stop;
 use super::bit_reader::{BitReader, Bits, REFILLED};
@@ -211,8 +211,11 @@ struct SymbolLengths {
     run: u32,
 }
 
-with_bmi2! {
-    fn read_symbol_lengths(
+#[cfg_attr(mordant, allow(reimplemented_helper))] // The copies for the targets look alike.
+#[bun_simd::foreach_target(sse4 + "bmi2", sse4, neon, portable)]
+mod simd {
+    #[export]
+    pub fn read_symbol_lengths(
         lengths: &mut SymbolLengths,
         alphabet_size: u32,
         table: &CodeLengthTable,

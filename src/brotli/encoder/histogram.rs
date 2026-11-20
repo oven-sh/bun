@@ -1,6 +1,6 @@
 //! Counts symbols, and estimates what they cost.
 
-use bun_highway::brotli::{SPARE_LOGARITHMS, estimate_costs};
+use bun_simd_kernels::brotli::{SPARE_LOGARITHMS, estimate_costs};
 
 use super::log2::{FRACTION_BITS, fast_log2, fixed_point_log2};
 use super::symbol_set::SymbolSet;

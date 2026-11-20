@@ -16,6 +16,7 @@ use crate::generated_bindgen::bindgen_test::{
     js_TestSquare,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult, WrapperGuard};
+use bun_core::ffi::SharedU8;
 use bun_ptr::{AsCtxPtr as _, RefPtr};
 
 // This example should be kept in sync with bindgen's documentation
@@ -294,6 +295,10 @@ pub(crate) fn bytes_of(data: &[u8]) -> Vec<u8> {
 
 pub(crate) fn bytes_of_then(data: &[u8], _: f64) -> Vec<u8> {
     data.to_vec()
+}
+
+pub(crate) fn bytes_of_then_atomic(data: &[SharedU8], _: f64) -> Vec<u8> {
+    data.iter().map(SharedU8::get).collect()
 }
 
 pub(crate) fn bytes_of_then_copied(data: Vec<u8>, _: f64) -> Vec<u8> {

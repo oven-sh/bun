@@ -2,8 +2,9 @@ use crate::string::WStr;
 use crate::string::immutable::{
     U3Fast, UNICODE_REPLACEMENT as unicode_replacement, first_non_ascii, first_non_ascii16,
 };
-use crate::vec::BorrowedBuf;
+use crate::strings_impl::{copy_all_utf16_into_shared_utf8, store_bytes};
 use bun_alloc::AllocError;
+use bun_simd::SharedOutU8;
 
 use crate::string::immutable::CodePoint; // i32
 /// Borrow `wbuf[..len]` as `&WStr` (NUL at `wbuf[len]`). Local copy of the
@@ -37,8 +38,9 @@ fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
     if src.is_empty() {
         return;
     }
-    // SAFETY: copy_u16_into_u8 fills exactly src.len() bytes.
-    copy_u16_into_u8(unsafe { crate::vec::writable_slice(dst, src.len()) }, src);
+    bun_simd::extend_vec(dst, src.len(), |out| {
+        bun_simd_kernels::copy_u16_to_u8(src, out)
+    });
 }
 
 // ───── canonical WTF-8 single-rune decode ─────
@@ -426,12 +428,6 @@ pub fn utf8_codepoint_with_fffd(bytes: &[u8]) -> UTF16Replacement {
     }
 }
 
-// SWAR body moved down into `crate::strings_impl` (T0) so the canonical
-// `copy_latin1_into_utf8` is the spec-faithful fast path. Re-export here so
-// `pub use unicode_draft::copy_latin1_into_utf8_stop_on_non_ascii` in
-// `immutable.rs` keeps resolving.
-pub use crate::strings_impl::copy_latin1_into_utf8_stop_on_non_ascii;
-
 pub fn copy_cp1252_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoResult {
     let buf_total = buf_.len();
     let latin1_total = latin1_.len();
@@ -485,14 +481,6 @@ pub fn copy_u8_into_u16(output_: &mut [u16], input_: &[u8]) {
     for i in 0..n {
         output[i] = u16::from(input[i]);
     }
-}
-
-#[inline]
-pub fn copy_u16_into_u8(output: &mut [u8], input: &[u16]) {
-    debug_assert!(input.len() <= output.len());
-    let count = input.len().min(output.len());
-
-    bun_highway::copy_u16_to_u8(&input[..count], output);
 }
 
 pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
@@ -955,7 +943,7 @@ fn cp1252_to_codepoint_bytes_assume_not_ascii16(char: u32) -> u16 {
 /// expect(buffer[0]).toBe(0xc8);
 /// ```
 pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
-    buf: &mut [u8],
+    buf: &[SharedOutU8],
     utf16: &[u16],
 ) -> EncodeIntoResult {
     if utf16.is_empty() {
@@ -965,13 +953,8 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
         };
     }
 
-    let buf_total = buf.len();
-    let mut remaining: &mut [u8] = buf;
-    let mut utf16_remaining = utf16;
-    let mut ended_on_non_ascii = false;
-
     if crate::FeatureFlags::USE_SIMDUTF {
-        let input = WithUtf8Len::utf16_worst_case(utf16, buf_total)
+        let input = WithUtf8Len::utf16_worst_case(utf16, buf.len())
             .unwrap_or_else(|| WithUtf8Len::utf16(utf16));
         crate::scoped_log!(
             strings,
@@ -979,116 +962,43 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
             utf16.len(),
             input.utf8_len()
         );
-        if input.utf8_len() <= buf_total {
-            let result = simdutf::convert::utf16::to::utf8::with_errors::le(
-                input,
-                BorrowedBuf::from(&mut *remaining).unfilled(),
-            );
-            if result.is_successful() {
-                return EncodeIntoResult {
-                    read: utf16.len(),
-                    written: result.count,
-                };
-            }
+        if let Some(result) = copy_all_utf16_into_shared_utf8(buf, input) {
+            return result;
         }
     }
 
-    while let Some(i) = first_non_ascii16(utf16_remaining) {
-        let i = i as usize;
-        let end = i.min(remaining.len());
-        if end > 0 {
-            copy_u16_into_u8(remaining, &utf16_remaining[..end]);
+    let (mut remaining, mut utf16_remaining) = (buf, utf16);
+    loop {
+        let fit = &utf16_remaining[..utf16_remaining.len().min(remaining.len())];
+        let ascii_len = first_non_ascii16(fit).map_or(fit.len(), |i| i as usize);
+        if ascii_len > 0 {
+            let copied = bun_simd_kernels::copy_u16_to_shared(&fit[..ascii_len], remaining);
+            remaining = &remaining[copied..];
+            utf16_remaining = &utf16_remaining[copied..];
         }
-        remaining = &mut remaining[end..];
-        utf16_remaining = &utf16_remaining[end..];
-
-        if utf16_remaining.len().min(remaining.len()) == 0 {
+        if utf16_remaining.is_empty() || remaining.is_empty() {
             break;
         }
 
         let replacement = utf16_codepoint_with_fffd(utf16_remaining);
-
-        let width: usize = replacement.utf8_width() as usize;
+        let mut four = [0u8; 4];
+        let width = crate::strings_impl::encode_wtf8_rune(&mut four, replacement.code_point);
         debug_assert!(width > 1);
         if width > remaining.len() {
-            ended_on_non_ascii = width > 1;
             if ALLOW_TRUNCATED_UTF8_SEQUENCE {
-                match width {
-                    2 => {
-                        if !remaining.is_empty() {
-                            //only first will be written
-                            remaining[0] = (0xC0 | (replacement.code_point >> 6)) as u8;
-                            let rl = remaining.len();
-                            remaining = &mut remaining[rl..];
-                        }
-                    }
-                    3 => {
-                        //only first to second written
-                        match remaining.len() {
-                            1 => {
-                                remaining[0] = (0xE0 | (replacement.code_point >> 12)) as u8;
-                                let rl = remaining.len();
-                                remaining = &mut remaining[rl..];
-                            }
-                            2 => {
-                                remaining[0] = (0xE0 | (replacement.code_point >> 12)) as u8;
-                                remaining[1] = (0x80 | (replacement.code_point >> 6) & 0x3F) as u8;
-                                let rl = remaining.len();
-                                remaining = &mut remaining[rl..];
-                            }
-                            _ => {}
-                        }
-                    }
-                    4 => {
-                        //only 1 to 3 written
-                        match remaining.len() {
-                            1 => {
-                                remaining[0] = (0xF0 | (replacement.code_point >> 18)) as u8;
-                                let rl = remaining.len();
-                                remaining = &mut remaining[rl..];
-                            }
-                            2 => {
-                                remaining[0] = (0xF0 | (replacement.code_point >> 18)) as u8;
-                                remaining[1] = (0x80 | (replacement.code_point >> 12) & 0x3F) as u8;
-                                let rl = remaining.len();
-                                remaining = &mut remaining[rl..];
-                            }
-                            3 => {
-                                remaining[0] = (0xF0 | (replacement.code_point >> 18)) as u8;
-                                remaining[1] = (0x80 | (replacement.code_point >> 12) & 0x3F) as u8;
-                                remaining[2] = (0x80 | (replacement.code_point >> 6) & 0x3F) as u8;
-                                let rl = remaining.len();
-                                remaining = &mut remaining[rl..];
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
-                }
+                store_bytes(remaining, &four);
+                remaining = &[];
             }
             break;
         }
-
+        store_bytes(remaining, &four[..width]);
+        remaining = &remaining[width..];
         utf16_remaining = &utf16_remaining[replacement.len as usize..];
-        // `encode_wtf8_rune` only writes `width` bytes, but materializing
-        // `&mut [u8; 4]` would assert 4 valid bytes even when remaining.len() < 4,
-        // so encode into a stack buffer and copy the `width` bytes that were written.
-        let mut four = [0u8; 4];
-        let _ = crate::strings_impl::encode_wtf8_rune(&mut four, replacement.code_point);
-        remaining[..width].copy_from_slice(&four[..width]);
-        remaining = &mut remaining[width..];
-    }
-
-    if !remaining.is_empty() && !ended_on_non_ascii && !utf16_remaining.is_empty() {
-        let len = remaining.len().min(utf16_remaining.len());
-        copy_u16_into_u8(&mut remaining[..len], &utf16_remaining[..len]);
-        utf16_remaining = &utf16_remaining[len..];
-        remaining = &mut remaining[len..];
     }
 
     EncodeIntoResult {
         read: utf16.len() - utf16_remaining.len(),
-        written: buf_total - remaining.len(),
+        written: buf.len() - remaining.len(),
     }
 }
 

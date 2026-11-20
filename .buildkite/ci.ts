@@ -684,6 +684,12 @@ function hasWebKitChanges(options: PipelineOptions): boolean {
   return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
 }
 
+/** Only canary builds have the runner for the tests of src/simd. */
+function hasSimdChanges(options: PipelineOptions): boolean {
+  const { canary, changedFiles = [] } = options;
+  return !!canary && changedFiles.some(file => file.startsWith("src/simd/"));
+}
+
 /**
  * Host platform the verify-baseline step runs on — per-TARGET-arch, not the
  * shared arm64 build host. Reuses test-fleet images (debian-13 / win-2019) so
@@ -702,6 +708,7 @@ function getVerifyBaselineStep(platform: Platform, options: PipelineOptions): Co
   const triplet = getTargetTriplet(platform);
   const emulator = getEmulatorBinary(platform);
   const jitStressFlag = hasWebKitChanges(options) ? " --jit-stress" : "";
+  const simdCpusFlag = hasSimdChanges(options) ? " --simd-cpus" : "";
   // Android binaries need /system/bin/linker64 + a bionic sysroot, neither of which exist on the
   // build host, so qemu-user cannot load them; only the static instruction scan is meaningful.
   const skipEmulationFlag = abi === "android" ? " --skip-emulation" : "";
@@ -757,11 +764,11 @@ function getVerifyBaselineStep(platform: Platform, options: PipelineOptions): Co
     agents,
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
+    timeout_in_minutes: jitStressFlag || simdCpusFlag ? 30 : 10,
     command: [
       ...setupCommands,
       `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml${os === "windows" ? " || exit /b 1" : ""}`,
-      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --arch ${platform.arch} --emulator ${emulator}${skipEmulationFlag}${jitStressFlag}`,
+      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --arch ${platform.arch} --emulator ${emulator}${skipEmulationFlag}${jitStressFlag}${simdCpusFlag}`,
     ],
   };
 }
@@ -870,6 +877,31 @@ function getCargoTestStep(buildId: string | undefined): CommandStep {
       // ($$ is a literal $ after pipeline-upload interpolation.)
       `TESTAOT="$$PWD/${profileDir}/testaot" BUN_UNDER_TEST="$$PWD/${profileDir}/bun-profile" bun run rust:test`,
     ],
+  };
+}
+
+/** The ops of src/simd differ by architecture, and `getCargoTestStep()` covers only one. */
+function getSimdCargoTestStep(platform: Platform): CommandStep {
+  return {
+    key: `${getPlatformKey(platform)}-simd-cargo-test`,
+    label: `${getPlatformLabel(platform)} - simd-cargo-test`,
+    agents: getTestAgent(platform),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    timeout_in_minutes: 30,
+    command: "bun run rust:test -p bun_simd -p bun_simd_kernels -p bun_simd_trusted -- --include-ignored",
+  };
+}
+
+/** Times the kernels of src/simd on an otherwise idle machine. The tables are in the log. */
+function getSimdBenchmarkStep(platform: Platform, options: PipelineOptions, buildId: string | undefined): CommandStep {
+  const step = getTestBunStep({ ...platform, tests: ["internal/simd.test.ts"] }, options, { buildId });
+  return {
+    ...step,
+    key: `${getPlatformKey(platform)}-simd-benchmark`,
+    label: `${getPlatformLabel(platform)} - simd-benchmark`,
+    env: { ...step.env, BUN_SIMD_BENCHMARK: "1" },
+    soft_fail: true,
   };
 }
 
@@ -1865,6 +1897,19 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           ),
         );
       }
+    }
+  }
+
+  if (!options.skipTests && !isMergeQueue() && hasSimdChanges(options)) {
+    for (const platform of relevantTestPlatforms.filter(it => isInRelease(it) && it.tier !== "beta")) {
+      const simdSteps = [getSimdBenchmarkStep(platform, options, buildId)];
+      if (platform.distro === "debian") simdSteps.push(getSimdCargoTestStep(platform));
+      steps.push(
+        getStepWithDependsOn(
+          { key: getPlatformKey(platform), group: getPlatformLabel(platform), steps: simdSteps },
+          ...getImageDependsOn(platform, baking),
+        ),
+      );
     }
   }
 

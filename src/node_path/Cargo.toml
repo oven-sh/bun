@@ -11,7 +11,7 @@ workspace = true
 
 [dependencies]
 bun_core.workspace = true
-bun_highway.workspace = true
+bun_simd_kernels.workspace = true
 bun_paths.workspace = true
 
 [target.'cfg(windows)'.dependencies]

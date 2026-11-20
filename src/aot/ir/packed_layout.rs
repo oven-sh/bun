@@ -34,7 +34,7 @@ impl PackScratch {
         self.words.clear();
         self.words.reserve(count);
         let room = &mut self.words.spare_capacity_mut()[..count];
-        WordReader(unpack_words(packed, room).iter())
+        WordReader(unpack_words(packed, room.into()).iter())
     }
 }
 

@@ -1544,6 +1544,20 @@ pub(crate) mod command {
         Err(crate::Error::UnrecognizedCommand)
     }
 
+    #[cold]
+    #[inline(never)]
+    fn exec_test(log: &mut bun_ast::Log) -> CmdResult {
+        if (bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG)
+            && let [first, rest @ ..] = after_command(&argv_zslice(), b"test")
+            && first.as_bytes() == b"--run-simd-tests"
+        {
+            let rest: Vec<&[u8]> = rest.iter().map(|arg| arg.as_bytes()).collect();
+            let passed = bun_simd_conformance::run_from_command_line(&rest);
+            Global::exit(u32::from(!passed));
+        }
+        super::test_command::TestCommand::exec(init(Tag::TestCommand, log)?)
+    }
+
     /// Stamps out `#[cold] #[inline(never)] fn $name(log) { init($tag)?; $exec(ctx) }`
     /// for the trivial `init + exec` arms.
     macro_rules! cold_exec {
@@ -1574,7 +1588,6 @@ pub(crate) mod command {
         exec_remove             => (RemoveCommand,         super::remove_command::RemoveCommand::exec),
         exec_link               => (LinkCommand,           super::link_command::LinkCommand::exec),
         exec_unlink             => (UnlinkCommand,         super::unlink_command::UnlinkCommand::exec),
-        exec_test               => (TestCommand,           super::test_command::TestCommand::exec),
         exec_upgrade            => (UpgradeCommand,        super::upgrade_command::UpgradeCommand::exec),
     }
 

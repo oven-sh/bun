@@ -1,5 +1,5 @@
 // Correctness tests for the SIMD source-map mappings decoder
-// (src/jsc/bindings/highway_sourcemap.cpp). The SIMD path is enabled for
+// (src/simd/kernels/sourcemap.rs). The SIMD path is enabled for
 // mappings >= 128 bytes; every case here is parsed twice (once normally,
 // once with BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP=1 to force the scalar
 // decode) and the full mapping list must be byte-identical.

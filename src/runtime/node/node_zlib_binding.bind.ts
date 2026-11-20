@@ -4,7 +4,7 @@ export default b.module({ rustPath: "crate::node::node_zlib_binding" });
 
 export const crc32 = b.fn({
   args: {
-    data: b.bytes({ from: ["string", "buffer"], refuse: ["stringObject"] }),
+    data: b.bytes({ from: ["string", "buffer"], refuse: ["stringObject"], shared: "atomic" }),
     value: b.u32.validateInteger().default(0),
   },
   expected: { data: ["Buffer", "TypedArray", "DataView", "string"] },

@@ -2,7 +2,7 @@
 
 use core::hint::select_unpredictable;
 
-use bun_highway::with_bmi2;
+use bun_simd::with_bmi2;
 use bun_zstd_decoder::array::{At, grow, resize};
 use bun_zstd_decoder::format::CodeKind::{self, LiteralLength, MatchLength, Offset};
 use bun_zstd_decoder::format::{

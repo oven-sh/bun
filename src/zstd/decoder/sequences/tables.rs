@@ -1,6 +1,6 @@
 //! The decoding tables for sequences.
 
-use bun_highway::with_bmi2;
+use bun_simd::with_bmi2;
 
 use crate::array::{At, in_range};
 use crate::bits::Width;

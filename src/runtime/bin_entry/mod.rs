@@ -155,6 +155,11 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    for the entire process.
     unsafe { bun_core::init_argv(argc, argv) };
 
+    #[cfg(not(bun_locked_environment))]
+    if bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG {
+        limit_simd_target();
+    }
+
     // Everything below calls into simdutf, including the crash handler.
     if !bun_simdutf_sys::simdutf::has_any_implementation() {
         unsafe extern "C" {
@@ -209,6 +214,18 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     crate::cli::Cli::start();
     // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
     Global::exit(0)
+}
+
+/// `BUN_SIMD_TARGET=avx2` picks the kernels of an older CPU. Each kernel keeps what its first call picks.
+#[cfg(not(bun_locked_environment))]
+fn limit_simd_target() {
+    // SAFETY: the name ends with NUL, and no other thread runs. On Windows `env_var` calls kernels.
+    let name = unsafe { libc::getenv(c"BUN_SIMD_TARGET".as_ptr()) };
+    if name.is_null() {
+        return;
+    }
+    // SAFETY: not null, so a value of the environment.
+    bun_simd::limit_to_named(unsafe { bun_core::ffi::cstr(name) }.to_bytes());
 }
 
 /// Linux's `expand_fdtable()` waits for an RCU grace period (tens of ms on a

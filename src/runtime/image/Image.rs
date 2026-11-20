@@ -1,5 +1,5 @@
 //! `Bun.Image` — Sharp-shaped image pipeline backed by the statically linked
-//! `bun_jpeg`, `bun_png` and `bun_webp` codecs and the highway resize kernel.
+//! `bun_jpeg`, `bun_png` and `bun_webp` codecs and the SIMD resize kernel.
 //!
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
 //! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
@@ -147,16 +147,6 @@ bun_core::comptime_string_map! {
 impl jsc::FromJsEnum for Fit {
     fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
         v.to_enum_from_map(global, prop, &FIT_MAP, "'fill' or 'inside'")
-    }
-}
-impl jsc::FromJsEnum for codecs::Filter {
-    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
-        v.to_enum_from_map(
-            global,
-            prop,
-            &codecs::FILTER_MAP,
-            "'box', 'bilinear', 'linear', 'lanczos3', 'mitchell', 'nearest', 'cubic', 'lanczos2', 'mks2013' or 'mks2021'",
-        )
     }
 }
 
@@ -429,7 +419,12 @@ impl Image {
             ..Default::default()
         };
         if opt.is_object() {
-            if let Some(v) = opt.get_optional_enum::<codecs::Filter>(global, "filter")? {
+            if let Some(v) = opt.get_optional_enum_from_map(
+                global,
+                "filter",
+                &codecs::FILTER_MAP,
+                "'box', 'bilinear', 'linear', 'lanczos3', 'mitchell', 'nearest', 'cubic', 'lanczos2', 'mks2013' or 'mks2021'",
+            )? {
                 r.filter = v;
             }
             if let Some(v) = opt.get_optional_enum::<Fit>(global, "fit")? {
@@ -1835,7 +1830,7 @@ impl PipelineTask {
         if let Some(r) = p.resize {
             let t = resolve_resize(r, d.width, d.height);
             // Guard the output canvas AND the H-then-V intermediate (always
-            // dst_w × src_h — image_resize.cpp pass order is fixed). A 1×N
+            // dst_w × src_h — the order of the passes is fixed). A 1×N
             // source → resize(W,1) has tiny input AND output canvases yet a
             // W×N intermediate; with W=262143, N=16383 that's a 17 GiB alloc
             // from a ~200-byte PNG. The src_w×dst_h cross-product is bounded

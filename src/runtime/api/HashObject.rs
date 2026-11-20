@@ -1,4 +1,5 @@
 use bun_jsc::bindgen::JsLocal;
+use bun_simd::SharedU8;
 
 /// Each hasher truncates it to its native seed width.
 fn seed_of(seed: JsLocal<'_>) -> u64 {
@@ -17,12 +18,12 @@ pub(crate) fn wyhash(data: &[u8], seed: JsLocal<'_>) -> u64 {
     bun_wyhash::Wyhash::hash(seed_of(seed), data)
 }
 
-pub(crate) fn adler32(data: &[u8]) -> u32 {
-    bun_highway::adler32(data)
+pub(crate) fn adler32(data: &[SharedU8]) -> u32 {
+    bun_simd_kernels::adler32_shared(1, data)
 }
 
-pub(crate) fn crc32(data: &[u8], seed: JsLocal<'_>) -> u32 {
-    bun_highway::crc32(seed_of(seed) as u32, data)
+pub(crate) fn crc32(data: &[SharedU8], seed: JsLocal<'_>) -> u32 {
+    bun_simd_kernels::crc32_shared(seed_of(seed) as u32, data)
 }
 
 pub(crate) fn city_hash32(data: &[u8]) -> u32 {
@@ -33,17 +34,17 @@ pub(crate) fn city_hash64(data: &[u8], seed: JsLocal<'_>) -> u64 {
     bun_hash::CityHash64::hash_with_seed(data, seed_of(seed))
 }
 
-pub(crate) fn xx_hash32(data: &[u8], seed: JsLocal<'_>) -> u32 {
-    bun_hash::XxHash32::hash(seed_of(seed) as u32, data)
+pub(crate) fn xx_hash32(data: &[SharedU8], seed: JsLocal<'_>) -> u32 {
+    bun_simd_kernels::xxhash32_shared(seed_of(seed) as u32, data)
 }
 
-pub(crate) fn xx_hash64(data: &[u8], seed: JsLocal<'_>) -> u64 {
-    bun_hash::XxHash64::hash(seed_of(seed), data)
+pub(crate) fn xx_hash64(data: &[SharedU8], seed: JsLocal<'_>) -> u64 {
+    bun_simd_kernels::xxhash64_shared(seed_of(seed), data)
 }
 
-/// Runtime-dispatched SIMD (Highway): src/jsc/bindings/xxhash3.cpp. The seed is truncated to 32 bits.
-pub(crate) fn xx_hash3(data: &[u8], seed: JsLocal<'_>) -> u64 {
-    bun_highway::xxhash3_64(u64::from(seed_of(seed) as u32), data)
+/// The seed is truncated to 32 bits.
+pub(crate) fn xx_hash3(data: &[SharedU8], seed: JsLocal<'_>) -> u64 {
+    bun_simd_kernels::xxhash3_64_shared(u64::from(seed_of(seed) as u32), data)
 }
 
 pub(crate) fn murmur32v2(data: &[u8], seed: JsLocal<'_>) -> u32 {

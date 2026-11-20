@@ -3,7 +3,7 @@
 use core::hint::{black_box, cold_path};
 use core::ops::Range;
 
-use bun_highway::with_bmi2;
+use bun_simd::with_bmi2;
 use bun_zstd_decoder::array::At;
 
 use super::hash::Hasher;

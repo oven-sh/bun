@@ -1,7 +1,7 @@
 //! The input that is being compressed, behind what matches are looked for in.
 
 use bun_deflate::format::{MAX_MATCH_LEN, MIN_MATCH_LEN};
-use bun_highway::common_prefix_length;
+use bun_simd_kernels::common_prefix_len;
 
 use crate::checksum::Checksum;
 use crate::error::Result;
@@ -144,7 +144,7 @@ pub(super) fn word(bytes: &[u8], at: u32) -> Option<u64> {
 /// How many bytes are equal at the start, at most `MAX_MATCH_LEN`.
 #[inline(always)]
 pub(super) fn match_len(a: &Scan, b: &Scan) -> u32 {
-    match common_prefix_length(&a[..16], &b[..16]) {
+    match common_prefix_len(&a[..16], &b[..16]) {
         16 => long_match_len(a, b),
         len => len as u32,
     }
@@ -155,7 +155,7 @@ fn long_match_len(a: &Scan, b: &Scan) -> u32 {
     let mut len = 16;
     while let (Some(a), Some(b)) = (chunk::<32>(a, len), chunk::<32>(b, len)) {
         if a != b {
-            return (len + common_prefix_length(a, b) as u32).min(MAX_MATCH_LEN as u32);
+            return (len + common_prefix_len(a, b) as u32).min(MAX_MATCH_LEN as u32);
         }
         len += 32;
     }

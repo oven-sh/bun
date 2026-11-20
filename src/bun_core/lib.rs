@@ -1152,12 +1152,11 @@ pub use fmt::{
 pub use crate::string::immutable::{
     CodePoint, DecodeHexError, LineRange, PercentEncodeError, QuoteEscapeFormatFlags,
     SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT, WHITESPACE_CHARS, append, cat,
-    concat_with_length, contains_char, copy, count_char, decode_hex_to_bytes,
-    decode_hex_to_bytes_truncate, encode_bytes_to_hex, ends_with_any, ends_with_char,
-    ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
-    format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
-    has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace,
-    is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
+    concat_with_length, contains_char, copy, count_char, decode_hex_to_bytes, ends_with_any,
+    ends_with_char, ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime,
+    eql_comptime_utf16, format_escapes, has_prefix, has_prefix_case_insensitive,
+    has_prefix_comptime, has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar,
+    is_all_whitespace, is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
     is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_utf16,
     length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
     sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
@@ -1171,6 +1170,9 @@ pub use crate::string::immutable::{
 /// duplicates an `immutable` scanner; when both layers need the same helper,
 /// the single implementation lives here and `immutable` re-exports it.
 pub(crate) mod strings_impl {
+    use bun_simd::{Out, SharedOutU8};
+    use bun_simd_kernels as kernels;
+
     // ─── UTF-16 surrogate-pair encoding (ICU U16_LEAD / U16_TRAIL) ─────────────
     // Defined here in
     // bun_core (not bun_string) so the WTF-8 fallback transcoder below and any
@@ -1221,7 +1223,7 @@ pub(crate) mod strings_impl {
         }
         let mut size = input.len();
         let mut i = 0usize;
-        while let Some(pos) = ::bun_highway::memmem(&input[i..], needle) {
+        while let Some(pos) = kernels::memmem(&input[i..], needle) {
             size = size - needle.len() + replacement.len();
             i += pos + needle.len();
         }
@@ -1240,7 +1242,7 @@ pub(crate) mod strings_impl {
         let mut o = 0usize;
         let mut count = 0usize;
         loop {
-            match ::bun_highway::memmem(&input[i..], needle) {
+            match kernels::memmem(&input[i..], needle) {
                 Some(pos) => {
                     output[o..o + pos].copy_from_slice(&input[i..i + pos]);
                     o += pos;
@@ -1265,7 +1267,7 @@ pub(crate) mod strings_impl {
         }
         let mut out = Vec::with_capacity(replacement_size(input, needle, replacement));
         let mut i = 0usize;
-        while let Some(pos) = ::bun_highway::memmem(&input[i..], needle) {
+        while let Some(pos) = kernels::memmem(&input[i..], needle) {
             out.extend_from_slice(&input[i..i + pos]);
             out.extend_from_slice(replacement);
             i += pos + needle.len();
@@ -1679,7 +1681,13 @@ pub(crate) mod strings_impl {
     /// Port of `copyUTF16IntoUTF8` — encode UTF-16 into a fixed-size UTF-8 buffer.
     /// Unpaired surrogates are replaced with U+FFFD (matches `utf16CodepointWithFFFD`).
     /// Returns units read / bytes written. Caller is responsible for sizing `buf`.
+    #[inline]
     pub fn copy_utf16_into_utf8(buf: &mut [u8], utf16: &[u16]) -> EncodeIntoResult {
+        copy_utf16_into_shared_utf8(Out::from(buf).into_shared(), utf16)
+    }
+
+    /// [`copy_utf16_into_utf8`] for the bytes of a JS buffer.
+    pub fn copy_utf16_into_shared_utf8(buf: &[SharedOutU8], utf16: &[u16]) -> EncodeIntoResult {
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
@@ -1689,25 +1697,15 @@ pub(crate) mod strings_impl {
     }
 
     pub fn copy_utf16_into_utf8_with_utf8_len(
-        buf: &mut [u8],
+        buf: &[SharedOutU8],
         input: WithUtf8Len<'_, u16>,
     ) -> EncodeIntoResult {
         let utf16 = input.slice();
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
-        // Fast path: if buf can definitely hold the whole conversion, try simdutf.
-        if input.utf8_len() <= buf.len() {
-            let r = simdutf::convert::utf16::to::utf8::with_errors::le(
-                input,
-                BorrowedBuf::from(&mut *buf).unfilled(),
-            );
-            if r.is_successful() {
-                return EncodeIntoResult {
-                    read: utf16.len(),
-                    written: r.count,
-                };
-            }
+        if let Some(result) = copy_all_utf16_into_shared_utf8(buf, input) {
+            return result;
         }
         // Scalar path (handles unpaired surrogates + partial-buffer fill).
         let mut read = 0usize;
@@ -1719,17 +1717,47 @@ pub(crate) mod strings_impl {
             if written + n > buf.len() {
                 break;
             }
-            buf[written..written + n].copy_from_slice(&tmp[..n]);
+            store_bytes(&buf[written..], &tmp[..n]);
             written += n;
             read += adv as usize;
         }
         EncodeIntoResult { read, written }
     }
 
+    /// `None` if `buf` may be too short, or if there is an unpaired surrogate.
+    #[inline]
+    pub(crate) fn copy_all_utf16_into_shared_utf8(
+        buf: &[SharedOutU8],
+        input: WithUtf8Len<'_, u16>,
+    ) -> Option<EncodeIntoResult> {
+        if input.utf8_len() > buf.len() {
+            return None;
+        }
+        let result = simdutf::convert::utf16::to::utf8::with_errors::le_to_shared(input, buf);
+        result.is_successful().then_some(EncodeIntoResult {
+            read: input.slice().len(),
+            written: result.count,
+        })
+    }
+
+    /// As many of a few bytes as fit.
+    #[inline]
+    pub(crate) fn store_bytes(to: &[SharedOutU8], bytes: &[u8]) {
+        for (to, &byte) in to.iter().zip(bytes) {
+            to.set(byte);
+        }
+    }
+
     /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
     #[inline]
     pub fn copy_latin1_into_utf8(buf: &mut [u8], latin1: &[u8]) -> EncodeIntoResult {
-        if latin1.len() <= 16 && latin1.len() <= buf.len() && copy_short_ascii(buf, latin1) {
+        copy_latin1_into_shared_utf8(Out::from(buf).into_shared(), latin1)
+    }
+
+    /// [`copy_latin1_into_utf8`] for the bytes of a JS buffer.
+    #[inline]
+    pub fn copy_latin1_into_shared_utf8(buf: &[SharedOutU8], latin1: &[u8]) -> EncodeIntoResult {
+        if kernels::copy_few_ascii_to_shared(latin1, buf) {
             return EncodeIntoResult {
                 read: latin1.len(),
                 written: latin1.len(),
@@ -1739,124 +1767,44 @@ pub(crate) mod strings_impl {
         if latin1.len() >= MIN_LEN_FOR_SIMDUTF {
             let input = WithUtf8Len::latin1(latin1);
             if buf.len() >= input.utf8_len() {
-                let mut out = BorrowedBuf::from(buf);
-                simdutf::convert::latin1::to::utf8(input, out.unfilled());
                 return EncodeIntoResult {
                     read: latin1.len(),
-                    written: out.len(),
+                    written: simdutf::convert::latin1::to::shared_utf8(input, buf),
                 };
             }
         }
-        copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
+        copy_latin1_into_shared_utf8_by_runs(buf, latin1)
     }
 
-    /// Copies at most 16 bytes with two loads and two stores that overlap. Writes nothing and
-    /// returns false unless all of `src` is ASCII. `dst` is at least as long as `src`.
-    #[inline(always)]
-    fn copy_short_ascii(dst: &mut [u8], src: &[u8]) -> bool {
-        let n = src.len();
-        debug_assert!(n <= 16);
-        let dst = &mut dst[..n];
-        if let (Some(&first), Some(&last)) = (src.first_chunk::<8>(), src.last_chunk()) {
-            if (u64::from_ne_bytes(first) | u64::from_ne_bytes(last)) & 0x8080_8080_8080_8080 != 0 {
-                return false;
-            }
-            *dst.first_chunk_mut().unwrap() = first;
-            *dst.last_chunk_mut().unwrap() = last;
-        } else if let (Some(&first), Some(&last)) = (src.first_chunk::<4>(), src.last_chunk()) {
-            if (u32::from_ne_bytes(first) | u32::from_ne_bytes(last)) & 0x8080_8080 != 0 {
-                return false;
-            }
-            *dst.first_chunk_mut().unwrap() = first;
-            *dst.last_chunk_mut().unwrap() = last;
-        } else if n > 0 {
-            // The first, the middle and the last of one, two or three bytes are all of them.
-            let (first, middle, last) = (src[0], src[n / 2], src[n - 1]);
-            if (first | middle | last) >= 0x80 {
-                return false;
-            }
-            dst[0] = first;
-            dst[n / 2] = middle;
-            dst[n - 1] = last;
-        }
-        true
-    }
-
-    #[inline]
-    fn copy_ascii_prefix(dst: &mut [u8], src: &[u8]) -> usize {
-        debug_assert_eq!(dst.len(), src.len());
-
-        const HIGHWAY_MIN_LEN: usize = 64;
-        if src.len() >= HIGHWAY_MIN_LEN {
-            return bun_highway::copy_ascii_prefix(src, dst);
-        }
-
-        const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
-        let n = src.len();
-        assert!(dst.len() >= n);
-        let (from, to) = (src.as_ptr(), dst.as_mut_ptr());
-        let mut copied = 0usize;
-        // SAFETY: every access below lies in the first `n` bytes of `src` or of `dst`.
-        unsafe {
-            while copied + 8 <= n {
-                let word = from.add(copied).cast::<u64>().read_unaligned();
-                if word & HIGH_BITS != 0 {
-                    break;
-                }
-                to.add(copied).cast::<u64>().write_unaligned(word);
-                copied += 8;
-            }
-            // The last word overlaps the one before it.
-            if copied + 8 > n && n >= 8 {
-                let word = from.add(n - 8).cast::<u64>().read_unaligned();
-                if word & HIGH_BITS == 0 {
-                    to.add(n - 8).cast::<u64>().write_unaligned(word);
-                    return n;
-                }
-            }
-            while copied < n && *from.add(copied) < 0x80 {
-                *to.add(copied) = *from.add(copied);
-                copied += 1;
-            }
-        }
-        copied
-    }
-
-    /// Port of `copyLatin1IntoUTF8StopOnNonASCII`.
-    pub fn copy_latin1_into_utf8_stop_on_non_ascii<const STOP: bool>(
-        buf_: &mut [u8],
-        latin1_: &[u8],
+    fn copy_latin1_into_shared_utf8_by_runs(
+        buf: &[SharedOutU8],
+        latin1: &[u8],
     ) -> EncodeIntoResult {
-        let mut written = 0usize;
-        let mut read = 0usize;
-
-        while written < buf_.len() && read < latin1_.len() {
-            let n = (buf_.len() - written).min(latin1_.len() - read);
-            let copied =
-                copy_ascii_prefix(&mut buf_[written..written + n], &latin1_[read..read + n]);
-            written += copied;
-            read += copied;
-            if copied == n {
+        let (mut to, mut from) = (buf, latin1);
+        loop {
+            let copied = copy_ascii_prefix_to_shared(to, from);
+            (to, from) = (&to[copied..], &from[copied..]);
+            let (Some((pair, to_rest)), [byte, rest @ ..]) = (to.split_first_chunk::<2>(), from)
+            else {
                 break;
-            }
-
-            debug_assert!(latin1_[read] >= 0x80);
-            if STOP {
-                return EncodeIntoResult {
-                    written: usize::MAX,
-                    read: usize::MAX,
-                };
-            }
-            if buf_.len() - written < 2 {
-                break;
-            }
-            buf_[written..written + 2]
-                .copy_from_slice(&latin1_to_codepoint_bytes_assume_not_ascii(latin1_[read]));
-            written += 2;
-            read += 1;
+            };
+            store_bytes(pair, &latin1_to_codepoint_bytes_assume_not_ascii(*byte));
+            (to, from) = (to_rest, rest);
         }
+        EncodeIntoResult {
+            read: latin1.len() - from.len(),
+            written: buf.len() - to.len(),
+        }
+    }
 
-        EncodeIntoResult { written, read }
+    /// Copies up to the first byte that is not ASCII or does not fit, and returns the count.
+    #[inline]
+    pub fn copy_ascii_prefix_to_shared(to: &[SharedOutU8], from: &[u8]) -> usize {
+        const MIN_LEN_FOR_DISPATCH: usize = 64;
+        if from.len().min(to.len()) >= MIN_LEN_FOR_DISPATCH {
+            return kernels::copy_ascii_prefix_to_shared(from, to);
+        }
+        kernels::copy_short_ascii_prefix_to_shared(from, to)
     }
 
     /// Null-terminated variant of `to_utf8_from_latin1`. Returns `ZBox` so
@@ -2231,11 +2179,11 @@ pub(crate) mod strings_impl {
         }
         #[inline(always)]
         fn index_of_unit(s: &[u8], unit: u8) -> Option<usize> {
-            bun_highway::index_of_char(s, unit)
+            crate::strings::index_of_char_usize(s, unit)
         }
         #[inline(always)]
         fn last_index_of_unit(s: &[u8], unit: u8) -> Option<usize> {
-            bun_highway::last_index_of_char(s, unit)
+            crate::strings::last_index_of_char(s, unit)
         }
     }
     impl PathByte for u16 {
@@ -2253,11 +2201,11 @@ pub(crate) mod strings_impl {
         }
         #[inline(always)]
         fn index_of_unit(s: &[u16], unit: u16) -> Option<usize> {
-            bun_highway::memmem16(s, &[unit])
+            kernels::index_of_char16(s, unit)
         }
         #[inline(always)]
         fn last_index_of_unit(s: &[u16], unit: u16) -> Option<usize> {
-            bun_highway::memrmem16(s, &[unit])
+            kernels::last_index_of_char16(s, unit)
         }
     }
 
@@ -2410,6 +2358,8 @@ pub mod ffi {
     // `bun_core::ffi::{wcslen,wstr_units,slice,slice_mut}` call paths are
     // unchanged.
     pub use bun_opaque::ffi::{slice, slice_mut, wcslen, wstr_units};
+
+    pub use bun_simd::{SharedOutU8, SharedU8};
 
     /// Borrow a NUL-terminated C string from an FFI pointer.
     ///

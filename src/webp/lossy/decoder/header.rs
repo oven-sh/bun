@@ -1,6 +1,6 @@
 //! The frame header, RFC 6386 sections 9 and 19.2.
 
-use bun_highway::webp::FilterStrength;
+use bun_simd_kernels::webp::FilterStrength;
 
 use super::bool_reader::BoolReader;
 use super::residuals::{Probabilities, Quantizers};

@@ -13,7 +13,6 @@
 import type { Dependency } from "../source.ts";
 import { boringssl } from "./boringssl.ts";
 import { cares } from "./cares.ts";
-import { highway } from "./highway.ts";
 import { libuv } from "./libuv.ts";
 import { lolhtml } from "./lolhtml.ts";
 import { lsqpack } from "./lsqpack.ts";
@@ -35,7 +34,6 @@ export const allDeps: readonly Dependency[] = [
   nodejsHeaders,
 
   cares,
-  highway,
   libuv,
   lolhtml,
   rustArgon2,
@@ -57,7 +55,6 @@ export const allDeps: readonly Dependency[] = [
 export {
   boringssl,
   cares,
-  highway,
   libuv,
   lolhtml,
   lsqpack,

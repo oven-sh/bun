@@ -1,7 +1,6 @@
 //! Level 1: one candidate for a match, written at once with the fixed codes.
 
 use bun_deflate::format::STATIC;
-use bun_highway::with_bmi2;
 
 use super::chains::HASHED_LEN;
 use super::encoding::FIXED;
@@ -58,7 +57,7 @@ impl Deflater {
             if this.quick_block == QuickBlock::None {
                 this.open_quick_block(is_last);
             }
-            compress_up_to(this, stop);
+            simd::compress_up_to(this, stop);
             if !this.pending.is_almost_full() {
                 return true;
             }
@@ -79,39 +78,45 @@ impl Deflater {
     }
 }
 
-with_bmi2! {
+#[bun_simd::foreach_target(sse4 + "bmi2", sse4, neon, portable)]
+mod simd {
     /// Or until `pending` is almost full.
-    fn compress_up_to(this: &mut Deflater, stop: u32) -> () {
+    #[export]
+    pub fn compress_up_to(this: &mut Deflater, stop: u32) {
         let (mut position, end) = (this.window.position, this.window.end);
         let max_distance = this.window.max_distance();
         let window = this.window.scannable_below(stop);
         let mut index = this.chains.over(window);
         let max_len = (end - position) as usize * 9 / 8 + 1;
-        this.pending.write_some(max_len, #[inline(always)] |writer| {
-            while let Some::<&Scan>(scan) = chunk(window, position) {
-                let lookahead = end - position;
-                if lookahead >= HASHED_LEN {
-                    let hashed = chunk(scan, 0).copied().unwrap_or_default();
-                    let candidate = index.insert::<false>(position, hashed);
-                    let distance = position.wrapping_sub(candidate);
-                    if distance.wrapping_sub(1) < max_distance
-                        && let Some::<&Scan>(other) = chunk(window, candidate)
-                        && chunk(other, 0) == Some(&hashed)
-                    {
-                        let len = match_len(scan, other).min(lookahead);
-                        position += len;
-                        if !writer.put_and_check(FIXED.of(Symbol::for_match(distance, len))) {
-                            break;
+        this.pending.write_some(
+            max_len,
+            #[inline(always)]
+            |writer| {
+                while let Some::<&Scan>(scan) = chunk(window, position) {
+                    let lookahead = end - position;
+                    if lookahead >= HASHED_LEN {
+                        let hashed = chunk(scan, 0).copied().unwrap_or_default();
+                        let candidate = index.insert::<false>(position, hashed);
+                        let distance = position.wrapping_sub(candidate);
+                        if distance.wrapping_sub(1) < max_distance
+                            && let Some::<&Scan>(other) = chunk(window, candidate)
+                            && chunk(other, 0) == Some(&hashed)
+                        {
+                            let len = match_len(scan, other).min(lookahead);
+                            position += len;
+                            if !writer.put_and_check(FIXED.of(Symbol::for_match(distance, len))) {
+                                break;
+                            }
+                            continue;
                         }
-                        continue;
+                    }
+                    position += 1;
+                    if !writer.put_and_check(FIXED.of_literal(scan[0])) {
+                        break;
                     }
                 }
-                position += 1;
-                if !writer.put_and_check(FIXED.of_literal(scan[0])) {
-                    break;
-                }
-            }
-        });
+            },
+        );
         this.window.position = position;
     }
 }

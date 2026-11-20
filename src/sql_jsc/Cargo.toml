@@ -23,5 +23,6 @@ bun_event_loop.workspace = true
 bun_http.workspace = true
 bun_jsc.workspace = true
 bun_ptr.workspace = true
+bun_simd.workspace = true
 bun_sql.workspace = true
 bun_uws.workspace = true

@@ -66,14 +66,10 @@ impl TextEncoderStreamEncoder {
 
         let mut remain = input;
         while !remain.is_empty() {
-            // SAFETY: copy_latin1_into_utf8 writes initialized bytes into the spare capacity and
-            // returns the number written; fill_spare commits exactly that many.
-            let result = unsafe {
-                bun_core::vec::fill_spare(buffer, 0, |spare| {
-                    let r = strings::copy_latin1_into_utf8(spare, remain);
-                    (r.written, r)
-                })
-            };
+            let spare = bun_simd::Out::<u8>::from(buffer.spare_capacity_mut()).into_shared();
+            let result = strings::copy_latin1_into_shared_utf8(spare, remain);
+            // SAFETY: it has written that many bytes to the start of the spare capacity.
+            unsafe { bun_core::vec::commit_spare(buffer, result.written) };
             remain = &remain[result.read..];
 
             if result.written == 0 && result.read == 0 {

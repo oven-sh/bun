@@ -289,11 +289,9 @@ const nativeFiles = [
   "bindgen_test.bind.ts",
   "declared_results_testing.bind.ts",
   "decodeURIComponentSIMD.cpp",
-  "highway_strings_testing.cpp",
   "node_crypto_binding.cpp",
   "streams/BunStreamConsumers.cpp",
   "stringWidth.cpp",
-  "xxhash3_testing.cpp",
 ];
 
 export default b.declarations(

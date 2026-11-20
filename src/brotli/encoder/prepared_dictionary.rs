@@ -1,6 +1,6 @@
 use core::ops::Range;
 
-use bun_highway::brotli::Place;
+use bun_simd_kernels::brotli::Place;
 
 use super::hash::{Candidate, Match, score, score_of_recent};
 use super::matching::{HASH_MULTIPLIER_64, load32, match_length};

@@ -1,6 +1,6 @@
 //! What things cost to store, in 256ths of a bit.
 
-use bun_highway::webp::{Candidates, IS_FLAT, MAX_SYMBOL};
+use bun_simd_kernels::webp::{Candidates, IS_FLAT, MAX_SYMBOL};
 
 use crate::array::At;
 use crate::error::Result;

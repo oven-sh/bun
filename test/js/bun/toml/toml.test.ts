@@ -437,6 +437,35 @@ describe("strings", () => {
     expect((TOML.parse("a = 'C:\\Users\\nodejs\\templates'") as any).a).toBe("C:\\Users\\nodejs\\templates");
   });
 
+  // https://github.com/oven-sh/bun/issues/45036: a Windows path or a regex in
+  // a basic string is an invalid escape. The message names the escape and the
+  // fix, and does not send the user to hex-digit formatting.
+  test("invalid escapes name the escape and the literal-string fix (#45036)", () => {
+    const fix = "; for a literal backslash, use a literal string (single quotes) or write \\\\";
+    expect(syntaxError('a = "C:\\Users\\name"').message).toBe(
+      "TOML Parse error: Invalid escape sequence '\\U' in basic string: a Unicode escape must be followed by exactly 8 hex digits" +
+        fix,
+    );
+    // Fails at the second hex digit, same hint.
+    expect(syntaxError('a = "C:\\Ubuntu\\home"').message).toBe(
+      "TOML Parse error: Invalid escape sequence '\\U' in basic string: a Unicode escape must be followed by exactly 8 hex digits" +
+        fix,
+    );
+    expect(syntaxError('a = "\\d+\\.txt"').message).toBe(
+      "TOML Parse error: Invalid escape sequence '\\d' in basic string" + fix,
+    );
+    expect(syntaxError('a = "\\x0g"').message).toBe(
+      "TOML Parse error: Invalid escape sequence '\\x' in basic string: a hex escape must be followed by exactly 2 hex digits" +
+        fix,
+    );
+    expect(syntaxError('"a\\d" = 1').message).toBe(
+      "TOML Parse error: Invalid escape sequence '\\d' in basic string" + fix,
+    );
+    // The suggested fixes parse.
+    expect(TOML.parse("a = 'C:\\Users\\name'")).toEqual({ a: "C:\\Users\\name" });
+    expect(TOML.parse('a = "C:\\\\Users\\\\name"')).toEqual({ a: "C:\\Users\\name" });
+  });
+
   test("lone surrogate escapes are rejected", () => {
     expect(syntaxError('a = "\\uD800"').message).toBe(
       "TOML Parse error: Escaped code point must be a Unicode scalar value",

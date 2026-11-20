@@ -5539,7 +5539,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x0A)");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid escape sequence (0x0A) in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+    );
   });
 
   test("invalid/key/escape", () => {
@@ -6614,7 +6616,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A hex escape must be followed by exactly 2 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\x' in basic string: a hex escape must be followed by exactly 2 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6641,7 +6643,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: 'a'");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid escape sequence '\\a' in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+    );
   });
 
   test("invalid/string/bad-escape-02", () => {
@@ -6653,7 +6657,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid escape sequence (0x20) in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+    );
   });
 
   test("invalid/string/bad-escape-03", () => {
@@ -6679,7 +6685,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid escape sequence (0x20) in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+    );
   });
 
   test("invalid/string/bad-escape-05", () => {
@@ -6691,7 +6699,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid escape sequence (0x20) in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+    );
   });
 
   test("invalid/string/bad-hex-esc-01", () => {
@@ -6704,7 +6714,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A hex escape must be followed by exactly 2 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\x' in basic string: a hex escape must be followed by exactly 2 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6718,7 +6728,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A hex escape must be followed by exactly 2 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\x' in basic string: a hex escape must be followed by exactly 2 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6732,7 +6742,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A hex escape must be followed by exactly 2 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\x' in basic string: a hex escape must be followed by exactly 2 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6746,7 +6756,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A hex escape must be followed by exactly 2 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\x' in basic string: a hex escape must be followed by exactly 2 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6760,7 +6770,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A hex escape must be followed by exactly 2 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\x' in basic string: a hex escape must be followed by exactly 2 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6787,7 +6797,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: '/'");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid escape sequence '\\/' in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+    );
   });
 
   test("invalid/string/bad-uni-esc-01", () => {
@@ -6800,7 +6812,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A Unicode escape must be followed by exactly 4 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\u' in basic string: a Unicode escape must be followed by exactly 4 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6814,7 +6826,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\U' in basic string: a Unicode escape must be followed by exactly 8 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6828,7 +6840,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\U' in basic string: a Unicode escape must be followed by exactly 8 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6842,7 +6854,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\U' in basic string: a Unicode escape must be followed by exactly 8 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6856,7 +6868,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\U' in basic string: a Unicode escape must be followed by exactly 8 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6882,7 +6894,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A Unicode escape must be followed by exactly 4 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\u' in basic string: a Unicode escape must be followed by exactly 4 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6896,7 +6908,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A Unicode escape must be followed by exactly 4 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\u' in basic string: a Unicode escape must be followed by exactly 4 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6910,7 +6922,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\U' in basic string: a Unicode escape must be followed by exactly 8 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6924,7 +6936,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\U' in basic string: a Unicode escape must be followed by exactly 8 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6938,7 +6950,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\U' in basic string: a Unicode escape must be followed by exactly 8 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6952,7 +6964,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\U' in basic string: a Unicode escape must be followed by exactly 8 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -6978,7 +6990,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: A Unicode escape must be followed by exactly 4 hex digits",
+      "TOML Parse error: Invalid escape sequence '\\u' in basic string: a Unicode escape must be followed by exactly 4 hex digits; for a literal backslash, use a literal string (single quotes) or write \\\\",
     );
   });
 
@@ -7029,7 +7041,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: '@'");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid escape sequence '\\@' in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+    );
   });
 
   test("invalid/string/basic-out-of-range-unicode-escape-01", () => {
@@ -7065,7 +7079,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: '@'");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid escape sequence '\\@' in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+    );
   });
 
   test("invalid/string/literal-multiline-quotes-01", () => {
@@ -7137,7 +7153,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: 'a'");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid escape sequence '\\a' in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+    );
   });
 
   test("invalid/string/multiline-bad-escape-02", () => {
@@ -7149,7 +7167,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid escape sequence (0x20) in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+    );
   });
 
   test("invalid/string/multiline-bad-escape-03", () => {
@@ -7161,7 +7181,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid escape sequence (0x20) in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+    );
   });
 
   test("invalid/string/multiline-bad-escape-04", () => {
@@ -7185,7 +7207,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid escape sequence (0x20) in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+    );
   });
 
   test("invalid/string/multiline-escape-space-02", () => {
@@ -7197,7 +7221,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid escape sequence (0x20) in basic string; for a literal backslash, use a literal string (single quotes) or write \\\\",
+    );
   });
 
   test("invalid/string/multiline-lit-no-close-01", () => {

@@ -101,3 +101,21 @@ new ReadableStream({
 expectType(new ReadableStream({ type: "bytes" })).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
 expectType(new ReadableStream<Uint8Array>({ type: "bytes" })).is<ReadableStream<Uint8Array>>();
 expectType(new ReadableStream<string>({} as any)).is<ReadableStream<string>>();
+
+{
+  // A finished read has a `value` of its own, which is undefined. So `read()` can be the
+  // `next()` of an async iterator.
+  const reader = new ReadableStreamDefaultReader(new ReadableStream<string>({} as any));
+  const iterator: AsyncIterator<string> = { next: () => reader.read() };
+
+  const result = await reader.read();
+  if (result.done) {
+    expectType(result.value).is<undefined>();
+  } else {
+    expectType(result.value).is<string>();
+  }
+
+  const finished: Bun.ReadableStreamDefaultReadResult<string> = { done: true, value: undefined };
+  // @ts-expect-error A result without a `value` is not one that `read()` gives.
+  const withoutValue: Bun.ReadableStreamDefaultReadResult<string> = { done: true };
+}

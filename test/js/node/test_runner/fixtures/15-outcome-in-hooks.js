@@ -26,12 +26,17 @@ test("afterEach sees passed=false and the thrown error for a failing subtest", a
   assert.strictEqual(seen.error, boom);
 });
 
-test("workerId reads NODE_TEST_WORKER_ID", t => {
-  assert.strictEqual(t.workerId, undefined);
-  process.env.NODE_TEST_WORKER_ID = "3";
+test("workerId is the id of the worker, and it reads NODE_TEST_WORKER_ID", t => {
+  // A test runner gives a file that runs alone the worker id 1.
+  assert.strictEqual(t.workerId, 1);
+  const inherited = process.env.NODE_TEST_WORKER_ID;
   try {
+    process.env.NODE_TEST_WORKER_ID = "3";
     assert.strictEqual(t.workerId, 3);
+    process.env.NODE_TEST_WORKER_ID = "not a number";
+    assert.strictEqual(t.workerId, undefined);
   } finally {
-    delete process.env.NODE_TEST_WORKER_ID;
+    if (inherited === undefined) delete process.env.NODE_TEST_WORKER_ID;
+    else process.env.NODE_TEST_WORKER_ID = inherited;
   }
 });

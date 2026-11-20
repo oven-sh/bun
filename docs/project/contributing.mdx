@@ -248,7 +248,7 @@ Bun's CI runs on BuildKite. Install the [BuildKite CLI](https://github.com/build
 
 ```sh
 bun run ci:status         # progress summary for the current branch's latest build
-bun run ci:errors         # rendered test-failure output, tagged [new] vs [also on main]
+bun run ci:errors         # rendered test-failure output, tagged [new] vs [pre-existing] (also fails on main)
 bun run ci:logs           # save full logs for each failed job to ./tmp/ci-<build>/
 bun run ci:watch          # watch until the build finishes
 bun run ci:find           # print the build number (compose with raw `bk`)

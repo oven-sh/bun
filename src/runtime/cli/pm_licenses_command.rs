@@ -9,7 +9,7 @@ use bun_core::{FileKind, Global, Output, strings};
 use bun_install::isolated_install::store::entry::fmt_store_key;
 use bun_install::lockfile::{Lockfile, package::PackageColumns as _, reachable, tree};
 use bun_install::package_manager::{LogLevel, workspace_selection};
-use bun_install::{PackageID, PackageManager, Resolution, ResolutionTag};
+use bun_install::{DependencyID, PackageID, PackageManager, Resolution, ResolutionTag};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_parsers::json as JSON;
 use bun_paths::{AutoAbsPath, resolve_path};
@@ -202,10 +202,12 @@ impl PmLicensesCommand {
         let packages = &lockfile.packages;
         let pkg_names = packages.items_name();
         let pkg_resolution = packages.items_resolution();
+        let pkg_metas = packages.items_meta();
         let buf = lockfile.buffers.string_bytes.as_slice();
 
         let mut log = Log::init();
         let mut store = BunStore::init();
+        let mut shipped_parents: Option<ShippedParents> = None;
         let mut disk = DiskIndex { entries: None };
         let mut entries: Vec<Entry> = Vec::new();
         // Packages whose installed copy is not the version in bun.lock. They are listed under the
@@ -231,7 +233,11 @@ impl PmLicensesCommand {
             let _ = write!(&mut version, "{}", resolution.fmt(buf, PathSep::Posix));
             let is_npm = resolution.tag == ResolutionTag::Npm;
 
-            let mut info = if isolated {
+            // A shipped package has no store entry of its own and no copy outside the package that
+            // bundles it. Its name and version can be those of another package.
+            let is_shipped = pkg_metas[pkg_id].is_shipped();
+
+            let mut info = if isolated && !is_shipped {
                 store.read_info(
                     &mut path,
                     top_len,
@@ -246,7 +252,21 @@ impl PmLicensesCommand {
 
             let mut other_version: Option<PackageInfo> = None;
             if info.is_none() {
-                if let Some(location) = &locations[pkg_id] {
+                if isolated && is_shipped {
+                    let shipped =
+                        shipped_parents.get_or_insert_with(|| ShippedParents::init(lockfile));
+                    info = store.read_shipped_info(
+                        &mut path,
+                        top_len,
+                        lockfile,
+                        shipped,
+                        pkg_id as PackageID,
+                        &mut log,
+                    );
+                }
+                if info.is_none()
+                    && let Some(location) = &locations[pkg_id]
+                {
                     let segments: [&[u8]; 1] = [location];
                     info = read_package_info_at(&mut path, top_len, &segments, &mut log);
                 }
@@ -259,17 +279,30 @@ impl PmLicensesCommand {
             }
 
             if info.is_none() && !isolated {
-                info = store.read_info(
-                    &mut path,
-                    top_len,
-                    pkg_names[pkg_id],
-                    resolution,
-                    buf,
-                    &mut log,
-                );
+                info = if is_shipped {
+                    let shipped =
+                        shipped_parents.get_or_insert_with(|| ShippedParents::init(lockfile));
+                    store.read_shipped_info(
+                        &mut path,
+                        top_len,
+                        lockfile,
+                        shipped,
+                        pkg_id as PackageID,
+                        &mut log,
+                    )
+                } else {
+                    store.read_info(
+                        &mut path,
+                        top_len,
+                        pkg_names[pkg_id],
+                        resolution,
+                        buf,
+                        &mut log,
+                    )
+                };
             }
 
-            if info.is_none() && is_npm {
+            if info.is_none() && is_npm && !is_shipped {
                 info = disk.take(
                     &mut path,
                     top_len,
@@ -393,6 +426,58 @@ fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
     }
 
     out
+}
+
+/// A shipped package is only inside the folder of the package that has the bundled dependency on
+/// it. For each shipped package, this holds that package and that dependency.
+pub(crate) struct ShippedParents {
+    parents: Vec<Option<(PackageID, DependencyID)>>,
+}
+
+impl ShippedParents {
+    pub(crate) fn init(lockfile: &Lockfile) -> Self {
+        let metas = lockfile.packages.items_meta();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let mut parents: Vec<Option<(PackageID, DependencyID)>> = vec![None; metas.len()];
+        for (owner, rows) in lockfile.packages.items_dependencies().iter().enumerate() {
+            for dep_id in rows.begin()..rows.end() {
+                let target = resolutions[dep_id as usize] as usize;
+                if target < metas.len()
+                    && metas[target].is_shipped()
+                    && dependencies[dep_id as usize].behavior.is_bundled()
+                    && parents[target].is_none()
+                {
+                    parents[target] = Some((owner as PackageID, dep_id));
+                }
+            }
+        }
+        Self { parents }
+    }
+
+    /// Returns the package that was installed with `pkg_id` inside it, and the names of the folders
+    /// from `pkg_id` up to that package.
+    pub(crate) fn bundler<'a>(
+        &self,
+        lockfile: &'a Lockfile,
+        pkg_id: PackageID,
+    ) -> Option<(PackageID, Vec<&'a [u8]>)> {
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let metas = lockfile.packages.items_meta();
+        let mut folders: Vec<&'a [u8]> = Vec::new();
+        let mut id = pkg_id;
+        // A lockfile that was edited can hold a cycle.
+        while folders.len() < MAX_SCAN_DEPTH {
+            let (parent, dep_id) = (*self.parents.get(id as usize)?)?;
+            folders.push(dependencies[dep_id as usize].name.slice(buf));
+            if !metas[parent as usize].is_shipped() {
+                return Some((parent, folders));
+            }
+            id = parent;
+        }
+        None
+    }
 }
 
 fn read_package_info_at(
@@ -555,6 +640,36 @@ impl BunStore {
             b"node_modules",
             pkg_name.slice(buf),
         ];
+        read_package_info_at(path, top_len, &segments, log)
+    }
+
+    /// A shipped package is inside the entry of the package that bundles it.
+    fn read_shipped_info(
+        &mut self,
+        path: &mut AutoAbsPath,
+        top_len: usize,
+        lockfile: &Lockfile,
+        shipped: &ShippedParents,
+        pkg_id: PackageID,
+        log: &mut Log,
+    ) -> Option<PackageInfo> {
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let (bundler, folders) = shipped.bundler(lockfile, pkg_id)?;
+        let bundler_name = lockfile.packages.items_name()[bundler as usize];
+        let resolution = &lockfile.packages.items_resolution()[bundler as usize];
+        let entry = self.lookup(path, top_len, bundler_name, resolution, buf)?;
+        let entry_folder: [&[u8]; 5] = [
+            b"node_modules",
+            b".bun",
+            entry,
+            b"node_modules",
+            bundler_name.slice(buf),
+        ];
+        let mut segments: Vec<&[u8]> = entry_folder.to_vec();
+        for folder in folders.iter().rev() {
+            segments.push(b"node_modules");
+            segments.push(*folder);
+        }
         read_package_info_at(path, top_len, &segments, log)
     }
 

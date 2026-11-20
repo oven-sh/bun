@@ -444,6 +444,8 @@ impl<'a> LayoutEvidence<'a> {
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
         let pkg_res = lockfile.packages.items_resolution();
+        let pkg_metas = lockfile.packages.items_meta();
+        // A shipped package is only inside the package that bundles it, under either linker.
         let mut extracted_aliases: Vec<&[u8]> = deps
             .iter()
             .zip(resolutions)
@@ -451,6 +453,7 @@ impl<'a> LayoutEvidence<'a> {
                 pkg_res
                     .get(**pkg_id as usize)
                     .is_some_and(|res| extracted(res.tag))
+                    && !pkg_metas[**pkg_id as usize].is_shipped()
             })
             .map(|(dep, _)| dep.name.slice(buf))
             .collect();

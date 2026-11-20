@@ -1144,6 +1144,7 @@ fn plan_edges(
     {
         let lockfile = &*manager.lockfile;
         let res = lockfile.packages.items_resolution();
+        let metas = lockfile.packages.items_meta();
         let has_patches = lockfile.patched_dependencies.count() > 0;
         const SKIP: u32 = u32::MAX - 1;
         let mut instance_of: Vec<u32> = vec![u32::MAX; res.len()];
@@ -1177,7 +1178,8 @@ fn plan_edges(
                 slot
             } else {
                 let pkg_id = target as usize;
-                if res[pkg_id].tag != ResolutionTag::Npm {
+                // A shipped package is the copy in its bundler's tarball. No row moves off it.
+                if res[pkg_id].tag != ResolutionTag::Npm || metas[pkg_id].is_shipped() {
                     instance_of[pkg_id] = SKIP;
                     continue;
                 }

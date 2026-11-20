@@ -100,7 +100,9 @@ pub(crate) fn download_pinned_packages(
         let resolution = pkg.resolution;
         let behavior = manager.lockfile.buffers.dependencies[dep_id as usize].behavior;
 
+        // A shipped package has no tarball. It is in the cache inside the package that bundles it.
         if !resolution.can_enqueue_install_task()
+            || pkg.meta.is_shipped()
             || pkg.meta.is_disabled(cpu, os, libc.for_dependency(behavior))
         {
             continue;

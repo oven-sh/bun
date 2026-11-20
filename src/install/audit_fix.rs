@@ -585,6 +585,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         let lockfile = &*manager.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
         let deps = lockfile.buffers.dependencies.as_slice();
+        let metas = lockfile.packages.items_meta();
         let mut parent_of: Vec<PackageID> = vec![invalid_package_id; deps.len()];
         for (pkg_id, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
             let end = (slice.end() as usize).min(deps.len());
@@ -604,6 +605,11 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 continue;
             }
             let dep = &deps[dep_id];
+            // A shipped package is in the tarball of the package that bundles it. Only the bundled
+            // row that places it holds it there. Every other row on it follows that one.
+            if metas[target as usize].is_shipped() && !dep.behavior.is_bundled() {
+                continue;
+            }
             let parent = parent_of[dep_id];
             // A bundled copy ships inside its dependent whatever an override says.
             let rule = if dep.behavior.is_bundled() {

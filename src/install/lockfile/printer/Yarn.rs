@@ -110,6 +110,11 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
     for &i in alphabetized_names.iter() {
         let resolution = &resolved[i as usize];
         let meta = &metas[i as usize];
+        // A shipped package comes inside the tarball of the package that bundles it, so it has no
+        // `resolved` of its own.
+        if meta.is_shipped() {
+            continue;
+        }
         // The manifest's order in a fresh install, this order once loaded from bun.lock.
         let dependency_list = dependency_lists[i as usize];
         dependencies.clear();

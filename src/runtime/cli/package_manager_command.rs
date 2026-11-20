@@ -19,7 +19,7 @@ use bun_sys::{self, Dir, Fd, File};
 use crate::cli::Command;
 use crate::cli::pm_cache_prune_command::{DEFAULT_MAX_AGE_DAYS, PmCachePruneCommand};
 use crate::cli::pm_diff_command as PmDiffCommand;
-use crate::cli::pm_licenses_command::{BunStore, LicensesFlags, PmLicensesCommand};
+use crate::cli::pm_licenses_command::{BunStore, LicensesFlags, PmLicensesCommand, ShippedParents};
 use crate::cli::pm_pkg_command::PmPkgCommand;
 use crate::cli::pm_trusted_command::{
     DefaultTrustedCommand, TrustCommand, UntrustedCommand, read_trusted_dependencies,
@@ -44,6 +44,7 @@ struct InstalledFilter {
     path: AutoAbsPath,
     top_len: usize,
     store: BunStore,
+    shipped: Option<ShippedParents>,
 }
 
 impl InstalledFilter {
@@ -57,6 +58,7 @@ impl InstalledFilter {
             path,
             top_len,
             store,
+            shipped: None,
         })
     }
 
@@ -74,7 +76,6 @@ impl InstalledFilter {
         if package_id >= lockfile.packages.len() {
             return false;
         }
-        let name = lockfile.packages.items_name()[package_id];
         let resolution = &lockfile.packages.items_resolution()[package_id];
         let buf = lockfile.buffers.string_bytes.as_slice();
         // Local sources live outside of node_modules.
@@ -98,12 +99,28 @@ impl InstalledFilter {
         self.path.set_length(self.top_len);
         let _ = self.path.append(dir);
         let _ = self.path.append(alias);
-        bun_sys::exists(self.path.slice())
-            || (or_in_store
-                && self
-                    .store
-                    .lookup(&mut self.path, self.top_len, name, resolution, buf)
-                    .is_some())
+        if bun_sys::exists(self.path.slice()) {
+            return true;
+        }
+        if !or_in_store {
+            return false;
+        }
+        // A shipped package has no store entry. It is inside the entry of the package that
+        // bundles it.
+        let entry_of = if lockfile.packages.items_meta()[package_id].is_shipped() {
+            let shipped = (self.shipped).get_or_insert_with(|| ShippedParents::init(lockfile));
+            match shipped.bundler(lockfile, package_id as PackageID) {
+                Some((bundler, _)) => bundler as usize,
+                None => return false,
+            }
+        } else {
+            package_id
+        };
+        let name = lockfile.packages.items_name()[entry_of];
+        let resolution = &lockfile.packages.items_resolution()[entry_of];
+        self.store
+            .lookup(&mut self.path, self.top_len, name, resolution, buf)
+            .is_some()
     }
 }
 

@@ -23,6 +23,8 @@ const deleteOwnProperty: (object: object, key: PropertyKey) => boolean = $newCpp
 // `MessagePort.prototype` on load, so load them before the snapshot. Otherwise the restore would remove their patches.
 require("node:perf_hooks");
 require("node:worker_threads");
+// It puts its three exports on the global `AbortController` when it loads.
+require("abort-controller");
 
 // This module is evaluated before any test file runs. Test files can patch builtins later,
 // so only use what's captured here, $-private names, index loops and null-prototype descriptors.

@@ -86,7 +86,8 @@ impl State {
         let (has_to_wait, is_ahead) = match self.invited {
             Some((invited, is_ahead))
                 if invited == id
-                    && let max @ 1.. = self.max_write(stream, len as u64) =>
+                    && let max = self.max_write(stream, len as u64)
+                    && max >= self.min_credit =>
             {
                 credit = (credit.saturating_sub(self.spare_credit)).min(max);
                 (false, is_ahead)
@@ -419,7 +420,8 @@ impl State {
         if stream.mark(Flags::IN_SENDABLE) {
             self.turns += 1;
             stream.turn_end = stream.send.sent() + TURN_LEN;
-            let rank = self.rank(stream);
+            let turn = TURN_BITS * u64::from(self.has_crumb(id, stream));
+            let rank = self.rank(stream) & !turn;
             line_up(&mut self.sendable, (rank, id));
         }
     }
@@ -480,7 +482,7 @@ impl Streams {
         (state.leader, state.has_passing) = (None, true);
     }
 
-    /// At most once for a stream until [`State::start_write_round`].
+    /// A stream has at most one turn until [`State::start_write_round`].
     #[inline]
     pub(crate) fn poll_writable(&mut self) -> Option<Event> {
         if core::mem::take(&mut self.has_new_priorities) {
@@ -503,7 +505,9 @@ impl Streams {
                 continue;
             }
             stream.flags.remove(Flags::WANTS_WRITE);
-            stream.write_round = state.write_round;
+            if !state.allowance.is_crumb {
+                stream.write_round = state.write_round;
+            }
             state.invited = Some((id, is_ahead));
             return Some(Event::Stream(id, stream.context, StreamEvent::Writable));
         }

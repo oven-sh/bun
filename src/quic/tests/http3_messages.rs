@@ -164,6 +164,25 @@ fn frames_that_do_not_start_a_message() {
 }
 
 #[test]
+fn a_turn_to_write_is_good_for_a_frame() {
+    let mut raw = Raw::http3(Server).connected_with("");
+    raw.peer.polls = false;
+    let ids = [(); 2].map(|()| raw.peer.open(Bidirectional));
+    for id in ids {
+        raw.peer.send_headers(id, "a=b");
+        raw.connection().want_write(StreamId(id));
+    }
+    let content = filler(0, 200_000);
+    raw.connection().write(FIRST, &content[..4091]);
+    raw.forget();
+    raw.send("ack");
+    raw.peer.log.clear();
+    raw.peer.poll(raw.now);
+    assert_eq!(raw.peer.events(), "0 writable");
+    assert!(raw.connection().write(FIRST, &content) > Some(0));
+}
+
+#[test]
 fn sends_messages() {
     for &side in BOTH {
         let mut raw = Raw::http3(side).connected_with("");

@@ -18,7 +18,7 @@ const MAX_LEFT: u64 = (1 << LEFT_BITS) - 1;
 /// A stream that has waited for a whole period may write a few bytes, so that the peer does not give up on it. That
 /// takes up one part of the path at most.
 const PERIOD: Duration = Duration::from_secs(1);
-const CRUMB: u64 = DUE_UNIT;
+const CRUMB: u64 = 1024;
 const PARTS: u64 = 4;
 
 #[inline]
@@ -33,14 +33,18 @@ pub(super) struct Allowance {
     end: u64,
     /// There is no end if it has less left.
     free_below: u64,
+    /// That comes on top of its turn.
+    pub(super) is_crumb: bool,
 }
 
 #[derive(Default)]
 pub(super) struct Periods {
     pub(super) count: u64,
     end: Instant,
-    /// Unless no stream has waited for too long.
-    next_crumb: Option<u64>,
+    /// False if no stream has waited for too long.
+    has_neglected: bool,
+    /// How many bytes have to be sent by then.
+    next_crumb: u64,
 }
 
 impl Stream {
@@ -65,9 +69,9 @@ impl Stream {
 impl State {
     /// For when the application offers `len` bytes.
     #[inline]
-    pub(crate) fn expect(&self, stream: &mut Stream, len: u64) {
+    pub(crate) fn expect(&self, id: StreamId, stream: &mut Stream, len: u64) {
         if len > stream.unwritten && !self.sends_in_order {
-            let has_waited = stream.write_round == self.write_round;
+            let has_waited = stream.write_round == self.write_round || self.has_crumb(id, stream);
             if stream.unwritten + stream.send.unsent_len() == 0 && !has_waited {
                 stream.busy_from = stream.send.end();
             }
@@ -102,17 +106,21 @@ impl State {
     #[inline]
     pub(super) fn count_periods(&mut self, now: Instant) {
         if now >= self.periods.end {
-            self.periods = Periods {
-                count: self.periods.count + 1,
-                end: now + PERIOD,
-                next_crumb: self.periods.next_crumb.or(Some(0)),
-            };
+            self.periods.count += 1;
+            (self.periods.end, self.periods.has_neglected) = (now + PERIOD, true);
         }
     }
 
     #[inline]
     fn is_crumb_due(&self) -> bool {
-        (self.periods.next_crumb).is_some_and(|it| it <= self.written())
+        self.periods.has_neglected && self.periods.next_crumb <= self.sent
+    }
+
+    #[inline]
+    pub(super) fn has_crumb(&self, id: StreamId, stream: &Stream) -> bool {
+        self.allowance.is_crumb
+            && self.invited.is_some_and(|it| it.0 == id)
+            && stream.send.end() <= self.allowance.end
     }
 
     /// For example by streams that are too short to ever wait.
@@ -136,10 +144,10 @@ impl State {
     /// For a stream whose turn it is.
     #[inline]
     pub(super) fn max_write(&self, stream: &Stream, len: u64) -> u64 {
-        let Allowance { end, free_below } = self.allowance;
-        match self.sends_in_order || self.writable.is_empty() || stream.left(len) < free_below {
+        let is_short = stream.left(len) < self.allowance.free_below;
+        match self.sends_in_order || self.writable.is_empty() || is_short {
             true => u64::MAX,
-            false => end.saturating_sub(stream.send.end()),
+            false => self.allowance.end.saturating_sub(stream.send.end()),
         }
     }
 
@@ -179,8 +187,12 @@ impl State {
             (None, true) => (stream.share, 0),
             (None, false) => (stream.share, left(rank).max(SHARE / LEFT_UNIT) + 1),
         };
-        let end = stream.send.end() + len;
-        self.allowance = Allowance { end, free_below };
+        self.invited = None;
+        self.allowance = Allowance {
+            end: stream.send.end() + len,
+            free_below,
+            is_crumb: crumb.is_some(),
+        };
         Some(at)
     }
 
@@ -195,10 +207,9 @@ impl State {
         let at = (self.writable.iter().map(waits_since).zip(0..).min())
             .filter(|it| it.0 < self.periods.count - 1)
             .map(|it| it.1);
-        let earliest = self.written().saturating_sub(WRITE_CHUNK / DUE_UNIT);
-        self.periods.next_crumb = (self.periods.next_crumb)
-            .filter(|_| at.is_some())
-            .map(|it| it.max(earliest) + PARTS);
+        let earliest = self.sent.saturating_sub(WRITE_CHUNK);
+        self.periods.has_neglected = at.is_some();
+        self.periods.next_crumb = self.periods.next_crumb.max(earliest) + PARTS * CRUMB;
         at
     }
 

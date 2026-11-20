@@ -1083,49 +1083,145 @@ fn stream_that_misses_its_turn_writes_a_little() {
 }
 
 #[test]
+fn a_few_bytes_need_no_room_and_go_first() {
+    let mut raw = Raw::server().with("max_streams_uni=99").connected();
+    raw.peer.polls = false;
+    let streams = [(); 14].map(|()| StreamId(raw.peer.open(Unidirectional)));
+    let data = filler(0, 900_000);
+    for &id in &streams[..13] {
+        raw.connection().write(id, &data);
+    }
+    raw.process();
+    for _ in 0..3 {
+        raw.advance(1000);
+        raw.send("ping");
+    }
+    raw.peer.log.clear();
+    for &id in &streams[1..10] {
+        assert!(raw.peer.poll(raw.now));
+        assert_eq!(raw.connection().write(id, &data), Some(1024));
+    }
+    assert!(!raw.peer.poll(raw.now));
+    raw.connection().write(streams[13], &data[..9]);
+    raw.forget();
+    raw.send("ack");
+    let expected = [6, 10, 14, 18, 22, 26, 30, 34, 38, 2, 54, 2];
+    assert_eq!(ids(turns(&mut raw)), expected);
+}
+
+#[test]
+fn a_few_bytes_do_not_cost_a_stream_its_turn() {
+    let mut raw = Raw::server().connected();
+    raw.peer.polls = false;
+    let ids = [(); 2].map(|()| StreamId(raw.peer.open(Unidirectional)));
+    let data = filler(0, 900_000);
+    raw.connection().write(ids[0], &data[..150_000]);
+    turns(&mut raw);
+    for _ in 0..3 {
+        raw.advance(1000);
+        raw.send("ping");
+    }
+    raw.connection().write(ids[1], &data);
+    raw.peer.log.clear();
+    for len in [30_000, 28_976] {
+        raw.peer.poll(raw.now);
+        raw.connection().write(ids[0], &data[..len]);
+    }
+    assert_eq!(raw.peer.events(), "2 writable, 2 writable");
+}
+
+#[test]
+fn stream_that_leaves_the_line_passes_nothing_on() {
+    let raw = Raw::server().with("max_data=90000000 max_stream_data_uni=9000000");
+    let mut raw = raw.connected();
+    let ids = [(); 3].map(|()| raw.peer.open(Unidirectional));
+    raw.peer.send(ids[0], &filler(0, 900_000), false);
+    turns(&mut raw);
+    raw.peer.polls = false;
+    let (ids, data) = (ids.map(StreamId), filler(0, 5_000_000));
+    for id in ids {
+        raw.connection().write(id, &data);
+    }
+    turns(&mut raw);
+    raw.peer.poll(raw.now);
+    raw.connection().write(ids[0], &data[..3_000_000]);
+    raw.connection().finish(ids[0]);
+    turns(&mut raw);
+    for &id in &ids[1..] {
+        raw.peer.poll(raw.now);
+        let written = raw.connection().write(id, &data[..3_000_000]);
+        assert_eq!(written, Some(69_632));
+    }
+    raw.peer.poll(raw.now);
+    let written = raw.connection().write(ids[2], &data[..2_000_000]);
+    assert_eq!(written, Some(0));
+}
+
+/// Returns how many KiB the long streams get in the second period.
+fn progress(count: usize, short: usize, window: u64, seconds: [u64; 2]) -> Vec<usize> {
+    let mut network = Network::new(1);
+    network.config(|it| {
+        it.parameters.initial_max_streams_uni = 99;
+        it.parameters.initial_max_stream_data_uni = 9_000_000;
+        it.parameters.initial_max_data = window;
+    });
+    (network.bytes_per_second, network.latency) = (100_000, Duration::from_millis(10));
+    network.connect();
+    for len in [200_000]
+        .repeat(count)
+        .into_iter()
+        .chain([8000].repeat(short))
+    {
+        let id = network.client.open(Unidirectional);
+        network.client.send(id, &vec![0; len], true);
+    }
+    let [before, after] = seconds.map(|it| {
+        network.run_for(Duration::from_secs(it));
+        let streams = network.server.streams.values().take(count);
+        Vec::from_iter(streams.map(|it| it.received.len() >> 10))
+    });
+    Vec::from_iter(after.iter().zip(before).map(|it| it.0 - it.1))
+}
+
+#[test]
 fn streams_are_not_silent_for_long() {
-    for (count, expected) in [(20, 5..6), (90, 2..4)] {
-        let mut network = Network::new(1);
-        network.config(|it| {
-            it.parameters.initial_max_streams_uni = 99;
-            it.parameters.initial_max_stream_data_uni = 9_000_000;
-            it.parameters.initial_max_data = 90_000_000;
-        });
-        (network.bytes_per_second, network.latency) = (100_000, Duration::from_millis(10));
-        network.connect();
-        for _ in 0..count {
-            let id = network.client.open(Unidirectional);
-            network.client.send(id, &[0; 200_000], true);
-        }
-        let [before, after] = [(); 2].map(|()| {
-            network.run_for(Duration::from_secs(10));
-            let streams = network.server.streams.values().skip(12);
-            Vec::from_iter(streams.map(|it| it.received.len() >> 10))
-        });
-        for (before, after) in before.iter().zip(after) {
-            assert!(expected.contains(&(after - before)), "{before} {after}");
-        }
+    for (count, short, window, seconds, expected) in [
+        (20, 0, 90_000_000, [10, 10], 5..6),
+        (90, 0, 90_000_000, [10, 10], 2..5),
+        (20, 0, 20_000, [10, 10], 4..6),
+        (20, 75, 90_000_000, [2, 3], 2..3),
+    ] {
+        let progress = progress(count, short, window, seconds);
+        let is_expected = progress[12..].iter().all(|it| expected.contains(it));
+        assert!(is_expected, "{progress:?}");
     }
 }
 
 #[test]
 fn streams_that_only_write_when_asked_are_long_all_the_same() {
-    let mut raw = Raw::server().connected();
-    let ids = [(); 2].map(|()| raw.peer.open(Unidirectional));
-    for _ in 0..10 {
-        raw.peer.polls = false;
+    for seconds in [0, 3] {
+        let mut raw = Raw::server().connected();
+        let ids = [(); 2].map(|()| raw.peer.open(Unidirectional));
+        for _ in 0..10 {
+            raw.peer.polls = false;
+            raw.connection().want_write(StreamId(ids[0]));
+            while raw.peer.poll(raw.now) {}
+            raw.peer.send(ids[0], &filler(0, 20_000), false);
+            turns(&mut raw);
+        }
         raw.connection().want_write(StreamId(ids[0]));
+        for _ in 0..seconds {
+            raw.advance(1000);
+            raw.send("ping");
+        }
         while raw.peer.poll(raw.now) {}
-        raw.peer.send(ids[0], &filler(0, 20_000), false);
-        turns(&mut raw);
+        raw.forget();
+        for id in ids {
+            raw.peer.send(id, &filler(0, 8_000), false);
+        }
+        raw.process();
+        assert_eq!(turns(&mut raw), [(ids[1], 0), (ids[0], 12)]);
     }
-    raw.connection().want_write(StreamId(ids[0]));
-    while raw.peer.poll(raw.now) {}
-    for id in ids {
-        raw.peer.send(id, &filler(0, 8_000), false);
-    }
-    raw.process();
-    assert_eq!(turns(&mut raw), [(ids[1], 0), (ids[0], 12)]);
 }
 
 #[test]

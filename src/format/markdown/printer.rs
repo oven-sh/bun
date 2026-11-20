@@ -908,6 +908,17 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
+    /// True if `sentence` starts the first paragraph or heading of a list item. There, Bun.markdown reads `[ ]` as the
+    /// checkbox of a task, and `[` and `]` on two lines as text, so the whitespace between them is kept as it is.
+    fn starts_list_item(&self, sentence: &Node) -> bool {
+        sentence.previous == NONE
+            && self.node(sentence.parent).is_some_and(|block| {
+                matches!(block.kind, Kind::Paragraph | Kind::Heading)
+                    && block.previous == NONE
+                    && self.kind(block.parent) == Some(Kind::ListItem)
+            })
+    }
+
     fn add_whitespace(parts: &mut FillParts<'a>, whitespace: &Whitespace) {
         match *whitespace {
             Whitespace::Text(text) => parts.content(Doc::from(text)),
@@ -963,6 +974,15 @@ impl<'a> Printer<'a, '_> {
             start = white_end;
             let has_newline =
                 bun_core::strings::contains_char(&text[white_start..white_end], b'\n');
+            if has_newline
+                && white_start == 1
+                && text[0] == b'['
+                && text.get(white_end) == Some(&b']')
+                && self.starts_list_item(node)
+            {
+                parts.hardline();
+                continue;
+            }
             if !has_newline || !is_preserved {
                 parts.content(Doc::from(" "));
                 continue;
@@ -1064,6 +1084,21 @@ impl<'a> Printer<'a, '_> {
                 continue;
             }
             let next = tokens.get(index + 1);
+            if index == 1
+                && matches!(token.kind, TokenKind::Space | TokenKind::Newline)
+                && self.str(tokens[0].value) == b"["
+                && next.is_some_and(|it| self.str(it.value).starts_with(b"]"))
+                && self.starts_list_item(node)
+            {
+                Self::add_whitespace(
+                    &mut parts,
+                    &match token.kind {
+                        TokenKind::Newline => Whitespace::Hardline,
+                        _ => Whitespace::Text(" "),
+                    },
+                );
+                continue;
+            }
             let after_next = tokens.get(index + 2);
             let is_next_fake_setext_line = token.kind == TokenKind::Newline
                 && next.is_some_and(|it| self.str(it.value) == b"-")

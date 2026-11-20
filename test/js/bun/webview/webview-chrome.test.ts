@@ -987,6 +987,256 @@ it("chrome: click(selector) waits for an animation that has not started", async 
   expect(await view.evaluate("String(window.__hit)")).toBe("100");
 });
 
+// The slide begins at the look that finds the button still for the second time. It is pending there, and the look before did not see it.
+it("chrome: click(selector) waits for an animation that begins at the look that would click", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <style>
+          @keyframes slide { to { transform: translateX(100px); } }
+          #mover { position: fixed; left: 0; top: 50px; width: 60px; height: 60px; }
+          .sliding { animation: slide 80ms linear forwards; }
+        </style>
+        <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+        <script>
+          const look = document.querySelector;
+          let looks = 0;
+          document.querySelector = function (selector) {
+            if (++looks === 3) mover.className = "sliding";
+            return look.call(this, selector);
+          };
+        </script>
+      `),
+  );
+  await view.click("#mover");
+  expect(await view.evaluate("String(window.__hit)")).toBe("100");
+});
+
+// The colour of the box around the button begins to change at the look that finds the button still for the second time, and the slide of the button at the look after it. Each is pending at one look only.
+it("chrome: click(selector) waits for two animations that begin one look after the other", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <style>
+          @keyframes shade { to { color: #333; } }
+          @keyframes slide { to { transform: translateX(100px); } }
+          #mover { position: fixed; left: 0; top: 50px; width: 60px; height: 60px; }
+          .shading { animation: shade 200ms linear forwards; }
+          .sliding { animation: slide 80ms linear forwards; }
+        </style>
+        <div id=box><button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button></div>
+        <script>
+          const look = document.querySelector;
+          let looks = 0;
+          document.querySelector = function (selector) {
+            if (++looks === 3) box.className = "shading";
+            if (looks === 4) mover.className = "sliding";
+            return look.call(this, selector);
+          };
+        </script>
+      `),
+  );
+  await view.click("#mover");
+  expect(await view.evaluate("String(window.__hit)")).toBe("100");
+});
+
+// The button is slotted into x-a. In its shadow tree x-a hands the slot on to x-b, and x-b slides. The way from the button to x-b goes into each shadow tree at its slot, and out of the tree of x-b at its host. In that tree the slot is in a form with a control named parentNode, which is not the parent of the form.
+it("chrome: click(selector) waits for an animation of a shadow host that the slot of the element is handed on to", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <style>#mover { width: 60px; height: 60px; }</style>
+        <x-a><button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button></x-a>
+        <script>
+          const outer = document.querySelector("x-a").attachShadow({ mode: "open" });
+          outer.innerHTML = \`
+            <style>
+              @keyframes slide { to { transform: translateX(100px); } }
+              x-b { display: block; position: fixed; left: 0; top: 50px; }
+              .sliding { animation: slide 80ms linear forwards; }
+            </style>
+            <x-b><slot></slot></x-b>\`;
+          const inner = outer.querySelector("x-b");
+          inner.attachShadow({ mode: "open" }).innerHTML = "<form><slot></slot><input name=parentNode hidden></form>";
+          const look = document.querySelector;
+          let looks = 0;
+          document.querySelector = function (selector) {
+            if (++looks === 3) inner.className = "sliding";
+            return look.call(this, selector);
+          };
+        </script>
+      `),
+  );
+  await view.click("#mover");
+  expect(await view.evaluate("String(window.__hit)")).toBe("100");
+});
+
+// The first row leaves with a slide that begins while the second click looks, as a leave transition of Vue does. The row stays in the document until the slide ends, and the selector finds its button until then. An empty row then takes its place, so a press on that place presses nothing.
+it("chrome: click(selector) does not press an element that begins to leave while it looks", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <style>
+          li { list-style: none; height: 40px; }
+          .leaving { transition: transform 80ms linear; transform: translateX(200px); }
+        </style>
+        <ul>
+          <li id=a><button onclick="press(a)">a</button></li>
+          <li id=b><button onclick="press(b)">b</button></li>
+        </ul>
+        <script>
+          window.__pressed = [];
+          const look = document.querySelector;
+          let looks;
+          function press(row) {
+            __pressed.push(row.id);
+            row.ontransitionend = () => row.replaceWith(document.createElement("li"));
+            looks = 0;
+          }
+          document.querySelector = function (selector) {
+            if (++looks === 3) a.className = "leaving";
+            return look.call(this, selector);
+          };
+        </script>
+      `),
+  );
+  await view.click("li button");
+  await view.click("li button");
+  expect(await view.evaluate("JSON.stringify(__pressed)")).toBe('["a","b"]');
+});
+
+// The box around the form begins to slide at the look that finds the button still for the second time. The controls of the form and an image have the names of what the check reads on its way up: form.assignedSlot and form.parentElement are inputs, to call form.getAnimations throws, and document.host is the image. The page also has a function named Reflect, as the output of Haxe has.
+it("chrome: click(selector) waits for an animation above a form whose controls are named as the properties that it reads", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <style>
+          @keyframes slide { to { transform: translateX(100px); } }
+          #box { position: fixed; left: 0; top: 50px; }
+          #mover { width: 60px; height: 60px; }
+          .sliding { animation: slide 80ms linear forwards; }
+        </style>
+        <div id=box>
+          <form onsubmit="return false">
+            <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+            <input name=assignedSlot hidden><input name=parentElement hidden><input name=getAnimations hidden>
+          </form>
+        </div>
+        <img name=host hidden>
+        <script>
+          function Reflect() {}
+          const look = document.querySelector;
+          let looks = 0;
+          document.querySelector = function (selector) {
+            if (++looks === 3) box.className = "sliding";
+            return look.call(this, selector);
+          };
+        </script>
+      `),
+  );
+  await view.click("#mover");
+  expect(await view.evaluate("String(window.__hit)")).toBe("100");
+});
+
+// A new animation of body is pending at every look, and the page cancels the one before. The check waits at two looks and clicks at the next, which is its fifth call of querySelector.
+it("chrome: click(selector) waits at two looks, and no more, on a page that begins an animation at every look", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <button id=b onclick="window.__hit=looks">b</button>
+        <script>
+          const look = document.querySelector;
+          let looks = 0, before;
+          document.querySelector = function (selector) {
+            looks++;
+            before?.cancel();
+            before = document.body.animate([{ color: "#000" }, { color: "#222" }], 1000);
+            return look.call(this, selector);
+          };
+        </script>
+      `),
+  );
+  await view.click("#b");
+  expect(await view.evaluate("String(window.__hit)")).toBe("5");
+});
+
+// An animation of body runs and is not pending. The check does not wait for it: it clicks at its second look, which is its third call of querySelector.
+it("chrome: click(selector) clicks a still element at its second look while an animation runs", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <button id=b onclick="window.__hit=looks">b</button>
+        <script>
+          const running = document.body.animate([{ color: "#000" }, { color: "#222" }], 60000);
+          const look = document.querySelector;
+          let looks = 0;
+          document.querySelector = function (selector) {
+            looks++;
+            return look.call(this, selector);
+          };
+        </script>
+      `),
+  );
+  await view.evaluate(
+    "new Promise(done => (function wait() { running.currentTime > 0 ? done(1) : requestAnimationFrame(wait); })())",
+  );
+  await view.click("#b");
+  expect(await view.evaluate("String(window.__hit)")).toBe("3");
+});
+
+// A cover is over the button for 14 looks, and an animation of body begins at each of them. Then the cover goes and the button begins to slide. The check has not used up its waits at the looks where it could not click.
+it("chrome: click(selector) waits for an animation that begins when a cover goes", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <style>
+          @keyframes slide { to { transform: translateX(100px); } }
+          #mover { position: fixed; left: 0; top: 50px; width: 60px; height: 60px; }
+          #cover { position: fixed; inset: 0; }
+          .sliding { animation: slide 80ms linear forwards; }
+        </style>
+        <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+        <div id=cover></div>
+        <script>
+          const look = document.querySelector;
+          let looks = 0;
+          document.querySelector = function (selector) {
+            document.body.animate([{ color: "#000" }, { color: "#222" }], 1000);
+            if (++looks === 16) {
+              cover.remove();
+              mover.className = "sliding";
+            }
+            return look.call(this, selector);
+          };
+        </script>
+      `),
+  );
+  await view.click("#mover");
+  expect(await view.evaluate("String(window.__hit)")).toBe("100");
+});
+
+// An animation of body begins at every look, and the clock of the page moves 100 ms at each look that finds the animation of the look before under way. The timeout of 250 ms passes after one wait. The check then clicks and does not reject.
+it("chrome: click(selector) does not wait for a pending animation past the timeout", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <button id=b onclick="window.__hit=1">b</button>
+        <script>
+          let now = 0, before;
+          performance.now = () => now;
+          const look = document.querySelector;
+          document.querySelector = function (selector) {
+            if (!before || before.currentTime > 0) now += 100;
+            before = document.body.animate([{ color: "#000" }, { color: "#222" }], 1000);
+            return look.call(this, selector);
+          };
+        </script>
+      `),
+  );
+  await view.click("#b", { timeout: 250 });
+  expect(await view.evaluate("String(window.__hit)")).toBe("1");
+});
+
 // --- scrollTo variants -----------------------------------------------------
 
 it("chrome: scrollTo with block: start aligns top", async () => {

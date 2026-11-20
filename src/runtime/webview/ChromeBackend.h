@@ -272,9 +272,11 @@ enum class Method : uint8_t {
 // The predicate: attached + has size + in viewport + stable for 2 frames
 // + elementFromPoint at center returns the element (not obscured). Returns
 // the center coords as [cx, cy]; throws on timeout.
+// `dom` reads a property past the own names of an element (a form control can take the name of any property of its form), by `super` because a page can have its own `Reflect`. `holds`: how many looks that could click may wait for a pending animation (two that begin one frame apart need 2).
 constexpr ASCIILiteral kActionabilityIIFE = R"js((async (sel, timeout) => {
 const deadline = performance.now() + timeout;
-let last;
+const dom = (e, k) => ({ __proto__: Object.getPrototypeOf(e), get() { return super[k]; } }).get.call(e);
+let last, holds = 2;
 document.querySelector(sel);
 for (;;) {
   await new Promise(f => requestAnimationFrame(f));
@@ -284,11 +286,11 @@ for (;;) {
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
       const held = [];
-      for (let e = el; e; e = e.parentElement)
-        for (const a of e.getAnimations()) if (a.pending && a.timeline?.currentTime != null) held.push([a, a.currentTime]);
+      for (let e = el, n; e; e = dom(e, "assignedSlot") || dom(e, "parentElement") || ((n = dom(e, "parentNode")) !== document && n?.host))
+        for (const a of dom(e, "getAnimations").call(e)) if (a.pending && a.timeline?.currentTime != null) held.push([a, a.currentTime]);
       if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height && !last.held.some(([a, t]) => a.playState === "running" && a.currentTime === t)) {
         const hit = document.elementFromPoint(cx, cy);
-        if (hit === el || el.contains(hit)) return [cx, cy];
+        if ((hit === el || el.contains(hit)) && !(held.length && performance.now() < deadline && holds-- > 0)) return [cx, cy];
       }
       last = { l: r.left, t: r.top, w: r.width, h: r.height, held };
     } else last = undefined;

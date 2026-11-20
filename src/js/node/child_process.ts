@@ -1,6 +1,6 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
-const { kHandle } = require("internal/shared");
+const { kHandle, ErrnoException } = require("internal/shared");
 const {
   validateBoolean,
   validateFunction,
@@ -56,6 +56,8 @@ interface ExecResult {
 interface ExecPromiseWithResolvers extends PromiseWithResolvers<ExecResult> {
   promise: Promise<ExecResult> & { child?: ChildProcess };
 }
+
+type SystemError = NodeJS.ErrnoException & { spawnargs?: string[]; pid?: number };
 
 interface SpawnSyncResult {
   signal: string | null;
@@ -155,8 +157,6 @@ if ($debug) {
  */
 function spawn(file, args, options) {
   options = normalizeSpawnArguments(file, args, options);
-  const windowsBatchFileError = options.windowsBatchFileError;
-  if (windowsBatchFileError) throw windowsBatchFileError;
   validateTimeout(options.timeout);
   validateAbortSignal(options.signal, "options.signal");
   const killSignal = sanitizeKillSignal(options.killSignal);
@@ -527,26 +527,6 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     ...normalizeSpawnArguments(file, args, options),
   };
 
-  if (options.windowsBatchFileError) {
-    const error = new SystemError(
-      `spawnSync ${options.file} EINVAL`,
-      options.file,
-      "spawnSync " + options.file,
-      -4071,
-      "EINVAL",
-    );
-    error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
-    return {
-      signal: null,
-      status: null,
-      output: [null, null, null],
-      pid: 0,
-      stdout: null,
-      stderr: null,
-      error,
-    };
-  }
-
   const maxBuffer = options.maxBuffer;
   const encoding = options.encoding;
 
@@ -577,6 +557,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   var error;
   try {
+    // node rejects a batch file where it would spawn the process, after it validates the options.
+    if (options.windowsBatchFileError) throw spawnSyncError(UV_EINVAL, options.file);
     var {
       stdout = null,
       stderr = null,
@@ -657,22 +639,10 @@ function spawnSync(file, args, options?): SpawnSyncResult {
   result.stderr = output?.[2];
 
   if (exitedDueToTimeout && error == null) {
-    result.error = new SystemError(
-      "spawnSync " + options.file + " ETIMEDOUT",
-      options.file,
-      "spawnSync " + options.file,
-      etimedoutErrorCode(),
-      "ETIMEDOUT",
-    );
+    result.error = spawnSyncError(etimedoutErrorCode(), options.file);
   }
   if (exitedDueToMaxBuffer && error == null) {
-    result.error = new SystemError(
-      "spawnSync " + options.file + " ENOBUFS (stdout or stderr buffer reached maxBuffer size limit)",
-      options.file,
-      "spawnSync " + options.file,
-      enobufsErrorCode(),
-      "ENOBUFS",
-    );
+    result.error = spawnSyncError(enobufsErrorCode(), options.file);
   }
 
   const resultError = result.error;
@@ -685,6 +655,14 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
 const enobufsErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
+const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
+
+// node builds the error of a spawnSync() failure from the libuv error number that its binding reports: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1126-L1130
+function spawnSyncError(errno: number, file: string) {
+  const error: SystemError = new ErrnoException(errno, "spawnSync " + file);
+  error.path = file;
+  return error;
+}
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1049,7 +1027,7 @@ function normalizeSpawnArguments(file, args, options?) {
     // opted into shell semantics. Surface via the returned options so each
     // caller can deliver the error in its API-appropriate shape (synchronous
     // throw for spawn(), `result.error` for spawnSync()).
-    windowsBatchFileError = new SystemError(`spawn ${file} EINVAL`, file, "spawn", -4071, "EINVAL");
+    windowsBatchFileError = new ErrnoException(UV_EINVAL, "spawn");
   }
 
   // Handle argv0
@@ -1210,20 +1188,6 @@ class ChildProcess extends EventEmitter {
       if (spawnfile) err.path = spawnfile;
       err.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
       err.pid = this.pid;
-      this.emit("error", err);
-    } else if (exitCode < 0) {
-      const err = new SystemError(
-        `Spawned process exited with error code: ${exitCode}`,
-        undefined,
-        "spawn",
-        "EUNKNOWN",
-        "ERR_CHILD_PROCESS_UNKNOWN_ERROR",
-      );
-      err.pid = this.pid;
-
-      if (spawnfile) err.path = spawnfile;
-
-      err.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
       this.emit("error", err);
     }
 
@@ -1468,6 +1432,10 @@ class ChildProcess extends EventEmitter {
       }
       return;
     }
+
+    // node rejects a batch file where it would spawn the process, after it validates the options: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L400
+    const windowsBatchFileError = options.windowsBatchFileError;
+    if (windowsBatchFileError) throw windowsBatchFileError;
 
     // normalizeSpawnargs has already prepended argv0 to the spawnargs array
     // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
@@ -2037,26 +2005,6 @@ function ERR_INVALID_OPT_VALUE(name, value) {
   const err = new TypeError(`The value "${value}" is invalid for option "${name}"`);
   err.code = "ERR_INVALID_OPT_VALUE";
   return err;
-}
-
-class SystemError extends Error {
-  declare spawnargs?: string[];
-  declare pid?: number;
-  path;
-  syscall;
-  errno;
-  code;
-  constructor(message, path, syscall, errno, code) {
-    super(message);
-    this.path = path;
-    this.syscall = syscall;
-    this.errno = errno;
-    this.code = code;
-  }
-
-  get name() {
-    return "SystemError";
-  }
 }
 
 export default {

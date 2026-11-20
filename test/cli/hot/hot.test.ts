@@ -886,9 +886,15 @@ it("holds the promise of the entry point itself, which it looks at on every tick
 
 // The cell of a collected promise goes to the next promise that is made.
 it.each([
-  ["pending", `new Promise(() => {})`],
-  ["rejected and handled", `Promise.reject(new Error("not the entry point's"))`],
-])("does not take a promise of the program's, %s, for that of the entry point", async (_, promise) => {
+  ["pending", ``, `new Promise(() => {})`],
+  // catch() also makes a promise, and that one becomes fulfilled: in the cell, it hides the bug.
+  // All rejected promises are made first, so that the cell goes to one of them.
+  [
+    "rejected and handled",
+    `const rejected = Array(20000).fill(new Error("not the entry point's")).map(error => Promise.reject(error));`,
+    `rejected[i]`,
+  ],
+])("does not take a promise of the program's, %s, for that of the entry point", async (_, before, promise) => {
   using dir = tempDir("hot-entry-promise-reused", { "main.js": `console.log("first load");` });
   await using runner = spawn({
     cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
@@ -916,7 +922,7 @@ it.each([
         setImmediate(() => {
           Bun.gc(true);
           require("crypto").randomBytes(8, () => {
-            Bun.gc(true);
+            Bun.gc(true);${before}
             for (let i = 0; i < 20000; i++) {
               const promise = ${promise};
               promise.catch(() => {});

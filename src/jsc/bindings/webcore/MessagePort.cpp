@@ -116,10 +116,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
                 break;
             }
         }
-        auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
-        if (disentangled.hasException())
-            return disentangled.releaseException();
-        transferredPorts = disentangled.releaseReturnValue();
+        transferredPorts = MessagePort::disentanglePorts(WTF::move(ports));
     }
 
     if (!isEntangled())
@@ -272,7 +269,7 @@ void MessagePort::peerClosed()
 
 TransferredMessagePort MessagePort::disentangle()
 {
-    ASSERT(isEntangled());
+    ASSERT(isEntangled() && !m_isClosing);
 
     removeAllEventListeners();
     m_hasMessageEventListener = false;
@@ -419,17 +416,8 @@ bool MessagePort::virtualHasPendingActivity() const
     return MessagePortPipe::queuedCount(m_pipe->state(m_side)) > 0;
 }
 
-ExceptionOr<Vector<TransferredMessagePort>> MessagePort::disentanglePorts(Vector<RefPtr<MessagePort>>&& ports)
+Vector<TransferredMessagePort> MessagePort::disentanglePorts(Vector<RefPtr<MessagePort>>&& ports)
 {
-    if (ports.isEmpty())
-        return Vector<TransferredMessagePort> {};
-
-    HashSet<MessagePort*> seen;
-    for (auto& port : ports) {
-        if (!port || !port->isEntangled() || port->isClosing() || !seen.add(port.get()).isNewEntry)
-            return Exception { DataCloneError };
-    }
-
     return WTF::map(ports, [](auto& port) {
         return port->disentangle();
     });

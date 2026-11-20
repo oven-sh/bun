@@ -233,11 +233,16 @@ await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
 
 ### Parameters
 
-| Parameter  | Type     | Description                                                |
-| ---------- | -------- | ---------------------------------------------------------- |
-| `path`     | `string` | Path to the script (resolved relative to caller)           |
-| `schedule` | `string` | Cron expression or nickname                                |
-| `title`    | `string` | Unique job identifier (alphanumeric, hyphens, underscores) |
+| Parameter  | Type            | Description                                                          |
+| ---------- | --------------- | -------------------------------------------------------------------- |
+| `path`     | `string \| URL` | Path to the script (resolved relative to caller), or a `file://` URL |
+| `schedule` | `string`        | Cron expression or nickname                                          |
+| `title`    | `string`        | Unique job identifier (alphanumeric, hyphens, underscores)           |
+
+```ts
+await Bun.cron(import.meta.resolve("./worker.ts"), "@daily", "my-job");
+await Bun.cron(new URL("./worker.ts", import.meta.url), "@daily", "my-job");
+```
 
 Re-registering with the same `title` overwrites the existing job in-place. Bun replaces the old schedule instead of duplicating it.
 
@@ -324,18 +329,18 @@ The plist uses `StartCalendarInterval` to define the schedule. Complex patterns 
 launchctl list | grep bun.cron
 ```
 
-**Logs:** stdout and stderr are written to:
+**Logs:** stdout and stderr are written to your temporary directory:
 
 ```
-/tmp/bun.cron.<title>.stdout.log
-/tmp/bun.cron.<title>.stderr.log
+$(getconf DARWIN_USER_TEMP_DIR)bun.cron.<title>.stdout.log
+$(getconf DARWIN_USER_TEMP_DIR)bun.cron.<title>.stderr.log
 ```
 
 For example, a job titled `weekly-report`:
 
 ```sh
-cat /tmp/bun.cron.weekly-report.stdout.log
-tail -f /tmp/bun.cron.weekly-report.stderr.log
+cat $(getconf DARWIN_USER_TEMP_DIR)bun.cron.weekly-report.stdout.log
+tail -f $(getconf DARWIN_USER_TEMP_DIR)bun.cron.weekly-report.stderr.log
 ```
 
 **Manually uninstalling without code:**

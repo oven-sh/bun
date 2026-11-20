@@ -1798,7 +1798,7 @@ pub(crate) mod JSZstd {
         heap: &JsHeap<'a>,
         options: &ZstdCompressionOptions,
     ) -> bindgen::Result<'a, i32> {
-        let level = options.level.map_or(3, |level| level as i32);
+        let level = (options.level).map_or(bun_zstd::DEFAULT_LEVEL, |level| level as i32);
         if !(1..=22).contains(&level) {
             return Err(
                 heap.invalid_arguments(format_args!("Compression level must be between 1 and 22"))
@@ -1811,8 +1811,8 @@ pub(crate) mod JSZstd {
     pub(crate) enum Failure {
         /// The output, whose size the input decides, or zstd's own state for it could not be allocated.
         OutOfMemory,
-        /// An `ERR_ZSTD` with this message.
-        Compression(&'static [u8]),
+        /// An `ERR_ZSTD` with the message of the error.
+        Compression(bun_zstd::Error),
         /// An `ERR_ZSTD` naming the error.
         Decompression(bun_zstd::ZstdError),
     }
@@ -1822,7 +1822,7 @@ pub(crate) mod JSZstd {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             match self {
                 Failure::OutOfMemory => f.write_str("Out of memory"),
-                Failure::Compression(message) => write!(f, "{}", bstr::BStr::new(message)),
+                Failure::Compression(err) => write!(f, "{err}"),
                 Failure::Decompression(err) => write!(f, "Decompression failed: {err}"),
             }
         }
@@ -1860,29 +1860,19 @@ pub(crate) mod JSZstd {
 
     /// Boxed (trimmed to the bytes produced) so an empty result owns no memory, as `create_buffer_from_box` requires.
     fn compress_to_box(input: &[u8], level: i32) -> Result<Box<[u8]>, Failure> {
-        let max_size = bun_zstd::compress_bound(input.len());
-        // `ZSTD_compressBound` returns an error code for inputs over `ZSTD_MAX_INPUT_SIZE`.
-        if bun_zstd::is_error(max_size) {
-            return Err(Failure::Compression(b"Input is too large to compress"));
+        let mut output = Vec::new();
+        match bun_zstd::compress_append(&mut output, input, level) {
+            Ok(()) => Ok(output.into_boxed_slice()),
+            Err(bun_zstd::Error::MemoryAllocation) => Err(Failure::OutOfMemory),
+            Err(err) => Err(Failure::Compression(err)),
         }
-
-        // Reserved, not zero-filled: zstd initializes exactly the bytes it reports.
-        let mut output: Vec<u8> = Vec::new();
-        output
-            .try_reserve_exact(max_size)
-            .map_err(|_| Failure::OutOfMemory)?;
-
-        if let bun_zstd::Result::Err(err) =
-            bun_zstd::compress_append(&mut output, input, Some(level))
-        {
-            return Err(Failure::Compression(err.as_bytes()));
-        }
-
-        Ok(output.into_boxed_slice())
     }
 
-    fn decompress_to_box(input: &[u8]) -> Result<Box<[u8]>, Failure> {
-        bun_zstd::decompress_alloc(input)
+    fn decompress_to_box(
+        spare: &mut bun_zstd::SpareTables,
+        input: &[u8],
+    ) -> Result<Box<[u8]>, Failure> {
+        bun_zstd::decompress_alloc_with(spare, input)
             .map(Vec::into_boxed_slice)
             .map_err(Failure::from)
     }
@@ -1901,7 +1891,9 @@ pub(crate) mod JSZstd {
         heap: &JsHeap<'a>,
         data: &[u8],
     ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
-        let output = decompress_to_box(data).map_err(|failure| failure.into_error(heap))?;
+        let output = (crate::jsc_hooks::runtime_state().zstd_tables)
+            .with_mut(|spare| decompress_to_box(spare, data))
+            .map_err(|failure| failure.into_error(heap))?;
         heap.create_buffer_from_box(output)
     }
 
@@ -1929,7 +1921,7 @@ pub(crate) mod JSZstd {
             this.result = if this.is_compress {
                 compress_to_box(input, this.level)
             } else {
-                decompress_to_box(input)
+                decompress_to_box(&mut bun_zstd::SpareTables::default(), input)
             };
             Some(done)
         }

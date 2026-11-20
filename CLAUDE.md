@@ -142,12 +142,13 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/shell/` - Cross-platform shell implementation
 - `src/css/` - CSS parser and processor
 - `src/http/` - HTTP client + `websocket_client/` (WebSocket, deflate)
+- `src/zstd/` - zstd (`decoder/` and `encoder/` are crates of their own)
 - `src/sql/` - SQL database integrations (Postgres, MySQL, SQLite)
 - `src/bake/` - Server-side rendering / dev server framework
 
 #### Vendored Dependencies (`vendor/`)
 
-Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), cares (async DNS), highway (SIMD), libuv (Windows event loop), lolhtml (HTML rewriter), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore), zstd. Build configuration for these is in `scripts/build/deps/*.ts`.
+Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), cares (async DNS), highway (SIMD), libuv (Windows event loop), lolhtml (HTML rewriter), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore). Build configuration for these is in `scripts/build/deps/*.ts`.
 
 ### JavaScript Class Implementation (C++)
 

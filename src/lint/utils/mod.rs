@@ -29,6 +29,7 @@
 //! | methods of `String`, `/\s/` | [`text`] | `bun_core::strings::trim_js_whitespace(bytes)`, `bun_core::strings::wtf8_len_utf16(bytes)` |
 //! | a fix that renames a variable or declares a new one | [`names`] | `names::is_free(name, scope, uses)` |
 //! | a fix that's only correct for an array, a string or a regular expression, in a rule without type information | [`visible`] | `report.fix_where_safe(\|\| visible::is_visibly_array(e), fix)` |
+//! | a fix that changes how a test file gets `jest`, `vi` or `vitest`: a global, an import, `require()`, a namespace | [`bun_test`] | `report.fix_where_safe(\|\| !bun_test::has_module_mock_call(references, b"vi"), fix)` |
 //! | a loop over `node.parent` from each of many nodes | [`ancestor_memo`] | `AncestorMemo::default()` in the state, `cx.state.find(node, \|child, parent\| ..)` |
 //!
 //! A function that takes two handles uses one lifetime for both, `fn f<'a>(a: Expr<'a>, b: Expr<'a>)`, because a
@@ -42,6 +43,7 @@
 pub mod ancestor_memo;
 pub mod array;
 pub mod ast_utils;
+pub mod bun_test;
 pub mod char_source;
 pub mod code_frame;
 pub mod directives;

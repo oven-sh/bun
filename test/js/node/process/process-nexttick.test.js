@@ -78,6 +78,185 @@ it.concurrent.each([
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
 });
 
+// The first read of process.nextTick on a global object makes its tick queue. Each script below reports tickQueues()
+// before the read that it tests. That is the precondition: with 0 tick queues, nothing read process.nextTick earlier.
+const defineTickQueues = `const tickQueues = () => require("bun:jsc").heapStats().objectTypeCounts.NextTickQueue ?? 0;`;
+
+// An immediate makes the first read, outside a microtask, and each round queues its tick from a microtask.
+// Node runs the ticks when the callback ends, after the microtasks that are queued:
+// https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/api/callback.cc#L165-L204
+function roundsFromTheFirstRead(report) {
+  return `
+    ${defineTickQueues}
+    const tickQueuesBeforeEachRound = [];
+    const round = () =>
+      new Promise(done => {
+        tickQueuesBeforeEachRound.push(tickQueues());
+        const nextTick = process.nextTick;
+        const order = [];
+        queueMicrotask(() => {
+          order.push("microtask 1");
+          nextTick(() => order.push("tick"));
+          queueMicrotask(() => order.push("microtask 2"));
+        });
+        setImmediate(() => done(order.join(", ")));
+      });
+    setImmediate(async () => {
+      const first = await round();
+      setImmediate(async () =>
+        ${report}(JSON.stringify({ first, second: await round(), tickQueuesBeforeEachRound })),
+      );
+    });
+  `;
+}
+
+async function runScript(script) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+it.concurrent.each([
+  ["the main thread", roundsFromTheFirstRead("console.log")],
+  [
+    "a global Worker",
+    `
+      const source = ${JSON.stringify(roundsFromTheFirstRead("postMessage"))};
+      const worker = new Worker(URL.createObjectURL(new Blob([source])));
+      worker.onmessage = event => {
+        console.log(event.data);
+        worker.terminate();
+      };
+    `,
+  ],
+])("the first tick of %s waits for the microtask queue when a microtask queues it", async (_thread, script) => {
+  const order = "microtask 1, microtask 2, tick";
+  expect(await runScript(script)).toEqual({
+    stdout: JSON.stringify({ first: order, second: order, tickQueuesBeforeEachRound: [0, 1] }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The job that reads process.nextTick first belongs to the own microtask queue of a node:vm context, and an immediate
+// runs the script. The tick waits for the jobs of that queue and runs when the immediate ends, before its microtasks.
+it.concurrent("the first tick of a job of a node:vm context's own microtask queue waits for that queue", async () => {
+  const result = await runScript(`
+    ${defineTickQueues}
+    const vm = require("node:vm");
+    const tickQueuesBeforeEachRound = [];
+    const round = () =>
+      new Promise(done => {
+        tickQueuesBeforeEachRound.push(tickQueues());
+        const order = [];
+        const context = vm.createContext({ process, order }, { microtaskMode: "afterEvaluate" });
+        vm.runInContext(
+          \`Promise.resolve().then(() => {
+             order.push("vm microtask 1");
+             process.nextTick(() => order.push("tick"));
+             Promise.resolve().then(() => order.push("vm microtask 2"));
+           });\`,
+          context,
+        );
+        queueMicrotask(() => order.push("microtask"));
+        setImmediate(() => done(order.join(", ")));
+      });
+    setImmediate(async () => {
+      const first = await round();
+      setImmediate(async () =>
+        console.log(JSON.stringify({ first, second: await round(), tickQueuesBeforeEachRound })),
+      );
+    });
+  `);
+  const order = "vm microtask 1, vm microtask 2, tick, microtask";
+  expect(result).toEqual({
+    stdout: JSON.stringify({ first: order, second: order, tickQueuesBeforeEachRound: [0, 1] }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// Programs that the early tick silences or kills. An immediate is the first to load or touch a built-in that reads
+// process.nextTick, and an event that the built-in emits from a tick has its listener added after an await.
+it.concurrent.each([
+  [
+    "'finish' of a Writable, where node:stream is first loaded in the immediate",
+    `
+      setImmediate(async () => {
+        console.log("tick queues: " + tickQueues());
+        const { Writable } = require("node:stream");
+        const sink = new Writable({
+          write(chunk, encoding, callback) {
+            Promise.resolve().then(() => callback());
+          },
+        });
+        const written = new Promise(resolve => sink.write("a", resolve));
+        sink.end();
+        await written;
+        await new Promise(resolve => sink.once("finish", resolve));
+        console.log("finished");
+      });
+    `,
+    "finished\n",
+  ],
+  [
+    "'error' of a stream that a promise job destroys, where node:stream is first loaded in the immediate",
+    `
+      async function source() {
+        throw new Error("boom");
+      }
+      async function open(PassThrough) {
+        const stream = new PassThrough();
+        source().then(data => stream.end(data), error => stream.destroy(error));
+        return stream;
+      }
+      setImmediate(async () => {
+        console.log("tick queues: " + tickQueues());
+        const { PassThrough } = require("node:stream");
+        const stream = await open(PassThrough);
+        stream.on("error", error => console.log("handled: " + error.message));
+      });
+    `,
+    "handled: boom\n",
+  ],
+  [
+    "'error' of a child that an awaited helper spawns, where the immediate is the first to write to process.stdout",
+    `
+      const { spawn } = require("node:child_process");
+      async function start(command) {
+        await null;
+        return spawn(command);
+      }
+      setImmediate(async () => {
+        console.log("tick queues: " + tickQueues());
+        process.stdout.write("starting\\n");
+        const child = await start(process.execPath + "-does-not-exist");
+        child.on("error", error => console.log("handled: " + error.code));
+      });
+    `,
+    "starting\nhandled: ENOENT\n",
+  ],
+])("a listener added after an await is in time for %s", async (_name, script, stdout) => {
+  expect(await runScript(defineTickQueues + script)).toEqual({
+    stdout: "tick queues: 0\n" + stdout,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The body of an entry point runs inside a microtask, and node runs a CommonJS entry point outside the microtask queue.
+// So the tick queue that the body makes still runs behind that microtask, before the promise jobs of the body.
+it.concurrent("the first tick of a CommonJS entry point runs before the promise jobs of its body", async () => {
+  const result = await runScript(`
+    require("node:os");
+    const order = [];
+    Promise.resolve().then(() => order.push("promise job"));
+    process.nextTick(() => order.push("tick"));
+    setImmediate(() => console.log(order.join(", ")));
+  `);
+  expect(result).toEqual({ stdout: "tick, promise job\n", stderr: "", exitCode: 0 });
+});
+
 // The tick pass is a JS function. When no tick is scheduled, a checkpoint must not enter it.
 it("after the tick queue went idle, a promise reaction does not run inside processTicksAndRejections", async () => {
   await using proc = Bun.spawn({

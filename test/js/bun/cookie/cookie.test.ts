@@ -124,6 +124,83 @@ describe("Expires serialization", () => {
   });
 });
 
+describe("domain setter", () => {
+  const create = () => new Bun.Cookie("a", "b", { domain: "example.com", path: "/x" });
+
+  test.each([[undefined], [null]])("domain = %p removes the Domain attribute", value => {
+    const cookie = create();
+    cookie.domain = value;
+    expect(cookie.domain).toBeNull();
+    expect(cookie.toString()).toBe("a=b; Path=/x; SameSite=Lax");
+    expect(cookie.toJSON()).not.toHaveProperty("domain");
+  });
+
+  test("the setter of the prototype removes the Domain attribute for undefined and null", () => {
+    const setter = Object.getOwnPropertyDescriptor(Bun.Cookie.prototype, "domain")!.set!;
+    for (const value of [undefined, null]) {
+      const cookie = create();
+      setter.call(cookie, value);
+      expect(cookie.domain).toBeNull();
+      expect(cookie.toString()).toBe("a=b; Path=/x; SameSite=Lax");
+    }
+  });
+
+  test("a subclass instance removes the Domain attribute", () => {
+    class SessionCookie extends Bun.Cookie {}
+    const cookie = new SessionCookie("a", "b", { domain: "example.com" });
+    cookie.domain = undefined;
+    expect(cookie.toString()).toBe("a=b; Path=/; SameSite=Lax");
+  });
+
+  test("the domain of a cookie that has none copies to another cookie", () => {
+    const cookie = create();
+    cookie.domain = new Bun.Cookie("c", "d").domain;
+    expect(cookie.domain).toBeNull();
+    expect(cookie.toString()).toBe("a=b; Path=/x; SameSite=Lax");
+  });
+
+  test("a cookie that has no domain keeps none when its domain is assigned to itself", () => {
+    const cookie = new Bun.Cookie("a", "b");
+    cookie.domain = cookie.domain;
+    expect(cookie.domain).toBeNull();
+    expect(cookie.toString()).toBe("a=b; Path=/; SameSite=Lax");
+  });
+
+  test("a domain that was removed takes a new value", () => {
+    const cookie = create();
+    cookie.domain = undefined;
+    cookie.domain = null;
+    expect(cookie.toString()).toBe("a=b; Path=/x; SameSite=Lax");
+
+    cookie.domain = "example.org";
+    expect(cookie.toString()).toBe("a=b; Domain=example.org; Path=/x; SameSite=Lax");
+  });
+
+  // Only undefined and null remove the attribute. Every other value is converted to a string.
+  const converted: [value: unknown, stored: string, serialized: string][] = [
+    ["", "", "a=b; Path=/x; SameSite=Lax"],
+    ["undefined", "undefined", "a=b; Domain=undefined; Path=/x; SameSite=Lax"],
+    ["null", "null", "a=b; Domain=null; Path=/x; SameSite=Lax"],
+    [0, "0", "a=b; Domain=0; Path=/x; SameSite=Lax"],
+    [false, "false", "a=b; Domain=false; Path=/x; SameSite=Lax"],
+    [new String("example.org"), "example.org", "a=b; Domain=example.org; Path=/x; SameSite=Lax"],
+  ];
+  test.each(converted)("domain = %p stores the string %p", (value, stored, serialized) => {
+    const cookie = create();
+    (cookie as any).domain = value;
+    expect(cookie.domain).toBe(stored);
+    expect(cookie.toString()).toBe(serialized);
+  });
+
+  test("a value that does not convert to a string throws and changes nothing", () => {
+    const cookie = create();
+    expect(() => ((cookie as any).domain = Symbol())).toThrow(
+      expect.objectContaining({ name: "TypeError", message: "Cannot convert a Symbol value to a string" }),
+    );
+    expect(cookie.toString()).toBe("a=b; Domain=example.com; Path=/x; SameSite=Lax");
+  });
+});
+
 console.log("describe Bun.serve() cookies");
 describe("Bun.serve() cookies", () => {
   const server = Bun.serve({

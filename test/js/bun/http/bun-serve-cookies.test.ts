@@ -389,6 +389,29 @@ describe("CookieMap iterator", () => {
   });
 });
 
+describe("a cookie changed after req.cookies.set(cookie)", () => {
+  it("sends no Domain attribute that the handler removed with undefined or null", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/": req => {
+          const first = new Bun.Cookie("first", "1", { domain: "example.com" });
+          const second = new Bun.Cookie("second", "2", { domain: "example.com" });
+          req.cookies.set(first);
+          req.cookies.set(second);
+          first.domain = undefined;
+          second.domain = null;
+          return new Response("ok");
+        },
+      },
+    });
+
+    const res = await fetch(server.url);
+    expect(await res.text()).toBe("ok");
+    expect(res.headers.getSetCookie()).toEqual(["first=1; Path=/; SameSite=Lax", "second=2; Path=/; SameSite=Lax"]);
+  });
+});
+
 describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
   it("can create a Cookie directly", () => {
     const cookie = new Bun.Cookie("name", "value");

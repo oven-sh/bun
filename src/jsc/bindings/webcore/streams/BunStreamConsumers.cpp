@@ -1453,6 +1453,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObje
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNativeReadableAdapter, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(Bun::WebStreams::nativeSourceAdapterForNodeReadable(globalObject, callFrame->argument(0)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNativeReadablePull, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::nativeSourcePullForNodeReadable(globalObject, callFrame->argument(0), callFrame->argument(1), callFrame->argument(2))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNativeReadablePullSettled, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::nativeSourcePullSettledForNodeReadable(globalObject, callFrame->argument(0), callFrame->argument(1))));
+}
+
 // [reaction-convention] handlers (FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_CONSUMERS).
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onBufferedFastPathRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))

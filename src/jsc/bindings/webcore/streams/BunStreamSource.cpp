@@ -343,10 +343,23 @@ static JSC::JSUint8Array* nativeGetInternalBuffer(JSC::VM& vm, JSGlobalObject* g
         if (!view->isDetached() && view->length() == chunkSize)
             return view;
     }
-    auto* fresh = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), chunkSize);
+    // Readable.push() takes a Buffer as it is, and wraps any other view in one.
+    auto* structure = adapter->m_forNodeReadable ? defaultGlobalObject(globalObject)->JSBufferSubclassStructure() : globalObject->typedArrayStructure(JSC::TypeUint8, false);
+    auto* fresh = JSC::JSUint8Array::createUninitialized(globalObject, structure, chunkSize);
     RETURN_IF_EXCEPTION(scope, nullptr);
     adapter->setPendingView(vm, fresh);
     return fresh;
+}
+
+// A partial fill (pipes, sockets, the tail of a file) is copied out right-sized and the whole slab is reused for the next pull: no subarray views, and the slab is never adopted into an ArrayBuffer (which only full collections reclaim). A full fill hands over the slab. Null: the copy threw.
+static JSC::JSUint8Array* nativeChunkOfSlab(JSGlobalObject* globalObject, JSC::JSUint8Array* slab, size_t count)
+{
+    if (count >= slab->length())
+        return slab;
+    auto* chunk = JSC::JSUint8Array::createUninitialized(globalObject, slab->structure(), count);
+    if (chunk) [[likely]]
+        memcpy(chunk->typedVector(), slab->typedVector(), count);
+    return chunk;
 }
 
 // Decodes one pull result. Returns the value to store as the pending view (a view or undefined).
@@ -373,19 +386,12 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         JSValue newView = view ? JSValue(view) : jsUndefined();
         if (written > 0 && view) {
             size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
-            JSC::JSArrayBufferView* toEnqueue = view;
-            if (count < view->length()) {
-                // A partial fill (pipes, sockets, the tail of a file) is copied out right-sized and the
-                // whole slab is reused for the next pull: no subarray views, and the slab is never adopted
-                // into an ArrayBuffer (which only full collections reclaim). A full fill hands over the slab.
-                auto* chunk = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), count);
-                RETURN_IF_EXCEPTION(scope, {});
-                memcpy(chunk->typedVector(), view->typedVector(), count);
-                toEnqueue = chunk;
-            } else
+            auto* chunk = nativeChunkOfSlab(globalObject, view, count);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (chunk == view)
                 newView = jsUndefined();
             if (controller) {
-                readableStreamDefaultControllerEnqueue(globalObject, controller, toEnqueue);
+                readableStreamDefaultControllerEnqueue(globalObject, controller, chunk);
                 RETURN_IF_EXCEPTION(scope, {});
             }
         }
@@ -667,6 +673,97 @@ static void nativeSourcePullRejected(JSC::VM& vm, JSGlobalObject* globalObject, 
         RETURN_IF_EXCEPTION(scope, );
     }
     RELEASE_AND_RETURN(scope, nativeSourceSever(globalObject, adapter));
+}
+
+//                       A node:stream Readable over the native source (native-readable.ts)
+
+// It pulls through an adapter that has a handle and a slab and nothing else, so that nativeChunkOfSlab decides what every pull of a native source hands on.
+
+// native-readable.ts read into no less before: the Readable's highWaterMark can be 0, and is a count of objects in objectMode.
+static constexpr size_t nodeReadableMinChunkSize = 512;
+
+JSValue nativeSourceAdapterForNodeReadable(JSGlobalObject* globalObject, JSValue handleValue)
+{
+    auto& vm = getVM(globalObject);
+    JSObject* handle = handleValue.getObject();
+    if (!handle || !(handle->inherits<JSFileInternalReadableStreamSource>() || handle->inherits<JSBytesInternalReadableStreamSource>() || handle->inherits<JSBlobInternalReadableStreamSource>()))
+        return jsUndefined();
+    auto* adapter = WebCore::JSNativeStreamSourceAdapter::create(vm, WebCore::JSStreamsRuntime::from(globalObject)->nativeStreamSourceAdapterStructure(defaultGlobalObject(globalObject)));
+    adapter->setHandle(vm, handle);
+    adapter->m_forNodeReadable = true;
+    return adapter;
+}
+
+// handle.pull(view, closer) as the class of the source defines it, without the [[Get]] and the call of invokeMethod.
+static JSValue nativeHandlePull(JSGlobalObject* globalObject, JSObject* handle, JSValue view, JSValue closer)
+{
+    if (auto* source = dynamicDowncast<JSFileInternalReadableStreamSource>(handle))
+        return source->pull(globalObject, view, closer);
+    if (auto* source = dynamicDowncast<JSBytesInternalReadableStreamSource>(handle))
+        return source->pull(globalObject, view, closer);
+    return uncheckedDowncast<JSBlobInternalReadableStreamSource>(handle)->pull(globalObject, view, closer);
+}
+
+// `result` as the Readable pushes it: a count of bytes in `view` becomes their chunk. The slab of a source that ended is let go.
+static JSValue nativeChunkForNodeReadable(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSC::JSUint8Array* view, JSValue result, bool isClosed)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue chunk = result;
+    if (result.isNumber()) {
+        chunk = jsUndefined();
+        double written = result.asNumber();
+        if (written > 0 && view) {
+            size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
+            auto* taken = nativeChunkOfSlab(globalObject, view, count);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (taken == view)
+                adapter->clearPendingView(vm);
+            chunk = taken;
+        }
+    }
+    if (isClosed || result.isBoolean()) {
+        adapter->m_closed = true;
+        adapter->clearPendingView(vm);
+    }
+    return chunk;
+}
+
+JSValue nativeSourcePullForNodeReadable(JSGlobalObject* globalObject, JSValue adapterValue, JSValue size, JSValue closer)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* adapter = dynamicDowncast<JSNativeStreamSourceAdapter>(adapterValue);
+    JSObject* handle = adapter ? adapter->handle() : nullptr;
+    if (!handle || adapter->m_closed)
+        return jsBoolean(false);
+
+    double requested = size.isNumber() ? size.asNumber() : 0;
+    adapter->m_chunkSize = requested > nodeReadableMinChunkSize ? static_cast<size_t>(std::min<double>(requested, std::numeric_limits<uint32_t>::max())) : nodeReadableMinChunkSize;
+    auto* view = nativeGetInternalBuffer(vm, globalObject, adapter);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue result = nativeHandlePull(globalObject, handle, view, closer);
+    RETURN_IF_EXCEPTION(scope, {});
+    // native-readable.ts makes one pull at a time (kPendingRead), also when code of the user runs inside this one.
+    ASSERT(adapter->pendingView() == view);
+    if (result.inherits<JSPromise>())
+        return result;
+
+    auto* closerArray = dynamicDowncast<JSArray>(closer);
+    bool isClosed = closerArray && closerArray->canGetIndexQuickly(0u) && closerArray->getIndexQuickly(0u).isTrue();
+    RELEASE_AND_RETURN(scope, nativeChunkForNodeReadable(vm, globalObject, adapter, view, result, isClosed));
+}
+
+// The source's promise only tells that it ended with `false`: it does not store into the closer.
+JSValue nativeSourcePullSettledForNodeReadable(JSGlobalObject* globalObject, JSValue adapterValue, JSValue result)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* adapter = dynamicDowncast<JSNativeStreamSourceAdapter>(adapterValue);
+    if (!adapter)
+        return result;
+    JSObject* pending = adapter->pendingView();
+    RELEASE_AND_RETURN(scope, nativeChunkForNodeReadable(vm, globalObject, adapter, pending ? uncheckedDowncast<JSC::JSUint8Array>(pending) : nullptr, result, /* isClosed */ false));
 }
 
 //                       The native-sink path

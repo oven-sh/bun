@@ -2394,6 +2394,331 @@ describe.concurrent("bundledDependencies", () => {
     expect(await run("install")).toEqual(["1.0.0", "1.0.0"]);
     expect(await run(...command)).toEqual(["2.0.0", "1.0.0"]);
   });
+
+  // https://github.com/oven-sh/bun/issues/49340
+  // The lockfile records each folder that the tarball of a bundler ships: at the path of the folder, with the name and
+  // the version of the package.json in it, and with no registry URL and no hash, because nothing downloads it. What
+  // the registry has for the name, or for the range that the bundler declares, plays no part. A bun.lock with such an
+  // entry is at lockfileVersion 4.
+  type BunLock = { lockfileVersion: number; packages: Record<string, [string, ...unknown[]]> };
+
+  /** The bun.lock entry of a package that bun downloads. */
+  const fetched = (
+    name: string,
+    version: string,
+    info: object = {},
+    integrity: unknown = expect.stringMatching(/^sha512-/),
+  ) => [`${name}@${version}`, `${registryUrl()}${name}/-/${name}-${version}.tgz`, info, integrity];
+
+  /** The bun.lock entry of a package that the tarball of a bundler ships. */
+  const shipped = (name: string, version: string, info: object = {}) => [
+    `${name}@${version}`,
+    "",
+    { ...info, bundled: true },
+    "",
+  ];
+
+  /** `bun.lock key -> name@version` of each package folder in node_modules. The hoisted linker makes one folder per key. */
+  async function installedPackages(packageDir: string) {
+    const nodeModules = join(packageDir, "node_modules");
+    const installed: Record<string, string> = {};
+    for await (const path of new Bun.Glob("**/package.json").scan({ cwd: nodeModules })) {
+      const { name, version } = await file(join(nodeModules, path)).json();
+      installed[dirname(path).replaceAll("\\", "/").replaceAll("/node_modules/", "/")] = `${name}@${version}`;
+    }
+    return installed;
+  }
+
+  /** `bun.lock key -> name@version` of each entry. */
+  const lockedPackages = (lockfile: BunLock) =>
+    Object.fromEntries(Object.entries(lockfile.packages).map(([key, [id]]) => [key, id]));
+
+  const parseBunLock = (text: string) => Bun.JSONC.parse(text) as BunLock;
+
+  /** The bun.lock of the project. A project with bun.lockb has it written from the binary lockfile. */
+  async function bunLockOf(packageDir: string, env: NodeJS.Dict<string>, textLockfile: boolean) {
+    if (!textLockfile) {
+      const { err } = await install(packageDir, env, ["--save-text-lockfile"]);
+      expect(err).toContain("Saved lockfile");
+    }
+    return await file(join(packageDir, "bun.lock")).text();
+  }
+
+  // The tarball of each of these has every folder that its node_modules gets. bundled-unshipped-host also bundles
+  // a-dep, which its tarball lacks and the registry has.
+  const shippers = [
+    "bundled-alias-host",
+    "bundled-deep-host",
+    "bundled-older-host",
+    "bundled-same-host",
+    "bundled-unshipped-host",
+  ];
+  const each = (names: string[], value: string) => Object.fromEntries(names.map(name => [name, value]));
+
+  for (const textLockfile of [true, false]) {
+    const format = textLockfile ? "bun.lock" : "bun.lockb";
+
+    // Installs the project, installs it again, and installs it into an empty node_modules from the lockfile alone.
+    // The folders are the same each time, and the lockfile stays the one that the first install saved. Each entry of
+    // it is the package in the folder that its key names.
+    const installShipped = async (dependencies: Record<string, string>) => {
+      const { packageDir, packageJson, env } = await setupTest();
+      await write(packageJson, JSON.stringify({ name: "ships", dependencies }));
+      await installSavingLockfile(packageDir, env, textLockfile);
+
+      const lockfilePath = join(packageDir, format);
+      const saved = Buffer.from(await file(lockfilePath).bytes());
+      const installed = await installedPackages(packageDir);
+
+      await expectReinstallIsNoop(packageDir, env);
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      const { err } = await install(packageDir, env, ["--frozen-lockfile"]);
+      expect(err).not.toContain("Saved lockfile");
+      expect(await installedPackages(packageDir)).toEqual(installed);
+      expect(saved.equals(await file(lockfilePath).bytes())).toBeTrue();
+
+      const lockfile = parseBunLock(await bunLockOf(packageDir, env, textLockfile));
+      expect(lockedPackages(lockfile)).toEqual(installed);
+      return { packageDir, lockfile };
+    };
+
+    test.each<[string, string, Record<string, unknown[]>]>([
+      [
+        // The registry resolves ^1.0.0 to no-deps@1.1.0.
+        "a bundled dependency is locked at the version that the tarball ships, not at the one its range resolves to",
+        "bundled-older-host",
+        {
+          "bundled-older-host": fetched("bundled-older-host", "1.0.0", { dependencies: { "no-deps": "^1.0.0" } }),
+          "bundled-older-host/no-deps": shipped("no-deps", "1.0.1"),
+        },
+      ],
+      [
+        // Nothing gives bundled-unshipped-host an a-dep: the tarball has none, and a bundled dependency never comes
+        // from the registry.
+        "a bundled dependency that the tarball does not ship has no entry",
+        "bundled-unshipped-host",
+        {
+          "bundled-unshipped-host": fetched("bundled-unshipped-host", "1.0.0", {
+            dependencies: { "a-dep": "^1.0.0", "no-deps": "1.0.0" },
+            unresolved: ["a-dep"],
+          }),
+          "bundled-unshipped-host/no-deps": shipped("no-deps", "1.0.0"),
+        },
+      ],
+      [
+        // bundled-shipped-inner has the no-deps@1.0.0 that it needs below itself. The one next to it is 1.0.1.
+        "a package that is shipped below another shipped package is locked at the path of its folder",
+        "bundled-deep-host",
+        {
+          "bundled-deep-host": fetched("bundled-deep-host", "1.0.0", {
+            dependencies: { "bundled-shipped-inner": "1.0.0", "no-deps": "^1.0.0" },
+          }),
+          "bundled-deep-host/bundled-shipped-inner": shipped("bundled-shipped-inner", "1.0.0", {
+            dependencies: { "no-deps": "1.0.0" },
+          }),
+          "bundled-deep-host/bundled-shipped-inner/no-deps": shipped("no-deps", "1.0.0"),
+          "bundled-deep-host/no-deps": shipped("no-deps", "1.0.1"),
+        },
+      ],
+      [
+        // a-dep and no-deps are dependencies of bundled-range-inner, with ranges that the registry resolves to
+        // a-dep@1.0.10 and no-deps@1.1.0. bundled-range-host declares neither. Its one-dep comes from the registry.
+        "a folder that the tarball ships and bundleDependencies does not name is locked",
+        "bundled-range-host",
+        {
+          "bundled-range-host": fetched("bundled-range-host", "1.0.0", {
+            dependencies: { "bundled-range-inner": "1.0.0", "one-dep": "1.0.0" },
+          }),
+          "no-deps": fetched("no-deps", "1.0.1"),
+          "one-dep": fetched("one-dep", "1.0.0", { dependencies: { "no-deps": "1.0.1" } }),
+          "bundled-range-host/a-dep": shipped("a-dep", "1.0.1"),
+          "bundled-range-host/bundled-range-inner": shipped("bundled-range-inner", "1.0.0", {
+            dependencies: { "a-dep": "^1.0.0", "no-deps": "^1.0.0" },
+          }),
+          "bundled-range-host/no-deps": shipped("no-deps", "1.0.0"),
+        },
+      ],
+      [
+        // The folders are no-deps-cjs and a-dep-cjs. The key of an entry has the name of the folder.
+        "a shipped folder is locked with the name that its package.json has",
+        "bundled-alias-host",
+        {
+          "bundled-alias-host": fetched("bundled-alias-host", "1.0.0", {
+            dependencies: { "bundled-alias-inner": "1.0.0", "no-deps-cjs": "npm:no-deps@^1.0.0" },
+          }),
+          "bundled-alias-host/a-dep-cjs": shipped("a-dep", "1.0.1"),
+          "bundled-alias-host/bundled-alias-inner": shipped("bundled-alias-inner", "1.0.0", {
+            dependencies: { "a-dep-cjs": "npm:a-dep@^1.0.0" },
+          }),
+          "bundled-alias-host/no-deps-cjs": shipped("no-deps", "1.0.1"),
+        },
+      ],
+    ])(`(${format}) %s`, async (_, bundler, packages) => {
+      const { lockfile } = await installShipped({ [bundler]: "1.0.0" });
+      expect(lockfile.packages).toEqual(packages);
+      expect(lockfile.lockfileVersion).toBe(4);
+    });
+
+    test(`(${format}) a package of the registry and the same version in a bundle stay two packages`, async () => {
+      // The project installs no-deps@1.0.0 from the registry. bundled-same-host ships no-deps@1.0.0 too, with
+      // another index.js.
+      const { packageDir, lockfile } = await installShipped({ "bundled-same-host": "1.0.0", "no-deps": "1.0.0" });
+      const { integrity } = (await file(join(registry.packagesPath, "no-deps", "package.json")).json()).versions[
+        "1.0.0"
+      ].dist;
+      expect(lockfile.packages).toEqual({
+        "bundled-same-host": fetched("bundled-same-host", "1.0.0", { dependencies: { "no-deps": "1.0.0" } }),
+        "no-deps": fetched("no-deps", "1.0.0", {}, integrity),
+        "bundled-same-host/no-deps": shipped("no-deps", "1.0.0"),
+      });
+      expect(lockfile.lockfileVersion).toBe(4);
+
+      const shippedIndex = `module.exports = "shipped by bundled-same-host";\n`;
+      const [ofRegistry, ofBundle] = await Promise.all([
+        file(join(packageDir, "node_modules", "no-deps", "index.js")).text(),
+        file(join(packageDir, "node_modules", "bundled-same-host", "node_modules", "no-deps", "index.js")).text(),
+      ]);
+      expect({ ofRegistry: ofRegistry === shippedIndex, ofBundle }).toEqual({
+        ofRegistry: false,
+        ofBundle: shippedIndex,
+      });
+    });
+  }
+
+  // A registry of its own counts what one install asks for. The project depends on bundlers alone, so each
+  // other request is for a bundled name: no-deps, a-dep, bundled-shipped-inner or bundled-alias-inner.
+  test.each<[string, string, string[]]>([
+    ["bun install", "dependencies", []],
+    // These two install nothing of a bundler. They read its tarball to know what it ships.
+    ["bun install --lockfile-only", "dependencies", ["--lockfile-only"]],
+    ["bun install --production, with the bundlers in devDependencies,", "devDependencies", ["--production"]],
+  ])("%s asks the registry for nothing that a tarball ships", async (_, group, args) => {
+    using recorded = new TestRegistry({ recordRequests: true }).start();
+    const { packageDir, packageJson, env } = await setupTest();
+    await Promise.all([
+      recorded.writeBunfig(packageDir, { saveTextLockfile: true, linker: "hoisted" }),
+      write(packageJson, JSON.stringify({ name: "ships", [group]: each(shippers, "1.0.0") })),
+    ]);
+    const asked = () => recorded.requests.map(request => request.path).toSorted();
+    const manifests = shippers.map(name => `/${name}`);
+    const tarballs = shippers.map(name => `/${name}/-/${name}-1.0.0.tgz`);
+
+    await install(packageDir, env, args);
+    expect(asked()).toEqual([...manifests, ...tarballs].toSorted());
+    if (args.length > 0) return;
+
+    // An install from the lockfile downloads the bundlers, and nothing for an entry without a URL.
+    await Promise.all(
+      ["node_modules", ".bun-cache"].map(path => rm(join(packageDir, path), { recursive: true, force: true })),
+    );
+    recorded.requests.length = 0;
+    await install(packageDir, env, ["--frozen-lockfile"]);
+    expect(asked()).toEqual(tarballs);
+    expect(await installedPackages(packageDir)).toEqual(
+      lockedPackages(parseBunLock(await file(join(packageDir, "bun.lock")).text())),
+    );
+  });
+
+  // bundled-range-host also has a dependency that comes from the registry: one-dep, which needs no-deps@1.0.1.
+  const allShippers = [...shippers, "bundled-range-host"].toSorted();
+
+  test("each way to resolve a project with bundlers saves the same bun.lock", async () => {
+    // The bundlers are devDependencies, which an install can leave out. The project's own no-deps@1.0.0 is a
+    // version that some of the tarballs ship too.
+    const manifest = {
+      name: "ships",
+      dependencies: { "no-deps": "1.0.0" },
+      devDependencies: each(allShippers, "1.0.0"),
+    };
+    type Run = (...args: string[]) => Promise<unknown>;
+    const ways: Record<string, (run: Run, packageDir: string) => Promise<unknown>> = {
+      "bun install": run => run(),
+      "bun install --lockfile-only": run => run("--lockfile-only"),
+      "bun install --lockfile-only, then bun install": async run => {
+        await run("--lockfile-only");
+        await run();
+      },
+      // The second install finds the tarballs, and the manifests that were written in time, in the cache.
+      "bun install again, without the bun.lock and the node_modules of the first": async (run, packageDir) => {
+        await run();
+        await Promise.all(
+          ["bun.lock", "node_modules"].map(path => rm(join(packageDir, path), { recursive: true, force: true })),
+        );
+        await run();
+      },
+      "bun install --linker isolated": run => run("--linker", "isolated"),
+      // --production leaves devDependencies out the same way, but it saves no lockfile. It accepts this one as it is.
+      "bun install --omit=dev, then bun install --production": async run => {
+        await run("--omit=dev");
+        await run("--production");
+      },
+    };
+    const projects = await Promise.all(
+      Object.entries(ways).map(async ([way, steps]) => {
+        const { packageDir, packageJson, env } = await setupTest();
+        await write(packageJson, JSON.stringify(manifest));
+        await steps((...args) => install(packageDir, env, ["--save-text-lockfile", ...args]), packageDir);
+        return { way, packageDir, lockfile: await file(join(packageDir, "bun.lock")).text() };
+      }),
+    );
+
+    const [{ packageDir, lockfile }] = projects;
+    expect(lockedPackages(parseBunLock(lockfile))).toEqual(await installedPackages(packageDir));
+    expect(parseBunLock(lockfile).lockfileVersion).toBe(4);
+    expect(Object.fromEntries(projects.map(project => [project.way, project.lockfile]))).toEqual(
+      each(Object.keys(ways), lockfile),
+    );
+    // Nothing of a bundler is in a node_modules without devDependencies.
+    expect(await readdirSorted(join(projects.at(-1)!.packageDir, "node_modules"))).toEqual(["no-deps"]);
+  });
+
+  test("a lockfile with shipped packages is loaded and saved back as it is", async () => {
+    const manifest = { name: "ships", dependencies: each(allShippers, "1.0.0") };
+    const { packageDir, packageJson, env } = await setupTest();
+    await write(packageJson, JSON.stringify(manifest));
+    await installSavingLockfile(packageDir, env, true);
+
+    const lockfilePath = join(packageDir, "bun.lock");
+    const written = await file(lockfilePath).text();
+    const installed = await installedPackages(packageDir);
+    expect(lockedPackages(parseBunLock(written))).toEqual(installed);
+    expect(parseBunLock(written).lockfileVersion).toBe(4);
+
+    // An install that saves bun.lock replaces the file.
+    const identity = async () => {
+      const { ino, mtimeMs } = await lstat(lockfilePath);
+      return { ino, mtimeMs, text: await file(lockfilePath).text() };
+    };
+    const saved = await identity();
+
+    await expectReinstallIsNoop(packageDir, env);
+    expect(await identity()).toEqual(saved);
+
+    let { err } = await install(packageDir, env, ["--frozen-lockfile"]);
+    expect(err).not.toContain("Saved lockfile");
+    expect(await identity()).toEqual(saved);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    ({ err } = await install(packageDir, env, ["--frozen-lockfile"]));
+    expect(err).not.toContain("Saved lockfile");
+    expect(await identity()).toEqual(saved);
+    expect(await installedPackages(packageDir)).toEqual(installed);
+
+    // --lockfile-only writes out what it loaded, also when nothing changed. These are the bytes that the file has.
+    await install(packageDir, env, ["--lockfile-only"]);
+    expect(await identity()).toEqual(saved);
+
+    // bun.lockb carries all of it: the bun.lock that bun writes from it is the same file.
+    const binary = await setupTest();
+    await write(binary.packageJson, JSON.stringify(manifest));
+    await installSavingLockfile(binary.packageDir, binary.env, false);
+    expect(await installedPackages(binary.packageDir)).toEqual(installed);
+    await expectReinstallIsNoop(binary.packageDir, binary.env);
+    await rm(join(binary.packageDir, "node_modules"), { recursive: true, force: true });
+    await install(binary.packageDir, binary.env, ["--frozen-lockfile"]);
+    expect(await installedPackages(binary.packageDir)).toEqual(installed);
+    expect(await bunLockOf(binary.packageDir, binary.env, false)).toBe(written);
+  });
 });
 
 // A fresh resolve starts to download tarballs before the install phase runs.
@@ -2647,6 +2972,34 @@ index 0000000..1111111 100644
     for (const [name, project] of Object.entries(projects)) {
       test(`(${linker}) ${name}`, () => installEachWay(linker, project));
     }
+  }
+
+  // The tarball of outer has bd, which it bundles, and tr, which bd needs. A
+  // fresh resolve takes both from there, also when it installs nothing.
+  for (const args of [[], ["--lockfile-only"]]) {
+    test(`bun ${["install", ...args].join(" ")} asks the registry for nothing that a tarball ships`, async () => {
+      const requests: Requests = { tarballs: [], manifests: new Set() };
+      await using registry = serveRegistry(requests);
+      using dir = tempDir("fresh-resolve-tarballs", {
+        "package.json": JSON.stringify({ name: "foo", dependencies: { outer: "1.0.0" } }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url.href } }),
+      });
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+        env: envFor(String(dir)),
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect({ manifests: [...requests.manifests].toSorted(), tarballs: requests.tarballs }).toEqual({
+        manifests: ["outer"],
+        tarballs: ["outer"],
+      });
+      expect(exitCode).toBe(0);
+    });
   }
 
   // The runtime has no install phase. With --install=force it loads every

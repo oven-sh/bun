@@ -450,8 +450,11 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, V
                 == name
         })
         .map(|dep| lockfile.buffers.resolutions[dep as usize] as usize);
-    // Fall back to a copy that is nested deeper, or that is only installed under an alias.
-    let by_own_name = (0..names.len()).filter(|&id| names[id].slice(string_buf) == name);
+    // Fall back to a copy that is nested deeper, or that is only installed under an alias. A
+    // shipped copy is whatever its bundler packed, not a version the lockfile resolved.
+    let metas = lockfile.packages.items_meta();
+    let by_own_name = (0..names.len())
+        .filter(|&id| names[id].slice(string_buf) == name && !metas[id].is_shipped());
     let found = by_installed_name.chain(by_own_name).find(|&id| {
         resolutions
             .get(id)

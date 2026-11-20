@@ -1235,6 +1235,7 @@ impl FixPlan {
         let names = lockfile.packages.items_name();
         let name_hashes = lockfile.packages.items_name_hash();
         let res = lockfile.packages.items_resolution();
+        let metas = lockfile.packages.items_meta();
         let planned = &self.advisories;
         let installed = AdvisoryIndex::build(installed_advisories).unwrap_or_oom();
 
@@ -1281,10 +1282,13 @@ impl FixPlan {
             index_sort::sort_vec_unstable_by(&mut advisories, |a, b| a.cmp(b));
             advisories.dedup();
             let ver = fmt_version(version, buf);
-            let planned_gone = self
-                .expected_gone
-                .iter()
-                .any(|(hash, from)| *hash == name_hash && **from == *ver);
+            // A shipped copy leaves only with the package that bundles it, so an ordinary package
+            // of the same name and version that was planned gone says nothing about it.
+            let planned_gone = !metas[pkg_id].is_shipped()
+                && self
+                    .expected_gone
+                    .iter()
+                    .any(|(hash, from)| *hash == name_hash && **from == *ver);
             let reported_staying = staying
                 .iter()
                 .any(|&(hash, from)| hash == name_hash && *from == *ver);

@@ -242,7 +242,9 @@ fn lockfile_entries(pm: &mut PackageManager) -> Vec<LockfileEntry> {
     let mut path_buf = bun_paths::path_buffer_pool::get();
     for i in 0..pm.lockfile.packages.len() {
         let resolution = pm.lockfile.packages.items_resolution()[i];
+        // A peer row can bind a shipped package, so the walk reaches it, but it has no entry.
         if !wanted.is_set(i)
+            || pm.lockfile.packages.items_meta()[i].is_shipped()
             || !matches!(
                 resolution.tag,
                 ResolutionTag::Npm

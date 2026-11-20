@@ -2589,6 +2589,23 @@ describe("`bun audit fix`", () => {
     expect(await installedVersion(dir, "bundled-1", "node_modules", "no-deps")).toBe("1.0.0");
   });
 
+  // The root's no-deps@1.0.0 and the one bundled-1 ships are two packages with one name and version.
+  test.concurrent("a bundled copy is reported once when the root's copy of that version is fixed", async () => {
+    await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "bundled-1": "1.0.0", "no-deps": "1.0.0" } });
+    expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
+
+    const { stdout, exitCode } = await auditFix(dir);
+    expect(stdout).toContain("fixing:\n  ^ no-deps 1.0.0 -> 1.0.1\n");
+    expect(stdout).toContain(
+      "blocked by a dependent's range:\n  ^ no-deps 1.0.0 -> 1.0.1\n    bundled-1@1.0.0 bundles no-deps@1.0.0\n",
+    );
+    expect(stdout).not.toContain("vulnerable after install");
+    expect(exitCode).toBe(1);
+    expect(await installedVersion(dir, "no-deps")).toBe("1.0.1");
+    expect(await installedVersion(dir, "bundled-1", "node_modules", "no-deps")).toBe("1.0.0");
+  });
+
   test.concurrent("multiple advisories on one instance are cleared together", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4", 1), adv("<1.0.6", 2)] });
     using dir = await setupVulnerableADep(server);
@@ -4602,6 +4619,29 @@ describe("`bun audit fix`", () => {
     expect(doc).toMatchObject({ dryRun: false, fixed: 0, remaining: 1, fixes: [] });
     expect(exitCode).toBe(1);
     expect(await lock(dir)).toBe(lockBefore);
+  });
+
+  test.concurrent("--json lists a bundled copy only as blocked when the root's copy is fixed", async () => {
+    await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "bundled-1": "1.0.0", "no-deps": "1.0.0" } });
+
+    const { stdout, exitCode } = await auditFix(dir, "--json");
+    expect(JSON.parse(stdout)).toMatchObject({
+      dryRun: false,
+      remaining: 1,
+      fixes: [{ name: "no-deps", from: "1.0.0", to: "1.0.1" }],
+      blocked: [
+        {
+          name: "no-deps",
+          from: "1.0.0",
+          to: "1.0.1",
+          blockers: [{ dependent: "bundled-1@1.0.0", range: "1.0.0", bundled: true, override: null }],
+        },
+      ],
+      vulnerableAfterInstall: [],
+    });
+    expect(exitCode).toBe(1);
+    expect(await installedVersion(dir, "no-deps")).toBe("1.0.1");
   });
 
   test.concurrent("--json marks a blocked fix that would be a downgrade", async () => {

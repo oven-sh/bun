@@ -2075,12 +2075,14 @@ impl Lockfile {
     /// The integrity hash that the lockfile records for the registry package `name@version`.
     pub fn npm_integrity(&self, name: &[u8], version: Semver::Version) -> Option<crate::Integrity> {
         let resolutions = self.packages.items_resolution();
+        let metas = self.packages.items_meta();
         let id = (0..resolutions.len()).find(|&id| {
             resolutions[id].tag == ResolutionTag::Npm
+                && !metas[id].is_shipped()
                 && resolutions[id].npm().version.eql(version)
                 && self.str(&self.packages.items_name()[id]) == name
         })?;
-        Some(self.packages.items_meta()[id].integrity)
+        Some(metas[id].integrity)
     }
 
     #[inline]

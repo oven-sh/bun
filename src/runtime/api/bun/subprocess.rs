@@ -188,6 +188,7 @@ bitflags::bitflags! {
         const ABORT_SIGNAL_KILLED          = 1 << 7;
     }
 }
+bun_core::assert_distinct_flag_bits!(Flags);
 
 bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, cause| {
     // SAFETY: trait contract — `this` is live.

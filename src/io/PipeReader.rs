@@ -205,6 +205,7 @@ bitflags::bitflags! {
         const READ_FAILED              = 1 << 11;
     }
 }
+bun_core::assert_distinct_flag_bits!(PosixFlags);
 
 #[cfg(unix)]
 impl PosixFlags {

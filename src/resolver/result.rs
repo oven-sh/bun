@@ -101,6 +101,7 @@ bitflags::bitflags! {
         const SET_SEMANTICS_FOR_CLASS_FIELDS = 1 << 7;
     }
 }
+bun_core::assert_distinct_flag_bits!(ResultFlags);
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExternalKind {

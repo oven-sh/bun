@@ -502,6 +502,166 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   expect(exitCode).toBe(0);
 });
 
+// A 'data' handler that pauses, removes itself and attaches a 'readable' listener in
+// one turn: the 'pause' tick releases the native reader after the listener is on, and
+// _read must take it back when the Readable asks for data on the listener's behalf.
+test.concurrent("switching from 'data' to 'readable' inside a 'data' handler keeps reading", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const seen = [];
+      const onData = chunk => {
+        seen.push("data:" + chunk);
+        process.stdin.pause();
+        process.stdin.removeListener("data", onData);
+        process.stdin.on("readable", () => {
+          let c;
+          while ((c = process.stdin.read()) !== null) seen.push("readable:" + c);
+        });
+        console.log("GOT1");
+      };
+      process.stdin.on("data", onData);
+      process.stdin.on("end", () => seen.push("end"));
+      process.on("exit", () => console.log(JSON.stringify(seen)));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const stderr = proc.stderr.text();
+  proc.stdin.write("hello");
+  await proc.stdin.flush();
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  for (let r; !(r = await reader.read()).done;) {
+    stdout += decoder.decode(r.value, { stream: true });
+    if (stdout.includes("GOT1")) break;
+  }
+  // A child that let go of stdin has exited by now. Its EPIPE is swallowed so the
+  // comparison below shows what the child saw.
+  try {
+    proc.stdin.write("world");
+    await proc.stdin.end();
+  } catch (e: any) {
+    if (e?.code !== "EPIPE") throw e;
+  }
+  for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
+
+  const exitCode = await proc.exited;
+  expect({ stdout, exitCode, ...(exitCode === 0 ? {} : { stderr: await stderr }) }).toEqual({
+    stdout: "GOT1\n" + JSON.stringify(["data:hello", "readable:world", "end"]) + "\n",
+    exitCode: 0,
+  });
+});
+
+// Each switch releases the native reader and takes it back. The rejected read of the
+// released reader re-enters _read, and so do Readable paths that reset its `reading`
+// flag, so without a guard one extra native read() stays pending per switch.
+test.concurrent("switching between 'data' and 'readable' repeatedly keeps one native read in flight", async () => {
+  const N = 6;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let inflight = 0, max = 0;
+      const read = ReadableStreamDefaultReader.prototype.read;
+      ReadableStreamDefaultReader.prototype.read = function (...args) {
+        max = Math.max(max, ++inflight);
+        const p = read.apply(this, args);
+        p.then(() => inflight--, () => inflight--);
+        return p;
+      };
+      const seen = [];
+      let cycle = 0;
+      const onData = chunk => {
+        seen.push("data:" + chunk);
+        if (++cycle < ${N}) {
+          process.stdin.pause();
+          process.stdin.removeListener("data", onData);
+          process.stdin.on("readable", onReadable);
+        }
+        console.log("GOT " + cycle);
+      };
+      const onReadable = () => {
+        let c;
+        while ((c = process.stdin.read()) !== null) {
+          seen.push("readable:" + c);
+          if (++cycle < ${N}) {
+            process.stdin.removeListener("readable", onReadable);
+            process.stdin.on("data", onData);
+          }
+          console.log("GOT " + cycle);
+        }
+      };
+      process.stdin.on("data", onData);
+      process.stdin.on("end", () => seen.push("end"));
+      process.on("exit", () => console.log(JSON.stringify({ seen, max })));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const stderr = proc.stderr.text();
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  for (let i = 1; i <= N; i++) {
+    try {
+      proc.stdin.write("c" + i);
+      await proc.stdin.flush();
+    } catch (e: any) {
+      if (e?.code !== "EPIPE") throw e;
+    }
+    for (let r; !stdout.includes(`GOT ${i}\n`) && !(r = await reader.read()).done;) {
+      stdout += decoder.decode(r.value, { stream: true });
+    }
+  }
+  try {
+    await proc.stdin.end();
+  } catch (e: any) {
+    if (e?.code !== "EPIPE") throw e;
+  }
+  for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
+
+  const exitCode = await proc.exited;
+  const expected = [...Array(N).keys()].map(i => (i % 2 ? "readable:" : "data:") + "c" + (i + 1));
+  expect({ stdout, exitCode, ...(exitCode === 0 ? {} : { stderr: await stderr }) }).toEqual({
+    stdout:
+      [...Array(N).keys()].map(i => `GOT ${i + 1}\n`).join("") +
+      JSON.stringify({ seen: [...expected, "end"], max: 1 }) +
+      "\n",
+    exitCode: 0,
+  });
+});
+
+// destroy() with a 'readable' listener and a read in flight: the 'close' tick releases
+// the reader, the rejected read calls _read again, and _read must not take the reader
+// back on a destroyed stream. The parent keeps stdin open, so the child exits only when
+// stdin lets go of the event loop.
+test.concurrent("destroy() with a 'readable' listener lets the process exit", async () => {
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.stdin.on("readable", () => process.stdin.read());
+      setImmediate(() => process.stdin.destroy());
+      process.on("exit", () => console.log("EXIT " + process.stdin.destroyed));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const result = await stdioResult(proc);
+  proc.stdin.end();
+  expect(result).toEqual({ stdout: "EXIT true\n", exitCode: 0 });
+});
+
 // The native FileReader source over a pollable pipe used to drain the fd to
 // EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
 // pipe into an internal buffer. The kernel pipe buffer filling up is the

@@ -1507,7 +1507,10 @@ export const linkerFlags: Flag[] = [
       // that actually runs on the `bun <file>` startup path; segregating it
       // into `.text.unlikely` made ~84% of that section resident at startup
       // anyway, so the monolithic default `.text` has *better* RSS locality.
-      "-Wl,--hash-style=both",
+      //
+      // gnu only: every loader this binary runs on (glibc, musl, bionic) reads
+      // .gnu.hash, so the SysV .hash table is dead bytes. FreeBSD keeps both.
+      "-Wl,--hash-style=gnu",
       "-Wl,--build-id=sha1",
     ],
     when: c => c.linux,
@@ -1852,9 +1855,8 @@ export function linkDepends(cfg: Config): string[] {
  * Strip step only runs for plain release builds (bun-profile → bun).
  * Not for debug/asan/valgrind/assertions variants — those keep symbols.
  *
- * Always: --strip-all --strip-debug --discard-all.
- * Platform extras remove unwind/exception sections we compile without
- * (no -fexceptions, lolhtml built with panic=abort).
+ * Always: --strip-all. Platform extras remove unwind/exception sections we
+ * compile without (no -fexceptions, lolhtml built with panic=abort).
  *
  * Linux section removal: CMake notes llvm-strip doesn't fully delete
  * these (leaves [LOAD #2 [R]]), GNU strip does. If size matters and
@@ -1862,9 +1864,10 @@ export function linkDepends(cfg: Config): string[] {
  */
 export const stripFlags: Flag[] = [
   {
-    // Core strip: symbols + debug info + local symbols.
-    flag: ["--strip-all", "--strip-debug", "--discard-all"],
-    desc: "Remove symbols, debug info, local symbols",
+    // --strip-all alone: GNU strip takes the last strip level it sees, so a
+    // trailing --strip-debug downgrades it and keeps .symtab/.strtab.
+    flag: ["--strip-all"],
+    desc: "Remove all symbols and debug info",
   },
   {
     flag: [

@@ -47,8 +47,9 @@ function symbolsOf(path: string) {
   const tables = sections.filter(section => section.type === SYMBOL_TABLE);
   expect(tables.length).toBeLessThanOrEqual(1);
   const table = tables[0] ?? { offset: 0, size: 0, link: 0, info: 0 };
-  const symbols = Array.from({ length: table.size / 24 }, (_, index) => {
-    const at = table.offset + index * 24;
+  // Entry 0 of a table is the null symbol. A stripped Bun has no table, and the one written for it starts with that entry too.
+  const symbols = Array.from({ length: Math.max(table.size / 24 - 1, 0) }, (_, index) => {
+    const at = table.offset + (index + 1) * 24;
     return {
       name: textAt(file, sections[table.link].offset + file.readUInt32LE(at)),
       isLocal: file[at + 4] >> 4 === 0,
@@ -58,7 +59,12 @@ function symbolsOf(path: string) {
       size: Number(file.readBigUInt64LE(at + 16)),
     };
   });
-  return { symbols, firstGlobal: table.info, payload: sections.find(section => section.name === ".bun")!, sections };
+  return {
+    symbols,
+    firstGlobal: Math.max(table.info - 1, 0),
+    payload: sections.find(section => section.name === ".bun")!,
+    sections,
+  };
 }
 
 const main = `function fibonacciOfTheTest(n: number): number {

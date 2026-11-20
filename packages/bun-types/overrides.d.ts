@@ -32,6 +32,8 @@ declare module "stream/web" {
      */
     blob(): Promise<Blob>;
   }
+
+  interface ReadableStreamDefaultReader<R = any> extends Bun.__internal.BunReadableStreamDefaultReaderMethods<R> {}
 }
 
 declare module "buffer" {

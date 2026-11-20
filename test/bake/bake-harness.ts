@@ -1755,9 +1755,7 @@ class OutputLineStream extends EventEmitter {
 
     this.name = name;
 
-    // @ts-ignore TODO: fix broken type definitions in @types/bun
     const reader1 = (this.reader1 = readable1.getReader());
-    // @ts-ignore TODO: fix broken type definitions in @types/bun
     const reader2 = (this.reader2 = readable2.getReader());
 
     for (const reader of [reader1, reader2]) {

@@ -1,4 +1,5 @@
 // Ported from Node.js v26.3.0 lib/internal/repl/history.js for Bun's node:repl.
+// The merge of the history file into the history in [kInitializeHistory] is from Node.js v26.8.0 (nodejs/node#64513).
 // Attribution: derived from Node.js, MIT licensed (Node.js contributors).
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
@@ -8,6 +9,7 @@ const {
   ArrayPrototypeIndexOf,
   ArrayPrototypeJoin,
   ArrayPrototypePop,
+  ArrayPrototypePushApply,
   ArrayPrototypeShift,
   ArrayPrototypeSplice,
   ArrayPrototypeUnshift,
@@ -341,10 +343,16 @@ class ReplHistory {
         return this[kHandleHistoryInitError](err as Error, onReadyCallback);
       }
 
-      if (data) {
-        this[kHistory] = RegExpPrototypeSymbolSplit(/\r?\n+/, data, this[kSize]);
+      const loadedHistory = data ? RegExpPrototypeSymbolSplit(/\r?\n+/, data, this[kSize]) : [];
+
+      // Lines evaluated while the file was read are already in the history, newest first: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/repl/history.js#L306-L321
+      if (this[kHistory].length > 0) {
+        ArrayPrototypePushApply(this[kHistory], loadedHistory);
+        if (this[kHistory].length > this[kSize]) {
+          ArrayPrototypeSplice(this[kHistory], this[kSize]);
+        }
       } else {
-        this[kHistory] = [];
+        this[kHistory] = loadedHistory;
       }
 
       validateArray(this[kHistory], "history");

@@ -312,12 +312,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    pub(crate) fn create_loop_header(&mut self, statement: StmtId) -> BlockId {
+    pub(crate) fn create_functions_before_loop(&mut self, statement: StmtId) {
         let created = self.file.scopes.functions_created_before_loop(statement);
         let created: SmallVec<[SymbolId; 2]> = created.iter().map(|entry| entry.1).collect();
         for symbol in created {
             self.get_binding(Binding::Symbol(symbol), self.file.bound.symbol(symbol).name);
         }
+    }
+
+    pub(crate) fn create_loop_header(&mut self, statement: StmtId) -> BlockId {
+        self.create_functions_before_loop(statement);
         let block = self.create_block();
         let mut modified: SmallVec<[LocalVariable; 8]> = SmallVec::new();
         for &binding in self.file.scopes.stored_in_loop(statement) {

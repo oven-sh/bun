@@ -1129,6 +1129,18 @@ describe("spyOn", () => {
       jest.restoreAllMocks();
     });
 
+    test("a spy keeps its target until it is restored", () => {
+      const { heapStats } = require("bun:jsc");
+      const count = () => (Bun.gc(true), heapStats().objectTypeCounts.Map ?? 0);
+      const before = count();
+      const spies = (() => Array.from({ length: 1000 }, () => spyOn(new Map(), "get")))();
+      // The counts are of every Map in the heap, so both bounds leave room for 100 that are not this test's.
+      expect(count() - before).toBeGreaterThan(900);
+      jest.restoreAllMocks();
+      expect(count() - before).toBeLessThan(100);
+      expect(spies).toHaveLength(1000);
+    });
+
     test("spyOn works on globalThis", () => {
       var obj = globalThis;
       obj.original = 42;
@@ -1605,6 +1617,92 @@ describe("spyOn", () => {
       expect(() => spyOn(frozen, "method")).toThrow(TypeError);
       expect(() => spyOn(frozen, "x", "get")).toThrow(TypeError);
     });
+
+    // Only the spy refers to these Proxies, and the mock is on the object behind them. No test calls the spy through its Proxy, which would record the Proxy as `this`.
+    if (isBun) {
+      describe.each([
+        ["spyOn", spyOn],
+        ["jest.spyOn", jest.spyOn],
+        ["vi.spyOn", vi.spyOn],
+      ])("%s, once the Proxy is garbage collected", (_, spyOn) => {
+        test.each([
+          ["mockRestore()", spies => spies.forEach(fn => fn.mockRestore())],
+          ["Symbol.dispose", spies => spies.forEach(fn => fn[Symbol.dispose]())],
+          ["jest.restoreAllMocks()", () => jest.restoreAllMocks()],
+          ["vi.restoreAllMocks()", () => vi.restoreAllMocks()],
+          ["mock.restore()", () => mock.restore()],
+        ])("%s puts back a method, a getter and a setter", (_, restore) => {
+          let value = 1;
+          const target = {
+            method: () => "original",
+            get x() {
+              return value;
+            },
+            set x(next) {
+              value = next;
+            },
+          };
+          const descriptors = Object.getOwnPropertyDescriptors(target);
+          const [method, getter, setter] = (() => [
+            spyOn(new Proxy(target, {}), "method"),
+            spyOn(new Proxy(target, {}), "x", "get"),
+            spyOn(new Proxy(target, {}), "x", "set"),
+          ])();
+          expect(target.method).toBe(method);
+          expect(Object.getOwnPropertyDescriptor(target, "x")).toMatchObject({ get: getter, set: setter });
+          Bun.gc(true);
+          restore([setter, getter, method]);
+          expect(Object.getOwnPropertyDescriptors(target)).toEqual(descriptors);
+        });
+      });
+
+      test("an inherited method, once the Proxy is garbage collected", () => {
+        class A {
+          method() {
+            return "original";
+          }
+        }
+        const target = new A();
+        const fn = (() => spyOn(new Proxy(target, {}), "method"))();
+        expect(target.method).toBe(fn);
+        Bun.gc(true);
+        fn.mockRestore();
+        expect(Object.hasOwn(target, "method")).toBe(false);
+        expect(target.method()).toBe("original");
+      });
+
+      test("a Proxy that keeps the properties in another object, once it is garbage collected", () => {
+        const store = { method: () => "original" };
+        const { method } = store;
+        const fn = (() => {
+          const proxy = new Proxy(
+            {},
+            {
+              getOwnPropertyDescriptor: (_, key) => Reflect.getOwnPropertyDescriptor(store, key),
+              defineProperty: (_, key, descriptor) => Reflect.defineProperty(store, key, descriptor),
+              deleteProperty: (_, key) => Reflect.deleteProperty(store, key),
+              has: (_, key) => key in store,
+              get: (_, key) => store[key],
+            },
+          );
+          return spyOn(proxy, "method");
+        })();
+        expect(store.method).toBe(fn);
+        Bun.gc(true);
+        fn.mockRestore();
+        expect(store.method).toBe(method);
+      });
+
+      test("restoreAllMocks() puts back 1000 spies whose Proxies are garbage collected", () => {
+        const targets = Array.from({ length: 1000 }, () => ({ method() {} }));
+        const spied = () => targets.filter(target => jest.isMockFunction(target.method)).length;
+        (() => targets.forEach(target => spyOn(new Proxy(target, {}), "method")))();
+        expect(spied()).toBe(1000);
+        Bun.gc(true);
+        jest.restoreAllMocks();
+        expect(spied()).toBe(0);
+      });
+    }
   });
 
   describe.each([
@@ -1758,6 +1856,17 @@ describe("spyOn", () => {
       for (const fn of spies) fn.mockRestore();
       expect(vm.runInContext("[method(), accessor]", context)).toEqual(["original", "original"]);
       expect(describe()).toEqual(descriptors);
+    });
+
+    test("made of a Proxy: restores the object behind it once the context is garbage collected", () => {
+      if (!isBun) return;
+      const sandbox = { method: () => "original" };
+      const { method } = sandbox;
+      const fn = (() => spyOn(vm.runInContext("this", vm.createContext(new Proxy(sandbox, {}))), "method"))();
+      expect(sandbox.method).toBe(fn);
+      Bun.gc(true);
+      fn.mockRestore();
+      expect(sandbox.method).toBe(method);
     });
   });
 
@@ -5063,6 +5172,39 @@ if (isBun) {
           expect(() => jest.restoreAllMocks()).toThrow("thrown by the trap");
           expect(mocked()).toEqual([false, true, false]);
           expect(() => jest.restoreAllMocks()).toThrow("thrown by the trap");
+          expect(() => objects[1].method.mockRestore()).toThrow("thrown by the trap");
+          expect(mocked()).toEqual([false, true, false]);
+
+          shouldThrow = false;
+          jest.restoreAllMocks();
+          expect(mocked()).toEqual([false, false, false]);
+        },
+      );
+
+      test.each(flavors)(
+        "%s: so is a spy whose Proxy is garbage collected before the restore that throws",
+        (_, isVitest, fn, spy) => {
+          const objects = [{ method() {} }, { method() {} }, { method() {} }];
+          let shouldThrow = false;
+          spy(objects[0], "method");
+          (() =>
+            spy(
+              new Proxy(objects[1], {
+                defineProperty(target, key, descriptor) {
+                  if (shouldThrow) throw new Error("thrown by the trap");
+                  return Reflect.defineProperty(target, key, descriptor);
+                },
+              }),
+              "method",
+            ))();
+          spy(objects[2], "method");
+          const mocked = () => objects.map(object => jest.isMockFunction(object.method));
+          expect(mocked()).toEqual([true, true, true]);
+
+          Bun.gc(true);
+          shouldThrow = true;
+          expect(() => jest.restoreAllMocks()).toThrow("thrown by the trap");
+          expect(mocked()).toEqual([false, true, false]);
           expect(() => objects[1].method.mockRestore()).toThrow("thrown by the trap");
           expect(mocked()).toEqual([false, true, false]);
 

@@ -20,6 +20,7 @@ pub(super) struct Trial {
     since: Option<Instant>,
     acked: u64,
     lost: u64,
+    /// Not zero once `spared` is not.
     last_len: u64,
     /// In bytes per second.
     min_rate: u64,
@@ -52,7 +53,7 @@ impl Trial {
         self.lost += feedback.lost;
         let is_judged = self.spared > 0 && self.pause < self.backoff.max(1);
         if !starts_cycle || self.acked < MIN_PERIOD_LEN {
-            if is_judged && self.lost * 1000 > self.max_loss * self.acked.max(self.last_len) {
+            if is_judged && self.lost * 1000 / self.acked.max(self.last_len) > self.max_loss {
                 self.retreat();
             }
             return;

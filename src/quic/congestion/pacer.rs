@@ -210,6 +210,9 @@ impl Pacer {
         feedback: &Feedback,
         starts_cycle: Option<bool>,
     ) {
+        if self.is_shared {
+            self.trial.spared = 0;
+        }
         let before = self.max_overflows();
         let is_relevant = !self.is_shared && (self.overflows > 0 || before < MAX_OVERFLOWS);
         let Some(starts_cycle) = starts_cycle.filter(|_| is_relevant) else {

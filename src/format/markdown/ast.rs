@@ -116,8 +116,8 @@ pub struct Node {
     pub reference_type: ReferenceType,
     /// For oxfmt: 1 for HTML that ends at a specific text (`-->`, `</script>` ..), 1 for indented code.
     /// A heading's `depth`, an ordered list's `start`, a table's column count (the columns are at
-    /// `Tree::aligns[first_align..]`), a sentence's token count (the tokens are at `Tree::tokens[first_align..]`). For
-    /// a list: how many lists of its kind are right before it.
+    /// `Tree::aligns[first_align..]`), a sentence's token count (the tokens are at `Tree::tokens[first_align..]`), the
+    /// number of backticks a code span is printed with. For a list: how many lists of its kind are right before it.
     pub number: u32,
     pub first_align: u32,
     pub start: u32,

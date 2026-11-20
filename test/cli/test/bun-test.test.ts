@@ -843,6 +843,147 @@ describe("bun test", () => {
       expect(sourceUrl).toStartWith("::error file=webpack%3A//app/./src/x.ts,line=1,col=");
       expect(sourceUrl).toContain("%0A      at fromSourceUrl (webpack://app/./src/x.ts:1:");
     });
+    async function testIn(cwd: string, env: Record<string, string | undefined>, ...args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        env: { ...bunEnv, AGENT: "0", ...env },
+        cwd,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+    test.concurrent("should annotate a test file that fails to load with a build or resolve error", async () => {
+      using dir = tempDir("bun-test-annotations", {
+        "a-syntax.test.ts": "const half = ;\n",
+        "b-two-errors.test.ts": "const x;\nconst half = ;\n",
+        "c-missing-import.test.ts": 'import "./does-not-exist";\n',
+        "d-build.test.ts": 'await Bun.build({ entrypoints: ["./entry.ts"] });\n',
+        "entry.ts": 'import "./does-not-exist";\n',
+        "e-data-url.test.ts": 'import "data:text/javascript;base64,!!!";\n',
+        // The parser reports line 2, column 0 for the end of this file. Column 0 is no column.
+        "f-crlf.test.ts": "function unclosed() {\r\n",
+        "g-plugin.test.ts": `
+          await Bun.build({
+            entrypoints: ["./data.txt"],
+            plugins: [
+              {
+                name: "fails",
+                setup(build) {
+                  build.onLoad({ filter: /data\\.txt$/ }, () => {
+                    throw new Error("cannot load\\ndata");
+                  });
+                },
+              },
+            ],
+          });
+        `,
+        "data.txt": "data\n",
+        "h,odd%name.test.ts": "const half = ;\n",
+        "i-thrown.test.ts": 'throw new TypeError("x");\n',
+        "j-thrown-string.test.ts": 'throw "line one\\nline two";\n',
+      });
+      const { stderr, exitCode } = await testIn(String(dir), { GITHUB_ACTIONS: "true", GITHUB_WORKSPACE: undefined });
+      expect({ annotations: stderr.split("\n").filter(line => line.startsWith("::error")), exitCode }).toEqual({
+        annotations: [
+          "::error file=a-syntax.test.ts,line=1,col=14,title=BuildMessage::Unexpected ;",
+          '::error file=b-two-errors.test.ts,line=1,col=7,title=BuildMessage::The constant "x" must be initialized',
+          "::error file=b-two-errors.test.ts,line=2,col=14,title=BuildMessage::Unexpected ;",
+          // The module loader does not know where in the file the import is.
+          expect.stringMatching(
+            /^::error title=ResolveMessage::Cannot find module '\.\/does-not-exist' from '.*c-missing-import\.test\.ts'$/,
+          ),
+          // The bundler does know.
+          '::error file=entry.ts,line=1,col=8,title=ResolveMessage::Could not resolve: "./does-not-exist"',
+          '::error title=BuildMessage::Base64DecodeError decoding data "data:text/javascript;base64,!!!"',
+          "::error file=f-crlf.test.ts,line=2,title=BuildMessage::Unexpected end of file",
+          // The error of a plugin names a file and no line.
+          "::error file=data.txt,title=BuildMessage::cannot load%0Adata",
+          "::error file=h%2Codd%25name.test.ts,line=1,col=14,title=BuildMessage::Unexpected ;",
+          expect.stringMatching(/^::error file=i-thrown\.test\.ts,line=1,col=\d+,title=TypeError: x::/),
+          "::error title=error: line one::line two",
+        ],
+        exitCode: 1,
+      });
+    });
+    test.concurrent(
+      "should annotate a build error that fails a test, but not one that a test catches and prints",
+      async () => {
+        using dir = tempDir("bun-test-annotations", {
+          "printed.ts": "const half = ;\n",
+          "uncaught.ts": "const half = ;\n",
+          "required.ts": "const half = ;\n",
+          "dependency.ts": "export const one = 1;\n",
+          "warns.ts": 'import * as dependency from "./dependency.ts";\nconsole.log(dependency.two);\n',
+          "import.test.ts": `
+            import { test } from "bun:test";
+            test("caught and printed", async () => {
+              const errors = [await import("./printed.ts").catch(e => e), await import("./does-not-exist").catch(e => e)];
+              console.error(new AggregateError(errors));
+            });
+            test("a warning", async () => {
+              const { logs } = await Bun.build({ entrypoints: ["./warns.ts"], throw: false });
+              throw logs[0];
+            });
+            test("uncaught", async () => {
+              await import("./uncaught.ts");
+            });
+            test("thrown by require()", () => {
+              require("./required.ts");
+            });
+          `,
+        });
+        const cwd = String(dir);
+        const { stderr, exitCode } = await testIn(cwd, { GITHUB_ACTIONS: "true", GITHUB_WORKSPACE: dirname(cwd) });
+        // The first two tests print these through the same printer, and get no annotation.
+        expect(stderr).toContain("printed.ts:1:14");
+        expect(stderr).toContain("error: Cannot find module './does-not-exist'");
+        expect(stderr).toContain('warn: Import "two" will always be undefined');
+        const lines = stderr
+          .split("\n")
+          .filter(line => /^(::error|\(pass\)|\(fail\)) /.test(line))
+          .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+        expect({ lines, exitCode }).toEqual({
+          lines: [
+            "(pass) caught and printed",
+            "(fail) a warning",
+            `::error file=${basename(cwd)}${sep}uncaught.ts,line=1,col=14,title=BuildMessage::Unexpected ;`,
+            "(fail) uncaught",
+            // A BuildMessage that is thrown, and is not the reason of a rejection, is printed as an Error with the stack of the throw.
+            expect.stringMatching(/^::error file=.*,line=\d+,col=\d+,title=BuildMessage: Unexpected ;::%0A {6}at /),
+            "(fail) thrown by require()",
+          ],
+          exitCode: 1,
+        });
+      },
+    );
+    test.concurrent("should annotate a build error in a --parallel worker", async () => {
+      using dir = tempDir("bun-test-annotations", {
+        "a-syntax.test.ts": "const half = ;\n",
+        "b-syntax.test.ts": "const half = ;\n",
+      });
+      const { stderr, exitCode } = await testIn(
+        String(dir),
+        { GITHUB_ACTIONS: "true", GITHUB_WORKSPACE: undefined },
+        "--parallel=2",
+      );
+      const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+      expect({ annotations: annotations.sort(), exitCode }).toEqual({
+        annotations: [
+          "::error file=a-syntax.test.ts,line=1,col=14,title=BuildMessage::Unexpected ;",
+          "::error file=b-syntax.test.ts,line=1,col=14,title=BuildMessage::Unexpected ;",
+        ],
+        exitCode: 1,
+      });
+    });
+    test.concurrent("should not annotate build errors by default", async () => {
+      using dir = tempDir("bun-test-annotations", { "a-syntax.test.ts": "const half = ;\n" });
+      const { stderr, exitCode } = await testIn(String(dir), { GITHUB_ACTIONS: undefined });
+      expect(stderr).toContain("error: Unexpected ;");
+      expect(stderr).not.toContain("::error");
+      expect(exitCode).toBe(1);
+    });
     // The reporters reuse the buffer that stored the file's title while its tests ran.
     test("should print the test file's name in the group for each --rerun-each run", () => {
       const cwd = createTest([

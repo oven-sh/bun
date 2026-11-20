@@ -1,25 +1,24 @@
 // COUNTER: FieldsEvictedByRedefinition = 1
 "use strict";
 // One site defines the name as a data property, another as an accessor. The slot is planned for the data property, and objects with the accessor keep it outside of the slot.
-function make(type, props) {
-  const ref = props.ref;
-  const element = { type, props };
-  if (ref !== undefined) Object.defineProperty(element, "ref", { enumerable: false, get: () => ref + 1 });
-  else Object.defineProperty(element, "ref", { enumerable: false, value: null });
-  Object.defineProperty(element, "info", { configurable: false, enumerable: false, writable: true, value: type });
-  Object.freeze(element);
-  return element;
+function ticket(row, wait) {
+  const made = { wait, row };
+  Object.defineProperty(made, "stamp", { value: "row " + row, writable: true });
+  if (!(wait < 0)) Object.defineProperty(made, "price", { value: null });
+  else Object.defineProperty(made, "price", { get() { return row - wait; } });
+  return Object.seal(made);
 }
-let said = 0;
+let sum = 0;
 for (let turn = 0; turn < 2000; turn++) {
-  const element = make("t" + (turn & 7), { turn });
-  said = (said + (element.ref === null ? 1 : 100) + element.info.length + element.props.turn) % 1000003;
+  const made = ticket(turn % 9, turn);
+  sum = (sum * 3 + made.wait + made.stamp.length + (made.price !== null ? 50 : 2)) % 999983;
 }
-const plain = make("plain", {}), other = make("other", { ref: 4 });
-for (const element of [plain, other]) {
-  const found = Object.getOwnPropertyDescriptor(element, "ref");
-  let store;
-  try { element.ref = 5; store = "taken"; } catch (error) { store = error.constructor.name; }
-  console.log(element.ref, typeof found.get, found.writable, found.enumerable, found.configurable, Object.getOwnPropertyNames(element).join(), Object.keys(element).join(), JSON.stringify(element), store, Object.isFrozen(element));
+const tickets = [ticket(3, 0), ticket(4, -2)];
+for (const made of tickets) {
+  const { get, writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(made, "price");
+  let stored = "stored";
+  try { made.price = 8; } catch ({ name }) { stored = name; }
+  made.stamp = "late " + made.row;
+  console.log(made.price, typeof get, writable, enumerable, configurable, Object.keys(made).join(), Object.getOwnPropertyNames(made).join(), JSON.stringify(made), stored, made.stamp, Object.isSealed(made), Object.isFrozen(made));
 }
-console.log(said);
+console.log(sum);

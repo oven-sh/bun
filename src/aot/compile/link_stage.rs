@@ -13,6 +13,7 @@ use crate::link::{
     self, LinkInput, LinkProject, LinkUnit, Linked, LinkedFunctions, ProgramModule,
     run_steps_beside,
 };
+use crate::load::contents::load_names::is_object_handed_on;
 use crate::load::runtime_roots::{StartOfRun, builtins_used_at_start};
 use crate::load::{ProgramFile, ProjectId};
 use crate::module_keys::{path_without_form, stamp_of_file};
@@ -208,6 +209,13 @@ impl Build<'_> {
                             .method_that_hands_out_global_object_may_come_out;
                         let used_at_start =
                             used_at_start.chain(comes_out.then_some(BuiltinId::GlobalThis));
+                        let gives_loader = runs_tests
+                            && is_object_handed_on(
+                                application.loaded.files(),
+                                BuiltinId::NodeModule,
+                            );
+                        let used_at_start =
+                            used_at_start.chain(gives_loader.then_some(BuiltinId::NodeModule));
                         program.builtins_used_at_start = used_at_start
                             .map(|builtin| BuiltinUsedAtStart { builtin })
                             .collect();

@@ -1,13 +1,21 @@
-// Under: --sourcemap=external: agent-base asks the stack whether node:https is below it
+// An agent of one's own asks which built-in module has called it: the frames of built-in modules bear their names.
+// Under: --sourcemap=external: with a map beside the executable they bear the same names
 // Under: --obfuscate: the same
 const http = require("node:http");
 const https = require("node:https");
 
-const isSecure = () => new Error().stack.split("\n").some(line => line.indexOf("(https.js:") !== -1 || line.indexOf("node:https:") !== -1);
+function whoCalled() {
+  let found = "nobody";
+  for (const line of new Error("who").stack.split("\n").slice(1)) {
+    const named = /node:(https?)\b/.exec(line);
+    if (named) found = named[1] === "https" || found === "https" ? "https" : "http";
+  }
+  return found;
+}
 
 class Agent extends http.Agent {
   addRequest(request) {
-    console.log(request.constructor.name, isSecure());
+    console.log(request.constructor.name, whoCalled());
     request.destroy();
   }
 }

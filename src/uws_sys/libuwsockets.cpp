@@ -1643,6 +1643,7 @@ __attribute__((callback (corker, ctx)))
   }
 
   LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) {
+    (void) us_socket_settle(s);
     return us_poll_fd(&s->p);
   }
 

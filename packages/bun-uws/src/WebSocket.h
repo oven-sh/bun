@@ -252,7 +252,7 @@ private:
                 }
             } else if (sendBufferAttribute == SendBufferAttribute::NEEDS_UNCORK) {
                 /* Uncork if we came here uncorked */
-                auto [written, failed] = Super::uncork();
+                auto [written, failed] = Super::uncorkSoon();
                 if (failed) {
                     webSocketData->needsDrainEvent = true;
                     return BACKPRESSURE;
@@ -399,7 +399,7 @@ public:
 
             /* There is no timeout when failing to uncork for WebSockets,
              * as that is handled by idleTimeout */
-            auto [written, failed] = Super::uncork();
+            auto [written, failed] = Super::uncorkSoon();
             (void)written;
             (void)failed;
         } else {

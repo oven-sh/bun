@@ -659,6 +659,21 @@ struct us_iovec_t {
  * partial-write poll handling, one writev for all chunks (sequential sends
  * on platforms without writev). Returns total bytes written. */
 int us_socket_raw_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
+
+/* Takes a copy for another thread to send, if the loop is busy enough for that to pay off. Returns 0 if it did not.
+ * What the kernel refuses goes to `unsent`, on the loop's thread and ahead of anything else done to `s`, which
+ * then polls for writable. */
+typedef void (*us_unsent_cb)(struct us_socket_t *s, const char *data, int length);
+int us_socket_write_soon(us_socket_r s, const char *data, int length, us_unsent_cb unsent);
+/* The same for the records that `s` seals until this is called with NULL. */
+void us_loop_ssl_write_soon(us_loop_r loop, struct us_socket_t *s);
+/* For any thread that is about to end the process. */
+void us_send_everything_queued(void);
+
+/* us_socket_write for a plain socket's last bytes. If they all fit, the FIN can leave in the same segment.
+ * The caller still has to call us_socket_shutdown. */
+int us_socket_write_last(us_socket_r s, const char *data, int length, us_unsent_cb unsent);
+
 /* Vectored us_socket_write: through TLS if `s->ssl` is set, with the records of all chunks in one write. */
 int us_socket_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
 

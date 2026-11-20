@@ -51,6 +51,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* Ignore data after this point. node:http clears its own slot: a request body outlives its response there. */
         if (!HttpContext<SSL>::fromSocket((us_socket_t *) uwsRes)->isNodeHttp()) {
             inStream = nullptr;
+            us_socket_may_read_ahead((us_socket_t *) uwsRes, 1);
         }
 
         // Ensure we don't call a timeout callback

@@ -1031,11 +1031,11 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 }
 #endif
 
-ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
+static ssize_t bsd_send_with_flags(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int flags) {
     ssize_t injected = 0;
     if (US_FAULT_CHECK(US_FAULT_SEND, fd, injected, length)) return injected;
     while (1) {
-        ssize_t rc = send(fd, buf, length, BSD_SEND_FLAGS);
+        ssize_t rc = send(fd, buf, length, flags);
 
         if (UNLIKELY(IS_EINTR(rc))) {
             continue;
@@ -1055,6 +1055,16 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
         return rc;
     }
 }
+
+ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
+    return bsd_send_with_flags(fd, buf, length, BSD_SEND_FLAGS);
+}
+
+#ifdef __linux__
+ssize_t bsd_send_more(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
+    return bsd_send_with_flags(fd, buf, length, BSD_SEND_FLAGS | MSG_MORE);
+}
+#endif
 
 #if !defined(_WIN32)
 ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int flags) {
@@ -1201,6 +1211,11 @@ static inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_li
             return LIBUS_SOCKET_ERROR;
         }
     }
+#endif
+
+#ifdef __linux__
+    /* For accepted sockets to inherit. */
+    bsd_socket_nodelay(listenFd, 1);
 #endif
 
     if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512, error)) {

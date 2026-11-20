@@ -2116,8 +2116,11 @@ static void restoreDefaultSignalDisposition(int signalNumber)
 }
 #endif
 
+extern "C" void us_send_everything_queued();
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
 {
+    us_send_everything_queued();
 #if OS(WINDOWS)
     // Raising SIGABRT is handled in the CRT in windows, calling _exit() with ambiguous code "3" by default.
     // This adjustment to the abort behavior gives a more sane exit code on abort, by calling _exit directly with code 134.
@@ -2334,6 +2337,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
     }
 
     int savedErrno;
+    us_send_everything_queued();
 
 #if OS(DARWIN)
     // macOS lacks SOCK_CLOEXEC/close_range, so use posix_spawn with the Apple
@@ -6016,8 +6020,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
 
 #if !OS(WINDOWS)
     bypassCrashHandlerForSelfSentSignal(pid, ownPid, signal);
-    if (killReachesThisProcess(pid, ownPid))
+    if (killReachesThisProcess(pid, ownPid)) {
+        us_send_everything_queued();
         Bun__willSendSignalToSelf(signal);
+    }
     int result = kill(pid, signal);
     if (result < 0)
         result = errno;

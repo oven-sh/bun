@@ -277,7 +277,40 @@ void us_internal_poll_write_unknown(struct us_poll_t *p, struct us_loop_t *loop)
 /* Dispatch `p` on the next tick if it is still ready for what it polls for. */
 void us_internal_poll_keep_if_ready(struct us_poll_t *p, struct us_loop_t *loop);
 int us_internal_poll_reads_until_eagain(struct us_poll_t *p);
+/* BUN_USOCKETS_FAST_ACCEPT=1 */
+extern int us_internal_fewer_syscalls;
+/* For a TCP socket whose first read is dispatched right away. */
+void us_internal_poll_start_later(struct us_poll_t *p, struct us_loop_t *loop, int events);
+void us_internal_loop_start_late_poll(struct us_loop_t *loop);
+#define LIBUS_READ_AHEAD_LENGTH 4096
+/* Reads for the next few polls of the batch in one go. */
+void us_internal_loop_read_ahead(struct us_loop_t *loop);
+/* Returns like recv(). */
+int us_internal_socket_take_read_ahead(struct us_socket_t *s, char **data);
+/* The kernel will not report to a nested tick what the outer one has read. Returns whether a handler ran. */
+int us_internal_loop_dispatch_reads_ahead(struct us_loop_t *loop);
+/* For while nothing can pause or hand over `s` ahead of its next on_data. */
+#define us_socket_may_read_ahead(s, yes) ((void) ((s)->p.may_read_ahead = (yes)))
+void us_internal_send_thread_init(void);
+void us_internal_send_thread_free(struct us_loop_t *loop);
+void us_internal_send_thread_before_wait(struct us_loop_t *loop);
+void us_internal_send_thread_after_wait(struct us_loop_t *loop);
+int us_internal_socket_raw_write_soon(struct us_socket_t *s, const char *data, size_t length, us_unsent_cb unsent, int is_last);
+/* Leaves the fd for the sender of the last bytes of `s` to close. False when it is the caller's to close. */
+int us_internal_socket_close_fd_soon(struct us_socket_t *s);
+int us_internal_socket_settle(struct us_socket_t *s);
+void us_internal_socket_send_was_short(struct us_socket_t *s, ssize_t written);
+#define us_socket_fin_sent(s) ((s)->p.fin_sent)
+#define us_internal_socket_before_write(s) ((s)->p.has_written = 1, us_socket_settle(s))
+/* Waits for us_socket_write_soon's send(). True when that just left bytes with its `unsent`. */
+#define us_socket_settle(s) ((s)->p.send_in_flight && us_internal_socket_settle(s))
 #else
+#define us_internal_send_thread_after_wait(loop) ((void) 0)
+#define us_internal_socket_raw_write_soon(s, data, length, unsent, is_last) 0
+#define us_socket_fin_sent(s) 0
+#define us_socket_may_read_ahead(s, yes) ((void) 0)
+#define us_internal_socket_before_write(s) 0
+#define us_socket_settle(s) 0
 #define us_internal_poll_read_short(p, loop, would_block) ((void) 0)
 #define us_internal_poll_write_short(p, loop, written) ((void) 0)
 #define us_internal_poll_write_unknown(p, loop) ((void) 0)
@@ -582,6 +615,8 @@ struct us_listen_socket_t {
   /* LIBUS_SOCKET_OPEN_PAUSED: accepted sockets start without read interest. */
   unsigned char accept_paused;
   unsigned char accepts_tcp;
+  /* Whether accepted sockets come with the listener's TCP_NODELAY: 1, 0, or -1 until the first one tells. */
+  signed char nodelay_is_inherited;
 };
 
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);

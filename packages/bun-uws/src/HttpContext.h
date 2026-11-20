@@ -504,6 +504,7 @@ private:
             /* Are we not ready for another request yet? Terminate the connection.
              * Important for denying async pipelining until, if ever, we want to support it.
              * Otherwise requests can get mixed up on the same connection. We still support sync pipelining. */
+            us_socket_may_read_ahead((us_socket_t *) s, 0);
             bool queueBehindEarlierResponse = false;
             if constexpr (IsNodeHttp) {
                 /* node:http also queues behind responses that were dispatched but
@@ -834,7 +835,9 @@ private:
             }
 
             /* Timeout on uncork failure */
-            auto [written, failed] = ((AsyncSocket<SSL> *) returnedData)->uncork();
+            auto *asyncSocket = (AsyncSocket<SSL> *) returnedData;
+            auto [written, failed] = IsNodeHttp || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) ? asyncSocket->uncork()
+                : httpResponseData->shouldCloseConnection() ? asyncSocket->uncorkLast() : asyncSocket->uncorkSoon();
             if (written > 0 || failed) {
                 /* All Http sockets timeout by this, and this behavior match the one in HttpResponse::cork */
                 ((HttpResponse<SSL> *) s)->resetTimeout();

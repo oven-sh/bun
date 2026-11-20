@@ -29,6 +29,7 @@
 #endif
 #ifdef __linux__
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <linux/errqueue.h>
 #endif
 
@@ -567,9 +568,16 @@ static void us_internal_dispatch_by_poll_type(struct us_poll_t *p, int error, in
 
                     /* Todo: stop timer if any */
 
+                    /* One backlog: clients that reconnect as fast as they are served never let it run dry. */
+                    int accepts_left = 512;
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
+#ifdef LIBUS_USE_EPOLL
+                        if (us_internal_fewer_syscalls && listen_socket->deferred_accept && listen_socket->accepts_tcp && !listen_socket->accept_paused) {
+                            us_internal_poll_start_later(accepted_p, loop, LIBUS_SOCKET_READABLE);
+                        } else
+#endif
                         if (us_poll_start_rc(accepted_p, loop, (listen_socket->accept_paused ? 0 : LIBUS_SOCKET_READABLE) | (listen_socket->accepts_tcp ? LIBUS_POLL_TCP : 0)) != 0) {
                             /* EPOLL_CTL_ADD failed (e.g. ENOSPC). Close the fd so the
                              * peer sees a RST instead of a connection that silently
@@ -600,7 +608,14 @@ static void us_internal_dispatch_by_poll_type(struct us_poll_t *p, int error, in
                         s->send_rejected = 0;
 
                         /* We always use nodelay */
-                        bsd_socket_nodelay(client_fd, 1);
+#ifdef LIBUS_USE_EPOLL
+                        if (listen_socket->nodelay_is_inherited == -1) {
+                            int nodelay = 0;
+                            socklen_t nodelay_length = sizeof(nodelay);
+                            listen_socket->nodelay_is_inherited = getsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, &nodelay_length) == 0 && nodelay;
+                        }
+#endif
+                        if (!listen_socket->nodelay_is_inherited) bsd_socket_nodelay(client_fd, 1);
 
                         us_internal_socket_group_link_socket(accept_group, s);
 
@@ -621,13 +636,16 @@ static void us_internal_dispatch_by_poll_type(struct us_poll_t *p, int error, in
                         if (listen_socket->deferred_accept && s && !us_socket_is_closed(s)) {
                             us_internal_dispatch_ready_poll((struct us_poll_t *) s, 0, 0, LIBUS_SOCKET_READABLE);
                         }
+#ifdef LIBUS_USE_EPOLL
+                        us_internal_loop_start_late_poll(loop);
+#endif
 
                         /* Exit accept loop if listen socket was closed in on_open or the request handler */
                         if (us_socket_is_closed(&listen_socket->s)) {
                             break;
                         }
 
-                    } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
+                    } while (--accepts_left && (client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
                 }
             }
         break;
@@ -640,6 +658,7 @@ static void us_internal_dispatch_by_poll_type(struct us_poll_t *p, int error, in
             s = us_internal_socket_follow_adopted(s);
             /* The group can change after calling a callback but the loop is always the same */
             struct us_loop_t* loop = s->group->loop;
+            (void) us_socket_settle(s);
             /* Captured before the read loop folds recv()==0 into `eof`; error events keep the error path. */
             const int hangup = (eof & LIBUS_POLL_HANGUP) && !error;
             /* Set once recv() returns 0 below: the only proof that the peer's stream ended with a FIN. The
@@ -740,6 +759,8 @@ static void us_internal_dispatch_by_poll_type(struct us_poll_t *p, int error, in
                 size_t repeat_recv_count = 0;
 
                 do {
+                    char *data = loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING;
+                    int capacity = LIBUS_RECV_BUFFER_LENGTH;
                     #ifdef _WIN32
                       const int recv_flags = MSG_PUSH_IMMEDIATE;
                     #else
@@ -804,18 +825,24 @@ static void us_internal_dispatch_by_poll_type(struct us_poll_t *p, int error, in
                         }
                     }else{
                     #endif
-                        length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
+                    #ifdef LIBUS_USE_EPOLL
+                        s->p.may_read_ahead = 0;
+                        if (s->p.read_ahead) {
+                            length = us_internal_socket_take_read_ahead(s, &data);
+                            capacity = LIBUS_READ_AHEAD_LENGTH;
+                        } else
+                    #endif
+                        length = bsd_recv(us_poll_fd(&s->p), data, capacity, recv_flags);
                     #if !defined(_WIN32)
                     }
                     #endif
 
                     if (length > 0) {
                         /* Before on_data: a tick nested in it can learn of newer data. */
-                        if (length < LIBUS_RECV_BUFFER_LENGTH) {
+                        if (length < capacity) {
                             us_internal_poll_read_short(&s->p, loop, 0);
                         }
-                        s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
-                                   : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        s = s->ssl ? us_internal_ssl_on_data(s, data, length) : us_dispatch_data(s, data, length);
                         /* After socket adoption, track the new socket; the old one becomes invalid */
                         s = us_internal_socket_follow_adopted(s);
                         // loop->num_ready_polls isn't accessible on Windows.
@@ -835,6 +862,9 @@ static void us_internal_dispatch_by_poll_type(struct us_poll_t *p, int error, in
                          * was keyed on the error flag, which kqueue does not set for
                          * a peer FIN. */
                         if (s && !us_socket_is_closed(s) && (error || (!s->flags.is_paused && eof))) {
+                            continue;
+                        }
+                        if (length == capacity && capacity < LIBUS_RECV_BUFFER_LENGTH && s && !us_socket_is_closed(s) && !s->flags.is_paused) {
                             continue;
                         }
                         /* Stop if on_data paused us (us_socket_pause from the data
@@ -944,6 +974,7 @@ static void us_internal_dispatch_by_poll_type(struct us_poll_t *p, int error, in
              * takes the write side down too, so a hangup_closes_unsent socket does
              * not wait when the write this event retried failed again. A TLS socket
              * retries nothing after a rejected send. */
+            if ((eof || error) && s) (void) us_socket_settle(s);
             const int eof_deferrable = eof && s && !error && !us_socket_is_closed(s) && !s->read_eof;
             const int unsent_is_lost = hangup && s && s->hangup_closes_unsent &&
                                        (s->flags.last_write_failed || (s->ssl && s->ssl_send_rejected));

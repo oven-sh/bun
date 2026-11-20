@@ -223,6 +223,9 @@ int bsd_queued_input(LIBUS_SOCKET_DESCRIPTOR fd);
 #if !defined(_WIN32)
 ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags);
 #endif
+#ifdef __linux__
+ssize_t bsd_send_more(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length);
+#endif
 ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length);
 #if !defined(_WIN32)
 ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int flags);

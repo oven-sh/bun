@@ -5733,3 +5733,511 @@ it("Proxy-Connection: close does not end a Bun.serve connection", async () => {
     socket.destroy();
   }
 });
+
+describe.skipIf(!isLinux).concurrent("BUN_USOCKETS_SEND", () => {
+  const source = /* js */ `
+    import { expect, test } from "bun:test";
+    import { readdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+    import { once } from "node:events";
+    import { dlopen, ptr } from "bun:ffi";
+
+    const tls = JSON.parse(process.env.TLS);
+    const libc = dlopen(process.env.LIBC, {
+      recv: { args: ["i32", "ptr", "usize", "i32"], returns: "isize" },
+      setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
+    });
+    const get = path => "GET " + path + " HTTP/1.1\\r\\nHost: a\\r\\n\\r\\n";
+    const tick = () => new Promise(setImmediate);
+    async function until(condition) {
+      for (const deadline = Date.now() + 4000; !condition(); await tick()) {
+        if (Date.now() > deadline) throw new Error("still waiting for " + condition);
+      }
+    }
+    // Ticks the event loop until the promise settles.
+    writeFileSync("entry.js", "");
+    const nest = promise => void Bun.build({ entrypoints: ["entry.js"], plugins: [{ name: "nest", setup: () => promise }] });
+    const sendThreads = () =>
+      readdirSync("/proc/self/task").filter(tid => {
+        try { return readFileSync("/proc/self/task/" + tid + "/comm", "utf8") === "Bun Send\\n"; } catch {}
+      }).length;
+
+    async function connect(port, secure) {
+      const client = { text: "", closed: false };
+      client.socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port,
+        tls: secure && { rejectUnauthorized: false },
+        socket: {
+          handshake: () => void (client.secured = true),
+          data: (s, chunk) => void (client.text += chunk.toString("latin1")),
+          close: () => void (client.closed = true),
+        },
+      });
+      await until(() => !secure || client.secured);
+      return client;
+    }
+
+    const fds = () => readdirSync("/proc/self/fd").map(fd => { try { return [+fd, readlinkSync("/proc/self/fd/" + fd)]; } catch { return [+fd, ""]; } });
+    function peerOf({ localPort, remotePort }) {
+      const hex = port => ":" + port.toString(16).toUpperCase().padStart(4, "0");
+      const row = readFileSync("/proc/self/net/tcp", "utf8").split("\\n").map(line => line.trim().split(/\\s+/))
+        .find(row => row[1]?.endsWith(hex(remotePort)) && row[2].endsWith(hex(localPort)));
+      return fds().find(([, link]) => link === "socket:[" + row[9] + "]")[0];
+    }
+
+    // Asks for one response at a time without reading, until the server polls for writable, or up to \`stopAt\`.
+    async function fill(port, secure, state, stopAt) {
+      state.handled = 0;
+      const client = await connect(port, secure);
+      client.socket.write(get("/0"));
+      await until(() => client.text.endsWith(">"));
+      client.socket.pause();
+      const peer = peerOf(client.socket);
+      // SOL_SOCKET, SO_SNDBUF
+      libc.symbols.setsockopt(peer, 1, 7, ptr(new Int32Array([4096])), 4);
+      const epolls = fds().filter(([, link]) => link.includes("eventpoll")).map(([fd]) => "/proc/self/fdinfo/" + fd);
+      const entry = new RegExp("tfd: +" + peer + " events: +([0-9a-f]+)");
+      for (client.asked = 1; client.asked !== stopAt; ) {
+        client.socket.write(get("/" + client.asked++));
+        await until(() => state.handled >= client.asked);
+        await tick();
+        await tick();
+        if (epolls.some(path => parseInt(readFileSync(path, "utf8").match(entry)?.[1], 16) & 4)) break;
+      }
+      return client;
+    }
+    // One request short of the response that the kernel refuses.
+    async function almostFill(port, state) {
+      const probe = await fill(port, false, state);
+      probe.socket.terminate();
+      return fill(port, false, state, probe.asked - 1);
+    }
+    async function overflow(port, secure, state) {
+      const client = await fill(port, secure, state);
+      client.socket.resume();
+      await until(() => client.text.endsWith("<" + (client.asked - 1) + ">"));
+      client.socket.write(get("/" + client.asked++));
+      await until(() => client.text.endsWith("<" + (client.asked - 1) + ">"));
+      client.socket.end();
+      const bodies = client.text.split("\\r\\n\\r\\n").slice(1).map(part => part.split("HTTP/1.1")[0]);
+      expect(bodies.findIndex((body, i) => body !== state.padding + "<" + i + ">")).toBe(-1);
+      expect(bodies.length).toBe(client.asked);
+    }
+
+    for (const secure of [false, true]) {
+      for (const size of [3500, 15_000]) {
+        test("what the kernel refuses is sent later, in order: " + size + (secure ? " TLS" : ""), async () => {
+          const state = { handled: 0, padding: Buffer.alloc(size, "x").toString() };
+          using server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            tls: secure && tls,
+            fetch: () => new Response(state.padding + "<" + state.handled++ + ">"),
+          });
+          await overflow(server.port, secure, state);
+          expect(sendThreads()).toBe(1);
+        });
+      }
+    }
+
+    test("a refused response stays ahead of the head of a pipelined file", async () => {
+      const state = { padding: Buffer.alloc(3500, "x").toString() };
+      writeFileSync("file.bin", Buffer.alloc(1024 * 1024, "F"));
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        routes: { "/file": () => (state.handled++, new Response(Bun.file("file.bin"))) },
+        fetch: () => new Response(state.padding + "<" + state.handled++ + ">"),
+      });
+      const client = await almostFill(server.port, state);
+      client.socket.write(get("/last") + get("/file"));
+      await until(() => state.handled === client.asked + 2);
+      client.socket.resume();
+      await until(() => client.text.endsWith("FFFF"));
+      expect(client.text.split("<" + client.asked + ">")[1]).toStartWith("HTTP/1.1 200 OK\\r\\n");
+      client.socket.terminate();
+    });
+
+    test("a handler that blocks does not hold up an earlier response", async () => {
+      let first, seen;
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        routes: {
+          "/ok": () => new Response("<ok>"),
+          "/block": () => {
+            const buffer = Buffer.alloc(1);
+            const deadline = Date.now() + 3000;
+            // MSG_PEEK | MSG_DONTWAIT
+            while (!(seen = libc.symbols.recv(first.socket.fd, ptr(buffer), 1, 0x42) > 0) && Date.now() < deadline);
+            return new Response("<ok>");
+          },
+        },
+      });
+      const clients = [(first = await connect(server.port)), await connect(server.port)];
+      for (const client of clients) client.socket.write(get("/ok"));
+      await until(() => clients.every(client => client.text.endsWith("<ok>")));
+      first.socket.pause();
+      clients[0].socket.write(get("/ok"));
+      clients[1].socket.write(get("/block"));
+      await until(() => seen !== undefined);
+      expect(seen).toBe(true);
+    });
+
+    test("stop(true) from a later handler sends what is queued", async () => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        routes: { "/ok": () => new Response("<ok>"), "/stop": () => (server.stop(true), new Response()) },
+      });
+      const clients = await Promise.all(Array.from({ length: 9 }, () => connect(server.port)));
+      for (const client of clients) client.socket.write(get("/ok"));
+      await until(() => clients.every(client => client.text.endsWith("<ok>")));
+      clients.forEach((client, i) => ((client.text = ""), client.socket.write(get(i < 8 ? "/ok" : "/stop"))));
+      await until(() => clients.every(client => client.closed));
+      expect(clients.slice(0, 8).map(client => client.text.slice(-4))).toEqual(Array(8).fill("<ok>"));
+    });
+
+    test("a tick nested in a handler gets the requests that were read ahead", async () => {
+      const others = Promise.withResolvers();
+      let handled = 0;
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        routes: {
+          "/ok": () => new Response("<ok>"),
+          "/other": () => (++handled === 40 && others.resolve(), new Response("<other>")),
+          "/nest": () => (nest(others.promise), new Response("<" + handled + " <other>")),
+        },
+      });
+      const clients = await Promise.all(Array.from({ length: 41 }, () => connect(server.port)));
+      for (const client of clients) client.socket.write(get("/ok"));
+      await until(() => clients.every(client => client.text.endsWith("<ok>")));
+      clients.forEach((client, i) => client.socket.write(get(i ? "/other" : "/nest")));
+      await until(() => clients.every(client => client.text.endsWith("<other>")));
+      expect(clients[0].text).toEndWith("<40 <other>");
+    });
+
+    test("sockets that close after they were read ahead are forgotten", async () => {
+      using stopped = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("<ok>") });
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        routes: {
+          "/ok": () => new Response("<ok>"),
+          "/stop": () => (stopped.stop(true), setImmediate(() => nesting.stop(true)), new Response("<stopped>")),
+        },
+      });
+      let opened, nested;
+      const nesting = Bun.listen({
+        port: 0,
+        hostname: "127.0.0.1",
+        socket: { open: () => void (opened = true), data() {}, close: () => void (nest(Bun.sleep(1)), (nested = true)) },
+      });
+      await connect(nesting.port);
+      await until(() => opened);
+      const clients = [await connect(server.port), ...(await Promise.all(Array.from({ length: 8 }, () => connect(stopped.port))))];
+      for (const client of clients) client.socket.write(get("/ok"));
+      await until(() => clients.every(client => client.text.endsWith("<ok>")));
+      clients.forEach((client, i) => client.socket.write(get(i ? "/ok" : "/stop")));
+      await until(() => nested && clients.every((client, i) => (i ? client.closed : client.text.endsWith("<stopped>"))));
+    });
+
+    test("requests larger than what is read ahead", async () => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: async req => new Response("<" + req.headers.get("x").length + " " + (await req.text()).length + ">"),
+      });
+      const client = await connect(server.port);
+      const head = (x, body) => "POST / HTTP/1.1\\r\\nHost: a\\r\\nX: " + x + "\\r\\nContent-Length: " + body + "\\r\\n\\r\\n";
+      const exactly = 4096 - head("", 0).length;
+      for (const [x, body] of [[1, 0], [exactly, 0], [exactly + 1, 0], [8000, 0], [1, 50_000], [exactly, 9]]) {
+        client.socket.write(head(Buffer.alloc(x, "x"), body) + Buffer.alloc(body, "y"));
+        await until(() => client.text.endsWith("<" + x + " " + body + ">"));
+      }
+    });
+
+    test("Connection: close, with and without input left unread", async () => {
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("<ok>") });
+      const before = fds().length;
+      const clients = await Promise.all(Array.from({ length: 40 }, () => connect(server.port)));
+      clients.forEach((client, i) => {
+        client.socket.write("POST / HTTP/1.1\\r\\nHost: a\\r\\nConnection: close\\r\\nContent-Length: " + (i % 2) * 2_000_000 + "\\r\\n\\r\\n");
+        if (i % 2) client.socket.write(Buffer.alloc(1_000_000, "y"));
+      });
+      await until(() => clients.every(client => client.closed));
+      expect(clients.map(client => client.text.slice(-4))).toEqual(Array(40).fill("<ok>"));
+      await until(() => fds().length <= before);
+    });
+
+    test("WebSocket messages keep their order through backpressure", async () => {
+      const padding = Buffer.alloc(3000, "x").toString();
+      let next = 0, drains = 0, last = Infinity;
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: (req, server) => void server.upgrade(req),
+        websocket: {
+          async open(ws) {
+            while (ws.send(padding + "<" + next++ + ">") !== -1) if (next % 3 === 0) await tick();
+            last = next - 1;
+          },
+          message() {},
+          drain: () => void drains++,
+        },
+      });
+      const client = await connect(server.port);
+      client.socket.pause();
+      client.socket.write(
+        "GET / HTTP/1.1\\r\\nHost: a\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Version: 13\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n\\r\\n",
+      );
+      await until(() => last !== Infinity);
+      client.socket.resume();
+      await until(() => client.text.endsWith("<" + last + ">") && drains);
+      const seen = [...client.text.matchAll(/(x+)<(\\d+)>/g)];
+      expect(seen.findIndex((match, i) => match[1].length !== padding.length || +match[2] !== i)).toBe(-1);
+      expect(seen.length).toBe(last + 1);
+      server.stop(true);
+    });
+
+    test("the thread ends with its worker", async () => {
+      const before = sendThreads();
+      const worker = new Worker(
+        "data:text/javascript," + encodeURIComponent("postMessage(Bun.serve({ port: 0, fetch: () => new Response('ok') }).port)"),
+      );
+      const [{ data: port }] = await once(worker, "message");
+      expect(await (await fetch("http://localhost:" + port)).text()).toBe("ok");
+      expect(sendThreads()).toBe(before + 1);
+      worker.terminate();
+      await until(() => sendThreads() === before);
+    });
+
+    test("load comes and goes", async () => {
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: req => new Response("<" + req.url.slice(9) + ">") });
+      const clients = await Promise.all(Array.from({ length: 32 }, () => connect(server.port)));
+      let n = 0;
+      async function round(count) {
+        n++;
+        for (const client of clients.slice(0, count)) client.text = "", client.socket.write(get("/" + n));
+        await until(() => clients.slice(0, count).every(client => client.text.endsWith("<" + n + ">")));
+      }
+      for (const deadline = Date.now() + 4000; !sendThreads() && Date.now() < deadline; ) await round(32);
+      expect(sendThreads()).toBe(1);
+      for (let i = 0; i < 2; i++) {
+        // Long enough for several of the 10 ms windows that the choice is made on.
+        for (const end = Date.now() + 60; Date.now() < end; ) await round(32);
+        for (let j = 0; j < 4; j++) await Bun.sleep(12), await round(1);
+      }
+    });
+
+    test.each(["process.exit(0)", "process.kill(process.pid, 'SIGKILL')"])("%s from a later handler sends what is queued", async end => {
+      await using proc = Bun.spawn({
+        cmd: [
+          process.execPath,
+          "-e",
+          \`console.log(Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            routes: { "/ok": () => new Response("<ok>"), "/exit": () => \${end} },
+          }).port)\`,
+        ],
+        stdout: "pipe",
+      });
+      const port = +Buffer.from((await proc.stdout.getReader().read()).value);
+      const clients = await Promise.all(Array.from({ length: 9 }, () => connect(port)));
+      for (const client of clients) client.socket.write(get("/ok"));
+      await until(() => clients.every(client => client.text.endsWith("<ok>")));
+      // Stopped, so that it finds all of them in one batch.
+      proc.kill("SIGSTOP");
+      await until(() => readFileSync("/proc/" + proc.pid + "/stat", "utf8").split(") ")[1][0] === "T");
+      clients.forEach((client, i) => ((client.text = ""), client.socket.write(get(i < 8 ? "/ok" : "/exit"))));
+      proc.kill("SIGCONT");
+      await until(() => clients.every(client => client.closed));
+      expect(clients.slice(0, 8).map(client => client.text.slice(-4))).toEqual(Array(8).fill("<ok>"));
+    });
+  `;
+
+  it.each([
+    ...["batch", "parallel"].flatMap(mode => [
+      [mode, "in order: \\d+$", 2],
+      [mode, "TLS", 2],
+      [mode, "pipelined file|WebSocket", 2],
+      [mode, "read ahead|Connection: close|blocks|load", 6],
+      [mode, "later handler|worker", 4],
+    ]),
+    ["auto", "load", 1],
+  ] as [string, string, number][])("%s: %s", async (mode, filter, count) => {
+    using dir = tempDir("usockets-send", { "fixture.test.ts": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "fixture.test.ts", "-t", filter],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_USOCKETS_SEND: mode,
+        BUN_USOCKETS_FAST_ACCEPT: "1",
+        LIBC: libcPathForDlopen(),
+        TLS: JSON.stringify(tls),
+      },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ passed: stderr.match(/(\d+) pass/)?.[1], stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      passed: String(count),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  const cc = Bun.which("cc");
+  it.skipIf(!cc).each(["batch", "parallel"])("%s: the kernel refuses the last response of a connection", async mode => {
+    using dir = tempDir("usockets-send-last", {
+      "shim.c": /* c */ `
+        #include <errno.h>
+        #include <sys/socket.h>
+        ssize_t send(int fd, const void *data, size_t length, int flags) {
+          static int calls;
+          if ((flags & MSG_MORE) && calls++ % 2) return errno = EAGAIN, -1;
+          if (flags & MSG_MORE) length = 9;
+          return sendto(fd, data, length, flags, 0, 0);
+        }
+      `,
+    });
+    await Bun.$`${cc} -shared -fPIC shim.c -nostdlib -o shim.so`.cwd(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+         const get = async () => (await fetch(server.url, { headers: { Connection: "close" } })).text();
+         console.log(await get(), await get(), ...(await Promise.all([get(), get(), get()])));`,
+      ],
+      env: {
+        ...bunEnv,
+        BUN_USOCKETS_SEND: mode,
+        BUN_USOCKETS_FAST_ACCEPT: "1",
+        LD_PRELOAD: join(String(dir), "shim.so"),
+        ASAN_OPTIONS: (bunEnv.ASAN_OPTIONS ?? "") + ":verify_asan_link_order=0",
+      },
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("ok ok ok ok ok\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+it.skipIf(!isLinux).each([undefined, "edge"])("BUN_USOCKETS_FAST_ACCEPT, trigger: %s", async trigger => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        import { dlopen, ptr } from "bun:ffi";
+        import { readdirSync, readFileSync, readlinkSync } from "node:fs";
+        const libc = dlopen(process.env.LIBC, { getsockopt: { args: ["i32", "i32", "i32", "ptr", "ptr"], returns: "i32" } });
+        const fds = () => readdirSync("/proc/self/fd").map(fd => { try { return [+fd, readlinkSync("/proc/self/fd/" + fd)]; } catch { return [+fd, ""]; } });
+        function accepted(localPort, remotePort) {
+          const hex = port => ":" + port.toString(16).toUpperCase().padStart(4, "0");
+          const row = readFileSync("/proc/self/net/tcp", "utf8").split("\\n").map(line => line.trim().split(/\\s+/))
+            .find(row => row[1]?.endsWith(hex(localPort)) && row[2].endsWith(hex(remotePort)));
+          const [fd] = fds().find(([, link]) => link === "socket:[" + row[9] + "]");
+          const value = new Int32Array(1), length = new Int32Array([4]);
+          libc.symbols.getsockopt(fd, 6, 1, ptr(value), ptr(length));
+          const polled = fds().some(([epoll, link]) => link.includes("eventpoll") && new RegExp("tfd: +" + fd + " ").test(readFileSync("/proc/self/fdinfo/" + epoll, "utf8")));
+          return { polled, nodelay: value[0] };
+        }
+        const big = Buffer.alloc(16 * 1024 * 1024, "x");
+        using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          routes: {
+            "/": (req, server) => Response.json(accepted(server.port, server.requestIP(req).port)),
+            "/big": () => new Response(big),
+            "/echo": async req => new Response(await req.text()),
+          },
+        });
+        async function exchange(...writes) {
+          const { promise, resolve } = Promise.withResolvers();
+          let text = "";
+          await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              open: s => void s.write(writes.shift()),
+              data(s, chunk) { text += chunk.toString("latin1"); if (writes.length) s.write(writes.shift()); },
+              close: () => resolve(text),
+            },
+          });
+          return (await promise).split("\\r\\n\\r\\n").slice(1).map(part => part.split("HTTP/1.1")[0]);
+        }
+        const get = (path, close) => "GET " + path + " HTTP/1.1\\r\\nHost: a\\r\\n" + (close ? "Connection: close\\r\\n" : "") + "\\r\\n";
+        console.log(JSON.stringify({
+          first: await exchange(get("/", true)),
+          second: await exchange(get("/", true)),
+          keepAlive: await exchange(get("/"), get("/", true)),
+          big: (await exchange(get("/big", true)))[0].length,
+          lateBody: await exchange("POST /echo HTTP/1.1\\r\\nHost: a\\r\\nConnection: close\\r\\nExpect: 100-continue\\r\\nContent-Length: 4\\r\\n\\r\\n", "body"),
+        }));
+      `,
+    ],
+    env: { ...bunEnv, BUN_USOCKETS_FAST_ACCEPT: "1", BUN_USOCKETS_TRIGGER: trigger, LIBC: libcPathForDlopen() },
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const fresh = JSON.stringify({ polled: false, nodelay: 1 });
+  expect(JSON.parse(stdout)).toEqual({
+    first: [fresh],
+    second: [fresh],
+    keepAlive: [fresh, JSON.stringify({ polled: true, nodelay: 1 })],
+    big: 16 * 1024 * 1024,
+    lateBody: ["", "body"],
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("timers run while every request brings another connection", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        let handled = 0, stop = false;
+        const port = new Int32Array(new SharedArrayBuffer(8));
+        // Keeps the backlog one connection ahead of the handler, which waits for it.
+        const worker = new Worker("data:text/javascript," + encodeURIComponent(\`
+          onmessage = async ({ data: shared }) => {
+            for (let i = 1; ; i++) {
+              const sent = Promise.withResolvers();
+              Bun.connect({ hostname: "127.0.0.1", port: shared[0], socket: {
+                open(s) { s.write("GET / HTTP/1.1\\\\r\\\\nHost: a\\\\r\\\\nConnection: close\\\\r\\\\n\\\\r\\\\n"); sent.resolve(); },
+                data() {},
+              } });
+              await sent.promise;
+              Atomics.store(shared, 1, i);
+              Atomics.notify(shared, 1);
+            }
+          };
+        \`));
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch() {
+            if (++handled === 1) setTimeout(() => { console.log("timer"); process.exit(0); }, 0);
+            if (handled === 600) { console.log("starved"); process.exit(1); }
+            for (let n; (n = Atomics.load(port, 1)) <= handled; ) if (Atomics.wait(port, 1, n, 4000) === 'timed-out') process.exit(2);
+            return new Response("ok");
+          },
+        });
+        port[0] = server.port;
+        worker.postMessage(port);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("timer\n");
+  expect(exitCode).toBe(0);
+});

@@ -277,6 +277,8 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return NULL;
     }
+    (void) us_socket_settle(s);
+    us_socket_may_read_ahead(s, 0);
     struct us_socket_group_t *old_group = s->group;
     struct us_loop_t *loop = old_group->loop;
 
@@ -375,6 +377,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     ls->deferred_accept = 0;
     ls->accept_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
     ls->accepts_tcp = 0;
+    ls->nodelay_is_inherited = 0;
 #ifdef LIBUS_USE_EPOLL
     int protocol = 0;
     socklen_t protocol_length = sizeof(protocol);
@@ -405,6 +408,10 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
+
+#ifdef LIBUS_USE_EPOLL
+    if (us_internal_fewer_syscalls) ls->nodelay_is_inherited = -1;
+#endif
 
     if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
         ls->deferred_accept = bsd_set_defer_accept(us_poll_fd(p));

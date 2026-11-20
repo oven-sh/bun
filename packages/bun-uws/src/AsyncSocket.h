@@ -173,6 +173,7 @@ public:
             return {sendBuffer, corked ? SendBufferAttribute::NEEDS_NOTHING : SendBufferAttribute::NEEDS_UNCORK};
         } else {
             /* Fallback: move any corked data into the backpressure buffer. */
+            existingBackpressure = getBufferedAmount();
             unsigned int ourCorkOffset = 0;
             char *ourCorkBuffer = nullptr;
             if (corked) {
@@ -195,6 +196,9 @@ public:
     size_t getBufferedAmount() {
         /* Unsent bytes; already-written bytes sitting behind the head cursor
          * are not backpressure (maxBackpressure checks, drain progress). */
+        if (!us_socket_fin_sent((us_socket_t *) this)) {
+            (void) us_socket_settle((us_socket_t *) this);
+        }
         return getAsyncSocketData()->buffer.length();
     }
 
@@ -206,7 +210,7 @@ public:
      * getBufferedAmount() so WebSocket's maxBackpressure policy and the
      * JS-exposed bufferedAmount stay a plaintext count. */
     bool hasFullyDrained() {
-        if (getAsyncSocketData()->buffer.length()) return false;
+        if (getBufferedAmount()) return false;
         if constexpr (SSL) {
             return us_socket_ssl_spill_pending((us_socket_t *) this) == 0;
         }
@@ -510,6 +514,63 @@ public:
             backpressure.append(part.data() + sent, part.length() - sent);
         }
         return {length, failed};
+    }
+
+    static void bufferUnsent(us_socket_t *s, const char *data, int length) {
+        auto *asyncSocket = (AsyncSocket *) s;
+        BackPressure &backpressure = asyncSocket->getAsyncSocketData()->buffer;
+        backpressure.append(data, (size_t) length);
+        /* Writes skip the cork buffer from here on, and must not overtake what it holds. */
+        LoopData *loopData = asyncSocket->getLoopData();
+        if (int slot = loopData->findCorkSlot(asyncSocket); slot != LoopData::INVALID_CORK_SLOT) {
+            auto *cork = loopData->getCorkSlot(slot);
+            backpressure.append(cork->buffer.get(), cork->offset);
+            cork->offset = 0;
+        }
+    }
+
+    /* uncork(), for a caller that does not need to know yet whether the kernel took it all. */
+    std::pair<size_t, bool> uncorkSoon() {
+        LoopData *loopData = getLoopData();
+        int slot = loopData->findCorkSlot(this);
+        if (slot == LoopData::INVALID_CORK_SLOT) {
+            return {0, false};
+        }
+        if constexpr (SSL) {
+            us_loop_t *loop = ((us_socket_t *) this)->group->loop;
+            us_loop_ssl_write_soon(loop, (us_socket_t *) this);
+            auto result = uncork();
+            us_loop_ssl_write_soon(loop, nullptr);
+            return result;
+        } else {
+            auto *s = loopData->getCorkSlot(slot);
+            unsigned int offset = s->offset;
+            if (offset && !getAsyncSocketData()->buffer.length() && us_socket_write_soon((us_socket_t *) this, s->buffer.get(), (int) offset, bufferUnsent)) {
+                loopData->releaseCorkSlot(slot);
+                return {offset, false};
+            }
+            return uncork();
+        }
+    }
+
+    /* uncork(), when nothing follows but shutdown(). */
+    std::pair<size_t, bool> uncorkLast() {
+        if constexpr (!SSL) {
+            LoopData *loopData = getLoopData();
+            int slot = loopData->findCorkSlot(this);
+            if (slot != LoopData::INVALID_CORK_SLOT && loopData->getCorkSlot(slot)->offset && !getBufferedAmount() && !us_socket_is_closed((us_socket_t *) this)) {
+                auto *s = loopData->getCorkSlot(slot);
+                unsigned int offset = s->offset;
+                const char *buffer = s->buffer.get();
+                loopData->releaseCorkSlot(slot);
+                unsigned int written = (unsigned int) us_socket_write_last((us_socket_t *) this, buffer, (int) offset, bufferUnsent);
+                if (written < offset) {
+                    getAsyncSocketData()->buffer.append(buffer + written, offset - written);
+                }
+                return {offset, written < offset};
+            }
+        }
+        return uncork();
     }
 
     /* Uncork this socket and flush or buffer any corked and/or passed data. It is essential to remember doing this. */

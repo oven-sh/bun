@@ -113,6 +113,7 @@ struct loop_ssl_data : us_allocated_t {
    * ssl_write_batch_len > 0. */
   struct us_socket_t *ssl_write_batch_owner;
 
+  struct us_socket_t *ssl_write_soon_socket;
   /* Connections whose spill (us_ssl_spill_t) holds the rest of a batch flush. While there is
    * one, no application write batches, so its spill takes at most the rest of one record. A
    * handshake flight is held whatever this says, with the first record written behind it, and
@@ -604,16 +605,34 @@ static void ssl_discard_spill(struct loop_ssl_data *loop_ssl_data, struct us_soc
   s->ssl_spilled = 0;
 }
 
+static void ssl_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s, const char *data, unsigned int length, int is_batch);
+
+[[maybe_unused]] static void ssl_spill_unsent(struct us_socket_t *s, const char *data, int length) {
+  ssl_spill((struct loop_ssl_data *)s->group->loop->data.ssl_data, s, data, (unsigned int)length, 1);
+}
+
+void us_loop_ssl_write_soon(struct us_loop_t *loop, struct us_socket_t *s) {
+  ((struct loop_ssl_data *)loop->data.ssl_data)->ssl_write_soon_socket = s;
+}
+
 /* Every sealed record of `s` leaves through here: to the kernel, or behind what the kernel refused. */
 static void ssl_emit(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s,
                      const char *data, unsigned int length, int is_batch) {
   if (!s->ssl_spilled) {
+    if (is_batch && loop_ssl_data->ssl_write_soon_socket == s && s->ssl_handshake_state == HANDSHAKE_COMPLETED && us_internal_socket_can_raw_write(s) &&
+        us_internal_socket_raw_write_soon(s, data, length, ssl_spill_unsent, 0)) {
+      return;
+    }
     unsigned int written = (unsigned int)ssl_raw_write(loop_ssl_data, s, data, (int)length);
     /* Sealed after our FIN, it can never leave. */
     if (written == length || !us_internal_socket_can_raw_write(s)) return;
     data += written;
     length -= written;
   }
+  ssl_spill(loop_ssl_data, s, data, length, is_batch);
+}
+
+static void ssl_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s, const char *data, unsigned int length, int is_batch) {
   struct us_ssl_rare_t *rare = us_ssl_rare_ensure(s_ssl(s));
   unsigned int held = rare->spill ? rare->spill->length : 0;
   if (!us_grow(rare->spill, sizeof(struct us_ssl_spill_t) + held + length)) {
@@ -2086,6 +2105,7 @@ static void ssl_defer_close(struct us_socket_t *s, int code) {
 }
 
 struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void *reason) {
+  (void)us_socket_settle(s);
   if (s->ssl && s->ssl_in_use) {
     /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
      * keylog, ...) destroyed this socket. Reaching ssl_set_loop_data /
@@ -2437,6 +2457,7 @@ static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {
   /* Ciphertext from a partial batch flush goes out before anything else;
    * while it is pending nothing new may be written for this socket. */
   loop_ssl_data->ssl_send_error = 0;
+  (void)us_socket_settle(s);
   if (!ssl_drain_spill(loop_ssl_data, s)) return s;
   if (loop_ssl_data->ssl_send_error) return ssl_close_after_rejected_send(s, loop_ssl_data->ssl_send_error);
   if (s->ssl_shutdown_after_spill) {
@@ -2798,6 +2819,7 @@ void *us_internal_ssl_get_native_handle(struct us_socket_t *s) {
  * close-after-drain gates do not fire while the last batch is still in
  * userspace. */
 unsigned int us_internal_ssl_spill_pending(struct us_socket_t *s) {
+  (void)us_socket_settle(s);
   if (!s->ssl_spilled || ssl_sent_close_notify(s)) return 0;
   struct us_ssl_spill_t *spill = us_ssl_rare(s_ssl(s))->spill.get();
   return spill->length - spill->offset;
@@ -2838,6 +2860,7 @@ int us_internal_ssl_writev(struct us_socket_t *s, const struct us_iovec_t *iov, 
    * SSL already counts them as written. While they cannot be delivered, the
    * caller buffers plaintext (return 0), bounding the in-flight ciphertext. */
   loop_ssl_data->ssl_send_error = 0;
+  (void)us_socket_settle(s);
   if (!ssl_drain_spill(loop_ssl_data, s) || !us_internal_socket_can_raw_write(s)) {
     return 0;
   }
@@ -2957,6 +2980,7 @@ static void ssl_send_fin(struct us_socket_t *s) {
 }
 
 void us_internal_ssl_shutdown(struct us_socket_t *s) {
+  (void)us_socket_settle(s);
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s)) return;
   if (s->ssl_first_flight_before_fin) {
     s->ssl_shutdown_after_first_flight = 1;

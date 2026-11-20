@@ -134,14 +134,16 @@ public:
             /* A write larger than the cork buffer released the cork. The rest of this read can hold the body of a node:http request. */
             return !(parsingThis && httpContext->isNodeHttp());
         }
-        if (!parsingThis) {
-            this->uncork();
-            return true;
+        if (!parsingThis || httpContext->isNodeHttp() || (getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_SEND_WHEN_COMPLETE)) {
+            if (httpContext->isNodeHttp()) {
+                this->uncork();
+            } else if (getHttpResponseData()->shouldCloseConnection()) {
+                !parsingThis || getHttpResponseData()->readEndsWithThisRequest ? Super::uncorkLast() : this->uncork();
+            } else {
+                Super::uncorkSoon();
+            }
         }
-        if (httpContext->isNodeHttp() || (getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_SEND_WHEN_COMPLETE)) {
-            this->uncork();
-        }
-        return false;
+        return !parsingThis;
     }
 
     /* node:http socket.destroy() during this socket's parse: onData closes it after the current message. False when the caller must close it now. */
@@ -495,6 +497,7 @@ private:
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);
 
         /* Move any backpressure out of HttpResponse */
+        (void) us_socket_settle((us_socket_t *) this);
         BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
 
         auto* socketData = responseData->socketData;

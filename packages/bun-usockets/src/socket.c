@@ -296,6 +296,11 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
   }
     if (!us_socket_is_closed(s)) {
         struct us_loop_t *loop = s->group->loop;
+        if (!us_socket_fin_sent(s) || code == LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET) (void) us_socket_settle(s);
+#ifdef LIBUS_USE_EPOLL
+        char *dropped;
+        if (s->p.read_ahead) us_internal_socket_take_read_ahead(s, &dropped);
+#endif
 
         if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
@@ -331,6 +336,9 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
             setsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_LINGER, (const char*)&l, sizeof(l));
         }
 
+#ifdef LIBUS_USE_EPOLL
+        if (!us_internal_socket_close_fd_soon(s))
+#endif
         us_internal_poll_close_fd((struct us_poll_t *) s);
 
         /* Mark the socket as closed */
@@ -431,6 +439,14 @@ static void us_internal_note_short_send(struct us_socket_t *s, ssize_t written) 
     }
 }
 
+#ifdef LIBUS_USE_EPOLL
+void us_internal_socket_send_was_short(struct us_socket_t *s, ssize_t written) {
+    us_internal_note_short_send(s, written);
+    s->flags.last_write_failed = 1;
+    us_internal_rearm_writable(s);
+}
+#endif
+
 /* macOS can report more bytes sent than it was given (golang/go#61060). How many it took is unknown, so nothing
  * may follow them. ECONNABORTED is a peer-gone errno, so it is never retried; the shutdown is for the writers that
  * take any failed send for backpressure. No write may close under its caller: the writable event does. */
@@ -474,6 +490,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
         return 0;
     }
 
+    if (us_internal_socket_before_write(s)) return 0;
     ssize_t sent = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
     int written = us_internal_reject_excess_send(s, sent, (size_t) header_length + (size_t) payload_length);
     if (written != header_length + payload_length) {
@@ -535,6 +552,7 @@ void *us_socket_get_native_handle(struct us_socket_t *s) {
     if (s->ssl) {
         return us_internal_ssl_get_native_handle(s);
     }
+    (void) us_socket_settle(s);
     return (void *) (uintptr_t) us_poll_fd((struct us_poll_t *) s);
 }
 
@@ -550,6 +568,7 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
         return 0;
     }
 
+    if (us_internal_socket_before_write(s)) return 0;
     int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
     if (written != length) {
         us_internal_note_short_send(s, written);
@@ -649,6 +668,7 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         return written;
     }
 
+    if (us_internal_socket_before_write(s)) return 0;
     int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
     if (written < 0) {
         int fatal_send_error = us_internal_classify_failed_send(s);
@@ -672,6 +692,33 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
     return written;
 }
 
+int us_socket_write_soon(struct us_socket_t *s, const char *data, int length, us_unsent_cb unsent) {
+    return !us_socket_is_closed(s) && !us_socket_is_shut_down(s) && us_internal_socket_raw_write_soon(s, data, (size_t) length, unsent, 0);
+}
+
+int us_socket_write_last(struct us_socket_t *s, const char *data, int length, us_unsent_cb unsent) {
+#ifdef LIBUS_USE_EPOLL
+    if (us_internal_fewer_syscalls && !us_socket_is_shut_down(s)) {
+        /* An empty send queue refuses this much only for lack of memory. */
+        if (&s->p == s->group->loop->not_added_yet && !s->p.has_written && length <= 4096 &&
+            us_internal_socket_raw_write_soon(s, data, (size_t) length, unsent, 1)) {
+            s->p.fin_sent = 1;
+            return length;
+        }
+        if (us_internal_socket_before_write(s)) return 0;
+        int written = bsd_send_more(us_poll_fd(&s->p), data, length);
+        if (written == length) {
+            bsd_shutdown_socket(us_poll_fd(&s->p));
+            s->p.fin_sent = 1;
+        } else {
+            us_internal_socket_send_was_short(s, written);
+        }
+        return written < 0 ? 0 : written;
+    }
+#endif
+    return us_socket_write(s, data, length);
+}
+
 int us_socket_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
     if (s->ssl) {
         return us_internal_ssl_writev(s, iov, count);
@@ -684,6 +731,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
         return 0;
     }
 
+    if (us_internal_socket_before_write(s)) return 0;
     size_t total = 0;
     for (int i = 0; i < count; i++) total += iov[i].iov_len;
 
@@ -707,6 +755,7 @@ int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int le
         return 0;
     }
 
+    if (us_internal_socket_before_write(s)) return 0;
     int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
     int fatal = 0;
     if (written >= 0) {
@@ -798,9 +847,10 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
      * We need more states in that case, we need to track RECEIVED_FIN
      * so far, the app has to track this and call close as needed */
     if (us_internal_socket_can_raw_write(s)) {
+        if (!us_socket_fin_sent(s)) (void) us_socket_settle(s);
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
         us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
-        bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
+        if (!us_socket_fin_sent(s)) bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
     }
 }
 

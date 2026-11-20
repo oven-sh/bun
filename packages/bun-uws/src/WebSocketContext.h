@@ -353,7 +353,7 @@ private:
         WebSocketProtocol<isServer, WebSocketContext<SSL, isServer, USERDATA>>::consume(data, (unsigned int) length, (WebSocketState<isServer> *) webSocketData, s);
 
         /* Uncorking a closed socekt is fine, in fact it is needed */
-        asyncSocket->uncork();
+        asyncSocket->uncorkSoon();
 
         return s;
     }

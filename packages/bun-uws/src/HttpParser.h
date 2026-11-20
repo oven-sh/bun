@@ -196,7 +196,11 @@ struct HttpResponseData;
         struct Header
         {
             std::string_view key, value;
-        } headers[UWS_HTTP_MAX_HEADERS_COUNT];
+        };
+        /* Left uninitialized: getHeaders() terminates what it fills in. */
+        union {
+            Header headers[UWS_HTTP_MAX_HEADERS_COUNT];
+        };
         bool ancientHttp;
         bool didYield;
         /* Written right before the request handler runs; see getHasTransferEncoding(). */
@@ -207,6 +211,8 @@ struct HttpResponseData;
         std::pair<int, std::string_view *> currentParameters;
 
     public:
+        HttpRequest() {}
+
         /* Any data pipelined after the HTTP headers (before response).
          * Used for Node.js compatibility: 'connect' and 'upgrade' events
          * pass this as the 'head' Buffer parameter.
@@ -601,6 +607,9 @@ struct HttpResponseData;
             /* A data handler that stops the parse at the last chunk leaves STATE_IS_TRAILERS_DONE. */
             return remainingStreamingBytes != 0 && remainingStreamingBytes != STATE_IS_TRAILERS_DONE;
         }
+
+        /* The read being parsed holds nothing more that could be answered with an error response. */
+        bool readEndsWithThisRequest = false;
 
         /* Header fields one request can carry: HttpRequest::headers also holds the request line in slot 0 and a sentinel after the last field. */
         static constexpr unsigned MAX_HEADER_FIELDS = UWS_HTTP_MAX_HEADERS_COUNT - 2;
@@ -1495,6 +1504,7 @@ struct HttpResponseData;
             if (isConnectRequestLine) {
                 isConnectRequest = true;
             }
+            readEndsWithThisRequest = !ConsumeMinimally && !transferEncoding.has && length <= (contentLengthStringLen ? remainingStreamingBytes : 0);
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken. What follows the head
@@ -1648,6 +1658,7 @@ public:
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
         HttpRequest req;
+        readEndsWithThisRequest = false;
         if (IsNodeHttp && nodeHttpBodyUntilEof) {
             void *returnedUser = dataHandler(user, std::string_view(data, length), false);
             return HttpParserResult::success(returnedUser != user ? HttpParserResult::WHOLE_READ : 0, returnedUser);

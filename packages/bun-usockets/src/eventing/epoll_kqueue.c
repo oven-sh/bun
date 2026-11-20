@@ -55,6 +55,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
 /* Loop */
 void us_loop_free(struct us_loop_t *loop) {
+#ifdef LIBUS_USE_EPOLL
+    us_internal_send_thread_free(loop);
+#endif
     us_internal_loop_data_free(loop);
     close(loop->fd);
 #ifdef LIBUS_USE_EPOLL
@@ -84,6 +87,7 @@ void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type
 #ifdef LIBUS_USE_EPOLL
     p->edge.ready = p->edge.armed = p->edge.enabled = p->edge.suspended = p->edge.registered = p->edge.goes_last = 0;
     p->edge.slot = -1;
+    p->send_in_flight = p->settled_early_at = p->fin_sent = p->has_written = p->may_read_ahead = p->read_ahead = 0;
 #endif
 }
 
@@ -206,7 +210,11 @@ static enum {
     TRIGGER_EDGE_EAGAIN,
 } trigger;
 
+int us_internal_fewer_syscalls;
+
 static void us_internal_read_trigger(void) {
+    const char *fast_accept = getenv("BUN_USOCKETS_FAST_ACCEPT");
+    us_internal_fewer_syscalls = fast_accept && !strcmp(fast_accept, "1");
     const char *name = getenv("BUN_USOCKETS_TRIGGER");
     if (!name) return;
     if (!strcmp(name, "edge-mod")) trigger = TRIGGER_EDGE_MOD;
@@ -454,6 +462,7 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 
     static pthread_once_t trigger_once = PTHREAD_ONCE_INIT;
     pthread_once(&trigger_once, us_internal_read_trigger);
+    us_internal_send_thread_init();
 
     if (has_epoll_pwait2 == -1) {
         if (Bun__isEpollPwait2SupportedOnLinuxKernel() == 0) {
@@ -483,6 +492,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_EPOLL
     if (trigger != TRIGGER_LEVEL) edge_complete_batch(loop);
     for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
+        if (loop->send_thread) us_internal_loop_read_ahead(loop);
         struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
         if (LIKELY(poll)) {
             if (CLEAR_POINTER_TAG(poll) != poll) {
@@ -640,7 +650,9 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     while (UNLIKELY(loop->num_ready_polls == LIBUS_MAX_READY_POLLS) && --drain_count != 0 && loop->num_polls > 0) {
 #ifdef LIBUS_USE_EPOLL
         static const struct timespec zero = {0, 0};
+        us_internal_send_thread_before_wait(loop);
         loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, edge_max_kernel_events(loop), &zero);
+        us_internal_send_thread_after_wait(loop);
 #else
         do {
             loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, LIBUS_MAX_READY_POLLS, KEVENT_FLAG_IMMEDIATE, NULL);
@@ -676,10 +688,15 @@ void us_loop_run(struct us_loop_t *loop) {
     while (loop->num_polls) {
         loop->data.tick_depth++;
 #ifdef LIBUS_USE_EPOLL
+        us_internal_loop_start_late_poll(loop);
+        const int ran_handlers = us_internal_loop_dispatch_reads_ahead(loop);
         edge_rescue_outer_batch(loop);
 #endif
         /* Emit pre callback */
         us_internal_loop_pre(loop);
+#ifdef LIBUS_USE_EPOLL
+        us_internal_send_thread_before_wait(loop);
+#endif
 
         struct timespec sweep_ts;
         const struct timespec *timeout = us_internal_clamp_to_sweep(loop, NULL, &sweep_ts);
@@ -687,10 +704,11 @@ void us_loop_run(struct us_loop_t *loop) {
         /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
         static const struct timespec zero = {0, 0};
-        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, edge_max_kernel_events(loop), loop->num_still_ready ? &zero : timeout);
+        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, edge_max_kernel_events(loop), loop->num_still_ready || ran_handlers ? &zero : timeout);
 #else
         loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, timeout);
 #endif
+        us_internal_send_thread_after_wait(loop);
 
         us_internal_dispatch_ready_polls(loop);
         us_internal_drain_ready_polls(loop);
@@ -711,11 +729,18 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     loop->data.tick_depth++;
 #ifdef LIBUS_USE_EPOLL
+    us_internal_loop_start_late_poll(loop);
+    const int ran_handlers = us_internal_loop_dispatch_reads_ahead(loop);
     edge_rescue_outer_batch(loop);
 #endif
 
     /* Emit pre callback */
     us_internal_loop_pre(loop);
+#ifdef LIBUS_USE_EPOLL
+    static const struct timespec zero = {0, 0};
+    us_internal_send_thread_before_wait(loop);
+    if (ran_handlers) timeout = &zero;
+#endif
 
     /* loop_pre runs lsquic_engine_process_conns and stores the soonest
      * earliest_adv_tick. The JS event loop folds this in via src/runtime/timer/mod.rs; other
@@ -766,7 +791,6 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
      * it sets timed_out=1 (line 1952) and returns before any scheduler
      * interaction (line 1975). No equivalent of KEVENT_FLAG_IMMEDIATE needed. */
-    static const struct timespec zero = {0, 0};
     loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, edge_max_kernel_events(loop), loop->num_still_ready ? &zero : timeout);
 #else
     loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS,
@@ -780,6 +804,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         timeout);
 #endif
 
+    us_internal_send_thread_after_wait(loop);
     /* Anything that stops a poll from here on scrubs this batch (us_internal_loop_update_pending_ready_polls). */
     loop->current_ready_poll = 0;
     /* Before anything can allocate again. */
@@ -906,7 +931,9 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     
     int events = us_poll_events(p);
 #ifdef LIBUS_USE_EPOLL
-    if (p->edge.enabled) {
+    if (p == loop->not_added_yet) {
+        loop->not_added_yet = new_p;
+    } else if (p->edge.enabled) {
         if (p->edge.registered) edge_ctl(new_p, loop, EPOLL_CTL_MOD, p->edge.armed);
         if (p->edge.slot >= 0) loop->still_ready[p->edge.slot] = new_p;
         p->edge.slot = -1;
@@ -971,6 +998,25 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 #endif
 }
 
+#ifdef LIBUS_USE_EPOLL
+void us_internal_poll_start_later(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+    loop->not_added_yet = p;
+    us_poll_change(p, loop, events);
+}
+
+void us_internal_loop_start_late_poll(struct us_loop_t *loop) {
+    struct us_poll_t *p = loop->not_added_yet;
+    if (!p) return;
+    loop->not_added_yet = NULL;
+    const int waits_to_write = us_poll_events(p) & LIBUS_SOCKET_WRITABLE;
+    if (us_poll_start_rc(p, loop, us_poll_events(p) | (waits_to_write ? 0 : LIBUS_POLL_TCP)) != 0) {
+        us_internal_socket_close_raw((struct us_socket_t *) p, errno, NULL);
+    } else if (waits_to_write && trigger != TRIGGER_LEVEL) {
+        p->edge.suspended = p->edge.registered = 1;
+    }
+}
+#endif
+
 void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     us_poll_start_rc(p, loop, events);
 }
@@ -979,6 +1025,10 @@ int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     int old_events = us_poll_events(p);
     int rc = 0;
 #ifdef LIBUS_USE_EPOLL
+    if (p == loop->not_added_yet) {
+        p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) | ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
+        return 0;
+    }
     if (p->edge.suspended && !(events & LIBUS_SOCKET_WRITABLE)) {
         p->edge.suspended = 0;
         p->edge.enabled = 1;
@@ -1029,6 +1079,10 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
     int old_events = us_poll_events(p);
     int new_events = 0;
 #ifdef LIBUS_USE_EPOLL
+    if (p == loop->not_added_yet) {
+        loop->not_added_yet = NULL;
+        return;
+    }
     struct epoll_event event;
     int rc;
     do {

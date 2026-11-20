@@ -110,6 +110,12 @@ struct us_loop_t {
     struct us_poll_t **still_ready;
     int num_still_ready;
     int still_ready_capacity;
+
+    struct us_send_thread_t *send_thread;
+    int sends_this_tick, sends_last_tick;
+
+    /* Just accepted and having its first read dispatched. It enters epoll if it outlives that. */
+    struct us_poll_t *not_added_yet;
 #else
     alignas(LIBUS_EXT_ALIGNMENT) struct kevent64_s ready_polls[1024];
 #endif
@@ -135,6 +141,13 @@ struct us_poll_t {
         /* Index in loop->still_ready, or -1. */
         int slot;
     } edge;
+    /* 1 + the index in loop->send_thread, or 0. */
+    unsigned short send_in_flight;
+    /* The low bits of the iteration_nr that had to wait for such a send, and would have to again. */
+    unsigned char settled_early_at;
+    unsigned char fin_sent : 1, has_written : 1, may_read_ahead : 1;
+    /* 1 + the index of what was read ahead, or 0. */
+    unsigned char read_ahead : 5;
 #endif
 };
 

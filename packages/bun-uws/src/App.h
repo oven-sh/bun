@@ -449,7 +449,7 @@ private:
                 if (flags & TopicTree<TopicTreeMessage, TopicTreeBigMessage>::IteratorFlags::LAST) {
                     /* We should not uncork in all cases? */
                     if (needsUncork) {
-                        ((AsyncSocket<SSL> *)ws)->uncork();
+                        ((AsyncSocket<SSL> *)ws)->uncorkSoon();
                         needsUncork = false;
                     }
                 }

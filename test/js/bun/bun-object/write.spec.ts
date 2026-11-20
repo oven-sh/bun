@@ -1,5 +1,5 @@
 import type { BunFile } from "bun";
-import { tmpdirSync } from "harness";
+import { tempDir, tmpdirSync } from "harness";
 import { constants, promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -18,20 +18,20 @@ describe("Bun.write()", () => {
     },
   );
 
-  // FIXME
-  it.failing("Throws when `destination` is a number ", async () => {
-    // @ts-expect-error
-    await expect(() => Bun.write(1, "foo 1")).toThrowWithCodeAsync(Error, "ERR_INVALID_ARG_TYPE");
-    // @ts-expect-error
-    await expect(() => Bun.write(0, "foo 0")).toThrowWithCodeAsync(Error, "ERR_INVALID_ARG_TYPE");
-    // @ts-expect-error
-    await expect(() => Bun.write(-10, "foo -10")).toThrowWithCodeAsync(Error, "ERR_INVALID_ARG_TYPE");
+  // A number is a file descriptor. The caller owns it: Bun writes at its position and does not truncate the file.
+  it("Writes to the file descriptor when `destination` is a number", async () => {
+    using dir = tempDir("bun-write-fd", { "file.txt": "0123456789" });
+    const filepath = path.join(String(dir), "file.txt");
+    const handle = await fs.open(filepath, "r+");
+    try {
+      expect(await Bun.write(handle.fd, "abc")).toBe(3);
+    } finally {
+      await handle.close();
+    }
+    expect(await fs.readFile(filepath, "utf-8")).toBe("abc3456789");
   });
 
-  // NOTE: if/when we ban fds, this will become ERR_INVALID_ARG_TYPE. When that
-  // happens, delete or update this test
   it("Throws when given a negative number", () => {
-    // @ts-expect-error
     expect(() => Bun.write(-1, "foo")).toThrow(RangeError);
   });
 

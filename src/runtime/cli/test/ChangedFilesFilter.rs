@@ -104,11 +104,11 @@ pub(crate) fn filter<'a>(
     // (On Windows the watcher restarts via TerminateProcess + parent
     // respawn, which cannot carry state, so this is POSIX-only; Windows
     // falls through to git below.)
-    let mut from_watch_trigger = true;
-    let mut changed_files = if let Some(trigger_set) = consume_watch_trigger() {
+    let watch_trigger = consume_watch_trigger();
+    let from_watch_trigger = watch_trigger.is_some();
+    let mut changed_files = if let Some(trigger_set) = watch_trigger {
         trigger_set
     } else {
-        from_watch_trigger = false;
         match get_changed_files(top_level_dir, changed_since) {
             Ok(set) => set,
             Err(GitError::GitNotFound) => {

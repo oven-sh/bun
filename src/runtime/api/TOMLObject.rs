@@ -522,7 +522,7 @@ impl Stringifier {
             return Err(global
                 .throw(format_args!(
                     "TOML.stringify cannot serialize {} (it has no TOML representation)",
-                    temporal_name(temporal_type)
+                    temporal_type.name()
                 ))
                 .into());
         }
@@ -541,7 +541,7 @@ impl Stringifier {
             return Err(global
                 .throw(format_args!(
                     "TOML.stringify cannot serialize a {} outside years 0000-9999",
-                    temporal_name(temporal_type)
+                    temporal_type.name()
                 ))
                 .into());
         }
@@ -602,20 +602,6 @@ fn has_toml_form(t: TemporalType) -> bool {
         | TemporalType::PlainYearMonth
         | TemporalType::PlainMonthDay
         | TemporalType::Duration => false,
-    }
-}
-
-fn temporal_name(t: TemporalType) -> &'static str {
-    match t {
-        TemporalType::Instant => "Temporal.Instant",
-        TemporalType::PlainDateTime => "Temporal.PlainDateTime",
-        TemporalType::PlainDate => "Temporal.PlainDate",
-        TemporalType::PlainTime => "Temporal.PlainTime",
-        TemporalType::ZonedDateTime => "Temporal.ZonedDateTime",
-        TemporalType::PlainYearMonth => "Temporal.PlainYearMonth",
-        TemporalType::PlainMonthDay => "Temporal.PlainMonthDay",
-        TemporalType::Duration => "Temporal.Duration",
-        TemporalType::None => unreachable!("not a Temporal object"),
     }
 }
 

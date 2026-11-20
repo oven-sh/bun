@@ -24,6 +24,7 @@ import {
   setRefreshRuntime,
 } from "./hmr-module";
 import { td } from "./shared";
+import { createUpdateQueue } from "./update-queue";
 
 const consoleErrorWithoutInspector = console.error;
 
@@ -73,16 +74,38 @@ async function performRouteReload(hasClientCode = false) {
 // A previous version of this runtime used `eval`, but browser support around
 // mapping stack traces of eval'd frames is poor (the case the error overlay).
 const pendingScriptSymbol = Symbol.for("bun:hmr:pendingScripts");
+type ReadyHmrUpdate = {
+  modules: Parameters<typeof replaceModules>[0];
+  sourceMapId: SourceMapURL;
+};
 type PendingHmrScript = {
   script: HTMLScriptElement;
   size: number;
   url: string;
+  resolve: (update: ReadyHmrUpdate) => void;
+  reject: (error: unknown) => void;
 };
 type PendingHmrQueue = PendingHmrScript[];
 const scriptTags: Map<string, PendingHmrQueue> =
   ((globalThis as any)[pendingScriptSymbol] as Map<string, PendingHmrQueue> | undefined) ??
   new Map<string, PendingHmrQueue>();
 (globalThis as any)[pendingScriptSymbol] = scriptTags;
+const scriptLoadFailure = Symbol();
+const applyUpdateInOrder = createUpdateQueue(async (ready: Promise<ReadyHmrUpdate> | undefined) => {
+  if (ready === undefined) {
+    emitEvent("bun:afterUpdate", null);
+  } else {
+    const { modules, sourceMapId } = await ready;
+    await replaceModules(modules, sourceMapId);
+  }
+});
+
+function onHotUpdateError(error: unknown) {
+  // Script failures already report and reload immediately, even behind a blocked update.
+  if (error === scriptLoadFailure) return;
+  console.error(error);
+  fullReload();
+}
 
 globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   const queue = scriptTags.get(id);
@@ -96,18 +119,19 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   }
 
   const { script, size, url } = entry;
-  const map: SourceMapURL = {
-    id,
-    url,
-    refs: Object.keys(modules).length,
-    size,
-  };
-  addMapping(url, map);
-  script.remove();
-  replaceModules(modules, map).catch(e => {
-    console.error(e);
-    fullReload();
-  });
+  try {
+    const map: SourceMapURL = {
+      id,
+      url,
+      refs: Object.keys(modules).length,
+      size,
+    };
+    addMapping(url, map);
+    script.remove();
+    entry.resolve({ modules, sourceMapId: map });
+  } catch (error) {
+    entry.reject(error);
+  }
 };
 
 let isFirstRun = true;
@@ -210,24 +234,60 @@ const handlers = {
       const blob = new Blob([rest], { type: "application/javascript" });
       const url = URL.createObjectURL(blob);
       const script = document.createElement("script");
+      let resolve!: (update: ReadyHmrUpdate) => void;
+      let reject!: (error: unknown) => void;
+      const ready = new Promise<ReadyHmrUpdate>((done, fail) => {
+        resolve = done;
+        reject = fail;
+      });
+      // A later script can fail before its queued operation starts awaiting it.
+      void ready.catch(() => {});
+      // Reserve this frame's place before its script has loaded or executed.
+      applyUpdateInOrder(ready).catch(onHotUpdateError);
       const pendingScripts = scriptTags.get(sourceMapId);
       const entry: PendingHmrScript = {
         script,
         size: sourceMapSize,
         url,
+        resolve,
+        reject,
       };
       if (pendingScripts) {
         pendingScripts.push(entry);
       } else {
         scriptTags.set(sourceMapId, [entry]);
       }
-      script.className = "bun-hmr-script";
-      script.src = url;
-      script.onerror = onHmrLoadError;
-      document.head.appendChild(script);
+      const failScript = (event: unknown, source?: string, lineno?: number, colno?: number, error?: Error) => {
+        const queue = scriptTags.get(sourceMapId);
+        const index = queue?.indexOf(entry) ?? -1;
+        if (index === -1) return;
+        queue!.splice(index, 1);
+        if (queue!.length === 0) scriptTags.delete(sourceMapId);
+        entry.reject(scriptLoadFailure);
+        try {
+          script.remove();
+          URL.revokeObjectURL(url);
+        } finally {
+          onHmrLoadError(event, source, lineno, colno, error);
+        }
+      };
+      script.onload = () => {
+        if (scriptTags.get(sourceMapId)?.includes(entry)) {
+          failScript("HMR script loaded without registering its modules");
+        }
+      };
+      script.onerror = failScript;
+      try {
+        script.className = "bun-hmr-script";
+        script.async = false;
+        script.src = url;
+        document.head.appendChild(script);
+      } catch (error) {
+        failScript(error);
+      }
     } else {
-      // Needed for testing.
-      emitEvent("bun:afterUpdate", null);
+      // Needed for testing. Complete in order with any pending JavaScript update.
+      applyUpdateInOrder(undefined).catch(onHotUpdateError);
     }
   },
   [MessageId.set_url_response](view) {
@@ -242,8 +302,8 @@ const ws = initWebSocket(handlers, {
   },
 });
 
-function onHmrLoadError(event: Event | string, source?: string, lineno?: number, colno?: number, error?: Error) {
-  if (typeof event === "string") {
+function onHmrLoadError(event: unknown, source?: string, lineno?: number, colno?: number, error?: Error) {
+  if (typeof event === "string" || event instanceof Error) {
     console.error(event);
   } else if (error) {
     console.error(error);

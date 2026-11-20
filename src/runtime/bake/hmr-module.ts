@@ -98,6 +98,7 @@ export class HMRModule {
   /** ES Modules have different semantics for `.exports` and `.cjs` */
   esm: boolean;
   state: State = State.Pending;
+  loadPromise: Promise<HMRModule> | null = null;
   /** The ESM namespace object. `null` if not yet initialized. */
   exports: any = null;
   /** For ESM, this is the converted CJS exports.
@@ -153,7 +154,16 @@ export class HMRModule {
   dynamicImport(id: Id, opts?: ImportCallOptions) {
     const found = loadModuleAsync(id, true, this);
     if (found) {
-      if ((found as HMRModule).id === id) return Promise.resolve(getEsmExports(found as HMRModule));
+      if ((found as HMRModule).id === id) {
+        const mod = found as HMRModule;
+        if (mod.state === State.Pending) {
+          // Let the current static dependency traversal publish its pending load first.
+          return Promise.resolve()
+            .then(() => loadModuleAsync(id, false, this))
+            .then(getEsmExports);
+        }
+        return Promise.resolve(getEsmExports(mod));
+      }
       return (found as Promise<HMRModule>).then(getEsmExports);
     }
     return opts
@@ -310,6 +320,7 @@ function prepareModule(mod: HMRModule | undefined, id: Id, isCommonJS: boolean, 
   if (importer) {
     mod.importers.add(importer);
   }
+  mod.loadPromise = null;
   return mod;
 }
 
@@ -414,7 +425,8 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       if (importer) {
         mod.importers.add(importer);
       }
-      return mod;
+      // Recursive static cycles reach Pending records before their load promise exists.
+      return state === State.Pending ? (mod.loadPromise ?? mod) : mod;
     }
   }
   const loadOrEsmModule = unloadedModuleRegistry[id];
@@ -460,19 +472,40 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
     // Running finishLoadModuleAsync synchronously when there are no promises is
     // not a performance optimization but a behavioral correctness issue.
-    return isAsync
-      ? Promise.all(list).then(
-          list => finishLoadModuleAsync(mod, load, list),
-          e => {
-            mod.state = State.Stale;
-            throw e;
-          },
-        )
-      : finishLoadModuleAsync(
-          mod,
-          load,
-          list as HMRModule[], // no promises as by assert above
-        );
+    if (!isAsync && !loadOrEsmModule[ESMProps.isAsync]) {
+      return finishLoadModuleAsync(mod, load, list as HMRModule[]);
+    }
+
+    let resolve!: (loaded: HMRModule) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<HMRModule>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    // Publish after static dependency traversal, before the body can reenter through import().
+    mod.loadPromise = promise;
+    const fail = (error: unknown) => {
+      if (mod.loadPromise === promise) mod.loadPromise = null;
+      reject(error);
+    };
+    try {
+      const result = isAsync
+        ? Promise.all(list).then(
+            list => finishLoadModuleAsync(mod, load, list),
+            e => {
+              mod.state = State.Stale;
+              throw e;
+            },
+          )
+        : finishLoadModuleAsync(mod, load, list as HMRModule[]);
+      Promise.resolve(result).then(loaded => {
+        if (mod.loadPromise === promise) mod.loadPromise = null;
+        resolve(loaded);
+      }, fail);
+    } catch (error) {
+      fail(error);
+    }
+    return promise;
   }
 }
 
@@ -575,7 +608,7 @@ type HMREvent =
   | "bun:ws:connect";
 
 interface HotUpdate {
-  toReload: Set<HMRModule>;
+  toReload: Map<HMRModule, HotAcceptFunction | null>;
   toAccept: { cb: HotAccept; key: Id }[];
   toDispose: Set<HMRModule>;
   /** Updated modules with a path to a root that nothing on it accepts. */
@@ -584,7 +617,7 @@ interface HotUpdate {
 
 /** Also moves the source map of each updated module to `sourceMapId`, and lets modules that have `data` accept. */
 function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: SourceMapURL | undefined): HotUpdate {
-  const toReload = new Set<HMRModule>();
+  const toReload = new Map<HMRModule, HotAcceptFunction | null>();
   const toAccept: HotUpdate["toAccept"] = [];
   let failures: Set<Id> | null = null;
   const toDispose = new Set<HMRModule>();
@@ -602,7 +635,7 @@ function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: Source
     const existing = registry.get(key);
     if (!existing) continue;
 
-    toReload.add(existing);
+    toReload.set(existing, existing.selfAccept);
 
     // Discover all HMR boundaries
     const visited = new Set<HMRModule>();
@@ -615,7 +648,7 @@ function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: Source
       // Stop propagation if the module is self-accepting
       let hadSelfAccept = true;
       if (mod.selfAccept) {
-        toReload.add(mod);
+        toReload.set(mod, mod.selfAccept);
         visited.add(mod);
         hadSelfAccept = false;
         if (mod.onDispose) {
@@ -625,7 +658,7 @@ function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: Source
       // Modules that mutate data are implied to handle updates via reusing their `data` property
       else if (Object.keys(mod.data).length > 0) {
         mod.selfAccept ??= implicitAcceptFunction;
-        toReload.add(mod);
+        toReload.set(mod, mod.selfAccept);
         visited.add(mod);
         hadSelfAccept = false;
         if (mod.onDispose) {
@@ -735,14 +768,16 @@ function disposeModules(toDispose: Set<HMRModule>): Promise<void>[] {
 }
 
 /** Returns a promise for each module that still loads, or that threw. */
-function reloadModules(toReload: Set<HMRModule>): Promise<HMRModule>[] {
-  const promises: Promise<HMRModule>[] = [];
-  for (const mod of toReload) {
+function reloadModules(toReload: Map<HMRModule, HotAcceptFunction | null>): Promise<HMRModule>[] {
+  for (const mod of toReload.keys()) {
     mod.state = State.Stale;
-    const selfAccept = mod.selfAccept;
+    mod.loadPromise = null;
     mod.selfAccept = null;
     mod.depAccepts = null;
+  }
 
+  const promises: Promise<HMRModule>[] = [];
+  for (const mod of toReload.keys()) {
     let modOrPromise: HMRModule | Promise<HMRModule>;
     try {
       modOrPromise = loadModuleAsync(mod.id, false, null);
@@ -751,20 +786,9 @@ function reloadModules(toReload: Set<HMRModule>): Promise<HMRModule>[] {
       promises.push(Promise.reject(e));
       continue;
     }
-    if (modOrPromise === mod) {
-      if (selfAccept) {
-        selfAccept(getEsmExports(mod));
-      }
-    } else {
+    if (modOrPromise !== mod) {
       DEBUG.ASSERT(modOrPromise instanceof Promise);
-      promises.push(
-        (modOrPromise as Promise<HMRModule>).then(mod => {
-          if (selfAccept) {
-            selfAccept(getEsmExports(mod));
-          }
-          return mod;
-        }),
-      );
+      promises.push(modOrPromise as Promise<HMRModule>);
     }
   }
   return promises;
@@ -796,7 +820,13 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   if (promises.length > 0) {
     await Promise.all(promises);
   }
-  for (const mod of toReload) {
+  // Recursively loaded asynchronous dependencies must finish before accepting.
+  for (const [mod, selfAccept] of toReload) {
+    if (selfAccept) {
+      selfAccept(getEsmExports(mod));
+    }
+  }
+  for (const mod of toReload.keys()) {
     const { selfAccept } = mod;
     if (selfAccept && selfAccept !== implicitAcceptFunction) continue;
     patchImporters(mod);

@@ -1,7 +1,8 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
-import { expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { createUpdateQueue } from "../../../src/runtime/bake/update-queue";
+import { devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -691,6 +692,571 @@ devTest("dev.write resolves only after the new module body has run", {
     expect(await c.js`globalThis.marker`).toBe("updated");
   },
 });
+
+const library = {
+  "node_modules/unchanged-barrel/package.json": JSON.stringify({
+    name: "unchanged-barrel",
+    type: "module",
+    exports: "./index.js",
+    sideEffects: false,
+  }),
+  "node_modules/unchanged-barrel/index.js": `
+    export { suffix } from './suffix.js';
+    export { unused } from './unused.js';
+  `,
+  "node_modules/unchanged-barrel/suffix.js": `export const suffix = ':library';`,
+  "node_modules/unchanged-barrel/unused.js": `export const unused = 'unused';`,
+};
+
+devTest("editing an accepted leaf does not hot-replace its unchanged barrel dependency", {
+  files: {
+    ...library,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"], body: "<h1></h1><button>Count 0</button>" }),
+    "index.ts": `
+      import { suffix } from 'unchanged-barrel';
+      import './leaf.ts';
+      document.documentElement.dataset.suffix = suffix;
+      globalThis.documentToken = Math.random();
+      let count = 0;
+      document.querySelector('button').onclick = event => {
+        event.currentTarget.textContent = 'Count ' + ++count;
+      };
+    `,
+    "leaf.ts": `
+      import { suffix } from 'unchanged-barrel';
+      document.querySelector('h1').textContent = 'BEFORE' + suffix;
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { allowUnlimitedReloads: true });
+    await c.expectElemText("h1", "BEFORE:library");
+    await c.click("button");
+    await c.expectElemText("button", "Count 1");
+    const token = await c.js`globalThis.documentToken`;
+
+    await dev.patch("leaf.ts", { find: "BEFORE", replace: "AFTER" });
+    await c.expectElemText("h1", "AFTER:library");
+    expect(await c.js`globalThis.documentToken`).toBe(token);
+    await c.expectElemText("button", "Count 1");
+  },
+});
+
+for (const shadowing of [false, true]) {
+  devTest(
+    `a cached sibling's import names do not change an unchanged barrel during HMR${shadowing ? " with nested shadowing" : ""}`,
+    {
+      files: {
+        "index.html": emptyHtmlFile({ scripts: ["index.ts"], body: "<h1></h1><button>Count 0</button>" }),
+        "index.ts": `
+      import { prefix } from './sibling.ts';
+      import { suffix } from 'unchanged-barrel';
+      import './leaf.ts';
+      document.documentElement.dataset.value = prefix + suffix;
+      globalThis.documentToken = Math.random();
+      let count = 0;
+      document.querySelector('button').onclick = event => {
+        event.currentTarget.textContent = 'Count ' + ++count;
+      };
+    `,
+        "sibling.ts": `
+      import { value } from './value.ts';
+      export const prefix = value;
+    `,
+        "value.ts": `export const value = 'sibling';`,
+        "leaf.ts": shadowing
+          ? `
+      import { suffix } from 'unchanged-barrel';
+      function format(import_unchanged_barrel) {
+        return import_unchanged_barrel + suffix;
+      }
+      document.querySelector('h1').textContent = format('BEFORE');
+      import.meta.hot.accept();
+    `
+          : `
+      import { suffix } from 'unchanged-barrel';
+      document.querySelector('h1').textContent = 'BEFORE' + suffix;
+      import.meta.hot.accept();
+    `,
+        "node_modules/unchanged-barrel/package.json": JSON.stringify({
+          name: "unchanged-barrel",
+          type: "module",
+          exports: "./index.js",
+          sideEffects: false,
+        }),
+        "node_modules/unchanged-barrel/index.js": `
+      export { value as suffix } from './value.js';
+      export { unused } from './unused.js';
+    `,
+        "node_modules/unchanged-barrel/value.js": `export const value = ':library';`,
+        "node_modules/unchanged-barrel/unused.js": `export const unused = 'unused';`,
+      },
+      async test(dev) {
+        await using c = await dev.client("/", { allowUnlimitedReloads: true });
+        await c.expectElemText("h1", "BEFORE:library");
+        await c.click("button");
+        await c.expectElemText("button", "Count 1");
+        const token = await c.js`globalThis.documentToken`;
+
+        await dev.patch("leaf.ts", { find: "BEFORE", replace: "AFTER" });
+        await c.expectElemText("h1", "AFTER:library");
+        expect(await c.js`globalThis.documentToken`).toBe(token);
+        await c.expectElemText("button", "Count 1");
+      },
+    },
+  );
+}
+
+devTest("namespace imports do not collide with a module's local exports binding during HMR", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"], body: "<h1></h1>" }),
+    "index.ts": `
+      import * as ns from './dep.ts';
+      const exports = 'local';
+      document.querySelector('h1').textContent = [ns.value, exports].join(':');
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `export const value = 'BEFORE';`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("h1", "BEFORE:local");
+
+    await dev.patch("dep.ts", { find: "BEFORE", replace: "AFTER" });
+    await c.expectElemText("h1", "AFTER:local");
+  },
+});
+
+for (const [withDispose, asyncDependency] of [
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+] as const) {
+  devTest(
+    `evaluates an accepting importer after all changed dependencies${withDispose ? " and disposes it once" : ""}${asyncDependency ? " with an async dependency" : ""}`,
+    {
+      files: {
+        "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+        "index.ts": `
+      import { a } from './a.ts';
+      import { b } from './b.ts';
+      import { c } from './c.ts';
+      console.log([a, b, c].join('|'));
+      import.meta.hot.accept(() => { globalThis.importerAccepts = (globalThis.importerAccepts ?? 0) + 1; });
+      ${withDispose ? `import.meta.hot.dispose(() => { globalThis.batchDisposals = (globalThis.batchDisposals ?? 0) + 1; });` : ""}
+    `,
+        "a.ts": `globalThis.loadsA = (globalThis.loadsA ?? 0) + 1; export const a = 'A0';`,
+        "b.ts": `
+      globalThis.loadsB = (globalThis.loadsB ?? 0) + 1;
+      export const b = 'B0';
+      import.meta.hot.accept(mod => { (globalThis.acceptedB ??= []).push(['old', mod.b]); });
+    `,
+        "c.ts": `globalThis.loadsC = (globalThis.loadsC ?? 0) + 1; export const c = 'C0';`,
+      },
+      async test(dev) {
+        await using client = await dev.client("/");
+        await client.expectMessage("A0|B0|C0");
+        {
+          await using batch = await dev.batchChanges();
+          await dev.write("a.ts", `globalThis.loadsA = (globalThis.loadsA ?? 0) + 1; export const a = 'A1';`);
+          await dev.write(
+            "b.ts",
+            `globalThis.loadsB = (globalThis.loadsB ?? 0) + 1; ${asyncDependency ? "await Promise.resolve();" : ""} export const b = 'B1';
+         import.meta.hot.accept(mod => { (globalThis.acceptedB ??= []).push(['new', mod.b]); });`,
+          );
+          await dev.write("c.ts", `globalThis.loadsC = (globalThis.loadsC ?? 0) + 1; export const c = 'C1';`);
+        }
+        await client.expectMessage("A1|B1|C1");
+        expect(await client.js`({ accepts: globalThis.importerAccepts, acceptedB: globalThis.acceptedB })`).toEqual({
+          accepts: 1,
+          acceptedB: [["old", "B1"]],
+        });
+        expect(await client.js`[globalThis.loadsA, globalThis.loadsB, globalThis.loadsC]`).toEqual([2, 2, 2]);
+        if (withDispose) {
+          expect(await client.js`globalThis.batchDisposals`).toBe(1);
+        }
+      },
+    },
+  );
+}
+
+for (const reentrant of [false, true]) {
+  devTest(
+    `batched importers wait for an already pending asynchronous dependency${reentrant ? " during reentrant dynamic import" : ""}`,
+    {
+      files: {
+        "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+        "index.ts": `
+      import { b } from './b.ts';
+      globalThis.events = [];
+      globalThis.gate = new Promise(resolve => { globalThis.releaseGate = resolve; });
+      console.log(b);
+      import.meta.hot.accept();
+    `,
+        "b.ts": `export const b = 'B0'; import.meta.hot.accept();`,
+      },
+      async test(dev) {
+        await using client = await dev.client("/");
+        await client.expectMessage("B0");
+        const batch = await dev.batchChanges({ errors: null });
+        await dev.write(
+          "b.ts",
+          `
+        globalThis.events.push('dependency:start');
+        console.log('holding dependency');
+        ${reentrant ? "void import('./index.ts');" : ""}
+        await globalThis.gate;
+        export const b = 'B1';
+        globalThis.events.push('dependency:end');
+        import.meta.hot.accept();
+      `,
+        );
+        await dev.write(
+          "index.ts",
+          `
+        import { b } from './b.ts';
+        globalThis.events.push('importer:' + b);
+        console.log('updated importer');
+        import.meta.hot.accept();
+      `,
+        );
+        const applied = batch![Symbol.asyncDispose]();
+        void applied.catch(() => {});
+        let held;
+        try {
+          await client.expectMessage("holding dependency");
+          held = await client.js`globalThis.events.slice()`;
+        } finally {
+          await client.js`globalThis.releaseGate()`;
+          await applied;
+        }
+        await client.expectMessage("updated importer");
+        expect(held).toEqual(["dependency:start"]);
+        expect(await client.js`globalThis.events`).toEqual(["dependency:start", "dependency:end", "importer:B1"]);
+      },
+    },
+  );
+}
+
+devTest("dynamic imports wait for an ancestor's pending asynchronous load", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { b } from './b.ts';
+      export const value = 'I0';
+      globalThis.events = [];
+      globalThis.imported = null;
+      globalThis.gate = new Promise(resolve => { globalThis.releaseGate = resolve; });
+      console.log(b);
+      import.meta.hot.accept();
+    `,
+    "b.ts": `export const b = 'B0'; import.meta.hot.accept();`,
+  },
+  async test(dev) {
+    await using client = await dev.client("/");
+    await client.expectMessage("B0");
+    const batch = await dev.batchChanges({ errors: null });
+    await dev.write(
+      "index.ts",
+      `
+        import { b } from './b.ts';
+        export const value = 'I1';
+        globalThis.events.push('importer:' + b);
+        import.meta.hot.accept();
+      `,
+    );
+    await dev.write(
+      "b.ts",
+      `
+        globalThis.events.push('dependency:start');
+        void import('./index.ts').then(mod => {
+          globalThis.imported = mod.value;
+          console.log('dynamic import completed');
+        });
+        console.log('holding dependency');
+        await globalThis.gate;
+        export const b = 'B1';
+        globalThis.events.push('dependency:end');
+        import.meta.hot.accept();
+      `,
+    );
+    const applied = batch![Symbol.asyncDispose]();
+    void applied.catch(() => {});
+    let held;
+    try {
+      await client.expectMessage("holding dependency");
+      held = await client.js`({ events: globalThis.events.slice(), imported: globalThis.imported })`;
+    } finally {
+      await client.js`globalThis.releaseGate()`;
+      await applied;
+    }
+    await client.expectMessage("dynamic import completed");
+    expect(held).toEqual({ events: ["dependency:start"], imported: null });
+    expect(await client.js`globalThis.imported`).toBe("I1");
+    expect(await client.js`globalThis.events`).toEqual(["dependency:start", "dependency:end", "importer:B1"]);
+  },
+});
+
+for (const gate of ["load", "dispose"] as const) {
+  devTest(`serializes hot updates while an asynchronous ${gate} is pending`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"], body: "<h1>0</h1>" }),
+      "index.ts": `
+        import './x.ts';
+        import './y.ts';
+        globalThis.acceptedX = [];
+        globalThis.acceptedY = [];
+        globalThis.disposed = [];
+        globalThis.lifecycle = [];
+        globalThis.gate = new Promise(resolve => { globalThis.releaseGate = resolve; });
+        let update = 0;
+        let completed = 0;
+        import.meta.hot.on('bun:beforeUpdate', () => { globalThis.lifecycle.push('before:' + ++update); });
+        import.meta.hot.on('bun:afterUpdate', () => {
+          const value = globalThis.versionX + '|' + globalThis.versionY;
+          globalThis.lifecycle.push('after:' + value);
+          document.querySelector('h1').textContent = String(++completed);
+        });
+        console.log('ready');
+      `,
+      "x.ts": `
+        export const x = 'X0';
+        globalThis.versionX = x;
+        import.meta.hot.accept(mod => { globalThis.acceptedX.push([x, mod.x]); });
+        import.meta.hot.dispose(() => { globalThis.disposed.push(x); });
+      `,
+      "y.ts": `
+        export const y = 'Y0';
+        globalThis.versionY = y;
+        import.meta.hot.accept(mod => { globalThis.acceptedY.push([y, mod.y]); });
+        import.meta.hot.dispose(${gate === "dispose" ? "async" : ""} () => {
+          globalThis.disposed.push(y);
+          ${gate === "dispose" ? "console.log('holding'); await globalThis.gate;" : ""}
+        });
+      `,
+    },
+    async test(dev) {
+      await using client = await dev.client("/", { storeHotChunks: true });
+      await client.expectMessage("ready");
+      const x = (value: string) => `
+        export const x = '${value}';
+        globalThis.versionX = x;
+        import.meta.hot.accept(mod => { globalThis.acceptedX.push([x, mod.x]); });
+        import.meta.hot.dispose(() => { globalThis.disposed.push(x); });
+      `;
+      const batch = await dev.batchChanges({ errors: null });
+      await dev.write("x.ts", x("X1"));
+      await dev.write(
+        "y.ts",
+        `
+        ${gate === "load" ? "console.log('holding'); await globalThis.gate;" : ""}
+        export const y = 'Y1';
+        globalThis.versionY = y;
+        import.meta.hot.accept(mod => { globalThis.acceptedY.push([y, mod.y]); });
+      `,
+      );
+      const applied = batch![Symbol.asyncDispose]();
+      void applied.catch(() => {});
+      let held;
+      let disposed;
+      try {
+        await client.expectMessage("holding");
+        await client.getMostRecentHmrChunk();
+        writeFileSync(dev.join("x.ts"), x("X2"));
+        expect(await client.getMostRecentHmrChunk()).toContain("X2");
+        held =
+          await client.js`({ x: globalThis.versionX, lifecycle: globalThis.lifecycle, acceptedX: globalThis.acceptedX })`;
+        disposed = await client.js<string[]>`globalThis.disposed`;
+      } finally {
+        await client.js`globalThis.releaseGate()`;
+        await applied;
+      }
+      await client.expectElemText("h1", "2");
+      expect(held).toEqual({ x: gate === "load" ? "X1" : "X0", lifecycle: ["before:1"], acceptedX: [] });
+      expect(disposed!.sort()).toEqual(["X0", "Y0"]);
+      expect(
+        await client.js`({ x: globalThis.acceptedX, y: globalThis.acceptedY, lifecycle: globalThis.lifecycle })`,
+      ).toEqual({
+        x: [
+          ["X0", "X1"],
+          ["X1", "X2"],
+        ],
+        y: [["Y0", "Y1"]],
+        lifecycle: ["before:1", "after:X1|Y1", "before:2", "after:X2|Y1"],
+      });
+      expect(await client.js`globalThis.disposed[2]`).toBe("X1");
+      expect(await client.js`globalThis.disposed.length`).toBe(3);
+    },
+  });
+}
+
+devTest("CSS-only completion waits for an asynchronous JavaScript update", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"], styles: ["style.css"], body: "<h1>0</h1>" }),
+    "index.ts": `
+      import './value.ts';
+      globalThis.lifecycle = [];
+      globalThis.gate = new Promise(resolve => { globalThis.releaseGate = resolve; });
+      let completed = 0;
+      import.meta.hot.on('bun:beforeUpdate', () => { globalThis.lifecycle.push('before'); });
+      import.meta.hot.on('bun:afterUpdate', () => {
+        globalThis.lifecycle.push('after:' + globalThis.value);
+        document.querySelector('h1').textContent = String(++completed);
+      });
+      console.log('ready');
+    `,
+    "value.ts": `globalThis.value = 'before'; import.meta.hot.accept();`,
+    "style.css": "body { color: red; }",
+  },
+  async test(dev) {
+    await using client = await dev.client("/");
+    await client.expectMessage("ready");
+    await client.style("body").color.expect.toBe("red");
+    const batch = await dev.batchChanges({ errors: null });
+    await dev.write(
+      "value.ts",
+      `console.log('holding JS'); await globalThis.gate; globalThis.value = 'after'; import.meta.hot.accept();`,
+    );
+    const applied = batch![Symbol.asyncDispose]();
+    void applied.catch(() => {});
+    let held;
+    try {
+      await client.expectMessage("holding JS");
+      writeFileSync(dev.join("style.css"), "body { color: blue; }");
+      // The style proves the CSS-only payload arrived while the JS body was still waiting.
+      const deadline = Date.now() + 2_000 * WAIT_MULTIPLIER;
+      let color: string | undefined;
+      do {
+        color = await client.style("body").color;
+        if (color === "#00f") break;
+        await new Promise(setImmediate);
+      } while (Date.now() < deadline);
+      expect(color).toBe("#00f");
+      held =
+        await client.js`({ value: globalThis.value, lifecycle: globalThis.lifecycle, completed: document.querySelector('h1').textContent })`;
+    } finally {
+      await client.js`globalThis.releaseGate()`;
+      await applied;
+    }
+    await client.expectElemText("h1", "2");
+    expect(held).toEqual({ value: "before", lifecycle: ["before"], completed: "0" });
+    expect(await client.js`globalThis.lifecycle`).toEqual(["before", "after:after", "after:after"]);
+    await client.style("body").color.expect.toBe("#00f");
+  },
+});
+
+devTest("CSS-only completion waits for an earlier script to execute", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"], styles: ["style.css"], body: "<h1>0</h1>" }),
+    "index.ts": `
+      import './value.ts';
+      globalThis.lifecycle = [];
+      let completed = 0;
+      import.meta.hot.on('bun:beforeUpdate', () => { globalThis.lifecycle.push('before'); });
+      import.meta.hot.on('bun:afterUpdate', () => {
+        globalThis.lifecycle.push('after:' + globalThis.value);
+        document.querySelector('h1').textContent = String(++completed);
+      });
+      console.log('ready');
+    `,
+    "value.ts": `globalThis.value = 'before'; import.meta.hot.accept();`,
+    "style.css": "body { color: red; }",
+  },
+  async test(dev) {
+    await using client = await dev.client("/");
+    await client.expectMessage("ready");
+    await client.style("body").color.expect.toBe("red");
+    await client.js`
+      const appendChild = document.head.appendChild;
+      const descriptor = Object.getOwnPropertyDescriptor(document.head, 'appendChild');
+      let heldScript;
+      Object.defineProperty(document.head, 'appendChild', {
+        configurable: true,
+        writable: true,
+        value: function (node) {
+          if (!heldScript && typeof node.src === 'string' && node.src.startsWith('blob:')) {
+            heldScript = node;
+            console.log('holding script');
+            return node;
+          }
+          return appendChild.call(this, node);
+        },
+      });
+      globalThis.releaseScript = () => {
+        if (descriptor) Object.defineProperty(document.head, 'appendChild', descriptor);
+        else delete document.head.appendChild;
+        if (heldScript) {
+          const script = heldScript;
+          heldScript = null;
+          appendChild.call(document.head, script);
+        }
+      };
+    `;
+    const batch = await dev.batchChanges({ errors: null });
+    await dev.write("value.ts", `globalThis.value = 'after'; import.meta.hot.accept();`);
+    const applied = batch![Symbol.asyncDispose]();
+    void applied.catch(() => {});
+    let held;
+    try {
+      await client.expectMessage("holding script");
+      writeFileSync(dev.join("style.css"), "body { color: blue; }");
+      // The style proves the later CSS payload arrived before the earlier script executed.
+      const deadline = Date.now() + 2_000 * WAIT_MULTIPLIER;
+      let color: string | undefined;
+      do {
+        color = await client.style("body").color;
+        if (color === "#00f") break;
+        await new Promise(setImmediate);
+      } while (Date.now() < deadline);
+      expect(color).toBe("#00f");
+      held =
+        await client.js`({ value: globalThis.value, lifecycle: globalThis.lifecycle, completed: document.querySelector('h1').textContent })`;
+    } finally {
+      await client.js`globalThis.releaseScript()`;
+      await applied;
+    }
+    await client.expectElemText("h1", "2");
+    expect(held).toEqual({ value: "before", lifecycle: [], completed: "0" });
+    expect(await client.js`globalThis.lifecycle`).toEqual(["before", "after:after", "after:after"]);
+    await client.style("body").color.expect.toBe("#00f");
+  },
+});
+
+try {
+  test("hot update queues reserve their tail before reentrant callbacks", async () => {
+    const events: string[] = [];
+    let nested!: Promise<void>;
+    const update = createUpdateQueue(async (version: number) => {
+      events.push(`start:${version}`);
+      if (version === 1) {
+        nested = update(2);
+        events.push("enqueued:2");
+        await Promise.resolve();
+      }
+      events.push(`end:${version}`);
+    });
+    await update(1);
+    await nested;
+    expect(events).toEqual(["start:1", "enqueued:2", "end:1", "start:2", "end:2"]);
+  });
+
+  test("hot update queues continue after a rejected operation", async () => {
+    const events: number[] = [];
+    const failure = new Error("expected update failure");
+    const update = createUpdateQueue(async (version: number) => {
+      events.push(version);
+      if (version === 1) throw failure;
+    });
+    const rejected = update(1);
+    const recovered = update(2);
+    await expect(rejected).rejects.toBe(failure);
+    await recovered;
+    expect(events).toEqual([1, 2]);
+  });
+} catch {
+  // Outside `bun test`, devTest handles interactive registrations.
+}
 
 devTest("a save of a CommonJS module reaches the ES modules that import it", {
   files: {

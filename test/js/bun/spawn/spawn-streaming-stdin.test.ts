@@ -1,7 +1,9 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, getMaxFD, isASAN } from "harness";
+import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, getMaxFD, isASAN, isWindows } from "harness";
+import { totalmem } from "os";
 import { join } from "path";
+import { measure } from "./measure-write-requests";
 
 const N = 50;
 const concurrency = 16;
@@ -80,3 +82,16 @@ test("spawn can write to stdin multiple chunks", async () => {
   await expectMaxObjectTypeCount(expect, "Subprocess", 5);
   dumpStats();
 }, 60_000);
+
+// TEMPORARY, removed before this PR leaves draft. See measure-write-requests.ts.
+test.skipIf(!isWindows || totalmem() < 12 * 1024 ** 3)(
+  "measure: write requests above one request's size",
+  async () => {
+    await measure([
+      "2^32 + 64 KiB queued on a child's stdin",
+      "2^32 + 64 KiB queued on a file sink",
+      "one 3 GiB write to a file sink",
+    ]);
+  },
+  170_000,
+);

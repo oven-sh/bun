@@ -496,6 +496,9 @@ describe("buildRustGraph + unitManifest", () => {
     // The root is named like every other library: by its crate and its hash.
     expect(abort.root.output).toBe(join("/build/rust-target", triple, "deps", `libmy_root-${abort.root.hash}.rlib`));
     expect(linkedRlibs(abort).map(u => u.crateName)).toEqual(["my_root", "std", "panic_abort"]);
+    // Another program can link a part of the graph.
+    const std = abort.units.find(u => u.crateName === "std")!;
+    expect(linkedRlibs(abort, std).map(u => u.crateName)).toEqual(["std", "panic_abort"]);
 
     const unwind = buildRustGraph(plan("unwind"), "/build/rust-target");
     expect(linkedRlibs(unwind).map(u => u.crateName)).toEqual(["my_root", "std", "panic_unwind"]);

@@ -30,7 +30,7 @@ impl Layer {
         let mut out = Vec::new();
         out.try_reserve_exact(BLOCK)?;
         Ok(Self {
-            gzip: gzip::Decoder::new(dialect)?,
+            gzip: gzip::Decoder::new(dialect),
             out,
             pos: 0,
             done: false,

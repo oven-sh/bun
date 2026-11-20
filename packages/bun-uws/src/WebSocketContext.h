@@ -196,13 +196,8 @@ private:
                     if (webSocketData->compressionStatus == WebSocketData::CompressionStatus::COMPRESSED_FRAME) {
                             webSocketData->compressionStatus = WebSocketData::CompressionStatus::ENABLED;
 
-                            /* 4 bytes of padding for zlib */
-                            if (!webSocketData->fragmentBuffer.tryAppend("1234", 4)) {
-                                return failOutOfMemory(s);
-                            }
-
                             data = webSocketData->fragmentBuffer.data();
-                            length = webSocketData->fragmentBuffer.length() - 4;
+                            length = webSocketData->fragmentBuffer.length();
                             if (!inflateMessage(s, data, length)) {
                                 return true;
                             }

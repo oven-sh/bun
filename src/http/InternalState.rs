@@ -3,7 +3,6 @@ use bun_core::MutableString;
 use bun_core::Output;
 use bun_http1::{ChunkedDecoder, ResponseParser};
 
-use crate::decompressor::has_zlib_header;
 use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
@@ -278,7 +277,9 @@ impl<'a> InternalState<'a> {
                 let decompress = match self.encoding {
                     Encoding::Gzip => bun_deflate::gunzip,
                     // `bun_deflate` does not read zlib streams.
-                    Encoding::Deflate if has_zlib_header(buffer) => break 'libdeflate,
+                    Encoding::Deflate if bun_zlib::inflate::has_zlib_header(buffer) => {
+                        break 'libdeflate;
+                    }
                     Encoding::Deflate => bun_deflate::inflate,
                     _ => unreachable!(),
                 };

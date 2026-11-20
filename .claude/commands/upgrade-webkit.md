@@ -28,6 +28,7 @@ To do that:
 - cd back to bun and update WEBKIT_VERSION in scripts/build/deps/webkit.ts:
   - Direct: the new vendor/WebKit commit sha
   - Preview: the full preview tag (`autobuild-preview-pr-...`)
+- bun run pin-webkit — writes the sha256 of the release's tarballs to scripts/build/deps/webkit.sha256. Commit it with WEBKIT_VERSION, every time that changes
 - git checkout -b claude/webkit-upgrade-<sha> (branch must start with `claude/` for CI)
 - commit + push (without adding the webkit-changes.md file)
 - create a PR titled "Upgrade WebKit to <upstream-short-sha>", paste webkit-changes.md into the description

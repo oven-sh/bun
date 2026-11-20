@@ -7,17 +7,17 @@ function seen(value) {
   const text = value.toString(16);
   for (let i = 0; i < text.length; i++) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0;
 }
-function mod(a, m) {
-  const r = a % m;
-  return r >= 0n ? r : m + r;
+function wrapped(value, round) {
+  let left = value % round;
+  if (left < 0n) left += round;
+  return left;
 }
-function pow(x, n, m) {
-  let r = x;
-  while (n-- > 0n) {
-    r *= r;
-    r %= m;
+function squared(value, times, round) {
+  for (let turn = 0n; turn < times; turn++) {
+    value = value * value;
+    value %= round;
   }
-  return r;
+  return value;
 }
 function dividends(m) {
   const list = [0n, 1n, m - 1n, m, m + 1n, 2n * m, m * m, m * m - 1n, m * m * m + 7n, (1n << 256n) - 1n, 1n << 256n, (1n << 512n) - 1n, 1n << 512n, (1n << 768n) - 1n, 1n << 1023n, (1n << 2047n) - 1n, (1n << 2048n) + 5n, 1n << 2300n];
@@ -35,15 +35,15 @@ function all(m, other) {
       const b = sign * a;
       seen(b % m);
       seen((b * a) % m);
-      seen(mod(b * other, m));
+      seen(wrapped(b * other, m));
       seen((b * a * other) % m);
       seen(b % other);
       let r = b;
       r *= a;
       r %= m;
       seen(r);
-      seen(pow(b % m, 5n, m));
-      sum = mod(sum + b * 3n, m);
+      seen(squared(b % m, 5n, m));
+      sum = wrapped(sum + b * 3n, m);
     }
   }
   return sum;

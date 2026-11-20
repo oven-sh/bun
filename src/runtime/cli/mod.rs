@@ -66,7 +66,7 @@ pub(crate) mod package_manager_command;
 // need `CommandLineReporter`. This is the sole live mount of the file.
 #[path = "test_command.rs"]
 pub(crate) mod test_command;
-/// `bun test` support modules (Scanner / ChangedFilesFilter / ParallelRunner).
+/// `bun test` support modules.
 /// Mounted here so `test_command.rs` can `use crate::cli::test::scanner` etc.
 pub(crate) mod test {
     #[path = "Scanner.rs"]
@@ -85,15 +85,7 @@ pub(crate) mod test {
     #[path = "ShardsByReach.rs"]
     pub(crate) mod shards_by_reach;
 
-    /// `bun test --parallel`: process-pool coordinator/worker entry points.
-    /// Thin façade re-exporting from `parallel::runner`.
-    #[path = "ParallelRunner.rs"]
-    pub(crate) mod parallel_runner;
-
-    /// `test/parallel/` submodule directory (no `mod.rs` on disk; declared
-    /// inline). `ParallelRunner.rs`
-    /// re-exports the public entry points from `runner`; the rest are
-    /// implementation detail of the coordinator/worker split.
+    /// `bun test --parallel`: a coordinator hands test files to worker processes. `runner` has the entry points.
     pub(crate) mod parallel {
         #[path = "aggregate.rs"]
         pub(crate) mod aggregate;
@@ -101,8 +93,6 @@ pub(crate) mod test {
         pub(crate) mod channel;
         #[path = "Coordinator.rs"]
         pub(crate) mod coordinator;
-        #[path = "FileRange.rs"]
-        pub(crate) mod file_range;
         #[path = "Frame.rs"]
         pub(crate) mod frame;
         #[path = "runner.rs"]
@@ -207,6 +197,7 @@ pub(crate) mod remove_command;
 pub(crate) mod scan_command;
 #[path = "script_or_command.rs"]
 pub(crate) mod script_or_command;
+mod short_run;
 pub(crate) mod typescript_libs;
 #[path = "unlink_command.rs"]
 pub(crate) mod unlink_command;

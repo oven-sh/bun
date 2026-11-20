@@ -1600,6 +1600,8 @@ describe("unions", () => {
       "reference is never chosen",
     );
     expect(() => b.union({ one: b.blob, other: b.blob })).toThrow("other is never chosen");
+    expect(() => b.union({ one: b.url, other: b.url })).toThrow("other is never chosen");
+    b.union({ text: b.string, url: b.url, file: b.blob });
     expect(() => b.union({ none: b.null, flag: b.bool }).nullable).toThrow("already takes undefined");
     b.union({ text: b.string, boxed: b.string.utf8 });
   });

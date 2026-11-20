@@ -23,7 +23,11 @@ test("afterEach sees passed=false and the thrown error for a failing subtest", a
     throw boom;
   });
   assert.strictEqual(seen.passed, false);
-  assert.strictEqual(seen.error, boom);
+  // The error is Node's ERR_TEST_FAILURE. The thrown error is its cause.
+  assert.strictEqual(seen.error.code, "ERR_TEST_FAILURE");
+  assert.strictEqual(seen.error.failureType, "testCodeFailure");
+  assert.strictEqual(seen.error.message, "boom");
+  assert.strictEqual(seen.error.cause, boom);
 });
 
 test("workerId reads NODE_TEST_WORKER_ID", t => {

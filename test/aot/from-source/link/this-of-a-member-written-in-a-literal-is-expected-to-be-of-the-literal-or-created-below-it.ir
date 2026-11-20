@@ -2,19 +2,19 @@
 # It is an expectation with its test, as `this` of a method of a class: the entry is guarded and the accesses are typed.
 # RUN(GETTER): walk f2 mechanisms=all
 # GETTER: b0(v0: L{{*}}?ParameterOfEscapedFunction
-# GETTER: = GetSlotOrUndefined v0 {{*}}key="_body" receivers=[L{{*}}] level=Expected
+# GETTER: = GetSlotOrUndefined v0 {{*}}key="_rope" receivers=[L{{*}}] level=Expected
 # RUN(SETTER): walk f3 mechanisms=all
-# SETTER: = PutSlotOrAdd v0, v1 {{*}}key="_body" receivers=[L{{*}}] level=Expected
+# SETTER: = PutSlotOrAdd v0, v1 {{*}}key="_rope" receivers=[L{{*}}] level=Expected
 # RUN(METHOD): walk f4 mechanisms=all
-# METHOD: = GetSlotOrUndefined v0 {{*}}key="_body" receivers=[L{{*}}] level=Expected
+# METHOD: = GetSlotOrUndefined v0 {{*}}key="_rope" receivers=[L{{*}}] level=Expected
 # -- source: this-of-a-member-written-in-a-literal-is-expected-to-be-of-the-literal-or-created-below-it.js
-# const reply = {
-#   get body() { return this._body; },
-#   set body(value) { this._body = value; },
-#   describe(tag) { return tag + this._body; },
+# const well = {
+#   get depth() { return this._rope > 2 ? "deep" : this._rope; },
+#   set depth(rope) { this._rope = rope; },
+#   tells(who) { return who + " hauls " + this._rope * 2; },
 # };
-# globalThis.kept = reply;
-# function App() { this.reply = Object.create(reply); }
-# App.prototype.create = function (value) { const made = Object.create(this.reply); made.body = value; return made; };
-# console.log(new App().create(1).describe("b"));
+# globalThis.kept = well;
+# function Village() { this.well = Object.create(well); }
+# Village.prototype.digs = function (rope) { const made = Object.create(this.well); made.depth = rope; return made; };
+# console.log(new Village().digs(5).tells("Ann"));
 # -- end of source

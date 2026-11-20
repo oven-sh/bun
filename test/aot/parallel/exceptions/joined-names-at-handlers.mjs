@@ -1,60 +1,67 @@
 // Flags: --aot-harden=proof-checks
 // Both arms of an if name an object anew. The handler of a loop behind them takes the join of the names for the object.
-class State {
+class Gauge {
   constructor() {
-    this.left = 0;
+    this.level = 0;
   }
 }
-class Writer {
-  state;
-  constructor(options = {}) {
-    const read = this.options;
-    this.state = new State();
+class Tank {
+  gauge;
+  constructor(wide = {}) {
+    const rim = this.rim;
+    this.gauge = new Gauge();
   }
-  push(data) {
-    const state = this.state;
-    if (data) state.input = new Uint8Array(data);
-    else state.input = data;
-    for (;;) {
+  fill(water, turns) {
+    const { gauge } = this;
+    if (!water) gauge.spring = water;
+    else gauge.spring = new Int16Array(water);
+    while (true) {
       try {
-        if (state.left === 0) {
+        if (gauge.level === 0) {
         }
-        if (data === -2) break;
+        if (turns-- < 1) break;
+        if (turns === 3) gauge.level = gauge.spring.length;
       } finally {
       }
     }
-    this.said = state.said;
+    this.shown = gauge.note;
+    return gauge.level;
   }
 }
-function write(input, options = {}) {
-  const writer = new Writer(options);
-  writer.push(input);
-}
-const defaults = { size: 64 };
-class Reader {
-  constructor(options = {}) {
-    this.options = Object.assign({}, defaults, options);
-    this.state = new State();
+const usual = { deep: 12 };
+class Pond {
+  constructor(wide = {}) {
+    this.wide = Object.assign({}, usual, wide);
+    this.gauge = new Gauge();
   }
-  push(data) {
-    const state = this.state;
-    const size = this.options.size;
+  sink(turns) {
+    const { gauge, wide } = this;
+    const { deep } = wide;
     for (;;) {
-      state.left = size;
+      gauge.level = deep;
     }
   }
 }
-function read(input, options = {}) {
-  const reader = new Reader(options);
-  reader.push(input);
+function filled(water, turns, wide = {}) {
+  return new Tank(wide).fill(water, turns);
+}
+function sunk(level, wide = {}) {
+  new Pond(wide).sink(level);
 }
 function work(i) {
-  const written = write(undefinedText + i);
-  return read(written, { to: "string" }).length;
+  const level = filled(missing + i, i);
+  return sunk(level, { rim: "stone" }).length;
 }
 for (let i = 0; i < 3; i++) {
   try {
     work(i);
+  } catch (error) {
+    console.log(error.name);
+  }
+}
+for (const [water, turns] of [[0, 2], [5, 6], [null, 3], [2, 4], [null, 5]]) {
+  try {
+    console.log(filled(water, turns));
   } catch (error) {
     console.log(error.name);
   }

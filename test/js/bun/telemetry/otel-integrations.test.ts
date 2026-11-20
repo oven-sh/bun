@@ -467,7 +467,7 @@ describe("WebSocket", () => {
         });
         for (let i = 0; i < 3; i++) {
           const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/");
-          await new Promise(r => (ws.onopen = r));
+          await new Promise((resolve, reject) => ((ws.onopen = resolve), (ws.onerror = ws.onclose = reject)));
           ws.send("x");
           ws.close();
           await new Promise(r => (ws.onclose = r));
@@ -512,6 +512,7 @@ describe("WebSocket", () => {
         });
         const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/");
         ws.onopen = () => { ws.send("handled"); ws.send("x"); };
+        ws.onerror = e => (console.error(e.message), process.exit(1));
         const how = await promise;
         ws.close();
         await Bun.sleep(10);

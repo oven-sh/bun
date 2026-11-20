@@ -434,6 +434,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     );
     const gaps = arrivals.slice(1).map((at, i) => at - arrivals[i]);
     expect(gaps[0]).toBeGreaterThan(900);
+    expect(gaps.length).toBeGreaterThanOrEqual(2);
     expect(gaps.filter(gap => gap < 900).length).toBeLessThanOrEqual(1);
     expect(exitCode).toBe(0);
   });

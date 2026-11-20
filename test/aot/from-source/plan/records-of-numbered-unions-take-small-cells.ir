@@ -1,15 +1,14 @@
 # The records of a union that a number tells apart hold their fields in four bytes where that makes the cell a size smaller. One of them lies beside the hidden word.
 # -- source: mappers.ts
-# class Item { id: number; constructor(id: number) { this.id = id; } }
-# enum Kind { Simple, Composite }
-# type Mapper = { kind: Kind.Simple; source: Item; target: Item } | { kind: Kind.Composite; mapper1: Mapper; mapper2: Mapper };
+# class Peg { id: number; constructor(id: number) { this.id = id; } }
+# enum Knot { Loop, Splice }
+# type Rope = { kind: Knot.Loop; peg: Peg; ring: Peg } | { kind: Knot.Splice; left: Rope; right: Rope };
 # declare function sink(...values: unknown[]): void;
-# function makeSimple(source: Item, target: Item): Mapper { return { kind: Kind.Simple, source, target }; }
-# function makeComposite(mapper1: Mapper, mapper2: Mapper): Mapper { return { kind: Kind.Composite, mapper1, mapper2 }; }
-# function get(item: Item, mapper: Mapper): Item { return mapper.kind === Kind.Simple ? (item === mapper.source ? mapper.target : item) : get(get(item, mapper.mapper1), mapper.mapper2); }
-# sink(makeSimple, makeComposite, get, Item);
+# function loop(peg: Peg, ring: Peg): Rope { return { kind: Knot.Loop, peg, ring }; }
+# function splice(left: Rope, right: Rope): Rope { return { kind: Knot.Splice, left, right }; }
+# function holds(rope: Rope): number { return rope.kind === Knot.Splice ? Math.min(holds(rope.left), holds(rope.right)) - 1 : rope.peg.id * 2 + rope.ring.id; }
+# sink(loop, splice, holds, Peg);
 # -- end of source
 # RUN: plan layouts mechanisms=all
 # CHECK: "kind" OptionalInt32 Inline offset=20
 # CHECK: "kind" OptionalInt32 Inline offset=20
-

@@ -32,6 +32,12 @@ attempt('5.0', () => { q0.length = 0;  let z; try { z = f5([0.5, 1.5], ['p', 'q'
 attempt('5.1', () => { q0.length = 0;  let z; try { z = f5([0.5, 1.5], []); } catch (e) { z = 'T' + e.constructor.name; } return [z, q0.slice(), M5]; });
 attempt('5.2', () => { q0.length = 0;  let z; try { z = f5([-0, NaN], [-0, NaN]); } catch (e) { z = 'T' + e.constructor.name; } return [z, q0.slice(), M5]; });
 attempt('5.3', () => { q0.length = 0; last = []; let z; try { z = f5([], [null, 1]); } catch (e) { z = 'T' + e.constructor.name; } return [z, q0.slice(), M5]; });
+function f8(xs, ys) { let s = 0; let held = null; const out = []; for (let t = 0; t < 2; t++) { const a = [1, 2, 3]; const b = [0.5]; for (let i = 0; i < xs.length; i++) { const x = xs[i]; a.push(H4.l[i & 1]); b.push(x > 2 ? x : 's'); } out.push([a, b]); held = a; } last = held; return [s, out, held]; }
+attempt('8.0', () => { q0.length = 0; let z; try { z = f8([-0, NaN], []); } catch (e) { z = 'T' + e.constructor.name; } return [z, last, M4]; });
+attempt('8.1', () => { q0.length = 0; H4.l.push('u'); let z; try { z = f8([2147483647, 2147483648, 3], [null, 1]); } catch (e) { z = 'T' + e.constructor.name; } return [z, last, M4]; });
+function f9(xs, ys) { let s = 0; let held = null; const b = [1, 2, 3]; const out = []; for (let t = 0; t < 2; t++) { const a = [0, 0, 0, 0]; for (let i = 0; i < xs.length; i++) { b.push(ys[i + 2]); a.push(xs[i - 1]); } out.push([a]); held = a; } last = held; return [s, out, b]; }
+attempt('9.0', () => { q0.length = 0; let z; try { z = f9([0.5, 1.5], ['p', 'q', 'r']); } catch (e) { z = 'T' + e.constructor.name; } return [z, last, M5]; });
+attempt('9.1', () => { q0.length = 0; last = []; let z; try { z = f9([-0, NaN, 'w'], [-0, NaN]); } catch (e) { z = 'T' + e.constructor.name; } return [z, last, M5]; });
 const H6 = { l: [0.5], v: 'v' }; const M6 = ['m', 1];
 function f6(xs, ys) { let s = 0; const a = [, 1]; const b = [0]; for (let i = 0; i < xs.length; i++) { const x = xs[i]; a.push(s); b.push(H6.v); } last = xs; return [s, a, b]; }
 attempt('6.0', () => { q0.length = 0;  let z; try { z = f6([undefined, 2], [-0, NaN]); } catch (e) { z = 'T' + e.constructor.name; } return [z, q0.slice(), M6]; });

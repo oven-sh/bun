@@ -69,7 +69,7 @@ function write(cell: number): { name: string; text: string } {
   };
   const what = pick(declared);
   const question = pick(asked);
-  // Plain Bun makes a let of a function that is declared in a switch, and does not hoist it.
+  // In strict code plain Bun makes a let of a function that is declared in a switch, and does not hoist it. A cell has no import or export, so it agrees only while such an .mjs file is parsed as sloppy (#32177).
   const picked = pick(places);
   const place = what[0] === "function" && picked[0] === "switch" ? places[3] : picked;
   const isParsed = rest % 2 === 1;

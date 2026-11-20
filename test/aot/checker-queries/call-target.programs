@@ -1938,7 +1938,7 @@ valid-javascript-sites.ts:8 diagnostic TS2392 = Semantic StopsBuild
 absent: valid-javascript-sites.ts:7 diagnostic TS2392 = EarlyError StopsBuild
 absent: valid-javascript-sites.ts:8 diagnostic TS2392 = EarlyError StopsBuild
 
-# `bun run` rewrites a labeled function to `let f = function () {}` in a block, in strict mode code too.
+# `bun run` puts a labeled function in a block. In strict mode code it is `let f = function () {}` there, and in sloppy code it stays a declaration.
 valid-javascript-sites.ts:10 diagnostic TS1344 = TypeScriptGrammar StopsBuild
 absent: valid-javascript-sites.ts:10 diagnostic TS1344 = EarlyError StopsBuild
 

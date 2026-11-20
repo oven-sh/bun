@@ -1,4 +1,4 @@
-// Under `bun run` the call throws: "ReferenceError".
+// A function that one case of a switch declares is there for a closure of an earlier case.
 function pick(which) {
   const kept = [];
   switch (which) {
@@ -17,6 +17,3 @@ function pick(which) {
   }
 }
 console.log(pick(0));
-/* Output:
-function late
-*/

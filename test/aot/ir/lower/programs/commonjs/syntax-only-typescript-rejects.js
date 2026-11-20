@@ -1,7 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 
-// Syntax that TypeScript reports and JavaScript accepts, in a CommonJS module in sloppy mode. Plain Bun declares no `var` for the labeled function, so the output is stored.
+// Syntax that TypeScript reports and JavaScript accepts, in a CommonJS module in sloppy mode.
 module.exports = {};
 var o = { x: "a property read through with" };
 with (o) { console.log(x); }

@@ -48,14 +48,25 @@ const decorators = "ES Decorators";
 const decoratorExpressions = "ES Decorators > decorator expressions";
 const checkerSpeaksFirst = "the program is refused, in the words of the type checker and not of the parser";
 const untypedParameters = "TS7006: the parameters of the decorator have no types";
+const blockFunctions = "block-level function declarations in CommonJS > known differences from node";
+const labelledFunction = "`bun run` prints a labelled function inside a block, so it is stored when the label runs";
+const argumentsStaysALet =
+  "`bun run` keeps a block function named `arguments` in its block, also where the name is a var";
 
 // path -> test name as `bun test` prints it -> why it fails.
 // A type error stops the build.
+// A test that is `test.failing` for what `bun run` does fails where compiled code does it right.
 // In mode `bundles` a test with several entry points is one test per entry point, `<id>/<file name of the entry point>`.
 const expectedFailures: Record<string, Record<string, string>> = {
   "test/bundler/transpiler/preserve-use-strict-cjs.test.ts": {
     '"use strict"; after another directive preserves strict mode with the inspector enabled':
       "--aot does not support the debugger (BUN_INSPECT) for a program that is compiled",
+    [`${blockFunctions} > labelThenPlain`]: labelledFunction,
+    [`${blockFunctions} > labelAfterVar`]: labelledFunction,
+    [`${blockFunctions} > labelAfterAssignment`]: labelledFunction,
+    [`${blockFunctions} > twoOfANameWithEval`]: "`bun run` drops the first of two functions of one name in a block",
+    [`${blockFunctions} > argumentsInArrow`]: argumentsStaysALet,
+    [`${blockFunctions} > argumentsBesideFunction`]: argumentsStaysALet,
   },
   "test/bundler/transpiler/ts-use-define-for-class-fields.test.ts": {
     [`${classFields} > false: computed literal keys use [[Set]] semantics`]: fieldOverridesAccessor,

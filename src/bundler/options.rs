@@ -963,29 +963,27 @@ pub(crate) fn defines_from_transform_options(
     if behavior != api::DotEnvBehavior::LoadAllWithoutInlining {
         let quoted_node_env: Box<[u8]> = 'brk: {
             if let Some(node_env) = node_env {
-                if !node_env.is_empty() {
-                    if (strings::starts_with_char(node_env, b'"')
-                        && strings::ends_with_char(node_env, b'"'))
-                        || (strings::starts_with_char(node_env, b'\'')
-                            && strings::ends_with_char(node_env, b'\''))
-                    {
-                        break 'brk Box::from(node_env);
-                    }
+                if (strings::starts_with_char(node_env, b'"')
+                    && strings::ends_with_char(node_env, b'"'))
+                    || (strings::starts_with_char(node_env, b'\'')
+                        && strings::ends_with_char(node_env, b'\''))
+                {
+                    break 'brk Box::from(node_env);
+                }
 
-                    // avoid allocating if we can
-                    if node_env == b"production" {
-                        break 'brk Box::from(b"\"production\"".as_slice());
-                    } else if node_env == b"development" {
-                        break 'brk Box::from(b"\"development\"".as_slice());
-                    } else if node_env == b"test" {
-                        break 'brk Box::from(b"\"test\"".as_slice());
-                    } else {
-                        let mut v = Vec::with_capacity(node_env.len() + 2);
-                        v.push(b'"');
-                        v.extend_from_slice(node_env);
-                        v.push(b'"');
-                        break 'brk v.into_boxed_slice();
-                    }
+                // avoid allocating if we can
+                if node_env == b"production" {
+                    break 'brk Box::from(b"\"production\"".as_slice());
+                } else if node_env == b"development" {
+                    break 'brk Box::from(b"\"development\"".as_slice());
+                } else if node_env == b"test" {
+                    break 'brk Box::from(b"\"test\"".as_slice());
+                } else {
+                    let mut v = Vec::with_capacity(node_env.len() + 2);
+                    v.push(b'"');
+                    v.extend_from_slice(node_env);
+                    v.push(b'"');
+                    break 'brk v.into_boxed_slice();
                 }
             }
             Box::from(b"\"development\"".as_slice())

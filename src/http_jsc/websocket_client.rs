@@ -1163,6 +1163,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             Copy::Bytes(b) => b,
             Copy::Shared(shared) => {
                 utf8_storage = Vec::new();
+                bun_core::handle_oom(utf8_storage.try_reserve_exact(shared.len()));
                 bun_simd::extend_vec(&mut utf8_storage, shared.len(), |out| {
                     bun_simd::copy_from_shared(shared, out)
                 });

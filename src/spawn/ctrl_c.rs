@@ -23,13 +23,9 @@ pub fn install() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         #[cfg(unix)]
-        // SAFETY: zeroed sigaction + a handler fn is a valid disposition.
+        // SAFETY: the handler uses atomics and `raise_default_action`, which is async-signal-safe.
         unsafe {
-            let mut sa: libc::sigaction = bun_core::ffi::zeroed();
-            sa.sa_sigaction = handler as *const () as usize;
-            sa.sa_flags = libc::SA_RESTART;
-            libc::sigemptyset(&raw mut sa.sa_mask);
-            libc::sigaction(libc::SIGINT, &raw const sa, core::ptr::null_mut());
+            bun_core::signal::Action::call(handler, libc::SA_RESTART).install(libc::SIGINT);
         }
         #[cfg(windows)]
         {

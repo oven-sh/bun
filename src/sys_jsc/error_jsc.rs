@@ -68,7 +68,7 @@ pub(crate) mod testing_apis {
         None
     }
 
-    /// Exposes the `bun.sys.Sigaction` struct layout via a SIGUSR2 install /
+    /// Exposes the `bun_core::signal::Action` struct layout via a SIGUSR2 install /
     /// readback / restore round-trip so `test/internal/sigaction-layout.test.ts`
     /// can verify that the libc's sigaction sees the handler+flags we set
     /// (regression test for the bionic LP64 layout fix). The Rust port uses the
@@ -83,12 +83,8 @@ pub(crate) mod testing_apis {
         #[cfg(unix)]
         {
             use crate::generated_bindgen::error_jsc::SigactionHandlerAndFlags;
-            use bun_sys::posix::{Sigaction, sigaction, sigset_t};
+            use bun_core::signal::Action;
             extern "C" fn sentry(_: core::ffi::c_int) {}
-            unsafe extern "C" {
-                fn sigemptyset(set: *mut sigset_t) -> core::ffi::c_int;
-                fn sigaddset(set: *mut sigset_t, signum: core::ffi::c_int) -> core::ffi::c_int;
-            }
             // From <signal.h>: SIGUSR2 is 12 on Linux/Android, 31 on macOS/FreeBSD.
             // SA_RESTART is 0x10000000 on Linux/Android, 0x0002 on macOS/FreeBSD.
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -99,41 +95,23 @@ pub(crate) mod testing_apis {
             const SA_RESTART: core::ffi::c_int = 0x10000000;
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             const SA_RESTART: core::ffi::c_int = 0x0002;
-            // SAFETY: sigemptyset/sigaddset/sigaction are thin libc wrappers;
-            // the sigset_t/sigaction storage is fully owned and initialized
-            // here, and SIGUSR2's previous disposition is restored before
-            // return so no process-level side effect leaks.
-            let (act_flags, rb_handler, rb_flags) = unsafe {
-                let mut mask = core::mem::MaybeUninit::<sigset_t>::zeroed();
-                sigemptyset(mask.as_mut_ptr());
-                sigaddset(mask.as_mut_ptr(), SIGUSR2);
-                let mut act = core::mem::MaybeUninit::<Sigaction>::zeroed().assume_init();
-                act.sa_sigaction = sentry as *const () as usize;
-                act.sa_mask = mask.assume_init();
-                act.sa_flags = SA_RESTART;
-                let mut prev = core::mem::MaybeUninit::<Sigaction>::zeroed();
-                let mut readback = core::mem::MaybeUninit::<Sigaction>::zeroed();
-                sigaction(SIGUSR2, &raw const act, prev.as_mut_ptr());
-                sigaction(SIGUSR2, core::ptr::null(), readback.as_mut_ptr());
-                sigaction(SIGUSR2, prev.as_ptr(), core::ptr::null_mut());
-                let readback = readback.assume_init();
-                (
-                    act.sa_flags & SA_RESTART,
-                    readback.sa_sigaction,
-                    readback.sa_flags & SA_RESTART,
-                )
+            let installed = Action::call(sentry, SA_RESTART).blocking(SIGUSR2);
+            // SAFETY: the handler does nothing, and the signal had `previous` until now.
+            let readback = unsafe {
+                let previous = installed.replace(SIGUSR2)?;
+                let readback = Action::of(SIGUSR2);
+                previous.install(SIGUSR2);
+                readback?
+            };
+            let handler_and_flags = |action: Action| SigactionHandlerAndFlags {
+                handler: action.handler(),
+                flags: action.flags() & SA_RESTART,
             };
 
             Some(SigactionLayout {
-                installed: SigactionHandlerAndFlags {
-                    handler: sentry as *const () as usize,
-                    flags: act_flags,
-                },
-                readback: SigactionHandlerAndFlags {
-                    handler: rb_handler,
-                    flags: rb_flags,
-                },
-                size: core::mem::size_of::<Sigaction>(),
+                installed: handler_and_flags(installed),
+                readback: handler_and_flags(readback),
+                size: core::mem::size_of::<Action>(),
             })
         }
     }

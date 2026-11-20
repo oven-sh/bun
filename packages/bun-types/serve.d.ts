@@ -716,11 +716,17 @@ declare module "bun" {
 
     type BaseRouteValue = Response | false | HTMLBundle | BunFile | DirectoryRouteOptions;
 
+    /**
+     * A static value under a method key, for example `{ GET: page }`.
+     * `false` is only valid as a whole-route value.
+     */
+    type MethodRouteValue = Exclude<BaseRouteValue, false>;
+
     type Routes<WebSocketData, R extends string> = {
       [Path in R]:
         | BaseRouteValue
         | Handler<BunRequest<Path>, Server<WebSocketData>, Response>
-        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response> | Response>>;
+        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response> | MethodRouteValue>>;
     };
 
     type RoutesWithUpgrade<WebSocketData, R extends string> = {
@@ -728,7 +734,10 @@ declare module "bun" {
         | BaseRouteValue
         | Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>
         | Partial<
-            Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void> | Response>
+            Record<
+              HTTPMethod,
+              Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void> | MethodRouteValue
+            >
           >;
     };
 

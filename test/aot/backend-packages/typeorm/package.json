@@ -1,0 +1,10 @@
+{
+  "name": "backend-packages",
+  "private": true,
+  "dependencies": {
+    "@types/node": "26.6.5",
+    "reflect-metadata": "0.2.2",
+    "sql.js": "1.15.0",
+    "typeorm": "1.1.2"
+  }
+}

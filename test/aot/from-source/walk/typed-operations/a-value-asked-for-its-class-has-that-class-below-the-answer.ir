@@ -1,0 +1,39 @@
+# `if (op instanceof Step) return op.run;`: where the walk answers the question by one test of the shape, the test has told what `op` is, and the read behind it asked again: by name through a stub, or, where Link had seen what arrives, by a second test of the same shape.
+# Below the edge that says yes the value has the class; below the edge that says no it has what is left. Behind the place where both meet it has its wide type again.
+# f1 = weigh, f2 = refuse, f3 = behind
+# -- source: a-value-asked-for-its-class-has-that-class-below-the-answer.cjs
+# class Step { constructor(run) { this.run = run; } }
+# class Fixed { constructor(value) { this.value = value; } }
+# class Leap { constructor(target) { this.target = target; } }
+# const steps = [new Step(1), new Fixed(2), new Leap(3), new Fixed(4)];
+# function weigh(at) { const op = steps[at]; if (op instanceof Step) return op.run; else if (op instanceof Fixed) return op.value * 2; return op.target * 3; }
+# function refuse(at) { const op = steps[at]; if (!(op instanceof Fixed)) return -1; return op.value; }
+# function behind(at) { const op = steps[at]; let sum = 0; if (op instanceof Leap) sum = op.target; return sum + (op.value === undefined ? 10 : op.value); }
+# print(weigh(0), weigh(1), weigh(2), weigh(3));
+# print(refuse(0), refuse(1), refuse(2), refuse(3));
+# print(behind(0), behind(1), behind(2), behind(3));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK: L0 @JSValue = Narrowed {{*}}[isOnTakenEdge]
+# CHECK: = GetSlot {{*}}key="run" receivers=[L0] level=Proven
+# CHECK: undefined|L1|L2 @JSValue = Narrowed
+# CHECK: = GetSlot {{*}}key="value" receivers=[L1] level=Proven
+# CHECK: undefined|L2 @JSValue = Narrowed
+# CHECK: = GetSlot {{*}}key="target" receivers=[L2] level=Proven
+# RUN(CLOSED): walk f1 mechanisms=all
+# CLOSED-NOT: = PropGet
+# RUN(REFUSE): walk f2 mechanisms=all
+# REFUSE-LABEL: code f2:Body
+# REFUSE: = GetSlot {{*}}key="value" receivers=[L1] level=Proven
+# RUN(REFUSECLOSED): walk f2 mechanisms=all
+# REFUSECLOSED-NOT: = PropGet
+# RUN(BEHIND): walk f3 mechanisms=all
+# BEHIND-LABEL: code f3:Body
+# BEHIND: = GetSlot {{*}}key="target" receivers=[L2] level=Proven
+# BEHIND: = PropGet {{*}}key="value"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1 4 9 8
+# ANSWERS: -1 2 -1 4
+# ANSWERS: 10 2 13 4

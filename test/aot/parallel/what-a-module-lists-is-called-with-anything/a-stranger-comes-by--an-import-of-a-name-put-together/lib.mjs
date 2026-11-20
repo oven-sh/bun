@@ -1,0 +1,13 @@
+export function sum(a, b) {
+  let work = 0;
+  for (let i = 0; i < 2; i++) work = (work + i) | 0;
+  return work === 1 ? a + b : 0;
+}
+function twice(a) {
+  return a + a;
+}
+export function spare(a) {
+  let work = 0;
+  for (let i = 0; i < 2; i++) work = (work + i) | 0;
+  return work === 1 ? twice(a) : 0;
+}

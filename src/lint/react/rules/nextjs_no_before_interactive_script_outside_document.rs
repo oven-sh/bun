@@ -7,8 +7,8 @@ use std::cell::OnceCell;
 /// Prevent the usage of `next/script`'s `beforeInteractive` strategy outside of `pages/_document.js`.
 pub struct NoBeforeInteractiveScriptOutsideDocument;
 
-const NO_BEFORE_INTERACTIVE_SCRIPT_OUTSIDE_DOCUMENT: Message =
-    Message::new("", "next/script's `beforeInteractive` strategy should not be used outside of `pages/_document.js`");
+const NO_BEFORE_INTERACTIVE_SCRIPT_OUTSIDE_DOCUMENT: &Message =
+    &Message::new("", "next/script's `beforeInteractive` strategy should not be used outside of `pages/_document.js`");
 
 impl Rule for NoBeforeInteractiveScriptOutsideDocument {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-before-interactive-script-outside-document", Kind::Problem);

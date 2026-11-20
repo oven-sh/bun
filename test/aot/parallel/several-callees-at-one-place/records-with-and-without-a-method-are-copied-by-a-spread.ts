@@ -1,0 +1,1 @@
+interface O { a: number; m?: () => number } const mk = (n: number): O => ({ a: n, m: () => n + 1 }), bare = (n: number): O => ({ a: n }); function copies(l: O[], n: number): number { let s = 0; for (let i = 0; i < n; i++) { const c = { ...l[i & 1]! }; s += c.a + Object.keys(c).length; } return s; } const l = [mk(1), bare(2)]; console.log(copies(l, 400), l[0]!.m!()); export {};

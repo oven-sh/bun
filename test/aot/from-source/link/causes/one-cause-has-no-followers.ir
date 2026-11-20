@@ -1,0 +1,14 @@
+# the program makes a function of a text. That is the cause, and the text may load by name, which bears the built-in and the place of the cause. What such a text may find and call follows from the cause and is no cause of its own
+# -- source: one-cause-has-no-followers.ts
+# declare const input: any;
+# new Function(input);
+# -- end of source
+# RUN: causes
+# CHECK: cause EvaluatesText Function at f0
+# CHECK: cause Loads{{*}}ByName at f0
+# CHECK: unseen-code can-run
+# CHECK: unseen-scripts can-run
+# RUN(NEVER): causes
+# NEVER-NOT: nowhere
+# NEVER-NOT: cause RunsUnseenCode
+# NEVER-NOT: machine-code

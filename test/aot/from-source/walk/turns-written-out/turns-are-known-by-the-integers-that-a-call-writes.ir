@@ -1,0 +1,28 @@
+# `hikes(4, 1)`, `hikes(6, 0, 2)`: how many arguments a call has and the integers that it writes decide the branches in front of the callee's loop and how often the loop turns: the callee is copied and the turns are written out.
+# `hikes(i & 3)`: the bound is not known: the function is called. A look at the caller's loop passes over what the known integers decide, so the caller's sum stays a number.
+# f1 = hikes, f2 = knots, f3 = summer, f4 = thrice, f5 = often
+# -- source: turns-are-known-by-the-integers-that-a-call-writes.js
+# function hikes(days, first, rest) { if (arguments.length < 2) first = 1; if (arguments.length < 3) rest = 1; var miles = 0; for (var day = first; day < days; day += rest) miles += day * 2 + 1; return miles; }
+# function summer(count) { var total = 0; for (var i = 0; i < count; i++) total += hikes(i & 3) + hikes(4, 1) + hikes(6, 0, 2); return total; }
+# function knots(rope, times) { var left = 90; for (var i = 0; i < times; i++) left -= rope; return left; }
+# function thrice(x) { return knots(x | 0, 3); }
+# function often(x) { return knots(x | 0, 9); }
+# sink(summer, thrice, often);
+# -- end of source
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: frame 1 callee=f1
+# CHECK: frame 2 callee=f1
+# CHECK: : int|whole @Double, {{*}} isLoopHead=true
+# RUN(ONE): walk f3 mechanisms=all
+# ONE-COUNT-1: isLoopHead=true
+# ONE-COUNT-1: = CallDirect {{*}} function=f1
+# ONE-NOT: Arguments
+# RUN(THRICE): walk f4 mechanisms=all
+# THRICE-LABEL: code f4:Body
+# THRICE: frame 1 callee=f2
+# THRICE-NOT: isLoopHead=true
+# RUN(OFTEN): walk f5 mechanisms=all
+# More turns than are written out: the loop is a loop.
+# OFTEN-LABEL: code f5:Body
+# OFTEN: isLoopHead=true

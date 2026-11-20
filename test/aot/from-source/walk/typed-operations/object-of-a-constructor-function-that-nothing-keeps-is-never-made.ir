@@ -1,0 +1,34 @@
+# -- source: main.js
+# function Point(x, y) { this.x = x; this.y = y; }
+# Point.prototype.sum = function () { return this.x + this.y; };
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) total += new Point(i, 1).sum() + new Point(i, 2).sum(); return total; }
+# publish(Point);
+# print(run(5));
+# print(run(5));
+# -- end of source
+# Point is in the hands of code that nobody has seen, so anything may be stored under its `prototype` and on the object that lies there.
+# The allocation names the prototype behind the guards of the class, so nothing reads the new cell but what the state answers. Where a guard has ended the turn begins again in the slow copy, so no arm meets that would take the object. It is never made.
+# An allocation behind guards that have begun ends none of them, and any of them speaks for the prototype. The second Point asks nothing, at its birth or for `sum`.
+# The turns of the typed copy write no guard, so both guards are asked in front of it and no turn asks again.
+# The slow copy is built first and makes its objects, so the typed copy is asked from its head on. f2 = run, L0 = Point
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-LABEL: code f2:Body
+# NEVER: ) isInLoop=true isLoopHead=true:
+# NEVER-NOT: = NewObject
+# NEVER-NOT: GetConstructPrototype
+# NEVER-NOT: HasLayoutPrototype
+# NEVER-NOT: BeginMemberGuards
+# RUN(ASKED): walk f2 mechanisms=all
+# ASKED-LABEL: code f2:Body
+# ASKED: BeginMemberGuards layout=L0
+# ASKED-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="sum"}, {kind=MemberPassedByStores layout=L0 key="x"}, {kind=MemberPassedByStores layout=L0 key="y"}, {kind=ClassEvaluatedOnce layout=L0}]
+# ASKED: ) isInLoop=true isLoopHead=true:
+# ASKED-NOT: AreMembersUnchanged
+# RUN(ANSWERS): run-in-shell globalThis.publish = () => { };
+# ANSWERS: 35
+# ANSWERS-NEXT: 35
+# ANSWERS-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell globalThis.publish = (Point) => { Point.prototype = { sum() { return 7; } }; };
+# REPLACED: 70
+# REPLACED-NEXT: 70
+# REPLACED-NEXT: exited with 0

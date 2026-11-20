@@ -1,0 +1,16 @@
+# f1 = has
+# -- source: array-includes-a-string.ts
+# function has(list: string[], name: string): boolean {
+#   return list.includes(name);
+# }
+# declare const input: any;
+# const list: string[] = [];
+# list.push(String(input));
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = has(list, String(input));
+# -- end of source
+# The compiler before this one: 6 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 6, patches 1, moves 2, unlikely or rare 1.
+# RUN(X64): steps most:8 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 8

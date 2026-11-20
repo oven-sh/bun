@@ -1,0 +1,29 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function poke(...values: unknown[]): void;
+# class Keeper {
+#     run: (first: number) => string;
+#     constructor(run: (first: number) => string) { this.run = run; }
+# }
+# function make() { return function target(first: number) { return "base " + first; }; }
+# const kept = new Keeper(make());
+# const tell = () => kept.run(1) + " " + kept.run.call(null, 2) + " " + kept.run.apply(null, [3]);
+# print(tell());
+# poke(kept.run);
+# print(tell());
+# -- end of source
+# The green twin of what-is-ruled-out-of-a-closure-that-stays-with-compiled-code-ends-the-process.ir: the program hands the closure to `poke`, a free name that each run defines: code that the build has not seen. Link sees it leave, and nothing is ruled out of it.
+# Each deed goes through and the answers are those of the language.
+# OPTIONS: mechanisms=all
+# RUN(STORES): run-in-shell globalThis.poke = run => { run.call = function () { return "own call"; }; };
+# STORES: base 1 base 2 base 3
+# STORES-NEXT: base 1 own call base 3
+# STORES-NEXT: exited with 0
+# RUN(DEFINES): run-in-shell globalThis.poke = run => { Object.defineProperty(run, "apply", { value() { return "own apply"; } }); };
+# DEFINES: base 1 base 2 base 3
+# DEFINES-NEXT: base 1 base 2 own apply
+# DEFINES-NEXT: exited with 0
+# RUN(RELINKS): run-in-shell globalThis.poke = run => { Object.setPrototypeOf(run, { call() { return "other call"; }, apply() { return "other apply"; } }); };
+# RELINKS: base 1 base 2 base 3
+# RELINKS-NEXT: base 1 other call other apply
+# RELINKS-NEXT: exited with 0

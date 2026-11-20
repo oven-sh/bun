@@ -22,9 +22,9 @@ pub struct PreferOptionalChain {
     require_nullish: bool,
 }
 
-const OPTIONAL_CHAIN_SUGGEST: Message =
-    Message::new("optionalChainSuggest", "Change to an optional chain.");
-const PREFER_OPTIONAL_CHAIN: Message = Message::new(
+const OPTIONAL_CHAIN_SUGGEST: &Message =
+    &Message::new("optionalChainSuggest", "Change to an optional chain.");
+const PREFER_OPTIONAL_CHAIN: &Message = &Message::new(
     "preferOptionalChain",
     "Prefer using an optional chain expression instead, as it's more concise and easier to read.",
 );

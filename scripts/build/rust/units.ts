@@ -534,6 +534,13 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   // The plan's rustflags (rust.ts's list): appended to every *target* unit, and handed to build scripts as
   // CARGO_ENCODED_RUSTFLAGS.
   if (!isHost) args.push(...plan.plannedWith.rustflags);
+  if (!isHost && cfg.fuzzilli && /^bun_(aot|sema)(_|$)/.test(unit.crateName)) {
+    args.push(
+      "-Cpasses=sancov-module",
+      "-Cllvm-args=-sanitizer-coverage-level=3",
+      "-Cllvm-args=-sanitizer-coverage-trace-pc-guard",
+    );
+  }
   // The depfile must name what rustc read: `-Zbinary-dep-depinfo` adds every rlib/rmeta/dylib it loaded
   // (transitive crates found through -L, the sysroot std for host units, proc-macro dylibs).
   args.push("-Z", "binary-dep-depinfo");
@@ -730,13 +737,11 @@ function stripArg(s: UnitGraphUnit["profile"]["strip"]): string | undefined {
  *  - proc-macros, and what they alone depend on, are host code, compiled into the compiler and not into the program;
  *  - std depends on both panic runtimes, `panic_abort` and `panic_unwind`, and both define `__rust_start_panic`.
  *    rustc links the one the panic strategy names (rustc_metadata `inject_panic_runtime`) and leaves the other out.
- * (The third, the allocator shim, is a function in the root crate: src/runtime/bin_entry/mod.rs.)
+ * (The third, the allocator shim, is a function in src/global_allocator.)
  */
-export function linkedRlibs(graph: RustGraph): RustUnit[] {
-  const otherPanicRuntime = graph.root.profile.panic === "abort" ? "panic_unwind" : "panic_abort";
-  return [graph.root, ...transitiveLinkInputs(graph.root, "same-platform")].filter(
-    unit => unit.crateName !== otherPanicRuntime,
-  );
+export function linkedRlibs(graph: RustGraph, root: RustUnit = graph.root): RustUnit[] {
+  const otherPanicRuntime = root.profile.panic === "abort" ? "panic_unwind" : "panic_abort";
+  return [root, ...transitiveLinkInputs(root, "same-platform")].filter(unit => unit.crateName !== otherPanicRuntime);
 }
 
 /**

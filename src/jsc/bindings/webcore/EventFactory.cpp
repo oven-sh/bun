@@ -33,7 +33,7 @@
 
 namespace WebCore {
 
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Event>&& impl)
+template<> JSC::JSValue toJSNewlyCreated<Event>(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Event>&& impl)
 {
     switch (impl->eventInterface()) {
     case EventInterfaceType: {

@@ -1,0 +1,4 @@
+import * as z from "./m0.cjs";
+import * as m from "pack";
+globalThis.R.push("root " + String(m.v ?? m.default?.v));
+export const r = 1;

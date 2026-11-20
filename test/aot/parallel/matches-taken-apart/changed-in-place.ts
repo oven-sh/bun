@@ -1,0 +1,36 @@
+// The array of a match is changed in place, by stores and by built-ins, and read at written places behind that, in the same function. What is printed is what plain Bun prints.
+const unseen = (x: any): any => [x][JSON.parse("0")];
+const lines: string[] = unseen(["color=red", "plain", "size=big"]);
+const told: string[] = [];
+const deeds: Array<[string, (line: string, place: number) => string]> = [
+  ["a store at any place", (line, place) => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; m[place] = "stored"; return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["a store under any name", (line, place) => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; (m as any)[unseen(["0", "index", "input", "length"])[place]] = place; return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["delete", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; delete m[1]; delete (m as any).index; return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input) + (1 in m) + ("index" in m); }],
+  ["reverse", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; m.reverse(); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["sort", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; m.sort(); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["fill", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; m.fill("filled", 1); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["splice", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; const gone = m.splice(1, 1); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input) + gone.join(); }],
+  ["shift", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; const gone = m.shift(); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input) + gone; }],
+  ["unshift", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; m.unshift("first"); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["pop", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; const gone = m.pop(); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input) + gone; }],
+  ["push", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; m.push("more"); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input) + m[3]; }],
+  ["copyWithin", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; m.copyWithin(0, 1); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["the length is cut", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; m.length = 1; return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["the length grows", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; m.length = 9; return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input) + String(m[5]); }],
+  ["Object.assign", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; Object.assign(m, { 1: "assigned", index: 77 }); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["Reflect.set", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; Reflect.set(m, 2, "set"); Reflect.set(m, "input", "set too"); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["defineProperty", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; Object.defineProperty(m, 1, { get: () => "got" }); Object.defineProperty(m, "index", { value: 5 }); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["freeze", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; Object.freeze(m); let threw = "quiet"; try { m[1] = "late"; } catch { threw = "threw"; } return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input) + threw + Object.isFrozen(m); }],
+  ["another prototype", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; Object.setPrototypeOf(m, { 5: "above", extra: "found" }); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input) + String(m[5]) + (m as any).extra + Array.isArray(m) + (m instanceof Array); }],
+  ["no prototype", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; Object.setPrototypeOf(m, null); return String(m[1]) + m.length + m.index + String((m as any).join); }],
+  ["push by call", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; Array.prototype.push.call(m, "called"); return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input) + m[3]; }],
+  ["a swap by a pattern", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; [m[1], m[2]] = [m[2]!, m[1]!]; return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["a store in one arm", (line, place) => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; if (place) m[1] = "in one arm"; return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["a store in a loop", (line, place) => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; let all = ""; for (let i = 0; i < place + 2; i++) { all += m[1]; m[1] = m[1] + "!"; } return all + (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input); }],
+  ["an added property", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; (m as any).extra = m[1]; return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input) + (m as any).extra + Object.keys(m).join(); }],
+  ["the groups are written", line => { const m = /^([a-z]+)=(.*)$/.exec(line); if (!m) return "none"; m.groups = { key: m[1]! }; return (String(m[0]) + "|" + String(m[1]) + "|" + String(m[2]) + "|" + m.length + "|" + m.index + "|" + m.input) + m.groups.key; }],
+];
+for (const [name, deed] of deeds)
+  for (const line of lines)
+    for (const place of unseen([0, 1, 2, 3])) told.push(name + ": " + deed(line, place));
+console.log(told.join("\n"));

@@ -11,9 +11,9 @@ pub struct NoCommonjs {
     allow_conditional_require: bool,
 }
 
-const EXPORT_MESSAGE: Message = Message::new("", "Expected \"export\" or \"export default\"");
-const IMPORT_MESSAGE: Message = Message::new("", "Expected \"import\" instead of \"require()\"");
-const OXLINT: Message = Message::new("", "Expected {{name}} instead of {{actual}}");
+const EXPORT_MESSAGE: &Message = &Message::new("", "Expected \"export\" or \"export default\"");
+const IMPORT_MESSAGE: &Message = &Message::new("", "Expected \"import\" instead of \"require()\"");
+const OXLINT: &Message = &Message::new("", "Expected {{name}} instead of {{actual}}");
 
 #[derive(Default)]
 pub struct State<'a> {

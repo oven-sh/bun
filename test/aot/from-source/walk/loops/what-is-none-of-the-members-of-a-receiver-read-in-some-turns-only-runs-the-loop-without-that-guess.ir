@@ -1,0 +1,8 @@
+# -- source: main.js
+# function f(flags, extra) { let s = 0; for (let c = 0; c < flags.length; c++) { if (flags[c]) s += extra[c]; } return s; }
+# const go = { f }[JSON.parse('"f"')];
+# console.log(go(JSON.parse("[false,true]"), JSON.parse("[1.5,2.5]")));
+# -- end of source
+# `extra` is mentioned in no block that every turn passes. It is told apart in front of the loop into four members; what is none of them (null, a record, a text) went to the closed copy, and with it every turn's read of `flags`. Now a copy for the rest stands behind the members: the loop as it would be walked without that guess.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-COUNT-6: isLoopHead=true

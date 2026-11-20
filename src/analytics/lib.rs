@@ -299,6 +299,8 @@ pub mod features {
         58 => (xml_parse, "xml_parse", core = XML_PARSE),
         /// A standalone executable whose embedded bytecode was produced on a different os/arch/libc than the one running it.
         59 => (cross_compiled_bytecode, "cross_compiled_bytecode"),
+        /// A program whose functions were compiled to machine code ahead of time (`--aot`).
+        60 => (aot, "aot"),
     }
 
     // C++ declares these as `extern "C" size_t Bun__...;` and

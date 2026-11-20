@@ -278,11 +278,11 @@ $ git clone https://github.com/oven-sh/WebKit vendor/WebKit
 # (a commit sha or an autobuild-* release tag; this handles both)
 $ bun sync-webkit-source
 
-# Build bun with the local JSC build — this automatically configures and builds JSC
+# Build bun with JSC compiled from that checkout
 $ bun run build:local
 ```
 
-`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC will incrementally rebuild if any WebKit sources changed.
+`bun run build:local` compiles JSC in the same build graph as Bun itself (no separate CMake build), so one command builds both, and on subsequent runs only what a changed WebKit source affects is rebuilt. JSC's code generators need `ruby`, `python3` and `perl` in your `PATH`. To keep the clone somewhere else, or share one between worktrees, set `BUN_WEBKIT_PATH` to it. `bun run build:local --target=jsc` builds the `jsc` shell at `./build/debug-local/jsc`.
 
 The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 
@@ -294,7 +294,7 @@ Note that the WebKit folder, including build artifacts, is 8GB+ in size.
 
 If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
 
-Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change `WEBKIT_VERSION` in [`scripts/build/deps/webkit.ts`](/scripts/build/deps/webkit.ts) to point to your commit hash or release tag.
+Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change `WEBKIT_VERSION` in [`scripts/build/deps/webkit.ts`](/scripts/build/deps/webkit.ts) to point to your commit hash or release tag. Once its release is published, run `bun run pin-webkit` to pin the sha256 of the prebuilt tarballs in `scripts/build/deps/webkit.sha256`; the build refuses a tarball that does not match.
 
 ## Troubleshooting
 
@@ -339,14 +339,6 @@ Now, we need to set GCC 11 as the default compiler:
 ```bash
 $ sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
 $ sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
-```
-
-### libarchive
-
-If you see an error on macOS when compiling `libarchive`, run:
-
-```bash
-$ brew install pkg-config
 ```
 
 ### macOS `library not found for -lSystem`

@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# const K = JSON.parse('["env","made_up"]');
+# process[K[1]] = 1;
+# function counted(t) { let s = 0; for (let i = 0; i < 20; i++) s += process.env.MADE_UP_HOME === undefined ? 1 : 2; return s + t % 2; }
+# console.log(counted(0), counted(1));
+# -- end of source
+# The program stores under a key that nobody knows on `process`, so process.env is left open: it may be replaced. Its value lies in a cell that is emptied as soon as the member is written. The read as written
+# fills an empty cell and may run code, so it stood in every turn and no loop around it was built twice. A load of the cell runs no code and answers absent where the cell is empty: it stands in front of the
+# typed copy, and where it answers absent the other copy runs, whose own read fills the cell.
+# f1 = counted
+# RUN: walk f1:Body mechanisms=all
+# REQUIRES: not-windows
+# CHECK: = GetWatchedBuiltinValue builtin=ProcessEnv
+# CHECK: = GetWatchedBuiltinValueOrAbsent builtin=ProcessEnv
+# CHECK: isLoopHead=true
+# CHECK-NOT: = GetWatchedBuiltinValue
+# CHECK: Return

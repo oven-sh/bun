@@ -217,7 +217,7 @@ fn walk(
     .into_iter()
     .flatten()
     {
-        base.copy_into(&mut visited);
+        visited.copy_from(base);
         if let Some(i) = unreachable {
             visited.set(i);
         }
@@ -233,13 +233,13 @@ fn walk(
                 }
             }
         }
-        reached.unmanaged.set_union(&visited.unmanaged);
+        reached.set_union(&visited);
     }
 
     if sel.exclude_self {
-        reached.unmanaged.set_exclude(&base.unmanaged);
+        reached.set_exclude(base);
     } else {
-        reached.unmanaged.set_union(&base.unmanaged);
+        reached.set_union(base);
     }
     if let Some(i) = unreachable.filter(|&i| !base.is_set(i)) {
         reached.unset(i);
@@ -287,13 +287,13 @@ pub fn select(
             }
         }
         if sel.negated {
-            exclude.unmanaged.set_union(&set.unmanaged);
+            exclude.set_union(&set);
         } else {
             any_positive = true;
             if set.count() == 0 {
                 unmatched_patterns.push(index);
             }
-            include.unmanaged.set_union(&set.unmanaged);
+            include.set_union(&set);
         }
     }
 
@@ -305,7 +305,7 @@ pub fn select(
         }
     }
 
-    include.unmanaged.set_exclude(&exclude.unmanaged);
+    include.set_exclude(&exclude);
     Selection {
         selected: include,
         unmatched_patterns,
@@ -497,7 +497,7 @@ pub fn select_lockfile_workspaces(
     let pkg_names = lockfile.packages.items_name();
     let name_hashes = lockfile.packages.items_name_hash();
     let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let top_level_dir = FileSystem::instance().top_level_dir();
+    let top_level_dir = FileSystem::get().top_level_dir();
 
     let mut path_buf = path_buffer_pool::get();
     let dirs: Vec<Box<[u8]>> = ids

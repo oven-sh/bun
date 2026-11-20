@@ -151,6 +151,17 @@ impl Default for PkgInfo<'_> {
 }
 
 impl List {
+    /// Whether the installer links the bins of the package `name` into its platform package, in a
+    /// project whose package.json is `root`.
+    pub fn is_native_dependency(root: &js_ast::Expr, name: &[u8]) -> bool {
+        let mut list = List::default();
+        PostinstallOptimizer::from_package_json(&mut list, root).is_ok()
+            && list.get(&PkgInfo {
+                name_hash: semver::string::Builder::string_hash(name),
+                ..Default::default()
+            }) == Some(PostinstallOptimizer::NativeBinlink)
+    }
+
     pub(crate) fn is_native_binlink_enabled(&self) -> bool {
         if self.dynamic.len() == 0 {
             if self.disable_default_native_binlinks {

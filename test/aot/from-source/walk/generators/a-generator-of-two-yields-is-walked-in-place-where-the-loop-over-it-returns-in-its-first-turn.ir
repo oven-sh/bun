@@ -1,0 +1,23 @@
+# -- source: a-generator-of-two-yields-is-walked-in-place-where-the-loop-over-it-returns-in-its-first-turn.ts
+# declare const sink: any;
+# type Stop = { fare: number; town: string };
+# const stops: Stop[] = JSON.parse('[{"fare":3,"town":"a"},{"fare":1,"town":"b"},{"fare":0,"town":"c"},{"fare":2,"town":"d"}]');
+# const inns = new Map<string, Stop>([["c", stops[2]], ["b", stops[1]]]);
+# let turns = 0;
+# function* nights(way: Stop[], purse: number) { for (let at = way.length - 1; at >= 0; at--) { const stop = way[at]; turns++; purse -= stop.fare; if (purse < 0) yield "out at " + stop.town; const inn = inns.get(stop.town); if (inn !== undefined && inn.fare < purse) yield "sleeps in " + inn.town; } }
+# function tonight(way: Stop[], purse: number) { for (const night of nights(way, purse)) return night; return "walks on"; }
+# const seen: string[] = [];
+# for (const purse of [9, 4, 3, 2, 1]) seen.push(tonight(stops, purse) + turns);
+# seen.push(tonight([], 0) + turns, tonight(stops.slice(3), 8) + turns);
+# sink(seen.join(", "));
+# -- end of source
+# `for (const night of nights(..)) return night;`: the loop over the generator returns in its first turn, so the step stands in the block of the call and of the open. A generator of more than one yield is
+# not walked in place where the region of the iteration itself holds an iteration that is walked in place; the rule read the whole block and so counted the open of this very generator against it: the
+# generator was made, stepped by a stub and closed: 316 instructions a call more. What stands in front of the step is no part of the region.
+# f1 = nights, f2 = tonight
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: coroutine(f1)
+# CHECK-NOT: = StepGenerator
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: sleeps in c2, sleeps in c4, sleeps in c6, out at b9, out at d10, walks on10, walks on11

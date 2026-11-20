@@ -1,0 +1,10 @@
+# -- source: the-key-of-a-for-in-over-a-list-goes-onto-the-edge-to-a-handler-as-the-text-that-it-is.ts
+# function run(list: number[], table: any): string[] { var key: any; const seen: string[] = []; try { try { for (key in list) table[key](); } finally { seen.push(typeof key); } } catch {} return seen; }
+# console.log(run(JSON.parse("[7,8,9]"), { 0() {}, 1() { throw new Error("no"); }, 2() {} }).join());
+# -- end of source
+# An access under the key of a for-in over a list is walked while the key is bound to its position, an int32. The edge that the access leads to the handler hands on the key itself, the text:
+# plain Bun prints string; until then the compiled program printed number. Where Code is verified the judge of what such an edge hands on stops the build by name if the position goes on it:
+# an-edge-to-a-handler-that-takes-the-position-for-the-key-of-a-for-in-stops-the-build-by-name.ir is the same program under that lie.
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body

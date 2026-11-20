@@ -8,12 +8,12 @@ use std::cell::OnceCell;
 /// Prevent use of unsafe polyfill.io domains and duplicate polyfills.
 pub struct NoUnwantedPolyfillio;
 
-const NO_UNWANTED_POLYFILLIO: Message = Message::new(
+const NO_UNWANTED_POLYFILLIO: &Message = &Message::new(
     "",
     "No duplicate polyfills from Polyfill.io are allowed. {{polyfill_name}} already shipped with Next.js.",
 );
-const POLYFILL_IO_SECURITY_WARNING: Message =
-    Message::new("", "Using polyfill.io is a security risk due to a supply chain attack in 2024.");
+const POLYFILL_IO_SECURITY_WARNING: &Message =
+    &Message::new("", "Using polyfill.io is a security risk due to a supply chain attack in 2024.");
 
 impl Rule for NoUnwantedPolyfillio {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-unwanted-polyfillio", Kind::Problem);

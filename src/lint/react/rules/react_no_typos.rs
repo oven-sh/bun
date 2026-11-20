@@ -15,22 +15,22 @@ use std::cell::OnceCell;
 /// Disallow common typos
 pub struct NoTypos;
 
-const TYPO_PROP_TYPE_CHAIN: Message =
-    Message::new("typoPropTypeChain", "Typo in prop type chain qualifier: {{name}}");
-const TYPO_PROP_TYPE: Message = Message::new("typoPropType", "Typo in declared prop type: {{name}}");
-const TYPO_STATIC_CLASS_PROP: Message =
-    Message::new("typoStaticClassProp", "Typo in static class property declaration");
-const TYPO_PROP_DECLARATION: Message = Message::new("typoPropDeclaration", "Typo in property declaration");
-const TYPO_LIFECYCLE_METHOD: Message = Message::new(
+const TYPO_PROP_TYPE_CHAIN: &Message =
+    &Message::new("typoPropTypeChain", "Typo in prop type chain qualifier: {{name}}");
+const TYPO_PROP_TYPE: &Message = &Message::new("typoPropType", "Typo in declared prop type: {{name}}");
+const TYPO_STATIC_CLASS_PROP: &Message =
+    &Message::new("typoStaticClassProp", "Typo in static class property declaration");
+const TYPO_PROP_DECLARATION: &Message = &Message::new("typoPropDeclaration", "Typo in property declaration");
+const TYPO_LIFECYCLE_METHOD: &Message = &Message::new(
     "typoLifecycleMethod",
     "Typo in component lifecycle method declaration: {{actual}} should be {{expected}}",
 );
-const STATIC_LIFECYCLE_METHOD: Message =
-    Message::new("staticLifecycleMethod", "Lifecycle method should be static: {{method}}");
-const NO_PROP_TYPES_BINDING: Message =
-    Message::new("noPropTypesBinding", "`'prop-types'` imported without a local `PropTypes` binding.");
-const NO_REACT_BINDING: Message =
-    Message::new("noReactBinding", "`'react'` imported without a local `React` binding.");
+const STATIC_LIFECYCLE_METHOD: &Message =
+    &Message::new("staticLifecycleMethod", "Lifecycle method should be static: {{method}}");
+const NO_PROP_TYPES_BINDING: &Message =
+    &Message::new("noPropTypesBinding", "`'prop-types'` imported without a local `PropTypes` binding.");
+const NO_REACT_BINDING: &Message =
+    &Message::new("noReactBinding", "`'react'` imported without a local `React` binding.");
 
 /// `Object.keys(require("prop-types"))` in prop-types 15.8.1
 const PROP_TYPES: [&str; 22] = [
@@ -289,7 +289,7 @@ impl<'a> Finding<'a> {
     }
 
     /// `typo`: the message for a wrongly cased `STATIC_CLASS_PROPERTIES` name.
-    fn report(self, typo: Message, cx: &Cx<'a, NoTypos>) {
+    fn report(self, typo: &'static Message, cx: &Cx<'a, NoTypos>) {
         match self {
             Finding::Casing(property_key) => {
                 cx.report(property_key, typo);

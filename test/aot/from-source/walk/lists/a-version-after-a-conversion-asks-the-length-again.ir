@@ -1,0 +1,13 @@
+# f1 = f
+# -- source: main.ts
+# // @ts-nocheck
+# function f(a: number[], b: number[], n: any): any { const w: any = [...b]; let i = w.length; while (i < n) { w[i] = a[i >> 1]; i++; } return w; }
+# print(f(new Int32Array(8) as any, [1e9, 2e9], 32).length, f([1e9, 2e9], new Float64Array([1.5, 2 ** 31]) as any, 8).length);
+# -- end of source
+# The preheader of the version for arrays of numbers converts the list to doubles. Its failing guards lead to the version for Int32Array, which asks the length itself.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetTypedArrayVector
+# CHECK: = GetArrayLength
+# CHECK: PutContiguousIndex
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 32 8

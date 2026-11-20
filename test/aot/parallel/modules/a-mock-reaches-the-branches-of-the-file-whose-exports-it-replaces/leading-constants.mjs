@@ -1,0 +1,23 @@
+export const number = 1;
+export const word = "word";
+export const none = null;
+export const missing = undefined;
+export const sum = 1 + 2;
+export const flag = !0;
+export const again = word;
+export const piece = `${word}s`;
+export const big = 1n;
+export const joined = "a" + "b";
+export const wide = `${word}é`;
+
+export const readNumber = () => (number === 1 ? "one" : "other:" + number);
+export const readWord = () => (word === "word" ? "word" : "other:" + word);
+export const readNone = () => (none === null ? "null" : "other:" + none);
+export const readMissing = () => (missing === undefined ? "undefined" : "other:" + missing);
+export const readSum = () => (sum === 3 ? "three" : "other:" + sum);
+export const readFlag = () => (flag ? "true" : "other:" + flag);
+export const readAgain = () => (again === "word" ? "word" : "other:" + again);
+export const readPiece = () => (piece === "words" ? "words" : "other:" + piece);
+export const readBig = () => (big === 1n ? "one" : "other:" + big);
+export const readJoined = () => (joined === "ab" ? "ab" : "other:" + joined);
+export const readWide = () => (wide === "wordé" ? "wide" : "other:" + wide);

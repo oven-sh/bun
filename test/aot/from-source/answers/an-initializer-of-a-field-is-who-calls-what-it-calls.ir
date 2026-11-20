@@ -1,0 +1,47 @@
+# -- source: main.js
+# import { Held, Derived, Private, BelowBuiltIn, Outer, MadeOfText, MadeOfTextWithField } from "./lib/helper.js";
+# function consume() {
+#   print("a field " + new Held().origin);
+#   print("a field of a derived class " + new Derived().origin);
+#   print("a private field " + new Private().origin);
+#   print("a field below a built-in " + new BelowBuiltIn().origin);
+#   print("a field of a class in a field " + new (new Outer().Inner)().origin);
+#   print("a field of a base of a class of this file " + new (class extends Held {})().origin);
+#   print("by Reflect.construct " + Reflect.construct(Held, []).origin);
+#   print("a constructor that nobody wrote " + new MadeOfText("return callerSourceOrigin()")());
+#   print("a field beside it " + new MadeOfTextWithField("return 1").origin);
+# }
+# consume();
+# -- source: lib/helper.js
+# export class Held { origin = callerSourceOrigin(); }
+# class Base {}
+# export class Derived extends Base { origin = callerSourceOrigin(); }
+# export class Private { #origin = callerSourceOrigin(); get origin() { return this.#origin; } }
+# export class BelowBuiltIn { origin = [1].map(callerSourceOrigin)[0]; }
+# export class Outer { Inner = class { origin = callerSourceOrigin(); }; }
+# export class MadeOfText extends Function {}
+# export class MadeOfTextWithField extends Function { origin = callerSourceOrigin(); }
+# -- end of source
+# The initializers of the fields of a class are a function of their own, which no trace shows. It is code of a file all the same: a host function that asks for the file of its caller gets that file. It asked the frames that a trace shows, so the constructor answered: one that is written lies in the same file, one that nobody wrote has no file, and the answer was null. A constructor that nobody wrote goes on answering that it has no file, as it answers in the interpreter.
+# RUN: run-in-shell mechanisms=all
+# CHECK: a field file:///lib/helper.js
+# CHECK-NEXT: a field of a derived class file:///lib/helper.js
+# CHECK-NEXT: a private field file:///lib/helper.js
+# CHECK-NEXT: a field below a built-in file:///lib/helper.js
+# CHECK-NEXT: a field of a class in a field file:///lib/helper.js
+# CHECK-NEXT: a field of a base of a class of this file file:///lib/helper.js
+# CHECK-NEXT: by Reflect.construct file:///lib/helper.js
+# CHECK-NEXT: a constructor that nobody wrote null
+# CHECK-NEXT: a field beside it file:///lib/helper.js
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: a field file:///lib/helper.js
+# CALLED-NEXT: a field of a derived class file:///lib/helper.js
+# CALLED-NEXT: a private field file:///lib/helper.js
+# CALLED-NEXT: a field below a built-in file:///lib/helper.js
+# CALLED-NEXT: a field of a class in a field file:///lib/helper.js
+# CALLED-NEXT: a field of a base of a class of this file file:///lib/helper.js
+# CALLED-NEXT: by Reflect.construct file:///lib/helper.js
+# CALLED-NEXT: a constructor that nobody wrote null
+# CALLED-NEXT: a field beside it file:///lib/helper.js
+# CALLED-NEXT: exited with 0

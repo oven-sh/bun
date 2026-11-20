@@ -1,0 +1,17 @@
+# -- source: instanceof-in-copy-asks-for-expected-answer.cjs
+# function Link(name) { this.name = name; this.id = count++; this.ref = null; }
+# function Pair(name, parts) { this.name = name; this.parts = parts; }
+# function follow(value) { while (value instanceof Link && value.ref !== null) value = value.ref; return value; }
+# Checker.prototype.isSame = function (one, other) {
+#   one = follow(one); other = follow(other);
+#   if (one instanceof Pair) {
+#     if (!(other instanceof Pair) || one.name !== other.name || one.parts.length !== other.parts.length) return false;
+#   }
+#   if (term instanceof Link) { var link = map.get(term); if (!link) map.set(term, link = new Link(term.name)); return link; }
+#   if (term instanceof Pair) { var parts = new Array(term.parts.length); for (var i = 0; i < parts.length; i++) parts[i] = copy(term.parts[i], map); return new Pair(term.name, parts); }
+# };
+# -- end of source
+# A miss of instanceof in a copy that hands the value back asks for the shapes that the answer is expected to have, in front of the walk up the chain.
+# RUN: walk f4:Body mechanisms=all
+# CHECK: = ShapeTest {{*}}layouts=[L0] {{*}}:1
+# CHECK: = ShapeTest {{*}}layouts=[L0, L1] {{*}}:1

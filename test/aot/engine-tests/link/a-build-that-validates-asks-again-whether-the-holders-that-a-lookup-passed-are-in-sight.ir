@@ -1,0 +1,7 @@
+# As a-build-that-validates-asks-again-for-the-names-that-a-lookup-took-for-unlaid.ir: here a holder that the lookup passes goes out of sight.
+# OPTIONS: check=Validate
+# LIBRARY: own
+# PROGRAM-OF: link-read-off-the-prototype-of-a-class-lets-go-what-stands-above-it.ir
+# RUN: link functions mechanisms=all
+# CHECK-NOT: StaleFlowAssumption
+# CHECK-NOT: function f2 unreached

@@ -1,0 +1,16 @@
+# -- source: main.js
+# const rounds = JSON.parse("9");
+# const step = rounds > 0 ? 1 : 2;
+# function twice(x) { return x * 2; }
+# function P(x) { this.x = x; this.y = twice(x) + step; }
+# P.prototype.next = function () { return new this.constructor(this.x + step); };
+# function run(turns) { let p = new P(0), sum = 0; for (let i = 0; i < turns; i++) { p = p.next(); sum += p.x + p.y; } return [sum, p instanceof P, p.constructor === P]; }
+# print(run(rounds).join());
+# -- end of source
+# The prototype object of a constructor function is made with `constructor`, as that of a class is. Nothing in sight lays the name, so the read is held by the guard of the name and the object is born in line. The function reads variables of its file, which lie among the variables of the program: the closure that the closure table holds carries none of them.
+# RUN(WALK): walk f3 mechanisms=all
+# WALK: AreMembersUnchanged {{*}}key="constructor"
+# WALK: = NewObject
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 144,true,true
+# ANSWERS-NEXT: exited with 0

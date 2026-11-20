@@ -30,8 +30,13 @@ struct PackageJson {
     path: Box<[u8]>,
     root: Expr,
     contents: Box<[u8]>,
-    source: Source,
     indentation: bun_ast::Indentation,
+}
+
+impl PackageJson {
+    fn source(&self) -> Source<'_> {
+        Source::init_path_string(&self.path[..], &self.contents[..])
+    }
 }
 
 /// One step of a key path such as `contributors[0].name` or `keywords[]`.
@@ -196,7 +201,6 @@ impl PmPkgCommand {
             path,
             root: result.root,
             contents,
-            source,
             indentation: result.indentation,
         }
     }
@@ -725,7 +729,7 @@ impl PmPkgCommand {
         if let Err(e) = js_printer::print_json(
             &mut writer,
             root,
-            &pkg.source,
+            &pkg.source(),
             js_printer::PrintJsonOptions {
                 indent: pkg.indentation,
                 mangled_props: None,

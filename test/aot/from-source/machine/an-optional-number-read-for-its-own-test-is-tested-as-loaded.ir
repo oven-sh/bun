@@ -1,0 +1,26 @@
+# -- source: an-optional-number-read-for-its-own-test-is-tested-as-loaded.ts
+# declare function print(value: unknown): void;
+# interface Options { width?: number; height?: number }
+# function make(n: number): Options { const options: Options = {}; if (n & 1) options.width = n / 2; if (n & 2) options.height = n % 5; if (n === 5) options.width = undefined; if (n === 7) options.width = NaN; return options; }
+# const list: Options[] = []; for (let n = 0; n < 8; n++) list.push(make(n));
+# function areas(): number { let total = 0; for (const options of list) { const { width = 10, height = 5 } = options; const area = width * height; total += area === area ? area : 1000; } return total; }
+# function widths(): number { let total = 0; for (const options of list) total += options.height ?? -1; return total; }
+# function texts(): string { let text = ""; for (const options of list) { const width = options.width; text += width === undefined ? "none " + width + ";" : "some " + width + ";"; } return text; }
+# print(areas()); print(widths()); print(texts());
+# -- end of source
+# A field that a class may leave out holds a marker where nothing was stored. `const { width = 10 } = options` reads it for its test for undefined and for what passes the test: the marker is
+# tested as it is loaded, and no undefined is made of it first. Where the value goes on as it is, undefined is made of it.
+# RUN(EVENT): compile EmptySlotConversionsSkipped mechanisms=all
+# EVENT: statistic EmptySlotConversionsSkipped 7
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1187
+# ANSWERS-NEXT: 4
+# ANSWERS-NEXT: none undefined;some 0.5;none undefined;some 1.5;none undefined;none undefined;none undefined;some NaN;
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# PROOFS: 1187
+# PROOFS-NEXT: 4
+# PROOFS-NEXT: none undefined;some 0.5;none undefined;some 1.5;none undefined;none undefined;none undefined;some NaN;
+# RUN(WALK): run-in-shell mechanisms=all testing=CheckWalkAtRunTime
+# WALK: 1187
+# WALK-NEXT: 4
+# WALK-NEXT: none undefined;some 0.5;none undefined;some 1.5;none undefined;none undefined;none undefined;some NaN;

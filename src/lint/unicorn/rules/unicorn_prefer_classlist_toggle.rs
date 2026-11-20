@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// Prefers the use of `element.classList.toggle(className, condition)` over conditional add/remove patterns.
 pub struct PreferClasslistToggle;
 
-const PREFER_CLASSLIST_TOGGLE: Message =
-    Message::new("", "Prefer `classList.toggle()` over `classList.add()` and `classList.remove()`");
+const PREFER_CLASSLIST_TOGGLE: &Message =
+    &Message::new("", "Prefer `classList.toggle()` over `classList.add()` and `classList.remove()`");
 
 impl Rule for PreferClasslistToggle {
     const META: Meta =

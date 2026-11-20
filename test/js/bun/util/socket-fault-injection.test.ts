@@ -116,7 +116,7 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     }
   });
 
-  // These have enum slots but no bsd.c hooks; arming them used to "succeed"
+  // These have enum slots but no bsd.cpp hooks; arming them used to "succeed"
   // and then never fire.
   test("set() rejects syscalls that have no fault hook", () => {
     for (const sc of ["socket", "close", "shutdown"]) {

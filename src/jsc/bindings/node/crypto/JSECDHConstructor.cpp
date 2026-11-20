@@ -73,6 +73,7 @@ JSC_DEFINE_HOST_FUNCTION(constructECDH, (JSC::JSGlobalObject * globalObject, JSC
         return Bun::ERR::CRYPTO_INVALID_CURVE(scope, globalObject);
     }
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto key = ncrypto::ECKeyPointer::NewByCurveName(nid);
     if (!key) {
         return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to create key using named curve"_s);
@@ -105,6 +106,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     RETURN_IF_EXCEPTION(scope, {});
 
     auto buffer = keyView->span();
+    if (buffer.empty())
+        return JSValue::encode(jsEmptyString(vm));
 
     int nid = curveNidFromShortName(curveName);
     if (nid == NID_undef)

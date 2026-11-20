@@ -1,6 +1,11 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { createSocketPair, setSocketOptions, socketFaultInjection } from "bun:internal-for-testing";
+import {
+  createSocketPair,
+  putBoringSSLErrorForTesting,
+  setSocketOptions,
+  socketFaultInjection,
+} from "bun:internal-for-testing";
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
 import { generateKeyPairSync } from "crypto";
 import { closeSync, fstatSync, readFileSync } from "fs";
@@ -29,7 +34,7 @@ describe.concurrent("socket", () => {
     const data = jest.fn();
     const connectError = jest.fn(() => {});
     {
-      expect(
+      await expect(
         async () =>
           await Bun.connect({
             fd: getMaxFD() + 1024,
@@ -1216,6 +1221,31 @@ it("getPeerCertificate and exportKeyingMaterial accept undefined for optional ar
   }
 });
 
+it("exportKeyingMaterial does not report an earlier BoringSSL failure", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });
+  const socket = await connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      data() {},
+      handshake: () => resolve(),
+      error: (_, error) => reject(error),
+      close: () => reject(new Error("closed before the handshake")),
+    },
+  });
+  try {
+    await promise;
+    putBoringSSLErrorForTesting();
+    expect(() => socket.exportKeyingMaterial(1_000_000, "label")).toThrow(
+      expect.objectContaining({ message: "OpenSSL OUTPUT_TOO_LARGE via OPENSSL_internal HKDF functions" }),
+    );
+  } finally {
+    socket.end();
+  }
+});
+
 it("exportKeyingMaterial with a context whose toPrimitive terminates the socket does not use-after-free", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -1712,10 +1742,19 @@ describe("TLS write() that ends short while another TLS socket is stalled", () =
 
 // After its close_notify a socket reads on until the peer's. A close ahead of that, over unread input, is a reset,
 // and the kernel drops what it had not sent yet.
-it.each([
-  ["that the kernel took at once", 1024 * 1024],
-  ["that waited for the kernel", 4 * 1024 * 1024],
-])("TLS end() while the peer is still sending delivers a write %s", async (_name, size) => {
+describe("TLS end() while the peer is still sending delivers a write", () => {
+  it.each([
+    ["that the kernel took at once", 1024 * 1024],
+    ["that waited for the kernel", 4 * 1024 * 1024],
+  ])("%s", async (_name, size) => await endWhilePeerSends(size));
+
+  it.skipIf(!socketFaultInjection.available())(
+    "that left the kernel no room for the close_notify",
+    async () => await endWhilePeerSends(1024 * 1024, 2),
+  );
+});
+
+async function endWhilePeerSends(size: number, refusals = 0) {
   const upload = 8 * 1024 * 1024;
   const payload = Buffer.alloc(upload, "a");
   type Side = { total: number; reported: number; received: number; events: string[] };
@@ -1751,7 +1790,12 @@ it.each([
     hostname: "127.0.0.1",
     port: 0,
     tls,
-    socket: handlers(size, socket => socket.end()),
+    socket: handlers(size, socket => {
+      if (refusals) {
+        socketFaultInjection.set({ syscall: "send", action: "zero", fd: (socket as any).fd, repeat: refusals });
+      }
+      socket.end();
+    }),
   });
   await Bun.connect({
     hostname: "127.0.0.1",
@@ -1770,7 +1814,7 @@ it.each([
     client: { received: size, events: ["end", "close"] },
     server: { received: upload, closed: "close" },
   });
-});
+}
 
 // A close must not cut off ciphertext that write() already reported, so it waits for the kernel to take
 // it. The owner has let go by then: only the deadline (10 s on a 4 s tick) ends the wait for such a peer.
@@ -2292,8 +2336,8 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
 
 // A socket over a Windows named pipe frees its native context from a task
 // that is queued when the socket closes. A handler can close the socket and
-// then spin the event loop before it returns (`expect().resolves` blocks on
-// the promise and runs queued tasks), so the context is gone by the time the
+// then spin the event loop before it returns (`Bun.build()` blocks on a plugin's
+// `setup()` promise and runs queued tasks), so the context is gone by the time the
 // libuv read callback that invoked the handler gets control back. The
 // callback must keep the context alive until it is done with it.
 describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop spun inside a read callback", () => {
@@ -2301,8 +2345,6 @@ describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop 
   // from the EOF read callback, "data" from the data read callback.
   function fixture(trigger: "end" | "data") {
     return /* js */ `
-      import { expect } from "bun:test";
-
       const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-${trigger}-teardown-" + Math.random().toString(36).slice(2);
       const serverOpened = Promise.withResolvers();
       const serverClosed = Promise.withResolvers();
@@ -2312,7 +2354,10 @@ describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop 
         socket.end();
         // Blocks until the promise settles. Every queued task, including the
         // one that frees the native context of this socket, runs before this returns.
-        expect(new Promise(resolve => setImmediate(resolve))).resolves.toBeUndefined();
+        Bun.build({
+          entrypoints: ["./none.js"],
+          plugins: [{ name: "spin", setup: () => new Promise(resolve => setImmediate(resolve)) }],
+        }).catch(() => {});
       }
 
       using server = Bun.listen({
@@ -6059,6 +6104,59 @@ describe.concurrent("tls socket that is paused when its graceful close starts", 
     expect(sent).toBeGreaterThan(chunk.length);
     expect(received).toBe(sent);
   });
+
+  // The peer's data comes behind the end(). A writable event in the middle of it must not close the socket over the rest.
+  it("pause(), write() and end() in the handshake: both sides get every byte", async () => {
+    const upload = Buffer.alloc(1024 * 1024, "u");
+    const reply = Buffer.alloc(70_000, "r");
+    const received = { server: 0, client: 0 };
+    const closed = [Promise.withResolvers<string>(), Promise.withResolvers<string>()];
+    const outcome = (error?: Error) => (error ? String((error as NodeJS.ErrnoException).code) : "closed");
+    let replied = 0;
+    // A write() may take a part of the reply. The rest goes out in drain(), and shutdown() comes behind all of it.
+    const sendReply = (socket: Socket) => {
+      if (replied === reply.length) return;
+      while (replied < reply.length) {
+        const wrote = socket.write(reply.subarray(replied));
+        if (wrote <= 0) return;
+        replied += wrote;
+      }
+      socket.shutdown();
+    };
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      // Before TLS 1.3 the reply comes with the end of the handshake.
+      tls: { ...tls, maxVersion: 0x0303 } as any,
+      socket: {
+        handshake: sendReply,
+        drain: sendReply,
+        data: (_socket, data) => void (received.server += data.length),
+        close: (_socket, error) => closed[0].resolve(outcome(error)),
+      },
+    });
+    let reported = 0;
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: { ca: tls.cert },
+      socket: {
+        handshake(socket) {
+          socket.pause();
+          reported = socket.write(upload);
+          socket.end();
+        },
+        drain() {},
+        data: (_socket, data) => void (received.client += data.length),
+        close: (_socket, error) => closed[1].resolve(outcome(error)),
+      },
+    });
+    const outcomes = await Promise.all(closed.map(({ promise }) => promise));
+    expect({ outcomes, received }).toEqual({
+      outcomes: ["closed", "closed"],
+      received: { server: reported, client: reply.length },
+    });
+  });
 });
 
 // A close that the event loop initiated passes the read error to close(). usockets
@@ -6661,16 +6759,20 @@ it("a view of shared memory as a tls option is refused", () => {
   }
 });
 
-// expect(promise).resolves ticks the loop while the dispatch that called the handler is still on the stack.
+// Bun.build() ticks the loop until an async plugin setup() settles, while the dispatch that called the handler is still on the stack.
 // The outer dispatch reads the closed socket again, so the inner ticks must not free it.
 describe.concurrent("a handler that closes its socket and then waits for a promise", () => {
   it("doesn't crash the dispatch that called it", async () => {
     const source = `
-      import { expect, test } from "bun:test";
+      import { test } from "bun:test";
 
       // JS can't observe when the loop finishes the close, so tick the loop from the handler for a short time.
       function waitInsideHandler() {
-        expect(Bun.sleep(20)).resolves.toBeUndefined();
+        void Bun.build({
+          entrypoints: ["/wait.js"],
+          files: { "/wait.js": "" },
+          plugins: [{ name: "wait", setup: () => Bun.sleep(20) }],
+        });
       }
 
       test("data() closes the accepted socket", async () => {

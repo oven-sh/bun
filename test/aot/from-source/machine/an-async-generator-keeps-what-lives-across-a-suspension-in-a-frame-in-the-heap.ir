@@ -1,0 +1,28 @@
+# What lives across a yield or an await of an async generator has a word in a frame in the heap, as in a plain generator: it is stored where it is defined and read once in each stretch that names it.
+# A suspension stores where the body goes on; the body goes on at an entrypoint of its own: the initial yield, the await, the yield, the await of what is returned. No machine frame is copied out or back.
+# An async function keeps its saved frame: a cell at every call that never suspends would cost more than it buys.
+# -- source: an-async-generator-keeps-what-lives-across-a-suspension-in-a-frame-in-the-heap.cjs
+# async function* steps(limit, wait) { let text = ""; for (let i = 0; i < limit; i++) { text += await wait(i); yield text; } return text; }
+# async function plain(limit, wait) { let text = ""; for (let i = 0; i < limit; i++) text += await wait(i); return text; }
+# keep(plain);
+# (async () => { const it = steps(3, i => Promise.resolve("x" + i)); for await (const text of it) say(text); say(await plain(2, i => "y" + i)); })();
+# -- end of source
+# RUN: emit f1:CoroutineBody f2:CoroutineBody mechanisms=all
+# CHECK-LABEL: unit f1:CoroutineBody
+# CHECK: entrypoint 0
+# CHECK: entrypoint 1
+# CHECK: Store({{*}}frameSlots
+# CHECK: entrypoint 2
+# CHECK: Store({{*}}frameSlots
+# CHECK: entrypoint 3
+# CHECK: Store({{*}}frameSlots
+# CHECK: entrypoint 4
+# CHECK-NOT: entrypoint 5
+# CHECK-LABEL: unit f2:CoroutineBody
+# CHECK: entrypoint 0
+# CHECK-NOT: entrypoint 1
+# RUN(SHELL): run-in-shell globalThis.keep = () => {}; globalThis.say = (x) => print(String(x));
+# SHELL: x0
+# SHELL-NEXT: x0x1
+# SHELL-NEXT: x0x1x2
+# SHELL-NEXT: y0y1

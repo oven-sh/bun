@@ -1,0 +1,115 @@
+# -- source: sixteen-loops-side-by-side-in-a-loop-each-holding-a-loop-cost-five-walks-each.js
+# function nest(count) {
+#   const n = count | 0;
+#   const list = [3, 1, 4, 1, 5, 9, 2, 6];
+#   let s = 0;
+#   for (let i1 = 0; i1 < n; i1++) {
+#     s = (s + list[(i1) & 7]) | 0;
+#     for (let j0 = 0; j0 < n; j0++) {
+#       s = (s + list[(i1 + j0 + 0) & 7]) | 0;
+#       for (let m0 = 0; m0 < n; m0++) {
+#         s = (s + list[(j0 + m0) & 7]) | 0;
+#       }
+#     }
+#     for (let j1 = 0; j1 < n; j1++) {
+#       s = (s + list[(i1 + j1 + 1) & 7]) | 0;
+#       for (let m1 = 0; m1 < n; m1++) {
+#         s = (s + list[(j1 + m1) & 7]) | 0;
+#       }
+#     }
+#     for (let j2 = 0; j2 < n; j2++) {
+#       s = (s + list[(i1 + j2 + 2) & 7]) | 0;
+#       for (let m2 = 0; m2 < n; m2++) {
+#         s = (s + list[(j2 + m2) & 7]) | 0;
+#       }
+#     }
+#     for (let j3 = 0; j3 < n; j3++) {
+#       s = (s + list[(i1 + j3 + 3) & 7]) | 0;
+#       for (let m3 = 0; m3 < n; m3++) {
+#         s = (s + list[(j3 + m3) & 7]) | 0;
+#       }
+#     }
+#     for (let j4 = 0; j4 < n; j4++) {
+#       s = (s + list[(i1 + j4 + 4) & 7]) | 0;
+#       for (let m4 = 0; m4 < n; m4++) {
+#         s = (s + list[(j4 + m4) & 7]) | 0;
+#       }
+#     }
+#     for (let j5 = 0; j5 < n; j5++) {
+#       s = (s + list[(i1 + j5 + 5) & 7]) | 0;
+#       for (let m5 = 0; m5 < n; m5++) {
+#         s = (s + list[(j5 + m5) & 7]) | 0;
+#       }
+#     }
+#     for (let j6 = 0; j6 < n; j6++) {
+#       s = (s + list[(i1 + j6 + 6) & 7]) | 0;
+#       for (let m6 = 0; m6 < n; m6++) {
+#         s = (s + list[(j6 + m6) & 7]) | 0;
+#       }
+#     }
+#     for (let j7 = 0; j7 < n; j7++) {
+#       s = (s + list[(i1 + j7 + 7) & 7]) | 0;
+#       for (let m7 = 0; m7 < n; m7++) {
+#         s = (s + list[(j7 + m7) & 7]) | 0;
+#       }
+#     }
+#     for (let j8 = 0; j8 < n; j8++) {
+#       s = (s + list[(i1 + j8 + 8) & 7]) | 0;
+#       for (let m8 = 0; m8 < n; m8++) {
+#         s = (s + list[(j8 + m8) & 7]) | 0;
+#       }
+#     }
+#     for (let j9 = 0; j9 < n; j9++) {
+#       s = (s + list[(i1 + j9 + 9) & 7]) | 0;
+#       for (let m9 = 0; m9 < n; m9++) {
+#         s = (s + list[(j9 + m9) & 7]) | 0;
+#       }
+#     }
+#     for (let j10 = 0; j10 < n; j10++) {
+#       s = (s + list[(i1 + j10 + 10) & 7]) | 0;
+#       for (let m10 = 0; m10 < n; m10++) {
+#         s = (s + list[(j10 + m10) & 7]) | 0;
+#       }
+#     }
+#     for (let j11 = 0; j11 < n; j11++) {
+#       s = (s + list[(i1 + j11 + 11) & 7]) | 0;
+#       for (let m11 = 0; m11 < n; m11++) {
+#         s = (s + list[(j11 + m11) & 7]) | 0;
+#       }
+#     }
+#     for (let j12 = 0; j12 < n; j12++) {
+#       s = (s + list[(i1 + j12 + 12) & 7]) | 0;
+#       for (let m12 = 0; m12 < n; m12++) {
+#         s = (s + list[(j12 + m12) & 7]) | 0;
+#       }
+#     }
+#     for (let j13 = 0; j13 < n; j13++) {
+#       s = (s + list[(i1 + j13 + 13) & 7]) | 0;
+#       for (let m13 = 0; m13 < n; m13++) {
+#         s = (s + list[(j13 + m13) & 7]) | 0;
+#       }
+#     }
+#     for (let j14 = 0; j14 < n; j14++) {
+#       s = (s + list[(i1 + j14 + 14) & 7]) | 0;
+#       for (let m14 = 0; m14 < n; m14++) {
+#         s = (s + list[(j14 + m14) & 7]) | 0;
+#       }
+#     }
+#     for (let j15 = 0; j15 < n; j15++) {
+#       s = (s + list[(i1 + j15 + 15) & 7]) | 0;
+#       for (let m15 = 0; m15 < n; m15++) {
+#         s = (s + list[(j15 + m15) & 7]) | 0;
+#       }
+#     }
+#   }
+#   return s;
+# }
+# print(nest(JSON.parse("3")));
+# -- end of source
+# The twin of the eight: twice the width, and the walks are five for each loop side by side and two. A wish that cost a walk of the whole nest for each loop that wishes would make a square of it.
+# RUN: compile LoopVisits mechanisms=all
+# CHECK: statistic LoopVisits 82
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 1718
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same

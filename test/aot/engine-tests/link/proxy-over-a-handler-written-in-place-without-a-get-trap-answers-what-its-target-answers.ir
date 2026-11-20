@@ -1,0 +1,41 @@
+# print(Object.create(new Proxy({}, { set() { return true; } })));
+# The host asks what it prints for the method under Symbol.for("nodejs.util.inspect.custom"), up the chain. A proxy in the chain answers by its `get` trap, and without one the question goes on at the target.
+# The handler is a literal that is written in place and that the construction alone holds. A trap is called on the handler, but this one has no `this`: nobody can lay a `get` there. It takes no operand either, so it is handed no name. The host loads nothing.
+# The twins that stay: the files beside this one that begin with proxy-over-a-handler-written-in-place.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+layout L1 module=m0 fields=[{key="set" declared={type=anything} flags=[IsRequired, IsMethod]}]
+runtimefunction id=UtilInspectStylizeWithNoColor function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    v2 = NewClosure function=f1
+    v3 = NewObject layout=L1
+    PropDefine v3, v2 key="set"
+    v5 = FinishObject v3
+    v6 = Builtin builtin=Proxy
+    v7 = Construct v6, -, v1, v5
+    v8 = Builtin builtin=ObjectCreate
+    v9 = Call v8, -, v7
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="print" [isFreeName]
+    v12 = Call v11, -, v9 calleeName="print"
+    v13 = Undefined
+    Return v13
+}
+function f1 name="set" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    Return v0
+}
+function f2 module=m1 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

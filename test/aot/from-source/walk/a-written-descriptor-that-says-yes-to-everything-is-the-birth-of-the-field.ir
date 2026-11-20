@@ -1,0 +1,13 @@
+# -- source: main.cjs
+# "use strict";
+# class Point { constructor(x) { Object.defineProperty(this, "x", { enumerable: true, configurable: true, writable: true, value: x }); } }
+# function f(t) { let s = t & 1; for (let i = 0; i < t; i++) { const point = new Point(i); s += point.x; } return s; }
+# sink(f(5) + " " + f(40) + " " + Object.keys(new Point(1)));
+# -- end of source
+# RUN: walk f2:Body mechanisms=all
+# CHECK-NOT: DefineOwnProperty
+# RUN(LOOP): walk f1:Body mechanisms=all
+# LOOP-NOT: DefineOwnProperty
+# LOOP-NOT: = NewObject
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 11 780 x

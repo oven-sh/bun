@@ -10,58 +10,25 @@ use bun_wyhash::Wyhash;
 // `DashedIdent` / `Ident` / `CustomIdent` are DISTINCT CSS value types per
 // spec (their `parse`/`to_css` differ intentionally — `--` prefix check,
 // plain ident, CSS-wide-keyword rejection respectively) but share an
-// identical `*const [u8]` arena-slice newtype shell. This macro stamps out
-// the struct + the byte-identical `v()`/`deep_clone`/`hash`/`as_slice`
+// identical newtype shell. This macro stamps out the struct + `deep_clone`/`hash`
 // boilerplate; per-type `parse`/`to_css` live in separate inherent `impl`
-// blocks below (Rust allows multiple inherent impls). Precedent:
-// `generics.rs` `ident_eql_impl!` already macroizes the shared `CssEql`.
+// blocks below (Rust allows multiple inherent impls).
 macro_rules! arena_slice_newtype {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, Copy)]
-        pub struct $name {
-            // CSS parser slices are arena-owned; the borrow is erased to a raw
-            // pointer until the crate threads a `'bump` lifetime (see
-            // PORTING.md §Allocators). Never dereferenced after arena reset.
-            pub v: *const [u8],
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, crate::CssEql)]
+        pub struct $name<'bump> {
+            pub v: &'bump [u8],
         }
 
-        impl $name {
-            /// Borrow the underlying arena-owned slice.
-            ///
-            /// `v` is always a non-null fat pointer into the parser's bump arena
-            /// (constructed from `expect_ident()` source text or copied from
-            /// another instance). Arena bytes are immutable and outlive every
-            /// value produced from them, so handing out `&[u8]` is sound.
-            ///
-            /// NOTE: the borrow is tied to `&self`. Call sites that must return
-            /// the slice with the `'static` placeholder lifetime (e.g.
-            /// `IdentOrRef::{debug_ident,as_str,as_original_string}`,
-            /// `Printer::lookup_ident_or_ref`, `SelectorParser::namespace_for_prefix`)
-            /// still go through the raw `v` field directly until `'bump` is threaded.
-            #[inline]
-            pub fn v(&self) -> &[u8] {
-                // SAFETY: arena-owned, never null, immutable for the parse session
-                // (see the field-level comment on `'bump` threading).
-                unsafe { crate::arena_str(self.v) }
-            }
-
+        impl $name<'_> {
             pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-                // The `*const [u8]` slice is arena-owned (never mutated, freed
-                // on arena reset), so identity copy is correct.
                 *self
             }
 
             pub fn hash(&self, hasher: &mut Wyhash) {
                 // Hash the arena slice bytes.
-                hasher.update(self.v());
-            }
-
-            /// Borrow the underlying arena slice.
-            /// SAFETY: caller must ensure the parser arena outlives the borrow.
-            #[inline]
-            pub unsafe fn as_slice(&self) -> &[u8] {
-                self.v()
+                hasher.update(self.v);
             }
         }
     };
@@ -71,8 +38,7 @@ macro_rules! arena_slice_newtype {
 // `properties::css_modules::Specifier` is real (parse/to_css/eql/hash); the
 // `from` field below uses it directly. `parse_with_options` honors
 // `ParserOptions.css_modules.dashed_idents`. `to_css` resolves the
-// import-record path up front and hands it to `CssModule::reference_dashed`
-// (borrowck — see the comment on that method).
+// import-record path up front and hands it to `CssModule::reference_dashed`.
 
 /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) reference.
 ///
@@ -82,15 +48,15 @@ macro_rules! arena_slice_newtype {
 /// In CSS modules, when the `dashed_idents` option is enabled, the identifier may be followed by the
 /// `from` keyword and an argument indicating where the referenced identifier is declared (e.g. a filename).
 #[derive(Debug, Clone, Copy)]
-pub struct DashedIdentReference {
+pub struct DashedIdentReference<'bump> {
     /// The referenced identifier.
-    pub(crate) ident: DashedIdent,
+    pub(crate) ident: DashedIdent<'bump>,
     /// CSS modules extension: the filename where the variable is defined.
     /// Only enabled when the CSS modules `dashed_idents` option is turned on.
     pub(crate) from: Option<crate::properties::css_modules::Specifier>,
 }
 
-impl DashedIdentReference {
+impl<'bump> DashedIdentReference<'bump> {
     pub(crate) fn eql(&self, rhs: &Self) -> bool {
         // Field-wise over `ident` and `from`.
         use crate::generics::CssEql;
@@ -105,14 +71,13 @@ impl DashedIdentReference {
     }
 
     pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // Both fields are `Copy` (arena-slice pointer + tagged enum of Copy payloads).
         *self
     }
 
     pub(crate) fn parse_with_options(
-        input: &mut Parser,
+        input: &mut Parser<'_, 'bump>,
         options: &css::ParserOptions,
-    ) -> CssResult<DashedIdentReference> {
+    ) -> CssResult<'bump, DashedIdentReference<'bump>> {
         let ident = DashedIdent::parse(input)?;
         let from = if options
             .css_modules
@@ -139,11 +104,6 @@ impl DashedIdentReference {
             None => false,
         };
         if dashed_idents {
-            // NOTE: cannot use `self.ident.v()` here — `reference_dashed` requires
-            // `&'a [u8]` (arena lifetime), but the safe accessor ties the borrow
-            // to `&self`. Raw deref yields the unbounded arena borrow.
-            // SAFETY: arena-owned slice; see `DashedIdent::v`.
-            let ident_v = unsafe { crate::arena_str(self.ident.v) };
             let source_index = dest.loc.source_index;
             let bump = dest.arena;
             // Borrowck forbids handing
@@ -157,9 +117,9 @@ impl DashedIdentReference {
                 }
                 _ => None,
             };
-            let name = dest.css_module.as_mut().unwrap().reference_dashed(
+            let name = dest.css_module.as_ref().unwrap().reference_dashed(
                 bump,
-                ident_v,
+                self.ident.v,
                 self.from,
                 specifier_path,
                 source_index,
@@ -169,7 +129,7 @@ impl DashedIdentReference {
                 return dest.serialize_name(name);
             }
         }
-        dest.write_dashed_ident(&self.ident, false)
+        dest.write_dashed_ident(&self.ident)
     }
 }
 
@@ -183,20 +143,19 @@ arena_slice_newtype! {
     DashedIdent
 }
 
-impl DashedIdent {
-    pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
+impl<'bump> DashedIdent<'bump> {
+    pub(crate) fn new(v: &'bump [u8]) -> Option<Self> {
+        v.starts_with(b"--").then_some(Self { v })
+    }
+
+    pub fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, DashedIdent<'bump>> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
-        if !strings::starts_with(ident, b"--") {
-            return Err(location.new_unexpected_token_error(Token::Ident(ident)));
-        }
-        Ok(DashedIdent {
-            v: std::ptr::from_ref::<[u8]>(ident),
-        })
+        let ident = input.expect_ident()?;
+        Self::new(ident).ok_or_else(|| location.new_unexpected_token_error(Token::Ident(ident)))
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.write_dashed_ident(self, true)
+        dest.write_dashed_ident(self)
     }
 }
 
@@ -207,193 +166,66 @@ arena_slice_newtype! {
     Ident
 }
 
-impl Ident {
-    pub fn parse(input: &mut Parser) -> CssResult<Ident> {
+impl<'bump> Ident<'bump> {
+    pub fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Ident<'bump>> {
         let ident = input.expect_ident()?;
-        Ok(Ident {
-            v: std::ptr::from_ref::<[u8]>(ident),
-        })
+        Ok(Ident { v: ident })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.serialize_identifier(self.v())
+        dest.serialize_identifier(self.v)
     }
 }
 
 // ───────────────────────────── IdentOrRef ────────────────────────────────
 
-/// Encodes an `Ident` or the bundler's `Ref` into 16 bytes.
-///
-/// It uses the top bit of the pointer to denote whether it's an ident or a ref
-///
-/// If it's an `Ident`, then `__ref_bit == false` and `__len` is the length of the slice.
-///
-/// If it's `Ref`, then `__ref_bit == true` and `__len` is the bit pattern of the `Ref`.
-///
-/// In debug mode, if it is a `Ref` we will also set the `__ptrbits` to point to the original
-/// []const u8 so we can debug the string. This should be fine since we use arena
-#[repr(transparent)]
-#[derive(Clone, Copy, Default)]
-pub struct IdentOrRef(u128);
-
-// Packed u128 field layout, LSB-first:
-//   __ptrbits: u63  -> bits  0..63
-//   __ref_bit: bool -> bit   63
-//   __len:     u64  -> bits 64..128
-const PTRBITS_MASK: u128 = (1u128 << 63) - 1;
-const REF_BIT: u128 = 1u128 << 63;
-
-#[cfg(debug_assertions)]
-pub(crate) type DebugIdent<'a> = (&'a [u8], &'a bun_alloc::Arena);
-#[cfg(not(debug_assertions))]
-pub(crate) type DebugIdent<'a> = core::marker::PhantomData<&'a ()>;
-
-/// Construct a `DebugIdent` — call sites use this instead of an inline
-/// `#[cfg(debug_assertions)]` arg attribute (which removes the parameter
-/// entirely in release and breaks arity).
-#[inline(always)]
-pub(crate) fn debug_ident<'a>(_raw: &'a [u8], _arena: &'a bun_alloc::Arena) -> DebugIdent<'a> {
-    #[cfg(debug_assertions)]
-    {
-        (_raw, _arena)
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        core::marker::PhantomData
-    }
+/// An `Ident`, or the bundler's `Ref` to a local name of a CSS module.
+#[derive(Clone, Copy)]
+pub enum IdentOrRef<'bump> {
+    Ident(Ident<'bump>),
+    Ref(Ref),
 }
 
-impl IdentOrRef {
-    #[inline]
-    fn ptrbits(self) -> u64 {
-        (self.0 & PTRBITS_MASK) as u64
-    }
+const _: () = assert!(size_of::<IdentOrRef<'static>>() == 16);
 
-    #[inline]
-    fn ref_bit(self) -> bool {
-        (self.0 & REF_BIT) != 0
-    }
-
-    #[inline]
-    fn len_bits(self) -> u64 {
-        (self.0 >> 64) as u64
-    }
-
-    #[inline]
-    fn pack(ptrbits: u64, ref_bit: bool, len: u64) -> Self {
-        let mut v: u128 = (ptrbits as u128) & PTRBITS_MASK;
-        if ref_bit {
-            v |= REF_BIT;
-        }
-        v |= (len as u128) << 64;
-        IdentOrRef(v)
-    }
-
-    pub(crate) fn from_ident(ident: Ident) -> Self {
-        let s = ident.v();
-        let (ptr, len) = (s.as_ptr() as usize as u64, s.len() as u64);
-        // narrowing usize→u63 is checked in debug
-        debug_assert!(ptr & (1u64 << 63) == 0);
-        Self::pack(ptr, false, len)
-    }
-
-    pub(crate) fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
-        let len: u64 = r.to_raw_bits();
-        #[cfg(not(debug_assertions))]
-        let this = Self::pack(0, true, len);
-
-        #[cfg(debug_assertions)]
-        let this = {
-            let (slice, bump) = debug_ident;
-            // bun.handleOom(arena.create(...)) → arena alloc; OOM aborts
-            let heap_ptr: &mut *const [u8] = bump.alloc(std::ptr::from_ref::<[u8]>(slice));
-            let addr = std::ptr::from_mut::<*const [u8]>(heap_ptr) as usize as u64;
-            debug_assert!(addr & (1u64 << 63) == 0);
-            Self::pack(addr, true, len)
-        };
-        #[cfg(not(debug_assertions))]
-        {
-            let _ = debug_ident;
-        }
-
-        this
-    }
-
-    #[inline]
-    pub(crate) fn is_ident(self) -> bool {
-        !self.ref_bit()
-    }
-
-    #[inline]
-    pub(crate) fn is_ref(self) -> bool {
-        self.ref_bit()
-    }
-
-    #[inline]
-    pub(crate) fn as_ident(self) -> Option<Ident> {
-        if !self.ref_bit() {
-            let ptr = self.ptrbits() as usize as *const u8;
-            let len = self.len_bits() as usize;
-            // SAFETY: ptr/len were packed from a valid arena slice in from_ident
-            let slice =
-                std::ptr::from_ref::<[u8]>(unsafe { core::slice::from_raw_parts(ptr, len) });
-            return Some(Ident { v: slice });
-        }
-        None
-    }
-
+impl<'bump> IdentOrRef<'bump> {
     #[inline]
     pub(crate) fn as_ref(self) -> Option<Ref> {
-        if self.ref_bit() {
-            // len_bits stores the exact u64 bit pattern written by from_ref
-            return Some(Ref::from_raw_bits(self.len_bits()));
+        match self {
+            Self::Ident(_) => None,
+            Self::Ref(r) => Some(r),
         }
-        None
     }
 
-    pub(crate) fn as_original_string(self, symbols: &[bun_ast::Symbol]) -> &[u8] {
-        if self.is_ident() {
-            // SAFETY: arena slice reconstructed from packed ptr/len
-            return unsafe { crate::arena_str(self.as_ident().unwrap().v) };
+    pub(crate) fn as_original_string(self, symbols: &'bump [bun_ast::Symbol]) -> &'bump [u8] {
+        match self {
+            Self::Ident(ident) => ident.v,
+            Self::Ref(r) => symbols[r.inner_index() as usize].original_name.slice(),
         }
-        let r = self.as_ref().unwrap();
-        symbols[r.inner_index() as usize].original_name.slice()
     }
 
     pub(crate) fn hash(&self, hasher: &mut Wyhash) {
-        if let Some(ident) = self.as_ident() {
-            hasher.update(ident.v());
-        } else {
-            // SAFETY: self is #[repr(transparent)] u128 (16 bytes), so reading the first 2
-            // bytes is in-bounds. Hashing only 2 of the 16 bytes (sic) is preserved for
-            // behavioral compatibility; PR #30784 hashes the full identity.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2)
-            };
-            hasher.update(bytes);
+        match self {
+            Self::Ident(ident) => hasher.update(ident.v),
+            Self::Ref(r) => hasher.update(&r.to_raw_bits().to_ne_bytes()),
         }
     }
 
     pub fn eql(&self, other: &Self) -> bool {
-        if let (Some(a), Some(b)) = (self.as_ident(), other.as_ident()) {
-            return a.v() == b.v();
-        } else if self.is_ref() && other.is_ref() {
-            let a = self.as_ref().unwrap();
-            let b = other.as_ref().unwrap();
-            return a.eql(b);
+        match (self, other) {
+            (Self::Ident(a), Self::Ident(b)) => a.v == b.v,
+            (Self::Ref(a), Self::Ref(b)) => a.eql(*b),
+            _ => false,
         }
-        false
     }
 }
 
-impl core::fmt::Display for IdentOrRef {
+impl core::fmt::Display for IdentOrRef<'_> {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if self.ref_bit() {
-            let r = self.as_ref().unwrap();
-            return write!(writer, "Ref({:?})", r);
+        match self {
+            Self::Ident(ident) => write!(writer, "Ident({})", bstr::BStr::new(ident.v)),
+            Self::Ref(r) => write!(writer, "Ref({:?})", r),
         }
-        let ident = self.as_ident().unwrap();
-        write!(writer, "Ident({})", bstr::BStr::new(ident.v()))
     }
 }
 
@@ -417,6 +249,7 @@ pub(crate) fn is_reserved_custom_ident(s: &[u8]) -> bool {
             b"default",
             b"revert",
             b"revert-layer",
+            b"revert-rule",
         ],
     )
 }
@@ -426,18 +259,15 @@ arena_slice_newtype! {
     CustomIdent
 }
 
-impl CustomIdent {
-    pub fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
-        let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
-        let valid = !is_reserved_custom_ident(ident);
+impl<'bump> CustomIdent<'bump> {
+    pub(crate) fn new(v: &'bump [u8]) -> Option<Self> {
+        (!is_reserved_custom_ident(v)).then_some(Self { v })
+    }
 
-        if !valid {
-            return Err(location.new_unexpected_token_error(Token::Ident(ident)));
-        }
-        Ok(CustomIdent {
-            v: std::ptr::from_ref::<[u8]>(ident),
-        })
+    pub fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, CustomIdent<'bump>> {
+        let location = input.current_source_location();
+        let ident = input.expect_ident()?;
+        Self::new(ident).ok_or_else(|| location.new_unexpected_token_error(Token::Ident(ident)))
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -456,31 +286,28 @@ impl CustomIdent {
             } else {
                 false
             };
-        // SAFETY: arena-owned slice valid for the printer's `'a` lifetime
-        // (`arena_str` yields an unbounded borrow, which coerces to `'a`).
-        let v = unsafe { crate::arena_str(self.v) };
-        dest.write_ident(v, css_module_custom_idents_enabled)
+        dest.write_ident(self.v, css_module_custom_idents_enabled)
     }
 }
 
 /// A list of CSS [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents) values.
-pub type CustomIdentList = SmallList<CustomIdent, 1>;
+pub type CustomIdentList<'bump> = SmallList<CustomIdent<'bump>, 1>;
 
 /// `none | <custom-ident>+`: the `none` keyword, or a space-separated list of
 /// [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents) values.
 #[derive(Clone, crate::CssEql, crate::DeepClone)]
-pub enum NoneOrCustomIdentList {
+pub enum NoneOrCustomIdentList<'bump> {
     /// The `none` keyword.
     None,
     /// A list of idents.
-    Idents(CustomIdentList),
+    Idents(CustomIdentList<'bump>),
 }
 
-impl NoneOrCustomIdentList {
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+impl<'bump> NoneOrCustomIdentList<'bump> {
+    pub fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let mut idents = CustomIdentList::default();
         while let Ok(ident) = input.try_parse(CustomIdent::parse) {
-            if strings::eql_case_insensitive_ascii_check_length(ident.v(), b"none") {
+            if strings::eql_case_insensitive_ascii_check_length(ident.v, b"none") {
                 if idents.len() == 0 {
                     return Ok(Self::None);
                 }

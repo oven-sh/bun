@@ -63,7 +63,8 @@ pub(crate) use per_file::PerFile;
 pub use registry::{
     Deprecated, Missing, Modes, Names, NativePlugins, Registry, canonical_oxlint_plugin,
     deprecated_info, deprecated_rule, formatting_rule, formatting_rules, normalize_plugin_name,
-    oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id,
+    oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, oxlint_written_name,
+    parse_rule_id,
 };
 pub use resolved::{
     ConfiguredJsRule, ConfiguredRule, Entry, FormattingRule, LinterOptions, ResolvedConfig,
@@ -605,6 +606,7 @@ impl<S: RuleSet> Linter<S> {
                 locator: &locator,
                 problems: &mut problems,
                 skipped: &mut result.skipped_rules,
+                js_plugins: options.js_plugins,
                 configured: Vec::new(),
                 by_other_name: Vec::new(),
             };
@@ -1393,6 +1395,7 @@ struct Inline<'i, 'c, 'a, S: RuleSet> {
     locator: &'i Locator<'a>,
     problems: &'i mut Vec<LintMessage>,
     skipped: &'i mut Vec<Box<[u8]>>,
+    js_plugins: Option<&'i js_plugin::Host<'i>>,
     /// The rules that a comment has already configured.
     configured: Vec<Named<'c>>,
     /// The subset of `configured` that was set [through the paired rule's name](Inline::set_by).
@@ -1569,6 +1572,9 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             let Some(named) = self.find(comment, &id, is_turned_on) else {
                 continue;
             };
+            if let (Some(rule), Some(host)) = (named.js(), self.js_plugins) {
+                host.describe(rule);
+            }
             let given = match &value {
                 Json::Array(items) => items.get(1..).unwrap_or_default(),
                 _ => &[],

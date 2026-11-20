@@ -1,0 +1,34 @@
+// A call may return an instance of a class that belongs to an API the program never uses. The call works all the same.
+//// the-writer-of-a-file
+const writer = Bun.file("written.txt").writer();
+writer.write("one ");
+writer.write("two");
+await writer.end();
+console.log(await Bun.file("written.txt").text());
+//// the-writer-of-a-blob-of-bytes
+try {
+  console.log(typeof new Blob(["a"]).writer("a", {}));
+} catch (error) {
+  console.log(error.name, error.code);
+}
+//// the-stats-of-a-file
+import { statSync, readdirSync } from "node:fs";
+console.log(statSync(".").isDirectory(), readdirSync(".", { withFileTypes: true }).length);
+//// the-stream-of-a-file
+//@ file cwd/read.txt "text"
+let length = 0;
+for await (const chunk of Bun.file("read.txt").stream()) length += chunk.length;
+console.log(length);
+//// the-lines-of-JSONL
+console.log(JSON.stringify(Bun.JSONL.parse('{"a":1}\n{"a":2}\n')));
+//// a-hash-of-node-crypto
+import { createHash, createHmac } from "node:crypto";
+console.log(createHash("sha256").update("a").digest("hex").length, createHmac("sha256", "k").update("a").digest("hex").length);
+//// a-decoder-of-strings
+import { StringDecoder } from "node:string_decoder";
+console.log(new StringDecoder("utf8").write(Buffer.from("a")));
+//// a-histogram
+import { createHistogram } from "node:perf_hooks";
+const histogram = createHistogram();
+histogram.record(5);
+console.log(histogram.count, histogram.max);

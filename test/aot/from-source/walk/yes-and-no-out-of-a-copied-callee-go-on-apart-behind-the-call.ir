@@ -1,0 +1,20 @@
+# `function below(i, n) { return i < n ? true : false; }` copied in line and asked by `if (below(i, list.length))`: yes and no met at a join inside the copy, came back as one boolean, and the
+# caller branched on it a second time; what the first branch had taught was forgotten at the join. A join whose ways bring yes and no to what its end returns out of a copy (or goes by) is walked
+# once for each way, and the answers of the copy go on apart behind the call where the caller's block only branches on them: ONE branch is left. f2 = pick, f1 = below.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = Less
+# CHECK-NEXT: Branch
+# CHECK-NOT: Branch
+# CHECK: = GetArrayElement
+# CHECK-NOT: Branch
+# -- source: yes-and-no-out-of-a-copied-callee-go-on-apart-behind-the-call.ts
+# function below(i: number, n: number): boolean { return i < n ? true : false; }
+# function pick(list: number[], i: number): number { if (below(i, list.length)) return list[i]; return -1; }
+# const table: Record<string, (list: number[], i: number) => number> = { pick };
+# const turns = Number(process.argv[2] || 1) * 100000;
+# const rows = [1, 2, 3, 4, 5, 6, 7, 8];
+# let total = 0;
+# for (let i = 0; i < turns; i++) total += table[process.argv.length > 99 ? "x" : "pick"](rows, i & 15);
+# console.log(total / turns);
+# -- end of source

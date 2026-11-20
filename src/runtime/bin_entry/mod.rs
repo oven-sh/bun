@@ -38,30 +38,13 @@ mod c_abi_exports;
 // (`sys_epoll_pwait2`, …) reach the linker.
 use bun_platform as _;
 
+// Likewise, for the allocator and for what the hook of ICU calls.
+use bun_global_allocator as _;
+use bun_icu_data as _;
+
 use bun_core::Global;
 use bun_core::StackCheck;
 use bun_core::output;
-
-/// mimalloc as the process allocator.
-#[cfg(not(bun_asan))]
-#[global_allocator]
-static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
-
-/// Under ASAN, use the system allocator so the interceptor sees every allocation.
-#[cfg(bun_asan)]
-#[global_allocator]
-static ALLOC: std::alloc::System = std::alloc::System;
-
-/// `alloc` calls this empty function before every allocation. rustc defines it only in the allocator shim it
-/// generates when rustc itself links the final artifact (`allocator_shim_contents`, rustc_codegen_ssa), as a
-/// tripwire against linking Rust libraries any other way (library/alloc/src/alloc.rs: "Make sure we don't
-/// accidentally allow omitting the allocator shim in stable code until it is actually stabilized"). This build
-/// links the rlibs itself, so it is defined here. Everything else a shim would hold already exists: the
-/// allocator symbols come from `#[global_allocator]` above, the allocation error handler from std.
-///
-/// A toolchain that renames the function (`_v2` → `_v3`) fails the link with an undefined symbol naming the new one.
-#[rustc_std_internal_symbol]
-fn __rust_no_alloc_shim_is_unstable_v2() {}
 
 /// ASAN runtime options override. Lives in the binary crate so it is a direct
 /// link input — the ASAN runtime weak-defines this symbol, and an rlib/archive
@@ -154,6 +137,18 @@ pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_ch
 /// the entire process — guaranteed by the C runtime that calls this symbol.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
+    // Before the first allocation. With glibc that one comes before `main`, and so does this call.
+    #[cfg(any(
+        target_os = "android",
+        all(target_os = "linux", not(target_env = "gnu"))
+    ))]
+    {
+        unsafe extern "C" {
+            safe fn Bun__askForAddressSpaceToStart();
+        }
+        Bun__askForAddressSpaceToStart();
+    }
+
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
@@ -190,7 +185,8 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         // `bun.handleOom(convertEnvToWTF8())` — converts the OS UTF-16 env
         // block to WTF-8 and publishes it via `bun_core::os::set_environ()`.
         // Without this, `Bun.env`/`process.env` see only `.env`-file vars.
-        bun_core::handle_oom(bun_sys::windows::env::convert_env_to_wtf8());
+        // SAFETY: no thread has been spawned yet.
+        bun_core::handle_oom(unsafe { bun_sys::windows::env::convert_env_to_wtf8() });
     }
 
     // 2/3. Allocator is static above; argv was captured at step 0; start_time
@@ -221,9 +217,7 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 /// so grow it to 1024 now. Fails with EINVAL (and does nothing) past RLIMIT_NOFILE.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn pregrow_fd_table() {
-    if let Ok(fd) = bun_sys::dup_at_least(bun_sys::Fd::stdin(), 1023) {
-        let _ = bun_sys::close(fd);
-    }
+    let _ = bun_sys::dup_at_least(bun_sys::Fd::stdin(), 1023).map(bun_sys::CloseOnDrop::new);
 }
 
 /// Point the bundled C/C++ dependencies that have an allocator hook at

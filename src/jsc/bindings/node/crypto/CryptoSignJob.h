@@ -12,9 +12,6 @@ JSC_DECLARE_HOST_FUNCTION(jsVerifyOneShot);
 inline constexpr unsigned int NoDsaSignature = static_cast<unsigned int>(-1);
 
 struct SignJobCtx {
-    WTF_MAKE_TZONE_ALLOCATED(SignJobCtx);
-
-public:
     enum class Mode {
         Sign,
         Verify
@@ -51,7 +48,6 @@ public:
 
     void runTask(JSC::JSGlobalObject*);
     JSCallbackArgs runFromJS(JSC::JSGlobalObject*);
-    void deinit();
 
     Mode m_mode;
     RefPtr<KeyObjectData> m_keyData;
@@ -66,12 +62,8 @@ public:
     // fail with "Context parameter is unsupported" on both the sync and callback paths.
     bool m_unsupportedContext = false;
 
-    std::optional<ByteSource> m_signResult = { std::nullopt };
+    std::optional<ncrypto::DataPointer> m_signResult = { std::nullopt };
     std::optional<bool> m_verifyResult = { std::nullopt };
     int m_opensslError = 0;
-};
-
-struct SignJob {
-    static void createAndSchedule(JSC::JSGlobalObject*, SignJobCtx&&, JSC::JSValue callback);
 };
 }

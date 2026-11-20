@@ -4,7 +4,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
-import { webkit, WEBKIT_VERSION } from "../../../scripts/build/deps/webkit.ts";
+import { webkit, WEBKIT_VERSION, webkitSha256Sums } from "../../../scripts/build/deps/webkit.ts";
+import { pinnedSha256 } from "../../../scripts/build/download.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(): Toolchain {
@@ -16,7 +17,6 @@ function mockToolchain(): Toolchain {
     clangVersion: "23.1.1",
     clangResourceDir: "/fake/llvm/lib/clang/23",
     ar: "/fake/llvm/bin/llvm-ar",
-    ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLlvmVersion: "23.1.1",
@@ -39,7 +39,6 @@ function mockToolchain(): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: undefined,
-    mt: undefined,
     nasm: undefined,
   };
 }
@@ -74,7 +73,7 @@ describe("WebKit prebuilt URL", () => {
   const defaultTag = WEBKIT_VERSION.startsWith("autobuild-") ? WEBKIT_VERSION : `autobuild-${WEBKIT_VERSION}`;
 
   test("default webkitVersion is used as the release tag", () => {
-    const cfg = resolveLinuxRelease();
+    const cfg = resolveLinuxRelease({ aot: false });
     expect(cfg.webkitVersion).toBe(WEBKIT_VERSION);
     expect(prebuiltUrlOf(cfg)).toBe(
       `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64.tar.gz`,
@@ -82,34 +81,93 @@ describe("WebKit prebuilt URL", () => {
   });
 
   test("lto picks the -lto artifact from the same release tag", () => {
-    const cfg = resolveLinuxRelease({ lto: true });
+    const cfg = resolveLinuxRelease({ lto: true, aot: false });
     expect(prebuiltUrlOf(cfg)).toBe(
       `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-lto.tar.gz`,
     );
   });
 
-  test("debug picks the -debug artifact from the same release tag", () => {
+  test("debug picks the -debug-aot artifact from the same release tag", () => {
     const cfg = resolveConfig(
       { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan: false, baseline: false, linuxSysroot: "/fake" },
       mockToolchain(),
     );
     expect(prebuiltUrlOf(cfg)).toBe(
-      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-debug.tar.gz`,
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-debug-aot.tar.gz`,
     );
   });
 
+  test("every variant is built with JavaScriptCore's ahead-of-time compiler", () => {
+    const suffixOf = (partial: PartialConfig) =>
+      prebuiltUrlOf(resolveLinuxRelease(partial)).match(/bun-webkit-linux-amd64(.*)\.tar\.gz$/)?.[1];
+    expect({
+      release: suffixOf({}),
+      lto: suffixOf({ lto: true }),
+      ltoHardened: suffixOf({ lto: true, hardened: true }),
+      hardened: suffixOf({ hardened: true }),
+      asan: suffixOf({ asan: true }),
+      assertions: suffixOf({ assertions: true }),
+      fuzzilli: suffixOf({ assertions: true, fuzzilli: true }),
+    }).toEqual({
+      release: "-aot",
+      lto: "-lto-aot",
+      ltoHardened: "-lto-hardened-aot",
+      hardened: "-hardened-aot",
+      asan: "-asan-aot",
+      assertions: "-assertions-aot",
+      fuzzilli: "-assertions-coverage-aot",
+    });
+  });
+
   test("baseline does not affect the suffix (every x64 WebKit is built at the nehalem floor)", () => {
-    expect(prebuiltUrlOf(resolveLinuxRelease({ lto: true, baseline: true }))).toBe(
+    expect(prebuiltUrlOf(resolveLinuxRelease({ lto: true, baseline: true, aot: false }))).toBe(
       `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-lto.tar.gz`,
     );
     expect(prebuiltUrlOf(resolveLinuxRelease({ asan: true, baseline: true }))).toBe(
-      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-asan.tar.gz`,
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-asan-aot.tar.gz`,
     );
+  });
+
+  test("--hardened=on takes the hardened prebuilt where one is published", () => {
+    expect(prebuiltUrlOf(resolveLinuxRelease({ hardened: true }))).toBe(
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-hardened-aot.tar.gz`,
+    );
+    expect(prebuiltUrlOf(resolveLinuxRelease({ hardened: true, lto: true, aot: false }))).toBe(
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-lto-hardened.tar.gz`,
+    );
+    const others = [
+      { arch: "aarch64" },
+      { buildType: "Debug" },
+      { asan: true },
+      { assertions: true },
+      { fuzzilli: true },
+    ];
+    for (const other of others as PartialConfig[]) {
+      expect(() => resolveLinuxRelease({ hardened: true, ...other })).toThrow("or webkit=local");
+      expect(resolveLinuxRelease({ hardened: true, webkit: "local", ...other }).hardened).toBe(true);
+    }
+    expect(() => resolveLinuxRelease({ hardened: true, abi: "musl" })).toThrow("or webkit=local");
+  });
+
+  test("a build with the ahead-of-time compiler is called -aot, and only what ships comes without it", () => {
+    const name = (partial: PartialConfig) => prebuiltUrlOf(resolveLinuxRelease(partial)).split("/").pop();
+    expect(name({})).toBe("bun-webkit-linux-amd64-aot.tar.gz");
+    expect(name({ lto: true })).toBe("bun-webkit-linux-amd64-lto-aot.tar.gz");
+    expect(name({ lto: true, hardened: true })).toBe("bun-webkit-linux-amd64-lto-hardened-aot.tar.gz");
+    for (const other of [
+      { asan: true },
+      { assertions: true },
+      { fuzzilli: true },
+      { hardened: true },
+    ] as PartialConfig[]) {
+      expect(name(other)).toEndWith("-aot.tar.gz");
+      expect(() => name({ ...other, aot: false })).toThrow("without the ahead-of-time compiler");
+    }
   });
 
   test("--webkit-version=<sha> uses the plain autobuild-<sha> tag", () => {
     const sha = "0123456789abcdef0123456789abcdef01234567";
-    const cfg = resolveLinuxRelease({ webkitVersion: sha });
+    const cfg = resolveLinuxRelease({ webkitVersion: sha, aot: false });
     expect(prebuiltUrlOf(cfg)).toBe(
       `https://github.com/oven-sh/WebKit/releases/download/autobuild-${sha}/bun-webkit-linux-amd64.tar.gz`,
     );
@@ -117,10 +175,31 @@ describe("WebKit prebuilt URL", () => {
 
   test("--webkit-version=autobuild-* is passed through verbatim", () => {
     const tag = "autobuild-preview-pr-999-deadbeef";
-    const cfg = resolveLinuxRelease({ webkitVersion: tag });
+    const cfg = resolveLinuxRelease({ webkitVersion: tag, aot: false });
     expect(prebuiltUrlOf(cfg)).toBe(
       `https://github.com/oven-sh/WebKit/releases/download/${tag}/bun-webkit-linux-amd64.tar.gz`,
     );
+  });
+
+  test("webkit.sha256 has the pins of WEBKIT_VERSION (bun run pin-webkit)", async () => {
+    const lines = (await Bun.file(webkitSha256Sums).text()).trimEnd().split("\n");
+    const isPin = (line: string) => /^[0-9a-f]{64}  (\S+)\/bun-webkit-[\w-]+\.tar\.gz$/.exec(line)?.[1] === defaultTag;
+    expect(lines.filter(line => !isPin(line))).toEqual([]);
+
+    for (const partial of [{}, { lto: true }, { lto: true, aot: false }, { asan: true }, { hardened: true }]) {
+      const url = prebuiltUrlOf(resolveLinuxRelease(partial));
+      expect([url, pinnedSha256(webkitSha256Sums, url)]).toEqual([url, expect.stringMatching(/^[0-9a-f]{64}$/)]);
+    }
+  });
+
+  test("the pins apply to WEBKIT_VERSION however it is spelled, and to no other version", () => {
+    const sumsOf = (partial: PartialConfig) => {
+      const src = webkit.source(resolveLinuxRelease(partial));
+      return src.kind === "prebuilt" ? src.sha256sums : src.kind;
+    };
+    expect(sumsOf({})).toBe(webkitSha256Sums);
+    expect(sumsOf({ webkitVersion: defaultTag })).toBe(webkitSha256Sums);
+    expect(sumsOf({ webkitVersion: "autobuild-preview-pr-999-deadbeef" })).toBeUndefined();
   });
 
   test("WEBKIT_VERSION is either a 40-hex sha or an autobuild-* tag", () => {

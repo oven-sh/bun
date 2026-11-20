@@ -1,0 +1,46 @@
+#### socket-type-as-string-object.js
+let asked = 0;
+const binaryType = new String("buffer");
+binaryType[Symbol.toPrimitive] = () => { asked++; return "uint8array"; };
+Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { binaryType, data() {} } }).stop(true);
+console.log(asked);
+#### socket-type-as-string-object.js prints
+1
+#### workers-ended-while-making-formatters/main.js
+const ended = worker => new Promise(resolve => worker.addEventListener("close", resolve));
+for (let round = 0; round < 12; round++) {
+  const workers = Array.from({ length: 8 }, () => new Worker(new URL("./worker.js", import.meta.url).href));
+  const all = workers.map(ended);
+  for (const worker of workers) setTimeout(() => worker.terminate(), Math.random() * 16);
+  await Promise.all(all);
+}
+console.log("every Worker has ended");
+#### workers-ended-while-making-formatters/worker.js
+for (;;) {
+  new Intl.DateTimeFormat("en-US", { year: "numeric", month: "short" });
+  new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+  new Date(0).toLocaleString("en-US", { timeZone: "UTC" });
+  (1234.5).toLocaleString("en-US");
+}
+#### workers-ended-while-making-formatters alone
+#### workers-ended-while-making-formatters prints
+every Worker has ended
+#### sorted-copy-of-a-very-long-list.js
+
+      const list = [];
+      list[300_000_000] = 1;
+      list[0] = 2;
+      let seen;
+      const before = process.resourceUsage().maxRSS;
+      try {
+        list.toSorted(() => {
+          throw new Error("the comparator was asked");
+        });
+        seen = "no error";
+      } catch (error) {
+        seen = error.name + ": " + error.message;
+      }
+      console.log(seen, "| grew by less than 128 MB:", process.resourceUsage().maxRSS - before < 128 * 1024);
+    
+#### sorted-copy-of-a-very-long-list.js prints
+Error: the comparator was asked | grew by less than 128 MB: true

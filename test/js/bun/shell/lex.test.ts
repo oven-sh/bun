@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
+import { bunEnv, bunExe } from "harness";
 import { createTestBuilder, redirect } from "./util";
 const { lex } = shellInternals;
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -676,6 +677,164 @@ describe("lex shell", () => {
     expect(JSON.parse(result)).toEqual(expected);
   });
 
+  // The text before a command substitution becomes its own token and stays
+  // outside the substitution. Each row gives the same tokens in both spellings.
+  test.each([
+    [
+      "two in one word",
+      "a`b`c`d`e",
+      "a$(b)c$(d)e",
+      [
+        { Text: "a" },
+        { CmdSubstBegin: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { Text: "c" },
+        { CmdSubstBegin: {} },
+        { Text: "d" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { Text: "e" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "text with a space inside double quotes",
+      '"a `b` c"',
+      '"a $(b) c"',
+      [
+        { DoubleQuotedText: "a " },
+        { CmdSubstBegin: {} },
+        { CmdSubstQuoted: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { DoubleQuotedText: " c" },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "inside $(...)",
+      "$(a`b`c)",
+      "$(a$(b)c)",
+      [
+        { CmdSubstBegin: {} },
+        { Text: "a" },
+        { CmdSubstBegin: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { Text: "c" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "inside a subshell",
+      "(a`b`c)",
+      "(a$(b)c)",
+      [
+        { OpenParen: {} },
+        { Text: "a" },
+        { CmdSubstBegin: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { Text: "c" },
+        { Delimit: {} },
+        { CloseParen: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "after non-ASCII text",
+      "é`b`",
+      "é$(b)",
+      [{ Text: "é" }, { CmdSubstBegin: {} }, { Text: "b" }, { Delimit: {} }, { CmdSubstEnd: {} }, { Eof: {} }],
+    ],
+    [
+      "in a redirect target",
+      "> o`b`",
+      "> o$(b)",
+      [
+        { Redirect: redirect({ stdout: true }) },
+        { Text: "o" },
+        { CmdSubstBegin: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "after a digit",
+      "1`b`",
+      "1$(b)",
+      [{ Text: "1" }, { CmdSubstBegin: {} }, { Text: "b" }, { Delimit: {} }, { CmdSubstEnd: {} }, { Eof: {} }],
+    ],
+    [
+      "after an escaped space",
+      "a\\ `b`",
+      "a\\ $(b)",
+      [{ Text: "a " }, { CmdSubstBegin: {} }, { Text: "b" }, { Delimit: {} }, { CmdSubstEnd: {} }, { Eof: {} }],
+    ],
+    ["empty body", "a``", "a$()", [{ Text: "a" }, { CmdSubstBegin: {} }, { CmdSubstEnd: {} }, { Eof: {} }]],
+  ])("command substitution inside a word: %s", (_name, backtick, dollar, expected) => {
+    expect(JSON.parse(lex({ raw: [backtick] }))).toEqual(expected);
+    expect(JSON.parse(lex({ raw: [dollar] }))).toEqual(expected);
+  });
+
+  // The text before a backtick substitution stays in its word. It is not run
+  // inside the substitution.
+  describe("backtick substitution inside a word", () => {
+    const BACKTICK = { raw: "`" };
+
+    TestBuilder.command`echo pre${BACKTICK}echo m${BACKTICK}post`
+      .stdout("prempost\n")
+      .runAsTest("text before and after");
+    TestBuilder.command`echo pre${BACKTICK}echo m${BACKTICK}`.stdout("prem\n").runAsTest("text before");
+    TestBuilder.command`echo "a ${BACKTICK}echo m${BACKTICK} b"`.stdout("a m b\n").runAsTest("inside double quotes");
+    TestBuilder.command`echo a${BACKTICK}echo b${BACKTICK}c${BACKTICK}echo d${BACKTICK}e`
+      .stdout("abcde\n")
+      .runAsTest("two substitutions in one word");
+    TestBuilder.command`echo $(echo pre${BACKTICK}echo m${BACKTICK}post)`
+      .stdout("prempost\n")
+      .runAsTest("inside $(...)");
+    TestBuilder.command`(echo pre${BACKTICK}echo m${BACKTICK}post)`.stdout("prempost\n").runAsTest("inside a subshell");
+    TestBuilder.command`echo ${"a b"}${BACKTICK}echo m${BACKTICK}`
+      .stdout("a bm\n")
+      .runAsTest("after an interpolated value");
+    TestBuilder.command`echo a\ ${BACKTICK}echo m${BACKTICK}`.stdout("a m\n").runAsTest("after an escaped space");
+    TestBuilder.command`echo 1${BACKTICK}echo 2${BACKTICK}`.stdout("12\n").runAsTest("after a digit");
+    TestBuilder.command`echo ${{ raw: "é" }}${BACKTICK}echo m${BACKTICK}`
+      .stdout("ém\n")
+      .runAsTest("after non-ASCII text");
+    TestBuilder.command`echo hi > out${BACKTICK}echo 1${BACKTICK}.txt`
+      .ensureTempDir()
+      .fileEquals("out1.txt", "hi\n")
+      .runAsTest("in a redirect target");
+    TestBuilder.command`FOO=${BACKTICK}echo hi${BACKTICK}; echo "[$FOO]"`
+      .stdout("[hi]\n")
+      .runAsTest("assignment value");
+    TestBuilder.command`FOO=${BACKTICK}echo hi${BACKTICK} && echo "[$FOO]"`
+      .stdout("[hi]\n")
+      .runAsTest("assignment that heads an && chain");
+    TestBuilder.command`FOO=x${BACKTICK}echo hi${BACKTICK}y; echo "[$FOO]"`
+      .stdout("[xhiy]\n")
+      .runAsTest("assignment value with text around the substitution");
+    TestBuilder.command`export FOO=${BACKTICK}echo hi${BACKTICK}; echo "[$FOO]"`
+      .stdout("[hi]\n")
+      .runAsTest("export operand");
+    TestBuilder.command`FOO=${BACKTICK}echo hi${BACKTICK} ${bunExe()} -e ${"console.log(process.env.FOO)"}`
+      .env(bunEnv)
+      .stdout("hi\n")
+      .runAsTest("assignment before a command");
+    TestBuilder.command`echo ${BACKTICK}echo m${BACKTICK}post`.stdout("mpost\n").runAsTest("at the start of a word");
+  });
+
   test("cmd_sub_backtick", () => {
     const expected = [
       {
@@ -704,6 +863,140 @@ describe("lex shell", () => {
     const result = lex`echo foo \`ls\``;
 
     expect(JSON.parse(result)).toEqual(expected);
+  });
+
+  // The `)` of `$(` and the closing backtick put a Delimit before CmdSubstEnd only after a
+  // token that is part of a word. The parser takes a Delimit after any other token for the
+  // start of one more command: `expected a command or assignment but got: "CmdSubstEnd"`.
+  describe("end of cmd subst", () => {
+    const buffer = new Uint8Array(8);
+    // `@` in the source is an interpolated Buffer.
+    const tokens = (source: string) => {
+      const raw = source.split("@");
+      return JSON.parse(lex({ raw }, ...raw.slice(1).map(() => buffer)));
+    };
+    const echo = [{ Text: "echo" }, { Delimit: {} }];
+    const echoHi = [...echo, { Text: "hi" }, { Delimit: {} }];
+    const toBuffer = [...echoHi, { Redirect: redirect({ stdout: true }) }, { JSObjRef: 0 }];
+
+    // [what the body ends in, the body, the tokens of the body]
+    const bodies: [string, string, object[]][] = [
+      ["a JS object", "echo hi > @", toBuffer],
+      ["a JS object and a blank", "echo hi > @ ", toBuffer],
+      ["a subshell", " (echo hi)", [{ OpenParen: {} }, ...echoHi, { CloseParen: {} }]],
+      [
+        "`]]` and a blank",
+        "[[ -n x ]] ",
+        [
+          { DoubleBracketOpen: {} },
+          { Text: "-n" },
+          { Delimit: {} },
+          { Text: "x" },
+          { Delimit: {} },
+          { DoubleBracketClose: {} },
+        ],
+      ],
+      ["`[[`", "[[ ", [{ DoubleBracketOpen: {} }]],
+      ["nothing", "", []],
+      ["a blank", " ", []],
+      ["`;`", "echo hi;", [...echoHi, { Semicolon: {} }]],
+      ["a newline", "echo hi\n", [...echoHi, { Newline: {} }]],
+      ["`2>&1`", "echo hi 2>&1", [...echoHi, { Redirect: redirect({ stdout: true, duplicate_out: true }) }]],
+      ["`|`", "echo hi |", [...echoHi, { Pipe: {} }]],
+      ["`||`", "echo hi ||", [...echoHi, { DoublePipe: {} }]],
+      ["`&&`", "echo hi &&", [...echoHi, { DoubleAmpersand: {} }]],
+      ["`&`", "echo hi &", [...echoHi, { Ampersand: {} }]],
+      // A token that is part of a word keeps its Delimit.
+      ["a variable", "echo $FOO", [...echo, { Var: "FOO" }, { Delimit: {} }]],
+      ["a closing quote", 'echo "hi"', [...echo, { DoubleQuotedText: "hi" }, { Delimit: {} }]],
+      ["`*`", "echo *", [...echo, { Asterisk: {} }, { Delimit: {} }]],
+      [
+        "a nested substitution",
+        "echo $(ls)",
+        [...echo, { CmdSubstBegin: {} }, { Text: "ls" }, { Delimit: {} }, { CmdSubstEnd: {} }, { Delimit: {} }],
+      ],
+    ];
+
+    test.each(
+      bodies.flatMap(([end, body, expected]) => [
+        ["$(...) ends in " + end, "$(" + body + ")", expected] as const,
+        ["`...` ends in " + end, "`" + body + "`", expected] as const,
+      ]),
+    )("%s", (_name, subst, expected) => {
+      // A script that is not ASCII goes through the other lexer.
+      for (const word of ["echo", "écho"]) {
+        expect(tokens(`${word} ${subst}`)).toEqual([
+          { Text: word },
+          { Delimit: {} },
+          { CmdSubstBegin: {} },
+          ...expected,
+          { CmdSubstEnd: {} },
+          { Eof: {} },
+        ]);
+      }
+    });
+
+    test.each(['echo "$()"', 'echo "``"'])("empty body in double quotes: %s", source => {
+      expect(tokens(source)).toEqual([
+        ...echo,
+        { CmdSubstBegin: {} },
+        { CmdSubstQuoted: {} },
+        { CmdSubstEnd: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    // Text directly before the opening backtick stays outside the body.
+    test.each([
+      [
+        "X=`echo hi;`",
+        [{ Text: "X=" }, { CmdSubstBegin: {} }, ...echoHi, { Semicolon: {} }, { CmdSubstEnd: {} }, { Eof: {} }],
+      ],
+      [
+        "X=`cat < @`",
+        [
+          { Text: "X=" },
+          { CmdSubstBegin: {} },
+          { Text: "cat" },
+          { Delimit: {} },
+          { Redirect: redirect({ stdin: true }) },
+          { JSObjRef: 0 },
+          { CmdSubstEnd: {} },
+          { Eof: {} },
+        ],
+      ],
+      [
+        "echo pre`(echo hi)`post",
+        [
+          ...echo,
+          { Text: "pre" },
+          { CmdSubstBegin: {} },
+          { OpenParen: {} },
+          ...echoHi,
+          { CloseParen: {} },
+          { CmdSubstEnd: {} },
+          { Text: "post" },
+          { Delimit: {} },
+          { Eof: {} },
+        ],
+      ],
+      [
+        'echo "a `echo hi\n` b"',
+        [
+          ...echo,
+          { DoubleQuotedText: "a " },
+          { CmdSubstBegin: {} },
+          { CmdSubstQuoted: {} },
+          ...echoHi,
+          { Newline: {} },
+          { CmdSubstEnd: {} },
+          { DoubleQuotedText: " b" },
+          { Eof: {} },
+        ],
+      ],
+    ])("text before the backtick: %s", (source, expected) => {
+      expect(tokens(source)).toEqual(expected);
+    });
   });
 
   // Where the lexer puts `Delimit` when a word's last part is not plain text
@@ -813,6 +1106,73 @@ describe("lex shell", () => {
       [{ Text: "foo" }, { Var: "BAR" }, { Delimit: {} }, { Text: "baz" }, { Delimit: {} }, { Eof: {} }],
     ],
     [
+      "backtick substitution inside a word",
+      "a`b`c d",
+      [
+        { Text: "a" },
+        { CmdSubstBegin: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { Text: "c" },
+        { Delimit: {} },
+        { Text: "d" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "backtick substitution inside double quotes",
+      '"a`b`c"',
+      [
+        { DoubleQuotedText: "a" },
+        { CmdSubstBegin: {} },
+        { CmdSubstQuoted: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { DoubleQuotedText: "c" },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "backtick substitution as an assignment value",
+      "FOO=`echo hi`",
+      [
+        { Text: "FOO=" },
+        { CmdSubstBegin: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "hi" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "subshell after text",
+      "a(b)",
+      [
+        { Text: "a" },
+        { Delimit: {} },
+        { OpenParen: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { CloseParen: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "subshell after a closing quote",
+      '"a"(b)',
+      [{ DoubleQuotedText: "a" }, { OpenParen: {} }, { Text: "b" }, { Delimit: {} }, { CloseParen: {} }, { Eof: {} }],
+    ],
+    [
+      "subshell after a variable",
+      "$X(b)",
+      [{ Var: "X" }, { OpenParen: {} }, { Text: "b" }, { Delimit: {} }, { CloseParen: {} }, { Eof: {} }],
+    ],
+    [
       "glob inside a word",
       "a*b c",
       [{ Text: "a" }, { Asterisk: {} }, { Text: "b" }, { Delimit: {} }, { Text: "c" }, { Delimit: {} }, { Eof: {} }],
@@ -858,6 +1218,54 @@ describe("lex shell", () => {
         .run();
 
       await TestBuilder.command`echo hi && (echo uh oh`.error("Unclosed subshell").run();
+    });
+
+    // bash reads `$((...))` as arithmetic, never as a subshell inside a command substitution.
+    test.each([
+      "echo $((1+2))",
+      "X=$((X+1))",
+      "echo $(((1+2)*3))",
+      'echo "$((1+2))"',
+      "echo $(echo $((1+2)))",
+      "echo `echo $((1+2))`",
+      "écho $((1+2))",
+    ])("arithmetic expansion: %s", source => {
+      expect(() => lex({ raw: [source] })).toThrow(
+        new Error(
+          "Arithmetic expansion `$((...))` is not supported yet. Compute the value in JavaScript: `${a + b}` in a `$` template, or `$(bun -e 'console.log(1 + 2)')` in a script. For a subshell inside a command substitution, write `$( (...) )`.",
+        ),
+      );
+    });
+
+    // `((` that does not follow `$`, or that has an escaped paren, is not `$((...))`.
+    describe("not arithmetic expansion", () => {
+      const subshell = [
+        { OpenParen: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "a" },
+        { Delimit: {} },
+        { CloseParen: {} },
+      ];
+      const twoSubshells = [{ OpenParen: {} }, ...subshell, { CloseParen: {} }];
+      const echoOf = (...body: object[]) => [
+        { Text: "echo" },
+        { Delimit: {} },
+        { CmdSubstBegin: {} },
+        ...body,
+        { CmdSubstEnd: {} },
+        { Eof: {} },
+      ];
+
+      test.each([
+        ["((echo a))", [...twoSubshells, { Eof: {} }]],
+        ["echo `((echo a))`", echoOf(...twoSubshells)],
+        ["echo $( ((echo a)) )", echoOf(...twoSubshells)],
+        ["echo $(\\((echo a))", echoOf({ Text: "(" }, { Delimit: {} }, ...subshell)],
+        ["echo $((echo a)\\))", echoOf(...subshell, { Text: ")" }, { Delimit: {} })],
+      ])("%s", (source, expected) => {
+        expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+      });
     });
 
     // https://github.com/oven-sh/bun/issues/33235

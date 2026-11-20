@@ -27,7 +27,7 @@ test.skipIf(isWindows)("FilePoll teardown tolerates an fd closed while still reg
     "fixture.js": `
 import { closeSync, constants, fstatSync, openSync, readdirSync } from "node:fs";
 
-function pipeFds() {
+function socketFds() {
   const dir = process.platform === "linux" ? "/proc/self/fd" : "/dev/fd";
   const out = new Map();
   for (const name of readdirSync(dir)) {
@@ -35,7 +35,8 @@ function pipeFds() {
     if (!Number.isInteger(fd)) continue;
     try {
       const st = fstatSync(fd);
-      if (st.isFIFO() || st.isSocket()) out.set(fd, st.ino);
+      // stdout is a socketpair; Darwin kqueue descriptors also report FIFO.
+      if (st.isSocket()) out.set(fd, st.ino);
     } catch {
       // closed between readdir and fstat (e.g. readdir's own dir fd)
     }
@@ -43,7 +44,7 @@ function pipeFds() {
   return out;
 }
 
-const before = pipeFds();
+const before = socketFds();
 const proc = Bun.spawn({
   cmd: ["sleep", "120"],
   stdin: "ignore",
@@ -58,12 +59,12 @@ try {
   const pending = reader.read();
   await new Promise(resolve => setImmediate(resolve));
 
-  // Only stdout is piped, so exactly one new pipe/socket fd exists: the
+  // Only stdout is piped, so exactly one new socket fd exists: the
   // parent's read end of the stdout socketpair, which is what the FilePoll
   // is registered on.
-  const candidates = [...pipeFds()].filter(([fd, ino]) => before.get(fd) !== ino).map(([fd]) => fd);
+  const candidates = [...socketFds()].filter(([fd, ino]) => before.get(fd) !== ino).map(([fd]) => fd);
   if (candidates.length !== 1) {
-    throw new Error("expected exactly one new pipe fd, got [" + candidates.join(", ") + "]");
+    throw new Error("expected exactly one new socket fd, got [" + candidates.join(", ") + "]");
   }
   const stdoutFd = candidates[0];
 

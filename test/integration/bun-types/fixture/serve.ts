@@ -92,3 +92,19 @@ Bun.serve({
   ],
   fetch: () => new Response(),
 });
+
+Bun.serve({
+  development: { hmr: true, allowedHosts: ["mybox.local", ".ngrok-free.app"] },
+  fetch: () => new Response(),
+});
+
+Bun.serve({
+  development: { allowedHosts: true },
+  fetch: () => new Response(),
+});
+
+Bun.serve({
+  // @ts-expect-error allowedHosts is an array of hostnames or `true`
+  development: { allowedHosts: "mybox.local" },
+  fetch: () => new Response(),
+});

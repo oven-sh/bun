@@ -296,6 +296,23 @@ describe("FormData", () => {
     }
   });
 
+  it("should keep the Content-Type of a file part whichever header line comes first", async () => {
+    const part = (headers: string[]) =>
+      `--X\r\n${headers.join("\r\n")}\r\n\r\nhi\r\n`;
+    const disposition = (name: string) => `Content-Disposition: form-data; name="${name}"; filename="${name}.txt"`;
+    const body =
+      part([disposition("a"), "Content-Type: text/x-after"]) +
+      part(["Content-Type: text/x-before", disposition("b")]) +
+      part([disposition("c"), "Content-Type: text/x-after", "X-Other: 1"]) +
+      "--X--\r\n";
+    const fd = await new Response(body, {
+      headers: { "Content-Type": "multipart/form-data; boundary=X" },
+    }).formData();
+    expect((fd.get("a") as File).type).toBe("text/x-after");
+    expect((fd.get("b") as File).type).toBe("text/x-before");
+    expect((fd.get("c") as File).type).toBe("text/x-after");
+  });
+
   // RFC 2045 §5.1 / RFC 7231 §3.1.1.1: media type/subtype and parameter
   // attribute names are case-insensitive; the boundary VALUE is byte-exact.
   describe("Content-Type case-insensitivity", () => {

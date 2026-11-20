@@ -1,6 +1,6 @@
 import { randomUUIDv7, RedisClient, spawn } from "bun";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import { join } from "node:path";
 import {
   ctx as _ctx,
@@ -17,6 +17,7 @@ import {
 } from "./test-utils";
 import type { RedisTestStartMessage } from "./valkey.failing-subscriber";
 import type { Message } from "./valkey.failing-subscriber-no-ipc";
+import { numberArguments } from "./valkey.number-arguments.fixture";
 
 for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
   const ctx = { ..._ctx, redis: connectionType ? _ctx.redis : (_ctx.redisTLS as RedisClient) };
@@ -63,6 +64,18 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         const getValue = await redis.get(testKey);
         expect(getValue).toMatchInlineSnapshot(`"${testValue}"`);
+      });
+
+      test("should store a number as the string that String(number) returns", async () => {
+        const redis = ctx.redis;
+
+        // The first sample of docs/runtime/redis.mdx.
+        expect(await redis.set("counter", 0)).toBe("OK");
+        expect(await redis.get("counter")).toBe("0");
+        expect(await redis.incr("counter")).toBe(1);
+
+        expect(await redis.set("ratio", 1.5)).toBe("OK");
+        expect(await redis.get("ratio")).toBe("1.5");
       });
 
       test("should test key existence", async () => {
@@ -7517,6 +7530,58 @@ describe("RedisClient argument validation", () => {
     } finally {
       client.close();
     }
+  });
+
+  test("a number is accepted as a value, a list element, a member and an option value", async () => {
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      const refused = numberArguments(client).filter(call => syncThrow(call) !== undefined);
+      expect(refused.map(String)).toEqual([]);
+
+      // The types refuse these (test/integration/bun-types/fixture/redis.ts), and so does the client.
+      for (const call of [
+        () => client.set("k", 10n as any),
+        () => client.set("k", true as any),
+        () => client.set("k", {} as any),
+        () => client.set("k", new Number(5) as any),
+        () => client.append("k", 10n as any),
+        () => client.lpush("list", true as any),
+        () => client.sadd("set", 10n as any),
+      ]) {
+        expect(syncThrow(call)).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+      }
+    } finally {
+      client.close();
+    }
+
+    // The declarations of this repository accept the same calls. `bun check` prints each diagnostic on stdout.
+    using dir = tempDir("redis-number-arguments", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          noEmit: true,
+          target: "esnext",
+          module: "esnext",
+          moduleResolution: "bundler",
+          lib: ["esnext"],
+          typeRoots: [join(import.meta.dir, "..", "..", "..", "packages")],
+          types: ["bun-types"],
+          skipLibCheck: true,
+        },
+      }),
+      "calls.ts": await Bun.file(join(import.meta.dir, "valkey.number-arguments.fixture.ts")).text(),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "check"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("No type errors in 1 file");
+    expect(exitCode).toBe(0);
   });
 });
 

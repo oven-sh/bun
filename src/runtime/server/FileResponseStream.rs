@@ -266,6 +266,11 @@ impl FileResponseStream {
             Ok(result) => this_ref.on_read_result(result),
             Err(err) => return this_ref.fail_with(err),
         }
+        // The POSIX reader reports a failed poll registration through `on_reader_error`, then returns `Ok`.
+        #[cfg(unix)]
+        if this_ref.state.get().contains(State::FINISHED) {
+            return;
+        }
 
         reader.update_ref(true);
 

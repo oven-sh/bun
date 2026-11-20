@@ -3651,6 +3651,9 @@ class QuicSession {
       return;
     }
 
+    // A closing endpoint cuts off sessions that make no progress.
+    if (this.#inner.endpoint?.closing) markPromiseAsHandled(this.closed);
+
     switch (errorType) {
       case 0:
         this.destroy(

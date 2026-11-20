@@ -72,7 +72,7 @@ impl Connection {
         if stream.flags.contains(Flags::WRITE_DONE) {
             return None;
         }
-        let capacity = state.capacity(stream);
+        let capacity = state.capacity(id, stream);
         let overhead = match &stream.role {
             Role::Message(message) if !message.has_sent_headers => return None,
             Role::Message(_) => data_frame_header(capacity.min(data.len() as u64)).1,

@@ -503,14 +503,36 @@ fn turns(raw: &mut Raw) -> Vec<(u64, u64)> {
 }
 
 #[test]
-fn streams_take_turns() {
-    let mut raw = Raw::server().connected();
-    for _ in 0..2 {
-        let id = raw.peer.open(Unidirectional);
-        raw.peer.send(id, &filler(0, 40_000), true);
+fn streams_take_turns_until_all_is_written() {
+    let alternating = [(2, 0), (6, 0), (2, 1), (6, 1), (2, 2), (6, 2)];
+    for (finishes, is_incremental, expected) in [
+        (false, false, &alternating[..]),
+        (true, true, &alternating),
+        (true, false, &[(2, 0), (6, 0), (2, 2), (6, 1)]),
+    ] {
+        let mut raw = Raw::server().connected();
+        for _ in 0..2 {
+            let id = raw.peer.open(Unidirectional);
+            (raw.connection()).set_priority(StreamId(id), priority(3, is_incremental));
+            raw.peer.send(id, &filler(0, 40_000), finishes);
+        }
+        assert_eq!(turns(&mut raw), expected);
     }
-    let expected = [(2, 0), (6, 0), (2, 1), (6, 1), (2, 2), (6, 2)];
-    assert_eq!(turns(&mut raw), expected);
+}
+
+#[test]
+fn streams_do_not_write_out_of_turn() {
+    let mut raw = Raw::server().connected();
+    let ids = [(); 3].map(|()| StreamId(raw.peer.open(Unidirectional)));
+    let data = filler(0, 20_000);
+    raw.connection().want_write(ids[0]);
+    assert_eq!(raw.connection().write(ids[1], &data), Some(8192));
+    (raw.connection()).set_priority(ids[2], priority(2, false));
+    assert_eq!(raw.connection().write(ids[2], &data), Some(20_000));
+    assert!(raw.peer.poll(raw.now));
+    assert_eq!(raw.peer.log.pop().unwrap(), "2 writable");
+    assert_eq!(raw.connection().write(ids[0], &data), Some(20_000));
+    assert_eq!(raw.connection().write(ids[1], &data), Some(0));
 }
 
 #[test]
@@ -615,7 +637,7 @@ fn streams_of_a_client_take_turns_unless_one_is_more_urgent() {
     let mut raw = raw.connected();
     for urgency in [3, 3, 2] {
         let id = raw.peer.open(Unidirectional);
-        raw.peer.send(id, &filler(0, 20_000), true);
+        raw.peer.send(id, &filler(0, 20_000), false);
         (raw.connection()).set_priority(StreamId(id), priority(urgency, false));
     }
     assert_eq!(turns(&mut raw), [(10, 0), (2, 0), (6, 0), (2, 1), (6, 1)]);

@@ -110,7 +110,7 @@ pub(crate) struct State {
 
     sendable: Line,
     turns: u64,
-    /// How many bytes have passed the long responses since one of them had its turn.
+    /// How many bytes have passed the serial streams since one of them had its turn.
     passed: u64,
     lost: VecDeque<StreamId>,
     /// They wait for MAX_DATA.
@@ -118,6 +118,8 @@ pub(crate) struct State {
     owing: VecDeque<StreamId>,
     readable: VecDeque<StreamId>,
     writable: Line,
+    /// The last one that was told to write.
+    invited: Option<StreamId>,
     closing: VecDeque<StreamId>,
 }
 

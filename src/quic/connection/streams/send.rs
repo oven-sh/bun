@@ -20,9 +20,10 @@ const BULK_LEN: u64 = 128 * 1024;
 const LITTLE: u64 = 2 * 1024;
 /// After how much a response that is not incremental shares the path all the same (RFC 9218 §10).
 const LONG_LEN: u64 = 1024 * 1024;
-/// A rank is made of the urgency, this bit, the turn, and whether the stream takes turns.
-const LONG: u64 = 1 << 59;
-const TURN_BITS: u64 = LONG - 2;
+/// A rank is made of the urgency, this bit, the turn, and whether the stream takes turns. Those that have the bit go one
+/// after the other, and the first of them alternates with those that have not.
+const SERIAL: u64 = 1 << 59;
+const TURN_BITS: u64 = SERIAL - 2;
 /// A type and three integers.
 const MAX_OWED_FRAME_LEN: usize = 25;
 
@@ -37,19 +38,24 @@ fn line_up(line: &mut Line, entry: (u64, StreamId)) {
     }
 }
 
-/// Where the first long response is that is as urgent as the first stream.
-fn first_long(line: &Line) -> Option<usize> {
-    let class = (line.front()?.0 / LONG) | 1;
-    let at = line.partition_point(|it| it.0 / LONG < class);
-    line.get(at).filter(|it| it.0 / LONG == class).map(|_| at)
+/// Of those that are as urgent as the first stream.
+fn first_serial(line: &Line) -> Option<usize> {
+    let class = (line.front()?.0 / SERIAL) | 1;
+    let at = line.partition_point(|it| it.0 / SERIAL < class);
+    line.get(at).filter(|it| it.0 / SERIAL == class).map(|_| at)
 }
 
 impl State {
     /// How many bytes the application may write.
     #[inline]
-    pub(crate) fn capacity(&self, stream: &Stream) -> u64 {
-        let wanted = (self.unsent_target.saturating_sub(self.unsent))
-            .max(MIN_UNSENT.saturating_sub(stream.send.unsent_len()));
+    pub(crate) fn capacity(&self, id: StreamId, stream: &Stream) -> u64 {
+        let has_to_wait = (self.writable.front())
+            .is_some_and(|first| self.invited != Some(id) && *first < (self.rank(stream), id));
+        let shared = match has_to_wait {
+            true => 0,
+            false => self.unsent_target.saturating_sub(self.unsent),
+        };
+        let wanted = shared.max(MIN_UNSENT.saturating_sub(stream.send.unsent_len()));
         let room = self.max_retained.saturating_sub(self.retained);
         wanted.min(room).min(self.credit_for(stream))
     }
@@ -208,22 +214,25 @@ impl State {
         }
         let is_past = |len| stream.send.sent() >= len && stream.send.unsent_len() > LITTLE;
         let takes_turns = !self.sends_in_order || stream.priority.is_incremental;
-        let (turn, is_long) = match takes_turns {
-            true => (
-                self.turns + u64::from(is_past(BULK_LEN)) * BULK_HANDICAP,
-                false,
-            ),
-            false => (stream.first_turn, is_past(LONG_LEN)),
+        let is_serial = match takes_turns {
+            true => {
+                !stream.priority.is_incremental && stream.flags.contains(Flags::FIN) && is_past(1)
+            }
+            false => is_past(LONG_LEN),
         };
-        let class = 2 * (u64::from(stream.priority.urgency) + 1) + u64::from(is_long);
-        (class * LONG) | turn << 1 & TURN_BITS | u64::from(takes_turns)
+        let turn = match takes_turns && !is_serial {
+            true => self.turns + u64::from(is_past(BULK_LEN)) * BULK_HANDICAP,
+            false => stream.first_turn,
+        };
+        let class = 2 * (u64::from(stream.priority.urgency) + 1) + u64::from(is_serial);
+        (class * SERIAL) | turn << 1 & TURN_BITS | u64::from(takes_turns)
     }
 
     /// Where it is in `sendable`.
     #[inline]
     fn next_to_send(&self) -> usize {
-        match self.sends_in_order && self.passed >= TURN_LEN {
-            true => first_long(&self.sendable).unwrap_or(0),
+        match self.passed >= TURN_LEN {
+            true => first_serial(&self.sendable).unwrap_or(0),
             false => 0,
         }
     }
@@ -293,7 +302,7 @@ impl Streams {
                 })
             };
             let line = &state.writable;
-            let at = (first_long(line))
+            let at = (first_serial(line))
                 .filter(|&at| line.get(at).is_some_and(|it| is_due(it, WRITE_CHUNK)))
                 .or_else(|| line.iter().position(|it| is_due(it, u64::MAX)));
             let id = at.and_then(|at| state.writable.remove(at)).map(|it| it.1);
@@ -311,6 +320,7 @@ impl Streams {
             }
             stream.flags.remove(Flags::WANTS_WRITE);
             stream.write_round = state.write_round;
+            state.invited = Some(id);
             return Some(Event::Stream(id, stream.context, StreamEvent::Writable));
         }
         None
@@ -376,14 +386,14 @@ impl Streams {
             let now_sent = stream.send.sent();
             state.sent += now_sent - start;
             state.unsent -= now_sent - start;
-            let is_long = rank & LONG != 0;
-            if !is_long {
+            let is_serial = rank & SERIAL != 0;
+            if !is_serial {
                 state.passed += now_sent - start;
             }
             if now_sent < range.end && now_sent < stream.turn_end {
                 return;
             }
-            if is_long {
+            if is_serial {
                 state.passed = 0;
             }
             state.sendable.remove(at);

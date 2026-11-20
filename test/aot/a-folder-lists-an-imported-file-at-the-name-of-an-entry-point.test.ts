@@ -17,7 +17,11 @@ test.each([
   ["crate.node", "no library"],
   ["crate.ts", "console.log(1 as number);\n"],
   // The copy of this source sorts in front of crate.js.
-  ["crate.cjs", "module.exports = 1;\n", `import own from "./crate.cjs" with { type: "file" };\nif (!own) throw own;\n`],
+  [
+    "crate.cjs",
+    "module.exports = 1;\n",
+    `import own from "./crate.cjs" with { type: "file" };\nif (!own) throw own;\n`,
+  ],
 ])(
   "beside %s as an entry point",
   async (name, text, imports = "") => {

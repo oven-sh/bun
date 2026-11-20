@@ -302,6 +302,17 @@ impl Drop for EventLoopEnterNoCheckpointGuard<'_> {
     }
 }
 
+/// The end of a `bun:test` callback's timeout, for a callback that never returns to the event loop,
+/// where the runner's timer would end it.
+#[derive(Clone, Copy)]
+pub struct TestCallbackDeadline {
+    /// On the clock of [`Timespec::now`](bun_core::Timespec::now), unmocked.
+    pub at: bun_core::Timespec,
+    /// Whether it also ends the microtask checkpoint after the callback. A checkpoint that it ends
+    /// discards every queued microtask, so only when all of them are the callback's own.
+    pub covers_checkpoint: bool,
+}
+
 /// What [`EventLoop::enter_js`] found.
 enum EnterJs<'a> {
     /// The callback may be called, inside this scope (none for [`ContextId::NONE`](crate::ContextId::NONE)).
@@ -444,6 +455,12 @@ impl EventLoop {
             _ => unreachable!(),
         }
 
+        Ok(self.after_microtask_checkpoint(vm))
+    }
+
+    /// What follows each microtask checkpoint. Returns whether `bun test` has a test or hook to run next.
+    #[inline(always)]
+    fn after_microtask_checkpoint(&self, vm: &VirtualMachine) -> bool {
         vm.is_inside_deferred_task_queue.set(true);
         self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
@@ -456,7 +473,7 @@ impl EventLoop {
         }
 
         // Through `self`: `vm` would need one more saved register to outlive the calls above.
-        Ok(self.vm_ref().has_pending_test_step.get())
+        self.vm_ref().has_pending_test_step.get()
     }
 
     /// Runs the next test or hook before any other timer or I/O callback.
@@ -1257,6 +1274,7 @@ impl EventLoop {
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     /// `context`: as for [`run_callback`](Self::run_callback).
     /// `after_call` runs after `callback` returns and before microtasks drain.
+    /// `Ok(None)`: `deadline` passed while `callback` or its microtasks still ran script, and unwound it.
     pub fn run_callback_with_result_and_forcefully_drain_microtasks(
         &self,
         context: crate::ContextId,
@@ -1264,23 +1282,44 @@ impl EventLoop {
         global_object: &JSGlobalObject,
         this_value: JSValue,
         arguments: &[JSValue],
+        deadline: Option<TestCallbackDeadline>,
         after_call: impl FnOnce(),
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Option<JSValue>> {
         let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             // An exception is already pending and `callback` never ran, so don't pretend it returned undefined.
             return Err(crate::JsError::Thrown);
         };
-        let result = {
-            let _entered = self.enter_scope_without_checkpoint();
-            callback.call(global_object, this_value, arguments)
-        };
+        let entered = self.enter_scope_without_checkpoint();
+        if let Some(deadline) = deadline
+            && !callback.has_nobody_to_call(global_object)
+        {
+            let vm = self.vm_ref();
+            debug_assert!(!vm.suppress_microtask_drain.get());
+            let after_call = move || {
+                drop(entered);
+                after_call();
+            };
+            let Some(result) =
+                callback.call_with_test_deadline(global_object, this_value, arguments, deadline, after_call)?
+            else {
+                return Ok(None);
+            };
+            result.ensure_still_alive();
+            if self.after_microtask_checkpoint(vm) {
+                self.run_pending_test_steps()
+                    .map_err(|stopped| stopped.throw(global_object))?;
+            }
+            return Ok(Some(result));
+        }
+        let result = callback.call(global_object, this_value, arguments);
+        drop(entered);
         after_call();
         let result = result?;
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();
         self.drain_microtasks_with_global(global_object, jsc_vm)
             .map_err(|stopped| stopped.throw(global_object))?;
-        Ok(result)
+        Ok(Some(result))
     }
 
     /// Keep one poll registered with the loop so `us_loop_run_bun_tick` parks

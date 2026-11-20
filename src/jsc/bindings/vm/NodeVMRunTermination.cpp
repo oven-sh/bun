@@ -11,13 +11,10 @@ namespace Bun {
 
 using namespace JSC;
 
-static thread_local NodeVMRunTermination* s_innermostRunOnThisThread = nullptr;
-
 NodeVMRunTermination::NodeVMRunTermination(JSGlobalObject* realm, std::optional<Seconds> timeout, bool breakOnSigint)
-    : m_vm(realm->vm())
+    : RunTermination(realm->vm(), Kind::NodeVMRun)
     , m_realm(realm)
     , m_timeout(timeout)
-    , m_enclosing(std::exchange(s_innermostRunOnThisThread, this))
 {
     if (breakOnSigint) {
         // Requested from the signal thread by then: the exception object it needs must exist.
@@ -32,8 +29,6 @@ NodeVMRunTermination::NodeVMRunTermination(JSGlobalObject* realm, std::optional<
 NodeVMRunTermination::~NodeVMRunTermination()
 {
     ASSERT(m_finished);
-    ASSERT(s_innermostRunOnThisThread == this);
-    s_innermostRunOnThisThread = m_enclosing;
 }
 
 void NodeVMRunTermination::disarm()
@@ -52,19 +47,9 @@ void NodeVMRunTermination::finish(ThrowScope& scope)
     // for it); what happens to it is decided below.
     std::ignore = scope.exception();
     disarm();
-    if (!wasCutShort())
+    if (!timedOutOrInterrupted() || !withdrawTermination())
         return;
     VM& vm = m_vm;
-    // The VM has been asked to stop as a whole meanwhile: that request is indistinguishable from ours and wins.
-    if (!WebCore::clientData(vm)->scriptAllowed())
-        return;
-
-    vm.cancelTermination();
-    // A stop requested between the check above and the withdrawal went with it: re-request, the stop wins.
-    if (!WebCore::clientData(vm)->scriptAllowed()) [[unlikely]] {
-        vm.notifyNeedTermination();
-        return;
-    }
     {
         // Whatever else the cut-short run may have left pending: the timeout / interrupt error replaces it.
         auto top = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -84,23 +69,17 @@ void NodeVMRunTermination::finish(ThrowScope& scope)
         vm.notifyNeedTermination();
 }
 
-const NodeVMRunTermination* NodeVMRunTermination::enclosingRunCutShort() const
-{
-    for (auto* run = m_enclosing; run; run = run->m_enclosing) {
-        if (run->wasCutShort())
-            return run;
-    }
-    return nullptr;
-}
-
 JSObject* NodeVMRunTermination::errorForEnclosingRunCutShort() const
 {
     ASSERT(m_finished);
-    if (wasCutShort() || !m_vm.hasPendingTermination())
+    if (timedOutOrInterrupted() || !m_vm.hasPendingTermination())
         return nullptr;
-    const auto* run = enclosingRunCutShort();
-    if (!run)
+    const auto* enclosing = enclosingRunCutShort();
+    if (!enclosing)
         return nullptr;
+    if (!enclosing->isNodeVMRun())
+        return createError(m_realm, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by the timeout of the test that ran it"_s);
+    const auto* run = static_cast<const NodeVMRunTermination*>(enclosing);
     if (run->timedOut())
         return createError(m_realm, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, run->m_timeout->milliseconds(), "ms"_s));
     return createError(m_realm, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);

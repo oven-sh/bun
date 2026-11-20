@@ -1600,10 +1600,57 @@ impl JSValue {
         })
     }
 
+    /// [`call`](Self::call) and the microtask checkpoint after it, for a `bun:test` callback that has
+    /// someone to call. Script that still runs when `deadline` passes is unwound at its next
+    /// safepoint: `Ok(None)`, with nothing pending. `after_call` runs between the call and the
+    /// checkpoint, whatever the call came to. After `Ok(Some(_))` the caller does what follows a
+    /// checkpoint ([`EventLoop::after_microtask_checkpoint`](crate::event_loop::EventLoop)).
+    #[track_caller]
+    pub(crate) fn call_with_test_deadline<AfterCall: FnOnce()>(
+        self,
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        args: &[JSValue],
+        deadline: crate::event_loop::TestCallbackDeadline,
+        after_call: AfterCall,
+    ) -> JsResult<Option<JSValue>> {
+        extern "C" fn run<AfterCall: FnOnce()>(after_call: *mut c_void) {
+            // SAFETY: `after_call` is the `Option<AfterCall>` below, which outlives the call.
+            if let Some(after_call) = unsafe { (*after_call.cast::<Option<AfterCall>>()).take() } {
+                after_call();
+            }
+        }
+        let mut after_call = Some(after_call);
+        let mut outcome = test_callback_outcome::COMPLETED;
+        let result = host_fn::from_js_host_call(global, || {
+            // SAFETY: as in `call_for_running_script`; `after_call` and `outcome` outlive the call.
+            unsafe {
+                Bun__TestCallback__callWithDeadline(
+                    global,
+                    self,
+                    this_value,
+                    args.len(),
+                    args.as_ptr(),
+                    deadline.at.ns(),
+                    deadline.covers_checkpoint,
+                    run::<AfterCall>,
+                    (&raw mut after_call).cast(),
+                    &raw mut outcome,
+                )
+            }
+        })?;
+        match outcome {
+            test_callback_outcome::COMPLETED => Ok(Some(result)),
+            test_callback_outcome::CUT_SHORT => Ok(None),
+            test_callback_outcome::STOPPED => Err(crate::JsError::Terminated),
+            _ => unreachable!(),
+        }
+    }
+
     /// A `Bun.ModuleGraph` that was disposed hears nothing more from native code, nor does a
     /// test file that finished (only `--isolate` retires a realm).
     #[inline]
-    fn has_nobody_to_call(self, global: &JSGlobalObject) -> bool {
+    pub(crate) fn has_nobody_to_call(self, global: &JSGlobalObject) -> bool {
         let vm = global.bun_vm();
         vm.calls_nobody()
             || (vm.test_isolation_enabled.get() && self.is_from_retired_test_isolation_realm())
@@ -2024,9 +2071,28 @@ unsafe extern "C" {
         args_len: usize,
         args_ptr: *const JSValue,
     ) -> JSValue;
+    fn Bun__TestCallback__callWithDeadline(
+        global: *const JSGlobalObject,
+        callback: JSValue,
+        this_value: JSValue,
+        args_len: usize,
+        args_ptr: *const JSValue,
+        deadline_ns: u64,
+        deadline_covers_checkpoint: bool,
+        after_call: extern "C" fn(*mut c_void),
+        after_call_context: *mut c_void,
+        outcome: *mut u8,
+    ) -> JSValue;
     safe fn Bun__JSValue__protect(this: JSValue);
     safe fn Bun__JSValue__unprotect(this: JSValue);
     safe fn Bun__JSValue__isFromRetiredTestIsolationRealm(this: JSValue) -> bool;
+}
+
+/// `TestCallbackOutcome` of TestCallbackDeadline.cpp.
+mod test_callback_outcome {
+    pub(super) const COMPLETED: u8 = 0;
+    pub(super) const CUT_SHORT: u8 = 1;
+    pub(super) const STOPPED: u8 = 2;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

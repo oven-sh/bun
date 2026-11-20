@@ -46,9 +46,9 @@ use bun_ptr::CellExt as _;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
-    ExecutionEntryCfg, HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, SequenceEntry, SequenceEntryId,
-    StepResult,
+    group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, CallbackRun, Calling, EntryData,
+    ExecutionEntry, ExecutionEntryCfg, HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, SequenceEntry,
+    SequenceEntryId, StepResult,
 };
 use super::expect::expect_deferred::ExpectDeferred;
 use super::test_context::{self, Deferred, TestContext};
@@ -335,30 +335,32 @@ impl ExecutionSequence {
     }
 
     fn evaluate_timeout(&self, buntest: &BunTest, id: SequenceEntryId, now: &Timespec) -> bool {
-        let sequence_entry = buntest.sequence_entry(id);
-        let timespec = sequence_entry.timespec.get();
+        let timespec = buntest.sequence_entry(id).timespec.get();
         if !timespec.eql(&Timespec::EPOCH) && timespec.order(now) == core::cmp::Ordering::Less {
-            // timed out
-            let entry = buntest.entry(sequence_entry.entry);
-            let has_done_parameter = entry.calling == Calling::Jest { done: true };
-            self.result.set(if entry.around.is_some() {
-                // `report_around_timeout` fails the sequence with an error.
-                self.result.get()
-            } else if self.test_entry == Some(id) {
-                if has_done_parameter {
-                    Result::FailBecauseTimeoutWithDoneCallback
-                } else {
-                    Result::FailBecauseTimeout
-                }
-            } else if has_done_parameter {
-                Result::FailBecauseHookTimeoutWithDoneCallback
-            } else {
-                Result::FailBecauseHookTimeout
-            });
-            self.maybe_skip.set(true);
+            self.time_out(buntest, id);
             return true;
         }
         false
+    }
+
+    fn time_out(&self, buntest: &BunTest, id: SequenceEntryId) {
+        let entry = buntest.entry(buntest.sequence_entry(id).entry);
+        let has_done_parameter = entry.calling == Calling::Jest { done: true };
+        self.result.set(if entry.around.is_some() {
+            // `report_around_timeout` fails the sequence with an error.
+            self.result.get()
+        } else if self.test_entry == Some(id) {
+            if has_done_parameter {
+                Result::FailBecauseTimeoutWithDoneCallback
+            } else {
+                Result::FailBecauseTimeout
+            }
+        } else if has_done_parameter {
+            Result::FailBecauseHookTimeoutWithDoneCallback
+        } else {
+            Result::FailBecauseHookTimeout
+        });
+        self.maybe_skip.set(true);
     }
 }
 
@@ -1232,7 +1234,7 @@ fn step_sequence_one(
         };
 
         global_this.bun_vm().is_running_vitest_entry.set(next_item.calling.is_vitest());
-        if BunTest::run_test_callback(
+        let cut_short = match BunTest::run_test_callback(
             buntest,
             global_this,
             callback,
@@ -1240,28 +1242,39 @@ fn step_sequence_one(
             next_item.calling == Calling::Jest { done: true },
             callback_data,
             &next_entry.timespec.get(),
-        )
-        .is_some()
-        {
-            *now = Timespec::now_force_real_time();
-            if sequence.evaluate_timeout(buntest, next_id, now) {
-                if let Some(context) = context {
-                    TestContext::abort_signal(context, global_this);
-                }
-                report_around_timeout(buntest, global_this, next_item, &callback_data)?;
-            } else if sequence.waits_for_matchers() {
+        ) {
+            CallbackRun::Done(_) => false,
+            CallbackRun::CutShort => true,
+            CallbackRun::Pending => {
                 return Ok(Some(AdvanceSequenceStatus::Execute {
                     timeout: next_entry.timespec.get(),
                 }));
             }
-
-            // the result is available immediately; advance the sequence and run again.
-            Execution::advance_sequence(buntest, sequence, group);
-            return Ok(None); // run again
+        };
+        *now = Timespec::now_force_real_time();
+        if cut_short {
+            sequence.time_out(buntest, next_id);
         }
-        return Ok(Some(AdvanceSequenceStatus::Execute {
-            timeout: next_entry.timespec.get(),
-        }));
+        if cut_short || sequence.evaluate_timeout(buntest, next_id, now) {
+            if let Some(context) = context {
+                TestContext::abort_signal(context, global_this);
+            }
+            // The callback never returned to the event loop, so the runner's timer has not done it.
+            Execution::kill_dangling_processes_on_timeout(buntest, global_this);
+            report_around_timeout(buntest, global_this, next_item, &callback_data)?;
+            if cut_short {
+                // What the callback held until it was unwound is garbage now. Without this, the next one starts on top of it.
+                global_this.bun_vm().garbage_collect(true);
+            }
+        } else if sequence.waits_for_matchers() {
+            return Ok(Some(AdvanceSequenceStatus::Execute {
+                timeout: next_entry.timespec.get(),
+            }));
+        }
+
+        // the result is available immediately; advance the sequence and run again.
+        Execution::advance_sequence(buntest, sequence, group);
+        return Ok(None); // run again
     } else {
         match next_item.base.mode {
             ScopeMode::Skip => sequence.set_result_if_pending(Result::Skip),

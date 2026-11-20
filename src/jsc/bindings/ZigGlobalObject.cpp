@@ -3776,23 +3776,25 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 
 // ====================== end conditional builtin globals ======================
 
-uint8_t GlobalObject::drainMicrotasks()
+uint8_t GlobalObject::drainMicrotasks(CheckpointException onException)
 {
     auto& vm = this->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    auto terminating = [&]() -> uint8_t {
+        if (onException == CheckpointException::Handled)
+            Bun__VM__takeTerminationOutsideScript(this);
+        return 1;
+    };
+
     // A stopped VM has no checkpoint to run: whether or not its termination is still pending here (the
     // landing frame may already have taken it), nothing queued may execute any more.
-    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
-        Bun__VM__takeTerminationOutsideScript(this);
-        return 1;
-    }
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+        return terminating();
 
     if (auto* exception = scope.exception()) [[unlikely]] {
-        if (vm.isTerminationException(exception)) [[unlikely]] {
-            Bun__VM__takeTerminationOutsideScript(this);
-            return 1;
-        }
+        if (vm.isTerminationException(exception)) [[unlikely]]
+            return terminating();
 
 #if ASSERT_ENABLED
         (void)scope.tryClearException();
@@ -3820,10 +3822,10 @@ uint8_t GlobalObject::drainMicrotasks()
         auto* exception = scope.exception();
         if (!exception)
             return std::nullopt;
-        if (vm.isTerminationException(exception)) {
-            Bun__VM__takeTerminationOutsideScript(this);
-            return 1;
-        }
+        if (vm.isTerminationException(exception))
+            return terminating();
+        if (onException == CheckpointException::LeftPending)
+            return 0;
         (void)scope.tryClearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);
         return 0;

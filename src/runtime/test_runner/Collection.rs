@@ -7,7 +7,7 @@ use bun_core::Timespec;
 use bun_ptr::CellExt as _;
 
 use crate::test_runner::bun_test::{
-    BunTest, BunTestPtr, HandleUncaughtExceptionResult, RefDataValue, ScopeId, StepResult,
+    BunTest, BunTestPtr, CallbackRun, HandleUncaughtExceptionResult, RefDataValue, ScopeId, StepResult,
 };
 use crate::test_runner::bun_test::debug::group;
 
@@ -120,7 +120,7 @@ impl Collection {
             bstr::BStr::new(buntest.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
         ));
 
-        if let Some(cfg_data) = BunTest::run_test_callback(
+        if let CallbackRun::Done(cfg_data) = BunTest::run_test_callback(
             buntest,
             global_this,
             first.callback.value(),

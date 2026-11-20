@@ -317,7 +317,15 @@ public:
     JSC::JSObject* processEnvObject();
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 
-    uint8_t drainMicrotasks();
+    // What a microtask checkpoint does with an exception that ends it. `Handled`: an uncaught error is
+    // reported and the VM's termination is taken (Bun::takeTerminationOutsideScript). `LeftPending`: either
+    // one stays pending, for a caller that may have requested the termination itself (TestCallbackDeadline).
+    enum class CheckpointException : uint8_t {
+        Handled,
+        LeftPending,
+    };
+    // 0: the checkpoint ran. 1: the VM is terminating.
+    uint8_t drainMicrotasks(CheckpointException = CheckpointException::Handled);
 
     void handleRejectedPromises();
     size_t holdRejectedPromises() { return m_aboutToBeNotifiedRejectedPromises.hold(this); }

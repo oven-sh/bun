@@ -7,6 +7,7 @@ use std::rc::{Rc, Weak};
 use bun_core::{Output, Timespec};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, StrongCell};
+use bun_jsc::event_loop::TestCallbackDeadline;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::{CellExt as _, RefPtr};
@@ -1211,7 +1212,8 @@ impl BunTest {
         }
     }
 
-    /// if sync, the result is returned. if async, None is returned.
+    /// `timeout`: when the callback times out. The runner's timer ends one that waits on the event loop, and
+    /// a [`TestCallbackDeadline`] ends one that never returns to it.
     #[optimize(size)]
     pub(crate) fn run_test_callback(
         this: &BunTestPtr,
@@ -1221,7 +1223,7 @@ impl BunTest {
         cfg_done_parameter: bool,
         cfg_data: RefDataValue,
         timeout: &Timespec,
-    ) -> Option<RefDataValue> {
+    ) -> CallbackRun {
         let _g = group_begin!();
         let vm = global_this.bun_vm();
 
@@ -1249,20 +1251,31 @@ impl BunTest {
         }
 
         Self::update_min_timeout(this, timeout);
+        let deadline = (!timeout.eql(&Timespec::EPOCH)).then(|| TestCallbackDeadline {
+            at: *timeout,
+            // With `test.concurrent`, the checkpoint also runs the microtasks of the other tests in the group.
+            covers_checkpoint: (this.execution.active_group())
+                .is_some_and(|group| group.sequences(&this.execution).len() == 1),
+        });
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         let on_stack = OnStack::enter(&this.execution.on_stack, &cfg_data);
-        let result: JSValue = match vm
-            .event_loop()
-            .run_callback_with_result_and_forcefully_drain_microtasks(
-                vm.test_isolation_state.file_context.get(),
-                cfg_callback,
-                global_this,
-                JSValue::UNDEFINED,
-                args_slice,
-                move || drop(on_stack),
-            )
-            .and_then(|returned| Self::promise_of_thenable(global_this, returned))
-        {
+        let returned = match vm.event_loop().run_callback_with_result_and_forcefully_drain_microtasks(
+            vm.test_isolation_state.file_context.get(),
+            cfg_callback,
+            global_this,
+            JSValue::UNDEFINED,
+            args_slice,
+            deadline,
+            move || drop(on_stack),
+        ) {
+            Ok(Some(returned)) => Self::promise_of_thenable(global_this, returned),
+            Ok(None) => {
+                bun_core::scoped_log!(bun_test_group, "callTestCallback -> cut short by its timeout");
+                return CallbackRun::CutShort;
+            }
+            Err(err) => Err(err),
+        };
+        let result: JSValue = match returned {
             Ok(v) => v,
             Err(_) => {
                 global_this.clear_termination_exception();
@@ -1333,13 +1346,13 @@ impl BunTest {
                             Bun__TestScope__Describe2__bunTestCatch,
                         );
                         // TODO: properly propagate exception upwards
-                        return None;
+                        return CallbackRun::Pending;
                     }
                     PromiseStatus::Fulfilled => {
                         // Do not register a then callback when it's already fulfilled.
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
                         this.adopt_teardown(&cfg_data, value);
-                        return Some(cfg_data);
+                        return CallbackRun::Done(cfg_data);
                     }
                     PromiseStatus::Rejected => {
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
@@ -1347,7 +1360,7 @@ impl BunTest {
 
                         // We previously marked it as handled above.
 
-                        return Some(cfg_data);
+                        return CallbackRun::Done(cfg_data);
                     }
                 }
             }
@@ -1356,14 +1369,14 @@ impl BunTest {
         if uncalled_done.is_some() {
             // completed asynchronously
             bun_core::scoped_log!(bun_test_group, "callTestCallback -> wait for done callback");
-            return None;
+            return CallbackRun::Pending;
         }
 
         bun_core::scoped_log!(bun_test_group, "callTestCallback -> sync");
         if !result.is_empty() {
             this.adopt_teardown(&cfg_data, result);
         }
-        Some(cfg_data)
+        CallbackRun::Done(cfg_data)
     }
 
     /// A promise that follows `returned` if it's a thenable other than a promise. Otherwise `returned`.
@@ -1517,6 +1530,16 @@ impl BunTest {
             slot.with_taken(|slot| TestFailure::record(slot, exception));
         }
     }
+}
+
+/// How a test or hook callback left [`BunTest::run_test_callback`].
+pub(crate) enum CallbackRun {
+    /// It returned or threw, and waits for nothing: the result is there.
+    Done(RefDataValue),
+    /// It returned a promise that is pending, or has yet to call `done`.
+    Pending,
+    /// Its timeout passed while it still ran script, and unwound it.
+    CutShort,
 }
 
 struct OnStack<'a> {

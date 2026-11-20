@@ -2,9 +2,10 @@ import { TCPSocketListener } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
+import zlib from "node:zlib";
 import { WebSocket } from "ws";
 import { openOrFailure } from "./proxy-test-utils";
-import { createPeer, encodeFrame, OP, type RawSocket, response101 } from "./raw-peer";
+import { closePayload, createPeer, encodeFrame, OP, type RawSocket, response101 } from "./raw-peer";
 
 const hostname = process.env.HOST || "127.0.0.1";
 const port = parseInt(process.env.PORT || "0");
@@ -541,6 +542,149 @@ describe("data received while a handshake listener spins the event loop", () => 
       ws.terminate();
     }
   });
+});
+
+describe("data received while a message listener spins the event loop", () => {
+  // Blocks until `until` settles. `Bun.build()` ticks the event loop until a plugin's `setup()` settles.
+  function waitSynchronously(until: Promise<unknown>) {
+    Bun.build({ entrypoints: ["./none.js"], plugins: [{ name: "spin", setup: () => until }] }).catch(() => {});
+  }
+
+  /** A compressed text frame (RFC 7692): raw deflate, sync flushed, without the trailing `00 00 ff ff`. */
+  function deflateFrame(text: string): string {
+    const deflated = zlib.deflateRawSync(Buffer.from(text), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+    return encodeFrame(OP.text, deflated.subarray(0, -4), { rsv1: true }).toString("latin1");
+  }
+
+  type Frame = (text: string) => string;
+  const closeFrame = encodeFrame(OP.close, closePayload(1000)).toString("latin1");
+
+  type Scenario = {
+    /** Sent by the peer while the "first" listener runs. */
+    duringListener?: string;
+    /** The peer sends FIN after `duringListener`. */
+    peerEndsAfter?: boolean;
+    /** What the "first" listener does after its spin. `third` also closes the socket once "third" arrives. */
+    afterSpin?: "third" | "terminate";
+  };
+
+  /**
+   * The peer sends the first 5 bytes of the "first" frame, then the rest. The "first" listener
+   * sends `duringListener`, spins the event loop until the peer sees that the client has read it ("spun"), then
+   * runs `afterSpin`. Returns the client's events in order.
+   */
+  async function spinInsideFirstMessage(
+    headers: string[],
+    frame: Frame,
+    client: (url: string) => NativeWebSocket | WebSocket,
+    scenario: Scenario = {},
+  ) {
+    const { duringListener = frame("second"), peerEndsAfter = false, afterSpin = "third" } = scenario;
+    let peer!: RawSocket;
+    await using server = await listen(connection => {
+      peer = connection;
+      write(connection, response101(connection, headers));
+    });
+    const order: string[] = [];
+    const done = Promise.withResolvers<void>();
+    const opened = Promise.withResolvers<void>();
+    const ws = client(server.url);
+    ws.addEventListener("open", () => opened.resolve(), { once: true });
+    ws.addEventListener("error", event => {
+      order.push((event as ErrorEvent).message.replace(/^.* failed: /, ""));
+      opened.reject(new Error((event as ErrorEvent).message));
+    });
+    ws.addEventListener("close", event => {
+      order.push(`close ${event.code}`);
+      opened.reject(new Error(`closed: ${event.code}`));
+      done.resolve();
+    });
+    ws.addEventListener("message", event => {
+      const data = String(event.data);
+      order.push(`message ${JSON.stringify(data)}`);
+      if (data === "first") {
+        write(peer, duringListener);
+        if (peerEndsAfter) peer.end();
+        waitSynchronously(clientHasRead(peer).then(() => order.push("spun")));
+        order.push("listener returns");
+        if (afterSpin === "terminate") ws.terminate();
+        else if (!peerEndsAfter) write(peer, frame("third"));
+      } else if (data === "third") {
+        ws.close(1000);
+      }
+    });
+    try {
+      await opened.promise;
+      await writeSplit(peer, frame("first"), 5);
+      await Promise.all([done.promise, peer.echoClose()]);
+      return order;
+    } finally {
+      ws.terminate();
+    }
+  }
+
+  // The global WebSocket and the `ws` package share the parser. Both, for text and for permessage-deflate.
+  const deflate = ["Sec-WebSocket-Extensions: permessage-deflate"];
+  const cases: [string, string[], Frame, (url: string) => NativeWebSocket | WebSocket][] = [
+    ["text", [], textFrame, url => new NativeWebSocket(url)],
+    ["permessage-deflate", deflate, deflateFrame, url => new NativeWebSocket(url)],
+    ["ws, text", [], textFrame, url => new WebSocket(url)],
+    ["ws, permessage-deflate", deflate, deflateFrame, url => new WebSocket(url)],
+  ];
+
+  // The first frame arrives in two reads, so the parser is mid-frame when its listener runs. The frame the
+  // peer sends during the listener is read inside the spin and must wait for the listener to return.
+  test.each(cases)(
+    "a frame received during the listener is delivered after it returns: %s",
+    async (_, headers, frame, client) => {
+      expect(await spinInsideFirstMessage(headers, frame, client)).toEqual([
+        'message "first"',
+        "spun",
+        "listener returns",
+        'message "second"',
+        'message "third"',
+        "close 1000",
+      ]);
+    },
+  );
+
+  // The peer sends its last frame, a Close frame and FIN during the listener. The message and the close
+  // code still arrive in order once the listener returns.
+  test.each(cases)(
+    "a Close frame and FIN received during the listener are reported after it returns: %s",
+    async (_, headers, frame, client) => {
+      expect(
+        await spinInsideFirstMessage(headers, frame, client, {
+          duringListener: frame("second") + closeFrame,
+          peerEndsAfter: true,
+        }),
+      ).toEqual(['message "first"', "spun", "listener returns", 'message "second"', "close 1000"]);
+    },
+  );
+
+  // The peer sends only FIN during the listener. The close is reported after the listener returns.
+  test.each(cases)(
+    "a FIN received during the listener is reported after it returns: %s",
+    async (_, headers, frame, client) => {
+      expect(await spinInsideFirstMessage(headers, frame, client, { duringListener: "", peerEndsAfter: true })).toEqual(
+        ['message "first"', "spun", "listener returns", "close 1006"],
+      );
+    },
+  );
+
+  // The listener terminates the socket after its spin: nothing read before or during the listener is
+  // delivered after terminate().
+  test.each(cases)(
+    "frames received before terminate() in the listener are dropped: %s",
+    async (_, headers, frame, client) => {
+      expect(await spinInsideFirstMessage(headers, frame, client, { afterSpin: "terminate" })).toEqual([
+        'message "first"',
+        "spun",
+        "listener returns",
+        "close 1006",
+      ]);
+    },
+  );
 });
 
 describe("WebSocket buffered handshake data", () => {

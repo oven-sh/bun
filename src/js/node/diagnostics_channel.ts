@@ -54,6 +54,12 @@ class WeakRefMap extends SafeMap {
     this.delete(key);
   });
 
+  // A channel with subscribers or bound stores must stay alive even when
+  // the app drops its own reference to it, like Node. The WeakReference
+  // alone cannot do that, so hold a strong reference while the ref count
+  // is above zero and release it when it returns to zero.
+  #strongRefs = new SafeMap();
+
   set(key: ChannelName, value: AnyChannel) {
     this.#finalizers.register(value, key);
     return super.set(key, new WeakReference(value));
@@ -64,11 +70,21 @@ class WeakRefMap extends SafeMap {
   }
 
   incRef(key: ChannelName) {
-    return (super.get(key) as WeakReference<AnyChannel> | undefined)?.incRef();
+    const ref = super.get(key) as WeakReference<AnyChannel> | undefined;
+    const count = ref?.incRef();
+    if (count === 1) {
+      this.#strongRefs.set(key, ref!.get());
+    }
+    return count;
   }
 
   decRef(key: ChannelName) {
-    return (super.get(key) as WeakReference<AnyChannel> | undefined)?.decRef();
+    const ref = super.get(key) as WeakReference<AnyChannel> | undefined;
+    const count = ref?.decRef();
+    if (count === 0) {
+      this.#strongRefs.delete(key);
+    }
+    return count;
   }
 }
 
@@ -437,3 +453,4 @@ export default {
   unsubscribe,
   Channel,
 };
+

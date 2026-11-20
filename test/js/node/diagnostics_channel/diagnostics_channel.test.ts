@@ -429,6 +429,29 @@ describe("Channel", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/49270
+  test("subscribed channel survives GC without a user reference", async () => {
+    const name = "gc-keeps-subscribers";
+    let delivered = false;
+    channel(name).subscribe(() => {
+      delivered = true;
+    });
+    expect(hasSubscribers(name)).toBeTrue();
+
+    // Drop the channel reference and collect on a fresh stack, like the
+    // reporter's repro. The subscription alone must keep it alive.
+    await new Promise<void>(resolve => {
+      setImmediate(() => {
+        gc(true);
+        resolve();
+      });
+    });
+
+    expect(hasSubscribers(name)).toBeTrue();
+    channel(name).publish({});
+    expect(delivered).toBeTrue();
+  });
+
   test("references are not leaked", () => {
     function noop() {}
 
@@ -483,3 +506,4 @@ function checkCalls() {
 beforeEach(() => {
   mocks.clear();
 });
+

@@ -284,7 +284,7 @@ export function createBunShellTemplateFunction(
       if (typeof newEnv === "undefined" || newEnv === originalDefaultEnv) {
         this[envSymbol] = originalDefaultEnv;
       } else if (newEnv) {
-        this[envSymbol] = Object.assign({}, newEnv);
+        this[envSymbol] = { ...newEnv };
       } else {
         throw new TypeError("env must be an object or undefined");
       }

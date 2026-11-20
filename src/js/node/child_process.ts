@@ -1060,7 +1060,8 @@ function normalizeSpawnArguments(file, args, options?) {
   }
 
   const env = options.env || process.env;
-  const bunEnv = {};
+  // No prototype: Object.prototype would take the store of a variable named `__proto__`, and refuse others when it is frozen.
+  const bunEnv = { __proto__: null };
 
   // // process.env.NODE_V8_COVERAGE always propagates, making it possible to
   // // collect coverage for programs that spawn with white-listed environment.
@@ -1132,7 +1133,7 @@ function checkExecSyncError(ret: SpawnSyncResult, args: string[] | undefined, cm
 }
 function parseEnvPairs(envPairs: string[] | undefined): Record<string, string> | undefined {
   if (!envPairs) return undefined;
-  const resEnv = {};
+  const resEnv = { __proto__: null } as unknown as Record<string, string>;
   for (const line of envPairs) {
     const [key, ...value] = line.split("=", 2);
     resEnv[key] = value.join("=");

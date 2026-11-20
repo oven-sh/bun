@@ -835,7 +835,6 @@ it("process.versions", async () => {
     tinycc: "tinycc",
     lolhtml: "lolhtml",
     ares: "cares",
-    zstd: "zstd",
   };
 
   const expectedVersions = {};
@@ -855,6 +854,9 @@ it("process.versions", async () => {
   // One hexadecimal digit for each part of the version.
   const { ZLIB_VERNUM } = zlibConstants;
   expect(process.versions.zlib).toStartWith([...ZLIB_VERNUM.toString(16)].slice(0, 3).join("."));
+
+  // Not linked. It is the version whose output src/zstd reproduces.
+  expect(process.versions.zstd).toBe("1.5.7");
 
   expect(process.versions).toHaveProperty("usockets");
   expect(process.versions).toHaveProperty("uwebsockets");

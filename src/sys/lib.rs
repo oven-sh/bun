@@ -6567,6 +6567,24 @@ fn get_fd_path_freebsd_linuxulator<'a>(
     Ok(&mut out.0[..len])
 }
 
+/// The temporary directory of this user, whatever `$TMPDIR` says. `None` unless only the user can open it.
+#[cfg(target_os = "macos")]
+pub fn darwin_user_temp_dir(out: &mut bun_paths::PathBuffer) -> Option<&[u8]> {
+    // SAFETY: it writes `out.len()` bytes at most.
+    let len_with_nul = unsafe {
+        libc::confstr(
+            libc::_CS_DARWIN_USER_TEMP_DIR,
+            out.0.as_mut_ptr().cast(),
+            out.0.len(),
+        )
+    };
+    let dir = out.0.get(..len_with_nul)?.strip_suffix(b"\0")?;
+    // libc falls back to `$TMPDIR` and to `/var/tmp`.
+    let st = stat(&bun_core::ZBox::from_bytes(dir)).ok()?;
+    let is_private = st.st_uid == c::getuid() && st.st_mode & 0o077 == 0;
+    is_private.then(|| dir.strip_suffix(b"/").unwrap_or(dir))
+}
+
 /// fd → absolute path. Linux: readlink `/proc/self/fd/N`;
 /// macOS: `fcntl(F_GETPATH)`; Windows: `GetFinalPathNameByHandle`.
 pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a mut [u8]> {

@@ -136,6 +136,35 @@ export default function TestPage() {
     expect(hasApiPath).toBe(true);
   });
 
+  // The prerender VM gets the server chunks straight from the in-memory build
+  // output. They are UTF-8, and a preserved comment is text the bundler keeps
+  // as written, so a chunk read as Latin-1 shows in what the page reads back.
+  test("non-ASCII text in a server chunk survives prerendering", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-non-ascii", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `
+function banner() {
+  /*! © café-中-🐰 */
+}
+
+export default function IndexPage() {
+  const text = banner.toString().split("/*! ")[1].split(" */")[0];
+  return <div id="probe">{[text, text.length].join("|")}</div>;
+}
+`,
+    });
+
+    const build = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(build.stderr.toString()).not.toContain("error");
+    expect(build.exitCode).toBe(0);
+
+    const indexHtml = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    expect(indexHtml).toContain(`<div id="probe">© café-中-🐰|11</div>`);
+  });
+
   test("import.meta properties are inlined in catch-all routes during production build", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-catch-all", {
       "src/index.tsx": `export default { 

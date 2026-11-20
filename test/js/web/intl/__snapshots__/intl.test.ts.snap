@@ -408,6 +408,35 @@ exports[`Intl.Collator ko 1`] = `
 ]
 `;
 
+exports[`Intl.Collator ja, ko and zh each reorder the same kanji (coll/ja.res, coll/ko.res, coll/zh.res) 1`] = `
+{
+  "en": [
+    "一",
+    "丁",
+    "亜",
+    "愛",
+  ],
+  "ja": [
+    "亜",
+    "愛",
+    "一",
+    "丁",
+  ],
+  "ko": [
+    "愛",
+    "一",
+    "丁",
+    "亜",
+  ],
+  "zh": [
+    "愛",
+    "丁",
+    "亜",
+    "一",
+  ],
+}
+`;
+
 exports[`Intl.Collator de phonebook vs standard 1`] = `
 {
   "phonebook": [
@@ -450,6 +479,28 @@ exports[`Intl.Segmenter word — en/zh/ja/th 1`] = `
     "中文",
     "分词",
     "测试",
+  ],
+}
+`;
+
+exports[`Intl.Segmenter word in km/lo/my (brkitr/khmerdict, laodict, burmesedict) 1`] = `
+{
+  "km": [
+    "ភាសាខ្មែរ",
+    "គឺជា",
+    "ភាសាផ្លូវការ",
+  ],
+  "lo": [
+    "ພາສາ",
+    "ລາວ",
+    "ເປັນ",
+    "ພາສາ",
+    "ທາງການ",
+  ],
+  "my": [
+    "မြန်မာဘာသာ",
+    "စကား",
+    "ဖြစ်သည်",
   ],
 }
 `;

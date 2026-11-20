@@ -12,11 +12,16 @@ export function asyncIterator(this: Console) {
   var value: Uint8Array[];
   var value_len: number;
   var pendingChunk: Uint8Array | undefined;
+  var activeIterator: AsyncGenerator<string> | undefined;
 
-  async function* ConsoleAsyncIterator() {
-    var reader = stream.getReader();
-    var deferredError: Error | undefined;
+  async function* readLines(session: { iterator: AsyncGenerator<string> | undefined }) {
+    var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    var deferredError: unknown;
+    var hasDeferredError = false;
     try {
+      // ConsoleAsyncIterator consumes this so the generator always enters this try/finally before user code receives it.
+      yield "";
+      reader = stream.getReader();
       if (i !== -1) {
         last = i + 1;
         i = indexOf(actualChunk, last);
@@ -99,15 +104,30 @@ export function asyncIterator(this: Console) {
         actualChunk = undefined!;
       }
     } catch (e) {
-      deferredError = e as Error;
+      deferredError = e;
+      hasDeferredError = true;
     } finally {
-      reader.releaseLock();
+      try {
+        if (reader) reader.releaseLock();
+      } finally {
+        if (activeIterator === session.iterator) activeIterator = undefined;
+      }
     }
 
-    if (deferredError) {
+    if (hasDeferredError) {
       // eslint-disable-next-line no-throw-literal
       throw deferredError;
     }
+  }
+
+  function ConsoleAsyncIterator() {
+    if (activeIterator) return activeIterator;
+    var session: { iterator: AsyncGenerator<string> | undefined } = { iterator: undefined };
+    var iterator = readLines(session);
+    session.iterator = iterator;
+    activeIterator = iterator;
+    $asyncGeneratorPrototypeNext.$call(iterator);
+    return iterator;
   }
 
   const symbol = globalThis.Symbol.asyncIterator;

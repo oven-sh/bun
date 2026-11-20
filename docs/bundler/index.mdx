@@ -1352,6 +1352,10 @@ Point `"types"` in your `package.json` at `index.d.ts`, and the `"aot"` conditio
 warn: the .aot.ts files that --aot compiles a package from are left out: they do not support --minify-identifiers yet
 ```
 
+- **A type error in an `.aot.ts` file leaves them out too.** Bun type checks the files before it writes them, without your sources and without the `types` in your `tsconfig.json`. If that check finds an error, Bun checks them again with Bun's types, because every program that loads an `.aot.ts` file has them. If there's still an error, Bun writes no `.aot.ts` file and warns. The warning says `with Bun's types` when only the second check reports the error that it names.
+
+- **`bun check` and `tsc` in your own project read the `.aot.ts` files too.** A `tsconfig.json` without `include` takes every `.ts` file below it. Add the `outdir` to `"exclude"`.
+
 - **The bundle isn't byte for byte what you get without `dts`.** A `const` stays a `const`, dead code is removed, and `--minify-syntax` skips a few rewrites, so that `index.aot.ts` type checks like your sources.
 
 ### features

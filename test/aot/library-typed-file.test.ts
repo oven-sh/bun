@@ -129,6 +129,42 @@ export function area(shape: Shape): Sizes.Size {
     expect(await compile(String(dir))).toEqual(USED);
   });
 
+  // A bundle for --target=bun begins with `// @bun`, and `bun run --aot` takes a file that begins so for JavaScript. The
+  // build type checks index.aot.ts with the types of Bun, which declare `import.meta.dir`, and still must not write it.
+  test("a library for --target=bun that reads import.meta.dir runs in a program under bun run --aot", async () => {
+    using dir = tempDir("aot-library-typed-file-for-bun", {
+      "library/tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          module: "Preserve",
+          moduleResolution: "bundler",
+          target: "ESNext",
+          types: ["bun"],
+          lib: ["ESNext"],
+          skipLibCheck: true,
+        },
+      }),
+      "library/package.json": JSON.stringify({ name: "where", version: "1.0.0" }),
+      "library/node_modules/@types/bun/package.json": JSON.stringify({
+        name: "@types/bun",
+        version: "1.0.0",
+        types: "index.d.ts",
+      }),
+      "library/node_modules/@types/bun/index.d.ts": "interface ImportMeta {\n  readonly dir: string;\n}\n",
+      "library/src/index.ts": "export function folder(): string {\n  return import.meta.dir;\n}\n",
+      "app/package.json": JSON.stringify({ name: "app", dependencies: { where: "1.0.0" } }),
+      "app/app.ts": 'import { folder } from "where";\nconsole.log(typeof folder());\n',
+    });
+    const library = join(String(dir), "library");
+    const built = await spawned([bunExe(), "compile", "--library", "--target=bun", "src/index.ts"], library, env);
+    expect(built.exitCode).toBe(0);
+    cpSync(join(library, "dist"), join(String(dir), "app/node_modules/where"), { recursive: true });
+    expect(await spawned([bunExe(), "run", "--aot", "app.ts"], join(String(dir), "app"), env)).toMatchObject({
+      stdout: "string\n",
+      exitCode: 0,
+    });
+  });
+
   test("does not read index.js, so a change to it reaches plain Bun alone", async () => {
     using dir = tempDir("aot-library-typed-file-patched", library);
     await install(String(dir));

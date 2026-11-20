@@ -753,6 +753,8 @@ test("vitest compatibility", () => {
 });
 ```
 
+If `fn` is already a mock, `vi.fn(fn)` returns `fn` and makes no new mock, as in Vitest. `jest.fn(fn)` and `mock(fn)` make a new mock that calls `fn`, as in Jest. To get a new mock from `vi.fn()`, pass a function that calls `fn`: `vi.fn((...args) => fn(...args))`.
+
 `vi.mocked(fn)` returns `fn` typed as a mock. `vi.isMockFunction(fn)` returns whether `fn` is a mock.
 
 For module mocks, `vi` has `mock`, `doMock`, `unmock`, `doUnmock`, `importActual`, `importMock`, `resetModules` and `hoisted`. `jest` has `mock`, `doMock`, `unmock`, `dontMock`, `requireActual`, `requireMock`, `createMockFromModule` and `resetModules`.

@@ -195,6 +195,8 @@ query.get(2); // ✓ Also works - parameters are bound fresh each time
 query.get(3); // ✓ Still works
 ```
 
+The exception is a loop over [`.iterate()`](#iterate-iterator) that has not ended. The next run of the same cached statement takes the cursor, and the loop throws at its next row. That run can come from other code, such as another request, while the loop body awaits. Give such a loop a `Statement` of its own with `.prepare()`.
+
 Use `.prepare()` instead of `.query()` when you want a fresh `Statement` instance that isn't cached, for example if you're dynamically generating SQL and don't want to fill the cache with one-off queries.
 
 ```ts

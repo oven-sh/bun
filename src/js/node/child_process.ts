@@ -69,6 +69,43 @@ interface SpawnSyncResult {
 
 const kFromNode = Symbol("kFromNode");
 
+const setStdioBlocking: (fd: number, blocking: boolean) => number = $bindgen(
+  "node_process.bind.ts",
+  "setStdioBlocking",
+);
+
+// Stand-in for Node's `Pipe` handle on piped child stdio, shaped like
+// `process.stdout._handle`: consumers read `fd` and call `setBlocking` for
+// synchronous fd-based IPC with readSync/writeSync. The native stream owns
+// the fd.
+class StdioPipeHandle {
+  #getFd: () => number | undefined;
+  constructor(getFd: () => number | undefined) {
+    this.#getFd = getFd;
+  }
+  get fd(): number {
+    const fd = this.#getFd();
+    return typeof fd === "number" ? fd : -1;
+  }
+  /** Like Node: 0 on success, a negative errno otherwise. */
+  setBlocking(blocking: boolean): number {
+    return setStdioBlocking(this.fd, !!blocking);
+  }
+}
+
+/** A piped child stdio stream: `_handle` carries the parent-end fd. */
+interface ChildStdioStream {
+  _handle?: StdioPipeHandle;
+}
+
+interface ChildStdinStream extends $Node.Writable, ChildStdioStream {
+  ref(): this;
+  unref(): this;
+}
+
+type ChildStdoutStream = ReturnType<$BunModules["internal/streams/native-readable"]["constructNativeReadable"]> &
+  ChildStdioStream;
+
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
   $debug("child_process: debug mode on");
@@ -1266,8 +1303,20 @@ class ChildProcess extends EventEmitter {
               stream.destroy();
               return stream;
             }
-            const result = require("internal/fs/streams").writableFromFileSink(stdin as $Node.FileSink);
+            const sink = stdin as $Node.FileSink;
+            const result = require("internal/fs/streams").writableFromFileSink(sink) as unknown as ChildStdinStream;
             result.readable = false;
+            result._handle = new StdioPipeHandle(() => sink._getFd());
+            // Node's child.stdin is a net.Socket with ref/unref. The FileSink
+            // keeps the loop alive exactly while a write is queued, which is
+            // what Node does for a queued write, and it cannot ref an idle
+            // pipe. Forwarding these would only let unref drop queued bytes.
+            result.ref = function ref() {
+              return this;
+            };
+            result.unref = function unref() {
+              return this;
+            };
             return result;
           }
           case "inherit":
@@ -1305,10 +1354,16 @@ class ChildProcess extends EventEmitter {
               return stream;
             }
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(
+            const pipe: ChildStdoutStream = require("internal/streams/native-readable").constructNativeReadable(
               value as ReadableStream,
               {},
             );
+            // A pipe that already drained to a buffer has a Blob source with
+            // no getFd; the handle getter maps the undefined to -1.
+            const ptr = pipe.$bunNativePtr;
+            if (ptr) {
+              pipe._handle = new StdioPipeHandle(() => ptr.getFd?.());
+            }
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
@@ -1779,8 +1834,10 @@ function streamFdOf(item): number | undefined {
     throw $ERR_INVALID_ARG_VALUE("stdio", require("internal/util/inspect").inspect(item, { depth: -1 }));
   }
 
+  // A piped child stdio stream keeps its own native reader on the fd, so
+  // handing that fd to another child would split the bytes between them.
   const handle = item._handle;
-  const handleFd = handle ? handle.fd : undefined;
+  const handleFd = handle && !(handle instanceof StdioPipeHandle) ? handle.fd : undefined;
   if (typeof handleFd === "number") return handleFd;
 
   if (item.destroyed) return undefined;

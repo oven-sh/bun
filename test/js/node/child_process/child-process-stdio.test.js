@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
@@ -217,6 +217,124 @@ describe.skipIf(!isPosix)("stdio handed to the child", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("spawnSync: ok 0\nspawn: 0\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("stdio _handle", () => {
+  it("piped stdio streams carry a _handle with a numeric fd", async () => {
+    const child = spawn(bunExe(), ["-e", "setTimeout(() => {}, 100_000)"], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    try {
+      expect(typeof child.stdin._handle.fd).toBe("number");
+      expect(typeof child.stdout._handle.fd).toBe("number");
+      expect(typeof child.stderr._handle.fd).toBe("number");
+      if (!isWindows) {
+        // Windows pipes have no CRT fd: Node reports -1 there too.
+        expect(child.stdin._handle.fd).toBeGreaterThanOrEqual(0);
+        expect(child.stdout._handle.fd).toBeGreaterThanOrEqual(0);
+        expect(child.stderr._handle.fd).toBeGreaterThanOrEqual(0);
+      }
+    } finally {
+      child.kill();
+    }
+    await once(child, "exit");
+    // The parent-end write fd is closed once the child is gone: the handle
+    // must not leak the stale number.
+    expect(child.stdin._handle.fd).toBe(-1);
+  });
+
+  it.skipIf(isWindows)("stdin _handle.fd is -1 after end()", async () => {
+    const child = spawn(bunExe(), ["-e", "process.stdin.resume(); setTimeout(() => {}, 30_000)"], {
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "inherit"],
+    });
+    try {
+      expect(child.stdin._handle.fd).toBeGreaterThanOrEqual(0);
+      child.stdin.end();
+      await once(child.stdin, "finish");
+      expect(child.stdin._handle.fd).toBe(-1);
+    } finally {
+      child.kill();
+    }
+    await once(child, "exit");
+  });
+
+  // Like Node: a queued write keeps the parent alive until the child has
+  // read it, however stdin is ref'd or unref'd. Once drained the parent
+  // exits on its own, which closes the pipe and lets the child report the
+  // byte count.
+  it.skipIf(isWindows)("a queued child.stdin write outlives ref/unref, then the parent exits", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { spawn } = require("node:child_process");
+        const child = spawn(process.execPath, ["-e", 'let n = 0; process.stdin.on("data", d => (n += d.length)); process.stdin.on("end", () => console.log(n))'], {
+          stdio: ["pipe", "inherit", "inherit"],
+        });
+        child.stdin.ref();
+        child.stdin.write(Buffer.alloc(1 << 20, 10));
+        child.stdin.unref();
+        child.unref();
+        `,
+      ],
+      // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes. It kills
+      // the child, which prints its count after its parent is gone.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`${1 << 20}\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // The synchronous fd-based IPC pattern used by TypeScript 7's sync API:
+  // grab the raw fds from _handle, make them blocking, keep the streams
+  // paused, and drive a request/response cycle with writeSync/readSync.
+  // The exchange runs in its own process: a blocking read on the test
+  // thread would outlive the test timeout.
+  it.skipIf(isWindows)("_handle.fd supports blocking readSync/writeSync IPC", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { spawn } = require("node:child_process");
+        const { readSync, writeSync } = require("node:fs");
+        const child = spawn(process.execPath, ["-e", 'process.stdin.once("data", d => process.stdout.write("pong:" + d.toString().trim()))'], {
+          stdio: ["pipe", "pipe", "inherit"],
+        });
+        process.on("exit", () => child.kill());
+        const readFd = child.stdout._handle.fd;
+        const writeFd = child.stdin._handle.fd;
+        const blocking = [child.stdout._handle.setBlocking(true), child.stdin._handle.setBlocking(true)];
+        child.stdout.pause();
+        child.stdout.unref();
+        child.stdin.unref();
+        child.unref();
+
+        writeSync(writeFd, "ping");
+        const buf = Buffer.alloc(64);
+        let out = "";
+        while (!out.includes("pong:ping")) {
+          const n = readSync(readFd, buf, 0, buf.length, null);
+          if (n === 0) break;
+          out += buf.toString("utf8", 0, n);
+        }
+        console.log(JSON.stringify({ blocking, out }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ blocking: [0, 0], out: "pong:ping" });
     expect(exitCode).toBe(0);
   });
 });

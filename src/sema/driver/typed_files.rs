@@ -3096,6 +3096,7 @@ fn add_types(
     transfer.type_enum_and_namespace_objects();
     transfer.copy_statements();
     transfer.copy_directives();
+    transfer.load_what_javascript_loads();
     transfer.copy_members();
     transfer.finish()
 }
@@ -3619,6 +3620,36 @@ impl<'a> Transfer<'_, 'a, '_> {
                 );
                 insertions.add(end, Order::Close(end - start), suffix);
             }
+        }
+    }
+
+    fn load_what_javascript_loads(&mut self) {
+        let (javascript, output, file) = (self.javascript, self.output, self.output.file);
+        let nested = output.nested_names();
+        let used: FxHashSet<&[u8]> = (output.used_names())
+            .map(|at| output.word(at))
+            .filter(|name| !nested.contains(name))
+            .collect();
+        let imports = file.imports.iter();
+        for import in imports.filter(|import| !import.type_only && !import.is_deferred) {
+            let named = import.named.iter().map(|specifier| file[specifier].pos);
+            let default = import.default.is_some().then_some(import.default_pos);
+            let namespace = import.namespace.is_some().then_some(import.namespace_pos);
+            let is_bare = !import.has_named_imports && default.is_none() && namespace.is_none();
+            let mut names = named.chain(default).chain(namespace);
+            if is_bare || names.any(|at| used.contains(output.word(at))) {
+                continue;
+            }
+            let from = output.after_trivia(import.clause_end);
+            let specifier = output.after_trivia(output.token_end(from));
+            let statement = &file[import.stmt];
+            let loaded = &javascript[specifier as usize..statement.loc.end as usize];
+            let end: &[u8] = if loaded.ends_with(b";") { b" " } else { b"; " };
+            self.insertions.add(
+                statement.start,
+                Order::MemberStart,
+                [&b"import "[..], loaded, end].concat(),
+            );
         }
     }
 

@@ -642,6 +642,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    #[cfg_attr(miri, ignore = "writes and maps a host file")]
     fn large_piece_of_spent_mapping_is_whole_and_no_longer_resident() {
         const IS_PRESENT: u64 = 1 << 63;
         let folder = TemporaryFolder::create("spent");

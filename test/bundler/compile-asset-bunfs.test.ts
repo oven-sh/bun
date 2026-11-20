@@ -721,7 +721,12 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
         await using proc = Bun.spawn({
           cmd: [join(root, "app" + exe)],
           cwd: extractDir,
-          env: { ...bunEnv, BUN_TMPDIR: extractDir, TMPDIR: extractDir, LD_DEBUG: "libs" },
+          // `LD_DEBUG_OUTPUT` would send the trace to a file instead of stderr.
+          env: Object.fromEntries(
+            Object.entries({ ...bunEnv, BUN_TMPDIR: extractDir, TMPDIR: extractDir, LD_DEBUG: "libs" }).filter(
+              ([key]) => key !== "LD_DEBUG_OUTPUT",
+            ),
+          ) as Record<string, string>,
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -900,6 +905,7 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
       const first = await runIsolated(String(dir), String(named));
       expect(first.stderr).not.toContain("ERR_DLOPEN_FAILED");
       expect(first.stdout.trim()).toBe(report(1));
+      expect(first.code).toBe(0);
       const name = readdirSync(String(named)).find(entry => entry.startsWith(".bun-"))!;
       expect(name).toBeString();
 

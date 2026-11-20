@@ -1206,7 +1206,7 @@ bitflags::bitflags! {
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
         /// After the linked-payload record: the record of the program compiled ahead of time (`compiled_program.rs`).
         const HAS_COMPILED_PROGRAM          = 1 << 14;
-        /// After the linked-payload record: `u64 set_hash`, `u32 count`, then `count` x `{ u32 file_index,
+        /// After the compiled-program record: `u64 set_hash`, `u32 count`, then `count` x `{ u32 file_index,
         /// u32 alias_index }` (`NativeLibrarySet`): every embedded shared library, so the runtime can mirror
         /// the set to disk before `dlopen` without hashing it first.
         const HAS_NATIVE_LIBRARY_SET        = 1 << 15;

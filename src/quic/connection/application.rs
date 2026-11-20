@@ -75,7 +75,7 @@ impl Connection {
         if stream.flags.contains(Flags::WRITE_DONE) {
             return None;
         }
-        stream.expect(data.len() as u64);
+        state.expect(stream, data.len() as u64);
         let (capacity, is_ahead) = state.capacity(id, stream, data.len());
         let overhead = match &stream.role {
             Role::Message(message) if !message.has_sent_headers => return None,

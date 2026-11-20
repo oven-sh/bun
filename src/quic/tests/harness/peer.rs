@@ -17,6 +17,8 @@ pub(crate) struct Stream {
     pub(crate) is_read_to_end: bool,
     pub(crate) is_closed: bool,
     unsent: VecDeque<u8>,
+    /// Of the current piece.
+    rest: usize,
     finishes: bool,
 }
 
@@ -38,6 +40,8 @@ pub(crate) struct Peer {
     pub(crate) echoes: bool,
     pub(crate) refuses: bool,
     pub(crate) resets: bool,
+    /// How many bytes it offers at a time.
+    pub(crate) piece_len: Option<usize>,
     turns: u32,
 }
 
@@ -59,6 +63,7 @@ impl Peer {
             echoes: false,
             refuses: false,
             resets: false,
+            piece_len: None,
             turns: 0,
         }
     }
@@ -93,8 +98,18 @@ impl Peer {
     fn write(&mut self, handle: Handle, id: u64) {
         let stream = self.streams.entry(id).or_default();
         let connection = self.endpoint.get_mut(handle).unwrap();
-        let len = connection.write(StreamId(id), stream.unsent.make_contiguous());
-        stream.unsent.drain(..len.unwrap_or(0));
+        loop {
+            let unsent = stream.unsent.make_contiguous();
+            if stream.rest == 0 || self.piece_len.is_none() {
+                stream.rest = unsent.len().min(self.piece_len.unwrap_or(usize::MAX));
+            }
+            let len = connection.write(StreamId(id), &unsent[..stream.rest]);
+            stream.unsent.drain(..len.unwrap_or(0));
+            stream.rest -= len.unwrap_or(0);
+            if stream.rest > 0 || stream.unsent.is_empty() {
+                break;
+            }
+        }
         if stream.unsent.is_empty() && stream.finishes {
             connection.finish(StreamId(id));
         }

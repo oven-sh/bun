@@ -48,6 +48,7 @@ bitflags::bitflags! {
         const WILL_BE_LONG = 1 << 29;
         /// It is long, and there is no telling how long.
         const KEEPS_COMING = 1 << 30;
+        const HAS_LONG_PIECES = 1 << 31;
     }
 }
 
@@ -72,10 +73,11 @@ pub(crate) struct Stream {
     pub(super) send_limit: u64,
     /// The limit that STREAM_DATA_BLOCKED has been sent for.
     pub(super) blocked_at: Option<u64>,
-    /// The turn in which it was opened, or in which its share is due.
+    /// The turn in which it was opened, or else in which its end is due.
     pub(super) first_turn: u64,
-    /// How many bytes are left of that share.
+    /// How many bytes are left of its share, and when that is due.
     pub(super) share: u64,
+    pub(super) due: u64,
     /// How many bytes the application is left with.
     pub(super) unwritten: u64,
     /// Where it last ran out of bytes to send.
@@ -119,6 +121,7 @@ impl Stream {
             blocked_at: None,
             first_turn: 0,
             share: 0,
+            due: 0,
             unwritten: 0,
             busy_from: 0,
             turn_end: 0,

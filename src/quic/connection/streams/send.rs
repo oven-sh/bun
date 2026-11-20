@@ -10,18 +10,14 @@ use crate::frame::{kind, stream_flag};
 use crate::stream_id::StreamId;
 
 /// What a stream can take however much the others have.
-const MIN_UNSENT: u64 = 8 * 1024;
+pub(super) const MIN_UNSENT: u64 = 8 * 1024;
 /// By how much what is unsent has to be below the target for the application to be asked for more.
 pub(in crate::connection) const WRITE_CHUNK: u64 = 32 * 1024;
 const TURN_LEN: u64 = 16 * 1024;
-/// By how many turns a stream gives way that has sent this much in one go, and has more than a little to send.
+/// By how many turns a stream gives way that sends this much in one go, and has more than a little to send.
 const BULK_HANDICAP: u64 = 8;
-const BULK_LEN: u64 = 128 * 1024;
+pub(super) const BULK_LEN: u64 = 128 * 1024;
 const LITTLE: u64 = 2 * 1024;
-/// Where streams are not sent in order, they write a share at a time. It is due later by a turn for so many of its bytes
-/// and for each of the streams, so that short ones pass long ones, but not for ever. Those that wait with little count half.
-const MAX_SHARE: u64 = 128 * 1024;
-const SHARE_PER_TURN: u64 = 4 * 1024;
 /// After how much a response that is not incremental shares the path all the same (RFC 9218 §10).
 const LONG_LEN: u64 = 1024 * 1024;
 /// A rank is made of the urgency, this bit, the turn, and whether the stream takes turns. Those that have the bit go one
@@ -47,16 +43,11 @@ fn line_up(line: &mut Line, entry: (u64, StreamId)) {
 }
 
 /// Of those that are as urgent as the first stream, unless it is sent in order and younger.
-fn first_serial(line: &Line) -> Option<usize> {
+pub(super) fn first_serial(line: &Line) -> Option<usize> {
     let first = line.front().map(|&(rank, id)| (rank | SERIAL, id))?;
     let at = line.partition_point(|it| it.0 / SERIAL < first.0 / SERIAL);
     let takes_turns = |rank| rank & 1 == 1 && rank / SERIAL == first.0 / SERIAL;
     (line.get(at).filter(|it| **it <= first || takes_turns(it.0))).map(|_| at)
-}
-
-#[inline]
-fn in_turn(rank: u64, turn: u64) -> u64 {
-    rank & !TURN_BITS | turn << 1 & TURN_BITS
 }
 
 /// Less is older, or more urgent. Streams that take turns have none.
@@ -76,26 +67,7 @@ fn is_under_way(stream: &Stream) -> bool {
 }
 
 impl Stream {
-    /// How many bytes the application is about to offer.
-    #[inline]
-    pub(crate) fn expect(&mut self, len: u64) {
-        if len > self.unwritten {
-            if self.unwritten + self.send.unsent_len() == 0 {
-                self.busy_from = self.send.end();
-            }
-            let keeps_coming = self.send.end() >= self.busy_from + BULK_LEN;
-            self.flags.set(Flags::KEEPS_COMING, keeps_coming);
-        }
-    }
-
-    #[inline]
-    fn share_of(&self, len: u64) -> u64 {
-        match self.flags.contains(Flags::KEEPS_COMING) {
-            true => MAX_SHARE,
-            false => len.min(MAX_SHARE),
-        }
-    }
-
+    /// How many bytes the application is left with.
     #[inline]
     pub(crate) fn set_unwritten(&mut self, len: u64) {
         self.unwritten = len;
@@ -112,21 +84,22 @@ impl State {
         let mut credit = self.send_credit();
         let (has_to_wait, is_ahead) = match self.invited {
             Some((invited, is_ahead)) if invited == id => {
-                credit = credit.saturating_sub(self.spare_credit);
+                credit = (credit.saturating_sub(self.spare_credit)).min(self.max_write(stream));
                 (false, is_ahead)
             }
             _ if self.writable.is_empty() && self.leader.is_none() => (false, false),
+            _ if !self.sends_in_order => (self.has_to_wait(id, stream, len as u64), false),
             _ => {
-                let entry = (self.rank_to_write(stream, len as u64), id);
-                let has_to_wait =
-                    (self.writable.front()).is_some_and(|it| it.1 != id && *it < entry);
+                let entry = (self.rank(stream), id);
+                let has_to_wait = self.writable.front().is_some_and(|it| *it < entry);
                 let follows = |age| has_to_wait || self.leader.is_some_and(|it| it < age);
                 (has_to_wait, age(entry).is_some_and(follows))
             }
         };
         let shared = match has_to_wait {
             true => 0,
-            false => self.unsent_target.saturating_sub(self.unsent),
+            false => (self.unsent_target + self.extra_unsent(stream, len as u64))
+                .saturating_sub(self.unsent),
         };
         let wanted = shared.max(MIN_UNSENT.saturating_sub(stream.send.unsent_len()));
         let room = self.max_retained.saturating_sub(self.retained);
@@ -197,8 +170,13 @@ impl State {
     }
 
     #[inline]
-    fn invites_writes(&self) -> bool {
+    pub(super) fn has_little_unsent(&self) -> bool {
         self.unsent + WRITE_CHUNK <= self.unsent_target
+    }
+
+    #[inline]
+    fn invites_writes(&self) -> bool {
+        (self.has_little_unsent() || self.is_any_starved())
             && self.retained + WRITE_CHUNK <= self.max_retained
             && self.send_credit() >= self.min_credit
     }
@@ -221,23 +199,16 @@ impl State {
             stream.send.write(part);
             self.unsent += part.len() as u64;
             self.retained += part.len() as u64;
-            self.use_share(stream, part.len() as u64);
+            stream.share = stream.share.saturating_sub(part.len() as u64);
         }
         self.mark_sendable(id, stream);
     }
 
-    #[inline]
-    fn use_share(&mut self, stream: &mut Stream, len: u64) {
-        let len = len.min(stream.share);
-        stream.share -= len;
-        self.shares -= len;
-    }
-
     pub(crate) fn finish(&mut self, id: StreamId, stream: &mut Stream) {
         if stream.mark(Flags::WRITE_DONE) {
-            self.use_share(stream, MAX_SHARE);
-            let last_turn = self.turns + stream.send.unsent_len() / (TURN_LEN / 2);
-            stream.first_turn = stream.first_turn.min(last_turn);
+            if !self.sends_in_order {
+                stream.first_turn = self.turns + stream.send.unsent_len() / (TURN_LEN / 2);
+            }
             stream.flags.insert(Flags::FIN);
             self.mark_sendable(id, stream);
             self.close_if_done(id, stream);
@@ -252,7 +223,6 @@ impl State {
             stream.flags.insert(Flags::RESET);
             self.owe(id, stream, Flags::OWES_RESET_STREAM);
         }
-        self.use_share(stream, MAX_SHARE);
         stream.flags.insert(Flags::WRITE_DONE);
         self.close_if_done(id, stream);
     }
@@ -318,12 +288,10 @@ impl State {
         self.report_blocked(id, stream);
         if stream.mark(Flags::IN_WRITABLE) {
             self.turns += 1;
-            let rank = self.rank_to_write(stream, stream.unwritten);
-            if self.writes_shares(stream) && stream.share == 0 {
-                stream.share = stream.share_of(stream.unwritten);
-                self.shares += stream.share;
-                stream.first_turn = (rank & TURN_BITS) >> 1;
-            }
+            let rank = match self.sends_in_order {
+                true => self.rank(stream),
+                false => self.rank_share(stream),
+            };
             line_up(&mut self.writable, (rank, id));
             self.is_write_round_over = false;
             self.has_passing |= self.can_pass((rank, id), stream);
@@ -367,64 +335,41 @@ impl State {
         };
         let turn = match (takes_turns, is_ending) {
             (true, false) => {
-                self.turns + u64::from(is_past(stream.busy_from + BULK_LEN)) * BULK_HANDICAP
+                let to_come = u64::from(!self.sends_in_order) * stream.unwritten;
+                let bulk_from = BULK_LEN.saturating_sub(to_come).max(MIN_UNSENT / 2);
+                self.turns + u64::from(is_past(stream.busy_from + bulk_from)) * BULK_HANDICAP
             }
             (true, true) if !is_serial => 0,
             _ => stream.first_turn,
         };
         let class = 2 * (u64::from(stream.priority.urgency) + 1) + u64::from(is_serial);
-        in_turn((class * SERIAL) | u64::from(takes_turns), turn)
-    }
-
-    #[inline]
-    fn writes_shares(&self, stream: &Stream) -> bool {
-        !self.sends_in_order && !stream.priority.is_incremental
-    }
-
-    /// For when the application has `len` bytes.
-    #[inline]
-    fn rank_to_write(&self, stream: &Stream, len: u64) -> u64 {
-        let rank = self.rank(stream);
-        if !self.writes_shares(stream) {
-            return rank;
-        }
-        if stream.share > 0 {
-            return in_turn(rank, stream.first_turn);
-        }
-        let (share, weight) = (stream.share_of(len), self.open * MAX_SHARE + self.shares);
-        let delay = share * (weight + share) / (2 * MAX_SHARE * SHARE_PER_TURN);
-        in_turn(rank, self.turns + delay)
+        (class * SERIAL) | turn << 1 & TURN_BITS | u64::from(takes_turns)
     }
 
     /// Where it is in `sendable`.
     #[inline]
     fn next_to_send(&self) -> usize {
-        match self.passed >= TURN_LEN {
+        let gives_way = |it: &(u64, StreamId)| (it.0 & TURN_BITS) >> 1 > self.turns;
+        match self.passed >= TURN_LEN
+            || !self.sends_in_order && self.sendable.front().is_some_and(gives_way)
+        {
             true => first_serial(&self.sendable).unwrap_or(0),
             false => 0,
         }
     }
 
-    /// The rank of the first stream that is written to the end among those that take turns, while there is enough to send.
-    #[inline]
-    fn first_ending(&self) -> Option<u64> {
-        let &(rank, _) = self.sendable.get(first_serial(&self.sendable)?)?;
-        (rank & 1 == 1 && self.unsent > 2 * WRITE_CHUNK).then_some(rank & !SERIAL)
-    }
-
     /// Where it is in `writable`, and whether it is ahead of an older stream.
     #[inline]
     fn next_to_write(&mut self, table: &Table) -> (Option<usize>, bool) {
+        if !self.sends_in_order {
+            return (self.next_share(table), false);
+        }
         let leader = (self.leader).filter(|it| table.get(it.1).is_some_and(is_under_way));
         self.update_credit_ahead(leader.and_then(|it| table.get(it.1)));
         let line = &self.writable;
-        let ending = self.first_ending();
-        let is_due = |&(rank, id): &(u64, StreamId), max_unsent| {
-            table.get(id).is_some_and(|it| {
-                let yields = ending.is_some_and(|ending| ending < rank)
-                    && it.flags.contains(Flags::HAS_MUCH_TO_WRITE)
-                    && !it.priority.is_incremental;
-                it.write_round != self.write_round && it.send.unsent_len() <= max_unsent && !yields
+        let is_due = |it: &(u64, StreamId), max_unsent| {
+            table.get(it.1).is_some_and(|it| {
+                it.write_round != self.write_round && it.send.unsent_len() <= max_unsent
             })
         };
         let serial = first_serial(line);
@@ -511,7 +456,7 @@ impl Streams {
     fn apply_priorities(&mut self) {
         let Self { table, state, .. } = self;
         let mut lines = [&mut state.sendable, &mut state.writable].map(core::mem::take);
-        for line in &mut lines {
+        for line in lines.iter_mut().take(1 + usize::from(state.sends_in_order)) {
             for (rank, id) in &mut *line {
                 let new = table.get(*id).map(|it| state.rank(it));
                 *rank = new

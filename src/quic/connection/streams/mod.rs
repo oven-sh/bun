@@ -4,6 +4,7 @@ pub(super) mod assembler;
 mod receive;
 mod send;
 pub(super) mod send_buffer;
+mod shares;
 mod stream;
 
 use std::collections::VecDeque;
@@ -123,10 +124,6 @@ pub(crate) struct State {
     pub(super) unsent_target: u64,
     write_round: u64,
     is_write_round_over: bool,
-    /// How many streams the application has.
-    open: u64,
-    /// What is left of their shares.
-    shares: u64,
 
     sendable: Line,
     turns: u64,
@@ -270,7 +267,6 @@ impl Streams {
     #[inline]
     pub(crate) fn get_mut(&mut self, id: StreamId) -> Option<(&mut Stream, &mut State)> {
         let Self { table, state, .. } = self;
-        state.open = table.unreleased as u64;
         table.get_mut(id).map(|stream| (stream, state))
     }
 

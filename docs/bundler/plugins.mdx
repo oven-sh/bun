@@ -252,9 +252,9 @@ One of the arguments passed to the `onLoad` callback is a `defer` function. It r
 <Accordion title="Example: tracking and reporting unused exports">
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-import { plugin } from "bun";
+import type { BunPlugin } from "bun";
 
-plugin({
+const trackImports: BunPlugin = {
   name: "track imports",
   setup(build) {
     const transpiler = new Bun.Transpiler();
@@ -283,11 +283,17 @@ plugin({
 
       // Emit JSON containing the stats of each import
       return {
-        contents: `export default ${JSON.stringify(trackedImports)}`,
+        contents: JSON.stringify(trackedImports),
         loader: "json",
       };
     });
   },
+};
+
+await Bun.build({
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
+  plugins: [trackImports],
 });
 ```
 

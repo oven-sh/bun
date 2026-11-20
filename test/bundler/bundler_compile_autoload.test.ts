@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 // Not describe.concurrent: the backend:"cli" cases each spawn a full
@@ -566,6 +566,35 @@ console.log("PRELOAD");
     run: {
       stdout: "PRELOAD\nENTRY",
       setCwd: true,
+    },
+  });
+
+  // With execArgv an executable reads bunfig.toml while it reads its arguments, so `logLevel` applies to it. A log
+  // level does not make fetch() print its headers.
+  itBundled("compile/AutoloadBunfigLogLevelPrintsNoFetchHeadersWithExecArgv", {
+    compile: {
+      execArgv: ["--smol"],
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        const response = await fetch(server.url, { headers: { "x-probe": "1" } });
+        console.log(await response.text());
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `logLevel = "debug"`,
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "ok",
+      setCwd: true,
+      env: { BUN_CONFIG_VERBOSE_FETCH: "" },
+      validate({ stderr }) {
+        // At "debug" bun prints how long it took to read .env: the level reached the executable.
+        expect(stderr).toContain(`] ".env"\n`);
+        expect(stderr.split("\n").filter(line => line.endsWith("x-probe: 1"))).toEqual([]);
+      },
     },
   });
 

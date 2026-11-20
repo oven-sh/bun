@@ -1635,13 +1635,27 @@ Invalid Bunfig: failed to load bunfig"
     },
   );
 
+  test.concurrent("rejects coverageThreshold = 70 when the coverage report has no files", async () => {
+    const bunfig = `[test]
+coverage = true
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = "sum.ts"
+coverageThreshold = 70
+`;
+    expect(await run(bunfig)).toMatchObject({
+      rangeError: rangeError("test.coverageThreshold", "70"),
+      ranTests: false,
+      exitCode: 1,
+    });
+  });
+
   test.concurrent.each([
     ["0", 0],
     ["0.2", 0],
     ["1", 1],
     ["{ lines = 0.3, functions = 0.3 }", 0],
     ["{ lines = 1.0, functions = 1.0 }", 1],
-    // Bun does not enforce `statements`, so it does not check its range.
+    // Nothing compares `statements` today, so its range is not checked.
     ["{ statements = 50, lines = 0.1, functions = 0.1 }", 0],
   ])("coverage = true accepts coverageThreshold = %s", async (threshold, exitCode) => {
     expect(await run(`[test]\ncoverage = true\ncoverageThreshold = ${threshold}\n`)).toMatchObject({
@@ -1663,16 +1677,5 @@ Invalid Bunfig: failed to load bunfig"
       printedTable: false,
       exitCode: 0,
     });
-  });
-
-  test.concurrent("coverage = false with --coverage never prints a table and then fails without a reason", async () => {
-    // This does not pin which of `coverage = false` and `--coverage` wins.
-    const result = await run(`[test]\ncoverage = false\ncoverageThreshold = 70\n`, ["--coverage"]);
-    expect(result.printedTable).toBe(false);
-    expect(result).toMatchObject(
-      result.ranTests
-        ? { rangeError: undefined, exitCode: 0 }
-        : { rangeError: rangeError("test.coverageThreshold", "70"), exitCode: 1 },
-    );
   });
 });

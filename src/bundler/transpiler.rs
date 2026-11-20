@@ -1251,6 +1251,8 @@ impl<'a> Transpiler<'a> {
                 ..Default::default()
             }
         });
+        // `arena` frees `source` without dropping it.
+        let _release = bun_ast::ReleasePositionIndex(&source.position_index);
 
         if RETURN_FILE_ONLY {
             return Some(ParseResult::empty_with(

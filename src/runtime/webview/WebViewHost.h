@@ -9,6 +9,7 @@
 #include <wtf/RefCounted.h>
 #include <wtf/Ref.h>
 #include <wtf/text/WTFString.h>
+#include <unordered_map>
 
 namespace Bun {
 
@@ -22,7 +23,26 @@ namespace Bun {
 class WebViewHost : public RefCounted<WebViewHost> {
 public:
     static Ref<WebViewHost> createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir);
+    static Ref<WebViewHost> createDesktopForIPC(uint32_t viewId, uint32_t width, uint32_t height, int32_t x, int32_t y, uint8_t flags, const WTF::String& title, const WTF::String& preloadJs);
+    static void warmDesktop();
+    static void registerCustomScheme(const WTF::String& scheme);
     ~WebViewHost();
+
+    void setWindowTitle(const WTF::String& title);
+    void showWindow(bool visible);
+    void performWindowAction(uint8_t action);
+    void setWindowProgress(double progress);
+    static void setApplicationMenu(const WTF::String& menuJson);
+    static void showDialog(uint32_t viewId, uint32_t reqId, uint8_t kind, const WTF::String& optsJson);
+    void sendDesktopIpcReply(uint32_t reqId, bool ok, const WTF::String& resultJson);
+    void sendDesktopIpcBinaryReply(uint32_t reqId, uint16_t status, const uint8_t* dataPtr, uint32_t dataLen);
+    void evaluateDesktopJS(uint32_t reqId, const WTF::String& script);
+    void dispatchToRenderer(const WTF::String& channel, const WTF::String& argsJson);
+    void onDesktopIpcMessage(uint32_t reqId, bool isInvoke, const WTF::String& channel, const WTF::String& argsJson);
+    void onDesktopIpcMessageWithReply(const WTF::String& channel, const WTF::String& argsJson, id replyHandler);
+    void onSchemeTaskStart(id task);
+    void onSchemeTaskStop(id task);
+    void sendSchemeResponse(uint32_t taskId, uint16_t status, uint8_t kind, const WTF::String& headersJson, const uint8_t* bytesPtr, uint32_t bytesLen, const WTF::String& filePath, uint64_t offset, uint64_t length);
 
     void navigateIPC(const WTF::String& url);
     void evaluateIPC(const WTF::String& js);
@@ -106,6 +126,11 @@ private:
     uint8_t m_selModifiers = 0;
     uint8_t m_selClickCount = 0;
     bool m_selIsScrollTo = false;
+    uint32_t m_nextSchemeTaskId = 1;
+    std::unordered_map<uint32_t, id> m_schemeTasks;
+    uint32_t m_nextIpcReqId = 1;
+    std::unordered_map<uint32_t, void*> m_pendingIpcReplies;
+    std::unordered_map<uint32_t, WTF::String> m_pendingIpcBlobs;
 };
 
 } // namespace Bun

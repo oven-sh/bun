@@ -432,4 +432,9 @@ extern "C" void Bun__WebView__closeAllForTermination()
 {
     Bun__Chrome__kill();
     Bun__WebViewHost__kill();
+#if OS(DARWIN)
+    if (Bun::WK::client().inProcess) {
+        Bun::WebViewProto::clearInProcessHost();
+    }
+#endif
 }

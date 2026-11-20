@@ -67,6 +67,22 @@ enum class Op : uint8_t {
     // fires (isTrusted:true — browser-driven), scrollY updates,
     // IntersectionObserver triggers.
     ScrollTo = 15, // ScrollToPayload + str selector
+
+    // Desktop mode (bun --desktop)
+    CreateDesktopWindow = 16, // CreateDesktopWindowPayload + str title + str preloadJs
+    SetWindowTitle = 17, // str title
+    ShowWindow = 18, // u8 visible
+    DesktopIpcReply = 19, // u32 reqId, u8 ok, str resultJsonOrErr
+    DesktopDispatch = 20, // str channel, str argsJson
+    DesktopSchemeResponse = 21, // u32 taskId, u16 status, u8 kind (0=Bytes,1=File,2=Error), str headersJson, ...
+    DesktopWindowAction = 22, // u8 action (1=Maximize, 2=Unmaximize, 3=Minimize, 4=Focus, 5=Center)
+    DesktopSetMenu = 23, // str menuJson
+    DesktopWindowProgress = 24, // f64 progress
+    DesktopDialog = 25, // u32 reqId, u8 kind (0=open,1=save,2=message,3=error), str optsJson
+    DesktopIpcBinaryReply = 26, // u32 reqId, u16 status, u32 dataLen, data bytes
+    DesktopWarm = 27, // (empty) pre-warm WebContent XPC + shared WKProcessPool
+    DesktopRegisterScheme = 28, // str scheme
+    DesktopEval = 29, // u32 reqId, str script
 };
 
 // Mouse button: 0=left, 1=right, 2=middle.
@@ -128,6 +144,15 @@ struct ScrollToPayload {
     // str selector follows
 };
 
+struct CreateDesktopWindowPayload {
+    uint32_t width;
+    uint32_t height;
+    int32_t x;
+    int32_t y;
+    uint8_t flags; // bit0=show, bit1=resizable, bit2=frame, bit3=transparent, bit4=hasPos
+    // str title, str preloadJs follow
+};
+
 #pragma pack(pop)
 
 static_assert(sizeof(CreatePayload) == 9);
@@ -137,6 +162,7 @@ static_assert(sizeof(PressPayload) == 2);
 static_assert(sizeof(ScrollPayload) == 8);
 static_assert(sizeof(ClickSelectorPayload) == 7);
 static_assert(sizeof(ScrollToPayload) == 5);
+static_assert(sizeof(CreateDesktopWindowPayload) == 17);
 
 // Encode: POD head + optional trailing string (u32 len + utf8). 64 bytes
 // inline covers every head; strings that overflow it heap-allocate, which
@@ -223,6 +249,19 @@ enum class Reply : uint8_t {
     // Payload: str type + u32 argCount + (str arg)*, where each arg is
     // the page-side JSON.stringify of the console argument.
     ConsoleEvent = 12,
+
+    // Desktop mode (bun --desktop)
+    // u32 reqId, u8 isInvoke, str channel, str argsJson
+    DesktopIpc = 13,
+    DesktopWindowClosed = 14,
+    // u32 taskId, str url, str method, str rangeHeader
+    DesktopSchemeRequest = 15,
+    // u32 reqId, str resultJson
+    DesktopDialogResult = 16,
+    // u32 reqId, str channel, u32 dataLen, data bytes
+    DesktopIpcBinary = 17,
+    // u32 reqId, u8 ok, str resultJsonOrErr
+    DesktopEvalResult = 18,
 };
 
 enum class DataStoreKind : uint8_t {
@@ -298,6 +337,8 @@ Head decode(Reader& r)
 // call sendReply; impl in host_main.cpp (owns the CF fd).
 class FrameWriter {
 public:
+    using InProcessReplyFn = void (*)(uint32_t viewId, Reply op, const uint8_t* payload, uint32_t len);
+
     void sendReply(uint32_t viewId, Reply op, const uint8_t* payload = nullptr, uint32_t len = 0);
     void sendReplyStr(uint32_t viewId, Reply op, const WTF::String& s);
 
@@ -306,6 +347,10 @@ public:
         m_fd = fd;
         m_cffd = cffd;
     }
+    void initInProcess(InProcessReplyFn fn)
+    {
+        m_inProcessFn = fn;
+    }
     void onWritable();
 
 private:
@@ -313,9 +358,14 @@ private:
 
     int m_fd = -1;
     CFFileDescriptorRef m_cffd = nullptr;
+    InProcessReplyFn m_inProcessFn = nullptr;
     WTF::Vector<uint8_t> m_queue;
 };
 
 FrameWriter* hostWriter();
+
+void initInProcessHost(FrameWriter::InProcessReplyFn replyFn);
+void dispatchInProcess(uint32_t viewId, Op op, const uint8_t* payload, uint32_t len);
+void clearInProcessHost();
 
 } // namespace Bun::WebViewProto

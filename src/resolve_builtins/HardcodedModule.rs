@@ -11,6 +11,8 @@ pub enum HardcodedModule {
     AbortController,
     #[strum(serialize = "bun:bake")]
     BunBake,
+    #[strum(serialize = "bun:desktop")]
+    BunDesktop,
     #[strum(serialize = "bun:ffi")]
     BunFfi,
     #[strum(serialize = "bun:jsc")]
@@ -125,6 +127,8 @@ pub enum HardcodedModule {
     Undici,
     #[strum(serialize = "ws")]
     Ws,
+    #[strum(serialize = "electron")]
+    Electron,
     #[strum(serialize = "isomorphic-fetch")]
     IsomorphicFetch,
     #[strum(serialize = "node-fetch")]
@@ -210,6 +214,7 @@ bun_core::comptime_string_map! {
         // Bun
         b"bun" => HardcodedModule::Bun,
         b"bun:bake" => HardcodedModule::BunBake,
+        b"bun:desktop" => HardcodedModule::BunDesktop,
         b"bun:ffi" => HardcodedModule::BunFfi,
         b"bun:jsc" => HardcodedModule::BunJsc,
         b"bun:main" => HardcodedModule::BunMain,
@@ -302,6 +307,7 @@ bun_core::comptime_string_map! {
         b"isomorphic-fetch" => HardcodedModule::IsomorphicFetch,
         b"undici" => HardcodedModule::Undici,
         b"ws" => HardcodedModule::Ws,
+        b"electron" => HardcodedModule::Electron,
         b"@vercel/fetch" => HardcodedModule::VercelFetch,
         b"utf-8-validate" => HardcodedModule::Utf8Validate,
         b"abort-controller" => HardcodedModule::AbortController,
@@ -714,6 +720,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("bun:test"),
     entry!("bun:test/vitest"),
     entry!("bun:bake"),
+    entry!("bun:desktop"),
     entry!("bun:ffi"),
     entry!("bun:jsc"),
     entry!("bun:main"),
@@ -753,6 +760,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("undici"),
     entry!("utf-8-validate"),
     entry!("ws"),
+    entry!("electron"),
     (
         b"ws/lib/websocket",
         Alias {

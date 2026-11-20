@@ -3,6 +3,7 @@
 
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ExceptionScope.h"
+#include "JavaScriptCore/FrameTracers.h"
 #include "JavaScriptCore/JSCast.h"
 #include "headers-handwritten.h"
 #include "headers.h"

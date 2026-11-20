@@ -83,7 +83,10 @@ impl Driver {
     }
 
     fn dial(&mut self) {
-        let attempt = self.client.first_dial().or_else(|| self.client.redial());
+        let attempt = self
+            .client
+            .claim_and_dial()
+            .or_else(|| self.client.redial());
         self.attempt = Some(attempt.unwrap());
     }
 
@@ -300,7 +303,7 @@ mod lifecycle {
     /// The core keeps its state private, so this tells them apart through what they do.
     fn state_of(mut it: Driver) -> State {
         it.log.clear();
-        if it.client.first_dial().is_some() {
+        if it.client.claim_and_dial().is_some() {
             Idle
         } else if it.client.redial().is_some() {
             Backoff
@@ -353,7 +356,7 @@ mod lifecycle {
     #[test]
     fn dial() {
         check(
-            |it| it.attempt = it.client.first_dial().or(it.attempt.take()),
+            |it| it.attempt = it.client.claim_and_dial().or(it.attempt.take()),
             &[(Idle, "", Dialing)],
         );
         check(
@@ -540,12 +543,67 @@ mod lifecycle {
     }
 
     #[test]
+    fn a_preconnect_that_is_lost_unclaimed_is_forgotten() {
+        type Touch = fn(&mut Driver);
+        let touches: [(&str, Touch, State); 5] = [
+            ("nothing", |_| {}, Idle),
+            ("claim", |it| it.client.claim(), Backoff),
+            ("command", |it| drop(it.client.claim_and_dial()), Backoff),
+            ("connect", |it| it.client.connect(), Backoff),
+            ("close", |it| drop(it.client.close()), Closed),
+        ];
+        let phases: [(&str, Touch); 4] = [
+            ("dialing", |_| {}),
+            ("no socket", |it| it.client.dial_failed()),
+            ("hello", Driver::start),
+            ("ready", |it| {
+                it.start();
+                it.read("+OK\r\n")
+            }),
+        ];
+        for (phase, reach) in phases {
+            for (touch, apply, expected) in touches {
+                let mut it = Driver::new(Config::default());
+                it.attempt = it.client.preconnect();
+                reach(&mut it);
+                apply(&mut it);
+                it.lost();
+                assert_eq!(state_of(it), expected, "{phase}, {touch}");
+            }
+        }
+    }
+
+    #[test]
+    fn connect_after_close_is_retried() {
+        let mut it = reach(Closed);
+        it.client.connect();
+        it.attempt = it.client.redial();
+        it.lost();
+        assert_eq!(state_of(it), Backoff);
+    }
+
+    #[test]
+    fn a_preconnect_that_is_refused_is_forgotten() {
+        for replies in ["-NO\r\n", "+OK\r\n-NO\r\n"] {
+            let mut it = Driver::new(database(1));
+            it.attempt = it.client.preconnect();
+            it.start();
+            it.read(replies);
+            assert_eq!(state_of(it), Idle, "{replies:?}");
+        }
+    }
+
+    #[test]
     fn retries_count_on_within_an_attempt() {
         let phases: [fn(&mut Driver); 3] = [|_| {}, Driver::start, |it| it.client.dial_failed()];
-        let touches: [fn(&mut Driver); 3] = [
+        let touches: [fn(&mut Driver); 4] = [
             |_| {},
+            |it| it.client.claim(),
             |it| it.client.connect(),
-            |it| (drop(it.client.close()), it.client.connect()).1,
+            |it| {
+                drop(it.client.close());
+                it.client.connect()
+            },
         ];
         for (phase, reach) in phases.into_iter().enumerate() {
             for (touch, apply) in touches.into_iter().enumerate() {
@@ -572,6 +630,24 @@ mod lifecycle {
         it.dial();
         it.lost();
         assert_eq!(it.take(), ["retry in 50 []", "retry in 50 []"]);
+    }
+
+    #[test]
+    fn a_preconnect_that_failed_is_final_once_claimed() {
+        let touches: [fn(&mut Driver); 3] = [
+            |it| it.client.claim(),
+            |it| it.client.connect(),
+            |it| drop(it.client.close()),
+        ];
+        for (touch, apply) in touches.into_iter().enumerate() {
+            let mut it = Driver::new(Config::default());
+            it.attempt = it.client.preconnect();
+            it.fail();
+            assert!(it.client.is_preconnect() && it.client.rejection().is_some());
+            apply(&mut it);
+            it.lost();
+            assert_eq!(state_of(it), Closed, "{touch}");
+        }
     }
 
     #[test]

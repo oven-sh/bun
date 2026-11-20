@@ -1441,7 +1441,8 @@ impl Run<'_> {
                     let Some(client) = crate::valkey_jsc::js_valkey::js::from_js(&redis) else {
                         return Ok(());
                     };
-                    client.do_connect(global, (&client).into());
+                    // Not `connect()`: nobody could catch its promise.
+                    client.preconnect((&client).into());
                     Ok(())
                 })
             };

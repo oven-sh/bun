@@ -565,6 +565,7 @@ impl JSValkeyClient {
         let this_value = object.to_js();
 
         if self.get_connected() {
+            self.client.with_mut(Client::claim);
             return JSPromise::resolved_promise_value(
                 global_object,
                 js::hello_get_cached(this_value).unwrap_or(JSValue::UNDEFINED),
@@ -625,6 +626,7 @@ impl JSValkeyClient {
             global,
             value.to_js().with_graph_context_if_needed(global),
         );
+        self.claim_for(value.to_js(), this_value.into());
     }
     pub(crate) fn get_onclose(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         js::onclose_get_cached(this_value.to_js())
@@ -642,6 +644,14 @@ impl JSValkeyClient {
             global,
             value.to_js().with_graph_context_if_needed(global),
         );
+        self.claim_for(value.to_js(), this_value.into());
+    }
+
+    fn claim_for(&self, handler: JSValue, object: Object<'_>) {
+        if handler.is_callable() {
+            self.client.with_mut(Client::claim);
+            self.update_poll_ref(object);
+        }
     }
 
     fn reset_connection_timeout(&self) {
@@ -694,8 +704,14 @@ impl JSValkeyClient {
 
     /// Every command dials first, so none meets a client that never did.
     pub(crate) fn ensure_dialing(&self, object: Object<'_>) {
-        if let Some(attempt) = self.client.with_mut(Client::first_dial) {
+        if let Some(attempt) = self.client.with_mut(Client::claim_and_dial) {
             bun_core::hint::cold();
+            self.dial(object, attempt);
+        }
+    }
+
+    pub(crate) fn preconnect(&self, object: Object<'_>) {
+        if let Some(attempt) = self.client.with_mut(Client::preconnect) {
             self.dial(object, attempt);
         }
     }
@@ -1084,7 +1100,7 @@ impl JSValkeyClient {
         let is_idle = client.is_connected()
             && !client.has_pending_commands()
             && object.subscription_count() == 0;
-        if client.is_active() && !is_idle {
+        if client.is_active() && !is_idle && !client.is_preconnect() {
             self.poll_ref.ref_(bun_io::js_vm_ctx());
         } else {
             self.poll_ref.unref(bun_io::js_vm_ctx());

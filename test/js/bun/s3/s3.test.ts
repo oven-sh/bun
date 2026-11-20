@@ -1,7 +1,7 @@
 import type { S3File, S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
-import { createHash, createHmac, randomUUID } from "crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "crypto";
 import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 import { spawnServer } from "s3-server";
@@ -180,6 +180,12 @@ for (let credentials of allCredentials) {
     const mediumPayload = makePayLoadFrom("Bun is the best runtime ever", 6 * 1024 * 1024);
     // less than 5 MiB
     const bigishPayload = makePayLoadFrom("Bun is the best runtime ever", 1 * 1024 * 1024);
+
+    // For a case that moves 1 MiB or more in one request. It runs against the
+    // local server only: R2 is a live service, and at times it holds such a
+    // request for a minute or longer, or answers it with 502, 504 or InternalError.
+    const itLarge = it.skipIf(credentials.service !== "s3-server");
+
     describe.skipIf(!s3Options.accessKeyId)("s3", () => {
       for (let bucketInName of [true, false]) {
         describe.concurrent("fetch", () => {
@@ -275,7 +281,7 @@ for (let credentials of allCredentials) {
               }
             });
 
-            it("should be able to upload large files", async () => {
+            itLarge("should be able to upload large files", 20_000, async () => {
               await using tmpfile = await tmp();
               // 10 MiB big enough to Multipart upload in more than one part
               const buffer = Buffer.alloc(1 * 1024 * 1024, "a");
@@ -295,7 +301,7 @@ for (let credentials of allCredentials) {
                 expect(result.status).toBe(200);
                 expect(result.headers.get("content-length")).toBe((buffer.byteLength * 10).toString());
               }
-            }, 20_000);
+            });
           });
         });
 
@@ -469,7 +475,7 @@ for (let credentials of allCredentials) {
               }
             });
 
-            it("should be able to upload large files using bucket.write + readable Request", async () => {
+            itLarge("should be able to upload large files using bucket.write + readable Request", 50_000, async () => {
               await using tmpfile = await tmp();
               {
                 await bucket.write(
@@ -489,18 +495,18 @@ for (let credentials of allCredentials) {
                 );
                 expect(await bucket.size(tmpfile.name, options!)).toBe(Buffer.byteLength(bigishPayload) * 10);
               }
-            }, 50_000);
+            });
 
-            it("should be able to upload large files in one go using bucket.write", async () => {
+            itLarge("should be able to upload large files in one go using bucket.write", 50_000, async () => {
               {
                 await using tmpfile = await tmp();
                 await bucket.write(tmpfile.name, bigPayload, options!);
                 expect(await bucket.size(tmpfile.name, options!)).toBe(Buffer.byteLength(bigPayload));
                 expect(await bucket.file(tmpfile.name, options!).text()).toBe(bigPayload);
               }
-            }, 50_000);
+            });
 
-            it("should be able to upload large files in one go using S3File.write", async () => {
+            itLarge("should be able to upload large files in one go using S3File.write", 50_000, async () => {
               {
                 await using tmpfile = await tmp();
                 const s3File = bucket.file(tmpfile.name, options!);
@@ -509,16 +515,16 @@ for (let credentials of allCredentials) {
                 expect(stat.size).toBe(Buffer.byteLength(bigPayload));
                 expect(await s3File.text()).toBe(bigPayload);
               }
-            }, 50_000);
+            });
 
             for (let queueSize of [1, 5, 7, 10, 20]) {
               for (let payloadQuantity of [1, 5, 7, 10, 20]) {
                 for (let partSize of [5, 7, 10]) {
                   // the larger payload causes OOM in CI.
                   for (let payload of [bigishPayload]) {
-                    // lets skip tests with more than 10 parts on cloud providers
-                    it.skipIf(credentials.service !== "s3-server")(
+                    itLarge(
                       `should be able to upload large files using writer() in multiple parts with partSize=${partSize} queueSize=${queueSize} payloadQuantity=${payloadQuantity} payloadSize=${payload.length * payloadQuantity}`,
+                      50_000,
                       async () => {
                         {
                           await using tmpfile = await tmp();
@@ -536,7 +542,6 @@ for (let credentials of allCredentials) {
                           await s3File.delete();
                         }
                       },
-                      50_000,
                     );
                   }
                 }
@@ -622,7 +627,7 @@ for (let credentials of allCredentials) {
                 expect(response.headers.get("content-type")).toStartWith("application/json");
               }
             });
-            it("should be able to upload large files using writer() #16452", async () => {
+            itLarge("should be able to upload large files using writer() #16452", 100_000, async () => {
               await using tmpfile = await tmp();
               const s3file = file(tmpfile.name, options);
               const writer = s3file.writer();
@@ -635,8 +640,8 @@ for (let credentials of allCredentials) {
               await Bun.sleep(10);
 
               expect(await s3file.text()).toBe(mediumPayload.repeat(2));
-            }, 100_000);
-            it("should be able to upload large files using flush and partSize", async () => {
+            });
+            itLarge("should be able to upload large files using flush and partSize", 100_000, async () => {
               await using tmpfile = await tmp();
               const s3file = file(tmpfile.name, options);
 
@@ -656,17 +661,17 @@ for (let credentials of allCredentials) {
               expect(total).toBe(Buffer.byteLength(mediumPayload) * 2);
               await writer.end();
               expect(await s3file.text()).toBe(mediumPayload.repeat(2));
-            }, 100_000);
-            it("should be able to upload large files in one go using Bun.write", async () => {
+            });
+            itLarge("should be able to upload large files in one go using Bun.write", 15_000, async () => {
               {
                 await using tmpfile = await tmp();
                 await Bun.write(file(tmpfile.name, options), bigPayload);
                 expect(await S3Client.size(tmpfile.name, options)).toBe(Buffer.byteLength(bigPayload));
                 expect(await file(tmpfile.name, options).text()).toEqual(bigPayload);
               }
-            }, 15_000);
+            });
 
-            it("should be able to upload large files in one go using S3File.write", async () => {
+            itLarge("should be able to upload large files in one go using S3File.write", 100_000, async () => {
               {
                 await using tmpfile = await tmp();
                 const s3File = file(tmpfile.name, options);
@@ -675,7 +680,7 @@ for (let credentials of allCredentials) {
                 expect(await s3File.text()).toBe(bigPayload);
                 await s3File.delete();
               }
-            }, 100_000);
+            });
           });
         });
 
@@ -766,7 +771,7 @@ for (let credentials of allCredentials) {
               }
             });
 
-            it("should be able to upload large files in one go using Bun.write", async () => {
+            itLarge("should be able to upload large files in one go using Bun.write", 100_000, async () => {
               {
                 await using tmpfile = await tmp();
                 const s3file = s3(tmpfile.name, options);
@@ -779,9 +784,9 @@ for (let credentials of allCredentials) {
                 expect(await s3file.text()).toBe(bigPayload);
                 await s3file.delete();
               }
-            }, 100_000);
+            });
 
-            it("should be able to upload large files using flush and partSize", async () => {
+            itLarge("should be able to upload large files using flush and partSize", 100_000, async () => {
               await using tmpfile = await tmp();
               const s3file = s3(tmpfile.name, options);
 
@@ -800,9 +805,9 @@ for (let credentials of allCredentials) {
               expect(total).toBe(Buffer.byteLength(mediumPayload) * 2);
               await writer.end();
               expect(await s3file.text()).toBe(mediumPayload.repeat(2));
-            }, 100_000);
+            });
 
-            it("should be able to upload large files in one go using S3File.write", async () => {
+            itLarge("should be able to upload large files in one go using S3File.write", 100_000, async () => {
               {
                 await using tmpfile = await tmp();
                 const s3File = s3(tmpfile.name, options);
@@ -816,7 +821,7 @@ for (let credentials of allCredentials) {
                 expect(await s3File.text()).toBe(bigPayload);
                 await s3File.delete();
               }
-            }, 100_000);
+            });
 
             describe("readable stream", () => {
               it("should work with small files", async () => {
@@ -838,7 +843,7 @@ for (let credentials of allCredentials) {
                 expect(bytes).toBe(10);
                 expect(Buffer.concat(chunks)).toEqual(Buffer.from("Hello Bun!"));
               });
-              it("should work with large files ", async () => {
+              itLarge("should work with large files ", 30_000, async () => {
                 await using tmpfile = await tmp();
                 const s3file = s3(tmpfile.name + "-readable-stream-big", options);
                 await s3file.write(bigishPayload);
@@ -863,7 +868,7 @@ for (let credentials of allCredentials) {
                   const SHA1_2 = Bun.SHA1.hash(bigishPayload, "hex");
                   expect(SHA1).toBe(SHA1_2);
                 }
-              }, 30_000);
+              });
               it("should work with sliced files (offset 0)", async () => {
                 await using tmpfile = await tmp();
                 const s3file = s3(tmpfile.name + "-readable-stream-slice", options);
@@ -1440,6 +1445,34 @@ for (let credentials of allCredentials) {
           const text = await s3file.text();
           expect(text).toBe("Bun!");
           await s3file.unlink();
+        });
+
+        it("should be able to upload in two parts", async () => {
+          // The smallest multipart upload: each part but the last has at least 5 MiB.
+          // It is not an `itLarge` case, so that R2 still gets one multipart upload.
+          const partSize = 5 * 1024 * 1024;
+          const parts = [randomBytes(partSize), randomBytes(4)];
+          const md5 = (data: Uint8Array) => createHash("md5").update(data).digest();
+          const s3file = S3({ ...s3Options, bucket: S3Bucket }).file(randomUUID());
+          try {
+            const writer = s3file.writer({ partSize });
+            for (const part of parts) writer.write(part);
+            expect(await writer.end()).toBe(partSize + 4);
+
+            // The ETag of a multipart upload is the MD5 of the MD5 of each part, then the number of parts.
+            const etag = `"${md5(Buffer.concat(parts.map(md5))).toString("hex")}-2"`;
+            const stat = await s3file.stat();
+            expect({ size: stat.size, etag: stat.etag }).toEqual({ size: partSize + 4, etag });
+
+            const chunks: Uint8Array[] = [];
+            for await (const chunk of s3file.stream()) chunks.push(chunk);
+            const body = Buffer.concat(chunks);
+            expect(body.length).toBe(partSize + 4);
+            // A comparison of the bodies would print megabytes when it fails.
+            expect(md5(body).toString("hex")).toBe(md5(Buffer.concat(parts)).toString("hex"));
+          } finally {
+            await s3file.unlink();
+          }
         });
       });
     });

@@ -349,6 +349,181 @@ test("Bun.JSONC.parse matches JSON.parse on escape-heavy strings", () => {
   }
 });
 
+// `count` copies of `text`. "x".repeat(count) is slow in a debug build.
+const repeated = (text: string, count: number) => Buffer.alloc(count * Buffer.byteLength(text), text).toString();
+
+test("Bun.JSONC.parse matches JSON.parse for text of any length around an escape", () => {
+  // The parser copies the text between two escapes in one step. To find the next escape it reads 4 bytes, then words
+  // of 8 bytes, then vectors once 64 bytes are left. It checks a string of 64 bytes or less for UTF-8 in another way.
+  // So the text has each length around those, and the escape is at each end and in the middle of it.
+  const escapes = [
+    "\\n",
+    '\\"',
+    "\\\\",
+    "\\/",
+    "\\u00e9",
+    "\\u65E5",
+    "\\ud83d\\ude00",
+    "\\ud83d",
+    "\\ude00",
+    "\\ud83d\\u0041",
+    "\\b\\f\\r\\t",
+  ];
+  const texts = [
+    (n: number) => repeated("a", n),
+    (n: number) => repeated("é", n),
+    (n: number) => repeated("\x7f~ ", n).slice(0, n),
+    (n: number) => repeated("日本語", n).slice(0, n),
+    (n: number) => repeated("a🚀", n).slice(0, n * 3),
+    (n: number) => repeated("aé", n).slice(0, n),
+  ];
+  const docsOf = (run: string, escape: string) => [
+    `"${escape}${run}"`,
+    `"${run}${escape}"`,
+    `"${run}${escape}${run}"`,
+    `"${escape}${run}${escape}${escape}${run}${escape}"`,
+    `{"${run}${escape}":["${run}","${escape}${run}"]}`,
+  ];
+  // One document for each length holds the strings of every text and escape: a call costs more than its bytes.
+  const wrong: string[] = [];
+  const check = (docs: string[]) => {
+    const doc = `[${docs.join(",")}]`;
+    const [actual, expected] = [Bun.JSONC.parse(doc) as unknown[], JSON.parse(doc) as unknown[]];
+    // Compare as JSON text, which spells a lone surrogate as an escape.
+    if (JSON.stringify(actual) === JSON.stringify(expected)) return;
+    // Name each string that differs.
+    for (const [i, value] of expected.entries()) {
+      const [got, want] = [JSON.stringify(actual[i]), JSON.stringify(value)];
+      if (got !== want) wrong.push(`${docs[i].slice(0, 80)} (${docs[i].length} chars): ${got?.slice(0, 80)}`);
+    }
+    if (actual.length !== expected.length) wrong.push(`${actual.length} values, not ${expected.length}`);
+  };
+  for (const length of [0, 1, 3, 4, 5, 11, 12, 13, 20, 27, 28, 29, 59, 60, 61, 62, 63, 64, 65, 66, 75, 76, 77, 300]) {
+    check(texts.flatMap(text => escapes.flatMap(escape => docsOf(text(length), escape))));
+  }
+  // 4096 bytes are one buffer of strings in the parser, and it reads the document 8192 bytes at a time. That
+  // depends on the number of bytes and not on the characters, so these lengths have two of the texts.
+  for (const length of [4095, 4096, 9000]) {
+    for (const text of texts.slice(0, 2)) for (const doc of docsOf(text(length), "\\n")) check([doc]);
+  }
+  expect(wrong).toEqual([]);
+  // JSON.parse does not take these escapes, and the parser of bun does.
+  expect(Bun.JSONC.parse('"\\x41\\xe9"')).toBe("Aé");
+  expect(Bun.JSONC.parse('"\\8\\9\\v"')).toBe("89\v");
+  expect(Bun.JSONC.parse(`"${repeated("é", 40)}\\x41\\8\\v${repeated("a", 40)}"`)).toBe(
+    `${repeated("é", 40)}A8\v${repeated("a", 40)}`,
+  );
+});
+
+test("Bun.JSONC.parse rejects a bad escape or a control character after text of any length", () => {
+  const SYNTAX = "JSONC Parse error: Syntax Error";
+  const LINE_BREAK = "JSONC Parse error: Unterminated string literal";
+  const bads: [bad: string, message: string][] = [
+    // One of each kind first: a string of thousands of bytes has only these five.
+    ["\\q", SYNTAX],
+    ["\n", LINE_BREAK],
+    ["\t", SYNTAX],
+    // The first of two that are bad makes the message.
+    ["\n\\q", LINE_BREAK],
+    ["\\q\n", SYNTAX],
+    ["\\u12", SYNTAX],
+    ["\\u12G4", SYNTAX],
+    ["\\x4", SYNTAX],
+    ["\\0", SYNTAX],
+    ["\\'", SYNTAX],
+    ["\r", LINE_BREAK],
+    ["\x00", SYNTAX],
+    ["\x1f", SYNTAX],
+  ];
+  // Each document is also not JSON: it has a control character or a bad escape in a string.
+  const wrong: string[] = [];
+  for (const length of [0, 1, 4, 5, 12, 13, 28, 29, 60, 61, 62, 63, 64, 65, 76, 77, 4095, 4096, 9000]) {
+    // The text has no hex digit, so it does not complete an escape that is cut short.
+    for (const run of [repeated("z", length), repeated("é", length)]) {
+      for (const [bad, message] of length < 4095 ? bads : bads.slice(0, 5)) {
+        for (const doc of [
+          `"${run}${bad}"`,
+          `"\\n${run}${bad}${run}"`,
+          `{"\\n${run}${bad}":1}`,
+          // Another string has the escape. The parser then looks for a control character in no string by itself:
+          // it takes the word of the index for it. A comment or a single quote makes the index read byte by byte.
+          `["${run}\\n","${run}${bad}"]`,
+          `['${run}\\n',"${run}${bad}"]`,
+          `/* c */["${run}\\n","${run}${bad}"]`,
+        ]) {
+          let got = "no error";
+          try {
+            Bun.JSONC.parse(doc);
+          } catch (error) {
+            got = (error as Error).message;
+          }
+          if (got !== message) wrong.push(`${JSON.stringify(doc.slice(0, 60))} (${doc.length} chars): ${got}`);
+        }
+      }
+    }
+  }
+  expect(wrong).toEqual([]);
+});
+
+test("Bun.JSONC.parse takes the same escapes whether or not a string of the document has a control character", () => {
+  // The parser has two decoders with an escape table each. A string with no control character in the document so far
+  // goes to the first. A later string with a line break in it sends every string to the second. Then the first of
+  // the two errors tells if the second decoder took the escape.
+  const SYNTAX = "JSONC Parse error: Syntax Error";
+  const LINE_BREAK = "JSONC Parse error: Unterminated string literal";
+  const taken: Record<string, string> = {
+    b: "\b",
+    f: "\f",
+    n: "\n",
+    r: "\r",
+    t: "\t",
+    v: "\v",
+    "8": "8",
+    "9": "9",
+    '"': '"',
+    "\\": "\\",
+    "/": "/",
+  };
+  // The value as JSON text, or the message of the error.
+  const outcome = (doc: string) => {
+    try {
+      return JSON.stringify(Bun.JSONC.parse(doc));
+    } catch (error) {
+      return (error as Error).message;
+    }
+  };
+  const rows: [escape: string, value: string | undefined][] = [
+    ["\\x41", "A"],
+    ["\\xe9", "é"],
+    ["\\x4", undefined],
+    ["\\xZZ", undefined],
+    ["\\x", undefined],
+    ["\\u0041", "A"],
+    ["\\u65e5", "日"],
+    ["\\u12", undefined],
+    ["\\uZZZZ", undefined],
+    ["\\u", undefined],
+  ];
+  // Every other character after a backslash, but a control character: that is an error of its own.
+  for (let code = 0x20; code <= 0xff; code++) {
+    const letter = String.fromCharCode(code);
+    if (letter !== "x" && letter !== "u" && !(code >= 0x7f && code < 0xa0)) rows.push(["\\" + letter, taken[letter]]);
+  }
+  const wrong: string[] = [];
+  for (const [escape, value] of rows) {
+    const alone = outcome(`"${escape}"`);
+    if (alone !== (value === undefined ? SYNTAX : JSON.stringify(value))) {
+      wrong.push(`${JSON.stringify(escape)} alone: ${alone}`);
+    }
+    const beforeLineBreak = outcome(`["${escape}","a\nb"]`);
+    if (beforeLineBreak !== (value === undefined ? SYNTAX : LINE_BREAK)) {
+      wrong.push(`${JSON.stringify(escape)} before a line break: ${beforeLineBreak}`);
+    }
+  }
+  expect(rows.filter(([, value]) => value !== undefined).length).toBe(15);
+  expect(wrong).toEqual([]);
+});
+
 test("Bun.JSONC.parse matches JSON.parse on lone and paired surrogate escapes", () => {
   for (const doc of [
     '"\\ud800"',

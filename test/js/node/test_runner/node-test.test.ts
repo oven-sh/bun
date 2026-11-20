@@ -166,8 +166,8 @@ describe("node:test", () => {
     expect(exitCode).toBe(1);
   });
 
-  // bun:test ends the blocked hook 5 s after the hook's own timeout, so this
-  // row cannot end in less than 5 s. It gets the headroom of the rows above.
+  // The child of 44-hook-own-timeout-blocks.js lives 5.5 s, so these rows cannot
+  // end sooner. They get the headroom of the rows above.
   test.concurrent(
     "should end a before() hook with its own timeout that blocks in spawnSync",
     async () => {
@@ -176,6 +176,23 @@ describe("node:test", () => {
       expect({ exitCode, stderr }).toMatchObject({
         exitCode: 1,
         stderr: expect.stringContaining("0 pass"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent.each([["60000"], ["0"]])(
+    "should not end a blocked before() hook with its own timeout before --timeout %s",
+    async timeout => {
+      const { exitCode, stdout, stderr } = await runTests(["44-hook-own-timeout-blocks.js"], {}, [
+        "--timeout",
+        timeout,
+      ]);
+      expect(stdout).toContain("child: null");
+      expect(stderr).toContain("1 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
       });
     },
     30_000,

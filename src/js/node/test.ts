@@ -25,14 +25,13 @@ type AnyFunction = (this: unknown, ...args: unknown[]) => unknown;
 type Done = (error?: unknown) => void;
 type Register = (name: string, fn: (done: Done) => void | Promise<unknown>, options?: object) => void;
 type RegisterSuite = (name: string, fn: () => unknown, options?: object) => void;
-type RegisterHook = (fn: (done: Done) => void, timeout: number | undefined) => void;
 
 /** What this module uses of `bun:test`. */
 interface BunTest {
   test: Register & { todo: Register; skip: Register };
   describe: RegisterSuite & { todo: RegisterSuite; skip: RegisterSuite };
-  beforeAll: RegisterHook;
-  afterAll: RegisterHook;
+  beforeAll(fn: (done: Done) => void): void;
+  afterAll(fn: (done: Done) => void): void;
 }
 
 const kDefaultName = "<anonymous>";
@@ -47,8 +46,6 @@ const kDefaultOptions = kEmptyObject;
 const kTimeoutMax = 2 ** 31 - 1;
 // Matches bun:test's default per-test timeout.
 const kBunTestDefaultTimeoutMs = 5_000;
-// bun:test sets no deadline for an entry whose timeout is 0.
-const kBunTestNoTimeout = 0;
 const kJoinSeparator = " > ";
 
 // -----------------------------------------------------------------------------
@@ -1664,6 +1661,9 @@ const fileGeneration: () => number = $bindgen("jest.bind.ts", "fileGeneration");
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult: (todo: boolean, done: Done) => void = $bindgen("jest.bind.ts", "nodeTestMarkResult");
+// Moves the deadline of the running bun:test hook to `ms` from now if that is
+// later, and removes it for Infinity. `done` names the hook.
+const raiseHookDeadline: (done: Done, ms: number) => void = $bindgen("jest.bind.ts", "nodeTestRaiseDeadline");
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -2553,21 +2553,17 @@ function bunTestOptions(options: TestOptions) {
   return undefined;
 }
 
-function bunTestHookTimeout(timeout: number | undefined) {
-  if (typeof timeout !== "number") return undefined;
-  if (timeout === Infinity) return kBunTestNoTimeout;
-  // 5s behind runHook's timer: bun:test only ends a hook that blocks the event loop.
-  return timeout + kBunTestDefaultTimeoutMs;
-}
-
 function registerOwnerHook(kind: "beforeAll" | "afterAll", hook: Hook, owner: TestNode, fallbackMessage: string) {
-  const register: RegisterHook = bunTest()[kind];
-  register((done: Done) => {
+  bunTest()[kind]((done: Done) => {
+    // runHook's timer ends the hook at its own timeout. bun:test's deadline stays
+    // 5s behind that, for a hook that blocks the event loop.
+    const { timeout } = hook;
+    if (typeof timeout === "number") raiseHookDeadline(done, timeout + kBunTestDefaultTimeoutMs);
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
       () => done(),
       err => done(err ?? new Error(fallbackMessage)),
     );
-  }, bunTestHookTimeout(hook.timeout));
+  });
 }
 
 function currentCollectionParent(): TestNode {

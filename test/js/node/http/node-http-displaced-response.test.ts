@@ -1,5 +1,11 @@
+import { nodeHTTPMessageHasConnection } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, tls as tlsCertificate } from "harness";
+import { once } from "node:events";
+import http from "node:http";
+import https from "node:https";
+import net, { type AddressInfo } from "node:net";
+import tls from "node:tls";
 import { join } from "path";
 
 // A connection has one current response. The server socket gives the connection to the next
@@ -187,4 +193,61 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     },
     timeout,
   );
+});
+
+// The other way to lose the connection is a close. The response hears about a close at once, before uWS
+// destructs the response state in the socket, so that is when it has to let go of the connection. A close
+// runs inside a listener when uWS cannot defer it: in a tunnel ('connect', 'upgrade') and for a reset.
+describe("a response lets go of the connection when its socket closes inside the listener", () => {
+  const head = "GET / HTTP/1.1\r\nHost: x\r\n";
+  const cases = [
+    {
+      event: "connect",
+      payload: "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+      close: "destroy",
+      transports: ["tcp", "tls"],
+    },
+    {
+      event: "upgrade",
+      payload: head + "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+      close: "destroy",
+      transports: ["tcp", "tls"],
+    },
+    // A TLS socket cannot be reset.
+    { event: "request", payload: head + "\r\n", close: "resetAndDestroy", transports: ["tcp"] },
+  ] as const;
+
+  for (const { event, payload, close, transports } of cases) {
+    test.each(transports)(`socket.${close}() inside '${event}' (%s)`, async transport => {
+      const held = Promise.withResolvers<{ before: boolean; after: boolean }>();
+      const server = transport === "tls" ? https.createServer(tlsCertificate) : http.createServer();
+      server.on(event, (req: http.IncomingMessage) => {
+        try {
+          const before = nodeHTTPMessageHasConnection(req);
+          (req.socket as any)[close]();
+          held.resolve({ before, after: nodeHTTPMessageHasConnection(req) });
+        } catch (error) {
+          held.reject(error);
+        }
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const client =
+        transport === "tls"
+          ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+          : net.connect(port, "127.0.0.1");
+      try {
+        // The server closes the socket, so the client ends with an error or a close. Only a close before the listener ran is a failure.
+        client.on("error", () => {});
+        client.on("close", () => held.reject(new Error("the client closed before the listener ran")));
+        client.write(payload);
+        expect(await held.promise).toEqual({ before: true, after: false });
+      } finally {
+        client.destroy();
+        server.closeAllConnections();
+        server.close();
+      }
+    });
+  }
 });

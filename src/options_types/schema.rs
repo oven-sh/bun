@@ -154,6 +154,8 @@ pub mod api {
         pub auth: Box<[u8]>,
         /// By a `registry=` line: a credential inside that URL yields to any `.npmrc` line for it.
         pub declared_in_npmrc: bool,
+        pub certfile: Box<[u8]>,
+        pub keyfile: Box<[u8]>,
     }
 
     impl NpmRegistry {

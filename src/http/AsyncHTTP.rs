@@ -249,6 +249,11 @@ pub struct Options<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl<'a> AsyncHTTP<'a> {
+    /// Sets the TLS configuration the request is sent with, before it starts.
+    pub fn set_tls_props(&mut self, tls_props: Option<SSLConfigSharedPtr>) {
+        self.client.tls_props = tls_props;
+    }
+
     /// Accessor for the global concurrent-request cap. Returned as a static
     /// so callers can `.load()` / `.store()` directly.
     #[inline]

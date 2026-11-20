@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isIPv6, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isIPv6, isWindows, nodeExe, serveBothSchemes, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
+import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { createSecureServer, type ServerHttp2Session } from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
@@ -39,6 +41,237 @@ async function createServer(cert: TLSOptions, callback: (port: number) => Promis
 }
 
 describe.concurrent("fetch-tls", () => {
+  describe("client TLS identity on redirects", () => {
+    const certificate = new X509Certificate(validTls.cert).raw.toString("base64");
+    const identity = { ...validTls, ca: validTls.cert };
+
+    async function server(redirect: (path: string) => string | undefined = () => undefined, persistent = false) {
+      const seen: { path: string; certificate: string | null; authorization: string | null }[] = [];
+      const sockets = new Set<tls.TLSSocket>();
+      const connections: number[] = [];
+      let nextConnection = 0;
+      const instance = tls.createServer(
+        { ...validTls, ca: validTls.cert, requestCert: true, rejectUnauthorized: false },
+        socket => {
+          sockets.add(socket);
+          socket.on("close", () => sockets.delete(socket));
+          const connection = ++nextConnection;
+          let head = "";
+          socket.on("data", data => {
+            head += data.toString();
+            const end = head.indexOf("\r\n\r\n");
+            if (end < 0) return;
+            const request = head.slice(0, end);
+            head = head.slice(end + 4);
+            const path = request.split(" ")[1];
+            connections.push(connection);
+            seen.push({
+              path,
+              certificate: socket.getPeerCertificate().raw?.toString("base64") ?? null,
+              authorization: /\r\nauthorization: ([^\r]*)/i.exec(request)?.[1] ?? null,
+            });
+            const location = redirect(path);
+            const connectionHeader = persistent ? "keep-alive" : "close";
+            const response = location
+              ? `HTTP/1.1 302 Found\r\nLocation: ${location}\r\nContent-Length: 0\r\nConnection: ${connectionHeader}\r\n\r\n`
+              : `HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: ${connectionHeader}\r\n\r\nok`;
+            if (persistent) socket.write(response);
+            else socket.end(response);
+          });
+        },
+      );
+      instance.listen(0, "127.0.0.1");
+      await once(instance, "listening");
+      return {
+        seen,
+        connections,
+        url: `https://127.0.0.1:${(instance.address() as net.AddressInfo).port}`,
+        async [Symbol.asyncDispose]() {
+          for (const socket of sockets) socket.destroy();
+          await new Promise<void>((resolve, reject) => instance.close(error => (error ? reject(error) : resolve())));
+        },
+      };
+    }
+
+    it("preserves client identity on a same-origin redirect", async () => {
+      await using origin = await server(path => (path === "/start" ? `${origin.url}/final` : undefined));
+      const response = await fetch(`${origin.url}/start`, {
+        tls: identity,
+        headers: { Authorization: "Bearer redirect-test" },
+      });
+      expect(await response.text()).toBe("ok");
+      expect(origin.seen).toEqual([
+        { path: "/start", certificate, authorization: "Bearer redirect-test" },
+        { path: "/final", certificate, authorization: "Bearer redirect-test" },
+      ]);
+    });
+
+    it("strips client identity on a cross-origin redirect while retaining the CA", async () => {
+      await using target = await server();
+      await using origin = await server(() => `${target.url}/final`);
+      const response = await fetch(`${origin.url}/start`, {
+        tls: identity,
+        headers: { Authorization: "Bearer redirect-test" },
+      });
+      expect(await response.text()).toBe("ok");
+      expect(origin.seen).toEqual([{ path: "/start", certificate, authorization: "Bearer redirect-test" }]);
+      expect(target.seen).toEqual([{ path: "/final", certificate: null, authorization: null }]);
+    });
+
+    it("does not restore client identity when a redirect returns to the original origin", async () => {
+      await using target = await server(() => `${origin.url}/final`);
+      await using origin = await server(path => (path === "/start" ? `${target.url}/middle` : undefined));
+      const response = await fetch(`${origin.url}/start`, {
+        tls: identity,
+        headers: { Authorization: "Bearer redirect-test" },
+      });
+      expect(await response.text()).toBe("ok");
+      expect(origin.seen).toEqual([
+        { path: "/start", certificate, authorization: "Bearer redirect-test" },
+        { path: "/final", certificate: null, authorization: null },
+      ]);
+      expect(target.seen).toEqual([{ path: "/middle", certificate: null, authorization: null }]);
+    });
+
+    it("does not reuse an authenticated socket after a persistent return redirect", async () => {
+      await using target = await server(() => `${origin.url}/final`, true);
+      await using origin = await server(path => (path === "/start" ? `${target.url}/middle` : undefined), true);
+      const options = { tls: identity, headers: { Authorization: "Bearer redirect-test" } };
+      expect(await (await fetch(`${origin.url}/warm`, options)).text()).toBe("ok");
+      expect(await (await fetch(`${origin.url}/start`, options)).text()).toBe("ok");
+      expect(origin.seen).toEqual([
+        { path: "/warm", certificate, authorization: "Bearer redirect-test" },
+        { path: "/start", certificate, authorization: "Bearer redirect-test" },
+        { path: "/final", certificate: null, authorization: null },
+      ]);
+      expect(origin.connections).toEqual([1, 1, 2]);
+      expect(target.seen).toEqual([{ path: "/middle", certificate: null, authorization: null }]);
+    });
+
+    it("strips client identity when only the hostname changes", async () => {
+      await using origin = await server(path =>
+        path === "/start" ? `${origin.url.replace("127.0.0.1", "localhost")}/final` : undefined,
+      );
+      const response = await fetch(`${origin.url}/start`, {
+        tls: identity,
+        headers: { Authorization: "Bearer redirect-test" },
+      });
+      expect(await response.text()).toBe("ok");
+      expect(origin.seen).toEqual([
+        { path: "/start", certificate, authorization: "Bearer redirect-test" },
+        { path: "/final", certificate: null, authorization: null },
+      ]);
+    });
+
+    it("strips client identity on an HTTP to HTTPS redirect", async () => {
+      await using target = await server();
+      using origin = Bun.serve({
+        port: 0,
+        fetch: () => Response.redirect(`${target.url}/final`, 302),
+      });
+      const response = await fetch(`http://127.0.0.1:${origin.port}/start`, {
+        tls: identity,
+        headers: { Authorization: "Bearer redirect-test" },
+      });
+      expect(await response.text()).toBe("ok");
+      expect(target.seen).toEqual([{ path: "/final", certificate: null, authorization: null }]);
+    });
+
+    it("strips client identity on an HTTP to HTTPS upgrade on the same port", async () => {
+      await using target = await server();
+      using origin = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => Response.redirect(`https://127.0.0.1:${bothSchemes.port}/final`, 302),
+      });
+      await using bothSchemes = await serveBothSchemes(origin.port!, Number(new URL(target.url).port));
+      const response = await fetch(`http://127.0.0.1:${bothSchemes.port}/start`, {
+        tls: identity,
+        headers: { Authorization: "Bearer redirect-test" },
+      });
+      expect(await response.text()).toBe("ok");
+      expect(target.seen).toEqual([{ path: "/final", certificate: null, authorization: null }]);
+    });
+
+    it("keeps independent requests' client identity after stripping it from a redirect", async () => {
+      await using target = await server();
+      await using origin = await server(() => `${target.url}/final`);
+      const redirected = await fetch(`${origin.url}/start`, { tls: identity });
+      expect(await redirected.text()).toBe("ok");
+      const direct = await fetch(`${target.url}/direct`, { tls: identity });
+      expect(await direct.text()).toBe("ok");
+      expect(target.seen).toEqual([
+        { path: "/final", certificate: null, authorization: null },
+        { path: "/direct", certificate, authorization: null },
+      ]);
+    });
+
+    it("strips client identity on an HTTP2 cross-origin redirect", async () => {
+      async function h2server(location?: string) {
+        const seen: unknown[] = [];
+        const sessions = new Set<ServerHttp2Session>();
+        const instance = createSecureServer({
+          ...validTls,
+          ca: validTls.cert,
+          requestCert: true,
+          rejectUnauthorized: false,
+        });
+        instance.on("session", session => {
+          sessions.add(session);
+          session.on("close", () => sessions.delete(session));
+        });
+        instance.on("stream", (stream, headers) => {
+          seen.push({
+            protocol: stream.session!.alpnProtocol,
+            certificate: (stream.session!.socket as tls.TLSSocket).getPeerCertificate().raw?.toString("base64") ?? null,
+            authorization: headers.authorization ?? null,
+          });
+          stream.respond(location ? { ":status": 302, location } : { ":status": 200 });
+          stream.end(location ? undefined : "ok");
+        });
+        instance.listen(0, "127.0.0.1");
+        await once(instance, "listening");
+        return {
+          seen,
+          url: `https://127.0.0.1:${(instance.address() as net.AddressInfo).port}`,
+          async [Symbol.asyncDispose]() {
+            for (const session of sessions) session.destroy();
+            await new Promise<void>((resolve, reject) => instance.close(error => (error ? reject(error) : resolve())));
+          },
+        };
+      }
+      await using target = await h2server();
+      await using origin = await h2server(`${target.url}/final`);
+      const response = await fetch(`${origin.url}/start`, {
+        protocol: "http2",
+        tls: identity,
+        headers: { Authorization: "Bearer redirect-test" },
+      });
+      expect(await response.text()).toBe("ok");
+      expect(origin.seen).toEqual([{ protocol: "h2", certificate, authorization: "Bearer redirect-test" }]);
+      expect(target.seen).toEqual([{ protocol: "h2", certificate: null, authorization: null }]);
+      const direct = await fetch(`${target.url}/direct`, { protocol: "http2", tls: identity });
+      expect(await direct.text()).toBe("ok");
+      expect(target.seen).toEqual([
+        { protocol: "h2", certificate: null, authorization: null },
+        { protocol: "h2", certificate, authorization: null },
+      ]);
+    });
+
+    it("still verifies the redirect target's certificate", async () => {
+      using target = Bun.serve({
+        port: 0,
+        tls: CERT_LOCALHOST_ONLY,
+        fetch: () => new Response("unexpected"),
+      });
+      await using origin = await server(() => `https://127.0.0.1:${target.port}/final`);
+      await expect(
+        fetch(`${origin.url}/start`, { tls: { ...identity, ca: [validTls.cert, CERT_LOCALHOST_ONLY.cert] } }),
+      ).rejects.toMatchObject({ code: "ERR_TLS_CERT_ALTNAME_INVALID" });
+      expect(origin.seen).toEqual([{ path: "/start", certificate, authorization: null }]);
+    });
+  });
+
   it("drops a caller-supplied Host header on a cross-origin redirect and never verifies TLS against it", async () => {
     // The redirect target records the Host header it actually receives.
     const receivedHostHeaders: (string | null)[] = [];

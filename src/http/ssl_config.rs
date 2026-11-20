@@ -246,6 +246,16 @@ impl SSLConfig {
         copy
     }
 
+    pub(crate) fn without_client_identity(&self) -> SSLConfig {
+        let mut config = self.clone();
+        config.cert_file_name = None;
+        config.key_file_name = None;
+        config.passphrase = None;
+        config.cert = None;
+        config.key = None;
+        config
+    }
+
     pub(crate) fn is_same(&self, other: &SSLConfig) -> bool {
         self.server_name == other.server_name
             && self.key_file_name == other.key_file_name

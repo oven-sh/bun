@@ -55,8 +55,6 @@ cfg_select! {
     }
     all(target_arch = "x86_64", not(miri)) => {
         unsafe extern "C" {
-            safe fn highway_zstd_is_quicker() -> bool;
-
             fn highway_zstd_write_codes(
                 symbols: *const u8,
                 count: usize,
@@ -71,6 +69,12 @@ cfg_select! {
                 len: usize,
                 counts: &mut [u32; 256],
             ) -> bool;
+        }
+
+        /// From Zen 4 and Sapphire Rapids on. Ice Lake and its like, whose clock goes down for vectors of 512 bits, have no BF16.
+        #[unsafe(no_mangle)]
+        extern "C" fn highway_zstd_is_quicker() -> bool {
+            is_x86_feature_detected!("avx512vbmi2") && is_x86_feature_detected!("avx512bf16")
         }
 
         #[inline(always)]

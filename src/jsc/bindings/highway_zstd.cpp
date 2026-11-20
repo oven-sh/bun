@@ -285,13 +285,6 @@ namespace bun {
 HWY_EXPORT(ZstdWriteCodes);
 HWY_EXPORT(ZstdCountBytes);
 
-// Not on Ice Lake and its like, whose clock goes down for vectors of 512 bits.
-extern "C" bool highway_zstd_is_quicker()
-{
-    static const bool is_quicker = hwy::SupportedTargets() & (HWY_AVX3_ZEN4 | HWY_AVX3_SPR);
-    return is_quicker;
-}
-
 // Reads `count` symbols and 256 codes. Whatever these are, writes up to `room` bytes, and 3 numbers.
 extern "C" bool highway_zstd_write_codes(const uint8_t* symbols, size_t count, const uint16_t* codes, uint8_t* out, size_t room, uint64_t* written)
 {

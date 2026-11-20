@@ -735,9 +735,7 @@ describe.skipIf(process.arch !== "x64")("highway_zstd.cpp", () => {
     const has = (...names: string[]) => names.every(name => flags.includes(name));
     const needed = "avx512vbmi avx512_vbmi2 avx512_vnni avx512_bitalg avx512_vpopcntdq gfni vaes vpclmulqdq";
     expect(hasKernels).toBe(has(...needed.split(" ")));
-    // AMD's have no FP16, and only they have SSE4a.
-    const isRecent = has("avx512_bf16") && (has("avx512_fp16") || has("sse4a"));
-    expect(hw("zstdIsQuicker", new Uint8Array(), 0)).toBe(Number(hasKernels && isRecent));
+    expect(hw("zstdIsQuicker", new Uint8Array(), 0)).toBe(Number(has("avx512_vbmi2", "avx512_bf16")));
   });
 
   it.skipIf(hasKernels)("leaves the work to the caller on others", () => {

@@ -2685,6 +2685,67 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(h3.lastIndexOf("a", 3, "utf16le")).toBe(2);
       });
 
+      it("indexOf/includes(string, oddOffset, 'utf16le') starts at the next code unit", () => {
+        // Node >= 26.11 (https://github.com/nodejs/node/pull/65960): a forward
+        // UCS2 search for a string rounds an odd byteOffset up, so a match never
+        // begins before byteOffset.
+        const abc = Buffer.from("abcabc", "utf16le"); // 12 bytes: a.b.c.a.b.c.
+        const abcNeedle = Buffer.from("abc", "utf16le");
+        for (const enc of ["ucs2", "ucs-2", "utf16le", "utf-16le", "UCS2", "UTF-16LE"]) {
+          expect(abc.indexOf("abc", 1, enc)).toBe(6);
+          expect(abc.indexOf("bc", 3, enc)).toBe(8);
+          expect(abc.indexOf("ca", 5, enc)).toBe(-1);
+          expect(abc.includes("abc", 1, enc)).toBe(true);
+          expect(abc.includes("ca", 5, enc)).toBe(false);
+          // A negative offset counts from the end first: -11 is byte 1, -1 is byte 11.
+          expect(abc.indexOf("abc", -11, enc)).toBe(6);
+          expect(abc.indexOf("c", -3, enc)).toBe(10);
+          expect(abc.indexOf("c", -1, enc)).toBe(-1);
+          // Offsets that coerce to an odd integer.
+          expect(abc.indexOf("abc", 1.9, enc)).toBe(6);
+          expect(abc.indexOf("abc", true, enc)).toBe(6);
+          expect(abc.indexOf("abc", { valueOf: () => 1 }, enc)).toBe(6);
+          // With `end`, the needle must fit between the rounded start and `end`.
+          expect(abc.indexOf("abc", 1, 12, enc)).toBe(6);
+          expect(abc.indexOf("abc", 1, 11, enc)).toBe(-1);
+          expect(abc.includes("abc", 1, 11, enc)).toBe(false);
+          expect(abc.indexOf("b", 7, 10, enc)).toBe(8);
+          expect(abc.indexOf("c", 9, 10, enc)).toBe(-1);
+
+          // Not rounded: an even offset and an empty needle.
+          expect(abc.indexOf("abc", 0, enc)).toBe(0);
+          expect(abc.indexOf("abc", 2, enc)).toBe(6);
+          expect(abc.indexOf("", 1, enc)).toBe(1);
+          expect(abc.includes("", 1, enc)).toBe(true);
+          // Still rounded down, as in Node: a Buffer or Uint8Array needle, and lastIndexOf.
+          expect(abc.indexOf(abcNeedle, 1, enc)).toBe(0);
+          expect(abc.indexOf(new Uint8Array(abcNeedle), 1, enc)).toBe(0);
+          expect(abc.includes(Buffer.from("ca", "utf16le"), 5, enc)).toBe(true);
+          expect(abc.lastIndexOf("abc", 5, enc)).toBe(0);
+          expect(abc.lastIndexOf(abcNeedle, 5, enc)).toBe(0);
+        }
+
+        expect(Buffer.from("aa", "utf16le").indexOf("a", 1, "ucs2")).toBe(2);
+        expect(Buffer.from("\u6881\u6882\u6881", "utf16le").indexOf("\u6881", 1, "utf16le")).toBe(4);
+        // An odd-length haystack: the trailing byte is not part of a code unit.
+        const odd = Buffer.concat([abc, Buffer.from([0x61])]);
+        expect(odd.indexOf("abc", 1, "ucs2")).toBe(6);
+        expect(odd.indexOf("abc", -11, "ucs2")).toBe(6);
+        expect(odd.indexOf("c", 11, "ucs2")).toBe(-1);
+        // A plain Uint8Array receiver takes the same path.
+        expect(Buffer.prototype.indexOf.call(new Uint8Array(abc), "abc", 1, "ucs2")).toBe(6);
+        expect(Buffer.prototype.includes.call(new Uint8Array(abc), "ca", 5, "ucs2")).toBe(false);
+        // One-byte encodings take an odd offset as it is.
+        expect(Buffer.from("abcabc", "latin1").indexOf("abc", 1, "latin1")).toBe(3);
+        expect(Buffer.from("abcabc").indexOf("bc", 1, "utf8")).toBe(1);
+
+        // A find-all loop moves on instead of getting the same match again.
+        const found = [];
+        let i = -1;
+        while (found.length < 4 && (i = abc.indexOf("abc", i + 1, "ucs2")) !== -1) found.push(i);
+        expect(found).toEqual([0, 6]);
+      });
+
       for (let fn of [Buffer.prototype.slice, Buffer.prototype.subarray]) {
         it(`Buffer.${fn.name}`, () => {
           const buf = new Buffer("buffer");

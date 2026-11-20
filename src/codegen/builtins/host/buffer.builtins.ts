@@ -344,7 +344,7 @@ export default b.declarations(
         },
       ],
       copyBytesFrom: {
-        args: { view: arrayBufferView, offset: b.f64.optional, length: b.f64.optional },
+        args: { view: b.instance("TypedArray"), offset: b.f64.optional, length: b.f64.optional },
         returns: newBuffer,
         capability: "heap",
         throws: true,

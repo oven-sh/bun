@@ -798,12 +798,15 @@ test("this.equals and the functions of this.utils do not need a receiver", () =>
     toUseDetachedFunctions(received, expected) {
       const { equals, utils } = this;
       const { stringify, printExpected, printReceived, EXPECTED_COLOR, RECEIVED_COLOR, matcherHint } = utils as any;
+      const { INVERTED_COLOR, DIM_COLOR, BOLD_WEIGHT } = utils as any;
       outcome = {
         equals: [equals(received, expected), [[1]].some(item => equals(item, [1])), equals.call(undefined, 1, 2)],
         explicitTesters: equals(1, 2, [() => true]),
         sameFunction: [equals === this.equals, stringify === utils.stringify],
         strings: [stringify, printExpected, printReceived].map(print => Bun.stripANSI(print({ a: "b" }))),
-        colors: [EXPECTED_COLOR, RECEIVED_COLOR].map(color => Bun.stripANSI(color("text"))),
+        colors: [EXPECTED_COLOR, RECEIVED_COLOR, INVERTED_COLOR, DIM_COLOR, BOLD_WEIGHT].map(color =>
+          Bun.stripANSI(color("text")),
+        ),
         matcherHint: Bun.stripANSI(matcherHint("toUseDetachedFunctions")).split("\n")[0],
         ownFunctions: Object.keys(utils).sort(),
       };
@@ -817,10 +820,13 @@ test("this.equals and the functions of this.utils do not need a receiver", () =>
     explicitTesters: true,
     sameFunction: [true, true],
     strings: [printed, printed, printed],
-    colors: ["text", "text"],
+    colors: ["text", "text", "text", "text", "text"],
     matcherHint: "expect(received).toUseDetachedFunctions(expected)",
     ownFunctions: [
+      "BOLD_WEIGHT",
+      "DIM_COLOR",
       "EXPECTED_COLOR",
+      "INVERTED_COLOR",
       "RECEIVED_COLOR",
       "diff",
       "matcherHint",
@@ -842,7 +848,8 @@ test.concurrent("matchers of jest-extended, which detach this.equals and this.ut
       ${matcher("toBeHexadecimal")}
       ${matcher("toIncludeAllMembers")}
       ${matcher("toIncludeSameMembers")}
-      expect.extend({ toBeHexadecimal, toIncludeAllMembers, toIncludeSameMembers });
+      ${matcher("toEqualIgnoringWhitespace")}
+      expect.extend({ toBeHexadecimal, toIncludeAllMembers, toIncludeSameMembers, toEqualIgnoringWhitespace });
       test("this.equals is passed to a helper", () => {
         expect([1, { a: 2 }]).toIncludeAllMembers([{ a: 2 }]);
         expect([1, { a: 2 }]).not.toIncludeAllMembers([{ a: 3 }]);
@@ -855,12 +862,25 @@ test.concurrent("matchers of jest-extended, which detach this.equals and this.ut
           console.log(Bun.stripANSI(error.message).split("\\n").slice(-2).join("|"));
         }
       });
+      test("the message is built with INVERTED_COLOR", () => {
+        for (const [received, expected] of [["a b", "a c"], ["ok 😀", "ok 😂"]]) {
+          try {
+            expect(received).toEqualIgnoringWhitespace(expected);
+          } catch (error) {
+            console.log(Bun.stripANSI(error.message).split("\\n").slice(-5).join("|"));
+          }
+        }
+      });
     `,
   });
   expect(stdout).toContain('Expected value to be a hexadecimal, received:|  "zz"\n');
+  expect(stdout).toContain("Expected:|  a c||Received:|  a b\n");
+  // jest-extended diffs UTF-16 code units, so it colors the two halves of each of these emoji in two calls.
+  expect(stdout).toContain("Expected:|  ok 😂||Received:|  ok 😀\n");
   expect(results).toEqual([
     "(pass) this.equals is passed to a helper",
     "(pass) the message is built with detached utils",
+    "(pass) the message is built with INVERTED_COLOR",
   ]);
   expect(exitCode).toBe(0);
 });

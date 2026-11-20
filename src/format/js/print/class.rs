@@ -319,12 +319,6 @@ fn write_ts_index_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
 /// The `key: string` of an index signature.
 struct FormatIndexSignatureName<'a>(Param<'a>);
 
-impl Spanned for FormatIndexSignatureName<'_> {
-    fn span(&self) -> Span {
-        self.0.span()
-    }
-}
-
 impl<'a> Format<'a> for FormatIndexSignatureName<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let param = self.0;

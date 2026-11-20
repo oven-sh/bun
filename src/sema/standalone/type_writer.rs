@@ -84,7 +84,7 @@ impl Checker<'_, '_> {
     ) -> String {
         let repeated = match kind {
             VisitedKind::Expression(e)
-            | VisitedKind::Parenthesized(e, _)
+            | VisitedKind::Parenthesized(e)
             | VisitedKind::AccessName(e) => Some(e.idx()),
             _ => None,
         };

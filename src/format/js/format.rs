@@ -1056,24 +1056,20 @@ pub(crate) fn write_declaration<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) 
             body,
         } => statements::write_for_statement(statement, init, test, update, body, f),
         StmtKind::ForIn { left, expr, body } => {
-            statements::write_for_in_statement(statement, left, expr, body, f)
+            statements::write_for_in_statement(left, expr, body, f)
         }
         StmtKind::ForOf {
             left,
             expr,
             body,
             is_await,
-        } => statements::write_for_of_statement(statement, left, expr, body, is_await, f),
-        StmtKind::While { test, body } => {
-            statements::write_while_statement(statement, test, body, f)
-        }
+        } => statements::write_for_of_statement(left, expr, body, is_await, f),
+        StmtKind::While { test, body } => statements::write_while_statement(test, body, f),
         StmtKind::DoWhile { body, test } => {
             statements::write_do_while_statement(statement, body, test, f)
         }
         StmtKind::Block(body) => print::block_statement::write_block_statement(statement, body, f),
-        StmtKind::With { object, body } => {
-            statements::write_with_statement(statement, object, body, f)
-        }
+        StmtKind::With { object, body } => statements::write_with_statement(object, body, f),
         StmtKind::Switch { expr, cases } => {
             print::switch_statement::write_switch_statement(statement, expr, cases, f)
         }
@@ -1104,7 +1100,7 @@ pub(crate) fn write_declaration<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) 
             print::export_declarations::write_export_all_declaration(statement, f)
         }
         StmtKind::ExportDefault(expression) => {
-            print::export_declarations::write_export_default_expression(statement, expression, f);
+            print::export_declarations::write_export_default_expression(expression, f);
         }
         StmtKind::ExportAssign(expression) => {
             ts_declarations::write_ts_export_assignment(expression, f)

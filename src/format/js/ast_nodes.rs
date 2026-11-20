@@ -23,7 +23,7 @@ use bun_lint::ast::{
     ImportSpec, Keyword, Member, MemberKind, ModuleName, Node, Param, Pat, PatKind, PatProp, Prop,
     PropKind, Stmt, StmtKind, StmtTag, TupleElem, TypeKind, TypeNode, TypeParam, UnOp, VarDecl,
 };
-use bun_lint::span::{Span, Spanned};
+use bun_lint::span::Span;
 use bun_sema::hir::ExprTag;
 
 /// An expression statement, or an arrow function's expression body, which oxc represents as an `ExpressionStatement` in
@@ -1342,12 +1342,6 @@ impl<'a> AstNodes<'a> {
                 .and_then(|it| it.angle_brackets_span())
                 .unwrap_or_else(|| owner.span()),
         }
-    }
-}
-
-impl Spanned for AstNodes<'_> {
-    fn span(&self) -> Span {
-        AstNodes::span(*self)
     }
 }
 

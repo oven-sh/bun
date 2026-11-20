@@ -148,7 +148,6 @@ macro_rules! absent {
 absent! {
     TypeId => TypeId::ERROR,
     bool => false,
-    u32 => 0,
     (u32, u32) => (0, 0),
     TypeFlags => TypeFlags::ANY,
     ObjectFlags => ObjectFlags::empty(),

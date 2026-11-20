@@ -1151,6 +1151,8 @@ console.log(logo);
 
 Setting `publicPath` prefixes all file paths with the specified value.
 
+Bun joins the prefix with each file's path relative to `outdir`, not relative to the file that references it. Bun adds no separator, so the prefix must end with `/`. Use an absolute path or URL, such as `/app/` or `https://cdn.example.com/`. A relative value such as `"./"` is resolved by the browser against the URL of whatever uses the path: the stylesheet for a CSS `url()`, the importing module for an `import`, or the page for a string a script assigns to `src`. It works only when that URL is served from the root of `outdir`. A CSS file in a subdirectory of `outdir` gets `url()` paths that point into a folder below its own: with `publicPath: "./"` and `naming: { entry: "assets/[name]-[hash].[ext]", asset: "assets/[name]-[hash].[ext]" }`, `out/assets/index-1t63ydpr.css` references `url(./assets/bg-a7305bdef.png)` instead of `url(./bg-a7305bdef.png)`.
+
 <Tabs>
   <Tab title="JavaScript">
     ```ts title="build.ts" icon="/icons/typescript.svg"

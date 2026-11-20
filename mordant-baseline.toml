@@ -214,6 +214,3 @@
 
 [bun_uws_sys]
 "unused_pub:src/uws_sys/Loop.rs" = 2
-
-[bun_zstd]
-"unused_pub:src/zstd/lib.rs" = 2

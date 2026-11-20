@@ -82,10 +82,10 @@ describe.concurrent("bun pm scan", () => {
 
       const [stdout, stderr, exitCode] = await runScan(dir);
 
-      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
         "bun pm scan <version> (<revision>)
         error: missing lockfile, nothing to scan
-        note: run 'bun install' first"
+        note: "<dir>/package.json" has no dependencies"
       `);
       expect(stdout).toBe("");
       expect(exitCode).toBe(1);

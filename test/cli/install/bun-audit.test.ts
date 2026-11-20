@@ -3327,7 +3327,9 @@ describe("`bun audit fix`", () => {
     });
 
     const { stdout, stderr, exitCode } = await auditFix(dir);
-    expect(normalizeBunSnapshot(stderr)).toBe(MISSING_LOCKFILE);
+    expect(normalizeBunSnapshot(stderr, String(dir))).toBe(
+      `error: missing lockfile, nothing to audit\nnote: "<dir>/package.json" has no dependencies`,
+    );
     expect(normalizeBunSnapshot(stdout)).toBe("bun audit fix <version> (<revision>)");
     expect(exitCode).toBe(1);
     expect(await exists(join(dir, "bun.lock"))).toBeFalse();

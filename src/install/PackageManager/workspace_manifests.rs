@@ -10,6 +10,7 @@ use crate::dependency::{
 };
 use crate::lockfile::package::{PackageColumns as _, folder_relative_to_top_level_dir};
 use crate::lockfile::{self, DependencySlice, Lockfile, Package};
+use crate::lockfile_real::package::workspace_map::{MissingWorkspace, WorkspaceMap};
 use crate::npm::{FindResult, FindVersionResult, MinimumReleaseAgeExcludes, PackageManifest};
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, ResolutionTag,
@@ -61,6 +62,71 @@ impl ScratchManifests {
             features,
         )?;
         self.fail_on_logged_errors()
+    }
+
+    /// Whether `bun install` accepts the root package.json and its workspaces and finds nothing to lock in them.
+    #[cold]
+    pub(crate) fn root_has_nothing_to_lock(manager: &mut PackageManager) -> Option<bool> {
+        // `parse_root` exits if it cannot read the file.
+        let entry = manager
+            .workspace_package_json_cache
+            .get_with_path(
+                &mut bun_ast::Log::init(),
+                &root_package_json_path(),
+                Default::default(),
+            )
+            .unwrap()
+            .ok()?;
+        let (root, source) = (entry.root, entry.source.clone());
+        let has_workspaces = root.get(b"workspaces").is_some();
+        // An install first copies pnpm-workspace.yaml into a root that has no `workspaces`.
+        if !has_workspaces && bun_sys::exists_z(bun_core::zstr!("pnpm-workspace.yaml")) {
+            return None;
+        }
+
+        let mut without_workspaces = ScratchManifests::new();
+        without_workspaces.parse_root_alone(manager).ok()?;
+        if !without_workspaces.locks_nothing() {
+            return Some(false);
+        }
+        if !has_workspaces {
+            return Some(true);
+        }
+
+        // `parse_root` exits on a workspace whose package.json is an empty file, which this walk skips.
+        let cache = &mut manager.workspace_package_json_cache;
+        let mut members = WorkspaceMap::init();
+        let named = members
+            .process_manifest(
+                cache,
+                &mut bun_ast::Log::init(),
+                &root,
+                &source,
+                MissingWorkspace::SkipEmptyToo,
+            )
+            .ok()?;
+        if named > 0 {
+            return Some(false);
+        }
+        // An install warns about a member with dependencies that it skips for having no name.
+        if members.skipped_any_with_dependencies()
+            || cache
+                .map
+                .values()
+                .any(|member| member.source.contents.is_empty())
+        {
+            return None;
+        }
+
+        let mut with_workspaces = ScratchManifests::new();
+        with_workspaces.parse_root(manager, Features::main()).ok()?;
+        Some(with_workspaces.locks_nothing())
+    }
+
+    /// `Lockfile::is_empty`, which `save_lockfile` asks, for a lockfile that holds this root.
+    fn locks_nothing(mut self) -> bool {
+        self.lockfile.append_package(&self.root).unwrap_or_oom();
+        self.lockfile.is_empty()
     }
 
     /// Doesn't read any workspace. Uses bun.lock's workspace paths, but not its versions, which may

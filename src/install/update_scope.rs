@@ -14,6 +14,7 @@ use crate::lockfile::{Lockfile, reachable};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::UpdateTargetWorkspace;
 use crate::package_manager::workspace_selection::{self, RootSelection};
+use crate::package_manager_real::LockfileNote;
 use crate::package_manager_real::command_line_arguments::UpdateGroups;
 use crate::package_manager_real::install_with_manager::loaded_lockfile_name;
 use crate::resolution::Tag as ResolutionTag;
@@ -290,24 +291,32 @@ fn describe_patterns(patterns: &[Pattern]) -> Vec<u8> {
 }
 
 fn exit_on_lockfile_load_failure(manager: &mut PackageManager, subject: &[u8]) -> &'static str {
-    fn missing(silent: bool, subject: &[u8]) -> ! {
-        if !silent {
+    fn missing(manager: &mut PackageManager, subject: &[u8]) -> ! {
+        if manager.options.log_level != LogLevel::Silent {
             Output::flush();
             Output::err_generic("no bun.lock to match {} against", (BStr::new(subject),));
-            bun_core::pretty_errorln!("    <cyan>bun install<r>");
+            match manager.unread_lockfile_note() {
+                LockfileNote::RunInstall(setting) => {
+                    bun_core::pretty_errorln!("    <cyan>bun install<r>");
+                    if let Some(setting) = setting {
+                        setting.print_note();
+                    }
+                }
+                note => manager.print_lockfile_note(note),
+            }
             Output::flush();
         }
         Global::exit(1);
     }
     let silent = manager.options.log_level == LogLevel::Silent;
     if !manager.options.do_.load_lockfile() {
-        missing(silent, subject);
+        missing(manager, subject);
     }
     let load_result = manager.load_lockfile_from_cwd::<true>();
     let lockfile_name = loaded_lockfile_name(&load_result);
     match load_result {
         crate::lockfile::LoadResult::Ok(_) => lockfile_name,
-        crate::lockfile::LoadResult::NotFound => missing(silent, subject),
+        crate::lockfile::LoadResult::NotFound => missing(manager, subject),
         crate::lockfile::LoadResult::Err(cause) => {
             if !silent {
                 cause.report(manager.log_mut());

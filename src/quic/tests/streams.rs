@@ -1199,7 +1199,7 @@ fn streams_are_not_silent_for_long() {
 
 #[test]
 fn streams_that_only_write_when_asked_are_long_all_the_same() {
-    for seconds in [0, 3] {
+    for (seconds, pauses) in [(0, false), (3, false), (3, true)] {
         let mut raw = Raw::server().connected();
         let ids = [(); 2].map(|()| raw.peer.open(Unidirectional));
         for _ in 0..10 {
@@ -1215,12 +1215,16 @@ fn streams_that_only_write_when_asked_are_long_all_the_same() {
             raw.send("ping");
         }
         while raw.peer.poll(raw.now) {}
+        if pauses {
+            raw.send("ping");
+        }
         raw.forget();
         for id in ids {
             raw.peer.send(id, &filler(0, 8_000), false);
         }
         raw.process();
-        assert_eq!(turns(&mut raw), [(ids[1], 0), (ids[0], 12)]);
+        let first = [(ids[1], 0), (ids[0], 12)][usize::from(pauses)];
+        assert_eq!(turns(&mut raw)[0], first);
     }
 }
 

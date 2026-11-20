@@ -201,6 +201,7 @@ impl State {
         self.count_periods(now);
         self.write_round += 1;
         self.is_write_round_over = false;
+        self.allowance.is_crumb = false;
     }
 
     /// Whatever the limits are.

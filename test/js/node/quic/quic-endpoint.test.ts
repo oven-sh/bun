@@ -307,12 +307,16 @@ describe("endpoint.close() while a session is live", () => {
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
   });
 
-  test("leaves it to the application to look at how the session ends", async () => {
+  test.concurrent.each([
+    [12, "ERR_QUIC_TRANSPORT_ERROR\n"],
+    [10, "unhandled\nERR_QUIC_TRANSPORT_ERROR\n"],
+  ])("a session that ends with transport error %d", async (code, expected) => {
     const script = `
       import { createPrivateKey } from "node:crypto";
       import { readFileSync } from "node:fs";
       import { connect, listen } from "node:quic";
       const [key, cert] = process.argv.slice(1).map(path => readFileSync(path));
+      process.on("unhandledRejection", () => console.log("unhandled"));
       const accepted = Promise.withResolvers();
       const server = await listen(accepted.resolve, { sni: { "*": { keys: [createPrivateKey(key)], certs: [cert] } } });
       const client = await connect(server.address, { servername: "localhost", verifyPeer: "manual" });
@@ -320,7 +324,7 @@ describe("endpoint.close() while a session is live", () => {
       const session = await accepted.promise;
       await session.opened;
       server.close();
-      client.close({ type: "transport", code: 12 });
+      client.close({ type: "transport", code: ${code} });
       await server.closed;
       await new Promise(setImmediate);
       console.log(await session.closed.catch(error => error.code));
@@ -333,7 +337,7 @@ describe("endpoint.close() while a session is live", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "ERR_QUIC_TRANSPORT_ERROR\n",
+      stdout: expected,
       stderr: expect.any(String),
       exitCode: 0,
     });

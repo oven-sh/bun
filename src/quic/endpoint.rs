@@ -747,6 +747,12 @@ impl Endpoint {
                 bring_forward(&mut self.deadlines, index, connection);
             }
         }
+        while let Some((deadline, index)) = self.deadlines.first()
+            && let Some(connection) = &self.slots.at(index).connection
+            && connection.timeout() > deadline
+        {
+            self.deadlines.set(index, connection.timeout());
+        }
         self.deadlines.first().map(|it| it.0)
     }
 

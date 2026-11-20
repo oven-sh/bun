@@ -64,6 +64,7 @@ fn bind_existing(
         is_first_time: false,
         may_bundle: false,
         task: None,
+        bundle_task: None,
     }))
 }
 
@@ -1682,10 +1683,7 @@ fn on_first_resolution(
             // SAFETY: `generate_network_task_for_tarball` initialized the task, and nothing else
             // holds it until `enqueue_resolved_task` queues it.
             Some(ResolvedPackageTask::NetworkTask(task)) => Some(unsafe { (**task).task_id }),
-            // SAFETY: `read_bundle_task` initialized the task, and nothing else holds it until
-            // `enqueue_resolved_task` queues it.
-            Some(ResolvedPackageTask::ReadBundle(task)) => Some(unsafe { (*task.as_ptr()).id }),
-            _ => None,
+            _ => result.bundle_task,
         };
         this.wait_for_bundle(package.meta.id, extracts);
         return Ok(());
@@ -1721,13 +1719,6 @@ fn enqueue_resolved_task(
                 this.set_preinstall_state(package_id, started);
                 enqueue_patch_task(this, patch_task);
             }
-        }
-        // `schedule_tasks` counts the batch as pending, so the resolve does not end before the
-        // read does.
-        ResolvedPackageTask::ReadBundle(task) => {
-            // SAFETY: a valid, initialized pool slot
-            let task = unsafe { &raw mut (*task.as_ptr()).threadpool_task };
-            this.task_batch.push(ThreadPool::Batch::from(task));
         }
     }
 }
@@ -3093,9 +3084,6 @@ pub(crate) enum ResolvedPackageTask {
 
     /// Apply patch task or calc patch hash task
     PatchTask(Box<PatchTask>),
-
-    /// A `Task::Job::ReadBundle` for the thread pool
-    ReadBundle(NonNull<Task::Task>),
 }
 
 #[derive(Default)]
@@ -3109,6 +3097,10 @@ pub(crate) struct ResolvedPackageResult {
     pub(crate) may_bundle: bool,
 
     pub task: Option<ResolvedPackageTask>,
+
+    /// The task that reads what a bundler ships, if `task` is not a download: the read that
+    /// `queue_bundle_read` queued, or the download that follows a `CalcHash` task.
+    pub(crate) bundle_task: Option<Task::Id>,
 }
 
 /// Warns once per version. For a version that none of the project's package.json files ask for,
@@ -3270,16 +3262,18 @@ fn ships_bundle(
             .any(|row| row.behavior.is_bundled())
 }
 
-/// `determine_preinstall_state` does not look in the cache for a package that this platform
-/// skips, or for one whose patch has no hash yet. `skips_patch` is true if this resolve does not
-/// download the bundler in order to patch it. The install phase patches what it places.
+/// Returns the state of a bundler that this resolve just added, and whether the cache has a folder
+/// of it to read: the one that `determine_preinstall_state` found if the state is `Done`, else the
+/// unpatched one. `determine_preinstall_state` does not look in the cache for a package that this
+/// platform skips, or for one whose patch has no hash yet. `skips_patch` is true if this resolve
+/// does not download the bundler in order to patch it. The install phase patches what it places.
 fn bundler_preinstall_state(
     this: &mut PackageManager,
     package: &Package,
     behavior: Behavior,
     state: install::PreinstallState,
     skips_patch: bool,
-) -> install::PreinstallState {
+) -> (install::PreinstallState, bool) {
     use install::PreinstallState as State;
     let has_looked = match state {
         State::Done => !package.meta.is_disabled(
@@ -3287,11 +3281,12 @@ fn bundler_preinstall_state(
             this.options.os,
             this.options.libc.for_dependency(behavior),
         ),
-        State::CalcPatchHash => !skips_patch,
+        State::CalcPatchHash => false,
         _ => true,
     };
     if has_looked {
-        return state;
+        // `ApplyPatch` means that the unpatched folder is in the cache.
+        return (state, matches!(state, State::Done | State::ApplyPatch));
     }
     let mut buf = bun_paths::path_buffer_pool::get();
     let folder = cached_npm_package_folder_name(
@@ -3302,21 +3297,25 @@ fn bundler_preinstall_state(
         None,
     );
     if is_package_in_cache(this, folder, ResolutionTag::Npm) {
-        return state;
+        return (state, true);
+    }
+    // `PatchTask::run_from_main_thread_calc_hash` starts the download once the hash is known.
+    if state == State::CalcPatchHash && !skips_patch {
+        return (state, false);
     }
     this.set_preinstall_state(package.meta.id, State::Extract);
-    State::Extract
+    (State::Extract, false)
 }
 
-/// The task that reads what a bundler in the cache ships in its own `node_modules`, so that the
-/// install thread does not. `patch_hash` is the one in the name of the folder that
-/// `determine_preinstall_state` found there.
-fn read_bundle_task(
+/// Queues the task that reads what a bundler in the cache ships in its own `node_modules`, so that
+/// the install thread does not. `patch_hash` is the one in the name of the folder to read.
+/// Returns the task's id, which is also the id of the task that would download the bundler.
+fn queue_bundle_read(
     this: &mut PackageManager,
     package: &Package,
     is_required: bool,
     patch_hash: Option<u64>,
-) -> NonNull<Task::Task> {
+) -> Task::Id {
     let cache = this.get_cache_directory();
     let version = package.resolution.npm().version;
     let name = this.lockfile.str(&package.name);
@@ -3333,7 +3332,13 @@ fn read_bundle_task(
         contents: None,
     };
     let task_id = Task::Id::for_npm_package(name, version);
-    Task::Task::create(this, task_id, job)
+    let task = Task::Task::create(this, task_id, job);
+    // SAFETY: a valid, initialized pool slot
+    let task = unsafe { &raw mut (*task.as_ptr()).threadpool_task };
+    // `schedule_tasks` counts the batch as pending, so the resolve does not end before the read
+    // does.
+    this.task_batch.push(ThreadPool::Batch::from(task));
+    task_id
 }
 
 fn get_or_put_resolved_package_with_find_result(
@@ -3475,21 +3480,30 @@ fn get_or_put_resolved_package_with_find_result(
             &mut name_and_version_hash,
             &mut patchfile_hash,
         );
+        let mut bundle_task = None;
         if reads_bundle {
-            state =
-                bundler_preinstall_state(this, &package, behavior, state, unplaced || !prefetches);
+            let skips_patch = unplaced || !prefetches;
+            let (bundler_state, in_cache) =
+                bundler_preinstall_state(this, &package, behavior, state, skips_patch);
+            state = bundler_state;
+            if in_cache {
+                // No download, but a worker reads what the bundler ships there. A patch that is
+                // not applied yet leaves the unpatched folder, which a download reads as well.
+                let patch_hash = match state {
+                    install::PreinstallState::Done => patchfile_hash,
+                    _ => None,
+                };
+                let is_required = behavior.is_required();
+                bundle_task = Some(queue_bundle_read(this, &package, is_required, patch_hash));
+            } else if state == install::PreinstallState::CalcPatchHash {
+                bundle_task = Some(Task::Id::for_npm_package(
+                    this.lockfile.str(&package.name),
+                    package.resolution.npm().version,
+                ));
+            }
         }
 
         let task = match state {
-            // Already in the cache: no download, but a worker reads what a bundler ships there.
-            install::PreinstallState::Done if reads_bundle => {
-                Some(ResolvedPackageTask::ReadBundle(read_bundle_task(
-                    this,
-                    &package,
-                    behavior.is_required(),
-                    patchfile_hash,
-                )))
-            }
             // Already in the cache: no download, but its dependencies are enqueued
             install::PreinstallState::Done => None,
             // Neither `unplaced` nor `--lockfile-only` nor a security scanner skips this download.
@@ -3530,6 +3544,7 @@ fn get_or_put_resolved_package_with_find_result(
             is_first_time: true,
             may_bundle,
             task,
+            bundle_task,
         }))
     })();
     success_fn(this, dependency_id, package_id);
@@ -4046,6 +4061,7 @@ fn resolved_folder_package(
         is_first_time,
         may_bundle: is_first_time,
         task: None,
+        bundle_task: None,
     }))
 }
 

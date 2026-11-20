@@ -53,14 +53,6 @@ impl<const BIG: bool> StatType<BIG> {
         Self::stat_to_js(&self.value, global)
     }
 
-    pub(crate) fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        if BIG {
-            Bun__JSBigIntStatsObjectConstructor(global)
-        } else {
-            Bun__JSStatsObjectConstructor(global)
-        }
-    }
-
     fn stat_to_js(stat_: &PosixStat, global: &JSGlobalObject) -> JsResult<JSValue> {
         let a_time = stat_.atime();
         let m_time = stat_.mtime();
@@ -124,7 +116,6 @@ impl<const BIG: bool> StatType<BIG> {
 }
 
 unsafe extern "C" {
-    safe fn Bun__JSBigIntStatsObjectConstructor(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__JSStatsObjectConstructor(global: &JSGlobalObject) -> JSValue;
 
     safe fn Bun__createJSStatsObject(
@@ -170,6 +161,12 @@ unsafe extern "C" {
 
 pub(crate) type StatsSmall = StatType<false>;
 pub(crate) type StatsBig = StatType<true>;
+
+impl StatsSmall {
+    pub(crate) fn get_constructor(global: &JSGlobalObject) -> JSValue {
+        Bun__JSStatsObjectConstructor(global)
+    }
+}
 
 /// Test-only: build a Stats/BigIntStats from a raw u64 ino via the real
 /// statToJS path, so regression tests can exercise high-inode values without

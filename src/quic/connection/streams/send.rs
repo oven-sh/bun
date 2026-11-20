@@ -66,11 +66,15 @@ fn is_under_way(stream: &Stream) -> bool {
 }
 
 impl State {
-    /// How many bytes the application may write, and whether they are ahead of an older stream.
+    /// How many bytes the application may write if it has `len`, and whether they are ahead of an older stream.
     #[inline]
-    pub(crate) fn capacity(&self, id: StreamId, stream: &Stream) -> (u64, bool) {
+    pub(crate) fn capacity(&self, id: StreamId, stream: &Stream, len: usize) -> (u64, bool) {
+        let mut credit = self.send_credit();
         let (has_to_wait, is_ahead) = match self.invited {
-            Some((invited, is_ahead)) if invited == id => (false, is_ahead),
+            Some((invited, is_ahead)) if invited == id => {
+                credit = credit.saturating_sub(self.spare_credit);
+                (false, is_ahead)
+            }
             _ if self.writable.is_empty() && self.leader.is_none() => (false, false),
             _ => {
                 let entry = (self.rank(stream), id);
@@ -85,11 +89,28 @@ impl State {
         };
         let wanted = shared.max(MIN_UNSENT.saturating_sub(stream.send.unsent_len()));
         let room = self.max_retained.saturating_sub(self.retained);
-        let capacity = wanted.min(room).min(self.credit_for(stream));
-        match is_ahead {
-            true => (capacity.min(self.credit_ahead), true),
-            false => (capacity, false),
+        let capacity = wanted.min(room).min(credit).min(stream.send_credit());
+        let max = match is_ahead {
+            true => self.credit_ahead + self.reserve_for(stream, len as u64 >= WRITE_CHUNK),
+            false => u64::MAX,
+        };
+        (capacity.min(max), is_ahead)
+    }
+
+    /// So that streams that the peer does not read cannot hold up short ones.
+    fn reserve_for(&self, stream: &Stream, has_much: bool) -> u64 {
+        let part = self.send_window / 32;
+        match has_much {
+            true => (self.reserve.saturating_sub(part))
+                .min((part / 2).saturating_sub(stream.send.end())),
+            false => self.reserve,
         }
+    }
+
+    /// Whether it can do without `credit_ahead`.
+    fn can_pass(&self, entry: (u64, StreamId), stream: &Stream) -> bool {
+        let has_much = stream.flags.contains(Flags::HAS_MUCH_TO_WRITE);
+        age(entry).is_none() || self.reserve_for(stream, has_much) >= self.min_credit
     }
 
     fn max_ahead(&self) -> u64 {
@@ -97,21 +118,25 @@ impl State {
     }
 
     /// At most, and apart from what the leader has on its way.
-    fn unread(&self, leader: Option<&Stream>) -> u64 {
-        (self.send_window.saturating_sub(self.send_credit()))
-            .saturating_sub(leader.map_or(0, |it| it.send.len()))
+    fn unread(&self, on_its_way: u64) -> u64 {
+        (self.send_window).saturating_sub(self.send_credit() + on_its_way)
     }
 
     fn update_credit_ahead(&mut self, leader: Option<&Stream>) {
-        self.credit_ahead = match leader.is_some_and(Stream::is_blocked) {
-            true => (self.send_window / 16 * MAX_SHARE_AHEAD).saturating_sub(self.unread(leader)),
-            false => self.max_ahead().saturating_sub(self.ahead),
+        self.credit_ahead = match leader.filter(|it| it.is_blocked()) {
+            Some(leader) => {
+                self.reserve = self.reserve.min(self.send_window / 32);
+                (self.send_window / 16 * MAX_SHARE_AHEAD)
+                    .saturating_sub(self.unread(leader.send.len()))
+            }
+            None => self.max_ahead().saturating_sub(self.ahead),
         };
     }
 
     pub(crate) fn on_written_ahead(&mut self, len: u64) {
         self.ahead += len;
-        self.credit_ahead -= len;
+        self.reserve -= len.saturating_sub(self.credit_ahead);
+        self.credit_ahead = self.credit_ahead.saturating_sub(len);
     }
 
     /// How many bytes flow control would let through.
@@ -182,6 +207,7 @@ impl State {
     fn discard(&mut self, stream: &mut Stream) {
         self.unsent -= stream.send.unsent_len();
         self.release(stream.send.len());
+        self.reached += stream.send.sent() - stream.send.reached();
         stream.send.discard();
     }
 
@@ -242,6 +268,7 @@ impl State {
             let rank = self.rank(stream);
             line_up(&mut self.writable, (rank, id));
             self.is_write_round_over = false;
+            self.has_passing |= self.can_pass((rank, id), stream);
         }
     }
 
@@ -323,10 +350,15 @@ impl Streams {
         let Self { table, state, .. } = self;
         if limit > state.send_limit {
             state.send_limit = limit;
-            let delivered = state.sent - state.delivery().1;
-            state.send_window = state.send_window.max(limit - delivered);
+            state.send_window = state.send_window.max(limit - state.reached);
             let leader = state.leader.and_then(|it| table.get(it.1));
-            let read = state.ahead.saturating_sub(state.unread(leader));
+            let unread = state.unread(leader.map_or(0, |it| it.send.end() - it.send.reached()));
+            let part = state.send_window / 32;
+            state.reserve = (part * (2 * MAX_SHARE_AHEAD + 1))
+                .saturating_sub(unread)
+                .min(2 * part);
+            state.has_passing = true;
+            let read = state.ahead.saturating_sub(unread);
             state.ahead -= read;
             if read > state.max_ahead() / 2 {
                 state.trust = MAX_TRUST.min(state.trust + 1);
@@ -355,7 +387,7 @@ impl Streams {
             line.make_contiguous().sort_unstable();
         }
         [state.sendable, state.writable] = lines;
-        state.leader = None;
+        (state.leader, state.has_passing) = (None, true);
     }
 
     /// At most once for a stream until [`State::start_write_round`].
@@ -375,19 +407,35 @@ impl Streams {
             };
             let line = &state.writable;
             let serial = first_serial(line);
+            let alternates = (state.sendable.front()).is_some_and(|it| it.0 & SERIAL == 0);
+            let max_unsent = u64::from(alternates) * WRITE_CHUNK;
             let mut at = serial
-                .filter(|&at| line.get(at).is_some_and(|it| is_due(it, WRITE_CHUNK)))
+                .filter(|&at| line.get(at).is_some_and(|it| is_due(it, max_unsent)))
                 .or_else(|| line.iter().position(|it| is_due(it, u64::MAX)));
+            state.spare_credit = match state.send_credit() {
+                credit @ LITTLE.. if at == serial && at > Some(0) => credit / 2,
+                _ => 0,
+            };
             let age_at = |at: Option<usize>| age(*line.get(at?)?);
             let oldest = [leader, age_at(Some(0)), age_at(serial)];
             let oldest = oldest.into_iter().flatten().min();
-            let mut is_ahead = age_at(at).is_some_and(|it| oldest < Some(it));
-            if is_ahead && state.credit_ahead < state.min_credit {
-                is_ahead = false;
-                at = ([Some(0), serial].into_iter().flatten())
-                    .find(|&at| age_at(Some(at)) == oldest)
-                    .filter(|&at| line.get(at).is_some_and(|it| is_due(it, u64::MAX)));
+            let is_ahead = |at| age_at(at).is_some_and(|it| oldest < Some(it));
+            if is_ahead(at) && state.credit_ahead < state.min_credit {
+                let can_pass = |it: &(u64, StreamId)| {
+                    (table.get(it.1)).is_some_and(|stream| state.can_pass(*it, stream))
+                };
+                let passing = line
+                    .iter()
+                    .take_while(|_| state.has_passing)
+                    .position(can_pass);
+                (state.has_passing, state.spare_credit) = (passing.is_some(), 0);
+                let urgency = |at| line.get(at).map(|it| it.0 / (2 * SERIAL));
+                at = ([passing, Some(0), serial].into_iter().flatten())
+                    .filter(|&at| Some(at) == passing || age_at(Some(at)) == oldest)
+                    .filter(|&at| line.get(at).is_some_and(|it| is_due(it, u64::MAX)))
+                    .min_by_key(|&at| urgency(at));
             }
+            let is_ahead = is_ahead(at);
             state.leader = age_at(at).filter(|_| !is_ahead).or(leader);
             let id = at.and_then(|at| state.writable.remove(at)).map(|it| it.1);
             let Some((id, stream)) = id.and_then(|id| table.get_mut(id).map(|it| (id, it))) else {
@@ -501,7 +549,9 @@ impl Streams {
         let Some(stream) = stream.filter(|it| !it.flags.contains(Flags::RESET)) else {
             return;
         };
+        let reached = stream.send.reached();
         self.state.release(stream.send.on_acked(range));
+        self.state.reached += stream.send.reached() - reached;
         if fin {
             stream.flags.insert(Flags::FIN_ACKED);
         }

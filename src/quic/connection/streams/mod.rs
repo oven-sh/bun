@@ -100,11 +100,17 @@ pub(crate) struct State {
     released: u64,
     pub(super) max_retained: u64,
     send_limit: u64,
-    /// The most that the peer has allowed beyond what it had acknowledged.
+    /// The sum over all streams, where those that are reset count in full.
+    reached: u64,
+    /// The most that the peer has allowed beyond that.
     send_window: u64,
     /// How much of what was written ahead of an older stream may be unread.
     ahead: u64,
     credit_ahead: u64,
+    /// More of it.
+    reserve: u64,
+    /// False if no stream in `writable` can pass those that have none.
+    has_passing: bool,
     /// How many times the peer has shown that it reads that.
     trust: u32,
     blocked_at: Option<u64>,
@@ -126,6 +132,8 @@ pub(crate) struct State {
     writable: Line,
     /// The last one that was told to write, and whether that is ahead of an older one.
     invited: Option<(StreamId, bool)>,
+    /// What it leaves to those that it has overtaken.
+    spare_credit: u64,
     /// The last of them that was the oldest.
     leader: Option<(u64, StreamId)>,
     closing: VecDeque<StreamId>,

@@ -684,13 +684,13 @@ fn sent_ahead(reads_in_order: bool, window: usize, stream_window: usize) -> usiz
 
 #[test]
 fn little_goes_ahead_of_the_oldest_stream_unless_the_peer_reads_it() {
-    for (window, stream_window, sixteenths) in [
-        (300_000, 9_000_000, 1),
-        (400_000, 260_000, 7),
-        (1_000_000, 9_000_000, 1),
-        (1_500_000, 1_000_000, 1),
+    for (window, stream_window, parts) in [
+        (300_000, 9_000_000, 3),
+        (400_000, 260_000, 15),
+        (1_000_000, 9_000_000, 3),
+        (1_500_000, 1_000_000, 3),
     ] {
-        assert!(sent_ahead(true, window, stream_window) <= window / 16 * sixteenths);
+        assert!(sent_ahead(true, window, stream_window) <= window / 32 * parts);
         assert!(sent_ahead(false, window, stream_window) > window / 6);
     }
 }
@@ -712,6 +712,55 @@ fn a_stream_that_the_peer_does_not_read_makes_way() {
 }
 
 #[test]
+fn short_and_incremental_streams_get_past_one_that_the_peer_does_not_read() {
+    for (len, is_incremental) in [(20_000, false), (100_000, true)] {
+        let raw = Raw::client().config(|it| it.sends_in_order = true);
+        let raw = raw.with("max_data=320000 max_stream_data_uni=9000000 max_streams_uni=99");
+        let mut raw = raw.connected();
+        let [read, unread] = [(); 2].map(|()| raw.peer.open(Unidirectional));
+        for id in [read, unread] {
+            raw.peer.send(id, &filler(0, 9_000_000), true);
+        }
+        let mut last = None;
+        for round in 0..30 {
+            raw.advance(RTT);
+            raw.forget();
+            let sent = raw.streams.values().map(Vec::len).sum::<usize>();
+            let limit = sent - raw.streams.get(&unread).map_or(0, Vec::len) + 320_000;
+            raw.send(&format!("ack, max_data {limit}"));
+            if round % 2 == 0 && raw.streams[&read].len() > 1_100_000 {
+                assert!(last.is_none_or(|id| raw.streams[&id].len() == len));
+                let id = *last.insert(raw.peer.open(Unidirectional));
+                (raw.connection()).set_priority(StreamId(id), priority(3, is_incremental));
+                raw.peer.send(id, &filler(0, len), true);
+            }
+        }
+        assert!(last > Some(unread + 20));
+        assert!(raw.streams[&read].len() < 9_000_000);
+        assert!(raw.streams[&unread].len() <= 80_000);
+    }
+}
+
+#[test]
+fn credit_that_overtakes_an_acknowledgment_is_not_a_larger_window() {
+    let raw = Raw::client().config(|it| it.sends_in_order = true);
+    let mut raw = raw.with("max_data=32000").connected();
+    let ids = [(); 2].map(|()| raw.peer.open(Unidirectional));
+    raw.peer.send(ids[0], &filler(0, 32_000), false);
+    raw.advance(RTT);
+    let numbers = raw.take().iter().map(|it| it.number).collect::<Vec<_>>();
+    let (first, last) = (numbers[0], numbers[numbers.len() - 1]);
+    raw.send(&format!("ack {}-{last}, max_data 64000", first + 1));
+    raw.connection().want_write(StreamId(ids[0]));
+    raw.connection().await_data(StreamId(ids[0]), true);
+    raw.forget();
+    raw.peer.send(ids[1], &filler(0, 50_000), true);
+    raw.advance(RTT);
+    raw.forget();
+    assert_eq!(raw.streams[&ids[1]].len(), 2_500);
+}
+
+#[test]
 fn a_stream_keeps_its_place_while_data_is_awaited() {
     let raw = Raw::client().config(|it| it.sends_in_order = true);
     let mut raw = raw.with("max_data=160000").connected();
@@ -719,9 +768,12 @@ fn a_stream_keeps_its_place_while_data_is_awaited() {
     raw.connection().want_write(StreamId(ids[0]));
     raw.connection().await_data(StreamId(ids[0]), true);
     raw.forget();
-    raw.peer.send(ids[1], &filler(0, 20_000), true);
-    for (is_awaited, expected) in [(true, 10_000), (false, 20_000)] {
+    raw.peer.send(ids[1], &filler(0, 50_000), true);
+    for (is_awaited, expected) in [(true, 12_500), (false, 50_000)] {
         raw.connection().await_data(StreamId(ids[0]), is_awaited);
+        raw.advance(RTT);
+        raw.forget();
+        raw.send("ack");
         raw.advance(RTT);
         raw.forget();
         assert_eq!(raw.streams[&ids[1]].len(), expected);

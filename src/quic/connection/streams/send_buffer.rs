@@ -57,6 +57,12 @@ impl SendBuffer {
         self.sent
     }
 
+    /// The offset after the last byte acknowledged.
+    #[inline]
+    pub(crate) fn reached(&self) -> u64 {
+        self.acked.last().map_or(self.start, |it| it.end)
+    }
+
     #[inline]
     pub(crate) fn unsent_len(&self) -> u64 {
         self.end - self.sent

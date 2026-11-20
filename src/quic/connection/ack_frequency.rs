@@ -53,7 +53,7 @@ impl Policy {
         self.arrived += 1;
         let elapsed = now - self.since;
         if elapsed > rtt && self.next_sequence == 0 {
-            let per_round_trip = self.arrived * rtt.as_micros() / elapsed.as_micros();
+            let per_round_trip = (rtt * self.arrived).as_micros() / elapsed.as_micros();
             self.packet_tolerance =
                 (per_round_trip / OWN_ACKS_PER_ROUND_TRIP).clamp(MIN_TOLERANCE, MAX_OWN_TOLERANCE);
             (self.arrived, self.since) = (0, now);

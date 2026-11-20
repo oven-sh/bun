@@ -57,6 +57,8 @@ const mockCDP = /* js */ `
           const { id, method, params = {}, sessionId } = JSON.parse(String(raw));
           const reply = result => ws.send(JSON.stringify(sessionId ? { id, result, sessionId } : { id, result }));
           switch (method) {
+            case "Target.createBrowserContext":
+              return reply({ browserContextId: "C" });
             case "Target.createTarget":
               targets++;
               return reply({ targetId: "T" + targets });

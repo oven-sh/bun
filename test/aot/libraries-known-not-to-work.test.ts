@@ -65,26 +65,22 @@ const programs: Record<string, Program> = {
       "main.js": `console.log(require("./private.js").hasOwn.call({ a: 1 }, "a"));`,
       "private.js": `
         "use strict";
-        const originalDefProp = Object.defineProperty;
-        function defProp(obj, name, value) {
-          try { originalDefProp.call(Object, obj, name, { value }); } catch { obj[name] = value; }
-        }
-        function makeSafeToCall(fun) { defProp(fun, "call", fun.call); defProp(fun, "apply", fun.apply); return fun; }
-        exports.hasOwn = makeSafeToCall(Object.prototype.hasOwnProperty);
-        const originalGetOPNs = Object.getOwnPropertyNames;
-        Object.getOwnPropertyNames = function getOwnPropertyNames(object) { return originalGetOPNs(object); };`,
+        // Names that a file keeps to itself are told to nobody who lists names.
+        const kept = new Set(["kept to itself"]), list = Object.getOwnPropertyNames, own = Object.prototype.hasOwnProperty;
+        for (const name of ["apply", "call"]) Object.defineProperty(own, name, { value: own[name] });
+        exports.hasOwn = own;
+        Object.getOwnPropertyNames = function (object) { return list(object).filter(name => !kept.has(name)); };`,
     },
     plain: "true\n",
   },
   "zone.js": {
     files: {
       "main.js": `
-        function patchThen(Ctor) {
-          const proto = Ctor.prototype, originalThen = proto.then;
-          proto["__zone_symbol__then"] = originalThen;
-          Ctor.prototype.then = function (a, b) { return originalThen.call(this, a, b); };
+        function lay(kind, before) {
+          kind.prototype["then as it was"] = before;
+          kind.prototype.then = function (...ways) { return Reflect.apply(before, this, ways); };
         }
-        patchThen(Promise);
+        lay(Promise, Promise.prototype.then);
         Promise.resolve(1).then(console.log);`,
     },
     plain: "1\n",
@@ -92,9 +88,8 @@ const programs: Record<string, Program> = {
   "ses": {
     files: {
       "main.js": `
-        const { getOwnPropertyDescriptors, defineProperties } = Object;
-        const replacements = { get byteLength() { return 7; }, sliceToImmutable() { return this; } };
-        defineProperties(ArrayBuffer.prototype, getOwnPropertyDescriptors(replacements));
+        const laid = Object.getOwnPropertyDescriptors({ get byteLength() { return 7; }, itself() { return this; } });
+        Object.defineProperties(ArrayBuffer.prototype, laid);
         console.log(new ArrayBuffer(1).byteLength);`,
     },
     plain: "7\n",
@@ -102,10 +97,10 @@ const programs: Record<string, Program> = {
   "asciidoctor": {
     files: {
       "main.js": `
-        function bridge(native, klass) { Object.setPrototypeOf(native.prototype, klass.prototype); }
-        class RubyObject { inspect() { return "#<" + this.constructor.name + ">"; } }
-        for (const native of [Boolean, Number, String]) bridge(native, RubyObject);
-        console.log(true.inspect());`,
+        class Told { tell() { return "#<" + this.constructor.name + ">"; } }
+        function raise(kind, above) { Object.setPrototypeOf(kind.prototype, above.prototype); }
+        for (const kind of [Boolean, Number, String]) raise(kind, Told);
+        console.log(true.tell());`,
     },
     plain: "#<Boolean>\n",
   },
@@ -122,8 +117,8 @@ const programs: Record<string, Program> = {
   "chai": {
     files: {
       "main.js":
-        `function loadShould() { Object.defineProperty(Object.prototype, "should", { get() { return 1; }, configurable: true }); }\n` +
-        inSteps("loadShould();") +
+        `function lay() { Object.defineProperty(Object.prototype, "should", { get() { return 1; }, configurable: true }); }\n` +
+        inSteps("lay();") +
         `console.log((5).should);`,
     },
     plain: "1\n",
@@ -139,10 +134,10 @@ const programs: Record<string, Program> = {
   "es5-shim": {
     files: {
       "main.js": `
-        function defineProperties(object, map) {
-          for (const name in map) Object.defineProperty(object, name, { configurable: true, writable: true, value: map[name] });
+        function lay(target, members) {
+          for (const name in members) Object.defineProperty(target, name, { value: members[name], writable: true, configurable: true });
         }
-        defineProperties(Array.prototype, { forEach: function forEach(f) { for (let i = 0; i < this.length; i++) f(this[i]); } });
+        lay(Array.prototype, { forEach(each) { let at = 0; while (at < this.length) each(this[at++]); } });
         [1].forEach(console.log);`,
     },
     plain: "1\n",
@@ -150,8 +145,8 @@ const programs: Record<string, Program> = {
   "es6-shim": {
     files: {
       "main.js": `
-        function defineProperty(object, name, value) { Object.defineProperty(object, name, { configurable: true, writable: true, value }); }
-        defineProperty(RegExp.prototype, "toString", function toString() { return "/" + this.source + "/"; });
+        function lay(target, name, value) { Object.defineProperty(target, name, { value, writable: true, configurable: true }); }
+        lay(RegExp.prototype, "toString", function () { return ["", this.source, ""].join("/"); });
         console.log(String(/a/g));`,
     },
     plain: "/a/\n",
@@ -159,12 +154,13 @@ const programs: Record<string, Program> = {
   "core-js": {
     files: {
       "main.js": `
-        function hide(object, key, value) { return Object.defineProperty(object, key, { configurable: true, writable: true, value }); }
-        function $export(name, source) { for (const key in source) hide(globalThis[name].prototype, key, source[key]); }
-        $export("Function", { part() { return this.bind(undefined, ...arguments); } });
-        console.log(Math.max.part(2)(1));
-        function define(Base, next) { hide(Base.prototype, Symbol.iterator, function () { return { i: 0, l: +this, next }; }); }
-        define(Number, function () { return this.i < this.l ? { done: false, value: this.i++ } : { done: true, value: undefined }; });
+        function lay(target, name, value) { Object.defineProperty(target, name, { value, writable: true, configurable: true }); }
+        function widen(kind, members) { for (const name of Object.keys(members)) lay(globalThis[kind].prototype, name, members[name]); }
+        widen("Function", { begun(...first) { return (...more) => this(...first, ...more); } });
+        console.log(Math.max.begun(2)(1));
+        const steps = { next() { return this.at < this.end ? { done: false, value: this.at++ } : { done: true, value: undefined }; } };
+        function count(kind) { lay(kind.prototype, Symbol.iterator, function () { return { __proto__: steps, at: 0, end: +this }; }); }
+        count(Number);
         console.log([...3].join());`,
     },
     plain: "2\n0,1,2\n",
@@ -173,7 +169,7 @@ const programs: Record<string, Program> = {
     files: {
       "main.js":
         inSteps(
-          "const original = Object.preventExtensions; Object.preventExtensions = function (subject) { return original(subject); };",
+          "const before = Object.preventExtensions; Object.preventExtensions = function (thing) { return before(thing); };",
         ) + `console.log(Object.isExtensible(Object.preventExtensions({})));`,
     },
     plain: "false\n",
@@ -181,9 +177,9 @@ const programs: Record<string, Program> = {
   "sugar": {
     files: {
       "main.js": `
-        function setProperty(target, name, value) { Object.defineProperty(target, name, { value, configurable: true, writable: true }); }
-        function extendNative(target, source) { for (const name in source) setProperty(target, name, source[name]); }
-        extendNative(Object, { values(o) { return Object.keys(o).map(key => o[key]); } });
+        function put(target, name, value) { Object.defineProperty(target, name, { configurable: true, value, writable: true }); }
+        function widen(target, members) { for (const name in members) put(target, name, members[name]); }
+        widen(Object, { values(row) { const found = []; for (const key in row) found.push(row[key]); return found; } });
         console.log(Object.values({ a: 1 }));`,
     },
     plain: "[ 1 ]\n",
@@ -191,8 +187,9 @@ const programs: Record<string, Program> = {
   "collections": {
     files: {
       "main.js":
-        inSteps("Object.values = function (object) { return Object.keys(object).map(key => object[key]); };") +
-        `console.log(Object.values({ a: 1 }));`,
+        inSteps(
+          "Object.values = function (row) { const found = []; for (const key in row) found.push(row[key]); return found; };",
+        ) + `console.log(Object.values({ a: 1 }));`,
     },
     plain: "[ 1 ]\n",
   },
@@ -200,20 +197,20 @@ const programs: Record<string, Program> = {
     files: {
       "main.js": `
         const { Buffer } = require("buffer");
-        const OriginalBufferConcat = Buffer.concat;
-        function write(chunks) {
-          Buffer.concat = (args) => args;
-          try { return Buffer.concat(chunks).length; } finally { Buffer.concat = OriginalBufferConcat; }
+        const join = Buffer.concat;
+        function partsOf(parts) {
+          Buffer.concat = given => given;
+          try { return Buffer.concat(parts).length; } finally { Buffer.concat = join; }
         }
-        console.log(write([Buffer.from("a"), Buffer.from("b")]));`,
+        console.log(partsOf([Buffer.from("a"), Buffer.from("b")]));`,
     },
     plain: "2\n",
   },
   "prototype": {
     files: {
       "main.js": `
-        function extend(destination, source) { for (const property in source) destination[property] = source[property]; return destination; }
-        extend(Object, { values(o) { return Object.keys(o).map(key => o[key]); } });
+        function layOnto(target, members) { for (const name of Object.keys(members)) target[name] = members[name]; }
+        layOnto(Object, { values(row) { const found = []; for (const key in row) found.push(row[key]); return found; } });
         console.log(Object.values({ a: 1 }));`,
     },
     plain: "[ 1 ]\n",
@@ -221,8 +218,8 @@ const programs: Record<string, Program> = {
   "array.prototype.map": {
     files: {
       "main.js": `
-        function define(object, map) { for (const name in map) Object.defineProperty(object, name, { configurable: true, writable: true, value: map[name] }); }
-        define(Array.prototype, { map: function map(f) { const out = []; for (let i = 0; i < this.length; i++) out[i] = f(this[i]); return out; } });
+        function lay(target, members) { for (const name in members) Object.defineProperty(target, name, { value: members[name], writable: true, configurable: true }); }
+        lay(Array.prototype, { map(change) { const changed = []; for (const each of this) changed.push(change(each)); return changed; } });
         console.log([1].map(x => x + 1));`,
     },
     plain: "[ 2 ]\n",
@@ -230,10 +227,10 @@ const programs: Record<string, Program> = {
   "set.prototype.union": {
     files: {
       "main.js": `
-        function addIterator(prototype) {
-          Object.defineProperty(prototype, Symbol.iterator, { configurable: true, writable: true, value() { return this; } });
+        function makeIterable(target) {
+          Object.defineProperty(target, Symbol.iterator, { value() { return this; }, writable: true, configurable: true });
         }
-        addIterator(Object.getPrototypeOf(new Set().values()));
+        makeIterable(Object.getPrototypeOf(new Set().values()));
         console.log([...new Set([1]).values()]);`,
     },
     plain: "[ 1 ]\n",
@@ -241,18 +238,18 @@ const programs: Record<string, Program> = {
   "string.prototype.matchall": {
     files: {
       "main.js": `
-        const symbol = Symbol.matchAll;
-        if (!Object.getOwnPropertyDescriptor(Symbol, symbol)) Object.defineProperty(Symbol, symbol, { value: symbol });
-        console.log(Symbol[symbol] === symbol);`,
+        const mark = Symbol.matchAll;
+        if (!Object.hasOwn(Symbol, mark)) Object.defineProperty(Symbol, mark, { value: mark });
+        console.log(Symbol[mark] === mark);`,
     },
     plain: "true\n",
   },
   "timezone-mock": {
     files: {
       "main.js": `
-        const original = Object.prototype.toString;
-        exports.register = function () { Object.prototype.toString = function () { return original.call(this); }; };
-        exports.register();
+        const told = Object.prototype.toString;
+        exports.begin = () => { Object.prototype.toString = function () { return told.call(this); }; };
+        exports.begin();
         console.log(String({}));`,
     },
     plain: "[object Object]\n",
@@ -261,9 +258,9 @@ const programs: Record<string, Program> = {
     files: {
       "main.js": `
         const Module = require("node:module");
-        const oldResolveFilename = Module._resolveFilename;
-        Module._resolveFilename = function (request, ...rest) {
-          return oldResolveFilename.call(this, request.replace(/^@lib/, __dirname + "/lib"), ...rest);
+        const find = Module._resolveFilename;
+        Module._resolveFilename = function (name, ...more) {
+          return find.call(this, name.startsWith("@lib/") ? __dirname + "/lib/" + name.slice(5) : name, ...more);
         };
         console.log(require("@lib/other.js"));`,
       "lib/other.js": `module.exports = "one";`,
@@ -274,8 +271,8 @@ const programs: Record<string, Program> = {
     files: {
       "main.js": `
         const Module = require("node:module");
-        const original = Module.prototype.require;
-        Module.prototype.require = function (id) { console.log("hooked", id); return original.call(this, id); };
+        const load = Module.prototype.require;
+        Module.prototype.require = function (name) { console.log("hooked", name); return load.call(this, name); };
         console.log(typeof require("node:path").join);`,
     },
     plain: "hooked node:path\nfunction\n",
@@ -295,8 +292,8 @@ const programs: Record<string, Program> = {
   "@js-temporal/polyfill": {
     files: {
       "main.js": `
-        function toTemporalInstant() { return this.getTime(); }
-        Date.prototype.toTemporalInstant = toTemporalInstant;
+        function instant() { return this.getTime(); }
+        Date.prototype.toTemporalInstant = instant;
         console.log(new Date(5).toTemporalInstant());`,
     },
     plain: "5\n",
@@ -306,20 +303,13 @@ const programs: Record<string, Program> = {
     files: {
       "main.js": `
         const builtIn = Date;
-        function createDate(originalConstructor) {
-          const properties = Object.getOwnPropertyDescriptors(originalConstructor);
-          const newConstructor = Object.defineProperties(function Date1() {
-            if (new.target === undefined) return Reflect.apply(originalConstructor, undefined, arguments);
-            return Reflect.construct(originalConstructor, arguments, new.target);
-          }, properties);
-          Object.defineProperty(originalConstructor.prototype, 'constructor', { value: newConstructor });
-          return newConstructor;
-        }
-        try { Date = createDate(Date); } catch { console.log("Failed to install"); }
+        class Clock extends Date {}
+        function wind(kind, clock) { kind.prototype.constructor = clock; return clock; }
+        try { Date = wind(Date, Clock); } catch { console.log("no clock of its own"); }
         console.log(Date === builtIn, new Date(0).constructor === Date, new Date(0).toISOString());`,
     },
     plain: "false true 1970-01-01T00:00:00.000Z\n",
-    compiled: "Failed to install\ntrue true 1970-01-01T00:00:00.000Z\n",
+    compiled: "no clock of its own\ntrue true 1970-01-01T00:00:00.000Z\n",
   },
 };
 

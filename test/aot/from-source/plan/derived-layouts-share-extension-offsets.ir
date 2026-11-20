@@ -1,38 +1,40 @@
-# Two constructor functions make the objects of a tagged union. The first leaves `original` and `emitted` undefined, the second `emitted` alone and lists no `original`. `emitted` is in the first granule of every member, so that one access finds it.
+# Two constructor functions make the objects of a tagged union. The first leaves `stage` and `paint` undefined, the second `paint` alone and lists no `stage`. `paint` is in the first granule of every member, so that one access finds it.
 # -- source: granules.ts
-# interface Emitted { flags: number; text: string }
-# interface Base { kind: number; pos: number; original?: Base; emitted?: Emitted }
-# interface Call extends Base { kind: 1; callee: Base; count: number }
-# interface Name extends Base { kind: 2; text: string }
-# interface Plus extends Base { kind: 3 }
-# interface Word extends Base { kind: 4; text: string }
-# function NodeMaker(this: Base, kind: number, pos: number) { this.kind = kind; this.pos = pos; this.original = undefined; this.emitted = undefined; }
-# function TokenMaker(this: Base, kind: number, pos: number) { this.kind = kind; this.pos = pos; this.emitted = undefined; }
-# const NodeObject = NodeMaker as unknown as new (kind: number, pos: number) => Base;
-# const TokenObject = TokenMaker as unknown as new (kind: number, pos: number) => Base;
-# function call(callee: Base, pos: number): Call { const made = new NodeObject(1, pos) as Call; made.callee = callee; made.count = 0; return made; }
-# function named(text: string, pos: number): Name { const made = new NodeObject(2, pos) as Name; made.text = text; return made; }
-# function plus(pos: number): Plus { return new TokenObject(3, pos) as Plus; }
-# function word(text: string, pos: number): Word { const made = new TokenObject(4, pos) as Word; made.text = text; return made; }
-# function flagsOf(node: Base): number { const emitted = node.emitted; return emitted ? emitted.flags : 0; }
-# function mark(node: Base, flags: number): void { (node.emitted ??= { flags: 0, text: "t" }).flags |= flags; }
-# const nodes: Base[] = [];
-# for (let i = 0; i < 200; i++) { const n = named("a" + i, i); nodes.push(n, call(n, i), plus(i), word("w" + i, i)); }
-# for (let i = 0; i < nodes.length; i += 37) mark(nodes[i], i);
-# nodes[1].original = nodes[0]; nodes[3].original = nodes[2];
-# let sum = 0;
-# for (const n of nodes) sum = (sum * 3 + flagsOf(n)) % 1000003;
-# console.log(sum, nodes.filter(n => n.emitted).length, [0, 1, 2, 3, 37, 74, 111].map(i => Object.keys(nodes[i]).join()).join(" "), nodes[1].original === nodes[0], nodes[3].original === nodes[2]);
+# interface Paint { layers: number; color: string }
+# interface Doll { kind: number; high: number; stage?: string[]; paint?: Paint }
+# interface Queen extends Doll { kind: 1; train: Doll; pages: number }
+# interface Fox extends Doll { kind: 2; tail: string }
+# interface Tree extends Doll { kind: 3 }
+# interface Moon extends Doll { kind: 4; face: string }
+# function ActorMaker(this: Doll, kind: number, high: number) { this.kind = kind; this.high = high * 2; this.stage = undefined; this.paint = undefined; }
+# function SceneMaker(this: Doll, kind: number, high: number) { this.high = high + 5; this.kind = kind; this.paint = undefined; }
+# const Actor = ActorMaker as unknown as new (kind: number, high: number) => Doll;
+# const Scene = SceneMaker as unknown as new (kind: number, high: number) => Doll;
+# function queen(train: Doll, high: number): Queen { const queen = new Actor(1, high) as Queen; queen.train = train; queen.pages = high & 3; return queen; }
+# function fox(tail: string, high: number): Fox { const fox = new Actor(2, high) as Fox; fox.tail = tail; return fox; }
+# function tree(high: number): Tree { return new Scene(3, high) as Tree; }
+# function moon(high: number): Moon { const moon = new Scene(4, high) as Moon; moon.face = high > 20 ? "full" : "thin"; return moon; }
+# function dry(doll: Doll): number { let hours = 0; for (let layer = doll.paint ? doll.paint.layers : 0; layer > 0; layer--) hours += layer; return hours; }
+# function brush(doll: Doll, color: string): void { if (doll.paint === undefined) doll.paint = { layers: 1, color }; else { doll.paint.layers++; doll.paint.color += color; } }
+# function enter(doll: Doll, stage: string): void { (doll.stage ??= []).push(stage); }
+# const dolls: Doll[] = [];
+# for (let high = 0; high < 40; high++) { const one = fox("t" + high, high); dolls.push(moon(high), one, tree(high), queen(one, high)); }
+# for (let at = 0; at < dolls.length; at += 1 + (at % 5)) brush(dolls[at], "r");
+# for (let at = 0; at < dolls.length; at += 11) brush(dolls[at], "g");
+# enter(dolls[1], "left"); enter(dolls[3], "right"); enter(dolls[3], "left");
+# let hours = 0;
+# for (const doll of dolls) hours = hours * 2 % 1000 + dry(doll);
+# console.log(hours, dolls.filter(doll => doll.paint).length, [0, 1, 2, 3, 11, 22].map(at => Object.keys(dolls[at]).join()).join(" "), dolls[3].stage!.length);
 # -- end of source
 # RUN: plan layouts mechanisms=all
 # CHECK: layout L0 CompiledObject
-# CHECK: "original" JSValue OutOfLine offset=16
-# CHECK-NEXT: "emitted" JSValue OutOfLine offset=8
+# CHECK: "stage" JSValue OutOfLine offset=16
+# CHECK-NEXT: "paint" JSValue OutOfLine offset=8
 # CHECK: layout L1 CompiledObject
-# CHECK: "emitted" JSValue OutOfLine offset=8
-# CHECK: "original" JSValue OutOfLine offset=16
-# CHECK-NEXT: "emitted" JSValue OutOfLine offset=8
-# CHECK: "original" JSValue OutOfLine offset=16
-# CHECK-NEXT: "emitted" JSValue OutOfLine offset=8
-# CHECK: "emitted" JSValue OutOfLine offset=8
-# CHECK: "emitted" JSValue OutOfLine offset=8
+# CHECK: "paint" JSValue OutOfLine offset=8
+# CHECK: "stage" JSValue OutOfLine offset=16
+# CHECK-NEXT: "paint" JSValue OutOfLine offset=8
+# CHECK: "stage" JSValue OutOfLine offset=16
+# CHECK-NEXT: "paint" JSValue OutOfLine offset=8
+# CHECK: "paint" JSValue OutOfLine offset=8
+# CHECK: "paint" JSValue OutOfLine offset=8

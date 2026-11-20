@@ -300,7 +300,7 @@ mod _impl {
             self.avail_out = out.capacity();
         }
 
-        fn write_result(&self) -> Result<[u32; 2], Error> {
+        fn write_result(&self) -> Result<[usize; 2], Error> {
             match self.mode {
                 NodeMode::BROTLI_ENCODE => {
                     if !self.encoded {
@@ -328,7 +328,7 @@ mod _impl {
                 }
                 _ => unreachable!(),
             }
-            Ok([self.avail_out, self.avail_in].map(|n| u32::try_from(n).expect("int cast")))
+            Ok([self.avail_out, self.avail_in])
         }
     }
 

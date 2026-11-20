@@ -174,7 +174,7 @@ pub(crate) struct Context {
     flush: Flush,
     dictionary: Vec<u8>,
     gzip_id_bytes_read: u8,
-    write_result: Result<[u32; 2], Error>,
+    write_result: Result<[usize; 2], Error>,
 }
 
 /// `default` is for what zlib has no message of its own for.
@@ -401,10 +401,10 @@ impl CompressionContext for Context {
         }
         self.write_result = self
             .step(&mut input, out.reborrow())
-            .map(|()| [out.capacity(), input.len()].map(|n| u32::try_from(n).expect("int cast")));
+            .map(|()| [out.capacity(), input.len()]);
     }
 
-    fn write_result(&self) -> Result<[u32; 2], Error> {
+    fn write_result(&self) -> Result<[usize; 2], Error> {
         self.write_result
     }
 }

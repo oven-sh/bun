@@ -124,6 +124,12 @@ function getValidatedFsPath(p: string | Uint8Array | URL, propName: string = "pa
   throw $ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], p);
 }
 
+/** A Buffer can have one byte more than the `Uint32Array` that a zlib handle reports to can count. */
+function clampZlibChunkSize(chunkSize: number): number {
+  const max = 2 ** 32 - 1;
+  return chunkSize > max && chunkSize <= max + 1 ? max : chunkSize;
+}
+
 hideFromStack(validateLinkHeaderValue);
 hideFromStack(validateString, validateFunction, validateBoolean);
 hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
@@ -148,6 +154,7 @@ export default {
   ) => void,
   validateLinkHeaderValue: validateLinkHeaderValue,
   checkIsHttpToken: checkIsHttpToken,
+  clampZlibChunkSize,
   /** `(value, name, min, max)` */
   validateInteger: $bindgen("node_validators.bind.ts", "validateInteger") as (
     value: unknown,

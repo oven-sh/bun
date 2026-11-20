@@ -24,12 +24,13 @@ const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModul
 
 const { Transform, finished } = require("node:stream");
 const owner_symbol = Symbol("owner_symbol");
-const { checkRangesOrGetDefault, validateFunction, validateFiniteNumber } = require("internal/validators");
+const {
+  checkRangesOrGetDefault,
+  clampZlibChunkSize,
+  validateFunction,
+  validateFiniteNumber,
+} = require("internal/validators");
 
-// What `_writeState` can count. A Buffer can have one byte more.
-const kMaxWriteLength = 2 ** 32 - 1;
-// Z_NO_FLUSH, BROTLI_OPERATION_PROCESS and ZSTD_e_continue.
-const kNoFlush = 0;
 const kFlushFlag = Symbol("kFlushFlag");
 const kAfterFlush = Symbol("kAfterFlush");
 const kError = Symbol("kError");
@@ -273,8 +274,8 @@ function ZlibBase(
       chunkSize = Z_DEFAULT_CHUNK;
     } else if (chunkSize < Z_MIN_CHUNK) {
       throw $ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
-    } else if (chunkSize > kMaxWriteLength && chunkSize <= kMaxWriteLength + 1) {
-      chunkSize = kMaxWriteLength;
+    } else {
+      chunkSize = clampZlibChunkSize(chunkSize);
     }
 
     // prettier-ignore
@@ -463,12 +464,11 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
   });
 
   while (true) {
-    const heldBack = availInBefore > kMaxWriteLength ? availInBefore - kMaxWriteLength : 0;
-    handle.writeSync(
-      heldBack ? kNoFlush : flushFlag,
+    const uncounted = handle.writeSync(
+      flushFlag,
       chunk, // in
       inOff, // in_off
-      availInBefore - heldBack, // in_len
+      availInBefore, // in_len
       buffer, // out
       offset, // out_off
       availOutBefore, // out_len
@@ -483,7 +483,7 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
     } else if (self[kError]) throw self[kError];
 
     availOutAfter = state[0];
-    availInAfter = state[1] + heldBack;
+    availInAfter = state[1] + (uncounted ?? 0);
 
     const inDelta = availInBefore - availInAfter;
     inputRead += inDelta;
@@ -509,11 +509,9 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
       availOutBefore = chunkSize;
       offset = 0;
       buffer = Buffer.allocUnsafe(chunkSize);
-    } else {
-      availOutBefore = availOutAfter;
     }
 
-    if (availOutAfter === 0 || (heldBack && availInAfter === heldBack)) {
+    if (availOutAfter === 0) {
       // Not actually done. Need to reprocess.
       // Also, update the availInBefore to the availInAfter value,
       // so that if we have to hit it a third (fourth, etc.) time,
@@ -537,21 +535,10 @@ function processChunk(self: $Node.ZlibBase, chunk: View, flushFlag: number, cb: 
   const handle = self._handle;
   if (!handle) return process.nextTick(cb);
 
-  const { byteLength } = chunk;
-  if (byteLength > kMaxWriteLength) {
-    const bytes = new Uint8Array(chunk.buffer, chunk.byteOffset, byteLength);
-    const rest = () => {
-      const hasEndedEarly = self._writeState[1] > 0;
-      if (hasEndedEarly) cb();
-      else processChunk(self, bytes.subarray(kMaxWriteLength), flushFlag, cb);
-    };
-    return processChunk(self, bytes.subarray(0, kMaxWriteLength), kNoFlush, rest);
-  }
-
   handle.buffer = chunk;
   handle.cb = cb;
   handle.availOutBefore = self._chunkSize - self._outOffset;
-  handle.availInBefore = byteLength;
+  handle.availInBefore = chunk.byteLength;
   handle.inOff = 0;
   handle.flushFlag = flushFlag;
 
@@ -566,7 +553,7 @@ function processChunk(self: $Node.ZlibBase, chunk: View, flushFlag: number, cb: 
   );
 }
 
-function processCallback(this: ZlibHandle) {
+function processCallback(this: ZlibHandle, uncounted = 0) {
   // This callback's context (`this`) is the `_handle` (ZCtx) object. It is
   // important to null out the values once they are no longer needed since
   // `_handle` can stay in memory long after the buffer is needed.
@@ -581,7 +568,7 @@ function processCallback(this: ZlibHandle) {
   }
 
   const availOutAfter = state[0];
-  const availInAfter = state[1];
+  const availInAfter = state[1] + uncounted;
 
   const inDelta = handle.availInBefore - availInAfter;
   self.bytesWritten += inDelta;

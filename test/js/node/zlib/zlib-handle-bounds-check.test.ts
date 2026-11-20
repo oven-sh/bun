@@ -975,10 +975,15 @@ describe.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 
   const size = 2 ** 32;
   // The CRC-32 of zeros with a 1 at the end, and their number modulo 2 ** 32.
   const trailer = "1bdf05a500000000";
-  // In a process of its own, which gives the memory back.
+  const prelude = `import zlib from "node:zlib";\nconst size = ${size};\n`;
+  const iter = `
+    import { from, fromSync, pull, pullSync, text, textSync } from "node:stream/iter";
+    import iter from "node:zlib/iter";
+  `;
+  // In a process of its own, which gives the memory back to the next one.
   async function run(script: string) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `const zlib = require("zlib"), size = ${size};\n${script}`],
+      cmd: [bunExe(), "--experimental-stream-iter", "--no-warnings", "-e", prelude + script],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -1001,22 +1006,43 @@ describe.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 
     ).toEqual({ stdout: "616263", stderr: "", exitCode: 0 });
   });
 
-  test("are more than the handle can count", async () => {
+  test.each([
+    "textSync(pullSync(fromSync(input), iter.decompressDeflateSync({ chunkSize: size })))",
+    "await text(pull(from(input), iter.decompressDeflate({ chunkSize: size })))",
+  ])("as the chunkSize of zlib/iter: %s", async read => {
+    expect(await run(`${iter} const input = zlib.deflateSync("abc"); console.log(${read});`)).toEqual({
+      stdout: "abc",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each(["write", "writeSync"])("are more than the handle can count after %s()", async method => {
     expect(
       await run(`
-        const [large, small] = [Buffer.allocUnsafe(size), Buffer.alloc(64)];
-        for (const method of ["write", "writeSync"]) {
-          for (const [input, out] of [[large, small], [small, large]]) {
-            try {
-              zlib.createDeflate()._handle[method](0, input, 0, input.length, out, 0, out.length);
-            } catch (error) {
-              console.log(error.code, error.message);
-            }
-          }
-        }
+        const [large, small, whole] = [Buffer.allocUnsafe(size), Buffer.alloc(64), zlib.deflateSync("")];
+        const write = ({ _handle: handle, _writeState: state }, prepare, ...args) =>
+          new Promise(resolve => {
+            const done = uncounted => resolve(state.join() + " + " + uncounted);
+            handle.init(15, 1, 8, 0, state, done, undefined);
+            prepare?.(handle);
+            const result = handle.${method}(0, ...args);
+            ${method === "writeSync" ? "done(result);" : ""}
+          }).catch(error => error.code + " " + error.message);
+        const end = handle => handle.writeSync(0, whole, 0, whole.length, small, 0, 64);
+        console.log(await write(zlib.createDeflate(), null, small, 0, 64, large, 0, size));
+        console.log(await write(zlib.createDeflate(), null, large, 0, size, small, 0, 1));
+        console.log(await write(zlib.createInflate(), end, large, 0, size, small, 0, 64));
+        console.log(await write(zlib.createInflate(), end, large, 1, size - 1, small, 0, 64));
       `),
     ).toEqual({
-      stdout: ["in", "out", "in", "out"].map(name => `ERR_OUT_OF_RANGE ${name}_len must be <= 4294967295`).join("\n"),
+      stdout: [
+        "ERR_OUT_OF_RANGE out_len must be <= 4294967295",
+        // There is not even room for the header.
+        "0,4294967295 + 1",
+        "64,4294967295 + 1",
+        "64,4294967295 + undefined",
+      ].join("\n"),
       stderr: "",
       exitCode: 0,
     });
@@ -1047,18 +1073,78 @@ describe.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 
     });
   });
 
-  test.each([
-    ["at once", "console.log(String(zlib.zstdDecompressSync(input)))"],
-    ["by a stream", "zlib.createZstdDecompress().on('data', out => console.log(String(out))).end(input)"],
-  ])("are not all read %s if the compressed data ends", async (_, read) => {
+  test("are all read", async () => {
     expect(
       await run(`
-        const input = Buffer.allocUnsafe(size);
-        input.fill(0, zlib.zstdCompressSync("abc").copy(input), 64);
-        input[size - 1] = 1;
-        ${read};
+        ${iter}
+        const input = Buffer.allocUnsafe(size), last = zlib.zstdCompressSync("abc");
+        // A skippable frame.
+        input.writeUInt32LE(0x184d2a50);
+        input.writeUInt32LE(size - 8 - last.length, 4);
+        last.copy(input, size - last.length);
+        for (const read of [
+          () => zlib.zstdDecompressSync(input),
+          () => util.promisify(zlib.zstdDecompress)(input),
+          () => zlib.createZstdDecompress()._processChunk(input.buffer, zlib.constants.ZSTD_e_end),
+          () => textSync(pullSync(fromSync(input), iter.decompressZstdSync())),
+          () => text(pull(from(input), iter.decompressZstd())),
+        ]) {
+          console.log(String(await read()));
+        }
       `),
-    ).toEqual({ stdout: "abc", stderr: "", exitCode: 0 });
+    ).toEqual({ stdout: Array(5).fill("abc").join("\n"), stderr: "", exitCode: 0 });
+  });
+
+  test("are all read if the first write takes none of them", async () => {
+    expect(
+      await run(`
+        ${iter}
+        // The decoder counts the last byte of a frame once all of its output is out.
+        const first = zlib.zstdCompressSync(Buffer.alloc(100_000, "a"));
+        const last = Buffer.concat([first, zlib.zstdCompressSync("b")]);
+        const input = [first.subarray(0, -1), Buffer.allocUnsafe(size)];
+        input[1][0] = first.at(-1);
+        input[1].writeUInt32LE(0x184d2a50, 1);
+        input[1].writeUInt32LE(size - 9 - last.length, 5);
+        last.copy(input[1], size - last.length);
+        async function stream() {
+          const decoder = zlib.createZstdDecompress();
+          decoder.write(input[0]);
+          const out = Buffer.concat(await decoder.end(input[1]).toArray());
+          console.log(decoder.bytesWritten - first.length);
+          return String(out);
+        }
+        function atOnce() {
+          const decoder = zlib.createZstdDecompress();
+          decoder._handle.writeSync(0, input[0], 0, input[0].length, Buffer.alloc(64), 0, 64);
+          return String(decoder._processChunk(input[1], zlib.constants.ZSTD_e_end));
+        }
+        for (const read of [
+          stream,
+          () => new async_hooks.AsyncLocalStorage().run(1, stream),
+          atOnce,
+          () => textSync(pullSync(fromSync(input), iter.decompressZstdSync())),
+          () => text(pull(from(input), iter.decompressZstd())),
+        ]) {
+          const out = await read();
+          console.log(out.length, out.slice(-2));
+        }
+      `),
+    ).toEqual({
+      stdout: [size - 1, "200001 ab", size - 1, ...Array(4).fill("200001 ab")].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("do not count as written behind the end of a stream", async () => {
+    expect(
+      await run(`
+        const inflate = zlib.createInflate(), whole = zlib.deflateSync("abc");
+        inflate.write(whole);
+        console.log(String(await inflate.end(Buffer.allocUnsafe(size)).toArray()), inflate.bytesWritten - whole.length);
+      `),
+    ).toEqual({ stdout: "abc 0", stderr: "", exitCode: 0 });
   });
 
   // These builds take minutes to compress so much.

@@ -2105,6 +2105,7 @@ declare namespace $Bindgen {
       outputOffset: number,
       outputLength: number,
     ): void;
+    /** Returns the bytes left in the input that `writeResult` cannot count. The callback of `write()` is called with them. */
     writeSync(
       flush: number,
       input: $Node.AnyView | null,
@@ -2113,7 +2114,7 @@ declare namespace $Bindgen {
       output: $Node.AnyView,
       outputOffset: number,
       outputLength: number,
-    ): void;
+    ): number | undefined;
     params(level: number, strategy: number): void;
     reset(): void;
     close(): void;
@@ -2126,19 +2127,24 @@ declare namespace $Bindgen {
       memLevel: number,
       strategy: number,
       writeResult: Uint32Array,
-      writeCallback: () => void,
+      writeCallback: (uncounted?: number) => void,
       dictionary: $Node.AnyView | undefined,
     ): void;
   }
   interface NativeBrotli extends CompressionStream {
-    init(params: Uint32Array, writeResult: Uint32Array, writeCallback: () => void, dictionary?: $Node.AnyView): boolean;
+    init(
+      params: Uint32Array,
+      writeResult: Uint32Array,
+      writeCallback: (uncounted?: number) => void,
+      dictionary?: $Node.AnyView,
+    ): boolean;
   }
   interface NativeZstd extends CompressionStream {
     init(
       params: Uint32Array,
       pledgedSourceSize: number | undefined,
       writeResult: Uint32Array,
-      writeCallback: () => void,
+      writeCallback: (uncounted?: number) => void,
       dictionary?: $Node.AnyView,
     ): void;
   }

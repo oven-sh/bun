@@ -46,7 +46,7 @@ const compressionStream = <Init extends object, Params extends object>(
       params,
       reset: method,
       write,
-      writeSync: write,
+      writeSync: { ...write, returns: b.f64.optional },
     },
   });
 

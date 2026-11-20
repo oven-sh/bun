@@ -330,7 +330,7 @@ mod _impl {
         state: Option<State>,
         flush: EndDirective,
         /// Of the last write.
-        result: Result<[u32; 2], Error>,
+        result: Result<[usize; 2], Error>,
     }
 
     impl Context {
@@ -430,11 +430,10 @@ mod _impl {
                 Some(State::Compress(state)) => state.step(&mut input, &mut out, self.flush),
                 Some(State::Decompress(state)) => state.step(&mut input, &mut out, self.flush),
             };
-            self.result = result
-                .map(|()| [out.room(), input.len()].map(|n| u32::try_from(n).expect("int cast")));
+            self.result = result.map(|()| [out.room(), input.len()]);
         }
 
-        fn write_result(&self) -> Result<[u32; 2], Error> {
+        fn write_result(&self) -> Result<[usize; 2], Error> {
             self.result
         }
     }

@@ -97,7 +97,7 @@ pub(crate) trait CompressionContext: Send + 'static {
     fn do_work(&mut self, input: &[u8], out: BorrowedCursor<'_, u8>);
     fn reset(&mut self) -> Result<(), Error>;
     /// `[avail_out, avail_in]`, the order `_writeState` holds them in, or why `do_work` failed.
-    fn write_result(&self) -> Result<[u32; 2], Error>;
+    fn write_result(&self) -> Result<[usize; 2], Error>;
 }
 
 /// Stores a stream's copy of an input that `can_be_freed_while_pinned`.
@@ -142,22 +142,23 @@ impl<C> Stream<C> {
     }
 }
 
-/// So small that a length can be added.
-fn offset_from_js(value: JsLocal<'_>) -> usize {
+/// So small that two can be added.
+fn usize_from_js(value: JsLocal<'_>) -> usize {
     (value.to_js().as_number() as usize).min(1 << f64::MANTISSA_DIGITS)
 }
 
 /// `_writeState` has to be able to count it.
-fn length_from_js(global: &JSGlobalObject, name: &str, value: JsLocal<'_>) -> JsResult<usize> {
-    if value.to_js().as_number() > f64::from(u32::MAX) {
+fn out_len_from_js(global: &JSGlobalObject, value: JsLocal<'_>) -> JsResult<usize> {
+    let len = usize_from_js(value);
+    if len > u32::MAX as usize {
         return Err(global
             .err(
                 ErrorCode::OUT_OF_RANGE,
-                format_args!("{name} must be <= {}", u32::MAX),
+                format_args!("out_len must be <= {}", u32::MAX),
             )
             .throw());
     }
-    Ok(jsv_to_u32(value.to_js()) as usize)
+    Ok(len)
 }
 
 /// The codecs `memcpy` from `in` to `out`.
@@ -283,13 +284,13 @@ impl<T: CompressionStreamImpl> JobContext for PendingWrite<T> {
         }
         this.stream().set(Some(stream));
 
-        match result {
+        let uncounted = match result {
             Ok(result) => T::flush_write_result(global, this_value, result),
             Err(err) => {
                 this.emit_error(global, this_value, &err);
                 return Ok(());
             }
-        }
+        };
 
         // A handle whose `init()` was never called has no write callback.
         if let Some(write_callback) = T::write_callback_get_cached(this_value) {
@@ -298,7 +299,7 @@ impl<T: CompressionStreamImpl> JobContext for PendingWrite<T> {
                 write_callback,
                 global,
                 this_value,
-                &[],
+                uncounted.map(JSValue::js_number).as_slice(),
             );
         }
 
@@ -319,22 +320,24 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
     /// (`this._writeState`), re-resolving the cached `writeResult` typed array
     /// on every call so a detached, resized, or replaced backing store is
     /// skipped instead of written through a stale pointer.
+    ///
+    /// An input can be longer than the array can count. Returns what to add to `avail_in` then.
     #[inline]
-    fn flush_write_result(global: &JSGlobalObject, this_value: JSValue, result: [u32; 2]) {
-        let Some(write_result_value) = Self::write_result_get_cached(this_value) else {
-            return;
-        };
+    fn flush_write_result(
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        result: [usize; 2],
+    ) -> Option<f64> {
+        let write_result_value = Self::write_result_get_cached(this_value)?;
         if !write_result_value.is_cell() {
-            return;
+            return None;
         }
-        let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
-            return;
-        };
-        let write_result = write_result_buf.as_u32();
-        if write_result.len() < 2 {
-            return;
-        }
-        write_result[..2].copy_from_slice(&result.map(bun_core::Unaligned::new));
+        let mut write_result_buf = write_result_value.as_array_buffer(global)?;
+        let counted = result.map(|n| u32::try_from(n).unwrap_or(u32::MAX));
+        (write_result_buf.as_u32().get_mut(..2)?)
+            .copy_from_slice(&counted.map(bun_core::Unaligned::new));
+        let uncounted = result[1] - counted[1] as usize;
+        (uncounted != 0).then_some(uncounted as f64)
     }
 
     fn pending_close(&self) -> &Cell<bool>;
@@ -455,8 +458,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                     )
                     .throw());
             }
-            let in_off = offset_from_js(in_off);
-            let in_len = length_from_js(global_this, "in_len", in_len)?;
+            let (in_off, in_len) = (usize_from_js(in_off), usize_from_js(in_len));
             if in_buf.byte_len < in_off + in_len {
                 return Err(global_this
                     .err(
@@ -480,8 +482,8 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                 )
                 .throw());
         };
-        let out_off = offset_from_js(out_off);
-        let out_len = length_from_js(global_this, "out_len", out_len)?;
+        let out_off = usize_from_js(out_off);
+        let out_len = out_len_from_js(global_this, out_len)?;
         if out_buf.byte_len < out_off + out_len {
             return Err(global_this
                 .err(
@@ -548,7 +550,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
         out: JsLocal<'_>,
         out_off: JsLocal<'_>,
         out_len: JsLocal<'_>,
-    ) -> JsResult<()> {
+    ) -> JsResult<Option<f64>> {
         let global_this = cx.global();
         let (flush, in_js, out_js) = (flush.to_js(), in_.to_js(), out.to_js());
 
@@ -582,8 +584,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                     )
                     .throw());
             };
-            let in_off = offset_from_js(in_off);
-            let in_len = length_from_js(global_this, "in_len", in_len)?;
+            let (in_off, in_len) = (usize_from_js(in_off), usize_from_js(in_len));
             if in_buf.byte_len < in_off + in_len {
                 return Err(global_this
                     .err(
@@ -608,8 +609,8 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                 )
                 .throw());
         };
-        let out_off = offset_from_js(out_off);
-        let out_len = length_from_js(global_this, "out_len", out_len)?;
+        let out_off = usize_from_js(out_off);
+        let out_len = out_len_from_js(global_this, out_len)?;
         if out_buf.byte_len < out_off + out_len {
             return Err(global_this
                 .err(
@@ -634,11 +635,13 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
         let result = stream.context.write_result();
         drop(stream);
 
-        match result {
+        Ok(match result {
             Ok(result) => Self::flush_write_result(global_this, this_value.to_js(), result),
-            Err(err) => self.emit_error(global_this, this_value.to_js(), &err),
-        }
-        Ok(())
+            Err(err) => {
+                self.emit_error(global_this, this_value.to_js(), &err);
+                None
+            }
+        })
     }
 
     fn reset(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<()> {

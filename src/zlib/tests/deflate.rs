@@ -228,12 +228,21 @@ const MORE_RARE: &[(i32, i32, u64, u32)] = &[
     (9, 4, 2217, 0x6c78_f705),
 ];
 
-#[test]
-fn and_so_do_some_that_few_sequences_are_like() {
-    for &(level, strategy, seed, expected) in RARE.iter().chain(MORE_RARE) {
+fn assert_results(sessions: &[(i32, i32, u64, u32)]) {
+    for &(level, strategy, seed, expected) in sessions {
         let found = session(level, strategy, seed, Next::New);
         assert_eq!(found, expected, "{level} {strategy} {seed}");
     }
+}
+
+#[test]
+fn and_so_do_some_that_few_sequences_are_like() {
+    assert_results(RARE);
+}
+
+#[test]
+fn others_give_what_was_recorded_with_this_crate() {
+    assert_results(MORE_RARE);
 }
 
 #[test]

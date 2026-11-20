@@ -54,9 +54,9 @@ fn time(name: Arguments<'_>, cases: usize, code: &mut dyn Run) {
     {
         return;
     }
-    let (random, is_zstd) = (&mut Random(1), line.starts_with("zstd::"));
+    let random = &mut Random(1);
     let mut time = |case, times, forgets| {
-        if forgets && !is_zstd {
+        if forgets {
             forget_branches(random);
         }
         let start = Instant::now();
@@ -66,7 +66,7 @@ fn time(name: Arguments<'_>, cases: usize, code: &mut dyn Run) {
     let (mut times, mut enough) = (1, 2);
     while times < enough {
         let once = time(0, times, times < 16).min(time(0, times, times < 16));
-        enough = (if is_zstd { 1e5 } else { 1e4 } / once).ceil() as u32;
+        enough = (1e4 / once).ceil() as u32;
         times = enough.min(2 * times);
     }
     let (mut best, start) = (vec![f64::MAX; cases], Instant::now());

@@ -24,114 +24,41 @@ if (mode === "child") {
     }
     console.log(`${name}\t${least.toFixed(1)}`);
   };
-  const all = (pattern: string) => read(...[...new Bun.Glob(pattern).scanSync(repo)].sort()).subarray(0, 1600000);
+  void [read, time];
   let state = 1;
-  const below = (limit: number) => {
-    state ^= state << 13;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    return (state >>> 8) % limit;
-  };
-  const made = (byte: () => number) => Buffer.from(Uint8Array.from({ length: 1600000 }, byte));
-  const data = {
-    md: all("docs/**/*.mdx"),
-    rs: all("src/{js_parser,css,install}/*.rs"),
-    json: all("test/**/package-lock.json"),
-    exe: readFileSync(rest[0]).subarray(8 << 20, 10 << 20),
-    skewed: made(() => below(1 + below(256))),
-    ascii: made(() => 32 + below(1 + below(95))),
-    oneBin: made(() => 64 + below(1 + below(64))),
-    and: made(() => below(256) & below(256)),
-    noise: made(() => below(256)),
-  };
-  const pieces = (all: Buffer, size: number) =>
-    Array.from({ length: Math.min(64, (all.length - 5) / size, Math.max(1, 5e5 / size)) | 0 }, (_, i) =>
-      all.subarray(5 + i * size, 5 + (i + 1) * size),
-    );
-  for (const [kind, all] of Object.entries(data))
-    for (const size of [100, 1000, 4200, 9000, 30000, 131072, 1000000])
-      for (const level of size === 30000 && kind.length < 5 ? [1, 3, 7] : [1]) {
-        const plain = pieces(all, size).map(it => [it, { level }] as const);
-        const packed = plain.map(([it, options]) => Bun.zstdCompressSync(it, options));
-        const name = `${kind} ${size} ${level} ${Bun.hash.crc32(Buffer.concat(packed))}`;
-        time(`compress ${name}`, plain, "Bun.zstdCompressSync(x[0], x[1])", 5e7);
-        if (kind.length < 5 || kind === "skewed") time(`decompress ${name}`, packed, "Bun.zstdDecompressSync(x)", 5e7);
-      }
-  for (const kind of ["skewed", "ascii", "and", "json"] as const)
-    for (const size of [5000, 6000, 7000, 8000, 8500, 9001, 10000, 12000, 16000, 20000]) {
-      const plain = pieces(data[kind], size).map(it => [it, { level: 1 }] as const);
-      time(`sizes ${kind} ${size}`, plain, "Bun.zstdCompressSync(x[0], x[1])", 5e7);
-    }
-  for (const size of [8, 32, 64, 300, 4096, 100000])
-    time(`hash xxHash64 ${size}`, pieces(data.md, size), "Bun.hash.xxHash64(x)", 5e7);
+  const noise = Buffer.from(
+    Uint8Array.from({ length: 1600000 }, () => {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      return state >>> 8;
+    }),
+  );
   const C = zlib.constants;
-  for (const [what, params] of Object.entries({
-    checksum: { [C.ZSTD_c_compressionLevel]: 1, [C.ZSTD_c_checksumFlag]: 1 },
-    long: { [C.ZSTD_c_compressionLevel]: 1, [C.ZSTD_c_enableLongDistanceMatching]: 1 },
-  }))
-    for (const kind of ["md", "exe", "noise"] as const)
-      for (const size of [300, 30000, 1000000]) {
-        const options = { params, chunkSize: 128 * 1024 };
-        const plain = pieces(data[kind], size).map(it => [it, options] as const);
-        const packed = plain.map(([it]) => [zlib.zstdCompressSync(it, options), { chunkSize: 128 * 1024 }]);
-        const name = `${what} ${kind} ${size} ${Bun.hash.crc32(packed[0][0] as Buffer)}`;
-        time(`compress ${name}`, plain, "zlib.zstdCompressSync(x[0], x[1])", 5e7);
-        if (what === "checksum") time(`decompress ${name}`, packed, "zlib.zstdDecompressSync(x[0], x[1])", 5e7);
-      }
-
-  const testing = require("bun:internal-for-testing");
-  const nanoseconds = (run: () => void, n: number) => {
-    let least = Infinity;
-    for (let turn = 0; turn < 20; turn++) {
-      const t = Bun.nanoseconds();
-      for (let i = 0; i < n; i++) run();
-      least = Math.min(least, (Bun.nanoseconds() - t) / n);
-    }
-    return least;
-  };
-  const whole = readFileSync(require.resolve("typescript", { paths: [join(repo, "test")] }));
-  const js = whole.subarray(whole.length >> 1);
-  if (process.arch !== "x64") {
-  } else if (testing.highwayStringsForTesting) {
-    const old = testing.highwayStringsForTesting;
-    const room = new Uint8Array(24 + 512 + (1 << 18));
-    new Uint16Array(room.buffer, 24, 256).forEach((_, symbol, codes) => (codes[symbol] = 3 + (symbol % 7)));
-    const [counts, nothing] = [new Uint8Array(1024), new Uint8Array()];
-    const call = nanoseconds(() => old("zstdIsQuicker", nothing, 0), 2000);
-    if (old("zstdCountBytes", nothing, counts))
-      for (const [name, text] of [
-        ["text", js],
-        ["any bytes", data.noise],
-      ] as const)
-        for (const n of [1024, 4159, 32768, 131072]) {
-          const some = text.subarray(0, n);
-          const times = Math.ceil(5e5 / n);
-          const count = nanoseconds(() => old("zstdCountBytes", some, counts), times) - call;
-          const write = nanoseconds(() => old("zstdWriteCodes", some, room), times) - call;
-          console.log(`zstd::count_bytes ${n}, ${name}\t${count.toFixed(1)}`);
-          console.log(`zstd::write_codes ${n}, ${name}\t${write.toFixed(1)}`);
+  for (const size of [300000, 1000000, 1500000])
+    for (const checksum of [0, 1])
+      for (const chunkSize of [16384, 131072, 2 << 20]) {
+        const params = { [C.ZSTD_c_compressionLevel]: 1, [C.ZSTD_c_checksumFlag]: checksum };
+        const [input, times, keep] = [noise.subarray(5, 5 + size), [] as number[], [] as unknown[]];
+        Bun.gc(true);
+        for (let i = 0; i < 400; i++) {
+          const t = Bun.nanoseconds();
+          keep[0] = zlib.zstdCompressSync(input, { params, chunkSize });
+          times.push(Bun.nanoseconds() - t);
         }
-  } else {
-    const path = require.resolve("typescript", { paths: [join(repo, "test")] });
-    const { stdout } = Bun.spawnSync([
-      process.execPath,
-      "test",
-      "--run-simd-tests",
-      "bench",
-      path,
-      path,
-      path,
-      "zstd::",
-    ]);
-    console.log(stdout.toString().trim().split(/\r?\n/).slice(1).join("\n"));
-  }
+        const name = `${size} sum${checksum} by${chunkSize}`;
+        console.log(`mean ${name}\t${times.reduce((a, b) => a + b) / times.length}`);
+        times.sort((a, b) => a - b);
+        console.log(`least ${name}\t${times[0]}`);
+        console.log(`median ${name}\t${times[200]}`);
+      }
 } else {
   console.log(cpus().length, "x", cpus()[0].model);
   for (const it of rest) console.log(Bun.spawnSync([it, "--revision"]).stdout.toString().trim());
   const best = new Map<string, number[]>();
   for (
     let turn = 0, start = Date.now();
-    turn < 2 || turn % 2 || ((Date.now() - start) / turn) * (turn + 2) < 245e3;
+    turn < 2 || turn % 2 || ((Date.now() - start) / turn) * (turn + 2) < 120e3;
     turn++
   ) {
     const { stdout, success } = Bun.spawnSync([rest[turn % 2], import.meta.path, "child", rest[0]], {

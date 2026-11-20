@@ -56,7 +56,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> RelocateVars {
         let p = self;
         // Only do this when the scope is not already top-level and when we're not inside a function.
-        if p.current_scope == p.module_scope {
+        // In dead control flow a module-scope `var` still moves out, so the
+        // dead statement holding it (`if (false) if (x) var y;`) can drop.
+        if p.current_scope == p.module_scope && !p.is_control_flow_dead {
             return RelocateVars {
                 ok: false,
                 ..Default::default()

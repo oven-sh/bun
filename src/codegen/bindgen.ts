@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Usage: bindgen.ts --sources=<crate>=<a.bind.ts>,.. --types-only=<b.bind.ts>,.. --codegen-path=<dir> --types-path=<dir> [--engine-directory=<Source/JavaScriptCore/aot> --builtin-uses=<builtin-uses.json>] (emitBindgen in scripts/build/codegen.ts)
+// Usage: bindgen.ts --sources=<crate>=<a.bind.ts>,..|@<file> --types-only=<b.bind.ts>,.. --codegen-path=<dir> --types-path=<dir> [--engine-directory=<Source/JavaScriptCore/aot> --builtin-uses=<builtin-uses.json>] (emitBindgen in scripts/build/codegen.ts)
 
 import assert from "node:assert";
 import path from "node:path";
@@ -17,14 +17,11 @@ import {
 } from "./bindgen-emit.ts";
 import { loadSchemaFile, sortTypes } from "./bindgen-load.ts";
 import { Guards } from "./builtins/guards.ts";
-import { argParse, writeIfNotChanged } from "./helpers.ts";
+import { argParse, listOption, writeIfNotChanged } from "./helpers.ts";
 
 const args = argParse(["sources", "types-only", "codegen-path", "types-path", "engine-directory", "builtin-uses"]);
 const codegenPath: string = args["codegen-path"];
-const sources = (args.sources as string)
-  .split(",")
-  .filter(source => source.length > 0)
-  .sort();
+const sources = listOption(args.sources as string).sort();
 const builtinUses: string | undefined = args["builtin-uses"];
 /** Without the table of built-ins nothing is guarded, and nothing compiles the C++. */
 const guards = new Guards(builtinUses ? readBuiltinUses(builtinUses) : { entries: [] });

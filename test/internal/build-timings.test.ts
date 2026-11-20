@@ -175,6 +175,7 @@ describe("readManifest", () => {
       ["compile", 2],
     ]);
     expect(rules.get("dep_fetch")).toEqual({
+      command: "fetch $name $repo $commit $dest $cache $patches",
       description: "fetch $name",
       restat: true,
       generator: false,

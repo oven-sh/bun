@@ -753,6 +753,8 @@ pub enum InstructionValue {
         object: Place,
         property: PropertyLiteral,
         value: Place,
+        /// Not in upstream: see `MemberUpdate`.
+        update: Option<MemberUpdate>,
         loc: Option<SourceLocation>,
     },
     PropertyLoad {
@@ -769,6 +771,8 @@ pub enum InstructionValue {
         object: Place,
         property: Place,
         value: Place,
+        /// Not in upstream: see `MemberUpdate`.
+        update: Option<MemberUpdate>,
         loc: Option<SourceLocation>,
     },
     ComputedLoad {
@@ -1016,6 +1020,28 @@ impl std::fmt::Display for UpdateOperator {
             UpdateOperator::Decrement => write!(f, "--"),
         }
     }
+}
+
+impl UpdateOperator {
+    /// `x++` stores `x + 1`.
+    pub fn binary_operator(self) -> BinaryOperator {
+        match self {
+            UpdateOperator::Increment => BinaryOperator::Add,
+            UpdateOperator::Decrement => BinaryOperator::Subtract,
+        }
+    }
+}
+
+/// Not in upstream: the source form of a store of `load op right`. Codegen prints it on the node of the load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberUpdate {
+    /// `object.property++`, `--object.property`
+    UpdateExpression {
+        operation: UpdateOperator,
+        prefix: bool,
+    },
+    /// `object.property += right`
+    AssignmentExpression { operator: BinaryOperator },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

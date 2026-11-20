@@ -244,6 +244,33 @@ const writes = `export default function Component(props) {
 }
 `;
 
+/**
+ * The rules read an update of a member as upstream lowers it: the value of `ref.current++` is the load, so a use of
+ * that value is one more report. `bun build` prints the update in place, and there its value is the store.
+ */
+const refUpdates = `import { useRef } from "react";
+
+export function PostfixUsed({ log }) {
+  const ref = useRef(0);
+  const id = ref.current++;
+  log(id);
+  return <div />;
+}
+
+export function PrefixUsed({ log }) {
+  const ref = useRef(0);
+  const id = ++ref.current;
+  log(id);
+  return <div />;
+}
+
+export function PostfixUnused() {
+  const ref = useRef(0);
+  ref.current++;
+  return <div />;
+}
+`;
+
 /** These aren't React's hooks, despite their names. */
 const ownHooks = `export function Component(props) {
   const f = useCallback(() => [props.a()], [props.a()]);
@@ -634,7 +661,7 @@ function Component(props) {
     ),
   },
   order: { ".oxlintrc.json": rc(), "order.jsx": order },
-  writes: { ".oxlintrc.json": rc(), "writes.jsx": writes },
+  writes: { ".oxlintrc.json": rc(), "writes.jsx": writes, "ref-updates.jsx": refUpdates },
   names: {
     ".oxlintrc.json": rc(),
     "own-hooks.tsx": ownHooks,

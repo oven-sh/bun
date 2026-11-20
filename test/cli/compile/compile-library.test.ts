@@ -908,6 +908,29 @@ export const left: number = __LEFT__;
     ]);
   });
 
+  test("declares a constant that only a type names with a type that names nothing", async () => {
+    using dir = tempDir(
+      "library-typed-file-constant",
+      library({
+        "src/index.ts": `const big = 1e999;
+const word = "a";
+export type Sizes = [typeof big, typeof word];
+export function sizes(): Sizes {
+  return [1e999, "a"];
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    // The bundle has `Infinity` for `1e999`, which is a `number`.
+    expect(
+      typedFile(dir)
+        .match(/^declare .*$/gm)
+        ?.sort(),
+    ).toEqual(["declare const big: number;", 'declare const word: "a";']);
+  });
+
   const rewritten = {
     "src/index.ts": `let notes = 0;
 const note = (): void => void notes++;

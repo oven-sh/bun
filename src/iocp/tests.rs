@@ -1049,6 +1049,27 @@ fn a_flood_is_left_to_gather() {
 }
 
 #[test]
+fn what_comes_to_a_thread_that_sleeps_is_no_flood() {
+    let port = Port::new().unwrap();
+    CLOCK_STOPPED_AT.set(Some(Instant::now()));
+    CLOCK_STEP.set(Duration::from_nanos(100));
+    let waker = port.waker();
+    let _sender = intercept(Call::NtRemoveIoCompletionEx, move |args| {
+        // SAFETY: the timeout of the call.
+        if unsafe { ptr::with_exposed_provenance::<i64>(args[4]).as_ref() } != Some(&0) {
+            waker.wake();
+        }
+        None
+    });
+    for _ in 0..8 {
+        let before = CLOCK_AHEAD.get();
+        port.did_receive();
+        turn(&port, Duration::from_secs(10));
+        assert!((CLOCK_AHEAD.get() - before).as_micros() < 5);
+    }
+}
+
+#[test]
 fn a_thread_waits_for_writes_but_not_for_long() {
     let port = Port::new().unwrap();
     assert!(!port.wait_for_pending_writes());

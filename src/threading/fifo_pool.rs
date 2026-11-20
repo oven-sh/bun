@@ -172,7 +172,7 @@ impl FifoPool {
                 return;
             }
             if let Some(since) = state.idle_since.take() {
-                state.spin.waited(since, now_ns());
+                state.spin.waited(since, now_ns(), limit);
             }
         }
     }

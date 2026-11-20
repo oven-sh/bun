@@ -265,8 +265,6 @@ impl Port {
 
     /// Returns how many events there are at most. It neither allocates nor frees.
     pub fn wait(&self, timeout_ns: Option<u64>) -> usize {
-        /// Less than a sleep takes.
-        const AT_ONCE_NS: u64 = 10_000;
         const FLOOD_TURN_NS: u64 = 20_000;
         const TURNS_TO_FLOOD: u32 = 4;
         const TURNS_TO_DOUBT: u32 = 64;
@@ -276,47 +274,46 @@ impl Port {
         }
         let only_receives = self.has_received.take() & !self.has_sent.take();
         let (turns, began_at) = self.flood.take();
-        let start = (only_receives && timeout_ns != Some(0)).then(|| {
+        let may_be_flood = only_receives && timeout_ns != Some(0);
+        if may_be_flood && turns >= TURNS_TO_FLOOD && has_other_cpu() {
             // A sender pays for every time that it has to tell us.
-            let mut now = now_ns();
-            while turns >= TURNS_TO_FLOOD && now < began_at + FLOOD_TURN_NS && has_other_cpu() {
+            while now_ns() < began_at + FLOOD_TURN_NS {
                 core::hint::spin_loop();
-                now = now_ns();
             }
-            now
-        });
+        }
+        let mut is_at_once = true;
         if timeout_ns == Some(0) || self.has_work() {
             self.fill_batch(Timeout::Now);
         } else {
             self.shared.is_parked.store(true, Ordering::SeqCst);
-            self.park(timeout_ns, only_receives);
+            is_at_once = self.park(timeout_ns, only_receives);
             self.shared.is_parked.store(false, Ordering::SeqCst);
         }
-        if let Some((start, now)) = start.map(|start| (start, now_ns()))
-            && now - start < AT_ONCE_NS
-        {
+        if may_be_flood && is_at_once {
             // After a pause there is always something, so it has to show itself again.
-            self.flood.set(((turns + 1) % TURNS_TO_DOUBT, now));
+            self.flood.set(((turns + 1) % TURNS_TO_DOUBT, now_ns()));
         }
         self.undispatched()
     }
 
-    fn park(&self, timeout_ns: Option<u64>, only_receives: bool) {
+    /// `true` if the first look was enough. With `only_receives`, that look does not wait.
+    fn park(&self, timeout_ns: Option<u64>, only_receives: bool) -> bool {
         const IDLE_NS: u64 = 100_000;
         let (start, mut spin) = (now_ns(), self.spin.get());
         let next_due = self.delayed.borrow().peek().map(|entry| entry.0.0);
         let deadline = (timeout_ns.map_or(u64::MAX, |timeout| start.saturating_add(timeout)))
             .min(next_due.unwrap_or(u64::MAX));
         let awake_ns = if only_receives { 0 } else { spin.limit_ns() };
-        let (mut now, awake_until) = (start, start + awake_ns);
+        let (mut now, awake_until, mut is_first) = (start, start + awake_ns, true);
         loop {
             let timeout = match deadline {
-                _ if now < awake_until => Timeout::Now,
+                _ if now < awake_until || (is_first && only_receives) => Timeout::Now,
                 u64::MAX => Timeout::Never,
                 _ => (self.timer).timeout(&self.shared.handle, now, deadline.saturating_sub(now)),
             };
             let has_packets = self.fill_batch(timeout);
             now = now_ns();
+            is_first &= has_packets;
             if has_packets || now >= deadline {
                 break;
             }
@@ -324,8 +321,9 @@ impl Port {
         if now.saturating_sub(start) > IDLE_NS {
             self.busy_since_ns.set(now);
         }
-        spin.waited(start, now);
+        spin.waited(start, now, awake_ns);
         self.spin.set(spin);
+        is_first
     }
 
     /// `false` if there is nothing to dispatch.

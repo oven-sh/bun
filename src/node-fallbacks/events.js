@@ -173,6 +173,8 @@ EventEmitterPrototype.addListener = function addListener(type, fn) {
     this._eventsCount = 0;
   } else if (events.newListener) {
     this.emit("newListener", type, fn.listener ?? fn);
+    // A "newListener" listener can replace `_events`, with removeAllListeners().
+    events = this._events;
   }
   var handlers = events[type];
   if (!handlers) {
@@ -198,6 +200,8 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
     this._eventsCount = 0;
   } else if (events.newListener) {
     this.emit("newListener", type, fn.listener ?? fn);
+    // A "newListener" listener can replace `_events`, with removeAllListeners().
+    events = this._events;
   }
   var handlers = events[type];
   if (!handlers) {
@@ -226,24 +230,31 @@ function overflowWarning(emitter, type, handlers) {
   console.warn(warn);
 }
 
-function onceWrapper(type, listener, ...args) {
-  this.removeListener(type, listener);
-  listener.apply(this, args);
+// From once() to listenerCount(), the code follows src/js/node/events.ts. browser/NodeEventsRemoveListener tests both.
+
+// The wrapper removes itself, and not `listener`: the same function can also be attached with on().
+function onceWrap(target, type, listener) {
+  function onceWrapper() {
+    // The first call clears `target`: a wrapper that ran does nothing more, and it does not keep the emitter alive.
+    if (target === undefined) return;
+    const emitter = target;
+    target = undefined;
+    emitter.removeListener(type, onceWrapper);
+    return listener.apply(emitter, arguments);
+  }
+  onceWrapper.listener = listener;
+  return onceWrapper;
 }
 
 EventEmitterPrototype.once = function once(type, fn) {
   checkListener(fn);
-  const bound = onceWrapper.bind(this, type, fn);
-  bound.listener = fn;
-  this.addListener(type, bound);
+  this.on(type, onceWrap(this, type, fn));
   return this;
 };
 
 EventEmitterPrototype.prependOnceListener = function prependOnceListener(type, fn) {
   checkListener(fn);
-  const bound = onceWrapper.bind(this, type, fn);
-  bound.listener = fn;
-  this.prependListener(type, bound);
+  this.prependListener(type, onceWrap(this, type, fn));
   return this;
 };
 
@@ -271,6 +282,8 @@ EventEmitterPrototype.removeListener = function removeListener(type, fn) {
     delete events[type];
     this._eventsCount--;
   }
+  // The only emit of "removeListener". A once() wrapper is reported as the function it wraps.
+  if (events.removeListener !== undefined) this.emit("removeListener", type, fn.listener ?? fn);
   return this;
 };
 
@@ -278,13 +291,32 @@ EventEmitterPrototype.off = EventEmitterPrototype.removeListener;
 
 EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
   var { _events: events } = this;
-  if (type && events) {
-    if (events[type]) {
+  if (!events) return this;
+  // Nothing listens for "removeListener": drop the lists.
+  if (events.removeListener === undefined) {
+    if (arguments.length === 0) {
+      this._events = { __proto__: null };
+      this._eventsCount = 0;
+    } else if (events[type] !== undefined) {
       delete events[type];
       this._eventsCount--;
     }
-  } else {
+    return this;
+  }
+  if (arguments.length === 0) {
+    for (const key of Reflect.ownKeys(events)) {
+      if (key !== "removeListener") this.removeAllListeners(key);
+    }
+    this.removeAllListeners("removeListener");
     this._events = { __proto__: null };
+    this._eventsCount = 0;
+    return this;
+  }
+  var handlers = events[type];
+  if (handlers !== undefined) {
+    // The last listener goes first, from a copy: a "removeListener" listener can remove other entries of the list.
+    handlers = handlers.slice();
+    for (let i = handlers.length - 1; i >= 0; i--) this.removeListener(type, handlers[i]);
   }
   return this;
 };
@@ -305,10 +337,15 @@ EventEmitterPrototype.rawListeners = function rawListeners(type) {
   return handlers.slice();
 };
 
-EventEmitterPrototype.listenerCount = function listenerCount(type) {
-  var { _events: events } = this;
-  if (!events) return 0;
-  return events[type]?.length ?? 0;
+EventEmitterPrototype.listenerCount = function listenerCount(type, listener) {
+  var handlers = this._events?.[type];
+  if (!handlers) return 0;
+  if (listener == null) return handlers.length;
+  var count = 0;
+  for (let i = 0; i < handlers.length; i++) {
+    if (handlers[i] === listener || handlers[i].listener === listener) count++;
+  }
+  return count;
 };
 
 EventEmitterPrototype.eventNames = function eventNames() {
@@ -406,7 +443,9 @@ class AbortError extends Error {
 }
 
 function ERR_INVALID_ARG_TYPE(name, type, value) {
-  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
+  // `value` is not converted to a string: that throws for a symbol, and it runs the toString() of an object.
+  const received = value == null ? value : "type " + typeof value;
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${received}`);
   err.code = "ERR_INVALID_ARG_TYPE";
   return err;
 }
@@ -440,7 +479,7 @@ function validateNumber(value, name, min, max) {
 
 function checkListener(listener) {
   if (typeof listener !== "function") {
-    throw new TypeError("The listener must be a function");
+    throw ERR_INVALID_ARG_TYPE("listener", "function", listener);
   }
 }
 

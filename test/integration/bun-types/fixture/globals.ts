@@ -233,6 +233,21 @@ const writableStream = new WritableStream();
   a.keys();
   a.values();
   a.toString();
+
+  // https://github.com/oven-sh/bun/issues/27194
+  // A value of a FormData can be a `File`, and a FormData is iterable. `.is<>()` is exact type
+  // equality, so a declaration that yields plain strings again fails here.
+  for (const [key, value] of a) {
+    expectType(key).is<string>();
+    expectType(value).is<Bun.FormDataEntryValue>();
+  }
+  for (const value of a.values()) {
+    expectType(value).is<Bun.FormDataEntryValue>();
+  }
+  for (const [key, value] of a.entries()) {
+    expectType(key).is<string>();
+    expectType(value).is<Bun.FormDataEntryValue>();
+  }
 }
 {
   const a = new Headers();
@@ -345,4 +360,22 @@ expectType<BunConsumerConvenienceMethods>();
   const a = new Blob();
   expectType(a.slice()).is<Blob>();
   expectType(a.slice(1, 2, "text/plain")).is<Blob>();
+}
+
+// https://github.com/oven-sh/bun/issues/27194
+// Without lib.dom, `formData()` of a Request or a Response gives the FormData of undici-types.
+// The global FormData takes it, and so does a Response.
+{
+  async function formOfARequest(request: Request): Promise<FormData> {
+    return await request.formData();
+  }
+  async function formOfAResponse(response: Response): Promise<FormData> {
+    return await response.formData();
+  }
+  async function responseOfAForm(request: Request): Promise<Response> {
+    return new Response(await request.formData());
+  }
+  expectType(formOfARequest).is<(request: Request) => Promise<FormData>>();
+  expectType(formOfAResponse).is<(response: Response) => Promise<FormData>>();
+  expectType(responseOfAForm).is<(request: Request) => Promise<Response>>();
 }

@@ -741,6 +741,14 @@ function parseOptions(
     path = hostname;
     hostname = "localhost";
   }
+  // Without a socket, the connection would go to the host of the URL over TCP, with its credentials.
+  if (isUnixUrl && !path) {
+    throw $ERR_INVALID_ARG_VALUE(
+      "url",
+      `unix://${REDACTED}`,
+      "must have the path of a unix socket (expected a URL like 'unix:///run/db.sock')",
+    );
+  }
   if (isPostgres && path && !path.includes("/.s.PGSQL.") && (hostIsPath || isDirectory(path))) {
     path = `${path}/.s.PGSQL.${port}`;
   }

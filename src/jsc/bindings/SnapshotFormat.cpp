@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include "JSDOMException.h"
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/JSFunctionInlines.h>
 #include <JavaScriptCore/JSMapIterator.h>
@@ -109,6 +110,12 @@ extern "C" SnapshotKind SnapshotFormat__kindOf(JSGlobalObject* globalObject, Enc
         current = prototype.getObject();
     }
     return SnapshotKind::Object;
+}
+
+// The name and the message of a DOMException are accessors of DOMException.prototype, not own properties.
+extern "C" bool SnapshotFormat__isDOMException(EncodedJSValue encodedValue)
+{
+    return JSValue::decode(encodedValue).inherits<WebCore::JSDOMException>();
 }
 
 // Vitest's `inspect()` truncates Object, Array, Map and Set by dropping items.

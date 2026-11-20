@@ -290,6 +290,8 @@ Bun reads and writes each snapshot file in the format of the runner that created
 
 Bun's format and `pretty-format` print most values the same way. They differ on functions (`[Function: name]` in Bun's format, `[Function]` in Jest's and Vitest's), classes, mock functions, regular expressions, symbol keys, React elements and a few others.
 
+Bun's format prints a `DOMException` as `[name: message]`. Bun 1.4.4 and older printed `DOMException {}`. A snapshot written that way still passes, for any name and message. Run `bun test --update-snapshots` to store the name and the message. A property matcher for the name or the message, such as `{ message: expect.any(String) }`, does not change the stored text.
+
 A new snapshot file uses Vitest's format if `test` is imported from `"vitest"`, and Bun's format otherwise.
 
 Inline snapshots don't record which runner wrote them, so Bun accepts a match in any runner's format. It writes and updates them in the format of the runner that `test` is imported from.

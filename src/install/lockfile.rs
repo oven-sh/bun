@@ -1161,13 +1161,13 @@ impl Lockfile {
         self.overrides.get(self, id, dependency.name_hash).is_some()
     }
 
-    /// Returns the package id of the workspace the install is taking place in.
+    /// The root (no hash), or the workspace package with that name hash if the lockfile has one.
     pub(crate) fn get_workspace_package_id(
         &self,
         workspace_name_hash: Option<PackageNameHash>,
-    ) -> PackageID {
+    ) -> Option<PackageID> {
         let Some(workspace_name_hash) = workspace_name_hash else {
-            return 0;
+            return Some(0);
         };
         let packages = &self.packages;
         (packages.items_resolution().iter())
@@ -1175,8 +1175,23 @@ impl Lockfile {
             .position(|(res, name_hash)| {
                 res.tag == ResolutionTag::Workspace && *name_hash == workspace_name_hash
             })
-            // should not hit this, default to root just in case
-            .map_or(0, |i| i as PackageID)
+            .map(|i| i as PackageID)
+    }
+
+    /// Whether the workspace package `id` is at `folder`, a root-relative path in platform form.
+    pub(crate) fn is_workspace_at(&self, id: PackageID, folder: &[u8]) -> bool {
+        let res = &self.packages.items_resolution()[id as usize];
+        res.tag == ResolutionTag::Workspace && {
+            let listed = res.workspace().slice(self.buffers.string_bytes.as_slice());
+            // A lockfile has `/` on every platform.
+            listed.len() == folder.len()
+                && (listed.iter().zip(folder)).all(|(&a, &b)| a == b || (a == b'/' && b == SEP))
+        }
+    }
+
+    /// The workspace package at `folder`: finds a workspace whose `name` changed since the save.
+    pub(crate) fn workspace_package_id_at(&self, folder: &[u8]) -> Option<PackageID> {
+        (0..self.packages.len() as PackageID).find(|&id| self.is_workspace_at(id, folder))
     }
 
     /// The workspaces whose dependency lists `request` names: the ones that received it under `--filter` / `-r`, else the cwd's.
@@ -1188,7 +1203,7 @@ impl Lockfile {
     ) -> Vec<PackageID> {
         match pending {
             Some(pending) => pending.workspace_ids_receiving(self, request.name_hash),
-            None => vec![self.get_workspace_package_id(workspace_name_hash)],
+            None => Vec::from_iter(self.get_workspace_package_id(workspace_name_hash)),
         }
     }
 

@@ -55,6 +55,8 @@ bun update -i
 
 `--interactive` opens a terminal interface listing every outdated direct dependency. Bun updates the packages you select as if you had run `bun update <name> ...`; everything else keeps its locked version.
 
+In a monorepo, the list is for the workspace you run it in. In a [workspace that the lockfile does not list](/pm/workspaces#a-workspace-that-the-lockfile-does-not-list), `bun update --interactive` exits with an error. So does `bun update` with `--dev`, `--prod`, `--depth 0` or a name pattern.
+
 ### Interactive Interface
 
 The interface displays packages grouped by dependency type:

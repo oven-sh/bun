@@ -287,7 +287,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     };
 
     manager.options.enable.set(Enable::FROZEN_LOCKFILE, true);
-    manager.summary = exit_unless_lockfile_matches_package_json(manager, "prune")?;
+    manager.summary = exit_unless_lockfile_matches_package_json(manager, "nothing to prune")?;
 
     let node_modules = match Dir::open(ROOT_DIR) {
         Ok(node_modules) => node_modules,
@@ -576,9 +576,10 @@ fn collect_workspace_names(manager: &PackageManager) -> Vec<Box<[u8]>> {
     out
 }
 
+/// `nothing` is the end of the error message, e.g. "nothing to prune".
 pub(crate) fn exit_unless_lockfile_matches_package_json(
     manager: &mut PackageManager,
-    nothing_to: &'static str,
+    nothing: &str,
 ) -> crate::Result<DiffSummary> {
     let Some(root) = manager.lockfile.root_package() else {
         return Ok(DiffSummary::default());
@@ -658,10 +659,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
 
     if summary.changes_dependencies() {
         if !quiet {
-            Output::err_generic(
-                "bun.lock does not match package.json, nothing to {s}",
-                (nothing_to,),
-            );
+            Output::err_generic("bun.lock does not match package.json, {s}", (nothing,));
             bun_core::note!("run 'bun install' first");
         }
         Global::exit(1);
@@ -1657,24 +1655,19 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         // self-contained workspace at the root, but they were installed in its own `node_modules`.
         let reached: Option<DynamicBitSet> = (self_contained.contains(&(pkg_id as PackageID)))
             .then(|| {
-                let name_hash = after.packages.items_name_hash()[pkg_id];
-                (before.packages.items_name_hash().iter())
-                    .zip(before.packages.items_resolution())
-                    .position(|(&hash, res)| {
-                        hash == name_hash && res.tag == ResolutionTag::Workspace
-                    })
+                before.get_workspace_package_id(Some(after.packages.items_name_hash()[pkg_id]))
             })
             .flatten()
             .map(|id| {
                 // `before` already has the dependencies of the workspace's new package.json, so the
                 // ones that were dropped from it are added here.
-                let mut roots: Vec<PackageID> = vec![id as PackageID];
+                let mut roots: Vec<PackageID> = vec![id];
                 roots.extend(
                     (manager.summary.dropped_rows.iter())
-                        .filter(|row| row.owner as usize == id)
+                        .filter(|row| row.owner == id)
                         .map(|row| row.package),
                 );
-                let options = reachable::Options::all(id as PackageID);
+                let options = reachable::Options::all(id);
                 let resolutions = before.buffers.resolutions.as_slice();
                 reachable::packages_from(before, resolutions, &roots, true, options)
             });
@@ -2583,7 +2576,7 @@ fn is_patch_copy(manager: &PackageManager, entry: &Entry) -> bool {
     let lockfile: &Lockfile = &manager.lockfile;
     let name_hash = bun_semver::semver_string::Builder::string_hash(&name);
     package_for_folder(lockfile, name_hash, &version)
-        .is_ok_and(|pkg| isolated_store_folders(manager, lockfile, pkg.meta.id, 0).is_empty())
+        .is_ok_and(|pkg| isolated_store_folders(manager, lockfile, pkg.meta.id, Some(0)).is_empty())
 }
 
 fn has_leftovers(dir: &Dir) -> bool {

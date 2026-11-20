@@ -427,14 +427,14 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, V
     if !loaded {
         return None;
     }
-    let member = pm.root_package_id.get(&pm.lockfile, pm.workspace_name_hash);
+    let member = pm.cwd_workspace_id_or_named();
     let lockfile = &*pm.lockfile;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let names = lockfile.packages.items_name();
     let resolutions = lockfile.packages.items_resolution();
     // Several copies may be installed, so search in the order `require(name)` would: first the
     // dependencies of the package the command was run in, then the root node_modules.
-    let own = lockfile.packages.items_dependencies().get(member as usize);
+    let own = member.and_then(|id| lockfile.packages.items_dependencies().get(id as usize));
     let mut folders = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
     let hoisted = folders
         .next(None)

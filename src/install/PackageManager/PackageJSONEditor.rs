@@ -428,7 +428,10 @@ pub(crate) fn edit_update_entries(
         }
 
         let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let workspace = lockfile.get_workspace_package_id(workspace_name_hash) as usize;
+        let Some(workspace) = lockfile.get_workspace_package_id(workspace_name_hash) else {
+            break;
+        };
+        let workspace = workspace as usize;
         let packages = &lockfile.packages;
         let resolutions = packages.items_resolution();
         let workspace_deps: &[Dependency] =

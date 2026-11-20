@@ -11,7 +11,7 @@ use crate::lockfile::override_map::OverrideMap;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{DependencyID, Features, PackageID, PackageNameHash, invalid_package_id};
+use crate::{DependencyID, Features, PackageID, PackageNameHash};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
@@ -126,7 +126,9 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
         };
         let requests = &manager.update_requests;
         let lockfile: &mut Lockfile = &mut manager.lockfile;
-        let workspace_id = lockfile.get_workspace_package_id(target.name_hash);
+        let Some(workspace_id) = lockfile.get_workspace_package_id(target.name_hash) else {
+            continue;
+        };
         let list = lockfile.packages.items_dependencies()[workspace_id as usize];
         let range = list.off as usize..(list.off + list.len) as usize;
 
@@ -415,17 +417,10 @@ fn edit_cwd(
     Ok(())
 }
 
-/// Package id of each edited file's row in `lockfile` (`invalid_package_id` when the workspace has none).
-fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<PackageID> {
-    let resolutions = lockfile.packages.items_resolution();
-    let name_hashes = lockfile.packages.items_name_hash();
-    let id_of = |hash: PackageNameHash| {
-        (0..resolutions.len())
-            .find(|&id| resolutions[id].tag == ResolutionTag::Workspace && name_hashes[id] == hash)
-            .map_or(invalid_package_id, |id| id as PackageID)
-    };
+/// Package id of each edited file's row in `lockfile` (`None` when the workspace has none).
+fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<Option<PackageID>> {
     (edited.iter())
-        .map(|e| e.target.name_hash.map_or(0, id_of))
+        .map(|e| lockfile.get_workspace_package_id(e.target.name_hash))
         .collect()
 }
 
@@ -486,10 +481,9 @@ fn sync_lockfile(
     }
     let mut rewritten: Vec<DependencyID> = Vec::new();
     for (i, pkg) in &parsed {
-        let target_id = target_ids[*i];
-        if target_id == invalid_package_id {
+        let Some(target_id) = target_ids[*i] else {
             continue;
-        }
+        };
         let is_root = edited[*i].target.name_hash.is_none();
         let row = manager.lockfile.packages.items_dependencies()[target_id as usize];
         let scratch_deps = pkg

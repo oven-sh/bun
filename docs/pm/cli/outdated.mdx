@@ -124,6 +124,8 @@ bun outdated lodash
 
 ### Workspace Filters
 
+In a monorepo, `bun outdated` checks the workspace you run it in. In a [workspace that the lockfile does not list](/pm/workspaces#a-workspace-that-the-lockfile-does-not-list), it exits with an error.
+
 Use the `--filter` flag to check for outdated dependencies in a different workspace package:
 
 ```sh terminal icon="terminal"

@@ -224,8 +224,8 @@ fn resolve_target(
     command: &'static str,
 ) -> Target {
     let argument: &'static [u8] = manager.options.positionals[1];
-    let workspace_name_hash = manager.workspace_name_hash;
-    let workspace_package_id = manager.root_package_id.get(lockfile, workspace_name_hash);
+    let workspace_package_id = manager.cwd_workspace_id_or_named_in(lockfile);
+    let not_in_workspace_root = manager.workspace_name_hash.is_some();
 
     // Every package except the ones that only ship inside another package's tarball.
     let installed = reachable::packages(
@@ -241,7 +241,7 @@ fn resolve_target(
     let is_path = strings::contains(argument, b"node_modules/")
         || (cfg!(windows) && strings::has_prefix(argument, b"node_modules\\"));
     let (pkg, folder, other_folders) = if is_path {
-        let folder = path_argument_from_root(lockfile, workspace_package_id, argument);
+        let folder = path_argument_from_root(manager, not_in_workspace_root, argument);
         let (name, version) = read_name_and_version(manager, &folder);
         let pkg = match package_for_folder(lockfile, string_hash(&name), &version) {
             Ok(pkg) => pkg,
@@ -290,7 +290,7 @@ fn resolve_target(
         pkg,
         folder,
         other_folders,
-        not_in_workspace_root: workspace_package_id != 0,
+        not_in_workspace_root,
     }
 }
 
@@ -308,19 +308,17 @@ fn crash_bundled(name: &[u8]) -> ! {
 /// A relative path from the user is relative to where the command was run, but the process has
 /// since changed to the project root.
 fn path_argument_from_root(
-    lockfile: &Lockfile,
-    workspace_package_id: PackageID,
+    manager: &PackageManager,
+    not_in_workspace_root: bool,
     argument: &[u8],
 ) -> Vec<u8> {
-    if workspace_package_id != 0 && !Platform::AUTO.is_absolute(argument) {
-        let workspace =
-            *lockfile.packages.items_resolution()[workspace_package_id as usize].workspace();
+    if not_in_workspace_root && !Platform::AUTO.is_absolute(argument) {
+        let mut workspace = manager.cwd_workspace_folder().to_vec();
+        resolve_path::platform_to_posix_in_place(&mut workspace);
         let mut spill = Vec::new();
-        let from_root = resolve_path::join_spill::<platform::Posix>(
-            &mut spill,
-            &[lockfile.str(&workspace), argument],
-        )
-        .to_vec();
+        let from_root =
+            resolve_path::join_spill::<platform::Posix>(&mut spill, &[&workspace, argument])
+                .to_vec();
         // The hoisted linker may have put the package in the root's node_modules only.
         if sys::exists(&from_root) || !sys::exists(argument) {
             return from_root;
@@ -1646,7 +1644,7 @@ fn installed_module_folder(
     manager: &PackageManager,
     lockfile: &Lockfile,
     pkg_id: PackageID,
-    workspace_package_id: PackageID,
+    workspace_package_id: Option<PackageID>,
     hoisted_folder: Vec<u8>,
 ) -> (Vec<u8>, Vec<Vec<u8>>) {
     let exists = sys::exists(&hoisted_folder);
@@ -1672,12 +1670,12 @@ fn installed_module_folder(
 }
 
 /// Returns the package's store entries. It has one per set of resolved peers. The ones that the
-/// current workspace loads come first.
+/// current workspace loads come first, if the lockfile lists that workspace.
 pub(crate) fn isolated_store_folders(
     manager: &PackageManager,
     lockfile: &Lockfile,
     pkg_id: PackageID,
-    workspace_package_id: PackageID,
+    workspace_package_id: Option<PackageID>,
 ) -> Vec<Vec<u8>> {
     let store = handle_oom(build_whole_store(manager, lockfile));
     let name = lockfile.str(&lockfile.packages.items_name()[pkg_id as usize]);
@@ -1732,7 +1730,7 @@ pub(crate) fn isolated_store_folders(
     };
     if let Some(start) = entry_pkgs
         .iter()
-        .position(|&pkg| pkg == workspace_package_id)
+        .position(|&pkg| Some(pkg) == workspace_package_id)
     {
         enqueue(start, &mut queue);
     }

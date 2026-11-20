@@ -13320,6 +13320,61 @@ describe.concurrent("outdated", () => {
     },
   );
 
+  // Without `--filter` the table is for the workspace that the command runs in. The lockfile lists a workspace
+  // under its folder. A folder that it does not list has no rows, and older versions of bun printed the root's.
+  test("a workspace added or renamed since the last install", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    const app = join(packageDir, "packages", "app");
+    const added = join(packageDir, "packages", "added");
+    const member = (name: string) => JSON.stringify({ name, dependencies: { "a-dep": "1.0.1" } });
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({ name: "foo", workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } }),
+      ),
+      write(join(app, "package.json"), member("app")),
+    ]);
+    await runBunInstall(env, packageDir);
+    await Promise.all([
+      write(join(app, "package.json"), member("app-renamed")),
+      write(join(added, "package.json"), member("added")),
+    ]);
+
+    expect({
+      added: await outdatedResult(env, added),
+      renamed: await outdatedResult(env, app),
+      root: await outdatedResult(env, packageDir),
+    }).toEqual({
+      added: {
+        table: [""],
+        err: "error: bun.lock does not match package.json, nothing outdated\nnote: run 'bun install' first\n",
+        exitCode: 1,
+      },
+      renamed: {
+        table: [
+          "|--------------------------------------|",
+          "| Package  | Current | Update | Latest |",
+          "|----------|---------|--------|--------|",
+          "| a-dep    | 1.0.1   | 1.0.1  | 1.0.10 |",
+          "|--------------------------------------|",
+        ],
+        err: "",
+        exitCode: 0,
+      },
+      root: {
+        table: [
+          "|--------------------------------------|",
+          "| Package  | Current | Update | Latest |",
+          "|----------|---------|--------|--------|",
+          "| no-deps  | 1.0.0   | 1.0.0  | 2.0.0  |",
+          "|--------------------------------------|",
+        ],
+        err: "",
+        exitCode: 0,
+      },
+    });
+  });
+
   // `bun outdated` only reports, so one bad package.json does not take the report of the other workspaces away.
   describe.each([
     { title: "does not parse", damage: (path: string) => write(path, "{ broken\n"), error: "ParserError" },

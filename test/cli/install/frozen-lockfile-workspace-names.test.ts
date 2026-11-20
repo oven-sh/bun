@@ -337,6 +337,118 @@ describe.each(linkers)("%s linker", linker => {
       await expectRoundTrip(dir, () => check(dir));
     });
 
+    // The summary of an install lists what it installed for the workspace that the command runs in. Such a bun.lock
+    // has no rows for this workspace, and older versions of bun listed the root's packages in their place.
+    test.concurrent("a range, in a bun.lock from Bun 1.4: an install in the workspace lists no packages", async () => {
+      const dependencies = { "no-deps": "1.0.0", "a-dep": "1.0.2" };
+      const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
+      await ok(dir, "install", "--lockfile-only");
+      await Promise.all([
+        write(join(dir, "package.json"), JSON.stringify(root({ dependencies }))),
+        write(join(dir, "packages", "no-deps", "package.json"), JSON.stringify(member)),
+      ]);
+
+      const { stdout } = await ok(join(dir, "packages", "no-deps"), "install");
+      expect(stdout.split("\n").filter(line => /^\+ | installed /.test(line))).toEqual([
+        expect.stringMatching(/^2 packages installed /),
+      ]);
+      expect(await seenFrom(dir, ".", "no-deps")).toBe("1.0.0");
+    });
+
+    // A command that edits the dependencies of the workspace is a change of dependencies, so bun.lock gets the
+    // workspace. Older versions of bun read the root's entry in its place: `bun add` wrote the version that the
+    // root has, or none, and installed nothing, and `bun update <name>` did not find the name.
+    const inWorkspace = "packages/no-deps";
+    test.concurrent.each<[string, string, Record<string, string>, string[] | undefined]>([
+      ["add a-dep@1.0.5", inWorkspace, { "a-dep": "1.0.5", "what-bin": "1.0.0" }, undefined],
+      ["add basic-1", inWorkspace, { "a-dep": "1.0.1", "what-bin": "1.0.0", "basic-1": "^1.0.0" }, undefined],
+      ["remove a-dep", inWorkspace, { "what-bin": "1.0.0" }, undefined],
+      ["update a-dep", inWorkspace, { "a-dep": "1.0.1", "what-bin": "1.0.0" }, undefined],
+      [
+        "add --trust uses-what-bin",
+        inWorkspace,
+        { "a-dep": "1.0.1", "what-bin": "1.0.0", "uses-what-bin": "^1.5.0" },
+        ["uses-what-bin"],
+      ],
+      ["add basic-1 --filter no-deps", ".", { "a-dep": "1.0.1", "what-bin": "1.0.0", "basic-1": "^1.0.0" }, undefined],
+      ["remove a-dep --filter no-deps", ".", { "what-bin": "1.0.0" }, undefined],
+      ["update a-dep --filter no-deps", ".", { "a-dep": "1.0.1", "what-bin": "1.0.0" }, undefined],
+    ])("a range, in a bun.lock from Bun 1.4: bun %s in %s", async (command, cwd, declared, trusted) => {
+      const dependencies = { "no-deps": "1.0.0", "a-dep": "1.0.2" };
+      const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
+      await ok(dir, "install", "--lockfile-only");
+      const workspace = join(dir, "packages", "no-deps");
+      await Promise.all([
+        write(join(dir, "package.json"), JSON.stringify(root({ dependencies }))),
+        write(join(workspace, "package.json"), JSON.stringify(member)),
+      ]);
+
+      await ok(join(dir, cwd), ...command.split(" "));
+      const lock = Bun.JSONC.parse(await lockText(dir)) as Record<string, any>;
+      expect({
+        declared: (await file(join(workspace, "package.json")).json()).dependencies,
+        locked: lock.workspaces["packages/no-deps"]?.dependencies,
+        trusted: lock.trustedDependencies,
+      }).toEqual({ declared, locked: declared, trusted });
+      for (const [name, range] of Object.entries(declared)) {
+        expect(await seenFrom(dir, "packages/no-deps", name)).toBe(range.replace("^", ""));
+      }
+      if (trusted) expect(await exists(join(await lookUp(workspace, "uses-what-bin"), "what-bin.txt"))).toBe(true);
+      await ok(dir, "install", "--frozen-lockfile");
+      expect(await seenFrom(dir, ".", "no-deps")).toBe("1.0.0");
+    });
+
+    // A command that names a package which the workspace does not declare edits nothing, so bun.lock stays as
+    // it is. Older versions of bun read the root's entry here too: `--trust` trusted the root's package of that
+    // name and ran its script.
+    test.concurrent.each(["remove basic-1", "remove uses-what-bin --trust"])(
+      "a range, in a bun.lock from Bun 1.4: bun %s in the workspace changes nothing",
+      async command => {
+        const dependencies = { "no-deps": "1.0.0", "uses-what-bin": "1.5.0" };
+        const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
+        await ok(dir, "install");
+        const workspace = join(dir, "packages", "no-deps");
+        await Promise.all([
+          write(join(dir, "package.json"), JSON.stringify(root({ dependencies }))),
+          write(join(workspace, "package.json"), JSON.stringify(member)),
+        ]);
+        const older = await lockText(dir);
+
+        await ok(workspace, ...command.split(" "));
+        expect({
+          lock: (await lockText(dir)) === older,
+          declared: (await file(join(workspace, "package.json")).json()).dependencies,
+          ran: await exists(join(await lookUp(dir, "uses-what-bin"), "what-bin.txt")),
+        }).toEqual({ lock: true, declared: member.dependencies, ran: false });
+      },
+    );
+
+    // A report in the workspace has no rows to read, and `bun install` keeps this lockfile. The note names a
+    // command that adds the workspace. For `bun update` that is not the command that stopped.
+    const updateNote = "run 'bun update' without flags or names here, or 'bun update <name>'";
+    test.concurrent.each([
+      ["outdated", "nothing outdated", "run 'bun update' here"],
+      ["update --prod", "nothing to update", updateNote],
+      ["update -i", "nothing to update", updateNote],
+    ])("a range, in a bun.lock from Bun 1.4: bun %s in the workspace is an error", async (command, nothing, note) => {
+      const dependencies = { "no-deps": "1.0.0", "a-dep": "1.0.2" };
+      const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
+      await ok(dir, "install");
+      const workspace = join(dir, "packages", "no-deps");
+      await Promise.all([
+        write(join(dir, "package.json"), JSON.stringify(root({ dependencies }))),
+        write(join(workspace, "package.json"), JSON.stringify(member)),
+      ]);
+      const older = await lockText(dir);
+
+      const { stderr, exitCode } = await bun(workspace, ...command.split(" "));
+      expect({ stderr, exitCode, lock: (await lockText(dir)) === older }).toEqual({
+        stderr: `error: workspace "packages/no-deps" not in lockfile, ${nothing}\nnote: ${note}\n`,
+        exitCode: 1,
+        lock: true,
+      });
+    });
+
     test.concurrent("an alias under its own name, in a bun.lock from Bun 1.4: it isn't changed", async () => {
       const dependencies = { "no-deps": "npm:no-deps@1.0.0" };
       const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
@@ -696,6 +808,26 @@ ${packages.map(row => `    ${row}\n`).join("\n")}  }
         await expectAccepted(dir, "bun.lockb", "kept", async () => {
           expect(await seenFrom(dir, ".", "no-deps")).toBe(row.before);
         });
+      });
+
+      // The summary of an install lists what it installed for the workspace that the command runs in: the
+      // workspace package of that name in the lockfile. `--verbose` has a section for each workspace package.
+      // Older versions of bun looked for the root's entry that links the workspace. Where the range has that
+      // entry, they listed the root's packages, and `--verbose` had no section for the workspace.
+      test.concurrent("an install lists the packages of the workspace", async () => {
+        const [inWorkspace, verbose] = await Promise.all([
+          setUp({ "no-deps": row.dev }),
+          setUp({ "no-deps": row.dev }),
+        ]);
+        const rows = (stdout: string) => stdout.split("\n").filter(line => /^\+ |^\S+:$/.test(line));
+        // The hoisted tree of this lockfile has the workspace's a-dep only where the root links the workspace.
+        const installed = linker === "isolated" || row.before === member.version ? ["+ a-dep@1.0.1"] : [];
+
+        expect(rows((await ok(join(inWorkspace, "packages", "no-deps"), "install")).stdout)).toEqual(installed);
+        // The first row is the root's.
+        expect(rows((await ok(verbose, "install", "--verbose")).stdout).slice(1)).toEqual(
+          installed.length ? ["no-deps:", ...installed] : [],
+        );
       });
 
       test.concurrent.each([

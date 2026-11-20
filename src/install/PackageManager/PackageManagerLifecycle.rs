@@ -409,11 +409,12 @@ impl PackageManager {
     ) -> ArrayHashMap<PackageID, ()> {
         // find all packages originating from --trust packages from cli
         let mut set: ArrayHashMap<PackageID, ()> = ArrayHashMap::default();
-        if self.options.do_.trust_dependencies_from_args() && self.lockfile.packages.len() > 0 {
-            let root_id = self
-                .root_package_id
-                .get(&self.lockfile, self.workspace_name_hash) as usize;
-            let root_deps = self.lockfile.packages.items_dependencies()[root_id];
+        if self.options.do_.trust_dependencies_from_args()
+            && self.lockfile.packages.len() > 0
+            && let Some(root_id) =
+                (self.root_package_id).get(&self.lockfile, self.workspace_name_hash)
+        {
+            let root_deps = self.lockfile.packages.items_dependencies()[root_id as usize];
             for dep_id in root_deps.begin()..root_deps.end() {
                 let root_dep = &self.lockfile.buffers.dependencies[dep_id as usize];
                 for request in self.update_requests.iter() {

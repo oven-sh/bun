@@ -2,8 +2,10 @@
 // A compiler that crashes says it in the crash report, behind the reason. No flag makes it crash at a known place, so here somebody ends a build that takes long.
 import { expect } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, raiseDoesNothing, tempDir } from "harness";
+import { constants } from "os";
 import { join } from "path";
+import { cCompiler, without } from "./harness/capabilities";
 import { spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
 import { buildEnvironment } from "./harness/flags";
@@ -41,12 +43,12 @@ describe("compile/aot/a build that stops says where", () => {
     ]);
   const environment = { ...bunEnv, ...withoutCrashReport };
 
-  async function endWhileItCompiles(signal: NodeJS.Signals) {
+  async function endWhileItCompiles(signal: NodeJS.Signals, env = environment) {
     const start = performance.now();
     await using build = Bun.spawn({
       cmd: command("takes-long.ts"),
       cwd: folder,
-      env: { ...environment, [buildEnvironment.logsPhaseTimes]: "1" },
+      env: { ...env, [buildEnvironment.logsPhaseTimes]: "1" },
       stdin: "ignore",
       stdout: "ignore",
       stderr: "pipe",
@@ -65,7 +67,7 @@ describe("compile/aot/a build that stops says where", () => {
       build.kill(signal);
     }
     await build.exited;
-    return { stderr, signal: build.signalCode };
+    return { stderr, signal: build.signalCode, exitCode: build.exitCode };
   }
 
   test("a build that reaches its end says nothing of the kind", async () => {
@@ -83,6 +85,7 @@ describe("compile/aot/a build that stops says where", () => {
       expect(await endWhileItCompiles("SIGILL")).toEqual({
         stderr: expect.stringContaining(`Signal 4 was sent by process ${process.pid}.\n`),
         signal: "SIGILL",
+        exitCode: null,
       });
     },
     300_000,
@@ -95,6 +98,21 @@ describe("compile/aot/a build that stops says where", () => {
       expect(await endWhileItCompiles(signal)).toEqual({
         stderr: expect.stringMatching(/^Still compiling .+ in (walk|sweep|emit|allocate|encode)\.$/m),
         signal,
+        exitCode: null,
+      });
+    },
+    300_000,
+  );
+
+  // The kernel drops a signal whose action is the default one if its target is the first process of a PID namespace. A raise() that does nothing stands for that kernel.
+  test.skipIf(!isLinux || !!without("a C compiler"))(
+    "a build that takes long, which SIGTERM cannot end, says what it is still compiling and exits with 128 + the number of the signal",
+    async () => {
+      const env = { ...(await raiseDoesNothing.env(cCompiler!)), ...withoutCrashReport };
+      expect(await endWhileItCompiles("SIGTERM", env)).toEqual({
+        stderr: expect.stringMatching(/^Still compiling .+ in (walk|sweep|emit|allocate|encode)\.$/m),
+        signal: null,
+        exitCode: 128 + constants.signals.SIGTERM,
       });
     },
     300_000,

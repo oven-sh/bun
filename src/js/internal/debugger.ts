@@ -31,6 +31,18 @@ const enum FramerState {
   WaitingForMessage,
 }
 
+interface UnsentDataHolder {
+  hasUnsentData: boolean;
+}
+
+// The inspected thread, before it exits, waits a bounded time while a transport holds bytes the kernel has not taken.
+let reportTransportHasUnsentData: (hasUnsentData: boolean) => void;
+function setHasUnsentData(transport: UnsentDataHolder, hasUnsentData: boolean): void {
+  if (transport.hasUnsentData === hasUnsentData) return;
+  transport.hasUnsentData = hasUnsentData;
+  reportTransportHasUnsentData(hasUnsentData);
+}
+
 let socketFramerMessageLengthBuffer: Buffer;
 class SocketFramer {
   state: FramerState = FramerState.WaitingForLength;
@@ -38,6 +50,7 @@ class SocketFramer {
   sizeBuffer: Buffer = Buffer.alloc(4);
   sizeBufferIndex: number = 0;
   bufferedData: Buffer = Buffer.alloc(0);
+  hasUnsentData: boolean = false;
 
   constructor(private onMessage: (message: string | string[]) => void) {
     if (!socketFramerMessageLengthBuffer) {
@@ -51,6 +64,7 @@ class SocketFramer {
     this.bufferedData = Buffer.alloc(0);
     this.sizeBufferIndex = 0;
     this.sizeBuffer = Buffer.alloc(4);
+    setHasUnsentData(this, false);
   }
 
   send(socket: FramedSocket, data: string): void {
@@ -60,7 +74,8 @@ class SocketFramer {
 
     socketFramerMessageLengthBuffer.writeUInt32BE(Buffer.byteLength(data), 0);
     socket.$write(socketFramerMessageLengthBuffer);
-    socket.$write(data);
+    // false: the socket keeps what the kernel did not take, the length included, until `drain`.
+    setHasUnsentData(this, socket.$write(data) === false);
   }
 
   onData(socket: FramedSocket, data: Buffer): void {
@@ -139,7 +154,9 @@ export default function (
   urlIsServer: boolean,
   isNodeInspector: boolean,
   reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
+  setTransportHasUnsentData: (hasUnsentData: boolean) => void,
 ): void {
+  reportTransportHasUnsentData = setTransportHasUnsentData;
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
     return;
@@ -450,7 +467,7 @@ class Debugger {
             }
             socket.data.framer.onData(socket, bytes);
           },
-          drain: (_socket: FramedSocket) => {},
+          drain: onFramedSocketDrain,
           close: (socket: FramedSocket) => {
             const socketData = socket.data;
             if (socketData) {
@@ -570,7 +587,7 @@ class Debugger {
     }
   }
 
-  #open(connection: ConnectionOwner, writer: Writer): void {
+  #open(connection: ConnectionOwner, writer: FlushableWriter): void {
     const { data } = connection;
     const { refEventLoop } = data;
 
@@ -628,8 +645,11 @@ class Debugger {
 
   #close(connection: ConnectionOwner): void {
     const { data } = connection;
-    const { backend } = data;
+    const { backend, client } = data;
     backend?.close();
+    if (client) {
+      setHasUnsentData(client, false);
+    }
   }
 
   #error(connection: ConnectionOwner, error: Error): void {
@@ -637,6 +657,13 @@ class Debugger {
     const { backend } = data;
     console.error(error);
     backend?.close();
+  }
+}
+
+// Called once the socket has written everything `$write` kept.
+function onFramedSocketDrain(socket: FramedSocket): void {
+  if (socket.data) {
+    setHasUnsentData(socket.data.framer, false);
   }
 }
 
@@ -722,7 +749,7 @@ async function connectToUnixServer(
         },
 
         // Ensure we always drain the socket.
-        drain: (_socket: FramedSocket) => {},
+        drain: onFramedSocketDrain,
 
         close: (socket: FramedSocket) => {
           const socketData = socket.data;
@@ -765,22 +792,28 @@ function nodeVersionInfo(): unknown {
   };
 }
 
-function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {
+function webSocketWriter(ws: ServerWebSocket<unknown>): FlushableWriter {
   return {
     write: message => !!ws.sendText(message),
+    isFlushed: () => ws.getBufferedAmount() === 0,
     close: () => ws.close(),
   };
 }
 
-function bufferedWriter(writer: Writer): Writer {
+function bufferedWriter(writer: FlushableWriter): BufferedWriter {
   let draining = false;
   let pendingMessages: string[] = [];
+  let checkScheduled = false;
 
-  return {
+  const client: BufferedWriter = {
+    hasUnsentData: false,
     write: message => {
       if (draining || !writer.write(message)) {
         pendingMessages.push(message);
       }
+      // A write inside a uWS callback lands in the cork buffer, which getBufferedAmount() does not count.
+      setHasUnsentData(client, true);
+      scheduleFlushedCheck();
       return true;
     },
     drain: () => {
@@ -795,6 +828,7 @@ function bufferedWriter(writer: Writer): Writer {
         pendingMessages.length = 0;
       } finally {
         draining = false;
+        scheduleFlushedCheck();
       }
     },
     close: () => {
@@ -802,6 +836,23 @@ function bufferedWriter(writer: Writer): Writer {
       pendingMessages.length = 0;
     },
   };
+
+  // Not a microtask: inside an inbound `message`, microtasks run before uWS uncorks the socket.
+  function scheduleFlushedCheck() {
+    if (checkScheduled) return;
+    checkScheduled = true;
+    setImmediate(releaseIfFlushed);
+  }
+
+  // While bytes remain, uWS calls `drain` again each time some leave.
+  function releaseIfFlushed() {
+    checkScheduled = false;
+    if (pendingMessages.length === 0 && writer.isFlushed()) {
+      setHasUnsentData(client, false);
+    }
+  }
+
+  return client;
 }
 
 const defaultHostname = "localhost";
@@ -941,7 +992,7 @@ type ConnectionOwner = {
 
 type Connection = {
   refEventLoop: boolean;
-  client?: Writer;
+  client?: BufferedWriter;
   backend?: Backend;
   // Present for node:inspector connections, which speak the V8 protocol.
   adapter?: InspectorCDPAdapter;
@@ -952,3 +1003,9 @@ type Writer = {
   drain?: () => void;
   close: () => void;
 };
+
+type FlushableWriter = Writer & {
+  isFlushed: () => boolean;
+};
+
+type BufferedWriter = Writer & UnsentDataHolder;

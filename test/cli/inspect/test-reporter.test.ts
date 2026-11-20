@@ -1,7 +1,9 @@
 import { Subprocess, spawn, write } from "bun";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import net from "node:net";
 import { join } from "node:path";
+import { OP, RawClient } from "../../js/web/websocket/raw-peer";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
 
@@ -454,5 +456,339 @@ afterAll(async () => {
       expect(stderr).toBe("");
     }
     expect(exitCode).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/34218
+describe.concurrent("inspector events written before the process exits", () => {
+  type Frontend = "ws" | "unix";
+
+  // The runner does not unwind a test it times out; killing that test's child ends every wait it is still in.
+  const children = new Set<Subprocess>();
+  afterAll(() => children.forEach(child => child.kill()));
+
+  // Collects the child's stderr and resolves each `waitFor` once a match appears; rejects it once stderr has ended
+  // or failed without one, including a `waitFor` that starts after that.
+  function watchStderr(child: Subprocess<"ignore" | "pipe", "ignore", "pipe">) {
+    let text = "";
+    let end: { error?: unknown } | undefined;
+    const waiters: { pattern: RegExp; resolve: (match: RegExpMatchArray) => void; reject: (error: Error) => void }[] =
+      [];
+    const check = () => {
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        const { pattern, resolve, reject } = waiters[i];
+        const match = text.match(pattern);
+        if (match) resolve(match);
+        else if (end)
+          reject(new Error(`stderr ${end.error ? `failed (${end.error})` : "ended"} without ${pattern}:\n${text}`));
+        else continue;
+        waiters.splice(i, 1);
+      }
+    };
+    const ended = (async () => {
+      const decoder = new TextDecoder();
+      try {
+        for await (const chunk of child.stderr) {
+          text += decoder.decode(chunk, { stream: true });
+          check();
+        }
+        text += decoder.decode();
+        end = {};
+      } catch (error) {
+        end = { error };
+      }
+      check();
+      if (end.error) throw end.error;
+    })();
+    // Awaited at the end of a run; a run that fails before then must not leave an unhandled rejection.
+    ended.catch(() => {});
+    return {
+      ended,
+      get text() {
+        return text;
+      },
+      waitFor(pattern: RegExp) {
+        const { promise, resolve, reject } = Promise.withResolvers<RegExpMatchArray>();
+        promise.catch(() => {});
+        waiters.push({ pattern, resolve, reject });
+        check();
+        return promise;
+      },
+    };
+  }
+  type Stderr = ReturnType<typeof watchStderr>;
+
+  // The runner prints it just before it exits.
+  const summary = /Ran \d+ tests across 1 file\./;
+
+  /** Rejects `failed` once anything ends the run early; every wait in the run goes through `unlessFailed`. */
+  function failurePath() {
+    const failed = Promise.withResolvers<never>();
+    failed.promise.catch(() => {});
+    return {
+      fail: (error: unknown) => failed.reject(error),
+      unlessFailed: <T>(promise: Promise<T>) => Promise.race([promise, failed.promise]),
+    };
+  }
+  type FailurePath = ReturnType<typeof failurePath>;
+
+  function spawnInspected(dir: string, inspect: string, testFile: string, stdin: "ignore" | "pipe") {
+    return spawn({
+      cmd: [bunExe(), `--inspect-wait=${inspect}`, "test", testFile],
+      env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: undefined },
+      cwd: dir,
+      stdin,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+  }
+
+  /** Watches `child`'s stderr, and fails the run if the child exits before the summary. */
+  function observe(child: Subprocess<"ignore" | "pipe", "ignore", "pipe">, { fail }: FailurePath) {
+    children.add(child);
+    const stderr = watchStderr(child);
+    child.exited
+      .then(async code => {
+        children.delete(child);
+        await stderr.ended.catch(() => {});
+        if (!summary.test(stderr.text)) fail(new Error(`exited with ${code} before the summary:\n${stderr.text}`));
+      })
+      .catch(fail);
+    return stderr;
+  }
+
+  /** A RawClient that hands each frame to `onFrame` as soon as it is complete, and keeps none of them. */
+  class FrameCountingClient extends RawClient {
+    onFrame = (_head: number, _payload: Buffer) => {};
+    #chunks: Buffer[] = [];
+    #size = 0;
+    #needed = 2;
+
+    override push(chunk: Buffer) {
+      this.#chunks.push(chunk);
+      this.#size += chunk.length;
+      if (this.#size < this.#needed) return;
+      let buffer = this.#chunks.length === 1 ? chunk : Buffer.concat(this.#chunks);
+      for (;;) {
+        this.#needed = 2;
+        if (buffer.length < 2) break;
+        let length = buffer[1] & 127;
+        let offset = 2;
+        if (length === 126) {
+          if (buffer.length < 4) break;
+          length = buffer.readUInt16BE(2);
+          offset = 4;
+        } else if (length === 127) {
+          if (buffer.length < 10) break;
+          length = Number(buffer.readBigUInt64BE(2));
+          offset = 10;
+        }
+        this.#needed = offset + length;
+        if (buffer.length < this.#needed) break;
+        this.onFrame(buffer[0], buffer.subarray(offset, offset + length));
+        buffer = buffer.subarray(offset + length);
+      }
+      this.#chunks = buffer.length ? [buffer] : [];
+      this.#size = buffer.length;
+    }
+  }
+
+  /** Connects to the WebSocket URL the child prints, with `onFrame` set before any frame can arrive. */
+  async function connectWs(
+    stderr: Stderr,
+    { fail, unlessFailed }: FailurePath,
+    onFrame: (head: number, payload: Buffer) => void,
+  ) {
+    // The URL ends at whitespace or an escape: a chunk boundary must not cut it short.
+    const [, url] = await unlessFailed(stderr.waitFor(/(ws:\/\/[^\s\x1b]+)[\s\x1b]/));
+    const { port, pathname } = new URL(url);
+    const client = new FrameCountingClient(Number(port), { path: pathname });
+    client.onFrame = onFrame;
+    client.socket.on("error", fail);
+    try {
+      const { status } = await unlessFailed(client.response);
+      if (!status.startsWith("HTTP/1.1 101 ")) throw new Error(`upgrade failed: ${status}\n${stderr.text}`);
+      return client;
+    } catch (error) {
+      client.destroy();
+      throw error;
+    }
+  }
+
+  /** Records the TestReporter and Console events it is handed, as messages or as WebSocket frames. */
+  function eventRecorder({ fail, unlessFailed }: FailurePath) {
+    const found: number[] = [];
+    const ended: number[] = [];
+    let consoleMessages = 0;
+    const onMessage = (message: string) => {
+      let method, params;
+      try {
+        ({ method, params } = JSON.parse(message));
+      } catch (error) {
+        return fail(error);
+      }
+      if (method === "TestReporter.found" && params.type === "test") found.push(params.id);
+      else if (method === "TestReporter.end") ended.push(params.id);
+      else if (method === "Console.messageAdded") consoleMessages++;
+    };
+    return {
+      onMessage,
+      onFrame(head: number, payload: Buffer) {
+        if (head === (0x80 | OP.text)) onMessage(payload.toString());
+      },
+      async result(child: Subprocess, stderr: Stderr) {
+        await unlessFailed(stderr.ended);
+        const exitCode = await unlessFailed(child.exited);
+        return {
+          found,
+          ended,
+          consoleMessages,
+          summary: stderr.text.match(summary)?.[0],
+          exitCode,
+          signalCode: child.signalCode,
+        };
+      },
+    };
+  }
+
+  /**
+   * Runs `count` synchronous tests that each log `payloadSize` bytes, under `--inspect-wait` with a raw frontend
+   * that enables TestReporter and Console, then reads nothing until the run summary is on stderr, which the runner
+   * prints just before it exits.
+   */
+  async function run(frontend: Frontend, { count, payloadSize }: Flood) {
+    using dir = tempDir("inspector-exit-flush", {
+      "flood.test.ts": `
+import { test } from "bun:test";
+const payload = Buffer.alloc(${payloadSize}, "x").toString();
+for (let i = 0; i < ${count}; i++) test("t" + i, () => { console.log(i, payload); });
+`,
+    });
+    const failure = failurePath();
+    const { fail, unlessFailed } = failure;
+
+    const socketPath = join(String(dir), "inspector.sock");
+    const accepted = Promise.withResolvers<{ socket: net.Socket; closed: Promise<unknown> }>();
+    const sockets: net.Socket[] = [];
+    await using server =
+      frontend === "unix"
+        ? net.createServer(socket => {
+            sockets.push(socket);
+            const closed = new Promise(resolve => socket.on("error", fail).once("close", resolve).pause());
+            accepted.resolve({ socket, closed });
+          })
+        : undefined;
+    // Before the server's dispose, which waits for its connections to end.
+    using _ = { [Symbol.dispose]: () => sockets.forEach(socket => socket.destroy()) };
+    if (server) {
+      server.on("error", fail);
+      await unlessFailed(new Promise<void>(resolve => server.listen(socketPath, resolve)));
+    }
+
+    const inspect = frontend === "unix" ? `unix:${socketPath}` : "ws://127.0.0.1:0/exit-flush";
+    await using child = spawnInspected(String(dir), inspect, "flood.test.ts", "ignore");
+    const stderr = observe(child, failure);
+    const recorder = eventRecorder(failure);
+    const handshake = ["Inspector.enable", "TestReporter.enable", "Console.enable", "Inspector.initialized"].map(
+      (method, id) => JSON.stringify({ id, method }),
+    );
+
+    if (frontend === "unix") {
+      const { socket, closed } = await unlessFailed(accepted.promise);
+      const framer = new SocketFramer(recorder.onMessage);
+      for (const message of handshake) framer.send(socket, message);
+      await unlessFailed(stderr.waitFor(summary));
+      socket.on("data", data => framer.onData(socket, data)).resume();
+      await unlessFailed(closed);
+    } else {
+      using client = await connectWs(stderr, failure, recorder.onFrame);
+      client.socket.pause();
+      for (const message of handshake) client.text(message);
+      await unlessFailed(stderr.waitFor(summary));
+      client.socket.resume();
+      await unlessFailed(client.closed);
+    }
+    return recorder.result(child, stderr);
+  }
+
+  type Flood = { count: number; payloadSize: number };
+
+  // Far more than the kernel buffers for a peer that is not reading, so most of it is still in the debugger thread's
+  // user-space buffers when the runner exits. Loopback TCP holds at most a few MiB (Linux's tcp_wmem plus tcp_rmem
+  // maxima, 4 + 6 MiB by default; macOS caps each socket buffer at 4 MiB). The ws flood is also over uWS's 16 MiB
+  // backpressure limit, so a debugger thread that keeps up with the run queues frames itself. A unix socket holds far
+  // less (Linux's wmem_default is 208 KiB, macOS's net.local.stream buffers 8 KiB).
+  const floods: Record<Frontend, Flood> = {
+    ws: { count: 160, payloadSize: 256 * 1024 },
+    unix: { count: 64, payloadSize: 32 * 1024 },
+  };
+
+  async function expectEveryEvent(frontend: Frontend) {
+    const flood = floods[frontend];
+    const result = await run(frontend, flood);
+    expect(result).toEqual({
+      found: expect.any(Array),
+      ended: result.found,
+      consoleMessages: flood.count,
+      summary: `Ran ${flood.count} tests across 1 file.`,
+      exitCode: 0,
+      signalCode: null,
+    });
+    expect(result.found).toHaveLength(flood.count);
+  }
+
+  test("a frontend that reads only after the run gets every event (ws)", () => expectEveryEvent("ws"));
+
+  // On Windows a node:net path names a named pipe (https://nodejs.org/api/net.html#identifying-paths-for-ipc-connections).
+  test.skipIf(!isPosix)("a frontend that reads only after the run gets every event (unix)", () =>
+    expectEveryEvent("unix"),
+  );
+
+  // The run's last events are still waiting for the debugger thread when the runner exits: the frontend sends all but
+  // the last fragment of a large message, waits for the Pong that shows the debugger thread has taken it, then sends
+  // that fragment just as it lets the tests start, and the debugger thread is busy with the message until they end.
+  test("a frontend gets the events of tests that end while the debugger thread is busy", async () => {
+    using dir = tempDir("inspector-exit-flush", {
+      "quick.test.ts": `
+import { beforeAll, test } from "bun:test";
+beforeAll(() => Bun.stdin.text());
+for (let i = 0; i < 5; i++) test("t" + i, () => {});
+`,
+    });
+    const failure = failurePath();
+    const { unlessFailed } = failure;
+    await using child = spawnInspected(String(dir), "ws://127.0.0.1:0/exit-flush", "quick.test.ts", "pipe");
+    const stderr = observe(child, failure);
+    const recorder = eventRecorder(failure);
+    const pong = Promise.withResolvers<void>();
+    pong.promise.catch(() => {});
+    using client = await connectWs(stderr, failure, (head, payload) => {
+      if (head === (0x80 | OP.pong)) pong.resolve();
+      else recorder.onFrame(head, payload);
+    });
+    client.closed.then(() =>
+      pong.reject(new Error(`the inspector connection closed before the Pong:\n${stderr.text}`)),
+    );
+    for (const [id, method] of ["Inspector.enable", "TestReporter.enable", "Inspector.initialized"].entries())
+      client.text(JSON.stringify({ id, method }));
+    // Milliseconds of work for the debugger thread, within its WebSocket server's 16 MiB maxPayloadLength. A method that
+    // does not exist only gets an error reply.
+    const pad = Buffer.alloc(4 * 1024 * 1024, "x").toString();
+    client.text(`{"id":3,"method":"Inspector.pad","params":{"pad":"${pad}"}`, { fin: false });
+    client.ping();
+    await unlessFailed(pong.promise);
+    client.send(OP.continuation, "}");
+    child.stdin.end();
+    await unlessFailed(client.closed);
+    const result = await recorder.result(child, stderr);
+    expect(result).toEqual({
+      found: expect.any(Array),
+      ended: result.found,
+      consoleMessages: 0,
+      summary: "Ran 5 tests across 1 file.",
+      exitCode: 0,
+      signalCode: null,
+    });
+    expect(result.found).toHaveLength(5);
   });
 });

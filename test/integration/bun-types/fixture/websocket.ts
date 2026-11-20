@@ -346,3 +346,15 @@ import { expectType } from "./utilities";
     expectType(corked).is<Bun.ServerWebSocket<{ id: number }>>();
   });
 }
+
+// A connection over a Unix domain socket has no IP address, and one that has closed has none to read.
+Bun.serve({
+  unix: "asdf",
+  fetch: (request, server) => (server.upgrade(request) ? undefined : new Response("not a WebSocket")),
+  websocket: {
+    message() {},
+    close(ws) {
+      expectType(ws.remoteAddress).is<string | undefined>();
+    },
+  },
+});

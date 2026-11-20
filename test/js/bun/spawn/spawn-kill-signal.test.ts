@@ -143,7 +143,7 @@ describe.concurrent.skipIf(isWindows)("signal names map to the OS's own numbers"
         timeout: 1,
         killSignal: number,
       });
-      expect({ exitCode, signalCode }).toEqual<unknown>({ exitCode: null, signalCode: name });
+      expect({ exitCode, signalCode }).toEqual({ exitCode: null, signalCode: name });
     });
   });
 });
@@ -200,6 +200,6 @@ describe.concurrent.skipIf(!isLinux)("a signal with no name", () => {
 
   test("spawnSync reports the number too", () => {
     const { exitCode, signalCode } = Bun.spawnSync({ cmd: ["sh", "-c", "kill -40 $$"], ...quiet });
-    expect({ exitCode, signalCode }).toEqual<unknown>({ exitCode: null, signalCode: 40 });
+    expect({ exitCode, signalCode }).toEqual({ exitCode: null, signalCode: 40 });
   });
 });

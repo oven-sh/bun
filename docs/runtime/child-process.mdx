@@ -596,11 +596,12 @@ interface Subprocess extends AsyncDisposable {
 interface SyncSubprocess {
   stdout: Buffer | undefined;
   stderr: Buffer | undefined;
-  exitCode: number;
+  exitCode: number | null; // null if a signal ended the process
   success: boolean;
   resourceUsage: ResourceUsage;
   signalCode?: NodeJS.Signals | number;
-  exitedDueToTimeout?: true;
+  exitedDueToTimeout?: boolean;
+  exitedDueToMaxBuffer?: boolean;
   pid: number;
 }
 

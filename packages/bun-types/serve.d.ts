@@ -265,12 +265,18 @@ declare module "bun" {
     /**
      * The IP address of the client.
      *
+     * `undefined` when there is no IP address to report: the connection does not
+     * use an IP socket (`Bun.serve({ unix })`), it has closed, or the client has
+     * already disconnected. That can be the case in any handler, `open` included.
+     * Bun caches the first read, so a value read while the client was connected
+     * is still there in `close`.
+     *
      * @example
      * ```ts
      * console.log(socket.remoteAddress); // "127.0.0.1"
      * ```
      */
-    readonly remoteAddress: string;
+    readonly remoteAddress: string | undefined;
 
     /**
      * The ready state of the client.

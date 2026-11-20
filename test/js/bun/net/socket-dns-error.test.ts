@@ -109,7 +109,7 @@ test.each([
   ["12\t7.0.0.1", "ENOTFOUND"],
 ])("Bun.connect to %j: %s", async (hostname, expected) => {
   // On every address, so that a connection to 127.1.0.0 also arrives.
-  const dialed: string[] = [];
+  const dialed: (string | undefined)[] = [];
   using listener = Bun.listen({
     hostname: "0.0.0.0",
     port: 0,

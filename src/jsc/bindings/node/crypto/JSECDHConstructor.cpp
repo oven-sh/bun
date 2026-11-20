@@ -106,6 +106,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     RETURN_IF_EXCEPTION(scope, {});
 
     auto buffer = keyView->span();
+    if (buffer.size() > INT32_MAX) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "key is too big"_s);
     if (buffer.empty())
         return JSValue::encode(jsEmptyString(vm));
 
@@ -115,11 +117,11 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
 
     auto group = ncrypto::ECGroupPointer::NewByCurveName(nid);
     if (!group)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to get EC_GROUP"_s);
+        return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Failed to get EC_GROUP"_s);
 
     auto point = ncrypto::ECPointPointer::New(group);
     if (!point)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to create EC_POINT"_s);
+        return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Failed to create EC_POINT"_s);
 
     const unsigned char* key_data = buffer.data();
     size_t key_length = buffer.size();

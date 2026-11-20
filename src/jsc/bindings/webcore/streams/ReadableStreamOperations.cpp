@@ -416,8 +416,12 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     const ReadableStreamState state = stream->m_state;
     if (state == ReadableStreamState::Closed)
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
-    if (state == ReadableStreamState::Errored)
+    if (state == ReadableStreamState::Errored) {
+        // The consumer that started the stream already got this error, so a cancel() it drops in its cleanup is not an unhandled rejection.
+        if (stream->m_lazyStartFailed)
+            RELEASE_AND_RETURN(scope, promiseRejectedWithAsHandled(globalObject, stream->m_storedError.get()));
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, stream->m_storedError.get()));
+    }
 
     readableStreamClose(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, nullptr);

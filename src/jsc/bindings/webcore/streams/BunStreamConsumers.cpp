@@ -865,18 +865,18 @@ JSValue readableStreamIntoArray(JSGlobalObject* globalObject, WebCore::JSReadabl
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    stream->materializeIfNeeded(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto* chunks = constructEmptyArray(globalObject, nullptr);
-    RETURN_IF_EXCEPTION(scope, {});
-    const ControllerKind controllerKind = stream->m_controllerKind;
-    bool isQueueBacked = controllerKind == ControllerKind::Default || controllerKind == ControllerKind::Byte;
-    // From here on this returns a promise (promiseFromSteps): readMany() throwing synchronously on an
+    // This returns a promise (promiseFromSteps): a lazy start that fails, readMany() throwing synchronously on an
     // already-errored stream, a getter throwing while draining, are its rejection.
     RELEASE_AND_RETURN(scope, promiseFromSteps(globalObject, [&] -> JSPromise* {
         auto scope = DECLARE_THROW_SCOPE(vm);
+        stream->materializeIfNeeded(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto* chunks = constructEmptyArray(globalObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        const ControllerKind controllerKind = stream->m_controllerKind;
+        bool isQueueBacked = controllerKind == ControllerKind::Default || controllerKind == ControllerKind::Byte;
         if (!isQueueBacked) {
             // Direct (and controller-less) streams keep the generic readMany loop.
             JSValue many = readableStreamDefaultReaderReadMany(globalObject, reader);

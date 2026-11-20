@@ -65,18 +65,22 @@ export function getStdioWriteStream(
           // stdout/stderr don't produce readable data, so yield nothing
         })();
       };
-    } else {
-      // File-backed stdio: Node's SyncWriteStream runs end() -> finish ->
-      // destroy -> the _destroy override below -> _undestroy(), which resets
-      // writable state so later writes succeed. autoClose:false disabled that.
-      stream._writableState.autoDestroy = true;
     }
   }
 
   if (fd === 1 || fd === 2) {
+    // As node's stdio streams: 'finish' and a failed write both run the
+    // _destroy below, which resets the stream so that later writes go through
+    // again. autoClose:false above only keeps the fd open.
+    stream._writableState.autoDestroy = true;
     stream.destroySoon = stream.destroy;
+    const isFile = !isTTY && fdType === BunProcessStdinFdType.file;
     stream._destroy = function (err, cb) {
       cb(err);
+      // After end() a pipe or tty stays ended, so a later write fails with
+      // ERR_STREAM_WRITE_AFTER_END (node's gets EPIPE from the shut-down
+      // handle). A file takes writes again, like node's SyncWriteStream.
+      if (!err && !isFile) this.writable = false;
       this._undestroy();
 
       if (!this._writableState.emitClose) {

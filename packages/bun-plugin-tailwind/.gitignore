@@ -1,0 +1,4 @@
+node_modules
+*.node
+*.tgz
+native/target

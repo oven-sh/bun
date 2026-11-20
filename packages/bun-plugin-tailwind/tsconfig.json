@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "types": ["bun"],
+
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    // `Features` of `@tailwindcss/node` is declared as a const enum.
+    "verbatimModuleSyntax": false,
+    "isolatedModules": false,
+    "noEmit": true,
+
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true
+  },
+  "include": ["src", "test"]
+}

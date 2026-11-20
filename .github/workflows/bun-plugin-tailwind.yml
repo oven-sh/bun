@@ -1,0 +1,131 @@
+name: bun-plugin-tailwind
+
+permissions:
+  contents: read
+
+on:
+  # To publish: run on main, then follow "Releasing" in packages/bun-plugin-tailwind/README.md.
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/bun-plugin-tailwind/**"
+      - "packages/bun-native-plugin-rs/**"
+      - ".github/workflows/bun-plugin-tailwind.yml"
+      - "!**/*.md"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/bun-plugin-tailwind/**"
+      - "packages/bun-native-plugin-rs/**"
+      - ".github/workflows/bun-plugin-tailwind.yml"
+      - "!**/*.md"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: "canary"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: ./packages/bun-plugin-tailwind
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          # The action's default bucket can be many commits behind for canary.
+          download-url: https://github.com/oven-sh/bun/releases/download
+      - name: Install dependencies
+        run: |
+          (cd ../.. && bun install)
+          bun install --frozen-lockfile
+      - name: Lint
+        run: |
+          bun lint --format=github --deny-warnings
+          bun fmt --config ../../.prettierrc --check .
+      - name: Check types
+        run: bun check:types
+
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `test`: the runner can load what it built.
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            test: true
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            test: true
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+          # glibc 2.17
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            flags: --use-napi-cross
+            test: true
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            flags: --use-napi-cross
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            flags: --cross-compile
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            flags: --cross-compile
+          - os: ubuntu-latest
+            target: aarch64-linux-android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          download-url: https://github.com/oven-sh/bun/releases/download
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        if: ${{ contains(matrix.target, 'musl') }}
+        with:
+          version: 0.14.1
+          use-cache: false
+      - name: Install cargo-zigbuild
+        if: ${{ contains(matrix.target, 'musl') }}
+        uses: taiki-e/install-action@65851e10cd6c377f11a60e600abc07cb08643468 # v2
+        with:
+          tool: cargo-zigbuild
+      - name: Install the Rust target
+        run: rustup target add ${{ matrix.target }}
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Check that Cargo.lock is up to date
+        run: cargo fetch --locked --manifest-path native/Cargo.toml
+      - name: Build
+        run: bun run build:native --target ${{ matrix.target }} ${{ matrix.flags }}
+      - name: Test
+        if: ${{ matrix.test }}
+        run: bun test
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.target }}
+          path: packages/bun-plugin-tailwind/*.node
+          if-no-files-found: error

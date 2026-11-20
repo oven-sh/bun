@@ -1112,6 +1112,7 @@ pub(crate) fn run_tasks(
                             &res,
                             resolved,
                             None,
+                            false,
                         );
                         manager.enqueue_git_task(queued);
                     }
@@ -1623,6 +1624,8 @@ pub fn generate_network_task_for_tarball<'a>(
     is_required: bool,
     dependency_id: DependencyID,
     package: &Package,
+    // See `ExtractTarball::reads_bundle`.
+    reads_bundle: bool,
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     // Only reached when the tarball is not already extracted in the cache.
     if this.options.offline == Options::OfflineMode::Offline {
@@ -1706,8 +1709,7 @@ pub fn generate_network_task_for_tarball<'a>(
         } else {
             b""
         },
-        reads_bundle: package.resolution.tag == bun_install::ResolutionTag::Npm
-            && this.is_bundler(package),
+        reads_bundle,
     };
 
     if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {

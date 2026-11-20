@@ -470,4 +470,8 @@ pub(crate) struct GitCheckoutRequest {
     pub(crate) resolved: StringOrTinyString,
     pub(crate) resolution: Resolution,
     pub(crate) apply_patch_task: Option<Box<PatchTask>>,
+    /// A resolve that adds the checkout asks the task to also read what it ships in its own
+    /// `node_modules` into `ExtractData::bundle`, if its package.json names bundled dependencies.
+    /// Never set by the install phase, which has no use for the result.
+    pub(crate) reads_bundle: bool,
 }

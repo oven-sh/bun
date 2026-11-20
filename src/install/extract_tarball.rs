@@ -41,9 +41,11 @@ pub struct ExtractTarball {
     pub(crate) github_resolved: &'static [u8],
     /// For an npm resolution. `None` is the default registry.
     pub(crate) registry: Option<FolderCacheKey>,
-    /// The package has bundled dependencies, so the task also reads what it ships in its own
-    /// `node_modules` into `ExtractData::bundle`. Only set for an npm package: a GitHub or tarball
-    /// package says so in the package.json that the task reads anyway.
+    /// A resolve that has just added the package asks the task to also read what the package
+    /// ships in its own `node_modules` into `ExtractData::bundle`. For an npm package the manifest
+    /// has said that it bundles dependencies. A GitHub or tarball package says so in the
+    /// package.json that the task reads anyway. Never set by the install phase, which has no use
+    /// for the result.
     pub(crate) reads_bundle: bool,
 }
 
@@ -626,7 +628,7 @@ impl ExtractTarball {
                     }
                 }
             }
-            let mut reads_bundle = self.reads_bundle;
+            let mut reads_bundle = self.reads_bundle && self.resolution.tag == ResolutionTag::Npm;
             if let Some(buf) = &json_buf {
                 crate::initialize_mini_store();
                 // Its locations borrow `buf`.
@@ -636,8 +638,9 @@ impl ExtractTarball {
                     &mut json_log,
                 ) {
                     Ok(parsed) => {
-                        reads_bundle |= self.resolution.tag != ResolutionTag::Npm
-                            && crate::git_runner::names_bundled_dependencies(&parsed.root);
+                        reads_bundle = self.reads_bundle
+                            && (reads_bundle
+                                || crate::git_runner::names_bundled_dependencies(&parsed.root));
                     }
                     Err(err) => {
                         log.add_error_fmt(

@@ -328,6 +328,7 @@ fn enqueue_download(
         is_required,
         dependency_id,
         &package,
+        false,
     )? {
         let request = task.take_request();
         this.network_tarball_batch.push(request);
@@ -361,6 +362,7 @@ fn enqueue_tarball_for_reading(
         alias,
         &resolution,
         Some(&integrity),
+        false,
     );
     this.task_batch.push(ThreadPool::Batch::from(task));
     Ok(())
@@ -410,6 +412,7 @@ fn enqueue_git_for_checkout(
             &resolution,
             resolved,
             patch_name_and_version_hash.map(|hash| (package_id, hash)),
+            false,
         );
         this.enqueue_git_task(task);
     } else {
@@ -2290,6 +2293,7 @@ fn bind_row_without_manifest(
                     return Ok(());
                 }
 
+                let reads_bundle = resolve_reads_bundle(this);
                 let task = enqueue_git_checkout(
                     this,
                     checkout_id,
@@ -2299,6 +2303,7 @@ fn bind_row_without_manifest(
                     &res,
                     stored_string(&resolved),
                     None,
+                    reads_bundle,
                 );
                 this.enqueue_git_task(task);
             } else {
@@ -2455,8 +2460,16 @@ fn bind_row_without_manifest(
                     return Ok(());
                 }
                 if !this.has_created_network_task(task_id, dependency.behavior.is_required()) {
-                    let task =
-                        enqueue_local_tarball(this, task_id, id, dependency.name, &res, None);
+                    let reads_bundle = resolve_reads_bundle(this);
+                    let task = enqueue_local_tarball(
+                        this,
+                        task_id,
+                        id,
+                        dependency.name,
+                        &res,
+                        None,
+                        reads_bundle,
+                    );
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
                 return Ok(());
@@ -2464,6 +2477,7 @@ fn bind_row_without_manifest(
 
             // Convert to `*mut` right away, so the borrow of `this` ends before
             // `enqueue_network_task` reborrows it.
+            let reads_bundle = resolve_reads_bundle(this);
             let network_task: Option<*mut NetworkTask> =
                 match run_tasks::generate_network_task_for_tarball(
                     this,
@@ -2477,6 +2491,7 @@ fn bind_row_without_manifest(
                         resolution: res,
                         ..Package::default()
                     },
+                    reads_bundle,
                 ) {
                     // An `--offline` miss. It was already reported if required, or skipped if
                     // optional.
@@ -2850,6 +2865,8 @@ pub fn enqueue_git_checkout(
     resolved: StringOrTinyString,
     // the package to patch and its name-and-version hash, if an apply step follows the checkout
     patch: Option<(PackageID, u64)>,
+    // See `GitCheckoutRequest::reads_bundle`.
+    reads_bundle: bool,
 ) -> NonNull<Task::Task> {
     // The patched-dependency entry can be missing (or its hash not yet
     // computed) when install state went stale — e.g. the patch was removed
@@ -2879,10 +2896,18 @@ pub fn enqueue_git_checkout(
                 pt.callback.apply_mut().task_id = Some(task_id);
                 pt
             }),
+            reads_bundle,
         },
         data: None,
     };
     Task::Task::create(this, task_id, job)
+}
+
+/// Returns true if the task that this resolve starts for a git, GitHub or tarball package also
+/// reads what the package ships: `is_bundler` can hold for the package that the task adds.
+#[inline]
+fn resolve_reads_bundle(this: &PackageManager) -> bool {
+    !this.options.runtime_auto_install
 }
 
 fn enqueue_local_tarball(
@@ -2893,6 +2918,8 @@ fn enqueue_local_tarball(
     resolution: &Resolution,
     // Of the package in the loaded lockfile.
     locked_integrity: Option<&Integrity>,
+    // See `ExtractTarball::reads_bundle`.
+    reads_bundle: bool,
 ) -> *mut ThreadPool::Task {
     let temp_dir = get_temporary_directory(this);
     let path = this.lockfile.str(resolution.local_tarball());
@@ -2927,7 +2954,7 @@ fn enqueue_local_tarball(
             skip_verify: false,
             in_trusted_dependencies: false,
             github_resolved: b"",
-            reads_bundle: false,
+            reads_bundle,
         },
         source: Task::TarballSource::Local {
             path: tarball_path,
@@ -3190,17 +3217,21 @@ fn is_row_unplaced(
         || this.lockfile.is_in_unplaced_subtree(dependency_id)
 }
 
+/// `may_bundle` is `ResolvedPackageResult::may_bundle` of the package.
 fn tarball_task(
     this: &mut PackageManager,
     name: SemverString,
     package: &Package,
     behavior: Behavior,
     dependency_id: DependencyID,
+    may_bundle: bool,
 ) -> crate::Result<Option<ResolvedPackageTask>> {
     let task_id =
         Task::Id::for_npm_package(this.lockfile.str(&name), package.resolution.npm().version);
     debug_assert!(!this.network_dedupe_map.contains(&task_id));
 
+    // The packages whose rows `on_first_resolution` keeps waiting for what this task reads.
+    let reads_bundle = may_bundle && this.is_bundler(package);
     let task = match run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
@@ -3208,6 +3239,7 @@ fn tarball_task(
         behavior.is_required(),
         dependency_id,
         package,
+        reads_bundle,
     ) {
         // An `--offline` miss of a bundler. It was already reported if required, or skipped if
         // optional.
@@ -3434,6 +3466,8 @@ fn get_or_put_resolved_package_with_find_result(
         let mut patchfile_hash: Option<u64> = None;
 
         let prefetches = this.options.do_.contains(Do::PREFETCH_RESOLVED_TARBALLS);
+        // The length is `u32::MAX` if the version bundles every dependency.
+        let may_bundle = find_result.package.bundled_dependencies.len != 0;
         let reads_bundle = ships_bundle(this, &package, find_result.package, inside_bundle);
         let mut state = this.determine_preinstall_state(
             &package,
@@ -3460,7 +3494,7 @@ fn get_or_put_resolved_package_with_find_result(
             install::PreinstallState::Done => None,
             // Neither `unplaced` nor `--lockfile-only` nor a security scanner skips this download.
             install::PreinstallState::Extract if reads_bundle => {
-                tarball_task(this, name, &package, behavior, dependency_id)?
+                tarball_task(this, name, &package, behavior, dependency_id, may_bundle)?
             }
             // If a placed dependency needs it too, the install phase fetches and patches it.
             _ if unplaced => None,
@@ -3468,7 +3502,7 @@ fn get_or_put_resolved_package_with_find_result(
             install::PreinstallState::Extract if !prefetches => None,
             // Do we need to download the tarball?
             install::PreinstallState::Extract => {
-                tarball_task(this, name, &package, behavior, dependency_id)?
+                tarball_task(this, name, &package, behavior, dependency_id, may_bundle)?
             }
             install::PreinstallState::CalcPatchHash => Some(ResolvedPackageTask::PatchTask(
                 PatchTask::new_calc_patch_hash(
@@ -3494,8 +3528,7 @@ fn get_or_put_resolved_package_with_find_result(
         Ok(Some(ResolvedPackageResult {
             package,
             is_first_time: true,
-            // The length is `u32::MAX` if the version bundles every dependency.
-            may_bundle: find_result.package.bundled_dependencies.len != 0,
+            may_bundle,
             task,
         }))
     })();

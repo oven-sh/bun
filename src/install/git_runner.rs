@@ -494,7 +494,11 @@ fn read_package_json(
         .dirname_store()
         .append(json_path)?;
 
-    let bundle = read_bundle(package_dir, &json_buf);
+    let bundle = if req.reads_bundle {
+        read_bundle(package_dir, &json_buf)
+    } else {
+        None
+    };
     Ok(ExtractData {
         url,
         resolved,

@@ -350,6 +350,9 @@ impl PatchTask {
                     debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
 
                     let is_required = dep_behavior.is_required();
+                    // Only a bundler whose turn is still to come has a use for what it ships.
+                    let reads_bundle = (manager.waiting_bundlers.iter())
+                        .any(|bundler| bundler.package_id == pkg_meta_id);
                     let network_task: *mut crate::NetworkTask =
                         match package_manager::generate_network_task_for_tarball(
                             manager,
@@ -358,6 +361,7 @@ impl PatchTask {
                             is_required,
                             dep_id,
                             &pkg,
+                            reads_bundle,
                         ) {
                             // --offline and not cached: already reported / skipped; nothing to patch
                             Err(crate::network_task::ForTarballError::Offline) => return Ok(()),

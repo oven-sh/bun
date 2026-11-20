@@ -2278,3 +2278,236 @@ test.concurrent("isolated: --check reports duplicates without touching the store
   }
   expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toStrictEqual(store);
 });
+
+// https://github.com/oven-sh/bun/issues/46620: a transitive range locked on an older version follows a
+// higher version that an install appends. Pinning 1.0.1 at the root and then dropping the pin leaves
+// one-range-dep's `^1.0.0` edge on 1.0.1, like a bun.lock resolved before 1.1.0 existed.
+async function setupStaleTransitive(packageDir: string, packageJson: string, root: object = { name: "foo" }) {
+  const lockfile = await installTwice(
+    packageDir,
+    packageJson,
+    { ...root, dependencies: { "one-range-dep": "1.0.0", "no-deps": "1.0.1" } },
+    { ...root, dependencies: { "one-range-dep": "1.0.0" } },
+  );
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.0.1"');
+  expect(lockfile).not.toContain('"no-deps@1.1.0"');
+  return lockfile;
+}
+
+// The lockfile the install wrote is what `--check` inspects; the write path of `bun dedupe` is covered above.
+async function expectOk(result: Promise<Result>) {
+  const { stderr, exitCode } = await result;
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+}
+
+test.concurrent.each(["hoisted", "isolated"] as const)(
+  "`bun add` of a higher version moves a locked transitive range onto it (%s linker)",
+  async linker => {
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+    await setupStaleTransitive(packageDir, packageJson);
+
+    await expectOk(run(packageDir, "add", "no-deps@1.1.0", "--linker", linker));
+    const lockfile = await lock(packageDir);
+    expect(lockfile).toContain('"no-deps": ["no-deps@1.1.0"');
+    expect(lockfile).not.toContain('"no-deps@1.0.1"');
+    expect(lockfile).not.toContain('"one-range-dep/no-deps"');
+    expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.1.0");
+    if (linker === "hoisted") {
+      expect(await exists(join(packageDir, "node_modules", "one-range-dep", "node_modules"))).toBeFalse();
+    } else {
+      const storeEntry = await realpath(join(packageDir, "node_modules", "one-range-dep"));
+      expect(await file(join(dirname(storeEntry), "no-deps", "package.json")).json()).toMatchObject({
+        version: "1.1.0",
+      });
+    }
+
+    expectNoDuplicates(await dedupe(packageDir, "--check"), 3);
+    await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+  },
+);
+
+test.concurrent.each([
+  ["`bun install no-deps@1.1.0`", (dir: string) => run(dir, "install", "no-deps@1.1.0")],
+  [
+    "a package.json edit and `bun install`",
+    async (dir: string) => {
+      await write(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "foo", dependencies: { "one-range-dep": "1.0.0", "no-deps": "^1.1.0" } }),
+      );
+      return run(dir, "install");
+    },
+  ],
+  [
+    "`bun update` of another package after a package.json edit",
+    async (dir: string) => {
+      await write(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "foo", dependencies: { "one-range-dep": "1.0.0", "no-deps": "^1.1.0" } }),
+      );
+      return run(dir, "update", "one-range-dep");
+    },
+  ],
+  // normal-dep-and-dev-dep@1.0.1 depends on no-deps@1.1.0: the higher copy comes in through a transitive edge.
+  [
+    "`bun add` of a package that depends on the higher version",
+    (dir: string) => run(dir, "add", "normal-dep-and-dev-dep@1.0.1"),
+  ],
+])("%s moves a locked transitive range onto the higher version it introduces", async (_, introduce) => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await setupStaleTransitive(packageDir, packageJson);
+
+  await expectOk(introduce(packageDir));
+  const lockfile = await lock(packageDir);
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.1.0"');
+  expect(lockfile).not.toContain('"no-deps@1.0.1"');
+  expect(await nodeModulesVersion(packageDir, "no-deps")).toBe("1.1.0");
+  expectNoDuplicates(await dedupe(packageDir, "--check"), lockPackageCount(lockfile));
+});
+
+// dedupe-divergent-strict@1.0.0 has a peer dependency on no-deps@^2.0.0 that nothing meets; it follows the others.
+test.concurrent("a locked peer edge that no version meets follows its siblings onto the higher version", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const lockfile = await installTwice(
+    packageDir,
+    packageJson,
+    { name: "foo", dependencies: { "one-range-dep": "1.0.0", "dedupe-divergent-strict": "1.0.0", "no-deps": "1.0.1" } },
+    { name: "foo", dependencies: { "one-range-dep": "1.0.0", "dedupe-divergent-strict": "1.0.0" } },
+  );
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.0.1"');
+
+  await expectOk(run(packageDir, "add", "no-deps@1.1.0"));
+  const after = await lock(packageDir);
+  expect(after).toContain('"no-deps": ["no-deps@1.1.0"');
+  expect(after).not.toContain('"no-deps@1.0.1"');
+  expectNoDuplicates(await dedupe(packageDir, "--check"), 4);
+});
+
+test.concurrent("a workspace member's new entry moves a locked transitive range onto its version", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const root = { name: "root", workspaces: ["packages/*"] };
+  const memberJson = join(packageDir, "packages", "a", "package.json");
+  await write(memberJson, JSON.stringify({ name: "a" }));
+  await setupStaleTransitive(packageDir, packageJson, root);
+
+  await write(memberJson, JSON.stringify({ name: "a", dependencies: { "no-deps": "1.1.0" } }));
+  await expectOk(run(packageDir, "install"));
+  const lockfile = await lock(packageDir);
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.1.0"');
+  expect(lockfile).not.toContain('"no-deps@1.0.1"');
+  expectNoDuplicates(await dedupe(packageDir, "--check"), 4);
+});
+
+// The root's 2.0.0 is out of one-range-dep's range; the member's 1.1.0 is the copy it lands on.
+test.concurrent("a locked transitive range lands on the new version that satisfies it", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const root = { name: "root", workspaces: ["packages/*"] };
+  const memberJson = join(packageDir, "packages", "a", "package.json");
+  await write(memberJson, JSON.stringify({ name: "a" }));
+  await setupStaleTransitive(packageDir, packageJson, root);
+
+  await write(memberJson, JSON.stringify({ name: "a", dependencies: { "no-deps": "1.1.0" } }));
+  await write(packageJson, JSON.stringify({ ...root, dependencies: { "one-range-dep": "1.0.0", "no-deps": "2.0.0" } }));
+  await expectOk(run(packageDir, "install"));
+  const lockfile = await lock(packageDir);
+  expect(lockfile).toContain('"no-deps": ["no-deps@2.0.0"');
+  expect(lockfile).toContain('"no-deps@1.1.0"');
+  expect(lockfile).not.toContain('"no-deps@1.0.1"');
+  expect(await nodeModulesVersion(packageDir, "one-range-dep", "node_modules", "no-deps")).toBe("1.1.0");
+  expectNoDuplicates(await dedupe(packageDir, "--check"), 5);
+});
+
+// one-dep@1.0.0 pins no-deps@1.0.1, so the old copy stays and one-range-dep keeps sharing it.
+test.concurrent("a locked transitive range stays on a version another locked dependent still needs", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await write(
+    packageJson,
+    JSON.stringify({ name: "foo", dependencies: { "one-range-dep": "1.0.0", "one-dep": "1.0.0" } }),
+  );
+  await runBunInstall(installEnv(packageDir), packageDir);
+  expect(await lock(packageDir)).toContain('"no-deps": ["no-deps@1.0.1"');
+
+  await expectOk(run(packageDir, "add", "no-deps@1.1.0"));
+  const lockfile = await lock(packageDir);
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.1.0"');
+  expect(lockfile).toContain('"one-dep/no-deps": ["no-deps@1.0.1"');
+  expect(lockfile).toContain('"one-range-dep/no-deps": ["no-deps@1.0.1"');
+  expectNoDuplicates(await dedupe(packageDir, "--check"), 5);
+});
+
+// one-dep@1.0.0 pins no-deps@1.0.1 and one-range-dep's range sits on a separate 1.0.0: a locked edge never
+// moves onto another locked version, even a higher one, when the new version is out of its range.
+test.concurrent("a locked transitive range does not move onto another locked version", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const deps = (extra: object) => ({ name: "foo", dependencies: { "one-range-dep": "1.0.0", ...extra } });
+  await installTwice(
+    packageDir,
+    packageJson,
+    deps({ "no-deps": "1.0.0" }),
+    deps({ "no-deps": "1.0.0", "one-dep": "1.0.0" }),
+  );
+  await write(packageJson, JSON.stringify(deps({ "one-dep": "1.0.0" })));
+  await runBunInstall(installEnv(packageDir), packageDir);
+  const lockfile = await lock(packageDir);
+  expect(lockfile).toContain('"no-deps@1.0.0"');
+  expect(lockfile).toContain('"no-deps@1.0.1"');
+
+  await expectOk(run(packageDir, "add", "no-deps@2.0.0"));
+  const after = await lock(packageDir);
+  expect(after).toContain('"no-deps": ["no-deps@2.0.0"');
+  expect(after).toContain('"one-range-dep/no-deps": ["no-deps@1.0.0"');
+  expect(after).toContain('"one-dep/no-deps": ["no-deps@1.0.1"');
+  const check = await dedupe(packageDir, "--check");
+  expectWouldRemove(check, "no-deps 1.0.0 -> 1.0.1", 6);
+  expect(check.exitCode).toBe(1);
+});
+
+// Like `bun dedupe`, only the edge's current version being patched holds it; a patched destination is fine.
+test.concurrent("a locked transitive range moves onto a patched higher version", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await setupStaleTransitive(packageDir, packageJson);
+  await write(join(packageDir, "patches", "no-deps@1.1.0.patch"), noDepsPatch);
+  const pkg = await file(packageJson).json();
+  pkg.patchedDependencies = { "no-deps@1.1.0": "patches/no-deps@1.1.0.patch" };
+  await write(packageJson, JSON.stringify(pkg));
+
+  await expectOk(run(packageDir, "add", "no-deps@1.1.0"));
+  const after = await lock(packageDir);
+  expect(after).toContain('"no-deps": ["no-deps@1.1.0"');
+  expect(after).not.toContain('"no-deps@1.0.1"');
+  expect(await exists(join(packageDir, "node_modules", "no-deps", "patched.txt"))).toBeTrue();
+  expectNoDuplicates(await dedupe(packageDir, "--check"), 3);
+});
+
+test.concurrent("a patched locked version is not moved onto the higher version", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await write(join(packageDir, "patches", "no-deps@1.0.1.patch"), noDepsPatch);
+  const patchedDependencies = { "no-deps@1.0.1": "patches/no-deps@1.0.1.patch" };
+  await setupStaleTransitive(packageDir, packageJson, { name: "foo", patchedDependencies });
+
+  await expectOk(run(packageDir, "add", "no-deps@1.1.0"));
+  const lockfile = await lock(packageDir);
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.1.0"');
+  expect(lockfile).toContain('"one-range-dep/no-deps": ["no-deps@1.0.1"');
+  expect(
+    await exists(join(packageDir, "node_modules", "one-range-dep", "node_modules", "no-deps", "patched.txt")),
+  ).toBeTrue();
+  expectNoDuplicates(await dedupe(packageDir, "--check"), 4);
+});
+
+// The rule only moves up: an exact pin on a lower version than the locked one leaves the duplicate for `bun dedupe`.
+test.concurrent("`bun add` of a lower version leaves the locked higher version where it is", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "one-range-dep": "1.0.0" } }));
+  await runBunInstall(installEnv(packageDir), packageDir);
+  expect(await lock(packageDir)).toContain('"no-deps": ["no-deps@1.1.0"');
+
+  await expectOk(run(packageDir, "add", "no-deps@1.0.0"));
+  const lockfile = await lock(packageDir);
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.0.0"');
+  expect(lockfile).toContain('"one-range-dep/no-deps": ["no-deps@1.1.0"');
+  const check = await dedupe(packageDir, "--check");
+  expectWouldRemove(check, "no-deps 1.1.0 -> 1.0.0", 4);
+  expect(check.exitCode).toBe(1);
+});

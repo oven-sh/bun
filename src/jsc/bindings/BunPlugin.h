@@ -4,6 +4,8 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/ScriptFetchParameters.h>
+#include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>
@@ -121,9 +123,13 @@ public:
         struct WaitingModuleMock {
             JSC::Strong<JSC::JSObject> mock;
             JSC::Strong<JSC::JSObject> turn;
-            // The module at the top of the load that asked for the mock, and the mock's place in that load. 0 until the load has fetched all it can.
-            String load;
-            unsigned rank { 0 };
+            // The module at the top of a load that asks for the mock, and the mock's place in that load.
+            struct Place {
+                String load;
+                unsigned rank;
+            };
+            // One for each load that asks for the mock and has fetched all it can. The mock takes its turn in the first load that can give it.
+            Vector<Place, 1> places;
         };
         Vector<WaitingModuleMock> waitingModuleMocks = {};
         struct ModuleMockWithTurn {
@@ -131,6 +137,27 @@ public:
             String load;
         };
         Vector<ModuleMockWithTurn> moduleMocksWithTurn = {};
+        // A mock has a place, and in each of its loads another factory has the turn. moduleLoaderResolve() ranks again if another load comes to import its module.
+        bool hasModuleMockBehindTurn = false;
+        // An import() or vi.importActual() of a running factory that waits for a module which another load is still fetching. See waitForFetchBeforeImport().
+        struct ImportWaitingForFetch {
+            bool isReleased { false };
+            // import() has `parameters` and `sourceOrigin`. vi.importActual() has `from`, the file of the call.
+            bool isImportCall;
+            // What the call returned.
+            JSC::Strong<JSC::JSObject> result;
+            JSC::Strong<JSC::Unknown> asyncContext;
+            String specifier;
+            String from;
+            RefPtr<JSC::ScriptFetchParameters> parameters;
+            JSC::SourceOrigin sourceOrigin;
+            // The module that is being fetched.
+            String moduleAhead;
+        };
+        Vector<ImportWaitingForFetch> importsWaitingForFetches = {};
+        // Set while moduleLoaderImportModule() or importModuleFrom() resolves an import that can wait: isWaitingForModule() then names the module being fetched in moduleAheadOfImport.
+        bool importCanWaitForFetch = false;
+        String moduleAheadOfImport;
         // The reactions that rankWaitingModuleMocks() leaves behind carry the number it had then, and do nothing if it has moved on.
         unsigned timesRanked = 0;
         // How many loads it found that were still being fetched. The end of each ranks again.
@@ -196,6 +223,9 @@ public:
             runningModuleMocks.clear();
             waitingModuleMocks.clear();
             moduleMocksWithTurn.clear();
+            hasModuleMockBehindTurn = false;
+            importsWaitingForFetches.clear();
+            moduleAheadOfImport = String();
             modulesGivenTimeToRequestImports.clear();
             loadRoots.clear();
             loadRootsDuringFactories.clear();
@@ -371,8 +401,12 @@ JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalObject*, JSC::JSObject* mod
 bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
 // Redirects what a running factory imports: the mocked module to its original, and a module that waits for the mock to a private copy, or if it's a mock, to a module that doesn't wait.
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
+// The import() call that moduleLoaderResolve() has just resolved waits for a fetch: moduleAheadOfImport is set. Returns the promise that the call gets.
+JSC::JSPromise* waitForFetchBeforeImportCall(Zig::GlobalObject*, const String& specifier, RefPtr<JSC::ScriptFetchParameters>, const JSC::SourceOrigin&);
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
+// An import has been resolved to `key` while hasModuleMockBehindTurn.
+void didResolveImportWhileModuleMockIsHeldBack(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
 #if ENABLE(AOT)
 // The same for the namespace object of a compiled module. Null for any other object.

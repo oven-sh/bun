@@ -47,3 +47,8 @@ test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > after it has removed its mock, or all of them
 # This one: the factory has a parameter, so compiled code has an original of its own for it, and the importers that get the original as they are run another. The closing notice names the file.
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > while the test loads a module that waits for that and imports the mock too
+# The next one: Bun.plugin.clearAll() while a callback of onLoad() holds a fetch and an import() of a factory waits for it. Plain takes the answer of the callback and the mock that is being loaded. Compiled runs the files themselves.
+test/js/bun/test/mock/mock-module.test.ts: a module behind an async onLoad() runs once for a factory and another load > an import() that waits goes on after Bun.plugin.clearAll()
+# These: two import() calls in one tick. Which of the two importers runs first is not fixed in plain: with the mocks of a preload the two lists parted in 2 of 24 runs.
+~ test/js/bun/test/mock/mock-module.test.ts: a mock doesn't wait for the pending factory of another load that imports it too > but it waits for a pending factory that comes before it in each of its loads, with the mocks of a preload
+~ test/js/bun/test/mock/mock-module.test.ts: a mock doesn't wait for the pending factory of another load that imports it too > but it waits for a pending factory that comes before it in each of its loads, with the mocks of the test file

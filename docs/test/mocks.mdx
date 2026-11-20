@@ -416,6 +416,8 @@ This also works when the mocked module is part of an import cycle. The modules t
 
 If the factory loads another module with `import()`, `require()` or `vi.importActual()`, and that module imports the one being mocked, it gets the original instead of waiting for the mock. That copy is private to the factory. The rest of the program loads the module again and gets the mock.
 
+If another import is still fetching the module that the factory asks for, `import()` and `vi.importActual()` wait for that fetch. The factory then shares the module with that import, unless the module imports the one being mocked. If that fetch waits for a plugin callback that in turn waits for the mock, the factory never returns.
+
 When one import leads to several mocked modules, Bun calls their factories one at a time, in the order the modules are imported, as Vitest does. A factory that imports another mocked module gets that mock, whose factory is called first if it hasn't been.
 
 ### Getters and Missing Exports

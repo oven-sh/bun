@@ -1,17 +1,21 @@
 // A build checks under a view of its own: with Bun's declarations where the project names none, with options that it forces, with every file a module.
 // What it finds there stops it only if `bun check` finds an error at the same place under the project's own configuration and its own installed types.
 // Which error a mistake gets depends on the types in sight (a suggestion, the number of overloads), so the codes may differ. That a name is not found says nothing of another error at its place.
-// So each program here is asked twice: the places that the build reports are among those that `bun check` reports, and the build says what the row expects.
-import { describe, expect } from "bun:test";
+// So each program here is asked twice, and each answer is held to its row: the build says `errors` and no more, `bun check` says `check` and no more,
+// and the places that the build reports are among those that `bun check` reports.
+import { expect } from "bun:test";
+import { existsSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { slot, spawned, unsupported } from "./harness/commands";
-import { test } from "./harness/default-timeout";
+import { slot, spawned } from "./harness/commands";
 import { withoutDebugInformation } from "./harness/without-debug-information";
+import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 
-type Row = { files: Record<string, string>; errors: string[]; stdout?: string };
+// `errors`: what the build reports, each as `file(line,column) code`. `check`: what `bun check` reports, where that is something else.
+// `stdout`: what the executable prints. A build that reports an error writes none.
+type Row = { files: Record<string, string>; errors: string[]; check?: string[]; stdout?: string };
 
 const withoutTypes = (library: string) =>
   JSON.stringify({
@@ -194,7 +198,7 @@ const job: Job = { id: crypto.randomUUID(), startedAt: performance.now(), retrie
 console.log(job.retries);
 `,
     },
-    errors: ["TS2322"],
+    errors: ["main.ts(7,75) TS2322"],
   },
   "a mistake of the program inside an arrow function that logs": {
     files: {
@@ -206,11 +210,11 @@ const main = (): void => {
 main();
 `,
     },
-    errors: ["TS2322"],
+    errors: ["main.ts(3,9) TS2322"],
   },
   "a mistake of the program behind a callback whose parameter has no written type": {
     files: { "main.ts": `export {};\nconst labels: string[] = [1, 2].map(n => n * 2);\nconsole.log(labels);\n` },
-    errors: ["TS2322"],
+    errors: ["main.ts(2,7) TS2322"],
   },
   "a mistake of the program beside one that rests on Bun's declarations: the first alone is reported": {
     files: {
@@ -220,23 +224,26 @@ const wrong: number = "text";
 console.log(typeof id, wrong);
 `,
     },
-    errors: ["TS2322"],
+    errors: ["main.ts(3,7) TS2322"],
   },
   "a name that nothing declares": {
     files: { "main.ts": `export {};\nconsole.log(nowhere);\n` },
-    errors: ["TS2304"],
+    errors: ["main.ts(2,13) TS2304"],
   },
   "a misspelled member of import.meta: Bun's declarations have one to suggest": {
     files: { "main.ts": `console.log(import.meta.dirnam);\nexport {};\n`, "tsconfig.json": withoutTypes("ESNext") },
-    errors: ["TS2551"],
+    errors: ["main.ts(1,25) TS2551"],
+    check: ["main.ts(1,25) TS2339"],
   },
   "a misspelled member of a class of the web: Bun's declarations have one to suggest": {
     files: { "main.ts": `console.log(new Headers().toJSN);\nexport {};\n`, "tsconfig.json": withoutTypes("ESNext") },
-    errors: ["TS2551"],
+    errors: ["main.ts(1,27) TS2551"],
+    check: ["main.ts(1,27) TS2339"],
   },
   "a misspelled member of console, without a tsconfig.json": {
     files: { "main.ts": `console.wrte("x");\n` },
-    errors: ["TS2551"],
+    errors: ["main.ts(1,9) TS2551"],
+    check: ["main.ts(1,9) TS2339"],
   },
   "a misspelled method of a list: the library that the build reads has one to suggest, the project's older one has none":
     {
@@ -244,25 +251,29 @@ console.log(typeof id, wrong);
         "main.ts": `const list: number[][] = [[1], [2]];\nconsole.log(list.flatt().length);\nexport {};\n`,
         "tsconfig.json": withoutTypes("ES2015"),
       },
-      errors: ["TS2551"],
+      errors: ["main.ts(2,18) TS2551"],
+      check: ["main.ts(2,18) TS2339"],
     },
   "a misspelled option of fetch: Bun's declarations have more than one overload": {
     files: {
       "main.ts": `const answer = fetch("http://127.0.0.1", { verbos: true });\nanswer.catch(() => {});\nexport {};\n`,
       "tsconfig.json": withoutTypes("ESNext"),
     },
-    errors: ["TS2769"],
+    errors: ["main.ts(1,44) TS2769"],
+    check: ["main.ts(1,44) TS2353"],
   },
   "a number handed to fetch, without a tsconfig.json": {
     files: { "main.ts": `fetch(1);\n` },
-    errors: ["TS2769"],
+    errors: ["main.ts(1,7) TS2769"],
+    check: ["main.ts(1,7) TS2345"],
   },
   "a misspelled namespace of Node.js": {
     files: {
       "main.ts": `let timer: NodeJs.Timer | undefined;\nconsole.log(timer);\nexport {};\n`,
       "tsconfig.json": withoutTypes("ESNext"),
     },
-    errors: ["TS2833"],
+    errors: ["main.ts(1,12) TS2833"],
+    check: ["main.ts(1,12) TS2503"],
   },
   "a type of the web read as a value, under a library without the DOM: Bun's declarations have the type, no view has a value":
     {
@@ -270,11 +281,13 @@ console.log(typeof id, wrong);
         "main.ts": `const taken: unknown = RequestInit;\nconsole.log(typeof taken);\nexport {};\n`,
         "tsconfig.json": withoutTypes("ES2022").replace(`,"DOM"`, ""),
       },
-      errors: ["TS2693"],
+      errors: ["main.ts(1,24) TS2693"],
+      check: ["main.ts(1,24) TS2304", "main.ts(2,1) TS2584"],
     },
   "a value of Node.js written where a type is wanted: `bun check` says only that the name is not declared": {
     files: { "main.ts": `let p: process;\nconsole.log(1);\nexport {};\n`, "tsconfig.json": withoutTypes("ESNext") },
     errors: [],
+    check: ["main.ts(1,8) TS2591"],
     stdout: "1\n",
   },
   "what Node.js may leave undefined is handed on as a string: `bun check` says only that the name is not declared": {
@@ -283,6 +296,7 @@ console.log(typeof id, wrong);
       "tsconfig.json": withoutTypes("ESNext"),
     },
     errors: [],
+    check: ["main.ts(4,19) TS2591"],
     stdout: "true\n",
   },
   "a script that merges with a declaration file: tsc accepts it; in a build every file is a module, as under `bun run`":
@@ -340,7 +354,8 @@ console.log(new Held().own, new Held().declared, show(Level.Own), show(3));
           files: ["shared.ts", "main.ts"],
         }),
       },
-      errors: ["TS2304"],
+      errors: ["main.ts(2,1) TS2304"],
+      check: ["main.ts(2,1) TS2588"],
     },
   "members that Bun adds, spelled right": {
     files: {
@@ -348,6 +363,7 @@ console.log(new Held().own, new Held().declared, show(Level.Own), show(3));
       "tsconfig.json": withoutTypes("ESNext"),
     },
     errors: [],
+    check: ["main.ts(1,32) TS2339", "main.ts(1,62) TS2339"],
     stdout: "string object\n",
   },
   "a script of a project that has Bun's types installed: its class and its enum go on in a declaration file": {
@@ -376,15 +392,15 @@ console.log(Object.keys(faces).length, faces["\\u{1F600}"], new Faces()["\\u{1F6
       ...scriptWithTypesOfBunInstalled(""),
       "main.ts": `export {};\nconst sizes = { small: 1, small: 2 };\nconsole.log(sizes.small);\n`,
     },
-    errors: ["TS1117"],
+    errors: ["main.ts(2,27) TS1117"],
   },
   "a key written twice, without a tsconfig.json": {
     files: { "main.ts": `export {};\nconst sizes = { small: 1, small: 2 };\nconsole.log(sizes.small);\n` },
-    errors: ["TS1117"],
+    errors: ["main.ts(2,27) TS1117"],
   },
   "a script of a project that has Bun's types installed: a mistake of its own still stops the build": {
     files: scriptWithTypesOfBunInstalled(`const wrong: number = "text";\nconsole.log(wrong);\n`),
-    errors: ["TS2322"],
+    errors: ["main.ts(12,7) TS2322"],
   },
   "a package's source accepts less than its declarations: that alone stops no build": {
     files: packageWithAotSource(`import { join } from "made-up";\nconsole.log(join(7, 1));\n`, ...joins),
@@ -393,7 +409,7 @@ console.log(Object.keys(faces).length, faces["\\u{1F600}"], new Faces()["\\u{1F6
   },
   "a package's source refuses the first argument, and the second is a mistake": {
     files: packageWithAotSource(`import { join } from "made-up";\nconsole.log(join(7, "x"));\n`, ...joins),
-    errors: ["TS2345"],
+    errors: ["main.ts(2,21) TS2345"],
   },
   "a package's source lacks a member, and the member's declared type is a mistake": {
     files: packageWithAotSource(
@@ -401,7 +417,7 @@ console.log(Object.keys(faces).length, faces["\\u{1F600}"], new Faces()["\\u{1F6
       `export declare const crate: { weight: number; extra: number };\n`,
       `export const crate = { weight: 1 };\n`,
     ),
-    errors: ["TS2322"],
+    errors: ["main.ts(2,7) TS2322"],
   },
   "a package's source lacks a member, and the mistake is a statement later": {
     files: packageWithAotSource(
@@ -409,7 +425,7 @@ console.log(Object.keys(faces).length, faces["\\u{1F600}"], new Faces()["\\u{1F6
       `export declare const crate: { weight: number; extra: number };\n`,
       `export const crate = { weight: 1 };\n`,
     ),
-    errors: ["TS2322"],
+    errors: ["main.ts(3,7) TS2322"],
   },
   "a package's source lacks an overload, and the mistake is in the file that imports the result": {
     files: {
@@ -420,7 +436,7 @@ console.log(Object.keys(faces).length, faces["\\u{1F600}"], new Faces()["\\u{1F6
       ),
       "part.ts": `import { pick } from "made-up";\nexport const made = pick(7);\n`,
     },
-    errors: ["TS2322"],
+    errors: ["main.ts(2,7) TS2322"],
   },
   "a package's source refuses an argument beside what bun check only reports for lack of Bun's types": {
     files: packageWithAotSource(
@@ -428,6 +444,7 @@ console.log(Object.keys(faces).length, faces["\\u{1F600}"], new Faces()["\\u{1F6
       ...joins,
     ),
     errors: [],
+    check: ["main.ts(2,32) TS2868", "main.ts(2,76) TS2339"],
     stdout: "7:1 string function\n",
   },
   "a name that only the DOM declares is called with arguments that its declaration refuses": {
@@ -436,6 +453,7 @@ console.log(Object.keys(faces).length, faces["\\u{1F600}"], new Faces()["\\u{1F6
       "main.ts": `if (typeof print === "function") print("a", 1);\nconsole.log("done");\n`,
     },
     errors: [],
+    check: ["main.ts(1,40) TS2554"],
     stdout: "done\n",
   },
   "a package's source refuses an argument beside a file that isn't under the rootDir of its importer": {
@@ -445,7 +463,7 @@ console.log(Object.keys(faces).length, faces["\\u{1F600}"], new Faces()["\\u{1F6
   },
   "the same, and a mistake beside them": {
     files: packagesWithRootDirectories(`const wrong: string = two;\nconsole.log(join(7, two), wrong);\n`),
-    errors: ["TS2322"],
+    errors: ["start.ts(3,7) TS2322"],
   },
   "a package's source refuses an argument beside a mistake in a branch that never runs": {
     files: packageWithAotSource(
@@ -453,6 +471,7 @@ console.log(Object.keys(faces).length, faces["\\u{1F600}"], new Faces()["\\u{1F6
       ...joins,
     ),
     errors: [],
+    check: ["main.ts(3,9) TS2322"],
     stdout: "7:1\n",
   },
   "a package's source refuses an argument beside a mistake in a function that nothing calls": {
@@ -461,18 +480,21 @@ console.log(Object.keys(faces).length, faces["\\u{1F600}"], new Faces()["\\u{1F6
       ...joins,
     ),
     errors: [],
+    check: ["main.ts(3,9) TS2322"],
     stdout: "7:1\n",
   },
 };
 
 // The plainest folder there is: a package.json and one file. What Bun itself provides is no error there.
-const provided: Record<string, [text: string, stdout: string]> = {
+// `bun check` has none of Bun's types in such a folder: each entry ends with what it reports for the lack of them.
+const provided: Record<string, [text: string, stdout: string, check: string[]]> = {
   "the text of the body of a request that Bun.serve hands over": [
     `const server = Bun.serve({ port: 0, async fetch(request) { return new Response(await request.body!.text()); } });
 console.log(await (await fetch(server.url, { method: "POST", body: "a" })).text());
 server.stop(true);
 `,
     "a\n",
+    ["main.ts(1,16) TS2868", "main.ts(1,49) TS7006"],
   ],
   "the text of the body of a request with a written type": [
     `async function answer(request: Request): Promise<string> {
@@ -481,17 +503,35 @@ server.stop(true);
 console.log(await answer(new Request("http://localhost/", { method: "POST", body: "a" })));
 `,
     "a\n",
+    ["main.ts(2,30) TS2339"],
   ],
-  "the JSON of the body of a response": [`console.log((await new Response('{"a":1}').body!.json()).a);\n`, "1\n"],
-  "the bytes of the body of a response": [`console.log((await new Response("ab").body!.bytes()).length);\n`, "2\n"],
-  "the blob of the body of a response": [`console.log((await new Response("ab").body!.blob()).size);\n`, "2\n"],
-  "the JSON of a blob": [`console.log((await new Blob(['{"a":1}']).json()).a);\n`, "1\n"],
-  "headers as JSON": [`console.log(new Headers({ a: "1" }).toJSON().a);\n`, "1\n"],
-  "console.write": [`console.write("written\\n");\n`, "written\n"],
-  "what Bun adds to import.meta": [`console.log(typeof import.meta.dir, import.meta.main);\n`, "string true\n"],
+  "the JSON of the body of a response": [
+    `console.log((await new Response('{"a":1}').body!.json()).a);\n`,
+    "1\n",
+    ["main.ts(1,50) TS2339"],
+  ],
+  "the bytes of the body of a response": [
+    `console.log((await new Response("ab").body!.bytes()).length);\n`,
+    "2\n",
+    ["main.ts(1,45) TS2339"],
+  ],
+  "the blob of the body of a response": [
+    `console.log((await new Response("ab").body!.blob()).size);\n`,
+    "2\n",
+    ["main.ts(1,45) TS2339"],
+  ],
+  "the JSON of a blob": [`console.log((await new Blob(['{"a":1}']).json()).a);\n`, "1\n", ["main.ts(1,42) TS2339"]],
+  "headers as JSON": [`console.log(new Headers({ a: "1" }).toJSON().a);\n`, "1\n", ["main.ts(1,37) TS2339"]],
+  "console.write": [`console.write("written\\n");\n`, "written\n", ["main.ts(1,9) TS2339"]],
+  "what Bun adds to import.meta": [
+    `console.log(typeof import.meta.dir, import.meta.main);\n`,
+    "string true\n",
+    ["main.ts(1,32) TS2339", "main.ts(1,49) TS2339"],
+  ],
   "a timer that is asked whether it holds the process": [
     `const timer = setTimeout(() => {}, 1);\ntimer.unref();\nconsole.log(timer.hasRef());\n`,
     "false\n",
+    ["main.ts(2,7) TS2339", "main.ts(3,19) TS2339"],
   ],
   "an option that Bun adds to fetch": [
     `const server = Bun.serve({ port: 0, fetch: () => new Response("a") });
@@ -499,59 +539,84 @@ console.log(await (await fetch(server.url, { verbose: false })).text());
 server.stop(true);
 `,
     "a\n",
+    ["main.ts(1,16) TS2868", "main.ts(2,46) TS2353"],
   ],
-  "Response.json": [`console.log(await Response.json({ a: 1 }).text());\n`, '{"a":1}\n'],
+  "Response.json": [`console.log(await Response.json({ a: 1 }).text());\n`, '{"a":1}\n', []],
 };
-for (const [name, [text, stdout]] of Object.entries(provided)) {
+for (const [name, [text, stdout, check]] of Object.entries(provided)) {
   rows[`a package.json and one file: ${name}`] = {
     files: { "package.json": `{ "name": "plainest" }\n`, "main.ts": text },
     errors: [],
+    check,
     stdout,
   };
 }
 
+// An error that has no code or no place stands as the build printed it, and so equals nothing that a row expects.
 const placesOfBuild = (stderr: string) => {
   const lines = stderr.split("\n");
   return lines.flatMap((line, index) => {
+    if (!line.startsWith("error")) return [];
     const code = /^error: (TS\d+):/.exec(line)?.[1];
     // A message may go on over several lines.
     const at = lines.slice(index + 1).find(next => /^\s+at /.test(next)) ?? "";
     const place = /([^/\\]+):(\d+):(\d+)$/.exec(at);
-    return code && place ? [`${place[1]}(${place[2]},${place[3]}) ${code}`] : [];
+    return [code && place ? `${place[1]}(${place[2]},${place[3]}) ${code}` : line];
   });
 };
+// `bun check` prints its errors to stdout, one to a line. A message that goes on is indented. Any other line stands as it was printed.
 const placesOfCheck = (stdout: string) =>
   stdout.split("\n").flatMap(line => {
+    if (!line || line.startsWith(" ")) return [];
     const found = /^(?:.*[/\\])?([^/\\(]+)\((\d+),(\d+)\): error (TS\d+):/.exec(line);
-    return found ? [`${found[1]}(${found[2]},${found[3]}) ${found[4]}`] : [];
+    return [found ? `${found[1]}(${found[2]},${found[3]}) ${found[4]}` : line];
   });
 
-describe.skipIf(!!unsupported)("what a build reports is a part of what bun check reports", () => {
-  for (const [name, { files, errors, stdout }] of Object.entries(rows)) {
-    test(name, () =>
+// No row shares a folder or a command with another, so the rows run beside one another on every lane, and not under a sanitizer alone.
+describe("what a build reports is a part of what bun check reports", () => {
+  for (const [name, { files, errors, check = errors, stdout }] of Object.entries(rows)) {
+    test.concurrent(name, () =>
       slot(async () => {
         using dir = tempDir("aot-a-build-asks-bun-check", files);
         const folder = String(dir);
+        const executable = join(folder, isWindows ? "main.exe" : "main");
         const built = await spawned(
           [bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation, "./main.ts", "--outfile", "main"],
           folder,
           env,
         );
         const reported = placesOfBuild(built.stderr);
-        expect({ errors: reported.map(place => place.split(" ")[1]), exitCode: built.exitCode }).toEqual({
-          errors,
-          exitCode: errors.length ? 1 : 0,
-        });
+        // Either command ends with 1 where it reports an error. Where it ended in another way than its row says, all that it wrote to stderr is shown.
+        const buildEnds = errors.length ? 1 : 0;
+        expect({
+          errors: reported,
+          stderr: built.exitCode === buildEnds ? "" : built.stderr,
+          exitCode: built.exitCode,
+          signal: built.signal,
+          executable: existsSync(executable),
+        }).toEqual({ errors, stderr: "", exitCode: buildEnds, signal: null, executable: !errors.length });
         // Without a tsconfig.json the build asks under the default library of tsc, which has the DOM. `bun check` by itself takes ESNext alone.
         const library = "tsconfig.json" in files ? [] : ["--lib", "esnext,dom"];
         const checked = await spawned([bunExe(), "check", ...library, "./main.ts"], folder, env);
+        const found = placesOfCheck(checked.stdout);
+        // The rule itself comes first, asked of what the two commands printed. Where it holds and `bun check` reports something else than the row says, the row is out of date, and the comparison behind it says so.
         const withoutCode = (place: string) => place.split(" ")[0];
-        expect(placesOfCheck(checked.stdout + checked.stderr).map(withoutCode)).toEqual(
-          expect.arrayContaining(reported.map(withoutCode)),
-        );
+        expect(found.map(withoutCode)).toEqual(expect.arrayContaining(reported.map(withoutCode)));
+        const checkEnds = check.length ? 1 : 0;
+        expect({
+          errors: found,
+          stderr: checked.exitCode === checkEnds ? "" : checked.stderr,
+          exitCode: checked.exitCode,
+          signal: checked.signal,
+        }).toEqual({ errors: check, stderr: "", exitCode: checkEnds, signal: null });
         if (stdout === undefined) return;
-        const ran = await spawned([join(folder, isWindows ? "main.exe" : "main")], folder, env);
-        expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout, exitCode: 0 });
+        const ran = await spawned([executable], folder, env);
+        expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+          stdout,
+          stderr: "",
+          exitCode: 0,
+          signal: null,
+        });
       }),
     );
   }

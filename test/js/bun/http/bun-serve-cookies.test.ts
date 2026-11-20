@@ -592,3 +592,42 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     expect(parsed.value).toBe("value");
   });
 });
+
+describe("a Cookie from Bun.Cookie.parse that is set on req.cookies", () => {
+  it("is sent with the value text it has", async () => {
+    const upstream = "connect.sid=s%3Aabc.def%2Fghi; Path=/; HttpOnly; SameSite=Lax";
+    // These characters are not cookie-octets, so the value stays percent-encoded on the wire.
+    const unusual = 'a=b\x01c\td\x7F\u00e9"x y,z\\';
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/forward": req => {
+          req.cookies.set(Bun.Cookie.parse(upstream));
+          req.cookies.set(Bun.Cookie.parse(unusual));
+          return new Response("ok");
+        },
+        // The cookies of a cloned request hold the same Cookie.
+        "/clone": req => {
+          req.cookies.set(Bun.Cookie.parse(upstream));
+          return Response.json(req.clone().cookies.toSetCookieHeaders());
+        },
+        "/read": req => new Response(req.cookies.get("connect.sid")),
+      },
+    });
+
+    const forwarded = await fetch(new URL("/forward", server.url));
+    expect(forwarded.headers.getSetCookie()).toEqual([
+      upstream,
+      "a=b%01c%09d%7F%C3%A9%22x%20y%2Cz%5C; Path=/; SameSite=Lax",
+    ]);
+
+    const cloned = await fetch(new URL("/clone", server.url));
+    expect(await cloned.json()).toEqual([upstream]);
+
+    // A client sends the pair back, and req.cookies percent-decodes a Cookie header.
+    const read = await fetch(new URL("/read", server.url), {
+      headers: { "Cookie": "connect.sid=s%3Aabc.def%2Fghi" },
+    });
+    expect(await read.text()).toBe("s:abc.def/ghi");
+  });
+});

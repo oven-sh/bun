@@ -324,6 +324,17 @@ console.log(cookie.toString());
 // => "session=abc123; Domain=example.com; Path=/admin; Expires=Wed, 19 Mar 2025 15:03:26 GMT; Secure; HttpOnly; SameSite=Strict"
 ```
 
+`toString()` percent-encodes the value the way [`encodeURIComponent`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/encodeURIComponent) does. It does not percent-encode the name, `Domain` or `Path`.
+
+```ts title="serialize-cookie-value.ts" icon="/icons/typescript.svg"
+const cookie = new Bun.Cookie("greeting", "hello world; 100%");
+
+console.log(cookie.toString());
+// => "greeting=hello%20world%3B%20100%25; Path=/; SameSite=Lax"
+```
+
+There is one exception. A cookie that was made from a cookie string (`Cookie.parse` or `new Bun.Cookie(cookieString)`), and whose `value` was not assigned since, keeps the value text of that string. This applies when the text is a `cookie-value` of [RFC 6265 section 4.1.1](https://datatracker.ietf.org/doc/html/rfc6265#section-4.1.1) in which two hex digits follow every `%`. A `cookie-value` is printable ASCII other than space, `"`, `,`, `;` and `\`, optionally inside one pair of double quotes. `toString()` percent-encodes every other value.
+
 #### `toJSON(): CookieInit`
 
 Converts the cookie to a plain object suitable for JSON serialization.
@@ -364,6 +375,33 @@ console.log(cookie.path); // "/"
 console.log(cookie.secure); // true
 console.log(cookie.sameSite); // "lax"
 ```
+
+`toString()` writes the value of a parsed cookie back as it is in the string. The exact rule is in the `toString()` section above. A cookie string is read as it is. A value that is passed as a value is text, and `toString()` percent-encodes it: `new Bun.Cookie(name, value)`, `Cookie.from`, a `CookieInit` object, `cookies.set(name, value)` and an assignment to `cookie.value`.
+
+```ts title="parse-cookie-value.ts" icon="/icons/typescript.svg"
+const cookie = Bun.Cookie.parse("session=s%3Aabc.def%2Fghi; Path=/; HttpOnly");
+
+console.log(cookie.toString()); // "session=s%3Aabc.def%2Fghi; Path=/; HttpOnly; SameSite=Lax"
+
+// To send a parsed cookie again, append its string to the headers of a response
+const headers = new Headers();
+headers.append("Set-Cookie", cookie.toString());
+
+// or set the Cookie on a CookieMap, which keeps one cookie for each name
+const cookies = new Bun.CookieMap();
+cookies.set(cookie);
+console.log(cookies.toSetCookieHeaders()); // ["session=s%3Aabc.def%2Fghi; Path=/; HttpOnly; SameSite=Lax"]
+
+// A cookie string is read as it is
+console.log(Bun.Cookie.parse(cookie.toString()).toString()); // "session=s%3Aabc.def%2Fghi; Path=/; HttpOnly; SameSite=Lax"
+
+// A value that is passed as a value is text, so it is percent-encoded
+console.log(new Bun.Cookie(cookie.name, cookie.value).toString()); // "session=s%253Aabc.def%252Fghi; Path=/; SameSite=Lax"
+```
+
+A parsed cookie always has a `path` (`/` by default) and a `sameSite` (`lax` by default), and Bun drops the attributes that it does not know. So `toString()` can write attributes that differ from the string that was parsed.
+
+`Bun.CookieMap` percent-decodes the values of a `Cookie` request header. So after a client sends this cookie back, `req.cookies.get("session")` is `"s:abc.def/ghi"`. That text can differ from the `value` of the `Cookie` that was set. An escape that is not valid UTF-8 is read as the Unicode replacement character (`\uFFFD`).
 
 #### `Cookie.from(name: string, value: string, options?: CookieInit): Cookie`
 

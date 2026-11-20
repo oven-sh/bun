@@ -22,8 +22,9 @@ public:
     enum class Field : uint32_t {
         // The user's underlyingSource object, or an internal source's context cell.
         UnderlyingSource = 0,
-        // Each is a callable or null.
+        // A callable: the ReadableStream constructor rejects a direct source without pull().
         Pull,
+        // Each is a callable or null.
         Cancel,
         // Bun's close(reason) lifecycle hook: the stream ended or errored.
         Close,

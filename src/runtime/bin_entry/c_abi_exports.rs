@@ -44,6 +44,8 @@ extern "C" fn Bun__loopInitFailed(err: core::ffi::c_int) -> ! {
 /// Each pointer is valid for reading its length, and nothing writes there meanwhile.
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 #[unsafe(no_mangle)]
+// An import by ThinLTO brings rustc's `RtLibUseGOT` flag (x64 Linux) into the caller's module, whose functions then stop folding with their twins.
+#[inline(never)]
 unsafe extern "C" fn memmem(
     haystack: *const u8,
     haystack_len: usize,

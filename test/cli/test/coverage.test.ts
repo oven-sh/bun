@@ -393,7 +393,7 @@ test("should call only some functions", () => {
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
-All files      |   75.00 |   75.00 |
+All files      |   66.67 |   81.82 |
  include-me.ts |   50.00 |   50.00 | 6-7
  test.test.ts  |  100.00 |  100.00 | 
 ---------------|---------|---------|-------------------
@@ -1557,4 +1557,135 @@ test("reports an error for a coverage directory longer than the path buffer", as
   expect(stderr).toContain("(pass) covered");
   expect(stderr).toContain("ENAMETOOLONG: File name too long: Failed to write lcov.info");
   expect(exitCode).toBe(1);
+});
+
+describe.concurrent("the All files row", () => {
+  // big.ts has about 100 executable lines that all ran. small.ts has a few
+  // lines, and at least one of them did not run. The mean of the two per-file
+  // percentages is well below the share of all lines that ran, which is the
+  // LH/LF ratio of the same run's lcov report.
+  const files = {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    "big.ts": `export function big() {\n  let x = 0;\n${"  x += 1;\n".repeat(98)}  return x;\n}\n`,
+    "small.ts": `export function f(a: number) {\n  if (a > 0) {\n    return 1;\n  }\n  return 2;\n}\n`,
+    "a.test.ts": `
+      import { test, expect } from "bun:test";
+      import { big } from "./big";
+      test("a", () => { expect(big()).toBe(98); });
+    `,
+    "b.test.ts": `
+      import { test, expect } from "bun:test";
+      import { big } from "./big";
+      import { f } from "./small";
+      test("b", () => { expect(big()).toBe(98); expect(f(1)).toBe(1); });
+    `,
+  };
+
+  async function run(dir: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", ...args],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (args.includes("--parallel=2")) {
+      expect(stdout).toContain("PARALLEL");
+    }
+    return { stderr, exitCode };
+  }
+
+  function lcovTotals(dir: string) {
+    const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf8");
+    const sum = (key: string) =>
+      lcov
+        .split("\n")
+        .filter(line => line.startsWith(key + ":"))
+        .reduce((acc, line) => acc + Number(line.slice(key.length + 1)), 0);
+    return { FNF: sum("FNF"), FNH: sum("FNH"), LF: sum("LF"), LH: sum("LH") };
+  }
+
+  function row(stderr: string, name: string) {
+    const line = stderr.split("\n").find(line => line.trimStart().startsWith(name + " "));
+    const [, funcs, lines] = line!.split("|").map(cell => cell.trim());
+    return { funcs, lines };
+  }
+
+  const modes: [string, string[]][] = [
+    ["one process", []],
+    ["--parallel=2", ["--parallel=2"]],
+  ];
+
+  test.each(modes)("is the share of all lines and functions that ran (%s)", async (_, args) => {
+    using dir = tempDir("coverage-total", files);
+    const { stderr, exitCode } = await run(String(dir), args);
+    const totals = lcovTotals(String(dir));
+
+    expect(stderr).toContain("2 pass");
+    // Which lines are executable depends on the source map, so the exact
+    // totals are not pinned.
+    expect(totals.FNF).toBe(2);
+    expect(totals.FNH).toBe(2);
+    expect(totals.LF).toBeGreaterThan(100);
+    expect(totals.LH).toBeLessThan(totals.LF);
+    expect(row(stderr, "All files")).toEqual({
+      funcs: "100.00",
+      lines: ((100 * totals.LH) / totals.LF).toFixed(2),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(modes)("does not decide the exit code: the threshold applies to each file (%s)", async (_, args) => {
+    using dir = tempDir("coverage-total-threshold", {
+      ...files,
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = 0.9\n`,
+    });
+    const { stderr, exitCode } = await run(String(dir), args);
+
+    expect(Number(row(stderr, "All files").lines)).toBeGreaterThan(90);
+    expect(Number(row(stderr, "small.ts").lines)).toBeLessThan(90);
+    expect(exitCode).toBe(1);
+  });
+
+  test("counts a file without functions as no functions, not as 100%", async () => {
+    using dir = tempDir("coverage-total-no-functions", {
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+      "consts.ts": `export const x = 1;\nexport const y = x + 1;\n`,
+      "lib.ts": `export function called() {\n  return 1;\n}\nexport function notCalled() {\n  return 2;\n}\n`,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import { y } from "./consts";
+        import { called } from "./lib";
+        test("t", () => { expect(called() + y).toBe(3); });
+      `,
+    });
+    const { stderr, exitCode } = await run(String(dir), []);
+    const totals = lcovTotals(String(dir));
+
+    expect(totals.FNF).toBe(2);
+    expect(totals.FNH).toBe(1);
+    expect(row(stderr, "consts.ts").funcs).toBe("100.00");
+    expect(row(stderr, "lib.ts").funcs).toBe("50.00");
+    expect(row(stderr, "All files").funcs).toBe("50.00");
+    expect(exitCode).toBe(0);
+  });
+
+  test("is 100.00 when no file has an executable line, like the rows", async () => {
+    using dir = tempDir("coverage-total-empty", {
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+      "types.ts": `export type X = number;\n`,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import "./types";
+        test("t", () => { expect(1).toBe(1); });
+      `,
+    });
+    const { stderr, exitCode } = await run(String(dir), []);
+
+    expect(lcovTotals(String(dir))).toEqual({ FNF: 0, FNH: 0, LF: 0, LH: 0 });
+    expect(row(stderr, "types.ts")).toEqual({ funcs: "100.00", lines: "100.00" });
+    expect(row(stderr, "All files")).toEqual({ funcs: "100.00", lines: "100.00" });
+    expect(exitCode).toBe(0);
+  });
 });

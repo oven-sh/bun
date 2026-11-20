@@ -29,52 +29,93 @@ pub struct Report<'a> {
     pub(crate) stmts_which_have_executed: Bitset,
 }
 
+/// How many of one kind of item (lines, functions, statements) a run covered.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct Metric {
+    pub covered: usize,
+    pub total: usize,
+}
+
+impl Metric {
+    /// Nothing to cover counts as fully covered, as Istanbul does.
+    pub fn fraction(self) -> f64 {
+        if self.total == 0 {
+            return 1.0;
+        }
+        self.covered as f64 / self.total as f64
+    }
+}
+
+impl core::ops::AddAssign for Metric {
+    fn add_assign(&mut self, other: Self) {
+        self.covered += other.covered;
+        self.total += other.total;
+    }
+}
+
+/// The counts of one file, or the sum over several files.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct Counts {
+    pub functions: Metric,
+    pub lines: Metric,
+    pub stmts: Metric,
+}
+
+impl Counts {
+    /// The fractions, with `failing` judged against `thresholds`.
+    pub fn fraction(&self, thresholds: &Fraction) -> Fraction {
+        let functions = self.functions.fraction();
+        let lines = self.lines.fraction();
+        Fraction {
+            functions,
+            lines,
+            stmts: self.stmts.fraction(),
+            failing: functions < thresholds.functions || lines < thresholds.lines,
+        }
+    }
+}
+
+impl core::ops::AddAssign for Counts {
+    fn add_assign(&mut self, other: Self) {
+        self.functions += other.functions;
+        self.lines += other.lines;
+        self.stmts += other.stmts;
+    }
+}
+
+impl core::iter::Sum for Counts {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::default(), |mut acc, c| {
+            acc += c;
+            acc
+        })
+    }
+}
+
 impl<'a> Report<'a> {
-    pub fn lines_coverage_fraction(&self) -> f64 {
-        let mut intersected = self
-            .executable_lines
-            .clone()
-            .unwrap_or_else(|_| bun_alloc::out_of_memory());
-        intersected.set_intersection(&self.lines_which_have_executed);
-
-        let total_count: f64 = self.executable_lines.count() as f64;
-        if total_count == 0.0 {
-            return 1.0;
+    /// The covered and total counts of this file.
+    pub fn counts(&self) -> Counts {
+        let lines = Metric {
+            covered: self.lines_which_have_executed.count(),
+            total: self.executable_lines.count(),
+        };
+        debug_assert!(lines.covered <= lines.total);
+        Counts {
+            functions: Metric {
+                covered: self.functions_which_have_executed.count(),
+                total: self.functions.len(),
+            },
+            lines,
+            stmts: Metric {
+                covered: self.stmts_which_have_executed.count(),
+                total: self.stmts.len(),
+            },
         }
-
-        let intersected_count: f64 = intersected.count() as f64;
-
-        intersected_count / total_count
-    }
-
-    pub fn stmts_coverage_fraction(&self) -> f64 {
-        let total_count: f64 = self.stmts.len() as f64;
-
-        if total_count == 0.0 {
-            return 1.0;
-        }
-
-        (self.stmts_which_have_executed.count() as f64) / total_count
-    }
-
-    pub fn function_coverage_fraction(&self) -> f64 {
-        let total_count: f64 = self.functions.len() as f64;
-        if total_count == 0.0 {
-            return 1.0;
-        }
-        (self.functions_which_have_executed.count() as f64) / total_count
     }
 
     /// This file's fractions, with `failing` judged against `thresholds`.
     pub fn fraction(&self, thresholds: &Fraction) -> Fraction {
-        let functions = self.function_coverage_fraction();
-        let lines = self.lines_coverage_fraction();
-        Fraction {
-            functions,
-            lines,
-            stmts: self.stmts_coverage_fraction(),
-            failing: functions < thresholds.functions || lines < thresholds.lines,
-        }
+        self.counts().fraction(thresholds)
     }
 
     /// Detach from the `ByteRangeMapping` this was generated from.
@@ -223,6 +264,9 @@ pub mod wire {
         }
         let executable_lines = r.bitset(line_count)?;
         let lines_which_have_executed = r.bitset(line_count)?;
+        if !lines_which_have_executed.subset_of(&executable_lines) {
+            return None;
+        }
         let mut line_hits = vec![0u32; line_count];
         bun_core::cast_slice_mut::<u32, u8>(&mut line_hits)
             .copy_from_slice(r.bytes(line_count * 4)?);

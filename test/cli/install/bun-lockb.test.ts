@@ -1,9 +1,19 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { chmodSync, readFileSync, statSync } from "fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, statSync } from "fs";
 import { copyFile, exists, open, rm, symlink, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isLinux, isRoot, isWindows, runBunInstall, tempDir, textLockfile } from "harness";
-import { join } from "path";
+import {
+  bunExe,
+  bunEnv as env,
+  isLinux,
+  isRoot,
+  isWindows,
+  MAX_PATH_BYTES,
+  runBunInstall,
+  tempDir,
+  textLockfile,
+} from "harness";
+import { dirname, join } from "path";
 import { installEnv, TestRegistry, toml } from "registry";
 
 const registry = new TestRegistry();
@@ -190,6 +200,127 @@ it("prints the file it's given, regardless of its name and of the files next to 
       run(String(dir), join("beside", "Ab12Cd_bun.lockb")),
     ]),
   ).toEqual([printed, printed]);
+});
+
+// The path is resolved against the working directory into a path buffer of MAX_PATH_BYTES: 4096 bytes on Linux, 1024
+// on macOS and, on Windows, the longest command line (32767 UTF-16 units) at three UTF-8 bytes per unit.
+describe.concurrent("bun <path>.lockb with a path close to the path buffer size", () => {
+  const lockb = file(join(import.meta.dir, "fixtures", "bun.lockb.v2")).bytes();
+
+  /** What is printed for a path that does not fit the buffer with its terminating NUL. */
+  const tooLong = (path: string) => ({
+    stdout: "",
+    // The path is not compared on Windows: it has backslashes and characters that are not ASCII there.
+    stderr: isWindows
+      ? expect.stringMatching(/^ENAMETOOLONG: File name too long: failed to open lockfile ".*" \(open\)\n$/s)
+      : `ENAMETOOLONG: File name too long: failed to open lockfile "${path}" (open)\n`,
+    exitCode: 1,
+  });
+
+  // On Windows the resolved path only gets as long as the buffer when it is made of three byte characters. That
+  // goes for the directory too: every byte it adds is one the argument does not have to carry. 150 characters keep
+  // the directory within MAX_PATH (260 units), the longest a process can be started in.
+  const FILLER = isWindows ? "\u4e00" : "d";
+  const DIR = isWindows ? Buffer.alloc(150 * 3, FILLER).toString() : "lockb-long-path";
+
+  /** A file name of `bytes` bytes that ends in `.lockb`. */
+  function nameOfBytes(bytes: number) {
+    const filler = bytes - ".lockb".length;
+    const remainder = filler % Buffer.byteLength(FILLER);
+    return Buffer.alloc(filler - remainder, FILLER).toString() + Buffer.alloc(remainder, "d").toString() + ".lockb";
+  }
+
+  // The working directory has a lockfile of its own. It is not the one the path names, so it is not printed.
+  it.each([
+    // Leaves no room for the terminating NUL.
+    ["as many bytes as the buffer holds", MAX_PATH_BYTES],
+    ["one byte more than the buffer holds", MAX_PATH_BYTES + 1],
+  ])("fails with ENAMETOOLONG for a relative path that resolves to %s", async (_, resolvedBytes) => {
+    using dir = tempDir(DIR, { "bun.lockb": await lockb });
+    const cwd = String(dir);
+    const name = nameOfBytes(resolvedBytes - Buffer.byteLength(cwd) - 1);
+    if (isWindows) {
+      // CreateProcess takes command lines of up to 32767 units, terminating NUL included.
+      expect(`"${bunExe()}" ${name}\0`.length).toBeLessThanOrEqual(32767);
+    }
+
+    expect(await run(cwd, name)).toEqual(tooLong(join(cwd, name)));
+  });
+
+  // The rest is not for Windows. A command line there cannot carry an argument that is as long as the buffer, a
+  // process cannot start in a directory of that length, and the OS refuses a path long before it fills the buffer.
+  describe.skipIf(isWindows)("on POSIX", () => {
+    /** A relative path of `bytes` bytes, made of short names, to a `.lockb` file that does not exist. */
+    function pathOfBytes(bytes: number) {
+      const filler = bytes - "a.lockb".length;
+      return (filler % 2 ? "d" : "") + Buffer.alloc(filler - (filler % 2), "d/").toString() + "a.lockb";
+    }
+    /** `pathOfBytes`, `bytes` long once it is resolved against `cwd`. */
+    const resolvingTo = (bytes: number, cwd: string) => pathOfBytes(bytes - Buffer.byteLength(cwd) - 1);
+
+    it.each([
+      ["is relative and fits the buffer only before it is resolved", () => pathOfBytes(MAX_PATH_BYTES - 1)],
+      ["is relative and longer than the buffer", () => pathOfBytes(MAX_PATH_BYTES + 100)],
+      ["is absolute and as long as the buffer", (cwd: string) => join(cwd, resolvingTo(MAX_PATH_BYTES, cwd))],
+      // An absolute path is used as written. This one names the lockfile of the working directory.
+      [
+        "is absolute and longer than the buffer",
+        (cwd: string) => `${cwd}/${Buffer.alloc(MAX_PATH_BYTES, "./")}bun.lockb`,
+      ],
+    ])("fails with ENAMETOOLONG for a path that %s", async (_, pathFor) => {
+      using dir = tempDir("lockb-long-path", { "bun.lockb": await lockb });
+      const cwd = String(dir);
+      const path = pathFor(cwd);
+
+      expect(await run(cwd, path)).toEqual(tooLong(path.startsWith("/") ? path : `${cwd}/${path}`));
+    });
+
+    it("looks up the longest path that fits", async () => {
+      using dir = tempDir("lockb-longest-path", {});
+      const cwd = String(dir);
+      const relative = resolvingTo(MAX_PATH_BYTES - 1, cwd);
+      const notFound = { stdout: "", stderr: `lockfile not found: "${join(cwd, relative)}"\n`, exitCode: 1 };
+
+      expect(await Promise.all([run(cwd, relative), run(cwd, join(cwd, relative))])).toEqual([notFound, notFound]);
+    });
+
+    // The resolved path has to fit in the buffer, not the path as written.
+    it("prints the lockfile for a relative path that only fits once it is resolved", async () => {
+      using dir = tempDir("lockb-long-spelling", { "Ab12Cd_bun.lockb": await lockb });
+      const cwd = String(dir);
+      const printed = await run(cwd, "Ab12Cd_bun.lockb");
+      expect(printed).toEqual({ stdout: expect.stringContaining("# yarn lockfile v1"), stderr: "", exitCode: 0 });
+
+      expect(await run(cwd, Buffer.alloc(MAX_PATH_BYTES + 100, "./").toString() + "Ab12Cd_bun.lockb")).toEqual(printed);
+    });
+
+    // `<cwd>/bun.lockb` does not fit, as `<cwd>/package.json` does not for `bun install`.
+    it("fails with ENAMETOOLONG in a working directory that leaves no room for /bun.lockb", async () => {
+      using dir = tempDir("lockb-deep-cwd", { "project/bun.lockb": await lockb });
+      const cwdBytes = MAX_PATH_BYTES + 1 - "/bun.lockb".length;
+      let cwd = String(dir);
+      // The last name has to stay under NAME_MAX (255).
+      while (cwdBytes - Buffer.byteLength(cwd) > 256) cwd = join(cwd, Buffer.alloc(200, "d").toString());
+      cwd = join(cwd, Buffer.alloc(cwdBytes - Buffer.byteLength(cwd) - 1, "L").toString());
+      expect(Buffer.byteLength(cwd)).toBe(cwdBytes);
+      // The lockfile may be too long to write by its final path: the directory is moved there with it inside.
+      mkdirSync(dirname(cwd), { recursive: true });
+      renameSync(join(String(dir), "project"), cwd);
+
+      expect(await run(cwd, "bun.lockb")).toEqual(tooLong(`${cwd}/bun.lockb`));
+    });
+
+    it("--hash fails with ENAMETOOLONG for a path as long as the buffer", async () => {
+      using dir = tempDir("lockb-long-path-hash", { "bun.lockb": await lockb });
+      const cwd = String(dir);
+
+      expect(await run(cwd, join(cwd, resolvingTo(MAX_PATH_BYTES, cwd)), "--hash")).toEqual({
+        stdout: "",
+        stderr: "ENAMETOOLONG: File name too long: failed to open lockfile (open)\n",
+        exitCode: 1,
+      });
+    });
+  });
 });
 
 const textBunLock = textLockfile(1, {

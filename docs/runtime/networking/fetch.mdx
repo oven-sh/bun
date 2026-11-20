@@ -566,7 +566,11 @@ await write("output.txt", response);
 
 ### Implementation details
 
-- Connection pooling is enabled by default. You can disable it per-request with `keepalive: false` or the `"Connection: close"` header.
+- Connection pooling is enabled by default. To send a request on a new connection, pass `keepalive: false` in the `fetch()` options. Bun closes that connection after the response.
+  - `fetch()` reads `keepalive` from its options, not from a `Request`. For a `Request`, write `fetch(request, { keepalive: false })`.
+  - A [`Bun.FetchSession`](#fetch-sessions) with `keepAlive: false` does the same for each of its requests.
+  - A `Connection: close` header has a different effect. Bun closes the connection after the response, but the request can go out on an idle connection from the pool.
+  - These rules apply to HTTP/1.1, which `fetch()` uses by default. An HTTP/2 or HTTP/3 request can share a connection that is already open, with or without `keepalive: false`.
 - Bun optimizes large file uploads using the operating system's `sendfile` syscall under specific conditions:
   - The file must be larger than 32KB
   - The request must not be using a proxy or the `compress` option

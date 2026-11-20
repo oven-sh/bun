@@ -280,7 +280,7 @@ fn a_server_repeats_its_flight() {
     }
     raw.advance(RTT);
     raw.send_in(Initial, "ack");
-    assert_eq!(raw.wait(), 2 * RTT);
+    assert_eq!(raw.wait(), RTT);
     assert_eq!(raw.outline(), "H[crypto]");
 }
 
@@ -301,7 +301,7 @@ fn a_client_probes_as_long_as_the_server_may_be_unable_to_send() {
     raw.advance(RTT);
     raw.send_in(Initial, "ack");
     raw.forget();
-    for (timeout, probes) in [(60, "I[ping]"), (120, "I[ping]; I[ping]")] {
+    for (timeout, probes) in [(60, "I[ping]"), (80, "I[ping]; I[ping]")] {
         assert_eq!(raw.wait(), timeout);
         assert_eq!(raw.outline(), probes);
     }
@@ -336,7 +336,7 @@ fn the_end_of_the_handshake_is_repeated() {
     raw.start(&[]);
     raw.shake_hands();
     raw.forget();
-    assert_eq!(raw.wait(), 3 * RTT);
+    assert_eq!(raw.wait(), 2 * RTT);
     assert!(raw.outline().starts_with("H[crypto]"));
 
     let mut raw = Raw::server();

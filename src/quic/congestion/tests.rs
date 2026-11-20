@@ -299,6 +299,22 @@ fn rtt_is_adjusted_by_the_ack_delay() {
 }
 
 #[test]
+fn probes_do_not_wait_for_the_variation_to_settle() {
+    let mut rtt = Rtt::default();
+    for (samples, expected) in [
+        (0, [150_000, 175_000, 250_000]),
+        (1, [200_000, 200_000, 250_000]),
+        (8, [120_016, 145_016, 220_016]),
+    ] {
+        (0..samples).for_each(|_| rtt.update(micros(100_000), Duration::ZERO));
+        assert_eq!(
+            [0, 25_000, 100_000].map(|it| rtt.probe_delay(micros(it))),
+            expected.map(micros),
+        );
+    }
+}
+
+#[test]
 fn loss_delay_grows_with_packets_that_are_late() {
     let mut rtt = Rtt::default();
     rtt.update(millis(8), Duration::ZERO);
@@ -593,6 +609,7 @@ struct Periods {
     now: Instant,
     is_path_limit: bool,
     overflows: bool,
+    sends: bool,
 }
 
 impl Periods {
@@ -602,6 +619,7 @@ impl Periods {
             now: START,
             is_path_limit: true,
             overflows: true,
+            sends: true,
         };
         assert_eq!(periods.run(1, |_| (110, 10)), [2]);
         periods
@@ -619,6 +637,9 @@ impl Periods {
                     ..Feedback::default()
                 };
                 self.now = self.now + millis(10);
+                if self.sends {
+                    self.pacer.on_sent(self.now, 1);
+                }
                 if self.overflows {
                     self.pacer.on_overflow();
                 }
@@ -687,13 +708,18 @@ fn bursts_stay_short_unless_the_outcome_is_comparable() {
     assert_eq!(periods.run(3, |_| (110, 10)), [2, 2, 2]);
 
     let mut periods = Periods::new();
+    (periods.sends, periods.now) = (false, periods.now + millis(150));
+    assert_eq!(periods.run(3, |_| (110, 10)), [2, 2, 2]);
+
+    let mut periods = Periods::new();
+    assert_eq!(periods.run(4, |_| (110, 10)), [4, 8, 16, 16]);
     (0..10).for_each(|_| periods.pacer.on_start_settled(true));
     assert_eq!(periods.run(3, |_| (110, 10)), [8, 8, 8]);
     assert_eq!(periods.pacer.max_turn(), 1);
 }
 
 #[test]
-fn longer_bursts_do_not_tell_whether_a_queue_is_shared() {
+fn bursts_on_trial_do_not_tell_whether_a_queue_is_shared() {
     let mut periods = Periods::new();
     for (outcome, expected) in [((110, 10), 4), ((104, 10), 4), ((110, 10), 2)] {
         assert_eq!(periods.run(1, |_| outcome), [expected]);
@@ -755,12 +781,17 @@ fn longer_bursts_are_judged_by_whole_cycles() {
         &[
             (2000, 20, true, 1),
             (2000, 141, true, 2),
-            (2000, 201, true, 3),
+            (2000, 142, true, 1),
         ],
         &[
-            (2000, 20, true, 1),
-            (2000, 141, true, 2),
-            (2000, 202, true, 1),
+            (2000, 600, true, 1),
+            (2000, 0, true, 2),
+            (2000, 241, true, 3),
+        ],
+        &[
+            (2000, 600, true, 1),
+            (2000, 0, true, 2),
+            (2000, 242, true, 1),
         ],
         &[(2000, 0, true, 1), (1, 121, false, 1), (1, 1, false, 0)],
         &[

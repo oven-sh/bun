@@ -379,8 +379,8 @@ impl Connection {
             SpaceId::Data if self.expects_prompt_ack() => {
                 (self.probe_timeout()).min(self.rtt.smoothed * 2)
             }
-            SpaceId::Data => self.probe_timeout(),
-            _ => self.rtt.probe_timeout(),
+            SpaceId::Data => self.rtt.probe_delay(self.peer_max_ack_delay()),
+            _ => self.rtt.probe_delay(Duration::ZERO),
         };
         space.sent.last_at + self.backed_off(timeout)
     }

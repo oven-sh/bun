@@ -57,6 +57,16 @@ impl Rtt {
         }
     }
 
+    /// The variation starts as a guess, and takes many samples to come down.
+    #[inline]
+    pub(crate) fn probe_delay(&self, max_ack_delay: Duration) -> Duration {
+        let max = match self.has_sample() {
+            true => (self.smoothed * 2).max(self.smoothed * 3 / 2 + max_ack_delay),
+            false => Duration::MAX,
+        };
+        (self.probe_timeout() + max_ack_delay).min(max)
+    }
+
     /// RFC 9002 §6.1.2.
     #[inline]
     pub(crate) fn loss_delay(&self) -> Duration {

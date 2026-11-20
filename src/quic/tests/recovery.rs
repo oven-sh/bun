@@ -357,9 +357,9 @@ fn what_is_out_of_date_is_not_sent_again() {
 #[test]
 fn probe_timeout_backs_off() {
     for (rtt, max_ack_delay, first, second) in [
-        (20, 25, 67_500, 80_000),
-        (20, 0, 42_500, 80_000),
-        (20, 1000, 1_042_500, 80_000),
+        (20, 25, 55_000, 80_000),
+        (20, 0, 40_000, 80_000),
+        (20, 1000, 1_030_000, 80_000),
         (0, 0, 10_000, 20_000),
     ] {
         let raw = Raw::client().config(|it| {
@@ -384,8 +384,8 @@ fn probe_timeout_backs_off() {
 #[test]
 fn probe_timeout_backs_off_up_to_an_eighth_of_the_idle_timeout() {
     for (idle, expected) in [
-        (4000, [67, 80, 160, 320, 500, 500]),
-        (500, [67, 80, 80, 80, 80, 80]),
+        (4000, [55, 80, 160, 320, 500, 500]),
+        (500, [55, 80, 80, 80, 80, 80]),
     ] {
         let raw = Raw::client().config(|it| it.parameters.max_idle_timeout_millis = idle);
         let mut raw = raw.connected();
@@ -411,21 +411,21 @@ fn probe_timeout_backs_off_while_nothing_can_be_sent() {
 fn acknowledgment_ends_the_backoff() {
     let mut raw = Raw::client().connected();
     raw.request_packets("a");
-    for timeout in [67, 80] {
+    for timeout in [55, 80] {
         assert_eq!(raw.wait(), timeout);
         raw.forget();
     }
     raw.advance(RTT);
     raw.send("ack");
     raw.request_packets("b");
-    assert_eq!(raw.wait(), 61);
+    assert_eq!(raw.wait(), 55);
 }
 
 #[test]
 fn acknowledgment_of_acknowledgments_does_not_end_the_backoff() {
     let mut raw = Raw::client().connected();
     raw.request_packets("a");
-    assert_eq!(raw.wait(), 67);
+    assert_eq!(raw.wait(), 55);
     raw.send("ping");
     raw.send("ping");
     let last = raw.take().pop().unwrap();
@@ -457,9 +457,9 @@ fn peer_that_is_heard_again_is_probed_once_between_two_timeouts() {
 fn acknowledgment_without_news_does_not_postpone_the_probe() {
     let mut raw = Raw::client().connected();
     raw.request_packets("a");
-    raw.advance(60);
+    raw.advance(50);
     raw.send("ack 0");
-    assert_eq!(raw.wait(), 7);
+    assert_eq!(raw.wait(), 5);
 }
 
 #[test]

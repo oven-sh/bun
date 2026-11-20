@@ -29,7 +29,7 @@ use crate::builtins::{
 use crate::ir::{InParallel, filter_each, for_each_mut};
 use crate::load::Sources;
 use crate::load::contents::load_names::find_library_modules_that_unknown_names_may_stand_for;
-use crate::load::runtime_roots::uses_of_what_start_reads;
+use crate::load::runtime_roots::{find_roads_by_module_objects, uses_of_what_start_reads};
 use crate::load::sources::{ParsedSource, SourceKind, parsed_source};
 use crate::lower::{LeftOutDeclarations, collect_library_functions};
 use crate::modules::{Candidates, ModuleGraph, ModuleRef, SiteAnswer};
@@ -1451,6 +1451,7 @@ impl<'a, 's> Walk<'a, 's> {
             }
         }
         if !(self.input.holds_what_unseen_code_finds || self.input.can_load_code_at_run_time) {
+            asks.roads_to_namespaces |= find_roads_by_module_objects(application);
             self.reach_uses(&RuntimeUses::of_asks(&asks, self.input.platform));
         }
         let modules =

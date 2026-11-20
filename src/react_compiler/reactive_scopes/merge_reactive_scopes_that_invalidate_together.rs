@@ -73,6 +73,32 @@ impl<'a> ReactiveFunctionVisitor for FindLastUsageVisitor<'a> {
             *entry = id;
         }
     }
+
+    /// Not in upstream: a store to a local after a scope needs the declaration outside that scope, as a read does.
+    fn visit_value(&self, id: EvaluationOrder, value: &ReactiveValue, state: &mut Self::State) {
+        self.traverse_value(id, value, state);
+        // Not in `visit_instruction`: the store that ends a loop test or update has no instruction around it.
+        let ReactiveValue::Instruction(instruction) = value else {
+            return;
+        };
+        let kind = match instruction {
+            InstructionValue::StoreLocal { lvalue, .. } => lvalue.kind,
+            InstructionValue::Destructure { lvalue, .. } => lvalue.kind,
+            _ => return,
+        };
+        if kind != InstructionKind::Reassign {
+            return;
+        }
+        for place in crate::hir::visitors::value_lvalues(instruction) {
+            let decl_id = self.env.identifiers[place.identifier.0 as usize].declaration_id;
+            // Raises only: a local that nothing reads has no entry, and `update_scope_declarations` keeps it.
+            if let Some(last_used_at) = state.get_mut(decl_id)
+                && id > *last_used_at
+            {
+                *last_used_at = id;
+            }
+        }
+    }
 }
 
 // =============================================================================

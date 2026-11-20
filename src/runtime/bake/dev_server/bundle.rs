@@ -1,6 +1,11 @@
 //! Starting bundles: choosing entry points, the bundle queue, and plugin loading.
 
 use super::*;
+use bun_jsc::bindgen::{JsLocal, JsScope};
+
+use crate::generated_bindgen::bundle::{
+    BunDevServer__onStartRejected, BunDevServer__onStartResolved,
+};
 use bun_ptr::detach_lifetime_mut;
 
 impl DevServer {
@@ -348,6 +353,73 @@ impl DevServer {
 
         let pending_request = self.server.map(PendingRequest::new);
 
+        self.current_bundle = Some(CurrentBundle {
+            state: BundleState::Preparing {
+                entry_points,
+                promise: jsc::StrongOptional::empty(),
+            },
+            timer,
+            had_reload_event,
+            requests: ::core::mem::take(&mut self.next_bundle.requests),
+            script_requests: Vec::new(),
+            resolution_failure_entries: Default::default(),
+            pending_request,
+        });
+        self.next_bundle.route_queue.clear_retaining_capacity();
+
+        if let Some(plugin) = self.plugins.as_ref().map(Plugins::as_non_null) {
+            use crate::api::js_bundler::PluginJscExt as _;
+            // SAFETY: `self.plugins` owns the plugin or borrows it from the server.
+            // The bundle's pending request holds that server throughout preparation.
+            let result = unsafe { plugin.as_ref() }.run_on_start_callbacks();
+            let global = self.global();
+            match result {
+                Ok(value) if value.as_any_promise().is_some() => {
+                    if let BundleState::Preparing { promise, .. } =
+                        &mut self.current_bundle.as_mut().unwrap().state
+                    {
+                        promise.set(global, value);
+                    }
+                    value.then(
+                        global,
+                        std::ptr::from_mut(self),
+                        BunDevServer__onStartResolved,
+                        BunDevServer__onStartRejected,
+                    );
+                    return Ok(());
+                }
+                Err(error) => {
+                    let error = global.take_exception(error);
+                    self.fail_prepared_bundle(error)
+                        .map_err(crate::Error::from)?;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+        let result = self.begin_prepared_bundle();
+        if result.is_err() {
+            self.cleanup_failed_preparation();
+        }
+        result
+    }
+
+    fn begin_prepared_bundle(&mut self) -> crate::Result<()> {
+        let mut entry_points = match &mut self
+            .current_bundle
+            .as_mut()
+            .expect("bundle preparation owns current_bundle")
+            .state
+        {
+            BundleState::Preparing { entry_points, .. } => ::core::mem::take(entry_points),
+            BundleState::Running { .. } => unreachable!(),
+        };
+        // onStart may have rewritten cached modules while its promise was pending.
+        let has_pending_changes = !self.pending_reload_event.state.lock().event.is_empty();
+        if core::mem::take(&mut self.next_bundle.has_reload_event) || has_pending_changes {
+            self.process_reload_events(&mut entry_points);
+            self.current_bundle.as_mut().unwrap().had_reload_event = true;
+        }
         // Boxed so its address is stable: `bv2.graph.heap: &'static Arena`
         // borrows it (self-ref via `CurrentBundle`, see Note on
         // `CurrentBundle.bv2`).
@@ -411,10 +483,6 @@ impl DevServer {
             self.graphs.server.reset();
         }
 
-        // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY
-        // mirror of this file's `EntryPointList` (moved down so `bun_bundler`
-        // can name it without depending on `bun_runtime`). Convert by value —
-        // both `Flags` are `#[repr(transparent)] u8` with identical bit layout.
         let start_data = bv2.start_from_bake_dev_server(&{
             let mut bt = bundler::bake_types::EntryPointList::empty();
             for (k, v) in entry_points.set.iter() {
@@ -430,21 +498,57 @@ impl DevServer {
         // `AstVec`s built during setup stay alive until the bundle completes.
         drop(ast_scope);
         let ast_alloc_state = ast_memory_store.take_ast_state();
-        self.current_bundle = Some(CurrentBundle {
+        self.current_bundle.as_mut().unwrap().state = BundleState::Running {
             _bv2: bv2,
             _heap: heap,
             _ast_alloc_state: ast_alloc_state,
-            timer,
             start_data,
-            had_reload_event,
-            requests: ::core::mem::take(&mut self.next_bundle.requests),
-            script_requests: Vec::new(),
-            resolution_failure_entries: Default::default(),
-            pending_request,
-        });
-
-        self.next_bundle.route_queue.clear_retaining_capacity();
+        };
         Ok(())
+    }
+
+    fn fail_prepared_bundle(&mut self, error: JSValue) -> JsResult<()> {
+        let entry_points = match &mut self.current_bundle.as_mut().expect("bundle active").state {
+            BundleState::Preparing { entry_points, .. } => ::core::mem::take(entry_points),
+            BundleState::Running { .. } => unreachable!(),
+        };
+        let dev = std::ptr::from_mut::<DevServer>(self);
+        scopeguard::defer! {
+            // SAFETY: the pending server reference keeps this owner alive until cleanup ends.
+            unsafe {
+                (*dev).cleanup_failed_preparation();
+            }
+        };
+        let _graph_lock = self.graph_safety_lock.guard();
+        for (path, flags) in entry_points.set.iter() {
+            let message = bun_ast_jsc::msg_from_js(self.global(), path.to_vec(), error)?;
+            let mut log = Log::init();
+            log.errors = 1;
+            log.msgs.push(message);
+            if flags.contains(entry_point_list::Flags::CLIENT) {
+                self.graphs.insert_failure::<{ bake::Side::Client }>(
+                    incremental_graph::InsertFailureKey::AbsPath(path, bake::Graph::Client),
+                    &log,
+                )?;
+            }
+            if flags.intersects(entry_point_list::Flags::SERVER | entry_point_list::Flags::SSR) {
+                let graph = if flags.contains(entry_point_list::Flags::SERVER) {
+                    bake::Graph::Server
+                } else {
+                    bake::Graph::Ssr
+                };
+                self.graphs.insert_failure::<{ bake::Side::Server }>(
+                    incremental_graph::InsertFailureKey::AbsPath(path, graph),
+                    &log,
+                )?;
+            }
+        }
+        self.index_failures()?;
+        super::finalize::respond_to_failed_bundle(self)
+    }
+
+    fn cleanup_failed_preparation(&mut self) {
+        super::finalize::finish_bundle_cleanup(self, true);
     }
 
     /// Bundle the files a testing batch collected, or report an empty batch.
@@ -525,4 +629,27 @@ impl DevServer {
             self.next_bundle.route_queue.clear_retaining_capacity();
         }
     }
+}
+
+pub(crate) fn on_start_resolved(
+    _: &mut JsScope<'_>,
+    _: JsLocal<'_>,
+    context: *mut DevServer,
+) -> JsResult<()> {
+    // SAFETY: start_async_bundle's pending server reference owns the callback lifetime.
+    if let Err(error) = unsafe { (*context).begin_prepared_bundle() } {
+        // SAFETY: the pending server reference remains owned until this cleanup.
+        unsafe { (*context).cleanup_failed_preparation() };
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+pub(crate) fn on_start_rejected(
+    _: &mut JsScope<'_>,
+    error: JsLocal<'_>,
+    context: *mut DevServer,
+) -> JsResult<()> {
+    // SAFETY: start_async_bundle's pending server reference owns the callback lifetime.
+    unsafe { (*context).fail_prepared_bundle(error.to_js()) }
 }

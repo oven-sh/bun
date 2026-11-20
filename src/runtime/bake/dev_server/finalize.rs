@@ -66,7 +66,7 @@ impl<'a> HotUpdateContext<'a> {
     }
 }
 
-fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
+pub(super) fn finish_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
     // Held to the end: a stopped server frees `dev` with its last request.
     let (script_requests, _pending_request) = match &mut dev.current_bundle {
         Some(current_bundle) => {
@@ -135,6 +135,44 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
     }
 }
 
+pub(super) fn respond_to_failed_bundle(dev: &mut DevServer) -> JsResult<()> {
+    // Borrowed from the VM, where the agent lives, so that `dev` stays free below.
+    let vm = dev.vm;
+    let mut inspector_agent = BunFrontendDevServerAgent::of(&vm);
+
+    while let Some(req) = dev
+        .current_bundle
+        .as_mut()
+        .expect("bundle active")
+        .requests
+        .pop_first()
+    {
+        let rb = dev.route_bundle_ptr(req.route_bundle_index);
+        rb.server_state = route_bundle::State::PossibleBundlingFailures;
+
+        let handler = req.take_handler();
+        let Some(resp) = handler.detach_response_for_error_page() else {
+            continue;
+        };
+
+        dev.send_serialized_failures(
+            resp,
+            dev.graphs.bundling_failures.values(),
+            inspector_agent.take(),
+        )?;
+    }
+    if let Some(agent) = inspector_agent {
+        let mut buf: Vec<u8> = Vec::new();
+        dev.encode_serialized_failures(
+            dev.graphs.bundling_failures.values(),
+            &mut buf,
+            Some(agent),
+        )?;
+    }
+
+    Ok(())
+}
+
 pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
     if current_bundle.requests.first().is_some() {
         // cannot be an assertion because in the case of OOM, the request list was not drained.
@@ -157,7 +195,7 @@ pub(super) fn finalize_bundle(
     debug_assert!(dev.magic == Magic::Valid);
     let mut had_sent_hmr_event = false;
     let finalized = finalize_bundle_inner(dev, bv2, result, &mut had_sent_hmr_event);
-    finalize_bundle_cleanup(dev, had_sent_hmr_event);
+    finish_bundle_cleanup(dev, had_sent_hmr_event);
     finalized
 }
 
@@ -637,6 +675,49 @@ fn finalize_bundle_inner(
     dev.graphs.client.ensure_stale_bit_capacity(false)?;
     dev.graphs.server.ensure_stale_bit_capacity(false)?;
 
+    if dev
+        .plugin_watchers
+        .modules
+        .iter()
+        .any(|modules| !modules.is_empty())
+    {
+        for index in &bv2.graph.entry_points {
+            let Some(source) = input_file_sources.get(index.get() as usize) else {
+                continue;
+            };
+            let graph = targets[index.get() as usize].bake_graph();
+            let key = source.path.key_for_incremental_graph();
+            let ready = match graph {
+                bake::Graph::Client => {
+                    dev.graphs
+                        .client
+                        .bundled_files
+                        .get_index(key)
+                        .is_some_and(|i| {
+                            !dev.graphs.client.bundled_files.values()[i].failed
+                                && !dev.graphs.client.stale_files.is_set(i)
+                        })
+                }
+                bake::Graph::Server | bake::Graph::Ssr => dev
+                    .graphs
+                    .server
+                    .bundled_files
+                    .get_index(key)
+                    .is_some_and(|i| {
+                        !dev.graphs.server.bundled_files.values()[i].failed
+                            && !dev.graphs.server.stale_files.is_set(i)
+                    }),
+            };
+            if ready {
+                dev.plugin_watchers.commit_entry_point(
+                    key,
+                    graph,
+                    bv2.original_entry_point_name(index.get()),
+                );
+            }
+        }
+    }
+
     dev.generation = dev.generation.wrapping_add(1);
     if Environment::ENABLE_LOGS {
         debug_log!(
@@ -1028,33 +1109,7 @@ fn finalize_bundle_inner(
     if !dev.graphs.incremental_result.failures_added.is_empty() {
         dev.bundles_since_last_error = 0;
 
-        // Borrowed from the VM, where the agent lives, so that `dev` stays free below.
-        let vm = dev.vm;
-        let mut inspector_agent = BunFrontendDevServerAgent::of(&vm);
-
-        while let Some(req) = current_bundle!().requests.pop_first() {
-            let rb = dev.route_bundle_ptr(req.route_bundle_index);
-            rb.server_state = route_bundle::State::PossibleBundlingFailures;
-
-            let handler = req.take_handler();
-            let Some(resp) = handler.detach_response_for_error_page() else {
-                continue;
-            };
-
-            dev.send_serialized_failures(
-                resp,
-                dev.graphs.bundling_failures.values(),
-                inspector_agent.take(),
-            )?;
-        }
-        if let Some(agent) = inspector_agent {
-            let mut buf: Vec<u8> = Vec::new();
-            dev.encode_serialized_failures(
-                dev.graphs.bundling_failures.values(),
-                &mut buf,
-                Some(agent),
-            )?;
-        }
+        respond_to_failed_bundle(dev)?;
 
         return Ok(());
     }

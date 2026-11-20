@@ -46,6 +46,7 @@ impl SplitBundlerOptions {
         &mut self,
         plugin_array: JSValue,
         global: &JSGlobalObject,
+        is_dev_server: bool,
     ) -> JsResult<()> {
         // Create the Plugin and assign it to `opts.plugin` BEFORE iterating,
         // so `plugins: []` still leaves `self.plugin = Some(_)`.
@@ -83,8 +84,14 @@ impl SplitBundlerOptions {
                 }
             };
 
-            let plugin_result =
-                plugin.add_plugin(function, empty_object, JSValue::NULL, false, true)?;
+            let plugin_result = plugin.add_plugin(
+                function,
+                empty_object,
+                JSValue::NULL,
+                false,
+                true,
+                is_dev_server,
+            )?;
 
             if let Some(promise) = plugin_result.as_any_promise() {
                 promise.set_handled(global.vm());

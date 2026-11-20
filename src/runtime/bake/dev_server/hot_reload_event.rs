@@ -7,8 +7,8 @@ use core::sync::atomic::AtomicPtr;
 /// `DevServer.HotReloadEvent` — produced by the watcher thread.
 #[derive(Default)]
 pub(crate) struct HotReloadEvent {
-    files: StringArrayHashMap<()>,
-    dirs: StringArrayHashMap<()>,
+    pub(super) files: StringArrayHashMap<()>,
+    pub(super) dirs: StringArrayHashMap<bun_watcher::Op>,
     /// NUL-joined absolute paths.
     extra_files: Vec<u8>,
 }
@@ -118,17 +118,22 @@ impl HotReloadEvent {
             bun_core::handle_oom(self.files.put(rest_extra, ()));
         }
 
+        bun_core::handle_oom(dev.plugin_watchers.invalidate(
+            self,
+            &dev.bun_watcher,
+            &dev.directory_watchers,
+        ));
         let changed_file_paths = self.files.keys();
-        bun_core::handle_oom(
-            dev.graphs
-                .server
-                .invalidate(changed_file_paths, entry_points),
-        );
-        bun_core::handle_oom(
-            dev.graphs
-                .client
-                .invalidate(changed_file_paths, entry_points),
-        );
+        bun_core::handle_oom(dev.graphs.server.invalidate(
+            changed_file_paths,
+            entry_points,
+            &dev.plugin_watchers,
+        ));
+        bun_core::handle_oom(dev.graphs.client.invalidate(
+            changed_file_paths,
+            entry_points,
+            &dev.plugin_watchers,
+        ));
 
         if entry_points.set.count() == 0 {
             bun_core::debug_warn!("nothing to bundle");
@@ -178,11 +183,21 @@ impl HotReloadEvent {
 
     /// Records a changed directory (and, when present, the changed entry
     /// within it) in the pending hot-reload event (deduplicated).
-    pub(crate) fn append_dir(&mut self, dir_path: &[u8], maybe_sub_path: Option<&[u8]>) {
+    pub(crate) fn append_dir(
+        &mut self,
+        dir_path: &[u8],
+        maybe_sub_path: Option<&[u8]>,
+        op: bun_watcher::Op,
+    ) {
         if dir_path.is_empty() {
             return;
         }
-        bun_core::handle_oom(self.dirs.get_or_put(dir_path));
+        let entry = bun_core::handle_oom(self.dirs.get_or_put(dir_path));
+        if entry.found_existing {
+            *entry.value_ptr |= op;
+        } else {
+            *entry.value_ptr = op;
+        }
 
         let Some(sub_path) = maybe_sub_path else {
             return;
@@ -200,6 +215,14 @@ impl HotReloadEvent {
         self.extra_files.push(bun_paths::SEP);
         self.extra_files.extend_from_slice(sub_path);
         self.extra_files.push(0);
+    }
+
+    pub(crate) fn directory_entries_changed(&self, path: &[u8]) -> bool {
+        self.dirs.get(path).is_some_and(|op| {
+            op.intersects(
+                bun_watcher::Op::DIRECTORY_ENTRIES_CHANGED | bun_watcher::Op::WATCH_INVALIDATED,
+            )
+        })
     }
 }
 
@@ -232,8 +255,16 @@ impl PendingReloadEvent {
             bun_core::scoped_log!(DevServer, "HMR Task end");
         }
 
-        if dev.current_bundle.is_some() {
+        if let Some(bundle) = &dev.current_bundle {
             dev.next_bundle.has_reload_event = true;
+            if matches!(bundle.state, BundleState::Preparing { .. }) {
+                // Acknowledge queued changes while onStart holds the preparation barrier.
+                dev.publish(
+                    HmrTopic::TestingWatchSynchronization,
+                    &[MessageId::TestingWatchSynchronization.char(), 1],
+                    bun_uws::Opcode::BINARY,
+                );
+            }
             return;
         }
 

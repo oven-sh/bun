@@ -41,11 +41,16 @@ impl DevServer {
     /// Expects dependency list to be already freed.
     pub(crate) fn free_directory_watch(&mut self, entry_index: usize) {
         let store = &mut self.directory_watchers;
-        let entry = store.watches.values()[entry_index];
 
         bun_core::scoped_log!(DevServer, "DirectoryWatchStore.freeEntry({})", entry_index);
 
-        self.bun_watcher.remove_at_index(entry.watch_index);
+        if !self
+            .plugin_watchers
+            .has_directory(&store.watches.keys()[entry_index])
+        {
+            self.bun_watcher
+                .remove_directory(&store.watches.keys()[entry_index]);
+        }
 
         // The Box key drops on swap_remove_at.
         let _ = store.watches.swap_remove_at(entry_index);
@@ -63,8 +68,6 @@ impl DevServer {
 pub(crate) struct Entry {
     /// `Dep.Index` — head of the singly-linked dep chain for this dir.
     pub(crate) first_dep: u32,
-    /// To pass to `Watcher::remove_at_index`.
-    pub(crate) watch_index: bun_watcher::WatchItemIndex,
 }
 /// `DirectoryWatchStore.Dep` — one resolution-failure to retry on dir change.
 pub(crate) struct Dep {
@@ -221,24 +224,21 @@ impl DevServer {
             return Ok(());
         }
 
-        let Ok(watch_index) = self
+        let watch_index = self
             .bun_watcher
-            .add_directory(dir_name_to_watch, Watcher::get_hash(dir_name_to_watch))
-        else {
+            .add_directory(dir_name_to_watch, Watcher::get_hash(dir_name_to_watch));
+        if !matches!(watch_index, Ok(index) if index != bun_watcher::NO_WATCH_ITEM) {
             // TODO: watch the parent of a directory that does not exist yet (BUN-10968).
             let _ = store.watches.swap_remove_at(gop_index);
             return Ok(()); // ignoring watch errors.
-        };
+        }
 
         let dep = store.append_dep_assume_capacity(Dep {
             next: None,
             source_file_path: file_path,
             specifier: specifier_cloned,
         });
-        store.watches.values_mut()[gop_index] = Entry {
-            first_dep: dep,
-            watch_index,
-        };
+        store.watches.values_mut()[gop_index] = Entry { first_dep: dep };
         Ok(())
     }
 }

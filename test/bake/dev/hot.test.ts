@@ -1,7 +1,206 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
-import { expect } from "bun:test";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { afterAll, expect } from "bun:test";
+import { tempDir } from "harness";
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
+
+const pendingBatchControls = tempDir("bake-pending-watch-events", {});
+try {
+  afterAll(() => pendingBatchControls[Symbol.dispose]());
+} catch {
+  // Direct-script runs use the harness's interactive fallback.
+}
+
+for (const atomicWatchFile of [false, true]) {
+  const traceName = atomicWatchFile ? "atomic-events.jsonl" : "events.jsonl";
+  devTest(
+    `retains separate watcher batches while the server thread is busy${atomicWatchFile ? " with an atomic plugin dependency" : ""}`,
+    {
+      framework: minimalFramework,
+      env: { BUN_WATCHER_TRACE: path.join(pendingBatchControls, traceName) },
+      pluginFile: atomicWatchFile
+        ? `
+    import { join } from 'node:path';
+    export default [{
+      name: 'atomic-pending-dependency',
+      setup(build) {
+        const dependency = join(import.meta.dirname, 'b.txt');
+        build.onLoad({ filter: /b\\.ts$/ }, async () => ({
+          contents: 'export const b = ' + JSON.stringify(await Bun.file(dependency).text()),
+          loader: 'js',
+          watchFiles: [dependency],
+        }));
+      },
+    }];
+  `
+        : undefined,
+      files: {
+        "routes/index.ts": `
+      import { existsSync, writeFileSync } from 'node:fs';
+      import { a } from '../a.ts';
+      import { b } from '../b.ts';
+      import { c } from '../c.ts';
+      export default function(req) {
+        if (new URL(req.url).searchParams.has('block')) {
+          const trace = process.env.BUN_WATCHER_TRACE;
+          writeFileSync(trace + '.blocked', 'blocked');
+          const deadline = Date.now() + 15000;
+          while (!existsSync(trace + '.release')) {
+            if (Date.now() > deadline) {
+              throw new Error('External release deadline exceeded');
+            }
+          }
+        }
+        return new Response([a, b, c].join('|'));
+      }
+    `,
+        "a.ts": `export const a = 'A0';`,
+        "b.ts": `export const b = 'B0';`,
+        ...(atomicWatchFile ? { "b.txt": "B0" } : {}),
+        "c.ts": `export const c = 'C0';`,
+      },
+      async test(dev) {
+        const trace = path.join(pendingBatchControls, traceName);
+        writeFileSync(trace, "");
+        for (const suffix of [".blocked", ".release"]) {
+          if (existsSync(trace + suffix)) {
+            unlinkSync(trace + suffix);
+          }
+        }
+        let blockedRequest: Promise<{ status: number; body: string }> | undefined;
+        async function waitForControl(condition: () => boolean) {
+          const deadline = Date.now() + 2000 * WAIT_MULTIPLIER;
+          while (!condition()) {
+            if (dev.devProcess.exitCode !== null) {
+              throw new Error("Dev server exited while awaiting watcher event");
+            }
+            if (Date.now() >= deadline) {
+              throw new Error("Watcher control event deadline exceeded");
+            }
+            await new Promise(setImmediate);
+          }
+        }
+        function waitForWrite(filename: string, offset = 0) {
+          return waitForControl(() => {
+            const text = readFileSync(trace, "utf8").slice(offset);
+            return text
+              .slice(0, text.lastIndexOf("\n") + 1)
+              .split("\n")
+              .filter(Boolean)
+              .some(line => Object.keys(JSON.parse(line).files).some(file => path.normalize(file) === filename));
+          });
+        }
+        async function expectCurrentValues(expected: string) {
+          const deadline = Date.now() + 1000 * WAIT_MULTIPLIER;
+          let body: string;
+          do {
+            body = await dev.fetch("/").text();
+          } while (body !== expected && Date.now() < deadline);
+          expect(body).toBe(expected);
+        }
+        await dev.fetch("/").expect.toBe("A0|B0|C0");
+        try {
+          blockedRequest = dev.fetch("/?block=1").then(async response => ({
+            status: response.status,
+            body: await response.text(),
+          }));
+          // The finally block awaits request failures after releasing the server.
+          void blockedRequest.catch(() => {});
+          await waitForControl(() => existsSync(trace + ".blocked"));
+          for (const name of ["a", "b", "c"]) {
+            const filename = dev.join(name === "b" && atomicWatchFile ? "b.txt" : name + ".ts");
+            if (name === "b" && atomicWatchFile) {
+              writeFileSync(filename + ".next", "B1");
+              renameSync(filename + ".next", filename);
+            } else {
+              writeFileSync(filename, `export const ${name} = '${name.toUpperCase()}1';`);
+            }
+            await waitForWrite(filename);
+          }
+        } finally {
+          writeFileSync(trace + ".release", "release");
+          expect(await blockedRequest).toEqual({ status: 200, body: "A0|B0|C0" });
+        }
+        await expectCurrentValues("A1|B1|C1");
+        if (atomicWatchFile) {
+          const offset = readFileSync(trace, "utf8").length;
+          writeFileSync(dev.join("b.txt"), "B2");
+          await waitForWrite(dev.join("b.txt"), offset);
+          await expectCurrentValues("A1|B2|C1");
+        }
+      },
+    },
+  );
+}
+
+for (const watch of ["watchFiles", "watchDirs"] as const) {
+  devTest(`rebuilds a virtual client entry point after its ${watch} change`, {
+    framework: {
+      ...minimalFramework,
+      fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client.ts" }],
+    },
+    pluginFile: `
+      import { join } from 'node:path';
+      import { readdir } from 'node:fs/promises';
+      export default [{
+        name: 'virtual-client-entry',
+        setup(build) {
+          const dependency = join(import.meta.dirname, ${JSON.stringify(watch === "watchFiles" ? "value.txt" : "data")});
+          build.onResolve({ filter: /client[.]ts$/ }, async args => {
+            if (args.kind !== 'entry-point-build') return;
+            const value = ${watch === "watchFiles" ? "await Bun.file(dependency).text()" : "'client'"};
+            if (value === 'file') return { path: join(import.meta.dirname, 'client.ts'), namespace: 'file' };
+            return { path: value === 'decline' ? 'third' : value, namespace: 'virtual-client' };
+          });
+          build.onLoad({ filter: /client[.]ts$/ }, async () => {
+            globalThis.virtualEntryValue = await Bun.file(join(import.meta.dirname, 'file-data.txt')).text();
+            return { contents: 'export const value = ' + JSON.stringify(globalThis.virtualEntryValue), loader: 'js', watchFiles: [join(import.meta.dirname, 'file-data.txt')] };
+          });
+          build.onLoad({ filter: /.*/, namespace: 'virtual-client' }, async () => {
+            const value = ${watch === "watchFiles" ? "await Bun.file(dependency).text()" : "(await readdir(dependency)).sort().join(',')"};
+            if (value === 'reject') throw new Error('virtual entry point failed');
+            if (value === 'decline') return;
+            globalThis.virtualEntryValue = value;
+            return { contents: 'export const value = ' + JSON.stringify(value), loader: 'js', ${watch}: [dependency] };
+          });
+        },
+      }];
+    `,
+    files: {
+      "client.ts": "",
+      "value.txt": "first",
+      "file-data.txt": "from the file entry point",
+      "data/first.txt": "first",
+      "routes/index.ts": `export default () => new Response(globalThis.virtualEntryValue);`,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals(watch === "watchFiles" ? "first" : "first.txt");
+      if (watch === "watchFiles") {
+        await dev.write("value.txt", "second");
+        await dev.fetch("/").equals("second");
+        await dev.write("value.txt", "third");
+        await dev.fetch("/").equals("third");
+        await dev.write("value.txt", "reject", { errors: null });
+        await dev.write("value.txt", "decline", { errors: null });
+        await dev.write("value.txt", "recovered");
+        await dev.fetch("/").equals("recovered");
+        await dev.write("value.txt", "file");
+        await dev.fetch("/").equals("from the file entry point");
+        await dev.write("value.txt", "obsolete dependency");
+        await dev.fetch("/").equals("from the file entry point");
+        await dev.write("value.txt", "file");
+        await dev.write("file-data.txt", "updated file entry point");
+        await dev.fetch("/").equals("updated file entry point");
+      } else {
+        await dev.write("data/second.txt", "second");
+        await dev.fetch("/").equals("first.txt,second.txt");
+        await dev.delete("data/first.txt");
+        await dev.fetch("/").equals("second.txt");
+      }
+    },
+  });
+}
 
 devTest("import.meta.hot.accept basic", {
   files: {

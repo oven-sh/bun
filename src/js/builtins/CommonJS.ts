@@ -164,6 +164,8 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 }
 
 $visibility = "Private";
+// Exposed as require.resolve
+$overriddenName = "resolve";
 export function requireResolve(this: JSCommonJSModule, id: string, options: { paths?: string[] } = {}) {
   // Only `options.paths` extraction happens here; builtin bypass and paths
   // validation are native (functionImportMeta__resolveSyncPrivate).
@@ -219,6 +221,7 @@ export function requireESM(this, resolved: string, requirer?: JSCommonJSModule) 
   return exports;
 }
 
+$visibility = "Private";
 export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
   $assert(this);
   // Runs inside `$require`, which removes the require map entry if the user's handler lets this throw.

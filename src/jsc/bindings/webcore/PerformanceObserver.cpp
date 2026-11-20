@@ -87,8 +87,8 @@ ExceptionOr<void> PerformanceObserver::observe(Init&& init)
             auto begin = m_entriesToDeliver.begin();
             auto oldEnd = begin + oldSize;
             auto end = m_entriesToDeliver.end();
+            // The specification appends: no merge with the entries that are already queued.
             std::stable_sort(oldEnd, end, PerformanceEntry::startTimeCompareLessThan);
-            std::inplace_merge(begin, oldEnd, end, PerformanceEntry::startTimeCompareLessThan);
         }
         m_typeFilter.add(filter);
     }
@@ -97,8 +97,8 @@ ExceptionOr<void> PerformanceObserver::observe(Init&& init)
         m_performance->registerPerformanceObserver(*this);
         m_registered = true;
     }
-    if (isBuffered)
-        deliver();
+    if (isBuffered && !m_entriesToDeliver.isEmpty())
+        m_performance->scheduleTaskIfNeeded();
 
     return {};
 }

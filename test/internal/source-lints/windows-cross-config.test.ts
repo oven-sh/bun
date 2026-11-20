@@ -169,4 +169,30 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     // index-only mode (still devirtualizes, just without the hybrid split).
     expect(linuxFlags.cxxflags).toContain("-fno-split-lto-unit");
   });
+
+  test("a link that generates the crates' code merges functions that have the same body", () => {
+    // rustc does so by default, in its own pipeline. Under -Clinker-plugin-lto the linker generates the crates'
+    // code, and LLVM's default there is off.
+    const elf = "-Wl,-mllvm,-enable-merge-functions";
+    const coff = "/mllvm:-enable-merge-functions";
+    const linuxLdflags = (partial: PartialConfig) =>
+      computeFlags(
+        resolveConfig(
+          { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", ci: true, linuxSysroot: "/fake", ...partial },
+          mockToolchain({ cc: "/fake/llvm/bin/clang", cxx: "/fake/llvm/bin/clang++", ld: "/fake/llvm/bin/ld.lld" }),
+        ),
+      ).ldflags;
+
+    expect(linuxLdflags({})).toContain(elf);
+    // The crates are bitcode in the link with the C/C++ LTO off too.
+    expect(linuxLdflags({ lto: false })).toContain(elf);
+    // rustc generates the code itself, so its own default holds.
+    expect(linuxLdflags({ lto: false, rustLto: false })).not.toContain(elf);
+    expect(linuxLdflags({ buildType: "Debug" })).not.toContain(elf);
+
+    const windows = computeFlags(resolveWindowsCross({ baseline: false })).ldflags;
+    expect(windows).toContain(coff);
+    expect(windows).not.toContain(elf);
+    expect(computeFlags(resolveWindowsCross({ lto: false, rustLto: false })).ldflags).not.toContain(coff);
+  });
 });

@@ -8769,46 +8769,28 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
 // OUTPUT_SINK — bun_core's stderr vtable, installed by us at init (B-0 hook).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Tells `bun test` whether a [`write_all_to_stdio`] is stuck: a test that waits for the reader of its output is not blocked.
+/// Tells `bun test` whether the process is inside [`write_all_to_stdio`]: time that a test waits for the reader of its output.
 pub mod stdio_writes {
-    use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
     static IS_COUNTED: AtomicBool = AtomicBool::new(false);
-    static BEGUN: AtomicU64 = AtomicU64::new(0);
-    static ENDED: AtomicU64 = AtomicU64::new(0);
+    static UNDER_WAY: AtomicU32 = AtomicU32::new(0);
 
     /// The writes from now on are counted.
     pub fn count() {
         IS_COUNTED.store(true, Ordering::SeqCst);
     }
 
-    /// What [`has_one_lasted_since`] compares with.
-    #[derive(Clone, Copy)]
-    pub struct Seen {
-        begun: u64,
-        ended: u64,
-    }
-
-    pub fn seen() -> Seen {
-        // In this order, a write that ends between the two loads looks as if it had not begun.
-        let ended = ENDED.load(Ordering::SeqCst);
-        Seen {
-            begun: BEGUN.load(Ordering::SeqCst),
-            ended,
-        }
-    }
-
-    /// Whether a write that was under way at `earlier` still is.
-    pub fn has_one_lasted_since(earlier: Seen) -> bool {
-        earlier.begun > earlier.ended && ENDED.load(Ordering::SeqCst) == earlier.ended
+    pub fn is_one_under_way() -> bool {
+        UNDER_WAY.load(Ordering::SeqCst) > 0
     }
 
     pub(super) struct Write(bool);
 
     pub(super) fn begin() -> Write {
-        let is_counted = IS_COUNTED.load(Ordering::Relaxed);
+        let is_counted = IS_COUNTED.load(Ordering::SeqCst);
         if is_counted {
-            BEGUN.fetch_add(1, Ordering::SeqCst);
+            UNDER_WAY.fetch_add(1, Ordering::SeqCst);
         }
         Write(is_counted)
     }
@@ -8816,7 +8798,7 @@ pub mod stdio_writes {
     impl Drop for Write {
         fn drop(&mut self) {
             if self.0 {
-                ENDED.fetch_add(1, Ordering::SeqCst);
+                UNDER_WAY.fetch_sub(1, Ordering::SeqCst);
             }
         }
     }

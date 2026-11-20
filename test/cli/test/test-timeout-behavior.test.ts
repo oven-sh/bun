@@ -116,21 +116,17 @@ test.concurrent.each([
      test("blocks", async () => { await wait(200); while (true) {} });`,
     ["(fail) times out", "  ^ this test timed out after 250ms.", "(fail) blocks", leftBlocked("this test")],
   ],
-])(
-  "%s that does not return to the event loop ends the run after its timeout",
-  async (_, tests, ended) => {
-    const run = await runTestFile(fixture(`test("before it", () => {}); ${tests} test("after it", () => {});`), {
-      graceMs: 250,
-    });
-    expect(run).toEqual({
-      lines: ["(pass) before it", ...ended, ...endedTheRun()],
-      signalCode: null,
-      exitCode: 1,
-      files: ["a.test.ts"],
-    });
-  },
-  20_000,
-);
+])("%s that does not return to the event loop ends the run after its timeout", async (_, tests, ended) => {
+  const run = await runTestFile(fixture(`test("before it", () => {}); ${tests} test("after it", () => {});`), {
+    graceMs: 250,
+  });
+  expect(run).toEqual({
+    lines: ["(pass) before it", ...ended, ...endedTheRun()],
+    signalCode: null,
+    exitCode: 1,
+    files: ["a.test.ts"],
+  });
+});
 
 test.concurrent(
   "a test that blocks the event loop for less than 5 seconds after its timeout runs to its end, and the run goes on",
@@ -155,16 +151,13 @@ test.concurrent(
       files: ["a.test.ts"],
     });
   },
-  20_000,
 );
 
 // The report of an error runs code of the test after the test has returned: here a getter that takes longer than the
 // timeout and 100ms more. What the runner does between two tests has no timeout.
-test.concurrent(
-  "an error that takes long to report does not end the run",
-  async () => {
-    const run = await runTestFile(
-      fixture(`
+test.concurrent("an error that takes long to report does not end the run", async () => {
+  const run = await runTestFile(
+    fixture(`
         test("throws", () => {
           const error = new Error("thrown");
           let calls = 0;
@@ -177,74 +170,77 @@ test.concurrent(
           throw error;
         });
         test("after it", () => {});`),
-      { graceMs: 100 },
-    );
-    expect(run).toEqual({
-      lines: ["error: thrown", "(fail) throws", "  ^ this test timed out after 250ms.", "(pass) after it"],
-      signalCode: null,
-      exitCode: 1,
-      files: ["a.test.ts"],
-    });
-  },
-  20_000,
-);
+    { graceMs: 100 },
+  );
+  expect(run).toEqual({
+    lines: ["error: thrown", "(fail) throws", "  ^ this test timed out after 250ms.", "(pass) after it"],
+    signalCode: null,
+    exitCode: 1,
+    files: ["a.test.ts"],
+  });
+});
 
 // Each of them blocks the event loop for longer than the timeout of a test or hook before or beside it, and 100ms more.
-test.concurrent(
-  "a timeout that is over, or that is not the test's, does not end the run",
-  async () => {
-    const run = await runTestFile(
-      fixture(`
-        beforeEach(() => {});
-        test("has no timeout", () => block(600), 0);
-        test("has a long timeout", () => block(600), 10_000);
-        test("has a long timeout, in a later turn", async () => { await wait(1); block(600); }, 10_000);
-        test("has a long timeout, with a done callback", done => { setTimeout(() => { block(600); done(); }, 1); }, 10_000);
-        describe("concurrent", () => {
-          test.concurrent("is over early", async () => { await wait(1); });
-          test.concurrent("has a long timeout, in a later turn", async () => { await wait(20); block(600); }, 10_000);
-        });
-        describe("beside a test that times out", () => {
-          test.concurrent("times out", async () => { await new Promise(() => {}); });
-          test.concurrent("has a long timeout, in a later turn", async () => { await wait(20); block(600); }, 10_000);
-        });
-        test("has no timeout, in a later turn", async () => { await wait(1); block(600); }, 0);`),
-      { graceMs: 100 },
-    );
-    expect(run).toEqual({
-      lines: [
-        "(pass) has no timeout",
-        "(pass) has a long timeout",
-        "(pass) has a long timeout, in a later turn",
-        "(pass) has a long timeout, with a done callback",
-        "(pass) concurrent > is over early",
-        "(pass) concurrent > has a long timeout, in a later turn",
-        "(pass) beside a test that times out > has a long timeout, in a later turn",
-        "(fail) beside a test that times out > times out",
-        "  ^ this test timed out after 250ms.",
-        "(pass) has no timeout, in a later turn",
-      ],
-      signalCode: null,
-      exitCode: 1,
-      files: ["a.test.ts"],
-    });
-  },
-  20_000,
-);
+test.concurrent.each([
+  ["has no timeout", `test("blocks", () => block(600), 0);`, ["(pass) blocks"]],
+  ["has a long timeout", `test("blocks", () => block(600), 10_000);`, ["(pass) blocks"]],
+  [
+    "has a long timeout, and blocks in a later turn",
+    `test("blocks", async () => { await wait(1); block(600); }, 10_000);`,
+    ["(pass) blocks"],
+  ],
+  [
+    "has a long timeout and a done callback",
+    `test("blocks", done => { setTimeout(() => { block(600); done(); }, 1); }, 10_000);`,
+    ["(pass) blocks"],
+  ],
+  [
+    "has a long timeout, beside a test that is over",
+    `test.concurrent("is over", async () => { await wait(1); });
+     test.concurrent("blocks", async () => { await wait(20); block(600); }, 10_000);`,
+    ["(pass) is over", "(pass) blocks"],
+  ],
+  [
+    "has a long timeout, beside a test that times out",
+    `test.concurrent("times out", async () => { await new Promise(() => {}); });
+     test.concurrent("blocks", async () => { await wait(20); block(600); }, 10_000);`,
+    ["(pass) blocks", "(fail) times out", "  ^ this test timed out after 250ms."],
+  ],
+  [
+    "has no timeout, and blocks in a later turn",
+    `test("blocks", async () => { await wait(1); block(600); }, 0);`,
+    ["(pass) blocks"],
+  ],
+])("a test that %s does not end the run when it blocks the event loop", async (_, tests, lines) => {
+  const run = await runTestFile(
+    fixture(`beforeEach(() => {}); test("before it", () => {}); ${tests} test("after it", () => {});`),
+    { graceMs: 100 },
+  );
+  expect(run).toEqual({
+    lines: ["(pass) before it", ...lines, "(pass) after it"],
+    signalCode: null,
+    exitCode: lines.length > 2 ? 1 : 0,
+    files: ["a.test.ts"],
+  });
+});
 
-// Whatever reads the output reads nothing for 1.5 seconds: longer than the timeout of a test and 100ms more. Nothing
-// tells it when `bun test` has filled the pipe. A shell pipeline, because Bun.spawn() reads a pipe as soon as there
-// is something in it.
-describe.concurrent.skipIf(isWindows)("a reader of the output that stops reading does not end the run", () => {
-  async function runWithPausedReader(source: string) {
-    using dir = tempDir("test-timeout-paused-reader", { "a.test.ts": source });
+// A shell pipeline, because Bun.spawn() reads a pipe as soon as there is something in it. Nothing tells the reader
+// when `bun test` has filled the pipe.
+describe.concurrent.skipIf(isWindows)("a reader of the output that is slow does not end the run", () => {
+  // It reads nothing for 1.5 seconds: longer than the timeout of a test and the 100ms after it.
+  const pausedReader = "(sleep 1.5; cat)";
+  // It reads 4 KB every 30ms.
+  const slowReader = `"$0" -e 'const chunk = Buffer.alloc(4096); for (let length; (length = fs.readSync(0, chunk)) > 0; Bun.sleepSync(30)) fs.writeSync(1, chunk.subarray(0, length));'`;
+
+  async function runWithReader(reader: string, graceMs: number, source: string) {
+    using dir = tempDir("test-timeout-slow-reader", { "a.test.ts": source });
     await using proc = Bun.spawn({
-      cmd: ["sh", "-c", `("$0" test --timeout=250 a.test.ts; echo "exit: $?") 2>&1 | (sleep 1.5; cat)`, bunExe()],
-      env: { ...bunEnv, BUN_TEST_TIMEOUT_GRACE_MS: "100" },
+      cmd: ["sh", "-c", `("$0" test --timeout=250 a.test.ts; echo "exit: $?") 2>&1 | ${reader}`, bunExe()],
+      env: { ...bunEnv, BUN_TEST_TIMEOUT_GRACE_MS: String(graceMs) },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "inherit",
-      timeout: 30_000,
+      timeout: 15_000,
       killSignal: "SIGKILL",
     });
     const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
@@ -253,26 +249,34 @@ describe.concurrent.skipIf(isWindows)("a reader of the output that stops reading
       .filter(line => /^\(fail\) |^  \^ |^error: |^ \d+ (pass|fail)$|^exit: /.test(line))
       .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
   }
+  const prints = (kilobytes: number) => `
+    import { test } from "bun:test";
+    test("prints", () => {
+      const line = Buffer.alloc(999, "x").toString();
+      for (let i = 0; i < ${kilobytes}; i++) console.log(line);
+    });
+    test("after it", () => {});`;
+  const timedOutAndWentOn = ["(fail) prints", "  ^ this test timed out after 250ms.", " 1 pass", " 1 fail", "exit: 1"];
 
   // The runner is blocked in a write, with no test running.
-  test("while the runner prints results", async () => {
-    const lines = await runWithPausedReader(
+  test("it stops reading while the runner prints results", async () => {
+    const lines = await runWithReader(
+      pausedReader,
+      100,
       `import { test } from "bun:test"; for (let i = 0; i < 6000; i++) test("test number " + i, () => {});`,
     );
     expect(lines).toEqual([" 6000 pass", " 0 fail", "exit: 0"]);
-  }, 40_000);
+  });
 
-  // The test is blocked in console.log().
-  test("while a test prints", async () => {
-    const lines = await runWithPausedReader(`
-      import { test } from "bun:test";
-      test("prints", () => {
-        const line = Buffer.alloc(1000, "x").toString();
-        for (let i = 0; i < 400; i++) console.log(line);
-      });
-      test("after it", () => {});`);
-    expect(lines).toEqual(["(fail) prints", "  ^ this test timed out after 250ms.", " 1 pass", " 1 fail", "exit: 1"]);
-  }, 40_000);
+  // The test is blocked in one call of console.log().
+  test("it stops reading while a test prints", async () => {
+    expect(await runWithReader(pausedReader, 100, prints(400))).toEqual(timedOutAndWentOn);
+  });
+
+  // Each call of console.log() returns, and the 200 KB take the reader 1.5 seconds: longer than the timeout and 300ms.
+  test("it reads slowly while a test prints", async () => {
+    expect(await runWithReader(slowReader, 300, prints(200))).toEqual(timedOutAndWentOn);
+  });
 });
 
 test.concurrent.each([
@@ -303,21 +307,17 @@ test.concurrent.each([
     { BUN_INSPECT_CONNECT_TO: "ws://127.0.0.1:9/nothing-listens" },
     ["(fail) outer > blocks", blocks("this test"), ...endedTheRun()],
   ],
-])(
-  "with %s, the run that a blocked event loop ends says which test blocked it",
-  async (_, args, env, lines) => {
-    const run = await runTestFile(
-      `import { test, describe } from "bun:test";
+])("with %s, the run that a blocked event loop ends says which test blocked it", async (_, args, env, lines) => {
+  const run = await runTestFile(
+    `import { test, describe } from "bun:test";
        describe("outer", () => {
          test("blocks", () => { while (true) {} });
        });`,
-      { graceMs: 250, args, env },
-    );
-    // Neither a report nor a coverage directory.
-    expect(run).toEqual({ lines, signalCode: null, exitCode: 1, files: ["a.test.ts"] });
-  },
-  20_000,
-);
+    { graceMs: 250, args, env },
+  );
+  // Neither a report nor a coverage directory.
+  expect(run).toEqual({ lines, signalCode: null, exitCode: 1, files: ["a.test.ts"] });
+});
 
 // Drives a `bun test` that waits for an inspector: enables the debugger, and resumes it `pauseMs` after each pause.
 // Nothing tells how long a test has been paused.
@@ -370,29 +370,25 @@ async function runPausedInDebugger(source: string, graceMs: number, pauseMs: num
 test.concurrent.each([
   ["for longer than its timeout", 100, 1000, ""],
   ["and that then works for less than 5 seconds", 1000, 1100, "block(500);"],
-])(
-  "a test that a debugger pauses %s does not end the run",
-  async (_, graceMs, pauseMs, work) => {
-    const run = await runPausedInDebugger(
-      fixture(`
+])("a test that a debugger pauses %s does not end the run", async (_, graceMs, pauseMs, work) => {
+  const run = await runPausedInDebugger(
+    fixture(`
         test("pauses", () => {
           debugger;
           ${work}
           console.log("ran: to the end");
         });
         test("after it", () => {});`),
-      graceMs,
-      pauseMs,
-    );
-    expect(run).toEqual({
-      lines: ["ran: to the end", "(fail) pauses", "  ^ this test timed out after 250ms.", "(pass) after it"],
-      pauses: 1,
-      signalCode: null,
-      exitCode: 1,
-    });
-  },
-  20_000,
-);
+    graceMs,
+    pauseMs,
+  );
+  expect(run).toEqual({
+    lines: ["ran: to the end", "(fail) pauses", "  ^ this test timed out after 250ms.", "(pass) after it"],
+    pauses: 1,
+    signalCode: null,
+    exitCode: 1,
+  });
+});
 
 // Under --watch a change of a file restarts a run that is blocked. The end of the process would end the watch.
 // On Windows `bun test --watch` is a parent process that restarts the runner.
@@ -400,7 +396,7 @@ test.concurrent.skipIf(isWindows)(
   "under --watch, a test that blocks the event loop is reported, and the run does not end",
   async () => {
     using dir = tempDir("test-timeout-watch", {
-      "a.test.ts": `import { test } from "bun:test"; test("overruns", () => { Bun.sleepSync(3000); });`,
+      "a.test.ts": `import { test } from "bun:test"; test("overruns", () => { Bun.sleepSync(1500); });`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--watch", "--no-clear-screen", "--timeout=250"],
@@ -415,7 +411,7 @@ test.concurrent.skipIf(isWindows)(
       output += chunk;
       if (output.includes("Ran 1 test across 1 file.")) break;
     }
-    // How often the thread that watches the tests has slept: every 12.5ms while the test was late, which is 212 times.
+    // How often the thread that watches the tests has slept: every 6.25ms while the test was late, which is 200 times.
     const sleeps = isLinux
       ? readdirSync(`/proc/${proc.pid}/task`)
           .map(thread => `/proc/${proc.pid}/task/${thread}`)
@@ -435,9 +431,8 @@ test.concurrent.skipIf(isWindows)(
       "  ^ this test timed out after 250ms.",
       "Ran 1 test across 1 file.",
     ]);
-    if (isLinux) expect(sleeps.map(count => (count < 1000 ? "under 1000" : count))).toEqual(["under 1000"]);
+    if (isLinux) expect(sleeps.map(count => (count < 2000 ? "under 2000" : count))).toEqual(["under 2000"]);
   },
-  20_000,
 );
 
 // While the process is stopped its clock goes on, and the timer of a test is only late, not blocked.
@@ -488,7 +483,7 @@ describe.concurrent.skipIf(isWindows)("a timeout that passes while the process i
       signalCode: null,
       exitCode: 1,
     });
-  }, 20_000);
+  });
 
   // The test is past its timeout when the process stops, and has 400ms of work left when the process goes on.
   test("while the test works", async () => {
@@ -509,7 +504,7 @@ describe.concurrent.skipIf(isWindows)("a timeout that passes while the process i
       signalCode: null,
       exitCode: 1,
     });
-  }, 20_000);
+  });
 });
 
 // The child inherits stdout, so stdout only ends when the child has ended too.
@@ -531,7 +526,6 @@ test.concurrent.skipIf(isWindows)(
       files: ["a.test.ts"],
     });
   },
-  20_000,
 );
 
 if (isFlaky && isLinux) {

@@ -6,8 +6,7 @@ use std::io::Write as _;
 
 use bun_core::time::NS_PER_MS;
 use bun_core::{Output, Timespec, TimespecMockMode, strings};
-use bun_threading::guarded::GuardedLock;
-use bun_threading::{Guarded, Mutex};
+use bun_threading::Guarded;
 
 use super::bun_test::{BunTest, SequenceEntryId};
 use super::jest::FileHeader;
@@ -182,14 +181,14 @@ fn publish(deadline: Timespec, is_in_callback: bool, entry: Option<Entry<'_>>) {
     HAS_DEADLINE.store(has_deadline, Ordering::Relaxed);
     drop(state);
 
-    if has_deadline && !IS_WATCHING.swap(true, Ordering::Relaxed) {
+    if has_deadline && !IS_WATCHING.swap(true, Ordering::SeqCst) {
         bun_sys::stdio_writes::count();
         // SAFETY: the thread holds nothing of a VM. It reads `STATE`, which holds copies, and ends the process.
         if let Err(err) = std::thread::Builder::new().name("TestTimeout".into()).spawn(watch) {
             // The next test tries again. Until then a test that blocks the event loop hangs.
-            IS_WATCHING.store(false, Ordering::Relaxed);
+            IS_WATCHING.store(false, Ordering::SeqCst);
             static HAS_WARNED: AtomicBool = AtomicBool::new(false);
-            if !HAS_WARNED.swap(true, Ordering::Relaxed) {
+            if !HAS_WARNED.swap(true, Ordering::SeqCst) {
                 bun_core::pretty_errorln!(
                     "<r><yellow>warn<r>: bun test could not start the thread that ends a run whose test blocks the event loop: {}",
                     err,
@@ -203,7 +202,7 @@ fn publish(deadline: Timespec, is_in_callback: bool, entry: Option<Entry<'_>>) {
 /// Ends the process once one deadline has stayed published, and in the past, through `grace_ms` of its own sleeps.
 fn watch() {
     const LOOKS_PER_GRACE: u64 = 4;
-    const SLEEPS_PER_GRACE: u64 = 8;
+    const SLEEPS_PER_GRACE: u64 = 16;
     Output::Source::configure_thread_no_js();
     // With every processor busy, as with tests that loop, the watch would wake up late by many time slices.
     #[cfg(windows)]
@@ -237,7 +236,7 @@ fn watch() {
             if bun_jsc::debugger::holds_a_thread() || is_traced() {
                 overdue.1 = 0;
             } else if !state.only_reports {
-                end_process(state, before);
+                end_process(&state, before);
             } else {
                 reported_generation = generation;
                 report(&state, before, false);
@@ -248,22 +247,17 @@ fn watch() {
             0 => grace_ns / SLEEPS_PER_GRACE,
             until_grace => until_grace.min(grace_ns / SLEEPS_PER_GRACE),
         };
-        let is_held = bun_jsc::debugger::holds_a_thread();
-        let writes = bun_sys::stdio_writes::seen();
+        let was_held = bun_jsc::debugger::holds_a_thread();
         std::thread::sleep(Duration::from_nanos(sleep_ns.max(1)));
         let slept_ns = now().saturating_sub(before);
-        if waits_for_somebody_else(is_held, writes) {
+        if was_held || bun_jsc::debugger::holds_a_thread() {
+            // A test that a debugger lets go on has the whole grace again.
             overdue.1 = 0;
-        } else {
+        } else if !bun_sys::stdio_writes::is_one_under_way() {
             // A sleep that ends late counts for what it asked: the process may have been stopped (SIGSTOP, a suspended machine).
             overdue.1 = overdue.1.saturating_add(slept_ns.min(sleep_ns));
         }
     }
-}
-
-/// Whether a debugger, or a reader of the output that stopped reading (`bun test | less`), kept the JavaScript thread through a sleep.
-fn waits_for_somebody_else(was_held: bool, writes: bun_sys::stdio_writes::Seen) -> bool {
-    was_held || bun_jsc::debugger::holds_a_thread() || bun_sys::stdio_writes::has_one_lasted_since(writes)
 }
 
 /// Whether a native debugger controls the process.
@@ -361,10 +355,10 @@ fn report(state: &State, now: u64, ends_process: bool) {
     let _ = Output::error_writer().write_all(&lines);
 }
 
-/// Keeps `state` locked, which stops the JavaScript thread before the next thing it would do with the runner.
+/// The caller keeps `state` locked, which stops the JavaScript thread before the next thing it would do with the runner.
 #[cold]
-fn end_process(state: GuardedLock<'static, State, Mutex>, now: u64) -> ! {
-    report(&state, now, true);
+fn end_process(state: &State, now: u64) -> ! {
+    report(state, now, true);
     let config = &state.config;
     if !config.is_worker {
         if Output::is_github_action() {

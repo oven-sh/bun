@@ -250,7 +250,6 @@ test.concurrent.each([
       (await Bun.file(junit).text()).match(/<testcase name="\(worker timed out\)"[^>]*>\s*<failure[^>]*>/),
     ).toEqual([expect.stringContaining(`message="a test did not return to the event loop after its timeout"`)]);
   },
-  20_000,
 );
 
 // The coordinator ends the process group of a worker that has ended, with SIGTERM.
@@ -311,7 +310,6 @@ test.skipIf(isWindows)(
       for (const pid of children.filter(isAlive)) process.kill(pid, "SIGKILL");
     }
   },
-  30_000,
 );
 
 test("--parallel: a test that calls process.exit(124) is a worker that crashed, not one that timed out", async () => {

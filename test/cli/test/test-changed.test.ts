@@ -279,6 +279,28 @@ describe.concurrent("bun test --changed", () => {
       expect(exitCode).toBe(1);
     });
 
+    test("the file that main of an imported directory's package.json names", async () => {
+      using dir = tempDir("test-changed-rm-main", {
+        ...deletionFixture,
+        "pkg/package.json": JSON.stringify({ name: "pkg", main: "src/entry.ts" }),
+        "pkg/src/entry.ts": lib,
+        "pkg/src/other.ts": lib,
+        "uses.test.ts": importing("./pkg"),
+      });
+      initRepo(String(dir));
+
+      rmSync(join(String(dir), "pkg", "src", "other.ts"));
+      {
+        const { stderr, exitCode } = await runTestChanged(String(dir));
+        expect(ranFiles(stderr, deletionNames)).toEqual([]);
+        expect(exitCode).toBe(0);
+      }
+      rmSync(join(String(dir), "pkg", "src", "entry.ts"));
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, deletionNames)).toEqual(["uses.test.ts"]);
+      expect(exitCode).toBe(1);
+    });
+
     test("a transitive import", async () => {
       using dir = tempDir("test-changed-rm-transitive", {
         ...deletionFixture,
@@ -342,31 +364,48 @@ describe.concurrent("bun test --changed", () => {
     });
 
     test("an import that never resolved claims only the file it names", async () => {
+      const optional = (specifier: string) =>
+        `import { test, expect } from "bun:test";\nlet optional;\ntry { optional = require("${specifier}"); } catch {}\ntest("optional", () => expect(optional).toBeUndefined());\n`;
       using dir = tempDir("test-changed-rm-beside-unresolved", {
         "package.json": JSON.stringify({ name: "optional", type: "module" }),
         "notes.txt": "notes\n",
         "optionally.ts": lib,
         "sub/optional.ts": lib,
         "docs/guide.md": "guide\n",
-        "test/optional.test.ts": `import { test, expect } from "bun:test";\nlet optional;\ntry { optional = require("../optional"); } catch {}\ntest("optional", () => expect(optional).toBeUndefined());\n`,
+        // Other extensions of the names that the imports below end in.
+        "config.ts": lib,
+        "config.json": "{}\n",
+        "styles.css": "a {}\n",
+        "test/optional.test.ts": optional("../optional"),
+        "test/local.test.ts": optional("../config.local"),
+        "test/styles.test.ts": optional("../styles.js"),
         "test/parent.test.ts": `import { test, expect } from "bun:test";\ntest("parent", async () => expect(await import("..").catch(() => null)).toBeNull());\n`,
       });
       initRepo(String(dir));
-      const optionalNames = ["optional.test.ts", "parent.test.ts"];
+      const optionalNames = ["optional.test.ts", "local.test.ts", "styles.test.ts", "parent.test.ts"];
 
-      for (const name of ["notes.txt", "optionally.ts", "sub/optional.ts", "docs/guide.md"]) {
-        rmSync(join(String(dir), name));
-      }
+      const unnamed = [
+        "notes.txt",
+        "optionally.ts",
+        "sub/optional.ts",
+        "docs/guide.md",
+        "config.ts",
+        "config.json",
+        "styles.css",
+      ];
+      for (const name of unnamed) rmSync(join(String(dir), name));
       {
         const { stderr, exitCode } = await runTestChanged(String(dir));
         expect(ranFiles(stderr, optionalNames)).toEqual([]);
-        expect(stderr).toContain("4 changed files, but no test files are affected");
+        expect(stderr).toContain("7 changed files, but no test files are affected");
         expect(exitCode).toBe(0);
       }
-      // The file that the import names selects its importer.
+      // The file that an import names selects its importer.
       writeFileSync(join(String(dir), "optional.ts"), lib);
+      writeFileSync(join(String(dir), "config.local.ts"), lib);
+      writeFileSync(join(String(dir), "styles.tsx"), lib);
       const { stderr, exitCode } = await runTestChanged(String(dir));
-      expect(ranFiles(stderr, optionalNames)).toEqual(["optional.test.ts"]);
+      expect(ranFiles(stderr, optionalNames)).toEqual(["local.test.ts", "optional.test.ts", "styles.test.ts"]);
       expect(exitCode).toBe(1);
     });
 
@@ -1121,6 +1160,29 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     renameSync(join(String(dir), "wc.test.ts"), join(String(dir), "wd.test.ts"));
     expect(await runs.next()).toEqual({ files: ["wb.test.ts", "wd.test.ts"], summary: "Ran 2 tests across 2 files." });
   }, 60_000);
+
+  // Linux only: it stops the process until /proc says that every thread is stopped.
+  test.skipIf(!isLinux)(
+    "a dependency deleted together with its import reruns the importer alone",
+    async () => {
+      using dir = tempDir("test-changed-watch-delete-with-import", watchFixture);
+      initRepo(String(dir));
+      appendFileSync(join(String(dir), "wb.test.ts"), "// dirty\n");
+
+      const runs = runsOf(String(dir));
+      await using proc = runs.proc;
+      expect(await runs.next()).toEqual({ files: ["wb.test.ts"], summary: "Ran 1 test across 1 file." });
+
+      // Stopped, so that the watcher gets both in one batch.
+      proc.kill("SIGSTOP");
+      await untilEveryThreadIs("T", proc.pid);
+      rmSync(join(String(dir), "dep-a.ts"));
+      writeFileSync(join(String(dir), "wa.test.ts"), watchFixture["wc.test.ts"]);
+      proc.kill("SIGCONT");
+      expect(await runs.next()).toEqual({ files: ["wa.test.ts"], summary: "Ran 1 test across 1 file." });
+    },
+    60_000,
+  );
 
   test("trigger file path handed to restarted runs has a 128-bit random hex suffix", async () => {
     using dir = tempDir("test-changed-watch-trigger-name", {

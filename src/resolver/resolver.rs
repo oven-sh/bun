@@ -1025,6 +1025,26 @@ impl<'a> Resolver<'a> {
         });
     }
 
+    /// Calls `each` with every absolute path that a main field of the package.json in `dir`
+    /// names, whether a file answers it or not. An import of `dir` resolves through them.
+    pub fn for_each_main_field_target(&mut self, dir: &[u8], mut each: impl FnMut(&[u8])) {
+        let Some(dir_info) = self.read_dir_info_ignore_error(dir) else {
+            return;
+        };
+        let Some(package_json) = dir_info.package_json() else {
+            return;
+        };
+        let mut buf = bun_paths::path_buffer_pool::get();
+        for field in package_json.main_fields.values() {
+            let target = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                bun_paths::platform::Auto,
+            >(dir, &mut buf.0, &[field]);
+            if let Some(target) = target {
+                each(target);
+            }
+        }
+    }
+
     pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
         // NOTE: capture `log` before partially borrowing `self.debug_logs`
         // so the method call doesn't conflict with the field borrow (`log()`
@@ -7140,7 +7160,7 @@ fn installed_package_folder(path: &[u8]) -> Option<&[u8]> {
 /// is esbuild's `rewrittenFileExtensions` table plus Bun's `.js` → `.mts`
 /// (oven-sh/bun#12580). `inside_node_modules` gates only `.mjs` and `.cjs`:
 /// `DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES` never applied to `.js`/`.jsx`.
-pub(crate) fn rewritten_file_extensions(
+pub fn rewritten_file_extensions(
     ext: &[u8],
     inside_node_modules: impl Fn() -> bool,
 ) -> &'static [&'static [u8]] {

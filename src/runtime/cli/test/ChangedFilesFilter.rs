@@ -36,11 +36,13 @@ use bun_paths::{self, platform, resolve_path};
 use bun_ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
+use bun_resolver::resolver::rewritten_file_extensions;
 use bun_sys as sys;
 use bun_which::which;
 
 use crate::Command;
 use crate::api::bun_process::sync as spawn_sync;
+use crate::cli::test::scanner::TEST_NAME_SUFFIXES;
 
 // `core::result::Result` is fully qualified throughout this file to avoid the
 // shadow.
@@ -316,6 +318,7 @@ pub(crate) fn filter<'a>(
         let mut unclaimed: Vec<usize> = (0..claimed.len()).filter(|&i| !claimed[i]).collect();
         let mut preload_affected = false;
         if !unclaimed.is_empty() {
+            let named = NamedByImports::new(changed.keys(), &unclaimed);
             for (idx, records) in import_records.iter().enumerate() {
                 if !sources[idx].path.is_file() {
                     continue;
@@ -330,8 +333,7 @@ pub(crate) fn filter<'a>(
                     if bun_paths::is_package_path(specifier) {
                         // A tsconfig.json "paths" alias whose file is gone is external to the scan.
                         resolver.for_each_tsconfig_paths_target(dir, specifier, |target| {
-                            names_changed |=
-                                claim_resolvable_from(target, changed, &unclaimed, &mut claimed);
+                            names_changed |= named.claim(target, &mut claimed);
                         });
                     } else if record.flags.contains(ImportRecordFlags::WAS_UNRESOLVED) {
                         let target = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
@@ -340,8 +342,10 @@ pub(crate) fn filter<'a>(
                             &[specifier],
                         );
                         if let Some(target) = target {
-                            names_changed |=
-                                claim_resolvable_from(target, changed, &unclaimed, &mut claimed);
+                            names_changed |= named.claim(target, &mut claimed);
+                            resolver.for_each_main_field_target(target, |main| {
+                                names_changed |= named.claim(main, &mut claimed);
+                            });
                         }
                     }
                 }
@@ -352,8 +356,7 @@ pub(crate) fn filter<'a>(
             }
             for preload in &preloads {
                 if let Preload::Missing(path) = preload {
-                    preload_affected |=
-                        claim_resolvable_from(path, changed, &unclaimed, &mut claimed);
+                    preload_affected |= named.claim(path, &mut claimed);
                 }
             }
             unclaimed.retain(|&i| !claimed[i]);
@@ -386,11 +389,17 @@ pub(crate) fn filter<'a>(
     };
 
     let mut selection = select(&changed_files);
-    // The watcher names the files it watched. One that is gone and that
-    // nothing names is a test file that was deleted or renamed: git knows
-    // the new name.
-    let is_gone = |&entry: &usize| !sys::exists(&changed_files.keys()[entry]);
-    if from_watch_trigger && selection.unclaimed.iter().any(is_gone) {
+    // The watcher names the files it watched. A test file that is gone was
+    // deleted or renamed: git knows the new name.
+    let is_gone_test_file = |&entry: &usize| {
+        let path = &changed_files.keys()[entry];
+        let name = without_extension(resolve_path::basename(path));
+        TEST_NAME_SUFFIXES
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
+            && !sys::exists(path)
+    };
+    if from_watch_trigger && selection.unclaimed.iter().any(is_gone_test_file) {
         if let Ok(known_to_git) = get_changed_files(top_level_dir, changed_since) {
             for path in known_to_git.keys() {
                 let _ = changed_files.insert(path); // OOM-only Result
@@ -489,40 +498,71 @@ fn resolve_preloads(
     preloads
 }
 
-/// `target` is a path that an import or a preload names and that resolved to
-/// no source. Marks the entries of `unclaimed` that the resolver could have
-/// picked for it while they existed, and reports whether there is one.
-fn claim_resolvable_from(
-    target: &[u8],
-    changed: &StringSet,
-    unclaimed: &[usize],
-    claimed: &mut [bool],
-) -> bool {
-    let target = strings::without_trailing_slash(target);
-    let mut any = false;
-    for &entry in unclaimed {
-        if is_resolvable_from(target, &changed.keys()[entry]) {
-            claimed[entry] = true;
-            any = true;
-        }
-    }
-    any
+/// The changed paths that the scan did not parse, under each path that an
+/// import which resolves to no source can name them with.
+struct NamedByImports<'a> {
+    paths: &'a [Box<[u8]>],
+    /// (name, index into `paths`), sorted.
+    names: Vec<(&'a [u8], usize)>,
 }
 
-/// Whether an import of `target` could have resolved to `path`: the file
-/// itself, the file with an extension added or replaced (`./lib.js` finds
-/// `lib.ts`), or the index file or package.json of the directory `target`.
-fn is_resolvable_from(target: &[u8], path: &[u8]) -> bool {
-    let stem = without_extension(path);
-    if path == target || stem == target || stem == without_extension(target) {
-        return true;
+impl<'a> NamedByImports<'a> {
+    fn new(paths: &'a [Box<[u8]>], unclaimed: &[usize]) -> Self {
+        let mut names: Vec<(&'a [u8], usize)> = Vec::with_capacity(unclaimed.len() * 2);
+        for &entry in unclaimed {
+            let path: &[u8] = &paths[entry];
+            names.push((path, entry));
+            // An import can leave the extension out.
+            let stem = without_extension(path);
+            if stem.len() != path.len() {
+                names.push((stem, entry));
+            }
+            // An import of a directory reads its package.json or its index file.
+            let name = resolve_path::basename(path);
+            if name == b"package.json" || without_extension(name) == b"index" {
+                names.push((resolve_path::dirname::<platform::Auto>(path), entry));
+            }
+        }
+        names.sort_unstable();
+        Self { paths, names }
     }
-    let in_directory = path.len() > target.len()
-        && path.starts_with(target)
-        && bun_paths::is_sep_any(path[target.len()]);
-    in_directory && {
-        let name = &path[target.len() + 1..];
-        name == b"package.json" || without_extension(name) == b"index"
+
+    /// `target` is a path that an import or a preload names and that resolved
+    /// to no source. Marks the changed paths that the resolver could have
+    /// picked for it while they existed, and reports whether there is one.
+    fn claim(&self, target: &[u8], claimed: &mut [bool]) -> bool {
+        let target = strings::without_trailing_slash(target);
+        let mut any = self.claim_named(target, |_| true, claimed);
+        // `./lib.js` finds lib.ts.
+        let stem = without_extension(target);
+        let rewritten = rewritten_file_extensions(&target[stem.len()..], || false);
+        if !rewritten.is_empty() {
+            let is_rewrite = |path: &[u8]| {
+                without_extension(path) == stem && rewritten.contains(&&path[stem.len()..])
+            };
+            any |= self.claim_named(stem, is_rewrite, claimed);
+        }
+        any
+    }
+
+    fn claim_named(
+        &self,
+        name: &[u8],
+        accept: impl Fn(&[u8]) -> bool,
+        claimed: &mut [bool],
+    ) -> bool {
+        let first = self.names.partition_point(|&(other, _)| other < name);
+        let mut any = false;
+        for &(other, entry) in &self.names[first..] {
+            if other != name {
+                break;
+            }
+            if accept(&self.paths[entry]) {
+                claimed[entry] = true;
+                any = true;
+            }
+        }
+        any
     }
 }
 

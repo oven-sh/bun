@@ -339,12 +339,22 @@ impl StandaloneModuleGraph {
                 let _ = seen.put(rel, is_dir);
             }
         };
-        // An entry point that was compiled ahead of time is listed below, under the name of its source.
-        let is_compiled_entry_point = |index: usize| {
-            let program = self.compiled_program.as_ref();
-            program.is_some_and(|program| {
-                u32::try_from(index)
-                    .is_ok_and(|index| program.entry_point_by_file_index(index).is_some())
+        // An entry point that was compiled ahead of time is listed below, under the name of its source, and so is an embedded copy of that source, which has a later record with the same module.
+        let is_listed_below = |index: usize, key: &[u8]| {
+            let found = self.compiled_program.as_ref().and_then(|program| {
+                let index = u32::try_from(index).ok()?;
+                Some((program, program.entry_point_by_file_index(index)?))
+            });
+            found.is_some_and(|(program, entry_point)| {
+                // An asset, or a file that is imported as one, may have the name of an entry point's empty file.
+                let is_copy = || {
+                    program.entry_points.iter().any(|other| {
+                        other.file_index < entry_point.file_index
+                            && other.module_id == entry_point.module_id
+                    })
+                };
+                self.find_file_record(key).is_none()
+                    && (self.files.values()[index].loader.is_javascript_like() || is_copy())
             })
         };
         for (index, key) in self.files.keys().iter().enumerate() {
@@ -352,9 +362,7 @@ impl StandaloneModuleGraph {
                 compiled_program::is_removed_by_program(key)
                     && compiled_program::find_written_file(key).is_none()
             };
-            let is_listed_below =
-                || is_compiled_entry_point(index) && self.find_file_record(key).is_none();
-            if !is_listed_below() && !is_removed() && !self.has_file_vanished(key) {
+            if !is_listed_below(index, key) && !is_removed() && !self.has_file_vanished(key) {
                 push(key, false);
             }
         }

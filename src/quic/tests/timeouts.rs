@@ -378,22 +378,31 @@ fn allowing_silence_again_does_not_put_off_the_next_ping() {
 
 #[test]
 fn silence_is_allowed_from_now_on_and_until_no_stream_is_left() {
-    for (allowed, is_answered, end) in [(90, false, 91), (90, true, 61), (0, true, 61)] {
+    for (frames, allowed, answer, end) in [
+        ("fin 0 0 a", 90, "none", 91),
+        ("fin 0 0 a", 90, "fin", 61),
+        ("fin 0 0 a", 0, "fin", 61),
+        ("fin 0 0 a", 0, "reset", 61),
+        ("fin 0 0 a, fin 4 0 a", 90, "fin", 91),
+    ] {
         let mut raw = Raw::client().connected();
         let start = raw.now;
-        raw.send("fin 0 0 a");
+        raw.send(frames);
         raw.advance(1000);
         let now = raw.now;
         (raw.connection()).allow_silence(now, Duration::from_secs(allowed));
-        if is_answered {
-            raw.peer.send(0, b"a", true);
-            raw.advance(RTT);
+        match answer {
+            "fin" => raw.peer.send(0, b"a", true),
+            "reset" => raw.connection().reset(StreamId(0), 0),
+            _ => {}
         }
-        while raw.peer.closed.is_none() {
+        raw.advance(RTT);
+        while raw.peer.closed.is_none() && raw.now < start + Duration::from_secs(100) {
             raw.send("ack, ping");
             raw.advance(500);
         }
-        assert_eq!((raw.now - start).as_millis() / 1000, end, "{allowed}");
+        let secs = (raw.now - start).as_millis() / 1000;
+        assert_eq!(secs, end, "{frames} {allowed} {answer}");
     }
 }
 
@@ -404,6 +413,7 @@ fn silence_cannot_be_allowed_after_the_end() {
     raw.send("stream 0 0 a, close 0 0 -");
     let now = raw.now;
     raw.connection().allow_silence(now, Duration::ZERO);
+    (raw.connection()).set_progress_timeout(now, Duration::from_secs(50));
     raw.advance(40_000);
     assert_eq!(raw.peer.endpoint.timeout(), None);
 }

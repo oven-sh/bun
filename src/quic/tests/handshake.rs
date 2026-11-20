@@ -562,6 +562,25 @@ fn a_server_does_not_probe_for_a_hello_that_has_arrived() {
     assert_eq!(raw.outline(), "H[crypto]");
 }
 
+/// RFC 9002 §6.2.2.1.
+#[test]
+fn a_client_keeps_probing_while_the_server_may_be_unable_to_send() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.advance(RTT);
+    raw.send_in(Initial, "ack");
+    raw.forget();
+    let mut timeouts = Vec::new();
+    for _ in 0..3 {
+        timeouts.push(raw.wait());
+        let probe = raw.take().pop().unwrap();
+        assert_eq!(probe.frames, ["ping"]);
+        raw.send_in(Initial, &format!("ack {}", probe.number));
+        raw.forget();
+    }
+    assert_eq!(timeouts, [60, 134, 281]);
+}
+
 #[test]
 fn backoff_ends_with_the_first_round_trip_time() {
     let mut raw = Raw::server();

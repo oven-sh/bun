@@ -197,7 +197,14 @@ fn connections_take_turns() {
         (raw.peer.endpoint).poll_transmit(raw.now, &mut batch, max_len, |it| {
             visited.push((it.addresses().peer.port(), it.stats().packets_sent));
         });
-        assert_eq!(raw.peer.endpoint.wants_to_transmit(), max_len == 48);
+        let endpoint = &raw.peer.endpoint;
+        assert_eq!(endpoint.wants_to_transmit(), max_len == 48);
+        let waiting = (
+            endpoint.waiting_to_transmit(),
+            endpoint.waiting_with_events(),
+        );
+        assert_eq!(waiting, [(0, 0), (2, 2)][usize::from(max_len == 48)]);
+        while raw.peer.endpoint.poll_event(raw.now).is_some() {}
     }
     assert!(matches!(
         visited[..],

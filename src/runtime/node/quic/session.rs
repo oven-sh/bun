@@ -634,14 +634,17 @@ impl QuicSession {
         }
     }
 
-    /// A stream that node would have announced, because its body left before the reset.
-    fn has_live_stream_queued(&self) -> bool {
-        self.events.get().iter().any(|it| match *it {
-            SessionEvent::StreamReady { stream } => {
-                (self.live_stream(stream)).is_some_and(|it| !it.is_reset())
-            }
-            _ => false,
-        })
+    /// test-quic-callback-error-stream-onerror.mjs destroys a stream, writes to the next one and expects one `onstream`.
+    fn is_replaced(&self, stream: &QuicStream) -> bool {
+        if !self.is_server || self.is_http3() || !stream.arrived_spent() {
+            return false;
+        }
+        let next = self.events.get().iter().find_map(|it| match *it {
+            SessionEvent::StreamReady { stream } => Some(stream),
+            _ => None,
+        });
+        (next.and_then(|it| self.live_stream(it)))
+            .is_some_and(|it| it.stream_id() == stream.stream_id() + 4 && it.has_received())
     }
 
     fn refresh_conn_stats(&self, conn: &Connection) {
@@ -853,20 +856,18 @@ impl QuicSession {
                 let Some(stream) = self.live_stream(stream) else {
                     return Ok(());
                 };
-                // Node writes a stream as it is created, so one that is dropped unused still arrives used.
                 if self.peer_cert_rejected.get()
                     || stream.is_reset() && self.conn.get().is_none()
-                    || stream.arrived_spent() && self.has_live_stream_queued()
+                    || self.is_replaced(stream)
                 {
                     stream.suppress_announce();
                     return Ok(());
                 }
-                // Already closing: the CONNECTION_CLOSE precedes this
-                // stream's packet and a closing endpoint discards new
-                // streams (RFC 9000 s10.2.1). Raw QUIC only.
+                // It ends like those that `Connection::close` finds open. HTTP/3 has GOAWAY.
                 if self.with_state(|st| st.graceful_close == 1) && !self.is_http3() {
                     stream.suppress_announce();
-                    stream.close();
+                    stream.abort(Some(http3_code::NO_ERROR), Some(0));
+                    self.schedule_process();
                     return Ok(());
                 }
                 let direction = StreamId(stream.stream_id() as u64).direction();

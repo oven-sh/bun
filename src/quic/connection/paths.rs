@@ -250,12 +250,9 @@ impl Connection {
         shared: &mut Shared,
     ) -> Result<Option<&mut Path>> {
         let local_id = LocalId::new(destination);
-        if let Some(at) = self.candidates.iter().position(|it| it.addresses == *from) {
-            let mut path = self.candidates.get_mut(at);
-            if let Some(path) = &mut path {
-                path.local_id = local_id;
-            }
-            return Ok(path);
+        if let Some(path) = (self.candidates.iter_mut()).find(|it| it.addresses == *from) {
+            path.local_id = local_id;
+            return Ok(Some(path));
         }
         // RFC 9000 §9.5.
         let is_continued = |path: &&Path| {

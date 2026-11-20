@@ -71,6 +71,10 @@ fn validates_both_paths_when_a_client_moves() {
             assert_eq!(raw.packets(), expected);
             let rtt = raw.connection().stats().smoothed_rtt;
             assert_eq!(rtt.is_zero(), !is_same_network);
+            raw.move_to(OLD);
+            raw.send_expanded("ping");
+            let expected = format!("{address} 1[path_challenge]; 1[path_challenge, ack 0-3]");
+            assert_eq!(raw.packets(), expected);
         }
     }
 }
@@ -311,16 +315,21 @@ fn search_for_the_datagram_size_goes_on_after_a_rebinding() {
 
 #[test]
 fn an_id_goes_along_with_a_rebinding() {
-    let mut raw = Raw::client().connected_with_spare_id();
-    raw.use_id(1);
-    raw.move_to(NEW);
-    raw.send_expanded("ping");
-    raw.forget();
-    raw.move_to("192.0.2.2:2001");
-    raw.send_expanded("ping");
-    let packets = raw.take();
-    assert_eq!(packets[0].frames, ["path_challenge", "ack 0-3"]);
-    assert_eq!(packets[0].destination, b"raw-id-1");
+    for (last_used, ack) in [(1, "ack 0-3"), (2, "ack 0-4")] {
+        let limit = format!("active_connection_id_limit={}", last_used + 1);
+        let mut raw = Raw::client().with(&limit).connected_with_spare_id();
+        raw.move_to(NEW);
+        for id in 1..=last_used {
+            raw.use_id(id);
+            raw.send_expanded("ping");
+        }
+        raw.forget();
+        raw.move_to("192.0.2.2:2001");
+        raw.send_expanded("ping");
+        let packets = raw.take();
+        assert_eq!(packets[0].frames, ["path_challenge", ack]);
+        assert_eq!(packets[0].destination, b"raw-id-1");
+    }
 
     let mut raw = Raw::client().connected_with_spare_id();
     let (old, new) = (raw.destination.clone(), raw.ids[&1].0.clone());

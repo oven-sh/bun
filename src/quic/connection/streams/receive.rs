@@ -54,6 +54,10 @@ impl Stream {
         self.received > 0 || self.flags.contains(Flags::READ_DONE)
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.received == 0
+    }
+
     #[inline]
     pub(crate) fn read_offset(&self) -> u64 {
         self.read

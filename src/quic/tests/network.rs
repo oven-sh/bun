@@ -44,6 +44,19 @@ fn fills_the_link() {
 }
 
 #[test]
+fn bbr_drains_the_queue_after_startup() {
+    let mut network = Network::new(1);
+    network.config(|it| it.congestion = Algorithm::Bbr);
+    (network.bytes_per_second, network.max_queueing) = (2_000_000, Duration::from_secs(1));
+    network.connect();
+    let id = network.client.open(Direction::Bidirectional);
+    network.client.send(id, &filler(0, 3_000_000), true);
+    network.run_for(Duration::from_millis(500));
+    let rtt = network.client.connection().stats().smoothed_rtt;
+    assert!(rtt < network.latency * 4);
+}
+
+#[test]
 fn unreliable_links() {
     for seed in 0..120 {
         let mut network = Network::new(seed);

@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::ops::RangeInclusive;
 
 use super::bandwidth_sampler::BandwidthSampler;
+use super::trial::Trial;
 use super::windowed_filter::WindowedMax;
 use super::*;
 use crate::time::Duration;
@@ -297,6 +298,20 @@ fn rtt_is_adjusted_by_the_ack_delay() {
 }
 
 #[test]
+fn loss_delay_grows_with_packets_that_are_late() {
+    let mut rtt = Rtt::default();
+    rtt.update(millis(8), Duration::ZERO);
+    rtt.update(millis(16), Duration::ZERO);
+    for (elapsed, loss_delay) in [(1, 18), (15, 18), (16, 20), (20, 24), (16, 24), (99, 36)] {
+        rtt.on_late(millis(elapsed));
+        assert_eq!(rtt.loss_delay(), millis(loss_delay));
+    }
+    let mut unknown = Rtt::default();
+    unknown.on_late(millis(1));
+    assert_eq!(unknown.loss_delay(), micros(112_500));
+}
+
+#[test]
 fn filter_keeps_the_maximum_of_ten_rounds() {
     for (updates, expected) in [
         (&[][..], 0),
@@ -491,21 +506,37 @@ fn pacer_looks_further_ahead_in_a_shared_queue() {
 }
 
 #[test]
+fn pacer_forgets_overflows_one_by_one() {
+    let mut pacer = pacer_at(1024, micros(16));
+    (0..2).for_each(|_| pacer.on_overflow());
+    for (packets, max_turn) in [(4096, 4), (1, 8), (8192, 8), (1, usize::MAX)] {
+        (0..packets).for_each(|_| _ = pacer.on_sent(START, 1024));
+        assert_eq!(pacer.max_turn(), max_turn);
+    }
+}
+
+#[test]
 fn bursts_that_lose_their_ends_overflow_a_queue() {
-    for (bursts, is_overflow) in [
-        (&["...xxx"][..], true),
-        (&["....xx"], false),
-        (&["..xxx."], false),
-        (&["xxxxxx"], false),
-        (&["xxx.xx"], false),
-        (&["....xx", ".....x"], true),
-        (&[".....x", ".....x", ".....x"], true),
-        (&["....xx", "......", "......", "......", ".....x"], true),
+    for (bursts, expected) in [
+        (&["...xxx"][..], 1),
+        (&["....xx"], 0),
+        (&["..xxx."], 0),
+        (&["xxxxxx"], 0),
+        (&["xxx.xx"], 0),
+        (&["....xx", ".....x"], 1),
+        (&[".....x", ".....x", ".....x"], 1),
+        (&["....xx", "......", "......", "......", ".....x"], 1),
         (
             &["....xx", "......", "......", "......", "......", ".....x"],
-            false,
+            0,
         ),
-        (&[".....x", "xxxxxx"], true),
+        (
+            &["....xx", "......", "......", "......", "......", "....xx"],
+            0,
+        ),
+        (&[".....x", "xxxxxx"], 1),
+        (&["...xxx", "....xx"], 1),
+        (&["...xxx", "...xxx"], 2),
     ] {
         let mut sender = Sender::new(Algorithm::Cubic);
         sender.rtt.update(millis(11), Duration::ZERO);
@@ -513,14 +544,29 @@ fn bursts_that_lose_their_ends_overflow_a_queue() {
             sender.wait(millis(1)).send(6);
         }
         assert_eq!(sender.controller.pacer.quantum().div_ceil(SEGMENT), 6);
+        let mut overflows = 0;
         for (flight, fate) in sender.flights.iter().zip(bursts.concat().bytes()) {
             match fate {
                 b'x' => (sender.controller).on_lost(flight, flight.sequence % 6 == 0),
                 _ => sender.controller.on_acked(flight),
             }
+            let feedback = &mut sender.controller.feedback;
+            overflows += u32::from(core::mem::take(&mut feedback.is_overflow));
         }
-        let feedback = &sender.controller.feedback;
-        assert_eq!(feedback.is_overflow, is_overflow, "{bursts:?}");
+        assert_eq!(overflows, expected, "{bursts:?}");
+    }
+}
+
+#[test]
+fn bursts_that_lose_their_starts_share_a_queue() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    for (bursts, lost, is_shared) in [(5, 1, false), (1, 1, true), (600, 0, true), (150, 0, false)]
+    {
+        for _ in 0..bursts {
+            sender.wait(millis(1)).send(3).wait(millis(1));
+            sender.feedback(lost, 3);
+        }
+        assert_eq!(sender.controller.pacer.bonus() == 0, is_shared);
     }
 }
 
@@ -686,6 +732,106 @@ fn pauses_do_not_make_failed_trials_more_frequent() {
     assert!(path.lost * 100 < path.delivered * 4);
 }
 
+/// A second later. Returns how many halvings are spared.
+fn judge(trial: &mut Trial, now: &mut Instant, acked: u64, lost: u64, starts_cycle: bool) -> u32 {
+    let feedback = Feedback {
+        acked: acked * SEGMENT,
+        lost: lost * SEGMENT,
+        ..Feedback::default()
+    };
+    *now = *now + millis(1000);
+    trial.update(*now, &feedback, starts_cycle, true);
+    trial.spared
+}
+
+#[test]
+fn longer_bursts_are_judged_by_whole_cycles() {
+    for steps in [
+        &[(1023, 0, true, 0), (1, 0, true, 1), (1024, 0, true, 2)][..],
+        &[(2000, 0, false, 0), (2000, 0, true, 1), (1950, 0, true, 2)],
+        &[(2000, 0, false, 0), (2000, 0, true, 1), (1949, 0, true, 0)],
+        &[(2000, 0, true, 1), (2400, 0, true, 2), (2000, 0, true, 1)],
+        &[
+            (2000, 20, true, 1),
+            (2000, 141, true, 2),
+            (2000, 142, true, 1),
+        ],
+        &[(2000, 0, true, 1), (1, 121, false, 1), (1, 1, false, 0)],
+        &[
+            (2000, 0, true, 1),
+            (2000, 0, true, 2),
+            (1500, 0, true, 1),
+            (1500, 0, true, 1),
+            (1500, 0, true, 1),
+            (1500, 0, true, 0),
+        ],
+    ] {
+        let (mut trial, mut now) = (Trial::default(), START);
+        judge(&mut trial, &mut now, 0, 0, true);
+        for &(acked, lost, starts_cycle, spared) in steps {
+            let judged = judge(&mut trial, &mut now, acked, lost, starts_cycle);
+            assert_eq!(judged, spared, "{steps:?}");
+        }
+    }
+}
+
+#[test]
+fn longer_bursts_are_tried_less_and_less_often() {
+    let (mut trial, mut now) = (Trial::default(), START);
+    let tries = (0..220).filter(|_| {
+        let acked = if trial.spared > 0 { 1500 } else { 2000 };
+        judge(&mut trial, &mut now, acked, 0, true) > 0
+    });
+    assert!(tries.eq([1, 11, 29, 63, 129, 195]));
+}
+
+#[test]
+fn longer_bursts_are_judged_by_cycles_without_interruptions() {
+    let (mut trial, mut now) = (Trial::default(), START);
+    judge(&mut trial, &mut now, 0, 0, true);
+    trial.interrupt();
+    for spared in [0, 1] {
+        assert_eq!(judge(&mut trial, &mut now, 2000, 0, true), spared);
+    }
+    now = now - millis(1000);
+    assert_eq!(judge(&mut trial, &mut now, 2000, 0, true), 2);
+}
+
+#[test]
+fn bbr_tries_longer_bursts_while_the_path_is_the_limit() {
+    type Step = fn(&mut Sender);
+    let share: Step = |it| (0..9).for_each(|_| it.controller.pacer.on_start_settled(true));
+    let lose: Step = |it| {
+        _ = it
+            .send(900)
+            .wait(millis(11))
+            .feedback(0, 1)
+            .feedback(800, 99)
+    };
+    let cases: [(u64, Step, Step, usize); 6] = [
+        (200, |_| {}, |_| {}, 8),
+        (200, |it| _ = it.run_dry(), |_| {}, 1),
+        (200, |_| {}, |it| _ = it.wait(millis(100)), 1),
+        (200, |_| {}, share, 1),
+        (1000, |_| {}, |_| {}, usize::MAX),
+        (1000, |_| {}, lose, 1),
+    ];
+    for (segments, always, at_last, max_turn) in cases {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(segments, 10, millis(10));
+        for round in 0..=60 {
+            always(&mut sender);
+            if round == 60 {
+                at_last(&mut sender);
+            }
+            sender.send(segments).wait(millis(11));
+            sender.feedback(0, 1).feedback(1, usize::MAX);
+            (0..5).for_each(|_| sender.controller.pacer.on_overflow());
+        }
+        assert_eq!(sender.controller.max_turn(), max_turn);
+    }
+}
+
 #[test]
 fn sampler_takes_the_lower_of_both_rates() {
     // The second packet follows the delivery of the first.
@@ -766,6 +912,30 @@ fn only_the_pacer_is_caught_up_with() {
         while sender.wait(millis(2)).burst() > 0 {}
         sender.wait(millis(80)).feedback(0, 20);
         assert_within(sender.burst(), 1..=3);
+    }
+}
+
+#[test]
+fn a_full_window_is_refilled_in_larger_pieces_on_short_paths() {
+    for algorithm in ALGORITHMS {
+        for (lost, acked, unsent, later, burst) in [
+            (0, 6, u64::MAX, 0, 0..=0),
+            (0, 7, u64::MAX, 0, 14..=14),
+            (0, 1, u64::MAX, 999, 0..=0),
+            (0, 1, u64::MAX, 1000, 2..=2),
+            (0, 1, SEGMENT, 0, 2..=2),
+            (1, 9, u64::MAX, 0, 4..=9),
+        ] {
+            let mut sender = Sender::new(algorithm);
+            sender.rtt.update(micros(100), Duration::ZERO);
+            sender.fill().wait(micros(100)).feedback(lost, acked);
+            sender.controller.permit(sender.now, unsent);
+            let before = sender.wait(micros(later)).flights.len();
+            while sender.controller.permit(sender.now, unsent) == Permit::Now {
+                sender.send(1);
+            }
+            assert_within((sender.flights.len() - before) as u64, burst);
+        }
     }
 }
 
@@ -1050,6 +1220,9 @@ fn cubic_starts_slowly_after_persistent_congestion() {
     assert_eq!(sender.rounds(8, millis(100)).segments(), 512);
     assert_eq!(sender.rounds(1, millis(100)).segments(), 655);
     assert_eq!(sender.rounds(20, millis(100)).segments(), 671);
+
+    sender.fill().controller.on_persistent_congestion();
+    assert_eq!(sender.feedback(20, 1).feedback(0, 1).segments(), 3);
 }
 
 #[test]
@@ -1130,20 +1303,23 @@ fn bbr_starts_up_for_longer_if_recovery_holds_it_back() {
 
 #[test]
 fn bbr_starts_up_until_short_transfers_suffer_high_loss() {
-    for (segments, lost, rtt, is_high) in [
-        (100, 5, 12_501, false),
-        (100, 6, 12_501, true),
-        (100, 6, 12_500, false),
-        (299, 6, 12_501, true),
-        (300, 6, 12_501, false),
-        (1000, 20, 12_501, false),
-        (1000, 21, 12_501, true),
+    for (segments, lost, late, rtt, is_high) in [
+        (100, 5, 0, 12_501, false),
+        (100, 6, 0, 12_501, true),
+        (100, 6, 1, 12_501, false),
+        (100, 6, 0, 12_500, false),
+        (299, 6, 0, 12_501, true),
+        (300, 6, 0, 12_501, false),
+        (1000, 20, 0, 12_501, false),
+        (1000, 21, 0, 12_501, true),
     ] {
         let mut sender = Sender::new(Algorithm::Bbr);
         let startup_rate = sender.rounds(6, millis(10)).pacing_rate();
         for round in 1..=4 {
             sender.run_dry().send(segments).wait(micros(rtt));
-            sender.feedback(lost, usize::MAX);
+            sender.feedback(lost, segments as usize - lost - 1);
+            sender.wait(micros(1)).feedback(0, 1);
+            sender.controller.on_late(late * SEGMENT);
             assert_eq!(sender.pacing_rate() < startup_rate, is_high && round == 4);
         }
     }
@@ -1349,6 +1525,43 @@ fn bbr_does_not_care_how_acknowledgments_are_split() {
     let mut sender = Sender::new(Algorithm::Bbr);
     sender.fill().wait(millis(10)).feedback(0, 10);
     assert_eq!(sender.feedback(0, 10).feedback(2, 1).segments(), 30);
+}
+
+#[test]
+fn bbr_recovers_at_once_if_all_that_was_lost_arrives() {
+    for last in [SEGMENT, SEGMENT + 1] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.fill().wait(millis(10)).feedback(2, 1).feedback(1, 1);
+        for (len, is_recovering) in [(SEGMENT, true), (SEGMENT, true), (last, false)] {
+            sender.controller.on_late(len);
+            assert_eq!(sender.controller.is_recovering(), is_recovering);
+        }
+    }
+}
+
+#[test]
+fn bbr_counts_what_arrives_late_as_delivered() {
+    let [in_time, late] = [0, 16].map(|late| {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds(1, millis(10)).fill().wait(millis(10));
+        sender.feedback(late, 0);
+        sender.controller.on_late(late as u64 * SEGMENT);
+        sender.feedback(0, usize::MAX).pacing_rate()
+    });
+    assert_eq!(in_time, late);
+}
+
+#[test]
+fn bbr_does_not_end_startup_for_an_outage() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    let startup_rate = sender.rounds(3, millis(10)).pacing_rate();
+    sender.rounds_of(128, 1, millis(10)).send(128);
+    sender.controller.on_persistent_congestion();
+    sender.wait(millis(20)).feedback(120, 1);
+    for _ in 0..2 {
+        sender.fill().wait(millis(10)).feedback(0, 4);
+    }
+    assert_eq!(sender.pacing_rate(), startup_rate);
 }
 
 #[test]

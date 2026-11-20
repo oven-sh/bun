@@ -43,3 +43,15 @@ fn bytes_count_as_integers() {
     integers.write_u64(3);
     assert_eq!(bytes.finish(), integers.finish());
 }
+
+#[test]
+fn all_of_a_key_counts() {
+    use crate::cid::{LocalId, ResetToken};
+    for at in 0..ResetToken::LEN {
+        let other = core::array::from_fn(|it| u8::from(it == at));
+        let tokens = [[0; ResetToken::LEN], other].map(|it| Seeded(1).hash_one(ResetToken(it)));
+        assert_ne!(tokens[0], tokens[1]);
+    }
+    let ids = [[0; LocalId::LEN], [1; LocalId::LEN]].map(|it| Seeded(1).hash_one(LocalId(it)));
+    assert_ne!(ids[0], ids[1]);
+}

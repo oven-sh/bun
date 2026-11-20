@@ -366,7 +366,7 @@ impl State {
             let passing = (line.iter().take_while(|_| self.has_passing)).position(can_pass);
             (self.has_passing, self.spare_credit) = (passing.is_some(), 0);
             let urgency = |at| line.get(at).map(|it| it.0 / (2 * SERIAL));
-            at = ([passing, Some(0), serial].into_iter().flatten())
+            at = ([passing, serial].into_iter().flatten())
                 .filter(|&at| Some(at) == passing || age_at(Some(at)) == oldest)
                 .filter(|&at| line.get(at).is_some_and(|it| is_due(it, u64::MAX)))
                 .min_by_key(|&at| urgency(at));
@@ -457,7 +457,7 @@ impl Streams {
                 return None;
             };
             stream.flags.remove(Flags::IN_WRITABLE);
-            if stream.flags & (Flags::WANTS_WRITE | Flags::WRITE_DONE) != Flags::WANTS_WRITE {
+            if stream.flags.contains(Flags::WRITE_DONE) {
                 continue;
             }
             if stream.send_credit() < state.min_credit {
@@ -524,7 +524,7 @@ impl Streams {
             };
             let (start, written) = (stream.send.sent(), stream.send.end());
             let allowed = (stream.send_limit).min(start + (state.send_limit - state.sent));
-            let range = start..written.min(allowed).max(start);
+            let range = start..written.min(allowed);
             let has_frame = !range.is_empty() || start == written && stream.owes_fin();
             if has_frame && !write_stream_frame(id, stream, range.clone(), out, end, sent) {
                 return;

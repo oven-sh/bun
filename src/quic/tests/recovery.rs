@@ -32,12 +32,19 @@ fn packet_threshold() {
         ("ack 3-4", "stream 3 0 a"),
         ("ack 3-4", ""),
         ("ack 3-5", "stream 3 1 b"),
+        ("ack 6-7", ""),
     ] {
         raw.send(ack);
         assert_eq!(raw.frames(), frames);
     }
     let stats = raw.connection().stats();
     assert_eq!((stats.packets_lost, stats.packets_retransmitted), (2, 2));
+
+    let mut raw = Raw::client().connected();
+    raw.request_packets("abcdef");
+    raw.advance(RTT);
+    raw.send("ack 6 2");
+    assert_eq!(raw.frames(), "stream 3 0 a, stream 3 2 c");
 }
 
 #[test]
@@ -74,6 +81,19 @@ fn time_threshold() {
         assert_eq!(raw.now - start, Duration::from_micros(lost_after));
         assert_eq!(raw.frames(), "stream 3 0 a");
     }
+}
+
+#[test]
+fn time_threshold_while_nothing_can_be_sent() {
+    let mut raw = Raw::client().connected();
+    raw.advance(1000);
+    let lost_at = raw.now + Duration::from_micros(22_500);
+    raw.request_packets("ab");
+    raw.advance(RTT);
+    raw.waits = false;
+    raw.send("ack 2");
+    raw.peer.poll(raw.now);
+    assert_eq!(raw.peer.endpoint.timeout(), Some(lost_at));
 }
 
 #[test]
@@ -124,6 +144,42 @@ fn reordering_raises_the_packet_threshold() {
 }
 
 #[test]
+fn packet_threshold_goes_by_the_oldest_of_the_late_packets() {
+    let mut raw = Raw::client().connected();
+    raw.request_packets("abcdef");
+    raw.advance(RTT);
+    raw.send("ack 3-6");
+    raw.send("ack 1-7");
+    raw.request_packets("ghijklm");
+    raw.advance(RTT);
+    for (ack, frames) in [("ack 9-13", ""), ("ack 9-14", "stream 7 0 g")] {
+        raw.send(ack);
+        assert_eq!(raw.frames(), frames);
+    }
+}
+
+#[test]
+fn packets_out_of_order_count_for_the_window() {
+    for (algorithm, missing) in [(Algorithm::Cubic, 1), (Algorithm::Bbr, 20)] {
+        let mut raw = (Raw::client().config(|it| it.congestion = algorithm)).connected();
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, &filler(0, 200_000), false);
+        raw.advance(RTT);
+        let last = raw.take().pop().unwrap().number;
+        raw.waits = false;
+        let acks = [
+            format!("ack {last} 0-{}", last - missing - 1),
+            format!("ack 0-{last}"),
+        ];
+        let [before, after] = acks.map(|it| {
+            raw.send(&it);
+            raw.connection().stats().congestion_window
+        });
+        assert!(before < after, "{before} {after}");
+    }
+}
+
+#[test]
 fn packet_threshold_has_no_limit() {
     let mut raw = Raw::client().connected();
     for (len, frames) in [(400, "stream 3 0 a"), (300, "")] {
@@ -140,9 +196,12 @@ fn packet_threshold_has_no_limit() {
 
 #[test]
 fn thresholds_start_over_if_packets_are_only_lost() {
-    for (losses, is_overtaken, is_lost) in
-        [(15, false, false), (16, false, true), (16, true, false)]
-    {
+    for (losses, is_overtaken, data, is_lost) in [
+        (15, false, "abcd", [false, false]),
+        (16, false, "abcd", [true, false]),
+        (16, false, "ab", [false, true]),
+        (16, true, "abcd", [false, false]),
+    ] {
         let mut raw = Raw::client().with("max_streams_uni=99").connected();
         let mut miss_first = |data: &str, arrives: bool| {
             let first = raw.received[2].last().unwrap() + 1;
@@ -150,23 +209,24 @@ fn thresholds_start_over_if_packets_are_only_lost() {
             raw.advance(RTT);
             raw.received[2].remove(&first);
             raw.send("ack");
-            let frames = raw.frames();
+            let at_once = raw.frames();
             raw.advance(RTT);
+            let later = raw.frames();
             if arrives {
                 raw.received[2].insert(first);
             }
             raw.send("ack");
             raw.forget();
-            !frames.is_empty()
+            [!at_once.is_empty(), !later.is_empty()]
         };
-        assert!(miss_first("abcde", true));
+        assert_eq!(miss_first("abcde", true), [true, false]);
         for number in 0..losses {
-            assert!(miss_first("abcdefg", false));
+            assert_eq!(miss_first("abcdefg", false), [true, false]);
             if is_overtaken && number == 8 {
-                assert!(!miss_first("ab", true));
+                assert_eq!(miss_first("ab", true), [false, false]);
             }
         }
-        assert_eq!(miss_first("abcd", true), is_lost, "{losses} {is_overtaken}");
+        assert_eq!(miss_first(data, true), is_lost, "{losses} {is_overtaken}");
     }
 }
 
@@ -318,6 +378,19 @@ fn probe_timeout_backs_off() {
             assert_eq!(raw.now - start, Duration::from_micros(expected));
             assert_eq!(raw.frames(), "stream 3 0 a, ping");
         }
+    }
+}
+
+#[test]
+fn probe_timeout_backs_off_up_to_an_eighth_of_the_idle_timeout() {
+    for (idle, expected) in [
+        (4000, [67, 80, 160, 320, 500, 500]),
+        (500, [67, 80, 80, 80, 80, 80]),
+    ] {
+        let raw = Raw::client().config(|it| it.parameters.max_idle_timeout_millis = idle);
+        let mut raw = raw.connected();
+        raw.request_packets("a");
+        assert_eq!(expected.map(|_| (raw.wait(), raw.forget()).0), expected);
     }
 }
 
@@ -498,6 +571,8 @@ fn delay_of_a_repeated_acknowledgment_counts_up_to_a_probe_timeout() {
         ([0, 1, 0], 122_500, 22_812),
         ([1, 0, 0], 122_500, 139_375),
         ([0, 0, 1], 50_000, 92_500),
+        ([0, 0, 1], 128_124, 22_812),
+        ([0, 0, 1], 128_125, 139_375),
     ] {
         let mut raw = Raw::client().connected();
         raw.next[2] += lost[0];
@@ -664,6 +739,7 @@ fn what_is_in_flight_is_sent_again_on_a_new_path() {
     raw.forget();
     raw.send("respond");
     assert_eq!(raw.frames(), "stream 3 0 a, stream 3 2 cd");
+    assert!(raw.sleeps_for() > RTT);
     assert_eq!(raw.connection().stats().packets_lost, 0);
 }
 
@@ -679,6 +755,19 @@ fn nothing_is_in_flight_on_a_new_path() {
     assert!(raw.peer.has_logged("datagram 1 lost"));
     raw.advance(1000);
     assert_eq!(raw.frames(), "");
+}
+
+#[test]
+fn window_and_backoff_start_over_on_another_network() {
+    let mut raw = Raw::client().connected();
+    raw.request_packets("a");
+    raw.advance(1000);
+    raw.move_to(NEW);
+    raw.send_expanded("ping");
+    raw.send("respond");
+    raw.forget();
+    assert_eq!(raw.connection().stats().congestion_window, INITIAL_WINDOW);
+    assert_eq!(raw.wait(), 175);
 }
 
 #[test]
@@ -698,4 +787,21 @@ fn packet_threshold_starts_over_on_another_network() {
         raw.send(&format!("ack {}", raw.received[2].last().unwrap()));
         assert_eq!(raw.frames(), frames);
     }
+}
+
+#[test]
+fn packets_that_are_late_on_the_old_path_do_not_raise_the_packet_threshold() {
+    let mut raw = Raw::client().connected();
+    raw.request_packets("abcdef");
+    raw.advance(RTT);
+    raw.send("ack 3-6");
+    raw.move_to("192.0.2.1:2000");
+    raw.send_expanded("ping");
+    raw.send("respond");
+    raw.advance(RTT);
+    raw.send("ack");
+    raw.request_packets("ghij");
+    raw.advance(RTT);
+    raw.send(&format!("ack {}", raw.received[2].last().unwrap()));
+    assert_eq!(raw.frames(), "stream 7 0 g");
 }

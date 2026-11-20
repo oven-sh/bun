@@ -136,3 +136,24 @@ impl RangeSet {
             .filter(|gap| !gap.is_empty())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn room_is_given_back() {
+        let cases: [fn(&mut RangeSet); 3] = [
+            |it| it.remove_below(1990),
+            |it| it.remove(0..1990),
+            |it| it.insert(0..1990),
+        ];
+        for shorten in cases {
+            let mut set = RangeSet::default();
+            (0..1000).for_each(|it| set.insert(2 * it..2 * it + 1));
+            shorten(&mut set);
+            assert_eq!(set.count_above(1992), 3);
+            assert!(set.0.capacity() < 100);
+        }
+    }
+}

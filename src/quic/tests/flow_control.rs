@@ -1,10 +1,10 @@
 use bun_quic::Direction::{Bidirectional, Unidirectional};
 use bun_quic::Layer::Transport;
-use bun_quic::Side::Server;
+use bun_quic::Side::{Client, Server};
 use bun_quic::StreamId;
 use bun_quic::transport_code::FLOW_CONTROL_ERROR;
 
-use crate::harness::messages::GET;
+use crate::harness::messages::{GET, OK};
 use crate::harness::raw::{RTT, Raw};
 use crate::harness::wire::{MAX, filler, groups};
 
@@ -103,6 +103,14 @@ fn gives_credit_for_what_is_discarded() {
     raw.forget();
     raw.send("stream 8 0 *90");
     assert_eq!(raw.frames(), "max_data 320");
+
+    let raw = Raw::client().config(|it| it.limits_unread_data = true);
+    let mut raw = with_windows(raw, 100, [0, 100, 0]);
+    raw.send("stream 0 0 -");
+    raw.connection().set_paused(StreamId(0), true);
+    raw.send("stream 0 0 *100");
+    raw.connection().stop(StreamId(0), 0);
+    assert_eq!(raw.frames(), "max_data 200, stop_sending 0 0x0");
 }
 
 #[test]
@@ -111,7 +119,7 @@ fn gives_no_credit_while_paused() {
         (true, "", "max_data 200, max_stream_data 0 200"),
         (false, "max_data 200", "max_stream_data 0 200"),
     ] {
-        let raw = Raw::client().config(|it| it.limits_unread_data = limits_unread_data);
+        let raw = Raw::client().config(|it| it.limits_unread_data |= limits_unread_data);
         let mut raw = with_windows(raw, 100, [0, 100, 0]);
         raw.send("stream 0 0 -");
         raw.connection().set_paused(StreamId(0), true);
@@ -229,6 +237,25 @@ fn gives_credit_again_if_it_is_lost() {
 }
 
 #[test]
+fn credit_is_what_it_has_said() {
+    let mut raw = with_windows(Raw::client(), 1000, [0, 100, 0]);
+    raw.send("stream 0 0 *10");
+    raw.connection().reset(StreamId(0), 0);
+    assert_eq!(raw.frames(), "reset_stream 0 0x0 0");
+    raw.send("stream 4 0 *100");
+    assert_eq!(raw.lose(), "max_stream_data 4 200");
+    raw.connection().stop(StreamId(4), 0);
+    raw.forget();
+    raw.advance(RTT);
+    raw.send("ack");
+    raw.advance(1000);
+    assert_eq!(raw.connection().stats().packets_lost, 1);
+    assert_eq!(raw.frames(), "");
+    raw.send("stream 0 10 *91");
+    assert_eq!(raw.error(), Some((Transport, FLOW_CONTROL_ERROR)));
+}
+
+#[test]
 fn gives_no_more_credit_than_can_be_encoded() {
     let mut raw = with_windows(Raw::client(), MAX - 10, [0, MAX, 0]);
     raw.send(&format!("reset_stream 0 0 {}", MAX - 10));
@@ -289,6 +316,20 @@ fn goes_on_when_the_connection_allows_more() {
 }
 
 #[test]
+fn who_is_asked_can_use_all_the_credit() {
+    let mut raw = Raw::server().with("max_data=9000").connected();
+    let ids = [(); 2].map(|()| StreamId(raw.peer.open(Unidirectional)));
+    for asking in [&ids[..1], &ids] {
+        for &id in asking {
+            raw.connection().want_write(id);
+        }
+        raw.peer.poll(raw.now);
+    }
+    assert_eq!(raw.peer.events(), "2 writable, 6 writable");
+    assert_eq!(raw.connection().write(ids[1], &[0; 9000]), Some(9000));
+}
+
+#[test]
 fn says_that_it_is_blocked_when_there_is_more_to_write() {
     let mut raw = Raw::server().with("max_stream_data_uni=0").connected();
     raw.peer.open(Unidirectional);
@@ -297,6 +338,29 @@ fn says_that_it_is_blocked_when_there_is_more_to_write() {
     raw.connection().want_write(StreamId(2));
     assert_eq!(raw.frames(), "stream_data_blocked 2 0");
     assert_eq!(raw.events(), "");
+
+    let mut raw = Raw::server().with("max_stream_data_uni=1").connected();
+    let ids = [(); 2].map(|()| StreamId(raw.peer.open(Unidirectional)));
+    for id in ids {
+        raw.connection().want_write(id);
+    }
+    assert_eq!(raw.connection().write(ids[0], b"a"), Some(1));
+    assert!(raw.peer.poll(raw.now));
+    assert_eq!(raw.peer.events(), "6 writable");
+    assert_eq!(raw.frames(), "stream_data_blocked 2 1, stream 2 0 a");
+}
+
+#[test]
+fn does_not_get_back_to_what_it_has_not_said() {
+    let mut raw = Raw::server().with("max_stream_data_uni=0").connected();
+    raw.peer.open(Unidirectional);
+    raw.peer.send(2, b"a", false);
+    raw.send("max_stream_data 2 9");
+    assert_eq!(raw.frames(), "stream 2 0 a");
+    raw.send("ack");
+    raw.advance(1000);
+    let timeout = raw.peer.endpoint.timeout().unwrap();
+    assert!((timeout - raw.now).as_millis() > 9000);
 }
 
 #[test]
@@ -322,6 +386,31 @@ fn says_that_it_is_blocked_as_soon_as_it_finds_out() {
     raw.request(GET);
     raw.send("ack");
     assert_eq!(raw.frames(), "");
+
+    let raw = Raw::http3(Client).with("max_stream_data_bidi_local=4096");
+    let mut raw = raw.exchange();
+    raw.peer.send_headers(0, OK);
+    (raw.connection()).write(StreamId(0), &filler(0, 4096 - 5 - 3));
+    assert!(raw.frames().starts_with("stream 0 0 "));
+    raw.peer.send_headers(0, "a=b");
+    assert_eq!(raw.frames(), "stream_data_blocked 0 4096");
+}
+
+#[test]
+fn says_what_it_is_blocked_by_first() {
+    let raw = Raw::http3(Server).with("max_data=5000 max_stream_data_bidi_remote=4096");
+    let mut raw = raw.connected_with("");
+    raw.request(&format!("{GET} a=*9000"));
+    raw.advance(RTT);
+    let frames = raw.frames();
+    let blocked = groups(&frames).into_iter().map(|it| it[0]);
+    assert!(
+        blocked
+            .filter(|it| it.ends_with("blocked"))
+            .eq(["stream_data_blocked"])
+    );
+    raw.send("ack, max_stream_data 0 20000");
+    assert!(raw.frames().ends_with(", data_blocked 5000"));
 }
 
 #[test]
@@ -421,6 +510,18 @@ fn takes_little_more_than_it_can_send() {
     raw.send("ack");
     raw.advance(RTT);
     assert_eq!(raw.events(), "2 writable, 6 writable");
+}
+
+#[test]
+fn what_a_reset_discards_makes_room() {
+    let mut raw = Raw::server().with("max_streams_uni=10").connected();
+    let window = raw.connection().stats().congestion_window as usize;
+    let data = filler(0, window + 65536);
+    for _ in 0..10 {
+        let id = StreamId(raw.peer.open(Unidirectional));
+        assert_eq!(raw.connection().write(id, &data), Some(data.len()));
+        raw.connection().reset(id, 0);
+    }
 }
 
 #[test]

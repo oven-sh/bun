@@ -218,6 +218,23 @@ fn frame_headers_count_for_flow_control() {
         let frames = format!("stream_data_blocked 0 {limit}{frame}");
         assert!(raw.frames().starts_with(&frames));
     }
+    raw.peer.send_headers(0, "a=b");
+    raw.connection().finish(FIRST);
+    assert!((4231..4250).any(|limit| {
+        raw.send(&format!("max_stream_data 0 {limit}"));
+        raw.frames().starts_with("fin 0 ")
+    }));
+}
+
+#[test]
+fn the_body_can_follow_the_head_at_once() {
+    let mut raw = Raw::http3(Client).exchange();
+    for fields in [None, Some(OK)] {
+        fields.inspect(|it| assert!(raw.peer.send_headers(0, it)));
+        raw.connection().want_write(FIRST);
+        raw.peer.poll(raw.now);
+        assert_eq!(raw.peer.events(), "0 writable");
+    }
 }
 
 #[test]
@@ -248,6 +265,14 @@ fn a_message_that_is_not_started_is_cancelled() {
     raw.write_http3(0, &format!("headers {GET}"), true);
     raw.connection().finish(FIRST);
     assert_eq!(raw.frames(), "reset_stream 0 0x10c 0");
+
+    let mut raw = Raw::http3(Server).connected_with("");
+    raw.peer.open(Bidirectional);
+    raw.connection().finish(FIRST);
+    let frames = "reset_stream 0 0x10c 0, stop_sending 0 0x10c";
+    assert!(raw.frames().starts_with(frames));
+    assert_eq!(raw.read_decoder(), "cancel 0");
+    assert_eq!(raw.events(), "0 closed");
 }
 
 #[test]

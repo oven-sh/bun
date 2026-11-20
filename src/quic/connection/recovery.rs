@@ -150,9 +150,9 @@ impl Connection {
             };
             let delay = reported.min(self.peer_max_ack_delay());
             let (mut sample, timeout) = (now - sent_at, self.probe_timeout());
-            if gap_at > sent_at && reported > timeout {
+            if gap_at > sent_at && reported > timeout && reported < sample + delay {
                 // Most likely, the acknowledgment that was in time is lost.
-                sample = sample.min(timeout.max(sample - reported + delay));
+                sample = sample.min(timeout.max(sample + delay - reported));
             }
             let is_first = !self.rtt.has_sample();
             self.rtt.update(sample, delay);

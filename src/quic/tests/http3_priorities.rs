@@ -5,7 +5,7 @@ use bun_quic::http3_code::*;
 
 use crate::harness::messages::{GET, OK};
 use crate::harness::priority;
-use crate::harness::raw::Raw;
+use crate::harness::raw::{RTT, Raw};
 use crate::harness::wire::{groups, http3, show_hex};
 
 fn connected(side: Side) -> Raw {
@@ -214,4 +214,29 @@ fn responses_are_sent_by_urgency() {
     };
     assert_eq!(order(set), "0 12 16 8 4");
     assert_eq!(order(|it| it.connection().go_away()), "3 0 12 16 8 4");
+}
+
+#[test]
+fn a_response_that_is_blocked_keeps_its_place_while_some_is_on_its_way() {
+    for (fields, body_len) in [("", 4096 - 5 - 3 - 2), ("a=*9000", 0)] {
+        let raw = Raw::http3(Client).config(|it| it.sends_in_order = true);
+        let raw = raw.with("max_data=32000 max_stream_data_bidi_local=4096");
+        let mut raw = raw.connected_with("");
+        for id in [0, 4] {
+            raw.write_http3(id, &format!("headers {GET}"), true);
+        }
+        raw.send("max_stream_data 4 32000");
+        raw.connection().want_write(StreamId(0));
+        raw.process();
+        raw.peer.send_headers(0, &format!("{OK} {fields}"));
+        raw.peer.send(0, &vec![0; body_len], false);
+        raw.connection().want_write(StreamId(0));
+        raw.peer.send_headers(4, OK);
+        raw.peer.send(4, &[0; 40_000], true);
+        for expected in [8000..16_000, 20_000..32_000] {
+            raw.advance(RTT);
+            assert!(expected.contains(&raw.streams[&4].len()));
+            raw.send("ack");
+        }
+    }
 }

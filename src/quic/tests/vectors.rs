@@ -423,3 +423,29 @@ fn integers_are_as_short_as_possible() {
         assert_eq!(raw.close, Some((Application, value)));
     }
 }
+
+/// RFC 9000 §20.1 and RFC 9368 §4.
+#[test]
+fn error_codes() {
+    use bun_quic::transport_code::*;
+    let codes = [
+        NO_ERROR,
+        INTERNAL_ERROR,
+        CONNECTION_REFUSED,
+        FLOW_CONTROL_ERROR,
+        STREAM_LIMIT_ERROR,
+        STREAM_STATE_ERROR,
+        FINAL_SIZE_ERROR,
+        FRAME_ENCODING_ERROR,
+        TRANSPORT_PARAMETER_ERROR,
+        CONNECTION_ID_LIMIT_ERROR,
+        PROTOCOL_VIOLATION,
+        INVALID_TOKEN,
+        APPLICATION_ERROR,
+        CRYPTO_BUFFER_EXCEEDED,
+        KEY_UPDATE_ERROR,
+        AEAD_LIMIT_REACHED,
+    ];
+    assert!(codes.into_iter().eq(0..0x10));
+    assert_eq!(VERSION_NEGOTIATION_ERROR, 0x11);
+}

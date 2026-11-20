@@ -1,7 +1,9 @@
 use bun_quic::Direction::Unidirectional;
+use bun_quic::Layer::Transport;
+use bun_quic::transport_code::CONNECTION_ID_LIMIT_ERROR;
 use bun_quic::{Algorithm, PreferredAddress};
 
-use crate::harness::paths::{NEW, OLD, PREFERRED, new_id};
+use crate::harness::paths::{NEW, OLD, PREFERRED, new_id, new_ids};
 use crate::harness::raw::{Packet, RTT, Raw};
 use crate::harness::wire::{filler, hex};
 
@@ -222,7 +224,7 @@ fn stays_if_the_preferred_address_is_of_no_use() {
         (true, SERVER, &without_ipv4),
         (true, "198.51.100.2:444", PREFERRED),
     ] {
-        let raw = Raw::server().config(|it| it.uses_preferred_address = is_wanted);
+        let raw = Raw::server().config(|it| it.uses_preferred_address |= is_wanted);
         let mut raw = raw.with(parameter);
         raw.move_to(server);
         let mut raw = raw.connected();
@@ -339,6 +341,55 @@ fn an_id_goes_along_with_a_rebinding() {
         raw.send_expanded("path_challenge 12345678");
         assert_eq!(raw.frames(), "path_response 12345678, path_challenge");
     }
+}
+
+#[test]
+fn an_id_that_two_paths_use_counts_once() {
+    let mut raw = Raw::client().connected_with_spare_id();
+    let first = raw.destination.clone();
+    raw.use_id(1);
+    raw.move_to(NEW);
+    raw.send_expanded("path_challenge 12345678");
+    raw.destination = first;
+    raw.move_to("192.0.2.3:3000");
+    raw.send_expanded("path_challenge 12345678");
+    raw.send(&new_ids(2..8));
+    assert_eq!(raw.error(), None);
+    raw.send(&new_id(8, 0));
+    assert_eq!(raw.error(), Some((Transport, CONNECTION_ID_LIMIT_ERROR)));
+}
+
+#[test]
+fn every_path_has_its_own_timer() {
+    let mut raw = Raw::client().connected();
+    for address in [NEW, "192.0.2.3:3000"] {
+        raw.move_to(address);
+        raw.send_expanded("path_challenge 12345678");
+        raw.advance(100);
+    }
+    raw.forget();
+    let expected = format!("{NEW} 1[path_challenge]");
+    assert_eq!((raw.wait(), raw.packets()), (50, expected));
+    assert_eq!(
+        (raw.wait(), raw.packets()),
+        (100, "1[path_challenge]".into())
+    );
+}
+
+#[test]
+fn a_client_gives_up_a_path_that_the_server_only_probes() {
+    let raw = Raw::server().config(|it| it.uses_preferred_address = true);
+    let mut raw = raw.with(PREFERRED).connected();
+    raw.move_to("198.51.100.2:444");
+    raw.send(&format!("respond, {}", new_id(2, 0)));
+    raw.send("ack");
+    raw.use_id(1);
+    raw.move_to(SERVER);
+    raw.send_expanded("path_challenge 12345678");
+    raw.advance(RTT);
+    raw.forget();
+    assert_eq!(raw.wait(), 8000 - RTT);
+    assert_eq!(raw.frames(), "retire_connection_id 2");
 }
 
 #[test]

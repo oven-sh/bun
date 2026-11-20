@@ -188,4 +188,17 @@ mod tests {
             assert_eq!((&out[..], received.is_ack_due), (ack, ack.is_empty()));
         }
     }
+
+    #[test]
+    fn old_gaps_take_no_room() {
+        let (now, mut received) = (Instant::default(), Received::default());
+        for number in [0, 2, 4] {
+            received.insert(now, number, true);
+        }
+        received.reported = 3;
+        for ranges in [3, 1] {
+            received.forget_old_gaps(now, Duration::ZERO);
+            assert_eq!(received.ranges.len(), ranges);
+        }
+    }
 }

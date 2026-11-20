@@ -192,3 +192,25 @@ fn target_acks(rtt: Duration) -> f32 {
         _ => 0.5,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_is_lower_for_longer_paths() {
+        let target = |micros| target_acks(Duration::from_micros(micros));
+        let steps = (0..200).filter(|it| target(1000 * it) > target(1000 * it + 1));
+        assert!(steps.eq([5, 10, 15, 20, 30, 40, 50, 60, 70, 80, 100]));
+    }
+
+    #[test]
+    fn controller_waits_for_a_round_trip_time() {
+        let (start, rtt) = (Instant::default(), Duration::from_millis(1));
+        let mut controller = Controller::new(start, Duration::ZERO);
+        assert!(!controller.on_ack(start, rtt, 9));
+        assert!(!controller.on_ack(start + rtt * 3, Duration::ZERO, 9));
+        assert!(controller.on_ack(start + rtt * 4, rtt, 9));
+        assert_eq!(controller.tolerance, Some(MIN_TOLERANCE));
+    }
+}

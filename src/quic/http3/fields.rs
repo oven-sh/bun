@@ -340,3 +340,28 @@ pub(super) fn decode(
     }
     Ok(Some(summary))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn what_is_pooled_is_limited() {
+        let entries = MAX_POOLED_LEN / size_of::<Entry>();
+        for (bytes, entries, pooled) in [
+            (MAX_POOLED_LEN, 0, MAX_POOLED),
+            (MAX_POOLED_LEN + 1, 0, 0),
+            (0, entries, MAX_POOLED),
+            (0, entries + 1, 0),
+        ] {
+            let mut pool = Pool::default();
+            for _ in 0..=MAX_POOLED {
+                let mut fields = Fields::default();
+                fields.bytes.reserve_exact(bytes);
+                fields.entries.reserve_exact(entries);
+                pool.put(fields);
+            }
+            assert_eq!(pool.0.len(), pooled);
+        }
+    }
+}

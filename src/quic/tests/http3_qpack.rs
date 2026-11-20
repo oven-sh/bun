@@ -35,6 +35,19 @@ fn acknowledges_insertions_and_sections() {
 }
 
 #[test]
+fn instructions_wait_for_a_packet() {
+    let mut raw = Raw::http3(Client).exchange();
+    raw.write_encoder(&format!("{CAPACITY}, {INSERT_AB}"));
+    raw.connection().acknowledge();
+    raw.forget();
+    assert_eq!((raw.wait(), raw.frames()), (5, "stream 7 1 #01".into()));
+    raw.write_encoder(INSERT_CD);
+    raw.peer.send_headers(0, OK);
+    assert_eq!(raw.frames(), "stream 7 2 #01, stream 0 0 #01030000d9");
+    assert!(raw.sleeps_for() > 5);
+}
+
+#[test]
 fn a_section_waits_for_what_it_refers_to() {
     for side in BOTH {
         for (polls, len) in [(true, 1), (true, 99), (false, 1), (false, 99)] {

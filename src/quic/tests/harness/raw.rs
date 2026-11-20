@@ -689,6 +689,11 @@ impl Raw {
         (self.now - start).as_millis()
     }
 
+    /// In milliseconds, unless something arrives.
+    pub(crate) fn sleeps_for(&mut self) -> u64 {
+        (self.peer.endpoint.timeout().unwrap() - self.now).as_millis()
+    }
+
     /// Since the last call of this or of what follows.
     pub(crate) fn take(&mut self) -> Vec<Packet> {
         self.process();

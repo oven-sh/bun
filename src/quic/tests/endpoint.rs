@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 
+use bun_quic::Direction::Unidirectional;
 use bun_quic::Layer::Transport;
 use bun_quic::{Batch, ConnectionId, Duration, Instant, StreamId, TokenBucket};
 
+use crate::harness::paths::NEW;
 use crate::harness::raw::Kind::{Initial, Short};
 use crate::harness::raw::{RTT, Raw};
 use crate::harness::wire::hex;
@@ -232,6 +234,28 @@ fn turns_are_short_while_the_socket_is_backed_up() {
 }
 
 #[test]
+fn who_has_waited_longest_sends_first() {
+    for (early, late, after) in [(0, 1, 10_000), (1, 0, 10_000), (0, 1, 1), (1, 0, 1)] {
+        let raw = Raw::client().connected();
+        let first = raw.peer.handle;
+        let mut raw = raw.again();
+        raw.addresses.peer.set_port(1001);
+        let mut raw = raw.connected();
+        let handles = [first, raw.peer.handle];
+        // The late one times out sooner, as it has two packets in flight.
+        for (at, micros) in [(early, 0), (late, after), (late, after)] {
+            raw.peer.handle = handles[at];
+            let id = raw.peer.open(Unidirectional);
+            raw.connection().write(StreamId(id), b"a");
+            raw.peer.process(raw.now + Duration::from_micros(micros));
+        }
+        let sent = raw.peer.process(raw.now + Duration::from_millis(100));
+        let order = sent.iter().map(|it| usize::from(it.0.peer.port()) - 1000);
+        assert_eq!(order.collect::<Vec<_>>(), [early, early, late, late]);
+    }
+}
+
+#[test]
 fn timers_that_are_stopped_do_not_wake_the_application() {
     let mut raw = Raw::client().connected();
     raw.advance(1000);
@@ -243,6 +267,20 @@ fn timers_that_are_stopped_do_not_wake_the_application() {
     raw.send("ping");
     assert_eq!(raw.packets(), "1[ack 0-2]");
     assert!(raw.peer.endpoint.timeout().unwrap() >= idle);
+
+    let id = raw.peer.open(Unidirectional);
+    raw.peer.send(id, &[1; 20_000], true);
+    raw.forget();
+    assert!(raw.sleeps_for() < 10);
+    raw.send("ack");
+    raw.send("ack");
+    assert!(raw.sleeps_for() > 1000);
+
+    raw.move_to(NEW);
+    raw.send_expanded("ping");
+    raw.send("respond");
+    raw.advance(RTT);
+    assert!(raw.sleeps_for() > 1000);
 }
 
 #[test]
@@ -332,10 +370,11 @@ fn handling_events_can_give_rise_to_packets() {
 #[test]
 fn a_connection_ends_even_if_it_never_gets_to_send() {
     let mut raw = Raw::client().connected();
-    raw.advance(1000);
+    raw.advance(29_900);
     let now = raw.now;
     raw.connection().abort(now, Transport, 1, b"");
     assert!(!raw.peer.poll(now));
+    (raw.peer.endpoint).handle_timeouts(now + Duration::from_millis(100));
     let end = raw.peer.endpoint.timeout().unwrap();
     assert!(end > now + Duration::from_millis(3 * (RTT + 25)));
     raw.peer.endpoint.handle_timeouts(end);

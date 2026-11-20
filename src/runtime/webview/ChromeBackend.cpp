@@ -1385,11 +1385,18 @@ void Transport::updateKeepAlive()
     }
 }
 
-uint32_t Transport::registerView(JSWebView* v)
+uint32_t Transport::reserveView()
 {
+    ASSERT(m_mode != TransportMode::None && !m_dead);
     uint32_t id = m_nextViewId++;
-    m_views.add(id, JSC::Weak<JSWebView>(v, &webViewWeakOwner()));
+    m_views.add(id, JSC::Weak<JSWebView>());
     return id;
+}
+
+void Transport::bindView(uint32_t viewId, JSWebView* v)
+{
+    ASSERT(m_views.contains(viewId));
+    m_views.set(viewId, JSC::Weak<JSWebView>(v, &webViewWeakOwner()));
 }
 
 void Transport::retireGlobal(Zig::GlobalObject* global)
@@ -1420,11 +1427,12 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     auto& vm = g->vm();
     auto& t = transport();
     auto* promise = JSPromise::create(vm, g->promiseStructure());
-    // Unreachable: the constructor spawned or connected, and the paths that
+    // Unreachable for an open view: the constructor spawned or connected, and the paths that
     // kill or release the transport afterwards (rejectAllAndMarkDead,
     // updateKeepAlive) leave no open view behind. WebSocket mode doesn't need
     // m_wsOpen here — send() queues until onOpen fires.
     if (t.m_dead || t.m_mode == TransportMode::None) {
+        ASSERT(v->m_closed);
         promise->reject(vm, createError(g, "Chrome connection is not available"_s));
         return promise;
     }

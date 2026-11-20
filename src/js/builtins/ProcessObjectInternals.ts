@@ -65,6 +65,10 @@ export function getStdioWriteStream(
           // stdout/stderr don't produce readable data, so yield nothing
         })();
       };
+      // A Socket's read() returns null when nothing was received.
+      stream.read = function () {
+        return null;
+      };
     } else {
       // File-backed stdio: Node's SyncWriteStream runs end() -> finish ->
       // destroy -> the _destroy override below -> _undestroy(), which resets

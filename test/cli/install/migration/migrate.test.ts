@@ -988,9 +988,9 @@ function npmNameFromFolder(folder: string) {
 }
 
 // Regular (non-optional) `file:` folder dependency whose package.json declares `os`/`cpu`
-// arrays. npm records those fields in the package-lock.json entry for every package, but
-// Bun only applies platform constraints to npm registry packages; a fresh `bun install`
-// of the same package.json installs the folder regardless. Migrating must not diverge.
+// arrays. npm records those fields in the package-lock.json entry for every package, and a
+// fresh `bun install` of the same package.json reads them from the folder. Migrating must
+// not diverge from that resolve.
 function filePlatformFixture(name: string, folder: string, os: string[], cpu: string[]) {
   const folderPackageJson: Record<string, unknown> = { name, version: "1.0.0" };
   const folderLockEntry: Record<string, unknown> = { version: "1.0.0" };
@@ -1014,21 +1014,25 @@ function filePlatformFixture(name: string, folder: string, os: string[], cpu: st
   };
 }
 
-test.concurrent("package-lock.json migration does not platform-skip a regular file: folder dependency", async () => {
-  using testDir = synthetic(
-    "migrate-folder-platform",
-    filePlatformFixture("a", "vendor/a", [`!${process.platform}`], [`!${process.arch}`]),
-  );
+test.concurrent("package-lock.json migration keeps the os and cpu of a file: folder dependency", async () => {
+  using testDir = synthetic("migrate-folder-platform", filePlatformFixture("a", "vendor/a", ["win32"], ["arm64"]));
 
-  const { stderr, exitCode } = await install(testDir);
+  const { stderr, exitCode } = await install(testDir, "--os", "linux", "--cpu", "x64");
   expect(stderr).toContain("migrated lockfile from package-lock.json");
   expect(stderr).not.toContain("InvalidNPMLockfile");
   expect(exitCode).toBe(0);
-  expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
+  expect(fs.existsSync(join(testDir, "node_modules", "a"))).toBeFalse();
 
   // The migrated bun.lock matches what a fresh resolve of the same package.json writes:
-  // the folder package keeps its real name and carries no os/cpu constraint.
-  expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(`"a": ["a@file:vendor/a", {}]`);
+  // the folder package keeps its real name and its os/cpu constraint.
+  const entry = `"a": ["a@file:vendor/a", { "os": "win32", "cpu": "arm64" }]`;
+  expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(entry);
+  fs.rmSync(join(testDir, "package-lock.json"));
+  fs.rmSync(join(testDir, "bun.lock"));
+  const fresh = await install(testDir, "--os", "linux", "--cpu", "x64");
+  expect(fresh.exitCode).toBe(0);
+  expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(entry);
+  expect(fs.existsSync(join(testDir, "node_modules", "a"))).toBeFalse();
 });
 
 test.concurrent.each([
@@ -1122,11 +1126,11 @@ test.concurrent(
   },
 );
 
-test.concurrent("package-lock.json migration does not platform-skip a regular file: tarball dependency", async () => {
-  // Same divergence as the folder variant, for a `LocalTarball` resolution. npm records
-  // the packed package's `os`/`cpu` arrays in its lockfile entry, and a fresh resolve of
-  // the same package.json extracts and installs the tarball regardless of them.
-  const nonMatching = { os: [`!${process.platform}`], cpu: [`!${process.arch}`] };
+test.concurrent("package-lock.json migration keeps the os and cpu of a file: tarball dependency", async () => {
+  // Same as the folder variant, for a `LocalTarball` resolution. npm records the packed
+  // package's `os`/`cpu` arrays in its lockfile entry, and a fresh resolve of the same
+  // package.json reads them from the extracted tarball.
+  const nonMatching = { os: ["win32"], cpu: ["arm64"] };
   using testDir = synthetic("migrate-tarball-platform", {
     "package.json": JSON.stringify({ name: "repro", dependencies: { a: "file:./a-1.0.0.tgz" } }),
     "src-a/package.json": JSON.stringify({ name: "a", version: "1.0.0", ...nonMatching }),
@@ -1148,11 +1152,24 @@ test.concurrent("package-lock.json migration does not platform-skip a regular fi
     }),
   );
 
-  const { stderr, exitCode } = await install(testDir);
+  const { stderr, exitCode } = await install(testDir, "--os", "linux", "--cpu", "x64");
   expect(stderr).toContain("migrated lockfile from package-lock.json");
   expect(stderr).not.toContain("InvalidNPMLockfile");
   expect(exitCode).toBe(0);
-  expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
+  expect(fs.existsSync(join(testDir, "node_modules", "a"))).toBeFalse();
+
+  expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(
+    `"a": ["a@a-1.0.0.tgz", { "os": "win32", "cpu": "arm64" }]`,
+  );
+  // A fresh resolve spells the path as written and records the integrity. The platform fields match.
+  fs.rmSync(join(testDir, "package-lock.json"));
+  fs.rmSync(join(testDir, "bun.lock"));
+  const fresh = await install(testDir, "--os", "linux", "--cpu", "x64");
+  expect(fresh.exitCode).toBe(0);
+  expect(await Bun.file(join(testDir, "bun.lock")).text()).toMatch(
+    /"a": \["a@\.\/a-1\.0\.0\.tgz", \{ "os": "win32", "cpu": "arm64" \}, "sha512-/,
+  );
+  expect(fs.existsSync(join(testDir, "node_modules", "a"))).toBeFalse();
 });
 
 // npm records a file: link target's own dependencies but never nests them, so a target that reaches its own name resolves through the root link and the hoist tree must cut the cycle.
@@ -1219,17 +1236,16 @@ test.concurrent(
   },
 );
 
-test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file: folder dependency", async () => {
-  // The pnpm migration copied the lockfile's `os`/`cpu` arrays into every package the
-  // same way the npm one did. pnpm records them for any `packages:` entry whose manifest
-  // declares them, so a `file:` folder dependency was silently dropped on a mismatch.
+test.concurrent("pnpm-lock.yaml migration keeps the os and cpu of a file: folder dependency", async () => {
+  // pnpm records `os`/`cpu` for any `packages:` entry whose manifest declares them. The
+  // migration keeps them for a `file:` folder, like a fresh resolve reads them from the folder.
   using testDir = synthetic("migrate-pnpm-folder-platform", {
     "package.json": JSON.stringify({ name: "repro", dependencies: { a: "file:./vendor/a" } }),
     "vendor/a/package.json": JSON.stringify({
       name: "a",
       version: "1.0.0",
-      os: [`!${process.platform}`],
-      cpu: [`!${process.arch}`],
+      os: ["win32"],
+      cpu: ["arm64"],
     }),
     "pnpm-lock.yaml": [
       "lockfileVersion: '9.0'",
@@ -1250,8 +1266,8 @@ test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file:
       "",
       "  a@file:vendor/a:",
       "    resolution: {directory: vendor/a, type: directory}",
-      `    os: ['!${process.platform}']`,
-      `    cpu: ['!${process.arch}']`,
+      "    os: [win32]",
+      "    cpu: [arm64]",
       "    version: 1.0.0",
       "",
       "snapshots:",
@@ -1261,15 +1277,23 @@ test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file:
     ].join("\n"),
   });
 
-  const { stderr, exitCode } = await install(testDir);
+  const { stderr, exitCode } = await install(testDir, "--os", "linux", "--cpu", "x64");
   expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
   expect(exitCode).toBe(0);
-  expect(await Bun.file(join(testDir, "node_modules", "a", "package.json")).json()).toHaveProperty("name", "a");
+  expect(fs.existsSync(join(testDir, "node_modules", "a"))).toBeFalse();
+
+  const migrated = await Bun.file(join(testDir, "bun.lock")).text();
+  expect(migrated).toContain(`"a": ["a@file:vendor/a", { "os": "win32", "cpu": "arm64" }]`);
+  fs.rmSync(join(testDir, "pnpm-lock.yaml"));
+  fs.rmSync(join(testDir, "bun.lock"));
+  const fresh = await install(testDir, "--os", "linux", "--cpu", "x64");
+  expect(fresh.exitCode).toBe(0);
+  expect(await Bun.file(join(testDir, "bun.lock")).text()).toBe(migrated);
 });
 
-// `libc` is carried over for registry packages like `os`/`cpu` are, and like them is dropped
-// for a `file:` dependency, which a fresh resolve installs unconditionally. Nothing is installed
-// (port 1 refuses connections), only the lockfile is migrated.
+// `libc` is carried over for registry packages like `os`/`cpu` are, and for a `file:` dependency,
+// whose package.json a fresh resolve reads. Nothing is installed (port 1 refuses connections),
+// only the lockfile is migrated.
 describe.each([
   [
     "package-lock.json",
@@ -1348,7 +1372,7 @@ describe.each([
 
     const lines = (await Bun.file(join(testDir, "bun.lock")).text()).split("\n").map(line => line.trim());
     expect(lines.find(line => line.startsWith('"native-musl": ['))).toContain(`{ "os": "linux", "libc": "musl" }`);
-    expect(lines.find(line => line.startsWith('"a": ['))).toBe('"a": ["a@file:vendor/a", {}],');
+    expect(lines.find(line => line.startsWith('"a": ['))).toBe('"a": ["a@file:vendor/a", { "libc": "musl" }],');
   });
 });
 

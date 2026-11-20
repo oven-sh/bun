@@ -719,6 +719,23 @@ pub fn exit(code: u32) -> ! {
     }
 }
 
+/// [`exit`] for a thread that ends the process while its other threads still run.
+/// It skips what the C library does on `exit()`: static destructors and a leak check
+/// would run under those threads.
+pub fn exit_while_other_threads_run(code: u32) -> ! {
+    #[cfg(windows)]
+    {
+        exit(code)
+    }
+    #[cfg(not(windows))]
+    {
+        IS_EXITING.store(true, Ordering::Relaxed);
+        crate::sleep_forever_if_another_thread_is_crashing();
+        Bun__onExit();
+        _exit(code as c_int)
+    }
+}
+
 pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {
     raise_ignoring_panic_handler_raw(sig as c_int)
 }

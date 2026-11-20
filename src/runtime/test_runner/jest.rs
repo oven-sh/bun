@@ -26,11 +26,18 @@ use super::{vi_utils, vi_wait};
 use bun_test::js_fns::{GenericHookTag, create_hook};
 use bun_test::{BaseScopeCfg, Flavor, RefDataValue, ScopeMode};
 
-struct FileHeader {
+#[derive(Clone)]
+pub(crate) struct FileHeader {
     title: Box<[u8]>,
     prefix: &'static [u8],
     repeat_count: u32,
     repeat_index: u32,
+}
+
+impl FileHeader {
+    pub(crate) fn print(&self) {
+        CurrentFile::print(&self.title, self.prefix, self.repeat_count, self.repeat_index);
+    }
 }
 
 #[derive(Default)]
@@ -54,7 +61,9 @@ impl CurrentFile {
             return;
         }
         if reporters.dots || reporters.only_failures {
-            self.unprinted.set(Some(FileHeader { title: title.into(), prefix, repeat_count, repeat_index }));
+            let header = FileHeader { title: title.into(), prefix, repeat_count, repeat_index };
+            super::deadline_watch::set_unprinted_header(Some(header.clone()));
+            self.unprinted.set(Some(header));
             return;
         }
 
@@ -95,7 +104,8 @@ impl CurrentFile {
 
     pub(crate) fn print_if_needed(&self) {
         if let Some(header) = self.unprinted.take() {
-            Self::print(&header.title, header.prefix, header.repeat_count, header.repeat_index);
+            super::deadline_watch::set_unprinted_header(None);
+            header.print();
         }
     }
 }

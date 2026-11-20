@@ -338,7 +338,7 @@ extern "C" fn on_process_exit() {
 /// (so its child set is stable while we recurse), which is what makes the
 /// verify step sufficient. The only forking process is `self`, and we're in
 /// the exit handler — not forking.
-pub fn kill_descendants() {
+fn kill_descendants() {
     let self_pid = getpid();
 
     let mut to_visit: Vec<libc::pid_t> = Vec::new();
@@ -386,6 +386,12 @@ pub fn kill_descendants() {
         i -= 1;
         let _ = kill(to_kill[i], libc::SIGKILL);
     }
+}
+
+/// [`kill_descendants`] for a thread that ends the process while its other threads still run.
+/// A child that one of them starts during the walk is not killed.
+pub fn kill_descendants_while_other_threads_run() {
+    kill_descendants();
 }
 
 /// Enumerate our direct children into `out`. Used by `spawnPosix`

@@ -82,6 +82,7 @@ pub(crate) fn get_exec_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
 pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     let vm = global_object.bun_vm();
     vm.exit_handler.exit_code.set(code);
+    crate::test_runner::deadline_watch::wait_if_ending();
     if let Some(worker) = vm.worker_ref() {
         // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner

@@ -193,13 +193,18 @@ test("--parallel marks a file whose worker exits mid-run as failed (no retry)", 
 
 // https://github.com/oven-sh/bun/issues/49339
 test.concurrent.each([
-  ["runs", `while (true) {}`],
+  ["runs", `while (true) {}`, {}, []],
   // The loop of the issue keeps everything it allocates. This one lets go of all but the last few
   // thousand objects, for a build that never ends it.
-  ["allocates", `const held = []; for (let i = 0; ; i++) held[i % 4096] = { payload: new Array(1024).fill(1) };`],
+  [
+    "allocates",
+    `const held = []; for (let i = 0; ; i++) held[i % 4096] = { payload: new Array(1024).fill(1) };`,
+    { GITHUB_ACTIONS: "true" },
+    ['::error title=error: Test "loops" timed out after 250ms::'],
+  ],
 ])(
   "--parallel: a test that %s and does not return to the event loop ends its worker after its timeout",
-  async (_, loop) => {
+  async (_, loop, env, annotations) => {
     using dir = tempDir("parallel-blocked-event-loop", {
       "a-loop.test.js": `import {test} from "bun:test";
         test("before the loop", () => {});
@@ -211,7 +216,7 @@ test.concurrent.each([
     const junit = path.join(String(dir), "junit.xml");
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--parallel=2", "--timeout=250", "--reporter=junit", `--reporter-outfile=${junit}`],
-      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_TEST_TIMEOUT_GRACE_MS: "250" },
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_TEST_TIMEOUT_GRACE_MS: "250", ...env },
       cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",
@@ -221,12 +226,12 @@ test.concurrent.each([
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const lines = (stdout + stderr)
       .split("\n")
-      .filter(line => /^\((pass|fail)\) |^  \^ |^✗ |^error: |^ \d+ (pass|fail)$|^Ran /.test(line))
+      .filter(line => /^\((pass|fail)\) |^  \^ |^✗ |^error: |^::error|^ \d+ (pass|fail)$|^Ran /.test(line))
       .map(line => line.replace(/ \[[\d.]+m?s\]$/, ""))
       .sort();
     expect({ lines, signalCode: proc.signalCode, exitCode }).toEqual({
       lines: [
-        "  ^ this test timed out after 250ms and had not returned to the event loop 250ms later.",
+        "  ^ this test timed out after 250ms and still blocked the event loop 250ms later.",
         // As for a worker that crashed, the file counts as one failure, and its tests that ended are not counted.
         " 1 fail",
         " 2 pass",
@@ -234,6 +239,7 @@ test.concurrent.each([
         "(pass) b",
         "(pass) before the loop",
         "(pass) c",
+        ...annotations,
         "Ran 3 tests across 3 files.",
         "✗ a-loop.test.js (worker timed out: a test did not return to the event loop after its timeout)",
       ],
@@ -245,6 +251,67 @@ test.concurrent.each([
     ).toEqual([expect.stringContaining(`message="a test did not return to the event loop after its timeout"`)]);
   },
   20_000,
+);
+
+// The coordinator ends the process group of a worker that has ended, with SIGTERM.
+test.skipIf(isWindows)(
+  "--parallel: a worker that a blocked event loop ends takes the child processes of its tests with it",
+  async () => {
+    const child = `process.on("SIGTERM", () => {}); console.log(process.pid); setTimeout(() => {}, 30_000);`;
+    using dir = tempDir("parallel-blocked-event-loop-children", {
+      "a-loop.test.js": `import {test} from "bun:test";
+        import {spawn} from "child_process";
+        import {appendFileSync} from "fs";
+        test("loops", async () => {
+          for (const detached of [false, true]) {
+            const child = spawn(process.execPath, ["-e", ${JSON.stringify(child)}], { detached, stdio: ["ignore", "pipe", "ignore"] });
+            const pid = await new Promise(resolve => child.stdout.once("data", resolve));
+            appendFileSync("children", pid);
+          }
+          while (true) {}
+        }, 2000);`,
+      "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2"],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_TEST_TIMEOUT_GRACE_MS: "250" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "ignore",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const children = readFileSync(path.join(String(dir), "children"), "utf8")
+      .trim()
+      .split("\n")
+      .map(Number);
+    const isAlive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      expect({
+        ended: stderr.split("\n").filter(line => line.startsWith("✗ ")),
+        children: children.length,
+        // They were killed before the worker ended, which was before the run ended.
+        alive: children.filter(isAlive),
+        exitCode,
+      }).toEqual({
+        ended: ["✗ a-loop.test.js (worker timed out: a test did not return to the event loop after its timeout)"],
+        children: 2,
+        alive: [],
+        exitCode: 1,
+      });
+    } finally {
+      for (const pid of children.filter(isAlive)) process.kill(pid, "SIGKILL");
+    }
+  },
+  30_000,
 );
 
 test("--parallel: a test that calls process.exit(124) is a worker that crashed, not one that timed out", async () => {

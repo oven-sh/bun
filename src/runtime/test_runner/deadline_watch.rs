@@ -3,43 +3,78 @@
 //! The timeout of a test or hook is a timer of the event loop. Code that does not return to the
 //! event loop (a loop without an end, a native call that blocks) keeps that timer from firing, so
 //! nothing on the JavaScript thread can end it. The runner publishes the deadline it waits for, and
-//! a thread that runs no JavaScript ends the process when the runner is `GRACE_MS` late for it.
+//! a thread that runs no JavaScript ends the process when the runner is `grace_ms` late for it.
 //! The process ends, and not the test alone: JavaScript that another thread interrupts leaves
 //! modules half loaded and promises unsettled for the tests after it.
 
-use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 use std::io::Write as _;
 
 use bun_core::time::NS_PER_MS;
-use bun_core::{Output, Timespec, TimespecMockMode};
+use bun_core::{Output, Timespec, TimespecMockMode, strings};
+use bun_threading::guarded::GuardedLock;
+use bun_threading::{Guarded, Mutex};
+
+use super::jest::FileHeader;
 
 /// What a `--parallel` worker exits with. See `Coordinator::reap_worker`.
 pub(crate) const WORKER_EXIT_CODE: u8 = 124;
 /// In what the process prints before it ends. With `WORKER_EXIT_CODE` it tells the coordinator that
 /// the watch ended the worker, and not a test that called `process.exit(124)`.
-pub(crate) const MESSAGE: &str = "had not returned to the event loop";
+pub(crate) const MESSAGE: &str = "still blocked the event loop";
 
-/// The deadline, in nanoseconds on the clock of `Timespec::now`, above `LABEL_BITS`. 0 is none.
-static PUBLISHED: AtomicU64 = AtomicU64::new(0);
-/// `PUBLISHED` from when the watch decides to end the process.
-const ENDING: u64 = u64::MAX;
-/// Which of `LABELS` names the test of the deadline.
-const LABEL_INDEX: u64 = 1;
-/// Whether one does.
-const HAS_LABEL: u64 = 2;
-const LABEL_BITS: u32 = 2;
+pub(crate) struct Config {
+    /// How long the JavaScript thread may be late for a deadline.
+    pub(crate) grace_ms: u64,
+    pub(crate) is_worker: bool,
+    /// The `--dots` reporter leaves its line open.
+    pub(crate) prints_dots: bool,
+    /// `--parallel` was not given, so it would help.
+    pub(crate) suggests_parallel: bool,
+    /// What a run that ends here does not write, for the note: ", JUnit report".
+    pub(crate) unwritten_reports: &'static str,
+}
 
-static GRACE_MS: AtomicU64 = AtomicU64::new(5000);
-static IS_WORKER: AtomicBool = AtomicBool::new(false);
-/// The `--dots` reporter leaves its line open.
-static PRINTS_DOTS: AtomicBool = AtomicBool::new(false);
+struct State {
+    config: Config,
+    /// Under `--watch` a change of a file restarts a run that is blocked, and the end of the
+    /// process would end the watch. The watch says what blocks, and no more.
+    only_reports: bool,
+    /// What the JavaScript thread is due back for, in nanoseconds on the clock of `Timespec::now`. 0: nothing.
+    deadline: u64,
+    /// Counts the changes of `deadline`, which can change back to the same time.
+    generation: u64,
+    /// The JavaScript thread is inside the callback of `label`. Otherwise it went back to the event loop.
+    is_in_callback: bool,
+    /// The deadline is the timeout of `label`, the only test that runs.
+    has_label: bool,
+    label: Label,
+    /// What `label.name` holds.
+    label_key: u64,
+    /// The header of the test file, as long as the reporter has not printed it.
+    unprinted_header: Option<FileHeader>,
+}
+
+static STATE: Guarded<State> = Guarded::new(State {
+    config: Config { grace_ms: 5000, is_worker: false, prints_dots: false, suggests_parallel: false, unwritten_reports: "" },
+    only_reports: false,
+    deadline: 0,
+    generation: 0,
+    is_in_callback: false,
+    has_label: false,
+    label: Label::empty(),
+    label_key: 0,
+    unprinted_header: None,
+});
+/// Whether `STATE.deadline` is not 0. Only the JavaScript thread writes the deadline, so it reads this
+/// without the lock, and takes the lock only to change what is published.
+static HAS_DEADLINE: AtomicBool = AtomicBool::new(false);
 static IS_WATCHING: AtomicBool = AtomicBool::new(false);
 
-/// The test that a deadline belongs to, for the message.
+/// The test that a deadline belongs to, for the report.
 pub(crate) struct Label {
-    /// Its end holds "describe > test". A name that does not fit loses its start.
+    /// Its end holds the names of the scopes, outermost first, and then of the test, with a NUL after each scope.
     name: [u8; Label::NAME_CAPACITY],
     name_start: usize,
     timeout_ms: u32,
@@ -53,193 +88,292 @@ impl Label {
         Label { name: [0; Label::NAME_CAPACITY], name_start: Label::NAME_CAPACITY, timeout_ms: 0, is_hook: false }
     }
 
-    pub(crate) fn set(&mut self, timeout_ms: u32, is_hook: bool) {
-        self.timeout_ms = timeout_ms;
-        self.is_hook = is_hook;
+    /// The name of the test, of which only the start is kept if it is too long.
+    pub(crate) fn set_test(&mut self, name: &[u8]) {
+        let mut kept = name.len().min(Label::NAME_CAPACITY);
+        // Not in the middle of a UTF-8 sequence.
+        while kept < name.len() && kept > 0 && name[kept] & 0xC0 == 0x80 {
+            kept -= 1;
+        }
+        self.name_start = Label::NAME_CAPACITY - kept;
+        self.name[self.name_start..].copy_from_slice(&name[..kept]);
     }
 
-    /// Puts `text` in front of the name.
-    pub(crate) fn prepend(&mut self, text: &[u8]) {
-        let kept = &text[text.len().saturating_sub(self.name_start)..];
-        self.name_start -= kept.len();
-        self.name[self.name_start..][..kept.len()].copy_from_slice(kept);
+    /// The scope around what the label holds. False if it does not fit, and then no scope around it is added.
+    pub(crate) fn add_scope(&mut self, name: &[u8]) -> bool {
+        let Some(start) = self.name_start.checked_sub(name.len() + 1) else {
+            return false;
+        };
+        self.name[start..][..name.len()].copy_from_slice(name);
+        self.name[start + name.len()] = 0;
+        self.name_start = start;
+        true
     }
-}
 
-struct LabelSlot(UnsafeCell<Label>);
-// SAFETY: the JavaScript thread writes the label that `PUBLISHED` does not name. The watch reads the
-// one it names, and only once it has stored `ENDING`, which stops the JavaScript thread at its next
-// `publish`, before that thread could write this label again.
-unsafe impl Sync for LabelSlot {}
-static LABELS: [LabelSlot; 2] = [LabelSlot(UnsafeCell::new(Label::empty())), LabelSlot(UnsafeCell::new(Label::empty()))];
-
-/// Before the first test runs. `grace_ms`: see `BUN_TEST_TIMEOUT_GRACE_MS`.
-pub(crate) fn configure(grace_ms: Option<u64>, is_worker: bool, prints_dots: bool) {
-    if let Some(grace_ms) = grace_ms {
-        GRACE_MS.store(grace_ms, Ordering::Relaxed);
-    }
-    IS_WORKER.store(is_worker, Ordering::Relaxed);
-    PRINTS_DOTS.store(prints_dots, Ordering::Relaxed);
-}
-
-/// What the JavaScript thread published last. Does not return once the watch ends the process.
-fn published() -> u64 {
-    let current = PUBLISHED.load(Ordering::SeqCst);
-    if current == ENDING {
-        wait_for_end();
-    }
-    current
-}
-
-/// The watch reads a label and ends the process.
-#[cold]
-fn wait_for_end() -> ! {
-    loop {
-        std::thread::park();
+    fn scopes_and_test(&self) -> (&[u8], &[u8]) {
+        let names = &self.name[self.name_start..];
+        match strings::last_index_of_char(names, 0) {
+            Some(last) => (&names[..last], &names[last + 1..]),
+            None => (&[], names),
+        }
     }
 }
 
-/// The JavaScript thread is about to call a test or hook whose timeout ends at `deadline`
-/// (`Timespec::EPOCH`: it has none). `describe` names it.
-pub(crate) fn calling(deadline: Timespec, describe: impl FnOnce(&mut Label)) {
-    let current = published();
-    if deadline.eql(&Timespec::EPOCH) {
-        return publish(current, current & LABEL_INDEX);
-    }
-    let index = !current & LABEL_INDEX;
-    // SAFETY: see `LabelSlot`.
-    let label = unsafe { &mut *LABELS[index as usize].0.get() };
-    label.name_start = Label::NAME_CAPACITY;
-    describe(label);
-    publish(current, deadline.ns() << LABEL_BITS | HAS_LABEL | index);
+/// A test or hook for `calling` and `waiting`.
+pub(crate) struct Entry<Name: FnOnce(&mut Label)> {
+    /// The same for a test and each of its hooks, and for nothing else.
+    pub(crate) key: u64,
+    pub(crate) timeout_ms: u32,
+    pub(crate) is_hook: bool,
+    /// Names the test in a label that is empty.
+    pub(crate) name: Name,
 }
 
-/// The JavaScript thread goes back to the event loop, where the runner waits until `deadline` at the
-/// latest (`Timespec::EPOCH`: for nothing that has a timeout).
-pub(crate) fn waiting_until(deadline: Timespec) {
-    let current = published();
-    let deadline = if deadline.eql(&Timespec::EPOCH) { 0 } else { deadline.ns() };
-    // It waits for the callback it called last, whose label stays.
-    if current >> LABEL_BITS == deadline {
+/// Before the first test runs.
+pub(crate) fn configure(config: Config) {
+    STATE.lock().config = config;
+}
+
+/// See `State::only_reports`.
+pub(crate) fn only_report() {
+    STATE.lock().only_reports = true;
+}
+
+/// The reporter prints the header of a test file with the first line it prints for the file.
+pub(crate) fn set_unprinted_header(header: Option<FileHeader>) {
+    STATE.lock().unprinted_header = header;
+}
+
+/// The JavaScript thread calls a test or hook whose timeout ends at `deadline` (`Timespec::EPOCH`: it has none).
+pub(crate) fn calling<Name: FnOnce(&mut Label)>(deadline: Timespec, entry: Option<Entry<Name>>) {
+    publish(deadline, true, entry);
+}
+
+/// That test or hook returned. What the runner does next, like the report of a result, has no timeout.
+pub(crate) fn returned() {
+    publish(Timespec::EPOCH, false, None::<Entry<fn(&mut Label)>>);
+}
+
+/// The runner handles what happened to a test. Does not return once the watch ends the process.
+pub(crate) fn running() {
+    publish(Timespec::EPOCH, false, None::<Entry<fn(&mut Label)>>);
+}
+
+/// The JavaScript thread goes back to the event loop, and the runner expects it back by `deadline`
+/// (`Timespec::EPOCH`: at no time). `entry`: the only test or hook that is running.
+pub(crate) fn waiting<Name: FnOnce(&mut Label)>(deadline: Timespec, entry: Option<Entry<Name>>) {
+    publish(deadline, false, entry);
+}
+
+/// For a thread that is about to end the process. Does not return once the watch ends it.
+pub(crate) fn wait_if_ending() {
+    drop(STATE.lock());
+}
+
+fn publish<Name: FnOnce(&mut Label)>(deadline: Timespec, is_in_callback: bool, entry: Option<Entry<Name>>) {
+    let has_deadline = !deadline.eql(&Timespec::EPOCH);
+    if !has_deadline && !HAS_DEADLINE.load(Ordering::Relaxed) {
         return;
     }
-    publish(current, deadline << LABEL_BITS | current & LABEL_INDEX);
-}
+    // The watch keeps the lock from when it decides to end the process.
+    let mut state = STATE.lock();
+    state.deadline = if has_deadline { deadline.ns().max(1) } else { 0 };
+    state.generation += 1;
+    state.is_in_callback = is_in_callback;
+    state.has_label = has_deadline && entry.is_some();
+    if let Some(entry) = entry.filter(|_| has_deadline) {
+        state.label.timeout_ms = entry.timeout_ms;
+        state.label.is_hook = entry.is_hook;
+        if state.label_key != entry.key {
+            state.label_key = entry.key;
+            state.label.name_start = Label::NAME_CAPACITY;
+            (entry.name)(&mut state.label);
+        }
+    }
+    HAS_DEADLINE.store(has_deadline, Ordering::Relaxed);
+    drop(state);
 
-fn publish(current: u64, next: u64) {
-    if next == current {
-        return;
-    }
-    if PUBLISHED.swap(next, Ordering::SeqCst) == ENDING {
-        wait_for_end();
-    }
-    if next >> LABEL_BITS != 0 && !IS_WATCHING.swap(true, Ordering::Relaxed) {
+    if has_deadline && !IS_WATCHING.swap(true, Ordering::Relaxed) {
         // Without the thread, a test that blocks the event loop hangs, as it did before there was one.
         let _ = std::thread::Builder::new().name("TestTimeout".into()).stack_size(256 << 10).spawn(watch);
     }
 }
 
 /// Ends the process once it has seen one deadline stay published, and in the past, through
-/// `GRACE_MS` of its own sleeps.
+/// `grace_ms` of its own sleeps.
 ///
-/// It counts its sleeps and not the clock: while the whole process is stopped (SIGSTOP, a suspended
-/// machine) a deadline can pass by any amount, and the JavaScript thread handles it as soon as the
-/// process runs again. A sleep that took longer than it asked for counts for little.
+/// It counts its sleeps and not the clock: while the whole process is stopped (SIGSTOP, a native
+/// debugger, a suspended machine) a deadline can pass by any amount, and the JavaScript thread
+/// handles it as soon as the process runs again. A sleep that took much longer than it asked for
+/// is such a stop, and counts for nothing.
 ///
 /// The JavaScript thread never wakes it, so that a test pays no system call for it: it looks at what
-/// is published a few times per `GRACE_MS`.
+/// is published a few times per `grace_ms`.
 fn watch() {
     const LOOKS_PER_GRACE: u64 = 4;
     const SLEEPS_PER_GRACE: u64 = 8;
+    Output::Source::configure_thread_no_js();
     let now = || Timespec::now(TimespecMockMode::ForceRealTime).ns();
 
+    // Of which `generation` it has seen the deadline in the past, and for how long.
     let mut overdue: (u64, u64) = (0, 0);
+    let mut reported_generation = 0;
     loop {
-        let published = PUBLISHED.load(Ordering::SeqCst);
-        let grace_ns = GRACE_MS.load(Ordering::Relaxed).saturating_mul(NS_PER_MS).max(NS_PER_MS);
-        let deadline = published >> LABEL_BITS;
+        let (deadline, generation, grace_ns) = {
+            let state = STATE.lock();
+            (state.deadline, state.generation, state.config.grace_ms.saturating_mul(NS_PER_MS).max(NS_PER_MS))
+        };
         let before = now();
         if deadline == 0 || before < deadline {
             let until_deadline = if deadline == 0 { u64::MAX } else { deadline - before };
             std::thread::sleep(Duration::from_nanos(until_deadline.min(grace_ns / LOOKS_PER_GRACE)));
             continue;
         }
-        let seen_overdue_ns = if overdue.0 == published { overdue.1 } else { 0 };
-        if seen_overdue_ns >= grace_ns {
-            if PUBLISHED.compare_exchange(published, ENDING, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-                end_process(published, before);
-            }
-            continue;
+        if overdue.0 != generation {
+            overdue = (generation, 0);
         }
-        let sleep_ns = (grace_ns / SLEEPS_PER_GRACE).clamp(1, grace_ns - seen_overdue_ns);
+        if overdue.1 >= grace_ns {
+            let state = STATE.lock();
+            if state.generation != generation {
+                continue;
+            }
+            // A debugger keeps a thread from running for as long as its user likes.
+            if bun_jsc::debugger::holds_a_thread() || is_traced() {
+                overdue.1 = 0;
+            } else if !state.only_reports {
+                end_process(state, before);
+            } else if reported_generation != generation {
+                reported_generation = generation;
+                report(&state, before, false);
+                Output::flush();
+            }
+        }
+        let sleep_ns = (grace_ns / SLEEPS_PER_GRACE).clamp(1, grace_ns.saturating_sub(overdue.1).max(1));
         std::thread::sleep(Duration::from_nanos(sleep_ns));
-        let slept_ns = now().saturating_sub(before).min(sleep_ns * 2);
-        overdue = (published, seen_overdue_ns + slept_ns);
+        let slept_ns = now().saturating_sub(before);
+        if slept_ns <= sleep_ns.saturating_mul(2) {
+            overdue.1 += slept_ns;
+        }
     }
 }
 
-#[cold]
-fn end_process(published: u64, now: u64) -> ! {
-    let colors = Output::enable_ansi_colors_stderr();
-    let grace_ms = GRACE_MS.load(Ordering::Relaxed);
-    let is_worker = IS_WORKER.load(Ordering::Relaxed);
-    let failed = crate::cli::test_command::fmt_status_text_line(super::execution::Result::FailBecauseTimeout, colors);
-
-    let mut message: Vec<u8> = Vec::new();
-    if PRINTS_DOTS.load(Ordering::Relaxed) {
-        let _ = message.write_all(b"\n");
+/// Whether a native debugger controls the process.
+fn is_traced() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let Ok(status) = bun_sys::File::read_from(bun_sys::Fd::cwd(), b"/proc/self/status") else {
+            return false;
+        };
+        const FIELD: &[u8] = b"\nTracerPid:";
+        strings::index_of(&status, FIELD)
+            .and_then(|at| strings::split(&status[at + FIELD.len()..], b"\n").next())
+            .is_some_and(|tracer| strings::trim(tracer, b" \t") != b"0")
     }
-    if published & HAS_LABEL != 0 {
-        // SAFETY: see `LabelSlot`.
-        let label = unsafe { &*LABELS[(published & LABEL_INDEX) as usize].0.get() };
-        let name = &label.name[label.name_start..];
-        let started = (published >> LABEL_BITS).saturating_sub(u64::from(label.timeout_ms) * NS_PER_MS);
-        if Output::is_github_action() {
-            let _ = writeln!(
-                message,
-                "::error title=error: Test \"{}\" timed out after {}ms::",
-                bun_core::fmt::github_action_property(name),
-                label.timeout_ms,
-            );
+    #[cfg(target_os = "macos")]
+    {
+        use bun_sys::c::{PROC_PIDTBSDINFO, proc_pidinfo, struct_proc_bsdinfo};
+        const PROC_FLAG_TRACED: u32 = 2;
+        let mut info: struct_proc_bsdinfo = bun_core::ffi::zeroed();
+        let size = core::mem::size_of::<struct_proc_bsdinfo>() as core::ffi::c_int;
+        // SAFETY: `info` is `size` bytes that `proc_pidinfo` may write.
+        let written =
+            unsafe { proc_pidinfo(std::process::id() as libc::pid_t, PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
+        written == size && info.pbi_flags & PROC_FLAG_TRACED != 0
+    }
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            safe fn IsDebuggerPresent() -> i32;
         }
-        let _ = message.write_all(&failed);
+        IsDebuggerPresent() != 0
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos", windows)))]
+    {
+        false
+    }
+}
+
+/// Prints the test that is late for its deadline: as a test that failed if that `ends_process`, and as a warning if not.
+#[cold]
+fn report(state: &State, now: u64, ends_process: bool) {
+    use crate::cli::test_command::{fmt_status_text_line, write_test_name};
+    let colors = Output::enable_ansi_colors_stderr();
+    let grace_ms = state.config.grace_ms;
+    let timeout_ms = state.label.timeout_ms;
+    let (scopes, test) = state.label.scopes_and_test();
+
+    if state.config.prints_dots {
+        bun_core::pretty_error!("<r>\n");
+    }
+    if let Some(header) = &state.unprinted_header {
+        header.print();
+    }
+    Output::flush();
+    let mut lines: Vec<u8> = Vec::new();
+    if state.has_label && ends_process && Output::is_github_action() {
+        let _ = writeln!(
+            lines,
+            "::error title=error: Test \"{}\" timed out after {}ms::",
+            bun_core::fmt::github_action_property(test),
+            timeout_ms,
+        );
+    }
+    if ends_process {
+        let _ = lines.write_all(&fmt_status_text_line(super::execution::Result::FailBecauseTimeout, colors));
+    } else {
+        let _ = bun_core::write_pretty!(lines, colors, "<r><yellow>warn<r>:");
+    }
+    if state.has_label {
+        let scopes = strings::split(scopes, b"\0").filter(|_| !scopes.is_empty());
+        write_test_name(&mut lines, colors, false, scopes, test);
+        let started = state.deadline.saturating_sub(u64::from(timeout_ms) * NS_PER_MS);
+        let elapsed = Output::ElapsedFormatter { colors, duration_ns: now.saturating_sub(started) };
+        let timed_out = if state.label.is_hook { "a hook of this test" } else { "this test" };
+        let blocked = if state.is_in_callback { " and" } else { ", and something" };
         let _ = bun_core::write_pretty!(
-            message,
+            lines,
             colors,
-            "<r><b> {}<r> {}\n  <d>^<r> <red>{} timed out after {}ms and {} {}ms later.<r>\n",
-            bstr::BStr::new(name),
-            Output::ElapsedFormatter { colors, duration_ns: now.saturating_sub(started) },
-            if label.is_hook { "a hook of this test" } else { "this test" },
-            label.timeout_ms,
+            " {}\n  <d>^<r> <red>{} timed out after {}ms{} {} {}ms later.<r>\n",
+            elapsed,
+            timed_out,
+            timeout_ms,
+            blocked,
             MESSAGE,
             grace_ms,
         );
     } else {
-        let _ = message.write_all(&failed);
+        write_test_name(&mut lines, colors, false, core::iter::empty(), b"(a test of this file)");
         let _ = bun_core::write_pretty!(
-            message,
+            lines,
             colors,
-            "<r><b> a test or hook of this file<r>\n  <d>^<r> <red>its timeout passed, and its code {} {}ms later.<r>\n",
+            "\n  <d>^<r> <red>a timeout passed, and something {} {}ms later.<r>\n",
             MESSAGE,
             grace_ms,
         );
     }
-    if !is_worker {
+    let _ = Output::error_writer().write_all(&lines);
+}
+
+/// Keeps `state` locked, which stops the JavaScript thread before the next thing it would do with the runner.
+#[cold]
+fn end_process(state: GuardedLock<'static, State, Mutex>, now: u64) -> ! {
+    report(&state, now, true);
+    let config = &state.config;
+    if !config.is_worker {
         if Output::is_github_action() {
-            let _ = message.write_all(b"\n::endgroup::\n");
+            bun_core::pretty_error!("<r>\n::endgroup::\n");
         }
-        let _ = bun_core::write_pretty!(
-            message,
-            colors,
-            "\n<r><red>error<r>: bun test cannot stop code that does not return to the event loop, so it ended the run.\n<d>note<r>: the tests and files after this one did not run. With --parallel, only this file ends.\n",
+        bun_core::pretty_error!(
+            "\n<r><red>error<r>: bun test cannot stop code that does not return to the event loop, so it ended the run.\n<d>note<r>: the tests and files after this one did not run, and no summary{} was written.{}\n",
+            config.unwritten_reports,
+            if config.suggests_parallel { " With --parallel, only this file ends." } else { "" },
         );
     }
-    let _ = bun_sys::File::borrow(&bun_sys::Fd::stderr()).write_all(&message);
+    Output::flush();
 
-    // The coordinator ends what a worker has started.
+    // A child that outlives the run can keep its output open, and whatever reads the output waits for that.
     #[cfg(unix)]
-    if !is_worker {
-        bun_io::ParentDeathWatchdog::kill_descendants();
-    }
-    bun_core::Global::exit(if is_worker { u32::from(WORKER_EXIT_CODE) } else { 1 })
+    bun_io::ParentDeathWatchdog::kill_descendants_while_other_threads_run();
+    bun_core::Global::exit_while_other_threads_run(if config.is_worker { u32::from(WORKER_EXIT_CODE) } else { 1 })
 }

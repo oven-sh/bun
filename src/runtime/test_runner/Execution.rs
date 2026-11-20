@@ -203,6 +203,11 @@ impl ExecutionSequence {
         }
     }
 
+    /// The entry whose callback was called and has not ended.
+    pub(crate) fn running_entry(&self) -> Option<SequenceEntryId> {
+        self.active_entry.get().filter(|_| self.executing.get())
+    }
+
     pub(crate) fn test<'a>(&self, buntest: &'a BunTest) -> Option<&'a ExecutionEntry> {
         Some(buntest.entry_of(self.test_entry?))
     }

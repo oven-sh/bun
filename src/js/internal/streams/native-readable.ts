@@ -12,6 +12,7 @@ const transferToNativeReadable: (stream: ReadableStream) => void = $newCppFuncti
   1,
 );
 const { errorOrDestroy } = require("internal/streams/destroy");
+const { reportUncaughtException } = require("internal/shared");
 
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
@@ -20,6 +21,7 @@ const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
+const kUncaughtOnListenerThrow = Symbol("uncaughtOnListenerThrow");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -39,6 +41,7 @@ interface NativeReadable extends $Node.Readable {
   [kHighWaterMark]: number;
   [kHasResized]: boolean;
   [kRemainingChunk]: Buffer | undefined;
+  [kUncaughtOnListenerThrow]: boolean;
   debugId: number;
 }
 
@@ -55,7 +58,12 @@ interface NativePtr {
 
 let debugId = 0;
 
-function constructNativeReadable(readableStream: ReadableStream, options: $Node.ReadableOptions): NativeReadable {
+// `uncaughtOnListenerThrow`: a 'data' listener throw is an uncaughtException, as from Node's native read callback.
+function constructNativeReadable(
+  readableStream: ReadableStream,
+  options: $Node.ReadableOptions,
+  uncaughtOnListenerThrow: boolean = false,
+): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = readableStream.$bunNativePtr;
   // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
@@ -77,6 +85,7 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
+  stream[kUncaughtOnListenerThrow] = uncaughtOnListenerThrow;
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
@@ -172,33 +181,33 @@ function read(this: NativeReadable, maxToRead: number) {
           `[${this.debugId}] pull, resolved: ${$isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
         );
         this[kPendingRead] = false;
-        this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
+        handleResult(this, result, chunk, this[kCloseState][0]);
       },
       reason => {
         errorOrDestroy(this, reason);
       },
     );
   } else {
-    this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
+    handleResult(this, result, chunk, this[kCloseState][0]);
   }
 }
 
+// Only handleNumberResult advances kRemainingChunk, before push(): a listener can pull again or throw.
 function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undefined, isClosed: boolean) {
   if (typeof result === "number") {
     $debug(`[${stream.debugId}] handleResult(${result})`);
     if (result >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {
       adjustHighWaterMark(stream);
     }
-    return handleNumberResult(stream, result, chunk, isClosed);
+    handleNumberResult(stream, result, chunk, isClosed);
   } else if (typeof result === "boolean") {
     $debug(`[${stream.debugId}] handleResult(${result})`, chunk, isClosed);
     process.nextTick(pushEof, stream);
-    return (chunk?.byteLength ?? 0) > 0 ? chunk : undefined;
   } else if ($isTypedArrayView(result)) {
     if (result.byteLength >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {
       adjustHighWaterMark(stream);
     }
-    return handleArrayBufferViewResult(stream, result, chunk, isClosed);
+    handleArrayBufferViewResult(stream, result, isClosed);
   } else {
     $assert(false, "Invalid result from pull");
   }
@@ -213,16 +222,33 @@ function pushEof(stream: NativeReadable) {
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
 function pushAndCheck(stream: NativeReadable, chunk: Buffer | ArrayBufferView) {
-  if (!stream.push(chunk)) {
+  let wantMore: boolean;
+  try {
+    wantMore = stream.push(chunk);
+  } catch (e) {
+    // Readable.fromWeb: the throw rejects the pending pull promise, as in Node.
+    if (!stream[kUncaughtOnListenerThrow]) throw e;
+    wantMore = true;
+    reportUncaughtException(e);
+    // The throw unwound addChunk before maybeReadMore; keep the stream reading.
+    process.nextTick(readAfterListenerThrow, stream);
+  }
+  if (!wantMore) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);
   }
 }
 
+function readAfterListenerThrow(stream: NativeReadable) {
+  // A sync pull from the uncaughtException handler can have closed the stream; its EOF push is already queued.
+  if (stream.destroyed || stream[kCloseState][0]) return;
+  stream.read(0);
+}
+
 function handleNumberResult(stream: NativeReadable, result: number, chunk: Buffer | undefined, isClosed: boolean) {
   if (result > 0) {
     const slice = chunk!.subarray(0, result);
-    chunk = slice.byteLength < chunk!.byteLength ? chunk!.subarray(result) : undefined;
+    stream[kRemainingChunk] = slice.byteLength < chunk!.byteLength ? chunk!.subarray(result) : undefined;
     if (slice.byteLength > 0) {
       pushAndCheck(stream, slice);
     }
@@ -231,16 +257,9 @@ function handleNumberResult(stream: NativeReadable, result: number, chunk: Buffe
   if (isClosed) {
     process.nextTick(pushEof, stream);
   }
-
-  return chunk;
 }
 
-function handleArrayBufferViewResult(
-  stream: NativeReadable,
-  result: ArrayBufferView,
-  chunk: Buffer | undefined,
-  isClosed: boolean,
-) {
+function handleArrayBufferViewResult(stream: NativeReadable, result: ArrayBufferView, isClosed: boolean) {
   if (result.byteLength > 0) {
     pushAndCheck(stream, result);
   }
@@ -248,8 +267,6 @@ function handleArrayBufferViewResult(
   if (isClosed) {
     process.nextTick(pushEof, stream);
   }
-
-  return chunk;
 }
 
 function adjustHighWaterMark(stream: NativeReadable) {

@@ -1766,3 +1766,30 @@ it("a server that ends the TLS handshake with close_notify and stays connected f
   );
   expect(outcome).toBe("ECONNRESET");
 });
+
+// fetch() finds the `ca` list of a `tls` option again by the strings it was read from. The fixture changes what an
+// option says in every way that JS can, and each request has to follow.
+it("a tls.ca that fetch() has seen before is what the option says at each call", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fetch.tls.ca-again-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const untrusted = "DEPTH_ZERO_SELF_SIGNED_CERT";
+  expect(stdout ? JSON.parse(stdout) : stderr).toEqual({
+    "the same array and object with other strings": [untrusted, "ok", untrusted, "ok", untrusted, "ok"],
+    "equal text in new strings": ["ok", "ok", untrusted, untrusted, "ok", "ok"],
+    "the same Buffer with other bytes": ["ok", untrusted, "ok"],
+    "the same file with other contents": ["ok", untrusted, "ok"],
+    "a relative caFile from another directory": ["ok", untrusted, "ok"],
+    "NODE_TLS_REJECT_UNAUTHORIZED set and unset": [untrusted, "ok", untrusted],
+    "tls.DEFAULT_CIPHERS assigned and restored": ["ok", "no common cipher", "ok"],
+    "2 lists in turn, as expected": [2, 2],
+    "5 lists in turn, as expected": [5, 5],
+    "61 lists in turn, as expected": [61, 61],
+    "a list that a terminated Worker used": ["ok", "ok", "ok", untrusted],
+  });
+  expect(exitCode).toBe(0);
+});

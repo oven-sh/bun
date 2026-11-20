@@ -3,15 +3,17 @@
 // configs (including `{servername}`-only and inline-CA configs) allocate one
 // CTX, not one per connection. The cache holds zero refs — when the last
 // real owner drops, BoringSSL's ex_data free callback tombstones the entry.
-import { expect, test } from "bun:test";
-import { X509Certificate } from "node:crypto";
+import { describe, expect, test } from "bun:test";
+import { createCipheriv, createHash, X509Certificate } from "node:crypto";
 import { once } from "node:events";
+import net from "node:net";
 import tls from "node:tls";
 // debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
 import { bunEnv, bunExe, expiredTls, tempDir, tls as tlsCerts } from "harness";
 import { readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tlsRecords } from "./tls-handshake-alert-utils";
 
 async function withServer(fn: (port: number) => Promise<void>) {
   const server = tls.createServer({ ...tlsCerts, rejectUnauthorized: false }, s => s.end());
@@ -644,4 +646,162 @@ test("the default client context follows tls.DEFAULT_CIPHERS, and the one it rep
     "connection after the reassignment": 1,
   });
   expect(exitCode).toBe(0);
+});
+
+// The strings of a `ca` option are one list per content, and the list keeps what BoringSSL makes of them: the
+// certificates, decoded, checked and indexed. A second context with the same `ca` takes that as it is. So each case
+// here is built twice, and `tls.createSecureContext()` gives a context of its own each time.
+describe("a context built from a ca that another context was built from", () => {
+  const der = (pem: string) => Buffer.from(pem.replace(/-----[A-Z ]+-----/g, "").replace(/\s+/g, ""), "base64");
+  const certificate = (der: Buffer, headers = "") =>
+    `-----BEGIN CERTIFICATE-----\n${headers}${der.toString("base64").replace(/(.{64})/g, "$1\n")}\n-----END CERTIFICATE-----\n`;
+  const root = tls.rootCertificates[0] + "\n";
+  const rootDER = der(root);
+  // Blocks that decode and are not certificates.
+  const unparseable = certificate(der(tls.rootCertificates[1]).subarray(0, 200));
+  const rootWithAnotherTag = certificate(Buffer.concat([Buffer.from([0x31]), rootDER.subarray(1)]));
+  // Not the bundled root, and still a certificate.
+  const rootWithAnotherSignature = certificate(
+    Buffer.concat([rootDER.subarray(0, -1), Buffer.from([~rootDER.at(-1)!])]),
+  );
+  const rootWithOneByteMore = certificate(Buffer.concat([rootDER, Buffer.from([0])]));
+  // The server's certificate as OpenSSL's legacy PEM encryption writes it: AES-256-CBC with a key from MD5.
+  const encrypted = (() => {
+    const iv = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
+    const salt = iv.subarray(0, 8);
+    const first = createHash("md5").update("right").update(salt).digest();
+    const second = createHash("md5").update(first).update("right").update(salt).digest();
+    const cipher = createCipheriv("aes-256-cbc", Buffer.concat([first, second]), iv);
+    const body = Buffer.concat([cipher.update(der(tlsCerts.cert)), cipher.final()]);
+    return certificate(body, `Proc-Type: 4,ENCRYPTED\nDEK-Info: AES-256-CBC,${iv.toString("hex").toUpperCase()}\n\n`);
+  })();
+
+  test.each([
+    ["text that is not PEM", ["not pem"], "Invalid CA"],
+    ["a block that does not parse", [unparseable], "Invalid CA"],
+    ["a block that does not parse, in the string after a bundled root", [root, unparseable], "Invalid CA"],
+    ["a block that does not parse, before a bundled root in its string", unparseable + root, "Invalid CA"],
+    ["a bundled root with another tag", [root, rootWithAnotherTag], "Invalid CA"],
+    ["a bundled root with one byte more", [root, rootWithOneByteMore], "Invalid CA"],
+    ["an empty string after a bundled root", [root, ""], "Invalid CA"],
+    ["a block that does not parse, after a bundled root in its string", root + unparseable, undefined],
+    ["a private key", tlsCerts.key, undefined],
+    ["a private key after a bundled root", [root, tlsCerts.key], undefined],
+    ["a bundled root with another signature", [root, rootWithAnotherSignature], undefined],
+    ["every bundled root", [...tls.rootCertificates], undefined],
+    ["every bundled root twice", [...tls.rootCertificates, tls.rootCertificates.join("\n")], undefined],
+  ])("is refused or made as the first one was: %s", (_, ca, message) => {
+    const outcomes = [1, 2].map(() => {
+      try {
+        tls.createSecureContext({ ca });
+      } catch (error) {
+        return (error as Error).message;
+      }
+    });
+    expect(outcomes).toEqual([message, message]);
+  });
+
+  test("trusts what the first one trusts", async () => {
+    const server = tls.createServer(tlsCerts, socket => socket.end());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as net.AddressInfo;
+    async function verdict(options: tls.SecureContextOptions) {
+      let secureContext;
+      try {
+        secureContext = tls.createSecureContext(options);
+      } catch (error) {
+        return (error as Error).message;
+      }
+      const socket = tls.connect({ port, host: "127.0.0.1", secureContext, rejectUnauthorized: false });
+      socket.on("error", () => {});
+      try {
+        await once(socket, "secureConnect");
+        return socket.authorized ? "authorized" : String(socket.authorizationError);
+      } finally {
+        socket.destroy();
+      }
+    }
+    const untrusted = "DEPTH_ZERO_SELF_SIGNED_CERT";
+    const cases: [string, tls.SecureContextOptions, string][] = [
+      ["the server's certificate", { ca: [tlsCerts.cert] }, "authorized"],
+      ["a bundled root", { ca: [root] }, untrusted],
+      [
+        "every bundled root and the server's certificate",
+        { ca: [...tls.rootCertificates, tlsCerts.cert] },
+        "authorized",
+      ],
+      // Nothing after a block that does not parse is read from its string.
+      ["its string stops before the certificate", { ca: [root + unparseable + tlsCerts.cert] }, untrusted],
+      ["the string after one that stops", { ca: [root + unparseable, tlsCerts.cert] }, "authorized"],
+      // An encrypted block is what the passphrase makes of it.
+      ["encrypted, with the passphrase", { ca: root + encrypted, passphrase: "right" }, "authorized"],
+      ["encrypted, with another passphrase", { ca: root + encrypted, passphrase: "wrong" }, untrusted],
+      ["encrypted, with no passphrase", { ca: root + encrypted }, untrusted],
+      ["only encrypted, with the passphrase", { ca: encrypted, passphrase: "right" }, "authorized"],
+      ["only encrypted, with no passphrase", { ca: encrypted }, "Invalid CA"],
+    ];
+    try {
+      // In both orders: a context comes after one of the same strings that read them with another passphrase.
+      for (const order of [cases, cases.toReversed(), cases]) {
+        const verdicts: Record<string, string> = {};
+        for (const [name, options] of order) verdicts[name] = await verdict(options);
+        expect(verdicts).toEqual(Object.fromEntries(cases.map(([name, , expected]) => [name, expected])));
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  test("names the same CAs to the clients of a server", async () => {
+    // The CertificateRequest of a TLS 1.2 handshake, which goes out in the clear.
+    async function certificateRequest(options: tls.TlsOptions) {
+      const server = tls.createServer({ ...tlsCerts, requestCert: true, rejectUnauthorized: false, ...options });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const fromServer: Buffer[] = [];
+      const relay = net.createServer(client => {
+        const upstream = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+        upstream.on("data", chunk => fromServer.push(chunk));
+        client.pipe(upstream).pipe(client);
+        client.on("error", () => upstream.destroy());
+        upstream.on("error", () => client.destroy());
+      });
+      await once(relay.listen(0, "127.0.0.1"), "listening");
+      const socket = tls.connect({
+        port: (relay.address() as net.AddressInfo).port,
+        host: "127.0.0.1",
+        maxVersion: "TLSv1.2",
+        rejectUnauthorized: false,
+      });
+      try {
+        await once(socket, "secureConnect");
+      } finally {
+        socket.destroy();
+        relay.close();
+        server.close();
+      }
+      const handshake = Buffer.concat(
+        tlsRecords(Buffer.concat(fromServer))
+          .filter(record => record.type === 22)
+          .map(record => Buffer.from(record.body, "hex")),
+      );
+      // Message type 13, before ServerHelloDone (14).
+      for (let at = 0; at + 4 <= handshake.length && handshake[at] !== 14;) {
+        const end = at + 4 + handshake.readUIntBE(at + 1, 3);
+        if (handshake[at] === 13) return handshake.subarray(at, end).toString("latin1");
+        at = end;
+      }
+      return "no CertificateRequest";
+    }
+    const ca = [tlsCerts.cert, root, tlsCerts.cert];
+    // Another session timeout is another context.
+    const first = await certificateRequest({ ca, sessionTimeout: 301 });
+    const again = await certificateRequest({ ca, sessionTimeout: 302 });
+    const subjects = [tlsCerts.cert, root].map(
+      pem => new X509Certificate(pem).subject.split("\n").at(-1)!.split("=")[1],
+    );
+    expect({ again, named: subjects.map(subject => first.includes(subject)) }).toEqual({
+      again: first,
+      named: [true, true],
+    });
+  });
 });

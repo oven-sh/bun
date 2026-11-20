@@ -11,7 +11,11 @@
 //! rule on a foreign type), so they're provided via the [`SSLConfigFromJs`]
 //! extension trait. Import that trait to call `SSLConfig::from_js(..)`.
 
+use std::sync::Arc;
+
+use bun_collections::smallvec::SmallVec;
 use bun_core::SensitiveCString;
+use bun_http::ca_list::CaList;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc};
 
@@ -164,7 +168,7 @@ impl SSLConfigFromJs for SSLConfig {
             (bytes.slice() != b"auto").then(|| SensitiveCString::new(bytes.slice()))
         });
 
-        let ca = handle_file_for_field(global, "ca", &generated.ca)?;
+        let ca = ca_list(vm, global, &generated.ca)?;
         let cert = handle_file_for_field(global, "cert", &generated.cert)?;
         let key = handle_file_for_field(global, "key", &generated.key)?;
         let crl = handle_file_for_field(global, "crl", &generated.crl)?;
@@ -335,59 +339,34 @@ fn handle_file_for_field(
     field: &'static str,
     file: &generated::TLSOptionsFile,
 ) -> JsResult<CStrSlice> {
-    match handle_file(global, file) {
-        Ok(v) => Ok(v),
-        Err(ReadFromBlobError::Js(e)) => Err(e),
-        Err(ReadFromBlobError::EmptyFile) => {
-            Err(global
-                .throw_invalid_arguments(format_args!("TLSOptions.{} is an empty file", field)))
+    let files = Files::of(file);
+    if files.len() == 0 {
+        return Ok(None);
+    }
+    let mut result = Vec::with_capacity(files.len());
+    for file in files {
+        let contents = handle_single_file(global, file);
+        result.push(contents.map_err(|err| throw_read_error(global, field, err))?);
+    }
+    Ok(Some(result.into_boxed_slice()))
+}
+
+fn throw_read_error(
+    global: &JSGlobalObject,
+    field: &'static str,
+    err: ReadFromBlobError,
+) -> JsError {
+    match err {
+        ReadFromBlobError::Js(e) => e,
+        ReadFromBlobError::EmptyFile => {
+            global.throw_invalid_arguments(format_args!("TLSOptions.{} is an empty file", field))
         }
-        Err(ReadFromBlobError::NullStore) | Err(ReadFromBlobError::NotAFile) => Err(global
+        ReadFromBlobError::NullStore | ReadFromBlobError::NotAFile => global
             .throw_invalid_arguments(format_args!(
                 "TLSOptions.{} is not a valid BunFile (non-BunFile `Blob`s are not supported)",
                 field
-            ))),
+            )),
     }
-}
-
-fn handle_file(
-    global: &JSGlobalObject,
-    file: &generated::TLSOptionsFile,
-) -> Result<CStrSlice, ReadFromBlobError> {
-    let single = handle_single_file(
-        global,
-        match file {
-            generated::TLSOptionsFile::None => return Ok(None),
-            generated::TLSOptionsFile::String(val) => SingleFile::String(val),
-            generated::TLSOptionsFile::Buffer(val) => SingleFile::Buffer(val),
-            generated::TLSOptionsFile::File(val) => SingleFile::File(val),
-            generated::TLSOptionsFile::Array(list) => {
-                return handle_file_array(global, list);
-            }
-        },
-    )?;
-    Ok(Some(vec![single].into_boxed_slice()))
-}
-
-fn handle_file_array(
-    global: &JSGlobalObject,
-    elements: &[generated::TLSOptionsSingleFile],
-) -> Result<CStrSlice, ReadFromBlobError> {
-    if elements.is_empty() {
-        return Ok(None);
-    }
-    let mut result = Vec::with_capacity(elements.len());
-    for elem in elements {
-        result.push(handle_single_file(
-            global,
-            match elem {
-                generated::TLSOptionsSingleFile::String(val) => SingleFile::String(val),
-                generated::TLSOptionsSingleFile::Buffer(val) => SingleFile::Buffer(val),
-                generated::TLSOptionsSingleFile::File(val) => SingleFile::File(val),
-            },
-        )?);
-    }
-    Ok(Some(result.into_boxed_slice()))
 }
 
 #[derive(Clone, Copy)]
@@ -396,6 +375,54 @@ enum SingleFile<'a> {
     Buffer(&'a jsc::JSCArrayBuffer),
     File(&'a crate::webcore::Blob),
 }
+
+/// The elements of a `ca`, `cert`, `key` or `crl` option, in order. No option and an empty array have none.
+#[derive(Clone)]
+struct Files<'a> {
+    single: Option<SingleFile<'a>>,
+    array: core::slice::Iter<'a, generated::TLSOptionsSingleFile>,
+}
+
+impl<'a> Files<'a> {
+    fn of(file: &'a generated::TLSOptionsFile) -> Self {
+        let mut array: &[generated::TLSOptionsSingleFile] = &[];
+        let single = match file {
+            generated::TLSOptionsFile::None => None,
+            generated::TLSOptionsFile::String(val) => Some(SingleFile::String(val)),
+            generated::TLSOptionsFile::Buffer(val) => Some(SingleFile::Buffer(val)),
+            generated::TLSOptionsFile::File(val) => Some(SingleFile::File(val)),
+            generated::TLSOptionsFile::Array(list) => {
+                array = list;
+                None
+            }
+        };
+        Self {
+            single,
+            array: array.iter(),
+        }
+    }
+}
+
+impl<'a> Iterator for Files<'a> {
+    type Item = SingleFile<'a>;
+
+    fn next(&mut self) -> Option<SingleFile<'a>> {
+        self.single.take().or_else(|| {
+            Some(match self.array.next()? {
+                generated::TLSOptionsSingleFile::String(val) => SingleFile::String(val),
+                generated::TLSOptionsSingleFile::Buffer(val) => SingleFile::Buffer(val),
+                generated::TLSOptionsSingleFile::File(val) => SingleFile::File(val),
+            })
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = usize::from(self.single.is_some()) + self.array.len();
+        (len, Some(len))
+    }
+}
+
+impl ExactSizeIterator for Files<'_> {}
 
 fn handle_single_file(
     global: &JSGlobalObject,
@@ -409,6 +436,139 @@ fn handle_single_file(
         }
         SingleFile::File(blob) => read_from_blob(global, blob),
     }
+}
+
+// ── `ca` ─────────────────────────────────────────────────────────────
+
+/// The `ca` lists of a VM's latest TLS options. An option that comes again finds its list here, with no pass over
+/// the certificates.
+#[derive(Default)]
+pub(crate) struct CaListMemo {
+    /// The latest first.
+    entries: Vec<CaListMemoEntry>,
+}
+
+struct CaListMemoEntry {
+    /// The JS strings that `list` was read from. Their text cannot change. Empty if an element was not a string.
+    cells: Box<[bun_core::String]>,
+    list: Arc<CaList>,
+}
+
+impl CaListMemo {
+    const CAPACITY: usize = 4;
+
+    fn use_entry(&mut self, index: usize) -> Arc<CaList> {
+        self.entries[..=index].rotate_right(1);
+        self.entries[0].list.clone()
+    }
+
+    /// The list that was read from these very strings.
+    fn find_by_cells(&mut self, files: &Files<'_>) -> Option<Arc<CaList>> {
+        let index = self.entries.iter().position(|entry| {
+            entry.cells.len() == files.len()
+                && files.clone().zip(&*entry.cells).all(|(file, cell)| {
+                    matches!(file, SingleFile::String(string) if is_same_cell(string, cell))
+                })
+        })?;
+        Some(self.use_entry(index))
+    }
+
+    /// The list of `strings`, by a comparison with each list here.
+    fn find_by_bytes(&mut self, strings: &[CaText<'_>]) -> Option<Arc<CaList>> {
+        let index = (self.entries.iter()).position(|entry| entry.list.holds(strings))?;
+        Some(self.use_entry(index))
+    }
+
+    /// `cells` are the strings that `list` was read from, if every element was a string.
+    fn remember(&mut self, cells: Option<Box<[bun_core::String]>>, list: &Arc<CaList>) {
+        let known = (self.entries.iter()).position(|entry| Arc::ptr_eq(&entry.list, list));
+        if let Some(index) = known {
+            if let Some(cells) = cells {
+                self.entries[index].cells = cells;
+            }
+            self.use_entry(index);
+            return;
+        }
+        self.entries.truncate(Self::CAPACITY - 1);
+        self.entries.insert(
+            0,
+            CaListMemoEntry {
+                cells: cells.unwrap_or_default(),
+                list: list.clone(),
+            },
+        );
+    }
+}
+
+/// Whether two JS strings have their characters in the same memory, which never changes while one of them is held.
+fn is_same_cell(a: &bun_core::String, b: &bun_core::String) -> bool {
+    a.tag() == bun_core::Tag::WTFStringImpl
+        && b.tag() == bun_core::Tag::WTFStringImpl
+        && a.is_8bit() == b.is_8bit()
+        && core::ptr::eq(a.byte_slice(), b.byte_slice())
+}
+
+/// One element of a `ca` option, read where it is.
+enum CaText<'a> {
+    String(bun_core::Utf8Bytes<'a>),
+    Buffer(jsc::ArrayBuffer),
+    File(SensitiveCString),
+}
+
+impl AsRef<[u8]> for CaText<'_> {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            CaText::String(utf8) => utf8.slice(),
+            CaText::Buffer(buffer) => buffer.byte_slice(),
+            CaText::File(contents) => contents.as_bytes(),
+        }
+    }
+}
+
+impl Drop for CaText<'_> {
+    fn drop(&mut self) {
+        if let CaText::String(bun_core::Utf8Bytes::Owned(transcoded)) = self {
+            bun_core::secure_zero(transcoded);
+        }
+    }
+}
+
+/// The `ca` option as the one list that the process has of those certificates.
+fn ca_list(
+    vm: &VirtualMachine,
+    global: &JSGlobalObject,
+    option: &generated::TLSOptionsFile,
+) -> JsResult<Option<Arc<CaList>>> {
+    let files = Files::of(option);
+    if files.len() == 0 {
+        return Ok(None);
+    }
+    let memo = &crate::jsc_hooks::runtime_state_of(vm).ca_lists;
+    if let Some(list) = memo.with_mut(|memo| memo.find_by_cells(&files)) {
+        return Ok(Some(list));
+    }
+
+    let mut texts = SmallVec::<[CaText<'_>; 1]>::with_capacity(files.len());
+    for file in files.clone() {
+        texts.push(match file {
+            SingleFile::String(string) => CaText::String(string.to_utf8()),
+            SingleFile::Buffer(buffer) => CaText::Buffer(buffer.as_array_buffer()),
+            SingleFile::File(blob) => CaText::File(
+                read_from_blob(global, blob).map_err(|err| throw_read_error(global, "ca", err))?,
+            ),
+        });
+    }
+    let list = memo
+        .with_mut(|memo| memo.find_by_bytes(&texts))
+        .unwrap_or_else(|| CaList::intern(&texts));
+    let cells = files
+        .map(|file| match file {
+            SingleFile::String(string) => Some(string.clone()),
+            SingleFile::Buffer(_) | SingleFile::File(_) => None,
+        })
+        .collect();
+    memo.with_mut(|memo| memo.remember(cells, &list));
+    Ok(Some(list))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

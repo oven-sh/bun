@@ -25,21 +25,30 @@ bun_core::declare_scope!(HTTPThread_log, visible); // log
 /// Since configs are interned via `ssl_config::global_registry`, pointer
 /// equality is sufficient for lookup. Each entry holds a ref on its SSLConfig.
 struct SslContextCacheEntry {
-    ctx: RefPtr<NewHttpContext<true>>,
+    /// Built from the config. Its direct connections and its tunnels to an origin share it.
+    ssl_ctx: OwnedSslCtx,
+    /// The sockets and the keep-alive pool of the config's direct connections. `None` until there is one.
+    ctx: Option<RefPtr<NewHttpContext<true>>>,
     last_used_ns: u64,
     /// Strong ref held by the cache entry (released on eviction).
     _config_ref: ssl_config::SharedPtr,
 }
 
-impl SslContextCacheEntry {
-    /// Mutable access to the cached `NewHttpContext`. The map and all callers
-    /// are HTTP-thread-only, so the returned `&mut` is the sole live borrow.
-    #[inline]
-    fn ctx_mut<'a>(&self) -> &'a mut NewHttpContext<true> {
-        // SAFETY: see above.
-        unsafe { &mut *self.ctx.as_ptr() }
-    }
+/// Mutable access to a cached `NewHttpContext`. The map and all callers
+/// are HTTP-thread-only, so the returned `&mut` is the sole live borrow.
+#[inline]
+fn https_context_mut<'a>(ctx: &RefPtr<NewHttpContext<true>>) -> &'a mut NewHttpContext<true> {
+    // SAFETY: see above.
+    unsafe { &mut *ctx.as_ptr() }
 }
+
+/// The contexts of the cache that have sockets.
+fn custom_https_contexts() -> impl Iterator<Item = &'static mut NewHttpContext<true>> {
+    (custom_ssl_context_map().values().iter())
+        .filter_map(|entry| entry.ctx.as_ref().map(https_context_mut))
+}
+
+/// Each bound is for the entries of one kind: those with a context for direct connections, and those without.
 const SSL_CONTEXT_CACHE_MAX_SIZE: usize = 60;
 const SSL_CONTEXT_CACHE_TTL_NS: u64 = 30 * (60 * 1_000_000_000); // 30 minutes
 
@@ -324,12 +333,95 @@ impl HttpThread {
     }
 
     /// A new reference to the default HTTPS context's `SSL_CTX`, which holds the CA options of [`InitOpts`].
-    pub(crate) fn default_ssl_ctx(&mut self) -> OwnedSslCtx {
+    fn default_ssl_ctx(&mut self) -> OwnedSslCtx {
         self.ensure_https_context_init();
         self.https_context
             .secure
             .clone()
             .expect("init_with_thread_opts sets `secure` or diverges")
+    }
+
+    /// The cache entry of `tls`, built on first use. A build that fails leaves no entry.
+    fn ssl_context_cache_entry(
+        &mut self,
+        tls: &ssl_config::SharedPtr,
+    ) -> Result<&'static mut SslContextCacheEntry, InitError> {
+        self.evict_stale_ssl_contexts();
+        let now = self.timer_read();
+        // Look up by pointer equality (configs are interned)
+        let config: *const SSLConfig = tls.get();
+        if !custom_ssl_context_map().contains(&config) {
+            let opts = tls.get().as_usockets_for_client_verification();
+            let ssl_ctx = crate::http_context::create_ssl_ctx(&opts)?;
+            bun_boringssl::ssl_ctx_setup(&ssl_ctx);
+            let _ = custom_ssl_context_map().put(
+                config,
+                SslContextCacheEntry {
+                    ssl_ctx,
+                    ctx: None,
+                    last_used_ns: now,
+                    // Strong ref for the cache entry; client.tls_props keeps its own.
+                    _config_ref: tls.clone(),
+                },
+            );
+        }
+        let entry = custom_ssl_context_map()
+            .get_mut(&config)
+            .expect("the entry in use is never the one evicted");
+        entry.last_used_ns = now;
+        Ok(entry)
+    }
+
+    /// The context of the direct connections of `tls`.
+    fn custom_https_context(
+        &mut self,
+        tls: &ssl_config::SharedPtr,
+    ) -> Result<RefPtr<NewHttpContext<true>>, InitError> {
+        let entry = self.ssl_context_cache_entry(tls)?;
+        if let Some(ctx) = &entry.ctx {
+            return Ok(ctx.clone());
+        }
+        let ctx = RefPtr::new(NewHttpContext::<true> {
+            ref_count: Cell::new(1),
+            pending_sockets: crate::http_context::LazyPool::new(),
+            pending_unix_sockets: crate::http_context::LazyPool::new(),
+            park_seq: 0,
+            group: uws::SocketGroup::default(),
+            secure: None,
+            active_h2_sessions: Vec::new(),
+            pending_h2_connects: Vec::new(),
+            session_cache: crate::session_cache::SessionCache::new(),
+        });
+        https_context_mut(&ctx).init_with_ssl_ctx(entry.ssl_ctx.clone());
+        entry.ctx = Some(ctx.clone());
+        evict_oldest_ssl_context_over_limit(true, tls.get());
+        Ok(ctx)
+    }
+
+    /// The `SSL_CTX` for the TLS connection of `client` to its origin, inside the CONNECT tunnel of a proxy.
+    pub(crate) fn tunnel_ssl_ctx(
+        &mut self,
+        client: &crate::HTTPClient,
+    ) -> crate::Result<OwnedSslCtx> {
+        let Some(tls) = &client.tls_props else {
+            // The context a direct connection uses: it holds the thread's CA options (`bun install --ca`).
+            return Ok(self.default_ssl_ctx());
+        };
+        let config = tls.get();
+        if !(config.requires_custom_request_ctx && config.build_reads_only_options()) {
+            // A context for this tunnel alone: its build reads a file or the default certificate store again, or
+            // the options are not ones that a direct connection has a context for.
+            // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
+            let opts = config.as_usockets_for_client_verification();
+            return Ok(crate::http_context::create_ssl_ctx(&opts)?);
+        }
+        if let Some(ctx) = &client.custom_ssl_ctx {
+            // An https proxy: the socket to it is in the context of the same options.
+            return Ok((ctx.secure.clone()).expect("a context with sockets has an `SSL_CTX`"));
+        }
+        let ssl_ctx = self.ssl_context_cache_entry(tls)?.ssl_ctx.clone();
+        evict_oldest_ssl_context_over_limit(false, config);
+        Ok(ssl_ctx)
     }
 
     pub(crate) fn connect<const IS_SSL: bool>(&mut self, mut client: InFlightRequest) {
@@ -347,65 +439,12 @@ impl HttpThread {
                 if !tls.get().requires_custom_request_ctx {
                     break 'custom_ctx;
                 }
-                let requested_config: *const SSLConfig = tls.get();
-
-                // Evict stale entries from the cache
-                self.evict_stale_ssl_contexts();
-
-                // Look up by pointer equality (configs are interned)
-                if let Some(entry) = custom_ssl_context_map().get_mut(&requested_config) {
-                    // Cache hit - reuse existing SSL context
-                    entry.last_used_ns = self.timer_read();
-                    client.set_custom_ssl_ctx(entry.ctx.clone());
-                    return Self::dial(entry.ctx_mut(), client);
-                }
-
-                // Cache miss - create new SSL context
-                let ctx = RefPtr::new(NewHttpContext::<true> {
-                    ref_count: Cell::new(1),
-                    pending_sockets: crate::http_context::LazyPool::new(),
-                    pending_unix_sockets: crate::http_context::LazyPool::new(),
-                    park_seq: 0,
-                    group: uws::SocketGroup::default(),
-                    secure: None,
-                    active_h2_sessions: Vec::new(),
-                    pending_h2_connects: Vec::new(),
-                    session_cache: crate::session_cache::SessionCache::new(),
-                });
-                // SAFETY: fresh allocation; HTTP-thread-only.
-                let custom_context = unsafe { &mut *ctx.as_ptr() };
-                if let Err(err) = custom_context.init_with_client_config(&mut client) {
-                    // `init_with_client_config` fails before `group.init()` runs.
-                    // `impl Drop for HTTPContext` tolerates an uninitialized
-                    // group (skips close_all when `group.loop_` is
-                    // null), so dropping `ctx` here is safe.
-                    return client.fail(match err {
-                        InitError::InvalidCRL => crate::Error::InvalidCRL,
-                        InitError::FailedToOpenSocket
-                        | InitError::InvalidCA
-                        | InitError::InvalidCAFile
-                        | InitError::LoadCAFile => crate::Error::FailedToOpenSocket,
-                    });
-                }
-
-                let now = self.timer_read();
+                let ctx = match self.custom_https_context(&tls) {
+                    Ok(ctx) => ctx,
+                    Err(err) => return client.fail(err.into()),
+                };
                 client.set_custom_ssl_ctx(ctx.clone());
-                let _ = custom_ssl_context_map().put(
-                    requested_config,
-                    SslContextCacheEntry {
-                        ctx,
-                        last_used_ns: now,
-                        // Strong ref for the cache entry; client.tls_props keeps its own.
-                        _config_ref: tls,
-                    },
-                );
-
-                // Enforce max cache size - evict oldest entry
-                if custom_ssl_context_map().count() > SSL_CONTEXT_CACHE_MAX_SIZE {
-                    evict_oldest_ssl_context();
-                }
-
-                return Self::dial(custom_context, client);
+                return Self::dial(https_context_mut(&ctx), client);
             }
         }
         Self::dial(self.context::<IS_SSL>(), client)
@@ -458,12 +497,7 @@ impl HttpThread {
         if self.https_context.abort_pending_h2_waiter(async_http_id) {
             return true;
         }
-        for entry in custom_ssl_context_map().values_mut() {
-            if entry.ctx_mut().abort_pending_h2_waiter(async_http_id) {
-                return true;
-            }
-        }
-        false
+        custom_https_contexts().any(|ctx| ctx.abort_pending_h2_waiter(async_http_id))
     }
 
     fn drain_queued_shutdowns(&mut self) {
@@ -631,8 +665,8 @@ impl HttpThread {
             for pool_id in queued {
                 self.http_context.close_idle_sockets(pool_id);
                 self.https_context.close_idle_sockets(pool_id);
-                for entry in custom_ssl_context_map().values_mut() {
-                    entry.ctx_mut().close_idle_sockets(pool_id);
+                for ctx in custom_https_contexts() {
+                    ctx.close_idle_sockets(pool_id);
                 }
                 h3::ClientContext::close_idle_sessions(pool_id);
             }
@@ -897,21 +931,21 @@ fn pop_queued_task() -> Option<Box<AsyncHttp<'static>>> {
     Some(unsafe { bun_core::heap::take(http.as_ptr()) })
 }
 
-/// Evict the least-recently-used SSL context cache entry.
-fn evict_oldest_ssl_context() {
+/// Keeps the entries of one kind within [`SSL_CONTEXT_CACHE_MAX_SIZE`]: evicts the least recently used of them,
+/// but never the entry of `in_use`.
+fn evict_oldest_ssl_context_over_limit(with_sockets: bool, in_use: *const SSLConfig) {
     let map = custom_ssl_context_map();
-    if map.count() == 0 {
+    let of_kind = |entry: &SslContextCacheEntry| entry.ctx.is_some() == with_sockets;
+    if map.values().iter().filter(|entry| of_kind(entry)).count() <= SSL_CONTEXT_CACHE_MAX_SIZE {
         return;
     }
-    let mut oldest_idx: usize = 0;
-    let mut oldest_time: u64 = u64::MAX;
-    for (i, entry) in map.values().iter().enumerate() {
-        if entry.last_used_ns < oldest_time {
-            oldest_time = entry.last_used_ns;
-            oldest_idx = i;
-        }
+    let oldest = (map.keys().iter().zip(map.values()).enumerate())
+        .filter(|(_, (config, entry))| of_kind(entry) && **config != in_use)
+        .min_by_key(|(_, (_, entry))| entry.last_used_ns)
+        .map(|(i, _)| i);
+    if let Some(i) = oldest {
+        map.swap_remove_at(i);
     }
-    map.swap_remove_at(oldest_idx);
 }
 
 /// Borrow the HTTP-thread abort tracker. PORTING.md §Global mutable state:

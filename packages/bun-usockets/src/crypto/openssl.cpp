@@ -833,12 +833,25 @@ static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
   return store;
 }
 
+/* The password callback of `ctx`, and whether a PEM block asked it for the passphrase. */
+struct us_passphrase_use_t {
+  SSL_CTX *ctx;
+  bool asked;
+};
+
+static int us_passphrase_use_cb(char *buf, int size, int rwflag, void *u) {
+  us_passphrase_use_t *use = (us_passphrase_use_t *)u;
+  use->asked = true;
+  return SSL_CTX_get_default_passwd_cb(use->ctx)(buf, size, rwflag, SSL_CTX_get_default_passwd_cb_userdata(use->ctx));
+}
+
 /* The `ca` option: every CERTIFICATE block of `content` as DER into `certs`. User-supplied certificates are validated
  * with a full parse here so a bad one fails the context rather than a later handshake; the parsed object is dropped and
- * the store keeps the DER lazily. Returns the number appended, or -1 for content that is not PEM or whose first
- * certificate block does not decode or parse. As with a PEM_read_bio_X509 loop, a PEM document with no certificates
- * (Node's tests pass a private key) counts as zero, and blocks after one that fails are ignored. */
-static int us_collect_ca_pem(SSL_CTX *ctx, const char *content, STACK_OF(CRYPTO_BUFFER) *certs) {
+ * the store keeps the DER lazily. A copy of a bundled root needs no parse to be known good. Returns the number
+ * appended, or -1 for content that is not PEM or whose first certificate block does not decode or parse. As with a
+ * PEM_read_bio_X509 loop, a PEM document with no certificates (Node's tests pass a private key) counts as zero, and
+ * blocks after one that fails are ignored. */
+static int us_collect_ca_pem(us_passphrase_use_t *passphrase, const char *content, STACK_OF(CRYPTO_BUFFER) *certs) {
   if (content == NULL) return 0;
   ERR_clear_error();
   us_bio_ptr in{BIO_new_mem_buf(content, strlen(content))};
@@ -847,13 +860,13 @@ static int us_collect_ca_pem(SSL_CTX *ctx, const char *content, STACK_OF(CRYPTO_
   for (;;) {
     uint8_t *out = NULL;
     long der_len = 0;
-    if (!PEM_bytes_read_bio(&out, &der_len, NULL, PEM_STRING_X509, in.get(), SSL_CTX_get_default_passwd_cb(ctx),
-                            SSL_CTX_get_default_passwd_cb_userdata(ctx))) {
+    if (!PEM_bytes_read_bio(&out, &der_len, NULL, PEM_STRING_X509, in.get(), us_passphrase_use_cb, passphrase)) {
       break;
     }
     us_unique_ptr<uint8_t, OPENSSL_free> der{out};
     us_crypto_buffer_ptr buf{CRYPTO_BUFFER_new(der.get(), der_len, NULL)};
-    if (buf == NULL || !us_x509_ptr{X509_parse_from_buffer(buf.get())} || !sk_CRYPTO_BUFFER_push(certs, buf.get())) {
+    bool parses = buf != NULL && (us_is_bundled_root_cert(der.get(), der_len) || us_x509_ptr{X509_parse_from_buffer(buf.get())});
+    if (!parses || !sk_CRYPTO_BUFFER_push(certs, buf.get())) {
       if (count == 0) count = -1;
       break;
     }
@@ -882,28 +895,85 @@ static int us_crypto_buffer_cmp(const CRYPTO_BUFFER *const *a, const CRYPTO_BUFF
   return memcmp(CRYPTO_BUFFER_data(*a), CRYPTO_BUFFER_data(*b), al);
 }
 
-/* Trusts the DER certificates in `certs` (duplicates dropped) through one lazily-parsed set on `store`, and makes their
- * subjects the context's client-CA list, as X509_STORE_add_cert + SSL_CTX_add_client_CA per parsed certificate did. */
-static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPTO_BUFFER) *certs) {
+/* BunSocketContextOptions and CaTrustSlot in Rust assert the same numbers. */
+static_assert(sizeof(struct us_bun_socket_context_options_t) == 176 &&
+                  offsetof(struct us_bun_socket_context_options_t, ecdh_curve) == 160 &&
+                  offsetof(struct us_bun_socket_context_options_t, ca_trust) == 168,
+              "us_bun_socket_context_options_t differs from BunSocketContextOptions");
+static_assert(sizeof(struct us_ca_trust_slot_t) == 24 && offsetof(struct us_ca_trust_slot_t, ca) == 8 &&
+                  offsetof(struct us_ca_trust_slot_t, ca_count) == 16,
+              "us_ca_trust_slot_t differs from CaTrustSlot");
+
+/* What the `ca` strings of one list build: their certificates in one lazily-parsed set, and the subjects for the
+ * client-CA list. Both are NULL if the strings hold no certificate. It does not change once built, so any number of
+ * contexts, on any thread, can take the same one. */
+struct us_ca_trust_t {
+  us_unique_ptr<X509_LAZY_CERT_SET, X509_LAZY_CERT_SET_free> certs;
+  us_crypto_buffer_stack_ptr names;
+};
+
+void us_ca_trust_free(void *built) {
+  delete (us_ca_trust_t *)built;
+}
+
+/* Of the DER certificates in `certs`, duplicates dropped. */
+static us_ca_trust_t *us_ca_trust_new(STACK_OF(CRYPTO_BUFFER) *certs) {
   sk_CRYPTO_BUFFER_set_cmp_func(certs, us_crypto_buffer_cmp);
   sk_CRYPTO_BUFFER_sort_and_dedup(certs, CRYPTO_BUFFER_free);
   size_t n = sk_CRYPTO_BUFFER_num(certs);
-  if (n == 0) return 1;
+  us_unique_ptr<us_ca_trust_t, us_ca_trust_free> trust{new us_ca_trust_t()};
+  if (n == 0) return trust.release();
   us_unique_ptr<CRYPTO_BUFFER *[], free> bufs{(CRYPTO_BUFFER **)malloc(n * sizeof(CRYPTO_BUFFER *))};
-  if (bufs == NULL) return 0;
+  if (bufs == NULL) return NULL;
   for (size_t i = 0; i < n; i++) bufs[i] = sk_CRYPTO_BUFFER_value(certs, i);
-  us_unique_ptr<X509_LAZY_CERT_SET, X509_LAZY_CERT_SET_free> set{X509_LAZY_CERT_SET_new(bufs.get(), n)};
-  us_crypto_buffer_stack_ptr names{sk_CRYPTO_BUFFER_new_null()};
-  if (set == NULL || names == NULL || !X509_STORE_add_lazy_cert_set(store, set.get())) return 0;
+  trust->certs.reset(X509_LAZY_CERT_SET_new(bufs.get(), n));
+  trust->names.reset(sk_CRYPTO_BUFFER_new_null());
+  if (trust->certs == NULL || trust->names == NULL) return NULL;
   for (size_t i = 0; i < n; i++) {
     const uint8_t *subject;
     size_t subject_len;
-    if (!X509_LAZY_CERT_SET_get0_subject(set.get(), i, &subject, &subject_len)) return 0;
+    if (!X509_LAZY_CERT_SET_get0_subject(trust->certs.get(), i, &subject, &subject_len)) return NULL;
     us_crypto_buffer_ptr name{CRYPTO_BUFFER_new(subject, subject_len, NULL)};
-    if (name == NULL || !sk_CRYPTO_BUFFER_push(names.get(), name.get())) return 0;
+    if (name == NULL || !sk_CRYPTO_BUFFER_push(trust->names.get(), name.get())) return NULL;
     name.release();
   }
+  return trust.release();
+}
+
+/* Trusts the certificates of `trust` on `store`, and makes their subjects the context's client-CA list, as
+ * X509_STORE_add_cert + SSL_CTX_add_client_CA per parsed certificate did. */
+static int us_ca_trust_install(SSL_CTX *ctx, X509_STORE *store, const us_ca_trust_t *trust) {
+  if (trust->certs == NULL) return 1;
+  us_crypto_buffer_stack_ptr names{sk_CRYPTO_BUFFER_deep_copy(trust->names.get(), CRYPTO_BUFFER_dup_ref, CRYPTO_BUFFER_free)};
+  if (names == NULL || !X509_STORE_add_lazy_cert_set(store, trust->certs.get())) return 0;
   SSL_CTX_set0_client_CAs(ctx, names.release());
+  return 1;
+}
+
+/* The `ca` option: trusts the certificates of its strings on `store`. If the strings have a slot, a build takes what
+ * an earlier one published there, and publishes what it makes. A build that asked for the passphrase does not
+ * publish: an encrypted certificate block is what that passphrase makes of it. */
+static int us_ssl_ctx_trust_ca(SSL_CTX *ctx, X509_STORE *store, const struct us_bun_socket_context_options_t *options) {
+  struct us_ca_trust_slot_t *slot = options->ca_trust;
+  if (slot != NULL && (slot->ca != options->ca || slot->ca_count != options->ca_count)) slot = NULL;
+  if (slot != NULL) {
+    const us_ca_trust_t *built = (const us_ca_trust_t *)__atomic_load_n(&slot->built, __ATOMIC_ACQUIRE);
+    if (built != NULL) return us_ca_trust_install(ctx, store, built);
+  }
+  us_passphrase_use_t passphrase = {ctx, false};
+  us_crypto_buffer_stack_ptr certs{sk_CRYPTO_BUFFER_new_null()};
+  for (unsigned int i = 0; certs != NULL && i < options->ca_count; i++) {
+    if (us_collect_ca_pem(&passphrase, options->ca[i], certs.get()) < 0) certs = NULL;
+  }
+  if (certs == NULL) return 0;
+  us_unique_ptr<us_ca_trust_t, us_ca_trust_free> trust{us_ca_trust_new(certs.get())};
+  if (trust == NULL || !us_ca_trust_install(ctx, store, trust.get())) return 0;
+  if (slot != NULL && !passphrase.asked) {
+    void *unpublished = NULL;
+    if (__atomic_compare_exchange_n(&slot->built, &unpublished, trust.get(), false, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
+      trust.release();
+    }
+  }
   return 1;
 }
 
@@ -1372,11 +1442,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
      * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
      * any client certificate that chains to a public root. */
     X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context.get());
-    us_crypto_buffer_stack_ptr ca_certs{sk_CRYPTO_BUFFER_new_null()};
-    for (unsigned int i = 0; ca_certs != NULL && i < options.ca_count; i++) {
-      if (us_collect_ca_pem(ssl_context.get(), options.ca[i], ca_certs.get()) < 0) ca_certs = NULL;
-    }
-    if (ca_certs == NULL || !us_install_ca_buffers(ssl_context.get(), cert_store, ca_certs.get())) {
+    if (!us_ssl_ctx_trust_ca(ssl_context.get(), cert_store, &options)) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
       return NULL;
     }

@@ -71,6 +71,7 @@ pub(crate) struct RuntimeState {
     /// `RareData.ssl_ctx_cache` — concrete digest-keyed weak `SSL_CTX*` cache.
     /// Same cycle-break story as `sql_rare`.
     pub(crate) ssl_ctx_cache: crate::api::SSLContextCache::SSLContextCache,
+    pub(crate) ca_lists: JsCell<crate::socket::ssl_config::CaListMemo>,
     /// `RareData.global_dns_data` — per-VM resolver + c-ares channel.
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
     /// drops in [`deinit_runtime_state`].
@@ -295,6 +296,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         timer: timer::All::init(),
         sql_rare: Default::default(),
         ssl_ctx_cache: Default::default(),
+        ca_lists: JsCell::default(),
         global_dns_data: core::cell::OnceCell::new(),
         body_value_pool: {
             // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the

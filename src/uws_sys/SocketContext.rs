@@ -3,8 +3,10 @@
 //! here is the `us_bun_socket_context_options_t` extern mirror, kept under its
 //! old name so `SSLConfig.asUSockets()` callers don't churn.
 
-use core::ffi::{c_char, c_long};
+use core::ffi::{c_char, c_long, c_void};
 use core::ptr;
+use std::sync::OnceLock;
+use std::sync::atomic::AtomicPtr;
 
 use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 
@@ -91,6 +93,63 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     ])
 }
 
+/// What the strings of a `ca` option build, kept with the strings: every `SSL_CTX` built from them after the first
+/// takes the certificates as the first left them, already decoded, checked and indexed.
+#[repr(C)]
+pub struct CaTrust {
+    slot: CaTrustSlot,
+    /// What [`BunSocketContextOptions::digest`] feeds for the strings.
+    digest: OnceLock<[u8; 32]>,
+}
+
+/// `us_ca_trust_slot_t`: the part of a [`CaTrust`] that C reads. There is none outside of a `CaTrust`.
+#[repr(C)]
+pub struct CaTrustSlot {
+    /// `us_ca_trust_t *`, null until a build publishes its result.
+    built: AtomicPtr<c_void>,
+    /// The strings that it is for.
+    ca: *const *const c_char,
+    ca_count: u32,
+}
+
+bun_core::assert_ffi_layout!(CaTrustSlot, 24, 8; built @ 0, ca @ 8, ca_count @ 16);
+
+// SAFETY: the strings do not change while it lives, and `built` is only reached through the atomic.
+unsafe impl Send for CaTrust {}
+// SAFETY: as above.
+unsafe impl Sync for CaTrust {}
+
+impl CaTrust {
+    /// # Safety
+    /// `ca` points to `ca_count` NUL-terminated strings, which do not change or move while this lives.
+    pub unsafe fn new(ca: *const *const c_char, ca_count: u32) -> Self {
+        Self {
+            slot: CaTrustSlot {
+                built: AtomicPtr::new(ptr::null_mut()),
+                ca,
+                ca_count,
+            },
+            digest: OnceLock::new(),
+        }
+    }
+
+    /// For [`BunSocketContextOptions::ca_trust`], beside the strings in `ca`.
+    #[inline]
+    pub fn slot(&self) -> *const CaTrustSlot {
+        &raw const self.slot
+    }
+}
+
+impl Drop for CaTrust {
+    fn drop(&mut self) {
+        let built = *self.slot.built.get_mut();
+        if !built.is_null() {
+            // SAFETY: a build published it, and nothing else frees it.
+            unsafe { c::us_ca_trust_free(built) };
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct BunSocketContextOptions {
@@ -120,7 +179,12 @@ pub struct BunSocketContextOptions {
     pub allow_partial_trust_chain: i32,
     pub sigalgs: *const c_char,
     pub ecdh_curve: *const c_char,
+    /// Null, or [`CaTrust::slot`] of the `ca` strings.
+    pub ca_trust: *const CaTrustSlot,
 }
+
+// `us_bun_socket_context_options_t`, which asserts the same numbers.
+bun_core::assert_ffi_layout!(BunSocketContextOptions, 176, 8; ecdh_curve @ 160, ca_trust @ 168);
 
 impl Default for BunSocketContextOptions {
     fn default() -> Self {
@@ -151,6 +215,7 @@ impl Default for BunSocketContextOptions {
             allow_partial_trust_chain: 0,
             sigalgs: ptr::null(),
             ecdh_curve: ptr::null(),
+            ca_trust: ptr::null(),
         }
     }
 }
@@ -251,7 +316,21 @@ impl BunSocketContextOptions {
         h.update(bun_core::bytes_of(&self.ssl_prefer_low_memory_usage));
         feed_arr(&mut h, self.key, self.key_count);
         feed_arr(&mut h, self.cert, self.cert_count);
-        feed_arr(&mut h, self.ca, self.ca_count);
+        // SAFETY: null, or the slot of a `CaTrust` that outlives these options. The slot is its first field.
+        match unsafe { self.ca_trust.cast::<CaTrust>().as_ref() } {
+            Some(trust) if trust.slot.ca == self.ca && trust.slot.ca_count == self.ca_count => {
+                // Not a presence byte of `feed_arr`.
+                h.update(&[2]);
+                h.update(trust.digest.get_or_init(|| {
+                    let mut strings = Sha256::init();
+                    feed_arr(&mut strings, self.ca, self.ca_count);
+                    let mut out = [0u8; 32];
+                    strings.final_(&mut out);
+                    out
+                }));
+            }
+            _ => feed_arr(&mut h, self.ca, self.ca_count),
+        }
         h.update(bun_core::bytes_of(&self.secure_options));
         h.update(bun_core::bytes_of(&self.ssl_min_version));
         h.update(bun_core::bytes_of(&self.ssl_max_version));
@@ -332,6 +411,8 @@ pub mod c {
         ) -> *mut SSL_CTX;
         // safe: no args; reads a process-global counter — no preconditions.
         pub safe fn us_ssl_ctx_live_count() -> c_long;
+        /// Frees what a build left in `CaTrust::built`.
+        pub(crate) fn us_ca_trust_free(built: *mut c_void);
         /// Appends the certificates in the NUL-terminated PEM `content` to
         /// `ctx`'s trust store; returns 0 when nothing could be added.
         pub fn us_ssl_ctx_add_ca_cert(

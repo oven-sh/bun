@@ -8,6 +8,8 @@ use std::sync::{Arc, Weak};
 
 use bun_core::SensitiveCString;
 use bun_uws as uws;
+
+use crate::ca_list::CaList;
 // Wyhash final4 variant. NOT `Wyhash11`.
 use bun_threading::Guarded as Mutex;
 use bun_wyhash::Wyhash;
@@ -27,7 +29,7 @@ pub struct SSLConfig {
 
     pub key: CStrSlice,
     pub cert: CStrSlice,
-    pub ca: CStrSlice,
+    pub ca: Option<Arc<CaList>>,
     pub crl: CStrSlice,
 
     pub secure_options: u32,
@@ -194,8 +196,9 @@ impl SSLConfig {
             ctx_opts.cert_count = cert.len() as u32;
         }
         if let Some(ca) = &self.ca {
-            ctx_opts.ca = ca.as_ptr().cast();
-            ctx_opts.ca_count = ca.len() as u32;
+            ctx_opts.ca = ca.as_ptr();
+            ctx_opts.ca_count = ca.count() as u32;
+            ctx_opts.ca_trust = ca.trust().slot();
         }
 
         if let Some(ssl_ciphers) = &self.ssl_ciphers {
@@ -246,6 +249,23 @@ impl SSLConfig {
         copy
     }
 
+    /// Whether every build of a context from these options gives the same context: the build reads no file, and no
+    /// certificate store but the one that `ca` fills.
+    pub(crate) fn build_reads_only_options(&self) -> bool {
+        let names_file = self.key_file_name.is_some()
+            || self.cert_file_name.is_some()
+            || self.ca_file_name.is_some()
+            || self.dh_params_file_name.is_some();
+        // `us_ssl_ctx_use_identities` completes each chain from the store.
+        let several_identities = self.key.as_ref().is_some_and(|key| key.len() > 1)
+            || self.cert.as_ref().is_some_and(|cert| cert.len() > 1);
+        // Without `ca` the store is the default one, or a copy of it for `crl` and `allowPartialTrustChain`, and
+        // that has the certificate directory of the system.
+        let reads_default_store = self.ca.is_none()
+            && (self.crl.is_some() || self.allow_partial_trust_chain || several_identities);
+        !names_file && !reads_default_store
+    }
+
     pub(crate) fn is_same(&self, other: &SSLConfig) -> bool {
         self.server_name == other.server_name
             && self.key_file_name == other.key_file_name
@@ -255,7 +275,8 @@ impl SSLConfig {
             && self.passphrase == other.passphrase
             && self.key == other.key
             && self.cert == other.cert
-            && self.ca == other.ca
+            // One list per content, so the same certificates are the same list.
+            && self.ca.as_ref().map(Arc::as_ptr) == other.ca.as_ref().map(Arc::as_ptr)
             && self.crl == other.crl
             && self.secure_options == other.secure_options
             && self.session_timeout == other.session_timeout
@@ -311,7 +332,10 @@ impl SSLConfig {
         hash_cstr!(passphrase);
         hash_slice!(key);
         hash_slice!(cert);
-        hash_slice!(ca);
+        if let Some(ca) = &self.ca {
+            hasher.update(&ca.hash().to_ne_bytes());
+        }
+        hasher.update(&[0]);
         hash_slice!(crl);
         hasher.update(&self.secure_options.to_ne_bytes());
         hasher.update(&self.session_timeout.to_ne_bytes());

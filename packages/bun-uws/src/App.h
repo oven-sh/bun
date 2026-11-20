@@ -88,6 +88,7 @@ namespace uWS {
         int allow_partial_trust_chain = 0;
         const char *sigalgs = nullptr;
         const char *ecdh_curve = nullptr;
+        struct us_ca_trust_slot_t *ca_trust = nullptr;
 
         /* Conversion operator used internally */
         operator struct us_bun_socket_context_options_t() const {
@@ -98,6 +99,7 @@ namespace uWS {
     };
 
     static_assert(sizeof(struct us_bun_socket_context_options_t) == sizeof(SocketContextOptions), "Mismatching uSockets/uWebSockets ABI");
+    static_assert(offsetof(struct us_bun_socket_context_options_t, ca_trust) == offsetof(SocketContextOptions, ca_trust), "Mismatching uSockets/uWebSockets ABI");
 
 template <bool SSL>
 struct TemplatedApp {

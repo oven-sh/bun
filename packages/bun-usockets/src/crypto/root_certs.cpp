@@ -1,9 +1,8 @@
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
+#include <algorithm>
 #include <mutex>
 #include <string.h>
-#include <string_view>
-#include <unordered_set>
 #include <vector>
 #include "./default_ciphers.h"
 
@@ -134,32 +133,58 @@ end:
 extern "C" size_t us_bundled_root_cert_count();
 extern "C" const uint8_t *us_bundled_root_cert(size_t index, size_t *out_len);
 
-struct us_bundled_roots_t {
+struct us_bundled_root_der_t {
   std::vector<const uint8_t *> certs;
   std::vector<size_t> lens;
-  X509_LAZY_CERT_SET *set = nullptr;
+  // Indices into `certs`, ordered by length and then by bytes, for us_is_bundled_root_cert.
+  std::vector<uint32_t> sorted;
+
+  int compare(uint32_t index, const uint8_t *der, size_t len) const {
+    if (lens[index] != len) return lens[index] < len ? -1 : 1;
+    return memcmp(certs[index], der, len);
+  }
 };
 
-static const us_bundled_roots_t &us_bundled_roots() {
-  static us_bundled_roots_t roots;
+static const us_bundled_root_der_t &us_bundled_root_der() {
+  static us_bundled_root_der_t roots;
   static std::once_flag once;
   std::call_once(once, []() {
     size_t count = us_bundled_root_cert_count();
     roots.certs.resize(count);
     roots.lens.resize(count);
-    for (size_t i = 0; i < count; i++) roots.certs[i] = us_bundled_root_cert(i, &roots.lens[i]);
-    roots.set = X509_LAZY_CERT_SET_new_static(roots.certs.data(), roots.lens.data(), count);
+    roots.sorted.resize(count);
+    for (size_t i = 0; i < count; i++) {
+      roots.certs[i] = us_bundled_root_cert(i, &roots.lens[i]);
+      roots.sorted[i] = i;
+    }
+    std::sort(roots.sorted.begin(), roots.sorted.end(),
+              [](uint32_t a, uint32_t b) { return roots.compare(a, roots.certs[b], roots.lens[b]) < 0; });
   });
   return roots;
 }
 
-X509_LAZY_CERT_SET *us_get_bundled_root_cert_set() { return us_bundled_roots().set; }
+X509_LAZY_CERT_SET *us_get_bundled_root_cert_set() {
+  static X509_LAZY_CERT_SET *set = nullptr;
+  static std::once_flag once;
+  std::call_once(once, []() {
+    const us_bundled_root_der_t &roots = us_bundled_root_der();
+    set = X509_LAZY_CERT_SET_new_static(roots.certs.data(), roots.lens.data(), roots.certs.size());
+  });
+  return set;
+}
 
 extern "C" size_t us_bundled_root_certs_der(const uint8_t *const **out_certs, const size_t **out_lens) {
-  const us_bundled_roots_t &roots = us_bundled_roots();
+  const us_bundled_root_der_t &roots = us_bundled_root_der();
   *out_certs = roots.certs.data();
   *out_lens = roots.lens.data();
   return roots.certs.size();
+}
+
+bool us_is_bundled_root_cert(const uint8_t *der, size_t len) {
+  const us_bundled_root_der_t &roots = us_bundled_root_der();
+  auto found = std::partition_point(roots.sorted.begin(), roots.sorted.end(),
+                                    [&](uint32_t index) { return roots.compare(index, der, len) < 0; });
+  return found != roots.sorted.end() && roots.compare(*found, der, len) == 0;
 }
 
 // std::call_once, not a flag: concurrent Workers must block until the list is
@@ -214,15 +239,7 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
       return;
     }
 
-    const uint8_t *const *bundled_certs = nullptr;
-    const size_t *bundled_lens = nullptr;
-    size_t bundled_count =
-        us_ca_store() == us_ca_store_t::openssl ? 0 : us_bundled_root_certs_der(&bundled_certs, &bundled_lens);
-    std::unordered_set<std::string_view> bundled;
-    bundled.reserve(bundled_count);
-    for (size_t i = 0; i < bundled_count; i++) {
-      bundled.emplace(reinterpret_cast<const char *>(bundled_certs[i]), bundled_lens[i]);
-    }
+    bool store_has_bundled_roots = us_ca_store() != us_ca_store_t::openssl;
 
     us_crypto_buffers certs;
     us_x509_stack_ptr trusted{sk_X509_new_null()};
@@ -245,7 +262,7 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
         // encrypted private key sharing the file) are skipped, headers and all, as PEM_X509_INFO_read_bio does.
         ok = false;
       } else if (strcmp(name, PEM_STRING_X509) == 0 || strcmp(name, PEM_STRING_X509_OLD) == 0) {
-        if (!bundled.count(std::string_view(reinterpret_cast<const char *>(data), len))) {
+        if (!(store_has_bundled_roots && us_is_bundled_root_cert(data, len))) {
           CRYPTO_BUFFER *buf = CRYPTO_BUFFER_new(data, len, nullptr);
           ok = buf != nullptr;
           if (ok) certs.push_back(buf);

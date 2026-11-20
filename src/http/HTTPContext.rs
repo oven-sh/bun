@@ -277,6 +277,22 @@ fn ssl_config_hash(cfg: Option<&SSLConfig>) -> u64 {
     cfg.map_or(0, SSLConfig::content_hash)
 }
 
+/// The `SSL_CTX` of `opts`. The errors are those of options that give none.
+pub(crate) fn create_ssl_ctx(
+    opts: &uws::SocketContext::BunSocketContextOptions,
+) -> Result<OwnedSslCtx, InitError> {
+    let mut err = uws::create_bun_socket_error_t::none;
+    opts.create_ssl_context(&mut err).ok_or(match err {
+        uws::create_bun_socket_error_t::load_ca_file => InitError::LoadCAFile,
+        uws::create_bun_socket_error_t::invalid_ca_file => InitError::InvalidCAFile,
+        uws::create_bun_socket_error_t::invalid_ca => InitError::InvalidCA,
+        uws::create_bun_socket_error_t::invalid_crl => InitError::InvalidCRL,
+        uws::create_bun_socket_error_t::none
+        | uws::create_bun_socket_error_t::invalid_ciphers
+        | uws::create_bun_socket_error_t::invalid_ecdh_curve => InitError::FailedToOpenSocket,
+    })
+}
+
 struct ExistingSocket<const SSL: bool> {
     socket: HTTPSocket<SSL>,
     /// Present if the socket carries an established CONNECT tunnel.
@@ -522,48 +538,14 @@ impl<const SSL: bool> HTTPContext<SSL> {
         Self::set_socket_ext(socket, ActiveSocket::<SSL>::init(session));
     }
 
-    pub(crate) fn init_with_client_config(
-        &mut self,
-        client: &mut HTTPClient,
-    ) -> Result<(), InitError> {
+    /// Gives the context its `SSL_CTX` and the group of its sockets.
+    pub(crate) fn init_with_ssl_ctx(&mut self, ctx: OwnedSslCtx) {
         // Rust cannot reject a const-generic bool branch at compile time on
         // stable, so this is a debug_assert.
         debug_assert!(SSL, "ssl only");
-        let opts = client
-            .tls_props
-            .as_ref()
-            .unwrap()
-            .get()
-            .as_usockets_for_client_verification();
-        self.init_with_opts(&opts)
-    }
-
-    fn init_with_opts(
-        &mut self,
-        opts: &uws::SocketContext::BunSocketContextOptions,
-    ) -> Result<(), InitError> {
-        debug_assert!(SSL, "ssl only");
-        let mut err = uws::create_bun_socket_error_t::none;
-        let ctx = match opts.create_ssl_context(&mut err) {
-            Some(ctx) => ctx,
-            None => {
-                return Err(match err {
-                    uws::create_bun_socket_error_t::load_ca_file => InitError::LoadCAFile,
-                    uws::create_bun_socket_error_t::invalid_ca_file => InitError::InvalidCAFile,
-                    uws::create_bun_socket_error_t::invalid_ca => InitError::InvalidCA,
-                    uws::create_bun_socket_error_t::invalid_crl => InitError::InvalidCRL,
-                    uws::create_bun_socket_error_t::none
-                    | uws::create_bun_socket_error_t::invalid_ciphers
-                    | uws::create_bun_socket_error_t::invalid_ecdh_curve => {
-                        InitError::FailedToOpenSocket
-                    }
-                });
-            }
-        };
-        ssl_ctx_setup(self.secure.insert(ctx));
+        self.secure = Some(ctx);
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
         self.group.init(uws::Loop::get(), None, owner_ptr);
-        Ok(())
     }
 
     pub(crate) fn init_with_thread_opts(
@@ -586,7 +568,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
             request_cert: 1,
             ..Default::default()
         };
-        self.init_with_opts(&opts)
+        let ctx = create_ssl_ctx(&opts)?;
+        ssl_ctx_setup(&ctx);
+        self.init_with_ssl_ctx(ctx);
+        Ok(())
     }
 
     pub(crate) fn init(&mut self) {

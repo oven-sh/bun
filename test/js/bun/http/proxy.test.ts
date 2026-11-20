@@ -2443,6 +2443,157 @@ describe.concurrent("a CONNECT tunnel", () => {
   });
 });
 
+// The TLS connection to the origin inside a tunnel needs an SSL_CTX. A `tls` option whose context is built from the
+// option alone (inline `ca`, `cert`, `key`) has one for all of its tunnels and its direct connections. Other options
+// give each tunnel a context of its own, because the build reads a file or the system's certificates again.
+describe.concurrent("the TLS context of a CONNECT tunnel", () => {
+  const keys = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
+  const pem = (name: string) => Bun.file(join(keys, name)).text();
+
+  // How many SSL_CTX a new process builds for `requests` requests that are all in flight at once, each in its own
+  // tunnel.
+  async function contextsBuilt(tls: Bun.TLSOptions, { requests = 8, proxyTls = false, directFirst = false } = {}) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "proxy-tunnel-tls-context-fixture.ts"),
+        JSON.stringify({ tls, proxyTls, requests, directFirst }),
+      ],
+      env: { ...bunEnv, ...proxyFreeEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr);
+    const { before, during, bodies, tunnels } = JSON.parse(stdout || "{}");
+    return { contexts: during - before, bodies, tunnels, exitCode };
+  }
+  const ok = (contexts: number, requests = 8) => ({ contexts, bodies: ["ok"], tunnels: requests, exitCode: 0 });
+
+  test.each([
+    ["ca", async () => ({ ca: tlsCert.cert })],
+    ["ca in an array and a servername", async () => ({ ca: [tlsCert.cert], serverName: "localhost" })],
+    ["ca, cert and key", async () => ({ ca: tlsCert.cert, cert: tlsCert.cert, key: tlsCert.key })],
+    [
+      "ca and two identities",
+      async () => ({
+        ca: tlsCert.cert,
+        cert: [tlsCert.cert, await pem("agent1-cert.pem")],
+        key: [tlsCert.key, await pem("agent1-key.pem")],
+      }),
+    ],
+    ["ca and allowPartialTrustChain", async () => ({ ca: tlsCert.cert, allowPartialTrustChain: true })],
+    ["ca and crl", async () => ({ ca: tlsCert.cert, crl: await pem("ca2-crl.pem"), rejectUnauthorized: false })],
+  ])("is one for every tunnel of an inline %s", async (_, tls) => {
+    expect(await contextsBuilt(await tls())).toEqual(ok(1));
+  });
+
+  test("is the one of the direct connections with the same option", async () => {
+    // The other one is the default context, which the first TLS socket of a process builds.
+    expect(await contextsBuilt({ ca: tlsCert.cert }, { directFirst: true })).toEqual(ok(2));
+  });
+
+  test("is the one of the connection to an https proxy with the same option", async () => {
+    const tls = { ca: tlsCert.cert };
+    const [two, eight] = await Promise.all([
+      contextsBuilt(tls, { proxyTls: true, requests: 2 }),
+      contextsBuilt(tls, { proxyTls: true, requests: 8 }),
+    ]);
+    expect({ two, eight }).toEqual({ two: ok(two.contexts, 2), eight: ok(two.contexts, 8) });
+  });
+
+  test.each([
+    ["no option that a direct connection needs a context for", async () => ({ rejectUnauthorized: false })],
+    ["crl without ca", async () => ({ crl: await pem("ca2-crl.pem"), rejectUnauthorized: false })],
+    ["allowPartialTrustChain without ca", async () => ({ allowPartialTrustChain: true, rejectUnauthorized: false })],
+    [
+      "two identities without ca",
+      async () => ({
+        cert: [tlsCert.cert, await pem("agent1-cert.pem")],
+        key: [tlsCert.key, await pem("agent1-key.pem")],
+        rejectUnauthorized: false,
+      }),
+    ],
+  ])("is built for each tunnel of %s", async (_, tls) => {
+    expect(await contextsBuilt(await tls())).toEqual(ok(8));
+  });
+
+  test("is built for each tunnel of an option that names a file", async () => {
+    using dir = tempDir("proxy-tunnel-tls-files", { "ca.pem": tlsCert.cert, "key.pem": tlsCert.key });
+    const [caFile, keyFile] = [join(String(dir), "ca.pem"), join(String(dir), "key.pem")];
+    expect(
+      await Promise.all([
+        contextsBuilt({ caFile }),
+        contextsBuilt({ ca: tlsCert.cert, certFile: caFile, keyFile }),
+        contextsBuilt({ ca: tlsCert.cert, dhParamsFile: join(keys, "dh2048.pem") }),
+      ]),
+    ).toEqual([ok(8), ok(8), ok(8)]);
+  });
+
+  test("follows a caFile that is rewritten in place", async () => {
+    using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("through") });
+    await using proxy = await createAdversarialProxy();
+    using dir = tempDir("proxy-tunnel-tls-cafile", { "ca.pem": tlsCert.cert });
+    const caFile = join(String(dir), "ca.pem");
+    const outcome = () =>
+      fetch(`https://localhost:${origin.port}/`, { proxy: proxy.url, tls: { caFile }, keepalive: false }).then(
+        response => response.text(),
+        error => error.code,
+      );
+    const outcomes = [await outcome()];
+    await Bun.write(caFile, await pem("ca1-cert.pem"));
+    outcomes.push(await outcome());
+    await Bun.write(caFile, tlsCert.cert);
+    outcomes.push(await outcome());
+    expect(outcomes).toEqual(["through", "DEPTH_ZERO_SELF_SIGNED_CERT", "through"]);
+  });
+
+  test("is asked for only once the proxy has opened the tunnel", async () => {
+    await using refusing = await createAdversarialProxy({ connectStatus: 407 });
+    using dead = await deadPort();
+    const tls = { ca: "not a certificate" };
+    const code = (proxy: string) =>
+      fetch("https://origin.invalid/", { proxy, tls, keepalive: false }).then(
+        response => response.status,
+        error => error.code,
+      );
+    expect([await code(refusing.url), await code(`http://127.0.0.1:${dead.port}`)]).toEqual([
+      "ERR_PROXY_TUNNEL",
+      "ECONNREFUSED",
+    ]);
+  });
+
+  test("does not cost a direct connection its place in the cache", async () => {
+    let connections = 0;
+    const origin = tls.createServer(tlsCert, socket => {
+      connections++;
+      socket.on("error", () => {});
+      socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"));
+    });
+    await once(origin.listen(0, "127.0.0.1"), "listening");
+    await using proxy = await createAdversarialProxy();
+    const url = `https://127.0.0.1:${(origin.address() as net.AddressInfo).port}/`;
+    try {
+      const direct = () => fetch(url, { tls: { ca: tlsCert.cert } }).then(r => r.text());
+      expect(await direct()).toBe("ok");
+      // More options with a context of their own than the cache keeps, each used by one tunnel.
+      const tunneled = await Promise.all(
+        Array.from({ length: 61 }, (_, i) =>
+          fetch(url, { proxy: proxy.url, keepalive: false, tls: { ca: `${tlsCert.cert}# ${i}\n` } }).then(r =>
+            r.text(),
+          ),
+        ),
+      );
+      expect(new Set(tunneled)).toEqual(new Set(["ok"]));
+      expect(await direct()).toBe("ok");
+      // The second direct request found the connection of the first one in its context.
+      expect(connections).toBe(1 + 61);
+    } finally {
+      origin.close();
+    }
+  });
+});
+
 describe("proxy resolution", () => {
   const { noProxyMatches, proxyFor, parseURL } = proxyInternals;
 

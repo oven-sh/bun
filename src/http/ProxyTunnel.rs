@@ -8,7 +8,6 @@ use bun_uws as uws;
 use crate::http_cert_error::HTTPCertError;
 use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::internal_state::HTTPStage;
-use crate::ssl_config::SSLConfig;
 use crate::ssl_wrapper::{Handler as SSLWrapperHandler, InitError, SSLWrapper};
 use crate::{AlpnOffer, HTTPClient, NextStep};
 
@@ -382,10 +381,9 @@ impl ProxyTunnel {
     pub(crate) fn start<const IS_SSL: bool>(
         this: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
-        ssl_options: Option<&SSLConfig>,
         start_payload: &[u8],
     ) -> ControlFlow<NextStep> {
-        let wrapper = match Self::create(this, ssl_options) {
+        let wrapper = match Self::create(this) {
             Ok(wrapper) => wrapper,
             Err(err) => return this.close_and_fail::<IS_SSL>(err, socket),
         };
@@ -395,24 +393,8 @@ impl ProxyTunnel {
     }
 
     /// Gives `this` a tunnel, and returns its wrapper.
-    fn create(this: &mut HTTPClient, ssl_options: Option<&SSLConfig>) -> Result<SSLWrapper, Error> {
-        let mut err = uws::create_bun_socket_error_t::none;
-        let ssl_ctx = match ssl_options {
-            // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-            Some(ssl_options) => ssl_options
-                .as_usockets_for_client_verification()
-                .create_ssl_context(&mut err),
-            // The context a direct connection uses: it holds the thread's CA options (`bun install --ca`).
-            None => Some(crate::http_thread().default_ssl_ctx()),
-        };
-        let Some(ssl_ctx) = ssl_ctx else {
-            // Invalid TLS options; the errors a direct request reports for them.
-            let error = match err {
-                uws::create_bun_socket_error_t::invalid_crl => crate::Error::InvalidCRL,
-                _ => crate::Error::FailedToOpenSocket,
-            };
-            return Err(error);
-        };
+    fn create(this: &mut HTTPClient) -> Result<SSLWrapper, Error> {
+        let ssl_ctx = crate::http_thread().tunnel_ssl_ctx(this)?;
         let wrapper = match SSLWrapper::init_with_ctx(ssl_ctx, true) {
             Ok(w) => w,
             Err(e) => {

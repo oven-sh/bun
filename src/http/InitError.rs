@@ -11,3 +11,16 @@ pub enum InitError {
     #[error("InvalidCRL")]
     InvalidCRL,
 }
+
+/// What a request reports for TLS options that give no context.
+impl From<InitError> for crate::Error {
+    fn from(err: InitError) -> Self {
+        match err {
+            InitError::InvalidCRL => crate::Error::InvalidCRL,
+            InitError::FailedToOpenSocket
+            | InitError::InvalidCA
+            | InitError::InvalidCAFile
+            | InitError::LoadCAFile => crate::Error::FailedToOpenSocket,
+        }
+    }
+}

@@ -498,6 +498,16 @@ const char *us_socket_sni_servername(struct us_socket_t *s);
  * from sockets entirely. Build once per SecureContext / config, share across
  * every connect/listen/upgrade. */
 
+/* What the `ca` strings of one list build, kept by the owner of the strings: every context built from them after the
+ * first takes it as it is. */
+struct us_ca_trust_slot_t {
+    /* NULL until a build publishes its result. Read and written atomically; us_ca_trust_free() frees it. */
+    void *built;
+    /* The `ca` and `ca_count` that it is for. */
+    const char * const *ca;
+    unsigned int ca_count;
+};
+
 struct us_bun_socket_context_options_t {
     const char *key_file_name;
     const char *cert_file_name;
@@ -532,6 +542,8 @@ struct us_bun_socket_context_options_t {
     const char *sigalgs;
     /* Colon-separated named-group list applied via SSL_CTX_set1_groups_list. */
     const char *ecdh_curve;
+    /* NULL, or the slot of the `ca` strings. */
+    struct us_ca_trust_slot_t *ca_trust;
 };
 
 enum create_bun_socket_error_t {
@@ -557,6 +569,8 @@ enum create_bun_socket_error_t {
 struct ssl_ctx_st *us_ssl_ctx_from_options(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
+/* Frees us_ca_trust_slot_t::built. */
+void us_ca_trust_free(void *built);
 /* SSL_CTX_up_ref / SSL_CTX_free without an OpenSSL include — for C++ callers
  * (uWS App.h) that don't pull in BoringSSL headers. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);

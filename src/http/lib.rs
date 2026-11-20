@@ -6,6 +6,7 @@ pub mod error;
 pub use error::{CertError, Error, Result};
 #[path = "AsyncHTTP.rs"]
 pub mod async_http;
+pub mod ca_list;
 #[path = "CertificateInfo.rs"]
 pub mod certificate_info;
 pub mod compress_body;
@@ -3355,9 +3356,7 @@ impl<'a> HTTPClient<'a> {
         start_payload: &[u8],
     ) -> ControlFlow<NextStep> {
         bun_core::scoped_log!(fetch, "startProxyHandshake");
-        // if we have options we pass them (ca, reject_unauthorized, etc) otherwise use the default
-        let ssl_options = self.tls_props.clone();
-        ProxyTunnel::start::<IS_SSL>(self, socket, ssl_options.as_deref(), start_payload)
+        ProxyTunnel::start::<IS_SSL>(self, socket, start_payload)
     }
 
     pub(crate) fn handle_on_data_headers<const IS_SSL: bool>(

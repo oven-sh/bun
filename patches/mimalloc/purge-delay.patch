@@ -1,0 +1,25 @@
+Purge freed arena memory after 500 ms instead of 100 ms.
+
+Memory that a busy program frees and allocates again within half a second is then
+not given back and faulted in again.
+
+--- a/src/util/options.c
++++ b/src/util/options.c
+@@ -155,7 +155,7 @@ static mi_option_desc_t mi_options[_mi_option_last] =
+   { 0, MI_OPTION_UNINIT, MI_OPTION(deprecated_abandoned_page_purge) },
+   { 0, MI_OPTION_UNINIT, MI_OPTION(deprecated_segment_reset) },   // reset segment memory on free (needs eager commit)
+   { 1, MI_OPTION_UNINIT, MI_OPTION(deprecated_eager_commit_delay) },
+-  { 100, MI_OPTION_UNINIT, MI_OPTION_LEGACY(purge_delay,reset_delay) },  // purge delay in milli-seconds
++  { 500, MI_OPTION_UNINIT, MI_OPTION_LEGACY(purge_delay,reset_delay) },  // purge delay in milli-seconds
+   { 0,   MI_OPTION_UNINIT, MI_OPTION(use_numa_nodes) },           // 0 = use available numa nodes, otherwise use at most N nodes.
+   { 0,   MI_OPTION_UNINIT, MI_OPTION_LEGACY(disallow_os_alloc,limit_os_alloc) },           // 1 = do not use OS memory for allocation (but only reserved arenas)
+   { 240, MI_OPTION_UNINIT, MI_OPTION(os_tag) },                   // macOS VM tag: 240 = VM_MEMORY_APPLICATION_SPECIFIC_1 (100 collided with IOAccelerator)
+@@ -164,7 +164,7 @@ static mi_option_desc_t mi_options[_mi_option_last] =
+   { 10,  MI_OPTION_UNINIT, MI_OPTION(deprecated_max_segment_reclaim)},       // max. percentage of the abandoned segments to be reclaimed per try.
+   { 0,   MI_OPTION_UNINIT, MI_OPTION(destroy_on_exit)},           // release all OS memory on process exit; careful with dangling pointer or after-exit frees!
+   { MI_DEFAULT_ARENA_RESERVE, MI_OPTION_UNINIT, MI_OPTION(arena_reserve) }, // reserve memory N KiB at a time (=1GiB) (use `option_get_size`)
+-  { 1,   MI_OPTION_UNINIT, MI_OPTION(arena_purge_mult) },         // purge delay multiplier for arena's (fork: 1, upstream uses 4 with a 1000ms purge_delay; the scavenger thread purges here so 100ms x 1 is the measured setting)
++  { 1,   MI_OPTION_UNINIT, MI_OPTION(arena_purge_mult) },         // purge delay multiplier for arena's (fork: 1, upstream uses 4 with a 1000ms purge_delay; the scavenger thread purges here so 500ms x 1 is the measured setting)
+   { 1,   MI_OPTION_UNINIT, MI_OPTION_LEGACY(deprecated_purge_extend_delay, decommit_extend_delay) },
+   { MI_DEFAULT_DISALLOW_ARENA_ALLOC,   MI_OPTION_UNINIT, MI_OPTION(disallow_arena_alloc) }, // 1 = do not use arena's for allocation (except if using specific arena id's)
+   { 400, MI_OPTION_UNINIT, MI_OPTION(retry_on_oom) },             // windows only: retry on out-of-memory for N milli seconds (=400), set to 0 to disable retries.

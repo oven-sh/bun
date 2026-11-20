@@ -1053,9 +1053,11 @@ unsafe fn clone_rc<T>(ptr: *mut T) -> Rc<T> {
 // ════════════════════════════════════════════════════════════════════════════
 
 #[cfg(not(windows))]
-use crate::webcore::blob::read_file::ReadFile;
+use crate::webcore::blob::{fd_job::FdJob, read_file, write_file};
 #[cfg(not(windows))]
-use crate::webcore::blob::write_file::WriteFile;
+type ReadFile = FdJob<read_file::ReadFile>;
+#[cfg(not(windows))]
+type WriteFile = FdJob<write_file::WriteFile>;
 
 /// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
 /// `bun_io`. The owner is recovered from the embedded `io_poll` field.
@@ -1108,9 +1110,8 @@ unsafe fn __bun_io_pollable_on_io_error(
             [Bodies],
             (poll: *mut bun_io::Poll = poll, err: &bun_sys::Error = err) {
                 // SAFETY: per fn contract.
-                let this = unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-                // WriteFile::on_io_error already takes `*mut ()` (it self-recovers via the io_request path elsewhere); reuse that shape rather than reborrowing `&mut`.
-                WriteFile::on_io_error(this.cast(), err);
+                let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
+                this.on_io_error(err);
             }
         ),
         bun_io::PollableTag::Empty => {

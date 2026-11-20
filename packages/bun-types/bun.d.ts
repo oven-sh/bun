@@ -10703,7 +10703,9 @@ declare module "bun" {
      *
      * @param data - The input data for the archive:
      *   - **Object**: Creates a new tarball with the object's keys as file paths and values as file contents
-     *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz)
+     *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz). If it was gzipped more
+     *     than once, `files()` and `extract()` reject once the inner layers decompress to more than 1,032 times
+     *     its size. Up to 64 MiB are always read.
      * @param options - Archive options, including compression settings
      *
      * @example

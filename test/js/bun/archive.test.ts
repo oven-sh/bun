@@ -3065,6 +3065,173 @@ describe("Bun.Archive", () => {
     });
   });
 
+  describe.concurrent("a slice of a Blob", () => {
+    const tar = (name: string) => Buffer.concat([ustarEntry(name, Buffer.from(name)), Buffer.alloc(1024)]);
+    const [before, inside, after] = ["before", "inside", "after"].map(tar);
+    const slice = () => new Blob([before, inside, after]).slice(before.length, before.length + inside.length);
+    const names = (bytes: Uint8Array) =>
+      Buffer.from(bytes)
+        .toString("latin1")
+        .match(/before|inside|after/g);
+
+    test.each([
+      ["blob.slice()", async () => slice()],
+      ["a slice of a slice", async () => new Blob([before, inside, after]).slice(1, -1).slice(2047, -2047)],
+      ["new Blob([slice])", async () => new Blob([slice()])],
+      ["new File([slice])", async () => new File([slice()], "a.tar")],
+      ["new Response(slice).blob()", () => new Response(slice()).blob()],
+    ])("%s is all that the archive holds", async (_, make) => {
+      using dir = tempDir("archive-slice", {});
+      const at = (name: string) => join(String(dir), name);
+      const blob = await make();
+      const archive = new Bun.Archive(blob);
+      const gzipped = new Bun.Archive(blob, { compress: "gzip" });
+      await Promise.all([
+        Bun.Archive.write(at("blob"), blob),
+        Bun.Archive.write(at("blob.gz"), blob, { compress: "gzip" }),
+        Bun.Archive.write(at("archive"), archive),
+        Bun.Archive.write(at("archive.gz"), gzipped),
+        Bun.write(at("bun-write"), archive),
+      ]);
+      const written = {
+        "bytes()": await archive.bytes(),
+        "blob()": await (await archive.blob()).bytes(),
+        "bytes(), gzip": Bun.gunzipSync(await gzipped.bytes()),
+        "blob(), gzip": Bun.gunzipSync(await (await gzipped.blob()).bytes()),
+        "write(blob)": readFileSync(at("blob")),
+        "write(blob), gzip": Bun.gunzipSync(readFileSync(at("blob.gz"))),
+        "write(archive)": readFileSync(at("archive")),
+        "write(archive), gzip": Bun.gunzipSync(readFileSync(at("archive.gz"))),
+        "Bun.write()": readFileSync(at("bun-write")),
+      };
+      expect(Object.entries(written).map(([how, bytes]) => [how, inside.equals(bytes) || names(bytes)])).toEqual(
+        Object.keys(written).map(how => [how, true]),
+      );
+      expect({
+        files: [...(await archive.files()).keys()],
+        extract: [await archive.extract(at("all")), readdirSync(at("all"))],
+        glob: [await archive.extract(at("glob"), { glob: "**" }), readdirSync(at("glob"))],
+        inspect: Bun.inspect(archive),
+      }).toEqual({
+        files: ["inside"],
+        extract: [1, ["inside"]],
+        glob: [1, ["inside"]],
+        inspect: Bun.inspect(new Bun.Archive(inside)),
+      });
+    });
+
+    test.each([
+      ["an empty slice", new Blob([inside]).slice(5, 5)],
+      ["no bytes", new Uint8Array(0)],
+    ])("an archive of %s is empty, and so is one of its blob()", async (_, data) => {
+      using dir = tempDir("archive-empty", {});
+      const archive = new Bun.Archive(data);
+      const blob = await archive.blob();
+      await Bun.Archive.write(join(String(dir), "written"), blob);
+      expect({
+        bytes: (await archive.bytes()).length,
+        blob: blob.size,
+        again: (await new Bun.Archive(blob).bytes()).length,
+        written: readFileSync(join(String(dir), "written")).length,
+      }).toEqual({ bytes: 0, blob: 0, again: 0, written: 0 });
+    });
+
+    test("of a file stays one in blob()", async () => {
+      using dir = tempDir("archive-file-slice", { all: Buffer.concat([before, inside, after]) });
+      const file = Bun.file(join(String(dir), "all")).slice(before.length, before.length + inside.length);
+      expect(names(await (await new Bun.Archive(file).blob()).bytes())).toEqual(names(inside));
+    });
+
+    test("is all that goes to S3", async () => {
+      const uploads: Uint8Array[] = [];
+      await using bucket = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          uploads.push(await request.bytes());
+          return new Response("", { headers: { etag: '"e"' } });
+        },
+      });
+      const s3 = new Bun.S3Client({ accessKeyId: "t", secretAccessKey: "t", endpoint: bucket.url.href, bucket: "b" });
+      const counts = [
+        await Bun.write(s3.file("k"), new Bun.Archive(slice())),
+        await Bun.write(s3.file("k"), slice()),
+        await Bun.write(s3.file("k"), new Response(slice())),
+        await s3.write("k", slice()),
+      ];
+      expect({ counts, uploads: uploads.map(bytes => inside.equals(bytes) || names(bytes)) }).toEqual({
+        counts: Array(4).fill(inside.length),
+        uploads: Array(4).fill(true),
+      });
+    });
+  });
+
+  // 1,032 times the size of the archive, which is as far as one layer goes, but not less than 64 MiB.
+  describe.concurrent("gzip inside gzip", () => {
+    const MiB = 2 ** 20;
+    const floor = 64 * MiB;
+    const gzip = (bytes: Uint8Array) => Buffer.from(Bun.gzipSync(bytes));
+    const tooLarge = (limit: number) =>
+      `The gzip layers inside the first one decompress to more than ${limit} bytes, the most that is read from an archive of this size`;
+    // A file, then zeros up to `length`. One member to a MiB, as compressing them all takes long.
+    const zeros = gzip(Buffer.alloc(MiB));
+    function gzippedTar(length: number) {
+      const file = ustarEntry("file", Buffer.from("x"));
+      const rest = length - file.length;
+      return Buffer.concat([gzip(file), ...Array(Math.floor(rest / MiB)).fill(zeros), gzip(Buffer.alloc(rest % MiB))]);
+    }
+    const files = (bytes: Uint8Array) =>
+      new Bun.Archive(bytes).files().then(
+        files => [...files.keys()],
+        e => e.message,
+      );
+
+    test("is read up to 64 MiB", async () => {
+      expect(await Promise.all([floor, floor + 1].map(length => files(gzip(gzippedTar(length)))))).toEqual([
+        ["file"],
+        tooLarge(floor),
+      ]);
+    });
+
+    test("is read further in a longer archive", async () => {
+      const size = 129 * 512;
+      // What follows the outer layer is not read, but it is part of the archive.
+      const padded = (bytes: Buffer) => Buffer.concat([bytes, Buffer.alloc(size - bytes.length, "-")]);
+      const lengths = [size * 1032, size * 1032 + 1];
+      expect(await Promise.all(lengths.map(length => files(padded(gzip(gzippedTar(length))))))).toEqual([
+        ["file"],
+        tooLarge(size * 1032),
+      ]);
+    });
+
+    // The longest extra field there is.
+    function withExtraField(member: Buffer) {
+      const header = Buffer.from(member.subarray(0, 10)).fill(4, 3, 4);
+      return Buffer.concat([header, Buffer.from([0xff, 0xff]), Buffer.alloc(0xffff), member.subarray(10)]);
+    }
+
+    test.each([
+      ["behind the tar", ustarEntry("file", Buffer.from("x")), Infinity],
+      ["inside the header of the next layer", withExtraField(gzippedTar(2048)), 0x10000],
+    ])("counts the layers in the middle (%s)", async (_, contents, at) => {
+      const emptyMembers = Array(floor / 0x10000).fill(gzip(withExtraField(gzip(Buffer.alloc(0)))));
+      const [before, after] = [contents.subarray(0, at), contents.subarray(at)].map(part => gzip(gzip(part)));
+      expect(await files(gzip(Buffer.concat([before, ...emptyMembers, after])))).toBe(tooLarge(floor));
+    });
+
+    test.each([
+      ["without a glob", undefined],
+      ["with a glob", { glob: "**" }],
+    ] as const)("extract() stops there too (%s)", async (_, options) => {
+      using dir = tempDir("archive-inner-layers", {});
+      const archive = new Bun.Archive(gzip(gzippedTar(floor + 512)));
+      expect(await archive.extract(String(dir), options).catch(e => e.message)).toBe("ReadError");
+    });
+
+    test("one layer has no such limit", async () => {
+      expect(await files(gzippedTar(floor + 512))).toEqual(["file"]);
+    });
+  });
+
   describe("TypeScript types", () => {
     test("valid archive options", () => {
       const files = { "hello.txt": "Hello, World!" };

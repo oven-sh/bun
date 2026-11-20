@@ -7,8 +7,7 @@ use super::blocking::{Blocking, BlockingPart};
 use super::job_file::{JobFile, Target, bare, is_device};
 use crate::io_order::{Key, Turn};
 use crate::webcore::blob::read_file::{
-    PendingReadFileCompletion, ReadFileCompletion, ReadFileRead, ReadFileResultType,
-    directory_error,
+    PendingReadFileCompletion, ReadFileCompletion, directory_error,
 };
 use crate::webcore::blob::store::Data;
 use crate::webcore::blob::{Blob, SizeType, Store, stat_to_js_mtime};
@@ -63,11 +62,9 @@ impl JobContext for ReadFile {
             file.last_modified = last_modified;
         }
         let result = match this.blocking_part.take_result().unwrap_or(this.result) {
-            Ok(bytes) => ReadFileResultType::Result(ReadFileRead { buf: bytes.into() }),
-            Err(_) if this.is_directory => {
-                ReadFileResultType::Err(directory_error(pathlike(&this.store)))
-            }
-            Err(err) => ReadFileResultType::Err(err.to_system_error().into()),
+            Ok(bytes) => Ok(bytes.into()),
+            Err(_) if this.is_directory => Err(directory_error(pathlike(&this.store))),
+            Err(err) => Err(err.into()),
         };
         completion.complete(result)
     }
@@ -83,9 +80,9 @@ fn pathlike(store: &Store) -> &PathOrFileDescriptor<'static> {
 }
 
 impl ReadFile {
-    pub(crate) fn create(blob: &Blob) -> ReadFile {
+    pub(crate) fn start(blob: &Blob, completion: Box<dyn ReadFileCompletion>, cx: &JsThread<'_>) {
         let store = blob.store().expect("infallible: store present").clone();
-        ReadFile {
+        let mut read = ReadFile {
             target: Target::new(pathlike(&store)),
             turn: None,
             store,
@@ -95,22 +92,19 @@ impl ReadFile {
             is_directory: false,
             last_modified: None,
             blocking_part: BlockingPart::default(),
-        }
-    }
-
-    pub(crate) fn schedule(mut self, completion: Box<dyn ReadFileCompletion>, cx: &JsThread<'_>) {
-        let completion = PendingReadFileCompletion::new(completion);
-        let &PathOrFileDescriptor::Fd(fd) = pathlike(&self.store) else {
-            return Job::<Self>::schedule(cx, self, completion);
         };
-        let can_block = is_device(pathlike(&self.store));
+        let completion = PendingReadFileCompletion::new(completion);
+        let &PathOrFileDescriptor::Fd(fd) = pathlike(&read.store) else {
+            return Job::<Self>::schedule(cx, read, completion);
+        };
+        let can_block = is_device(pathlike(&read.store));
         let key = match can_block {
             true => Key::device_input(fd),
             false => Key::descriptor(fd),
         };
         Turn::after_earlier(cx, key, false, |turn| {
-            self.turn = Some(turn);
-            Job::<Self>::create(cx, self, completion).for_device_if(can_block)
+            read.turn = Some(turn);
+            Job::<Self>::create(cx, read, completion).for_device_if(can_block)
         });
     }
 

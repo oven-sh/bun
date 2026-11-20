@@ -88,18 +88,11 @@ mod dom_call_slowpath {
 /// On Windows, this uses `GetLastError()` and formats the error code.
 /// Returns an owned byte string (heap-copied since `dlerror()`'s storage is
 /// not stable across calls).
-///
-/// Note: never fails — `Vec` write! is infallible and the POSIX path is
-/// unconditional.
 pub(crate) fn get_dl_error() -> Box<[u8]> {
     #[cfg(windows)]
     {
-        use std::io::Write as _;
-        let err = bun_sys::windows::GetLastError();
-        let err_int = err as u32;
-        let mut v = Vec::new();
-        write!(&mut v, "error code {}", err_int).ok();
-        v.into_boxed_slice()
+        let code = bun_sys::windows::GetLastError();
+        format!("error code {code}").into_bytes().into_boxed_slice()
     }
     #[cfg(not(windows))]
     {

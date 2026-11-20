@@ -675,11 +675,12 @@ describe("a sleeping Worker with an unfinished collection does not keep the mark
   // What the helper marked for the main heap between the two marks, and the heaps that had a collection in flight
   // when the main thread started its work.
   function read(log: string) {
-    const mainHeap = log.match(/\[GC<(0x[0-9a-f]+)>/)?.[1];
+    // Windows prints the address of a heap with upper-case digits.
+    const mainHeap = log.match(/\[GC<(0x[0-9a-fA-F]+)>/)?.[1];
     const before = log.slice(0, log.indexOf("MARK start"));
     const during = log.slice(log.indexOf("MARK start"), log.indexOf("MARK end"));
     const count = (id: string, what: string) => before.split(`[GC<${id}>: ${what}`).length - 1;
-    const heaps = new Set([...before.matchAll(/\[GC<(0x[0-9a-f]+)>: START/g)].map(m => m[1]));
+    const heaps = new Set([...before.matchAll(/\[GC<(0x[0-9a-fA-F]+)>: START/g)].map(m => m[1]));
     const unfinished = [...heaps].filter(id => id !== mainHeap && count(id, "START") > count(id, "epilogue"));
     const helperKb = during
       .split("\n")

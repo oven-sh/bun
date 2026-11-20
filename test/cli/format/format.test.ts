@@ -3316,6 +3316,490 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    describe("an event handler of statements", () => {
+      /** A `<button>` with one attribute. A value of several lines is printed on lines of its own. */
+      const button = (name: string, ...lines: string[]) =>
+        lines.length === 1
+          ? `<button ${name}="${lines[0]}">x</button>`
+          : `<button\n    ${name}="\n${lines.map(line => (line === "" ? "\n" : `      ${line}\n`)).join("")}    "\n  >\n    x\n  </button>`;
+      /** The same, with the value as it's written. */
+      const asWritten = (value: string) => `<button\n    @click="${value}"\n  >\n    x\n  </button>`;
+      const withSemicolons = ["--no-config"];
+      const withoutSemicolons = ["--no-config", "--no-semi"];
+      const longObject = [
+        "  kkkkkkkkkkkkkkk: 1,",
+        "  lllllllllllllll: 2,",
+        "  mmmmmmmmmmmmmmmmmm: 3,",
+        "  nnnnnnnnnnnnnnnnnnnnnnnn: 4,",
+      ];
+
+      /** Formats `html` and what's printed for it, which doesn't change. */
+      async function expectWritten(html: string, written: string, args: string[]) {
+        const files = { "a.vue": inTemplate(html), "b.vue": inTemplate(written) };
+        const result = await formatChecked(files, args, { reads: ["a.vue", "b.vue"] });
+        expect(result.files).toEqual({ "a.vue": inTemplate(written), "b.vue": inTemplate(written) });
+        expect(result.exitCode).toBe(0);
+      }
+
+      // Vue compiles a handler as statements only if its value has a `;`, and `(value)` as one expression otherwise:
+      // line breaks don't separate statements (vuejs/core#8854). Each row is the HTML, what's printed without
+      // semicolons, and what Prettier 3.9.9 and oxfmt 0.72.0 print without them. Vue 3 doesn't compile that, except
+      // for the function and for `foo`, which it calls: with the `;` they're a declaration and a statement, which do
+      // nothing. The statements in a statement end as the options say.
+      test.each([
+        [
+          button("@click", "customRange = null; timeMenuOpen = false"),
+          button("@click", "customRange = null;", "timeMenuOpen = false"),
+          button("@click", "customRange = null", "timeMenuOpen = false"),
+        ],
+        [
+          button("v-on:click.prevent", "a(); b()"),
+          button("v-on:click.prevent", "a();", "b()"),
+          button("v-on:click.prevent", "a()", "b()"),
+        ],
+        [
+          button("@click", "a()\n\nb();\nc()"),
+          button("@click", "a();", "", "b();", "c()"),
+          button("@click", "a()", "", "b()", "c()"),
+        ],
+        // Only one statement, which isn't an expression.
+        [button("@[evt]", "if (a) b();"), button("@[evt]", "if (a) b();"), button("@[evt]", "if (a) b()")],
+        [
+          button("@click", "for (const x of xs) f(x);"),
+          button("@click", "for (const x of xs) f(x);"),
+          button("@click", "for (const x of xs) f(x)"),
+        ],
+        [button("@click", "let a = 1;"), button("@click", "let a = 1;"), button("@click", "let a = 1")],
+        [button("@click", "throw e;"), button("@click", "throw e;"), button("@click", "throw e")],
+        [
+          button("@click", "if (a) { b(); }"),
+          button("@click", "if (a) {", "  b()", "};"),
+          button("@click", "if (a) {", "  b()", "}"),
+        ],
+        [
+          button("@click", "function f() { a() };"),
+          button("@click", "function f() {", "  a()", "};"),
+          button("@click", "function f() {", "  a()", "}"),
+        ],
+        [
+          button("@click", "if (a) {}; b()"),
+          button("@click", "if (a) {", "};", "b()"),
+          button("@click", "if (a) {", "}", "b()"),
+        ],
+        [
+          button("@click", "if (a) b(); else c(); d()"),
+          button("@click", "if (a) b()", "else c();", "d()"),
+          button("@click", "if (a) b()", "else c()", "d()"),
+        ],
+        [
+          button("@click", "a() /* c */; b()"),
+          button("@click", "a(); /* c */", "b()"),
+          button("@click", "a() /* c */", "b()"),
+        ],
+        [
+          button("@click", "a(); // c\n b()"),
+          button("@click", "a(); // c", "b()"),
+          button("@click", "a() // c", "b()"),
+        ],
+        // The `;` of a character reference is gone once Vue has decoded the value.
+        [
+          button("@click", "a('&nbsp;'); b()"),
+          button("@click", "a('&nbsp;');", "b()"),
+          button("@click", "a('&nbsp;')", "b()"),
+        ],
+        [button("@click", "foo;;"), button("@click", "foo;"), button("@click", "foo")],
+        // With a `;` in a string, what Prettier prints compiles. It isn't looked for.
+        [button("@click", "a(';'); b()"), button("@click", "a(';');", "b()"), button("@click", "a(';')", "b()")],
+        // However the lines break, on the first run and on the next.
+        [
+          button("@click", `x = a.b(';').c({${longObject.join("").replaceAll(",", ", ")}}).d(2); y()`),
+          button(
+            "@click",
+            "x = a",
+            "  .b(';')",
+            "  .c({",
+            ...longObject.map(line => `  ${line}`),
+            "  })",
+            "  .d(2);",
+            "y()",
+          ),
+          button(
+            "@click",
+            "x = a",
+            "  .b(';')",
+            "  .c({",
+            ...longObject.map(line => `  ${line}`),
+            "  })",
+            "  .d(2)",
+            "y()",
+          ),
+        ],
+        [
+          button(
+            "@click",
+            `$emit('export', {${longObject.join("").replaceAll(",", ", ")}}, () => { done = ';' }); y()`,
+          ),
+          button(
+            "@click",
+            "$emit(",
+            "  'export',",
+            "  {",
+            ...longObject.map(line => `  ${line}`),
+            "  },",
+            "  () => {",
+            "    done = ';'",
+            "  },",
+            ");",
+            "y()",
+          ),
+          button(
+            "@click",
+            "$emit(",
+            "  'export',",
+            "  {",
+            ...longObject.map(line => `  ${line}`),
+            "  },",
+            "  () => {",
+            "    done = ';'",
+            "  },",
+            ")",
+            "y()",
+          ),
+        ],
+        [
+          button("@click", "x = `${a\n.b(';').c().d()}`; y()"),
+          button("@click", "x = `${a.b(';').c().d()}`;", "y()"),
+          button("@click", "x = `${a.b(';').c().d()}`", "y()"),
+        ],
+      ])("keeps a `;` between statements without semicolons: %j", async (html, written, byPrettier) => {
+        expect(written).not.toBe(byPrettier);
+        await expectWritten(html, written, withoutSemicolons);
+      });
+
+      test.each([
+        [".prettierrc", "--flavor=prettier"],
+        [".oxfmtrc.json", "--flavor=oxfmt"],
+      ])('keeps a `;` with "semi": false in %s', async (config, flavor) => {
+        // The `<script>` stays without semicolons.
+        const sfc = (...handler: string[]) =>
+          `<script setup lang="ts">\nconst z = { a: "", b: 1 }\n</script>\n\n${inTemplate(button("@click", ...handler))}`;
+        const written = { "a.vue": sfc("let y: { a: string; b: number } = z;"), "b.vue": sfc("a = 1;", "b = 2") };
+        const files = {
+          [config]: '{ "semi": false }',
+          "a.vue": sfc("let y: {a: string, b: number} = z;"),
+          "b.vue": sfc("a = 1; b = 2"),
+        };
+        for (const args of [[], ["--no-config", "--no-semi", flavor]]) {
+          const result = await formatChecked(files, args, { reads: ["a.vue", "b.vue"] });
+          expect(result.files).toEqual(written);
+          expect(result.exitCode).toBe(0);
+        }
+      });
+
+      // Prettier 3.9.9 and oxfmt 0.72.0 print `while (a) {}` with and without semicolons, which Vue 3 doesn't compile.
+      test.each([[withSemicolons], [withoutSemicolons]])("keeps the `;` after a block: %j", async args => {
+        await expectWritten(button("@click", "while (a) {};"), button("@click", "while (a) {};"), args);
+      });
+
+      test("keeps the `;` after a class with semicolons", async () => {
+        // A class isn't looked into, so the `;` after it stays although the one in it is enough. Prettier 3.9.9 prints
+        // `class A {⏎x = 1;⏎}`.
+        const written = button("@click", "class A {", "  x = 1;", "};");
+        await expectWritten(button("@click", "class A { x = 1 };"), written, withSemicolons);
+      });
+
+      // What's printed for these has no `;` that's certain, and no statement to write one after. Each row is the value,
+      // which stays unchanged, and the options. Prettier 3.9.9 prints `/* c */`, which Vue 3 doesn't compile,
+      // `// prettier-ignore⏎a( 1 )⏎b()`, and the others with the `;` after the `}` or before the `if` removed.
+      test.each([
+        ["/* c */;", withSemicolons],
+        ["/* c */;", withoutSemicolons],
+        ["// prettier-ignore\na( 1 ); b( )", withoutSemicolons],
+        ["switch (a) {\n// prettier-ignore\ncase 1: (b || c)()\n};", withoutSemicolons],
+        [";if (a)\n// prettier-ignore\nb( )", withSemicolons],
+        ["while (x) {}; /* prettier-ignore */ a( 1 )", withSemicolons],
+        ["try {} /* prettier-ignore */ catch { b( ) };", withSemicolons],
+        ["switch (a) {\n// prettier-ignore\ncase 1: b( )\n};", withSemicolons],
+      ])("leaves a handler as written if no statement can have the `;`: %j", async (value, args) => {
+        const html = value.includes("\n") ? asWritten(value) : button("@click", value);
+        await expectWritten(button("@click", value), html, args);
+      });
+
+      // What Prettier 3.9.9 prints has a `;` however the lines break, or has the statements of a handler that has no
+      // `;`, which Vue 3 doesn't compile as statements. Each row is the HTML, and what both print without semicolons
+      // and with them.
+      test.each([
+        // The two in the head of a `for`.
+        [
+          button("@click", "for (;;) a(); b()"),
+          button("@click", "for (;;) a()", "b()"),
+          button("@click", "for (;;) a();", "b();"),
+        ],
+        [
+          button("@click", "$emit('click'); if (a) { for (let i = j; i < 100; i++) {} } else {}"),
+          button("@click", "$emit('click')", "if (a) {", "  for (let i = j; i < 100; i++) {}", "} else {", "}"),
+          button("@click", "$emit('click');", "if (a) {", "  for (let i = j; i < 100; i++) {}", "} else {", "}"),
+        ],
+        // The one that keeps `(b || c)()` from being the arguments of a call.
+        [
+          button("@click", "a = 1; (b || c)()"),
+          button("@click", "a = 1", ";(b || c)()"),
+          button("@click", "a = 1;", "(b || c)();"),
+        ],
+        [
+          button("@click", "(a || b)(); c()"),
+          button("@click", ";(a || b)()", "c()"),
+          button("@click", "(a || b)();", "c();"),
+        ],
+        [
+          button("@click", "if (a) { b(); [c].map(d) }; e()"),
+          button("@click", "if (a) {", "  b()", "  ;[c].map(d)", "}", "e()"),
+          button("@click", "if (a) {", "  b();", "  [c].map(d);", "}", "e();"),
+        ],
+        [
+          button("@click", "do { b(); [c].map(d) } while (a); e()"),
+          button("@click", "do {", "  b()", "  ;[c].map(d)", "} while (a)", "e()"),
+          button("@click", "do {", "  b();", "  [c].map(d);", "} while (a);", "e();"),
+        ],
+        [
+          button("@click", "a(); /** @type {T} */ (b).c()"),
+          button("@click", "a()", ";/** @type {T} */ (b).c()"),
+          button("@click", "a();", "/** @type {T} */ (b).c();"),
+        ],
+        // The one before or after a copy of the source.
+        [
+          button("@click", "a( 1 ); /* prettier-ignore */ [b].map( f )"),
+          button("@click", "a(1)", "/* prettier-ignore */ ;[b].map( f )"),
+          button("@click", "a(1);", "/* prettier-ignore */ [b].map( f )"),
+        ],
+        // The one that is a statement where one is needed.
+        [button("@click", "while (a);"), button("@click", "while (a);"), button("@click", "while (a);")],
+        [
+          button("@click", "while (a); b(); c()"),
+          button("@click", "while (a);", "b()", "c()"),
+          button("@click", "while (a);", "b();", "c();"),
+        ],
+        [
+          button("@click", "if (a); else b()"),
+          button("@click", "if (a);", "else b()"),
+          button("@click", "if (a);", "else b();"),
+        ],
+        [
+          button("@click", "do ; while (a)"),
+          button("@click", "do;", "while (a)"),
+          button("@click", "do;", "while (a);"),
+        ],
+        [
+          button("@click", "for (const x of xs); a()"),
+          button("@click", "for (const x of xs);", "a()"),
+          button("@click", "for (const x of xs);", "a();"),
+        ],
+        [button("@click", "l: ; a()"), button("@click", "l:;", "a()"), button("@click", "l:;", "a();")],
+        // No `;` for Vue.
+        [button("@click", "return"), button("@click", "return"), button("@click", "return;")],
+        [button("@click", "a = 1\nb = 2"), button("@click", "a = 1", "b = 2"), button("@click", "a = 1;", "b = 2;")],
+        [button("@click", "while(a){}"), button("@click", "while (a) {}"), button("@click", "while (a) {}")],
+        [
+          button("@click", "a('&nbsp;')\nb()"),
+          button("@click", "a('&nbsp;')", "b()"),
+          button("@click", "a('&nbsp;');", "b();"),
+        ],
+        // Nothing at all.
+        [button("@click", " ; ; "), button("@click", ""), button("@click", "")],
+      ])("prints a handler like Prettier if that keeps how Vue compiles it: %j", async (html, without, withThem) => {
+        await expectWritten(html, without, withoutSemicolons);
+        await expectWritten(html, withThem, withSemicolons);
+      });
+
+      test("a function is a function without the `;`, like Prettier", async () => {
+        // Vue 3 takes `x => a();;` for a function too, and what it compiles has the `;` in it, which isn't JavaScript.
+        const args = [...withoutSemicolons, "--arrow-parens=avoid"];
+        await expectWritten(button("@click", "x => a( );;"), button("@click", "x => a()"), args);
+      });
+
+      test("keeps the `;` before the only statement like Prettier", async () => {
+        await expectWritten(button("@click", ";(a  ||  b)( )"), button("@click", ";(a || b)()"), withoutSemicolons);
+      });
+
+      test("a handler that's one expression and a `;` loses the `;` like Prettier", async () => {
+        // Vue 3 compiles `a = 1;` as `$event => { a = 1; }` and `a = 1` as `$event => (a = 1)`, which returns the value.
+        // oxfmt keeps the `;` since 0.79.0. A function or a path to one keeps it in Prettier too.
+        for (const args of [withSemicolons, withoutSemicolons]) {
+          await expectWritten(button("@click", "a = 1;"), button("@click", "a = 1"), args);
+          await expectWritten(button("@click", "doSomething;"), button("@click", "doSomething;"), args);
+        }
+      });
+
+      // With semicolons, one that ends a statement is always printed, wherever the statement is. Each row is the HTML
+      // and what's printed, which is what Prettier 3.9.9 prints: no `;` after the `}`.
+      test.each([
+        [button("@click", "a = 1; b = 2"), button("@click", "a = 1;", "b = 2;")],
+        [button("@click", "if (a) { b(); };"), button("@click", "if (a) {", "  b();", "}")],
+        [button("@click", "if (a) {} else { b(); };"), button("@click", "if (a) {", "} else {", "  b();", "}")],
+        [button("@click", "if (a) b(); else {};"), button("@click", "if (a) b();", "else {", "}")],
+        [button("@click", "for (const k in o) { b(k); };"), button("@click", "for (const k in o) {", "  b(k);", "}")],
+        [button("@click", "for (const x of xs) { f(x); };"), button("@click", "for (const x of xs) {", "  f(x);", "}")],
+        [button("@click", "while (a) { b(); };"), button("@click", "while (a) {", "  b();", "}")],
+        [button("@click", "with (a) { b(); };"), button("@click", "with (a) {", "  b();", "}")],
+        [button("@click", "l: { b(); };"), button("@click", "l: {", "  b();", "}")],
+        [button("@click", "do {} while (a);"), button("@click", "do {} while (a);")],
+        [button("@click", "try { a(); } catch (e) {};"), button("@click", "try {", "  a();", "} catch (e) {}")],
+        [button("@click", "try {} catch (e) { b(e); };"), button("@click", "try {", "} catch (e) {", "  b(e);", "}")],
+        [button("@click", "try {} finally { c(); };"), button("@click", "try {", "} finally {", "  c();", "}")],
+        [
+          button("@click", "switch (a) { case 1: b(); };"),
+          button("@click", "switch (a) {", "  case 1:", "    b();", "}"),
+        ],
+        [button("@click", "function f() { a(); };"), button("@click", "function f() {", "  a();", "}")],
+        // The `;` after a copy of the source, and the one in a statement that has no `prettier-ignore` in it.
+        [
+          button("@click", "// prettier-ignore\na( 1 ); b( )"),
+          button("@click", "// prettier-ignore", "a( 1 );", "b();"),
+        ],
+        [
+          button("@click", "/* prettier-ignore */ a( 1 ); while (x) {}"),
+          button("@click", "/* prettier-ignore */ a( 1 );", "while (x) {}"),
+        ],
+        [
+          button("@click", "if (a) { b( 1 ); }; /* prettier-ignore */ { c( 1 ) }"),
+          button("@click", "if (a) {", "  b(1);", "}", "/* prettier-ignore */ { c( 1 ) }"),
+        ],
+      ])("prints statements like Prettier with semicolons: %j", async (html, written) => {
+        await expectWritten(html, written, withSemicolons);
+      });
+
+      test("every handler with a `;` and more than an expression keeps one", async () => {
+        const expressions = [
+          "a()",
+          "a = 1",
+          "foo",
+          "(b || c)()",
+          "[a, b].forEach(f)",
+          "+a",
+          "a(';')",
+          "a('&nbsp;')",
+          "() => a()",
+          "/** @type {T} */ (b).c()",
+        ];
+        const others = [
+          "if (a) b()",
+          "if (a) { b() }",
+          "if (a) b(); else c()",
+          "if (a); else b()",
+          "for (;;) a()",
+          "for (const x of xs) f(x)",
+          "for (const k in o) {}",
+          "while (a) {}",
+          "while (a);",
+          "do a(); while (b)",
+          "do {} while (b)",
+          "with (a) b()",
+          "l: a()",
+          "try { a() } finally { b() }",
+          "switch (a) { case 1: (b || c)() }",
+          "{ a() }",
+          "{}",
+          "function f() {}",
+          "function f() { a(); }",
+          "class A {}",
+          "class A { x = 1; }",
+          "let x = 1",
+          "throw e",
+          "debugger",
+        ];
+        // What comes second decides whether the first one's `;` is needed, printed before it, or gone.
+        const second = [
+          "a()",
+          "(b || c)()",
+          "if (a) b()",
+          "for (;;) a()",
+          "while (a);",
+          "{}",
+          "class A {}",
+          "let x = 1",
+        ];
+        const handlers = [
+          ...others.map(one => `${one};`),
+          ...[...expressions, ...others].flatMap(one => second.map(next => `${one}; ${next}`)),
+        ];
+        const text = inTemplate(handlers.map(handler => `<button @click="${handler}">x</button>`).join("\n  "));
+        for (const args of [withSemicolons, withoutSemicolons]) {
+          const first = await format({ "a.vue": text }, args, { reads: ["a.vue"] });
+          expect({ stdout: first.stdout, exitCode: first.exitCode }).toEqual({ stdout: "a.vue", exitCode: 0 });
+          const written = first.files["a.vue"]!;
+          const values = [...written.matchAll(/@click="([^"]*)"/g)].map(match => match[1]);
+          expect(values.length).toBe(handlers.length);
+          // The `;` of a character reference isn't one for Vue.
+          const lost = handlers.filter((_, i) => !values[i].replaceAll(/&\w+;/g, "").includes(";"));
+          expect(lost).toEqual([]);
+          const again = await format({ "a.vue": written }, args, { reads: ["a.vue"] });
+          expect({ ...again.files, stdout: again.stdout, exitCode: again.exitCode }).toEqual({
+            "a.vue": written,
+            stdout: "",
+            exitCode: 0,
+          });
+        }
+      });
+
+      // A handler with no `;`, which Vue 3 doesn't compile as statements. Prettier 3.9.9 prints each with a `;` in it:
+      // `let y: { a: string; b: number } = z`, `a();` and `x = 1;`. Printed like that, they'd get a `;` after each
+      // statement the next time, because the one in a type is only printed if the type fits on a line.
+      test.each([
+        ["let y: {a: string, b: number} = z", withoutSemicolons],
+        ["if (f(() => { a( ) })) {}", withSemicolons],
+        ["while (a) {}\nclass A { x = 1 }", withSemicolons],
+      ])("leaves a handler with no `;` as written if it would get one: %j", async (value, args) => {
+        const sfc = (html: string) =>
+          `<script setup lang="ts">\nconst z = 1${args.includes("--no-semi") ? "" : ";"}\n</script>\n\n${inTemplate(html)}`;
+        const html = value.includes("\n") ? asWritten(value) : button("@click", value);
+        const files = { "a.vue": sfc(button("@click", value)), "b.vue": sfc(html) };
+        const result = await formatChecked(files, args, { reads: ["a.vue", "b.vue"] });
+        expect(result.files).toEqual({ "a.vue": sfc(html), "b.vue": sfc(html) });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("a handler with no `;` doesn't change the second time", async () => {
+        const statements = [
+          "a()",
+          "(b || c)()",
+          "if (a) { b() }",
+          "if (f(() => { a() })) {}",
+          "while (a) {}",
+          "for (const x of xs) f(x)",
+          "try { a() } finally { b() }",
+          "switch (a) { case 1: b() }",
+          "{}",
+          "function f() { a() }",
+          "function f(a = () => { b() }) {}",
+          "class A { x = 1 }",
+          "let x = () => { a() }",
+          "return",
+          "a(() => { if (x) {}\n[c].map(d) })",
+          "a('&nbsp;')",
+        ];
+        const handlers = [...statements, ...statements.flatMap(one => statements.map(next => `${one}\n${next}`))];
+        const text = inTemplate(handlers.map(handler => `<button @click="${handler}">x</button>`).join("\n  "));
+        for (const args of [withSemicolons, withoutSemicolons]) {
+          const first = await format({ "a.vue": text }, args, { reads: ["a.vue"] });
+          expect({ stdout: first.stdout, exitCode: first.exitCode }).toEqual({ stdout: "a.vue", exitCode: 0 });
+          const written = first.files["a.vue"]!;
+          const again = await format({ "a.vue": written }, args, { reads: ["a.vue"] });
+          expect({ ...again.files, stdout: again.stdout, exitCode: again.exitCode }).toEqual({
+            "a.vue": written,
+            stdout: "",
+            exitCode: 0,
+          });
+        }
+      });
+
+      test("prints the handler of an HTML event like Prettier, because the browser inserts semicolons", async () => {
+        const files = { "a.html": '<button onclick="a(); b()">x</button>\n' };
+        const result = await formatChecked(files, withoutSemicolons, { reads: ["a.html"] });
+        expect(result.files).toEqual({ "a.html": '<button\n  onclick="\n    a()\n    b()\n  "\n>\n  x\n</button>\n' });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
     test("keeps a comment after an object literal in an Angular binding inside the quotes", async () => {
       // Prettier 3.9.9 and oxfmt 0.72.0 print `[x]="{ one: 1 }" // comment`, which turns the comment into attributes.
       const html = '<a [x]="{ one: 1 } // comment"></a>\n<a [x]="{one:  1} // prettier-ignore"></a>\n';

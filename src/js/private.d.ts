@@ -275,9 +275,6 @@ declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: string | 
 declare function $getProxyInternalField(proxy: object, field: TODO): TODO;
 declare function $min(...values: number[]): number;
 
-/** Defined by the fuzzilli build; `src/js/eval/fuzzilli-reprl.ts` calls it and cannot declare it (see its header). */
-declare function resetCoverage(): void;
-
 interface LoaderEntry {
   key: string;
   state: number;

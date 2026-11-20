@@ -542,7 +542,7 @@ unsafe fn deinit_runtime_state(state: OpaqueRuntimeState) {
 /// Error mapping: resolver `Failure` returns the resolver error,
 /// `NotFound` returns `error.ModuleNotFound`,
 /// `JSModuleLoader.import` throwing returns a rejected promise.
-fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
+pub(crate) fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
     // ── is_in_preload guard ─────────────────────────────────────────────
     let global = vm.global();
     vm.is_in_preload.set(true);
@@ -860,6 +860,14 @@ fn run_pending_test_step(global: &JSGlobalObject) {
 /// `on_before_exit` drain loops where blocking when the loop is idle would
 /// hang shutdown.
 fn auto_tick_active(vm: &VirtualMachine) {
+    auto_tick_active_with_max_wait(vm, None);
+}
+
+/// [`auto_tick_active`] with the I/O poll capped at `max_wait`.
+pub(crate) fn auto_tick_active_with_max_wait(
+    vm: &VirtualMachine,
+    max_wait: Option<&bun_core::Timespec>,
+) {
     let el = vm.event_loop();
     let loop_ = el.usockets_loop();
 
@@ -910,13 +918,19 @@ fn auto_tick_active(vm: &VirtualMachine) {
             // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
             // and so is the hook: NOW_NS_UNKNOWN means it took none.
             let mut now: Option<bun_core::Timespec> = None;
-            let have_timeout = state.timer.get_timeout(
+            let mut have_timeout = state.timer.get_timeout(
                 &mut timespec,
                 has_pending_immediate,
                 quic_next_tick_us,
                 vm,
                 &mut now,
             );
+            if let Some(max_wait) = max_wait {
+                if !have_timeout || max_wait.order(&timespec).is_lt() {
+                    timespec = *max_wait;
+                    have_timeout = true;
+                }
+            }
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             loop_.tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns);
         } else {

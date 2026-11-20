@@ -2872,8 +2872,7 @@ impl TestCommand {
         VirtualMachine::set_is_main_thread_vm(true);
 
         if ctx.test_options.isolate {
-            vm.test_isolation_enabled.set(true);
-            vm.auto_killer.enabled.set(true);
+            vm.enable_test_isolation();
         }
         vm.test_isolation_state
             .shares_global
@@ -2910,14 +2909,6 @@ impl TestCommand {
                 .set_time_zone(&EncodedSlice::from_bytes(tz_name));
         }
         let _ = vm.test_isolation_state.time_zone.set(Box::from(tz_name));
-        if vm.test_isolation_enabled.get() {
-            let _ = vm.test_isolation_state.proxy_env.set(
-                bun_jsc::rare_data::ProxyEnvSnapshot::capture(&vm.env_loader().map),
-            );
-            vm.test_isolation_state
-                .synthetic_allocation_limit
-                .set(Some(bun_jsc::virtual_machine::synthetic_allocation_limit()));
-        }
 
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and

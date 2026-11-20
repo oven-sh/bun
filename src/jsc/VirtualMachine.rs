@@ -5364,8 +5364,15 @@ impl VirtualMachine {
     #[unsafe(export_name = "Bun__VM__useIsolationSourceProviderCache")]
     pub extern "C" fn use_isolation_source_provider_cache(&self) -> bool {
         self.test_isolation_enabled.get()
+            && isBunTest.load(core::sync::atomic::Ordering::Relaxed)
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false)
+    }
+
+    /// Whether [`swap_global_for_test_isolation`](Self::swap_global_for_test_isolation) retires the realms of this VM.
+    #[unsafe(export_name = "Bun__VM__isTestIsolationEnabled")]
+    pub extern "C" fn is_test_isolation_enabled(&self) -> bool {
+        self.test_isolation_enabled.get()
     }
 
     #[unsafe(export_name = "Bun__VM__isMainModule")]
@@ -5622,6 +5629,17 @@ impl VirtualMachine {
     pub fn release_at_retirement(&self, release: Box<dyn FnOnce()>) {
         let at_retirement = &self.test_isolation_state.at_retirement;
         at_retirement.with_mut(|it| it.push(release));
+    }
+
+    /// Arms [`Self::swap_global_for_test_isolation`] and records the VM-level state it puts back.
+    pub fn enable_test_isolation(&self) {
+        self.test_isolation_enabled.set(true);
+        self.auto_killer.enabled.set(true);
+        let state = &self.test_isolation_state;
+        let proxy_env = crate::rare_data::ProxyEnvSnapshot::capture(&self.env_loader().map);
+        let _ = state.proxy_env.set(proxy_env);
+        let limit = synthetic_allocation_limit();
+        state.synthetic_allocation_limit.set(Some(limit));
     }
 
     /// Replaces the global object between test files so each file runs in a fresh realm.

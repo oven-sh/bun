@@ -911,7 +911,7 @@ pub(crate) mod command {
             return Tag::WhyCommand;
         }
         if x == RootCommandMatcher::case(b"fuzzilli") {
-            if bun_core::Environment::ENABLE_FUZZILLI {
+            if bun_core::Environment::ENABLE_FUZZILLI_REPRL {
                 return Tag::FuzzilliCommand;
             }
             return Tag::AutoCommand;
@@ -1537,7 +1537,7 @@ pub(crate) mod command {
     #[cold]
     #[inline(never)]
     fn exec_fuzzilli(log: &mut bun_ast::Log) -> CmdResult {
-        if bun_core::Environment::ENABLE_FUZZILLI {
+        if bun_core::Environment::ENABLE_FUZZILLI_REPRL {
             let ctx = init(Tag::FuzzilliCommand, log)?;
             return super::fuzzilli_command::FuzzilliCommand::exec(ctx);
         }

@@ -1,10 +1,19 @@
-#ifdef FUZZILLI_ENABLED
+#include "root.h"
+
 #include "JavaScriptCore/CallFrame.h"
+#include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/Exception.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/SourceCode.h"
+#include "JavaScriptCore/TopExceptionScope.h"
+#include "PathInlines.h"
 #include "ZigGlobalObject.h"
-#include "root.h"
+#include "wtf/URL.h"
+#include "wtf/text/MakeString.h"
 #include "wtf/text/WTFString.h"
+
+#ifdef FUZZILLI_ENABLED
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
@@ -246,14 +255,6 @@ extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard)
     *guard = 0;
 }
 
-// Function to reset coverage for next REPRL iteration
-// This should be called after each script execution
-JSC_DEFINE_HOST_FUNCTION(jsResetCoverage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
-{
-    __sanitizer_cov_reset_edgeguards();
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
 void Bun__REPRL__resetCoverage()
 {
     __sanitizer_cov_reset_edgeguards();
@@ -282,23 +283,42 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
         JSC::ImplementationVisibility::Public,
         JSC::NoIntrinsic,
         JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
-
-    globalObject->putDirectNativeFunction(
-        vm,
-        globalObject,
-        JSC::Identifier::fromString(vm, "resetCoverage"_s),
-        0,
-        jsResetCoverage,
-        JSC::ImplementationVisibility::Public,
-        JSC::NoIntrinsic,
-        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
 } // extern "C"
 
 #else
 
-// fuzzilli_compile_loop.rs names it in every build and calls it only in one with Fuzzilli.
+// fuzzilli_command.rs names it in every build. Only a build with Fuzzilli has coverage to reset.
 extern "C" void Bun__REPRL__resetCoverage() {}
 
 #endif // FUZZILLI_ENABLED
+
+// Runs one program of fuzzilli_command.rs as global code of a file in `directory`. On a throw: false, with the thrown value in *thrown.
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__REPRL__evaluate(Zig::GlobalObject* globalObject, const unsigned char* source, size_t sourceLen, const unsigned char* directory, size_t directoryLen, JSC::EncodedJSValue* thrown)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // import() resolves against the origin, and looks again for a file the program wrote only if the origin is a path.
+    auto path = makeString(WTF::String::fromUTF8(std::span { directory, directoryLen }), PLATFORM_SEP_s, "[REPRL]"_s);
+    JSC::SourceCode code = JSC::makeSource(
+        WTF::String::fromUTF8ReplacingInvalidSequences(std::span { source, sourceLen }),
+        JSC::SourceOrigin { WTF::URL::fileURLWithFileSystemPath(path) },
+        JSC::SourceTaintedOrigin::Untainted,
+        "[REPRL]"_s,
+        WTF::TextPosition(),
+        JSC::SourceProviderSourceType::Program);
+
+    WTF::NakedPtr<JSC::Exception> exception;
+    JSC::evaluate(globalObject, code, globalObject->globalThis(), exception);
+
+    JSC::Exception* error = exception.get();
+    if (!error)
+        error = scope.exception();
+    if (!error)
+        return true;
+    *thrown = JSC::JSValue::encode(error->value());
+    scope.clearException();
+    return false;
+}

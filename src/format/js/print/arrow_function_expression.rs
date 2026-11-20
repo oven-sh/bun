@@ -362,7 +362,8 @@ impl<'a, T: Format<'a>> Format<'a> for FormatConditionalBody<'_, T> {
 
 /// True if the signature is too complex to share a line with others: it has type parameters, a destructuring, rest or
 /// default parameter, or parameters and a return type.
-fn has_complex_signature(arrow: Func<'_>) -> bool {
+#[inline(always)]
+pub(crate) fn has_complex_signature(arrow: Func<'_>) -> bool {
     if !arrow.type_params().is_empty() || !has_only_simple_parameters(arrow, true) {
         return true;
     }

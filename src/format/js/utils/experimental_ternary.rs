@@ -9,7 +9,7 @@
 //! ```
 
 use super::assignment_like::is_short_argument;
-use super::conditional::{ConditionalLike, Operand, should_extra_indent};
+use super::conditional::{AfterColon, ConditionalLike, Operand, should_extra_indent};
 use super::typecast::{comments_of_expression, is_chain_expression_without_comments};
 use crate::js::parentheses;
 use crate::js::print::binary_like_expression::is_angular_pipe;
@@ -191,18 +191,8 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
     //   const result = foo != null ? foo : (
     //     some + long + expression
     //   );
-    let try_to_parenthesize_alternate = !is_in_chain
-        && !is_parent_ternary
-        && match (test, consequent) {
-            (Operand::Expr(_), Operand::Expr(consequent)) if is_in_jsx => {
-                matches!(consequent.kind(), ExprKind::Null)
-            }
-            (Operand::Expr(test), Operand::Expr(consequent)) => {
-                is_short_argument(consequent, f.options().line_width.value() / 4, f)
-                    && is_simple_expression_by_node_count(test, 3, f)
-            }
-            _ => false,
-        };
+    let try_to_parenthesize_alternate =
+        !is_in_chain && !is_parent_ternary && is_short_before_colon(test, consequent, is_in_jsx, f);
 
     let should_group_test_and_consequent = is_in_chain
         || (is_ts_conditional && !is_parent_ternary)
@@ -401,6 +391,8 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
         );
     });
 
+    // This printer writes no parentheses around the operands of a conditional with an element in it.
+    let outer = AfterColon::enter(conditional, false, f);
     if is_on_same_line_as_return {
         write!(f, group(&indent(&format_parts)));
     } else if should_extra_indent || (is_ts_conditional && is_in_test) {
@@ -416,6 +408,41 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
     } else {
         write!(f, format_parts);
     }
+    AfterColon::leave(outer, f);
+}
+
+/// True if the test and what follows the `?` are short enough for `a ? b : (⏎c⏎)`.
+fn is_short_before_colon<'a>(
+    test: Operand<'a>,
+    consequent: Operand<'a>,
+    is_in_jsx: bool,
+    f: &Formatter<'a>,
+) -> bool {
+    match (test, consequent) {
+        (Operand::Expr(_), Operand::Expr(consequent)) if is_in_jsx => {
+            matches!(consequent.kind(), ExprKind::Null)
+        }
+        (Operand::Expr(test), Operand::Expr(consequent)) => {
+            is_short_argument(consequent, f.options().line_width.value() / 4, f)
+                && is_simple_expression_by_node_count(test, 3, f)
+        }
+        _ => false,
+    }
+}
+
+/// True if `write_ternary` tries `a ? b : (⏎c⏎)` for `conditional`: it is in no chain, and `a ? b` is short.
+pub(crate) fn parenthesizes_alternate<'a>(conditional: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let ExprKind::Cond { test, yes, no } = conditional.kind() else {
+        return false;
+    };
+    let parent = conditional.ast_parent();
+    let is_in_jsx = matches!(
+        first_non_conditional_parent(conditional),
+        AstNodes::JSXExpressionContainer(_)
+    ) && !matches!(parent.parent(), AstNodes::JSXAttribute(_));
+    !Operand::Expr(no).is_conditional()
+        && !matches!(parent, AstNodes::ConditionalExpression(_))
+        && is_short_before_colon(Operand::Expr(test), Operand::Expr(yes), is_in_jsx, f)
 }
 
 /// The parent of the outermost conditional that has `e` as a consequent or alternate, directly or nested.

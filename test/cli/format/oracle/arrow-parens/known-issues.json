@@ -1,0 +1,22 @@
+[
+  "x = cond ? (a: T) => ({ c: a }) : (y) => 1;\n",
+  "x = cond ? async () => ({}) : (y) => y;\n",
+  "x = f(cond ? () => ({}) : a < b, (s) => s);\n",
+  "const v = cond ? () => ({}) : [(y) => y];\n",
+  "x = cond ? (q) => ({ a: 1 }) : (deps) => (id): T => y;\n",
+  "x = cond ? (q) => ({ ...{ a } }) : (deps) => (id): T => y;\n",
+  "x = cond ? (q) => ({ q }) : (deps) => async (id): Promise<T> => y;\n",
+  "x = cond ? (q) => ({ q }) : (deps) => (id): void => y;\n",
+  "function* g() {\n  x = a ? yield (q, r) : (deps) => y;\n}\n",
+  "switch (v) {\n  case (a, b):\n    (c) => d;\n}\n",
+  "export const reducer = enabled ? useImmer ? (draft) => ({ draft }) : (state) => reduceWithPlainObjects(state, initialAction) : fallbackReducerForDisabled;\n",
+  "x = a ? b ? (q) => ({ q }) : (state) => f(state) : (fallback): Handler => fallback;\n",
+  "switch (v) {\n  case cond ? (q) => ({ q }) : (d) => d:\n    break;\n}\n",
+  "x = cond ? (q) => ({ q }) : (a, b) => (keyof) => (id): T => y;\n",
+  "x = a ? <U.V>(q, r) : (deps) => (id): T => y;\n",
+  "x = cond ? (q) => ({ q }) : (deps) => (id): T[] => y;\n",
+  "x = cond ? (q) => ({ q }) : (deps) => (id): T | U => y;\n",
+  "x = cond ? (q) => ({ q }) : (deps) => (id): id is T => y;\n",
+  "x = a ? <U>(q.r, s) : (deps) => (id): T => y;\n",
+  "x = cond ? (q) => ({ q }) : (d) => (p): Promise<R> => (s: S) => y;\n"
+]

@@ -141,6 +141,76 @@ describe("node:test", () => {
     });
   });
 
+  test.concurrent("should give a before() or after() hook its own timeout, not the runner default", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["40-hook-own-timeout.js"], {}, ["--timeout", "10"]);
+    expect(stderr).toContain("1 pass");
+    expect(stdout).toContain("file before, suite before, suite after, file after");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test.concurrent("should end a before() hook without a timeout at the runner default", async () => {
+    const { exitCode, stderr } = await runTests(["41-hook-runner-timeout.js"], {}, ["--timeout", "100"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("0 pass"),
+    });
+  });
+
+  test.concurrent("should end a before() hook that never settles at its own timeout", async () => {
+    const { exitCode, stderr } = await runTests(["42-hook-own-timeout-expires.js"], {}, ["--timeout", "10"]);
+    expect(stderr).toContain("test timed out after 50ms");
+    expect(stderr).not.toContain("hook timed out");
+    expect(exitCode).toBe(1);
+  });
+
+  // The child of 44-hook-own-timeout-blocks.js lives 5.5 s, so these rows cannot
+  // end sooner. They get the headroom of the rows above.
+  test.concurrent(
+    "should end a before() hook with its own timeout that blocks in spawnSync",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["44-hook-own-timeout-blocks.js"]);
+      expect(stdout).toContain("child: SIGTERM");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("0 pass"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent.each([["60000"], ["0"]])(
+    "should not end a blocked before() hook with its own timeout before --timeout %s",
+    async timeout => {
+      const { exitCode, stdout, stderr } = await runTests(["44-hook-own-timeout-blocks.js"], {}, [
+        "--timeout",
+        timeout,
+      ]);
+      expect(stdout).toContain("child: null");
+      expect(stderr).toContain("1 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should not kill a process when a timer fires in an after() hook with an Infinity timeout",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["43-hook-own-timeout-child.js"], {}, ["--timeout", "300"]);
+      expect(stdout).toContain("child: SIGKILL");
+      expect(stderr).not.toContain("dangling process");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+  );
+
   test("should not leak file-level beforeEach hooks across files in one process", async () => {
     const { exitCode, stderr } = await runTests(["14-root-hooks-a.js", "14-root-hooks-b.js"]);
     expect(stderr).toContain("4 pass");

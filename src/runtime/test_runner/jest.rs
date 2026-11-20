@@ -592,6 +592,30 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     }
 }
 
+/// Reached only from `node:test`: moves the deadline of the entry that `done` names to `ms` from now, never earlier. `Infinity` removes it.
+pub(crate) fn node_test_raise_deadline(done: JsLocal<'_>, ms: f64) {
+    use bun_core::{Timespec, TimespecMockMode};
+    let Some(buntest) = bun_test::clone_active_strong() else {
+        return;
+    };
+    let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done.to_js());
+    let Some(dcb) = wrapper.as_class_ref::<bun_test::DoneCallback>() else {
+        return;
+    };
+    let Some(entry) = dcb.running_sequence(&buntest).and_then(|sequence| sequence.active_entry.get()) else {
+        return;
+    };
+    let deadline = &buntest.sequence_entry(entry).timespec;
+    let raised = if ms.is_finite() {
+        Timespec::ms_from_now(TimespecMockMode::ForceRealTime, ms as i64)
+    } else {
+        Timespec::EPOCH
+    };
+    if Timespec::order_ignore_epoch(raised, deadline.get()).is_gt() {
+        deadline.set(raised);
+    }
+}
+
 pub(crate) mod on_unhandled_rejection {
     use super::*;
 

@@ -151,7 +151,14 @@ export default b.declarations(
   ),
   extendAll(
     ["Test"],
-    ...nativeBindings("Bindgen", "jest.bind.ts", "askedByCompiledTestFile", "fileGeneration", "nodeTestMarkResult"),
+    ...nativeBindings(
+      "Bindgen",
+      "jest.bind.ts",
+      "askedByCompiledTestFile",
+      "fileGeneration",
+      "nodeTestMarkResult",
+      "nodeTestRaiseDeadline",
+    ),
   ),
   extendAll(
     bundlerFeatures,

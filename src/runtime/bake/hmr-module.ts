@@ -771,7 +771,22 @@ function reloadModules(toReload: Set<HMRModule>): Promise<HMRModule>[] {
 }
 
 /** Called when modules are replaced. */
-export async function replaceModules(modules: Record<Id, UnloadedModule>, sourceMapId?: SourceMapURL) {
+export async function replaceModules(
+  modules: Record<Id, UnloadedModule>,
+  sourceMapId?: SourceMapURL,
+  cachedModules?: Id[],
+) {
+  if (cachedModules) {
+    // Cached dependencies fill holes in a fresh browser without re-running loaded modules.
+    for (const id of cachedModules) {
+      if (unloadedModuleRegistry[id]) {
+        delete modules[id];
+      }
+    }
+    if (sourceMapId) {
+      sourceMapId.refs = Object.keys(modules).length;
+    }
+  }
   Object.assign(unloadedModuleRegistry, modules);
 
   emitEvent("bun:beforeUpdate", null);

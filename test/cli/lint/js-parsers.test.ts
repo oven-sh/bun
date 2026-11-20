@@ -2813,9 +2813,11 @@ debugger;
 };
 
 describe.concurrent("bun lint with an .oxlintrc.json", () => {
-  test("lints the scripts in .vue, .svelte and .astro files like oxlint", async () => {
+  test("lints the scripts in .vue, .svelte and .astro files like oxlint, except for the template's bindings", async () => {
     const result = await lint(scripts, ["-f", "json"]);
-    // This is what oxlint 1.80 reports.
+    // This is what oxlint 1.80 reports. oxlint skips `no-unused-vars` and `prefer-const` in .vue and .svelte files.
+    // Here they skip only the top-level bindings of a script that the template can use: every script of a.vue, because
+    // it has a `<script setup>`, and both scripts of b.svelte.
     expect(diagnostics(result.raw)).toMatchInlineSnapshot(`
       "a.vue 14:15 eslint(no-undef)
       a.vue 15:22 eslint(no-var)
@@ -2839,7 +2841,8 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
 
   test("--fix fixes the scripts in place", async () => {
     const result = await lint(scripts, ["--fix", "-f", "json"], ["a.vue", "b.svelte", "c.astro", "d.vue"]);
-    // These are the exact bytes oxlint 1.87 writes.
+    // These are the exact bytes oxlint 1.87 writes, except that a `var` the template can assign becomes `let`, where
+    // oxlint writes `const`.
     expect(result.files).toMatchInlineSnapshot(`
       {
         "a.vue": 
@@ -2849,7 +2852,7 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
       </template>
 
       <script lang="ts">
-      const a: number = 1;
+      let a: number = 1;
       debugger;
       export default { name: "a" };
       </script>
@@ -2857,7 +2860,7 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
       <script setup lang="ts" generic="T extends Record<string, string>">
       import { ref } from "vue";
       const props = defineProps<{ x: number }>();
-      let msg = ref("é"); const unused = 2;
+      let msg = ref("é"); let unused = 2;
       if (msg.value == "1") undefinedThing();
       // oxlint-disable-next-line no-debugger
       debugger;
@@ -2870,13 +2873,13 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
       ,
         "b.svelte": 
       "<script module lang="ts">
-        export const m: number = 1;
+        export let m: number = 1;
       </script>
       <script-like>var no = 1;</script-like>
       <script>
         let count = 0;
         $: doubled = count * 2;
-        const v = 1; debugger;
+        let v = 1; debugger;
       </script>
       <button on:click={() => count == 1}>{doubled}</button>
       "
@@ -2905,5 +2908,271 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
       }
     `);
     expect(result.exitCode).toBe(1);
+  });
+
+  // The issue's fixtures. ESLint with vue-eslint-parser reports these five, plus four on App.vue's top level that it
+  // knows the template doesn't use. Without the template, nothing the template could use is reported.
+  test("the rules that depend on the template run in .vue and .svelte files except on its bindings", async () => {
+    const files = {
+      ".oxlintrc.json": JSON.stringify({
+        categories: { correctness: "off" },
+        rules: {
+          "no-unused-vars": "error",
+          "prefer-const": "error",
+          "no-unassigned-vars": "error",
+          "no-useless-assignment": "error",
+        },
+      }),
+      "App.vue": `<script setup>
+import { computed, ref } from "vue";
+
+const unusedConst = 1;
+let neverReassigned = 2;
+const shown = computed(() => neverReassigned);
+function unusedHelper() {
+  return 3;
+}
+</script>
+
+<template>
+  <p>{{ shown }}</p>
+</template>
+`,
+      "Inner.vue": `<script setup>
+import { computed } from "vue";
+
+const shown = computed(() => {
+  const innerUnused = 1;
+  let innerNeverReassigned = 2;
+  return innerNeverReassigned;
+});
+</script>
+
+<template>
+  <p>{{ shown }}</p>
+</template>
+`,
+      // Without a `<script setup>`, the template can't use the script's bindings.
+      "Plain.vue": `<script>
+const unusedConst = 1;
+let neverReassigned = 2;
+export default {
+  data() {
+    const innerUnused = 3;
+    return { value: neverReassigned };
+  },
+};
+</script>
+
+<template>
+  <p>{{ value }}</p>
+</template>
+`,
+      // A template in TypeScript can use a type, as in `(count as Ref<number>)`, so top-level types are skipped too.
+      "Types.vue": `<script setup lang="ts">
+import type { Ref } from "vue";
+import { type ComputedRef, ref } from "vue";
+interface Shape {}
+const count = ref(0);
+function f() {
+  type Local = 1;
+  const unused = 1;
+}
+</script>
+
+<template>
+  <p @click="f()">{{ (count as Ref<number>).value }}</p>
+</template>
+`,
+      "Types.svelte": `<script lang="ts" generics="T extends { text: string }">
+  import type { Snippet } from "svelte";
+  interface Row {
+    item: T;
+  }
+  let { items, row }: { items: T[]; row: Snippet<[Row]> } = $props();
+  function label() {
+    type Unused = string;
+    let same = 1;
+    return same;
+  }
+</script>
+{#each items as item}{@render row({ item })}{/each}
+{label()}
+`,
+      // oxlint reports `b` of `let b = 0; b ||= 2;` where ESLint does not. It is also skipped at the top level.
+      "Candidates.vue": `<script setup lang="ts">
+let open = false;
+open ||= true;
+function f() {
+  let inner = 0;
+  inner ||= 1;
+}
+</script>
+
+<template>
+  <button @click="open = !open">{{ f() }}</button>
+</template>
+`,
+      // The template can assign a binding, and read it after the script's last assignment.
+      "Assigned.vue": `<script setup>
+let el;
+let title = "a";
+console.log(title);
+title = "b";
+for (let i = 0; i < 2; i++) console.log(i);
+function f() {
+  let local;
+  let t = "a";
+  console.log(t);
+  t = "b";
+  return local;
+}
+</script>
+
+<template>
+  <p ref="el" @click="f()">{{ title }}</p>
+</template>
+`,
+      "Dialog.svelte": `<script>
+  let dialog;
+  function open() {
+    let pending;
+    dialog.showModal();
+    return pending;
+  }
+</script>
+<dialog bind:this={dialog}></dialog>
+<button on:click={open}>Open</button>
+`,
+      // oxlint, and bun lint, skip a `<script` that a line break follows. Its `setup` still counts.
+      "Wrapped.vue": `<script>
+let fromPlain = 1;
+</script>
+<script
+  setup
+  lang="ts"
+>
+let fromSetup = 2;
+</script>
+
+<template>
+  <p @click="fromPlain++">{{ fromSetup }}</p>
+</template>
+`,
+      // The text of a script isn't a tag.
+      "Mention.vue": `<script>
+export default { data: () => ({ sample: "<script setup>" }) };
+let unusedPlain = 1;
+</script>
+`,
+      "Both.vue": `<script>
+let fromPlain = 1;
+</script>
+<script setup>
+let fromSetup = 2;
+</script>
+
+<template>
+  <p @click="fromPlain++">{{ fromSetup }}</p>
+</template>
+`,
+      "Counter.svelte": `<script module>
+  let shared = 0;
+</script>
+<script>
+  let count = 0;
+  function total() {
+    const unused = 1;
+    let same = 2;
+    return same;
+  }
+</script>
+<button on:click={() => count++}>{count} {shared} {total()}</button>
+`,
+    };
+    const result = await lint(files, ["-f", "json"]);
+    expect(diagnostics(result.raw)).toMatchInlineSnapshot(`
+      "Assigned.vue 11:3 eslint(no-useless-assignment)
+      Assigned.vue 8:7 eslint(no-unassigned-vars)
+      Candidates.vue 5:7 eslint(no-unused-vars)
+      Candidates.vue 6:3 eslint(no-useless-assignment)
+      Counter.svelte 7:11 eslint(no-unused-vars)
+      Counter.svelte 8:9 eslint(prefer-const)
+      Dialog.svelte 4:9 eslint(no-unassigned-vars)
+      Inner.vue 5:9 eslint(no-unused-vars)
+      Inner.vue 6:7 eslint(prefer-const)
+      Mention.vue 3:5 eslint(no-unused-vars)
+      Mention.vue 3:5 eslint(prefer-const)
+      Plain.vue 2:7 eslint(no-unused-vars)
+      Plain.vue 3:5 eslint(prefer-const)
+      Plain.vue 6:11 eslint(no-unused-vars)
+      Types.svelte 8:10 eslint(no-unused-vars)
+      Types.svelte 9:9 eslint(prefer-const)
+      Types.vue 7:8 eslint(no-unused-vars)
+      Types.vue 8:9 eslint(no-unused-vars)"
+    `);
+    expect(result.exitCode).toBe(1);
+  });
+
+  test("--fix keeps a var that the template can assign writable", async () => {
+    const files = {
+      ".oxlintrc.json": JSON.stringify({
+        categories: { correctness: "off" },
+        rules: {
+          "no-var": "error",
+          "no-unused-vars": ["error", { varsIgnorePattern: "^_", reportUsedIgnorePattern: true }],
+        },
+      }),
+      // A class the template can use isn't "marked as ignored but used" either.
+      "Legacy.vue": `<script setup lang="ts">
+class _Legacy {}
+new _Legacy();
+</script>
+`,
+      "TemplateWrites.vue": `<script setup>
+var count = 0;
+var label = "a";
+function f() {
+  var inner = 1;
+  return inner;
+}
+</script>
+
+<template>
+  <button type="button" @click="count++">{{ count }} {{ label }} {{ f() }}</button>
+  <input v-model="label" />
+</template>
+`,
+      "Plain.vue": `<script>
+var plain = 1;
+export default { data: () => ({ plain }) };
+</script>
+`,
+    };
+    const result = await lint(files, ["--fix", "-f", "json"], ["TemplateWrites.vue", "Plain.vue"]);
+    expect(result.files["TemplateWrites.vue"]).toMatchInlineSnapshot(`
+      "<script setup>
+      let count = 0;
+      let label = "a";
+      function f() {
+        const inner = 1;
+        return inner;
+      }
+      </script>
+
+      <template>
+        <button type="button" @click="count++">{{ count }} {{ label }} {{ f() }}</button>
+        <input v-model="label" />
+      </template>
+      "
+    `);
+    expect(result.files["Plain.vue"]).toMatchInlineSnapshot(`
+      "<script>
+      const plain = 1;
+      export default { data: () => ({ plain }) };
+      </script>
+      "
+    `);
+    expect(result.exitCode).toBe(0);
   });
 });

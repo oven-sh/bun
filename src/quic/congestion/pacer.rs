@@ -178,7 +178,7 @@ impl Pacer {
     /// For the first packet of a burst, which finds room in a queue that has only this sender to fill it.
     #[inline]
     pub(super) fn on_start_settled(&mut self, is_lost: bool) {
-        if self.trial.is_under_way() {
+        if self.trial.is_unsettled() {
             return;
         }
         self.lost_starts -= self.lost_starts / STARTS_AVERAGED;
@@ -207,8 +207,9 @@ impl Pacer {
         starts_cycle: Option<bool>,
     ) {
         if self.is_shared {
-            return self.trial.interrupt();
+            return self.trial.abandon();
         }
+        let starts_cycle = starts_cycle.filter(|_| now - self.last_sent_at <= self.max_lag);
         let overflows = self.overflows * u32::from(self.max_quantum() < self.steady);
         self.trial.update(now, feedback, starts_cycle, overflows);
         self.overflows = self.overflows.min(self.trial.max_overflows());

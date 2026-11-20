@@ -51,12 +51,12 @@ impl Trial {
     }
 
     #[inline]
-    pub(super) fn is_under_way(&self) -> bool {
-        self.spared > 0 || self.is_recovering
+    pub(super) fn is_unsettled(&self) -> bool {
+        self.is_new || self.is_recovering
     }
 
-    pub(super) fn interrupt(&mut self) {
-        self.period.is_comparable = false;
+    pub(super) fn abandon(&mut self) {
+        (self.spared, self.period.is_comparable) = (0, false);
     }
 
     /// `starts_cycle` is `None` unless the path is what limits the rate.
@@ -98,7 +98,7 @@ impl Trial {
                 0 => (min_rate, max_loss),
                 _ => (
                     min_rate.max(self.min_rate),
-                    max_loss.midpoint(self.max_loss),
+                    (max_loss + TOLERATED_LOSS).min(self.max_loss),
                 ),
             };
             let next = MAX_OVERFLOWS + 1 - period.max_overflows;

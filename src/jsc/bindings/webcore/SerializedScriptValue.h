@@ -110,6 +110,7 @@ enum class FastPath : uint8_t {
     Int32Array,
     DoubleArray,
     DenseArray,
+    Primitive,
 };
 
 class MessagePort;
@@ -162,6 +163,9 @@ public:
     // Fast path for postMessage with dense arrays containing simple objects
     static Ref<SerializedScriptValue> createDenseArrayFastPath(WTF::FixedVector<DenseArrayElement>&& elements);
 
+    // The clone of a value that is not a cell. A double comes back as CloneDeserializer returns one: an int32 if it holds one, and the pure NaN for any NaN.
+    static JSC::JSValue cloneOfNonCell(JSC::JSValue value) { return value.isDouble() ? JSC::jsNumber(JSC::purifyNaN(value.asDouble())) : value; }
+
     WEBCORE_EXPORT JSC::JSValue deserialize(JSC::JSGlobalObject&, JSC::JSGlobalObject*, SerializationErrorMode = SerializationErrorMode::Throwing, bool* didFail = nullptr);
     WEBCORE_EXPORT JSC::JSValue deserialize(JSC::JSGlobalObject&, JSC::JSGlobalObject*, const Vector<RefPtr<MessagePort>>&, SerializationErrorMode = SerializationErrorMode::Throwing, bool* didFail = nullptr);
 
@@ -199,6 +203,11 @@ private:
     SerializedScriptValue(Vector<uint8_t>&& butterflyData, uint32_t length, FastPath fastPath);
     // Constructor for DenseArray fast path
     explicit SerializedScriptValue(WTF::FixedVector<DenseArrayElement>&& denseElements);
+    // Constructor for Primitive fast path
+    explicit SerializedScriptValue(JSC::JSValue primitive);
+
+    // Fast path for postMessage with a number, a boolean, null or undefined
+    static Ref<SerializedScriptValue> createPrimitiveFastPath(JSC::JSValue);
 
     size_t computeMemoryCost() const;
 
@@ -224,7 +233,11 @@ private:
 
     // Int32Array / DoubleArray fast path: raw butterfly data
     Vector<uint8_t> m_arrayButterflyData {};
-    uint32_t m_arrayLength { 0 };
+    // Int32Array / DoubleArray use m_arrayLength. Primitive uses m_fastPathPrimitive, which is never a cell.
+    union {
+        uint32_t m_arrayLength { 0 };
+        JSC::EncodedJSValue m_fastPathPrimitive;
+    };
 
     // DenseArray fast path: array of primitives/strings/simple objects
     FixedVector<DenseArrayElement> m_denseArrayElements {};

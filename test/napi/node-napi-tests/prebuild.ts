@@ -50,11 +50,9 @@ if (pending.length) {
         failed.push(dir); // not the trivial shape — its do.test.ts builds it alone
         continue;
       }
-      const ns = relative(join(import.meta.dir, "test"), dir)
-        .replaceAll("/", "_")
-        .replaceAll("\\", "_");
       for (const target of parsed) {
-        const name = `${ns}__${target.target_name}`;
+        // MSBuild fails (MSB3491) when Debug\obj\<name>\...\<name>.lastbuildstate reaches 260 characters.
+        const name = `t${targets.length}`;
         targets.push({
           target_name: name,
           sources: target.sources.map(source => relative(combinedDir, join(dir, source)).replaceAll("\\", "/")),
@@ -78,6 +76,7 @@ if (pending.length) {
         built += pending.length - failed.length;
       } catch (error) {
         console.error("prebuild: combined node-gyp build failed; tests will build their own:", error);
+        for (const target of targets) console.error(`prebuild: ${target.target_name} is ${target.sources.join(" ")}`);
         failed.push(...pending.filter(dir => !failed.includes(dir)));
       }
     }

@@ -179,7 +179,7 @@ export async function buildWithNodeGyp(dir: string) {
     cmd: [bunExe(), "--bun", "x", "node-gyp@11", "configure", "build", "--debug"],
     cwd: dir,
     stderr: "pipe",
-    stdout: "ignore",
+    stdout: "pipe",
     stdin: "inherit",
     env: {
       ...bunEnv,
@@ -195,9 +195,14 @@ export async function buildWithNodeGyp(dir: string) {
         : {}),
     },
   });
-  const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
   if (exitCode !== 0) {
-    throw new Error(`node-gyp build in ${dir} failed:\n${stderr}`);
+    // MSBuild reports compiler, linker and its own errors on stdout, not stderr.
+    throw new Error(`node-gyp build in ${dir} failed:\n${stderr}\nstdout:\n${stdout}`);
   }
 }
 

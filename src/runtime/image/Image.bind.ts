@@ -41,6 +41,8 @@ export const Image = b.class({
     /** ThumbHash rendered as a PNG data: URL of at most 32px. */
     placeholder: { ...settlingWith(table.string), args: { format: b.any }, length: 0 },
     png: chainableWithOptions,
+    /** Decoded pixels: `{ channels: 1 | 3 | 4 }` (luma, RGB, RGBA), 8-bit, row-major, no padding. */
+    raw: { ...settlingWith(table.instance("Uint8Array")), args: { options: b.any }, length: 0 },
     resize: {
       ...chainable,
       args: { width: b.any, height: b.any, options: b.any },

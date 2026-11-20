@@ -126,6 +126,7 @@ A pipeline does no work until you await one of these:
 ```ts
 await img.bytes(); // Uint8Array
 await img.buffer(); // Buffer
+await img.raw({ channels: 1 }); // Uint8Array of decoded pixels: 1 = BT.709 luma, 3 = RGB, 4 = RGBA (default)
 await img.blob(); // Blob with .type set to the output MIME
 await img.toBase64(); // string
 await img.dataurl(); // "data:image/png;base64,…"

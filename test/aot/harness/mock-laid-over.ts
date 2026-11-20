@@ -1,10 +1,11 @@
 // Projects for mock-laid-over*.test.ts: a mock laid over a module whose body has run. A project is the module's kind x the call x the factory x the realm. Inside it every
 // kind of export is read by every kind of reader at six moments, and each reading is a line `KEY <moment> | <reader> | <export> = <value>`.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "../supported";
+import { limitWithASAN, slot, slots } from "./commands";
 import { afterAll } from "./default-timeout";
 import { run } from "./run";
 import { runsWholeGrids } from "./ways";
@@ -353,35 +354,91 @@ const known = readFileSync(list, "utf8").split("\n");
 const found: string[] = [];
 const asked = new Set<string>();
 
-async function keysOf(dir: string, flags: string[]) {
-  const { stdout } = await run([bunExe(), "test", ...flags], dir, { ...bunEnv, NO_COLOR: "1" });
+// How a run ends is one more reading, behind the six moments: what the runner counts, and the exit code.
+const atItsEnd = "6 over | the run | ends";
+
+/** Of a run that stopped on its way: what it wrote, from both ends and without the warnings of a build. Such a run says why there, and nowhere else. */
+function lastWordsOf(stderr: string) {
+  const lines = stderr.split("\n").filter(line => line && !/^(warn: |\d+ \| | +\^| +at )/.test(line));
+  return (lines.length > 12 ? [...lines.slice(0, 6), "...", ...lines.slice(-6)] : lines).map(line => line.slice(0, 200));
+}
+
+// A run that hangs is ended at its limit, and its project then says which run it was and what it wrote. `bun test` ends the children of a test that timed out only
+// where the tests run one by one: here a run would outlast its test. A debug build of Bun builds a project for a minute or two.
+const limitOfARun = isASAN || isDebug ? limitWithASAN : 150_000;
+const limitOfAPackedRun = 270_000;
+
+async function readingsOf(dir: string, flags: string[], limit: number) {
+  // A test of the run has a third of the limit of the run: one that hangs is failed and named by the run itself, which then comes to its summary. The five seconds of
+  // bun:test are too few: a busy machine takes longer than that to load a module, and the test then fails in one run alone.
+  const cmd = [bunExe(), "test", `--timeout=${Math.round(limit / 3)}`, ...flags];
+  const started = performance.now();
+  const { stdout, stderr, exitCode } = await run(cmd, dir, { ...bunEnv, NO_COLOR: "1" }, limit);
+  // `run()` ends it with SIGKILL.
+  const wasEnded = exitCode === 137 && performance.now() - started >= limit;
   const keys = new Map<string, string>();
   for (const line of stdout.split("\n")) {
     const at = line.indexOf(" = ");
-    if (line.startsWith("KEY ") && at > 0) keys.set(line.slice(4, at), line.slice(at + 3));
+    if (!line.startsWith("KEY ") || at <= 0) continue;
+    const [key, value] = [line.slice(4, at), line.slice(at + 3)];
+    // A file that runs twice reads twice, and the later reading would stand in the place of the first.
+    keys.set(key, keys.has(key) ? `${keys.get(key)}, and again ${value}` : value);
   }
-  return keys;
+  const counted = [...stderr.matchAll(/^ *(\d+ (?:pass|skip|todo|fail|errors?))$/gm)].map(([, count]) => count);
+  const ran = /^Ran (\d+ tests? across (\d+) files?)\. /m.exec(stderr);
+  return {
+    keys,
+    ends: [...counted, ran?.[1] ?? "no summary", wasEnded ? `ended at its limit of ${limit / 1000} s` : `exit code ${exitCode}`].join(", "),
+    // `bun test` says what it counted, and exits with 0 or with 1.
+    hasEnded: !!ran && exitCode <= 1,
+    // It counted every test file that the command names, and it exits with 1 where it counts a failure or an error, else with 0.
+    isWhole:
+      Number(ran?.[2]) === flags.filter(flag => flag.endsWith(".test.ts")).length &&
+      exitCode === Number(counted.some(count => /^[1-9]\d* (fail|errors?)$/.test(count))),
+    lastWords: lastWordsOf(stderr),
+  };
 }
 
-async function judge(name: string, { files, flags }: Project, fewestKeys: number) {
+async function judge(name: string, { files, flags }: Project, fewestKeys: number, limit: number) {
   using plainDir = tempDir("aot-mock-laid-over", files);
   using compiledDir = tempDir("aot-mock-laid-over", files);
-  const [plain, compiled] = await Promise.all([keysOf(String(plainDir), flags), keysOf(String(compiledDir), ["--aot", ...flags])]);
-  // A run in which plain printed little would pass for the wrong reason.
-  expect(plain.size).toBeGreaterThan(fewestKeys);
+  // No more projects run at once than the machine has processors, whatever `--max-concurrency` says: a build keeps one of them busy, and `run()` ends every run where
+  // they hold too much together.
+  const [plain, compiled] = await slot(() =>
+    Promise.all([readingsOf(String(plainDir), flags, limit), readingsOf(String(compiledDir), ["--aot", ...flags], limit)]),
+  );
+  // A run of plain that stopped on its way would pass for the wrong reason: a compiled run that stops there says the same. So would one that printed little.
+  expect({ isWhole: plain.isWhole, ends: plain.ends, lastWords: plain.isWhole ? [] : plain.lastWords }).toEqual({
+    isWhole: true,
+    ends: plain.ends,
+    lastWords: [],
+  });
+  expect(plain.keys.size).toBeGreaterThan(fewestKeys);
+  // The list holds what a compiled run says otherwise, never that it came to no end.
+  expect({ hasEnded: compiled.hasEnded, ends: compiled.ends, lastWords: compiled.hasEnded ? [] : compiled.lastWords }).toEqual({
+    hasEnded: true,
+    ends: compiled.ends,
+    lastWords: [],
+  });
+  for (const readings of [plain, compiled]) readings.keys.set(atItsEnd, readings.ends);
   const moments = new Map<string, string[]>();
-  for (const [key, expected] of plain) {
-    const got = compiled.get(key) ?? "nothing";
+  const both: string[] = [];
+  // What one run alone prints differs too: the other printed nothing there.
+  for (const key of new Set([...plain.keys.keys(), ...compiled.keys.keys()])) {
+    const [expected, got] = [plain.keys.get(key) ?? "nothing", compiled.keys.get(key) ?? "nothing"];
     if (got === expected) continue;
     const parts = key.split(" | ");
     const [moment] = parts.splice(-3, 1);
-    const line = `${name} | ${parts.join(" | ")}: ${/^(threw |nothing$)/.test(got) ? "loud" : "SILENT"} | ${got}`;
+    // The runner says how a run ends.
+    const isLoud = key === atItsEnd || /^(threw |nothing$)/.test(got);
+    const line = `${name} | ${parts.join(" | ")}: ${isLoud ? "loud" : "SILENT"} | ${got}`;
     moments.set(line, [...(moments.get(line) ?? []), moment[0]]);
+    both.push(`${key}: bun test ${expected} | --aot ${got}`);
   }
   const differing = [...moments].map(([line, at]) => `${line} | at ${at.sort().join(" ")}`).sort();
   asked.add(name);
   found.push(...differing);
-  if (!rewrite) expect(differing).toEqual(known.filter(line => line.startsWith(name + " | ")));
+  if (!rewrite) expect(differing, both.slice(0, 12).join("\n")).toEqual(known.filter(line => line.startsWith(name + " | ")));
 }
 
 // In front of a merge: the columns in which real programs were counted, and a witness for each fault that the grid has found.
@@ -427,30 +484,47 @@ export function packed(all: Map<string, Project>, columns: string[]): Project {
   return { files: { ...files, "preload.ts": preload }, flags: ["--isolate", "--preload", "./preload.ts", ...order] };
 }
 
+const packedRuns = ["packed", "packed beside preloads that mock"];
+
 /**
- * The cell in which real programs live: the module has run, then a mock is laid over it. What `bun test` prints is the specification, key by key.
+ * The cell in which real programs live: the module has run, then a mock is laid over it. What `bun test` prints is the specification, key by key, and so is how its run
+ * ends: what the runner counts and the exit code are one more reading, `the run | ends`, at a seventh moment.
  * In front of a merge: the columns as one project, twice: without a preload that lays a mock, and with, as large programs run. Four runs. A mock call in any preload
  * changes how the whole run answers: a fault of another column went out of sight beside one. AOT_WHOLE=1, on a bench: all 696 projects, each alone.
  * mock-laid-over.known.txt holds every key that differs, a line `<project> | <reader> | <export>: <loud | SILENT> | <what is printed> | at <the moments>`: a line that is
- * cured, one that changes and a new one all fail. BUN_AOT_REWRITE_MOCK_LAID_OVER=1 writes the lines of what ran anew.
- * One file took five minutes, and CI's runner tries a file that fails four times. So `parts` files share the projects, each a stretch of the sorted names, and the packed
- * runs go with the first.
+ * cured, one that changes and a new one all fail. A key that one run alone prints differs from nothing. BUN_AOT_REWRITE_MOCK_LAID_OVER=1 writes the lines of what ran anew.
+ * One file took five minutes, and CI's runner tries a file that fails four times. So `parts` files share the projects, and the packed runs go with the first. A file has
+ * every `parts`th column of the sorted names, in both realms: a stretch of the names is the projects of one or two modules, and a build takes three times as long where
+ * the module is a large part of Bun's library. The projects of a file run beside one another on every lane, as many as `--max-concurrency` says and the machine has
+ * processors: each waits for one build.
  */
 export function mockLaidOver(part: number, parts: number) {
   const all = new Map([...modules(), ...builtinModules()]);
+  const namesAProject = (line: string) => all.has(line.split(" | ")[0]) || packedRuns.includes(line.split(" | ")[0]);
+  // A project waits for its slot inside its test, and `bun test` has up to twenty tests under way unless it is told otherwise. So the limit of a test holds every run
+  // that may take a slot ahead of its own, each for its whole limit, and half a minute more: no test times out while it waits, and a run that hangs is ended before
+  // its test is.
+  const limitOfATest = Math.ceil(20 / slots) * (part === 1 ? limitOfAPackedRun : limitOfARun) + 30_000;
   if (part === 1) {
+    // A project holds the lines that begin with its name, so a line that begins otherwise is held by nothing. Where the list is written anew, such a line goes out.
+    // It stands in front: behind the packed runs, a test that runs alone would make the projects wait until both of them are over.
+    if (!rewrite)
+      test("every line of the list names a project", () => {
+        expect(known.filter(line => line && !line.startsWith("#") && !namesAProject(line))).toEqual([]);
+      });
     const withoutMockingPreload = witnesses.filter(column => !column.includes(".laid-by-preload."));
-    test("the columns of real programs and a witness for each fault", () => judge("packed", packed(all, withoutMockingPreload), 5000), 300_000);
-    test("the same beside preloads that lay mocks", () => judge("packed beside preloads that mock", packed(all, witnesses), 5000), 300_000);
+    const limit = limitOfAPackedRun;
+    test.concurrent("the columns of real programs and a witness for each fault", () => judge(packedRuns[0], packed(all, withoutMockingPreload), 5000, limit), limitOfATest);
+    test.concurrent("the same beside preloads that lay mocks", () => judge(packedRuns[1], packed(all, witnesses), 5000, limit), limitOfATest);
   }
+  // The two realms of a column stand side by side.
   const names = [...all.keys()].sort();
-  const stretch = Math.ceil(names.length / parts);
-  const mine = names.slice((part - 1) * stretch, part * stretch);
-  if (runsWholeGrids) for (const name of mine) test(name, () => judge(name, all.get(name)!, 10), 180_000);
+  const mine = names.filter((_, index) => Math.floor(index / 2) % parts === part - 1);
+  if (runsWholeGrids) for (const name of mine) test.concurrent(name, () => judge(name, all.get(name)!, 10, limitOfARun), limitOfATest);
   afterAll(() => {
     if (!rewrite) return;
     const now = readFileSync(list, "utf8").split("\n");
-    const kept = now.filter(line => line && !line.startsWith("#") && !asked.has(line.split(" | ")[0]));
+    const kept = now.filter(line => line && !line.startsWith("#") && namesAProject(line) && !asked.has(line.split(" | ")[0]));
     writeFileSync(list, [...now.filter(line => line.startsWith("#")), ...[...kept, ...found].sort(), ""].join("\n"));
   });
 }

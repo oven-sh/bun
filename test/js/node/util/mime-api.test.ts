@@ -459,6 +459,78 @@ test("MIMEType releases its type and subtype strings when garbage-collected", as
   await expectRssDeltaBelow(["--smol", "-e", code], { release: 20, debug: 25 });
 });
 
+describe("MIMEType quoted parameter values", () => {
+  // [input, String(new MIMEType(input)) in Node.js v26.12.1]
+  const cases: [string, string][] = [
+    // The parser ignores the text between the closing quote and the next ";".
+    ['text/plain;a="b"xx=y;c=d', "text/plain;a=b;c=d"],
+    ['a/b;a="b"x=y', "a/b;a=b"],
+    ['a/b;a=""b=c', 'a/b;a=""'],
+    ['a/b;a="b" x=y;c=d', "a/b;a=b;c=d"],
+    ['a/b;a="1"b="2"c="3"d=4;e=5', "a/b;a=1;e=5"],
+    ['text/html;x="y"charset=evil;charset=utf-8', "text/html;x=y;charset=utf-8"],
+    // Also when it drops the quoted parameter: an empty name, an invalid value, a repeated name.
+    ['a/b;="b"x=y;c=d', "a/b;c=d"],
+    ['a/b;a="\u0001"x=y;c=d', "a/b;c=d"],
+    ['a/b;a=1;a="2"x=y;c=d', "a/b;a=1;c=d"],
+    // The ignored text ends at the first ";". A quote in it does not end it and does not hide a ";".
+    ['a/b;a="b"x"y="z;c=d', "a/b;a=b;c=d"],
+    ['a/b;a="b"c="d;e=f";e=g;h=i', 'a/b;a=b;e="f\\"";h=i'],
+    // A value with no closing quote ends before the trailing HTTP whitespace of the input.
+    ['a/b;a="b\t', "a/b;a=b"],
+    ['a/b;a="b ', "a/b;a=b"],
+    ['a/b;a="b\n', "a/b;a=b"],
+    ['a/b;a="b\r', "a/b;a=b"],
+    ['a/b;a="\t', 'a/b;a=""'],
+    ['a/b;a="b  ;c=d \n', 'a/b;a="b  ;c=d"'],
+    ['a/b;a="\\ ', 'a/b;a="\\\\"'],
+    ['a/b;a="b\\\t\t', 'a/b;a="b\\\\"'],
+    // The parser removes nothing else: U+000C, U+000B and U+00A0 are not HTTP whitespace. These rows pass without the fix too.
+    ['a/b;a="b\f', "a/b"],
+    ['a/b;a="b\v', "a/b"],
+    ['a/b;a="b\u00a0', 'a/b;a="b\u00a0"'],
+    ['a/b;a=" b', 'a/b;a=" b"'],
+    ['a/b;a="b " ', 'a/b;a="b "'],
+    ['a/b;a="b\\ "', 'a/b;a="b "'],
+  ];
+
+  test.each(cases)("%j", (input, expected) => {
+    expect(String(new MIMEType(input))).toBe(expected);
+    // The same input as a 16-bit string. U+0100 is not valid in a parameter name, so the parser ignores "\u0100=1".
+    const wide = input.replace(";", ";\u0100=1;");
+    expect(wide).toBeUTF16String();
+    expect(String(new MIMEType(wide))).toBe(expected);
+  });
+
+  test("ignored text does not become a parameter", () => {
+    const mime = new MIMEType('text/plain;a="b"x=y;c=d');
+    expect([...mime.params]).toEqual([
+      ["a", "b"],
+      ["c", "d"],
+    ]);
+    mime.params.set("x", "1");
+    expect(String(mime)).toBe("text/plain;a=b;c=d;x=1");
+  });
+
+  test("HTTP whitespace at the end of the input does not change the result", () => {
+    // Every text of up to 3 code points from this alphabet, as the parameters and after an opening quote.
+    const alphabet = ['"', "\\", " ", ";", "=", "a"];
+    const tails = [""];
+    for (let i = 0; i < tails.length; i++) {
+      if (tails[i].length < 3) for (const c of alphabet) tails.push(tails[i] + c);
+    }
+    const changed: string[] = [];
+    for (const prefix of ["a/b;", 'a/b;a="']) {
+      for (const tail of tails) {
+        const input = prefix + tail;
+        const expected = String(new MIMEType(input));
+        if (String(new MIMEType(input + " \t\r\n")) !== expected) changed.push(JSON.stringify(input));
+      }
+    }
+    expect(changed).toEqual([]);
+  });
+});
+
 test("MIMEType and MIMEParams throw when the serialized string is too long", () => {
   const half = Buffer.alloc(512 * 1024, "a").toString();
   const mime = new MIMEType("text/plain");

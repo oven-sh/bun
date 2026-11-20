@@ -47,7 +47,8 @@ async function generate(symbol_name: string): Promise<[stub: string, symbol_name
 
   const HEADER_PATH = import.meta.dir;
 
-  const output = await Bun.$`rg -n ${symbol_name + "\\("}`.cwd(HEADER_PATH).text();
+  // An explicit path: without one, rg reads stdin when stdin is not a terminal.
+  const output = await Bun.$`rg -n ${symbol_name + "\\("} .`.cwd(HEADER_PATH).text();
 
   if (!output.includes("UV_EXTERN")) {
     console.error("Symbol not found!");

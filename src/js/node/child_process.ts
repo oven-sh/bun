@@ -4,6 +4,9 @@ const { kHandle } = require("internal/shared");
 const {
   validateBoolean,
   validateFunction,
+  validateInteger,
+  validateInt32,
+  validateNumber,
   validateString,
   validateAbortSignal,
   validateArray,
@@ -35,7 +38,6 @@ const ArrayPrototypeSplice = Array.prototype.splice;
 
 var ArrayBufferIsView = ArrayBuffer.isView;
 
-var NumberIsInteger = Number.isInteger;
 var ObjectHasOwn = Object.hasOwn;
 var StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeIndexOf = String.prototype.indexOf;
@@ -268,8 +270,8 @@ function execFile(file, args, options?, callback?: ExecCallback) {
     uid: options.uid,
     gid: options.gid,
     cgroup: options.cgroup,
-    windowsHide: options.windowsHide,
-    windowsVerbatimArguments: options.windowsVerbatimArguments,
+    windowsHide: !!options.windowsHide,
+    windowsVerbatimArguments: !!options.windowsVerbatimArguments,
     shell: options.shell,
     signal: options.signal,
   });
@@ -987,14 +989,14 @@ function normalizeSpawnArguments(file, args, options?) {
 
   // Validate the uid, if present.
   const uid = options.uid;
-  if (uid != null && !isInt32(uid)) {
-    throw $ERR_INVALID_ARG_TYPE("options.uid", "int32", uid);
+  if (uid != null) {
+    validateInt32(uid, "options.uid");
   }
 
   // Validate the gid, if present.
   const gid = options.gid;
-  if (gid != null && !isInt32(gid)) {
-    throw $ERR_INVALID_ARG_TYPE("options.gid", "int32", gid);
+  if (gid != null) {
+    validateInt32(gid, "options.gid");
   }
 
   // Validate the shell, if present.
@@ -1942,8 +1944,8 @@ class Control extends EventEmitter {
 //------------------------------------------------------------------------------
 
 function validateMaxBuffer(maxBuffer) {
-  if (maxBuffer != null && !(typeof maxBuffer === "number" && maxBuffer >= 0)) {
-    throw $ERR_OUT_OF_RANGE("options.maxBuffer", "a positive number", maxBuffer);
+  if (maxBuffer != null) {
+    validateNumber(maxBuffer, "options.maxBuffer", 0);
   }
 }
 
@@ -1963,13 +1965,9 @@ function validateArgumentsNullCheck(args, propName) {
 }
 
 function validateTimeout(timeout) {
-  if (timeout != null && !(NumberIsInteger(timeout) && timeout >= 0)) {
-    throw $ERR_OUT_OF_RANGE("timeout", "an unsigned integer", timeout);
+  if (timeout != null) {
+    validateInteger(timeout, "timeout", 0);
   }
-}
-
-function isInt32(value) {
-  return value === (value | 0);
 }
 
 function nullCheck(path, propName, throwError = true) {
@@ -1985,7 +1983,7 @@ function nullCheck(path, propName, throwError = true) {
     return;
   }
 
-  const err = $ERR_INVALID_ARG_VALUE(propName, path, "must be a string or Uint8Array without null bytes");
+  const err = $ERR_INVALID_ARG_VALUE(propName, path, "must be a string, Uint8Array, or URL without null bytes");
   if (throwError) {
     throw err;
   }

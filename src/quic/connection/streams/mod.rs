@@ -510,7 +510,9 @@ impl Table {
         flags.set(Flags::RELEASED, is_unwanted);
         let counts = self.counts(id.direction());
         let stream = Stream::new(role, flags, counts.remote_send, counts.remote_receive);
-        let next = (id.index() + 1..counts.remote_next)
+        let next = (counts.remote_skipped)
+            .gaps(id.index() + 1..counts.remote_next)
+            .flatten()
             .take(MAX_OVERTAKING)
             .find_map(|index| self.get(StreamId::new(!self.side, id.direction(), index)));
         let first_turn = next.map_or(state.turns, |it| it.first_turn);

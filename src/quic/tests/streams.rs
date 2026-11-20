@@ -558,6 +558,17 @@ fn streams_that_arrive_late_keep_their_place() {
 }
 
 #[test]
+fn streams_keep_their_place_however_many_arrive_late() {
+    let raw = Raw::client().config(|it| it.sends_in_order = true);
+    let mut raw = raw.connected();
+    for id in [0, 4 * 90, 4, 4 * 89] {
+        raw.write(id, b"a", true);
+        raw.peer.send(id, &filler(0, 40_000), true);
+    }
+    assert_eq!(ids(turns(&mut raw)), [0, 4, 4 * 89, 4 * 90]);
+}
+
+#[test]
 fn urgent_streams_go_first() {
     let mut raw = Raw::client()
         .config(|it| it.sends_in_order = true)

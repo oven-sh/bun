@@ -26,7 +26,7 @@ pub struct Upload {
     /// No more bytes come.
     ended: bool,
     /// Less than a part.
-    tail: Vec<u8>,
+    tail: Tail,
     /// Parts that wait for the upload id or for room in the queue.
     waiting: VecDeque<Vec<u8>>,
     part_size: usize,
@@ -143,13 +143,85 @@ fn commit_body(etags: &[Box<[u8]>]) -> Vec<u8> {
     xml
 }
 
+/// What is written of the next part. It stays in blocks up to half a part, so that little is copied or held.
+#[derive(Default)]
+struct Tail {
+    full: Vec<Box<[u8]>>,
+    full_len: usize,
+    last: Vec<u8>,
+}
+
+impl Tail {
+    const BLOCK: usize = 256 * 1024;
+    /// Joining holds the blocks and their copy at once. Past this the tail is one buffer that doubles.
+    const MAX_IN_BLOCKS: usize = 64 * 1024 * 1024;
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.full_len + self.last.len()
+    }
+
+    #[inline]
+    fn room(&self) -> usize {
+        self.last.capacity() - self.last.len()
+    }
+
+    fn capacity(&self) -> usize {
+        self.full_len + self.last.capacity()
+    }
+
+    #[inline]
+    fn extend(&mut self, mut bytes: &[u8], part_size: usize) {
+        if bytes.len() > self.room() && !self.last.is_empty() {
+            self.make_room(&mut bytes, part_size);
+        }
+        self.last.extend_from_slice(bytes);
+    }
+
+    #[inline(never)]
+    fn make_room(&mut self, bytes: &mut &[u8], part_size: usize) {
+        let len = self.len() + bytes.len();
+        if len > part_size / 2 {
+            self.join(part_size);
+        } else if len > Self::MAX_IN_BLOCKS {
+            self.join(len.max(2 * self.len()));
+        } else if self.last.len() + bytes.len() > Self::BLOCK {
+            let (fits, rest) = bytes.split_at(self.room());
+            self.last.extend_from_slice(fits);
+            *bytes = rest;
+            let next = Vec::with_capacity(rest.len().max(Self::BLOCK));
+            self.full_len += self.last.len();
+            self.full.push(replace(&mut self.last, next).into());
+        } else {
+            self.last.reserve(bytes.len());
+        }
+    }
+
+    fn join(&mut self, capacity: usize) {
+        if self.full.is_empty() {
+            return self.last.reserve_exact(capacity - self.last.len());
+        }
+        let Self { full, last, .. } = take(self);
+        self.last.reserve_exact(capacity);
+        for block in &full {
+            self.last.extend_from_slice(block);
+        }
+        self.last.extend_from_slice(&last);
+    }
+
+    fn take(&mut self) -> Vec<u8> {
+        self.join(self.len());
+        take(&mut self.last)
+    }
+}
+
 impl Upload {
     pub fn new(options: MultiPartUploadOptions) -> Self {
         let max_queue_size = MultiPartUploadOptions::MAX_QUEUE_SIZE;
         Self {
             phase: Phase::Buffering,
             ended: false,
-            tail: Vec::new(),
+            tail: Tail::default(),
             waiting: VecDeque::new(),
             part_size: options.part_size as usize,
             queue_size: options.queue_size.min(max_queue_size).into(),
@@ -162,21 +234,6 @@ impl Upload {
         matches!(self.phase, Phase::Buffering) && self.waiting.is_empty()
     }
 
-    /// `tail` has to grow, and twice its capacity is more than a part.
-    #[inline]
-    fn would_outgrow_a_part(&self, additional: usize) -> bool {
-        let capacity = self.tail.capacity();
-        additional > capacity - self.tail.len() && capacity > self.part_size / 2
-    }
-
-    #[inline]
-    fn extend_tail(&mut self, bytes: &[u8]) {
-        if self.would_outgrow_a_part(bytes.len()) {
-            self.tail.reserve_exact(self.part_size - self.tail.len());
-        }
-        self.tail.extend_from_slice(bytes);
-    }
-
     /// `true`: it filled a part.
     #[inline]
     pub fn write(&mut self, mut bytes: &[u8]) -> bool {
@@ -184,11 +241,11 @@ impl Upload {
         self.accepted += bytes.len() as u64;
         let mut filled = false;
         while let Some((last, rest)) = bytes.split_at_checked(self.part_size - self.tail.len()) {
-            self.extend_tail(last);
-            self.waiting.push_back(take(&mut self.tail));
+            self.tail.extend(last, self.part_size);
+            self.waiting.push_back(self.tail.take());
             (bytes, filled) = (rest, true);
         }
-        self.extend_tail(bytes);
+        self.tail.extend(bytes, self.part_size);
         filled
     }
 
@@ -224,20 +281,20 @@ impl Upload {
     fn write_encoded(&mut self, max_len: usize, append: impl FnOnce(&mut Vec<u8>)) -> bool {
         debug_assert!(!self.ended);
         let before = self.tail.len();
-        if max_len >= self.part_size - before || self.would_outgrow_a_part(max_len) {
+        if max_len >= self.part_size - before || (before != 0 && max_len > self.tail.room()) {
             let mut bytes = Vec::new();
             append(&mut bytes);
             return self.write(&bytes);
         }
-        append(&mut self.tail);
+        append(&mut self.tail.last);
         self.accepted += (self.tail.len() - before) as u64;
         false
     }
 
     pub fn end(&mut self) {
         self.ended = true;
-        if !self.fits_one_put() && !self.tail.is_empty() {
-            self.waiting.push_back(take(&mut self.tail));
+        if !self.fits_one_put() && self.tail.len() != 0 {
+            self.waiting.push_back(self.tail.take());
         }
     }
 
@@ -245,7 +302,7 @@ impl Upload {
     pub fn next_request(&mut self) -> Option<Request> {
         let (request, phase) = match &mut self.phase {
             Phase::Buffering if !self.waiting.is_empty() => (Request::Create, Phase::Creating),
-            Phase::Buffering if self.ended => (Request::Put(take(&mut self.tail)), Phase::Putting),
+            Phase::Buffering if self.ended => (Request::Put(self.tail.take()), Phase::Putting),
             Phase::Sending(sending) if sending.in_flight < self.queue_size => {
                 if let Some(data) = self.waiting.pop_front() {
                     let part = Part {
@@ -337,7 +394,7 @@ impl Upload {
             return Step::Nothing;
         }
         self.ended = true;
-        self.tail = Vec::new();
+        self.tail = Tail::default();
         self.waiting = VecDeque::new();
         match replace(&mut self.phase, Phase::Finished) {
             Phase::Sending(sending) => Step::Failed(error, Some(Request::Abort(sending.id))),

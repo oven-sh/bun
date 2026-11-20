@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/hardened-zstd.test.ts": {
+    "default": 2000,
+    "asan": 8000
+  },
   "aot/opentelemetry-in-an-executable.test.ts": {
     "default": 6000,
     "asan": 24000

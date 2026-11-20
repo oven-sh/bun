@@ -2,6 +2,7 @@ import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { closeSync, openSync, readSync, renameSync, writeSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
+import { constants } from "os";
 import { join } from "path";
 import { openFifo, untilWatched } from "../io/fifo-helpers";
 
@@ -164,3 +165,33 @@ test.skipIf(!isLinux)(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "y\ny\n", stderr: "", exitCode: 0 });
   },
 );
+
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+// FUSE, /proc/kmsg and trace_pipe do this, and need root.
+test.skipIf(!isLinux || !cc)("read() is called again after EAGAIN from a regular file", async () => {
+  using dir = tempDir("bun-file-fd-read", { "file.txt": "hello" });
+  const file = join(String(dir), "file.txt");
+  const supervisor = join(String(dir), "fail-nth-read");
+  const source = join(import.meta.dir, "..", "io", "fail-nth-read.c");
+  await using compile = Bun.spawn({ cmd: [cc!, "-O0", "-o", supervisor, source], env: bunEnv, stderr: "inherit" });
+  expect(await compile.exited).toBe(0);
+
+  // The second read() is the one that finds the end of the file, so no bytes are lost.
+  const failSecondRead = [supervisor, file, "2", String(constants.errno.EAGAIN), "--"];
+  await using proc = Bun.spawn({
+    cmd: [...failSecondRead, bunExe(), "-e", "console.log(await Bun.file(process.argv[1]).text())", file],
+    // LeakSanitizer does not work under ptrace.
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: "detect_leaks=0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("hello\n");
+  expect(stderr).toContain("matched read() calls on target: 3\n");
+  expect(exitCode).toBe(0);
+});

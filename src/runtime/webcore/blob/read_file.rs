@@ -431,42 +431,31 @@ impl ReadFile {
             break 'brk crate::node::fs::read_descriptor(self.opened_fd, buf);
         };
 
-        loop {
-            match &result {
-                Ok(res) => {
-                    self.read_eof = *res == 0;
-                }
-                Err(err) => {
-                    match err.get_errno() {
-                        e if e == io::RETRY => {
-                            if !self.could_block {
-                                // regular files cannot use epoll.
-                                // this is fine on kqueue, but not on epoll.
-                                continue;
-                            }
-                            *retry = true;
-                            self.read_eof = false;
-                            return true;
-                        }
-                        _ => {
-                            self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                            self.system_error = Some(err.to_system_error().into());
-                            if self.system_error.as_ref().unwrap().path.is_empty() {
-                                self.system_error.as_mut().unwrap().path =
-                                    if self.file_store.pathlike.is_path() {
-                                        BunString::clone_utf8(
-                                            self.file_store.pathlike.path().slice(),
-                                        )
-                                    } else {
-                                        BunString::EMPTY
-                                    };
-                            }
-                            return false;
-                        }
-                    }
-                }
+        match &result {
+            Ok(res) => {
+                self.read_eof = *res == 0;
             }
-            break;
+            Err(err) => match err.get_errno() {
+                e if e == io::RETRY => {
+                    self.could_block = true;
+                    *retry = true;
+                    self.read_eof = false;
+                    return true;
+                }
+                _ => {
+                    self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                    self.system_error = Some(err.to_system_error().into());
+                    if self.system_error.as_ref().unwrap().path.is_empty() {
+                        self.system_error.as_mut().unwrap().path =
+                            if self.file_store.pathlike.is_path() {
+                                BunString::clone_utf8(self.file_store.pathlike.path().slice())
+                            } else {
+                                BunString::EMPTY
+                            };
+                    }
+                    return false;
+                }
+            },
         }
 
         true

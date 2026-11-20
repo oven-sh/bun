@@ -118,6 +118,7 @@ impl PackageManager {
         let resolutions_lists: &[DependencyIDSlice] = lockfile.packages.items_resolutions();
         let dependency_lists: &[DependencySlice] = lockfile.packages.items_dependencies();
         let pkg_resolutions = lockfile.packages.items_resolution();
+        let pkg_metas = lockfile.packages.items_meta();
         let dependencies_buffer = lockfile.buffers.dependencies.as_slice();
         let resolutions_buffer = lockfile.buffers.resolutions.as_slice();
         let end: PackageID = lockfile.packages.len() as PackageID;
@@ -143,6 +144,19 @@ impl PackageManager {
 
                 // Unmet peers only warn (`warn_unmet_peer_dependency`).
                 if failed_dep.behavior.is_peer() {
+                    continue;
+                }
+
+                // The tarball lacks the folder of a bundled dependency, or a bundle lacks what one
+                // of its packages needs. Nothing resolves either. The root and a workspace are in
+                // no tarball.
+                if pkg_metas[parent_id].is_shipped()
+                    || (failed_dep.behavior.is_bundled()
+                        && !matches!(
+                            pkg_resolutions[parent_id].tag,
+                            ResolutionTag::Root | ResolutionTag::Workspace
+                        ))
+                {
                     continue;
                 }
 

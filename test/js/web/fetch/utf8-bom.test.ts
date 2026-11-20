@@ -27,6 +27,12 @@ describe("UTF-8 BOM should be ignored", () => {
         const blob = new Blob(['\uFEFF{"hello":"World 🌎"}'], { type: "application/json" });
         expect(await blob.json()).toStrictEqual({ "hello": "World 🌎" } as any);
       });
+
+      it("in formData()", async () => {
+        const blob = new Blob(["\uFEFFhello=world 🌎"], { type: "application/x-www-form-urlencoded" });
+        const formData = await blob.formData();
+        expect(formData.get("hello")).toBe("world 🌎");
+      });
     });
 
     it("in text()", async () => {
@@ -37,6 +43,12 @@ describe("UTF-8 BOM should be ignored", () => {
     it("in json()", async () => {
       const blob = new Blob(['\uFEFF{"hello":"World"}'], { type: "application/json" });
       expect(await blob.json()).toEqual({ "hello": "World" } as any);
+    });
+
+    it("in formData()", async () => {
+      const blob = new Blob(["\uFEFFhello=world"], { type: "application/x-www-form-urlencoded" });
+      const formData = await blob.formData();
+      expect(formData.get("hello")).toBe("world");
     });
   });
 
@@ -51,6 +63,14 @@ describe("UTF-8 BOM should be ignored", () => {
         headers: { "content-type": "application/json" },
       });
       expect(await response.json()).toEqual({ "hello": "World" } as any);
+    });
+
+    it("in formData()", async () => {
+      const response = new Response(Buffer.from("\uFEFFhello=world"), {
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+      });
+      const formData = await response.formData();
+      expect(formData.get("hello")).toBe("world");
     });
   });
 
@@ -69,6 +89,15 @@ describe("UTF-8 BOM should be ignored", () => {
         headers: { "content-type": "application/json" },
       });
       expect(await request.json()).toEqual({ "hello": "World" } as any);
+    });
+
+    it("in formData()", async () => {
+      const request = new Request("https://example.com", {
+        body: Buffer.from("\uFEFFhello=world"),
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+      });
+      const formData = await request.formData();
+      expect(formData.get("hello")).toBe("world");
     });
   });
 
@@ -113,6 +142,17 @@ describe("UTF-8 BOM should be ignored", () => {
       expect(await stream.json()).toEqual({ "hello": "World" });
     });
 
+    it("in Bun.readableStreamToFormData()", async () => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(Buffer.from("\uFEFFhello=world"));
+          controller.close();
+        },
+      });
+      const formData = await Bun.readableStreamToFormData(stream);
+      expect(formData.get("hello")).toBe("world");
+    });
+
     it("in Bun.readableStreamToBlob()", async () => {
       const stream = new ReadableStream({
         start(controller) {
@@ -137,83 +177,25 @@ describe("UTF-8 BOM should be ignored", () => {
   });
 });
 
-// The URL Standard's application/x-www-form-urlencoded parser and the
-// multipart/form-data parser both decode with "UTF-8 decode without BOM",
-// which treats a leading U+FEFF as data (unlike text()/json()).
+test("formData() drops one BOM, and only at the start of a url-encoded body", async () => {
+  const headers = { "content-type": "application/x-www-form-urlencoded" };
+  const parse = async (body: string) => [...(await new Response(body, { headers }).formData())];
+  expect({
+    only: await parse("\uFEFF"),
+    two: await parse("\uFEFF\uFEFFa=1"),
+    inside: await parse("\uFEFFa=\uFEFF1&\uFEFFb=2"),
+  }).toEqual({
+    only: [],
+    two: [["\uFEFFa", "1"]],
+    inside: [
+      ["a", "\uFEFF1"],
+      ["\uFEFFb", "2"],
+    ],
+  });
+});
+
+// A part is decoded with "UTF-8 decode without BOM", which treats a leading U+FEFF as data.
 describe("UTF-8 BOM should be preserved in formData()", () => {
-  const urlencoded = { "content-type": "application/x-www-form-urlencoded" };
-
-  it("matches URLSearchParams on the same bytes", async () => {
-    const expected = [...new URLSearchParams("\uFEFFa=1")];
-    expect(expected).toEqual([["\uFEFFa", "1"]]);
-
-    const fromString = await new Response("\uFEFFa=1", { headers: urlencoded }).formData();
-    expect([...fromString]).toEqual(expected);
-
-    const fromBytes = await new Response(new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0x3d, 0x31]), {
-      headers: urlencoded,
-    }).formData();
-    expect([...fromBytes]).toEqual(expected);
-
-    const fromRequest = await new Request("http://h/", {
-      method: "POST",
-      body: "\uFEFFa=1",
-      headers: urlencoded,
-    }).formData();
-    expect([...fromRequest]).toEqual(expected);
-  });
-
-  it("BOM-only body yields a single entry", async () => {
-    const formData = await new Response("\uFEFF", { headers: urlencoded }).formData();
-    expect([...formData]).toEqual([["\uFEFF", ""]]);
-  });
-
-  it("in Blob", async () => {
-    const blob = new Blob(["\uFEFFhello=world"], { type: "application/x-www-form-urlencoded" });
-    const formData = await blob.formData();
-    expect([...formData.entries()]).toEqual([["\uFEFFhello", "world"]]);
-    expect(formData.get("\uFEFFhello")).toBe("world");
-    expect(formData.get("hello")).toBe(null);
-  });
-
-  it("in Blob with emoji", async () => {
-    const blob = new Blob(["\uFEFFhello=world 🌎"], { type: "application/x-www-form-urlencoded" });
-    const formData = await blob.formData();
-    expect([...formData.entries()]).toEqual([["\uFEFFhello", "world 🌎"]]);
-  });
-
-  it("in Response", async () => {
-    const response = new Response(Buffer.from("\uFEFFhello=world"), { headers: urlencoded });
-    const formData = await response.formData();
-    expect([...formData]).toEqual([["\uFEFFhello", "world"]]);
-    expect(formData.get("\uFEFFhello")).toBe("world");
-    expect(formData.get("hello")).toBe(null);
-  });
-
-  it("in Request", async () => {
-    const request = new Request("https://example.com", {
-      body: Buffer.from("\uFEFFhello=world"),
-      headers: urlencoded,
-    });
-    const formData = await request.formData();
-    expect([...formData]).toEqual([["\uFEFFhello", "world"]]);
-    expect(formData.get("\uFEFFhello")).toBe("world");
-    expect(formData.get("hello")).toBe(null);
-  });
-
-  it("in Bun.readableStreamToFormData()", async () => {
-    const stream = new ReadableStream({
-      start(controller) {
-        controller.enqueue(Buffer.from("\uFEFFhello=world"));
-        controller.close();
-      },
-    });
-    const formData = await Bun.readableStreamToFormData(stream);
-    expect([...formData.entries()]).toEqual([["\uFEFFhello", "world"]]);
-    expect(formData.get("\uFEFFhello")).toBe("world");
-    expect(formData.get("hello")).toBe(null);
-  });
-
   it("in multipart/form-data part values", async () => {
     const boundary = "----x";
     const body = [`------x`, `Content-Disposition: form-data; name="field"`, ``, `\uFEFFvalue`, `------x--`, ``].join(

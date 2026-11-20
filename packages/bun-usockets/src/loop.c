@@ -118,6 +118,12 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
     us_internal_timer_sweep(loop);
 }
 
+void us_internal_sweep_soon(struct us_loop_t *loop) {
+    if (loop->data.sweep_next_tick_ns >= 0) {
+        loop->data.sweep_next_tick_ns = 0;
+    }
+}
+
 #endif
 
 

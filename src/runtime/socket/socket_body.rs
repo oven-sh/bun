@@ -4561,6 +4561,11 @@ pub(crate) mod testing_apis {
         }
     }
 
+    /// `runSocketTimeoutSweepSoon` in `bun:internal-for-testing`.
+    pub(crate) fn run_socket_timeout_sweep_soon() {
+        bun_uws_sys::Loop::get().sweep_soon();
+    }
+
     /// Live `DuplexUpgradeContext`s (one per TLS socket over a JS stream).
     pub(crate) fn duplex_upgrade_context_live_count() -> usize {
         DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT.load(core::sync::atomic::Ordering::Relaxed)

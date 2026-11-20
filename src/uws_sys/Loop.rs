@@ -518,6 +518,12 @@ impl ThreadLoop {
         // SAFETY: this thread's live loop, with the `LoopData` that lists the writes.
         unsafe { c::uws_loop_flush_pending_writes(self) };
     }
+
+    /// Testing only (`runSocketTimeoutSweepSoon`): the next iteration of this loop runs the socket timeout sweep.
+    pub fn sweep_soon(&self) {
+        // SAFETY: this thread's live loop. The call moves the sweep deadline and runs no handler.
+        unsafe { c::us_internal_sweep_soon(self) };
+    }
 }
 
 // ───────────────────────────── extern "C" ─────────────────────────────
@@ -560,6 +566,7 @@ mod c {
         pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut ThreadLoop;
         pub(super) fn uws_loop_date_header_timer_update(loop_: &ThreadLoop);
         pub(super) fn uws_loop_flush_pending_writes(loop_: &ThreadLoop);
+        pub(super) fn us_internal_sweep_soon(loop_: &ThreadLoop);
     }
 }
 // Raw, for callers on another thread that hold only a pointer (e.g. bun_http's

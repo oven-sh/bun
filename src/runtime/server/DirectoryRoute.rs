@@ -114,8 +114,8 @@ impl DirectoryRoute {
     fn on(this: ThisPtr<DirectoryRoute>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
         debug_assert!(this.server.get().is_some());
         let route = PendingRequest::new(RefPtr::from_this(this));
-        if let Some(server) = this.server.get() {
-            resp.timeout(server.config().idle_timeout);
+        if this.server.get().is_some() {
+            resp.start_timeout();
         }
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -244,7 +244,6 @@ impl DirectoryRoute {
             pollable: false,
             offset: body_offset,
             length: Some(body_len),
-            idle_timeout: server.config().idle_timeout,
             owner: StreamOwner::DirectoryRoute(route),
         });
     }

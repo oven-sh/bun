@@ -67,7 +67,7 @@ const CHANGED_SAMPLE: usize = 5;
 enum Preload {
     /// The local file it resolves to. An entry point of the scan.
     File(Box<[u8]>),
-    /// The path it names, which no file answers.
+    /// A path it names, which no file answers.
     Missing(Box<[u8]>),
 }
 
@@ -103,23 +103,9 @@ pub(crate) fn filter<'a>(
     // falls through to git below.)
     let watch_trigger = consume_watch_trigger();
     let from_watch_trigger = watch_trigger.is_some();
-    let mut changed_files = if let Some(trigger_set) = watch_trigger {
-        trigger_set
-    } else {
-        match get_changed_files(top_level_dir, changed_since) {
-            Ok(set) => set,
-            Err(GitError::GitNotFound) => {
-                Output::err_generic(
-                    "<b>--changed<r> requires <b>git<r> to be installed and in PATH",
-                    (),
-                );
-                Global::exit(1);
-            }
-            Err(GitError::GitFailed) => {
-                // get_changed_files already printed the git error output.
-                Global::exit(1);
-            }
-        }
+    let mut changed_files = match watch_trigger {
+        Some(trigger_set) => trigger_set,
+        None => changed_files_of_git_or_exit(top_level_dir, changed_since),
     };
 
     if test_files.is_empty() {
@@ -289,7 +275,6 @@ pub(crate) fn filter<'a>(
         *out = path_to_index.get(tf.as_bytes()).copied();
     }
 
-    let mut path_buf = bun_paths::path_buffer_pool::get();
     let mut select = |changed: &StringSet| -> Selection {
         // BFS backward from every changed file that participates in the graph.
         let mut affected = bun_core::handle_oom(DynamicBitSet::init_empty(sources.len()));
@@ -323,23 +308,13 @@ pub(crate) fn filter<'a>(
                     if record.source_index.is_valid() {
                         continue;
                     }
-                    if bun_paths::is_package_path(specifier) {
-                        // A tsconfig.json "paths" alias whose file is gone is external to the scan.
-                        resolver.for_each_tsconfig_paths_target(dir, specifier, |target| {
+                    // A tsconfig.json "paths" alias whose file is gone is external to the scan.
+                    if bun_paths::is_package_path(specifier)
+                        || record.flags.contains(ImportRecordFlags::WAS_UNRESOLVED)
+                    {
+                        resolver.for_each_path_named_by_import(dir, specifier, |target| {
                             names_changed |= named.claim(target, &mut claimed);
                         });
-                    } else if record.flags.contains(ImportRecordFlags::WAS_UNRESOLVED) {
-                        let target = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
-                            dir,
-                            &mut path_buf.0,
-                            &[specifier],
-                        );
-                        if let Some(target) = target {
-                            names_changed |= named.claim(target, &mut claimed);
-                            resolver.for_each_main_field_target(target, |main| {
-                                names_changed |= named.claim(main, &mut claimed);
-                            });
-                        }
                     }
                 }
                 if names_changed && !affected.is_set(idx) {
@@ -385,19 +360,18 @@ pub(crate) fn filter<'a>(
     // A watched test file that is gone was deleted or renamed: git knows the new name.
     let is_gone_test_file = |&entry: &usize| {
         let path = &changed_files.keys()[entry];
-        let name = without_extension(resolve_path::basename(path));
+        // The scanner compares the name in lowercase.
+        let name = without_extension(resolve_path::basename(path)).to_ascii_lowercase();
         TEST_NAME_SUFFIXES
             .iter()
             .any(|suffix| name.ends_with(suffix))
             && !sys::exists(path)
     };
     if from_watch_trigger && selection.unclaimed.iter().any(is_gone_test_file) {
-        if let Ok(known_to_git) = get_changed_files(top_level_dir, changed_since) {
-            for path in known_to_git.keys() {
-                let _ = changed_files.insert(path); // OOM-only Result
-            }
-            selection = select(&changed_files);
+        for path in changed_files_of_git_or_exit(top_level_dir, changed_since).keys() {
+            let _ = changed_files.insert(path); // OOM-only Result
         }
+        selection = select(&changed_files);
     }
 
     // A test file is selected if (a) its entry point source index is marked
@@ -442,6 +416,23 @@ pub(crate) fn filter<'a>(
     })
 }
 
+fn changed_files_of_git_or_exit(top_level_dir: &[u8], changed_since: &[u8]) -> StringSet {
+    match get_changed_files(top_level_dir, changed_since) {
+        Ok(set) => set,
+        Err(GitError::GitNotFound) => {
+            Output::err_generic(
+                "<b>--changed<r> requires <b>git<r> to be installed and in PATH",
+                (),
+            );
+            Global::exit(1);
+        }
+        Err(GitError::GitFailed) => {
+            // get_changed_files already printed the git error output.
+            Global::exit(1);
+        }
+    }
+}
+
 /// Resolves the preloads like the runtime. One in node_modules is no local file and is left out.
 fn resolve_preloads(
     resolver: &mut bun_resolver::Resolver<'_>,
@@ -460,7 +451,6 @@ fn resolve_preloads(
             core::ptr::NonNull::from(&mut unread_log),
         )
     };
-    let mut buf = bun_paths::path_buffer_pool::get();
     for name in names {
         let name: &[u8] = name.strip_prefix(b"file://".as_slice()).unwrap_or(name);
         match resolver.resolve(top_level_dir, name, bun_ast::ImportKind::Stmt) {
@@ -472,17 +462,9 @@ fn resolve_preloads(
                     preloads.push(Preload::File(Box::from(file)));
                 }
             }
-            Err(_) if bun_paths::is_package_path(name) => {}
-            Err(_) => {
-                let path = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
-                    top_level_dir,
-                    &mut buf.0,
-                    &[name],
-                );
-                if let Some(path) = path {
-                    preloads.push(Preload::Missing(Box::from(path)));
-                }
-            }
+            Err(_) => resolver.for_each_path_named_by_import(top_level_dir, name, |path| {
+                preloads.push(Preload::Missing(Box::from(path)));
+            }),
         }
     }
     preloads

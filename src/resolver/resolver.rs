@@ -999,13 +999,28 @@ impl<'a> Resolver<'a> {
         self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
     }
 
-    /// The paths that tsconfig.json "paths" maps the import to, existing or not.
-    pub fn for_each_tsconfig_paths_target(
+    /// The paths an import that resolved to no file can name, through tsconfig "paths" and main fields too.
+    pub fn for_each_path_named_by_import(
         &mut self,
         source_dir: &[u8],
         import_path: &[u8],
         mut each: impl FnMut(&[u8]),
     ) {
+        let mut named = |this: &mut Self, target: &[u8]| {
+            each(target);
+            this.for_each_main_field_target(target, &mut each);
+            false
+        };
+        if !is_package_path(import_path) {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let target = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                bun_paths::platform::Auto,
+            >(source_dir, &mut buf.0, &[import_path]);
+            if let Some(target) = target {
+                named(self, target);
+            }
+            return;
+        }
         if !bun_paths::is_absolute(source_dir) {
             return;
         }
@@ -1018,14 +1033,11 @@ impl<'a> Resolver<'a> {
         if tsconfig.paths.count() == 0 {
             return;
         }
-        self.find_tsconfig_paths_target(&tsconfig, import_path, |_, target| {
-            each(target);
-            false
-        });
+        self.find_tsconfig_paths_target(&tsconfig, import_path, named);
     }
 
     /// The paths that the main fields of the package.json in `dir` name, existing or not.
-    pub fn for_each_main_field_target(&mut self, dir: &[u8], mut each: impl FnMut(&[u8])) {
+    fn for_each_main_field_target(&mut self, dir: &[u8], mut each: impl FnMut(&[u8])) {
         let Some(dir_info) = self.read_dir_info_ignore_error(dir) else {
             return;
         };

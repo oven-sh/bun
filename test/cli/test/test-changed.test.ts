@@ -285,19 +285,22 @@ describe.concurrent("bun test --changed", () => {
         "pkg/package.json": JSON.stringify({ name: "pkg", main: "src/entry.ts" }),
         "pkg/src/entry.ts": lib,
         "pkg/src/other.ts": lib,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@alias/*": ["./*"] } } }),
         "uses.test.ts": importing("./pkg"),
+        "alias.test.ts": importing("@alias/pkg"),
       });
       initRepo(String(dir));
+      const mainNames = [...deletionNames, "alias.test.ts"];
 
       rmSync(join(String(dir), "pkg", "src", "other.ts"));
       {
         const { stderr, exitCode } = await runTestChanged(String(dir));
-        expect(ranFiles(stderr, deletionNames)).toEqual([]);
+        expect(ranFiles(stderr, mainNames)).toEqual([]);
         expect(exitCode).toBe(0);
       }
       rmSync(join(String(dir), "pkg", "src", "entry.ts"));
       const { stderr, exitCode } = await runTestChanged(String(dir));
-      expect(ranFiles(stderr, deletionNames)).toEqual(["uses.test.ts"]);
+      expect(ranFiles(stderr, mainNames)).toEqual(["alias.test.ts", "uses.test.ts"]);
       expect(exitCode).toBe(1);
     });
 
@@ -527,6 +530,28 @@ describe.concurrent("bun test --changed", () => {
 
       const { stderr, exitCode } = await runTestChanged(String(dir));
       expect(stderr).toContain("1 changed file, running 2/2 test files\n");
+      expect(exitCode).toBe(1);
+    });
+
+    test("a deleted preload that a tsconfig paths alias names", async () => {
+      using dir = tempDir("test-changed-preload-alias-deleted", {
+        ...preloadFixture,
+        "bunfig.toml": `[test]\npreload = ["@/setup"]\n`,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }),
+        "src/setup.ts": `globalThis.fromSetup = 1;\n`,
+        "src/unused.ts": `export {};\n`,
+      });
+      initRepo(String(dir));
+
+      rmSync(join(String(dir), "src", "unused.ts"));
+      {
+        const { stderr, exitCode } = await runTestChanged(String(dir));
+        expect(ranFiles(stderr, preloadNames)).toEqual([]);
+        expect(exitCode).toBe(0);
+      }
+      rmSync(join(String(dir), "src", "setup.ts"));
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(stderr).toContain("2 changed files, running 2/2 test files\n");
       expect(exitCode).toBe(1);
     });
 
@@ -1159,6 +1184,25 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     // The watcher knows the old name alone. Git lists the new one.
     renameSync(join(String(dir), "wc.test.ts"), join(String(dir), "wd.test.ts"));
     expect(await runs.next()).toEqual({ files: ["wb.test.ts", "wd.test.ts"], summary: "Ran 2 tests across 2 files." });
+  }, 60_000);
+
+  test("a renamed test file whose name has capitals runs under its new name", async () => {
+    using dir = tempDir("test-changed-watch-rename-capitals", {
+      ...watchFixture,
+      "Upper.Test.ts": watchFixture["wc.test.ts"],
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "wb.test.ts"), "// dirty\n");
+
+    const runs = runsOf(String(dir));
+    await using proc = runs.proc;
+    expect(await runs.next()).toEqual({ files: ["wb.test.ts"], summary: "Ran 1 test across 1 file." });
+
+    renameSync(join(String(dir), "Upper.Test.ts"), join(String(dir), "renamed.test.ts"));
+    expect(await runs.next()).toEqual({
+      files: ["renamed.test.ts", "wb.test.ts"],
+      summary: "Ran 2 tests across 2 files.",
+    });
   }, 60_000);
 
   // Linux only: it stops the process until /proc says that every thread is stopped.

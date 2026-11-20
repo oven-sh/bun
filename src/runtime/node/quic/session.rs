@@ -1452,11 +1452,15 @@ impl QuicSession {
         Ok((layer, code, reason))
     }
 
-    fn apply_graceful_close(&self, (layer, code, reason): Close<Layer>) {
-        self.update(|conn| conn.set_close_error(layer, code, &reason));
+    pub(super) fn expect_end(&self) {
         if self.is_server {
             self.update(|conn| conn.set_progress_timeout(now(), CLOSING_PROGRESS_TIMEOUT));
         }
+    }
+
+    fn apply_graceful_close(&self, (layer, code, reason): Close<Layer>) {
+        self.update(|conn| conn.set_close_error(layer, code, &reason));
+        self.expect_end();
         if self.is_http3() && self.has_opened_stream() {
             // RFC 9114 §5.2.
             self.update(Connection::go_away);

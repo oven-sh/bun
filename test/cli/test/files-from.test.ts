@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, type DirectoryTree } from "harness";
+import { join } from "node:path";
 
 const passes = (name: string) =>
   `import {test,expect} from "bun:test"; test(${JSON.stringify(name)}, () => expect(1).toBe(1));`;
@@ -119,4 +120,61 @@ test("--files-from refuses a filter beside it, rather than running the listed fi
   expect(mixed.out).toContain("unit is a filter, and --files-from takes none beside it");
   expect(mixed.out).not.toContain("beta");
   expect(mixed.exitCode).toBe(1);
+});
+
+// The UTF-8 byte order mark, EF BB BF on disk. Windows PowerShell 5.1 writes it with `-Encoding utf8`.
+const mark = "\uFEFF";
+
+const markedLists: [shape: string, lists: DirectoryTree][] = [
+  ["paths", { "list.txt": `${mark}./a.test.js\n./b.test.js\n./c.test.js\n` }],
+  ["names and CRLF", { "list.txt": `${mark}a.test.js\r\nb.test.js\r\nc.test.js\r\n` }],
+  ["an absolute path", { "list.txt": ({ root }) => `${mark}${join(root, "a.test.js")}\nb.test.js\nc.test.js\n` }],
+  ["two lists", { "one.txt": `${mark}a.test.js\n`, "two.txt": `${mark}./b.test.js\n./c.test.js\n` }],
+];
+
+// Not `test.concurrent`: in a debug build, six `bun test` children at once take over 5 seconds each and time out.
+test.each(markedLists)("--files-from skips a UTF-8 byte order mark at the start of the list: %s", async (_, lists) => {
+  using dir = tempDir("files-from-mark", {
+    "a.test.js": passes("alpha"),
+    "b.test.js": passes("bravo"),
+    "c.test.js": passes("charlie"),
+    "d.test.js": passes("delta"),
+    ...lists,
+  });
+  const { out, exitCode } = await run(String(dir), ...Object.keys(lists).flatMap(list => ["--files-from", list]));
+  expect(out).toContain("(pass) alpha");
+  expect(out).toContain("(pass) bravo");
+  expect(out).toContain("(pass) charlie");
+  expect(out).not.toContain("delta");
+  expect(out).toContain("Ran 3 tests across 3 files");
+  expect(exitCode).toBe(0);
+});
+
+test("--files-from: a list that holds only a byte order mark lists no test files", async () => {
+  using dir = tempDir("files-from-mark-only", {
+    "a.test.js": passes("alpha"),
+    "list.txt": mark,
+  });
+  const { out, exitCode } = await run(String(dir), "--files-from", "list.txt", "./a.test.js");
+  expect(out).toContain("lists no test files");
+  expect(out).not.toContain("alpha");
+  expect(exitCode).toBe(1);
+});
+
+test.each([
+  ["on a later line", `${mark}a.test.js\n${mark}b.test.js\n`],
+  ["after ./ on the first line", `./${mark}b.test.js\na.test.js\n`],
+])("--files-from: U+FEFF after the start of the list is a character of the name: %s", async (_, list) => {
+  using dir = tempDir("files-from-mark-in-name", {
+    "a.test.js": passes("alpha"),
+    [`${mark}b.test.js`]: passes("bravo"),
+    "c.test.js": passes("charlie"),
+    "list.txt": list,
+  });
+  const { out, exitCode } = await run(String(dir), "--files-from", "list.txt");
+  expect(out).toContain("(pass) alpha");
+  expect(out).toContain("(pass) bravo");
+  expect(out).not.toContain("charlie");
+  expect(out).toContain("Ran 2 tests across 2 files");
+  expect(exitCode).toBe(0);
 });

@@ -38,30 +38,11 @@ const publishedBins: Record<string, Record<string, Record<string, string>>> = {
 };
 
 /**
- * Stands in for https://registry.npmjs.org/. bun.lock leaves out the tarball URLs of that registry alone, so with a
- * registry at another URL the fixtures would migrate to other bytes. With `env`, bun sends every https request through
- * a tunnel that ends at a local server, whatever host it asks for. The server has the manifests of `publishedBins`,
- * the tarballs of the test registry's fixtures, and 404 for everything else.
+ * With `env`, bun sends every https request through a tunnel that ends at a local server, whatever host it asks for.
+ * `fetch` answers them. Its `request.url` is the URL that bun asked for.
  */
-export async function startNpmjs() {
-  const server = Bun.serve({
-    port: 0,
-    tls,
-    async fetch(request) {
-      const [name, tarball] = decodeURIComponent(new URL(request.url).pathname.slice(1)).split("/-/");
-      if (tarball !== undefined) {
-        const fixture = Bun.file(join(fixturePackages, name, tarball));
-        if (await fixture.exists()) return new Response(fixture);
-      } else if (Object.hasOwn(publishedBins, name)) {
-        const versions = Object.entries(publishedBins[name]).map(([version, bin]) => [
-          version,
-          { name, version, bin, dist: { tarball: `https://registry.npmjs.org/${name}/-/${name}-${version}.tgz` } },
-        ]);
-        return Response.json({ name, versions: Object.fromEntries(versions) });
-      }
-      return Response.json({ error: "not found" }, { status: 404 });
-    },
-  });
+export async function startHttpsStandIn(fetch: (request: Request) => Response | Promise<Response>) {
+  const server = Bun.serve({ port: 0, tls, fetch });
   const tunnel = net.createServer(client => {
     client.on("error", () => client.destroy());
     // The first packet is the whole `CONNECT host:443` request.
@@ -77,20 +58,43 @@ export async function startNpmjs() {
   tunnel.listen(0, "127.0.0.1", resolve);
   await listening;
   const proxy = `http://127.0.0.1:${(tunnel.address() as net.AddressInfo).port}`;
+  const stop = () => {
+    tunnel.close();
+    server.stop(true);
+  };
+  return {
+    env: { HTTPS_PROXY: proxy, https_proxy: proxy, NO_PROXY: "", no_proxy: "", NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+    stop,
+    [Symbol.dispose]: stop,
+  };
+}
+
+/**
+ * Stands in for https://registry.npmjs.org/. bun.lock leaves out the tarball URLs of that registry alone, so with a
+ * registry at another URL the fixtures would migrate to other bytes. The server has the manifests of `publishedBins`,
+ * the tarballs of the test registry's fixtures, and 404 for everything else.
+ */
+export async function startNpmjs() {
+  const npmjs = await startHttpsStandIn(async request => {
+    const [name, tarball] = decodeURIComponent(new URL(request.url).pathname.slice(1)).split("/-/");
+    if (tarball !== undefined) {
+      const fixture = Bun.file(join(fixturePackages, name, tarball));
+      if (await fixture.exists()) return new Response(fixture);
+    } else if (Object.hasOwn(publishedBins, name)) {
+      const versions = Object.entries(publishedBins[name]).map(([version, bin]) => [
+        version,
+        { name, version, bin, dist: { tarball: `https://registry.npmjs.org/${name}/-/${name}-${version}.tgz` } },
+      ]);
+      return Response.json({ name, versions: Object.fromEntries(versions) });
+    }
+    return Response.json({ error: "not found" }, { status: 404 });
+  });
   // Manifests are cached by registry URL, and CI's parallel batch has one cache for all of its files.
   const cache = tempDir("npmjs-cache", {});
   return {
-    env: {
-      HTTPS_PROXY: proxy,
-      https_proxy: proxy,
-      NO_PROXY: "",
-      no_proxy: "",
-      NODE_TLS_REJECT_UNAUTHORIZED: "0",
-      BUN_INSTALL_CACHE_DIR: String(cache),
-    },
+    env: { ...npmjs.env, BUN_INSTALL_CACHE_DIR: String(cache) },
     stop() {
-      tunnel.close();
-      server.stop(true);
+      npmjs.stop();
       cache[Symbol.dispose]();
     },
   };

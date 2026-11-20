@@ -740,6 +740,10 @@ Disables environment variable injection entirely.
 
 Specifies the type of sourcemap to generate.
 
+`Bun.build` also accepts a boolean. `false` means `"none"`. `true` means `"linked"` when `outdir` is set and `"inline"` when it is not.
+
+`Bun.build` does not need `outdir` for `"linked"` or `"external"`. It returns each sourcemap in [`outputs`](#outputs), and without `outdir` it writes nothing to disk. A build with `compile` is different: see [standalone executables](/compiler/executables).
+
 <Tabs>
   <Tab title="JavaScript">
     ```ts title="build.ts" icon="/icons/typescript.svg"
@@ -1226,6 +1230,8 @@ A map of file extensions to built-in loader names. Use this to customize how cer
 
 A banner added to the final bundle. This can be a directive like `"use client"` for React, or a comment block such as a license.
 
+Bun adds the banner to every JavaScript entry point and chunk. It does not add it to CSS or HTML.
+
 <Tabs>
   <Tab title="JavaScript">
     ```ts title="build.ts" icon="/icons/typescript.svg"
@@ -1246,6 +1252,8 @@ A banner added to the final bundle. This can be a directive like `"use client"` 
 ### footer
 
 A footer added to the final bundle. This can be a comment block for a license or a fun easter egg.
+
+Bun adds the footer to every JavaScript entry point and chunk. It does not add it to CSS or HTML.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -1886,7 +1894,7 @@ interface BuildConfig {
   publicPath?: string;
   define?: Record<string, string>;
   loader?: { [k in string]: Loader };
-  sourcemap?: "none" | "linked" | "inline" | "external" | boolean; // default: "none", true -> "inline"
+  sourcemap?: "none" | "linked" | "inline" | "external" | boolean; // default: "none", true -> "linked" with outdir, "inline" without
   /**
    * package.json `exports` conditions used when resolving imports
    *
@@ -1964,12 +1972,16 @@ interface BuildConfig {
   };
   /**
    * Add a banner to the bundled code such as "use client";
+   *
+   * Added to every JavaScript entry point and chunk, not to CSS or HTML.
    */
   banner?: string;
   /**
    * Add a footer to the bundled code such as a comment block like
    *
    * `// made with bun!`
+   *
+   * Added to every JavaScript entry point and chunk, not to CSS or HTML.
    */
   footer?: string;
 

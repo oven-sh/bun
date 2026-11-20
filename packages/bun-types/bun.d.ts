@@ -3404,17 +3404,28 @@ declare module "bun" {
      * - `"none"` - No source maps are generated
      * - `"linked"` - A separate `*.ext.map` file is generated alongside each
      *   `*.ext` file. A `//# sourceMappingURL` comment is added to the output
-     *   file to link the two. Requires `outdir` to be set.
+     *   file to link the two.
      * - `"inline"` - an inline source map is appended to the output file.
-     * - `"external"` - Generate a separate source map file for each input file.
-     *   No `//# sourceMappingURL` comment is added to the output file.
+     * - `"external"` - Generate a separate source map file for each JavaScript
+     *   entry point and chunk. No `//# sourceMappingURL` comment is added to
+     *   the output file.
      *
-     * `true` and `false` are aliases for `"inline"` and `"none"`, respectively.
+     * Only JavaScript entry points and chunks get a source map. CSS and HTML
+     * do not.
+     *
+     * Each `"linked"` or `"external"` map is a separate {@link BuildArtifact}
+     * in `outputs` with `kind: "sourcemap"`.
+     *
+     * In a build without `compile`:
+     * - `true` is an alias for `"linked"` when `outdir` is set, and for
+     *   `"inline"` when it is not. `false` is an alias for `"none"`.
+     * - Without `outdir`, Bun does not write a `"linked"` or `"external"` map
+     *   to disk.
      *
      * @default "none"
      *
-     * @see {@link outdir} required for `"linked"` maps
      * @see {@link publicPath} to customize the base url of linked source maps
+     * @see [Standalone executables](https://bun.com/docs/compiler/executables) for source maps with `compile`
      */
     sourcemap?: "none" | "linked" | "inline" | "external" | boolean;
 
@@ -3549,6 +3560,9 @@ declare module "bun" {
 
     /**
      * Add a banner to the bundled code such as "use client";
+     *
+     * The banner is added to every JavaScript entry point and chunk. It is
+     * not added to CSS or HTML.
      */
     banner?: string;
 
@@ -3556,6 +3570,9 @@ declare module "bun" {
      * Add a footer to the bundled code such as a comment block like
      *
      * `// made with bun!`
+     *
+     * The footer is added to every JavaScript entry point and chunk. It is
+     * not added to CSS or HTML.
      */
     footer?: string;
 

@@ -38,6 +38,8 @@ let windowGeneration = 0;
 let pendingAcks = () => 0;
 // Every ack sent so far; with `pendingAcks()` it tells the harness how many acks to expect in total.
 let acksSent = 0;
+// Settles once every stylesheet the current page links has loaded or failed.
+let stylesheetsSettled = Promise.resolve();
 let objectURLRegistry = new Map();
 let internalAPIs;
 
@@ -231,72 +233,8 @@ function createWindow(windowUrl) {
     },
     info: (...args) => {
       if (args[0]?.startsWith("[Bun] Hot-module-reloading socket connected")) {
-        // Wait for all CSS assets to be fully loaded before emitting the event
-        let checkAttempts = 0;
-        const MAX_CHECK_ATTEMPTS = 20; // Prevent infinite waiting
-
-        const checkCSSLoaded = () => {
-          checkAttempts++;
-
-          // Get all link elements with rel="stylesheet"
-          const styleLinks = window.document.querySelectorAll('link[rel="stylesheet"]');
-          // Get all style elements
-          const styleTags = window.document.querySelectorAll("style");
-          // Check for adoptedStyleSheets
-          const adoptedSheets = window.document.adoptedStyleSheets || [];
-
-          // If no stylesheets of any kind, just emit the event
-          if (styleLinks.length === 0 && styleTags.length === 0 && adoptedSheets.length === 0) {
-            process.nextTick(ackPageLoad);
-            return;
-          }
-
-          // Check if all stylesheets are loaded
-          let allLoaded = true;
-          let pendingCount = 0;
-
-          // Check link elements
-          for (const link of styleLinks) {
-            // If the stylesheet is not loaded yet
-            if (!link.sheet) {
-              allLoaded = false;
-              pendingCount++;
-            }
-          }
-
-          // Check style elements - these should be loaded immediately
-          for (const style of styleTags) {
-            if (!style.sheet) {
-              allLoaded = false;
-              pendingCount++;
-            }
-          }
-
-          // Check adoptedStyleSheets - these should be loaded immediately
-          for (const sheet of adoptedSheets) {
-            if (!sheet.cssRules) {
-              allLoaded = false;
-              pendingCount++;
-            }
-          }
-
-          if (allLoaded || checkAttempts >= MAX_CHECK_ATTEMPTS) {
-            // All CSS is loaded or we've reached max attempts, emit the event
-            if (checkAttempts >= MAX_CHECK_ATTEMPTS && !allLoaded) {
-              console.warn("[W] Reached maximum CSS load check attempts, proceeding anyway");
-            }
-            process.nextTick(ackPageLoad);
-          } else {
-            // Wait a bit and check again
-            console.info(
-              `[I] Waiting for ${pendingCount} CSS assets to load (attempt ${checkAttempts}/${MAX_CHECK_ATTEMPTS})...`,
-            );
-            setTimeout(checkCSSLoaded, 50);
-          }
-        };
-
-        // Start checking for CSS loaded state
-        checkCSSLoaded();
+        // Ack the page load once every stylesheet it links has loaded or failed.
+        stylesheetsSettled.then(() => process.nextTick(ackPageLoad));
       }
       if (args[0]?.startsWith("[WS] receive message")) return;
       if (args[0]?.startsWith("Updated modules:")) return;
@@ -430,6 +368,37 @@ async function loadPage() {
     process.exit(exitCodeMap.reloadFailed);
   }
   window.document.write(html);
+  stylesheetsSettled = settleStylesheets(window);
+}
+
+/**
+ * Resolves once every stylesheet `<link>` in the document has loaded or
+ * failed. happy-dom fetches each one after `document.write` returns, so the
+ * listeners miss no event: a load sets `link.sheet` and fires "load", a
+ * response that is not ok fires "error" (a 404 for a source tag the dev
+ * server left in a recovered page, for example) and leaves `sheet` null.
+ */
+function settleStylesheets(window) {
+  const links = [...window.document.querySelectorAll('link[rel="stylesheet"]')];
+  const pending = new Set(links.filter(link => !link.sheet));
+  // Only a diagnostic: the harness times out the page load on its own.
+  const diagnostic = setTimeout(() => {
+    const hrefs = [...pending].map(link => link.getAttribute("href"));
+    console.warn(`[W] Still waiting for ${pending.size} stylesheets to load or fail: ${hrefs.join(", ")}`);
+  }, 1000);
+  return Promise.all(
+    [...pending].map(
+      link =>
+        new Promise(resolve => {
+          const settle = () => {
+            pending.delete(link);
+            resolve();
+          };
+          link.addEventListener("load", settle);
+          link.addEventListener("error", settle);
+        }),
+    ),
+  ).finally(() => clearTimeout(diagnostic));
 }
 
 // Listen for control messages from the test harness

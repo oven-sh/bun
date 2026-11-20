@@ -7,6 +7,7 @@ import { once } from "node:events";
 import type { SocketAddress } from "node:net";
 import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
 import { connect as connectTLS } from "node:tls";
+import { release } from "os";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
@@ -2517,5 +2518,282 @@ describe("Bun.serve HTTP/3 SNI", () => {
     );
     expect(outcomes).toEqual(spellings.map(name => [name, "closed", "closed", "200 served"]));
     expect(await exchange("other.example")).toBe("200 served");
+  });
+});
+
+// Linux gives each datagram to a UDP reuseport group to one of its sockets, from a hash of the
+// 4-tuple over the group. Other systems do not balance UDP over SO_REUSEPORT, and before Linux 5.4
+// the group could win over a connected socket, so there a server does not pin.
+const [kernelMajor, kernelMinor] = release().split(".").map(Number);
+const serversSharePort = isLinux && (kernelMajor > 5 || (kernelMajor === 5 && kernelMinor >= 4));
+
+describe.skipIf(!serversSharePort)("Bun.serve HTTP/3 servers that share a port with reusePort", () => {
+  const script = `
+    const { readdirSync } = require("fs");
+    const tls = ${JSON.stringify(tls)};
+    const held = new Set();
+    let server;
+    const serve = (port, reusePort, name) =>
+      Bun.serve({
+        port, hostname: process.env.HOST, reusePort, tls, http3: true,
+        fetch(req) {
+          const { pathname } = new URL(req.url);
+          if (pathname === "/hold") {
+            return new Response(new ReadableStream({ start(c) { c.enqueue(name + ":held"); held.add(c); } }));
+          }
+          if (pathname === "/abort-and-rebind") commands["abort-and-rebind"]();
+          return new Response(name);
+        },
+      });
+    const commands = {
+      fds: () => console.error("FDS=" + readdirSync("/proc/self/fd").length + ";"),
+      stop: () => {
+        server.stop().then(() => console.error("DRAINED"));
+        console.error("STOPPING");
+      },
+      release: () => {
+        for (const c of held) { c.enqueue(":released"); c.close(); }
+        held.clear();
+      },
+      abort: () => {
+        server.stop(true);
+        console.error("ABORTED");
+      },
+      "abort-and-rebind": () => {
+        const port = server.port;
+        server.stop(true);
+        server = serve(port, false, process.env.NAME + "-rebound");
+        console.error("REBOUND");
+      },
+    };
+    server = serve(Number(process.env.PORT), process.env.REUSE_PORT !== "0", process.env.NAME);
+    console.error("PORT=" + server.port);
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", chunk => { for (const line of chunk.split("\\n")) commands[line]?.(); });
+    ${STOP_ON_STDIN_END}
+  `;
+
+  async function spawnServer(dir: string, name: string, port: number, env: Record<string, string> = {}) {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "server.mjs"],
+      cwd: dir,
+      env: { ...bunEnv, NAME: name, PORT: String(port), ...env },
+      stdout: "inherit",
+      stderr: "pipe",
+      stdin: "pipe",
+    });
+    let buf = "";
+    let eof = false;
+    type Waiter = { re: RegExp; from: number; resolve: (m: RegExpMatchArray) => void; reject: (e: Error) => void };
+    const waiters: Waiter[] = [];
+    const drain = (async () => {
+      for await (const chunk of proc.stderr) {
+        buf += new TextDecoder().decode(chunk);
+        for (let i = waiters.length - 1; i >= 0; i--) {
+          const m = buf.slice(waiters[i].from).match(waiters[i].re);
+          if (m) waiters.splice(i, 1)[0].resolve(m);
+        }
+      }
+      eof = true;
+      for (const w of waiters.splice(0)) w.reject(new Error(`${name} exited without matching ${w.re}; stderr:\n${buf}`));
+    })();
+    /** Waits for a match in what the script printed after the first `from` characters. */
+    const waitForStderr = (re: RegExp, from = 0) =>
+      new Promise<RegExpMatchArray>((resolve, reject) => {
+        const m = buf.slice(from).match(re);
+        if (m) return resolve(m);
+        if (eof) return reject(new Error(`${name} exited without matching ${re}; stderr:\n${buf}`));
+        waiters.push({ re, from, resolve, reject });
+      });
+    const exit = async () => {
+      // stdin end makes the script stop(true), which closes its connections, and exit.
+      proc.stdin?.end();
+      await Promise.race([proc.exited, Bun.sleep(1000)]);
+      proc.kill();
+      await proc.exited;
+      await drain.catch(() => {});
+    };
+    try {
+      port = Number((await waitForStderr(/PORT=(\d+)/))[1]);
+    } catch (err) {
+      await exit();
+      throw err;
+    }
+    return {
+      port,
+      waitForStderr,
+      exit,
+      /** Runs a command of the script. If `printed` is given, waits for the script to print it. */
+      async send(command: string, printed?: RegExp) {
+        const from = buf.length;
+        proc.stdin!.write(command + "\n");
+        return printed ? (await waitForStderr(printed, from))[1] : undefined;
+      },
+      [Symbol.asyncDispose]: exit,
+    };
+  }
+
+  // One client is one UDP socket, so one 4-tuple. A session that gets no answer ends after
+  // maxIdleTimeout, and its requests then report "closed".
+  async function h3Client(port: number, host = "127.0.0.1") {
+    const endpoint = new QuicEndpoint();
+    const session = await connect(`${host}:${port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+    } as SessionOptions);
+    const closed = session.closed.then(
+      () => "closed",
+      () => "closed",
+    );
+    const request = (path: string) => {
+      const firstChunk = Promise.withResolvers<void>();
+      const done = (async () => {
+        await session.opened;
+        let status = "";
+        const stream = await session.createBidirectionalStream({
+          headers: requestHeaders(path),
+          onheaders(received) {
+            status = received[":status"] as string;
+          },
+        });
+        stream.closed.catch(() => {});
+        let body = "";
+        for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+          for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+          if (body) firstChunk.resolve();
+        }
+        return `${status} ${body}`;
+      })().catch(() => "closed");
+      const outcome = Promise.race([done, closed]);
+      outcome.then(() => firstChunk.resolve());
+      return { firstChunk: firstChunk.promise, outcome };
+    };
+    return {
+      get: (path = "/") => request(path).outcome,
+      hold: () => request("/hold"),
+      async [Symbol.asyncDispose]() {
+        // Not close(): that waits for the responses that the test left open.
+        if (!session.destroyed) session.destroy();
+        await endpoint[Symbol.asyncDispose]();
+      },
+    };
+  }
+
+  const clients = async (count: number, port: number, host?: string) => {
+    const stack = new AsyncDisposableStack();
+    const list = await Promise.all(Array.from({ length: count }, () => h3Client(port, host)));
+    for (const client of list) stack.use(client);
+    return Object.assign(list, { [Symbol.asyncDispose]: () => stack.disposeAsync() });
+  };
+
+  // Before: the kernel moved about half of the first server's connections to each server that
+  // joined. The joiner did not know them, so their requests got no answer.
+  test.each([
+    ["on every address", undefined],
+    ["on one address", "127.0.0.1"],
+  ])(
+    "a server that joins the port takes no connection from the servers before it, %s",
+    async (_, hostname) => {
+      const host = hostname ? { HOST: hostname } : {};
+      using dir = tempDir("serve-http3-share", { "server.mjs": script });
+      await using a = await spawnServer(String(dir), "A", 0, host);
+      await using first = await clients(16, a.port);
+      expect(await Promise.all(first.map(client => client.get()))).toEqual(first.map(() => "200 A"));
+
+      await using b = await spawnServer(String(dir), "B", a.port, host);
+      expect(await Promise.all(first.map(client => client.get()))).toEqual(first.map(() => "200 A"));
+
+      // These are on A or on B. Both give each a socket of its own when it arrives.
+      await using second = await clients(16, a.port);
+      const owners = await Promise.all(second.map(client => client.get()));
+      expect(owners.filter(owner => owner !== "200 A" && owner !== "200 B")).toEqual([]);
+
+      await using c = await spawnServer(String(dir), "C", a.port, host);
+      expect({
+        first: await Promise.all(first.map(client => client.get())),
+        second: await Promise.all(second.map(client => client.get())),
+      }).toEqual({ first: first.map(() => "200 A"), second: owners });
+    },
+    30_000,
+  );
+
+  // Before: the server that stopped kept its UDP socket on the port until its last connection
+  // ended, so the kernel still gave it about half of the new connections, and it dropped them.
+  test("a server that stops gracefully leaves the port to the other server and finishes its responses", async () => {
+    using dir = tempDir("serve-http3-share", { "server.mjs": script });
+    await using a = await spawnServer(String(dir), "A", 0);
+    await using holders = await clients(4, a.port);
+    const held = holders.map(client => client.hold());
+    await Promise.all(held.map(response => response.firstChunk));
+    await using b = await spawnServer(String(dir), "B", a.port);
+
+    await a.send("stop", /STOPPING/);
+    await using fresh = await clients(16, a.port);
+    expect(await Promise.all(fresh.map(client => client.get()))).toEqual(fresh.map(() => "200 B"));
+
+    // A has no listen socket now. Its responses go out, and their ACKs come in, on the connections' own sockets.
+    await a.send("release");
+    expect(await Promise.all(held.map(response => response.outcome))).toEqual(held.map(() => "200 A:held:released"));
+    await holders[Symbol.asyncDispose]();
+    await a.waitForStderr(/DRAINED/);
+  }, 30_000);
+
+  describe("the port is free when stop(true) returns", () => {
+    // A pins its connections from the time B joins, and keeps doing so after B is gone.
+    async function pinningServer(dir: string) {
+      const a = await spawnServer(dir, "A", 0);
+      const b = await spawnServer(dir, "B", a.port);
+      await b.exit();
+      return a;
+    }
+
+    test("after a graceful stop that left connections open", async () => {
+      using dir = tempDir("serve-http3-share", { "server.mjs": script });
+      await using a = await pinningServer(String(dir));
+      await using holders = await clients(3, a.port);
+      const held = holders.map(client => client.hold());
+      await Promise.all(held.map(response => response.firstChunk));
+
+      await a.send("stop", /STOPPING/);
+      await a.send("abort", /ABORTED/);
+      // stop(true) ends the responses through the connections' own sockets: A has no listen socket.
+      const ended = await Promise.all(held.map(response => response.outcome));
+      expect(ended.filter(outcome => outcome.endsWith(":released"))).toEqual([]);
+      // A server that does not share the port can only bind it when no socket of A is left on it.
+      await using c = await spawnServer(String(dir), "C", a.port, { REUSE_PORT: "0" });
+      await using fresh = await h3Client(a.port);
+      expect(await fresh.get()).toBe("200 C");
+    }, 30_000);
+
+    test("from a request handler", async () => {
+      using dir = tempDir("serve-http3-share", { "server.mjs": script });
+      await using a = await pinningServer(String(dir));
+      await using holders = await clients(3, a.port);
+      const held = holders.map(client => client.hold());
+      await Promise.all(held.map(response => response.firstChunk));
+
+      await using trigger = await h3Client(a.port);
+      trigger.get("/abort-and-rebind");
+      await a.waitForStderr(/REBOUND/);
+      await using fresh = await h3Client(a.port);
+      expect(await fresh.get()).toBe("200 A-rebound");
+    }, 30_000);
+  });
+
+  test("a server that is alone on its port opens no socket for a connection", async () => {
+    using dir = tempDir("serve-http3-share", { "server.mjs": script });
+    await using a = await spawnServer(String(dir), "A", 0);
+    {
+      // What the server opens for its first request is open before the count.
+      await using warmup = await h3Client(a.port);
+      expect(await warmup.get()).toBe("200 A");
+    }
+    const before = Number(await a.send("fds", /FDS=(\d+);/));
+    await using holders = await clients(4, a.port);
+    await Promise.all(holders.map(client => client.hold().firstChunk));
+    expect(Number(await a.send("fds", /FDS=(\d+);/))).toBe(before);
   });
 });

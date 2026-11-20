@@ -2,6 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
+      "name": "bun-release-action",
       "dependencies": {
         "aws4fetch": "^1.0.17",
         "esbuild": "^0.17.3",

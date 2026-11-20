@@ -176,7 +176,7 @@ bun install --frozen-lockfile
 
 `package.json` disagrees with `bun.lock` when an edit adds a package, removes one, or changes a version. The error names the first dependency that changed. Run `bun install` and commit the updated `bun.lock` to fix it.
 
-Edits that keep every package at its locked version don't fail the install. For example, you can change `^1.0.0` to `>=1.0.0`, move a dependency to another group, or add a dependency that another workspace already has. The same goes for a workspace's `version`, `bin` and `scripts`, and for `trustedDependencies` and `patchedDependencies`. If the `package.json` of a `file:` directory changed its dependencies, Bun prints a warning and installs what's locked.
+Edits that keep every package at its locked version don't fail the install. For example, you can change `^1.0.0` to `>=1.0.0`, move a dependency to another group, or add a dependency that another workspace already has. The same goes for a workspace's `version`, `bin` and `scripts`, for the root's `name`, and for `trustedDependencies` and `patchedDependencies`. If the `package.json` of a `file:` directory changed its dependencies, Bun prints a warning and installs what's locked.
 
 Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or use `bun ci`. If there is no lockfile at all, `--frozen-lockfile` installs from `package.json` without writing one.
 

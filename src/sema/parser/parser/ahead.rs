@@ -185,7 +185,9 @@ fn parse_stretch(
     let mut lx = Lexer::new(text, stops, atoms, &mut scratch.names);
     set_up_lexer(&mut lx, &options);
     lx.start_at(from.at);
-    let jsdoc = jsdoc::State::new(&options, true, false);
+    // The checker reads no JSDoc comment of a declaration file.
+    let reads_typescript_jsdoc = false;
+    let jsdoc = jsdoc::State::new(&options, true, reads_typescript_jsdoc);
     let mut parser = Parser::<false, false>::new(lx, file, stacks, declared, options, jsdoc);
     if from.is_in_namespace {
         parser.enter_module_block();

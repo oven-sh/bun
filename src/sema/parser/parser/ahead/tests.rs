@@ -121,6 +121,18 @@ fn modules() {
 }
 
 #[test]
+fn modules_with_import_attributes() {
+    let text = r#"
+declare module "*.css" with { type: "css" } {
+    const sheet: A;
+    export default sheet;
+}
+"#
+    .repeat(16);
+    assert!(compare(text.as_bytes(), 100) > Some(0));
+}
+
+#[test]
 fn any_damage_gives_the_same_or_is_left_to_one_thread() {
     let text = DECLARATIONS.repeat(2);
     for at in (0..text.len()).step_by(7) {

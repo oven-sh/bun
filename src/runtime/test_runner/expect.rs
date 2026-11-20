@@ -15,6 +15,7 @@ use bun_core::strings;
 use bun_ptr::RefPtr;
 
 use super::bun_test::{self};
+use super::diff::print_diff::NO_VISUAL_DIFFERENCE;
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
@@ -2028,8 +2029,6 @@ impl ExpectMatcherContext {
     }
 }
 
-const NO_VISUAL_DIFFERENCE: &[u8] = b"Compared values have no visual difference.";
-
 #[derive(Clone, Copy)]
 enum HintColor {
     Dim,
@@ -2261,7 +2260,7 @@ impl ExpectMatcherUtils {
         }
         let mut out: Vec<u8> = Vec::new();
         if expected.is_same_value(received, global_this)? {
-            HintColor::Dim.paint(&mut out, NO_VISUAL_DIFFERENCE);
+            HintColor::Dim.paint(&mut out, NO_VISUAL_DIFFERENCE.as_bytes());
             return bun_string_jsc::create_utf8_for_js(global_this, &out);
         }
         if Expect::is_asymmetric_matcher(expected) {
@@ -2278,20 +2277,16 @@ impl ExpectMatcherUtils {
         }
 
         if expected_type != "string" {
-            return Self::diff_text(global_this, &DiffFormatter::new(global_this, received, expected, false)?);
+            return Self::diff_text(global_this, DiffFormatter::new(global_this, received, expected, false)?);
         }
         let (expected, received) = (expected.to_bun_string(global_this)?, received.to_bun_string(global_this)?);
         let (expected, received) = (expected.to_utf8(), received.to_utf8());
-        Self::diff_text(global_this, &DiffFormatter::from_strings(received.slice(), expected.slice(), false))
+        Self::diff_text(global_this, DiffFormatter::from_strings(received.slice(), expected.slice(), false))
     }
 
     #[optimize(size)]
-    fn diff_text(global_this: &JSGlobalObject, formatter: &DiffFormatter<'_>) -> JsResult<JSValue> {
-        if formatter.received_string == formatter.expected_string {
-            let mut out: Vec<u8> = Vec::new();
-            HintColor::Dim.paint(&mut out, NO_VISUAL_DIFFERENCE);
-            return bun_string_jsc::create_utf8_for_js(global_this, &out);
-        }
+    fn diff_text(global_this: &JSGlobalObject, mut formatter: DiffFormatter<'_>) -> JsResult<JSValue> {
+        formatter.sentence_only = true;
         bun_string_jsc::create_utf8_for_js(global_this, format!("{formatter}").as_bytes())
     }
 

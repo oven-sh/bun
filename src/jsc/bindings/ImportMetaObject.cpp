@@ -188,10 +188,10 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
             RETURN_IF_EXCEPTION(scope, {});
             auto fromString = JSValue::decode(from).toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
-                if (moduleString == resolvedString.value())
+            if (String key = Bun::keyOfVirtualModuleForImporter(globalObject, moduleString, fromString, isESM, false); !key.isNull()) {
+                if (moduleString == key)
                     return JSC::JSValue::encode(moduleName);
-                return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
+                return JSC::JSValue::encode(jsString(vm, key));
             }
         }
     }
@@ -284,14 +284,10 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
             RETURN_IF_EXCEPTION(scope, {});
             auto fromString = from.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
-                if (!isRequireDotResolve)
-                    resolvedString = Bun::packageImportKey(globalObject, resolvedString.value(), fromString, false);
-                if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]]
-                    return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, resolvedString.value(), fromString, false)));
-                if (moduleString == resolvedString.value())
+            if (String key = Bun::keyOfVirtualModuleForImporter(globalObject, moduleString, fromString, false, !isRequireDotResolve); !key.isNull()) {
+                if (moduleString == key)
                     return JSC::JSValue::encode(moduleName);
-                return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
+                return JSC::JSValue::encode(jsString(vm, key));
             }
         }
     }

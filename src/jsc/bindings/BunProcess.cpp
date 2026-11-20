@@ -5299,12 +5299,12 @@ extern "C" int getPeakRSS(size_t* peak)
 #endif
 }
 
-// heap.size() walks every block. Until the first collection nothing has been freed, so the whole heap counts as used:
-// the blocks, and through capacity() the large allocations and the array buffers.
+// heap.size() walks every block. Until the first collection nothing has been freed, so the whole heap counts as used.
 HeapUsage heapUsage(JSC::VM& vm)
 {
     size_t total = vm.heap.blockBytesAllocated();
     size_t used = vm.heap.sizeAfterLastCollection();
+    // capacity() has what is not in a block: the large allocations and the array buffers.
     return { total, used ? used : std::max(total, vm.heap.capacity()) };
 }
 

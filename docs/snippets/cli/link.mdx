@@ -78,6 +78,11 @@ bun link <packages>
   Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
+<ParamField path="--ignore-engines" type="boolean">
+  Do not warn when <code>packageManager</code> in package.json pins another bun version. Also set by
+  <code>BUN_CONFIG_IGNORE_ENGINES=1</code> in the environment
+</ParamField>
+
 ### Network &amp; Registry
 
 <ParamField path="--ca" type="string">

@@ -1664,6 +1664,7 @@ pub(crate) fn pack(
         ConfigureEnvOptions {
             log_errors: ctx.manager.options.log_level != LogLevel::Silent,
             store_root_fd: false,
+            check_bun_version: false,
         },
     ) {
         if matches!(err, crate::Error::Alloc(_)) {

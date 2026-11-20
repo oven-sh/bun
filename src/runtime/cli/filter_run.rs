@@ -781,6 +781,7 @@ pub(crate) fn run_scripts_with_filter(
         ConfigureEnvOptions {
             log_errors: true,
             store_root_fd: false,
+            check_bun_version: true,
         },
     )?;
 

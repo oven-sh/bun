@@ -946,6 +946,7 @@ impl BunxCommand {
             ConfigureEnvOptions {
                 log_errors: true,
                 store_root_fd: false,
+                check_bun_version: false,
             },
         )?;
 

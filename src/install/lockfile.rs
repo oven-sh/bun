@@ -1788,7 +1788,9 @@ impl Lockfile {
             let pkg_res = pkg_resolutions[i];
             let pkg_bin = &mut pkg_bins[i];
 
+            // A shipped package is not the registry's package of that name and version.
             if pkg_res.tag != ResolutionTag::Npm
+                || pkg_metas[i].is_shipped()
                 || only.is_some_and(|only| !only.contains(&(i as PackageID)))
             {
                 continue;

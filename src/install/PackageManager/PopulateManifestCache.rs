@@ -138,6 +138,9 @@ pub fn populate_manifest_cache(
     let pkg_resolutions = pkgs.items_resolution();
     let pkg_names = pkgs.items_name();
     let pkg_dependencies = pkgs.items_dependencies();
+    // A shipped package (`Meta::is_shipped`) has no manifest: it is not the registry's package
+    // of that name.
+    let pkg_metas = pkgs.items_meta();
 
     match packages {
         Packages::All => {
@@ -157,7 +160,7 @@ pub fn populate_manifest_cache(
                 }
 
                 let res = &pkg_resolutions[pkg_id as usize];
-                if res.tag != ResolutionTag::Npm {
+                if res.tag != ResolutionTag::Npm || pkg_metas[pkg_id as usize].is_shipped() {
                     continue;
                 }
 
@@ -224,7 +227,9 @@ pub fn populate_manifest_cache(
                     let dep = &dependencies[dep_id];
 
                     let resolution: &Resolution = &pkg_resolutions[pkg_id as usize];
-                    if resolution.tag != ResolutionTag::Npm {
+                    if resolution.tag != ResolutionTag::Npm
+                        || pkg_metas[pkg_id as usize].is_shipped()
+                    {
                         continue;
                     }
 
@@ -266,7 +271,9 @@ pub fn populate_manifest_cache(
         }
         Packages::Exact(ids) => {
             for &pkg_id in ids {
-                if pkg_resolutions[pkg_id as usize].tag != ResolutionTag::Npm {
+                if pkg_resolutions[pkg_id as usize].tag != ResolutionTag::Npm
+                    || pkg_metas[pkg_id as usize].is_shipped()
+                {
                     continue;
                 }
                 let package_name = pkg_names[pkg_id as usize].slice(string_buf);

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import vm from "node:vm";
+import { knownDifferences, notStored, positions, replacesGlobal, stored, strict } from "./repl-block-function-rows";
 
 describe("Bun.Transpiler replMode", () => {
   describe("basic transform output", () => {
@@ -287,6 +288,157 @@ describe("Bun.Transpiler replMode", () => {
       const result = transpiler.transformSync("const fn = async () => await 1");
       // await inside arrow function doesn't trigger TLA transform
       expect(result).not.toMatch(/^\(async\s*\(\)/);
+    });
+  });
+
+  // In sloppy code a function declared in a block is also a `var` of its script
+  // (ECMA-262 Annex B.3.3). A REPL input is such a script, so the function is a name
+  // of the session once its declaration runs.
+  describe("a function declared in a block", () => {
+    const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+
+    /**
+     * Runs the inputs in one new context, as `bun repl` runs its inputs in one global scope.
+     * Gives the value of the last input, or "!Name" if it threw an error of that name.
+     */
+    async function lastOf(inputs: string[], transform: (input: string) => string | Promise<string>) {
+      const context = vm.createContext({});
+      let last: unknown;
+      for (const input of inputs) {
+        try {
+          last = (await vm.runInContext(await transform(input), context))?.value;
+        } catch (e) {
+          last = `!${(e as Error).name}`;
+        }
+      }
+      return last;
+    }
+
+    describe.each<[string, (input: string) => string | Promise<string>]>([
+      ["of an input", input => transpiler.transformSync(input)],
+      ["of an input that transform() prints", input => transpiler.transform(input)],
+      // This input runs in an async wrapper function.
+      ["of an input with a top-level await", input => transpiler.transformSync("await 0; " + input)],
+    ])("%s", (_, transform) => {
+      test.each(positions)("`%s` is a function in the next input", async input => {
+        expect(await lastOf([input, "typeof f"], transform)).toBe("function");
+      });
+
+      test.each(stored)("%s", async (_, inputs, expected) => {
+        expect(await lastOf(inputs, transform)).toBe(expected);
+      });
+
+      test.each(replacesGlobal)("%s is a function in the next input", async (_, inputs, expected) => {
+        expect(await lastOf(inputs, transform)).toBe(expected);
+      });
+
+      test.each(notStored)("stays in its block %s", async (_, inputs, expected) => {
+        expect(await lastOf(inputs, transform)).toBe(expected);
+      });
+
+      test.failing.each(knownDifferences)("%s", async (_, inputs, expected) => {
+        expect(await lastOf(inputs, transform)).toBe(expected);
+      });
+    });
+
+    test.each(strict)("stays in its block %s", async (_, inputs, expected) => {
+      expect(await lastOf(inputs, input => transpiler.transformSync(input))).toBe(expected);
+    });
+
+    test("is declared in front of the wrapper and stored where it is declared", () => {
+      const input = "if (c) { g(); function f() {} }";
+      expect(transpiler.transformSync(input)).toBe(
+        "var f;\n(() => {\n  if (c) {\n    let f = function() {};\n    g();\n    this.f = f;\n  }\n})();\n",
+      );
+      // Only a REPL input has a session to store to.
+      expect(new Bun.Transpiler({ loader: "tsx" }).transformSync(input)).toBe(
+        "if (c) {\n  let f = function() {};\n  g();\n}\n",
+      );
+    });
+
+    // Statements that run their body once. Some of them bind `f` around it.
+    const around: Record<string, (body: string) => string> = {
+      "a block": body => `{ ${body} }`,
+      "an if": body => `if (1) { ${body} }`,
+      "an else": body => `if (0) {} else { ${body} }`,
+      "a try": body => `try { ${body} } catch (e) {}`,
+      "a catch": body => `try { throw 1 } catch (e) { ${body} }`,
+      "a catch with no parameter": body => `try { throw 1 } catch { ${body} }`,
+      "a catch (f)": body => `try { throw 1 } catch (f) { { ${body} } }`,
+      "a catch ({ f })": body => `try { throw {} } catch ({ f }) { { ${body} } }`,
+      "a finally": body => `try {} finally { ${body} }`,
+      "a label": body => `l: { ${body} }`,
+      "a switch case": body => `switch (0) { case 0: ${body} }`,
+      "a block of a switch case": body => `switch (0) { default: { ${body} } }`,
+      "a for": body => `for (var i = 0; i < 1; i++) { ${body} }`,
+      "a for (var f)": body => `for (var f = 0; ; ) { ${body} break; }`,
+      "a for (let f)": body => `for (let f = 0; ; ) { ${body} break; }`,
+      "a for (let f of)": body => `for (let f of [0]) { ${body} }`,
+      "a while": body => `while (1) { ${body} break; }`,
+      "a do": body => `do { ${body} } while (0)`,
+      "a with": body => `with ({}) { ${body} }`,
+      "a block with let f": body => `{ let f; { ${body} } }`,
+      "a block with const f": body => `{ const f = 0; { ${body} } }`,
+      "a block with class f": body => `{ class f {} { ${body} } }`,
+      "a block with var f": body => `{ var f; { ${body} } }`,
+      "a block with an async function f": body => `{ async function f() {} { ${body} } }`,
+      "a block with a generator f": body => `{ function* f() {} { ${body} } }`,
+    };
+
+    // The engine decides for a script whether `f` is a `var`, and stores the function when
+    // its declaration runs. The input has to give the session the same.
+    test.each(Object.keys(around))("in %s is stored as the engine stores it for a script", async outer => {
+      const declaration = "globalThis.f = 0; function f() {} stored = typeof globalThis.f;";
+      const observed = (nested: string) =>
+        `var declared = Object.hasOwn(globalThis, "f"), stored; ${nested} [declared, stored].join()`;
+      const run = async (text: () => string) => {
+        try {
+          const result = await vm.runInContext(text(), vm.createContext({}));
+          return typeof result === "string" ? result : result.value;
+        } catch {
+          return "error";
+        }
+      };
+
+      const differences: string[] = [];
+      const shapes = [around[outer](declaration)];
+      for (const inner of Object.values(around)) shapes.push(around[outer](inner(declaration)));
+      for (const shape of shapes) {
+        const script = await run(() => observed(shape));
+        const input = await run(() => transpiler.transformSync(observed(shape)));
+        if (input !== script) differences.push(`${shape}: ${input}, as a script: ${script}`);
+      }
+      const script = await run(() => observed(shapes[0]));
+      const input = await run(() => transpiler.transformSync("await 0; " + observed(shapes[0])));
+      if (input !== script) differences.push(`await 0; ${shapes[0]}: ${input}, as a script: ${script}`);
+
+      expect(differences).toEqual([]);
+    });
+  });
+
+  // The REPL runs every input in a sloppy function. An `await`, an `import` or an `export`
+  // makes only a module strict code.
+  describe("an input with a top-level await or an export", () => {
+    const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+
+    test.each(["await 0; var yield = 5; yield", "export const e = 1; var yield = 5; yield"])(
+      "`%s` is sloppy code",
+      async input => {
+        const result = await vm.runInContext(transpiler.transformSync(input), vm.createContext({}));
+        expect(result).toEqual({ value: 5 });
+      },
+    );
+
+    test("is strict code after a directive", () => {
+      expect(() => transpiler.transformSync('"use strict"; await 0; var yield = 5; yield')).toThrow(
+        '"yield" is a reserved word and cannot be used in strict mode',
+      );
+    });
+
+    test("is strict code without replMode", () => {
+      expect(() => new Bun.Transpiler({ loader: "tsx" }).transformSync("await 0; var yield = 5; yield")).toThrow(
+        '"yield" is a reserved word and cannot be used in strict mode',
+      );
     });
   });
 

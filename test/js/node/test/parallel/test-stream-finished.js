@@ -1,3 +1,4 @@
+// Flags: --expose-internals
 'use strict';
 
 const common = require('../common');
@@ -15,6 +16,7 @@ const EE = require('events');
 const fs = require('fs');
 const { promisify } = require('util');
 const http = require('http');
+const { kEosNodeSynchronousCallback } = require('internal/streams/end-of-stream');
 
 {
   const rs = new Readable({
@@ -95,13 +97,20 @@ const http = require('http');
 
 {
   // Check pre-cancelled
-  const signal = new EventTarget();
-  signal.aborted = true;
+  const signal = AbortSignal.abort();
 
   const rs = Readable.from((function* () {})());
-  finished(rs, { signal }, common.mustCall((err) => {
+  const cleanup = finished(rs, { signal }, common.mustCall((err) => {
     assert.strictEqual(err.name, 'AbortError');
+    cleanup();
   }));
+  const unset = Symbol('unset');
+  let cleanup2 = unset;
+  cleanup2 = finished(rs, { signal, [kEosNodeSynchronousCallback]: true }, common.mustCall((err) => {
+    assert.strictEqual(err.name, 'AbortError');
+    assert.strictEqual(cleanup2, unset);
+  }));
+  cleanup2();
 }
 
 {
@@ -160,8 +169,7 @@ const http = require('http');
   // Promisified pre-aborted works
   const finishedPromise = promisify(finished);
   async function run() {
-    const signal = new EventTarget();
-    signal.aborted = true;
+    const signal = AbortSignal.abort();
     const rs = Readable.from((function* () {})());
     await finishedPromise(rs, { signal });
   }
@@ -342,10 +350,10 @@ function testClosed(factory) {
 
     const s = factory({
       emitClose: false,
-      destroy(err, cb) {
+      destroy: common.mustCall((err, cb) => {
         cb();
         finished(s, common.mustCall());
-      }
+      }),
     });
     s.destroy();
   }
@@ -354,14 +362,14 @@ function testClosed(factory) {
     // Invoke with deep async.
 
     const s = factory({
-      destroy(err, cb) {
-        setImmediate(() => {
+      destroy: common.mustCall((err, cb) => {
+        setImmediate(common.mustCall(() => {
           cb();
-          setImmediate(() => {
+          setImmediate(common.mustCall(() => {
             finished(s, common.mustCall());
-          });
-        });
-      }
+          }));
+        }));
+      }),
     });
     s.destroy();
   }
@@ -567,13 +575,13 @@ testClosed((opts) => new Writable({ write() {}, ...opts }));
     }));
     res.end();
   }))
-  .listen(0, function() {
+  .listen(0, common.mustCall(function() {
     http.request({
       method: 'GET',
       port: this.address().port
     }).end()
       .on('response', common.mustCall());
-  });
+  }));
 }
 
 {
@@ -584,12 +592,35 @@ testClosed((opts) => new Writable({ write() {}, ...opts }));
       }));
     }));
     req.destroy();
-  })).listen(0, function() {
+  })).listen(0, common.mustCall(function() {
     http.request({
       method: 'GET',
       port: this.address().port
     }).end().on('error', common.mustCall());
-  });
+  }));
+}
+
+{
+  let serverRes;
+  const server = http.createServer(common.mustCall((req, res) => {
+    serverRes = res;
+    res.write('hello');
+  })).listen(0, common.mustCall(function() {
+    http.get({ port: this.address().port }, common.mustCall((res) => {
+      res.on('aborted', common.mustCall(() => {
+        finished(res, common.mustCall((err) => {
+          assert.strictEqual(err.code, 'ECONNRESET');
+          assert.strictEqual(err.message, 'aborted');
+          server.close();
+        }));
+      }));
+      res.on('error', common.expectsError({
+        code: 'ECONNRESET',
+        message: 'aborted',
+      }));
+      serverRes.destroy();
+    })).on('error', common.mustNotCall());
+  }));
 }
 
 {
@@ -601,10 +632,10 @@ testClosed((opts) => new Writable({ write() {}, ...opts }));
   w.aborted = false;
   w.end();
   let closed = false;
-  w.on('finish', () => {
+  w.on('finish', common.mustCall(() => {
     assert.strictEqual(closed, false);
     w.emit('aborted');
-  });
+  }));
   w.on('close', common.mustCall(() => {
     closed = true;
   }));
@@ -655,7 +686,7 @@ testClosed((opts) => new Writable({ write() {}, ...opts }));
     finished(res, common.mustCall(function(err) {
       assert.strictEqual(err, undefined);
     }));
-  })).listen(0, function() {
+  })).listen(0, common.mustCall(function() {
     http.request(
       { method: 'GET', port: this.address().port },
       common.mustCall(function(res) {
@@ -665,7 +696,7 @@ testClosed((opts) => new Writable({ write() {}, ...opts }));
         }));
       })
     ).end();
-  });
+  }));
 }
 
 {

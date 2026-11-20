@@ -190,6 +190,43 @@ describe("bundler", () => {
       },
     });
 
+    // The shared chunk is not an entry point, and it also starts with the `// @bun` pragma. A hashbang in the banner
+    // has to come before that pragma. If it comes after, the embedded chunk does not parse and gets no bytecode.
+    for (const bytecode of [false, true]) {
+      itBundled(`compile/splitting/HashbangBanner${bytecode ? "+bytecode" : ""}`, {
+        backend: "api",
+        compile: true,
+        splitting: true,
+        bytecode,
+        format: "esm",
+        banner: "#!/usr/bin/env bun\n// Additional banner content",
+        files: {
+          "/entry.ts": /* js */ `
+            import { shared } from "./shared";
+            const { value } = await import("./lazy");
+            console.log("entry", shared(), value);
+          `,
+          "/lazy.ts": /* js */ `
+            import { shared } from "./shared";
+            export const value = "lazy " + shared();
+          `,
+          "/shared.ts": /* js */ `
+            console.log("shared evaluated");
+            export function shared() { return "shared-value"; }
+          `,
+        },
+        run: {
+          env: { BUN_JSC_verboseDiskCache: "1" },
+          stdout: "shared evaluated\nentry shared-value lazy shared-value",
+          validate({ stderr }) {
+            const count = (text: string) => stderr.split("\n").filter(l => l.includes(text)).length;
+            // With bytecode, the entry and its two chunks must hit. bun:main carries none.
+            expect(count("[Disk Cache] Cache hit")).toBe(bytecode ? 3 : 0);
+          },
+        },
+      });
+    }
+
     // The embedded module graph is laid out in load order: the entry point's
     // static imports (dependencies first), then each dynamic import's closure,
     // breadth-first. Chunk index order would be entry, lazy1, lazy2, shared,

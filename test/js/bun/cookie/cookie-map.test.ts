@@ -433,6 +433,34 @@ describe("iterator", () => {
     c=d"
   `);
   });
+  // https://github.com/oven-sh/bun/issues/48347
+  test("an iterator that is done yields what set() adds after it", () => {
+    const cookies = new Bun.CookieMap();
+    const iterator = cookies.entries();
+    expect(iterator.next()).toEqual({ value: undefined, done: true });
+    cookies.set("a", "b");
+    expect(iterator.next()).toEqual({ value: ["a", "b"], done: false });
+    expect(iterator.next()).toEqual({ value: undefined, done: true });
+  });
+  // set() cookies iterate first, so a set() lands before the cursor.
+  test("a set() before the cursor of a done iterator replays the entry at the cursor, like Headers", () => {
+    const cookies = new Bun.CookieMap("a=1; b=2");
+    const cookieIterator = cookies.entries();
+    expect([...cookieIterator]).toEqual([
+      ["a", "1"],
+      ["b", "2"],
+    ]);
+    cookies.set("c", "3");
+    expect(cookieIterator.next()).toEqual({ value: ["b", "2"], done: false });
+    expect(cookieIterator.next()).toEqual({ value: undefined, done: true });
+
+    const headers = new Headers({ b: "2" });
+    const headerIterator = headers.entries();
+    expect([...headerIterator]).toEqual([["b", "2"]]);
+    headers.set("a", "1");
+    expect(headerIterator.next()).toEqual({ value: ["b", "2"], done: false });
+    expect(headerIterator.next()).toEqual({ value: undefined, done: true });
+  });
 });
 
 describe("cookie header values with non-ASCII characters", () => {

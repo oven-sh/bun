@@ -123,7 +123,7 @@ protected:
 
     static void destroy(JSC::JSCell*);
 
-    std::optional<typename DOMWrapped::Iterator> m_iterator;
+    typename DOMWrapped::Iterator m_iterator;
     IterationKind m_kind;
 };
 
@@ -251,12 +251,11 @@ void JSDOMIteratorBase<JSWrapper, IteratorTraits>::destroy(JSCell* cell)
 template<typename JSWrapper, typename IteratorTraits>
 JSC::JSValue JSDOMIteratorBase<JSWrapper, IteratorTraits>::next(JSC::JSGlobalObject& lexicalGlobalObject)
 {
-    if (m_iterator) {
-        auto iteratorValue = m_iterator->next();
-        if (iteratorValue)
-            return createIteratorResultObject(&lexicalGlobalObject, asJS(lexicalGlobalObject, iteratorValue), false);
-        m_iterator = std::nullopt;
-    }
+    // Web IDL reads the live list on every call. A done result does not end the
+    // iterator: an entry appended at the cursor is yielded by the next call.
+    auto iteratorValue = m_iterator.next();
+    if (iteratorValue)
+        return createIteratorResultObject(&lexicalGlobalObject, asJS(lexicalGlobalObject, iteratorValue), false);
     return createIteratorResultObject(&lexicalGlobalObject, JSC::jsUndefined(), true);
 }
 

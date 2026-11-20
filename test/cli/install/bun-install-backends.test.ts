@@ -5,15 +5,17 @@
 // walker fails to create has to fail the install instead of being skipped while
 // the install reports success, and a file that cannot be installed has to fail
 // the package (as it does with the hardlink backend) rather than exit bun.
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, readdirSorted, tempDir } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, readdirSorted, refusedSyscalls, tempDir } from "harness";
 import {
   chmodSync,
   closeSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -689,5 +691,110 @@ describe("file: folder dependencies with the hoisted linker", () => {
         });
       }
     }
+  });
+});
+
+// macOS reports an operation that the file system does not have as ENOTSUP (45). EOPNOTSUPP (102) is another errno
+// there, unlike on Linux. HFS+ and exFAT answer clonefileat that way. APFS has every operation, so `refusedSyscalls`
+// refuses one for the installing process.
+describe.skipIf(!refusedSyscalls.available)("a call that fails with ENOTSUP on macOS", () => {
+  let shimDir: ReturnType<typeof tempDir>;
+  let shim: string;
+
+  beforeAll(async () => {
+    shimDir = tempDir("refuse-syscalls", {});
+    shim = await refusedSyscalls.compile(String(shimDir));
+  });
+
+  afterAll(() => shimDir?.[Symbol.dispose]());
+
+  /** `bun install` with the calls in `refuse` refused. `refused` has the name of the call of each refusal. */
+  async function installRefusing(
+    refuse: Parameters<typeof refusedSyscalls.env>[1],
+    projectDir: string,
+    args: readonly string[],
+  ) {
+    const log = join(projectDir, "refused.log");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: projectDir,
+      env: { ...refusedSyscalls.env(shim, refuse, log), BUN_INSTALL_CACHE_DIR: join(projectDir, ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const refused = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [];
+    return { stdout, stderr, exitCode, refused };
+  }
+
+  /** A project that depends on the package in `tarball`, which is installed from the cache. */
+  function projectWithTarball(name: string, dependency: string, tarball: string) {
+    const dir = tempDir(name, {
+      "package.json": JSON.stringify({ name: "app", dependencies: { [dependency]: `file:./${tarball}` } }),
+    });
+    cpSync(join(import.meta.dir, tarball), join(String(dir), tarball));
+    return dir;
+  }
+
+  // The hoisted linker copies a package that cannot be cloned. The isolated linker tries a hard link first.
+  for (const [name, refuse, args, nlink] of [
+    ["hoisted linker copies the package when clonefileat fails", { clonefileat: "ENOTSUP" }, ["--linker=hoisted"], 1],
+    [
+      "clonefile_each_dir backend copies the package when clonefileat fails",
+      { clonefileat: "ENOTSUP" },
+      ["--linker=hoisted", "--backend=clonefile_each_dir"],
+      1,
+    ],
+    [
+      "isolated linker hard-links the package when clonefileat fails",
+      { clonefileat: "ENOTSUP" },
+      ["--linker=isolated"],
+      2,
+    ],
+    [
+      "isolated linker copies the package when the hard link is refused too",
+      { clonefileat: "ENOTSUP", linkat: "EXDEV" },
+      ["--linker=isolated"],
+      1,
+    ],
+    // libcopyfile answers ENOTSUP for a source that is not a regular file.
+    [
+      "copyfile backend reads and writes the file when fcopyfile fails",
+      { fcopyfile: "ENOTSUP" },
+      ["--linker=hoisted", "--backend=copyfile"],
+      1,
+    ],
+  ] as const) {
+    test.concurrent(name, async () => {
+      using dir = projectWithTarball("refused-enotsup", "bar", "bar-0.0.2.tgz");
+
+      const { stdout, stderr, exitCode, refused } = await installRefusing(refuse, String(dir), args);
+      expect(stderr).not.toContain("error");
+      expect(stdout).toContain("1 package installed");
+      // Every call in `refuse` was made and refused, so the package below is what the fallback installed.
+      expect([...new Set(refused)].sort()).toEqual(Object.keys(refuse).sort());
+      const installed = join(String(dir), "node_modules", "bar", "package.json");
+      expect(JSON.parse(readFileSync(installed, "utf8"))).toEqual({ name: "bar", version: "0.0.2" });
+      // 1 is a copy. 2 is a hard link to the file in the cache.
+      expect(statSync(installed).nlink).toBe(nlink);
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  // HFS+ and exFAT have symlinks. This is the answer of a file system without them.
+  test.concurrent("bin links are skipped with one warning when symlink fails", async () => {
+    using dir = projectWithTarball("symlink-enotsup", "baz", "baz-0.0.3.tgz");
+    const binDir = join(String(dir), "node_modules", ".bin");
+    const warning = `warn: ENOTSUP: cannot create symlinks in ${binDir}, skipping bin links\n`;
+
+    const { stdout, stderr, exitCode, refused } = await installRefusing({ symlink: "ENOTSUP" }, String(dir), [
+      "--linker=hoisted",
+    ]);
+    expect({ warnings: stderr.split(warning).length - 1, stderr }).toEqual({ warnings: 1, stderr });
+    expect(stdout).toContain("1 package installed");
+    expect(refused).toContain("symlink");
+    expect(readdirSync(binDir)).toEqual([]);
+    expect(existsSync(join(String(dir), "node_modules", "baz", "index.js"))).toBe(true);
+    expect(exitCode).toBe(0);
   });
 });

@@ -1126,41 +1126,46 @@ impl BunTest {
             Some((sequence, entry, self.sequence_entry(entry).timespec.get()))
         });
         match (running.next(), running.next()) {
-            (None, _) => deadline_watch::waiting(*step_timeout, None::<deadline_watch::Entry<fn(&mut _)>>),
+            (None, _) => deadline_watch::waiting(*step_timeout, None),
             (Some((sequence, entry, deadline)), None) => {
-                deadline_watch::waiting(deadline, Some(self.watched_entry(sequence, entry)));
+                deadline_watch::waiting(deadline, Some(self.watched_entry(sequence, entry, self.entry_of(entry))));
             }
             (Some(first), Some(second)) => {
                 // One without a timeout never times out.
                 let latest = [first, second].into_iter().chain(running).map(|(.., deadline)| deadline).reduce(
                     |latest, deadline| if Timespec::order_ignore_epoch(deadline, latest).is_gt() { deadline } else { latest },
                 );
-                deadline_watch::waiting(latest.unwrap_or(Timespec::EPOCH), None::<deadline_watch::Entry<fn(&mut _)>>);
+                deadline_watch::waiting(latest.unwrap_or(Timespec::EPOCH), None);
             }
         }
     }
 
-    /// `called`, an entry of `sequence`, for `deadline_watch`.
-    fn watched_entry<'a>(
+    /// `called`, which is `entry` of `sequence`, for `deadline_watch`.
+    pub(crate) fn watched_entry<'a>(
         &'a self,
-        sequence: &'a Execution::ExecutionSequence,
+        sequence: &Execution::ExecutionSequence,
         called: SequenceEntryId,
-    ) -> deadline_watch::Entry<impl FnOnce(&mut deadline_watch::Label) + 'a> {
+        entry: &ExecutionEntry,
+    ) -> deadline_watch::Entry<'a> {
         let named = sequence.test_entry.or(sequence.first_entry).unwrap_or(called);
         deadline_watch::Entry {
             key: u64::from(self.generation) << 32 | u64::from(named.0.get()),
-            timeout_ms: self.entry_of(called).timeout,
+            timeout_ms: entry.timeout,
             is_hook: sequence.test_entry != Some(called),
-            name: move |label: &mut deadline_watch::Label| {
-                let named = self.entry_of(named);
-                label.set_test(named.base.name.as_deref().unwrap_or(b"(unnamed)"));
-                for scope in self.scopes_from(named.base.parent) {
-                    let name = scope.base.name.as_deref().unwrap_or(b"");
-                    if !name.is_empty() && !label.add_scope(name) {
-                        break;
-                    }
-                }
-            },
+            buntest: self,
+            named,
+        }
+    }
+
+    /// Names the test `named` and the scopes around it.
+    pub(crate) fn write_label(&self, named: SequenceEntryId, label: &mut deadline_watch::Label) {
+        let named = self.entry_of(named);
+        label.set_test(named.base.name.as_deref().unwrap_or(b"(unnamed)"));
+        for scope in self.scopes_from(named.base.parent) {
+            let name = scope.base.name.as_deref().unwrap_or(b"");
+            if !name.is_empty() && !label.add_scope(name) {
+                break;
+            }
         }
     }
 
@@ -1271,6 +1276,7 @@ impl BunTest {
     }
 
     /// if sync, the result is returned. if async, None is returned.
+    /// `watched`: the entry whose timeout ends at `timeout`, if it has one.
     #[optimize(size)]
     pub(crate) fn run_test_callback(
         this: &BunTestPtr,
@@ -1280,6 +1286,7 @@ impl BunTest {
         cfg_done_parameter: bool,
         cfg_data: RefDataValue,
         timeout: &Timespec,
+        watched: Option<deadline_watch::Entry<'_>>,
     ) -> Option<RefDataValue> {
         let _g = group_begin!();
         let vm = global_this.bun_vm();
@@ -1308,11 +1315,10 @@ impl BunTest {
         }
 
         Self::update_min_timeout(this, timeout);
-        deadline_watch::calling(
-            *timeout,
-            (this.execution.get_current_and_valid_execution_sequence(&cfg_data))
-                .and_then(|(sequence, _)| Some(this.watched_entry(sequence, sequence.active_entry.get()?))),
-        );
+        match watched {
+            Some(entry) => deadline_watch::calling(*timeout, entry),
+            None => deadline_watch::in_runner(),
+        }
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         let on_stack = OnStack::enter(&this.execution.on_stack, &cfg_data);
         let returned = vm

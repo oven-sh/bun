@@ -16,6 +16,7 @@ use bun_core::{Output, Timespec, TimespecMockMode, strings};
 use bun_threading::guarded::GuardedLock;
 use bun_threading::{Guarded, Mutex};
 
+use super::bun_test::{BunTest, SequenceEntryId};
 use super::jest::FileHeader;
 
 /// What a `--parallel` worker exits with. See `Coordinator::reap_worker`.
@@ -120,13 +121,14 @@ impl Label {
 }
 
 /// A test or hook for `calling` and `waiting`.
-pub(crate) struct Entry<Name: FnOnce(&mut Label)> {
+pub(crate) struct Entry<'a> {
     /// The same for a test and each of its hooks, and for nothing else.
     pub(crate) key: u64,
     pub(crate) timeout_ms: u32,
     pub(crate) is_hook: bool,
-    /// Names the test in a label that is empty.
-    pub(crate) name: Name,
+    /// `buntest.write_label(named, label)` names the test in a label that is empty.
+    pub(crate) buntest: &'a BunTest,
+    pub(crate) named: SequenceEntryId,
 }
 
 /// Before the first test runs.
@@ -144,21 +146,24 @@ pub(crate) fn set_unprinted_header(header: Option<FileHeader>) {
     STATE.lock().unprinted_header = header;
 }
 
-/// The JavaScript thread calls a test or hook whose timeout ends at `deadline` (`Timespec::EPOCH`: it has none).
-pub(crate) fn calling<Name: FnOnce(&mut Label)>(deadline: Timespec, entry: Option<Entry<Name>>) {
-    publish(deadline, true, entry);
+/// The JavaScript thread calls a test or hook whose timeout ends at `deadline`.
+pub(crate) fn calling(deadline: Timespec, entry: Entry<'_>) {
+    publish(deadline, true, Some(entry));
 }
 
 /// The JavaScript thread is in the code of the runner: a test or hook returned to it, or the event loop
 /// called it. What it does there, like the report of a result, has no timeout.
 /// Does not return once the watch ends the process.
+#[inline]
 pub(crate) fn in_runner() {
-    publish(Timespec::EPOCH, false, None::<Entry<fn(&mut Label)>>);
+    if HAS_DEADLINE.load(Ordering::Relaxed) {
+        publish(Timespec::EPOCH, false, None);
+    }
 }
 
 /// The JavaScript thread goes back to the event loop, and the runner expects it back by `deadline`
 /// (`Timespec::EPOCH`: at no time). `entry`: the only test or hook that is running.
-pub(crate) fn waiting<Name: FnOnce(&mut Label)>(deadline: Timespec, entry: Option<Entry<Name>>) {
+pub(crate) fn waiting(deadline: Timespec, entry: Option<Entry<'_>>) {
     publish(deadline, false, entry);
 }
 
@@ -167,7 +172,7 @@ pub(crate) fn wait_if_ending() {
     drop(STATE.lock());
 }
 
-fn publish<Name: FnOnce(&mut Label)>(deadline: Timespec, is_in_callback: bool, entry: Option<Entry<Name>>) {
+fn publish(deadline: Timespec, is_in_callback: bool, entry: Option<Entry<'_>>) {
     let has_deadline = !deadline.eql(&Timespec::EPOCH);
     if !has_deadline && !HAS_DEADLINE.load(Ordering::Relaxed) {
         return;
@@ -184,7 +189,7 @@ fn publish<Name: FnOnce(&mut Label)>(deadline: Timespec, is_in_callback: bool, e
         if state.label_key != entry.key {
             state.label_key = entry.key;
             state.label.name_start = Label::NAME_CAPACITY;
-            (entry.name)(&mut state.label);
+            entry.buntest.write_label(entry.named, &mut state.label);
         }
     }
     HAS_DEADLINE.store(has_deadline, Ordering::Relaxed);

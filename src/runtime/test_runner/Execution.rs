@@ -1237,6 +1237,7 @@ fn step_sequence_one(
         };
 
         global_this.bun_vm().is_running_vitest_entry.set(next_item.calling.is_vitest());
+        let timespec = next_entry.timespec.get();
         if BunTest::run_test_callback(
             buntest,
             global_this,
@@ -1244,7 +1245,8 @@ fn step_sequence_one(
             args,
             next_item.calling == Calling::Jest { done: true },
             callback_data,
-            &next_entry.timespec.get(),
+            &timespec,
+            (!timespec.eql(&Timespec::EPOCH)).then(|| buntest.watched_entry(sequence, next_id, next_item)),
         )
         .is_some()
         {

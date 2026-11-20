@@ -128,6 +128,7 @@ impl Collection {
             false,
             RefDataValue::Collection { active_scope: first.active_scope },
             &Timespec::EPOCH,
+            None,
         ) {
             // the result is available immediately; queue
             buntest.add_result(cfg_data);

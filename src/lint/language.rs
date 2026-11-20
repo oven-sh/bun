@@ -587,6 +587,13 @@ impl LanguageOptions {
         }
     }
 
+    /// acorn-jsx doesn't read `<a>{...b}</a>` or `<a {...b, c} />`. Without a config there's no ESLint to match.
+    pub fn reads_jsx_spreads_like_acorn(&self) -> bool {
+        self.parser == Parser::Espree
+            && self.rejects_what_parser_rejects
+            && !self.has_no_foreign_config
+    }
+
     /// ESLint's `scopeManager.isGlobalReturn()`: there's a function scope between the global scope and the file's code.
     /// With Babel's parser, `"commonjs"` by itself doesn't create one, so `const { Symbol } = a;` at the top level
     /// defines the global variable.

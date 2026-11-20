@@ -32,7 +32,10 @@ process.exit(result.success ? 0 : 1);
     expect(await run([bunExe(), "./main.mjs"], join(folder, "yard"))).toEqual(said);
     const executable = join(folder, isWindows ? "built.exe" : "built");
     const built = await run([bunExe(), "build.ts", executable], folder);
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
     const elsewhere = join(folder, "elsewhere");
     mkdirSync(elsewhere);
     expect(await run([executable], elsewhere)).toEqual(said);

@@ -796,7 +796,7 @@ impl CreateCommand {
                 let parsed = match JSON::parse_package_json_utf8_with_opts(
                     JSON::JSONOptions {
                         guess_indentation: true,
-                        ..JSON::JSONOptions::DEFAULT
+                        ..JSON::PACKAGE_JSON_OPTS
                     },
                     &source,
                     log,

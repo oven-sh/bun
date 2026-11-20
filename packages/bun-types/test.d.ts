@@ -383,6 +383,7 @@ declare module "bun:test" {
 
   /**
    * Create a spy on a property's getter. The spy calls the original getter until you give it another implementation.
+   * For a plain property, the original getter returns the property's value.
    *
    * @example
    * ```ts
@@ -392,6 +393,7 @@ declare module "bun:test" {
   export function spyOn<T extends object, K extends keyof T>(obj: T, property: K, accessType: "get"): Mock<() => T[K]>;
   /**
    * Create a spy on a property's setter. The spy calls the original setter until you give it another implementation.
+   * A plain property still reads its value under the spy.
    */
   export function spyOn<T extends object, K extends keyof T>(
     obj: T,

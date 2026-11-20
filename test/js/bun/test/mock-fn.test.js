@@ -2112,6 +2112,295 @@ describe("spyOn", () => {
         );
       });
 
+      // Jest throws "does not have access type" for these. In Vitest the property reads undefined while a spy is on it.
+      describe.each([
+        ["spyOn", spyOn],
+        ["jest.spyOn", jest.spyOn],
+        ["vi.spyOn", vi.spyOn],
+      ])("%s on a data property", (_, spyOn) => {
+        const orders = [[["set"]], [["get"]], [["get", "set"]], [["set", "get"]]];
+        const plain = { value: 1, writable: true, enumerable: true, configurable: true };
+
+        test.each(orders)("reads its value under %j spies", order => {
+          const obj = { x: 1 };
+          const spies = Object.fromEntries(order.map(access => [access, spyOn(obj, "x", access)]));
+          for (const access of order) expect(spyOn(obj, "x", access)).toBe(spies[access]);
+
+          expect(obj.x).toBe(1);
+          expect(JSON.stringify(obj)).toBe('{"x":1}');
+          expect({ ...obj }).toEqual({ x: 1 });
+          const descriptor = Object.getOwnPropertyDescriptor(obj, "x");
+          expect(descriptor).toMatchObject({
+            get: spies.get ?? expect.any(Function),
+            enumerable: true,
+            configurable: true,
+          });
+          if (spies.get) expect(spies.get.mock.results.map(result => result.value)).toEqual([1, 1, 1]);
+          if (spies.set) {
+            expect(descriptor.set).toBe(spies.set);
+            obj.x = 2;
+            expect(spies.set.mock.calls).toEqual([[2]]);
+            expect(spies.set.mock.contexts[0]).toBe(obj);
+          }
+        });
+
+        test.each(orders)("mockRestore() puts back the value from before %j spies", order => {
+          const restores = [
+            spies => spies.forEach(spy => spy.mockRestore()),
+            spies => spies.toReversed().forEach(spy => spy.mockRestore()),
+            () => jest.restoreAllMocks(),
+          ];
+          for (const restore of restores) {
+            const obj = { x: 1 };
+            const spies = order.map(access => spyOn(obj, "x", access));
+            expect(obj.x).toBe(1);
+            if (order.includes("set")) obj.x = 2;
+            restore(spies);
+            expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual(plain);
+            obj.x = 3;
+            expect(obj.x).toBe(3);
+          }
+        });
+
+        const symbol = Symbol("key");
+        test.each([
+          ["non-enumerable", () => [Object.defineProperty({}, "x", { ...plain, enumerable: false }), "x"]],
+          ["non-configurable", () => [Object.defineProperty({}, "x", { ...plain, configurable: false }), "x"]],
+          ["non-writable", () => [Object.defineProperty({}, "x", { ...plain, writable: false }), "x"]],
+          ["of a sealed object", () => [Object.seal({ x: 1 }), "x"]],
+          ["of a frozen object", () => [Object.freeze({ x: 1 }), "x"]],
+          ["inherited", () => [Object.create({ x: 1 }), "x"]],
+          ["inherited by a frozen object", () => [Object.freeze(Object.create({ x: 1 })), "x"]],
+          ["inherited and not extensible", () => [Object.preventExtensions(Object.create({ x: 1 })), "x"]],
+          ["with a symbol key", () => [{ [symbol]: 1 }, symbol]],
+          ["with an index key", () => [{ 0: 1 }, 0]],
+          ["of an object without a prototype", () => [Object.assign(Object.create(null), { x: 1 }), "x"]],
+          ["an array element", () => [[1], 0]],
+          ["a class field", () => [new (class { x = 1; })(), "x"]], // prettier-ignore
+          ["a static of a function", () => [Object.assign(function () {}, { x: 1 }), "x"]],
+        ])("%s", (_, make) => {
+          const [obj, key] = make();
+          const original = Object.getOwnPropertyDescriptor(obj, key);
+          const setter = spyOn(obj, key, "set");
+          expect(obj[key]).toBe(1);
+          obj[key] = 2;
+          expect(setter.mock.calls).toEqual([[2]]);
+          expect(Object.getOwnPropertyDescriptor(obj, key).enumerable).toBe(original?.enumerable ?? true);
+
+          setter.mockRestore();
+          expect(Object.getOwnPropertyDescriptor(obj, key)).toEqual(original);
+          expect(obj[key]).toBe(1);
+        });
+
+        // As for any accessor of a prototype.
+        test("every read and write of an object that inherits it goes through the spy", () => {
+          class Connection {}
+          Connection.prototype.state = "closed";
+          const first = new Connection();
+          const second = new Connection();
+          const setter = spyOn(Connection.prototype, "state", "set");
+          expect([first.state, second.state]).toEqual(["closed", "closed"]);
+
+          first.state = "open";
+          first.state = "closed";
+          second.state = "open";
+          expect(setter.mock.calls).toEqual([["open"], ["closed"], ["open"]]);
+          expect(setter.mock.contexts.map(context => context === first)).toEqual([true, true, false]);
+          expect(Object.hasOwn(first, "state")).toBe(false);
+
+          const getter = spyOn(Connection.prototype, "state", "get").mockReturnValue("mocked");
+          expect([first.state, second.state]).toEqual(["mocked", "mocked"]);
+          expect(getter).toHaveBeenCalledTimes(2);
+          jest.restoreAllMocks();
+          expect([first.state, second.state]).toEqual(["closed", "closed"]);
+        });
+
+        test.each([
+          ["get", "set"],
+          ["set", "get"],
+        ])("a %s spy, then a %s spy on an object that inherits the property", (onPrototype, onInstance) => {
+          class Connection {}
+          Connection.prototype.state = "closed";
+          const first = new Connection();
+          const second = new Connection();
+          const spies = {
+            [onPrototype]: spyOn(Connection.prototype, "state", onPrototype),
+            [onInstance]: spyOn(first, "state", onInstance),
+          };
+
+          expect([first.state, second.state]).toEqual(["closed", "closed"]);
+          expect(spies.get).toHaveBeenCalledTimes(onPrototype === "get" ? 2 : 1);
+          first.state = "open";
+          expect(spies.set.mock.calls).toEqual([["open"]]);
+          spies[onInstance].mockRestore();
+          expect(Object.hasOwn(first, "state")).toBe(false);
+          jest.restoreAllMocks();
+          expect(first.state).toBe("closed");
+        });
+
+        // As for any accessor: a half that is a spy already is that half's spy, for the object and for what inherits from it.
+        test("a spy that the prototype has is handed back for an object that inherits the property", () => {
+          class Connection {}
+          Connection.prototype.state = "closed";
+          const instance = new Connection();
+          const getter = spyOn(Connection.prototype, "state", "get");
+          expect(spyOn(instance, "state", "get")).toBe(getter);
+          const setter = spyOn(Connection.prototype, "state", "set");
+          expect(spyOn(instance, "state", "set")).toBe(setter);
+
+          expect([instance.state, Object.hasOwn(instance, "state")]).toEqual(["closed", false]);
+          jest.restoreAllMocks();
+        });
+
+        // The two-argument spy on a value is both halves of the accessor.
+        test("after a two-argument spy, a getter or setter spy is that spy", () => {
+          const obj = { x: 1 };
+          const spy = spyOn(obj, "x");
+          expect(spyOn(obj, "x", "get")).toBe(spy);
+          expect(spyOn(obj, "x", "set")).toBe(spy);
+          expect(obj.x).toBe(1);
+          spy.mockRestore();
+          expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual(plain);
+        });
+
+        test("a setter spy with an implementation takes the write, and the value stays readable", () => {
+          const obj = { x: 1 };
+          const written = [];
+          const setter = spyOn(obj, "x", "set").mockImplementation(value => void written.push(value));
+          obj.x = 2;
+          expect([obj.x, JSON.stringify(obj), written]).toEqual([1, '{"x":1}', [2]]);
+          setter.mockRestore();
+          expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual(plain);
+        });
+
+        test("a method stays callable, and can then be spied on as a method", () => {
+          const obj = { run: () => "ran" };
+          const original = Object.getOwnPropertyDescriptor(obj, "run");
+          const setter = spyOn(obj, "run", "set");
+          expect(obj.run()).toBe("ran");
+          const method = spyOn(obj, "run");
+          expect(obj.run()).toBe("ran");
+          expect(method).toHaveBeenCalledTimes(1);
+          method.mockRestore();
+          setter.mockRestore();
+          expect(Object.getOwnPropertyDescriptor(obj, "run")).toEqual(original);
+        });
+
+        test("through a Proxy", () => {
+          const target = { x: 1 };
+          const proxy = new Proxy(target, {});
+          const setter = spyOn(proxy, "x", "set");
+          expect([proxy.x, target.x]).toEqual([1, 1]);
+          proxy.x = 2;
+          expect(setter.mock.calls).toEqual([[2]]);
+          expect(setter.mock.contexts[0]).toBe(proxy);
+          setter.mockRestore();
+          expect(Object.getOwnPropertyDescriptor(target, "x")).toEqual(plain);
+        });
+
+        test("on the global object of a node:vm context", () => {
+          const sandbox = { value: "original" };
+          const context = vm.createContext(sandbox);
+          const setter = spyOn(vm.runInContext("this", context), "value", "set");
+          expect(vm.runInContext("value", context)).toBe("original");
+          vm.runInContext("value = 'assigned'", context);
+          expect(setter.mock.calls).toEqual([["assigned"]]);
+          setter.mockRestore();
+          expect(Object.getOwnPropertyDescriptor(sandbox, "value")).toEqual({ ...plain, value: "original" });
+        });
+
+        test("process.platform and the prototype of a mock", () => {
+          const platform = Object.getOwnPropertyDescriptor(process, "platform");
+          const fn = jest.fn();
+          const prototype = fn.prototype;
+          const spies = [spyOn(process, "platform", "set"), spyOn(fn, "prototype", "set")];
+          const seen = [process.platform, fn.prototype];
+          for (const spy of spies) spy.mockRestore();
+          expect(seen).toEqual([platform.value, prototype]);
+          expect(Object.getOwnPropertyDescriptor(process, "platform")).toEqual(platform);
+          expect(fn.prototype).toBe(prototype);
+        });
+
+        // `performance` is an accessor of Node's global object and a plain property of Bun's.
+        test.each(["get", "set"])("a global variable is read by its name under a %j spy", access => {
+          const original = Object.getOwnPropertyDescriptor(globalThis, "performance");
+          try {
+            const spy = spyOn(globalThis, "performance", access);
+            expect(performance).toBe(original.value);
+            expect(performance.now()).toBeNumber();
+            if (access === "get") expect(spy).toHaveBeenCalledTimes(2);
+          } finally {
+            jest.restoreAllMocks();
+          }
+          expect(Object.getOwnPropertyDescriptor(globalThis, "performance")).toEqual(original);
+        });
+
+        // `Error.prepareStackTrace` is a value that the engine stores itself. Script sees a plain property.
+        test.each(orders)("a value that native code stores reads the same under %j spies", order => {
+          const original = Object.getOwnPropertyDescriptor(Error, "prepareStackTrace");
+          const format = () => "formatted";
+          Error.prepareStackTrace = format;
+          try {
+            const spies = Object.fromEntries(order.map(access => [access, spyOn(Error, "prepareStackTrace", access)]));
+            expect(Error.prepareStackTrace).toBe(format);
+            if (spies.get) expect(spies.get).toHaveBeenCalledTimes(1);
+          } finally {
+            jest.restoreAllMocks();
+            Error.prepareStackTrace = original.value;
+          }
+          expect(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")).toEqual(original);
+        });
+      });
+
+      // The accessor goes onto the object that the factory returned, which every importer reads from.
+      test("a plain export of a mocked module keeps its value for the modules that import it", async () => {
+        const { bunEnv, bunExe, tempDir } = require("harness");
+        using dir = tempDir("spy-on-plain-export", {
+          "dep.js": `export const plain = "real";`,
+          "reader.js": `
+            import { plain } from "./dep.js";
+            import * as dep from "./dep.js";
+            export const read = () => [plain, dep.plain];
+          `,
+          "spy.test.js": `
+            import { expect, test, vi } from "bun:test";
+            import * as dep from "./dep.js";
+            import { read } from "./reader.js";
+
+            const exports = vi.hoisted(() => ({ plain: "mocked" }));
+            vi.mock("./dep.js", () => exports);
+
+            test("under a setter spy", () => {
+              const setter = vi.spyOn(dep, "plain", "set");
+              expect(read()).toEqual(["mocked", "mocked"]);
+              exports.plain = "written";
+              expect(setter.mock.calls).toEqual([["written"]]);
+              setter.mockRestore();
+              expect(read()).toEqual(["mocked", "mocked"]);
+            });
+
+            test("under a getter spy", () => {
+              const getter = vi.spyOn(dep, "plain", "get").mockReturnValue("spied");
+              expect(read()).toEqual(["spied", "spied"]);
+              vi.resetAllMocks();
+              expect(read()).toEqual(["mocked", "mocked"]);
+              vi.restoreAllMocks();
+              expect(read()).toEqual(["mocked", "mocked"]);
+            });
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "spy.test.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(" 2 pass\n 0 fail\n");
+        expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+      });
+
       // Consistent with method spies, which also replace read-only and non-configurable properties.
       test("non-configurable, frozen and non-extensible targets", () => {
         const fixed = Object.defineProperty({}, "x", { get: () => 1 });
@@ -3644,11 +3933,33 @@ if (isBun) {
       });
     });
 
+    // The original of a data property's getter reads its value.
+    test.each(flavors)("%s: a getter spy on a data property and mockReset()", (_, isVitest, fn, spyOn) => {
+      const obj = { x: 1 };
+      const getter = spyOn(obj, "x", "get").mockReturnValue(9);
+      expect(obj.x).toBe(9);
+      getter.mockReset();
+      expect(obj.x).toBe(isVitest ? 1 : undefined);
+      jest.restoreAllMocks();
+      expect(obj.x).toBe(1);
+    });
+
     // Either API's *AllMocks() covers every mock, and each mock follows the flavor of the function that created it.
     const everyApi = [
       ["vi", vi],
       ["jest", jest],
     ];
+
+    test.each(everyApi)("%s.resetAllMocks() and a getter spy on a data property", (_, api) => {
+      for (const [, isVitest, fn, spyOn] of flavors) {
+        const untouched = { x: 1 };
+        const configured = { x: 1 };
+        spyOn(untouched, "x", "get");
+        spyOn(configured, "x", "get").mockReturnValue(9);
+        api.resetAllMocks();
+        expect([untouched.x, configured.x]).toEqual(isVitest ? [1, 1] : [undefined, undefined]);
+      }
+    });
 
     test.each(everyApi)("%s.resetAllMocks()", (_, api) => {
       for (const [, isVitest, fn, spyOn] of flavors) {

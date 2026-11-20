@@ -864,7 +864,7 @@ describe.concurrent("vi.setConfig", () => {
       import { beforeAll, beforeEach, test, vi } from "${module}";
       ${config}
       const fn = vi.fn(() => "original");
-      const object = { method: () => "original" };
+      const object = { method: () => "original", plain: "original" };
       fn("top level");
       beforeAll(() => { fn("beforeAll"); });
       beforeEach(() => { fn("beforeEach"); });
@@ -872,11 +872,12 @@ describe.concurrent("vi.setConfig", () => {
         fn("first");
         fn.mockReturnValue("changed");
         vi.spyOn(object, "method").mockReturnValue("spied");
+        vi.spyOn(object, "plain", "get").mockReturnValue("spied");
         vi.stubEnv("STUBBED", "1");
         vi.stubGlobal("stubbed", 1);
       });
       test("second", () => {
-        console.log(JSON.stringify({ calls: fn.mock.calls.flat(), returns: fn(), method: object.method(), env: process.env.STUBBED, global: typeof stubbed }));
+        console.log(JSON.stringify({ calls: fn.mock.calls.flat(), returns: fn(), method: object.method(), plain: object.plain, env: process.env.STUBBED, global: typeof stubbed }));
       });
     `;
     const seen = async (
@@ -907,6 +908,7 @@ describe.concurrent("vi.setConfig", () => {
       calls: ["top level", "beforeAll", "beforeEach", "first", "beforeEach"],
       returns: "changed",
       method: "spied",
+      plain: "spied",
       env: "1",
       global: "number",
     };
@@ -923,13 +925,20 @@ describe.concurrent("vi.setConfig", () => {
     describe.each(["bunfig", "setConfig", "preload"] as const)("through %s", through => {
       test.each([
         [{ clearMocks: true }, cleared],
-        [{ mockReset: true }, { ...cleared, returns: "original", method: "original" }],
-        [{ restoreMocks: true }, { method: "original" }],
+        [{ mockReset: true }, { ...cleared, returns: "original", method: "original", plain: "original" }],
+        [{ restoreMocks: true }, { method: "original", plain: "original" }],
         [{ unstubEnvs: true }, { env: undefined }],
         [{ unstubGlobals: true }, { global: "undefined" }],
         [
           { clearMocks: true, mockReset: true, restoreMocks: true, unstubEnvs: true, unstubGlobals: true },
-          { ...cleared, returns: "original", method: "original", env: undefined, global: "undefined" },
+          {
+            ...cleared,
+            returns: "original",
+            method: "original",
+            plain: "original",
+            env: undefined,
+            global: "undefined",
+          },
         ],
       ])("%j", async (options, difference) => {
         expect(await seen("bun:test", options, through)).toEqual({ ...nothing, ...difference });

@@ -320,15 +320,19 @@ test.skipIf(isWindows)(
   async () => {
     using dir = tempDir("parallel-blocked-event-loop-busy-coordinator", {
       "a.test.js": `import {test} from "bun:test";
-        import {writeFileSync} from "fs";
-        test("prints", () => {
+        import {existsSync, writeFileSync} from "fs";
+        test("prints once the other file runs", async () => {
+          while (!existsSync("b-runs")) await Bun.sleep(5);
           const line = Buffer.alloc(999, "x").toString();
           for (let i = 0; i < 200; i++) console.log(line);
         }, 10_000);
-        test("says that it has printed", () => writeFileSync("printed", ""));`,
+        test("says that it has printed", () => writeFileSync("a-printed", ""));`,
       "b.test.js": `import {test} from "bun:test";
-        import {existsSync} from "fs";
-        test("waits for the other file", async () => { while (!existsSync("printed")) await Bun.sleep(5); }, 10_000);
+        import {existsSync, writeFileSync} from "fs";
+        test("waits until the other file has printed", async () => {
+          writeFileSync("b-runs", "");
+          while (!existsSync("a-printed")) await Bun.sleep(5);
+        }, 10_000);
         test("loops", () => { while (true) {} });`,
     });
     await using proc = Bun.spawn({

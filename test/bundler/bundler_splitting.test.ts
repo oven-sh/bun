@@ -4821,6 +4821,65 @@ describe("bundler", () => {
     run: { file: "/out/a.js", stdout: "first\nsecond\na 2 other" },
   });
 
+  // A split import() of a CommonJS file prints as
+  // `import("./chunk.js").then((m)=>__toESM(m.default))`, and the printer names
+  // that parameter itself. In these two, --minify-identifiers has to name
+  // __toESM `m`: every other one-letter name is an unbound global, and __toESM
+  // is the name used most.
+  const typeofEveryOneLetterNameButM = [..."abcdefghijklnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"].map(
+    name => "typeof " + name,
+  );
+
+  // __toESM crosses chunks: the runtime's chunk declares it, and it has one
+  // name in the whole bundle.
+  itBundled("splitting/DynamicImportOfCommonJSWithHelperNamedLikeParameter", {
+    files: {
+      "/entry.js": /* js */ `
+        globalThis.unbound = [${typeofEveryOneLetterNameButM}]
+        const all = await Promise.all([import('./c.cjs'), import('./c.cjs'), import('./c.cjs')])
+        console.log(all.map(ns => ns.default.id).join(' '))
+      `,
+      "/c.cjs": /* js */ `
+        module.exports = { id: 'c' }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    minifyIdentifiers: true,
+    outdir: "/out",
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain(".then((n)=>m(n.default))");
+    },
+    run: { file: "/out/entry.js", stdout: "c c c" },
+  });
+
+  // __toESM stays in the chunk that imports, so that chunk's own renamer names
+  // it: the target is the entry point of the chunk the importing file is in.
+  // The 64 calls make __toESM the name that chunk uses most.
+  itBundled("splitting/DynamicImportOfCommonJSWithChunkLocalHelperNamedLikeParameter", {
+    files: {
+      "/entry.cjs": /* js */ `
+        globalThis.unbound = [${typeofEveryOneLetterNameButM}]
+        module.exports = { id: 'entry' }
+        require('./importer.mjs').load().then(all => console.log(all.length, all[0].default.id))
+      `,
+      "/importer.mjs": /* js */ `
+        export const load = () => Promise.all([${Array.from({ length: 64 }, () => "import('./entry.cjs')")}])
+      `,
+    },
+    entryPoints: ["/entry.cjs"],
+    outputPaths: ["/out/entry.js"],
+    splitting: true,
+    minifyIdentifiers: true,
+    outdir: "/out",
+    target: "node",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain(".then((n)=>m(n.default,1))");
+    },
+    run: { file: "/out/entry.js", stdout: "64 entry" },
+  });
+
   // Chunks are printed with placeholders where they refer to other chunks and
   // assets; the placeholders are replaced once every output path is known.
   // These pin the two per-chunk decisions of that step: what the written paths

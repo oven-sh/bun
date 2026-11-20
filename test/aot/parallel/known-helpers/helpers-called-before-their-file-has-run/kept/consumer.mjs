@@ -1,4 +1,4 @@
-import { __exportStar, __importStar } from "./helpers.mjs";
+import { __exportStar, __importStar } from "./tools.mjs";
 const from = { a: 1, get b() { return 2; } };
 export function use() {
   try { const o = {}; __exportStar(from, o); console.log("star", JSON.stringify(o)); } catch (e) { console.log("star", e.name); }

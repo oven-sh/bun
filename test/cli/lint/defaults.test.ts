@@ -915,6 +915,351 @@ await expect(1).toBe(1);
     });
   });
 
+  describe("with --type-aware, a method given to expect()", () => {
+    const rule = "@typescript-eslint/unbound-method";
+    const tsconfig = `{ "compilerOptions": { "strict": true, "lib": ["esnext"], "types": [] } }`;
+    /** What bun-types declares, as far as these tests go. `bun test` has the same `expect` in all three modules. */
+    const runners = (matchers: string[]) => `declare module "bun:test" {
+  interface Matchers {
+    not: Matchers;
+    resolves: Matchers;
+    rejects: Matchers;
+${matchers.map(name => `    ${name}(...expected: unknown[]): any;`).join("\n")}
+  }
+  export const expect: {
+    (actual?: unknown, message?: unknown): Matchers;
+    soft(actual?: unknown, message?: unknown): Matchers;
+    poll(actual: () => unknown): Matchers;
+  };
+  type Mock = { mockReturnValue(value: unknown): void };
+  export const jest: { fn<T>(implementation: T): T & Mock; mocked<T>(item: T, options?: unknown): T & Mock };
+  export const vi: typeof jest;
+}
+declare module "vitest" {
+  export { expect } from "bun:test";
+}
+declare module "@jest/globals" {
+  export { expect } from "bun:test";
+}
+`;
+    const store = `export class Store {
+  private rows = new Map<number, string>();
+  get(id: number) {
+    return this.rows.get(id);
+  }
+  static make() {
+    return new Store();
+  }
+}
+export declare const store: Store;
+export declare const fallback: (id: number) => string | undefined;
+export declare function use(value: unknown): void;
+`;
+    /** A test file with one statement per line. */
+    const testFile = (statements: string[]) =>
+      `import { expect, jest, vi } from "bun:test";\nimport { Store, fallback, store, use } from "./store";\n${statements.join("\n")}\n`;
+    /** The line of code at each of `reports`, by file. */
+    const linesOf = (files: Record<string, string>, reports: string[]) => {
+      const lines: Record<string, string[]> = {};
+      for (const report of reports) {
+        const [file, line] = report.split(":");
+        (lines[file] ??= []).push(files[file].split("\n")[Number(line) - 1]);
+      }
+      return lines;
+    };
+
+    // The matcher only looks at the method, so `this` can't get lost.
+    const inspected = [
+      `expect(store.get).toHaveBeenCalledTimes(1);`,
+      `expect(store.get).not.toHaveBeenCalled();`,
+      `expect.soft(store.get).toHaveBeenCalled();`,
+      `expect(store.get, "message").toHaveBeenCalled();`,
+      `expect(store.get).toBe(fallback);`,
+      `expect(Store.make).toHaveBeenCalled();`,
+      `expect(store["get"]).toHaveBeenCalled();`,
+      `expect(store?.get).toHaveBeenCalled();`,
+      `expect((store.get)).toHaveBeenCalled();`,
+      `expect(store.get)["toHaveBeenCalled"]();`,
+      `expect(store.get)["not"].toHaveBeenCalled();`,
+      `expect(store.get!).toHaveBeenCalled();`,
+      `expect(store.get as unknown).toHaveBeenCalled();`,
+      `expect(<unknown>store.get).toHaveBeenCalled();`,
+      `expect(store.get ?? fallback).toHaveBeenCalled();`,
+      `expect(fallback ?? store.get).toHaveBeenCalled();`,
+      `expect(fallback && store.get).toHaveBeenCalled();`,
+      `expect(fallback || store.get).toHaveBeenCalled();`,
+      `expect(jest.mocked(store).get).toHaveBeenCalledTimes(1);`,
+      // `mocked()` returns the method. Only a property of that is used, or the matcher looks at it.
+      `jest.mocked(store.get).mockReturnValue("x");`,
+      `vi.mocked(store.get).mockReturnValue("x");`,
+      `(jest.mocked(store.get)).mockReturnValue("x");`,
+      `jest.mocked(store.get)["mockReturnValue"]("x");`,
+      `jest.mocked(store.get!).mockReturnValue("x");`,
+      `expect(jest.mocked(store.get)).toHaveBeenCalled();`,
+      // The matcher only looks at its arguments too.
+      `expect(fallback).toBe(store.get);`,
+      `expect(fallback).not.toBe(store.get);`,
+      `expect.soft(fallback).toBe(store.get);`,
+      `expect(fallback)["toBe"](store.get);`,
+      `expect(fallback)["not"].toBe(store.get);`,
+      `(expect(fallback)).toBe(store.get);`,
+      `expect(fallback).toHaveBeenCalledWith(1, store.get);`,
+      `await expect(fallback).resolves.toBe(store.get);`,
+      `await expect(fallback).rejects.not.toBe(store.get);`,
+      `expect(fallback).toHaveBeenCalledBefore(jest.mocked(store.get));`,
+    ];
+    // The matcher calls the method or hands it on, or nothing says what happens to it.
+    const called = [
+      `expect(store.get).toThrow();`,
+      `expect(store.get).toThrowError();`,
+      `expect(store.get).toThrowErrorMatchingSnapshot();`,
+      `expect(store.get).toThrowErrorMatchingInlineSnapshot();`,
+      `expect(store.get).not.toThrow();`,
+      `expect(store.get).toSatisfy(Boolean);`,
+      `await expect(store.get).resolves.toBe("x");`,
+      `await expect(store.get).rejects.toBeDefined();`,
+      `await expect.poll(store.get).toBe("x");`,
+      `expect(store.get);`,
+      `use(expect(store.get));`,
+      `void expect(store.get).toHaveBeenCalled;`,
+      `if (expect(store.get).toHaveBeenCalled) use(1);`,
+      `expect(store.get).toBeDefined().toThrow();`,
+      `expect(store.get).toBeSpied();`,
+      `expect(store.get).toContainKeys([]);`,
+      `expect(store.get).toContainKeys([]).toThrow();`,
+      `expect([store.get]).toHaveLength(1);`,
+      `expect({ get: store.get }).toBeDefined();`,
+      `expect(fallback, store.get).toBeDefined();`,
+      `expect(store.get satisfies unknown).toBeDefined();`,
+      `expect(fallback ? store.get : fallback).toBeDefined();`,
+      `ensure(store.get).toBeDefined();`,
+      `ensure.toBe(store.get);`,
+      `use(store.get);`,
+      `const unbound = store.get;`,
+      `const { get } = store;`,
+      `jest.fn(store.get).mockReturnValue("x");`,
+      `const mocked = jest.mocked(store.get);`,
+      `jest.mocked(store.get)(1);`,
+      `jest.mocked(store.get)!(1);`,
+      `jest.mocked(fallback, store.get).mockReturnValue("x");`,
+      `view.mocked(store.get).mockReturnValue("x");`,
+      `ensure[jest.mocked(store.get)];`,
+      `use(jest.mocked(store.get));`,
+      `expect(jest.mocked(store.get)).toThrow();`,
+      `expect(fallback).toSatisfy(store.get);`,
+      `expect(fallback).toBeSpied(store.get);`,
+      `expect(fallback).never.toBe(store.get);`,
+      `await expect.poll(fallback).toBe(store.get);`,
+      `expect(fallback).toBe(use(store.get));`,
+    ];
+    // Every matcher named above.
+    const matchers = [...new Set([...inspected, ...called].flatMap(it => it.match(/\bto\w+/g) ?? []))];
+    const other = (source: string) =>
+      `${source}import { store } from "./store";\nexpect(store.get).toHaveBeenCalled();\n`;
+    const files = {
+      "tsconfig.json": tsconfig,
+      "runners.d.ts": runners(matchers),
+      "globals.d.ts": `declare var expect: typeof import("bun:test").expect;\ndeclare var ensure: any;\ndeclare var view: any;\n`,
+      "store.ts": store,
+      "inspected.test.ts": testFile(inspected),
+      "called.test.ts": testFile(called),
+      "vitest.test.ts": other(`import { expect } from "vitest";\n`),
+      "jest.test.ts": other(`import { expect } from "@jest/globals";\n`),
+      "global.test.ts": other(""),
+    };
+
+    test("isn't reported if the matcher only inspects it", async () => {
+      const { native, eslint } = await inBothModes(files, [rule], ["--type-aware"]);
+      expect(linesOf(files, native)).toEqual({ "called.test.ts": called });
+      expect(linesOf(files, eslint)).toEqual({
+        "called.test.ts": called,
+        "global.test.ts": ["expect(store.get).toHaveBeenCalled();"],
+        "inspected.test.ts": inspected,
+        "jest.test.ts": ["expect(store.get).toHaveBeenCalled();"],
+        "vitest.test.ts": ["expect(store.get).toHaveBeenCalled();"],
+      });
+    });
+
+    test("is reported with an oxlint config", async () => {
+      const oxlint = {
+        ...files,
+        ".oxlintrc.json": `{ "categories": { "correctness": "off" }, "rules": { "typescript/unbound-method": "error" } }`,
+      };
+      const { json } = await lint(oxlint, ["--type-aware", "inspected.test.ts"]);
+      const lines = json.diagnostics.map(
+        (it: any) => `${it.code} ${files["inspected.test.ts"].split("\n")[it.labels[0].span.line - 1]}`,
+      );
+      // tsgolint doesn't look at `a["b"]`.
+      const checked = inspected.filter(it => !it.includes(`store["get"]`));
+      expect(lines).toEqual(checked.map(it => `typescript(unbound-method) ${it}`));
+    });
+
+    test("goes by what each matcher of bun test does with the value", async () => {
+      using dir = tempDir("bun-lint-defaults-matchers", {
+        "probe.test.js": `import { afterAll, describe, expect, jest, test } from "bun:test";
+
+const prototype = Object.getPrototypeOf(expect(0));
+const names = Object.getOwnPropertyNames(prototype).filter(
+  name => name !== "constructor" && typeof Object.getOwnPropertyDescriptor(prototype, name).value === "function",
+);
+// The arguments that get a matcher to a result, where none of those that every matcher is tried with does.
+const rows = {
+  toBeInstanceOf: [Function],
+  toBeTypeOf: ["function"],
+  toBeWithin: [0, 2],
+  toHaveBeenCalledAfter: [jest.fn()],
+  toHaveBeenCalledBefore: [jest.fn()],
+  toIncludeRepeated: ["a", 1],
+  toMatchInlineSnapshot: ['"a"'],
+};
+const facts = { names, callsIt: [], handsItOn: [], callsItsArgument: [], returnsTheExpectation: [], unprobed: [] };
+
+// A test for each matcher: on a debug build, all of them in one test have taken longer than a test may.
+describe.each(names)("%s", name => {
+  test("what it does with the value", () => {
+    let called = false;
+    let handedOn = false;
+    let calledArgument = false;
+    let chained = false;
+    let reached = false;
+    const method = jest.fn(() => {
+      called = true;
+    });
+    const callback = (...args) => {
+      calledArgument = true;
+      handedOn ||= args.includes(method);
+      return true;
+    };
+    for (const args of name in rows ? [rows[name]] : [[], [1], ["a"], [[]], [callback]]) {
+      for (const received of [method, 1, "a"]) {
+        for (const negated of [true, false]) {
+          try {
+            const result = (negated ? expect(received).not : expect(received))[name](...args);
+            reached = true;
+            chained ||= typeof result?.[name] === "function";
+          } catch {}
+        }
+      }
+    }
+    if (called) facts.callsIt.push(name);
+    if (handedOn) facts.handsItOn.push(name);
+    if (calledArgument) facts.callsItsArgument.push(name);
+    if (chained) facts.returnsTheExpectation.push(name);
+    if (!reached && !called && !handedOn) facts.unprobed.push(name);
+  });
+});
+
+afterAll(() => console.log(JSON.stringify(facts)));
+`,
+      });
+      // With `CI=false` a snapshot matcher writes its snapshot and passes.
+      await using proc = spawn({
+        cmd: [bunExe(), "test", "probe.test.js"],
+        env: { ...env, CI: "false" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 0 fail");
+      const { names, returnsTheExpectation, ...facts } = JSON.parse(stdout.slice(stdout.indexOf("{")));
+      // A matcher that refuses its arguments does nothing with the value, whatever it does once it accepts them. So a
+      // matcher that never got to a result is `unprobed`, and needs a row in `rows` above.
+      expect(facts).toEqual({
+        callsIt: ["toThrow", "toThrowError", "toThrowErrorMatchingInlineSnapshot", "toThrowErrorMatchingSnapshot"],
+        handsItOn: ["toSatisfy"],
+        callsItsArgument: ["toSatisfy"],
+        unprobed: [],
+      });
+      expect(stderr).toContain(` ${names.length} pass`);
+      expect(exitCode).toBe(0);
+
+      const all = {
+        "tsconfig.json": tsconfig,
+        "runners.d.ts": runners(names),
+        "store.ts": store,
+        "received.test.ts": testFile(names.map((name: string) => `expect(store.get).${name}();`)),
+        "argument.test.ts": testFile(names.map((name: string) => `expect(fallback).${name}(store.get);`)),
+      };
+      const { native, eslint } = await inBothModes(all, [rule], ["--type-aware"]);
+      const matchersOf = (reports: string[], file: string) =>
+        reports.filter(it => it.startsWith(`${file}:`)).map(it => names[Number(it.split(":")[1]) - 3]);
+      // The other matchers are the ones in `INSPECTING_MATCHERS` of src/lint/typescript/rules/unbound_method.rs.
+      const doesMore = [...facts.callsIt, ...facts.handsItOn, ...returnsTheExpectation];
+      const reported = names.filter((name: string) => doesMore.includes(name));
+      expect(matchersOf(native, "received.test.ts")).toEqual(reported);
+      expect(matchersOf(eslint, "received.test.ts")).toEqual(names);
+      expect(matchersOf(native, "argument.test.ts")).toEqual(reported);
+      expect(matchersOf(eslint, "argument.test.ts")).toEqual(names);
+    });
+
+    test("a comment that disables it is unused, but not with an ESLint config", async () => {
+      const disabled = {
+        "tsconfig.json": tsconfig,
+        "runners.d.ts": runners(["toHaveBeenCalled"]),
+        "store.ts": store,
+        "a.test.ts": `import { expect } from "bun:test";
+import { store } from "./store";
+// eslint-disable-next-line ${rule}
+expect(store.get).toHaveBeenCalled();
+`,
+      };
+      const config = `export default [
+  {
+    files: ["**/*.ts"],
+    extends: ["typescript-eslint/base"],
+    languageOptions: { parserOptions: { projectService: true } },
+    rules: { "${rule}": "error" },
+  },
+];
+`;
+      const [native, eslint] = await Promise.all([
+        lint(disabled, ["--type-aware"]),
+        lint({ ...disabled, "eslint.config.mjs": config }, ["a.test.ts"]),
+      ]);
+      expect(native.problems).toEqual([
+        `a.test.ts:3:1 Unused eslint-disable directive (no problems were reported from '${rule}').`,
+      ]);
+      expect(eslint.problems).toEqual([]);
+      expect([native.exitCode, eslint.exitCode]).toEqual([0, 0]);
+    });
+
+    test("isn't reported however the rule is turned on", async () => {
+      const js = `import { expect } from "bun:test";
+class Store {
+  rows = new Map();
+  get(id) {
+    return this.rows.get(id);
+  }
+}
+const store = new Store();
+expect(store.get).toHaveBeenCalled();
+expect(store.get).toThrow();
+`;
+      const ts = js.replace("new Map()", "new Map<number, string>()").replace("get(id)", "get(id: number)");
+      const declarations = { "runners.d.ts": runners(["toHaveBeenCalled", "toThrow"]) };
+      const [inBunfig, onTheCommandLine] = await Promise.all([
+        lint(
+          {
+            ...declarations,
+            "tsconfig.json": `{ "compilerOptions": { "strict": true, "allowJs": true, "lib": ["esnext"], "types": [] } }`,
+            "bunfig.toml": `[lint.rules]\n"${rule}" = "error"\n`,
+            "a.test.js": js,
+          },
+          [],
+        ),
+        lint(
+          { ...declarations, "tsconfig.json": tsconfig },
+          ["--rule", `${rule}: error`, "--stdin", "--stdin-filename", "a.test.ts"],
+          ts,
+        ),
+      ]);
+      const own = (reports: string[]) => reports.filter(it => it.endsWith(` ${rule}`));
+      expect(own(inBunfig.reports)).toEqual([`a.test.js:10:8 error ${rule}`]);
+      expect(own(onTheCommandLine.reports)).toEqual([`a.test.ts:10:8 error ${rule}`]);
+    });
+  });
+
   test("an array of elements needs keys only where React renders it as a list", async () => {
     const files = {
       ...react,

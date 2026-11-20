@@ -908,6 +908,110 @@ export const left: number = __LEFT__;
     ]);
   });
 
+  test("a class member without an annotation has the type of the sources, whatever the bundle keeps of its stores", async () => {
+    using dir = tempDir(
+      "library-typed-file-members",
+      library({
+        "src/index.ts": `import { Unchecked } from "./unchecked";
+declare const __DEV__: boolean;
+export class Shapes {
+  mode;
+  kept;
+  static count;
+  static {
+    if (__DEV__) this.count = 1;
+  }
+  constructor() {
+    this.kept = "kept";
+    if (__DEV__) this.mode = "dev";
+  }
+  sum(): number {
+    return this.kept.length + (Shapes.count ?? 0) + (this.mode?.length ?? 0) + new Unchecked().bare;
+  }
+}
+`,
+        "src/unchecked.ts": `// @ts-nocheck
+export class Unchecked {
+  bare;
+  constructor() {
+    this.bare = 1;
+  }
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--define", "__DEV__=false");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(json(join(String(dir), "dist/package.json")).exports["."]).toEqual(conditions("index"));
+    // A module under `// @ts-nocheck` keeps what the bundle has.
+    expect(typedFile(dir).match(/^  (?:static )?\w+(?:: [^;{]+)?;$/gm)).toEqual([
+      "  bare;",
+      "  mode: string | undefined;",
+      "  kept: string;",
+      "  static count: number | undefined;",
+    ]);
+  });
+
+  // The build runs what an `accessor` field starts with in the field after it.
+  test("a member without a value has its type before a value that the build gives it", async () => {
+    using dir = tempDir(
+      "library-typed-file-member-with-made-value",
+      library({
+        "src/index.ts": `declare const __DEV__: boolean;
+export class Hosts {
+  accessor first = 1;
+  after;
+  constructor() {
+    if (__DEV__) this.after = 2;
+  }
+  read(): string {
+    return this.first + (this.after === undefined ? "" : this.after.toFixed());
+  }
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--define", "__DEV__=false");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toContain("  after: number | undefined = (__privateAdd(this, _first, 1), undefined);\n");
+  });
+
+  // The .aot.ts file has `any` for a namespace object, so `pick` answers with its first signature there.
+  // On Windows the build says nothing about .aot.ts files that it leaves out, as for `--splitting` below.
+  test.todoIf(isWindows)(
+    "a store that the .aot.ts file types in another way than the sources is a warning, not another type for the member",
+    async () => {
+      using dir = tempDir(
+        "library-typed-file-member-refused",
+        library({
+          "src/index.ts": `function pick(value: string): string;
+function pick(value: number): number;
+function pick(value: string | number): string | number {
+  return value;
+}
+export namespace Defaults {
+  export const size: number = 1;
+}
+export class Box {
+  size;
+  constructor() {
+    this.size = pick(Defaults.size);
+  }
+}
+`,
+        }),
+      );
+      const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+      expect(built.stderr).toMatch(
+        /^warn: the \.aot\.ts files that --aot compiles a package from are left out: they have type errors, the first at index\.aot\.ts:\d+:\d+: TS2322: Type 'string' is not assignable to type 'number'\.\n$/,
+      );
+      expect(built.exitCode).toBe(0);
+      expect(readFileSync(join(String(dir), "dist/index.d.ts"), "utf8")).toContain("    size: number;\n");
+      expect(filesIn(join(String(dir), "dist")).filter(path => /\.aot\.|tsconfig/.test(path))).toEqual([]);
+      expect(JSON.stringify(json(join(String(dir), "dist/package.json")))).not.toContain('"aot"');
+    },
+  );
+
   const rewritten = {
     "src/index.ts": `let notes = 0;
 const note = (): void => void notes++;

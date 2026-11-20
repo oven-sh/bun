@@ -74,6 +74,10 @@ struct node_module {
 extern "C" BUN_EXPORT void node_module_register(void* mod);
 
 // Runs the entry point of a module queued by node_module_register, with moduleObject as `module`. Throws on failure.
-void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, JSC::JSObject* moduleObject);
+// `filename` is the addon's path, for the error text.
+void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, JSC::JSObject* moduleObject, const WTF::String& filename);
+
+// The message for a failed dlopen() of `filename`: dlerror()'s text, plus the cause when that text names a v8:: or node:: symbol.
+WTF::String loaderErrorMessage(WTF::String&& loaderError, const WTF::String& filename);
 
 } // namespace node

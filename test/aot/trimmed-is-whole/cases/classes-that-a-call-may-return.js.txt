@@ -32,3 +32,126 @@ import { createHistogram } from "node:perf_hooks";
 const histogram = createHistogram();
 histogram.record(5);
 console.log(histogram.count, histogram.max);
+//// the-text-that-a-rewriter-of-HTML-answers
+//@ removes Bun.build
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+const rewriter = new HTMLRewriter().on("p", {
+  element(element) {
+    element.setAttribute("seen", "yes");
+  },
+});
+console.log(rewriter.transform("<p>text</p>"), rewriter.transform("") === "");
+//// the-bytes-that-a-rewriter-of-HTML-answers
+//@ removes Bun.build
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+const rewriter = new HTMLRewriter().on("p", {
+  element(element) {
+    element.setAttribute("seen", "yes");
+  },
+});
+const bytes = () => new TextEncoder().encode("<p>bytes</p>");
+const shared = new SharedArrayBuffer(12);
+new Uint8Array(shared).set(bytes());
+const decoder = new TextDecoder();
+for (const input of [bytes().buffer, bytes(), new DataView(bytes().buffer), shared, new Uint8Array(shared)]) {
+  const answer = rewriter.transform(input);
+  console.log(answer.byteLength, decoder.decode(answer));
+}
+//// the-response-that-a-rewriter-of-HTML-answers
+//@ removes Bun.build
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+const rewriter = new HTMLRewriter().on("p", {
+  element(element) {
+    element.setAttribute("seen", "yes");
+  },
+});
+const response = rewriter.transform(new Response("<p>response</p>", { status: 201 }));
+console.log(typeof response, response.status, await response.text());
+const ofBlob = rewriter.transform(new Response(new Blob(["<p>blob</p>"]), { status: 202 }));
+console.log(ofBlob.status, await ofBlob.text());
+//// the-response-of-a-file-that-a-rewriter-of-HTML-answers
+//@ file cwd/page.html "<p>from a file</p>\n"
+//@ removes Bun.build
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+const rewriter = new HTMLRewriter().on("p", {
+  element(element) {
+    element.setAttribute("seen", "yes");
+  },
+});
+const read = () => rewriter.transform(new Response(Bun.file("page.html")));
+const decoder = new TextDecoder();
+console.log(await read().text());
+const blob = await read().blob();
+console.log(decoder.decode(await read().arrayBuffer()), blob.size, await blob.text(), decoder.decode(await read().bytes()));
+//// what-a-rewriter-of-HTML-refuses
+//@ removes Bun.build
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+const rewriter = new HTMLRewriter();
+for (const refused of [new Blob(["<p>blob</p>"]), 5, undefined]) {
+  try {
+    rewriter.transform(refused);
+  } catch (error) {
+    console.log(error.name, error.message);
+  }
+}
+//// the-arguments-that-node-util-parses
+//@ removes Bun.build
+//@ removes Bun.serve
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+import { parseArgs } from "node:util";
+class Words extends Array {}
+const words = Words.of("p", "q");
+const { values, positionals, tokens } = parseArgs({
+  args: ["--name", "x", "-v", "first", "--no-color", "--", "last"],
+  options: {
+    name: { type: "string" },
+    verbose: { type: "boolean", short: "v" },
+    color: { type: "boolean" },
+    listed: { type: "string", multiple: true, default: words },
+    plain: { type: "string", default: "kept" },
+  },
+  allowPositionals: true,
+  allowNegative: true,
+  tokens: true,
+});
+console.log(Object.getPrototypeOf(values), Object.keys(values).join(), "toString" in values);
+console.log(values.name.toUpperCase(), values.verbose, values.color, values.plain, values.listed === words, values.listed instanceof Words);
+console.log(positionals.join(), tokens.map(token => `${token.kind}:${token.name ?? token.value}:${token.index}`).join(" "));
+const repeated = parseArgs({ args: ["--many", "1", "--many", "2"], options: { many: { type: "string", multiple: true } } });
+console.log(repeated.values.many.map(Number).join(), repeated.tokens);
+class Path {
+  toString() {
+    return "a/b";
+  }
+  parts() {
+    return `${this}`.split("/");
+  }
+}
+const path = new Path();
+const through = parseArgs({ args: [path, "--", 5], allowPositionals: true, tokens: true });
+console.log(through.positionals[0] === path, through.positionals[0].parts().join(), through.tokens[0].value.parts().length, typeof through.positionals[1]);
+try {
+  parseArgs({ args: ["--nope"], options: {} });
+} catch (error) {
+  console.log(error.code);
+}
+//// what-node-util-prints-of-an-object
+//@ removes Bun.build
+//@ removes Bun.serve
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+import { inspect, promisify } from "node:util";
+console.log(inspect({ a: 1, list: [1, "two"] }), typeof promisify);

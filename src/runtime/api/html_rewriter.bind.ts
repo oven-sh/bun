@@ -152,7 +152,7 @@ export const HTMLRewriter = b.class({
     onDocument: { ...chainable(b.self), args: { handlers: b.any }, capability: "js", throws: true },
     transform: {
       args: { input: b.any },
-      returns: b.any.returning("string", "object"),
+      returns: b.any.returning("string", "Response", "ArrayBuffer"),
       capability: "js",
       throws: true,
       passThis: true,

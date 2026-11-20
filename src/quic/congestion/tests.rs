@@ -540,48 +540,150 @@ fn bursts_get_shorter_after_an_overflow_and_whenever_cubic_backs_off() {
     }
 }
 
-/// Returns the quantum in KiB after each period, given what is delivered and lost in a cycle with such a quantum.
-fn quanta(periods: usize, mut cycle: impl FnMut(usize, u64) -> (u64, u64)) -> Vec<u64> {
-    let (mut pacer, mut now, rtt) = (Pacer::default(), START, Rtt::default());
-    (0..5).for_each(|_| pacer.on_overflow());
-    pacer.set_rate(16 * 1024, millis(1), &rtt);
-    pacer.try_longer_bursts(now, &Feedback::default(), Some(true));
-    let period = |at| {
-        for step in 1..=10 {
-            let (acked, lost) = cycle(at, pacer.quantum() / 1024);
-            let feedback = Feedback {
-                acked: acked * SEGMENT,
-                lost: lost * SEGMENT,
-                ..Feedback::default()
-            };
-            now = now + millis(10);
-            pacer.on_overflow();
-            pacer.try_longer_bursts(now, &feedback, Some(step == 10));
-            pacer.set_rate(16 * 1024, millis(1), &rtt);
-        }
-        pacer.quantum() / 1024
-    };
-    (0..periods).map(period).collect()
+/// Of a pacer that has met a short queue.
+struct Periods {
+    pacer: Pacer,
+    now: Instant,
+    is_path_limit: bool,
+    overflows: bool,
+}
+
+impl Periods {
+    fn new() -> Self {
+        let mut periods = Self {
+            pacer: Pacer::default(),
+            now: START,
+            is_path_limit: true,
+            overflows: true,
+        };
+        assert_eq!(periods.run(1, |_| (110, 10)), [2]);
+        periods
+    }
+
+    /// Takes what is delivered and lost in a tenth of a period with a given quantum, and returns the quantum after
+    /// each period. Both are in KiB.
+    fn run(&mut self, count: usize, mut outcome: impl FnMut(u64) -> (u64, u64)) -> Vec<u64> {
+        let period = |_| {
+            for step in 1..=10 {
+                let (acked, lost) = outcome(self.pacer.quantum() / 1024);
+                let feedback = Feedback {
+                    acked: acked * SEGMENT,
+                    lost: lost * SEGMENT,
+                    ..Feedback::default()
+                };
+                self.now = self.now + millis(10);
+                if self.overflows {
+                    self.pacer.on_overflow();
+                }
+                let starts_cycle = self.is_path_limit.then_some(step == 10);
+                (self.pacer).try_longer_bursts(self.now, &feedback, starts_cycle);
+                (self.pacer).set_rate(16 * 1024, millis(1), &Rtt::default());
+            }
+            self.pacer.quantum() / 1024
+        };
+        (0..count).map(period).collect()
+    }
 }
 
 #[test]
 fn bursts_get_longer_as_far_as_it_makes_no_difference() {
-    assert_eq!(quanta(5, |_, _| (110, 10)), [4, 8, 16, 16, 16]);
-    assert_eq!(
-        quanta(5, |_, len| (110 - len / 8, 10 + len / 3)),
-        [4, 8, 16, 16, 16]
-    );
+    let expected = [4, 8, 16, 16, 16];
+    assert_eq!(Periods::new().run(5, |_| (110, 10)), expected);
+    let slightly_worse = |len| (110 - len / 8, 10 + len / 3);
+    assert_eq!(Periods::new().run(5, slightly_worse), expected);
     for worse in [(105, 10), (110, 18), (110, 90)] {
-        let quanta = quanta(40, |_, len| if len > 4 { worse } else { (110, 10) });
-        assert_eq!(quanta.iter().filter(|&&it| it > 4).count(), 3);
+        let quanta = Periods::new().run(40, |len| if len > 4 { worse } else { (110, 10) });
+        let trials = quanta.chunk_by(|a, b| a == b).filter(|it| it.contains(&8));
+        assert_eq!(trials.count(), 3);
         assert!(quanta.iter().all(|it| (4..=8).contains(it)));
     }
 }
 
 #[test]
+fn longer_bursts_are_compared_with_the_best_so_far() {
+    let quanta = Periods::new().run(4, |len| match len {
+        2 => (110, 30),
+        4 => (110, 1),
+        _ => (110, 25),
+    });
+    assert_eq!(quanta, [4, 8, 4, 4]);
+}
+
+#[test]
 fn bursts_get_short_again_when_the_path_changes() {
-    let quanta = quanta(8, |at, _| if at < 5 { (110, 10) } else { (104, 10) });
-    assert_eq!(quanta, [4, 8, 16, 16, 16, 8, 2, 2]);
+    for (is_path_limit, outcome, expected) in [
+        (true, (104, 10), [16, 2]),
+        (true, (110, 30), [2, 2]),
+        (false, (104, 10), [16, 16]),
+        (false, (110, 30), [2, 2]),
+        (false, (20, 20), [8, 2]),
+    ] {
+        let mut periods = Periods::new();
+        assert_eq!(periods.run(4, |_| (110, 10)), [4, 8, 16, 16]);
+        periods.is_path_limit = is_path_limit;
+        assert_eq!(periods.run(2, |_| outcome), expected);
+    }
+}
+
+#[test]
+fn bursts_only_get_short_for_an_overflow() {
+    let mut periods = Periods::new();
+    assert_eq!(periods.run(4, |_| (110, 10)), [4, 8, 16, 16]);
+    periods.overflows = false;
+    assert_eq!(periods.run(2, |_| (104, 0)), [16, 16]);
+}
+
+#[test]
+fn bursts_stay_short_unless_the_outcome_is_comparable() {
+    let mut periods = Periods::new();
+    periods.is_path_limit = false;
+    assert_eq!(periods.run(3, |_| (110, 10)), [2, 2, 2]);
+
+    let mut periods = Periods::new();
+    (0..10).for_each(|_| periods.pacer.on_start_settled(true));
+    assert_eq!(periods.run(3, |_| (110, 10)), [8, 8, 8]);
+    assert_eq!(periods.pacer.max_turn(), 1);
+}
+
+#[test]
+fn longer_bursts_do_not_tell_whether_a_queue_is_shared() {
+    let mut periods = Periods::new();
+    for (outcome, expected) in [((110, 10), 4), ((104, 10), 4), ((110, 10), 2)] {
+        assert_eq!(periods.run(1, |_| outcome), [expected]);
+        if expected > 2 {
+            (0..10).for_each(|_| periods.pacer.on_start_settled(true));
+        }
+    }
+}
+
+#[test]
+fn bursts_that_were_fine_are_tried_again_at_once() {
+    let mut periods = Periods::new();
+    let outcome = |len| if len > 4 { (105, 10) } else { (110, 10) };
+    assert_eq!(periods.run(4, outcome), [4, 8, 8, 4]);
+    assert_eq!(periods.run(1, |_| (104, 10)), [4]);
+    assert_eq!(periods.run(4, outcome), [2, 4, 4, 4]);
+}
+
+#[test]
+fn period_takes_some_time() {
+    let mut periods = Periods::new();
+    let feedback = Feedback {
+        acked: 2000 * SEGMENT,
+        ..Feedback::default()
+    };
+    (periods.pacer).try_longer_bursts(periods.now, &feedback, Some(true));
+    assert_eq!(periods.pacer.max_turn(), 1);
+}
+
+#[test]
+fn pauses_do_not_make_failed_trials_more_frequent() {
+    let mut path = Path::new(Algorithm::Bbr, micros(120), millis(1), 3);
+    for _ in 0..40 {
+        path.transfer(4000, |_| {});
+        path.now = path.now + millis(100);
+    }
+    assert!(path.lost * 100 < path.delivered * 4);
 }
 
 #[test]

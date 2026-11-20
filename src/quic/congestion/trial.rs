@@ -1,5 +1,6 @@
 //! Short bursts take many wake-ups. They help to get through a short queue, but not if it is the rate that is too high.
 
+use super::pacer::MAX_OVERFLOWS;
 use super::{Feedback, MICROS_PER_SECOND, SEGMENT};
 use crate::time::Instant;
 
@@ -12,75 +13,122 @@ const MIN_BACKOFF: u32 = 7;
 const MAX_BACKOFF: u32 = 63;
 
 #[derive(Default)]
-pub(super) struct Trial {
-    /// How many of the times that bursts can be halved are done without.
-    pub(super) spared: u32,
-    /// Whether that is one more than in the last period.
-    is_new: bool,
-    since: Option<Instant>,
+struct Period {
+    since: Instant,
     acked: u64,
     lost: u64,
-    /// Not zero once `spared` is not.
+    /// That have cut bursts short.
+    max_overflows: u32,
+    /// It is made of whole cycles, in each of which the sender probes for bandwidth.
+    is_comparable: bool,
+}
+
+#[derive(Default)]
+pub(super) struct Trial {
+    /// How many overflows are disregarded.
+    spared: u32,
+    /// Whether that number has yet to prove itself.
+    is_new: bool,
+    /// The last one that has not.
+    failed: u32,
+    /// In how many periods to try it again.
+    pause: u32,
+    backoff: u32,
+    /// From bursts that were too long.
+    is_recovering: bool,
+    period: Period,
     last_len: u64,
     /// In bytes per second.
     min_rate: u64,
     /// In thousandths.
     max_loss: u64,
-    /// In periods, the first of which is for the rate to recover.
-    pause: u32,
-    backoff: u32,
 }
 
 impl Trial {
-    pub(super) fn interrupt(&mut self) {
-        self.since = None;
+    #[inline]
+    pub(super) fn max_overflows(&self) -> u32 {
+        MAX_OVERFLOWS - self.spared
     }
 
-    /// A period is made of whole cycles, in each of which the sender probes for bandwidth.
+    #[inline]
+    pub(super) fn is_under_way(&self) -> bool {
+        self.spared > 0 || self.is_recovering
+    }
+
+    pub(super) fn interrupt(&mut self) {
+        self.period.is_comparable = false;
+    }
+
+    /// `starts_cycle` is `None` unless the path is what limits the rate.
     #[inline]
     pub(super) fn update(
         &mut self,
         now: Instant,
         feedback: &Feedback,
-        starts_cycle: bool,
-        are_bursts_short: bool,
+        starts_cycle: Option<bool>,
+        overflows: u32,
     ) {
-        let Some(since) = self.since else {
-            (self.since, self.acked, self.lost) = (starts_cycle.then_some(now), 0, 0);
-            return;
-        };
-        self.acked += feedback.acked;
-        self.lost += feedback.lost;
-        let is_judged = self.spared > 0 && self.pause < self.backoff.max(1);
-        if !starts_cycle || self.acked < MIN_PERIOD_LEN {
-            if is_judged && self.lost * 1000 / self.acked.max(self.last_len) > self.max_loss {
-                self.retreat();
+        let period = &mut self.period;
+        period.acked += feedback.acked;
+        period.lost += feedback.lost;
+        period.max_overflows = period.max_overflows.max(overflows);
+        period.is_comparable &= starts_cycle.is_some();
+        let is_judged = self.spared > 0 && !self.is_recovering;
+        if starts_cycle != Some(false) && period.acked >= MIN_PERIOD_LEN && now > period.since {
+            self.end_period(now, is_judged, starts_cycle.is_some());
+        } else if is_judged
+            && period.lost * 1000 / period.acked.max(self.last_len).max(1) > self.max_loss
+        {
+            self.retreat(now);
+        }
+    }
+
+    fn end_period(&mut self, now: Instant, is_judged: bool, starts_cycle: bool) {
+        let period = &self.period;
+        let rate =
+            period.acked.saturating_mul(MICROS_PER_SECOND) / (now - period.since).as_micros();
+        let loss = period.lost * 1000 / period.acked;
+        if is_judged && (loss > self.max_loss || period.is_comparable && rate < self.min_rate) {
+            return self.retreat(now);
+        }
+        if period.is_comparable {
+            let min_rate = rate - rate / 1000 * TOLERATED_SLOWDOWN;
+            let max_loss = loss + TOLERATED_LOSS;
+            (self.min_rate, self.max_loss) = match self.spared {
+                0 => (min_rate, max_loss),
+                _ => (
+                    min_rate.max(self.min_rate),
+                    max_loss.midpoint(self.max_loss),
+                ),
+            };
+            let next = MAX_OVERFLOWS + 1 - period.max_overflows;
+            self.is_new = next <= MAX_OVERFLOWS && (next < self.failed || self.pause == 0);
+            if self.is_new {
+                self.spared = next;
             }
-            return;
+            self.last_len = period.acked;
         }
-        let rate = self.acked.saturating_mul(MICROS_PER_SECOND) / (now - since).as_micros().max(1);
-        let loss = self.lost * 1000 / self.acked;
-        if is_judged && (rate < self.min_rate || loss > self.max_loss) {
-            return self.retreat();
-        }
-        let min_rate = rate - rate / 1000 * TOLERATED_SLOWDOWN;
-        match self.spared {
-            0 => (self.min_rate, self.max_loss) = (min_rate, loss + TOLERATED_LOSS),
-            _ => self.min_rate = self.min_rate.max(min_rate),
-        }
-        self.is_new = self.pause == 0 && are_bursts_short;
-        self.spared += u32::from(self.is_new);
-        (self.pause, self.last_len) = (self.pause.saturating_sub(1), self.acked);
-        (self.since, self.acked, self.lost) = (Some(now), 0, 0);
+        (self.pause, self.is_recovering) = (self.pause.saturating_sub(1), false);
+        self.period = Period {
+            since: now,
+            is_comparable: starts_cycle,
+            ..Period::default()
+        };
     }
 
     /// By one step, unless it is the path that has changed.
-    fn retreat(&mut self) {
-        (self.spared, self.backoff) = match self.is_new {
-            true => (self.spared - 1, 2 * self.backoff + 1),
-            false => (0, self.backoff),
+    fn retreat(&mut self, now: Instant) {
+        if core::mem::take(&mut self.is_new) {
+            self.backoff = (2 * self.backoff + 1).clamp(MIN_BACKOFF, MAX_BACKOFF);
+            (self.failed, self.pause) = (self.spared, self.backoff);
+            self.spared -= 1;
+        } else {
+            self.spared = 0;
+        }
+        self.is_recovering = true;
+        self.period = Period {
+            since: now,
+            ..Period::default()
         };
-        self.backoff = self.backoff.clamp(MIN_BACKOFF, MAX_BACKOFF);
-        (self.pause, self.since, self.is_new) = (self.backoff, None, false);
     }
 }

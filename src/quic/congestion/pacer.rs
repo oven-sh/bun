@@ -9,7 +9,7 @@ use crate::time::{Duration, Instant};
 const BURST: u8 = 10;
 const MAX_QUANTUM: u64 = 64 * 1024;
 const MICROS_PER_HALVING: u64 = 512;
-const MAX_OVERFLOWS: u32 = 5;
+pub(super) const MAX_OVERFLOWS: u32 = 5;
 /// After how many without an overflow one is forgotten.
 const QUANTA_PER_OVERFLOW: u64 = 256;
 /// In packets.
@@ -140,9 +140,6 @@ impl Pacer {
 
     pub(super) fn on_idle_restart(&mut self, now: Instant, is_recovering: bool) {
         (self.next, self.left_at) = (self.next.min(now), now);
-        if now - self.last_sent_at > self.max_lag {
-            self.trial = Trial::default();
-        }
         if !is_recovering {
             self.burst_tokens = BURST;
         }
@@ -181,6 +178,9 @@ impl Pacer {
     /// For the first packet of a burst, which finds room in a queue that has only this sender to fill it.
     #[inline]
     pub(super) fn on_start_settled(&mut self, is_lost: bool) {
+        if self.trial.is_under_way() {
+            return;
+        }
         self.lost_starts -= self.lost_starts / STARTS_AVERAGED;
         self.lost_starts += u32::from(is_lost) * (1_000_000 / STARTS_AVERAGED);
         self.is_shared = self.lost_starts
@@ -195,12 +195,8 @@ impl Pacer {
     }
 
     pub(super) fn on_overflow(&mut self) {
-        self.overflows = (self.overflows + 1).min(self.max_overflows());
+        self.overflows = (self.overflows + 1).min(self.trial.max_overflows());
         self.sent_since_overflow = 0;
-    }
-
-    fn max_overflows(&self) -> u32 {
-        MAX_OVERFLOWS - self.trial.spared
     }
 
     #[inline]
@@ -211,18 +207,10 @@ impl Pacer {
         starts_cycle: Option<bool>,
     ) {
         if self.is_shared {
-            self.trial.spared = 0;
-        }
-        let before = self.max_overflows();
-        let is_relevant = !self.is_shared && (self.overflows > 0 || before < MAX_OVERFLOWS);
-        let Some(starts_cycle) = starts_cycle.filter(|_| is_relevant) else {
             return self.trial.interrupt();
-        };
-        let are_short = self.overflows > 0 && MAX_QUANTUM >> before < self.steady.min(MAX_QUANTUM);
-        self.trial.update(now, feedback, starts_cycle, are_short);
-        self.overflows = match self.max_overflows() > before {
-            true => before + 1,
-            false => self.overflows.min(self.max_overflows()),
-        };
+        }
+        let overflows = self.overflows * u32::from(self.max_quantum() < self.steady);
+        self.trial.update(now, feedback, starts_cycle, overflows);
+        self.overflows = self.overflows.min(self.trial.max_overflows());
     }
 }

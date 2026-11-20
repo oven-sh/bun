@@ -77,6 +77,17 @@ describe("Bun.deepMatch", () => {
       new Set(["a", "b", "c"]),
       new Set(["a", "b", "c"]),
     ],
+
+    // Dates and Errors
+    [new Date(1), new Date(1)],
+    [{ d: new Date(1) }, { d: new Date(1), other: 1 }],
+    [{ d: [new Date(1)] }, { d: [new Date(1)] }],
+    [new Error("a"), new Error("a")],
+    [{ e: new Error("a") }, { e: new Error("a", { cause: 1 }) }],
+    [{ e: new Error("a") }, { e: Object.assign(new Error("a"), { code: 1 }) }],
+    // a plain object in the subset matches the properties of any object
+    [{ message: "a" }, new Error("a")],
+    [{ d: {} }, { d: new Date() }],
   ])("Bun.deepMatch(%p, %p) === true", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(true);
   });
@@ -133,6 +144,17 @@ describe("Bun.deepMatch", () => {
     //   new Set(["a", "b", "c"]),
     //   new Set(["a", "b", "d"]),
     // ],
+
+    // A Date is compared by its time value, an Error by its message
+    [new Date(1), new Date(2)],
+    [{ d: new Date(1) }, { d: new Date(2) }],
+    [{ d: new Date() }, { d: {} }],
+    [{ d: new Date(1) }, { d: [new Date(1)] }],
+    [new Error("a"), new Error("b")],
+    [{ e: new Error("a") }, { e: new Error("b") }],
+    [{ e: new Error("a") }, { e: { message: "a" } }],
+    [{ e: new Error("a") }, { e: {} }],
+    [{ e: Object.assign(new Error("a"), { code: 1 }) }, { e: new Error("a") }],
   ])("Bun.deepMatch(%p, %p) === false", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(false);
   });

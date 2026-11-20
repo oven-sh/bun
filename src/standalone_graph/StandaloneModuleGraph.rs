@@ -22,7 +22,7 @@ use bun_paths::fs as bun_fs;
 use bun_paths::{self as path, PathBuffer, strings};
 use bun_resolver::LINKED_BYTECODE_REGION_COUNT;
 use bun_resolver::compiled_program::{
-    CompiledEntryPoint, CompiledProgram, ImageFile, join_public_file_path,
+    CompiledEntryPoint, CompiledProgram, ImageFile, compare_source_paths, join_public_file_path,
 };
 use bun_sourcemap as SourceMap;
 use bun_sourcemap::SerializedSourceMap::SerializedSourceMap;
@@ -347,12 +347,19 @@ impl StandaloneModuleGraph {
             });
             found.is_some_and(|(program, entry_point)| {
                 // An asset, or a file that is imported as one, may have the name of an entry point's empty file.
-                let is_copy = || {
+                // The file of an entry point differs from its module in the extension alone, wherever it stands among the files.
+                let has_name_of_module = || {
+                    let stem = |name: &'_ [u8]| name.len() - path::extension(name).len();
+                    let module = entry_point.module_path;
+                    compare_source_paths(&key[..stem(key)], &module[..stem(module)]).is_eq()
+                };
+                let has_earlier_record = || {
                     program.entry_points.iter().any(|other| {
                         other.file_index < entry_point.file_index
                             && other.module_id == entry_point.module_id
                     })
                 };
+                let is_copy = || !has_name_of_module() && has_earlier_record();
                 self.find_file_record(key).is_none()
                     && (self.files.values()[index].loader.is_javascript_like() || is_copy())
             })

@@ -16,11 +16,13 @@ const said = { stdout: "the data\ncrate.js\ncrate.js\n", stderr: "", exitCode: 0
 test.each([
   ["crate.node", "no library"],
   ["crate.ts", "console.log(1 as number);\n"],
+  // The copy of this source sorts in front of crate.js.
+  ["crate.cjs", "module.exports = 1;\n", `import own from "./crate.cjs" with { type: "file" };\nif (!own) throw own;\n`],
 ])(
   "beside %s as an entry point",
-  async (name, text) => {
+  async (name, text, imports = "") => {
     using dir = tempDir("aot-listed-imported-file", {
-      "yard/main.mjs": main,
+      "yard/main.mjs": imports + main,
       "yard/crate.js": "the data",
       [`yard/${name}`]: text,
       "build.ts": `const result = await Bun.build({ entrypoints: ["./yard/main.mjs", "./yard/${name}"], splitting: true, naming: { asset: "[name].[ext]" }, compile: { outfile: process.argv[2], aot: true }, throw: false });

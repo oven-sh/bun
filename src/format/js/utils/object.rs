@@ -5,9 +5,7 @@ use super::string::{
     FormatLiteralStringToken, StringLiteralParentKind, is_canonical_simple_number,
     is_name_without_quotes, is_simple_number,
 };
-use super::tailwindcss::{
-    context_of_string, has_white_space, sorted_string_literal, sorted_template_text,
-};
+use super::tailwindcss::{context_of_class_list, sorted_string_literal, sorted_template_text};
 use crate::ir::width::string_width;
 use crate::js::format::format_name;
 use crate::prelude::*;
@@ -133,15 +131,14 @@ fn printed_key<'a>(
     };
     if matches!(key.kind(), KeyKind::String(_) | KeyKind::ComputedString(_))
         && !source.starts_with(b"`")
-        && let Some(context) = context_of_string(source, f)
+        && let Some(context) = context_of_class_list(source, f)
         && let Some(sorted) = sorted_string_literal(source, false, (span, parent), context, f)
     {
         return Cow::Owned(sorted);
     }
     if let (KeyKind::ComputedString(_), [b'`', text @ .., b'`']) = (key.kind(), source)
-        && has_white_space(text)
         && let (Some(context), Some(tailwind)) = (
-            f.context().tailwind_context(),
+            context_of_class_list(text, f),
             f.options().tailwind.as_deref(),
         )
         && let context = match context.follows_plugin {

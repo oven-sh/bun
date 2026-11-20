@@ -293,7 +293,7 @@ fn a_client_probes_as_long_as_the_server_may_be_unable_to_send() {
         raw.advance(RTT);
         raw.send_in(Initial, frames);
         raw.forget();
-        assert_eq!(raw.wait(), 3 * RTT);
+        assert_eq!(raw.wait(), 2 * RTT);
         assert_eq!(raw.outline(), probe);
     }
     let mut raw = Raw::server();
@@ -301,7 +301,7 @@ fn a_client_probes_as_long_as_the_server_may_be_unable_to_send() {
     raw.advance(RTT);
     raw.send_in(Initial, "ack");
     raw.forget();
-    for (timeout, probes) in [(60, "I[ping]"), (80, "I[ping]; I[ping]")] {
+    for (timeout, probes) in [(40, "I[ping]"), (80, "I[ping]; I[ping]")] {
         assert_eq!(raw.wait(), timeout);
         assert_eq!(raw.outline(), probes);
     }
@@ -604,7 +604,7 @@ fn a_client_keeps_probing_while_the_server_may_be_unable_to_send() {
         raw.send_in(Initial, &format!("ack {}", probe.number));
         raw.forget();
     }
-    assert_eq!(timeouts, [60, 134, 281]);
+    assert_eq!(timeouts, [40, 70, 122]);
 }
 
 /// RFC 9002 §6.2.2.1.
@@ -644,5 +644,5 @@ fn backoff_ends_with_the_first_round_trip_time() {
     raw.forget();
     raw.advance(RTT);
     raw.send_in(Initial, "ack");
-    assert_eq!((raw.wait(), raw.outline()), (3 * RTT, "I[ping]".into()));
+    assert_eq!((raw.wait(), raw.outline()), (2 * RTT, "I[ping]".into()));
 }

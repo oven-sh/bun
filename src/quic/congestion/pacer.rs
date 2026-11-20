@@ -140,6 +140,9 @@ impl Pacer {
 
     pub(super) fn on_idle_restart(&mut self, now: Instant, is_recovering: bool) {
         (self.next, self.left_at) = (self.next.min(now), now);
+        if now - self.last_sent_at > self.max_lag {
+            self.trial.abandon();
+        }
         if !is_recovering {
             self.burst_tokens = BURST;
         }

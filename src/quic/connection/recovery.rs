@@ -417,7 +417,7 @@ impl Connection {
         }
         match self.earliest(|id, space| self.probe_time(id, space)).0 {
             Instant::NEVER if self.has_to_unblock_server() => {
-                let timeout = self.backed_off(self.rtt.probe_timeout());
+                let timeout = self.backed_off(self.rtt.probe_delay(Duration::ZERO));
                 self.timers.get(Timer::Loss).min(now + timeout)
             }
             time => time,

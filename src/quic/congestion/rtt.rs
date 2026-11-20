@@ -57,11 +57,14 @@ impl Rtt {
         }
     }
 
-    /// The variation starts as a guess, and takes many samples to come down.
+    /// The variation starts as a guess, and takes many samples to come down from there or from a spike.
     #[inline]
     pub(crate) fn probe_delay(&self, max_ack_delay: Duration) -> Duration {
         let max = match self.has_sample() {
-            true => (self.smoothed * 2).max(self.smoothed * 3 / 2 + max_ack_delay),
+            true => {
+                let margin = (self.smoothed / 2).max(GRANULARITY);
+                self.smoothed + self.smoothed.max(margin + max_ack_delay)
+            }
             false => Duration::MAX,
         };
         (self.probe_timeout() + max_ack_delay).min(max)

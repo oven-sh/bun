@@ -56,7 +56,7 @@ impl Trial {
     }
 
     pub(super) fn abandon(&mut self) {
-        (self.spared, self.period.is_comparable) = (0, false);
+        (self.spared, self.is_new, self.period.is_comparable) = (0, false, false);
     }
 
     /// `starts_cycle` is `None` unless the path is what limits the rate.
@@ -107,6 +107,8 @@ impl Trial {
                 self.spared = next;
             }
             self.last_len = period.acked;
+        } else if !starts_cycle && core::mem::take(&mut self.is_new) {
+            self.spared -= 1;
         }
         (self.pause, self.is_recovering) = (self.pause.saturating_sub(1), false);
         self.period = Period {

@@ -312,6 +312,9 @@ fn probes_do_not_wait_for_the_variation_to_settle() {
             expected.map(micros),
         );
     }
+    let mut rtt = Rtt::default();
+    rtt.update(micros(200), Duration::ZERO);
+    assert_eq!(rtt.probe_delay(millis(25)), micros(26_200));
 }
 
 #[test]
@@ -747,6 +750,39 @@ fn period_takes_some_time() {
     };
     (periods.pacer).try_longer_bursts(periods.now, &feedback, Some(true));
     assert_eq!(periods.pacer.max_turn(), 1);
+}
+
+#[test]
+fn bursts_have_to_prove_themselves_again_after_a_pause() {
+    let mut path = Path::new(Algorithm::Bbr, micros(20), micros(500), 20);
+    path.transfer(60_000, |_| {});
+    assert_eq!(path.controller.max_turn(), 4);
+    (path.lost, path.delivered) = (0, 0);
+    for _ in 0..50 {
+        path.now = path.now + millis(2000);
+        path.transfer(600, |_| {});
+    }
+    assert!(path.lost * 1000 < path.delivered * 15);
+}
+
+#[test]
+fn trial_that_cannot_be_judged_is_called_off() {
+    let mut periods = Periods::new();
+    assert_eq!(periods.run(2, |_| (110, 10)), [4, 8]);
+    periods.is_path_limit = false;
+    assert_eq!(periods.run(3, |_| (110, 10)), [8, 4, 4]);
+    (0..10).for_each(|_| periods.pacer.on_start_settled(true));
+    periods.run(1, |_| (110, 10));
+    assert_eq!(periods.pacer.max_turn(), 1);
+}
+
+#[test]
+fn pause_ends_a_trial() {
+    let mut periods = Periods::new();
+    assert_eq!(periods.run(1, |_| (110, 10)), [4]);
+    (periods.pacer).on_idle_restart(periods.now + millis(151), false);
+    (0..10).for_each(|_| periods.pacer.on_start_settled(true));
+    assert_eq!(periods.run(1, |_| (110, 10)), [8]);
 }
 
 #[test]

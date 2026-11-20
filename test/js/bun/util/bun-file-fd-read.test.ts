@@ -1,7 +1,7 @@
 import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { closeSync, openSync, readSync, renameSync, writeSync } from "fs";
-import { isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { join } from "path";
 import { openFifo, untilWatched } from "../io/fifo-helpers";
 
@@ -127,3 +127,40 @@ describe.skipIf(!isLinux)("EPOLLERR while Bun.file(fd).text() waits for a socket
     expect(() => readSync(socket.fd, Buffer.alloc(1))).toThrow(expect.objectContaining({ code: "ECONNRESET" }));
   });
 });
+
+// epoll keeps the entry while the pipe is open elsewhere, and only the closed number could remove it.
+test.skipIf(!isLinux)(
+  "a pipe gets ready after the read that waited for it was cancelled and its fd closed",
+  async () => {
+    using dir = tempDir("bun-file-fd-read", {});
+    const script = `
+    import { openFifo, untilWatched } from ${JSON.stringify(join(import.meta.dir, "..", "io", "fifo-helpers.ts"))};
+    import { mkdirSync, writeSync } from "node:fs";
+    const open = dir => (mkdirSync(dir), openFifo(dir));
+    // The thread that waits handles everything in order.
+    async function fence(dir) {
+      using fifo = open(dir);
+      const text = Bun.file(fifo.reader).slice(0, 1).text();
+      await untilWatched(fifo.reader);
+      writeSync(fifo.writer, "y");
+      console.log(await text);
+    }
+
+    const stale = Array.from({ length: 8 }, (_, i) => open("stale-" + i));
+    await using holder = Bun.spawn({ cmd: ["cat"], stdio: ["pipe", "ignore", "ignore", ...stale.map(fifo => fifo.reader)] });
+    const graph = new Bun.ModuleGraph();
+    for (const fifo of stale) graph.run(() => void Bun.file(fifo.reader).text());
+    for (const fifo of stale) await untilWatched(fifo.reader);
+    for (const fifo of stale) fifo.close(fifo.reader);
+    graph.dispose();
+    await fence("cancelled");
+    // Takes over the memory of the jobs.
+    const junk = Array.from({ length: 1000 }, (_, i) => new Blob([Buffer.alloc(64 + (i % 60) * 16, 2)]));
+    for (const fifo of stale) writeSync(fifo.writer, "x");
+    await fence("reported");
+  `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "y\ny\n", stderr: "", exitCode: 0 });
+  },
+);

@@ -102,6 +102,7 @@
 #include "JavaScriptCore/ScriptExecutable.h"
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
+#include "JavaScriptCore/TypedArrayController.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "ZigGlobalObject.h"
@@ -1021,6 +1022,35 @@ static bool isWellKnownConstructor(JSValue value)
         || info == WebCore::JSBufferConstructor::info();
 }
 
+#if ENABLE(AOT)
+static NEVER_INLINE bool haveSameConstructorBesideTheirOwn(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSObject* first, JSObject* second)
+{
+    namespace PropertyWalk = JSC::AOT::PropertyWalk;
+    VM& vm = globalObject->vm();
+    const auto& name = vm.propertyNames->constructor;
+    if (first->structureID() != second->structureID() || PropertyWalk::structureGuaranteesAbsence(first->structure(), name.impl()))
+        return true;
+    bool firstHasOwn = !!PropertyWalk::getDirect(vm, first, name, nullptr);
+    if (!firstHasOwn && !PropertyWalk::getDirect(vm, second, name, nullptr))
+        return true;
+    PropertySlot slot(first, PropertySlot::InternalMethodType::Get);
+    bool hasConstructor = first->getPropertySlot(globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool isTakenForShared = hasConstructor && slot.isCacheableValue() && slot.slotBase() != first && !first->structure()->hasPolyProto();
+    if (!isTakenForShared)
+        return true;
+    JSValue constructorOfFirst = slot.getValue(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (constructorOfFirst.isUndefined() || (firstHasOwn && !isWellKnownConstructor(constructorOfFirst)))
+        return true;
+    JSValue constructorOfSecond = second->get(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool isSame = JSC::JSValue::strictEqual(globalObject, constructorOfFirst, constructorOfSecond);
+    RETURN_IF_EXCEPTION(scope, false);
+    return isSame;
+}
+#endif
+
 extern "C" bool Bun__VM__isRunningVitestEntry(void* bunVM);
 
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
@@ -1484,7 +1514,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         bool sameIsEqual = true;
         if constexpr (enableAsymmetricMatchers)
             sameIsEqual = !hasEqualityTesters(globalObject);
-        auto areEqual = Bun::compareCompiledObjectProperties<isStrict>(globalObject, scope, o1, o2, sameIsEqual, [&](JSValue left, JSValue right) {
+        constexpr Bun::CompareCompiledObjects compareWhatIsNotListed = checkPrototypes && !skipPrototypeIdentity ? haveSameConstructorBesideTheirOwn : nullptr;
+        auto areEqual = Bun::compareCompiledObjectProperties<isStrict, compareWhatIsNotListed>(globalObject, scope, o1, o2, sameIsEqual, [&](JSValue left, JSValue right) {
             return Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
         });
         RETURN_IF_EXCEPTION(scope, false);

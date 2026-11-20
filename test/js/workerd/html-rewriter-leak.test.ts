@@ -336,10 +336,8 @@ describe("an output Response that outlives its rewrite does not keep the pending
   });
 });
 
-// Each .on() / .onDocument() call heap-allocates an ElementHandler / DocumentHandler
-// struct via bun.default_allocator. When the HTMLRewriter is garbage-collected,
-// LOLHTMLContext.deinit() must destroy those allocations. Previously it only
-// unprotected the held JSValues and leaked the struct memory.
+// Each .on() / .onDocument() call stores a native registration, which has to be
+// freed when the HTMLRewriter is garbage-collected.
 //
 // RSS is a high-water mark — Bun.gc(true) collects every wrapper and its
 // lol-html builder, but the allocators don't promptly hand pages back to the
@@ -452,7 +450,7 @@ test("async handler reject/cancel on native-stream input releases the pipe", asy
       resolve();
       await first.catch(() => {});
 
-      // suspend-then-resume-then-sync-throw (resume_rewrite → fail)
+      // suspend-then-resume-then-sync-throw (resume → fail)
       await new HTMLRewriter()
         .on("p", { async element() {} })
         .on("div", {

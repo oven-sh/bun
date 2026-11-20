@@ -65,6 +65,32 @@ describe("Bun.build compile", () => {
     expect(exists).toBe(true);
   });
 
+  test.concurrent.each([
+    ["whole", (tgz: Uint8Array) => tgz, "InvalidElfFile", ["not an executable"]],
+    ["cut short", (tgz: Uint8Array) => tgz.subarray(0, -1), "appears to be corrupted", []],
+    ["damaged", (tgz: Uint8Array) => tgz.fill(0, -8), "appears to be corrupted", []],
+  ])("the download of another platform's executable is %s", async (_, spoil, message, cached) => {
+    const tar = await new Bun.Archive({ "package/bin/bun": "not an executable" }).bytes();
+    using server = Bun.serve({ port: 0, fetch: () => new Response(spoil(Bun.gzipSync(tar))) });
+    using dir = tempDir("build-compile-download", { "app.js": "", "cache": {} });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=bun-linux-${isArm64 ? "x64" : "arm64"}`, "app.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        BUN_COMPILE_TARGET_TARBALL_URL: server.url.href,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(message);
+    const files = readdirSync(join(String(dir), "cache"));
+    expect(files.map(name => readFileSync(join(String(dir), "cache", name), "utf8"))).toEqual(cached);
+    expect(exitCode).toBe(1);
+  });
+
   test.skipIf(!isLinux)("the executable can be started when it was written as descriptor 0, 1 or 2", async () => {
     using dir = tempDir("build-compile-closed-stdio", {
       "build.js": `

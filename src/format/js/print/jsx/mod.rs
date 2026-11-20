@@ -1,6 +1,6 @@
 //! JSX. Prettier's `print/jsx.js`.
 
-mod child_list;
+pub(crate) mod child_list;
 mod element;
 mod opening_element;
 

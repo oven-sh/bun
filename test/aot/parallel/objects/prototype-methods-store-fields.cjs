@@ -1,22 +1,22 @@
 // The objects of a constructor function whose fields are stored by methods on its prototype.
 var log = [];
-var State = function () {
-  function State() {}
-  var proto = State.prototype;
-  proto.init = function init(options, input) { this.input = input; this.pos = this.start = 0; this.value = options.value; this.tokens = []; return this; };
-  proto.clone = function clone() { var self = this, copy = new State(); Object.keys(this).forEach(function (key) { copy[key] = Array.isArray(self[key]) ? self[key].slice() : self[key]; }); return copy; };
-  proto.next = function next() { while (this.pos < this.input.length && this.input.charCodeAt(this.pos) !== 32) ++this.pos; this.value = this.input.slice(this.start, this.pos); this.start = ++this.pos; this.last = this.value; return this.value; };
-  proto.forget = function forget() { delete this.value; this.start = undefined; if (this.pos > 9) this.late = -0; };
-  return State;
+var Jar = function () {
+  function Jar() {}
+  var shelf = Jar.prototype;
+  shelf.fill = function fill(order, words) { this.lids = []; this.words = words; this.label = order.label; this.first = this.at = 0; return this; };
+  shelf.twin = function twin() { var made = new Jar(); for (var part in this) if (Object.hasOwn(this, part)) { var held = this[part]; made[part] = held instanceof Array ? held.concat() : held; } return made; };
+  shelf.next = function next() { var till = this.words.indexOf(" ", this.first); if (till < 0) till = this.words.length; this.label = this.words.substring(this.first, till); this.at = this.first = till + 1; this.last = this.label; return this.label; };
+  shelf.forget = function forget() { delete this.label; this.first = undefined; if (this.at > 9) this.late = -0; };
+  return Jar;
 }();
 function show(o) { return Object.keys(o).map(function (k) { return k + "=" + (Object.is(o[k], -0) ? "-0" : Array.isArray(o[k]) ? "[" + o[k] + "]" : String(o[k])); }).join(" "); }
 for (var turn = 0; turn < 60; turn++) {
-  var state = new State();
-  if (turn === 0) log.push(show(state), "pos" in state, state.pos, state.value);
-  state.init({ value: turn }, "let alpha beta gamma");
-  var words = []; for (var i = 0; i < 4; i++) words.push(state.next());
-  var copy = state.clone(); copy.forget();
-  if (turn % 20 === 0) log.push(words.join(), show(state), show(copy), "value" in copy, JSON.stringify(copy));
+  var jar = new Jar();
+  if (turn === 0) log.push(show(jar), "at" in jar, jar.at, jar.label);
+  jar.fill({ label: turn }, "let alpha beta gamma");
+  var told = []; for (var i = 0; i < 4; i++) told.push(jar.next());
+  var twin = jar.twin(); twin.forget();
+  if (turn % 20 === 0) log.push(told.join(), show(jar), show(twin), "label" in twin, JSON.stringify(twin));
 }
 // The order is the order of the stores, not that of the methods.
 function Later() { this.own = 1; }
@@ -27,6 +27,6 @@ function Over() {} Over.prototype = { kind: "proto", set: function () { this.kin
 var over = new Over(); log.push(over.kind, over.size); try { over.set(); } catch (e) { log.push(e.constructor.name); } log.push(over.kind, over.size, over.fixed, show(over)); delete over.kind; log.push(over.kind);
 var other = { z: 1 }; Later.prototype.b.call(other); log.push(show(other)); var frozen = Object.freeze(new Later()); frozen.a(); log.push(show(frozen));
 function Below() { Later.call(this); this.below = true; } Below.prototype = Object.create(Later.prototype); Below.prototype.b = function () { Later.prototype.b.call(this); this.mine = this.x; }; var below = new Below(); below.b(); below.a(); log.push(show(below));
-class Heir extends State { constructor() { super(); this.heir = 1; } } var heir = new Heir(); log.push(show(heir), heir.pos); heir.init({ value: 2 }, "x y"); log.push(show(heir), heir.next());
+class Heir extends Jar { constructor() { super(); this.heir = 1; } } var heir = new Heir(); log.push(show(heir), heir.at); heir.fill({ label: 2 }, "x y"); log.push(show(heir), heir.next());
 Later.prototype.a = function () { this.q = 8; }; var changed = new Later(); changed.a(); log.push(show(changed), changed.x);
 console.log(log.join("\n"));

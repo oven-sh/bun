@@ -1179,11 +1179,15 @@ const cron: b.FunctionField[] = [
     implementation: b.generic,
   },
   {
-    args: { path: stringOrStringObject, schedule: stringOrStringObject, title: stringOrStringObject },
+    args: {
+      path: b.union(stringOrStringObject, b.instance("URL")),
+      schedule: stringOrStringObject,
+      title: stringOrStringObject,
+    },
     returns: settledWithAnyReason(b.undefined),
     ...operandCodeOnly,
     throws: true,
-    uses: { path: converted, schedule: converted, title: converted },
+    uses: { path: [...converted, b.readsContents()], schedule: converted, title: converted },
     reads: externalState,
     writes: externalState,
     implementation: b.generic,

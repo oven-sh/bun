@@ -262,6 +262,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.callable`                                     | `JsLocal<'a, Callable>`          | a function, or a proxy of one                                 |
 | `b.object`                                       | `JsLocal<'a, JSObject>`          | an object                                                     |
 | `b.jsArray`                                      | `JsLocal<'a, JSArray>`           | an array, as itself                                           |
+| `b.url`                                          | `JsLocal<'a, DOMURL>`            | a `URL`                                                       |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.any.variadic`                                 | `&'a [JsLocal<'a>]`              | this argument and every one after it; only the last argument  |
 | `b.rest(T)`                                      | `&'a [T]`                        | the same, each converted to `T`; see below                    |
@@ -977,6 +978,8 @@ pub(crate) fn call_matcher<'a>(
 `callee` is the JS function that was called, and `arguments` is everything it was called with. The function takes its
 own arguments out of that list, so they're all `b.any`, the last one possibly `.variadic`. It also needs
 `capability: "js"`, `throws: true` and `returns: b.any`, and can't have overloads. The class can't be `refCounted`.
+The type of `matcher` is up to `call_matcher`. Every function of `proto` returns what `matcher` returns. It gets the
+first argument of `matcher` as `this_value`, which can be any `Copy` type whose `payload_ref()` gives `&Self`.
 
 ## What the compiler reads
 

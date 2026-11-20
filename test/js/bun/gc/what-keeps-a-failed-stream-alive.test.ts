@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "path";
 
-// The program of a-failed-stream-is-collected.test.ts. Where the stream is still alive after ten turns, the run says what holds it:
+// Where a stream that failed is still alive after ten turns, the run says what holds it:
 // what-keeps-it-alive.fixture.js. The stale word lies where the frames of one build on one platform put it, so only that build can say.
 test.skipIf(!isLinux)(
   "a stream that failed is collected, or the run says what holds it",

@@ -9,12 +9,12 @@ use bun_jsc::{
     JsError, JsResult, JsThread, Strong, StrongCell,
 };
 
-use super::expect_core::expect_deferred::RunningEntry;
+use super::expect::expect_deferred::RunningEntry;
 use super::jest::Jest;
 use super::timers::fake_timers::{self, Stop};
 use crate::generated_bindgen::vi_wait as generated;
 use crate::jsc_hooks::timer_all;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Kind {
@@ -385,7 +385,6 @@ impl ViWait {
     }
 
     pub(crate) fn on_timer_fire(&self, now: &Timespec, vm: &VirtualMachine) -> JsResult<()> {
-        self.timer.state.set(EventLoopTimerState::FIRED);
         let Some(this_value) = self.root.get() else {
             return Ok(());
         };

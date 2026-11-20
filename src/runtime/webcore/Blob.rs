@@ -38,8 +38,11 @@ use store::{FileExt as _, S3Ext as _, StoreExt as _};
 #[path = "blob/copy_file.rs"]
 pub(crate) mod copy_file;
 #[cfg(not(windows))]
+#[path = "blob/fd_job.rs"]
+pub(crate) mod fd_job;
+#[cfg(not(windows))]
 #[path = "blob/io_parking.rs"]
-pub(crate) mod io_parking;
+mod io_parking;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[path = "blob/memfd.rs"]
 mod memfd;
@@ -96,10 +99,10 @@ pub(crate) trait ReadBytesHandler {
 
 /// How a file read reports to the `ctx` of `read_bytes_to_handler`.
 impl<H: ReadBytesHandler> read_file::ReadFileCompletion for H {
-    fn run(self: Box<Self>, r: read_file::ReadFileResultType) -> JsResult<()> {
+    fn run(self: Box<Self>, r: read_file::ReadFileResult) -> JsResult<()> {
         self.on_read_bytes(match r {
-            read_file::ReadFileResultType::Result(b) => ReadBytesResult::Ok(b.buf.into_vec()),
-            read_file::ReadFileResultType::Err(e) => ReadBytesResult::Err(Box::new(e)),
+            Ok(bytes) => ReadBytesResult::Ok(bytes.into_vec()),
+            Err(e) => ReadBytesResult::Err(e),
         })
     }
     fn cancel(self: Box<Self>) {
@@ -120,8 +123,6 @@ impl<H: ReadBytesHandler> read_file::ReadFileCompletion for H {
 // This crate layers behaviour via the `BlobExt` extension trait below.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(not(windows))]
-pub(crate) use bun_jsc::webcore_types::ClosingState;
 pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, MAX_SIZE, SizeType};
 
 /// 1: Initial
@@ -417,13 +418,11 @@ impl BlobExt for Blob {
 
         #[cfg(not(windows))]
         {
-            let file_read = read_file::ReadFile::create(self);
-            // Create the Promise only after the store has been ref()'d.
             handler.promise = jsc::JSPromiseStrong::init(cx.global());
             let promise_value = handler.promise.value();
             promise_value.ensure_still_alive();
 
-            read_file::ReadFile::schedule(file_read, handler, cx);
+            read_file::ReadFile::start(self, handler, cx);
 
             debug!("doReadFile: read_file_task scheduled");
             promise_value
@@ -535,8 +534,7 @@ impl BlobExt for Blob {
         }
         #[cfg(not(windows))]
         {
-            let file_read = read_file::ReadFile::create(self);
-            read_file::ReadFile::schedule(file_read, ctx, cx);
+            read_file::ReadFile::start(self, ctx, cx);
         }
     }
     fn get_content_type(&self) -> Option<Utf8Bytes<'_>> {
@@ -3339,14 +3337,31 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
                 this.set_mkdirp_if_not_exists(false);
                 return Retry::Continue;
             }
-            bun_sys::Result::Err(err2) => {
-                this.set_errno_if_present(bun_errno::from_errno(err2.errno as i32).into());
+            bun_sys::Result::Err(_) => {
                 this.set_system_error(err.to_system_error());
                 return Retry::Fail;
             }
         }
     }
     Retry::No
+}
+
+/// Runs `create` again if the parents of `path` were missing and could be made, which clears `mkdirp`.
+#[cfg(not(windows))]
+pub(crate) fn creating_parents<T>(
+    mkdirp: &mut bool,
+    path: &[u8],
+    create: impl Fn() -> bun_sys::Result<T>,
+) -> bun_sys::Result<T> {
+    match create() {
+        Err(err)
+            if *mkdirp && err.get_errno() == bun_sys::E::ENOENT && mkdirp_parent(path).is_ok() =>
+        {
+            *mkdirp = false;
+            create()
+        }
+        result => result,
+    }
 }
 
 /// `bun_sys::Error` only
@@ -3366,14 +3381,12 @@ fn sys_error_with_path_like(
     }
 }
 
-/// Receiver trait for `mkdir_if_not_exists`; impls optionally
-/// write `errno` via the defaulted setter.
+/// Receiver trait for `mkdir_if_not_exists`.
 #[cfg(not(windows))]
 pub(crate) trait MkdirpTarget {
     fn mkdirp_if_not_exists(&self) -> bool;
     fn set_mkdirp_if_not_exists(&mut self, v: bool);
     fn set_system_error(&mut self, e: bun_sys::SystemError);
-    fn set_errno_if_present(&mut self, _e: crate::Error) {}
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -3578,8 +3591,6 @@ pub(crate) fn write_file_with_source_destination(
     let source_type = source_store.data.tag();
 
     if destination_type == store::DataTag::File && source_type == store::DataTag::Bytes {
-        // The borrowed views below are +0 on the store ref;
-        // `WriteFile::create` takes its own ref.
         #[cfg(windows)]
         {
             let promise_value = JSPromise::create(cx.global()).to_js();
@@ -3600,18 +3611,13 @@ pub(crate) fn write_file_with_source_destination(
 
         #[cfg(not(windows))]
         {
-            let file_copier = write_file::WriteFile::create(
-                destination_blob.borrowed_view(),
-                source_blob.borrowed_view(),
+            return Ok(write_file::WriteFile::start(
+                destination_store,
+                source_store,
+                source_blob,
                 options.mkdirp_if_not_exists.unwrap_or(true),
-            )
-            .expect("unreachable");
-            // Defer promise creation until we're just about to schedule the task.
-            let promise = jsc::JSPromiseStrong::init(cx.global());
-            let promise_value = promise.value();
-            promise_value.ensure_still_alive();
-            write_file::WriteFile::schedule(file_copier, promise, cx);
-            return Ok(promise_value);
+                cx,
+            ));
         }
     }
     // If this is file <> file, we can just copy the file
@@ -5617,10 +5623,6 @@ impl Internal {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// JSDOMFile__hasInstance / FileOpener / FileCloser
-// ──────────────────────────────────────────────────────────────────────────
-
 // C++ side declares `extern "C" SYSV_ABI bool JSDOMFile__hasInstance(...)` (JSDOMFile.cpp).
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
@@ -5634,206 +5636,3 @@ bun_jsc::jsc_host_abi! {
         blob.is_jsdom_file.get()
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// FileOpener<T> / FileCloser<T>
-// ──────────────────────────────────────────────────────────────────────────
-
-// TODO: move to bun_sys?
-/// Generic file-open helper used by ReadFile/WriteFile/CopyFile state machines,
-/// modeled as a trait the target implements.
-#[cfg(not(windows))]
-pub(crate) trait FileOpener: Sized {
-    /// Override if you need different open flags; defaults to RDONLY.
-    const OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
-    const OPENER_FLAGS: i32 = bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC;
-
-    fn opened(&mut self) -> &mut bun_sys::MaybeOwnedFile;
-    fn set_errno(&mut self, e: crate::Error);
-    fn set_system_error(&mut self, e: jsc::SystemError);
-    /// Either `self.file_store.pathlike` or `self.file_blob.store.data.file.pathlike`.
-    fn pathlike(&self) -> &PathOrFileDescriptor<'static>;
-    /// Implementors that have a `mkdirp_if_not_exists` field (`WriteFile`,
-    /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
-    /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls
-    /// straight through to the error branch.
-    fn try_mkdirp(&mut self, _err: bun_sys::Error, _path: &bun_core::ZStr) -> Retry {
-        Retry::No
-    }
-
-    fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let path = self.pathlike().path().slice_z(&mut buf);
-
-        loop {
-            match bun_sys::File::open(
-                path,
-                Self::OPEN_FLAGS | Self::OPENER_FLAGS,
-                crate::node::fs::DEFAULT_PERMISSION,
-            ) {
-                bun_sys::Result::Ok(file) => {
-                    *self.opened() = file.into();
-                    break;
-                }
-                bun_sys::Result::Err(err) => {
-                    if err.get_errno() == bun_sys::E::ENOENT {
-                        // Not `err`: its path is "" if the path does not fit `buf`.
-                        match self.try_mkdirp(err.with_path(self.pathlike().path().slice()), path) {
-                            Retry::Continue => continue,
-                            // `mkdir_if_not_exists` has set `errno` and `system_error`.
-                            Retry::Fail => break,
-                            Retry::No => {}
-                        }
-                    }
-                    let err = sys_error_with_path_like(&err, self.pathlike());
-                    self.set_errno(bun_errno::from_errno(err.errno as i32).into());
-                    self.set_system_error(jsc::SysErrorJsc::to_system_error(&err));
-                    break;
-                }
-            }
-        }
-
-        let fd = self.opened().fd();
-        callback(self, fd);
-    }
-
-    fn get_fd(&mut self, callback: fn(&mut Self, Fd)) {
-        if let PathOrFileDescriptor::Fd(fd) = self.pathlike() {
-            let fd = *fd;
-            *self.opened() = bun_sys::MaybeOwnedFile::Borrowed(fd);
-            callback(self, fd);
-            return;
-        }
-
-        self.get_fd_by_opening(callback);
-    }
-}
-
-#[cfg(not(windows))]
-pub(crate) use io_parking::IoParking;
-
-// TODO: move to bun_sys?
-#[cfg(not(windows))]
-pub(crate) trait FileCloser: FileOpener {
-    const IO_TAG: bun_io::Tag;
-
-    fn close_after_io(&self) -> bool;
-    fn state(&self) -> &core::sync::atomic::AtomicU8;
-    fn io_request(&mut self) -> &mut bun_io::Request;
-    fn io_poll(&mut self) -> &mut bun_io::Poll;
-    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
-
-    /// Intrusive backref: Rust `offset_of!` cannot name
-    /// fields on a trait `Self`, so each concrete impl supplies its own
-    /// container_of recovery (no default body).
-    fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_>;
-
-    fn on_io_request_closed(this: &mut Self) {
-        this.io_poll()
-            .flags
-            .remove(bun_io::Flags::WasEverRegistered);
-        *this.task() = bun_jsc::WorkPoolTask {
-            node: Default::default(),
-            callback: Self::on_close_io_request,
-        };
-        bun_jsc::WorkPool::schedule(this.task());
-    }
-
-    /// Intrusive backref: concrete impl supplies its own
-    /// container_of recovery (no default body).
-    ///
-    /// Stored in `WorkPoolTask::callback` (raw fn-pointer slot — safe `fn`
-    /// coerces). Never called directly; the impl guards its single
-    /// `container_of` deref locally, so a fn-level qualifier is redundant.
-    fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask);
-
-    fn do_close(&mut self) -> bool {
-        if self.close_after_io() {
-            self.state().store(
-                ClosingState::Closing as u8,
-                core::sync::atomic::Ordering::SeqCst,
-            );
-            let io_request = self.io_request();
-            // The io thread reads `callback` after popping the request: a plain store would race.
-            io_request.store_callback_seq_cst(Self::schedule_close);
-            if !io_request.scheduled {
-                bun_io::IoRequestLoop::schedule(io_request);
-            }
-            return true;
-        }
-
-        *self.opened() = bun_sys::MaybeOwnedFile::INVALID;
-        false
-    }
-}
-
-/// Implements [`FileCloser`] for a task struct with the standard field set
-/// (`opened`, `close_after_io`, `state`, `io_request`, `io_poll`, `task`),
-/// an inherent `update()`, and a [`bun_io::Tag`] variant named after the type.
-/// The type must also carry `bun_threading::intrusive_work_task!` and
-/// `bun_io::intrusive_io_request!`, which provide the parent-pointer recovery
-/// used by the two trampolines.
-#[cfg(not(windows))]
-macro_rules! impl_file_closer {
-    ($T:ident) => {
-        impl crate::webcore::blob::FileCloser for $T {
-            const IO_TAG: ::bun_io::Tag = ::bun_io::Tag::$T;
-            fn close_after_io(&self) -> bool {
-                self.close_after_io
-            }
-            fn state(&self) -> &::core::sync::atomic::AtomicU8 {
-                &self.state
-            }
-            fn io_request(&mut self) -> &mut ::bun_io::Request {
-                &mut self.io_request
-            }
-            fn io_poll(&mut self) -> &mut ::bun_io::Poll {
-                &mut self.io_poll
-            }
-            fn task(&mut self) -> &mut ::bun_jsc::WorkPoolTask {
-                &mut self.task
-            }
-
-            fn schedule_close(request: &mut ::bun_io::Request) -> ::bun_io::Action<'_> {
-                use ::bun_io::IntrusiveIoRequest as _;
-                // SAFETY: `request` is `&mut self.io_request` (intrusive); recover parent.
-                let this = unsafe { $T::from_io_request(::core::ptr::from_mut(request)) };
-                fn on_done(ctx: *mut ()) {
-                    // SAFETY: ctx is `self as *mut Self` set below.
-                    let this = unsafe { ::bun_ptr::callback_ctx::<$T>(ctx.cast()) };
-                    <$T as crate::webcore::blob::FileCloser>::on_io_request_closed(this);
-                }
-                // SAFETY: `request` is `&mut self.io_request` (intrusive), so `this` is the
-                // live parent; the `fd` copy and the `io_poll` field borrow are the only
-                // borrows formed.
-                let (fd, poll) = unsafe { ((*this).opened.fd(), &mut (*this).io_poll) };
-                ::bun_io::Action::Close(::bun_io::CloseAction {
-                    fd,
-                    poll,
-                    ctx: this.cast::<()>(),
-                    tag: <Self as crate::webcore::blob::FileCloser>::IO_TAG,
-                    on_done,
-                })
-            }
-
-            // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
-            // the trait method cannot be marked `unsafe fn`, so the lint is
-            // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
-            // in `on_io_request_closed` and is guaranteed live.
-            #[allow(clippy::not_unsafe_ptr_arg_deref)]
-            fn on_close_io_request(task: *mut ::bun_jsc::WorkPoolTask) {
-                use ::bun_threading::IntrusiveWorkTask as _;
-                // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
-                // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
-                // recover parent.
-                let this = unsafe { $T::from_task_ptr(task) };
-                // SAFETY: `this` is the live parent (see above); scoped access.
-                unsafe { (*this).close_after_io = false };
-                // SAFETY: as above; exclusive borrow scoped to the call.
-                $T::update(unsafe { &mut *this });
-            }
-        }
-    };
-}
-#[cfg(not(windows))]
-pub(crate) use impl_file_closer;

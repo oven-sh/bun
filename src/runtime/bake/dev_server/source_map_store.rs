@@ -579,10 +579,7 @@ impl SourceMapStore {
     /// # Safety
     /// `timer` must point to the `weak_ref_sweep_timer` field of a live
     /// `SourceMapStore`.
-    pub(crate) fn sweep_weak_refs(
-        timer: *mut EventLoopTimer,
-        now_ts: &bun_event_loop::EventLoopTimer::Timespec,
-    ) {
+    pub(crate) fn sweep_weak_refs(timer: *mut EventLoopTimer, now_ts: &Timespec) {
         map_log!("sweepWeakRefs");
         // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.
         let store: &mut SourceMapStore = unsafe { &mut *SourceMapStore::from_timer_ptr(timer) };
@@ -597,10 +594,6 @@ impl SourceMapStore {
                 store.unref_count(item.key(), item.count);
             } else {
                 store.weak_refs.unget(&[item]).expect("unreachable"); // space exists since the last item was just removed.
-                store
-                    .weak_ref_sweep_timer
-                    .state
-                    .set(EventLoopTimerState::FIRED);
                 crate::jsc_hooks::timer_all().update(
                     OwnedTimer::node(&raw const store.weak_ref_sweep_timer),
                     &Timespec {

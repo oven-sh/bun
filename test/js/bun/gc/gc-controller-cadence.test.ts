@@ -664,3 +664,161 @@ describe("short-lived typed arrays and ArrayBuffers", () => {
     expect(total).toBeGreaterThan(10);
   });
 });
+
+// Every heap of a process marks with one pool of helper threads. A helper used to stay in a collection until that
+// collection ended, also with nothing left to mark. A thread that sleeps has no safepoint, so its collection does not
+// end: a Worker in Atomics.wait, or idle in its event loop, kept every helper, and the collections of the other heaps
+// marked on one thread or did not end at all (#49314). A helper now leaves a collection that no thread conducts.
+// `BUN_JSC_logGC` prints what each thread marked in a cycle: `C` is the conducting thread, `P1` the helper. With two
+// markers the pool has exactly one helper, on every machine.
+describe("a sleeping Worker with an unfinished collection does not keep the marking helper", () => {
+  // What the helper marked for the main heap between the two marks, and the heaps that had a collection in flight
+  // when the main thread started its work.
+  function read(log: string) {
+    // Windows prints the address of a heap with upper-case digits.
+    const mainHeap = log.match(/\[GC<(0x[0-9a-fA-F]+)>/)?.[1];
+    const before = log.slice(0, log.indexOf("MARK start"));
+    const during = log.slice(log.indexOf("MARK start"), log.indexOf("MARK end"));
+    const count = (id: string, what: string) => before.split(`[GC<${id}>: ${what}`).length - 1;
+    const heaps = new Set([...before.matchAll(/\[GC<(0x[0-9a-fA-F]+)>: START/g)].map(m => m[1]));
+    const unfinished = [...heaps].filter(id => id !== mainHeap && count(id, "START") > count(id, "epilogue"));
+    const helperKb = during
+      .split("\n")
+      .filter(line => line.startsWith(`[GC<${mainHeap}>`))
+      .flatMap(line => [...line.matchAll(/ P1:(\d+)\)/g)].map(m => Number(m[1])));
+    return { unfinished, helperKb };
+  }
+
+  // The main thread makes short-lived objects and puts new values in old objects, so its heap collects several times.
+  const mainWork = `
+    process._rawDebug("\\nMARK start");
+    let cursor = 0;
+    for (let made = 0; made < 1_400_000; made += 2000) {
+      let junk = [];
+      for (let i = 0; i < 2000; i++) junk.push({ i, a: [i, i + 1] });
+      for (let i = 0; i < 500; i++) live[(cursor = (cursor + 7919) % live.length)].a = [made, i];
+    }
+    process._rawDebug("\\nMARK end");
+  `;
+  const make = `const make = n => { const out = []; for (let i = 0; i < n; i++) out.push({ i, a: [i, i + 1], s: "x" + i }); return out; };`;
+
+  // The Worker conducts its collection itself and goes to sleep in the concurrent phase. A collection can also end
+  // in its first pause, so three Workers try, and the child runs again if none of them has one in flight.
+  test.concurrent(
+    "in Atomics.wait",
+    async () => {
+      using dir = tempDir("gc-helper-leaves", {
+        "main.js": `
+          const ia = new Int32Array(new SharedArrayBuffer(8));
+          globalThis.live = [];
+          for (let i = 0; i < 200_000; i++) live.push({ i, a: [i] });
+          Bun.gc(true); // The first heap in the log is the main heap.
+          for (let i = 0; i < 3; i++) {
+            const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+            await new Promise(resolve => (worker.onmessage = resolve));
+            worker.postMessage(ia);
+          }
+          for (let asleep; (asleep = Atomics.load(ia, 1)) < 3; ) await Atomics.waitAsync(ia, 1, asleep).value;
+          ${mainWork}
+          Atomics.store(ia, 0, 1);
+          Atomics.notify(ia, 0);
+          process.exit(0);
+        `,
+        "worker.js": `
+          ${make}
+          onmessage = ({ data: ia }) => {
+            globalThis.keep = make(200_000);
+            Bun.gc(true); // No collection is in flight now.
+            globalThis.fresh = make(30_000); // Little to mark: the helper is soon done, also in a debug build.
+            Bun.gc(false); // Requests an eden collection. This thread conducts it.
+            globalThis.big = new Array(200_000).fill(0); // An allocation slow path: the collection starts.
+            Atomics.add(ia, 1, 1);
+            Atomics.notify(ia, 1);
+            Atomics.wait(ia, 0, 0);
+          };
+          postMessage("ready");
+        `,
+      });
+      let log = "";
+      let result: ReturnType<typeof read> = { unfinished: [], helperKb: [] };
+      for (let attempt = 0; attempt < 3 && !result.unfinished.length; attempt++) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "main.js"],
+          cwd: String(dir),
+          env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_numberOfGCMarkers: "2", BUN_GC_TIMER_DISABLE: "1" },
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(exitCode, stderr).toBe(0);
+        log = stderr;
+        result = read(log);
+      }
+      expect(result.unfinished.length, log).toBeGreaterThan(0);
+      expect(result.helperKb.length, log).toBeGreaterThan(0);
+      expect(Math.max(...result.helperKb), log).toBeGreaterThan(0);
+    },
+    60_000,
+  );
+
+  // The collector thread conducts the idle collection of a Worker that is parked in its event loop. A timer wakes
+  // the Worker, which then sleeps in Atomics.wait, and the collector thread gives the conn to it: no thread conducts
+  // until the Worker wakes. The timer lands in the collection in most runs, not in all, so the test does not
+  // require it. Not on Windows, where a parked thread keeps heap access. Debug and ASAN builds take too long to
+  // build the heap.
+  (isWindows || isASAN || isDebug ? test.skip : test.concurrent)(
+    "after the collector thread gave the conn to it",
+    async () => {
+      using dir = tempDir("gc-helper-leaves-handoff", {
+        "main.js": `
+          const ia = new Int32Array(new SharedArrayBuffer(8));
+          globalThis.live = [];
+          for (let i = 0; i < 300_000; i++) live.push({ i, a: [i] });
+          Bun.gc(true); // The first heap in the log is the main heap.
+          const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+          await new Promise(resolve => (worker.onmessage = resolve));
+          worker.postMessage(ia);
+          await Atomics.waitAsync(ia, 1, 0).value;
+          await Bun.sleep(1500); // The collector thread marks what is left and gives the conn away.
+          ${mainWork}
+          process.exit(0);
+        `,
+        "worker.js": `
+          ${make}
+          onmessage = ({ data: ia }) => {
+            globalThis.keep = make(4_000_000);
+            Bun.gc(true);
+            // The idle collection starts 1 s after the last work and takes some 100 ms.
+            setTimeout(() => {
+              Atomics.store(ia, 1, 1);
+              Atomics.notify(ia, 1);
+              Atomics.wait(ia, 0, 0);
+            }, 1100);
+          };
+          postMessage("ready");
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.js"],
+        cwd: String(dir),
+        env: {
+          ...bunEnv,
+          BUN_JSC_logGC: "1",
+          BUN_JSC_numberOfGCMarkers: "2",
+          BUN_IDLE_GC_SECONDS: "1",
+          BUN_GC_TIMER_DISABLE: undefined,
+          BUN_GC_TIMER_INTERVAL: undefined,
+          BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+        },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [log, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const { helperKb } = read(log);
+      expect(helperKb.length, log).toBeGreaterThan(0);
+      expect(Math.max(...helperKb), log).toBeGreaterThan(0);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+});

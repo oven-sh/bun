@@ -89,6 +89,11 @@ buildBothWays("compile/aot/plugins of Bun.build that fail", {
     plugins: [`build.onLoad({ filter: /a\\.ts$/ }, () => ({ contents: "", loader: "nonsense" }));`],
     fails: "nonsense",
   },
+  "a loader that does not exist, by a name that every object has": {
+    files,
+    plugins: [`build.onLoad({ filter: /a\\.ts$/ }, () => ({ contents: "", loader: "constructor" }));`],
+    fails: "Loader constructor is not supported.",
+  },
   "the object loader without exports": {
     files,
     plugins: [`build.onLoad({ filter: /a\\.ts$/ }, () => ({ loader: "object" }));`],

@@ -428,6 +428,11 @@ impl<'bump> TokenList<'bump> {
                     // Attempt to parse embedded color values into hex tokens.
                     if let Some(color) = try_parse_color_token(f, &state, input) {
                         tokens.push(TokenOrValue::Color(color));
+                        // Its short form would run into a name or a number written right after it.
+                        let next = input.input.tokenizer.next_byte();
+                        if next.is_some_and(|b| JOINS_A_COLOR[usize::from(b)]) {
+                            push_blank_after_color(tokens);
+                        }
                         continue;
                     }
                     let failures_before = input.token_list_parse_failures();
@@ -1471,4 +1476,27 @@ fn try_parse_color_token(f: &[u8], state: &ParserState, input: &mut Parser) -> O
     }
 
     None
+}
+
+/// Whether a token that starts with this byte can read as part of a color printed right before it.
+const JOINS_A_COLOR: [bool; 256] = {
+    let mut table = [false; 256];
+    let mut b = 0;
+    while b < 256 {
+        // Not `_`: it is a blank in utility-class text, `shadow-[rgba(0,0,0,.5)_0_0_10px]`.
+        table[b] = (b as u8).is_ascii_alphanumeric()
+            || matches!(b as u8, 0 | b'#' | b'-' | b'\\' | b'(' | 0x80..);
+        b += 1;
+    }
+    table
+};
+
+/// Stores a blank after the color that ends `tokens`. Out of line: few colors touch a token.
+#[cold]
+fn push_blank_after_color(tokens: &mut Vec<TokenOrValue>) {
+    // A `light-dark()` prints with `)` last at every target, which joins nothing.
+    if let Some(TokenOrValue::Color(CssColor::LightDark { .. })) = tokens.last() {
+        return;
+    }
+    tokens.push(TokenOrValue::Token(Token::Whitespace(b" ")));
 }

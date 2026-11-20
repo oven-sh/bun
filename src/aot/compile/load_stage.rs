@@ -8,7 +8,7 @@ use crate::diagnostics::{
     Diagnostic, Diagnostics, IgnoreCommentOptions, InternalError, LoadMessages, ProgramView, Span,
 };
 use crate::link::run_beside;
-use crate::load::contents::entry_points::NameLeftOut;
+use crate::load::contents::entry_points::{NameLeftOut, NameOfLoad};
 use crate::load::contents::worker_entries::source_path_of;
 use crate::load::contents::{
     ContentsInput, EntryPointFinder, FinderInput, FoundEntryPoint, ProgramContents,
@@ -550,6 +550,7 @@ fn may_run_code_outside_image(files: &Files<'_>, file: FileId) -> bool {
 struct FoundByLoad {
     entry_points: Vec<FoundEntryPoint>,
     followed_workers: Vec<(FileId, ExprId)>,
+    names_of_loads: Vec<NameOfLoad>,
     names_written: Vec<EntryPointPaths>,
     names_left_out: Vec<NameLeftOut>,
 }
@@ -779,11 +780,12 @@ impl<'a> Build<'a> {
                 let application = application?;
                 let names_written = finder.take_names_written();
                 let names_left_out = finder.take_excluded_names();
-                let (entry_points, followed_workers) =
+                let (entry_points, followed_workers, names_of_loads) =
                     finder.finish(application.files(), options.entry_points.len());
                 let found = FoundByLoad {
                     entry_points,
                     followed_workers,
+                    names_of_loads,
                     names_written,
                     names_left_out,
                 };
@@ -984,6 +986,7 @@ impl<'a> Build<'a> {
                 found.names_written,
             );
             self.started_workers.names = names;
+            self.started_workers.names_of_loads = found.names_of_loads;
             for diagnostic in said {
                 self.diagnostics.add(None, diagnostic);
             }

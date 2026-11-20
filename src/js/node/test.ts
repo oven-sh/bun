@@ -25,13 +25,14 @@ type AnyFunction = (this: unknown, ...args: unknown[]) => unknown;
 type Done = (error?: unknown) => void;
 type Register = (name: string, fn: (done: Done) => void | Promise<unknown>, options?: object) => void;
 type RegisterSuite = (name: string, fn: () => unknown, options?: object) => void;
+type RegisterHook = (fn: (done: Done) => void, timeout: number | undefined) => void;
 
 /** What this module uses of `bun:test`. */
 interface BunTest {
   test: Register & { todo: Register; skip: Register };
   describe: RegisterSuite & { todo: RegisterSuite; skip: RegisterSuite };
-  beforeAll(fn: (done: Done) => void): void;
-  afterAll(fn: (done: Done) => void): void;
+  beforeAll: RegisterHook;
+  afterAll: RegisterHook;
 }
 
 const kDefaultName = "<anonymous>";
@@ -46,6 +47,8 @@ const kDefaultOptions = kEmptyObject;
 const kTimeoutMax = 2 ** 31 - 1;
 // Matches bun:test's default per-test timeout.
 const kBunTestDefaultTimeoutMs = 5_000;
+// bun:test sets no deadline for an entry whose timeout is 0.
+const kBunTestNoTimeout = 0;
 const kJoinSeparator = " > ";
 
 // -----------------------------------------------------------------------------
@@ -2550,6 +2553,23 @@ function bunTestOptions(options: TestOptions) {
   return undefined;
 }
 
+function registerOwnerHook(kind: "beforeAll" | "afterAll", hook: Hook, owner: TestNode, fallbackMessage: string) {
+  // runHook's timer is the only deadline of a hook that has its own `timeout`,
+  // as in Node. A hook without one keeps the runner default (`--timeout`).
+  // A test cannot use 0 (see bunTestOptions): its bun:test entry also runs the
+  // beforeEach and afterEach hooks, and one without a `timeout` has no timer.
+  const register: RegisterHook = bunTest()[kind];
+  register(
+    (done: Done) => {
+      Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
+        () => done(),
+        err => done(err ?? new Error(fallbackMessage)),
+      );
+    },
+    typeof hook.timeout === "number" ? kBunTestNoTimeout : undefined,
+  );
+}
+
 function currentCollectionParent(): TestNode {
   const node = currentNode();
   if (node !== undefined && !node.isExecutionPhase && node.isSuite) {
@@ -2836,13 +2856,7 @@ function before(arg0: unknown, arg1: unknown) {
     }
     return;
   }
-  const { beforeAll } = bunTest();
-  beforeAll((done: (error?: unknown) => void) => {
-    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
-      () => done(),
-      err => done(err ?? new Error("before hook failed")),
-    );
-  });
+  registerOwnerHook("beforeAll", hook, owner, "before hook failed");
 }
 
 function after(arg0: unknown, arg1: unknown) {
@@ -2852,13 +2866,7 @@ function after(arg0: unknown, arg1: unknown) {
     owner.hooks.after.push(hook);
     return;
   }
-  const { afterAll } = bunTest();
-  afterAll((done: (error?: unknown) => void) => {
-    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
-      () => done(),
-      err => done(err ?? new Error("after hook failed")),
-    );
-  });
+  registerOwnerHook("afterAll", hook, owner, "after hook failed");
 }
 
 function beforeEach(arg0: unknown, arg1: unknown) {

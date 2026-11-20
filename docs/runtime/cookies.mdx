@@ -411,7 +411,7 @@ type CookieSameSite = "strict" | "lax" | "none";
 class Cookie {
   constructor(name: string, value: string, options?: CookieInit);
   constructor(cookieString: string);
-  constructor(cookieObject?: CookieInit);
+  constructor(cookieObject: CookieInit);
 
   readonly name: string;
   value: string;

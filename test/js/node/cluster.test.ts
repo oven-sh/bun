@@ -451,6 +451,115 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("listening workers: 2 distinct ports: 1");
 });
 
+// Without the `reusePort` option, `Bun.serve()` shares its port when the `development` option is
+// falsy, and in a node:cluster worker (NODE_UNIQUE_ID).
+// Each cell starts a server, then a second one on the same port.
+const reusePortFixture = `
+const developments = { "absent": undefined, "false": false, "true": true, "{ hmr: false }": { hmr: false } };
+const reusePorts = { "absent": undefined, "true": true, "false": false };
+const result = {};
+for (const [developmentLabel, development] of Object.entries(developments)) {
+  const row = (result["development " + developmentLabel] = {});
+  for (const [reusePortLabel, reusePort] of Object.entries(reusePorts)) {
+    const options = { port: 0, hostname: "127.0.0.1", fetch: () => new Response() };
+    if (development !== undefined) options.development = development;
+    if (reusePort !== undefined) options.reusePort = reusePort;
+    const first = Bun.serve(options);
+    try {
+      await Bun.serve({ ...options, port: first.port }).stop(true);
+      row["reusePort " + reusePortLabel] = "shared";
+    } catch (error) {
+      row["reusePort " + reusePortLabel] = error.code;
+    }
+    await first.stop(true);
+  }
+}
+console.log(JSON.stringify(result));
+`;
+
+test.concurrent.each([
+  { inWorker: false, NODE_ENV: "development" },
+  { inWorker: false, NODE_ENV: "production" },
+  { inWorker: true, NODE_ENV: "development" },
+  { inWorker: true, NODE_ENV: "production" },
+])("Bun.serve() reusePort default (cluster worker: $inWorker, NODE_ENV=$NODE_ENV)", async ({ inWorker, NODE_ENV }) => {
+  const { stdout, stderr, exitCode } = await bunRun(["-e", reusePortFixture], {
+    NODE_ENV,
+    NODE_UNIQUE_ID: inWorker ? "1" : undefined,
+  });
+  const onlyWhenPassed = {
+    "reusePort absent": "EADDRINUSE",
+    "reusePort true": "shared",
+    "reusePort false": "EADDRINUSE",
+  };
+  const onByDefault = { ...onlyWhenPassed, "reusePort absent": "shared" };
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "development absent": inWorker ? onByDefault : onlyWhenPassed,
+    "development false": onByDefault,
+    "development true": inWorker ? onByDefault : onlyWhenPassed,
+    "development { hmr: false }": inWorker ? onByDefault : onlyWhenPassed,
+  });
+  expect(exitCode).toBe(0);
+});
+
+const bunServeWorkersFixture = `
+import cluster from "node:cluster";
+import page from "./index.html";
+
+if (cluster.isPrimary) {
+  const workers = [];
+  // Forks a worker that calls Bun.serve() on \`port\`. Resolves with what the worker reports.
+  const listen = port => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const worker = cluster.fork({ SERVE_PORT: String(port) });
+    workers.push(worker);
+    worker.once("message", resolve);
+    worker.once("exit", code => reject(new Error("the worker exited with code " + code + " before it reported")));
+    return promise;
+  };
+  const first = await listen(0);
+  const second = await listen(first.port);
+  console.log(second.port === first.port ? "worker 2 shares the port" : "worker 2: " + second.code);
+  for (const worker of workers) worker.kill();
+  process.exit(0);
+} else {
+  try {
+    const server = Bun.serve({
+      ...JSON.parse(process.env.SERVE_OPTIONS),
+      ...(process.env.HTML_ROUTE && { routes: { "/": page } }),
+      port: Number(process.env.SERVE_PORT),
+      hostname: "127.0.0.1",
+      fetch: () => new Response(),
+    });
+    process.send({ port: server.port });
+  } catch (error) {
+    process.send({ code: error.code });
+  }
+}
+`;
+
+test.each([
+  [`{"development":true}`, "no HTML route", "worker 2 shares the port"],
+  [`{"development":{"hmr":false}}`, "no HTML route", "worker 2 shares the port"],
+  [`{"development":true,"reusePort":false}`, "no HTML route", "worker 2: EADDRINUSE"],
+  // An HTML route in development mode has a dev server, and that answers only for its own bundles.
+  // With the `development` option it keeps its port. Without the option it shares the port.
+  [`{"development":true}`, "an HTML route", "worker 2: EADDRINUSE"],
+  [`{"development":{"console":true}}`, "an HTML route", "worker 2: EADDRINUSE"],
+  [`{}`, "an HTML route", "worker 2 shares the port"],
+])("two cluster workers call Bun.serve(%s) with %s on one port", async (options, routes, expected) => {
+  using dir = tempDir("cluster-bun-serve-reuse-port", {
+    "main.mjs": bunServeWorkersFixture,
+    "index.html": `<!doctype html><html><body><h1>Home</h1></body></html>`,
+  });
+  const { stdout, stderr, exitCode } = await bunRun(joinP(String(dir), "main.mjs"), {
+    SERVE_OPTIONS: options,
+    HTML_ROUTE: routes === "an HTML route" ? "1" : undefined,
+  });
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+});
+
 test("SCHED_NONE: close() releases the shared handle so the worker can re-listen on the same port", async () => {
   using dir = tempDir("cluster-shared-relisten", {
     "main.ts": `

@@ -203,9 +203,14 @@ if (process.argv[2] === "stay") setInterval(() => {}, 1000);
     for (const end = Date.now() + 120_000; !listsFirst() && stays.exitCode === null && Date.now() < end;)
       await Bun.sleep(10);
     expect({ listsFirst: listsFirst(), exitCode: stays.exitCode }).toEqual({ listsFirst: true, exitCode: null });
-    stays.kill("SIGKILL");
-    expect(await stays.stdout.text()).toBe("8\n");
+    // The file lists `first` once it has started, which is before the program prints.
+    let stdout = "";
+    for await (const chunk of stays.stdout.pipeThrough(new TextDecoderStream())) {
+      stdout += chunk;
+      if (stdout.includes("\n")) stays.kill("SIGKILL");
+    }
     await stays.exited;
+    expect({ stdout, signalCode: stays.signalCode }).toEqual({ stdout: "8\n", signalCode: "SIGKILL" });
     expect(readFileSync(written, "utf8")).toContain(" first\n");
     const missing = await run([executable], { BUN_AOT_ORDER_OUT: join(String(dir), "missing", "file") });
     expect(missing).toEqual({ stdout: "8\n", stderr: expect.stringContaining("nothing is recorded"), exitCode: 0 });

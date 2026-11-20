@@ -1116,9 +1116,11 @@ impl BunTest {
     }
 
     /// The deadline that `deadline_watch` hears of. None while an inspector is enabled: a debugger may
-    /// pause the test for longer than any timeout.
+    /// pause the test for longer than any timeout. None under `--watch`, where a change of a file
+    /// restarts a run that is blocked, and the end of the process would end the watch.
     fn watched(global_this: &JSGlobalObject, deadline: &Timespec) -> Timespec {
-        if global_this.bun_vm().is_inspector_enabled() { Timespec::EPOCH } else { *deadline }
+        let vm = global_this.bun_vm();
+        if vm.is_inspector_enabled() || vm.is_watcher_enabled() { Timespec::EPOCH } else { *deadline }
     }
 
     /// Names the test that the entry of `data` runs for.

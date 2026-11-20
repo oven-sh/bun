@@ -173,6 +173,41 @@ test.concurrent(
   20_000,
 );
 
+// Under --watch a change of a file restarts a run that is blocked. The end of the process would end the watch.
+// On Windows `bun test --watch` is a parent process that restarts the runner.
+test.concurrent.skipIf(isWindows)(
+  "a test that blocks the event loop does not end the run under --watch",
+  async () => {
+    using dir = tempDir("test-timeout-watch", {
+      "a.test.ts": `
+        import { test } from "bun:test";
+        test("overruns", () => {
+          const end = performance.now() + 900;
+          while (performance.now() < end) {}
+        });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--watch", "--no-clear-screen", "--timeout=250"],
+      env: { ...bunEnv, BUN_TEST_TIMEOUT_GRACE_MS: "100" },
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    let output = "";
+    for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
+      output += chunk;
+      if (output.includes("Ran 1 test across 1 file.")) break;
+    }
+    const lines = output
+      .split("\n")
+      .filter(line => /^\((pass|fail)\) |^  \^ |^error: |^Ran /.test(line))
+      .map(line => line.replace(/ \[[\d.]+m?s\]$/, ""));
+    expect(lines).toEqual(["(fail) overruns", "  ^ this test timed out after 250ms.", "Ran 1 test across 1 file."]);
+  },
+  20_000,
+);
+
 // While the process is stopped its clock goes on, and the timer of the test is only late, not blocked.
 test.concurrent.skipIf(isWindows)(
   "a timeout that passes while the process is stopped does not end the run",

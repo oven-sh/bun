@@ -33,6 +33,8 @@ const LABEL_BITS: u32 = 2;
 
 static GRACE_MS: AtomicU64 = AtomicU64::new(5000);
 static IS_WORKER: AtomicBool = AtomicBool::new(false);
+/// The `--dots` reporter leaves its line open.
+static PRINTS_DOTS: AtomicBool = AtomicBool::new(false);
 static IS_WATCHING: AtomicBool = AtomicBool::new(false);
 
 /// The test that a deadline belongs to, for the message.
@@ -72,17 +74,35 @@ unsafe impl Sync for LabelSlot {}
 static LABELS: [LabelSlot; 2] = [LabelSlot(UnsafeCell::new(Label::empty())), LabelSlot(UnsafeCell::new(Label::empty()))];
 
 /// Before the first test runs. `grace_ms`: see `BUN_TEST_TIMEOUT_GRACE_MS`.
-pub(crate) fn configure(grace_ms: Option<u64>, is_worker: bool) {
+pub(crate) fn configure(grace_ms: Option<u64>, is_worker: bool, prints_dots: bool) {
     if let Some(grace_ms) = grace_ms {
         GRACE_MS.store(grace_ms, Ordering::Relaxed);
     }
     IS_WORKER.store(is_worker, Ordering::Relaxed);
+    PRINTS_DOTS.store(prints_dots, Ordering::Relaxed);
+}
+
+/// What the JavaScript thread published last. Does not return once the watch ends the process.
+fn published() -> u64 {
+    let current = PUBLISHED.load(Ordering::SeqCst);
+    if current == ENDING {
+        wait_for_end();
+    }
+    current
+}
+
+/// The watch reads a label and ends the process.
+#[cold]
+fn wait_for_end() -> ! {
+    loop {
+        std::thread::park();
+    }
 }
 
 /// The JavaScript thread is about to call a test or hook whose timeout ends at `deadline`
 /// (`Timespec::EPOCH`: it has none). `describe` names it.
 pub(crate) fn calling(deadline: Timespec, describe: impl FnOnce(&mut Label)) {
-    let current = PUBLISHED.load(Ordering::Relaxed);
+    let current = published();
     if deadline.eql(&Timespec::EPOCH) {
         return publish(current, current & LABEL_INDEX);
     }
@@ -97,7 +117,7 @@ pub(crate) fn calling(deadline: Timespec, describe: impl FnOnce(&mut Label)) {
 /// The JavaScript thread goes back to the event loop, where the runner waits until `deadline` at the
 /// latest (`Timespec::EPOCH`: for nothing that has a timeout).
 pub(crate) fn waiting_until(deadline: Timespec) {
-    let current = PUBLISHED.load(Ordering::Relaxed);
+    let current = published();
     let deadline = if deadline.eql(&Timespec::EPOCH) { 0 } else { deadline.ns() };
     // It waits for the callback it called last, whose label stays.
     if current >> LABEL_BITS == deadline {
@@ -111,10 +131,7 @@ fn publish(current: u64, next: u64) {
         return;
     }
     if PUBLISHED.swap(next, Ordering::SeqCst) == ENDING {
-        // The watch reads a label and ends the process.
-        loop {
-            std::thread::park();
-        }
+        wait_for_end();
     }
     if next >> LABEL_BITS != 0 && !IS_WATCHING.swap(true, Ordering::Relaxed) {
         // Without the thread, a test that blocks the event loop hangs, as it did before there was one.
@@ -169,16 +186,28 @@ fn end_process(published: u64, now: u64) -> ! {
     let failed = crate::cli::test_command::fmt_status_text_line(super::execution::Result::FailBecauseTimeout, colors);
 
     let mut message: Vec<u8> = Vec::new();
-    let _ = message.write_all(&failed);
+    if PRINTS_DOTS.load(Ordering::Relaxed) {
+        let _ = message.write_all(b"\n");
+    }
     if published & HAS_LABEL != 0 {
         // SAFETY: see `LabelSlot`.
         let label = unsafe { &*LABELS[(published & LABEL_INDEX) as usize].0.get() };
+        let name = &label.name[label.name_start..];
         let started = (published >> LABEL_BITS).saturating_sub(u64::from(label.timeout_ms) * NS_PER_MS);
+        if Output::is_github_action() {
+            let _ = writeln!(
+                message,
+                "::error title=error: Test \"{}\" timed out after {}ms::",
+                bun_core::fmt::github_action_property(name),
+                label.timeout_ms,
+            );
+        }
+        let _ = message.write_all(&failed);
         let _ = bun_core::write_pretty!(
             message,
             colors,
             "<r><b> {}<r> {}\n  <d>^<r> <red>{} timed out after {}ms and {} {}ms later.<r>\n",
-            bstr::BStr::new(&label.name[label.name_start..]),
+            bstr::BStr::new(name),
             Output::ElapsedFormatter { colors, duration_ns: now.saturating_sub(started) },
             if label.is_hook { "a hook of this test" } else { "this test" },
             label.timeout_ms,
@@ -186,6 +215,7 @@ fn end_process(published: u64, now: u64) -> ! {
             grace_ms,
         );
     } else {
+        let _ = message.write_all(&failed);
         let _ = bun_core::write_pretty!(
             message,
             colors,
@@ -195,6 +225,9 @@ fn end_process(published: u64, now: u64) -> ! {
         );
     }
     if !is_worker {
+        if Output::is_github_action() {
+            let _ = message.write_all(b"\n::endgroup::\n");
+        }
         let _ = bun_core::write_pretty!(
             message,
             colors,

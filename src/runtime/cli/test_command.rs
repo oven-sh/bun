@@ -2925,6 +2925,7 @@ impl TestCommand {
         crate::test_runner::deadline_watch::configure(
             timeout_grace_ms,
             ctx.test_options.test_worker,
+            ctx.test_options.reporters.dots && !ctx.test_options.test_worker,
         );
 
         if ctx.test_options.test_worker {

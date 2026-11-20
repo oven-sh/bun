@@ -656,6 +656,11 @@ fn set_override_options(
         if !may_use_plugin || known().any(|it| it.eq_ignore_ascii_case(&key.name)) {
             return unknown_key(&key.name, key.at, b"fmt.overrides.options", keys());
         }
+        // Only the installed Prettier would get it, and Bun does such a plugin's work for the files it formats.
+        if let Some(own) = crate::fmt::cli::own_key_for_plugin_option(&key.name) {
+            let why: &[u8] = b"\" is an option of a plugin that is built into bun fmt, which only reads it from a Prettier config\n  Use \"";
+            return reject(key.at, &[b"\"", &key.name, why, own, b"\" here"]);
+        }
         let value_as_json = json_of(value)?;
         // JSON has no such number, so Prettier would get `null` and use the plugin's default.
         if let Some(number) = non_finite_in(value) {

@@ -1159,6 +1159,17 @@ insertFinalNewline = false
     [options(`plugins = ["prettier-plugin-astro"], rangeStart = 1`), unknownInOptions("rangeStart")],
     // Without a plugin, a misspelled key gets its suggestion.
     [options(`tabWidht = 8`), `${unknownInOptions("tabWidht")}  Did you mean "tabWidth"?`],
+    // Bun does the work of a built-in plugin for the files it formats, and doesn't read that plugin's options here.
+    ...[
+      ["tailwindFunctions", `["clsx"]`, "sortTailwindcss"],
+      ["importOrder", `["^a"]`, "sortImports"],
+      ["organizeImportsTypeOrder", `"last"`, "sortImports"],
+      ["packageSortOrder", `["name"]`, "sortPackageJson"],
+      ["svelteSortOrder", `"scripts-markup-styles"`, "svelte"],
+    ].map(([name, value, own]) => [
+      options(`plugins = ["prettier-plugin-tailwindcss", "prettier-plugin-astro"], ${name} = ${value}`),
+      `"${name}" is an option of a plugin that is built into bun fmt, which only reads it from a Prettier config\n  Use "${own}" here`,
+    ]),
     // JSON, which is what Prettier gets, has no such number.
     [options(`plugins = ["./plugin.js"], fooDepth = inf`), "fooDepth must be a finite number"],
     [options(`plugins = ["./plugin.js"], fooDepth = -inf`), "fooDepth must be a finite number"],

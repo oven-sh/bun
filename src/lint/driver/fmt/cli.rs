@@ -279,6 +279,22 @@ pub struct Override {
     pub passthrough: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
+/// Bun's own key for `name`, if it's an option of a built-in plugin. Bun reads those from a Prettier config only.
+pub(crate) fn own_key_for_plugin_option(name: &[u8]) -> Option<&'static [u8]> {
+    match name {
+        name if super::tailwind::is_plugin_option(name) => Some(b"sortTailwindcss"),
+        name if name.starts_with(b"importOrder") || name.starts_with(b"organizeImports") => {
+            Some(b"sortImports")
+        }
+        b"packageSortOrder" => Some(b"sortPackageJson"),
+        b"svelteSortOrder"
+        | b"svelteAllowShorthand"
+        | b"svelteIndentScriptAndStyle"
+        | b"svelte5CompilerPath" => Some(b"svelte"),
+        _ => None,
+    }
+}
+
 impl Override {
     /// True if it lists a plugin that isn't built in, or sets a `parser` that Prettier doesn't have.
     pub(crate) fn may_use_plugin(&self) -> bool {

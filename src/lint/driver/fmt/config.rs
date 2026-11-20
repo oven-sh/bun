@@ -1357,7 +1357,8 @@ impl<'c> Configs<'c> {
         }
         if is_oxfmt {
             let listed = configs.flag_plugins().flat_map(|it| &it.listed);
-            configs.warn_about_flag_plugins(listed.filter(|it| !is_built_in_plugin(it)), true);
+            let mut unused = listed.filter(|it| !is_built_in_plugin(it));
+            configs.warn_about_flag_plugins(&mut unused, true);
         }
         configs
     }
@@ -1418,11 +1419,7 @@ impl<'c> Configs<'c> {
     }
 
     /// Warns that the flag plugins `names` change nothing: oxfmt loads no plugin (`is_oxfmt`), or else Bun lacks them.
-    fn warn_about_flag_plugins<'n>(
-        &self,
-        names: impl Iterator<Item = &'n Vec<u8>>,
-        is_oxfmt: bool,
-    ) {
+    fn warn_about_flag_plugins(&self, names: &mut dyn Iterator<Item = &Vec<u8>>, is_oxfmt: bool) {
         let mut unique: Vec<&[u8]> = Vec::new();
         for name in names {
             if !unique.contains(&&name[..]) {
@@ -1446,10 +1443,11 @@ impl<'c> Configs<'c> {
             let lists =
                 (self.flag_plugins()).filter(|it| it.is_left_to_oxfmt.load(Ordering::Relaxed));
             let listed = lists.flat_map(|it| &it.listed);
-            self.warn_about_flag_plugins(listed.filter(|it| !is_built_in_plugin(it)), true);
+            let mut unused = listed.filter(|it| !is_built_in_plugin(it));
+            self.warn_about_flag_plugins(&mut unused, true);
         }
         let lists = (self.flag_plugins()).filter(|it| it.is_left_out.load(Ordering::Relaxed));
-        self.warn_about_flag_plugins(lists.flat_map(|it| &it.missing), false);
+        self.warn_about_flag_plugins(&mut lists.flat_map(|it| &it.missing), false);
     }
 
     /// Prettier's `loadConfig`. `None` if the file has no configuration, like most `package.json` files.

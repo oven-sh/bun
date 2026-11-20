@@ -1,7 +1,9 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { once } from "node:events";
 import { join } from "node:path";
+import { run } from "node:test";
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -246,6 +248,78 @@ describe("node:test", () => {
     });
   });
 
+  test.concurrent(
+    "should fail the run when a test's own timeout or plan wait ends it, whatever expectFailure accepts",
+    async () => {
+      // node v26.3.0 (`node <file>`) gives each test the verdict of expectFailure,
+      // counts "cancelled 6" and exits 1. Its top-level lines are: ok, ok, ok,
+      // not ok, not ok, not ok, ok, ok. bun:test has no cancelled count, so a
+      // top-level test with a cancelled test in it fails: the first, the second
+      // and the seventh here.
+      const { exitCode, stderr } = await runTests(["31-expect-failure-cancelled.js"]);
+      expect(stderr).toContain("error: test timed out after 50ms");
+      expect(stderr).toContain("error: plan timed out after 50ms");
+      expect({ exitCode, verdicts: verdicts(stderr) }).toEqual({
+        exitCode: 1,
+        verdicts: [
+          "(fail) own timeout",
+          "(fail) plan wait",
+          "(pass) hook timeout > test",
+          "(fail) parent expects, subtest own timeout",
+          "(fail) parent expects, subtest plan wait",
+          "(fail) suite expects > subtest own timeout",
+          "(fail) only the subtest expects",
+          "(pass) todo subtest own timeout",
+        ],
+      });
+    },
+  );
+
+  test.concurrent("should report a file whose only failure is a cancelled test as failed from run()", async () => {
+    const file = join(import.meta.dirname, "fixtures", "31b-expect-failure-cancelled-alone.js");
+    const events: unknown[] = [];
+    let stderr = "";
+    const stream = run({ files: [file], env: bunEnv });
+    stream.on("test:pass", data => events.push(["test:pass", data.name]));
+    stream.on("test:fail", data => events.push(["test:fail", data.name]));
+    stream.on("test:summary", data => data.file === undefined && events.push(["success", data.success]));
+    stream.on("test:stderr", data => (stderr += data.message));
+    await once(stream.resume(), "end");
+
+    // node v26.3.0 emits the same: the test keeps the verdict of
+    // expectFailure, and the exit code of its process fails the file.
+    expect({ events, stderr }).toMatchObject({
+      events: [
+        ["test:pass", "own timeout"],
+        ["test:fail", file],
+        ["success", false],
+      ],
+    });
+  });
+
+  test.concurrent("should not count a cancelled subtest below a todo test", async () => {
+    // node v26.3.0 prints "todo 4", "cancelled 0" and exits 0 for this file: a
+    // test below a todo test is todo. Both parents pass, and `bun test --todo`
+    // reports a todo test that passes as a failure.
+    const { exitCode, stderr } = await runTests(["31c-todo-parent-cancelled-subtest.js"], {}, ["--todo"]);
+    expect(stderr).toContain("this test is marked as todo but passes");
+    expect({ exitCode, verdicts: verdicts(stderr) }).toEqual({
+      exitCode: 1,
+      verdicts: ["(fail) test.todo()", "(fail) todo option"],
+    });
+  });
+
+  test.concurrent(
+    "should keep a cancelled subtest of the first run out of a retry and out of the next test",
+    async () => {
+      const { exitCode, stderr } = await runTests(["31d-retry-cancelled-subtest.js"], {}, ["--retry", "1"]);
+      expect({ exitCode, verdicts: verdicts(stderr) }).toEqual({
+        exitCode: 0,
+        verdicts: ["(pass) fails in its first run (attempt 2)", "(pass) next"],
+      });
+    },
+  );
+
   test("should not run a skipped suite's callback", async () => {
     const { exitCode, stdout, stderr } = await runTests(["26-skipped-suite-body.js"]);
     expect(stdout).not.toContain("[suite body ran: skip-only]");
@@ -342,6 +416,14 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     new Response(stderrStream).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+/** The result lines of `bun test`, in order and without their durations. */
+function verdicts(stderr: string) {
+  return stderr
+    .split("\n")
+    .filter(line => /^\((pass|fail|skip|todo)\) /.test(line))
+    .map(line => line.replace(/ \[[\d.]+m?s\]$/, ""));
 }
 
 describe("node:test mock", () => {

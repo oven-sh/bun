@@ -1466,6 +1466,7 @@ impl QuicSession {
     fn apply_graceful_close(&self, (layer, code, reason): Close<Layer>) {
         self.update(|conn| conn.set_close_error(layer, code, &reason));
         self.expect_end();
+        self.update(Connection::note_progress);
         if self.is_http3() && self.has_opened_stream() {
             // RFC 9114 §5.2.
             self.update(Connection::go_away);
@@ -1988,7 +1989,7 @@ impl QuicSession {
                 layer: Layer::Transport,
                 code: transport_code::APPLICATION_ERROR,
                 ..
-            } => (CloseType::Idle, 0, Vec::new()),
+            } if !self.has_opened_stream() => (CloseType::Idle, 0, Vec::new()),
             CloseReason::Error {
                 layer,
                 code,

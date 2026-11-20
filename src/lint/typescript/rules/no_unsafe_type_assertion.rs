@@ -71,13 +71,8 @@ impl NoUnsafeTypeAssertion {
             return;
         }
 
-        let is_oxlint = cx.language().is_oxlint;
         let report = |message: &'static Message, advice: &'static str| {
-            let report = cx.report(node, message);
-            match is_oxlint {
-                true => report.help_with(|| help(expression_type, asserted_type, advice)),
-                false => report,
-            }
+            cx.report(node, message).oxlint_help_with(|| help(expression_type, asserted_type, advice))
         };
 
         // Asserting unknown ==> any.

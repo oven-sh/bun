@@ -1,3 +1,4 @@
+use crate::rules::no_unsafe_assignment::TYPE_THIS;
 use bun_lint::prelude::*;
 use bun_lint::types::{Signature, Type, TypeFlags};
 use bun_lint::types::tsutils::{
@@ -42,7 +43,6 @@ fn help(return_node: Expr, expected: Option<Signature>, advice: &str) -> String 
 }
 
 const RETURN_A_SAFE_VALUE: &str = "Return a safely typed value or narrow the value before returning it.";
-const TYPE_THIS: &str = "Enable `noImplicitThis` or add an explicit `this` parameter to the function.";
 
 fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoUnsafeReturn>) {
     let Some(function_node) = get_parent_function_node(return_node) else {
@@ -67,14 +67,10 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
     };
     let any_or_unknown = TypeFlags::ANY | TypeFlags::UNKNOWN;
     let report = |message: &'static Message, advice: &'static str| {
-        let report = cx.report(reporting_node, message);
-        match is_oxlint {
-            true => report.help_with(|| {
-                let expected = (has_return_type || uses_contextual_type).then(|| call_signatures.first().copied());
-                help(return_node, expected.flatten(), advice)
-            }),
-            false => report,
-        }
+        cx.report(reporting_node, message).oxlint_help_with(|| {
+            let expected = (has_return_type || uses_contextual_type).then(|| call_signatures.first().copied());
+            help(return_node, expected.flatten(), advice)
+        })
     };
 
     // An explicit annotation is intentional, even if it's unsafe.

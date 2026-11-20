@@ -136,14 +136,6 @@ impl<'a> Destructured<'a> {
     }
 }
 
-/// Adds tsgolint's help, which is only shown with an oxlint config.
-fn with_help<'a>(cx: &Context<'a>, report: Report<'a>, help: impl FnOnce() -> String) -> Report<'a> {
-    match cx.language().is_oxlint {
-        true => report.help_with(help),
-        false => report,
-    }
-}
-
 /// `receives` is the type's text.
 #[cold]
 fn destructure_help(sender_type: Type, receives: &dyn std::fmt::Display) -> String {
@@ -164,7 +156,7 @@ fn assignment_help(sender_type: Type, receiver_type: Type, is_inferred: bool, ad
 }
 
 const USE_A_SAFE_VALUE: &str = "Use a safely typed value or `unknown`, and narrow it before use.";
-const TYPE_THIS: &str = "Enable `noImplicitThis` or add an explicit `this` parameter to the function.";
+pub(crate) const TYPE_THIS: &str = "Enable `noImplicitThis` or add an explicit `this` parameter to the function.";
 
 fn check_destructure<'a>(
     cx: &Context<'a>,
@@ -186,8 +178,9 @@ fn check_destructure<'a>(
         };
         // The any type comes first, to handle `[[[x]]] = [any]` and `{ x: { y: z } } = { x: any }`.
         if is_type_any_type(sender_type) {
-            let report = cx.report(part.span, part.message).data("sender", describe_sender(sender_type, cx));
-            with_help(cx, report, || destructure_help(sender_type, &diagnostic_type_text(sender_type)));
+            cx.report(part.span, part.message)
+                .data("sender", describe_sender(sender_type, cx))
+                .oxlint_help_with(|| destructure_help(sender_type, &diagnostic_type_text(sender_type)));
         } else if !part.has_default {
             check_pattern(cx, part.target, part.target.span(), sender_type, &mut parts);
         }
@@ -224,8 +217,9 @@ fn check_array_destructure<'a>(
 ) {
     // `const [x] = [] as any[];`
     if is_type_any_array_type(sender_type) {
-        let report = cx.report(receiver_span, UNSAFE_ARRAY_PATTERN).data("sender", describe_sender(sender_type, cx));
-        with_help(cx, report, || destructure_help(sender_type, &"any"));
+        cx.report(receiver_span, UNSAFE_ARRAY_PATTERN)
+            .data("sender", describe_sender(sender_type, cx))
+            .oxlint_help_with(|| destructure_help(sender_type, &"any"));
         return;
     }
     if !sender_type.is_tuple_type() {
@@ -329,8 +323,9 @@ fn report_any_assignment<'a>(
         true => (ANY_ASSIGNMENT_THIS, TYPE_THIS),
         false => (ANY_ASSIGNMENT, USE_A_SAFE_VALUE),
     };
-    let report = cx.report(reporting_node, message).data("sender", describe_sender(sender_type, cx));
-    with_help(cx, report, || assignment_help(sender_type, receiver_type, !compares, advice));
+    cx.report(reporting_node, message)
+        .data("sender", describe_sender(sender_type, cx))
+        .oxlint_help_with(|| assignment_help(sender_type, receiver_type, !compares, advice));
 }
 
 /// Returns true if it reported. `compares` is upstream's `comparisonType !== ComparisonType.None`.
@@ -365,11 +360,10 @@ fn report_unsafe_assignment<'a>(
     let Some(result) = is_unsafe_assignment(sender_type, receiver_type, sender_node) else {
         return false;
     };
-    let report = cx
-        .report(reporting_node, UNSAFE_ASSIGNMENT)
+    cx.report(reporting_node, UNSAFE_ASSIGNMENT)
         .data("receiver", in_backticks(result.receiver))
-        .data("sender", in_backticks(result.sender));
-    with_help(cx, report, || assignment_help(result.sender, result.receiver, false, USE_A_SAFE_VALUE));
+        .data("sender", in_backticks(result.sender))
+        .oxlint_help_with(|| assignment_help(result.sender, result.receiver, false, USE_A_SAFE_VALUE));
     true
 }
 
@@ -499,8 +493,7 @@ impl NoUnsafeAssignment {
         }
         let rest_type = argument.ty();
         if is_type_any_type(rest_type) || is_type_any_array_type(rest_type) {
-            let report = cx.report(node, UNSAFE_ARRAY_SPREAD).data("sender", describe_sender(rest_type, cx));
-            with_help(cx, report, || {
+            cx.report(node, UNSAFE_ARRAY_SPREAD).data("sender", describe_sender(rest_type, cx)).oxlint_help_with(|| {
                 let value = diagnostic_type_text(rest_type);
                 format!(
                     "The spread value has type `{value}`. Use a safely typed array or narrow the value before spreading it."

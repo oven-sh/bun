@@ -269,7 +269,7 @@ export function createConsoleConstructor(console: Console) {
 
   interface ConsoleStream extends $Node.Writable {
     isTTY?: boolean;
-    getColorDepth?(): number;
+    getColorDepth?(env?: Record<string, string | undefined>): number;
   }
 
   /** The options of `util.inspect`. */
@@ -555,10 +555,12 @@ export function createConsoleConstructor(console: Console) {
       value: function (this: ConsoleInstance, stream: ConsoleStream) {
         let color: ColorMode | undefined = this[kColorMode];
         if (color === "auto") {
-          if (Bun.env["FORCE_COLOR"] !== undefined) {
-            color = Bun.enableANSIColors;
+          // Node's `shouldColorize(stream)`. Loading `internal/util/colors` for it creates `process.stderr`.
+          const env = globalThis.process?.env ?? Bun.env;
+          if (env.FORCE_COLOR !== undefined) {
+            color = require("internal/tty").getColorDepth(env) > 2;
           } else {
-            color = stream.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true);
+            color = stream.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth(env) > 2 : true);
           }
         }
 
@@ -577,6 +579,8 @@ export function createConsoleConstructor(console: Console) {
     [kFormatForStdout]: {
       ...consolePropAttributes,
       value: function (this: ConsoleInstance, args: unknown[]) {
+        // As in Node 26: a lone string is logged as it is, and nothing decides about colors.
+        if (args.length === 1 && typeof args[0] === "string") return args[0];
         const opts = this[kGetInspectOptions](this._stdout);
         return formatWithOptions(opts, ...args);
       },
@@ -584,6 +588,7 @@ export function createConsoleConstructor(console: Console) {
     [kFormatForStderr]: {
       ...consolePropAttributes,
       value: function (this: ConsoleInstance, args: unknown[]) {
+        if (args.length === 1 && typeof args[0] === "string") return args[0];
         const opts = this[kGetInspectOptions](this._stderr);
         return formatWithOptions(opts, ...args);
       },
@@ -679,7 +684,7 @@ export function createConsoleConstructor(console: Console) {
     clear(this: ConsoleInstance) {
       // It only makes sense to clear if _stdout is a TTY.
       // Otherwise, do nothing.
-      if (this._stdout.isTTY && Bun.env["TERM"] !== "dumb") {
+      if (this._stdout.isTTY && (globalThis.process?.env ?? Bun.env).TERM !== "dumb") {
         this._stdout.write("\x1B[2J\x1B[3J\x1B[H");
       }
     },

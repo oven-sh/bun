@@ -54,6 +54,40 @@ Bun v1.2 changed the default lockfile format to the text-based `bun.lock`. To mi
 
 For more on the format, see [the blog post](https://bun.com/blog/bun-lock-text-lockfile).
 
+#### Lockfile version
+
+The `lockfileVersion` field at the top of `bun.lock` is the version of the format.
+
+| `lockfileVersion` | Change                                                                                               | Minimum Bun version |
+| ----------------- | ---------------------------------------------------------------------------------------------------- | ------------------- |
+| `0`               | The first version of the text lockfile.                                                              | v1.1.39             |
+| `1`               | The entry of a workspace package in `packages` no longer lists its dependencies.                     | v1.2.0              |
+| `2`               | The same content as `1`. Bun applies stricter checks when it reads the lockfile.                     | v1.4.0              |
+| `3`               | [`overrides`](/pm/overrides) has a nested or version-scoped rule, so a value there can be an object. | v1.4.0              |
+
+At `lockfileVersion` 2 and later, Bun rejects a lockfile that has:
+
+- an integrity hash that Bun does not support
+- an npm package with no integrity hash, from a tarball URL outside both the configured registry and the default registry
+- a `.bun-tag` on a `git` dependency that is not a safe path component
+
+At `lockfileVersion` 0 and 1, Bun still reads such a lockfile. Two checks apply at every version. Bun rejects a `.bun-tag` longer than 256 bytes, and a `.bun-tag` on a `github` dependency that is not a safe path component.
+
+Bun picks the version when it saves the lockfile:
+
+- A new lockfile gets `2`.
+- An existing lockfile keeps its version. The exception is `0`, which becomes `1`.
+- A lockfile gets `3` while `overrides` has a nested or version-scoped rule. When you remove the last such rule, a lockfile at `3` goes back to `2`.
+
+Before Bun writes `3`, or a `2` that the lockfile did not have before, it checks the packages. Bun writes `1` instead when it finds one of these:
+
+- an npm package with no supported integrity hash, from a tarball URL outside the default registry
+- a `.bun-tag` on a `git` dependency that is not a safe path component
+
+This check ignores the registries in your configuration, so the result is the same on every machine. Such a lockfile stays at `1`, also with object values in `overrides`. Bun v1.4.0 and later reads object values at every `lockfileVersion`.
+
+If the `lockfileVersion` is not a whole number from 0 to 4294967295, Bun stops with `Invalid lockfile version`. If the value is in that range and your version of Bun does not support it, Bun stops with `Unsupported lockfile version`. Run `bun upgrade` for the second error only.
+
 #### Automatic lockfile migration
 
 When you run `bun install` in a project without a `bun.lock`, Bun automatically migrates existing lockfiles:

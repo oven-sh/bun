@@ -223,9 +223,8 @@ describe("heapStats() mimalloc integration", () => {
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "index.js"],
-        // enough threads for the reads of a round to be spread over several heaps, whatever the machine. And two sweeps
-        // fit in the deadline: by default they are a second apart.
-        env: { ...bunEnv, UV_THREADPOOL_SIZE: "4", MIMALLOC_PURGE_HOLES_MIN_INTERVAL: "100" },
+        // enough threads for the reads of a round to be spread over several heaps, whatever the machine
+        env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
         cwd: String(dir),
         stdout: "pipe",
         stderr: "inherit",
@@ -259,17 +258,11 @@ describe("heapStats() mimalloc integration", () => {
           console.log(server.port);
           `,
         ],
-        // An epoch of the sweep lasts 10 ms here instead of a second, so that the 50 ms between two requests are what five
-        // seconds are by default: the two epochs for which free blocks stay in any case are long over. And the collector
+        // An epoch of the sweep lasts 10 ms here instead of 100, so that the 50 ms between two requests are what half a
+        // second is by default: the two epochs for which free blocks stay in any case are long over. And the collector
         // looks every 100 ms instead of every second: until it has freed the buffers of the first requests, every
-        // request gets new ones, which no allocator has in memory yet. The kept pages age in epochs, so 256 of them
-        // keep a page for 2.5 seconds here, however slow a request is.
-        env: {
-          ...bunEnv,
-          MIMALLOC_PURGE_HOLES_MIN_INTERVAL: "10",
-          MIMALLOC_PURGE_HOLES_LARGE_FLOOR_EPOCHS: "256",
-          BUN_GC_TIMER_INTERVAL: "100",
-        },
+        // request gets new ones, which no allocator has in memory yet.
+        env: { ...bunEnv, MIMALLOC_PURGE_HOLES_MIN_INTERVAL: "10", BUN_GC_TIMER_INTERVAL: "100" },
         stdout: "pipe",
         stderr: "inherit",
       });

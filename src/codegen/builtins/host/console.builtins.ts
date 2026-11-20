@@ -2,7 +2,7 @@ import * as b from "bun-builtins-table";
 
 const terminal = ["ExternalState"];
 
-const formatted = b.printedByFormatter("colors", "depth");
+const formatted = b.printedByFormatter("colors", "depth", "showHidden");
 
 // console.table makes a row of each value, of a function too, and a column of each of its keys.
 const printing = (withoutCode: b.TableType, values: readonly b.UseSpec[] = [formatted]) =>

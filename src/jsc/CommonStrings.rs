@@ -45,6 +45,7 @@ pub enum CommonStringsForRust {
     FetchOptionTls = 30,
     FetchOptionUnix = 31,
     FetchOptionVerbose = 32,
+    InspectOptionShowHidden = 33,
 }
 
 unsafe extern "C" {

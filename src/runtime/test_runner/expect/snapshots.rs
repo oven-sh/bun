@@ -1,6 +1,6 @@
 use bun_core::Utf8Bytes;
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{JSPromise, JSStringView, JSValue, JsResult};
+use bun_jsc::{JSPromise, JSStringView, JSValue, JsResult, MatchedRows};
 use bun_sys_jsc::ErrorJsc as _;
 
 use super::matcher::{Matcher, NO_PARAMS, Params, This, Verdict, fail, params};
@@ -173,7 +173,7 @@ impl Expect {
         if value.is_string_literal() {
             received.extend_from_slice(value.to_js_string_view(global)?.to_utf8().slice());
         } else {
-            JestPrettyFormat::print_snapshot(global, value, None, &mut received, Format::Vitest)?;
+            JestPrettyFormat::print_snapshot(global, value, None, MatchedRows::default(), &mut received, Format::Vitest)?;
             if received.len() > 2 && received.starts_with(b"\n") && received.ends_with(b"\n") {
                 received.pop();
                 received.remove(0);

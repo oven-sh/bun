@@ -4,7 +4,7 @@ use core::fmt::{self, Write as _};
 
 use bun_core::{Output, write_pretty};
 use bun_jsc::bindgen::JsScope;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, MatchedRows};
 
 use super::expect_deferred::{MatcherCall, Settled};
 use super::{Promise, js, show};
@@ -305,6 +305,14 @@ impl<'a> Matcher<'a> {
     #[optimize(size)]
     pub(super) fn fail_diff(&self, expected: JSValue, received: JSValue) -> Verdict {
         let diff = DiffFormatter::new(self.global, received, expected, self.not())?;
+        Err(self.fail(format_args!("{diff}\n")))
+    }
+
+    /// [`Self::fail_diff`] where `received` prints the matchers in `rows` in place of what they matched.
+    #[cold]
+    #[optimize(size)]
+    pub(super) fn fail_diff_with_rows(&self, expected: JSValue, received: JSValue, rows: MatchedRows) -> Verdict {
+        let diff = DiffFormatter::with_matched_rows(self.global, received, expected, self.not(), rows)?;
         Err(self.fail(format_args!("{diff}\n")))
     }
 }

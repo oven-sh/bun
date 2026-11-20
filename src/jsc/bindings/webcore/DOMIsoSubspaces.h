@@ -70,6 +70,7 @@ public:
     IsoSubspace* m_subspaceForJSX509Certificate { nullptr };
     IsoSubspace* m_subspaceForWasmStreamingCompiler { nullptr };
     IsoSubspace* m_subspaceForJSWebView { nullptr };
+    IsoSubspace* m_subspaceForJestMatchedRows { nullptr };
     IsoSubspace* m_subspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /*-- BUN --*/
 

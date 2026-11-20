@@ -1158,6 +1158,230 @@ describe.concurrent("test environment", () => {
     expect(exitCode).toBe(1);
   });
 
+  // With --isolate no other file runs on a file's global, so the names of its window are never taken off it.
+  describe("the names of a window stay on the global of its file", () => {
+    // --parallel prints its workers' stdout on stderr.
+    test.each(["--isolate", "--parallel=2"])(
+      "%s: a timer that a file left pending runs with the file's document while the window closes",
+      async flag => {
+        using dir = tempDir("test-environment", {
+          ...fakePackages,
+          // Like the real happy-dom, abort() settles after the runner turned the event loop. Here, when the file's timer ran.
+          "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+            const { Window } = exports;
+            exports.Window = class extends Window {
+              constructor(...args) {
+                super(...args);
+                const { promise, resolve } = Promise.withResolvers();
+                this.document.leftTimerRan = resolve;
+                this.happyDOM.abort = () => promise;
+              }
+            };`,
+          "1.test.js": `// ${VITEST} happy-dom
+            import { test } from "bun:test";
+            test("leaves a timer", async () => {
+              const page = document;
+              await new Promise(resolve => {
+                setTimeout(() => {
+                  setTimeout(() => {
+                    console.log("timer", typeof document);
+                    page.leftTimerRan();
+                  }, 0);
+                  resolve();
+                }, 0);
+              });
+            });`,
+          "2.test.js": logEnvironment,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), flag);
+        expect([...stdout, ...stderr.split("\n")].filter(line => /^(?:timer|close) /.test(line))).toEqual([
+          "timer object",
+          "close happy-dom#1",
+        ]);
+        expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.each(["happy-dom", "jsdom"])("--isolate: code that a %s window calls while it closes", async name => {
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+          const { setTimeout } = globalThis;
+          const { Window } = exports;
+          exports.Window = class extends Window {
+            constructor(...args) {
+              super(...args);
+              const { document } = this;
+              this.happyDOM.abort = async () => {
+                document.whileClosing("abort");
+                await new Promise(resolve => setTimeout(resolve, 1));
+                document.whileClosing("after the timer of abort");
+              };
+              this.close = () => document.whileClosing("close");
+            }
+          };`,
+        "node_modules/jsdom/index.js": `${fakePackages["node_modules/jsdom/index.js"]}
+          const { JSDOM } = exports;
+          exports.JSDOM = class extends JSDOM {
+            constructor(...args) {
+              super(...args);
+              const { document } = this.window;
+              this.window.close = () => document.whileClosing("close");
+            }
+          };`,
+        "1.test.js": `// ${VITEST} ${name}
+          import { test } from "bun:test";
+          test("environment", () => {
+            document.whileClosing = step => console.log(step + ":", typeof document);
+          });`,
+        "2.test.js": logEnvironment,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate");
+      expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+        ...(name === "happy-dom" ? ["abort: object", "after the timer of abort: object"] : []),
+        "close: object",
+        "2.test.js node ",
+      ]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("--isolate: a socket that a file left open closes after the window, with the names still there", async () => {
+      const file = (name: string) => `// ${VITEST} ${name}
+        import { test } from "bun:test";
+        test("leaves a socket open", async () => {
+          const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+          await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              data() {},
+              close: () => console.log("socket closed", typeof document === "undefined" ? "node" : environment),
+            },
+          });
+        });`;
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "1.test.js": file("happy-dom"),
+        "2.test.js": file("jsdom"),
+        "3.test.js": logEnvironment,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate");
+      expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+        "abort happy-dom#1",
+        "close happy-dom#1",
+        "socket closed happy-dom#1",
+        "close jsdom#1",
+        "socket closed jsdom#1",
+        "3.test.js node ",
+      ]);
+      expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
+    // The global is set up a second time only here, so this is where the names of the closed window come off.
+    test.each([
+      ["settles", ""],
+      ["rejects", `throw new Error("cannot abort happy-dom");`],
+    ])(
+      "--isolate --rerun-each: a file that closed its window gets a new one, when the close %s",
+      async (_, rejection) => {
+        using dir = tempDir("test-environment", {
+          ...fakePackages,
+          "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+            const { Window } = exports;
+            exports.Window = class extends Window {
+              constructor(...args) {
+                super(...args);
+                const { document } = this;
+                this.close = () => (this.closed = true);
+                this.happyDOM.abort = async () => {
+                  document.whileClosing();
+                  ${rejection}
+                };
+              }
+            };`,
+          "a.test.js": `// ${VITEST} happy-dom
+            import { afterAll, test } from "bun:test";
+            document.whileClosing = () => console.log("closing", typeof document);
+            afterAll(() => close());
+            test("environment", () => console.log("test", environment));`,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate", "--rerun-each=2");
+        expect(stdout.map(line => line.split(" ").slice(0, 2).join(" "))).toEqual([
+          "open happy-dom#1",
+          "test happy-dom#1",
+          "closing object",
+          "open happy-dom#2",
+          "test happy-dom#2",
+          "closing object",
+        ]);
+        expect(summary(stderr)).toEqual(["2 pass", "0 fail", ...(rejection ? ["2 errors"] : [])]);
+        expect(exitCode).toBe(rejection ? 1 : 0);
+      },
+    );
+
+    test.each([
+      ["a comment", `// ${VITEST} happy-dom`, {}],
+      ["bunfig.toml", "", { "bunfig.toml": `[test]\nenvironment = "happy-dom"\n` }],
+    ])(
+      "--isolate --rerun-each: a name that can't be taken off globalThis fails the next run of the file (environment from %s)",
+      async (_, comment, bunfig) => {
+        using dir = tempDir("test-environment", {
+          ...fakePackages,
+          ...bunfig,
+          "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+            const { Window } = exports;
+            exports.Window = class extends Window {
+              constructor(...args) {
+                super(...args);
+                this.close = () => (this.closed = true);
+              }
+            };`,
+          "a.test.js": `${comment}
+            import { afterAll, test } from "bun:test";
+            afterAll(() => {
+              close();
+              Object.seal(globalThis);
+            });
+            test("environment", () => console.log("test", environment));`,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate", "--rerun-each=2");
+        expect(stderr).toContain(
+          `error: Cannot tear down the "happy-dom" test environment: globalThis.Request can no longer be redefined\n`,
+        );
+        expect(warnings(stderr)).toEqual([]);
+        expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["test happy-dom#1", "abort happy-dom#1"]);
+        expect(summary(stderr)).toEqual(["1 pass", "1 fail", "1 error"]);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    test("--isolate: a file that seals globalThis still has its window closed", async () => {
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+          const { setTimeout } = globalThis;
+          const { Window } = exports;
+          exports.Window = class extends Window {
+            constructor(...args) {
+              super(...args);
+              this.happyDOM.abort = () => new Promise(resolve => setTimeout(resolve, 1));
+            }
+          };`,
+        "1.test.js": `// ${VITEST} happy-dom
+          import { test } from "bun:test";
+          test("happy-dom", () => void Object.seal(globalThis));`,
+        "2.test.js": logEnvironment,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate");
+      expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["close happy-dom#1", "2.test.js node "]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("--preload", () => {
     const preload = `console.log("preload", typeof document === "undefined" ? "node" : environment);`;
 

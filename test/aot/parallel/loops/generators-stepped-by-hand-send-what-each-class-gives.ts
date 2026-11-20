@@ -1,7 +1,7 @@
 // Methods of several classes give what a step written by hand sends, behind a store into a view.
 // Under: --aot-testing=FailSpeculations: guesses that fail
 // Under: --aot-harden=proof-checks: proofs that are checked
-function* counts(limit: any) {
+function* counts(limit: any): Generator<number, number, any> {
     let heard = 0;
     for (let i = 0; i < limit; i++)
         heard += Number(yield heard) || 1;

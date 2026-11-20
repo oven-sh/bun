@@ -88,8 +88,6 @@ declare module "bun" {
      * ```
      */
     class ShellPromise extends Promise<ShellOutput> {
-      get stdin(): WritableStream;
-
       /**
        * Change the current working directory of the shell.
        * @param newCwd The new working directory

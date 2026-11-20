@@ -439,7 +439,11 @@ impl Stringifier {
                     || pkg_metas[pkg_id as usize].is_shipped()
                     || (any_lacks_bundled_folder && names_bundled_dependency(pkg_id));
 
-                if lockfile.patched_dependencies.count() > 0 {
+                // A shipped package is not the registry's package of that name and version, and
+                // no patch is applied to it.
+                if lockfile.patched_dependencies.count() > 0
+                    && !pkg_metas[pkg_id as usize].is_shipped()
+                {
                     use std::io::Write;
                     let _ = write!(&mut temp_buf, "{}@", bstr::BStr::new(pkg_name.slice(buf)));
                     match res.tag {

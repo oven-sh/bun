@@ -5733,3 +5733,102 @@ it("Proxy-Connection: close does not end a Bun.serve connection", async () => {
     socket.destroy();
   }
 });
+
+// Timer drain fairness under saturated keep-alive socket load (oven-sh/bun#49044).
+// The full epoll ready batch is 1024 events; with 1250 active sockets, the
+// event loop must yield to already-due timers instead of indefinitely re-draining.
+const timerDrainTest = isLinux ? it : it.skip;
+timerDrainTest("saturated Bun.serve sockets do not starve a 20ms timer", async () => {
+  const fixture = join(import.meta.dir, "fixtures", "serve-timer-drain.fixture.ts");
+  const server = spawn(bunExe(), [fixture, "server"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  let client: ReturnType<typeof spawn> | undefined;
+  let port: number | undefined;
+  let stdout = "";
+  let stderr = "";
+  let stopping = false;
+  let childFailure: Error | undefined;
+  const childClosures = new WeakMap<ReturnType<typeof spawn>, Promise<void>>();
+
+  function observeChild(child: ReturnType<typeof spawn>, name: string) {
+    childClosures.set(child, new Promise(resolve => child.once("close", () => resolve())));
+    child.on("error", error => {
+      if (!stopping) childFailure = new Error(`${name} failed: ${error.message}`);
+    });
+    child.on("exit", (code, signal) => {
+      if (!stopping) childFailure = new Error(`${name} exited unexpectedly: ${code ?? signal}`);
+    });
+  }
+  observeChild(server, "server");
+
+  type TimerReport = { reqs: number; timerFires: number; msSinceLastTimerFire: number; maxGap: number };
+  const reports: TimerReport[] = [];
+  server.stdout.on("data", (chunk: Buffer) => {
+    stdout += chunk.toString();
+    for (;;) {
+      const newline = stdout.indexOf("\n");
+      if (newline < 0) break;
+      const line = stdout.slice(0, newline);
+      stdout = stdout.slice(newline + 1);
+      try {
+        const parsed = JSON.parse(line);
+        if (typeof parsed.port === "number") port = parsed.port;
+        else if (typeof parsed.reqs === "number") reports.push(parsed);
+      } catch {
+        // Child startup may print text before the structured report.
+      }
+    }
+  });
+  server.stderr.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+
+  async function waitUntil(check: () => boolean, ms: number) {
+    const deadline = performance.now() + ms;
+    while (!check()) {
+      if (childFailure) throw childFailure;
+      if (performance.now() >= deadline) {
+        throw new Error(`timer load did not make progress: ${JSON.stringify(reports)}; ${stderr}`);
+      }
+      await Bun.sleep(25);
+    }
+    if (childFailure) throw childFailure;
+  }
+
+  async function stopChild(child?: ReturnType<typeof spawn>) {
+    if (!child) return;
+    const closed = childClosures.get(child)!;
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    const forceKill = setTimeout(() => child.kill("SIGKILL"), 1000);
+    try {
+      await closed;
+    } finally {
+      clearTimeout(forceKill);
+    }
+  }
+
+  try {
+    await waitUntil(() => port !== undefined, 1500);
+    client = spawn(bunExe(), [fixture, "client", String(port), "1250"], {
+      stdio: "ignore",
+      env: { ...bunEnv, BUN_CONFIG_MAX_HTTP_REQUESTS: "65000" },
+    });
+    observeChild(client, "client");
+
+    // Wait on actual active one-second load windows, not a fixed sleep.
+    // A server that reports requests but no live timer callbacks fails below.
+    await waitUntil(() => reports.filter(report => report.reqs >= 100).length >= 3, 4000);
+    const active = reports.filter(report => report.reqs >= 100).slice(0, 3);
+    expect(active.reduce((sum, report) => sum + report.reqs, 0)).toBeGreaterThan(1000);
+    for (const report of active) {
+      expect(report.timerFires).toBeGreaterThan(0);
+      expect(report.msSinceLastTimerFire).toBeLessThan(1500);
+      expect(report.maxGap).toBeLessThan(1500);
+    }
+  } finally {
+    stopping = true;
+    await Promise.all([stopChild(client), stopChild(server)]);
+  }
+});

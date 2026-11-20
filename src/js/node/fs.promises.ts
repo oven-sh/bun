@@ -302,6 +302,11 @@ const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
 
 type TailParameters<F> = F extends (first: any, ...rest: infer Rest) => any ? Rest : never;
+/** A wrapper that hands its `arguments` on to `F` as they are, so it declares only the first one. */
+type Forwards<F extends (...args: any[]) => any> = (
+  fileHandleOrFdOrPath: any,
+  ...args: TailParameters<F>
+) => ReturnType<F>;
 
 // Argument validation must run at the first .next(), not at call time: Node's
 // fs/promises glob is an async generator whose body constructs Glob lazily.
@@ -311,10 +316,12 @@ async function* glob(pattern, options) {
 
 const exports = {
   access: asyncWrap(fs.access, "access"),
-  appendFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _appendFile>) {
-    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
-    return _appendFile(fileHandleOrFdOrPath, ...args);
-  },
+  // These three hand on `arguments` as it is: a spread calls the array iterator, which script can replace.
+  appendFile: async function (fileHandleOrFdOrPath) {
+    const fd = fileHandleOrFdOrPath?.[kFd];
+    if (fd != null) arguments[0] = fd;
+    return _appendFile.$apply(undefined, arguments);
+  } as Forwards<typeof _appendFile>,
   close: asyncWrap(fs.close, "close"),
   copyFile: asyncWrap(fs.copyFile, "copyFile"),
   cp,
@@ -367,24 +374,26 @@ const exports = {
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
   readdir: asyncWrap(fs.readdir, "readdir"),
-  readFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _readFile>) {
-    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
-    return _readFile(fileHandleOrFdOrPath, ...args);
-  },
-  writeFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _writeFile>) {
-    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+  readFile: async function (fileHandleOrFdOrPath) {
+    const fd = fileHandleOrFdOrPath?.[kFd];
+    if (fd != null) arguments[0] = fd;
+    return _readFile.$apply(undefined, arguments);
+  } as Forwards<typeof _readFile>,
+  writeFile: async function (fileHandleOrFdOrPath) {
+    const fd = fileHandleOrFdOrPath?.[kFd];
+    if (fd != null) arguments[0] = fd;
+    const data = arguments[1];
     if (
-      !$isTypedArrayView(args[0]) &&
-      typeof args[0] !== "string" &&
-      ($isCallable(args[0]?.[Symbol.iterator]) || $isCallable(args[0]?.[Symbol.asyncIterator]))
+      !$isTypedArrayView(data) &&
+      typeof data !== "string" &&
+      ($isCallable(data?.[Symbol.iterator]) || $isCallable(data?.[Symbol.asyncIterator]))
     ) {
       $debug("fs.promises.writeFile async iterator slow path!");
       // Node accepts an arbitrary async iterator here
-      // @ts-expect-error
-      return writeFileAsyncIterator(fileHandleOrFdOrPath, ...args);
+      return writeFileAsyncIterator.$apply(undefined, arguments);
     }
-    return _writeFile(fileHandleOrFdOrPath, ...args);
-  },
+    return _writeFile.$apply(undefined, arguments);
+  } as Forwards<typeof _writeFile>,
   readlink: asyncWrap(fs.readlink, "readlink"),
   realpath: asyncWrap(fs.realpathNative, "realpath"),
   rename: asyncWrap(fs.rename, "rename"),

@@ -6,7 +6,7 @@ import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
+import { connect, listen, QuicEndpoint, type QuicSession, type SessionOptions } from "node:quic";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -779,4 +779,82 @@ test("streams can be read one after the other, in any order", async () => {
   }
   expect(lengths).toEqual(sizes.toReversed());
   await client.close();
+});
+
+test.each([
+  ["Uni", "drop, use", ["open 2", "open 6", "reset 2 with 5"]],
+  ["Bi", "drop", ["open 0", "reset 0 with 5"]],
+  ["Bi", "use, drop", ["open 0", "open 4", "reset 4 with 5"]],
+  ["Bi", "drop, stop", ["open 0", "open 4", "reset 0 with 5"]],
+  ["Bi", "reset, use", ["open 0", "open 4", "reset 0 with 5"]],
+  ["Bi", "write and drop, use", ["open 0", "open 4", "reset 0 with 1"]],
+  ["Bi", "drop, use", ["open 4"]],
+] as const)("what a server is told of %sdirectional streams: %s", async (kind, steps, expected) => {
+  const seen: string[] = [];
+  const last = Promise.withResolvers<void>();
+  await using server = await listen(
+    session => {
+      session.closed.then(() => last.reject(new Error("closed")), last.reject);
+      session.onstream = stream => {
+        const { id, direction } = stream;
+        stream.closed.catch(() => {});
+        if (direction === "bidi") stream.setBody(null);
+        if (direction !== (kind === "Bi" ? "bidi" : "uni")) return last.resolve();
+        seen.push(`open ${id}`);
+        stream.onreset = (error: any) => void seen.push(`reset ${id} with ${error.errorCode}`);
+      };
+    },
+    { alpn: ["quic-test"], sni: { "*": { keys: [key], certs: [cert] } } },
+  );
+  const client = await connect(server.address!, { alpn: "quic-test", verifyPeer: "manual" } as SessionOptions);
+  using _ = { [Symbol.dispose]: () => client.destroy(undefined, { code: 0n }) };
+  await client.opened;
+  // This is still in a callback, after which all leaves together. Outside of one, what is written leaves at once.
+  if (steps.startsWith("write")) await new Promise(resolve => setImmediate(resolve));
+  for (const step of steps.split(", ")) {
+    const stream: any = await client[`create${kind}directionalStream`]({ body: step === "use" ? "used" : undefined });
+    stream.closed.catch(() => {});
+    if (step === "write and drop") stream.writer.writeSync("gone");
+    if (step.endsWith("drop")) stream.destroy(new Error("gone"), { code: 5n });
+    if (step === "stop") stream.stopSending(5n);
+    if (step === "reset") stream.resetStream(5n);
+  }
+  await client[`create${kind === "Bi" ? "Uni" : "Bi"}directionalStream`]({ body: "last" });
+  await last.promise;
+  expect(seen.toSorted()).toEqual([...expected]);
+});
+
+test.each([
+  ["a client", "quic-test", 5n, ["open 1", "reset 1 with 5", "open 5"]],
+  ["an HTTP/3 server", "h3", 4n, ["open 0", "reset 0 with 5", "open 4"]],
+] as const)("%s is told of a stream that was dropped for the next one", async (_, alpn, next, expected) => {
+  const seen: string[] = [];
+  const last = Promise.withResolvers<void>();
+  async function start(session: QuicSession, asks: boolean) {
+    session.closed.then(() => last.reject(new Error("closed")), last.reject);
+    session.onstream = stream => {
+      const { id } = stream;
+      stream.closed.catch(() => {});
+      seen.push(`open ${id}`);
+      stream.onreset = (error: any) => void seen.push(`reset ${id} with ${error.errorCode}`);
+      if (id === next) last.resolve();
+    };
+    if (!asks) return;
+    await session.opened;
+    const dropped = await session.createBidirectionalStream();
+    dropped.closed.catch(() => {});
+    dropped.destroy(new Error("gone"), { code: 5n });
+    const headers = { ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+    const used = await session.createBidirectionalStream({ body: "used", ...(alpn === "h3" && { headers }) });
+    used.closed.catch(() => {});
+  }
+  await using server = await listen(session => start(session, alpn !== "h3"), {
+    alpn: [alpn],
+    sni: { "*": { keys: [key], certs: [cert] } },
+  });
+  const client = await connect(server.address!, { alpn, verifyPeer: "manual" } as SessionOptions);
+  using __ = { [Symbol.dispose]: () => client.destroy(undefined, { code: 0n }) };
+  await start(client, alpn === "h3");
+  await last.promise;
+  expect(seen).toEqual([...expected]);
 });

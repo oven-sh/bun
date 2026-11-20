@@ -136,6 +136,7 @@ pub(crate) struct QuicStream {
     wakeup: JsCell<Option<Strong>>,
     /// The peer has opened it, and it can be answered.
     is_request: Cell<bool>,
+    is_reset_empty: Cell<bool>,
     /// For when it is not pending any more.
     pending_reset: Cell<Option<u64>>,
     pending_stop: Cell<Option<u64>>,
@@ -168,6 +169,7 @@ impl QuicStream {
             inbound: JsCell::new(Inbound::default()),
             wakeup: JsCell::new(None),
             is_request: Cell::new(false),
+            is_reset_empty: Cell::new(false),
             pending_reset: Cell::new(None),
             pending_stop: Cell::new(None),
             awaits_reader: Cell::new(false),
@@ -250,7 +252,7 @@ impl QuicStream {
         }
     }
 
-    fn abort(&self, stop: Option<u64>, reset: Option<u64>) {
+    pub(super) fn abort(&self, stop: Option<u64>, reset: Option<u64>) {
         self.update(|conn, id| {
             stop.inspect(|&code| conn.stop(id, code));
             reset.inspect(|&code| conn.reset(id, code));
@@ -339,9 +341,12 @@ impl QuicStream {
     pub(super) fn is_reset(&self) -> bool {
         self.with_state(|s| s.reset != 0)
     }
-    /// The peer opened it, reset it and sent nothing.
+    pub(super) fn has_received(&self) -> bool {
+        self.read_stat(IDX_STATS_BYTES_RECEIVED) > 0
+    }
+    /// The peer gave up on both halves before it used them.
     pub(super) fn arrived_spent(&self) -> bool {
-        self.id.get().is_none() && self.is_reset() && self.read_stat(IDX_STATS_BYTES_RECEIVED) == 0
+        self.id.get().is_none() && self.is_request.get() && self.is_reset_empty.get()
     }
     pub(super) fn release_close_root(&self) {
         self.this_value.with_mut(|r| r.downgrade());
@@ -349,9 +354,6 @@ impl QuicStream {
 
     pub(super) fn suppress_announce(&self) {
         self.announce_suppressed.set(true);
-    }
-    pub(super) fn close(&self) {
-        self.update(close);
     }
 
     pub(super) fn is_announce_suppressed(&self) -> bool {
@@ -837,7 +839,10 @@ impl QuicStream {
                 self.drain_outbound();
             }
             if code == 0 && send_ended && self.outbound.get().data.is_empty() {
-                self.close();
+                self.update(|conn, id| {
+                    conn.finish(id);
+                    conn.stop(id, http3_code::NO_ERROR);
+                });
             } else {
                 self.update(|conn, id| conn.reset(id, code));
             }
@@ -1012,6 +1017,8 @@ impl QuicStream {
             }
             StreamEvent::Writable => self.drain_outbound(),
             StreamEvent::Reset(code) => {
+                let info = self.get(Connection::stream_info);
+                self.is_reset_empty.set(info.is_some_and(|it| it.is_empty));
                 self.mark_reset(code);
                 session.push_event(SessionEvent::StreamReset { stream, code });
                 session.push_event(SessionEvent::StreamWake { stream });
@@ -1036,11 +1043,6 @@ impl QuicStream {
             self.with_state(|s| s.received_early_data = 1);
         }
     }
-}
-
-pub(super) fn close(conn: &mut Connection, id: StreamId) {
-    conn.finish(id);
-    conn.stop(id, http3_code::NO_ERROR);
 }
 
 /// Each field is a name, NUL, a value, NUL and a byte of flags. `count` is authoritative: the Latin-1 encoding

@@ -19,6 +19,8 @@ pub struct StreamInfo {
     pub has_unacked_data: bool,
     pub has_early_data: bool,
     pub has_received: bool,
+    /// As far as is known, the peer has not sent a byte.
+    pub is_empty: bool,
     /// The peer cannot send much more.
     pub is_short_of_credit: bool,
 }
@@ -61,6 +63,7 @@ impl Connection {
             has_unacked_data: stream.has_unacked_data() || stream.has_unacked_reset(),
             has_early_data: stream.flags.contains(Flags::HAS_EARLY_DATA),
             has_received: stream.has_received(),
+            is_empty: stream.is_empty(),
             is_short_of_credit: self.streams.state.is_peer_short_of_credit(stream),
         })
     }

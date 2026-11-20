@@ -145,6 +145,21 @@ fn tells_whether_the_peer_is_short_of_credit() {
 }
 
 #[test]
+fn tells_whether_the_peer_has_sent_anything() {
+    for (frame, has_received, is_empty) in [
+        ("stream 0 0 -", false, true),
+        ("reset_stream 0 7 0", true, true),
+        ("reset_stream 0 7 1", true, false),
+        ("stream 0 1 a", true, false),
+    ] {
+        let mut raw = Raw::client().connected();
+        raw.send(frame);
+        let info = raw.connection().stream_info(StreamId(0)).unwrap();
+        assert_eq!((info.has_received, info.is_empty), (has_received, is_empty));
+    }
+}
+
+#[test]
 fn gives_what_credit_there_is_to_a_peer_that_is_blocked() {
     let mut raw = with_windows(Raw::client(), 6400, [0, 100, 0]);
     for (frames, expected) in [

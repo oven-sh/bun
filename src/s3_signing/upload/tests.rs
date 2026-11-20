@@ -152,6 +152,52 @@ fn a_byte_after_a_part_does_not_allocate_a_part() {
 }
 
 #[test]
+fn up_to_half_a_part_is_held_in_blocks() {
+    const PART: usize = 8 * Tail::BLOCK;
+    let data: Vec<u8> = (0..2 * PART + 3 * Tail::BLOCK)
+        .map(|i| (i % 127) as u8)
+        .collect();
+    for chunk in [1000, 60_000, Tail::BLOCK, Tail::BLOCK + 1, PART - 1] {
+        for encoded in [false, true] {
+            let mut upload = with_part_size(PART as u64);
+            write_in_chunks(&mut upload, &data, chunk, encoded);
+            upload.end();
+            let lens: Vec<_> = upload.waiting.iter().map(Vec::len).collect();
+            assert_eq!(lens, [PART, PART, 3 * Tail::BLOCK], "{chunk}");
+            assert!(upload.waiting.iter().flatten().eq(&data), "{chunk}");
+            assert!(upload.waiting.iter().all(|it| it.capacity() <= PART));
+        }
+    }
+}
+
+#[test]
+fn what_the_tail_holds() {
+    const BLOCK: usize = Tail::BLOCK;
+    const MAX: usize = Tail::MAX_IN_BLOCKS;
+    for (part, writes, blocks, cost) in [
+        (8 * BLOCK, &[5 * BLOCK][..], 0, 5 * BLOCK),
+        (8 * BLOCK, &[BLOCK, 1], 1, 2 * BLOCK),
+        (8 * BLOCK, &[BLOCK, 1, BLOCK], 2, 3 * BLOCK),
+        (8 * BLOCK, &[1, 2 * BLOCK], 1, 8 + 2 * BLOCK - 7),
+        (8 * BLOCK, &[4 * BLOCK, 1], 0, 8 * BLOCK),
+        (8 * MAX, &[MAX - BLOCK, BLOCK], 1, MAX),
+        (8 * MAX, &[MAX - BLOCK, BLOCK, 1], 0, 2 * MAX),
+    ] {
+        for encoded in [false, true] {
+            let mut upload = with_part_size(part as u64);
+            for &len in writes {
+                write_in_chunks(&mut upload, &vec![0; len], len, encoded);
+            }
+            let held = (upload.tail.full.len(), upload.memory_cost());
+            assert_eq!(held, (blocks, cost), "{writes:?}");
+            let len: usize = writes.iter().sum();
+            let capacity = if blocks == 0 { cost } else { len };
+            assert_eq!(upload.tail.take().capacity(), capacity, "{writes:?}");
+        }
+    }
+}
+
+#[test]
 fn a_part_allocates_no_more_than_the_part_size() {
     for chunk in [1, 64, 99, 300, 500, 501, 1500] {
         for encoded in [false, true] {

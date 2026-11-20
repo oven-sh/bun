@@ -86,6 +86,23 @@ const s4 = Bun.serve({
 });
 
 Bun.serve({
+  tls: { key: "key", cert: "cert", clientHello: true },
+  fetch(req, server) {
+    expectType(server.clientHello(req)).is<Bun.Serve.ClientHello | null>();
+    expectType(server.clientHello(req)?.raw).is<Uint8Array<ArrayBuffer> | undefined>();
+    return new Response();
+  },
+});
+
+Bun.listen({
+  // @ts-expect-error - `clientHello` is an option of Bun.serve only
+  tls: { key: "key", cert: "cert", clientHello: true },
+  port: 0,
+  hostname: "localhost",
+  socket: { data() {} },
+});
+
+Bun.serve({
   tls: [
     { key: "key", cert: "cert", ca: "ca", requestCert: true, crl: Bun.file("crl.pem") },
     { serverName: "a.example.com", key: "key", cert: "cert", crl: "crl" },

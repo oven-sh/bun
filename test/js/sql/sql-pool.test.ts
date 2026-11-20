@@ -225,6 +225,7 @@ const mysqlDialect = {
   url: (host: string, port: number) => `mysql://root@${host}:${port}/bun_sql_test`,
   prefix: "ERR_MYSQL_",
   sessionId: "select connection_id() as id",
+  readsTable: "select 1 from mysql.db limit 1",
   endSession: (id: unknown) => `kill ${id}`,
   lock: (key: number) => `select get_lock('bun_pool_${key}', 60)`,
   unlock: (key: number) => `select release_lock('bun_pool_${key}')`,
@@ -238,6 +239,7 @@ const servers = [
     url: (host: string, port: number) => `postgres://bun_sql_test@${host}:${port}/bun_sql_test`,
     prefix: "ERR_POSTGRES_",
     sessionId: "select pg_backend_pid() as id",
+    readsTable: "select 1 from pg_class limit 1",
     endSession: (id: unknown) => `select pg_terminate_backend(${id})`,
     lock: (key: number) => `select pg_advisory_lock(${key})`,
     unlock: (key: number) => `select pg_advisory_unlock(${key})`,
@@ -295,6 +297,73 @@ for (const server of servers) {
         await connected.reached(5);
         const sessions = new Set([await sessionId(sql), await sessionId(sql), await sessionId(sql)]);
         expect({ sessions: sessions.size, dials: connected.count }).toEqual({ sessions: 1, dials: 5 });
+      });
+
+      const oneAtATime: [string, (sql: SQL) => Promise<unknown>][] = [
+        ["begin()", sql => sql.begin(tx => sessionId(tx))],
+        [
+          "reserve()",
+          async sql => {
+            using reserved = await sql.reserve();
+            return await sessionId(reserved);
+          },
+        ],
+        [
+          "begin() on a reserved connection",
+          async sql => {
+            using reserved = await sql.reserve();
+            return await reserved.begin(tx => sessionId(tx));
+          },
+        ],
+      ];
+
+      test.each(oneAtATime)("%s one after the other uses the connection that the queries use", async (_, call) => {
+        const connected = new Calls();
+        await using sql = await pool({ max: 4, onconnect: connected.hit });
+        const first = await sessionId(sql);
+        await connected.reached(4);
+        const sessions: unknown[] = [];
+        for (let i = 0; i < 4; i++) sessions.push(await call(sql), await call(sql), await sessionId(sql));
+        expect(sessions).toEqual(Array(12).fill(first));
+      });
+
+      // #49268
+      test.each(oneAtATime.slice(0, 2))(
+        "%s one after the other lets the connections that it does not need reach idleTimeout",
+        async (_, call) => {
+          const connected = new Calls();
+          const idledOut = new Calls();
+          await using sql = await pool({
+            max: 4,
+            idleTimeout: 0.25,
+            onconnect: connected.hit,
+            onclose: (err: any) => void (err?.code === code("IDLE_TIMEOUT") && idledOut.hit()),
+          });
+          const sessions = new Set<unknown>();
+          while (connected.count < 4) sessions.add(await call(sql));
+          // Dialed after the four have logged in, and its one connection idles out after four times as long: by
+          // then the three have had their time.
+          let over = false;
+          await using clock = await pool({ idleTimeout: 1, onclose: () => void (over = true) });
+          const ticking = clock.connect();
+          while (idledOut.count < 3 && !over) sessions.add(await call(sql));
+          await ticking;
+          expect({ sessions: sessions.size, idledOut: idledOut.count >= 3 }).toEqual({ sessions: 1, idledOut: true });
+        },
+      );
+
+      test("reserve() gets the idle connection that logged in first, not the one that waited longest", async () => {
+        const connected = new Calls();
+        await using sql = await pool({ max: 4, onconnect: connected.hit });
+        await sql.connect();
+        await connected.reached(4);
+        using one = await sql.reserve();
+        using two = await sql.reserve();
+        const held = [await sessionId(one), await sessionId(two)];
+        one.release();
+        two.release();
+        using again = await sql.reserve();
+        expect(await sessionId(again)).toBe(held[0]);
       });
 
       test("queries that run together get a connection each, up to max", async () => {
@@ -430,6 +499,47 @@ for (const server of servers) {
         expect({ kept: (await sessionId(sql)) === id, closed: closed.count }).toEqual({ kept: true, closed: 0 });
       });
 
+      test("it keeps its place when the query that already runs behind ends the transaction", async () => {
+        const connected = new Calls();
+        await using sql = await pool({ max: 2, onconnect: connected.hit });
+        const id = await sessionId(sql);
+        await connected.reached(2);
+        await using held = await gate();
+        const begins = sql.unsafe("select 1; begin").simple().execute();
+        // Three queries on two connections: the third one is sent behind the first.
+        const other = held.wait(sql).execute();
+        const commits = held.wait(sql, "; commit").simple().execute();
+        await begins;
+        // Inside the transaction it is given to nobody: this one is sent behind the query on the other connection.
+        const inside = sessionId(sql);
+        await held.open();
+        await Promise.all([other, commits]);
+        expect([(await inside) !== id, await sessionId(sql), await sql.begin(tx => sessionId(tx))]).toEqual([
+          true,
+          id,
+          id,
+        ]);
+      });
+
+      test("one that outlived maxLifetime while it is busy gets no new query", async () => {
+        await using held = await gate();
+        const connected = new Calls();
+        await using sql = await pool({ maxLifetime: 0.2, onconnect: connected.hit });
+        // Its query is what dials the connection, so it is busy from its login on.
+        const busy = held.wait(sql).then(rows => rows[0].id);
+        await connected.reached(1);
+        {
+          // Dialed after that login, so it closes later.
+          const closed = Promise.withResolvers<unknown>();
+          await using later = await pool({ maxLifetime: 0.2, onclose: closed.resolve });
+          await later.connect();
+          await closed.promise;
+        }
+        const next = sessionId(sql);
+        await held.open();
+        expect((await next) !== (await busy)).toBe(true);
+      });
+
       test("it stays while it has a prepared distributed transaction", async () => {
         const closed = new Calls();
         await using sql = await pool({ max: 2, onclose: closed.hit });
@@ -444,6 +554,65 @@ for (const server of servers) {
         (other === first ? second : first).release();
         await sql.unsafe("select 1");
         expect([await outcome(sql.commitDistributed(name)), closed.count]).toEqual(["resolved", 0]);
+      });
+
+      test("one with a prepared distributed transaction is the last one that a caller gets", async () => {
+        const connected = new Calls();
+        await using sql = await pool({ max: 3, onconnect: connected.hit });
+        await sql.connect();
+        await connected.reached(3);
+        const name = `bun_pool_${(Math.random() * 2 ** 31) | 0}`;
+        await sql.beginDistributed(name, tx => tx.unsafe("select 1"));
+        // MariaDB keeps it on that session, and refuses there whatever is not its commit or rollback.
+        const callers: string[] = [];
+        for (let i = 0; i < 4; i++) callers.push(await outcome(sql.begin(tx => tx.unsafe("select 1"))));
+        // The other two are reserved, so the commit gets the connection that has it.
+        using _first = await sql.reserve();
+        using _second = await sql.reserve();
+        expect([...callers, await outcome(sql.commitDistributed(name))]).toEqual(Array(5).fill("resolved"));
+      });
+
+      test("a query shares a busy connection before it gets the one with a prepared distributed transaction", async () => {
+        const connected = new Calls();
+        await using sql = await pool({ max: 3, onconnect: connected.hit });
+        await sql.connect();
+        await connected.reached(3);
+        await using held = await gate();
+        const name = `bun_pool_${(Math.random() * 2 ** 31) | 0}`;
+        const busy: PromiseLike<string>[] = [];
+        await sql.beginDistributed(name, async tx => {
+          await tx.unsafe("select 1");
+          // Two on one of the other connections, one on the other.
+          for (let i = 0; i < 3; i++) busy.push(outcome(held.wait(sql).execute()));
+        });
+        // An even share is two for each: the connection with one query can take it.
+        const query = outcome(sql.unsafe(server.readsTable).execute());
+        await held.open();
+        const outcomes = await Promise.all([...busy, query]);
+        // The other two are reserved, so the rollback gets the connection that has it.
+        using _first = await sql.reserve();
+        using _second = await sql.reserve();
+        expect([...outcomes, await outcome(sql.rollbackDistributed(name))]).toEqual(Array(5).fill("resolved"));
+      });
+
+      test("a query behind a reservation that waits shares a busy connection before it gets the one with a prepared distributed transaction", async () => {
+        const connected = new Calls();
+        await using sql = await pool({ max: 2, onconnect: connected.hit });
+        await sql.connect();
+        await connected.reached(2);
+        await using held = await gate();
+        const name = `bun_pool_${(Math.random() * 2 ** 31) | 0}`;
+        // On the connection that logged in first: of two that are as busy, that one is left to the reservation.
+        await sql.beginDistributed(name, tx => tx.unsafe("select 1"));
+        const busy = [held.wait(sql), held.wait(sql)].map(outcome);
+        const reserving = sql.reserve();
+        const query = outcome(sql.unsafe(server.readsTable).execute());
+        await held.open();
+        const outcomes = await Promise.all([...busy, query]);
+        (await reserving).release();
+        // The other one is reserved, so the rollback gets the connection that has it.
+        using _other = await sql.reserve();
+        expect([...outcomes, await outcome(sql.rollbackDistributed(name))]).toEqual(Array(4).fill("resolved"));
       });
 
       test("a transaction by hand on a pool of one connection keeps it", async () => {
@@ -555,6 +724,29 @@ for (const server of servers) {
         first.release();
         await Promise.all(finished);
         expect(order).toEqual(["query 1", "reserve", "query 2"]);
+      });
+
+      test("a query behind a reservation that waits is not sent on a connection that is reserved", async () => {
+        const connected = new Calls();
+        await using sql = await pool({ max: 2, onconnect: connected.hit });
+        await sql.connect();
+        await connected.reached(2);
+        await using held = await gate();
+        // On the connection that logged in first: the reserved one is then the last of the two.
+        const busy = outcome(held.wait(sql));
+        using first = await sql.reserve();
+        const order: string[] = [];
+        const second = sql.reserve().then(reserved => (order.push("reserve"), reserved));
+        const query = sql.unsafe("select 1").then(() => order.push("query"));
+        await held.open();
+        expect(await busy).toBe("resolved");
+        using _ = await second;
+        // Answered after whatever was sent on its connection before it.
+        await first.unsafe("select 1");
+        order.push("release");
+        first.release();
+        await query;
+        expect(order).toEqual(["reserve", "release", "query"]);
       });
 
       test("queries use the other connections while a reservation waits for one to drain", async () => {

@@ -3436,6 +3436,13 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
   // connection (RST) instead of ending it. Node reports that as a read
   // error and never emits 'end'. allowHalfOpen keeps the accepted socket open
   // after an 'end', so a reset misreported as an orderly end strands it.
+  //
+  // A reset discards what the peer's kernel has not sent yet, so the chunk has to
+  // fit in the receive window. Linux can start a connection with 64 KiB, and 64 KiB
+  // of data is more than that as TLS records. 32 KiB is sent at once, is queued
+  // ahead of the reset, and leaves the window open: macOS drops an RST that arrives
+  // at a zero window, so filling the buffers would strand the socket there.
+  const chunk = Buffer.alloc(32 * 1024, "r");
   async function acceptPausedSocketAndFill() {
     const accepted = Promise.withResolvers<net.Socket>();
     const onConnection = (socket: net.Socket) => {
@@ -3503,10 +3510,6 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
         server.close();
       },
     };
-    // One chunk that fits: it is queued ahead of the reset and the receive window
-    // stays open. macOS drops an RST that arrives at a zero window, so filling
-    // the buffers would strand the socket there.
-    const chunk = Buffer.alloc(64 * 1024, "r");
     const written = peer.write(chunk);
     if (written !== chunk.length) {
       t[Symbol.dispose]();
@@ -3523,7 +3526,7 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     // The data queued ahead of the reset was read off the socket before it closed
     // (kept in the paused stream's buffer), not discarded with the fd. Windows
     // discards the receive queue on a reset.
-    if (!isWindows) expect(t.socket.bytesRead).toBe(64 * 1024);
+    if (!isWindows) expect(t.socket.bytesRead).toBe(chunk.length);
   });
 
   it("delivers the data queued ahead of the reset and then reports ECONNRESET, not 'end'", async () => {

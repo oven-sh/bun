@@ -218,6 +218,15 @@ declare namespace NodeJS {
     noDeprecation?: boolean;
     traceDeprecation?: boolean;
     traceProcessWarnings?: boolean;
+    /** Only under `bun test --isolate=modules`, whose files share this `process`: src/js/internal/test/globals.ts. */
+    $sharedByTestFiles:
+      | {
+          /** Adds a listener that the builtin needs for as long as it lives: it stays for the files after this one. */
+          on(name: string, listener: (...args: any[]) => void): void;
+          /** `forget` runs once, before the next file. It drops what the builtin holds for the file that ends. */
+          forget(forget: () => void): void;
+        }
+      | undefined;
   }
 }
 

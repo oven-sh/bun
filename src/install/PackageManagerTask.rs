@@ -3,7 +3,7 @@
 
 use core::ptr::NonNull;
 
-use bun_ast::{Loc, Log};
+use bun_ast::Log;
 use bun_core::Output;
 use bun_core::StringOrTinyString;
 use bun_semver as semver;
@@ -23,14 +23,10 @@ use crate::{
 /// cross that boundary; Phase B should likely demote to `*mut NetworkTask`.
 pub struct Task {
     pub(crate) job: Job,
-    /// default: `Status::Waiting`
-    pub(crate) status: Status,
     /// default: `thread_pool::Task { callback: Task::callback }`
     pub(crate) threadpool_task: thread_pool::Task,
     pub(crate) log: Log,
     pub(crate) id: Id,
-    /// default: `None`
-    pub(crate) err: Option<crate::Error>,
     /// The filesystem tail of a clone or checkout task; `callback` runs it. default: `None`
     pub(crate) git_finalize: Option<crate::git_runner::Finalize>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
@@ -106,7 +102,7 @@ impl Id {
         Id((5u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
     }
 
-    /// Not persisted: only keys the in-memory `git_commits` cache and `task_queue`.
+    /// Not persisted.
     pub(crate) fn for_git_commit(url: &[u8], committish: &[u8]) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(url);
@@ -123,12 +119,10 @@ impl Task {
             job,
             log: Log::init(),
             id,
-            status: Status::Waiting,
             threadpool_task: thread_pool::Task {
                 node: Default::default(),
                 callback: Task::callback,
             },
-            err: None,
             git_finalize: None,
             next: bun_threading::Link::new(),
         };
@@ -139,6 +133,21 @@ impl Task {
         match &self.job {
             Job::Extract { tarball, .. } => tarball,
             _ => unreachable!("not an extract task"),
+        }
+    }
+
+    /// The slot that goes back to its pool with this task.
+    pub(crate) fn network_task(&mut self) -> Option<*mut NetworkTask> {
+        match &mut self.job {
+            Job::PackageManifest { network, .. }
+            | Job::Extract {
+                source: TarballSource::Network(network),
+                ..
+            } => Some(&raw mut **network),
+            Job::Extract { .. }
+            | Job::GitClone { .. }
+            | Job::GitCommit { .. }
+            | Job::GitCheckout { .. } => None,
         }
     }
 
@@ -180,159 +189,65 @@ impl Task {
         // SAFETY: exclusive access — task runs on exactly one worker thread
         let this: &mut Task = unsafe { &mut *this_raw };
 
-        // Body of the switch; arms exit via `break 'body;` so the
-        // trailing block (patch + push + wake) and `Output::flush()` run
-        // unconditionally afterwards.
-        'body: {
-            match &mut this.job {
-                Job::PackageManifest {
-                    name,
-                    network,
-                    temp_dir,
-                    manifest,
-                } => {
-                    // Take ownership so the
-                    // multi-MB manifest buffer drops on every exit of this arm
-                    // instead of staying live on the NetworkTask until recycle.
-                    let mut body = core::mem::take(&mut network.response_buffer);
-
-                    let Some(metadata) = &network.response.metadata else {
-                        // Handle the case when metadata is null (e.g., network failure before receiving headers)
-                        let err = network
-                            .response
-                            .fail
-                            .map(crate::Error::from)
-                            .unwrap_or(crate::Error::HTTPError);
-                        this.log.add_error_fmt(
-                            None,
-                            Loc::EMPTY,
-                            format_args!(
-                                "{} downloading package manifest {}",
-                                err.name(),
-                                bstr::BStr::new(name.slice()),
-                            ),
-                        );
-                        this.err = Some(err);
-                        this.status = Status::Fail;
-                        break 'body;
-                    };
-
-                    let crate::network_task::Callback::PackageManifest {
-                        loaded_manifest,
-                        is_extended_manifest,
+        match &mut this.job {
+            Job::PackageManifest {
+                name,
+                network,
+                temp_dir,
+                manifest,
+            } => {
+                // Taken, so that the multi-MB buffer is freed here and not when the slot is reused.
+                let mut body = core::mem::take(&mut network.response_buffer);
+                *manifest = match (&network.response.metadata, &network.callback) {
+                    (
+                        Some(metadata),
+                        &crate::network_task::Callback::PackageManifest {
+                            is_extended_manifest,
+                            registry,
+                            ..
+                        },
+                    ) => npm::Registry::get_package_metadata(
                         registry,
-                        ..
-                    } = &mut network.callback
-                    else {
-                        unreachable!("`NetworkTask::for_manifest` built it");
-                    };
-
-                    let package_manifest = match npm::Registry::get_package_metadata(
-                        *registry,
                         metadata,
                         body.slice(),
                         &mut this.log,
                         name.slice(),
-                        loaded_manifest.take(),
                         *temp_dir,
-                        *is_extended_manifest,
-                    ) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            this.err = Some(err);
-                            this.status = Status::Fail;
-                            break 'body;
-                        }
-                    };
-
-                    match package_manifest {
-                        npm::registry::PackageVersionResponse::Fresh(result)
-                        | npm::registry::PackageVersionResponse::Cached(result) => {
-                            this.status = Status::Success;
-                            *manifest = Some(result);
-                            break 'body;
-                        }
-                        npm::registry::PackageVersionResponse::NotFound => {
-                            this.log.add_error_fmt(
-                                None,
-                                Loc::EMPTY,
-                                format_args!("404 - GET {}", bstr::BStr::new(name.slice())),
-                            );
-                            this.status = Status::Fail;
-                            break 'body;
-                        }
-                    }
-                }
-                Job::Extract {
-                    tarball,
-                    source: TarballSource::Network(network),
-                    data,
-                } => {
-                    // Streaming extraction never reaches this callback: the
-                    // HTTP thread drives `TarballStream.drain_task`, which
-                    // fills in `data`/`this.status` and pushes to
-                    // `resolve_tasks` directly from `TarballStream.finish()`.
-                    // This path is the buffered fallback — feature flag off,
-                    // non-2xx status, or the whole body arrived in a single
-                    // chunk before streaming could commit.
-
-                    // Take ownership so the
-                    // tarball body drops on every exit of this arm.
-                    let mut buffer = core::mem::take(&mut network.response_buffer);
-
-                    let result = match tarball.run(&mut this.log, buffer.slice()) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            this.err = Some(err);
-                            this.status = Status::Fail;
-                            break 'body;
-                        }
-                    };
-
-                    *data = Some(result);
-                    this.status = Status::Success;
-                }
-                Job::GitClone { .. } | Job::GitCheckout { .. } => {
-                    crate::git_runner::Finalize::run(this);
-                }
-                Job::GitCommit { .. } => {
-                    unreachable!("a commit lookup completes on the install thread (git_runner.rs)")
-                }
-                Job::Extract {
-                    tarball,
-                    source: TarballSource::Local { path, normalize },
-                    data,
-                } => {
-                    // `path` and `normalize` are computed on the main thread when the
-                    // task is enqueued. This callback runs on a ThreadPool worker and must not
-                    // read `manager.lockfile.packages` / `manager.lockfile.buffers.string_bytes`:
-                    // the main thread may reallocate those buffers concurrently while processing
-                    // other dependencies.
-
-                    let result =
-                        match read_and_extract(tarball, path.slice(), *normalize, &mut this.log) {
-                            Ok(v) => v,
-                            Err(err) => {
-                                this.err = Some(err);
-                                this.status = Status::Fail;
-                                break 'body;
-                            }
-                        };
-
-                    *data = Some(result);
-                    this.status = Status::Success;
-                }
+                        is_extended_manifest,
+                    ),
+                    _ => Err((network.response.fail).map_or(crate::Error::HTTPError, Into::into)),
+                };
+            }
+            // The buffered path. `TarballStream` completes a streamed download by itself.
+            Job::Extract {
+                tarball,
+                source: TarballSource::Network(network),
+                data,
+            } => {
+                let mut buffer = core::mem::take(&mut network.response_buffer);
+                *data = tarball.run(&mut this.log, buffer.slice());
+            }
+            Job::Extract {
+                tarball,
+                source: TarballSource::Local { path, normalize },
+                data,
+            } => *data = read_and_extract(tarball, path.slice(), *normalize, &mut this.log),
+            Job::GitClone { .. } | Job::GitCheckout { .. } => {
+                crate::git_runner::Finalize::run(this);
+            }
+            Job::GitCommit { .. } => {
+                unreachable!("a commit lookup completes on the install thread (git_runner.rs)")
             }
         }
 
-        // Runs after the switch on all paths.
-        if let (Status::Success, Job::GitCheckout { request, .. }) = (this.status, &mut this.job) {
-            if let Some(mut pt) = request.apply_patch_task.take() {
-                // `defer pt.deinit()` → Box<PatchTask> drops at end of this block
-                bun_core::handle_oom(pt.apply());
-                // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
-                let _ = (pt.callback.apply_mut().logger).print(Output::error_writer());
-            }
+        if let Job::GitCheckout {
+            request,
+            data: Ok(_),
+        } = &mut this.job
+            && let Some(mut pt) = request.apply_patch_task.take()
+        {
+            bun_core::handle_oom(pt.apply());
+            let _ = (pt.callback.apply_mut().logger).print(Output::error_writer());
         }
         INBOX.resolve_tasks.push(task);
         INBOX.wake();
@@ -366,39 +281,32 @@ fn read_and_extract(
     tarball.run(log, &bytes)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Status {
-    Waiting,
-    Success,
-    Fail,
-}
-
-/// What to do. The last field of each variant is the result, set if the task succeeds.
+/// What to do. The last field of each variant is the result, a failure until the task has run.
 pub(crate) enum Job {
     PackageManifest {
         name: StringOrTinyString,
         network: &'static mut NetworkTask,
         /// `None` if the manifest cache is off or cannot be written.
         temp_dir: Option<&'static TemporaryDirectory>,
-        manifest: Option<npm::PackageManifest>,
+        manifest: crate::Result<npm::PackageManifest>,
     },
     Extract {
         tarball: ExtractTarball,
         source: TarballSource,
-        data: Option<ExtractData>,
+        data: crate::Result<ExtractData>,
     },
     GitClone {
         request: GitCloneRequest,
-        repo: Fd,
+        repo: crate::Result<Fd>,
     },
     /// `git log`: resolve a committish of a cloned repository to a commit SHA.
     GitCommit {
         request: GitCommitRequest,
-        sha: Vec<u8>,
+        sha: Option<Vec<u8>>,
     },
     GitCheckout {
         request: GitCheckoutRequest,
-        data: Option<ExtractData>,
+        data: crate::Result<ExtractData>,
     },
 }
 

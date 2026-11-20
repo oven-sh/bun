@@ -720,12 +720,6 @@ pub mod registry {
         &pathname[..strings::index_of_char_usize(pathname, b'?').unwrap_or(pathname.len())]
     }
 
-    pub(crate) enum PackageVersionResponse {
-        Cached(PackageManifest),
-        Fresh(PackageManifest),
-        NotFound,
-    }
-
     /// How long a cached manifest stays fresh, in seconds. This is the `max-age` that
     /// registry.npmjs.org sends, the default without one, and the longest one that is honored.
     const MAX_MANIFEST_AGE: u32 = 300;
@@ -764,20 +758,11 @@ pub mod registry {
         body: &[u8],
         log: &mut bun_ast::Log,
         package_name: &[u8],
-        loaded_manifest: Option<PackageManifest>,
         temp_dir: Option<&'static TemporaryDirectory>,
         is_extended_manifest: bool,
-    ) -> Result<PackageVersionResponse, Error> {
-        match response.status_code() {
-            400 => return Err(crate::Error::BadRequest),
-            429 => return Err(crate::Error::TooManyRequests),
-            404 => return Ok(PackageVersionResponse::NotFound),
-            500..=599 => return Err(crate::Error::HTTPInternalServerError),
-            304 => match loaded_manifest {
-                Some(manifest) => return Ok(PackageVersionResponse::Cached(manifest)),
-                None => return Err(crate::Error::UnexpectedNotModified),
-            },
-            _ => {}
+    ) -> Result<PackageManifest, Error> {
+        if response.status_code() == 304 {
+            return Err(crate::Error::UnexpectedNotModified);
         }
 
         let newly_last_modified: &[u8] = response.header(b"last-modified").unwrap_or(b"");
@@ -804,7 +789,7 @@ pub mod registry {
                 package_manifest::Serializer::save_async(&package, registry, temp_dir);
             }
 
-            return Ok(PackageVersionResponse::Fresh(package));
+            return Ok(package);
         }
 
         Err(crate::Error::PackageFailedToParse)

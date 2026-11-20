@@ -100,8 +100,7 @@ impl PackageManager {
             response_buffer.reset();
             let response;
             (request, response) = request.send_sync_for_result(response_buffer)?;
-            let (_, retry) = download_outcome(&response, true);
-            if !retry || attempt >= self.options.max_retry_count {
+            if !download_outcome(&response, true).retry || attempt >= self.options.max_retry_count {
                 return response.into_metadata();
             }
             attempt += 1;

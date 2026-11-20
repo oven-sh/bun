@@ -1761,7 +1761,7 @@ impl Lockfile {
             return Ok(());
         }
         // Otherwise the command loading this lockfile would dedupe its own fetch of a manifest this pass failed to get.
-        manager.network_dedupe_map.clear();
+        manager.manifest_requests.clear();
 
         let cache_ctx = manager.manifest_disk_cache_ctx();
         // Lockfile fields are taken from `self` (== `manager.lockfile`), never via `manager`.

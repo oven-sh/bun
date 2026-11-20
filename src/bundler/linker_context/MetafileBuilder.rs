@@ -361,11 +361,7 @@ pub(crate) fn generate(c: &LinkerContext, chunks: &[Chunk]) -> crate::Result<Box
                 }
 
                 // Add "external": true for external imports
-                if record
-                    .flags
-                    .contains(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
-                    || !record.source_index.is_valid()
-                {
+                if !record.source_index.is_valid() {
                     j.push_static(b",\n          \"external\": true");
                 }
 

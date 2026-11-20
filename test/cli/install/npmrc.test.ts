@@ -6726,7 +6726,7 @@ describe.concurrent("registry client TLS credential flows", () => {
     };
     const port = (server.address() as import("node:net").AddressInfo).port;
     const url = `https://localhost:${port}/`;
-    using dir = tempDir("npmrc-mtls-review", {
+    const files = {
       "package.json": JSON.stringify({
         name: "app",
         version: "1.0.0",
@@ -6742,7 +6742,11 @@ describe.concurrent("registry client TLS credential flows", () => {
       "client.pem": tls.cert,
       "client.key": tls.key,
       "index.js": 'console.log(require("pkg"));',
-    });
+    };
+    using dir =
+      kind === "auto-install"
+        ? autoInstallTempDir("npmrc-mtls-review", files)
+        : tempDir("npmrc-mtls-review", files);
     const args =
       kind === "registry-userinfo"
         ? ["pm", "view", "pkg", "version"]

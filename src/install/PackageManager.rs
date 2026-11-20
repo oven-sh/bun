@@ -1087,20 +1087,20 @@ impl PackageManager {
         let mut config = http::ssl_config::SSLConfig::default();
         config.requires_custom_request_ctx = true;
         if !registry.certfile.is_empty() {
-            config.cert_file_name = bun_core::dupe_z(&registry.certfile);
+            config.cert_file_name = Some(bun_core::SensitiveCString::new(&registry.certfile));
         }
         if !registry.keyfile.is_empty() {
-            config.key_file_name = bun_core::dupe_z(&registry.keyfile);
+            config.key_file_name = Some(bun_core::SensitiveCString::new(&registry.keyfile));
         }
         if !self.options.ca_file_name.is_empty() {
-            config.ca_file_name = bun_core::dupe_z(self.options.ca_file_name);
+            config.ca_file_name = Some(bun_core::SensitiveCString::new(self.options.ca_file_name));
         }
         if !self.options.ca.is_empty() {
             config.ca = Some(
                 self.options
                     .ca
                     .iter()
-                    .map(|ca| bun_core::dupe_z(ca))
+                    .map(|ca| bun_core::SensitiveCString::new(ca))
                     .collect(),
             );
         }
@@ -1129,7 +1129,7 @@ impl PackageManager {
             self.proxy_settings(),
             http::FetchRedirect::Follow,
         );
-        req.client.tls_props = tls_props;
+        req.set_tls_props(tls_props);
         req.client.flags.reject_unauthorized = self.tls_reject_unauthorized();
         req.client.flags.redirect_credentials = http::RedirectCredentialsPolicy::HttpsUpgrade;
         req

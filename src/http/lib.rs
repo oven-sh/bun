@@ -2510,8 +2510,6 @@ impl<'a> HTTPClient<'a> {
             return self.fail(crate::Error::TooManyRedirects);
         }
         self.strip_redirect_tls_identity();
-        self.state.reset();
-        bun_core::scoped_log!(fetch, "doRedirect state reset");
         // also reset proxy to redirect
         self.flags.proxy_tunneling = false;
         self.flags.protocol = Protocol::Http1_1;
@@ -3916,7 +3914,6 @@ impl InFlightRequest {
             return self.fail(crate::Error::TooManyRedirects);
         }
         self.strip_redirect_tls_identity();
-        self.state.reset();
         self.flags.proxy_tunneling = false;
         self.flags.protocol = Protocol::Http1_1;
         self.reevaluate_proxy_for_redirect();
@@ -4637,7 +4634,8 @@ impl<'a> HTTPClient<'a> {
                 }
                 self.state.flags.strip_tls_identity_on_redirect = !hop.same_origin
                     && (!hop.https_upgrade
-                        || self.flags.redirect_credentials == RedirectCredentialsPolicy::SameOrigin)
+                        || self.flags.redirect_credentials
+                            == RedirectCredentialsPolicy::SameOrigin)
                     && self.tls_props.is_some();
                 self.state.flags.is_redirect_pending = true;
                 if self.method.has_request_body() {

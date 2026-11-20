@@ -1011,7 +1011,7 @@ fn registry_get(
     }
 
     let mut response_buf = MutableString::init(64 * 1024)?;
-    let display_url = url.href.to_vec();
+    let display_url = url.href;
     let tls_props = pm
         .options
         .tarball_credentials(scope, &url, normalized)

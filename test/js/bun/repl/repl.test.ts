@@ -698,6 +698,17 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test("require.resolve.paths answers for the REPL's module without its require.resolve", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        `const paths = require.resolve.paths; paths("./x").length`,
+        `paths("./x")[0] === require("path").dirname(module.filename)`,
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["1", "true"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("global objects", () => {

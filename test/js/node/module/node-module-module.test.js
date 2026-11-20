@@ -1271,6 +1271,386 @@ console.log("survived", require("./late.js"));`,
     expect(Module._resolveLookupPaths("bar", { paths: ["a"] })).toEqual(["a"]);
   });
 
+  describe("require.resolve.paths", () => {
+    // Calls the `paths` of `own` in every way, with a bare and with a relative request, and
+    // answers [the first folder, the folders] of each call, relative to `root`.
+    const callShapes = `
+      const path = require("node:path");
+      exports.callShapes = (own, other, root) => {
+        const where = list => list.map(folder => path.relative(root, folder).split(path.sep).join("/") || ".");
+        const { paths } = own.resolve;
+        // vitest's vm pools do this with the resolve of a createRequire().
+        const copied = id => other.resolve(id);
+        copied.paths = own.resolve.paths;
+        const shapes = {
+          method: request => own.resolve.paths(request),
+          destructured: request => paths(request),
+          callback: request => [request].map(own.resolve.paths)[0],
+          copied: request => copied.paths(request),
+          calledOnOtherResolve: request => own.resolve.paths.call(other.resolve, request),
+          reflectApply: request => Reflect.apply(own.resolve.paths, undefined, [request]),
+          bound: request => own.resolve.paths.bind(other.resolve)(request),
+        };
+        const answers = {};
+        for (const [shape, call] of Object.entries(shapes)) answers[shape] = [where(call("pkg"))[0], where(call("./x"))];
+        return answers;
+      };
+    `;
+    const answersFrom = folder => {
+      const answer = [folder === "." ? "node_modules" : `${folder}/node_modules`, [folder]];
+      return {
+        method: answer,
+        destructured: answer,
+        callback: answer,
+        copied: answer,
+        calledOnOtherResolve: answer,
+        reflectApply: answer,
+        bound: answer,
+      };
+    };
+
+    test("answers for the module of its require, however it is called", async () => {
+      using dir = tempDir("require-resolve-paths-cjs", {
+        "shapes.cjs": callShapes,
+        "main.cjs": `
+          const path = require("node:path");
+          const Module = require("node:module");
+          const { callShapes } = require("./shapes.cjs");
+          const other = Module.createRequire(path.join(__dirname, "other", "x.js"));
+          const compiled = new Module(path.join(__dirname, "compiled", "c.js"));
+          compiled.filename = compiled.id;
+          compiled.paths = Module._nodeModulePaths(path.dirname(compiled.id));
+          compiled._compile("module.exports = require;", compiled.id);
+          console.log(JSON.stringify({
+            file: callShapes(require, other, __dirname),
+            createRequire: callShapes(other, require, __dirname),
+            compile: callShapes(compiled.exports, other, __dirname),
+          }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        file: answersFrom("."),
+        createRequire: answersFrom("other"),
+        compile: answersFrom("compiled"),
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("answers for an ES module's createRequire() and import.meta.require, however it is called", async () => {
+      using dir = tempDir("require-resolve-paths-esm", {
+        "shapes.cjs": callShapes,
+        "main.mjs": `
+          import { createRequire } from "node:module";
+          import path from "node:path";
+          const made = createRequire(import.meta.url);
+          const { callShapes } = made("./shapes.cjs");
+          const other = createRequire(path.join(import.meta.dirname, "other", "x.js"));
+          console.log(JSON.stringify({
+            createRequire: callShapes(made, other, import.meta.dirname),
+            importMetaRequire: callShapes(import.meta.require, other, import.meta.dirname),
+          }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ createRequire: answersFrom("."), importMetaRequire: answersFrom(".") });
+      expect(exitCode).toBe(0);
+    });
+
+    test("answers for the module of `bun -e` without its require.resolve", async () => {
+      using dir = tempDir("require-resolve-paths-eval", {});
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const path = require("node:path");
+           const where = list => list.map(folder => path.relative(process.cwd(), folder) || ".");
+           const { paths } = require.resolve;
+           console.log(JSON.stringify([where(paths("./x")), where(["./x"].map(require.resolve.paths)[0])]));`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([["."], ["."]]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("is kept on its require.resolve once it is read, one for each require", async () => {
+      using dir = tempDir("require-resolve-paths-shape", {
+        "main.cjs": `
+          const path = require("node:path");
+          const { createRequire, globalPaths } = require("node:module");
+          const where = list => list.map(folder => path.relative(__dirname, folder).split(path.sep).join("/") || ".");
+          const fresh = name => createRequire(path.join(__dirname, name, "x.js"));
+          const describeOwn = resolve => {
+            const d = Object.getOwnPropertyDescriptor(resolve, "paths");
+            return d && { value: typeof d.value, writable: d.writable, enumerable: d.enumerable, configurable: d.configurable };
+          };
+          const collect = globalThis.gc ?? (() => Bun.gc(true));
+          const out = {};
+
+          const read = fresh("read");
+          out.sameOnEveryRead = read.resolve.paths === read.resolve.paths;
+          out.ownOnceRead = [describeOwn(read.resolve), Object.keys(read.resolve)];
+          collect();
+          out.sameAfterCollection = read.resolve.paths === Object.getOwnPropertyDescriptor(read.resolve, "paths").value;
+          out.oneForEachRequire = read.resolve.paths !== fresh("read").resolve.paths;
+          out.assignCopiesOnceRead = where(Object.assign(id => id, read.resolve).paths("./x"));
+
+          const stored = fresh("stored");
+          stored.resolve.paths = () => "stored";
+          out.stored = [stored.resolve.paths("./x"), describeOwn(stored.resolve)];
+
+          const defined = fresh("defined");
+          Object.defineProperty(defined.resolve, "paths", { value: "defined", configurable: true });
+          out.defined = defined.resolve.paths;
+
+          const frozen = fresh("frozen");
+          Object.freeze(frozen.resolve);
+          out.frozen = [where(frozen.resolve.paths("./x")), Object.isFrozen(frozen.resolve)];
+          try {
+            // A class body is strict code.
+            new (class {
+              constructor() {
+                frozen.resolve.paths = 1;
+              }
+            })();
+            out.frozenRefusesAStrictStore = false;
+          } catch (error) {
+            out.frozenRefusesAStrictStore = error instanceof TypeError;
+          }
+
+          // Reflect.get() names a receiver that the read does not go through.
+          const named = fresh("named");
+          Object.defineProperty(named.resolve, "paths", { value: "kept" });
+          Reflect.get(fresh("reader").resolve, "paths", named.resolve);
+          Reflect.get(fresh("reader").resolve, "paths", named);
+          out.namedReceiverIsUntouched = [named.resolve.paths, Object.hasOwn(named, "paths")];
+
+          out.boundResolveHasNone = typeof fresh("bound").resolve.bind(null).paths;
+          out.aboveResolveHasNone = typeof Object.getPrototypeOf(require.resolve).paths;
+
+          const kept = Array.from({ length: 500 }, (_, i) => fresh("kept" + i).resolve.paths);
+          collect();
+          out.eachOutlivesItsRequire = kept.every((paths, i) => where(paths("./x"))[0] === "kept" + i);
+
+          const { paths } = require.resolve;
+          out.name = paths.name;
+          out.length = paths.length;
+          out.builtin = [paths("fs"), paths("node:fs")];
+          const attempt = fn => {
+            try {
+              return fn();
+            } catch (error) {
+              return error.name + " " + error.code + ": " + error.message;
+            }
+          };
+          out.notAString = [attempt(() => paths()), attempt(() => paths(1))];
+
+          // The function holds the module and not the name of its file.
+          out.beforeRename = where(paths("./x"));
+          module.filename = path.join(__dirname, "renamed", "file.js");
+          out.afterRename = where(paths("./x"));
+
+          const nameless = new (require("node:module"))("nameless");
+          nameless._compile("module.exports = require;", "nameless.js");
+          out.withoutFileName = [
+            nameless.filename,
+            nameless.exports.resolve.paths("./x"),
+            // Node.js lists its global folders for a bare request.
+            nameless.exports.resolve.paths("pkg").filter(folder => !globalPaths.includes(folder)),
+          ];
+
+          console.log(JSON.stringify(out));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const ownData = { value: "function", writable: true, enumerable: true, configurable: true };
+      // What `node --expose-gc main.cjs` prints too (v26.3.0).
+      expect(JSON.parse(stdout)).toEqual({
+        sameOnEveryRead: true,
+        ownOnceRead: [ownData, ["paths"]],
+        sameAfterCollection: true,
+        oneForEachRequire: true,
+        assignCopiesOnceRead: ["read"],
+        stored: ["stored", ownData],
+        defined: "defined",
+        frozen: [["frozen"], true],
+        frozenRefusesAStrictStore: true,
+        namedReceiverIsUntouched: ["kept", false],
+        boundResolveHasNone: "undefined",
+        aboveResolveHasNone: "undefined",
+        eachOutlivesItsRequire: true,
+        name: "paths",
+        length: 1,
+        builtin: [null, null],
+        notAString: [
+          'TypeError ERR_INVALID_ARG_TYPE: The "request" argument must be of type string. Received undefined',
+          'TypeError ERR_INVALID_ARG_TYPE: The "request" argument must be of type string. Received type number (1)',
+        ],
+        beforeRename: ["."],
+        afterRename: ["renamed"],
+        withoutFileName: [null, ["."], []],
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // The DFG and the FTL hand a getter the global object of the code they have inlined: oven-sh/WebKit#762, #44518.
+    test("is a function of the module's realm, whatever realm the reader or the receiver is of", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const vm = require("node:vm");
+           const read = vm.runInNewContext("(function (r) { return r.paths; })");
+           // Nothing is stored on a frozen function, so every read calls the getter.
+           const resolve = Object.freeze(require("node:module").createRequire(__filename).resolve);
+           let paths;
+           for (let i = 0; i < 5_000; i++) paths = read(resolve);
+           // A function of the context that is bound to the module is a receiver that the getter answers.
+           const bound = vm.runInNewContext("(function () {}).bind(m)", { m: module });
+           const ofBound = Reflect.get(require.resolve, "paths", bound);
+           const list = ofBound("./x");
+           console.log(JSON.stringify({
+             read: [typeof paths, paths("./x").length, Object.getPrototypeOf(paths) === Function.prototype],
+             receiver: [Object.getPrototypeOf(ofBound) === Function.prototype, list instanceof Array, list.length],
+           }));`,
+        ],
+        // The FTL compiles the loop on the main thread after about a thousand turns.
+        env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0", BUN_JSC_jitPolicyScale: "0.01" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ read: ["function", 1, true], receiver: [true, true, 1] });
+      expect(exitCode).toBe(0);
+    });
+
+    test("is made for a module when something first asks for it", async () => {
+      const count = 100;
+      const files = {};
+      for (let i = 0; i <= count; i++) {
+        files[`plain/m${i}.cjs`] = `module.exports = ${i};`;
+        files[`reads/m${i}.cjs`] = `module.exports = typeof require.resolve.paths;`;
+      }
+      using dir = tempDir("require-resolve-paths-heap", {
+        ...files,
+        "main.cjs": `
+          const { heapStats } = require("bun:jsc");
+          const functions = () => {
+            Bun.gc(true);
+            return heapStats().objectTypeCounts.Function;
+          };
+          // Function objects that stay for each module, after the first of its kind has made what all share.
+          const functionsForEach = kind => {
+            require("./" + kind + "/m0.cjs");
+            const before = functions();
+            for (let i = 1; i <= ${count}; i++) require("./" + kind + "/m" + i + ".cjs");
+            return Math.round((functions() - before) / ${count});
+          };
+          console.log(JSON.stringify({ plain: functionsForEach("plain"), reads: functionsForEach("reads") }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      // `require` and `require.resolve`, and `paths` for the modules that read it.
+      expect(JSON.parse(stdout)).toEqual({ plain: 2, reads: 3 });
+      expect(exitCode).toBe(0);
+    });
+
+    // In Node.js `paths` is an own property of each require.resolve from the start. Here the first read makes it one.
+    // Each row holds what Node.js does and fails until then. A row that starts to pass becomes a plain test.
+    describe("as in Node.js, before its first read", () => {
+      const fresh = name => createRequire(path.join(import.meta.dir, name, "x.js")).resolve;
+      const folderOf = name => [path.join(import.meta.dir, name)];
+
+      test.failing("is an own data property", () => {
+        expect(Object.getOwnPropertyDescriptor(fresh("own"), "paths")).toEqual({
+          value: expect.any(Function),
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+      });
+
+      // mock.method() of node:test, vi.spyOn() of vitest and stub() of sinon look for a function in this way.
+      test.failing("a spy library finds a function in the first descriptor of it, on the object or above", () => {
+        let holder = fresh("spied");
+        while (!Object.hasOwn(holder, "paths")) holder = Object.getPrototypeOf(holder);
+        expect(Object.getOwnPropertyDescriptor(holder, "paths").value).toBeFunction();
+      });
+
+      test.failing("an object that inherits from the require.resolve reads it", () => {
+        expect(Object.create(fresh("heir")).paths("./x")).toEqual(folderOf("heir"));
+      });
+
+      test.failing("a Proxy of the require.resolve reads it", () => {
+        expect(new Proxy(fresh("proxy"), {}).paths("./x")).toEqual(folderOf("proxy"));
+      });
+
+      test.failing("a Proxy that binds what it reads to its target reads it", () => {
+        const proxy = new Proxy(fresh("binding-proxy"), {
+          get(target, key, receiver) {
+            const value = Reflect.get(target, key, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        expect(proxy.paths("./x")).toEqual(folderOf("binding-proxy"));
+      });
+
+      test.failing("Reflect.get() answers for the require.resolve that it reads, whatever the receiver", () => {
+        expect(Reflect.get(fresh("read"), "paths", fresh("receiver"))("./x")).toEqual(folderOf("read"));
+      });
+
+      test.failing("a frozen require.resolve has one function", () => {
+        const resolve = Object.freeze(fresh("frozen"));
+        expect(resolve.paths).toBe(resolve.paths);
+      });
+
+      test.failing("a sloppy store on a frozen require.resolve is ignored, and Reflect.set() answers false", () => {
+        const resolve = Object.freeze(fresh("frozen-store"));
+        new Function("resolve", "resolve.paths = 1;")(resolve);
+        expect(Reflect.set(resolve, "paths", 1)).toBe(false);
+      });
+
+      test.failing("a store on a require.resolve that is not extensible replaces it", () => {
+        const resolve = Object.preventExtensions(fresh("not-extensible"));
+        resolve.paths = 1;
+        expect(resolve.paths).toBe(1);
+      });
+    });
+  });
+
   test("Module.findSourceMap doesn't throw", () => {
     expect(Module.findSourceMap("foo")).toEqual(undefined);
   });

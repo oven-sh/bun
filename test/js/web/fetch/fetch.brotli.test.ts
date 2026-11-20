@@ -34,17 +34,17 @@ test("fetch brotli response works", async () => {
     },
   });
   const [firstText, secondText, { headers }] = await Promise.all([
-    fetch(`${server.url}/logo.svg`, {
+    fetch(new URL("/logo.svg", server.url), {
       headers: {
         "Accept-Encoding": "br",
       },
     }).then(res => res.text()),
-    fetch(`${server.url}/logo.svg`, {
+    fetch(new URL("/logo.svg", server.url), {
       headers: {
         "Accept-Encoding": "gzip",
       },
     }).then(res => res.text()),
-    fetch(`${server.url}/logo.svg`, {
+    fetch(new URL("/logo.svg", server.url), {
       headers: {
         "Accept-Encoding": "br",
       },

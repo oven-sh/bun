@@ -1,0 +1,28 @@
+{
+  "_id": "bundled-deep-host",
+  "name": "bundled-deep-host",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-deep-host",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "bundled-shipped-inner": "1.0.0",
+        "no-deps": "^1.0.0"
+      },
+      "bundleDependencies": [
+        "bundled-shipped-inner",
+        "no-deps"
+      ],
+      "_id": "bundled-deep-host@1.0.0",
+      "dist": {
+        "integrity": "sha512-Zj77G+aTczr7BxzXFyxXWO/UWmyli7SW37dhUBSlx29QkdZBs+FUdggzAkvb2Kme4ZKS2TIEndgSXzLRkz55HQ==",
+        "shasum": "12487b1716a9dd3216bf1b2927c10c6be87263cb",
+        "tarball": "http://localhost:4873/bundled-deep-host/-/bundled-deep-host-1.0.0.tgz"
+      }
+    }
+  }
+}

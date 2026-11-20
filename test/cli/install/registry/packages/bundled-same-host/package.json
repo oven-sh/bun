@@ -1,0 +1,26 @@
+{
+  "_id": "bundled-same-host",
+  "name": "bundled-same-host",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-same-host",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "no-deps": "1.0.0"
+      },
+      "bundleDependencies": [
+        "no-deps"
+      ],
+      "_id": "bundled-same-host@1.0.0",
+      "dist": {
+        "integrity": "sha512-yuSaRdnNWd46Vq3WGume4qaszYjsFHCOcGwVGPXS45+nSiEPOhlg0g8ojKBSknGN29j25+5vGaeDuGSk0QaLdw==",
+        "shasum": "08f49e85b914685d35fc9f573c63e18f2c0aa1d8",
+        "tarball": "http://localhost:4873/bundled-same-host/-/bundled-same-host-1.0.0.tgz"
+      }
+    }
+  }
+}

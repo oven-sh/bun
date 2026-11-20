@@ -1,0 +1,28 @@
+{
+  "_id": "bundled-alias-host",
+  "name": "bundled-alias-host",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-alias-host",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "bundled-alias-inner": "1.0.0",
+        "no-deps-cjs": "npm:no-deps@^1.0.0"
+      },
+      "bundleDependencies": [
+        "bundled-alias-inner",
+        "no-deps-cjs"
+      ],
+      "_id": "bundled-alias-host@1.0.0",
+      "dist": {
+        "integrity": "sha512-DL/pOa5bdtNJ4imIGWIsBJu+zT9AnEIndtaJHd2K7Ejh6EV/FhI0aLkiBxx7FxR94+uMxJ8NfTVDntt6r4QSCg==",
+        "shasum": "cb637d09f71cebd1339ee6f903addbe6f041a8c8",
+        "tarball": "http://localhost:4873/bundled-alias-host/-/bundled-alias-host-1.0.0.tgz"
+      }
+    }
+  }
+}

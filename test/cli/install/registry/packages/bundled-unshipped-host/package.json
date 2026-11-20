@@ -1,0 +1,28 @@
+{
+  "_id": "bundled-unshipped-host",
+  "name": "bundled-unshipped-host",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-unshipped-host",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "no-deps": "1.0.0",
+        "a-dep": "^1.0.0"
+      },
+      "bundleDependencies": [
+        "no-deps",
+        "a-dep"
+      ],
+      "_id": "bundled-unshipped-host@1.0.0",
+      "dist": {
+        "integrity": "sha512-+nr6Q+1dtk7ucsUzDfpeCTkRgEotBsnjoqdaJBXzXsrOwsW6X8VnmDxqymKSrnrMWA9D4X8cQXL8vrHnl4PjiA==",
+        "shasum": "be0bbfa611a94545674d9e6f6710c3fa9e5b7695",
+        "tarball": "http://localhost:4873/bundled-unshipped-host/-/bundled-unshipped-host-1.0.0.tgz"
+      }
+    }
+  }
+}

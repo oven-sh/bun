@@ -1,0 +1,23 @@
+{
+  "_id": "bundled-alias-inner",
+  "name": "bundled-alias-inner",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-alias-inner",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "a-dep-cjs": "npm:a-dep@^1.0.0"
+      },
+      "_id": "bundled-alias-inner@1.0.0",
+      "dist": {
+        "integrity": "sha512-XXUZ2WJt1ltTfTFCRQP4U9w1Xt7C1PtsaFjYYoFy7wMOQeljtuvhwC9hXIJBUDx/USt6IukmdLH5vGZIS7WKAQ==",
+        "shasum": "90c986c770cd20b61a82461f2bb6fcbf07fccc27",
+        "tarball": "http://localhost:4873/bundled-alias-inner/-/bundled-alias-inner-1.0.0.tgz"
+      }
+    }
+  }
+}

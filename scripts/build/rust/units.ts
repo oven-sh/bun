@@ -504,8 +504,9 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   if (!isHost) args.push("--target", unit.platform);
   const linker = isHost ? ctx.linker.host : ctx.linker.target;
   if (linker !== undefined) args.push("-C", `linker=${linker}`);
-  // cargo: incremental for path packages only, and never when CI is set.
-  if (p.incremental && local && !cfg.ci)
+  // Opt-in, for path packages only and never on CI. Cargo's dev profile
+  // enables incremental by default even when the build option is off.
+  if (cfg.rustIncremental && p.incremental && local && !cfg.ci)
     args.push("-C", `incremental=${join(graph.dir, unit.platform, "incremental")}`);
   const strip = stripArg(p.strip);
   if (strip !== undefined) args.push("-C", `strip=${strip}`);

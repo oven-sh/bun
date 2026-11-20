@@ -1196,11 +1196,39 @@ it.skipIf(!isASAN)("stops the file watcher thread before the VM is freed at exit
   expect(await Promise.all([run(), run(), run(), run()])).toEqual([0, 0, 0, 0]);
 });
 
-// --hot and --watch intern a module's transpiled text in the VM.
-it("throws ERR_STRING_TOO_LONG for a module whose transpiled text exceeds the string limit", async () => {
+// --hot and --watch intern a module's transpiled text in the VM, in the width it was printed in: Latin-1, or UTF-16
+// when a regex literal has a character above U+00FF. A module with a prefix prints its literal's source when it runs.
+// The limit is 65,536 code units: the UTF-16 text of the second case is about 100,000 of them, and that of the third
+// about 40,000, which is 80,000 bytes.
+it.each([
+  [
+    "throws ERR_STRING_TOO_LONG for a module whose transpiled text exceeds the string limit",
+    "",
+    200 * 1024,
+    `{"big":"caught:ERR_STRING_TOO_LONG","small":2}\n`,
+  ],
+  [
+    "throws ERR_STRING_TOO_LONG for a module whose UTF-16 transpiled text exceeds the string limit",
+    "console.log(/中/.source);\n",
+    100_000,
+    `中\n{"big":"caught:ERR_STRING_TOO_LONG","small":2}\n`,
+  ],
+  [
+    "loads a module whose UTF-16 transpiled text is below the string limit",
+    "console.log(/中/.source);\n",
+    40_000,
+    `中\n中\n{"big":"loaded:40000","small":2}\n`,
+  ],
+  [
+    "loads a module whose Latin-1 transpiled text is below the string limit",
+    "console.log(/é/.source);\n",
+    40_000,
+    `é\né\n{"big":"loaded:40000","small":2}\n`,
+  ],
+])("%s", async (_, prefix, length, expected) => {
   using dir = tempDir("hot-string-limit", {
-    "big.cjs": `const s = ${JSON.stringify(Buffer.alloc(200 * 1024, "x").toString())};\nmodule.exports = { len: s.length };\n`,
-    "small.cjs": `module.exports = { ok: 2 };\n`,
+    "big.cjs": `${prefix}const s = ${JSON.stringify(Buffer.alloc(length, "x").toString())};\nmodule.exports = { len: s.length };\n`,
+    "small.cjs": `${prefix}module.exports = { ok: 2 };\n`,
     "entry.cjs": `
       let big;
       try {
@@ -1220,11 +1248,7 @@ it("throws ERR_STRING_TOO_LONG for a module whose transpiled text exceeds the st
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: JSON.stringify({ big: "caught:ERR_STRING_TOO_LONG", small: 2 }) + "\n",
-    stderr: "",
-    exitCode: 0,
-  });
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
 });
 
 it.each(["--hot", "--watch"])("%s keeps running and reloading after uncaught exceptions", async flag => {

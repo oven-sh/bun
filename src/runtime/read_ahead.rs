@@ -16,7 +16,7 @@ use bun_bundler::transpiler::{AlreadyBundled, ParseOptions, Transpiler};
 use bun_collections::HashMap;
 use bun_core::{MutableString, String, strings};
 use bun_js_parser::lower::defer_requires::{LOADS, has_react_compiler, is_in_known_package};
-use bun_js_printer::{BufferPrinter, BufferWriter};
+use bun_js_printer::RuntimePrinter;
 use bun_jsc::resolved_source::{Bytecode, PrintedAst, Tag};
 use bun_jsc::runtime_transpiler_cache::{ModuleType as CacheModuleType, RuntimeTranspilerCache};
 use bun_jsc::virtual_machine::{SharedResolution, VirtualMachine};
@@ -170,7 +170,7 @@ static EXPECTED: Guarded<Vec<Job>> = Guarded::new(Vec::new());
 
 struct Tools {
     transpiler: Box<Transpiler<'static>>,
-    printer: BufferPrinter,
+    printer: RuntimePrinter,
 }
 
 thread_local! {
@@ -384,7 +384,7 @@ impl ReadAhead {
         TOOLS.with_borrow_mut(|tools| {
             then(tools.get_or_insert_with(|| Tools {
                 transpiler: copy_of(&self.template.0),
-                printer: BufferPrinter::init(BufferWriter::init()),
+                printer: RuntimePrinter::new(),
             }))
         })
     }
@@ -482,7 +482,7 @@ impl ReadAhead {
                     drop(state);
                     TOOLS.with_borrow_mut(|tools| {
                         if let Some(tools) = tools {
-                            tools.printer = BufferPrinter::init(BufferWriter::init());
+                            tools.printer = RuntimePrinter::new();
                         }
                     });
                     bun_jsc::cached_bytecode::destroy_bytecode_cache_vm();
@@ -670,15 +670,15 @@ fn transpile(
                 .ok()?;
             let printed = PrintedAst::new(&parsed.ast);
             let chunk = Cell::new(None);
-            tools.printer.ctx.reset();
+            tools.printer.reset();
             let format = bun_js_printer::Format::EsmAscii;
             transpiler
                 .print_with_source_map(&arena, parsed, &mut tools.printer, format, &chunk, None)
                 .ok()?;
-            let code = tools.printer.ctx.get_written();
+            let code = tools.printer.printed();
             let mappings = chunk.take().map_or_else(Vec::new, |it| it.buffer.list);
             cache.put(code, &mappings, None).ok()?;
-            (String::clone_latin1(code), printed, mappings)
+            (code.to_string(), printed, mappings)
         }
     };
     if code.is_utf16() || printed.depends_on_more_than_source() {

@@ -62,7 +62,7 @@ pub(crate) type OnUnhandledRejection = fn(&VirtualMachine, &JSGlobalObject, JSVa
 pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, crate::Strong>;
 pub type ExceptionList = Vec<crate::exception_list::JsException>;
 
-/// Error for bytes that aren't interned yet and are longer than [`bun_core::String::max_length`].
+/// Error for text that isn't interned yet and has more code units than a string of its width holds, at most [`bun_core::String::max_length`].
 #[derive(Debug)]
 pub struct StringTooLong;
 
@@ -316,7 +316,7 @@ pub struct VirtualMachine {
     pub(crate) regular_event_loop: EventLoop,
     event_loop: Cell<*const EventLoop>, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
 
-    /// See [`Self::ref_counted_string`]. By hash.
+    /// See [`Self::ref_counted_string`]. 8-bit or 16-bit, by a hash of the bytes seeded with the width.
     ref_strings: JsCell<
         bun_collections::HashMap<u32, bun_core::WTFString, bun_collections::IdentityContext<u32>>,
     >,
@@ -3613,11 +3613,13 @@ impl bun_js_printer::OnSourceMapChunk for RuntimeSourceMapHandler<'_> {
         &self,
         chunk: bun_sourcemap::Chunk,
         source: &bun_ast::Source,
-        output: &mut bun_core::MutableString,
+        output: bun_js_printer::PrintedOutput<'_>,
         module_info: Option<&bun_js_printer::analyze_transpiled_module::ModuleInfo>,
     ) -> bun_js_printer::Result<()> {
-        self.cache
-            .put(&output.list, &chunk.buffer.list, module_info)?;
+        // `None`: a UTF-8 writer, which no loader prints with.
+        if let Some(printed) = output.printed() {
+            self.cache.put(printed, &chunk.buffer.list, module_info)?;
+        }
 
         // Take the inline-sourcemap path only when a
         // debugger is present AND it is *not* in `.connect` mode — `.connect`
@@ -3642,7 +3644,7 @@ impl RuntimeSourceMapHandler<'_> {
         &self,
         chunk: bun_sourcemap::Chunk,
         source: &bun_ast::Source,
-        output: &mut bun_core::MutableString,
+        mut output: bun_js_printer::PrintedOutput<'_>,
     ) -> bun_js_printer::Result<()> {
         let mut temp_json_buffer = bun_core::MutableString::init_empty();
         // `defer temp_json_buffer.deinit()` → Drop.
@@ -3651,25 +3653,22 @@ impl RuntimeSourceMapHandler<'_> {
             .map_err(|_| bun_js_printer::Error::WriteFailed)?;
         const SOURCE_MAP_URL_PREFIX_START: &[u8] =
             b"//# sourceMappingURL=data:application/json;base64,";
-        // TODO: do we need to %-encode the path?
-        let source_url_len = source.path.text.len();
         const SOURCE_MAPPING_URL: &[u8] = b"\n//# sourceURL=";
-        let prefix_len =
-            SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
         self.source_mappings
             .put_mappings(source, chunk.buffer)
             .map_err(|_| bun_js_printer::Error::WriteFailed)?;
 
-        let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());
-        output.grow_if_needed(encode_len + prefix_len + 2)?;
-        output.append_assume_capacity(b"\n");
-        output.append_assume_capacity(SOURCE_MAP_URL_PREFIX_START);
-        bun_base64::encode_append(&mut output.list, &temp_json_buffer.list);
-        output.append_assume_capacity(SOURCE_MAPPING_URL);
+        let source_map_json = temp_json_buffer.list.as_slice();
+        output.append_latin1(b"\n");
+        output.append_latin1(SOURCE_MAP_URL_PREFIX_START);
+        output.append_latin1_with(bun_base64::encode_len(source_map_json), |encoded| {
+            bun_base64::encode(encoded, source_map_json)
+        });
+        output.append_latin1(SOURCE_MAPPING_URL);
         // TODO: do we need to %-encode the path?
-        output.append_assume_capacity(source.path.text);
-        output.append(b"\n")?;
+        output.append_latin1(source.path.text);
+        output.append_latin1(b"\n");
         Ok(())
     }
 }
@@ -4589,22 +4588,24 @@ impl VirtualMachine {
         (!in_standalone_executable || runs_tests_in_place) && !path.starts_with(b"data:")
     }
 
-    /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
+    /// Builds a `ResolvedSource` backed by a ref-counted copy of `code`, in its width, interned in the VM's ref-string map.
     pub fn ref_counted_resolved_source(
         &self,
         ast: crate::resolved_source::PrintedAst,
-        code: &[u8],
+        code: bun_js_printer::Printed<'_>,
         specifier: &bun_core::String,
         source_url: &[u8],
     ) -> Result<ResolvedSource, StringTooLong> {
+        let bytes = code.byte_slice();
         // refCountedString will panic if the code is empty
-        if code.is_empty() {
+        if bytes.is_empty() {
             return Ok(ResolvedSource {
                 source_url: specifier.create_if_different(source_url),
                 ..ResolvedSource::printed(ast, Default::default())
             });
         }
-        let source = bun_core::String::adopt_wtf_impl(self.ref_counted_string(code)?.into_raw());
+        let source = self.intern_ref_string(bytes, code.is_utf16())?;
+        let source = bun_core::String::adopt_wtf_impl(source.into_raw());
         Ok(ResolvedSource {
             source_url: specifier.create_if_different(source_url),
             ..ResolvedSource::printed(ast, source)
@@ -4613,18 +4614,37 @@ impl VirtualMachine {
 
     /// Interns `input` as Latin-1 for as long as the VM lives.
     pub fn ref_counted_string(&self, input: &[u8]) -> Result<bun_core::WTFString, StringTooLong> {
+        self.intern_ref_string(input, false)
+    }
+
+    /// Interns `input` for as long as the VM lives: as Latin-1 or, with `utf16`, as its UTF-16 code units in native byte order.
+    fn intern_ref_string(
+        &self,
+        input: &[u8],
+        utf16: bool,
+    ) -> Result<bun_core::WTFString, StringTooLong> {
         use bun_collections::zig_hash_map::MapEntry as Entry;
         jsc::mark_binding();
         debug_assert!(!input.is_empty());
-        let hash = bun_hash::XxHash32::hash(0, input);
+        debug_assert!(!utf16 || input.len().is_multiple_of(2));
+        // The map is keyed by the hash alone, so the width is in the seed.
+        let hash = bun_hash::XxHash32::hash(u32::from(utf16), input);
+        let length = if utf16 { input.len() / 2 } else { input.len() };
         self.ref_strings
             .with_mut(|ref_strings| match ref_strings.entry(hash) {
                 Entry::Occupied(o) => Ok(o.get().clone()),
-                Entry::Vacant(_) if input.len() > bun_core::String::max_length() => {
-                    Err(StringTooLong)
-                }
+                Entry::Vacant(_) if length > bun_core::String::max_length() => Err(StringTooLong),
                 Entry::Vacant(v) => {
-                    let string = bun_core::String::clone_latin1(input).into_wtf();
+                    let string = if utf16 {
+                        bun_core::String::clone_utf16_bytes(input)
+                    } else {
+                        bun_core::String::clone_latin1(input)
+                    };
+                    // The longest 16-bit `WTF::StringImpl` is a few code units short of `max_length`; past it the copy is `Dead`.
+                    if string.tag() == bun_core::Tag::Dead {
+                        return Err(StringTooLong);
+                    }
+                    let string = string.into_wtf();
                     let string = string.unwrap_or_else(|| bun_core::out_of_memory());
                     Ok(v.insert(string).clone())
                 }

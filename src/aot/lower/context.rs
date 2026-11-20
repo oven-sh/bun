@@ -9,8 +9,8 @@ use core::mem::take;
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
 
-use bun_core::printer::{FIRST_ASCII, LAST_ASCII, bmp_escape, surrogate_pair_escape};
-use bun_core::strings::{CodepointIterator, Cursor};
+use bun_core::printer::regexp_nul_offsets_to_escape;
+use bun_core::strings::{CodepointIterator, Cursor, is_valid_utf8, push_codepoint_wtf8_joined};
 use bun_sema::atom::{Atom, NAME_IN_GLOBAL_SCOPE};
 use bun_sema::bind::{Binding, Bound, SymbolId};
 use bun_sema::check::aot::{
@@ -63,25 +63,27 @@ use crate::statistics::{LimitId, LimitValues};
 pub(in crate::lower) use self::function::CreatedRequire;
 pub(crate) use self::function::FunctionLowering;
 
-pub(super) fn regexp_pattern_as_printed(written: &[u8]) -> Cow<'_, [u8]> {
-    let is_printed_as_written = |character: u32| (FIRST_ASCII..=LAST_ASCII).contains(&character);
-    if written
-        .iter()
-        .all(|&byte| is_printed_as_written(u32::from(byte)))
-    {
+/// The pattern, or the whole literal, as plain Bun prints it: as written, but for each U+0000 that [`regexp_nul_offsets_to_escape`] gives, `\u0000`.
+pub(super) fn regexp_pattern_as_printed<'a>(written: &'a [u8], flags: &[u8]) -> Cow<'a, [u8]> {
+    let mut zeros_to_escape = regexp_nul_offsets_to_escape(written, flags).peekable();
+    if zeros_to_escape.peek().is_none() && is_valid_utf8(written) {
         return Cow::Borrowed(written);
     }
-    let mut printed = Vec::with_capacity(written.len() * 2);
+    let mut printed = Vec::with_capacity(written.len() + 5);
     let characters = CodepointIterator::init(written);
     let mut cursor = Cursor::default();
     while characters.next(&mut cursor) {
-        match cursor.c as u32 {
-            character if is_printed_as_written(character) => printed.push(character as u8),
-            character @ 0..=0xFFFF => printed.extend_from_slice(&bmp_escape(character)),
-            character => printed.extend_from_slice(&surrogate_pair_escape(character)),
+        match zeros_to_escape.next_if_eq(&(cursor.i as usize)) {
+            Some(_) => printed.extend_from_slice(b"\\u0000"),
+            None => push_codepoint_wtf8_joined(&mut printed, cursor.c as u32),
         }
     }
     Cow::Owned(printed)
+}
+
+/// Whether the engine can be asked about the printed pattern. It decodes UTF-8, in which half a surrogate pair, as a file that is not UTF-8 writes one, is three U+FFFD: another pattern.
+pub(super) fn can_ask_engine_about_pattern(printed: &[u8]) -> bool {
+    is_valid_utf8(printed)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -442,9 +444,11 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             if decisions.is_dead_expr(literal) {
                 continue;
             }
-            let pattern = regexp_pattern_as_printed(self.queries.atom_bytes(pattern));
             let flags = self.queries.atom_bytes(flags);
-            if let Some(sentence) = describe_regexp_syntax_error(&pattern, flags) {
+            let pattern = regexp_pattern_as_printed(self.queries.atom_bytes(pattern), flags);
+            if can_ask_engine_about_pattern(&pattern)
+                && let Some(sentence) = describe_regexp_syntax_error(&pattern, flags)
+            {
                 invalid.push((literal, sentence));
             }
         }

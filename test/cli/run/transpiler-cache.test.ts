@@ -1314,3 +1314,77 @@ try {
     expectRemappedFrameAndStoredSourceMap(run());
   });
 });
+
+// The runtime prints a regex literal as it is written. Its output is one byte per character, or UTF-16 when a
+// character of a literal is above U+00FF. An entry holds the output in that width, and its tag says which.
+describe.concurrent("output with a non-ASCII regex literal", () => {
+  // See Metadata::encode in src/jsc/RuntimeTranspilerCache.rs.
+  const OUTPUT_ENCODING_AT = 5;
+  const OUTPUT_BYTE_OFFSET_AT = 30;
+  const OUTPUT_BYTE_LENGTH_AT = 38;
+  const UTF16 = 2;
+  const LATIN1 = 3;
+
+  // "ÿ" is the last character that fits in a byte. "🐰" takes two UTF-16 code units.
+  const latin1 = "café-©-ÿ";
+  const cjk = "ÿ中文-🐰";
+  // Only modules of 4 KiB or more are cached.
+  const padding = `// ${Buffer.alloc(5 * 1024, "x").toString()}\n`;
+
+  const run = (dir: string, file: string) =>
+    bunRun(join(dir, file), { ...env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(dir, ".cache") });
+
+  /** The entries in the cache of `dir`, UTF-16 ones first. */
+  function readEntries(dir: string) {
+    const cache = join(dir, ".cache");
+    return readdirSync(cache)
+      .map(name => {
+        const bytes = readFileSync(join(cache, name));
+        const tag = bytes[OUTPUT_ENCODING_AT];
+        const start = Number(bytes.readBigUInt64LE(OUTPUT_BYTE_OFFSET_AT));
+        const end = start + Number(bytes.readBigUInt64LE(OUTPUT_BYTE_LENGTH_AT));
+        // UTF-16 is stored in the byte order of the machine, which is little-endian wherever the tests run.
+        const output = bytes.toString(tag === UTF16 ? "utf16le" : "latin1", start, end);
+        const { ino, mtimeNs } = statSync(join(cache, name), { bigint: true });
+        return { name, tag, output, ino, mtimeNs };
+      })
+      .sort((a, b) => a.tag - b.tag);
+  }
+
+  test.each([
+    ["Latin-1", "the entry point", latin1, LATIN1, "entry.js"],
+    ["Latin-1", "an imported module", latin1, LATIN1, "import.mjs"],
+    ["UTF-16", "the entry point", cjk, UTF16, "entry.js"],
+    ["UTF-16", "an imported module", cjk, UTF16, "import.mjs"],
+  ])("round trip of %s output through %s", async (_width, _path, text, tag, file) => {
+    using dir = tempDir("transpiler-cache-width", {
+      "entry.js": `${padding}const re = /${text}/;\nconsole.log(re.source);\n`,
+      "module.mjs": `${padding}export const re = /${text}/;\n`,
+      "import.mjs": `import { re } from "./module.mjs";\nconsole.log(re.source);\n`,
+    });
+
+    expect(await run(String(dir), file)).toSpawn(text);
+    // Only a padded module is large enough to be cached.
+    const stored = readEntries(String(dir));
+    expect(stored).toMatchObject([{ tag, output: expect.stringContaining(`/${text}/`) }]);
+
+    // An entry that can't be loaded is removed, and the output is printed and stored again.
+    expect(await run(String(dir), file)).toSpawn(text);
+    expect(readEntries(String(dir))).toEqual(stored);
+  });
+
+  // `require()` prints every module of a process with one printer.
+  test("a module printed after a widened one is 8-bit again", async () => {
+    using dir = tempDir("transpiler-cache-width", {
+      "wide.cjs": `${padding}module.exports = /${cjk}/;\n`,
+      "narrow.cjs": `${padding}module.exports = /${latin1}/;\n`,
+      "main.cjs": `console.log(require("./wide.cjs").source);\nconsole.log(require("./narrow.cjs").source);\n`,
+    });
+
+    expect(await run(String(dir), "main.cjs")).toSpawn(`${cjk}\n${latin1}`);
+    expect(readEntries(String(dir))).toMatchObject([
+      { tag: UTF16, output: expect.stringContaining(`/${cjk}/`) },
+      { tag: LATIN1, output: expect.stringContaining(`/${latin1}/`) },
+    ]);
+  });
+});

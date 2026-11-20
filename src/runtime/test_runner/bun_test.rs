@@ -18,6 +18,7 @@ use crate::cli::test_command::{CommandLineReporter, TestFailure};
 use crate::generated_bindgen::bun_test::{
     Bun__BunTest__hook, Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
 };
+use super::deadline_watch;
 use super::execution::TimespecExt as _;
 use super::test_context::{self, Deferred};
 use super::test_context_fixtures::TestFixtures;
@@ -1080,9 +1081,17 @@ impl BunTest {
         scopeguard::defer! { this.in_run_loop.set(false) }
 
         let mut min_timeout = Timespec::EPOCH;
+        // What the last step left the runner waiting for, which `min_timeout` can be earlier than.
+        let waits_until: Cell<Option<Timespec>> = Cell::new(None);
+        scopeguard::defer! {
+            if let Some(deadline) = waits_until.get() {
+                deadline_watch::waiting_until(Self::watched(global_this, &deadline));
+            }
+        }
 
         while let Some(result) = this.result_queue.with_taken(VecDeque::pop_front) {
             global_this.clear_termination_exception();
+            waits_until.set(Some(Timespec::EPOCH));
             let step_result: StepResult = match this.phase.get() {
                 Phase::Collection => Collection::step(this, global_this, &result)?,
                 Phase::Execution => Execution::Execution::step(this, global_this, &result)?,
@@ -1091,6 +1100,7 @@ impl BunTest {
             match step_result {
                 StepResult::Waiting { timeout } => {
                     min_timeout = min_timeout.min_ignore_epoch(timeout);
+                    waits_until.set(Some(timeout));
                 }
                 StepResult::Complete => {
                     if this.advance(global_this)? == Advance::Exit {
@@ -1103,6 +1113,35 @@ impl BunTest {
 
         Self::update_min_timeout(this, &min_timeout);
         Ok(())
+    }
+
+    /// The deadline that `deadline_watch` hears of. None while an inspector is enabled: a debugger may
+    /// pause the test for longer than any timeout.
+    fn watched(global_this: &JSGlobalObject, deadline: &Timespec) -> Timespec {
+        if global_this.bun_vm().is_inspector_enabled() { Timespec::EPOCH } else { *deadline }
+    }
+
+    /// Names the test that the entry of `data` runs for.
+    fn label(&self, label: &mut deadline_watch::Label, data: &RefDataValue) {
+        let RefDataValue::Execution { group_index, entry_data: Some(EntryData { sequence_index, entry: Some(called), .. }) } =
+            *data
+        else {
+            return;
+        };
+        let Some(sequence) =
+            (self.execution.groups().get(group_index)).and_then(|group| group.sequences(&self.execution).get(sequence_index))
+        else {
+            return;
+        };
+        let named = self.entry_of(sequence.test_entry.or(sequence.first_entry).unwrap_or(called));
+        label.set(self.entry_of(called).timeout, sequence.test_entry != Some(called));
+        label.prepend(named.base.name.as_deref().unwrap_or(b"(unnamed)"));
+        for scope in self.scopes_from(named.base.parent) {
+            if let Some(name) = scope.base.name.as_deref().filter(|name| !name.is_empty()) {
+                label.prepend(b" > ");
+                label.prepend(name);
+            }
+        }
     }
 
     fn update_min_timeout(this: &BunTestPtr, min_timeout: &Timespec) {
@@ -1249,6 +1288,7 @@ impl BunTest {
         }
 
         Self::update_min_timeout(this, timeout);
+        deadline_watch::calling(Self::watched(global_this, timeout), |label| this.label(label, &cfg_data));
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         let on_stack = OnStack::enter(&this.execution.on_stack, &cfg_data);
         let result: JSValue = match vm

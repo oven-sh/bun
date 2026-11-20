@@ -824,7 +824,7 @@ pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate:
     Ok(())
 }
 
-fn fmt_status_text_line(
+pub(crate) fn fmt_status_text_line(
     status: bun_test::Execution::Result,
     emoji_or_color: bool,
 ) -> Output::PrettyBuf {
@@ -2918,6 +2918,14 @@ impl TestCommand {
                 .synthetic_allocation_limit
                 .set(Some(bun_jsc::virtual_machine::synthetic_allocation_limit()));
         }
+
+        // How long a test may block the event loop after its timeout. An override keeps the tests of it short.
+        let timeout_grace_ms = (vm.env_loader().get(b"BUN_TEST_TIMEOUT_GRACE_MS"))
+            .and_then(|ms| bun_core::fmt::parse_int::<u64>(ms, 10).ok());
+        crate::test_runner::deadline_watch::configure(
+            timeout_grace_ms,
+            ctx.test_options.test_worker,
+        );
 
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and

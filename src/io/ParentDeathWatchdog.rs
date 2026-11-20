@@ -338,7 +338,7 @@ extern "C" fn on_process_exit() {
 /// (so its child set is stable while we recurse), which is what makes the
 /// verify step sufficient. The only forking process is `self`, and we're in
 /// the exit handler — not forking.
-fn kill_descendants() {
+pub fn kill_descendants() {
     let self_pid = getpid();
 
     let mut to_visit: Vec<libc::pid_t> = Vec::new();

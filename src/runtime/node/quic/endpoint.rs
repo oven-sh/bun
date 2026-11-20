@@ -415,6 +415,7 @@ fn config_from_js(
         adapts_ack_frequency: false,
         wants_tickets: true,
         has_priorities: is_http3,
+        sends_in_order: true,
         awaits_consumption: true,
         ..if side.is_server() { server } else { client }
     };

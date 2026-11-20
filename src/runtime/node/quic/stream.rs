@@ -579,8 +579,13 @@ impl QuicStream {
             (was_full, s.high_water_mark)
         });
         if was_full && pending < hwm {
+            self.update(|conn, id| conn.await_data(id, true));
             self.push_event(SessionEvent::StreamDrain { stream: self.key });
         }
+    }
+
+    pub(super) fn on_drain_delivered(&self) {
+        self.update(|conn, id| conn.await_data(id, false));
     }
 
     fn queued_len(&self) -> u32 {

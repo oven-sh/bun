@@ -43,6 +43,7 @@ bitflags::bitflags! {
         /// We have given up on reading.
         const STOPPED = 1 << 25;
         const RESET_BY_PEER = 1 << 26;
+        const AWAITS_DATA = 1 << 27;
     }
 }
 

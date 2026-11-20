@@ -549,7 +549,7 @@ fn streams_do_not_write_out_of_turn() {
 #[test]
 fn urgent_streams_go_first() {
     let mut raw = Raw::client()
-        .config(|it| it.has_priorities = true)
+        .config(|it| it.sends_in_order = true)
         .connected();
     let priorities = [
         priority(4, false),
@@ -569,9 +569,9 @@ fn urgent_streams_go_first() {
 }
 
 /// With a stream that has sent `len` bytes, and has more.
-fn sending(has_priorities: bool, len: usize) -> Raw {
-    let raw = Raw::client().config(|it| it.has_priorities = has_priorities);
-    let mut raw = raw.with("max_stream_data_uni=9000000").connected();
+fn sending(sends_in_order: bool, len: usize) -> Raw {
+    let raw = Raw::client().config(|it| it.sends_in_order = sends_in_order);
+    let mut raw = (raw.with("max_data=90000000 max_stream_data_uni=9000000")).connected();
     let id = raw.peer.open(Unidirectional);
     raw.peer.send(id, &filler(0, 4 * len), true);
     while raw.streams.get(&id).is_none_or(|it| it.len() < len) {
@@ -589,26 +589,26 @@ fn ids(turns: Vec<(u64, u64)>) -> Vec<u64> {
 
 #[test]
 fn short_streams_pass_long_ones() {
-    for (has_priorities, len, expected) in [
+    for (sends_in_order, len, expected) in [
         (false, 140_000, [7, 11, 3]),
         (true, 140_000, [3, 7, 11]),
         (true, 1_100_000, [7, 11, 3]),
     ] {
-        let mut raw = sending(has_priorities, len);
+        let mut raw = sending(sends_in_order, len);
         for _ in 0..2 {
             let id = raw.peer.open(Unidirectional);
             raw.peer.send(id, &filler(0, 8_000), true);
         }
         raw.advance(RTT);
         raw.send("ack");
-        assert_eq!(ids(turns(&mut raw)), expected, "{has_priorities} {len}");
+        assert_eq!(ids(turns(&mut raw)), expected, "{sends_in_order} {len}");
     }
 }
 
 #[test]
 fn long_streams_are_not_passed_for_ever() {
-    for (has_priorities, expected) in [(false, 7), (true, 3)] {
-        let mut raw = sending(has_priorities, 1_100_000);
+    for (sends_in_order, expected) in [(false, 7), (true, 3)] {
+        let mut raw = sending(sends_in_order, 1_100_000);
         for _ in 0..20 {
             let id = raw.peer.open(Unidirectional);
             raw.peer.send(id, &filler(0, 8_000), true);
@@ -642,10 +642,95 @@ fn the_first_long_response_shares_the_path_with_the_short_ones() {
     assert!((rest * 9 / 5..rest * 11 / 5).contains(&finished[0].1));
 }
 
+/// The peer returns credit in halves of its windows, for what it has read of all streams or of the first one that it has
+/// not read to the end. Returns how much the others have sent when the first one is at two thirds.
+fn sent_ahead(reads_in_order: bool, window: usize, stream_window: usize) -> usize {
+    const LEN: usize = 3_000_000;
+    let raw = Raw::client().config(|it| it.sends_in_order = true);
+    let parameters = format!("max_data={window} max_stream_data_uni={stream_window}");
+    let mut raw = raw.with(&parameters).connected();
+    let ids = [(); 3].map(|()| raw.peer.open(Unidirectional));
+    for id in ids {
+        raw.peer.send(id, &filler(0, LEN), true);
+    }
+    let (mut limit, mut stream_limits, mut ahead) = (window, [stream_window; 3], None);
+    for _ in 0..1000 {
+        raw.forget();
+        raw.advance(RTT / 4);
+        let lens = ids.map(|id| raw.streams.get(&id).map_or(0, Vec::len));
+        let done = lens.iter().take_while(|&&it| it == LEN).count();
+        if lens[0] > LEN * 2 / 3 {
+            ahead.get_or_insert(lens[1] + lens[2]);
+        }
+        let open = if reads_in_order { done + 1 } else { 3 };
+        let (mut frames, read) = (String::from("ack"), lens.iter().take(open).sum::<usize>());
+        if read == 3 * LEN {
+            return ahead.unwrap();
+        }
+        for ((id, len), limit) in ids.iter().zip(lens).zip(&mut stream_limits).take(open) {
+            if *limit - len < stream_window / 2 {
+                *limit = len + stream_window;
+                frames += &format!(", max_stream_data {id} {limit}");
+            }
+        }
+        if limit - read < window / 2 {
+            limit = read + window;
+            frames += &format!(", max_data {limit}");
+        }
+        raw.send(&frames);
+    }
+    panic!("stuck");
+}
+
 #[test]
-fn streams_of_a_client_take_turns_unless_one_is_more_urgent() {
-    let raw = Raw::server().config(|it| it.has_priorities = true);
-    let mut raw = raw.connected();
+fn little_goes_ahead_of_the_oldest_stream_unless_the_peer_reads_it() {
+    for (window, stream_window, sixteenths) in [
+        (300_000, 9_000_000, 1),
+        (400_000, 260_000, 7),
+        (1_000_000, 9_000_000, 1),
+        (1_500_000, 1_000_000, 1),
+    ] {
+        assert!(sent_ahead(true, window, stream_window) <= window / 16 * sixteenths);
+        assert!(sent_ahead(false, window, stream_window) > window / 6);
+    }
+}
+
+#[test]
+fn a_stream_that_the_peer_does_not_read_makes_way() {
+    let raw = Raw::client().config(|it| it.sends_in_order = true);
+    let mut raw = (raw.with("max_data=160000 max_stream_data_uni=80000")).connected();
+    let ids = [(); 2].map(|()| raw.peer.open(Unidirectional));
+    for id in ids {
+        raw.peer.send(id, &filler(0, 100_000), true);
+    }
+    for _ in 0..5 {
+        raw.advance(RTT);
+        raw.forget();
+        raw.send("ack");
+    }
+    assert_eq!(ids.map(|id| raw.streams[&id].len()), [80_000; 2]);
+}
+
+#[test]
+fn a_stream_keeps_its_place_while_data_is_awaited() {
+    let raw = Raw::client().config(|it| it.sends_in_order = true);
+    let mut raw = raw.with("max_data=160000").connected();
+    let ids = [(); 2].map(|()| raw.peer.open(Unidirectional));
+    raw.connection().want_write(StreamId(ids[0]));
+    raw.connection().await_data(StreamId(ids[0]), true);
+    raw.forget();
+    raw.peer.send(ids[1], &filler(0, 20_000), true);
+    for (is_awaited, expected) in [(true, 10_000), (false, 20_000)] {
+        raw.connection().await_data(StreamId(ids[0]), is_awaited);
+        raw.advance(RTT);
+        raw.forget();
+        assert_eq!(raw.streams[&ids[1]].len(), expected);
+    }
+}
+
+#[test]
+fn streams_take_turns_unless_one_is_more_urgent() {
+    let mut raw = Raw::server().connected();
     for urgency in [3, 3, 2] {
         let id = raw.peer.open(Unidirectional);
         raw.peer.send(id, &filler(0, 20_000), false);
@@ -780,9 +865,9 @@ fn an_end_that_is_acknowledged_is_not_sent_again() {
 
 #[test]
 fn streams_that_are_gone_leave_the_queues() {
-    for has_priorities in [false, true] {
+    for sends_in_order in [false, true] {
         for limit in ["max_data=0", "max_stream_data_uni=0", ""] {
-            let raw = Raw::server().config(|it| it.has_priorities = has_priorities);
+            let raw = Raw::server().config(|it| it.sends_in_order = sends_in_order);
             let mut raw = raw.with(limit).connected();
             for id in [2, 6] {
                 raw.peer.open(Unidirectional);
@@ -803,7 +888,7 @@ fn streams_that_are_gone_leave_the_queues() {
 #[test]
 fn urgent_streams_are_writable_first() {
     let mut raw = Raw::server()
-        .config(|it| it.has_priorities = true)
+        .config(|it| it.sends_in_order = true)
         .connected();
     for urgency in [3, 1, 2] {
         let id = StreamId(raw.peer.open(Unidirectional));

@@ -9,7 +9,7 @@ use crate::harness::raw::Raw;
 use crate::harness::wire::{groups, http3, show_hex};
 
 fn connected(side: Side) -> Raw {
-    let raw = Raw::http3(side).config(|it| it.has_priorities = true);
+    let raw = Raw::http3(side).config(|it| (it.has_priorities, it.sends_in_order) = (true, true));
     raw.connected_with("")
 }
 

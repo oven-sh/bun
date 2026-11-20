@@ -72,7 +72,7 @@ impl Connection {
         if stream.flags.contains(Flags::WRITE_DONE) {
             return None;
         }
-        let capacity = state.capacity(id, stream);
+        let (capacity, is_ahead) = state.capacity(id, stream);
         let overhead = match &stream.role {
             Role::Message(message) if !message.has_sent_headers => return None,
             Role::Message(_) => data_frame_header(capacity.min(data.len() as u64)).1,
@@ -84,6 +84,9 @@ impl Connection {
             let (header, header_len) = data_frame_header(len);
             let header = header.get(..header_len.min(overhead)).unwrap_or_default();
             state.write(id, stream, &[header, taken]);
+            if is_ahead {
+                state.on_written_ahead((header.len() + taken.len()) as u64);
+            }
             state.made_progress = true;
         }
         if taken.len() < data.len() {
@@ -95,6 +98,13 @@ impl Connection {
     pub fn want_write(&mut self, id: StreamId) {
         if let Some((stream, state)) = self.stream(id) {
             state.want_write(id, stream);
+        }
+    }
+
+    /// The stream keeps its place while the application goes for more to write.
+    pub fn await_data(&mut self, id: StreamId, is_awaited: bool) {
+        if let Some((stream, state)) = self.stream(id) {
+            state.await_data(stream, is_awaited);
         }
     }
 

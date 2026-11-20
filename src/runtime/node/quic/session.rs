@@ -956,12 +956,16 @@ impl QuicSession {
                     &[js_arr, JSValue::js_number(kind as f64)],
                 );
             }
-            SessionEvent::StreamDrain { stream } => {
-                let Some(stream) = self.live_stream(stream) else {
+            SessionEvent::StreamDrain { stream: key } => {
+                let Some(stream) = self.live_stream(key) else {
                     return Ok(());
                 };
                 let handle = stream.handle();
                 callbacks::run(global, "onStreamDrain", handle, &[]);
+                if let Some(stream) = self.live_stream(key) {
+                    stream.on_drain_delivered();
+                    self.schedule_process();
+                }
             }
             SessionEvent::StreamEnd { stream } => {
                 if let Some(stream) = self.live_stream(stream) {

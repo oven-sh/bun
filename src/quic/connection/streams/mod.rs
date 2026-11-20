@@ -73,7 +73,6 @@ struct Counts {
 /// What the streams share.
 #[derive(Default)]
 pub(crate) struct State {
-    /// One response after the other (RFC 9218 §10).
     sends_in_order: bool,
     limits_unread_data: bool,
     /// What it takes to write a byte.
@@ -101,6 +100,13 @@ pub(crate) struct State {
     released: u64,
     pub(super) max_retained: u64,
     send_limit: u64,
+    /// The most that the peer has allowed beyond what it had acknowledged.
+    send_window: u64,
+    /// How much of what was written ahead of an older stream may be unread.
+    ahead: u64,
+    credit_ahead: u64,
+    /// How many times the peer has shown that it reads that.
+    trust: u32,
     blocked_at: Option<u64>,
     pub(super) has_reported_blocked: bool,
     /// How many bytes that have not been sent are worth having.
@@ -118,8 +124,10 @@ pub(crate) struct State {
     owing: VecDeque<StreamId>,
     readable: VecDeque<StreamId>,
     writable: Line,
-    /// The last one that was told to write.
-    invited: Option<StreamId>,
+    /// The last one that was told to write, and whether that is ahead of an older one.
+    invited: Option<(StreamId, bool)>,
+    /// The last of them that was the oldest.
+    leader: Option<(u64, StreamId)>,
     closing: VecDeque<StreamId>,
 }
 
@@ -165,7 +173,7 @@ impl Streams {
                 ),
             },
             state: State {
-                sends_in_order: config.has_priorities && side.is_server(),
+                sends_in_order: config.sends_in_order,
                 limits_unread_data: config.limits_unread_data,
                 min_credit: if is_http3 { MIN_DATA_FRAME_LEN } else { 1 },
                 write_round: 1,

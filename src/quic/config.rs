@@ -23,8 +23,10 @@ pub struct Config {
     /// Whether a client goes on with TLS after the handshake.
     pub wants_tickets: bool,
     pub uses_preferred_address: bool,
-    /// Whether streams are served by urgency and then by ID, as opposed to in turns.
+    /// Whether to go by what the peer says about priorities (RFC 9218).
     pub has_priorities: bool,
+    /// Whether streams that are not incremental go one after the other, as opposed to in turns (RFC 9218 §10).
+    pub sends_in_order: bool,
     /// Whether what the application has got counts as unread until [`consume`](crate::Connection::consume).
     pub awaits_consumption: bool,
     /// Whether what is unread counts for the limit of the connection, so that it can hold up other streams.
@@ -87,6 +89,7 @@ impl Config {
             wants_tickets: false,
             uses_preferred_address: false,
             has_priorities: false,
+            sends_in_order: false,
             awaits_consumption: false,
             limits_unread_data: false,
             http3: None,

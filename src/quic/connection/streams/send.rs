@@ -24,6 +24,10 @@ const LONG_LEN: u64 = 1024 * 1024;
 /// after the other, and the first of them alternates with those that have not.
 const SERIAL: u64 = 1 << 59;
 const TURN_BITS: u64 = SERIAL - 2;
+/// A peer that reads one stream after the other only raises its limit for what the oldest one sends (RFC 9308 §4.4). The
+/// others get a sixteenth of its window, which doubles up to so many times, and so many while the oldest one is blocked.
+const MAX_TRUST: u32 = 2;
+const MAX_SHARE_AHEAD: u64 = 7;
 /// A type and three integers.
 const MAX_OWED_FRAME_LEN: usize = 25;
 
@@ -45,19 +49,69 @@ fn first_serial(line: &Line) -> Option<usize> {
     line.get(at).filter(|it| it.0 / SERIAL == class).map(|_| at)
 }
 
+/// Less is older, or more urgent. Streams that take turns have none.
+#[inline]
+fn age((rank, id): (u64, StreamId)) -> Option<(u64, StreamId)> {
+    (rank & 1 == 0).then_some((rank & !SERIAL, id))
+}
+
+/// Whether it is going to need credit before long.
+fn is_under_way(stream: &Stream) -> bool {
+    let beyond_limit = stream.send.end().saturating_sub(stream.send_limit);
+    !stream.flags.contains(Flags::WRITE_DONE)
+        && match stream.is_blocked() {
+            true => stream.send.len() > beyond_limit,
+            false => stream.send.unsent_len() > LITTLE || stream.flags.contains(Flags::AWAITS_DATA),
+        }
+}
+
 impl State {
-    /// How many bytes the application may write.
+    /// How many bytes the application may write, and whether they are ahead of an older stream.
     #[inline]
-    pub(crate) fn capacity(&self, id: StreamId, stream: &Stream) -> u64 {
-        let has_to_wait = (self.writable.front())
-            .is_some_and(|first| self.invited != Some(id) && *first < (self.rank(stream), id));
+    pub(crate) fn capacity(&self, id: StreamId, stream: &Stream) -> (u64, bool) {
+        let (has_to_wait, is_ahead) = match self.invited {
+            Some((invited, is_ahead)) if invited == id => (false, is_ahead),
+            _ if self.writable.is_empty() && self.leader.is_none() => (false, false),
+            _ => {
+                let entry = (self.rank(stream), id);
+                let has_to_wait = self.writable.front().is_some_and(|it| *it < entry);
+                let follows = |age| has_to_wait || self.leader.is_some_and(|it| it < age);
+                (has_to_wait, age(entry).is_some_and(follows))
+            }
+        };
         let shared = match has_to_wait {
             true => 0,
             false => self.unsent_target.saturating_sub(self.unsent),
         };
         let wanted = shared.max(MIN_UNSENT.saturating_sub(stream.send.unsent_len()));
         let room = self.max_retained.saturating_sub(self.retained);
-        wanted.min(room).min(self.credit_for(stream))
+        let capacity = wanted.min(room).min(self.credit_for(stream));
+        match is_ahead {
+            true => (capacity.min(self.credit_ahead), true),
+            false => (capacity, false),
+        }
+    }
+
+    fn max_ahead(&self) -> u64 {
+        (self.send_window / 16) << self.trust
+    }
+
+    /// At most, and apart from what the leader has on its way.
+    fn unread(&self, leader: Option<&Stream>) -> u64 {
+        (self.send_window.saturating_sub(self.send_credit()))
+            .saturating_sub(leader.map_or(0, |it| it.send.len()))
+    }
+
+    fn update_credit_ahead(&mut self, leader: Option<&Stream>) {
+        self.credit_ahead = match leader.is_some_and(Stream::is_blocked) {
+            true => (self.send_window / 16 * MAX_SHARE_AHEAD).saturating_sub(self.unread(leader)),
+            false => self.max_ahead().saturating_sub(self.ahead),
+        };
+    }
+
+    pub(crate) fn on_written_ahead(&mut self, len: u64) {
+        self.ahead += len;
+        self.credit_ahead -= len;
     }
 
     /// How many bytes flow control would let through.
@@ -172,6 +226,11 @@ impl State {
         }
     }
 
+    pub(crate) fn await_data(&mut self, stream: &mut Stream, is_awaited: bool) {
+        stream.flags.set(Flags::AWAITS_DATA, is_awaited);
+        self.is_write_round_over = false;
+    }
+
     pub(crate) fn want_write(&mut self, id: StreamId, stream: &mut Stream) {
         if stream.flags.contains(Flags::WRITE_DONE) {
             return;
@@ -264,6 +323,15 @@ impl Streams {
         let Self { table, state, .. } = self;
         if limit > state.send_limit {
             state.send_limit = limit;
+            let delivered = state.sent - state.delivery().1;
+            state.send_window = state.send_window.max(limit - delivered);
+            let leader = state.leader.and_then(|it| table.get(it.1));
+            let read = state.ahead.saturating_sub(state.unread(leader));
+            state.ahead -= read;
+            if read > state.max_ahead() / 2 {
+                state.trust = MAX_TRUST.min(state.trust + 1);
+            }
+            state.update_credit_ahead(leader);
             for id in core::mem::take(&mut state.stalled) {
                 crate::with(table.get_mut(id), |stream| {
                     stream.flags.remove(Flags::IN_STALLED);
@@ -287,6 +355,7 @@ impl Streams {
             line.make_contiguous().sort_unstable();
         }
         [state.sendable, state.writable] = lines;
+        state.leader = None;
     }
 
     /// At most once for a stream until [`State::start_write_round`].
@@ -297,15 +366,29 @@ impl Streams {
         }
         let Self { table, state, .. } = self;
         while state.awaits_writes() {
+            let leader = (state.leader).filter(|it| table.get(it.1).is_some_and(is_under_way));
+            state.update_credit_ahead(leader.and_then(|it| table.get(it.1)));
             let is_due = |it: &(u64, StreamId), max_unsent| {
                 table.get(it.1).is_some_and(|it| {
                     it.write_round != state.write_round && it.send.unsent_len() <= max_unsent
                 })
             };
             let line = &state.writable;
-            let at = (first_serial(line))
+            let serial = first_serial(line);
+            let mut at = serial
                 .filter(|&at| line.get(at).is_some_and(|it| is_due(it, WRITE_CHUNK)))
                 .or_else(|| line.iter().position(|it| is_due(it, u64::MAX)));
+            let age_at = |at: Option<usize>| age(*line.get(at?)?);
+            let oldest = [leader, age_at(Some(0)), age_at(serial)];
+            let oldest = oldest.into_iter().flatten().min();
+            let mut is_ahead = age_at(at).is_some_and(|it| oldest < Some(it));
+            if is_ahead && state.credit_ahead < state.min_credit {
+                is_ahead = false;
+                at = ([Some(0), serial].into_iter().flatten())
+                    .find(|&at| age_at(Some(at)) == oldest)
+                    .filter(|&at| line.get(at).is_some_and(|it| is_due(it, u64::MAX)));
+            }
+            state.leader = age_at(at).filter(|_| !is_ahead).or(leader);
             let id = at.and_then(|at| state.writable.remove(at)).map(|it| it.1);
             let Some((id, stream)) = id.and_then(|id| table.get_mut(id).map(|it| (id, it))) else {
                 state.is_write_round_over = true;
@@ -321,7 +404,7 @@ impl Streams {
             }
             stream.flags.remove(Flags::WANTS_WRITE);
             stream.write_round = state.write_round;
-            state.invited = Some(id);
+            state.invited = Some((id, is_ahead));
             return Some(Event::Stream(id, stream.context, StreamEvent::Writable));
         }
         None

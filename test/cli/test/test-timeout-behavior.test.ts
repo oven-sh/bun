@@ -180,7 +180,7 @@ test.concurrent.skipIf(isWindows)(
     const run = await runTestFile(
       `import { test } from "bun:test";
        test("blocks", () => {
-         Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(() => {}, 1000)"], stdio: ["ignore", "inherit", "inherit"] });
+         Bun.spawn({ cmd: [process.execPath, "-e", "setTimeout(() => {}, 30_000)"], stdio: ["ignore", "inherit", "inherit"] });
          while (true) {}
        });`,
       { graceMs: 250 },

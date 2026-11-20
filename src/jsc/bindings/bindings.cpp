@@ -619,7 +619,11 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSV
     ExpectFlags flags = ExpectFlags();
     AsymmetricMatcherResult result = matchAsymmetricMatcherAndGetFlags(globalObject, matcherProp, otherProp, throwScope, flags);
     if (result != AsymmetricMatcherResult::NOT_MATCHER && (flags & FLAG_NOT)) {
-        result = (result == AsymmetricMatcherResult::PASS) ? AsymmetricMatcherResult::FAIL : AsymmetricMatcherResult::PASS;
+        if (result == AsymmetricMatcherResult::PASS)
+            return AsymmetricMatcherResult::FAIL;
+        // FAIL with an exception pending means the matcher threw, or waits for a promise. Neither is a pass.
+        RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+        return AsymmetricMatcherResult::PASS;
     }
     return result;
 }

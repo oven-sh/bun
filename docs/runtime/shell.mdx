@@ -455,6 +455,18 @@ const result = await $`echo "Hello World!"`.blob();
 console.log(result); // Blob(13) { size: 13, type: "text/plain" }
 ```
 
+### Reading output as a `Uint8Array`
+
+To read the output of a command as a `Uint8Array`, use `.bytes()`:
+
+```js
+import { $ } from "bun";
+
+const result = await $`echo "Hello World!"`.bytes();
+
+console.log(result); // Uint8Array(13) [ 72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 33, 10 ]
+```
+
 ---
 
 ## Builtin Commands

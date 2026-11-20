@@ -6026,7 +6026,7 @@ pub mod bv2_impl {
                                             bstr::BStr::new(&source.path.text),
                                             bstr::BStr::new(&import_record.path.text)
                                         );
-                                        // Only re-query if we previously had something cached.
+                                        // Only re-query if the folder was ever looked up. Another thread can have busted it first.
                                         if self
                                             .transpiler_for_target(target)
                                             .resolver

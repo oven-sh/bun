@@ -13,7 +13,8 @@ pub(crate) fn apply_standalone_runtime_flags(
 ) {
     use bun_options_types::schema::api::DotEnvBehavior;
     let disable_env = graph.flags.contains(GraphFlags::DISABLE_DEFAULT_ENV_FILES);
-    b.options.env.disable_default_env_files = disable_env;
+    // Raise only: `--no-env-file` and bunfig `env = false` set it before this runs.
+    b.options.env.disable_default_env_files |= disable_env;
     b.options.env.behavior = if disable_env {
         DotEnvBehavior::disable
     } else {

@@ -174,6 +174,12 @@ FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-code-span.md { printWidth: 80,
 FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-code-span.md { printWidth: 100, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-code-span.md { printWidth: 80, proseWrap: "never" }
 FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-code-span.md { printWidth: 100, proseWrap: "never" }
+FAIL prettier markdown/markdown/prose-wrap/wiki-link-risk-link-text.md { printWidth: 80, proseWrap: "always" }
+FAIL prettier markdown/markdown/prose-wrap/wiki-link-risk-link-text.md { printWidth: 100, proseWrap: "always" }
+FAIL prettier markdown/markdown/prose-wrap/wiki-link-risk-link-text.md { printWidth: 80, proseWrap: "never" }
+FAIL prettier markdown/markdown/prose-wrap/wiki-link-risk-link-text.md { printWidth: 100, proseWrap: "never" }
+FAIL prettier markdown/markdown/prose-wrap/wiki-link-risk-link-text.md { printWidth: 80, proseWrap: "preserve" }
+FAIL prettier markdown/markdown/prose-wrap/wiki-link-risk-link-text.md { printWidth: 100, proseWrap: "preserve" }
 FAIL prettier markdown/markdown/prose-wrap/wrapped-block-starts.md { printWidth: 80, proseWrap: "always" }
 FAIL prettier markdown/markdown/prose-wrap/wrapped-block-starts.md { printWidth: 100, proseWrap: "always" }
 FAIL prettier markdown/markdown/prose-wrap/wrapped-block-starts.md { printWidth: 80, proseWrap: "never" }
@@ -197,5 +203,5 @@ FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 80, proseW
 FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 100, proseWrap: "always" }
 FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 80, proseWrap: "never" }
 FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 100, proseWrap: "never" }
-as Prettier prints them: 1526/1570
+as Prettier prints them: 1520/1570
 as oxfmt prints them, in its flavor: 1343/1498

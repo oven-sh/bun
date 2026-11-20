@@ -36,12 +36,12 @@ const token = Bun.CSRF.generate("my-secret-key");
 - `secret` (string, optional) — The secret key used to sign the token. If not provided, Bun generates a random in-memory default secret (unique per thread).
 - `options` (object, optional):
 
-| Option      | Type     | Default       | Description                                                                                                                                                 |
-| ----------- | -------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `expiresIn` | `number` | `86400000`    | Milliseconds until the token expires. Defaults to 24 hours.                                                                                                 |
-| `encoding`  | `string` | `"base64url"` | Token encoding format: `"base64"`, `"base64url"`, or `"hex"`.                                                                                               |
-| `algorithm` | `string` | `"sha256"`    | HMAC algorithm: `"sha256"`, `"sha384"`, `"sha512"`, `"sha512-256"`, `"blake2b256"`, or `"blake2b512"`.                                                      |
-| `sessionId` | `string` | (none)        | Binds the token to the requesting principal (session ID, user ID, or equivalent). The token only verifies when you pass the same `sessionId` to `verify()`. |
+| Option      | Type     | Default       | Description                                                                                                                                                                           |
+| ----------- | -------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `expiresIn` | `number` | `86400000`    | Milliseconds until the token expires, embedded in the token. Defaults to 24 hours. `0` embeds no expiry. `verify()` also applies its own `maxAge`, see [Token expiry](#token-expiry). |
+| `encoding`  | `string` | `"base64url"` | Token encoding format: `"base64"`, `"base64url"`, or `"hex"`.                                                                                                                         |
+| `algorithm` | `string` | `"sha256"`    | HMAC algorithm: `"sha256"`, `"sha384"`, `"sha512"`, `"sha512-256"`, `"blake2b256"`, or `"blake2b512"`.                                                                                |
+| `sessionId` | `string` | (none)        | Binds the token to the requesting principal (session ID, user ID, or equivalent). The token only verifies when you pass the same `sessionId` to `verify()`.                           |
 
 **Returns:** `string` — the encoded token.
 
@@ -78,7 +78,7 @@ const isValid = Bun.CSRF.verify(token, { secret: "my-secret-key" });
 | Option      | Type     | Default       | Description                                                                                                                                                                                                     |
 | ----------- | -------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `secret`    | `string` | (auto)        | The secret used to sign the token. If not provided, uses the same in-memory default as `generate()`.                                                                                                            |
-| `maxAge`    | `number` | `86400000`    | Maximum token age in milliseconds, independent of the token's own `expiresIn`.                                                                                                                                  |
+| `maxAge`    | `number` | `86400000`    | Maximum token age in milliseconds that `verify()` accepts, checked in addition to the token's own `expiresIn`. `0` turns off this check.                                                                        |
 | `encoding`  | `string` | `"base64url"` | Must match the encoding used during `generate()`.                                                                                                                                                               |
 | `algorithm` | `string` | `"sha256"`    | Must match the algorithm used during `generate()`.                                                                                                                                                              |
 | `sessionId` | `string` | (none)        | Must match the `sessionId` used during `generate()`. A token bound to one principal fails verification for any other principal. A token generated without a `sessionId` fails verification when you supply one. |
@@ -99,6 +99,28 @@ const isValid2 = Bun.CSRF.verify(token, {
   maxAge: 60 * 1000, // reject tokens older than 1 minute
 });
 ```
+
+---
+
+## Token expiry
+
+`verify()` checks the age of a token twice, both times against the timestamp that `generate()` embedded in it. A token must pass both checks:
+
+- The token's own `expiresIn`, chosen by `generate()`. `expiresIn: 0` embeds no expiry.
+- The verifier's `maxAge`, 24 hours by default. `maxAge: 0` turns off this check.
+
+So a token is accepted for the shorter of the two durations. To accept tokens that are older than 24 hours, pass a `maxAge` at least as long as the `expiresIn` they were generated with:
+
+```ts title="expiry.ts" icon="/icons/typescript.svg"
+const WEEK = 7 * 24 * 60 * 60 * 1000;
+
+const token = Bun.CSRF.generate("my-secret", { sessionId: "user-session-id", expiresIn: WEEK });
+
+// Without maxAge, verify() rejects this token once it is 24 hours old
+const isValid = Bun.CSRF.verify(token, { secret: "my-secret", sessionId: "user-session-id", maxAge: WEEK });
+```
+
+A token generated with `expiresIn: 0` and verified with `maxAge: 0` never expires. Avoid this: rotating the secret is then the only way to invalidate it.
 
 ---
 

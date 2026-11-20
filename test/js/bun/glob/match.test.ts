@@ -2463,6 +2463,78 @@ describe("Glob.match", () => {
   });
 
   test.each([
+    // A `**` that ends an alternative is a globstar when a `/` or the end of the pattern follows the group.
+    ["a/{**,b}", ["a/x", "a/x/y", "a/x/y/z", "a/b", "a/b/c", "a/"], ["a", "ab", "c/x/y"]],
+    ["a/{b,**}", ["a/b", "a/x/y"], ["a", "b/x"]],
+    ["a/{**,}", ["a/x/y", "a/"], ["a"]],
+    ["a/{,**}", ["a/x/y", "a/"], ["a"]],
+    ["{**,b}", ["", "/", "x", "x/", "x/y/z", "b"], []],
+    ["{**,b}/", ["", "/", "b/", "x/y/"], ["x"]],
+    ["{a/**,b}", ["a/", "a/x", "a/x/y", "b"], ["a", "b/x", "c/x"]],
+    ["{.git,.git/**}", [".git", ".git/", ".git/objects", ".git/objects/c5"], [".gitignore", "x/.git"]],
+    ["a/{**,b}/", ["a/", "a/x/"], ["a/x"]],
+    ["a/{**,b}/c", ["a/c", "a/x/c", "a/x/y/c", "a/b/c", "a/b/x/c"], ["a/x/y/d", "a/x/y/c/d", "a/bc", "c"]],
+    ["a/{**,b}/*", ["a/x", "a/x/y", "a/b/z"], ["a"]],
+    ["a/{**,b}/{c,d}", ["a/c", "a/d", "a/x/y/c", "a/x/y/d", "a/b/x/d"], ["a/x/y/e", "a/x/y", "a/cd"]],
+    ["test/{foo/**,bar}/baz", ["test/foo/baz", "test/foo/x/y/baz", "test/bar/baz"], ["test/bar/x/baz", "test/baz"]],
+    ["src/{**,lib}/*.ts", ["src/a.ts", "src/x/a.ts", "src/x/y/a.ts", "src/lib/a.ts"], ["src/x/y/a.js", "lib/a.ts"]],
+    ["x/{**,b}/y/{**,c}", ["x/1/2/y/3/4", "x/y/", "x/y/3", "x/b/y/c", "x/1/y/c/2"], ["x/y", "x/1/z/3"]],
+    ["**/{**,a}/b", ["b", "x/b", "x/y/b", "x/a/b"], ["x/y/c", "bb"]],
+    ["a/{c,{**,d}}", ["a/c", "a/d", "a/x/y", "a/"], ["a", "b/x"]],
+    ["a/{c,{**,d}}/e", ["a/e", "a/c/e", "a/x/y/e", "a/c/x/e"], ["a/x/y/f", "a/x/y"]],
+    ["a/{{**,c},b}/d", ["a/d", "a/x/y/d", "a/b/x/d"], ["a/x/y", "a/x/y/e"]],
+    ["a{**/b/**,c}", ["a/b/z/w", "ax/b/z/w", "ac"], ["ab"]],
+    [
+      "src/app{**/gen/**,-old}/x.ts",
+      ["src/app/gen/x.ts", "src/appq/gen/r/s/x.ts", "src/app-old/x.ts"],
+      ["src/app/x.ts"],
+    ],
+    ["!a/{**,b}", ["a", "c/x/y"], ["a/x/y", "a/b"]],
+    // It is a `*` when text follows the group, or when it has text before it in its alternative.
+    ["a/{**,b}x", ["a/yx", "a/bx", "a/x"], ["a/y/zx"]],
+    ["a/{c,{**,d}x}", ["a/c", "a/yx", "a/dx"], ["a/y/zx"]],
+    ["a/{**,b}{c,d}", ["a/c", "a/yd", "a/bc"], ["a/x/yc"]],
+    ["a/{x**,b}", ["a/xy", "a/b"], ["a/x/y"]],
+    ["{a,b}/**,x", ["a/c,x", "b/,x"], ["a/c/d,x", "a/c"]],
+    // A whole `**` alternative is a `*` when the group has text before it.
+    ["src/app{**,-old}/main.ts", ["src/app/main.ts", "src/appx/main.ts", "src/app-old/main.ts"], ["src/app/x/main.ts"]],
+    ["a{**,b}", ["a", "ax", "ab"], ["a/x", "a/x/y"]],
+    ["x{**,y}/z", ["x/z", "xq/z", "xy/z"], ["x/q/z"]],
+    ["pre{a,**}/post", ["prea/post", "pre/post", "prefix/post"], ["pre/q/post"]],
+    ["vendor{**,-old}", ["vendor", "vendors", "vendor-old"], ["vendor/x", "vendor/x/"]],
+    ["a{{**,b},c}/d", ["a/d", "ax/d", "ab/d", "ac/d"], ["a/x/d"]],
+    ["a/b{c,{**,d}}/e", ["a/bc/e", "a/b/e", "a/bx/e", "a/bd/e"], ["a/b/x/e"]],
+    ["a,{**,b}/c", ["a,/c", "a,x/c", "a,b/c"], ["a,/x/c"]],
+    ["a}{**,b}/c", ["a}/c", "a}x/c", "a}b/c"], ["a}/x/c"]],
+    ["!x{**,y}/z", ["x/q/z"], ["xq/z", "xy/z"]],
+    ["!!{**,b}/c", ["c", "x/y/c", "b/c"], ["x/y/d"]],
+    // The text can be the alternative that was taken in the group before.
+    ["{a,b}{**,c}/d", ["a/d", "ax/d", "bc/d"], ["a/x/d", "bx/y/d"]],
+    ["{a/,b}{**,c}/d", ["a/c/d", "bx/d", "bc/d"], ["bx/y/d"]],
+    ["q{,a}{**,b}/z", ["q/z", "qx/z", "qab/z"], ["qx/y/z"]],
+    ["{a,{b/,c}}{**,d}/e", ["a/e", "cx/e"], ["ax/y/e", "cx/y/e"]],
+    ["{a/,b}**", ["a/", "b", "bx"], ["b/x", "bx/y"]],
+    ["a/{b/,c}**/d", ["a/c/d", "a/cx/d"], ["a/cx/y/d"]],
+    // `a**` is `a*`, also when an alternative of a later group does not match and the `**/` before it takes more.
+    ["**/a**/{x,y}", ["ab/y", "ab/ay/y", "q/ab/x"], ["ab/ay", "ab/ax", "ab/aq", "zz/ay"]],
+    ["**/a**/{x}", [], ["ab/ax"]],
+    ["**/a**/{x,y}/c", ["ab/y/c"], ["ab/ay/c"]],
+    ["**/a**/{x,{y,z}}", ["ab/z"], ["ab/az"]],
+    ["**/{a,b}**/{x,y}", ["q/bz/x"], ["q/bz/bx"]],
+    ["**/{b**,c}/{x,y}", ["b/bq/x", "q/c/y"], ["b/bq/r/x"]],
+    ["!**/a**/{x,y}", ["ab/ay"], ["ab/y"]],
+    ["**/a/**/{x,y}", ["q/a/b/c/y", "q/a/y"], ["q/a/b/z"]],
+    ["**/{**/x,y}", ["a/b/x", "a/b/y"], ["a/b/z"]],
+    ["**/a/{b/**/x,y}", ["q/a/b/c/d/x"], ["q/a/b/c/d/z"]],
+  ])("a `**` beside a group: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
     ["{a,bb}{c,dd}", ["ac", "add", "bbc", "bbdd"], ["a", "abb", "bc"]],
     ["{a,bb}{c,dd}{e,ff}", ["ace", "bbddff"], ["ac", "bbdde f"]],
     ["{a,bb}{c,dd}{e,ff}{g,hh}", ["aceg", "bbddffhh"], ["ace"]],

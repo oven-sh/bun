@@ -296,12 +296,10 @@ pub(crate) fn maybe_to_lower_case(value: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-/// True if `text` ends with a backslash that isn't escaped itself. If `text` is a whole value or all of an at-rule's
-/// parameters, the backslash escapes whitespace that `postcss` split off as trailing whitespace, because anything else
-/// would still be in `text`. That doesn't hold for a word of a value: `\@a` is split into `\` and `@a`.
-pub(crate) fn ends_with_unescaped_backslash(text: &[u8]) -> bool {
-    text.ends_with(b"\\") && text.iter().rev().take_while(|byte| **byte == b'\\').count() % 2 == 1
-}
+/// If `text` is a whole value or all of an at-rule's parameters, the backslash escapes whitespace that `postcss` split
+/// off as trailing whitespace, because anything else would still be in `text`. That doesn't hold for a word of a
+/// value: `\@a` is split into `\` and `@a`.
+pub(crate) use crate::text::ends_with_unescaped_backslash;
 
 /// True if `text` ends with `\` and one to six hex digits. One whitespace character after that is part of the escape:
 /// `\31 0` means `10`.

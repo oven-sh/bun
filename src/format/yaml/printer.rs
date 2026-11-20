@@ -5,7 +5,9 @@ use super::scalar::scalar_source;
 use crate::css::doc::{Alignment, Elements, Group, IndentCommand, Line};
 use crate::options::ProseWrap;
 use crate::stack::Stack;
-use crate::text::{self, has_newline_backwards, is_previous_line_empty};
+use crate::text::{
+    self, ends_with_unescaped_backslash, has_newline_backwards, is_previous_line_empty,
+};
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -81,15 +83,31 @@ fn should_print_end_comments(node: &Node<'_>) -> bool {
         )
 }
 
-/// `splitWithSingleSpace`: `" a   b c   d e   f "` becomes `[" a   b", "c   d", "e   f "]`.
-fn split_with_single_space(text: &[u8]) -> Vec<&[u8]> {
+/// True if `text[at]` is escaped in double quotes: an odd number of backslashes is before it.
+fn is_escaped(text: &[u8], at: usize) -> bool {
+    text.get(..at).is_some_and(ends_with_unescaped_backslash)
+}
+
+/// True if `word` ends with an escaped space or tab, which the line break after it must not trim.
+fn ends_with_escaped_space(word: &[u8]) -> bool {
+    matches!(word.last(), Some(b' ' | b'\t')) && is_escaped(word, word.len() - 1)
+}
+
+/// `splitWithSingleSpace`: `" a   b c   d e   f "` becomes `[" a   b", "c   d", "e   f "]`. With `has_escapes`, the space
+/// of `\ ` isn't a boundary: a `\` at the end of a line in double quotes is an escaped line break. Prettier breaks the
+/// line there, and the space is lost.
+fn split_with_single_space(text: &[u8], has_escapes: bool) -> Vec<&[u8]> {
     let mut words = Vec::new();
     if text.is_empty() {
         return words;
     }
     let mut start = 0;
     for i in 1..text.len().saturating_sub(1) {
-        if text[i] == b' ' && text[i - 1] != b' ' && text[i + 1] != b' ' {
+        if text[i] == b' '
+            && text[i - 1] != b' '
+            && text[i + 1] != b' '
+            && !(has_escapes && is_escaped(text, i))
+        {
             words.push(&text[start..i]);
             start = i + 1;
         }
@@ -130,12 +148,19 @@ impl<'c> Words<'c> {
         last.is_some_and(|word| matches!(word.last(), Some(b' ' | b'\t')))
     }
 
-    /// `fill(join(line, words))`
-    fn write_fill(&self, out: &mut Elements) {
+    /// `fill(join(line, words))`. With `has_escapes`, a word that ends with an escaped space or tab keeps it, whatever
+    /// line break follows: the printer trims spaces and tabs before a line break.
+    fn write_fill(&self, out: &mut Elements, has_escapes: bool) {
+        let write_word = |out: &mut Elements, word: &[u8]| {
+            out.text(word);
+            if has_escapes && ends_with_escaped_space(word) {
+                out.keep_trailing_whitespace();
+            }
+        };
         let words = match self {
             Words::None => return,
             // A single word doesn't need a fill.
-            Words::One(word) => return out.text(word),
+            Words::One(word) => return write_word(out, word),
             Words::Slices(words) => &words[..],
             Words::Joined(text) => &[&text[..]],
         };
@@ -147,7 +172,7 @@ impl<'c> Words<'c> {
                 out.end_item();
             }
             out.start_item();
-            out.text(word);
+            write_word(out, word);
             out.end_item();
         }
         out.end_fill();
@@ -755,8 +780,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         if self.prose_wrap == ProseWrap::Preserve
             && node.position.start.line == node.position.end.line
         {
-            return Words::line(content).write_fill(self.out);
+            return Words::line(content).write_fill(self.out, false);
         }
+        let has_escapes = node.kind == Kind::QuoteDouble;
         for (index, words) in self
             .flow_scalar_line_contents(node.kind, content)
             .iter()
@@ -765,19 +791,30 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             if index > 0 {
                 self.out.hard_line();
             }
-            words.write_fill(self.out);
+            words.write_fill(self.out, has_escapes);
         }
     }
 
     /// `getFlowScalarLineContents`
     fn flow_scalar_line_contents<'c>(&self, kind: Kind, content: &'c [u8]) -> Vec<Words<'c>> {
+        let has_escapes = kind == Kind::QuoteDouble;
+        // `trimEnd`, except that an escaped space or tab at the end of a line in double quotes is content. Prettier
+        // trims it too, so that a `\` ends the line, which is an escaped line break: the space is lost.
+        let trim_end = |line: &'c [u8]| -> &'c [u8] {
+            let trimmed = strings::trim_js_whitespace_end(line);
+            let end = trimmed.len();
+            match line.get(end) {
+                Some(b' ' | b'\t') if has_escapes && is_escaped(line, end) => &line[..end + 1],
+                _ => trimmed,
+            }
+        };
         let mut raw_lines: Vec<&'c [u8]> = strings::split(content, b"\n").collect();
         let count = raw_lines.len();
         for (index, line) in raw_lines.iter_mut().enumerate() {
             *line = match (index == 0, index + 1 == count) {
                 (true, true) => line,
-                (false, false) => strings::trim_js_whitespace(line),
-                (true, false) => strings::trim_js_whitespace_end(line),
+                (false, false) => trim_end(strings::trim_js_whitespace_start(line)),
+                (true, false) => trim_end(line),
                 (false, true) => strings::trim_js_whitespace_start(line),
             };
         }
@@ -786,14 +823,14 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         }
         let mut lines: Vec<Vec<&'c [u8]>> = Vec::new();
         for (index, line) in raw_lines.iter().enumerate() {
-            let words = split_with_single_space(line);
+            let words = split_with_single_space(line, has_escapes);
             match lines.last_mut() {
                 Some(last)
                     if index > 0
                         && !raw_lines[index - 1].is_empty()
                         && !words.is_empty()
                         // A backslash at the end of a line in double quotes stays there.
-                        && !(kind == Kind::QuoteDouble && last.last().is_some_and(|word| word.ends_with(b"\\"))) =>
+                        && !(has_escapes && last.last().is_some_and(|word| word.ends_with(b"\\"))) =>
                 {
                     last.extend(words);
                 }
@@ -853,7 +890,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 let words = match self.is_oxfmt && text::starts_with_white_space(line) {
                     // A more-indented line isn't folded, so oxfmt leaves it unchanged.
                     true => vec![*line],
-                    false => split_with_single_space(line),
+                    false => split_with_single_space(line, false),
                 };
                 // Prettier tests the array, which is coerced to its words joined by commas.
                 let is_whitespace_at = |word: Option<&&[u8]>, at_start: bool| {
@@ -1007,7 +1044,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             if index == 0 {
                 out.hard_line();
             }
-            words.write_fill(out);
+            words.write_fill(out, false);
             // Trailing spaces and tabs are part of the value. Prettier drops them from the last line, because the hard
             // line after the scalar trims them (prettier#19764).
             if words.ends_with_space_or_tab() {

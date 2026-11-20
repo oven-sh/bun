@@ -45,4 +45,14 @@ bench("inspect big json object", () => {
   console.error(inspect(json));
 });
 
+class Plain extends Array {}
+const arrays = {
+  "[1, 2, 3]": [1, 2, 3],
+  "[[1], [2], [3]]": [[1], [2], [3]],
+  "Plain.of(1, 2, 3)": Plain.of(1, 2, 3),
+};
+for (const [name, value] of Object.entries(arrays)) {
+  bench(`inspect ${name}`, () => inspect(value));
+}
+
 await run();

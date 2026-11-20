@@ -1071,17 +1071,14 @@ static void installOneShotMethods(JSC::VM& vm, JSGlobalObject* globalObject, JSO
 
 // Calls the user's pull(oneShotController) exactly once (its own scope so the caller may
 // catch the abrupt completion).
-static JSValue oneShotCallPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamSource* source, JSOneShotDirectSink* sink)
+static JSPromise* oneShotCallPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamSource* source, JSOneShotDirectSink* sink)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* pullFunction = source->pullFunction();
-    if (!pullFunction) [[unlikely]] {
+    if (!source->hasPull()) [[unlikely]] {
         throwTypeError(globalObject, scope, "The 'pull' method of a direct ReadableStream's underlying source is not a function"_s);
-        return {};
+        return nullptr;
     }
-    MarkedArgumentBuffer arguments;
-    arguments.append(sink);
-    RELEASE_AND_RETURN(scope, JSC::call(globalObject, pullFunction, JSC::getCallData(pullFunction), source->thisValue(), arguments));
+    RELEASE_AND_RETURN(scope, source->pull(globalObject, sink));
 }
 
 JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, bool asUint8Array)
@@ -1128,7 +1125,7 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
     // throw errors the stream and rejects the returned promise; a returned promise's rejection is
     // handled by its reaction.
     sink->m_insidePullCall = true;
-    JSValue firstPull = oneShotCallPull(vm, globalObject, source, sink);
+    JSPromise* pullPromise = oneShotCallPull(vm, globalObject, source, sink);
     sink->m_insidePullCall = false;
     if (JSC::Exception* exception = scope.exception()) {
         TRY_CLEAR_EXCEPTION(scope, {});
@@ -1142,7 +1139,7 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
         markPromiseAsHandled(vm, capability);
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, exception->value()));
     }
-    if (auto* pullPromise = dynamicDowncast<JSPromise>(firstPull)) {
+    if (pullPromise) {
         // The caller holds the capability that close()/end() settle, so it does not wait for a pull() that outlives them. The reactions settle it only when pull() settles first.
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onConsumeDirectToArrayBufferPullFulfilled(), runtime->onConsumeDirectToArrayBufferPullRejected(), jsUndefined(), sink);
         if (capability->status() == JSPromise::Status::Pending)

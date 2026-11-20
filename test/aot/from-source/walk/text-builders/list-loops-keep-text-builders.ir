@@ -1,5 +1,5 @@
 # `for (const row of rows) { if (row.skip) continue; line += tell(row); }`: every turn that appends runs other code. A step through a list is cheap with a builder, so the text stays in one.
-# The same over a Map: its turns without other code are quicker without a builder.
+# The same over a Map, whose turns are quicker with a builder, too.
 # f1 = told, f2 = toldOfTable
 # -- source: list-loops-keep-text-builders.ts
 # declare function print(text: unknown): void;
@@ -18,4 +18,4 @@
 # FORM: StringBuilderBegin
 # RUN(TABLE): walk f2 mechanisms=all
 # TABLE-LABEL: code f2:Body
-# TABLE-NOT: StringBuilderBegin
+# TABLE: StringBuilderBegin

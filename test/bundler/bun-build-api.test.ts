@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   bunRun,
+  expectRssDeltaBelow,
   isASAN,
   isDebug,
   isWindows,
@@ -43,6 +44,26 @@ describe("Bun.build", () => {
     expect(build.outputs).toHaveLength(1);
     expect(build.outputs[0].kind).toBe("asset");
     expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
+  });
+
+  test("a file imported by its default type and with { type: 'file' } is one output", async () => {
+    using dir = tempDir("bun-build-api-file-twice", {
+      "entry.ts": `
+        import a from "./data.wasm";
+        import b from "./data.wasm" with { type: "file" };
+        console.log(a, b);
+      `,
+      "data.wasm": "wasm",
+    });
+
+    const build = await Bun.build({ entrypoints: [join(String(dir), "entry.ts")], target: "bun" });
+
+    expect(build.outputs.map(output => output.kind)).toEqual(["entry-point", "asset"]);
+    const [, asset] = build.outputs;
+    const name = path.basename(asset.path);
+    expect(await asset.text()).toBe("wasm");
+    // Both imports name it.
+    expect((await build.outputs[0].text()).split(name)).toHaveLength(2 + 1);
   });
 
   test("bytecode works", async () => {
@@ -2260,6 +2281,24 @@ test.skipIf(!isDebug && !isASAN)(
   },
   120_000,
 );
+
+test("Bun.build does not leak its options when define is invalid", async () => {
+  const code = `
+    const banner = Buffer.alloc(8 * 1024 * 1024, "/").toString();
+    const options = { entrypoints: ["/a.js"], files: { "/a.js": "" }, banner, define: { a: "{{{" }, throw: false };
+    async function build(count) {
+      for (let i = 0; i < count; i++) {
+        if ((await Bun.build(options)).success) throw new Error("the define is not valid");
+      }
+      Bun.gc(true);
+      return process.memoryUsage.rss();
+    }
+    const before = await build(5);
+    console.log(JSON.stringify({ deltaMiB: ((await build(25)) - before) / 1024 / 1024 }));
+  `;
+  // One banner per build is 200 MiB.
+  await expectRssDeltaBelow(["-e", code], { release: 80, debug: 100 });
+});
 
 // Regression: src/js_printer/renamer.zig:592 `assignNamesRecursiveWithNumberScope`
 // walks a linear single-child scope chain in a `while(true)` loop, allocating a

@@ -1,7 +1,7 @@
 # -- source: main.cjs
 # "use strict";
 # function add(a, b) { return (a + b) | 0; }
-# const lib = { base: 1 };
+# const lib = (0, { base: 1 });
 # function early() { try { return lib.add(1, 2); } catch (error) { return error.constructor.name; } }
 # print(typeof lib.add, early());
 # Object.defineProperty(lib, "add", { enumerable: true, get: function () { return add; } });

@@ -1,50 +1,29 @@
-use core::ffi::{c_int, c_void};
-use core::ptr::{self, NonNull};
+use core::ffi::c_int;
 
-use bun_brotli::c;
-type Op = c::BrotliEncoderOperation;
+use bun_brotli::{DecodeError, DecodeStatus, Decoder, Encoder, Operation};
+
+use crate::node::node_zlib_binding::{NodeMode, Z_BUF_ERROR};
 
 // ─── type defs (real) ─────────────────────────────────────────────────────
 
-pub(crate) struct Context {
-    pub(crate) mode: bun_zlib::NodeMode,
-    pub(crate) state: Option<NonNull<c_void>>,
-
-    pub(crate) next_in: *const u8,
-    pub(crate) next_out: *mut u8,
-    pub avail_in: usize,
-    pub avail_out: usize,
-
-    pub flush: Op,
-
-    /// The encoder's `BROTLI_BOOL`, or the decoder's `BrotliDecoderResult` as an integer.
-    pub(crate) last_result: c_int,
-    pub(crate) error: c::BrotliDecoderErrorCode2,
-
-    /// Owned copy of the dictionary bytes. The prepared dictionary (encode) and
-    /// the decoder (decode) borrow this buffer, so it must outlive both; it is
-    /// only cleared by `deinit_dictionary`, after the borrower is destroyed.
-    pub dictionary: Vec<u8>,
-    /// Encode-mode only: the prepared dictionary attached to the encoder.
-    pub(crate) prepared_dictionary: Option<NonNull<c::BrotliEncoderPreparedDictionary>>,
+enum State {
+    Encoder(Box<Encoder>),
+    Decoder(Box<Decoder>),
 }
 
-impl Default for Context {
-    fn default() -> Self {
-        Self {
-            mode: bun_zlib::NodeMode::NONE,
-            state: None,
-            next_in: ptr::null(),
-            next_out: ptr::null_mut(),
-            avail_in: 0,
-            avail_out: 0,
-            flush: Op::process,
-            last_result: 0,
-            error: c::BrotliDecoderErrorCode2::NO_ERROR,
-            dictionary: Vec::new(),
-            prepared_dictionary: None,
-        }
-    }
+pub(crate) struct Context {
+    mode: NodeMode,
+    state: Option<State>,
+
+    avail_in: usize,
+    avail_out: usize,
+
+    flush: Operation,
+
+    encoded: bool,
+    needs_input: bool,
+    /// Outlives `reset()`, like in node.
+    error: Option<DecodeError>,
 }
 
 // ─── the class + Context method bodies ────────────────────────────────────
@@ -54,83 +33,44 @@ mod _impl {
     use core::cell::Cell;
     use core::ffi::c_uint;
 
+    use bun_core::vec::BorrowedCursor;
     use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-    use bun_jsc::{ErrorCode, JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
-    use bun_ptr::RefPtr;
+    use bun_jsc::{ErrorCode, JsResult};
 
-    use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive, Error};
+    use crate::node::node_zlib_binding::{
+        CompressionContext, CompressionStreamImpl as _, Error, Stream,
+    };
     use crate::node::util::validators;
 
-    // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-    // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
-    #[derive(bun_ptr::CellRefCounted)]
     pub(crate) struct NativeBrotli {
-        pub(crate) ref_count: Cell<u32>,
-        // The global outlives this payload. `BackRef`
-        // centralises the single unsafe deref so the trait impl is safe.
-        pub global_this: bun_ptr::BackRef<JSGlobalObject>,
-        /// How the pool thread delivers a finished write to the VM.
-        pub ticket: Cell<Option<bun_jsc::Ticket>>,
-        pub stream: JsCell<Context>,
-        pub poll_ref: JsCell<CountedKeepAlive>,
-        // TODO: Strong self-ref on the wrapper → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
-        pub this_value: JsCell<StrongOptional>, // Strong.Optional — empty-initialised
-        pub write_in_progress: Cell<bool>,
-        /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
-        pub pinned_buffers: Cell<u8>,
-        /// Copy of the pending `write()`'s input, if a pin can't keep the input mapped.
-        pub input_copy: JsCell<crate::node::node_zlib_binding::InputCopy>,
-        pub pending_close: Cell<bool>,
-        pub closed: Cell<bool>,
-        pub task: JsCell<WorkPoolTask>,
-        /// External-allocation footprint reported to the GC, fixed at
-        /// construction. `mode` never changes after this (only `close()` sets
-        /// it to `NONE`, on the JS thread), so the external state size is
-        /// constant for the life of the instance. Cached here as a plain
-        /// immutable field because `estimated_size` runs on the concurrent GC
-        /// marking thread, where reading `self.stream` through the `JsCell`
-        /// would alias the `&mut` held by an in-progress `with_mut` drive loop.
-        pub(crate) estimated_external_size: usize,
+        stream: Cell<Option<Box<Stream<Context>>>>,
+        pending_close: Cell<bool>,
+        closed: Cell<bool>,
+        /// Fixed at construction: `estimated_size` runs on a GC marking thread, which cannot read `stream`.
+        estimated_external_size: usize,
     }
 
     // `CompressionStreamImpl` (node_zlib_binding.rs) has write, writeSync, reset, close and onerror.
 
     impl NativeBrotli {
-        pub(crate) fn constructor(cx: &mut JsScope<'_>, mode: u8) -> *mut Self {
-            let mode = bun_zlib::NodeMode::from_int(mode);
-            let stream = Context {
-                mode,
-                ..Default::default()
-            };
-            RefPtr::new(Self {
-                ref_count: Cell::new(1),
-                global_this: bun_ptr::BackRef::new(cx.global()),
-                ticket: Cell::new(None),
-                stream: JsCell::new(stream),
-                poll_ref: JsCell::new(CountedKeepAlive::default()),
-                this_value: JsCell::new(StrongOptional::empty()),
-                write_in_progress: Cell::new(false),
-                pinned_buffers: Cell::new(0),
-                input_copy: JsCell::new(Default::default()),
+        pub(crate) fn constructor(mode: u8) -> Self {
+            let mode = NodeMode::from_int(mode);
+            Self {
+                stream: Cell::new(Some(Stream::new(Context::new(mode)))),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
-                // .callback = undefined — overwritten before WorkPool::schedule()
-                task: JsCell::new(WorkPoolTask {
-                    node: Default::default(),
-                    callback: noop_task_callback,
-                }),
                 estimated_external_size: Self::external_size_for(mode),
-            })
-            .into_raw()
+            }
         }
 
         /// Per-mode external-allocation footprint, fixed at construction.
-        fn external_size_for(mode: bun_zlib::NodeMode) -> usize {
-            const ENCODER_STATE_SIZE: usize = 5143; // sizeof(BrotliEncoderStateStruct)
-            const DECODER_STATE_SIZE: usize = 855; // sizeof(BrotliDecoderStateStruct)
+        fn external_size_for(mode: NodeMode) -> usize {
+            // What a stream takes depends on its parameters and input, so these only pace the collector.
+            const ENCODER_ESTIMATE: usize = 5143;
+            const DECODER_ESTIMATE: usize = 855;
             match mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => ENCODER_STATE_SIZE,
-                bun_zlib::NodeMode::BROTLI_DECODE => DECODER_STATE_SIZE,
+                NodeMode::BROTLI_ENCODE => ENCODER_ESTIMATE,
+                NodeMode::BROTLI_DECODE => DECODER_ESTIMATE,
                 _ => 0,
             }
         }
@@ -152,10 +92,8 @@ mod _impl {
         ) -> JsResult<bool> {
             let global_this = cx.global();
             let this_value = this_value.to_js();
-            // Racing an in-flight async write would alias `&mut Context`
-            // across threads; a closed `Context` cannot be re-initialized.
-            self.throw_unless_idle(global_this)?;
-            let feature = if self.stream.get().mode == bun_zlib::NodeMode::BROTLI_ENCODE {
+            let mode = self.borrow_idle_stream(global_this)?.context.mode;
+            let feature = if mode == NodeMode::BROTLI_ENCODE {
                 bun_removable_features::Feature::BrotliEncoder
             } else {
                 bun_removable_features::Feature::BrotliDecoder
@@ -219,10 +157,10 @@ mod _impl {
             }
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
-            // outlives the `stream.init` call below (E0716 otherwise).
+            // outlives the `Context::init` call below (E0716 otherwise).
             let dictionary_buf;
             let dictionary = if dictionary.is_undefined() {
-                None
+                &[]
             } else {
                 let dictionary_value = dictionary.to_js();
                 dictionary_buf = match dictionary_value.as_array_buffer(global_this) {
@@ -235,7 +173,7 @@ mod _impl {
                         ));
                     }
                 };
-                Some(dictionary_buf.byte_slice())
+                dictionary_buf.byte_slice()
             };
 
             js::write_result_set_cached(this_value, global_this, write_result_value);
@@ -246,9 +184,10 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global_this),
             );
 
-            let mut err = self.stream.with_mut(|s| s.init(dictionary));
-            if err.is_error() {
-                self.emit_error(global_this, this_value, err);
+            let mut stream = self.borrow_idle_stream(global_this)?;
+            if let Err(err) = stream.context.init(dictionary) {
+                drop(stream);
+                self.emit_error(global_this, this_value, &err);
                 return Ok(false);
             }
 
@@ -259,15 +198,13 @@ mod _impl {
                 if d == u32::MAX {
                     continue;
                 }
-                err = self
-                    .stream
-                    .with_mut(|s| s.set_params(u32::try_from(i).expect("int cast") as c_uint, d));
-                if err.is_error() {
-                    // impl.emitError(this, globalThis, this_value, err); //XXX: onerror isn't set yet
-                    self.stream.with_mut(|s| s.close());
-                    // The Context is torn down (`mode` is `NONE`); reject any
-                    // further operation the way `close()` does.
-                    self.closed.set(true);
+                if !stream
+                    .context
+                    .set_params(u32::try_from(i).expect("int cast") as c_uint, d)
+                {
+                    // No `emit_error`: zlib.ts sets `onerror` after `init()`.
+                    drop(stream);
+                    self.close();
                     return Ok(false);
                 }
             }
@@ -279,402 +216,123 @@ mod _impl {
         }
     }
 
-    // `poll_ref` and `this_value` (Strong) clean up via their own Drop impls.
-    impl Drop for NativeBrotli {
-        fn drop(&mut self) {
-            self.stream.with_mut(|s| match s.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE | bun_zlib::NodeMode::BROTLI_DECODE => s.close(),
-                _ => {}
-            });
-        }
-    }
-
     impl Context {
-        pub(crate) fn init(&mut self, dictionary: Option<&[u8]>) -> Error {
+        fn new(mode: NodeMode) -> Self {
+            Self {
+                mode,
+                state: None,
+                avail_in: 0,
+                avail_out: 0,
+                flush: Operation::Process,
+                encoded: false,
+                needs_input: false,
+                error: None,
+            }
+        }
+
+        fn init(&mut self, dictionary: &[u8]) -> Result<(), Error> {
             // Mirrors node's Init(): free the previous instance and dictionary
             // before building new ones. `init` is JS-reachable twice on one
             // handle, and ResetStream() lands here with no dictionary.
-            if self.state.is_some() {
-                self.deinit_state();
-            }
-            self.deinit_dictionary();
-            match self.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => {
-                    let alloc = bun_brotli::BrotliAllocator::alloc;
-                    let free = bun_brotli::BrotliAllocator::free;
-                    // SAFETY: FFI — alloc/free are valid fn ptrs, opaque arg unused.
-                    let state = unsafe {
-                        c::BrotliEncoderCreateInstance(Some(alloc), Some(free), ptr::null_mut())
-                    };
-                    if state.is_null() {
-                        return Error::init(
-                            c"Could not initialize Brotli instance".as_ptr(),
-                            -1,
-                            c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
-                        );
-                    }
-                    self.state = NonNull::new(state.cast::<c_void>());
-                    self.attach_dictionary(dictionary)
-                }
-                bun_zlib::NodeMode::BROTLI_DECODE => {
-                    let alloc = bun_brotli::BrotliAllocator::alloc;
-                    let free = bun_brotli::BrotliAllocator::free;
-                    // SAFETY: FFI — alloc/free are valid fn ptrs, opaque arg unused.
-                    let state = unsafe {
-                        c::BrotliDecoderCreateInstance(Some(alloc), Some(free), ptr::null_mut())
-                    };
-                    if state.is_null() {
-                        return Error::init(
-                            c"Could not initialize Brotli instance".as_ptr(),
-                            -1,
-                            c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
-                        );
-                    }
-                    self.state = NonNull::new(state.cast::<c_void>());
-                    self.attach_dictionary(dictionary)
-                }
+            self.state = None;
+            let (state, message) = match self.mode {
+                NodeMode::BROTLI_ENCODE => (
+                    Encoder::with_dictionary(dictionary).map(|e| State::Encoder(Box::new(e))),
+                    c"Failed to prepare brotli dictionary",
+                ),
+                NodeMode::BROTLI_DECODE => (
+                    Decoder::with_dictionary(dictionary).map(|d| State::Decoder(Box::new(d))),
+                    c"Failed to attach brotli dictionary",
+                ),
                 _ => unreachable!(),
-            }
-        }
-
-        /// Copies `dictionary` into `self.dictionary` and attaches it to the
-        /// freshly created encoder/decoder state. Must run after `self.state`
-        /// is set and after `deinit_dictionary`.
-        fn attach_dictionary(&mut self, dictionary: Option<&[u8]>) -> Error {
-            let Some(dict) = dictionary.filter(|d| !d.is_empty()) else {
-                return Error::ok();
             };
-            self.dictionary = dict.to_vec();
-            let (data, data_size) = (self.dictionary.as_ptr(), self.dictionary.len());
-            let state = self.state_ptr();
-            match self.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => {
-                    let alloc = bun_brotli::BrotliAllocator::alloc;
-                    let free = bun_brotli::BrotliAllocator::free;
-                    // SAFETY: FFI — `data`/`data_size` borrow the Context-owned
-                    // dictionary copy, which outlives the prepared dictionary
-                    // (`deinit_dictionary` destroys it before clearing the Vec).
-                    let prepared = unsafe {
-                        c::BrotliEncoderPrepareDictionary(
-                            c::BROTLI_SHARED_DICTIONARY_RAW as c::BrotliSharedDictionaryType,
-                            data_size,
-                            data,
-                            c::BROTLI_MAX_QUALITY,
-                            Some(alloc),
-                            Some(free),
-                            ptr::null_mut(),
-                        )
-                    };
-                    let Some(prepared) = NonNull::new(prepared) else {
-                        return Error::init(
-                            c"Failed to prepare brotli dictionary".as_ptr(),
-                            -1,
-                            c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
-                        );
-                    };
-                    self.prepared_dictionary = Some(prepared);
-                    // SAFETY: FFI — `state` is a live encoder (set by the caller
-                    // just above); `prepared` is owned by `self` and outlives it.
-                    let ok = unsafe {
-                        c::BrotliEncoderAttachPreparedDictionary(state.cast(), prepared.as_ptr())
-                    };
-                    if ok == 0 {
-                        return Error::init(
-                            c"Failed to attach brotli dictionary".as_ptr(),
-                            -1,
-                            c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
-                        );
-                    }
-                    Error::ok()
-                }
-                bun_zlib::NodeMode::BROTLI_DECODE => {
-                    // SAFETY: FFI — `state` is a live decoder; `data`/`data_size`
-                    // borrow the Context-owned copy, which outlives the decoder.
-                    let ok = unsafe {
-                        c::BrotliDecoderAttachDictionary(
-                            state.cast(),
-                            c::BROTLI_SHARED_DICTIONARY_RAW as c::BrotliSharedDictionaryType,
-                            data_size,
-                            data,
-                        )
-                    };
-                    if ok == 0 {
-                        return Error::init(
-                            c"Failed to attach brotli dictionary".as_ptr(),
-                            -1,
-                            c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
-                        );
-                    }
-                    Error::ok()
-                }
-                _ => unreachable!(),
-            }
+            let error = || Error::init(message, -1, c"ERR_ZLIB_DICTIONARY_LOAD_FAILED");
+            self.state = Some(state.ok_or_else(error)?);
+            Ok(())
         }
 
-        /// Destroys the prepared dictionary before releasing the bytes it
-        /// borrows. Idempotent.
-        fn deinit_dictionary(&mut self) {
-            if let Some(prepared) = self.prepared_dictionary.take() {
-                // SAFETY: FFI — created by `BrotliEncoderPrepareDictionary` and
-                // taken out of `self`, so it is destroyed exactly once.
-                unsafe { c::BrotliEncoderDestroyPreparedDictionary(prepared.as_ptr()) };
-            }
-            self.dictionary = Vec::new();
-        }
-
-        pub(crate) fn set_params(&mut self, key: c_uint, value: u32) -> Error {
-            match self.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => {
-                    if c::BrotliEncoderSetParameter(self.encoder_mut(), key, value) == 0 {
-                        return Error::init(
-                            c"Setting parameter failed".as_ptr(),
-                            -1,
-                            c"ERR_BROTLI_PARAM_SET_FAILED".as_ptr(),
-                        );
-                    }
-                    Error::ok()
-                }
-                bun_zlib::NodeMode::BROTLI_DECODE => {
-                    if c::BrotliDecoderSetParameter(self.decoder_mut(), key, value) == 0 {
-                        return Error::init(
-                            c"Setting parameter failed".as_ptr(),
-                            -1,
-                            c"ERR_BROTLI_PARAM_SET_FAILED".as_ptr(),
-                        );
-                    }
-                    Error::ok()
-                }
-                _ => unreachable!(),
+        fn set_params(&mut self, key: c_uint, value: u32) -> bool {
+            match &mut self.state {
+                Some(State::Encoder(encoder)) => encoder.set_parameter(key, value),
+                Some(State::Decoder(decoder)) => decoder.set_parameter(key, value),
+                None => unreachable!(),
             }
         }
+    }
 
-        pub(crate) fn reset(&mut self) -> Error {
+    impl CompressionContext for Context {
+        fn reset(&mut self) -> Result<(), Error> {
             // Matches node's `BrotliContext::ResetStream()`, which calls `Init()`
             // with its default (empty) dictionary — a reset drops the dictionary.
             // `init` frees the previous state and dictionary itself.
-            self.init(None)
+            self.init(&[])
         }
 
-        /// Frees the Brotli encoder/decoder state without changing mode.
-        /// Use close() for full cleanup that also sets mode to NONE.
-        fn deinit_state(&mut self) {
-            match self.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => {
-                    c::BrotliEncoder::destroy_instance(self.encoder_mut())
-                }
-                bun_zlib::NodeMode::BROTLI_DECODE => {
-                    c::BrotliDecoder::destroy_instance(self.decoder_mut())
-                }
-                _ => unreachable!(),
-            }
-            self.state = None;
-        }
-
-        pub(crate) fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
-            self.next_in = in_.map_or(ptr::null(), |p| p.as_ptr());
-            self.avail_in = in_.map_or(0, |p| p.len());
-            // Reshaped for borrowck — compute ptr/len before consuming `out`.
-            match out {
-                Some(p) => {
-                    self.avail_out = p.len();
-                    self.next_out = p.as_mut_ptr();
-                }
-                None => {
-                    self.avail_out = 0;
-                    self.next_out = ptr::null_mut();
-                }
-            }
-        }
-
-        pub(crate) fn flush_value_is_valid(flush: u32) -> bool {
+        fn flush_value_is_valid(flush: u32) -> bool {
             flush <= 3
         }
 
-        pub(crate) fn set_flush(&mut self, flush: c_int) {
-            // Caller passes a valid BrotliEncoderOperation discriminant (Node
-            // zlib constants 0..=3). Exhaustive match — `Op` is `#[repr(u32)]`
-            // so the prior `c_int` bit-cast was a width hazard anyway. Out-of-
-            // range traps.
+        fn set_flush(&mut self, flush: c_int) {
             self.flush = match flush {
-                0 => Op::process,
-                1 => Op::flush,
-                2 => Op::finish,
-                3 => Op::emit_metadata,
-                n => unreachable!("invalid BrotliEncoderOperation {n}"),
+                0 => Operation::Process,
+                1 => Operation::Flush,
+                2 => Operation::Finish,
+                3 => Operation::EmitMetadata,
+                n => unreachable!("invalid BROTLI_OPERATION {n}"),
             };
         }
 
-        pub(crate) fn do_work(&mut self) {
-            // A handle driven before `init()` has no encoder/decoder state;
-            // brotli dereferences the state pointer unconditionally.
-            if self.state.is_none() {
-                return;
-            }
-            match self.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => {
-                    // SAFETY: state is a live encoder; next_in/next_out point into
-                    // caller-provided buffers sized by avail_in/avail_out.
-                    self.last_result = unsafe {
-                        c::BrotliEncoderCompressStream(
-                            self.state_ptr().cast(),
-                            self.flush,
-                            &raw mut self.avail_in,
-                            &raw mut self.next_in,
-                            &raw mut self.avail_out,
-                            &raw mut self.next_out,
-                            ptr::null_mut(),
-                        )
-                    };
+        fn do_work(&mut self, mut input: &[u8], mut out: BorrowedCursor<'_, u8>) {
+            match &mut self.state {
+                // Driven before `init()`, or after it failed.
+                None => self.encoded = false,
+                Some(State::Encoder(encoder)) => {
+                    let result = encoder.compress(self.flush, &mut input, out.reborrow());
+                    self.encoded = result.is_ok();
                 }
-                bun_zlib::NodeMode::BROTLI_DECODE => {
-                    // SAFETY: state is a live decoder; buffers as above.
-                    let result = unsafe {
-                        c::BrotliDecoderDecompressStream(
-                            self.state_ptr().cast(),
-                            &raw mut self.avail_in,
-                            &raw mut self.next_in,
-                            &raw mut self.avail_out,
-                            &raw mut self.next_out,
-                            ptr::null_mut(),
-                        )
-                    };
-                    self.last_result = result as c_int;
-                    if result == c::BrotliDecoderResult::err {
-                        self.error = c::BrotliDecoderGetErrorCode(self.decoder_mut());
-                    }
+                Some(State::Decoder(decoder)) => {
+                    let result = decoder.decompress(&mut input, out.reborrow());
+                    self.needs_input = result == Ok(DecodeStatus::NeedsInput);
+                    self.error = result.err().or(self.error);
                 }
-                _ => unreachable!(),
             }
+            self.avail_in = input.len();
+            self.avail_out = out.capacity();
         }
 
-        pub(crate) fn write_result(&self) -> [u32; 2] {
-            [self.avail_out, self.avail_in].map(|n| u32::try_from(n).expect("int cast"))
-        }
-
-        pub(crate) fn get_error_info(&self) -> Error {
+        fn write_result(&self) -> Result<[u32; 2], Error> {
             match self.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => {
-                    if self.last_result == 0 {
-                        return Error::init(
-                            c"Compression failed".as_ptr(),
+                NodeMode::BROTLI_ENCODE => {
+                    if !self.encoded {
+                        return Err(Error::init(
+                            c"Compression failed",
                             -1,
-                            c"ERR_BROTLI_COMPRESSION_FAILED".as_ptr(),
-                        );
+                            c"ERR_BROTLI_COMPRESSION_FAILED",
+                        ));
                     }
-                    Error::ok()
                 }
-                bun_zlib::NodeMode::BROTLI_DECODE => {
-                    if self.error != c::BrotliDecoderErrorCode2::NO_ERROR {
-                        return Error::init(
-                            c"Decompression failed".as_ptr(),
-                            self.error as i32,
-                            code_for_error(self.error),
-                        );
-                    } else if self.flush == Op::finish
-                        && self.last_result == c::BrotliDecoderResult::needs_more_input as c_int
-                    {
-                        return Error::init(
-                            c"unexpected end of file".as_ptr(),
-                            bun_zlib::ReturnCode::BufError as i32,
-                            c"Z_BUF_ERROR".as_ptr(),
-                        );
+                NodeMode::BROTLI_DECODE => {
+                    if let Some(error) = self.error {
+                        return Err(Error::init(
+                            c"Decompression failed",
+                            error as i32,
+                            error.code(),
+                        ));
+                    } else if self.flush == Operation::Finish && self.needs_input {
+                        return Err(Error::init(
+                            c"unexpected end of file",
+                            Z_BUF_ERROR,
+                            c"Z_BUF_ERROR",
+                        ));
                     }
-                    Error::ok()
                 }
                 _ => unreachable!(),
             }
-        }
-
-        pub(crate) fn close(&mut self) {
-            // Idempotent: a handle that was never (successfully) initialized,
-            // or that was already closed, has no encoder/decoder to free.
-            if self.state.is_some() {
-                self.deinit_state();
-            }
-            // After the encoder/decoder that borrows the dictionary is gone.
-            self.deinit_dictionary();
-            self.mode = bun_zlib::NodeMode::NONE;
-        }
-
-        #[inline]
-        fn state_ptr(&self) -> *mut c_void {
-            self.state.map_or(ptr::null_mut(), |p| p.as_ptr())
-        }
-
-        /// `&mut` to the live encoder state. Single unsafe deref site for the
-        /// set-once `state: Option<NonNull<c_void>>` (encode mode) so callers
-        /// hitting the `pub safe fn` brotli FFI surface stay safe.
-        #[inline]
-        fn encoder_mut(&mut self) -> &mut c::BrotliEncoder {
-            debug_assert!(matches!(self.mode, bun_zlib::NodeMode::BROTLI_ENCODE));
-            // SAFETY: callers branch on `mode == BROTLI_ENCODE`, so `state` was
-            // populated by `BrotliEncoderCreateInstance` in `init()` and is not
-            // yet freed (`deinit_state` clears it after destroy).
-            unsafe { &mut *self.state.unwrap().as_ptr().cast() }
-        }
-
-        /// `&mut` to the live decoder state. Single unsafe deref site for the
-        /// set-once `state: Option<NonNull<c_void>>` (decode mode).
-        #[inline]
-        fn decoder_mut(&mut self) -> &mut c::BrotliDecoder {
-            debug_assert!(matches!(self.mode, bun_zlib::NodeMode::BROTLI_DECODE));
-            // SAFETY: callers branch on `mode == BROTLI_DECODE`, so `state` was
-            // populated by `BrotliDecoderCreateInstance` in `init()` and is not
-            // yet freed.
-            unsafe { &mut *self.state.unwrap().as_ptr().cast() }
+            Ok([self.avail_out, self.avail_in].map(|n| u32::try_from(n).expect("int cast")))
         }
     }
 
     crate::__impl_compression_stream!(NativeBrotli, Context, js_NativeBrotli);
-
-    fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
-        // Node builds these as `"ERR_" + <brotli enum suffix>` where the suffix
-        // keeps its leading underscore (`_ERROR_FORMAT_*`), yielding codes like
-        // `ERR__ERROR_FORMAT_PADDING_2` (double underscore). Match node exactly.
-        // Rust has no enum reflection — expand the table by hand. Keep in sync
-        // with `bun_brotli::c::BrotliDecoderErrorCode2`.
-        use c::BrotliDecoderErrorCode2 as E;
-        let s: &core::ffi::CStr = match err {
-            E::NO_ERROR => c"ERR__NO_ERROR",
-            E::SUCCESS => c"ERR__SUCCESS",
-            E::NEEDS_MORE_INPUT => c"ERR__NEEDS_MORE_INPUT",
-            E::NEEDS_MORE_OUTPUT => c"ERR__NEEDS_MORE_OUTPUT",
-            E::ERROR_FORMAT_EXUBERANT_NIBBLE => c"ERR__ERROR_FORMAT_EXUBERANT_NIBBLE",
-            E::ERROR_FORMAT_RESERVED => c"ERR__ERROR_FORMAT_RESERVED",
-            E::ERROR_FORMAT_EXUBERANT_META_NIBBLE => c"ERR__ERROR_FORMAT_EXUBERANT_META_NIBBLE",
-            E::ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET => c"ERR__ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET",
-            E::ERROR_FORMAT_SIMPLE_HUFFMAN_SAME => c"ERR__ERROR_FORMAT_SIMPLE_HUFFMAN_SAME",
-            E::ERROR_FORMAT_CL_SPACE => c"ERR__ERROR_FORMAT_CL_SPACE",
-            E::ERROR_FORMAT_HUFFMAN_SPACE => c"ERR__ERROR_FORMAT_HUFFMAN_SPACE",
-            E::ERROR_FORMAT_CONTEXT_MAP_REPEAT => c"ERR__ERROR_FORMAT_CONTEXT_MAP_REPEAT",
-            E::ERROR_FORMAT_BLOCK_LENGTH_1 => c"ERR__ERROR_FORMAT_BLOCK_LENGTH_1",
-            E::ERROR_FORMAT_BLOCK_LENGTH_2 => c"ERR__ERROR_FORMAT_BLOCK_LENGTH_2",
-            E::ERROR_FORMAT_TRANSFORM => c"ERR__ERROR_FORMAT_TRANSFORM",
-            E::ERROR_FORMAT_DICTIONARY => c"ERR__ERROR_FORMAT_DICTIONARY",
-            E::ERROR_FORMAT_WINDOW_BITS => c"ERR__ERROR_FORMAT_WINDOW_BITS",
-            E::ERROR_FORMAT_PADDING_1 => c"ERR__ERROR_FORMAT_PADDING_1",
-            E::ERROR_FORMAT_PADDING_2 => c"ERR__ERROR_FORMAT_PADDING_2",
-            E::ERROR_FORMAT_DISTANCE => c"ERR__ERROR_FORMAT_DISTANCE",
-            E::ERROR_FORMAT_BLOCK_SWITCH => c"ERR__ERROR_FORMAT_BLOCK_SWITCH",
-            E::ERROR_COMPOUND_DICTIONARY => c"ERR__ERROR_COMPOUND_DICTIONARY",
-            E::ERROR_DICTIONARY_NOT_SET => c"ERR__ERROR_DICTIONARY_NOT_SET",
-            E::ERROR_INVALID_ARGUMENTS => c"ERR__ERROR_INVALID_ARGUMENTS",
-            E::ERROR_ALLOC_CONTEXT_MODES => c"ERR__ERROR_ALLOC_CONTEXT_MODES",
-            E::ERROR_ALLOC_TREE_GROUPS => c"ERR__ERROR_ALLOC_TREE_GROUPS",
-            E::ERROR_ALLOC_CONTEXT_MAP => c"ERR__ERROR_ALLOC_CONTEXT_MAP",
-            E::ERROR_ALLOC_RING_BUFFER_1 => c"ERR__ERROR_ALLOC_RING_BUFFER_1",
-            E::ERROR_ALLOC_RING_BUFFER_2 => c"ERR__ERROR_ALLOC_RING_BUFFER_2",
-            E::ERROR_ALLOC_BLOCK_TYPE_TREES => c"ERR__ERROR_ALLOC_BLOCK_TYPE_TREES",
-            E::ERROR_UNREACHABLE => c"ERR__ERROR_UNREACHABLE",
-        };
-        s.as_ptr()
-    }
-
-    /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
-    /// (see `CompressionStreamImpl::write` in node_zlib_binding.rs).
-    /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
-    /// struct-init site; the body never dereferences the pointer.
-    fn noop_task_callback(_task: *mut WorkPoolTask) {}
 } // mod _impl
 
 pub(crate) use _impl::NativeBrotli;

@@ -1,3 +1,4 @@
+#![feature(core_io_borrowed_buf)]
 #![allow(non_snake_case)]
 #![warn(unused_must_use)]
 #![cfg_attr(test, feature(linkage))]
@@ -20,12 +21,16 @@ pub mod StandaloneModuleGraph;
 pub mod compiled_program;
 mod executable_file;
 pub mod executable_request;
-#[cfg(not(windows))]
-pub use compiled_program::has_descriptors;
 pub use compiled_program::{
     CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput, CompiledProgramInput,
 };
-pub use compiled_program::{find_written_file, has_written_files, normalize_source_path};
+pub use compiled_program::{
+    find_written_code, find_written_file, has_written_files, normalize_source_path,
+};
+#[cfg(not(windows))]
+pub use compiled_program::{
+    forget_descriptor, has_descriptors, has_waiting_descriptors, read_descriptor,
+};
 pub use executable_file::with_executable_image;
 
 // Re-export the flat surface most downstream callers use.

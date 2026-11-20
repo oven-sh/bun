@@ -6,11 +6,12 @@
 # function holdsHeavy(r) { let s = 0; for (let i = 0; i < 3; i++) s += heavy(r); return s; }
 # function holdsFalls() { let s = 0; for (let i = 57; i < 60; i++) s += falls(i); return s; }
 # function holdsLight(box) { let s = 0; for (let i = 0; i < 3; i++) s += light(box, i); return s; }
-# globalThis.sink(holdsHeavy, holdsFalls, holdsLight);
+# function alsoHoldsHeavy(rows) { let s = 1; for (let i = 0; i < rows.length; i++) s -= heavy(rows[i]); return s; }
+# globalThis.sink(alsoHoldsHeavy, holdsHeavy, holdsFalls, holdsLight);
 # -- end of source
-# f1 = heavy, f2 = falls, f3 = light, f4 = holdsHeavy, f5 = holdsFalls, f6 = holdsLight
+# f1 = heavy, f2 = falls, f3 = light, f4 = holdsHeavy, f5 = holdsFalls, f6 = holdsLight, f7 = alsoHoldsHeavy
 # A short loop that stands in no other is left a loop where it holds a call that loops alone copy: as a loop it holds one copy. Whether loops copy the callee was asked by its size, up to forty operations. The inliner is finer: by size alone it copies up to twenty-four in a loop, and some bodies it does not walk in line at all. For those the loop stayed a loop AND the callee stayed a call: the turns written out were taken away and nothing was given.
-# The question is the inliner's own. A callee of twenty-eight operations that is handed nothing which would pay for its copy: the turns are written out, three calls in straight code,
+# The question is the inliner's own. (A callee that one loop alone calls is copied there; two call this one.) A callee of twenty-eight operations that is handed nothing which would pay for its copy: the turns are written out, three calls in straight code,
 # RUN(HEAVY): walk f4 mechanisms=all
 # HEAVY: code f4:Body
 # HEAVY-NOT: isLoopHead=true

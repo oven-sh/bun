@@ -7,7 +7,7 @@
 # const makes = id(make);
 # const first = makes(1, true);
 # print(Object.hasOwn(first, "fragile"), seen);
-# Object.defineProperty(Parcel.prototype, "fragile", { set(value: boolean) { seen++; }, configurable: true });
+# Object.defineProperty(id(Parcel.prototype), "fragile", { set(value: boolean) { seen++; }, configurable: true });
 # const second = makes(2, true);
 # print(Object.hasOwn(second, "fragile"), seen);
 # -- end of source

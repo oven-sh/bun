@@ -22,7 +22,6 @@ use crate::lifecycle_script_runner::{
     InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
 };
 use crate::lockfile_real::package::scripts::List as ScriptsList;
-use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
 use bun_install::{Behavior, PackageID, PackageManager, PreinstallState, invalid_package_id};
@@ -61,7 +60,7 @@ impl PackageManager {
     /// site; collapsed onto `self.lockfile` to avoid the
     /// `&mut self` / `&self.lockfile` aliasing borrowck rejects.
     /// `dependency` is the dependency `pkg` is being resolved for.
-    pub fn determine_preinstall_state(
+    pub(crate) fn determine_preinstall_state(
         &mut self,
         pkg: &Package,
         dependency: Behavior,
@@ -126,18 +125,17 @@ impl PackageManager {
                     break 'brk Some(patched_dep.patchfile_hash().unwrap());
                 };
 
-                // SAFETY: each arm reads the union variant that matches the
-                // `pkg.resolution.tag` just dispatched on; `Resolution` is
-                // zero-initialised (`Value::zero()`) so even a stale tag yields
-                // POD bytes, never uninit.
+                let mut buf = bun_paths::path_buffer_pool::get();
                 let folder_path: &ZStr = match pkg.resolution.tag {
                     ResolutionTag::Git => directories::cached_git_folder_name_print_auto(
                         self,
+                        &mut buf,
                         pkg.resolution.git(),
                         patch_hash,
                     ),
                     ResolutionTag::Github => directories::cached_github_folder_name_print_auto(
                         self,
+                        &mut buf,
                         pkg.resolution.github(),
                         patch_hash,
                     ),
@@ -147,6 +145,7 @@ impl PackageManager {
                             .slice(self.lockfile.buffers.string_bytes.as_slice());
                         directories::cached_npm_package_folder_name(
                             self,
+                            &mut buf,
                             name,
                             pkg.resolution.npm().version,
                             patch_hash,
@@ -155,6 +154,7 @@ impl PackageManager {
                     ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                         directories::cached_tarball_folder_name(
                             self,
+                            &mut buf,
                             &pkg.meta.integrity,
                             &pkg.resolution,
                             patch_hash,
@@ -227,23 +227,7 @@ impl PackageManager {
 
     pub fn sleep(&mut self) {
         self.report_slow_lifecycle_scripts();
-        Output::flush();
-        // see `tick_lifecycle_scripts` — `is_done` callback reborrows
-        // `self` (the struct that owns `event_loop`), so use the raw-pointer
-        // `tick_raw` variant which only holds `&mut event_loop` between
-        // `is_done` calls.
-        let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
-        let event_loop = core::ptr::addr_of_mut!(self.event_loop);
-        // SAFETY: `event_loop` is valid for the duration; `is_done` reborrows
-        // `*ctx` only while no `&mut event_loop` is live (per `tick_raw` contract).
-        unsafe {
-            bun_event_loop::AnyEventLoop::tick_raw(event_loop, ctx, |ctx| {
-                // SAFETY: `ctx` is the `*mut PackageManager` erased above; live
-                // for the duration of `sleep`.
-                let this = bun_ptr::callback_ctx::<PackageManager>(ctx);
-                this.has_no_more_pending_lifecycle_scripts()
-            });
-        }
+        self.sleep_until(Self::has_no_more_pending_lifecycle_scripts);
     }
 
     pub(crate) fn report_slow_lifecycle_scripts(&mut self) {
@@ -322,7 +306,6 @@ impl PackageManager {
     /// TODO: re-evaluate whether some variables still need to be atomic
     pub fn spawn_package_lifecycle_scripts(
         &mut self,
-        ctx: Command::Context<'_>,
         list: ScriptsList,
         optional: bool,
         foreground: bool,
@@ -342,10 +325,9 @@ impl PackageManager {
         if cwd.len() + "/node_modules/.bin".len() >= bun_paths::MAX_PATH_BYTES {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
         }
-        let this_transpiler = self.configure_env_for_scripts(ctx)?;
+        self.configure_env_for_scripts()?;
 
-        let env_loader = this_transpiler.env_mut();
-        let mut script_env = env_loader.map.clone_with_allocator()?;
+        let mut script_env = self.env().map.clone_with_allocator()?;
 
         // `script_env.put` below needs `&mut`; copy PATH out so the
         // shared borrow does not span it.
@@ -358,13 +340,23 @@ impl PackageManager {
         let mut parent: Option<&[u8]> = Some(cwd);
         // An untrusted package can link a `node` or `sh` into a shared `.bin`, so that directory is
         // searched last.
-        let mut inherited_path = list.is_dependency.then_some(original_path.as_slice());
+        let mut env_path = EnvPath::init_capacity(original_path.len())?;
+        if list.is_dependency {
+            append_path_without_ancestor_bins(&mut env_path, &original_path, cwd)?;
+        }
+        crate::bin::link_conflicting_bins(
+            &self.lockfile,
+            &list.bin_conflicts,
+            cwd,
+            env_path.slice(),
+        )?;
+        let mut inherited_path = list.is_dependency.then_some(env_path.slice());
         let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
 
         while let Some(dir) = parent {
             if dir.len() != cwd.len() && !strings::contains(dir, store_entry) {
                 if let Some(inherited) = inherited_path.take() {
-                    append_path_without_ancestor_bins(&mut path, inherited, cwd)?;
+                    path.append(inherited)?;
                 }
             }
 
@@ -377,7 +369,7 @@ impl PackageManager {
         }
 
         match inherited_path {
-            Some(inherited) => append_path_without_ancestor_bins(&mut path, inherited, cwd)?,
+            Some(inherited) => path.append(inherited)?,
             None if list.is_dependency => {}
             None => path.append(original_path.as_slice())?,
         }
@@ -387,9 +379,9 @@ impl PackageManager {
 
         // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the
-        // owning `NullDelimitedEnvMap` by value so its `K=V\0` buffers outlive
+        // owning `CStringList` by value so its `K=V\0` strings outlive
         // this stack frame (freed by the subprocess's `Drop`).
-        let envp = script_env.create_null_delimited_env_map()?;
+        let envp = script_env.to_envp();
 
         #[cfg(windows)]
         let shell_bin: Option<&ZStr> = None;
@@ -408,7 +400,7 @@ impl PackageManager {
             log_level,
             foreground,
             install_ctx,
-        )?;
+        );
         Ok(())
     }
 

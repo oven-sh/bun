@@ -740,6 +740,11 @@ impl<'a, 's> Reader<'a, 's> {
         let is_oxc = self.flavor == Flavor::Oxc;
         let mut pos = start;
         while let Some(&ch) = text.get(pos) {
+            // 0xE2 starts U+2028 and U+2029, which are line breaks.
+            if !matches!(ch, b'`' | b'\n' | b'\r' | 0xE2 | b'@' | b'{') {
+                pos += 1;
+                continue;
+            }
             if ch == b'`' || lexer::starts_with_line_break(&text[pos..]) {
                 break;
             }

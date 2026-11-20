@@ -1,7 +1,7 @@
 # `for (k in impl) N[k] = impl[k]`: the key is a name that the loop over `impl` gave, and what is stored is read off `impl` under that key: each name of `impl` is appended to `N`, in the cell, and holds what `impl` holds under it, so `N.add(..)` calls `add`. `M` is filled under the keys of a loop over ANOTHER object: nobody knows its names. `held` is an instance: the names of `part` are appended to its layout too.
 # RUN: link fields layouts mechanisms=all
-# CHECK: field L0.1 "one" appended proven=i32 writers-known
-# CHECK: field L0.2 "two" appended proven=i32 writers-known
+# CHECK: field L0.1 "one" appended proven=int[0, 2147483647] writers-known
+# CHECK: field L0.2 "two" appended proven=int[0, 2147483647] writers-known
 # CHECK: field L1.0 "add" appended proven=f2 writers-known
 # CHECK: field L1.1 "low" appended proven=f3 writers-known
 # CHECK-NOT: field L2.

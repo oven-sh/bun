@@ -27,7 +27,7 @@ use bun_sema::fold::FoldOptions;
 use bun_sema::hir_from_data::DataModule;
 use bun_sema::resolve::{AOT_CONDITION, CodeFailure, CodeImportKind, FileSearch, FoundCode, Host};
 use bun_sema::util::FxHashSet;
-use bun_sema_driver::host::{from_native, to_native};
+use bun_sema_driver::host::{from_native, is_regular_file, to_native};
 use bun_threading::Guarded;
 use core::ptr::NonNull;
 use std::borrow::Cow;
@@ -59,13 +59,9 @@ impl BuildContext {
         &self.bundle().transpiler().options
     }
 
-    pub(crate) fn with_worker<R>(
-        &self,
-        work: impl FnOnce(&mut Transpiler<'static>, &Arena) -> R,
-    ) -> R {
-        let mut worker = scopeguard::guard(Worker::get(self.bundle()), |worker| worker.unget());
-        let data = worker.data.as_mut().expect("Worker::get creates it");
-        with_ast_scope(|arena| work(&mut data.transpiler, arena))
+    pub(crate) fn with_worker<R>(&self, work: impl FnOnce(&mut Transpiler<'static>) -> R) -> R {
+        let mut worker = Worker::get(self.bundle());
+        with_ast_scope(|_| work(&mut worker.transpiler))
     }
 }
 
@@ -88,7 +84,7 @@ impl FileFinder {
     ///
     /// # Safety
     /// `transpiler` outlives what is returned and is not written in the meantime.
-    pub unsafe fn new(transpiler: &Transpiler<'_>, conditions: &[Vec<u8>]) -> FileFinder {
+    pub unsafe fn new(transpiler: &Transpiler<'static>, conditions: &[Vec<u8>]) -> FileFinder {
         let mut options = crate::transpiler::resolver_bundle_options_subset(&transpiler.options);
         // Whoever asks has taken out what is external and the modules of Bun's own that it has.
         options.mark_builtins_as_external = false;
@@ -106,8 +102,7 @@ impl FileFinder {
             options.conditions.require.insert(condition, ());
         }
         let resolver = &transpiler.resolver;
-        // SAFETY: the caller's.
-        FileFinder(unsafe { Resolver::for_worker(resolver, resolver.log, options) })
+        FileFinder(Resolver::for_worker(resolver, resolver.log, options))
     }
 
     pub fn find(&mut self, search: &FileSearch<'_>) -> FoundCode {
@@ -142,7 +137,7 @@ impl FileFinder {
         let failure = resolver.esm_failure.take();
         let result = match result {
             ResultUnion::Success(result) => result,
-            ResultUnion::Failure(_) | ResultUnion::Pending(_) | ResultUnion::NotFound => {
+            ResultUnion::Failure(_) | ResultUnion::NotFound => {
                 return failure.map_or_else(FoundCode::not_found, describe_failure);
             }
         };
@@ -193,7 +188,7 @@ pub(crate) fn with_test_context<R>(
     static OUTPUT: std::sync::Once = std::sync::Once::new();
     OUTPUT.call_once(bun_core::output::stdio::init);
     let mut log = Log::init();
-    let mut event_loop = bun_event_loop::AnyEventLoop::default();
+    let event_loop = bun_event_loop::AnyEventLoop::default();
     let arena = Arena::new();
     let transform_options = crate::options::TransformOptions {
         absolute_working_dir: Some(Box::from(&b"/project"[..])),
@@ -209,21 +204,15 @@ pub(crate) fn with_test_context<R>(
         transpiler,
         None,
         &arena,
-        Some(NonNull::from(&mut event_loop)),
-        false,
+        Some(NonNull::from(&event_loop)),
         None,
         &arena,
-    )
-    .expect("the carrier starts");
+    );
     let context = BuildContext {
         bundle: NonNull::from(&mut *bundle).cast(),
         module_prefix: Box::from(&b"/$bunfs/root/"[..]),
     };
-    let result = then(&context);
-    drop(context);
-    bundle.deinit_without_freeing_arena();
-    drop(bundle);
-    result
+    then(&context)
 }
 
 pub(crate) struct BundlerServices {
@@ -328,9 +317,10 @@ fn list_files_below(folder: &[u8]) -> Vec<Vec<u8>> {
 
 /// The paths of the files and the folders in `folder` itself.
 fn list_folder(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
-    let directory = bun_sys::open_dir_for_iteration(bun_sys::Fd::cwd(), folder).ok()?;
-    let _close = scopeguard::guard(directory, bun_sys::FdExt::close);
-    let mut entries = bun_sys::dir_iterator::iterate(directory);
+    let directory = bun_sys::open_dir_for_iteration(bun_sys::Fd::cwd(), folder)
+        .map(bun_sys::File::from_fd)
+        .ok()?;
+    let mut entries = bun_sys::dir_iterator::iterate(directory.fd());
     let (mut files, mut folders) = (Vec::new(), Vec::new());
     while let Some(entry) = entries.next().ok()? {
         let path = [folder, &[bun_paths::SEP], entry.name.slice_u8()].concat();
@@ -360,6 +350,9 @@ fn is_native_program(path: &[u8]) -> bool {
         b"\xcf\xfa\xed\xfe",
         b"\xca\xfe\xba\xbe",
     ];
+    if !is_regular_file(path) {
+        return false;
+    }
     let Ok(file) = bun_sys::File::openat(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) else {
         return false;
     };
@@ -525,9 +518,8 @@ impl BundlerServices {
         // The levels above the root are already settled. They reach as far up as code does, and one level always exists.
         let root = without_trailing_slash_windows_path(&self.names_wanted.root_directory);
         let highest = count_lexical_levels_above(root, module_path).max(1);
-        let kind = bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
         let is_embedded = count_lexical_levels_above(root, source_path) <= highest
-            && matches!(kind, Ok(bun_sys::ExistsAtType::File))
+            && is_regular_file(source_path)
             && match is_query {
                 // What finds it there may read it. A program of machine code is started, which needs the disk.
                 true if reads_unknown_paths => {
@@ -893,7 +885,7 @@ impl SourceProvider for BundlerServices {
             Some(known) => known.value.into_owned(),
             None => written.to_ascii_lowercase(),
         };
-        let kept = MimeType::MimeType::init(&kept, false, None);
+        let kept = MimeType::MimeType::init(&kept);
         Some(Loader::from_mime_type(kept))
     }
 
@@ -955,6 +947,12 @@ impl SourceProvider for BundlerServices {
     fn is_embeddable_only_by_asset(&self, module_path: &[u8], source_path: &[u8]) -> bool {
         !self.is_found_by_pattern(source_path)
             && self.is_embeddable_as_asset(module_path, source_path)
+    }
+
+    fn is_in_asset(&self, source_path: &[u8]) -> bool {
+        let source_path = &*with_platform_separators(source_path);
+        let mut assets = self.assets.iter();
+        assets.any(|asset| is_at_or_below(source_path, asset))
     }
 
     fn find_package_folder(&self, module_path: &[u8]) -> Option<Vec<u8>> {
@@ -1043,13 +1041,27 @@ impl SourceProvider for BundlerServices {
         files.is_embedded(source_path, is_query)
     }
 
+    fn list_files_embedded_implicitly(&self) -> Vec<Vec<u8>> {
+        let files = self.files_for_file_system.lock();
+        let embedded = files.implicitly_embedded.iter().chain(&files.asked_about);
+        let mut paths: Vec<Vec<u8>> = embedded.map(|it| it.to_vec()).collect();
+        paths.sort_unstable();
+        paths.dedup();
+        paths
+    }
+
     fn fill_package_json_gaps(&self, module_paths: &[&[u8]]) -> Vec<(Vec<u8>, Vec<u8>)> {
         let has_any = !(self.files_for_file_system.lock().embedded_manifests).is_empty();
         let (mut added, mut closed) = (Vec::new(), FxHashSet::default());
+        let mut asked: FxHashSet<Vec<u8>> = FxHashSet::default();
         for path in module_paths.iter().filter(|_| has_any) {
             let path = with_platform_separators(path);
-            if let Some(folder) = bun_paths::dirname(&path).filter(|it| !closed.contains(*it)) {
-                self.fill_gaps_above(folder, &mut closed, &mut added);
+            // Whatever is added has an embedded `package.json` above it, so a folder that had none above it still has none.
+            if let Some(folder) = bun_paths::dirname(&path).filter(|it| !asked.contains(*it)) {
+                asked.insert(folder.to_vec());
+                if !closed.contains(folder) {
+                    self.fill_gaps_above(folder, &mut closed, &mut added);
+                }
             }
         }
         self.fill_gaps_in_packages(&mut added);
@@ -1086,6 +1098,15 @@ impl SourceProvider for BundlerServices {
         let source = &*with_platform_separators(source_path);
         (is_installed_package_file(source) || is_nearest_package_json(entry, source))
             && self.embed_eligible_file(module_path, source_path, is_query)
+    }
+
+    fn read_web_assembly(&self, source_path: &[u8]) -> Option<Vec<u8>> {
+        let source = &*with_platform_separators(source_path);
+        if !is_regular_file(source) {
+            return None;
+        }
+        let bytes = bun_sys::File::read_from(bun_sys::Fd::cwd(), source).ok()?;
+        bytes.starts_with(b"\0asm\x01\0\0\0").then_some(bytes)
     }
 
     fn embed_named_file(&self, module_path: &[u8], source_path: &[u8]) -> bool {
@@ -1152,7 +1173,7 @@ impl SourceProvider for BundlerServices {
     }
 
     fn compile_components(&self, file: &ComponentFile<'_>, observer: &mut dyn Observer) -> bool {
-        components::compile_components(&self.context, file, observer, None, &mut Log::init())
+        components::compile_components(&self.context, file, observer, &mut Log::init())
     }
 
     fn expand_globs(&self, file: &ComponentFile<'_>) -> Vec<ExpandedImportMetaGlob> {

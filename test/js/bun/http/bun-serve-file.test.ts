@@ -1558,7 +1558,7 @@ process.exit(0);
 }, 30_000);
 
 // On Windows, FileResponseStream closes its fd via Closer::close in Drop AND
-// WindowsBufferedReader::Drop closed the same CRT fd via File::start_close
+// WindowsBufferedReader::Drop closed the same CRT fd via File::finish
 // (CLOSE_HANDLE was cleared on the reader but never honored). Between the two
 // async uv_fs_close calls, an unrelated open could be handed the recycled
 // slot and have it closed under it. On POSIX the reader honors CLOSE_HANDLE,
@@ -1989,6 +1989,59 @@ test.skipIf(isWindows)("the next response can read a FIFO fd after an aborted Re
     writeSync(writer, "hello");
     closeSync(writer);
     expect(await fetch(server.url).then(res => res.text())).toBe("hello");
+  } finally {
+    closeSync(fd);
+  }
+});
+
+// kqueue drops the registration of a closed fd by itself.
+test.concurrent.skipIf(!isLinux)("an abort listener can close the fd of a Response(Bun.file(fd))", async () => {
+  using dir = tempDir("serve-fifo-fd-close-on-abort", {
+    "fixture.ts": `
+import { closeSync, openSync, writeSync } from "node:fs";
+const writer = openSync(process.argv[2], "w");
+const closed = Promise.withResolvers<void>();
+using server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  fetch(req) {
+    if (req.url.endsWith("/later")) return new Response("ok");
+    req.signal.addEventListener("abort", () => closed.resolve(closeSync(3)));
+    return new Response(Bun.file(3));
+  },
+});
+await Bun.connect({
+  hostname: "127.0.0.1",
+  port: server.port,
+  socket: {
+    open: socket => void socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"),
+    data: socket => socket.terminate(),
+  },
+});
+await closed.promise;
+const later = () => fetch(new URL("/later", server.url)).then(res => res.text());
+// The FIFO becomes readable after the response is gone.
+await later();
+writeSync(writer, "late");
+console.log(await later());
+`,
+  });
+  const fifoPath = join(String(dir), "fd.fifo");
+  mkfifo(fifoPath);
+  // Keeps the file open after the server has closed its descriptor.
+  const fd = openSync(fifoPath, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", fifoPath],
+      env: bunEnv,
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "pipe", fd],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   } finally {
     closeSync(fd);
   }

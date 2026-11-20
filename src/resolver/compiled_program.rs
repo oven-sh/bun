@@ -61,6 +61,57 @@ pub struct CompiledPathAlias {
     pub is_base_url: bool,
 }
 
+/// Names that are decoded when one is first looked up.
+pub struct NamesReadLater<T: 'static> {
+    encoded: &'static [u8],
+    entry_point_count: usize,
+    read: fn(&'static [u8], usize) -> Box<[T]>,
+    names: OnceLock<Box<[T]>>,
+}
+
+impl<T> NamesReadLater<T> {
+    /// Without `encoded` bytes there are no names.
+    pub fn new(
+        encoded: &'static [u8],
+        entry_point_count: usize,
+        read: fn(&'static [u8], usize) -> Box<[T]>,
+    ) -> NamesReadLater<T> {
+        NamesReadLater {
+            encoded,
+            entry_point_count,
+            read,
+            names: OnceLock::new(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self.names.get() {
+            Some(names) => names.is_empty(),
+            None => self.encoded.is_empty(),
+        }
+    }
+}
+
+impl<T> From<Box<[T]>> for NamesReadLater<T> {
+    fn from(names: Box<[T]>) -> NamesReadLater<T> {
+        NamesReadLater {
+            names: OnceLock::from(names),
+            ..NamesReadLater::new(b"", 0, |_, _| Box::new([]))
+        }
+    }
+}
+
+impl<T> core::ops::Deref for NamesReadLater<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &[T] {
+        self.names.get_or_init(|| match self.encoded {
+            b"" => Box::new([]),
+            encoded => (self.read)(encoded, self.entry_point_count),
+        })
+    }
+}
+
 /// `--aot-program-file`: the file stands where the executable would.
 pub static FILE_IN_PLACE_OF_EXECUTABLE: OnceLock<FileInPlaceOfExecutable> = OnceLock::new();
 
@@ -80,7 +131,7 @@ pub struct CompiledProgram {
     /// Indices into `entry_points`, ascending by `compare_source_paths`.
     source_path_order: Box<[u32]>,
     /// Ascending by `path`.
-    package_names: Box<[CompiledPackageName]>,
+    package_names: NamesReadLater<CompiledPackageName>,
     /// Those of one folder are in the order of its tsconfig.json.
     path_aliases: Box<[CompiledPathAlias]>,
     /// Of an executable that loads code from disk: the root directory of the build, relative to the working directory of the build.
@@ -98,7 +149,7 @@ pub struct CompiledProgram {
     /// `--loader` and `[loader]` of bunfig.toml: `bun_aot::module_keys::encode_loaders_given_to_build`.
     loaders_given_to_build: &'static [u8],
     /// Ascending by path.
-    further_package_names: Box<[CompiledFurtherPackageName]>,
+    further_package_names: NamesReadLater<CompiledFurtherPackageName>,
     /// Built with `--aot-allow-code-from-disk`. Whether the program itself loads such code is the image's to say.
     pub allows_code_from_disk: bool,
     pub names_plugin: bool,
@@ -522,7 +573,7 @@ const FILE_FOR_FILE_SYSTEM_RECORD: usize =
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PathForFileSystemAlone {
     pub path_below_root: Vec<u8>,
-    /// When it was last changed on the disk of the build, in milliseconds.
+    /// When it was last changed on the disk of the build, in milliseconds. A folder is as new as the newest file in it that the executable holds.
     pub modified_at: i64,
     pub is_folder: bool,
     /// Passed as `--asset`, so `Bun.embeddedFiles` lists it.
@@ -655,7 +706,7 @@ impl CompiledProgram {
             entry_points,
             preserves_source_paths,
             source_path_order,
-            package_names: Box::new([]),
+            package_names: NamesReadLater::from(Box::default()),
             path_aliases: Box::new([]),
             root_below_working_directory: None,
             root_from_executable: None,
@@ -664,7 +715,7 @@ impl CompiledProgram {
             refused_data: b"",
             files_for_file_system_alone: b"",
             loaders_given_to_build: b"",
-            further_package_names: Box::new([]),
+            further_package_names: NamesReadLater::from(Box::default()),
             allows_code_from_disk: false,
             names_plugin: false,
             root_folders_spelled: b"",
@@ -678,6 +729,7 @@ impl CompiledProgram {
         }
     }
 
+    #[cfg(test)]
     pub fn with_package_names(
         mut self,
         package_names: Box<[CompiledPackageName]>,
@@ -688,7 +740,15 @@ impl CompiledProgram {
             .flat_map(|name| [name.required, name.imported])
             .flatten();
         debug_assert!(indices.all(|index| (index as usize) < self.entry_points.len()));
-        self.package_names = package_names;
+        self.package_names = package_names.into();
+        self
+    }
+
+    pub fn with_package_names_read_later(
+        mut self,
+        names: NamesReadLater<CompiledPackageName>,
+    ) -> CompiledProgram {
+        self.package_names = names;
         self
     }
 
@@ -746,7 +806,7 @@ impl CompiledProgram {
 
     pub fn with_further_package_names(
         mut self,
-        names: Box<[CompiledFurtherPackageName]>,
+        names: NamesReadLater<CompiledFurtherPackageName>,
     ) -> CompiledProgram {
         self.further_package_names = names;
         self

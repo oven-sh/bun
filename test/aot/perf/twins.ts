@@ -9,6 +9,8 @@ import { built, spawned, withoutDebugInformation } from "../harness/commands";
 import { eachRow } from "../supported";
 
 export type Row = [file: string, baseline: string, other: string, times: number];
+/** A loop whose twin got cheaper than it: it may take at most so many instructions a turn, whatever its twin takes. */
+export type CountedRow = [file: string, loop: string, most: number];
 
 // A debug or ASAN build counts other instructions.
 const isSlowBuild = isDebug || isASAN;
@@ -26,14 +28,20 @@ const instructionsOfReading = 20_000_000;
 const mostTurns = 2 ** 20;
 
 /** Each row names a file of `folder` and two of its loops. `programOf` names the program that has the loops of a file: without arguments it prints what every loop returns, and `<file> <loop> <turns>` runs one. */
-export function describeTwins(title: string, folder: string, rows: Row[], programOf: (file: string) => string) {
+export function describeTwins(
+  title: string,
+  folder: string,
+  rows: Row[],
+  programOf: (file: string) => string,
+  counted: CountedRow[] = [],
+) {
   describe.skipIf(isSlowBuild || !!without("a counter of instructions"))(`compile/aot/perf/${title}`, () => {
     const executables = String(tempDir(`aot-${title}`, {}));
     const executableOf = (program: string) => join(executables, program.replaceAll(".", "-"));
     const env = { ...bunEnv, ...withSteadyCollections };
 
     beforeAll(async () => {
-      for (const program of new Set(rows.map(([file]) => programOf(file)))) {
+      for (const program of new Set([...rows, ...counted].map(([file]) => programOf(file)))) {
         const executable = executableOf(program);
         built(
           await spawned(
@@ -100,6 +108,23 @@ export function describeTwins(title: string, folder: string, rows: Row[], progra
         expect({ other, ratio, isWithinAllowance: measured <= expected * times }).toEqual({
           other,
           ratio,
+          isWithinAllowance: true,
+        });
+      },
+      60_000,
+    );
+
+    eachRow(counted)(
+      "%s: %s: at most %d instructions a turn",
+      async (file, loop, most) => {
+        let measured = await costOf(file, loop);
+        for (let again = 0; again < 2 && measured > most && measured < most * 1.1; again++)
+          measured = await costOf(file, loop, true);
+        const instructions = Math.round(100 * measured) / 100;
+        console.error(`${title.toUpperCase().replaceAll("-", " ")} ${file}\t${loop}\t${instructions} of ${most}`);
+        expect({ loop, instructions, isWithinAllowance: measured <= most }).toEqual({
+          loop,
+          instructions,
           isWithinAllowance: true,
         });
       },

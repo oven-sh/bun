@@ -16,6 +16,7 @@ test/js/bun/css/css-loader.test.ts: css module exports > import, import(), requi
 test/js/bun/css/css-loader.test.ts: css module exports > names depend on the path relative to the working directory
 test/js/bun/css/css-loader.test.ts: css module: a composes chain too deep for the stack is an error
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?init instantiates a WebAssembly module
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline frees the module it generates
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline in import.meta.glob and static imports returns a URL that fetch() can read
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline on a file that cannot be read
 test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline on an .svg file
@@ -39,8 +40,6 @@ test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `.mjs
 test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `dep/c` inside node_modules resolves to null
 test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `dep/m` inside node_modules resolves to null
 test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > an exact target with no extension is not probed
-# These tests make their temporary folders below an empty node_modules folder, where Bun installs nothing: there `bun run` says "Cannot find package" too. Without that folder the compiled program says what `bun run` says.
-test/js/bun/resolve/resolve.test.ts: auto-install init failure from an unreadable cwd is a catchable error
 test/js/bun/resolve/resolve.test.ts: can resolve with source directories that do not exist
 test/js/bun/resolve/resolve.test.ts: file url in await import resolves
 test/js/bun/resolve/resolve.test.ts: file url in import resolves
@@ -287,6 +286,9 @@ test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode
 test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > with a recorded run > (unnamed)
 test/bundler/bun-build-compile.test.ts: Bun.build compile > a chunk whose bytecode cannot be generated keeps the embedded files
 test/bundler/bun-build-compile.test.ts: Bun.build compile > bytecode from a compiled executable is not copied into private memory
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the download of another platform's executable is cut short
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the download of another platform's executable is damaged
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the download of another platform's executable is whole
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (cjs, bytecode: true, minify: false, utf16: false)
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (esm, bytecode: false, minify: false, utf16: false)
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (esm, bytecode: true, minify: false, utf16: false)
@@ -393,6 +395,7 @@ test/bundler/compile-argv.test.ts: bundler > compile/EvalFlagsInUserArgsDoNotMea
 test/bundler/compile-argv.test.ts: bundler > compile/EvalFlagsInUserArgsDoNotMeanOneShotStartupWithExecArgv
 test/bundler/compile-asset-bunfs.test.ts: compile --asset and /$bunfs/ directory semantics > --asset errors on colliding embedded paths
 test/bundler/compile-asset-bunfs.test.ts: compile --asset and /$bunfs/ directory semantics > Bun.build({compile: {assets}}) rejects colliding paths
+test/bundler/compile-corrupted-embed.test.ts: prints a stack trace when the embedded source map points outside itself
 # A trimmed executable whose program cannot be read has no command line to go on with, and says that it is damaged: a-truncated-executable-says-so.test.ts holds that.
 trims test/bundler/compile-corrupted-embed.test.ts: a truncated standalone executable says so unless part of the payload's last page is left
 trims test/bundler/compile-corrupted-embed.test.ts: doesn't crash at startup when the graph length or address points outside mapped memory

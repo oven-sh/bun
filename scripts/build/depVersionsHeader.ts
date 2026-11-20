@@ -72,9 +72,9 @@ function computeVersions(cfg: Config): [string, string][] {
   versions.push(["ZIG", "04e7f6ac1e009525bc00934f20199c68f04e0a24"]);
 
   // NOTE: cmake's GenerateDependencyVersions.cmake also extracted semantic
-  // versions (LIBDEFLATE_VERSION="1.19", ZLIB_VERSION="1.2.8") from vendor
-  // headers. Those macros were never consumed — BunProcess.cpp only reads
-  // the _HASH (commit) macros for process.versions. The extraction is also
+  // versions (ZLIB_VERSION="1.2.8") from vendor headers. Those macros
+  // were never consumed — of this header BunProcess.cpp only reads the
+  // commit macros for process.versions. The extraction is also
   // a chicken-and-egg: it runs at configure time but vendor headers exist
   // only after fetch, so on a clean checkout the header content flips on
   // the second configure → spurious rebuild. Dropping the dead code.

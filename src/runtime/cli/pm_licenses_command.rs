@@ -199,7 +199,7 @@ impl PmLicensesCommand {
             });
         let locations = tree_locations(lockfile);
 
-        let packages = lockfile.packages.slice();
+        let packages = &lockfile.packages;
         let pkg_names = packages.items_name();
         let pkg_resolution = packages.items_resolution();
         let buf = lockfile.buffers.string_bytes.as_slice();

@@ -101,8 +101,8 @@ console.log(run(250));
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="groupBy"
-// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|function):
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_2]]> flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_2]]>, v1: undefined|null|function):
 // CHECK-NEXT: v2 = PropGet v0 key="reduce"
 // CHECK-NEXT: v3 = NewClosure v1 function=[[f_3]]
 // CHECK-NEXT: v4 = Data data=[[d_4]]

@@ -19,6 +19,7 @@ use super::expression::is_link_in_brackets;
 use super::{FileLowering, FunctionLowering};
 use crate::ir::generated::QuotedSource;
 use crate::load::hoisted_mocks::is_namespace_of_hoisted_import;
+use crate::load::objects_created_below::{is_created_below, written_name_of_prototype};
 use crate::load::test_runner_names::{skip_to_written_use, written_name_of_local};
 
 #[derive(Default)]
@@ -675,6 +676,10 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.expression(expression, level, around);
                 break;
             };
+            if hir.copied_factory_of(expression).is_some() {
+                expression = right;
+                continue;
+            }
             if let Some(constant) = self.constant_of(expression) {
                 self.constant(constant, level);
                 break;
@@ -967,6 +972,17 @@ impl Printer<'_, '_, '_, '_, '_> {
                 (start, wraps)
             }
             ExprKind::Call(site) => self.call(hir[site], around, level),
+            ExprKind::New(site) if is_created_below(hir, expression) => {
+                let wraps = level >= Level::New || around.forbids_call;
+                if wraps {
+                    self.text.push(b'(');
+                }
+                let start = self.text.len();
+                self.word(b"Object.create(");
+                self.expression(hir[site].callee, Level::Comma, Around::default());
+                self.text.push(b')');
+                (start, wraps)
+            }
             ExprKind::New(site) => {
                 let site = hir[site];
                 let wraps = level >= Level::Call;
@@ -1254,6 +1270,10 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             ExprKind::Cond { .. } => {
                 skip_to_written_use(self.hir, |name| self.queries.atom_bytes(name), written)
             }
+            ExprKind::Dot { .. } => written_name_of_prototype(self.hir, written).unwrap_or(written),
+            ExprKind::Binary { right, .. } if self.hir.copied_factory_of(written).is_some() => {
+                right
+            }
             ExprKind::Binary {
                 op: BinOp::Comma,
                 left,
@@ -1271,6 +1291,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         &self,
         expression: ExprId,
     ) -> Option<&'a [u8]> {
+        if !self.inputs.options.runs_tests {
+            return None;
+        }
         let hir = self.hir;
         let written = hir[expression];
         let namespace = match written.kind {
@@ -1475,10 +1498,19 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             .then_some(start)
     }
 
+    fn move_out_of_copies(&self, quoted: &mut [QuotedSource]) {
+        if !self.hir.copied_factories.is_empty() {
+            for quoted in quoted {
+                quoted.position = self.hir.written_position(quoted.position);
+            }
+        }
+    }
+
     pub(in crate::lower) fn take_quoted_in_part(&mut self) -> QuotedInPart {
         let QuotedSources {
             text, mut quoted, ..
         } = core::mem::take(&mut self.quoted_sources);
+        self.move_out_of_copies(&mut quoted);
         quoted.sort_by_u32(|quoted| quoted.position);
         QuotedInPart { text, quoted }
     }
@@ -1503,6 +1535,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             ..
         } = core::mem::take(&mut self.quoted_sources);
         let text_of = |quoted: &QuotedSource| &text[quoted.start as usize..quoted.end as usize];
+        self.move_out_of_copies(&mut quoted);
         quoted.sort_by_u32(|quoted| quoted.position);
         if !quoted_in_parts.is_empty() {
             quoted = merge_by_position(quoted, quoted_in_parts);

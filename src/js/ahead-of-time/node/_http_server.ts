@@ -678,7 +678,7 @@ declare global {
     }
 
     interface ServerResponse extends OutgoingMessage {
-      req: IncomingMessage;
+      req: IncomingMessage | SubstituteRequest;
       statusCode: number;
       statusMessage: string | undefined;
       headersSent: boolean;

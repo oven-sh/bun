@@ -30,6 +30,14 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.create_untyped_variable(variable.name())
             }
             VariableKey::PrivateState { part, .. } => self.create_private_state_variable(part),
+            VariableKey::AddedStatic(property) => {
+                let class = self.class_with_added_static(property.id);
+                Variable {
+                    initialization: VariableInitialization::Uninitialized,
+                    owner: Some(self.class_layout(class)),
+                    ..self.create_untyped_variable(self.bound.symbol(property.id).name)
+                }
+            }
             VariableKey::ModuleExports(_) => self.create_untyped_variable(known::exports),
             VariableKey::MockOf(_) => {
                 let mut declared = DeclaredType::untyped();
@@ -88,6 +96,18 @@ impl FileLowering<'_, '_, '_, '_> {
                     initialization: VariableInitialization::Function,
                     function: Some(allocation),
                     flags: VariableFlags::IS_REPLACEABLE | VariableFlags::ALLOCATES_INSTANCE,
+                    ..self.create_untyped_variable(known::default)
+                }
+            }
+            VariableKey::PrototypeMaker(variable) => {
+                let maker = self.declare_prototype_maker(variable.id);
+                let ty = self.fragment.types.intern(Type::function(maker));
+                Variable {
+                    name: None,
+                    declared: DeclaredType::from_compiler(ty),
+                    initialization: VariableInitialization::Function,
+                    function: Some(maker),
+                    flags: VariableFlags::IS_IMMUTABLE,
                     ..self.create_untyped_variable(known::default)
                 }
             }
@@ -154,6 +174,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 None => by_number(symbol.id.idx(), 0),
             },
             VariableKey::RequiredAnswer(holder) => by_number(holder.id.idx(), 1),
+            VariableKey::PrototypeMaker(variable) => by_number(variable.id.idx(), 2),
+            VariableKey::AddedStatic(property) => by_number(property.id.idx(), 0),
             VariableKey::PrivateState { state, part } => by_number(state.id.idx(), 2 + part as u32),
             VariableKey::ClassSlot { class, slot } => match slot {
                 ClassSlot::ClassObject => by_number(class.class.idx(), 4),

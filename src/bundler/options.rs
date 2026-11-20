@@ -649,7 +649,7 @@ pub fn get_loader_and_virtual_source<'a>(
 
     let is_main = jsc_vm
         .main()
-        .is_some_and(|main| strings::eql_long(specifier, main, true));
+        .is_some_and(|main| strings::eql_long(specifier, main));
 
     let dir = path.name().dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
@@ -1286,7 +1286,7 @@ pub struct TypeChecked<'a, 'i> {
     /// bundle, which the type checker takes instead of reading the file again.
     pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
     /// The `Bun.build` that this is for, which its VM may cancel during the check.
-    pub completion: Option<core::ptr::NonNull<crate::bundle_v2::JSBundleCompletionTask>>,
+    pub completion: Option<crate::bundle_v2::dispatch::CompletionHandle<'a>>,
 }
 
 /// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns
@@ -1460,6 +1460,8 @@ pub struct BundleOptions<'a> {
     pub compile_target_builtins: CompileTargetBuiltins,
 
     pub code_coverage: bool,
+    /// For a linter's configuration and plugins. See `Features::lists_loads` and `Features::defers_requires`.
+    pub defers_requires: bool,
     pub debugger: bool,
 
     pub compile_mode: CompileMode,
@@ -1476,7 +1478,7 @@ pub struct BundleOptions<'a> {
     // directly — all access goes through crate::dispatch::DevServerVTable.
     pub dev_server: *const (),
     /// Set when Bake is bundling. Affects module resolution.
-    pub framework: Option<&'a crate::bake_types::Framework>,
+    pub framework: Option<std::sync::Arc<crate::bake_types::Framework>>,
 
     pub serve_plugins: Option<Box<[Box<[u8]>]>>,
     pub bunfig_path: Box<[u8]>,
@@ -1674,6 +1676,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
+            defers_requires: self.defers_requires,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
             compile_entry_point_name: self.compile_entry_point_name.clone(),
@@ -1681,7 +1684,7 @@ impl<'a> BundleOptions<'a> {
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
             dev_server: self.dev_server,
-            framework: self.framework,
+            framework: self.framework.clone(),
             serve_plugins: self.serve_plugins.clone(),
             bunfig_path: self.bunfig_path.clone(),
             unwrap_commonjs_packages: self.unwrap_commonjs_packages,
@@ -1930,6 +1933,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_order: Vec::new(),
             compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
+            defers_requires: false,
             debugger: false,
             compile_mode: CompileMode::None,
             compile_entry_point_name: Box::default(),
@@ -2103,15 +2107,6 @@ impl<'a> BundleOptions<'a> {
     }
 }
 
-impl Drop for BundleOptions<'_> {
-    fn drop(&mut self) {
-        // self.define dropped automatically (Box<Define>).
-        //
-        // bundler_feature_flags is `Option<Box<StringSet>>`; `None` ≡ the static
-        // empty set (nothing to free), `Some` drops the Box here automatically.
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportPathFormat {
     Relative,
@@ -2155,9 +2150,7 @@ pub(crate) fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
             let mut buf = bun_paths::path_buffer_pool::get();
             let len = output_dir.len().min(buf.0.len() - 1);
             buf.0[..len].copy_from_slice(&output_dir[..len]);
-            buf.0[len] = 0;
-            // SAFETY: NUL-terminated above; `buf` outlives the `mkdirat` call.
-            let z = bun_core::ZStr::from_buf(&buf.0[..], len);
+            let z = bun_core::ZStr::nul_terminate(&mut buf, len);
             if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), z, 0o755) {
                 let err: crate::Error = err.into();
                 Output::print_errorln(format_args!(

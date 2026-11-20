@@ -612,6 +612,7 @@ impl<S: RuleSet> Linter<S> {
                 locator: &locator,
                 problems: &mut problems,
                 skipped: &mut result.skipped_rules,
+                js_plugins: options.js_plugins,
                 configured: Vec::new(),
                 by_other_name: Vec::new(),
             };
@@ -1456,6 +1457,7 @@ struct Inline<'i, 'c, 'a, S: RuleSet> {
     locator: &'i Locator<'a>,
     problems: &'i mut Vec<LintMessage>,
     skipped: &'i mut Vec<Box<[u8]>>,
+    js_plugins: Option<&'i js_plugin::Host<'i>>,
     /// The rules that a comment has already configured.
     configured: Vec<Named<'c>>,
     /// The subset of `configured` that was set [through the paired rule's name](Inline::set_by).
@@ -1632,6 +1634,9 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             let Some(named) = self.find(comment, &id, is_turned_on) else {
                 continue;
             };
+            if let (Some(rule), Some(host)) = (named.js(), self.js_plugins) {
+                host.describe(rule);
+            }
             let given = match &value {
                 Json::Array(items) => items.get(1..).unwrap_or_default(),
                 _ => &[],
@@ -1656,6 +1661,9 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 Named::Instance(_, name) => self.config.find_js_rule(name).flatten(),
                 _ => None,
             };
+            if let (Some(old), Some(host)) = (old, self.js_plugins) {
+                host.describe(old);
+            }
             let js = rule.js().or_else(|| old.map(|it| &**it));
             let value = match eslint_8.map(|it| it.inline_setting(&id, &value, js)) {
                 Some(Ok(setting)) => Json::Array(setting),

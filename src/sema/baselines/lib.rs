@@ -36,7 +36,7 @@ macro_rules! error_line {
 }
 
 pub fn write_line(to: bun_core::Fd, line: std::fmt::Arguments<'_>) {
-    let _ = bun_sys::File::from_fd(to).write_all(format!("{line}\n").as_bytes());
+    let _ = bun_sys::File::borrow(&to).write_all(format!("{line}\n").as_bytes());
 }
 
 fn read_file(path: &str) -> Option<Vec<u8>> {
@@ -1952,7 +1952,7 @@ fn run_one(
                     .extensions
                     .clone(),
                 original: info.original_text.to_vec(),
-                text: module.hir.text.to_vec(),
+                text: files.hir(file).text.to_vec(),
             })
         });
         *mapped = Some(units.collect());

@@ -1,7 +1,7 @@
-use bun_sema::bind::{Binding, CodeUnit, Decl, ScopeId, SymbolId};
+use bun_sema::bind::{Binding, CodeUnit, Decl, ScopeId, ScopeKind, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::{TreeNode, push_children};
-use bun_sema::hir::{ExprId, Flags, FnId, PatKind, StmtId, is_moved_to_file_start};
+use bun_sema::hir::{ExprId, Flags, FnId, GlobalCode, PatKind, StmtId, is_moved_to_file_start};
 use bun_sema::util::SharedSort;
 use bun_sort_by_number::{SortByNumber, number_of_pair};
 use rustc_hash::FxHashMap;
@@ -245,7 +245,15 @@ fn find_starts_of_functions_made_late(input: &ScopeInput<'_, '_>, walk: &mut Sco
     }
     let bound = input.bound;
     let (functions, function_of_fn) = (&mut walk.functions, &walk.function_of_fn);
-    for &(_, symbol, function) in &walk.hoisted_functions {
+    let global_code = input.hir.global_code();
+    for &(scope, symbol, function) in &walk.hoisted_functions {
+        let is_made_as_property = matches!(
+            bound.scopes[scope.idx()].kind,
+            ScopeKind::Fn(script) if global_code.contains(&(script, GlobalCode::Script))
+        );
+        if is_made_as_property {
+            continue;
+        }
         let is_never_made = matches!(
             bound.code_unit(bound.symbol_scope(symbol)),
             CodeUnit::Function(_)
@@ -365,6 +373,8 @@ impl<'x, 's> Walker<'x, 's> {
                 bound,
                 input.modules.inner_modules(input.file),
             ),
+            literal_of_bodies: (input.modules.wrapped().literal_of_bodies(input.file))
+                .unwrap_or(ExprId::NONE),
             jsx_uses,
             metadata_uses,
             class_decorators: collect_class_decorators(hir, bound),
@@ -586,7 +596,7 @@ impl<'x, 's> Walker<'x, 's> {
             lexical_scope: self.lexical_owners[scope.idx()],
             enclosing_loop: None,
             enclosing_try: None,
-            is_repeated: function != WalkedFunctionId::MODULE_BODY,
+            is_repeated: self.walk.functions[function.index()].creator.is_some(),
             is_conditional: false,
         };
         self.enter_scope(scope, context);

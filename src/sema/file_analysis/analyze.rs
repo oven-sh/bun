@@ -40,9 +40,10 @@ pub(super) fn run<'s>(
     let (mut folded, mut scan) = fold_bound_file(hir, &bound, inputs, file, atoms, arena);
     let decision = decide_format(hir, &bound, &folded, &scan);
     let is_module = decision.formats.get(file.declared_module_type) == ModuleFormat::Esm;
+    let has_sloppy_functions = hir.makes_sloppy_functions();
     if is_module && !hir.is_strict_by_syntax {
         hir.set_strict();
-        if bound.runtime.depends_on_sloppy_mode() {
+        if has_sloppy_functions || bound.runtime.depends_on_sloppy_mode() {
             drop(bound);
             let step = file_steps::count(FileStep::Bind);
             bound = bind_below_defines(hir, options, names_in_place, atoms, arena);
@@ -53,7 +54,9 @@ pub(super) fn run<'s>(
             (folded, scan) = fold_bound_file(hir, &bound, inputs, file, atoms, arena);
         }
     }
-    bound.runtime.set_module_goal(is_module);
+    bound
+        .runtime
+        .set_module_goal(is_module, has_sloppy_functions);
     let analysis = create_analysis(hir, &folded, &scan, &decision, file, arena);
     (bound, analysis)
 }
@@ -147,6 +150,8 @@ fn create_analysis<'s>(
         paths_of_changed_files: scan.paths_of_changed_files,
         module_relative_reads: scan.module_relative_reads,
         module_relative_patterns: scan.module_relative_patterns,
+        reads_ruled_out: scan.reads_ruled_out,
+        patterns_ruled_out: scan.patterns_ruled_out,
         caller_relative_reads: scan.caller_relative_reads,
         unknown_path_reads: scan.unknown_path_reads,
         path_queries: scan.path_queries,
@@ -155,6 +160,7 @@ fn create_analysis<'s>(
         reads_below_working_folder: scan.reads_below_working_folder,
         named_paths: scan.named_paths,
         paths_created: scan.paths_created,
+        web_assembly_names: scan.web_assembly_names,
         reading_functions: scan.reading_functions,
         own_folder_arguments: scan.own_folder_arguments,
         known_load_names: scan.known_load_names,

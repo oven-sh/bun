@@ -11,9 +11,9 @@
 # The constructors come out of a table under a name that is known when the program runs, so nothing is proven of new.target in the body of Round, and the prototype is fetched from it. The birth in the copy of Mark names the layout of Round, whose constructor runs: the record of that allocation remembers the prototype of Round, so the stub that allocates finds it at its first comparison. With the layout of Mark it never did, and each birth went through the table of instances below prototypes. The prototype stays an operand: any other prototype goes the way it went. In the body of Mark itself the birth names Mark.
 # RUN(BELOW): walk f3 mechanisms=all
 # BELOW: frame 1 callee=f2
-# BELOW: [[above]]: {{*}} = GetConstructPrototype v1 layout=L0
-# BELOW-NOT: NewObject [[above]] layout=L0
-# BELOW: NewObject [[above]] layout=L1
+# BELOW-NOT: GetConstructPrototype
+# BELOW-NOT: layout=L0
+# BELOW: = NewObject {{*}}layout=L1
 # RUN(ABOVE): walk f2 mechanisms=all
 # ABOVE: [[above]]: {{*}} = GetConstructPrototype v0 layout=L0
 # ABOVE: NewObject [[above]] layout=L0

@@ -12,7 +12,7 @@ use bun_options_types::schema::api::DotEnvBehavior;
 use bun_standalone_graph::Graph;
 use bun_sys::{Fd, File, Maybe, O};
 use bun_threading::Guarded;
-use bun_watcher::{ChangedFilePath, WatchEvent, WatchList, Watcher, WatcherContext};
+use bun_watcher::{Evictions, OwnedWatcher, WatchEvent, WatchList, Watcher, WatcherContext};
 
 use super::compile_command::{
     CompileFailure, CompileProduct, RequestOrigin, compile_from_context, exit_with_failure,
@@ -417,19 +417,21 @@ fn hand_over(
 }
 
 struct WatchedFiles {
-    watcher: Guarded<SharedWatcher>,
+    watcher: OwnedWatcher,
     working_directory: Vec<u8>,
     paths: Guarded<Vec<Vec<u8>>>,
 }
 
-struct SharedWatcher(*mut Watcher);
-// SAFETY: the watcher is never freed, and one thread at a time has the pointer.
-unsafe impl Send for SharedWatcher {}
-
 struct RestartOnChange;
 
 impl WatcherContext for RestartOnChange {
-    fn on_file_update(&mut self, events: &mut [WatchEvent], _: &[ChangedFilePath], _: &WatchList) {
+    fn on_file_update(
+        &mut self,
+        events: &[WatchEvent],
+        _: &[&[u8]],
+        _: &WatchList,
+        _: &mut Evictions,
+    ) {
         if events.is_empty() {
             return;
         }
@@ -455,13 +457,10 @@ impl WatchedFiles {
         decide_whether_to_clear_terminal();
         let working_directory = super::check_command::working_directory();
         let directory: &'static [u8] = Box::leak(working_directory.clone().into_boxed_slice());
-        let context = Box::leak(Box::new(RestartOnChange));
-        let started = Watcher::init(context, directory)
-            .map(Box::leak)
-            .and_then(|watcher| {
-                watcher.start()?;
-                Ok(watcher)
-            });
+        let started = Watcher::init(Box::new(RestartOnChange), directory).and_then(|watcher| {
+            watcher.start()?;
+            Ok(watcher)
+        });
         let watcher = match started {
             Ok(watcher) => watcher,
             Err(error) => {
@@ -470,7 +469,7 @@ impl WatchedFiles {
             }
         };
         let watched: &'static WatchedFiles = Box::leak(Box::new(WatchedFiles {
-            watcher: Guarded::new(SharedWatcher(watcher)),
+            watcher,
             working_directory,
             paths: Guarded::new(Vec::new()),
         }));
@@ -493,11 +492,7 @@ impl WatchedFiles {
     fn add(&self, path: &[u8]) {
         use bun_paths::{platform::Auto, resolve_path::join_abs_string};
         let path = join_abs_string::<Auto>(&self.working_directory, &[path]);
-        let shared = self.watcher.lock();
-        let watcher = shared.0;
-        // SAFETY: see `SharedWatcher`.
-        let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
-        drop(shared);
+        let _ = self.watcher.add_file_by_path_slow(path);
         self.paths.lock().push(path.to_vec());
     }
 }
@@ -569,14 +564,10 @@ impl Program<'_> {
             #[cfg(unix)]
             Program::Written(WrittenProgram { descriptor, length }) => {
                 let (access, flags) = (libc::PROT_READ, libc::MAP_SHARED);
-                let mapped =
-                    bun_sys::mmap(core::ptr::null_mut(), length, access, flags, descriptor, 0);
-                let hash = mapped.map_or(0, |start| {
-                    // SAFETY: the mapping has `length` bytes, and nothing writes to the file until it is unmapped.
-                    let hash =
-                        bun_wyhash::hash(unsafe { core::slice::from_raw_parts(start, length) });
-                    let _ = bun_sys::munmap(start, length);
-                    hash
+                let mapped = bun_sys::Mmap::new(length, access, flags, descriptor, 0);
+                let hash = mapped.map_or(0, |mapped| {
+                    // SAFETY: nothing writes to the file until it is unmapped.
+                    bun_wyhash::hash(unsafe { mapped.as_slice() })
                 });
                 (length, hash)
             }
@@ -619,7 +610,7 @@ pub(crate) fn temporary_path(directory: &[u8]) -> ZBox {
 }
 
 #[cfg(unix)]
-fn create_deleted_file(directory: &[u8]) -> Maybe<Fd> {
+fn create_deleted_file(directory: &[u8]) -> Maybe<File> {
     let path = temporary_path(directory);
     let file = File::from_fd(bun_sys::openat(
         Fd::cwd(),
@@ -628,7 +619,7 @@ fn create_deleted_file(directory: &[u8]) -> Maybe<Fd> {
         0o700,
     )?);
     bun_sys::unlinkat(Fd::cwd(), &path)?;
-    Ok(file.into_raw())
+    Ok(file)
 }
 
 /// Where the compiled program waits for the process that runs it, best first.
@@ -646,44 +637,41 @@ enum ProgramFile {
 fn can_map_code(descriptor: Fd) -> bool {
     let size = bun_sys::page_size();
     let (access, flags) = (libc::PROT_READ | libc::PROT_EXEC, libc::MAP_PRIVATE);
-    bun_sys::mmap(core::ptr::null_mut(), size, access, flags, descriptor, 0)
-        .is_ok_and(|page| bun_sys::munmap(page, size).is_ok())
+    bun_sys::Mmap::new(size, access, flags, descriptor, 0).is_ok()
 }
 
 #[cfg(target_os = "linux")]
-fn create_shared_memory() -> Option<Fd> {
+fn create_shared_memory() -> Option<File> {
     // What `shm_open` and `shm_unlink` do. Before glibc 2.34 they are in librt, which Bun does not link.
-    let file = File::from_fd(create_deleted_file(b"/dev/shm").ok()?);
-    can_map_code(file.handle()).then(|| file.into_raw())
+    let file = create_deleted_file(b"/dev/shm").ok()?;
+    can_map_code(file.handle()).then_some(file)
 }
 
 #[cfg(target_os = "freebsd")]
-fn create_shared_memory() -> Option<Fd> {
-    // SAFETY: `SHM_ANON` stands in for a name and is not read.
-    let descriptor =
-        unsafe { libc::shm_open(libc::SHM_ANON, libc::O_RDWR | libc::O_CLOEXEC, 0o600) };
-    (descriptor >= 0).then(|| Fd::from_native(descriptor))
+fn create_shared_memory() -> Option<File> {
+    bun_sys::freebsd::create_shared_memory().map(File::from_fd)
 }
 
 #[cfg(unix)]
-fn create_unnamed_file(first: ProgramFile) -> Maybe<(Fd, ProgramFile)> {
+fn create_unnamed_file(first: ProgramFile) -> Maybe<(File, ProgramFile)> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     if first == ProgramFile::Memfd && bun_sys::can_use_memfd() {
-        if let Ok(descriptor) =
-            bun_sys::memfd_create(c"bun-compiled-program", bun_sys::MemfdFlags::Executable)
-        {
-            return Ok((descriptor, ProgramFile::Memfd));
+        if let Ok(descriptor) = bun_sys::memfd_create(
+            c"bun-compiled-program".into(),
+            bun_sys::MemfdFlags::Executable,
+        ) {
+            return Ok((File::from_fd(descriptor), ProgramFile::Memfd));
         }
     }
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     if first <= ProgramFile::SharedMemory {
-        if let Some(descriptor) = create_shared_memory() {
-            return Ok((descriptor, ProgramFile::SharedMemory));
+        if let Some(file) = create_shared_memory() {
+            return Ok((file, ProgramFile::SharedMemory));
         }
     }
     let _ = first;
-    let descriptor = create_deleted_file(bun_resolver::fs::RealFS::tmpdir_path())?;
-    Ok((descriptor, ProgramFile::Deleted))
+    let file = create_deleted_file(bun_resolver::fs::RealFS::tmpdir_path())?;
+    Ok((file, ProgramFile::Deleted))
 }
 
 #[cfg(unix)]
@@ -696,13 +684,10 @@ fn write_to_unnamed_file(parts: &[&[u8]], first: ProgramFile) -> Maybe<Fd> {
     let mut is_last_try = false;
     loop {
         let (error, kind) = match create_unnamed_file(first) {
-            Ok((descriptor, kind)) => {
-                let file = File::from_fd(descriptor);
-                match write_to_empty_file(descriptor, parts) {
-                    Ok(()) => return Ok(file.into_raw()),
-                    Err(error) => (error, kind),
-                }
-            }
+            Ok((file, kind)) => match write_to_empty_file(file.fd(), parts) {
+                Ok(()) => return Ok(file.into_raw()),
+                Err(error) => (error, kind),
+            },
             // The kinds before it are passed over where they cannot be made.
             Err(error) => (error, ProgramFile::Deleted),
         };
@@ -764,26 +749,18 @@ fn copy_into_mapping_of_empty_file(descriptor: Fd, parts: &[&[u8]]) -> bool {
         return false;
     }
     // A store to a page that there is no room for ends the process. With the room taken first, it is an error of this call.
-    // SAFETY: the system checks the descriptor and the range.
-    if unsafe { libc::fallocate(descriptor.native(), 0, 0, length as libc::off_t) } != 0 {
+    if !bun_sys::linux::fallocate(descriptor.native(), 0, length as i64) {
         return false;
     }
-    let Ok(start) = bun_sys::mmap(
-        core::ptr::null_mut(),
-        length,
-        libc::PROT_READ | libc::PROT_WRITE,
-        libc::MAP_SHARED,
-        descriptor,
-        0,
-    ) else {
+    let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
+    let Ok(mut mapped) = bun_sys::Mmap::new(length, access, flags, descriptor, 0) else {
         return false;
     };
-    // SAFETY: the mapping has `length` bytes that may be written, and nothing else refers to them until `munmap`.
-    let mapped = unsafe { core::slice::from_raw_parts_mut(start, length) };
     let share = length
         .div_ceil(usize::from(bun_core::get_thread_count()))
         .max(MIN_BYTES_OF_THREAD);
-    let mut room = mapped;
+    // SAFETY: the mapping may be written, and nothing else has the file.
+    let mut room = unsafe { mapped.as_mut_slice() };
     let mut shares = Vec::new();
     for part in parts {
         let (target, behind) = room.split_at_mut(part.len());
@@ -791,7 +768,6 @@ fn copy_into_mapping_of_empty_file(descriptor: Fd, parts: &[&[u8]]) -> bool {
         room = behind;
     }
     for_each_on_threads(shares, |(target, source)| target.copy_from_slice(source));
-    let _ = bun_sys::munmap(start, length);
     true
 }
 
@@ -889,15 +865,6 @@ fn start_second_process(
     Global::exit(1)
 }
 
-#[cfg(windows)]
-const HANDLE_FLAG_INHERIT: u32 = 1;
-
-#[cfg(windows)]
-unsafe extern "system" {
-    fn SetHandleInformation(handle: *mut core::ffi::c_void, mask: u32, flags: u32) -> i32;
-    fn GetStartupInfoW(startup_info: *mut bun_sys::windows::STARTUPINFOW);
-}
-
 /// `block` is what a parent process hands to the C runtime of its child: a count, then a byte of flags for each
 /// descriptor, then a handle for each. The answer starts at descriptor 3.
 #[cfg(any(windows, test))]
@@ -918,23 +885,8 @@ fn list_open_extra_descriptors(block: &[u8]) -> Vec<bool> {
 
 #[cfg(windows)]
 fn list_inherited_extra_descriptors() -> Box<[bool]> {
-    // SAFETY: integers and null pointers are a valid STARTUPINFOW.
-    let mut startup_info: bun_sys::windows::STARTUPINFOW =
-        unsafe { bun_core::ffi::zeroed_unchecked() };
-    // SAFETY: the call fills the structure it is given.
-    unsafe { GetStartupInfoW(&mut startup_info) };
-    if startup_info.lpReserved2.is_null() {
-        return Box::default();
-    }
-    // SAFETY: the block is part of the parameters of this process, which are never freed.
-    let block = unsafe {
-        core::slice::from_raw_parts(
-            startup_info.lpReserved2,
-            usize::from(startup_info.cbReserved2),
-        )
-    };
     let is_still_open = |index: usize| Fd::from_uv(3 + index as i32).native() as isize > 0;
-    list_open_extra_descriptors(block)
+    list_open_extra_descriptors(bun_sys::windows::inherited_descriptors())
         .into_iter()
         .enumerate()
         .map(|(index, was_open)| was_open && is_still_open(index))
@@ -942,7 +894,7 @@ fn list_inherited_extra_descriptors() -> Box<[bool]> {
 }
 
 #[cfg(windows)]
-fn write_to_named_file(path: &bun_core::ZStr, bytes: &[u8], bytes_after: &[u8]) -> Maybe<Fd> {
+fn write_to_named_file(path: &bun_core::ZStr, bytes: &[u8], bytes_after: &[u8]) -> Maybe<File> {
     let file = File::from_fd(bun_sys::openat(
         Fd::cwd(),
         path,
@@ -951,7 +903,7 @@ fn write_to_named_file(path: &bun_core::ZStr, bytes: &[u8], bytes_after: &[u8]) 
     )?);
     file.write_all(bytes)?;
     file.write_all(bytes_after)?;
-    Ok(file.into_raw())
+    Ok(file)
 }
 
 #[cfg(windows)]
@@ -976,7 +928,7 @@ fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u
     bun_spawn::ctrl_c::install();
     let spawned = sync::spawn(&sync::Options {
         argv,
-        argv0: Some(executable.as_ptr().cast::<core::ffi::c_char>()),
+        argv0: Some(executable.into()),
         cwd: original_cwd.map(Box::<[u8]>::from).unwrap_or_default(),
         envp: None,
         stderr: sync::SyncStdio::Inherit,
@@ -984,7 +936,7 @@ fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u
         stdin: sync::SyncStdio::Inherit,
         windows: crate::api::bun_process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
+                None,
             )),
             ..Default::default()
         },
@@ -1028,16 +980,15 @@ fn start_second_process(
         Global::exit(run_second_process(arguments, original_cwd))
     };
     let path = temporary_path(bun_resolver::fs::RealFS::tmpdir_path());
-    let descriptor = match write_to_named_file(&path, bytes, handover.bytes_after) {
-        Ok(descriptor) => descriptor,
+    let file = match write_to_named_file(&path, bytes, handover.bytes_after) {
+        Ok(file) => file,
         Err(error) => {
             let _ = bun_sys::unlinkat(Fd::cwd(), &path);
             exit_write_failed(&error)
         }
     };
-    let handle = descriptor.native();
-    // SAFETY: `handle` is the open file handle this function owns until the close below.
-    unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) };
+    let handle = file.fd().native();
+    let _ = bun_sys::windows::make_inheritable(handle);
     let descriptor_text = (handle as usize).to_string();
     let arguments = second_process_arguments(
         typed,
@@ -1046,7 +997,7 @@ fn start_second_process(
     );
     Output::flush();
     let exit_code = run_second_process(arguments, original_cwd);
-    let _ = bun_sys::close(descriptor);
+    drop(file);
     let _ = bun_sys::unlinkat(Fd::cwd(), &path);
     Global::exit(exit_code)
 }
@@ -1119,6 +1070,8 @@ pub(crate) fn write_program_alone(
     program: &[u8],
     build_id: &[u8; 16],
 ) -> Maybe<()> {
+    use bun_sys::close_on_fork;
+
     let bun = bun_core::self_exe_path().unwrap_or(bun_core::zstr!("bun"));
     let parts: Vec<&[u8]> = bun_core::strings::split(bun.as_bytes(), b"'").collect();
     let quoted = parts.join(&b"'\\''"[..]);
@@ -1134,12 +1087,9 @@ pub(crate) fn write_program_alone(
     launcher.extend_from_slice(build_id);
     let flags = O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC;
     let path = ZBox::from_bytes(path);
-    let file = File::from_fd(bun_sys::openat(directory, &path, flags, 0o755)?);
-    let written = file
-        .write_all(&launcher)
-        .and_then(|()| file.write_all(program));
-    let _ = bun_sys::close(file.into_raw());
-    written
+    let file = close_on_fork::File::openat(directory, &path, flags, 0o755)?;
+    file.write_all(&launcher)?;
+    file.write_all(program)
 }
 
 #[cfg(not(unix))]
@@ -1209,8 +1159,8 @@ pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Gr
         Err(_) => path.to_vec(),
     };
     argv[0] = Box::leak(Box::new(ZBox::from_bytes(typed.unwrap_or(&file)))).as_zstr();
-    // SAFETY: no other thread has started.
-    unsafe { bun_core::set_argv(Vec::leak(argv)) };
+    static ARGV: bun_core::Once<&[&bun_core::ZStr]> = bun_core::Once::new();
+    bun_core::set_argv(ARGV.get_or_init(|| argv.leak()));
     // The program finds the environment that the launcher found.
     #[cfg(unix)]
     if has_launcher {
@@ -1388,13 +1338,10 @@ pub(crate) extern "C" fn Bun__AOT__runsTestFilesAgain() -> bool {
 pub(crate) extern "C" fn Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(
     global: &bun_jsc::JSGlobalObject,
 ) -> bool {
-    let Some(runner) = crate::test_runner::jest::Jest::runner() else {
+    let Some(file) = crate::test_runner::bun_test::clone_active_strong() else {
         return false;
     };
-    let Some(file) = runner.bun_test_root.clone_active_file() else {
-        return false;
-    };
-    file.get().is_loading
+    file.is_loading.get()
         && global
             .bun_vm()
             .pending_internal_promise()
@@ -1407,22 +1354,21 @@ pub(crate) extern "C" fn Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(
 /// BunCompiledModules.cpp. Immediates that were set have yet to run.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOT__hasImmediatesYetToRun(global: &bun_jsc::JSGlobalObject) -> bool {
-    let event_loop = global.bun_vm().event_loop_shared();
-    !event_loop.immediate_tasks.is_empty() || !event_loop.next_immediate_tasks.is_empty()
+    global.bun_vm().event_loop().immediate_task_count() > 0
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOT__transpilerJobsScheduled(
     global: &bun_jsc::JSGlobalObject,
 ) -> u64 {
-    global.bun_vm().transpiler_store.jobs_scheduled
+    global.bun_vm().transpiler_store.jobs_scheduled.get()
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOT__transpilerJobsCompleted(
     global: &bun_jsc::JSGlobalObject,
 ) -> u64 {
-    global.bun_vm().transpiler_store.jobs_completed
+    global.bun_vm().transpiler_store.jobs_completed.get()
 }
 
 #[unsafe(no_mangle)]

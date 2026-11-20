@@ -3671,15 +3671,21 @@ impl<'p, 's> Checker<'p, 's> {
             return ty;
         } else {
             // The call for the first such function contains the calls for the others.
-            let first = props.iter().find_map(|p| {
-                let value = hir[p].value;
-                match hir.exprs.get(value.idx())?.kind {
-                    ExprKind::Fn(f) if !is_parenthesized(hir, value) => {
-                        is_typed_with_literal(f).then_some(f)
+            let find_first = || {
+                props.iter().find_map(|p| {
+                    let value = hir[p].value;
+                    match hir.exprs.get(value.idx())?.kind {
+                        ExprKind::Fn(f) if !is_parenthesized(hir, value) => {
+                            is_typed_with_literal(f).then_some(f)
+                        }
+                        _ => None,
                     }
-                    _ => None,
-                }
-            });
+                })
+            };
+            let first = *self
+                .functions_typed_with_literals
+                .entry((file, literal))
+                .or_insert_with(find_first);
             first.map_or(
                 ObjectLiteralCheck::ForThis,
                 ObjectLiteralCheck::ForThisParameter,
@@ -5743,7 +5749,14 @@ impl<'p, 's> Checker<'p, 's> {
         let ExprKind::Object(props) = hir[e].kind else {
             return Shape::new_in(self.arena);
         };
-        let context = self.object_literal_context_in(file, e, in_const_context);
+        let context = match props.is_empty() {
+            true => ObjectLiteralContext {
+                in_destructuring_pattern: false,
+                implied: None,
+                in_const_context,
+            },
+            false => self.object_literal_context_in(file, e, in_const_context),
+        };
         let mut shape = Shape::new_in(self.arena);
         shape.props.reserve_exact(props.len());
         // The names in `shape.props`, tracked only for a literal with many members.
@@ -6305,8 +6318,9 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeId::BOOLEAN
             }
             BinOp::Comma => {
-                self.type_of_expr(file, left);
-                self.type_of_expr(file, right)
+                let l = self.type_of_expr(file, left);
+                let r = self.type_of_expr(file, right);
+                self.type_created_by_copied_factory(file, e, l).unwrap_or(r)
             }
             BinOp::And => {
                 let l = self.type_of_expr(file, left);

@@ -1,3 +1,4 @@
+# LIBRARY: own
 # `XS.some(x => x > 2)`, `XS.forEach(x => { .. })` in a loop, and nothing is known of XS (it comes out of a parse or out of the host): lists, views and iterators all answer such a name, forEach maps and sets too,
 # so no one built-in class is told by it: the read and the call went by name, the library's method was entered and called the arrow by value at every element.
 # A function written in place for the call, under a name that lists answer, where lists answer every name that is asked of the value and no layout of the program has one of them: a list is expected.

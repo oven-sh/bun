@@ -53,27 +53,14 @@ console.log(new NoBase().describe(), new InArrow().name, new InParameter().name,
 // CHECK-NEXT: v3 = NewObject layout=[[L_7]]
 // CHECK-NEXT: v4 = CallDirect v3, v1, v0 function=[[f_8]]
 // CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: v6 = TypeTest v5 testedType=object
-// CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v7):
-// CHECK-NEXT: Jump -> next b6(v7)
-// CHECK-NEXT: b2(v8):
-// CHECK-NEXT: v9 = TypeTest v8 testedType=undefined
-// CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b3(v10):
-// CHECK-NEXT: v11 = GetEnvironmentField v3 layout=[[L_7]]
-// CHECK-NEXT: v12 = TypeTest v11 testedType=absent
-// CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b4(v13):
-// CHECK-NEXT: v14 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v14
-// CHECK-NEXT: b5(v15):
-// CHECK-NEXT: Jump -> next b6(v15)
-// CHECK-NEXT: b6(v16):
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: b7(v17):
-// CHECK-NEXT: v18 = NewRuntimeError runtimeError=DerivedConstructorResult name="InArrow"
-// CHECK-NEXT: Throw v18
+// CHECK-NEXT: v6 = GetEnvironmentField v3 layout=[[L_7]]
+// CHECK-NEXT: v7 = TypeTest v6 testedType=absent
+// CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v8):
+// CHECK-NEXT: v9 = NewRuntimeError runtimeError=UninitializedThis
+// CHECK-NEXT: Throw v9
+// CHECK-NEXT: b2(v10):
+// CHECK-NEXT: Return v10
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="initialize"
 // CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] captures=[{type=env [[L_7]] flags=[IsFromCompiler]}, {type=anything}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {

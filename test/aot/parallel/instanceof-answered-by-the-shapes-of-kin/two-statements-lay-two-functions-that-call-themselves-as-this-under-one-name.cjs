@@ -1,5 +1,6 @@
 // Two statements lay two functions under one name; each calls itself as `this.alike(..)` by its own defining statement.
-// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 15
+// STATISTIC: InstanceOfMissesDecidedByHierarchy >= 13
+// The test in a return is none of them: the one in the condition answers it.
 function Atom(name) { this.name = name; }
 function Num(value) { this.value = value; }
 function Struct(name, args) { this.name = name; this.args = args; }

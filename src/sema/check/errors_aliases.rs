@@ -19,7 +19,7 @@ use super::sink::{NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
 use crate::content_mapper::{extension_rewrite, rewrite_extension, should_rewrite_extension};
-use crate::program::{ReadingNoTrees, TypeOnlyDeclaration, source_file_may_be_emitted};
+use crate::program::{TypeOnlyDeclaration, source_file_may_be_emitted};
 use crate::resolve::{
     ModuleKind, Options, ScriptTarget, file_extension_is, get_relative_path_from_directory,
     is_declaration_file_name, path_is_relative, try_extract_ts_extension,
@@ -30,6 +30,9 @@ use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
+use std::sync::Arc;
+
+pub(super) type AliasDeclarations = ArrayHashMap<Decl, Sym>;
 
 const ALL_MEANINGS: SymFlags = SymFlags::VALUE
     .union(SymFlags::TYPE)
@@ -305,8 +308,6 @@ impl Checker<'_, '_> {
         let files = self.files();
         self.are_module_exports_checked(module, file)
             || files.files_with_alias_from_exports_of(module).any(|other| {
-                let _reading = ReadingNoTrees::begin();
-                // A leaf's data is freed after its task.
                 (other == file || !files.module(other).is_leaf)
                     && self.is_checked_no_later_than(other, file)
             })
@@ -315,7 +316,12 @@ impl Checker<'_, '_> {
     // ───────────────────────────── alias declarations ─────────────────────────────
 
     /// `node.Symbol` for the alias declarations in `file`, in symbol order.
-    pub(super) fn symbols_of_alias_declarations(&self, file: FileId) -> ArrayHashMap<Decl, Sym> {
+    pub(super) fn symbols_of_alias_declarations(&self, file: FileId) -> Arc<AliasDeclarations> {
+        let known = self.alias_declarations.borrow();
+        if let Some((_, symbols)) = known.as_ref().filter(|known| known.0 == file) {
+            return Arc::clone(symbols);
+        }
+        drop(known);
         let mut symbols = ArrayHashMap::new();
         for (i, symbol) in self.bound(file).symbols.iter().enumerate() {
             if symbol.flags.contains(SymFlags::ALIAS) {
@@ -325,6 +331,8 @@ impl Checker<'_, '_> {
                 }
             }
         }
+        let symbols = Arc::new(symbols);
+        *self.alias_declarations.borrow_mut() = Some((file, Arc::clone(&symbols)));
         symbols
     }
 
@@ -1015,7 +1023,7 @@ impl Checker<'_, '_> {
             let checks_declaration_rewrite = options.emits_declarations
                 && rewrite_extension(text, rewrites, files.is_case_sensitive).is_some()
                 && path_is_relative(text)
-                && importing.hir.kind != FileKind::Declaration;
+                && importing.facts.kind != FileKind::Declaration;
             // `ResolvedUsingTsExtension`
             let using_ts_extension = importing.ts_extension_imports.contains(&key);
             let is_declaration_name = (using_ts_extension

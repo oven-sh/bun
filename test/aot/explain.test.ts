@@ -245,7 +245,7 @@ function total(accounts: Account[]) {
   return sum;
 }
 const accounts = [new Account(), new Account()];
-const handler = (globalThis as any).onAccount;
+const handler = JSON.parse("{}").onAccount;
 if (handler) handler(accounts[0]);
 console.log(total(accounts));
 `,

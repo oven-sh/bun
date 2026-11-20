@@ -94,6 +94,14 @@ const stringEncodings = b.enumeration([
 ]);
 
 export default b.declarations(
+  fsSyncFunction("appendFileSync", b.undefined),
+  fsSyncFunction("chmodSync", b.undefined),
+  fsSyncFunction("closeSync", b.undefined),
+  fsSyncFunction(
+    "fstatSync",
+    b.union(b.instance("Stats"), b.instance("BigIntStats")).fresh,
+    withoutFsOptions(b.instance("Stats").fresh),
+  ),
   fsSyncFunction("lstatSync", statsIfFound, withoutFsOptions(b.instance("Stats").fresh)),
   fsSyncFunction(
     "readdirSync",
@@ -208,6 +216,32 @@ export default b.declarations(
   }),
   ["Script", "Module"].flatMap(name => b.class(`${vmBinding}.${name}`, { hasPrototype: false })),
   answers("native:Cpp:NodeVM.cpp:Bun::createNodeVMBinding", b.builtin(vmBinding)),
+
+  // create_constructor() in src/runtime/node/node_http_parser.rs. They are writable.
+  [
+    "REQUEST",
+    "RESPONSE",
+    "kOnMessageBegin",
+    "kOnHeaders",
+    "kOnHeadersComplete",
+    "kOnBody",
+    "kOnMessageComplete",
+    "kOnExecute",
+    "kOnTimeout",
+    "kLenientNone",
+    "kLenientHeaders",
+    "kLenientChunkedLength",
+    "kLenientKeepAlive",
+    "kLenientTransferEncoding",
+    "kLenientVersion",
+    "kLenientDataAfterClose",
+    "kLenientOptionalLFAfterCR",
+    "kLenientOptionalCRLFAfterChunk",
+    "kLenientOptionalCRBeforeLF",
+    "kLenientSpacesAfterChunkSize",
+    "kLenientHeaderValueRelaxed",
+    "kLenientAll",
+  ].flatMap(name => b.static(`%HTTPParser%.${name}`, b.property(b.any))),
 
   // Whether the process was started with --experimental-stream-iter.
   answers("native:Cpp:NodeModuleModule.cpp:createStreamIterEnabledFlag", b.bool),

@@ -5,7 +5,7 @@ use crate::builtins::{BuiltinId, table};
 use crate::emit::FunctionsWithoutCode;
 use crate::ir::generated::{
     BuiltinUsedAtStart, ModuleFlags, ModuleKind, NameClass, OpenedName, ReplaceableBuiltin,
-    SourceStamp,
+    SourceStamp, WebAssemblyModule,
 };
 use crate::ir::parallel::map_each;
 use crate::ir::{Id, ModuleId, StringId};
@@ -73,6 +73,15 @@ impl Build<'_> {
                 return Err(Stage::LinkAndEmit);
             }
         };
+        for (file, bytes) in core::mem::take(&mut self.adjacent_web_assembly) {
+            let project = ProjectId::Application;
+            let named_by = Some(ProgramFile { project, file });
+            if let Some(index) = modules.iter().position(|it| it.file() == named_by) {
+                let module = ModuleId::new(index);
+                let modules = &mut program.web_assembly_modules;
+                modules.push(WebAssemblyModule { module, bytes });
+            }
+        }
         let (mut with_names, mut with_value, mut facades) = (0, 0, 0);
         for &module in &modules {
             let (project, own) = match module {
@@ -262,8 +271,13 @@ impl Build<'_> {
                         }
                         debug_assert_eq!(entry_points.len(), program.entries.len());
                         steps.end("link stage: built-ins that are replaced, names, stamps");
-                        let listed_modules = (self.options.lists_modules)
-                            .then(|| collect_module_list(&loaded, &bound, &modules, runs_tests));
+                        let listed_modules = (self.options.lists_modules).then(|| {
+                            let mut listed =
+                                collect_module_list(&loaded, &bound, &modules, runs_tests);
+                            let embedded = self.provider.list_files_embedded_implicitly();
+                            listed.add_embedded_files(&embedded, &self.options.load.project_root);
+                            listed
+                        });
                         steps.end("link stage: list of modules");
                         (entry_points, folders, listed_modules)
                     },

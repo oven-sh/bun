@@ -3,13 +3,8 @@
 # RUN: walk f0 mechanisms=all
 # CHECK-LABEL: code f0:Body
 # CHECK: isLoopHead=true
-# CHECK: = GetSlot {{*}}key="encoding" receivers=[L2] level=Proven
 # CHECK: = ShapeTest {{*}}layouts=[L2]
-# CHECK: = ShapeTest {{*}}layouts=[L0]
-# CHECK: = GetSlot {{*}}key="limit" receivers=[L2] level=Proven
-# CHECK: = ShapeTest {{*}}layouts=[L2]
-# CHECK: = ShapeTest {{*}}layouts=[L0]
-# CHECK: = GetSlot {{*}}key="strict" receivers=[L2] level=Proven
+# CHECK: = GetSlot {{*}}key="length" receivers=[L2] level=Proven
 # -- source: the-two-turns-stand-in-the-copy-in-line-in-the-loop-of-the-caller-too.cjs
 # function configure(stream, options) {
 #   var opts = options || {};

@@ -27,6 +27,7 @@ mod program_symbols;
 mod prototype_links;
 pub mod queries;
 pub mod query_writer;
+mod super_calls;
 pub mod trust;
 mod type_arguments;
 pub mod type_identity;
@@ -41,7 +42,7 @@ pub use answers::{
     ListedMember, MemberForm, MemberLookup, MemberName, MemberTypedOtherwise, MethodsAbove,
     ObjectMember, ObjectMemberKind, PositionTypes, QueryLimit, QueryLimits, QueryStatistics,
     SignatureParameter, SignatureShape, SymbolCreation, TypeArgument, TypeParameterRef,
-    WrittenParameter, WrittenType,
+    UnknownParent, WrittenParameter, WrittenType,
 };
 pub use builtin_types::{
     BuiltinClassIndex, BuiltinTypeClass, BuiltinTypePath, BuiltinTypeSymbols, BuiltinValueIndex,
@@ -62,6 +63,10 @@ pub use program_symbols::COMPILER_DECLARATIONS_PATH;
 pub use prototype_links::{NamedValue, NamedValues, PrototypeOperation};
 pub use queries::{Queries, QueryInputs};
 pub use query_writer::write_queries;
+pub use super_calls::{
+    SuperCall, SuperCallForm, find_super_call, function_of_this, may_be_constructor_function,
+    text_of_function,
+};
 pub use trust::Trust;
 pub use type_identity::{ObjectOrigin, TypeIdentity};
 pub use type_relations::MemberPresence;

@@ -5,7 +5,8 @@ use super::{
 use crate::atom::Interner;
 use crate::bind::Bound;
 use crate::file_analysis::FileAnalysis;
-use crate::hir::{ExprId, File};
+use crate::fold::Decisions;
+use crate::hir::{CallId, ExprId, File};
 use crate::hir_from_data::HostValue;
 use crate::json::Json;
 use crate::module_format::{DeclaredModuleType, ModuleFormat};
@@ -244,8 +245,12 @@ pub trait CodeHost: Host {
         text: &[u8],
         atoms: &Interner<'s>,
     ) -> ParsedCode<'s> {
+        let options = ParseOptions {
+            keeps_comments: true,
+            ..request.options
+        };
         ParsedCode {
-            hir: self.parse(arena, request.path, text, atoms, request.options),
+            hir: self.parse(arena, request.path, text, atoms, options),
             host_values: &[],
             payload: None,
         }
@@ -276,6 +281,28 @@ pub trait CodeHost: Host {
         _arena: &'s Arena,
         _atoms: &Interner<'s>,
         _request: &mut TransformRequest<'_, 's>,
+        _payload: &mut Option<HostPayload>,
+    ) -> TreeChange {
+        TreeChange::Unchanged
+    }
+
+    fn find_settled_evals<'s>(
+        &self,
+        _hir: &File<'s>,
+        _bound: &Bound<'s>,
+        _atoms: &Interner<'s>,
+    ) -> Vec<CallId> {
+        Vec::new()
+    }
+
+    /// Writes the copies of factories into a tree. See `hir::CopiedFactory`.
+    fn copy_factories<'s>(
+        &self,
+        _arena: &'s Arena,
+        _atoms: &Interner<'s>,
+        _hir: &mut File<'s>,
+        _bound: &Bound<'s>,
+        _decisions: &Decisions<'s>,
         _payload: &mut Option<HostPayload>,
     ) -> TreeChange {
         TreeChange::Unchanged

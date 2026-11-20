@@ -19,7 +19,8 @@
 # CHECK: unit f5:GenericCallEntry -> {{*}} only-calls=1
 # RUN(OTHERS): plan units mechanisms=all
 # OTHERS-NOT: unit f3:GenericCallEntry -> f3:Body only-calls
-# OTHERS-NOT: unit f4:GenericCallEntry -> f4:Body only-calls
+# RUN(KEPT): plan units mechanisms=all
+# KEPT: unit f4:GenericCallEntry -> f4:Body only-calls=1
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 109 19 -4 11 13 8 14 112 22 -7 12 11 8 16
 # ANSWERS: 120 16 321

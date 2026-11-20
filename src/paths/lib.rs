@@ -56,6 +56,18 @@ pub mod strings {
 pub use bun_alloc::SEP;
 pub use bun_alloc::SEP_STR;
 
+/// The name of the package in `node_modules` that the file at `path` is in
+pub fn package_of(path: &[u8]) -> Option<Vec<u8>> {
+    let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    let names: Vec<&[u8]> = strings::split_any(path, separators).collect();
+    let at = names.iter().rposition(|it| *it == b"node_modules")?;
+    match names[at + 1..] {
+        [scope @ [b'@', ..], name, _, ..] => Some([scope, b"/", name].concat()),
+        [name, _, ..] => Some(name.to_vec()),
+        _ => None,
+    }
+}
+
 /// `<SEP>node_modules<SEP>` — platform-dependent infix needle for detecting whether
 /// a path passes through a `node_modules` directory.
 pub const NODE_MODULES_NEEDLE: &[u8] =
@@ -142,11 +154,8 @@ macro_rules! path_literal {
             }
             o // o[__N] == 0 (NUL terminator)
         };
-        // Explicit `&__OUT` borrow for guaranteed rvalue static promotion
-        // (mirrors `os_path_literal!`).
-        const __REF: &[u8; __N + 1] = &__OUT;
-        // SAFETY: __REF[__N] == 0 (NUL terminator); len excludes it.
-        unsafe { ::bun_core::ZStr::from_raw(__REF.as_ptr(), __N) }
+        const __Z: &::bun_core::ZStr = ::bun_core::ZStr::from_slice_with_nul(&__OUT);
+        __Z
     }};
 }
 
@@ -184,13 +193,8 @@ macro_rules! os_path_literal {
                 }
                 out
             };
-            // Explicit `&__W` borrow so rvalue static promotion is guaranteed
-            // (mirrors `wstr!`): relying on the implicit autoref inside
-            // `__W.as_ptr()` to promote is not spec-guaranteed in all
-            // contexts, and a non-promoted `__W` would dangle immediately.
-            const __WREF: &[u16; __N + 1] = &__W;
-            // SAFETY: __WREF[__N] == 0 (NUL terminator); len excludes it.
-            unsafe { ::bun_core::WStr::from_raw(__WREF.as_ptr(), __N) }
+            const __Z: &::bun_core::WStr = ::bun_core::WStr::from_slice_with_nul(&__W);
+            __Z
         }
     }};
 }
@@ -481,7 +485,6 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 pub mod fs {
     use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-    use std::io::Write as _;
     use std::sync::OnceLock;
 
     use bun_core::ZStr;
@@ -560,26 +563,20 @@ pub mod fs {
             extname: &[u8],
             buf: &'b mut [u8],
             hash: u64,
-        ) -> crate::Result<&'b mut ZStr> {
+        ) -> crate::Result<&'b ZStr> {
             let hex_value: u64 = hash ^ (bun_core::time::nano_timestamp() as u64);
 
-            let len = buf.len();
-            let mut cursor = &mut buf[..];
             // Fixed-width, zero-padded hex (u64 → 16 digits, u32 → 8).
-            write!(
-                &mut cursor,
-                ".{:016x}-{:08X}.{}",
-                hex_value,
-                TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
-                bun_core::fmt::s(extname),
+            bun_core::fmt::buf_print_z(
+                buf,
+                format_args!(
+                    ".{:016x}-{:08X}.{}",
+                    hex_value,
+                    TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
+                    bun_core::fmt::s(extname),
+                ),
             )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-            let written = len - cursor.len();
-            if written >= len {
-                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
-            }
-            buf[written] = 0;
-            Ok(ZStr::from_buf_mut(buf, written))
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))
         }
     }
 
@@ -768,6 +765,12 @@ pub mod fs {
 
     const _: () = assert!(core::mem::size_of::<Path<'static>>() <= 56);
 
+    /// True when `namespace` is the canonical `file` namespace (empty or `"file"`).
+    #[inline]
+    pub fn is_file_namespace(namespace: &[u8]) -> bool {
+        namespace.is_empty() || namespace == b"file"
+    }
+
     impl<'a> Default for Path<'a> {
         #[inline]
         fn default() -> Self {
@@ -890,7 +893,7 @@ pub mod fs {
 
         #[inline]
         pub fn is_file(&self) -> bool {
-            self.namespace.is_empty() || self.namespace == b"file"
+            is_file_namespace(self.namespace)
         }
 
         #[inline]
@@ -914,6 +917,22 @@ pub mod fs {
         /// parsed dir component (`name.dir`, NOT `text`).
         pub fn is_node_module(&self) -> bool {
             crate::strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
+        }
+
+        /// Checks for a package in `node_modules` (in any case) or in the install cache.
+        pub fn is_dependency(&self) -> bool {
+            let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+            let mut components = crate::strings::split_any(self.name().dir, separators).peekable();
+            while let Some(component) = components.next() {
+                if crate::strings::contains(component, b"@@@")
+                    || component.starts_with(b"@G@")
+                    || (component.eq_ignore_ascii_case(b"node_modules")
+                        && components.peek().is_some())
+                {
+                    return true;
+                }
+            }
+            false
         }
 
         /// Key used to identify this path in the incremental graph: the real

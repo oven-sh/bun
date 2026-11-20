@@ -16,8 +16,8 @@ A tagged pointer union containing various async task types (file I/O, network re
 
 Two separate queues for `setImmediate()`:
 
-- **`immediate_tasks`**: Tasks to run on the current tick
-- **`next_immediate_tasks`**: Tasks to run on the next tick
+- **`immediate_tasks`**: What `setImmediate` pushes to, and the next tick takes
+- **`next_immediate_tasks`**: The empty buffer that replaces it then
 
 This prevents infinite loops when `setImmediate` is called within a `setImmediate` callback.
 
@@ -272,7 +272,7 @@ When I/O becomes ready (socket readable/writable, file descriptor ready):
 3. The callback may:
    - Directly execute JavaScript (must use `EventLoop.enter()/exit()`)
    - Enqueue a task to the concurrent task queue for later processing
-   - Update internal state and return (e.g., `FilePoll.onUpdate()`)
+   - Update internal state and return (e.g., a `BufferedReader` filling its buffer)
 4. If JavaScript is called via `enter()/exit()`, microtasks are drained when `entered_event_loop_count` reaches 0
 
 **Important**: I/O callbacks don't automatically get the microtask draining behavior - they must explicitly wrap JS calls in `enter()/exit()` or use `runCallback()` to ensure proper microtask handling. This is why some I/O operations enqueue tasks to the concurrent queue instead of running JavaScript directly.
@@ -319,16 +319,16 @@ This is because:
 The event loop uses a counter to track when to drain microtasks:
 
 ```rust
-pub fn enter(&mut self) {
-    self.entered_event_loop_count += 1;
+pub fn enter(&self) {
+    self.entered_event_loop_count.update(|count| count + 1);
 }
 
-pub fn exit(&mut self) {
-    let count = self.entered_event_loop_count;
+pub fn exit(&self) {
+    let count = self.entered_event_loop_count.get();
     if count == 1 && !self.vm_ref().is_inside_deferred_task_queue.get() {
         let _ = self.drain_microtasks();
     }
-    self.entered_event_loop_count -= 1;
+    self.entered_event_loop_count.update(|count| count - 1);
 }
 ```
 

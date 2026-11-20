@@ -1,12 +1,11 @@
 //! Resolver output and bookkeeping types: `Result`, `MatchResult`, `LoadResult`,
-//! `PathPair`, `PendingResolution`, `DebugLogs`, and friends. These are the
+//! `PathPair`, `DebugLogs`, and friends. These are the
 //! value types the [`crate::Resolver`] state machine produces and threads
 //! through `resolve_without_remapping` / `load_as_file_or_directory`.
 
 use std::io::Write as _;
 
 use ::bun_ast::import_record as ast;
-use ::bun_install_types::resolver_hooks as Install;
 use bun_alloc as allocators;
 use bun_core::MutableString;
 use bun_sys::Fd as FD;
@@ -14,7 +13,6 @@ use bun_sys::Fd as FD;
 use crate::dir_info::DirInfoRef;
 use crate::options;
 use crate::package_json::PackageJSON;
-use crate::resolver::Dependency;
 
 // NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
 // DirnameStore/FilenameStore). Alias here so the bare-`Path` use sites resolve
@@ -181,10 +179,10 @@ impl ResultFlags {
     }
 }
 
+#[expect(clippy::large_enum_variant, reason = "`Success` is the common case")]
 pub enum ResultUnion<'r> {
     Success(Result<'r>),
     Failure(crate::Error),
-    Pending(PendingResolution),
     NotFound,
 }
 
@@ -334,12 +332,11 @@ impl Default for MatchResult {
 /// payload (~300 bytes) is written through an `out: &mut MatchResult` parameter
 /// instead of being moved by value through every nested level. **`out` is only
 /// valid to read when the returned status is `Success`**; on `NotFound` /
-/// `Pending` / `Failure` it may hold partially-written state from an earlier
+/// `Failure` it may hold partially-written state from an earlier
 /// attempt and must be ignored.
 pub enum MatchStatus {
     NotFound,
     Success,
-    Pending(Box<PendingResolution>),
     Failure(crate::Error),
 }
 
@@ -348,35 +345,6 @@ impl MatchStatus {
     pub(crate) fn is_success(&self) -> bool {
         matches!(self, MatchStatus::Success)
     }
-}
-
-pub struct PendingResolution {
-    pub esm: crate::package_json::PackageExternal,
-    pub dependency: Dependency::Version,
-    pub root_dependency_id: Install::DependencyID,
-    pub import_record_id: u32,
-    pub string_buf: Vec<u8>,
-    pub tag: PendingResolutionTag,
-}
-
-impl Default for PendingResolution {
-    fn default() -> Self {
-        Self {
-            esm: Default::default(),
-            dependency: Default::default(),
-            root_dependency_id: Install::INVALID_PACKAGE_ID,
-            import_record_id: u32::MAX,
-            string_buf: Vec::new(),
-            tag: PendingResolutionTag::Download,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PendingResolutionTag {
-    Download,
-    Resolve,
-    Done,
 }
 
 pub struct LoadResult {

@@ -443,8 +443,8 @@ for (const dress of Object.keys(extensions) as Dress[]) {
       "the comparison reports a helper that is no longer copied in line",
       async () =>
         expect((await compare(await both(dress, "alone", "another helper"), features)).differences.join("\n")).toMatch(
-          // The copy of isInteger() makes a number of its text. x64 calls for the characters of a rope first, ARM64 for the number.
-          /calls, alone, \w+: Call Stub (?:RopeCharacters|TailCallOperation\.None operationAOTStringToNumber8)/,
+          // The copy of isInteger() begins with the stub that runs the test of its pattern.
+          /calls, alone, \w+: Call Stub RegExpTest\.Literal/,
         ),
       timeLimit,
     );

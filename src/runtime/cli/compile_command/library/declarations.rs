@@ -50,7 +50,7 @@ pub(crate) fn add_declaration_files(
 ) -> Result<(), OutsideRootDirectory> {
     // Without bundling, only the entry points are written.
     let has_javascript =
-        |source: &[u8]| is_bundled || output_files.iter().any(|file| file.src_path.text == source);
+        |source: &[u8]| is_bundled || output_files.iter().any(|file| &*file.src_path == source);
     let mut placed: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     for declaration in declarations {
         if !has_javascript(&declaration.source) {

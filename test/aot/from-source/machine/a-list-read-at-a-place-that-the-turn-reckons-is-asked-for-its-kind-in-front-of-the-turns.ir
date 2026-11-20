@@ -1,3 +1,4 @@
+# LIBRARY: own
 # -- source: a-list-read-at-a-place-that-the-turn-reckons-is-asked-for-its-kind-in-front-of-the-turns.ts
 # declare function sink(value: unknown): void;
 # function spread(weights: number[], count: number): number { let s = 0; const end = count | 0; for (let i = 0; i < end; i++) s += weights[(i * 7) & 1023]; return s; }

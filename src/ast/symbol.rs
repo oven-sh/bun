@@ -109,6 +109,9 @@ pub struct Symbol {
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct SymbolFlags: u8 {
+        /// Holds a function that returns the value. See `defer_requires.rs` in the parser.
+        const IS_DEFERRED_REQUIRE = 1 << 0;
+
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;
 
         /// Certain symbols must not be renamed or minified. For example, the
@@ -152,6 +155,7 @@ macro_rules! symbol_flag_accessors {
 }
 
 symbol_flag_accessors! {
+    is_deferred_require, set_is_deferred_require => IS_DEFERRED_REQUIRE;
     must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
     import_used_as_value, set_import_used_as_value => IMPORT_USED_AS_VALUE;
@@ -434,18 +438,6 @@ pub fn follow_symbols(symbols: &[Symbol], ref_: Ref) -> Ref {
     root
 }
 
-impl Symbol {
-    pub(crate) fn merge_contents_with(&mut self, old: &Symbol) {
-        self.use_count_estimate += old.use_count_estimate;
-        if old.must_not_be_renamed() {
-            self.original_name = old.original_name;
-            self.set_must_not_be_renamed(true);
-        }
-
-        // TODO: MustStartWithCapitalLetterForJSX
-    }
-}
-
 #[derive(Default)]
 pub struct Map {
     // This could be represented as a "map[Ref]Symbol" but a two-level array was
@@ -558,45 +550,21 @@ impl Map {
             return merged;
         }
 
-        self.get_const(old).unwrap().link.set(new);
-        // `merge_contents_with` mutates non-Cell fields (use_count_estimate,
-        // must_not_be_renamed, original_name) on `new` while reading `old`.
-        let old_symbol = self.get(old).unwrap();
-        let new_symbol = self.get(new).unwrap();
-        // SAFETY: `old != new` (checked above) so the two slots are disjoint
-        // elements of the NestedList; `get()` derives `*mut` from Vec's raw
-        // `NonNull` (write provenance preserved). Neither reference outlives this
-        // block (cf. split_at_mut).
-        unsafe {
-            (&mut *new_symbol).merge_contents_with(&*old_symbol);
-        }
-        new
-    }
+        let old_symbol = self.get_const(old).unwrap();
+        old_symbol.link.set(new);
+        let use_count_estimate = old_symbol.use_count_estimate;
+        let pinned_name = old_symbol
+            .must_not_be_renamed()
+            .then_some(old_symbol.original_name);
 
-    // Returns a raw *mut Symbol because callers (merge/follow/assign_chunk_index/
-    // get_with_link) hold aliasing pointers into the NestedList and/or recurse through
-    // &mut self while holding the pointer.
-    //
-    // SOUNDNESS: the *mut is derived directly from `Vec.ptr: NonNull<T>` — a raw
-    // pointer field whose provenance is independent of the `&self` borrow used to read
-    // it. We deliberately do NOT go through `.slice()`/`.at()` (which produce `&[T]`/`&T`
-    // and would yield read-only provenance, making any later write UB). Callers may write
-    // through the result as long as the backing storage is not reallocated and they do
-    // not materialize overlapping `&mut`.
-    pub fn get(&self, ref_: Ref) -> Option<*mut Symbol> {
-        if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
-            return None;
+        let new_symbol = self.get_mut(new).unwrap();
+        new_symbol.use_count_estimate += use_count_estimate;
+        if let Some(original_name) = pinned_name {
+            new_symbol.original_name = original_name;
+            new_symbol.set_must_not_be_renamed(true);
         }
-        let src = ref_.source_index() as usize;
-        let idx = ref_.inner_index() as usize;
-        debug_assert!(src < self.symbols_for_source.len());
-        // SAFETY: src in-bounds (parser-produced ref); raw-ptr field read — no `&` to the
-        // element is created. idx in-bounds of the inner list.
-        unsafe {
-            let inner: *mut Vec<Symbol> = self.symbols_for_source.as_ptr().cast_mut().add(src);
-            debug_assert!(idx < (*inner).len());
-            Some((*inner).as_mut_ptr().add(idx))
-        }
+        // TODO: MustStartWithCapitalLetterForJSX
+        new
     }
 
     pub fn get_const(&self, ref_: Ref) -> Option<&Symbol> {
@@ -629,8 +597,6 @@ impl Map {
     // Takes ownership of `list` and boxes it into a one-element NestedList.
     // PERF: one extra allocation — profile if needed (single caller is the
     // printer one-shot, cold).
-    // OWNERSHIP: returned `Map` is *owned*; the `Vec<List>` allocated here leaks if a
-    // consumer parks it in `ManuallyDrop` (e.g. renamer.rs `MinifyRenamer.symbols`).
     pub fn init_with_one_list(list: Vec<Symbol>) -> Map {
         Self::init_list(vec![list])
     }
@@ -641,10 +607,6 @@ impl Map {
         }
     }
 
-    /// Safe `&mut` lookup via the `Vec`/`Vec<Symbol>` backing storage. Mirrors
-    /// [`get_const`] but returns a unique borrow tied to `&mut self`, so callers
-    /// that only need to flip a flag (e.g. `must_not_be_renamed`) don't need the
-    /// raw `*mut Symbol` from [`get`] + an open-coded `(*ptr).field = ...`.
     pub fn get_mut(&mut self, ref_: Ref) -> Option<&mut Symbol> {
         if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
             return None;

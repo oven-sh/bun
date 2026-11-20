@@ -5,8 +5,6 @@ use crate::exception_list;
 use bun_core::{String, StringOrView};
 use bun_url::URL as ZigURL;
 
-use crate::module_loader::ModuleLoader;
-use crate::virtual_machine::VirtualMachine;
 use crate::{JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, ZigStackTrace};
 
 // SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
@@ -53,11 +51,6 @@ impl ZigException<'_> {
         ZigException__collectSourceLines(value, global, self);
     }
 
-    // `ZigException__fromException` is declared in headers.h but has no C++
-    // body (bindings.cpp dropped it; the only producer is
-    // `JSC__JSValue__toZigException` which writes through an out-param), so
-    // there is intentionally no `from_exception` here.
-
     pub(crate) fn add_to_error_list(
         &mut self,
         error_list: &mut Vec<exception_list::JsException>,
@@ -91,7 +84,6 @@ pub struct Holder<'a> {
     source_lines: [StringOrView<'a>; SOURCE_LINES_COUNT],
     frames: [ZigStackFrame<'a>; FRAME_COUNT],
     pub(crate) zig_exception: Option<ZigException<'a>>,
-    pub(crate) need_to_clear_parser_arena_on_deinit: bool,
 }
 
 impl<'a> Holder<'a> {
@@ -101,20 +93,11 @@ impl<'a> Holder<'a> {
             source_line_numbers: [-1; SOURCE_LINES_COUNT],
             source_lines: core::array::from_fn(|_| StringOrView::EMPTY),
             zig_exception: None,
-            need_to_clear_parser_arena_on_deinit: false,
         }
     }
 
     pub fn init() -> Self {
         Self::zero()
-    }
-
-    /// `Drop` releases the strings; this resets the parser arena used while
-    /// collecting source lines, which needs `vm`.
-    pub(crate) fn deinit(&mut self, vm: &mut VirtualMachine) {
-        if core::mem::take(&mut self.need_to_clear_parser_arena_on_deinit) {
-            ModuleLoader::reset_arena(vm);
-        }
     }
 
     pub fn zig_exception(&mut self) -> &mut ZigException<'a> {

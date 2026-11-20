@@ -108,7 +108,7 @@
 use super::task::{Task, tables_of, tables_written_immediately};
 use super::{Checker, Program, Query, Spare};
 use crate::local::{Log, node_word};
-use crate::program::{FileId, Files, ReadingNoTrees, Sym};
+use crate::program::{FileId, Files, Sym};
 use crate::session::Arena;
 use crate::table::{Prepared, Publish};
 use crate::util::{FxBuild, FxHashMap, SharedSort};
@@ -493,6 +493,13 @@ impl View<'_> {
         }
     }
 
+    /// `snapshot_of`, or `None` if the task may ignore some of the commits that it sees in `file` (`hides`).
+    #[inline]
+    pub(super) fn snapshot_without_hidden_commits(&self, file: FileId) -> Option<u32> {
+        let snapshot = self.snapshot_of(file);
+        (!self.may_hide_commits(file, snapshot)).then_some(snapshot)
+    }
+
     #[cold]
     #[inline(never)]
     fn touch(&self, file: FileId) -> u32 {
@@ -557,9 +564,15 @@ impl View<'_> {
     /// entry it found there must not vanish, nor the entries that were stored together with it.
     #[inline]
     pub(crate) fn hides(&self, file: FileId, snapshot: u32, commit: u32) -> bool {
+        self.may_hide_commits(file, snapshot) && self.hides_a_later_commit(file, commit)
+    }
+
+    /// True if a commit up to `snapshot` found an error in `file`.
+    #[inline]
+    fn may_hide_commits(&self, file: FileId, snapshot: u32) -> bool {
         let first = self.first_with_error.get(file.idx());
         let first = first.map_or(0, |it| it.load(Ordering::Relaxed));
-        first != 0 && first <= snapshot && self.hides_a_later_commit(file, commit)
+        first != 0 && first <= snapshot
     }
 
     #[cold]
@@ -1081,8 +1094,10 @@ impl<'s> Checker<'_, 's> {
         debug_assert!(self.stack.is_empty());
         for &entry in &cycles.0 {
             let has_tree = |file: FileId| {
-                let module = self.files().module(file);
-                !module.is_leaf || module.bound.symbols.len() > 0 || !module.hir.stmts.is_empty()
+                let files = self.files();
+                !files.module(file).is_leaf
+                    || files.bound(file).symbols.len() > 0
+                    || !files.hir(file).stmts.is_empty()
             };
             if !entry.file_that_names_it().is_some_and(has_tree) {
                 continue;
@@ -1334,7 +1349,6 @@ impl CyclesEntered {
     }
 
     pub fn retain_within_reach_of(&mut self, files: &Files<'_>, visited: &[FileId]) {
-        let _reading = ReadingNoTrees::begin();
         let is_reached = files.reached_from(visited.to_vec());
         self.0.retain(|entry| {
             let file = entry.file_that_names_it();

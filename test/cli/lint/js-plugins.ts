@@ -1,5 +1,5 @@
 // What js-plugins.test.ts and js-plugin-api.test.ts share.
-import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
+import { autoInstallTempDir, bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "../children";
@@ -22,7 +22,7 @@ export async function lint(
   reads: string[] = [],
   variables: Record<string, string> = {},
 ) {
-  using dir = tempDir("bun-lint-js-plugins", files);
+  using dir = (variables.BUN_CONFIG_REGISTRY ? autoInstallTempDir : tempDir)("bun-lint-js-plugins", files);
   await using proc = spawn({
     cmd: [bunExe(), "lint", ...(args.includes("--threads") ? [] : ["--threads", "2"]), ...args],
     env: { ...env, ...variables },

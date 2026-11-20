@@ -90,7 +90,7 @@ public:
         {
         }
 
-        VirtualModuleMap* _Nullable virtualModules = nullptr;
+        std::unique_ptr<VirtualModuleMap> virtualModules;
         bool mustDoExpensiveRelativeLookup = false;
         // Set right before requestImportModule(), to tell moduleLoaderResolve() it's a script's import(), which can't use NUL-prefixed keys.
         bool isResolvingImportCall = false;
@@ -166,6 +166,10 @@ public:
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
+        // Files whose module under the original's key became the original of a mock, with the test file that has the mock.
+        WTF::UncheckedKeyHashMap<String, unsigned> filesWithRestoredOriginal = {};
+        // Files that were mocked while an earlier module was under the original's key, with the test file that mocked them. When it ends, `bun test` gives that module the key back.
+        WTF::UncheckedKeyHashMap<String, unsigned> filesWithEarlierOriginal = {};
 
         struct Matches {
             JSC::JSString* path { nullptr };
@@ -186,7 +190,6 @@ public:
         void clear()
         {
             Base::clear();
-            delete virtualModules;
             virtualModules = nullptr;
             mustDoExpensiveRelativeLookup = false;
             displacedPreloadModuleMocks.clear();
@@ -199,6 +202,8 @@ public:
             loadRootFetches.clear();
             moduleMocksBeingLoaded.clear();
             loadedByImportActual.clear();
+            filesWithEarlierOriginal.clear();
+            filesWithRestoredOriginal.clear();
 #if ENABLE(AOT)
             pendingCompiledMocks.clear();
             compiledMockFactories.clear();
@@ -207,6 +212,8 @@ public:
             waitingMockFetches.clear();
             fetchesBlockedOnFactories.clear();
             compiledImportersLinkedBeforeMocks.clear();
+            mocksOutsideRegistry.clear();
+            filesMockedOutsideRegistry.clearAll();
             bodyMocks.clear();
             modulesWithBodyMocks.clear();
 #endif
@@ -252,6 +259,9 @@ public:
             WTF::String importer;
         };
         WTF::Vector<CompiledImporterLinkedBeforeMock> compiledImportersLinkedBeforeMocks;
+        // The specifiers of the mocks that may not be in the registry, by the file that they name.
+        WTF::UncheckedKeyHashMap<uint32_t, WTF::Vector<WTF::String, 1>, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> mocksOutsideRegistry;
+        WTF::BitVector filesMockedOutsideRegistry;
         uint64_t compiledFactoryCallCount { 0 };
         // By module, whether or not the call is still in the list above.
         WTF::Vector<std::pair<uint32_t, uint64_t>> latestCompiledFactoryCalls;
@@ -288,13 +298,6 @@ public:
             return replayFrame == frame ? replayingFile : WTF::nullString();
         }
 #endif
-
-        ~OnLoad()
-        {
-            if (virtualModules) {
-                delete virtualModules;
-            }
-        }
     };
 
     class OnResolve final : public Base {
@@ -345,6 +348,8 @@ bool canRequireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMoc
 bool hasSynchronousMockFactory(Zig::GlobalObject*, const String& path, bool isOriginalSynchronous);
 bool isSpyMock(Zig::GlobalObject*, const String& path);
 #if ENABLE(AOT)
+bool hasRegisteredModuleMock(Zig::GlobalObject*, const String& path);
+bool hasMockOverFileOfPreload(Zig::GlobalObject*, const String& path);
 bool canRequireMockOriginalAt(Zig::GlobalObject*, const String& path);
 // In `bun test` the require map holds a restored preload mock, which is dropped with the key.
 void didDeleteModuleMockKey(Zig::GlobalObject*, const String& key);

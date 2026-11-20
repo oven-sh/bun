@@ -3,6 +3,7 @@ pub(crate) mod builtin_uses;
 pub(crate) mod bundled_commonjs;
 pub(crate) mod compiler_declarations;
 pub(crate) mod contents;
+mod copied_factories;
 pub(crate) mod data_modules;
 pub(crate) mod disk_delegation;
 pub(crate) mod externals;
@@ -14,7 +15,7 @@ pub(crate) mod hoisted_mocks;
 pub(crate) mod host;
 pub(crate) mod import_functions;
 pub(crate) mod import_meta_glob;
-mod known_evaluations;
+pub(crate) mod known_evaluations;
 pub(crate) mod loader_aliases;
 pub(crate) mod loaders;
 pub(crate) mod locked_builtin_defines;
@@ -22,6 +23,7 @@ mod made_own_require;
 pub(crate) mod manual_mocks;
 pub(crate) mod module_paths;
 pub(crate) mod modules_with_queries;
+pub(crate) mod objects_created_below;
 pub(crate) mod plugin_modules;
 pub mod project;
 pub(crate) mod react_compiler;
@@ -61,8 +63,9 @@ pub fn host_platform() -> Platforms {
     }
 }
 
+#[inline]
 pub(crate) fn is_host_path(path: &[u8]) -> bool {
-    path.starts_with(HOST_ROOT)
+    path.get(1) == Some(&HOST_ROOT[1]) && path.starts_with(HOST_ROOT)
 }
 
 pub(crate) fn is_in_node_modules(path: &[u8]) -> bool {
@@ -89,7 +92,16 @@ pub(crate) fn file_size(path: &[u8]) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bun_sema_driver::host::from_native;
+    use bun_sema_driver::host::{from_native, is_regular_file};
+
+    #[test]
+    fn folders_and_names_with_nul_are_no_regular_files() {
+        let executable = std::env::current_exe().unwrap();
+        let path = from_native(executable.to_str().unwrap().as_bytes()).to_vec();
+        assert!(is_regular_file(&path));
+        assert!(!is_regular_file(bun_paths::dirname(&path).unwrap()));
+        assert!(!is_regular_file(&[&path[..], b"\0"].concat()));
+    }
 
     #[test]
     fn host_platform_is_one_platform() {

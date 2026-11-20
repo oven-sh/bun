@@ -10,17 +10,17 @@
 # GetArrayLength), a turn that holds them is not laid out, and so every check of the emitters on what a front has found was text that never ran. Under testing=CheckBoundsInEmittersOnly the walk writes nothing
 # more: the same loops are laid out, in the same ways, as in an executable, and the checks stand in their turns.
 # RUN: compile UnrolledLoopsEmitted UnrolledLoopsForMaskedIndexes UnrolledLoopsForTypedArrays UnrolledLoopStorageChecksHoisted UnrolledLoopTypeProofsChecked mechanisms=all
-# CHECK: statistic UnrolledLoopsEmitted 65
-# CHECK: statistic UnrolledLoopsForMaskedIndexes 5
-# CHECK: statistic UnrolledLoopsForTypedArrays 5
+# CHECK: statistic UnrolledLoopsEmitted 79
+# CHECK: statistic UnrolledLoopsForMaskedIndexes 8
+# CHECK: statistic UnrolledLoopsForTypedArrays 6
 # CHECK: statistic UnrolledLoopStorageChecksHoisted 4
 # CHECK: statistic UnrolledLoopTypeProofsChecked 0
 # RUN(LANE): compile UnrolledLoopsEmitted UnrolledLoopsForMaskedIndexes UnrolledLoopsForTypedArrays UnrolledLoopStorageChecksHoisted UnrolledLoopTypeProofsChecked mechanisms=all testing=CheckBoundsInEmittersOnly
-# LANE: statistic UnrolledLoopsEmitted 65
-# LANE: statistic UnrolledLoopsForMaskedIndexes 5
-# LANE: statistic UnrolledLoopsForTypedArrays 5
+# LANE: statistic UnrolledLoopsEmitted 79
+# LANE: statistic UnrolledLoopsForMaskedIndexes 8
+# LANE: statistic UnrolledLoopsForTypedArrays 6
 # LANE: statistic UnrolledLoopStorageChecksHoisted 4
-# LANE: statistic UnrolledLoopTypeProofsChecked 430
+# LANE: statistic UnrolledLoopTypeProofsChecked 462
 # RUN(PROOFS): compile UnrolledLoopsEmitted mechanisms=all testing=CheckProofsAtRunTime
 # PROOFS: statistic UnrolledLoopsEmitted 0
 # RUN(ANSWERS): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly

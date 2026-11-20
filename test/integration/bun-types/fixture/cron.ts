@@ -39,6 +39,7 @@ expectType(Bun.cron.remove("weekly-report")).is<Promise<void>>();
 // -- Return type --
 
 expectType(Bun.cron("./worker.ts", "@daily", "daily")).is<Promise<void>>();
+expectType(Bun.cron(new URL("file:///worker.ts"), "@daily", "daily")).is<Promise<void>>();
 
 // -- In-process callback overload --
 

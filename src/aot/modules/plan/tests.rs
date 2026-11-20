@@ -200,6 +200,40 @@ fn the_mark_of_exports_that_something_looks_at_is_read_from_the_object() {
 }
 
 #[test]
+fn destructured_names_are_read_from_module() {
+    let main = "
+        const a = require('./m.cjs');
+        let b = require('./m.cjs');
+        const { c } = a;
+        exports.f = function (x) { const { f, c: other = x } = b; return f(other) + c; };
+    ";
+    let files = [
+        ("main.cjs", main),
+        ("m.cjs", "exports.c = 1; exports.f = (x) => x;"),
+    ];
+    with_plan(&files, |plan| {
+        assert_eq!(plan.shape("m.cjs"), Shape::Names);
+        let exports = Some(View::Exports(plan.module("m.cjs")));
+        assert_eq!(plan.holder("main.cjs", "a"), exports);
+        assert_eq!(plan.holder("main.cjs", "b"), exports);
+        assert_eq!(plan.reads_as_value("main.cjs"), [false, false]);
+    });
+}
+
+#[test]
+fn rest_is_read_from_object() {
+    let main = "const a = require('./m.cjs'); const { c, ...rest } = a; exports.rest = [c, rest];";
+    let files = [
+        ("main.cjs", main),
+        ("m.cjs", "exports.c = 1; exports.d = 2;"),
+    ];
+    with_plan(&files, |plan| {
+        assert_eq!(plan.shape("m.cjs"), Shape::Value);
+        assert_eq!(plan.holder("main.cjs", "a"), None);
+    });
+}
+
+#[test]
 fn require_of_a_commonjs_module_binds_its_names() {
     let main = "
         const a = require('./m.cjs');

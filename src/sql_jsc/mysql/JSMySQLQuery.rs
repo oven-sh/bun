@@ -1,28 +1,29 @@
 use core::cell::Cell;
-use core::ptr::NonNull;
 
 use crate::generated_bindgen::js_my_sql_query::js_MySQLQuery as js;
 use crate::jsc::{
-    JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, VirtualMachine,
-    VirtualMachineSqlExt as _, bun_string_jsc,
+    JSArrayIterator, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer,
+    VirtualMachine, VirtualMachineSqlExt as _, bun_string_jsc, js_error_to_mysql,
 };
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
+use bun_core::strings;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSArray, JsCell};
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
-use bun_sql::mysql::MySQLQueryResult;
+use bun_ptr::{AsCtxPtr, BackRef, RefPtr};
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
+use bun_sql::mysql::protocol::prepared_statement::{Execute, set_statement_id};
+use bun_sql::mysql::session::Command;
+use bun_sql::mysql::{MySQLQueryResult, mysql_request};
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
 use super::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
-use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
-// The struct, and the `declare_scope!` static of the same name that `debug!` below logs to.
-use super::my_sql_query::MySQLQuery;
 use super::my_sql_statement::{MySQLStatement, describe};
+use super::my_sql_value::Value;
+use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 
-bun_core::define_scoped_log!(debug, MySQLQuery);
+bun_core::define_scoped_log!(debug, MySQLQuery, visible);
 
 // JS can re-enter any method, so they all take `&self` and the fields are cells.
 #[derive(bun_ptr::CellRefCounted)]
@@ -30,8 +31,72 @@ pub struct JSMySQLQuery {
     this_value: JsCell<JsRef>,
     ref_count: Cell<u32>,
     global_object: BackRef<JSGlobalObject>,
-    query: JsCell<MySQLQuery>,
+    query: bun_core::String,
+    state: JsCell<State>,
+    pub(crate) bigint: bool,
+    pub(crate) simple: bool,
+    pub(crate) result_mode: Cell<SQLQueryResultMode>,
     undescribed: JsCell<Undescribed<Vec<ColumnDefinition41>>>,
+}
+
+/// `rejected`: JS has its answer. The rest of the server's is read and dropped.
+enum State {
+    New,
+    Queued,
+    /// Its parameters are being read.
+    Binding,
+    Preparing {
+        statement: RefPtr<MySQLStatement>,
+        execute: Vec<u8>,
+        rejected: bool,
+    },
+    Prepared {
+        statement: RefPtr<MySQLStatement>,
+        execute: Vec<u8>,
+    },
+    Running {
+        statement: RefPtr<MySQLStatement>,
+        rejected: bool,
+        /// KILL QUERY between two of them ends the text silently, after a further result was promised.
+        several_statements: bool,
+    },
+    Done,
+}
+
+/// Each returns whether the caller has something to deliver.
+impl State {
+    fn result(&mut self, is_last_result: bool) -> bool {
+        let State::Running { rejected, .. } = *self else {
+            return false;
+        };
+        if is_last_result {
+            *self = State::Done;
+        }
+        !rejected
+    }
+
+    fn fail(&mut self) -> bool {
+        match core::mem::replace(self, State::Done) {
+            State::New | State::Queued | State::Binding | State::Prepared { .. } => true,
+            State::Preparing { rejected, .. } | State::Running { rejected, .. } => !rejected,
+            State::Done => false,
+        }
+    }
+
+    /// Stays in flight: the rest of the response would go to the next request.
+    fn discard_response(&mut self) -> bool {
+        match self {
+            State::Preparing { rejected, .. } | State::Running { rejected, .. } => {
+                !core::mem::replace(rejected, true)
+            }
+            _ => self.fail(),
+        }
+    }
+
+    /// The server runs a query that it has to its end: only an unwritten one is cancelled.
+    fn cancel(&mut self) -> bool {
+        !matches!(self, State::Running { .. }) && self.discard_response()
+    }
 }
 
 impl JSMySQLQuery {
@@ -64,17 +129,19 @@ impl JSMySQLQuery {
         let (values, pending_value) = (values.to_js(), pending_value.to_js());
         query_ctor_args::validate(global_this, &query, values, simple)?;
 
-        let this_ptr = bun_core::heap::into_raw(Box::new(Self {
+        let this = RefPtr::new(Self {
             this_value: JsCell::new(JsRef::empty()),
             ref_count: Cell::new(1),
             global_object: BackRef::new(global_this),
-            query: JsCell::new(MySQLQuery::init(query, bigint, simple)),
+            query,
+            state: JsCell::new(State::New),
+            bigint,
+            simple,
+            result_mode: Cell::new(SQLQueryResultMode::Objects),
             undescribed: JsCell::new(Undescribed::default()),
-        }));
-        let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
-
-        let this_value = js::to_js(this_ptr, global_this);
-        this_value.ensure_still_alive();
+        });
+        let this = js::wrap(this, global_this);
+        let this_value = this.to_js();
         this.this_value.with_mut(|v| v.set_weak(this_value));
 
         js::binding_set_cached(this_value, global_this, values);
@@ -108,9 +175,10 @@ impl JSMySQLQuery {
                 AnyMySQLError::Error::ConnectionClosed,
             )));
         }
-        if self.is_completed() {
+        if !matches!(self.state.get(), State::New) {
             return Ok(());
         }
+        self.state.set(State::Queued);
         js::target_set_cached(this_value.to_js(), global_object, query);
         // Until it ends: the wrapper holds the target, the parameters and the rows.
         self.this_value.with_mut(|v| v.upgrade(global_object));
@@ -122,7 +190,7 @@ impl JSMySQLQuery {
         let _entered = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
         // The queue drops a request that ended when it gets to it.
         self.reject_when(
-            MySQLQuery::cancel,
+            State::cancel,
             self.error_to_js(AnyMySQLError::Error::QueryCancelled),
         );
     }
@@ -145,7 +213,7 @@ impl JSMySQLQuery {
                 );
             }
         };
-        self.query.with_mut(|q| q.set_result_mode(mode));
+        self.result_mode.set(mode);
         Ok(())
     }
 
@@ -157,7 +225,7 @@ impl JSMySQLQuery {
         if value <= bun_jsc::MAX_SAFE_INTEGER as u64 {
             return Ok(JSValue::js_number_from_uint64(value));
         }
-        if self.is_bigint_supported() {
+        if self.bigint {
             return JSValue::from_uint64_no_truncate(self.global_object(), value);
         }
         let mut buffer = bun_core::fmt::ItoaBuf::new();
@@ -169,17 +237,20 @@ impl JSMySQLQuery {
 
     /// `result.statement`, or the number that `describe_result` makes it for.
     fn description(&self, has_columns: bool) -> JsResult<JSValue> {
-        let query = self.query.get();
-        match query.get_statement() {
-            Some(_) if query.is_discarding_response() => Ok(JSValue::NULL),
-            Some(statement) if statement.statement_id > 0 => {
-                statement.description(self.global_object(), query.text(), has_columns)
-            }
-            Some(statement) => Ok(self
-                .undescribed
-                .with_mut(|results| results.push(statement.take_columns(has_columns)))),
-            None => Ok(JSValue::NULL),
+        let State::Running {
+            statement,
+            rejected: false,
+            ..
+        } = self.state.get()
+        else {
+            return Ok(JSValue::NULL);
+        };
+        if !self.simple {
+            return statement.description(self.global_object(), &self.query, has_columns);
         }
+        Ok(self
+            .undescribed
+            .with_mut(|results| results.push(statement.take_columns(has_columns))))
     }
 
     pub fn describe_result(&self, cx: &mut JsScope<'_>, number: JsLocal<'_>) -> JsResult<JSValue> {
@@ -187,7 +258,7 @@ impl JSMySQLQuery {
             .undescribed
             .with_mut(|results| results.take(number.to_js()))
         {
-            Some(columns) => describe(cx.global(), self.query.get().text(), &[], &columns),
+            Some(columns) => describe(cx.global(), &self.query, &[], &columns),
             None => Ok(JSValue::NULL),
         }
     }
@@ -199,7 +270,7 @@ impl JSMySQLQuery {
         // Rejected here; `result()` below has nothing to deliver and ends it at its last result.
         let reject = |err| {
             self.reject_when(
-                MySQLQuery::discard_response,
+                State::discard_response,
                 self.global_object().take_exception(err),
             );
             JSValue::UNDEFINED
@@ -210,7 +281,7 @@ impl JSMySQLQuery {
         // `result()` lets go of the statement at the last result.
         let statement = self.description(result.has_columns).unwrap_or_else(reject);
 
-        if !self.query.with_mut(|q| q.result(is_last_result)) {
+        if !self.state.with_mut(|state| state.result(is_last_result)) {
             return;
         }
 
@@ -221,8 +292,8 @@ impl JSMySQLQuery {
         let Some(target_value) = js::target_get_cached(this_value) else {
             return;
         };
-        let vm = VirtualMachine::get_mut();
-        let Some(function) = vm.sql_state().mysql_context.on_query_resolve_fn.get() else {
+        let vm = VirtualMachine::get();
+        let Some(function) = vm.sql_state().mysql_context.get().on_query_resolve_fn.get() else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryResolveFn is not callable");
@@ -231,7 +302,7 @@ impl JSMySQLQuery {
         pending_value.ensure_still_alive();
         self.set_pending_value(JSValue::UNDEFINED);
 
-        vm.event_loop_mut().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
@@ -255,23 +326,19 @@ impl JSMySQLQuery {
         if self.this_value.get().is_not_empty() {
             self.this_value.with_mut(|v| v.downgrade());
         }
-        let _ = self.query.with_mut(|q| q.fail());
+        self.state.set(State::Done);
     }
 
     pub(crate) fn reject(&self, err: AnyMySQLError::Error) {
         self.reject_with_js_value(self.error_to_js(err));
     }
 
-    /// The client cannot decode a row of this query's result. Reject the query
-    /// now, but leave it in flight (`MySQLQuery::discard_response`): the
-    /// connection keeps it at the queue head and skips the rest of its
-    /// response.
     pub(crate) fn reject_undecodable_row(&self, err: AnyMySQLError::Error) {
-        self.reject_when(MySQLQuery::discard_response, self.error_to_js(err));
+        self.reject_when(State::discard_response, self.error_to_js(err));
     }
 
     pub(crate) fn reject_with_js_value(&self, err: JSValue) {
-        self.reject_when(MySQLQuery::fail, err);
+        self.reject_when(State::fail, err);
     }
 
     fn error_to_js(&self, err: AnyMySQLError::Error) -> JSValue {
@@ -285,10 +352,10 @@ impl JSMySQLQuery {
 
     /// `transition` moves the query to its rejected state, and returns whether
     /// a rejection is still to be delivered to JS.
-    fn reject_when(&self, transition: fn(&mut MySQLQuery) -> bool, err: JSValue) {
+    fn reject_when(&self, transition: fn(&mut State) -> bool, err: JSValue) {
         let _guard = self.ref_guard();
 
-        if !self.query.with_mut(transition) {
+        if !self.state.with_mut(transition) {
             return;
         }
         let _downgrade = DowngradeOnDrop(self);
@@ -310,12 +377,12 @@ impl JSMySQLQuery {
         }
         debug_assert!(!js_error.is_empty(), "js_error is zero");
         js_error.ensure_still_alive();
-        let vm = VirtualMachine::get_mut();
-        let Some(function) = vm.sql_state().mysql_context.on_query_reject_fn.get() else {
+        let vm = VirtualMachine::get();
+        let Some(function) = vm.sql_state().mysql_context.get().on_query_reject_fn.get() else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryRejectFn is not callable");
-        vm.event_loop_mut().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
@@ -324,8 +391,30 @@ impl JSMySQLQuery {
         );
     }
 
+    /// For one that `is_pending`.
     pub(crate) fn run(&self, connection: &MySQLConnection) -> Result<(), AnyMySQLError::Error> {
-        if self.query.with_mut(|q| q.start(connection))? {
+        if let State::Prepared {
+            statement,
+            mut execute,
+        } = self.state.replace(State::Binding)
+        {
+            // With too many parameters, nothing was staged.
+            if !statement.parameter_count_matches()
+                || set_statement_id(&mut execute, statement.wire.get().id).is_none()
+            {
+                return Err(AnyMySQLError::Error::WrongNumberOfParametersProvided);
+            }
+            connection.write(|out| out.extend_from_slice(&execute));
+            self.set_running(statement, false);
+            return Ok(());
+        }
+        if self.simple {
+            let query = self.query.to_utf8();
+            connection.write(|out| mysql_request::execute_query(query.slice(), out));
+            self.set_running(
+                RefPtr::new(MySQLStatement::unprepared()),
+                strings::contains_char(query.slice(), b';'),
+            );
             return Ok(());
         }
         let this_value = self.this_value.get().try_get();
@@ -334,54 +423,121 @@ impl JSMySQLQuery {
             .unwrap_or(JSValue::UNDEFINED);
         // `params` is on the malloc heap: `roots` keeps the buffers in it alive.
         MarkedArgumentBuffer::new(|roots| {
-            let params = MySQLQuery::bind(self.global_object(), binding_value, roots)?;
-            self.query.with_mut(|q| q.execute(connection, &params))
+            let params = Self::bind(self.global_object(), binding_value, roots)?;
+            // A parameter's getter can close the connection, which ends the request.
+            if let State::Binding = self.state.get() {
+                self.execute(connection, &params);
+            }
+            Ok(())
         })
+    }
+
+    /// The one step of `run` that runs user JS.
+    fn bind<'a>(
+        global_object: &'a JSGlobalObject,
+        binding_value: JSValue,
+        roots: &mut MarkedArgumentBuffer,
+    ) -> Result<Vec<Value<'a>>, AnyMySQLError::Error> {
+        let mut iter =
+            JSArrayIterator::init(binding_value, global_object).map_err(js_error_to_mysql)?;
+        let mut params = Vec::with_capacity(iter.len as usize);
+        while let Some(js_value) = iter.next().map_err(js_error_to_mysql)? {
+            params.push(Value::from_js(global_object, js_value, roots)?);
+        }
+        Ok(params)
+    }
+
+    fn execute(&self, connection: &MySQLConnection, params: &[Value<'_>]) {
+        let query = self.query.to_utf8();
+        if let Some(statement) = connection.cached_statement(query.slice(), params) {
+            let statement_id = statement.wire.get().id;
+            connection.write(|out| {
+                Execute {
+                    statement_id,
+                    params,
+                }
+                .write(out)
+            });
+            return self.set_running(statement, false);
+        }
+        let mut execute = Vec::new();
+        // The server refuses to prepare more than it can count in 16 bits, and says it better.
+        if params.len() <= usize::from(u16::MAX) {
+            Execute {
+                statement_id: 0,
+                params,
+            }
+            .write(&mut execute);
+        }
+        self.state.set(State::Preparing {
+            statement: connection.prepare_statement(query.slice(), params),
+            execute,
+            rejected: false,
+        });
+    }
+
+    fn set_running(&self, statement: RefPtr<MySQLStatement>, several_statements: bool) {
+        self.state.set(State::Running {
+            statement,
+            rejected: false,
+            several_statements,
+        });
+    }
+
+    /// The reply to its COM_STMT_PREPARE is complete.
+    pub(crate) fn prepared(&self) {
+        if let State::Preparing {
+            statement,
+            execute,
+            rejected: false,
+        } = self.state.replace(State::Done)
+        {
+            self.state.set(State::Prepared { statement, execute });
+        }
+    }
+
+    /// What the server has to answer.
+    #[inline]
+    pub(crate) fn written_command(&self) -> Option<(Command, RefPtr<MySQLStatement>)> {
+        match self.state.get() {
+            State::Preparing { statement, .. } => Some((Command::Prepare, statement.clone())),
+            State::Running { statement, .. } => Some((Command::Execute, statement.clone())),
+            _ => None,
+        }
     }
 
     #[inline]
     pub(crate) fn is_completed(&self) -> bool {
-        self.query.get().is_completed()
-    }
-    #[inline]
-    pub(crate) fn is_in_flight(&self) -> bool {
-        self.query.get().is_in_flight()
-    }
-    #[inline]
-    pub(crate) fn can_be_followed(&self) -> bool {
-        self.query.get().can_be_followed()
-    }
-    #[inline]
-    pub(crate) fn is_pending(&self) -> bool {
-        self.query.get().is_pending()
-    }
-    #[inline]
-    pub(crate) fn prepared(&self) {
-        self.query.with_mut(|q| q.prepared());
-    }
-    #[inline]
-    pub(crate) fn is_discarding_response(&self) -> bool {
-        self.query.get().is_discarding_response()
-    }
-    #[inline]
-    pub(crate) fn is_simple(&self) -> bool {
-        self.query.get().is_simple()
-    }
-    #[inline]
-    pub(crate) fn is_bigint_supported(&self) -> bool {
-        self.query.get().is_bigint_supported()
-    }
-    #[inline]
-    pub(crate) fn get_result_mode(&self) -> SQLQueryResultMode {
-        self.query.get().get_result_mode()
-    }
-    // TODO: isolate statement modification away from the connection
-    pub(crate) fn get_statement(&self) -> Option<&mut MySQLStatement> {
-        self.query.get().get_statement()
+        matches!(self.state.get(), State::Done)
     }
 
-    pub(crate) fn statement_ref(&self) -> Option<RefPtr<MySQLStatement>> {
-        self.query.get().statement_ref()
+    pub(crate) fn is_in_flight(&self) -> bool {
+        matches!(
+            self.state.get(),
+            State::Binding | State::Preparing { .. } | State::Running { .. }
+        )
+    }
+
+    /// It is written, and the next request can be written behind it.
+    #[inline]
+    pub(crate) fn can_be_followed(&self) -> bool {
+        matches!(
+            self.state.get(),
+            State::Running {
+                several_statements: false,
+                ..
+            }
+        )
+    }
+
+    #[inline]
+    pub(crate) fn is_pending(&self) -> bool {
+        matches!(self.state.get(), State::Queued | State::Prepared { .. })
+    }
+
+    #[inline]
+    pub(crate) fn is_discarding_response(&self) -> bool {
+        matches!(self.state.get(), State::Running { rejected: true, .. })
     }
 
     #[inline]

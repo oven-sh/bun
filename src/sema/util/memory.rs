@@ -236,8 +236,9 @@ unsafe impl Length for Cell<u32> {
 const FIRST_CHUNK_BITS: u32 = 10;
 
 /// A vector that's appended to through a shared reference. Its elements never move.
-pub struct Stable<T, L: Length, A: Allocator + Clone = Global> {
-    chunks: Chunks<MaybeUninit<T>, FIRST_CHUNK_BITS, A>,
+pub struct Stable<T, L: Length, A: Allocator + Clone = Global, const FIRST: u32 = FIRST_CHUNK_BITS>
+{
+    chunks: Chunks<MaybeUninit<T>, FIRST, A>,
     /// Elements below `len` are initialized, except those that an in-progress `push` or a caller of
     /// `reserve` hasn't written yet.
     len: L,
@@ -251,13 +252,18 @@ pub type AppendVec<T, A = Global> = Stable<T, AtomicU32, A>;
 /// Single-threaded. It can be cleared and reused.
 pub type LocalVec<T, A = Global> = Stable<T, Cell<u32>, A>;
 
-impl<T, L: Length, A: Allocator + Clone + Default> Default for Stable<T, L, A> {
+/// A `LocalVec` whose first chunk has 16 elements.
+pub type SmallLocalVec<T> = Stable<T, Cell<u32>, Global, 4>;
+
+impl<T, L: Length, A: Allocator + Clone + Default, const FIRST: u32> Default
+    for Stable<T, L, A, FIRST>
+{
     fn default() -> Self {
         Self::new_in(A::default())
     }
 }
 
-impl<T, L: Length, A: Allocator + Clone> Stable<T, L, A> {
+impl<T, L: Length, A: Allocator + Clone, const FIRST: u32> Stable<T, L, A, FIRST> {
     pub fn new() -> Self
     where
         A: Default,
@@ -347,7 +353,7 @@ impl<T, L: Length, A: Allocator + Clone> Stable<T, L, A> {
     }
 }
 
-impl<T, L: Length, A: Allocator + Clone> Drop for Stable<T, L, A> {
+impl<T, L: Length, A: Allocator + Clone, const FIRST: u32> Drop for Stable<T, L, A, FIRST> {
     fn drop(&mut self) {
         self.clear();
     }
@@ -700,10 +706,17 @@ impl<T> Clone for Elements<'_, T> {
 impl<T> Copy for Elements<'_, T> {}
 
 impl<T, A: Allocator + Clone> Segmented<'_, T, AtomicU32, A> {
-    /// Appends `count` placeholders made by `new`. Any thread may call this.
-    pub(crate) fn add_placeholders(&self, count: u32, new: impl Fn() -> T) -> Placeholders<'_> {
+    /// Appends `count` placeholders made by `new`. Any thread may call this. `when_reserved` is called as soon as the
+    /// length counts them, before they are written.
+    pub(crate) fn add_placeholders(
+        &self,
+        count: u32,
+        when_reserved: impl FnOnce(),
+        new: impl Fn() -> T,
+    ) -> Placeholders<'_> {
         // SAFETY: the loop below writes every reserved index before any of them escapes this call.
         let next = unsafe { self.reserve(count) };
+        when_reserved();
         for index in next..next + count {
             // SAFETY: the index was reserved above, so no other thread writes this slot, and it's
             // written exactly once.
@@ -1993,7 +2006,7 @@ mod tests {
                 let store = &store;
                 scope.spawn(move || {
                     for _ in 0..ROUNDS {
-                        let mut mine = store.add_placeholders(64, || u64::MAX);
+                        let mut mine = store.add_placeholders(64, || {}, || u64::MAX);
                         let first = mine.first().unwrap();
                         // The last placeholder is never replaced.
                         for index in first..first + 63 {
@@ -2022,7 +2035,7 @@ mod tests {
     fn replacing_a_placeholder_in_another_vector_panics() {
         let [one, other] = [(), ()].map(|()| Segmented::<u64, AtomicU32>::new_in(Global));
         other.push(1);
-        let placeholder = one.add_placeholders(1, || 0).take_first().unwrap();
+        let placeholder = one.add_placeholders(1, || {}, || 0).take_first().unwrap();
         other.replace(placeholder, 2);
     }
 

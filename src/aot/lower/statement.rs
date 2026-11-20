@@ -1,10 +1,12 @@
 mod declarations;
 mod loops;
+mod loose_loops;
 mod suspending_loops;
 
-use bun_sema::bind::ScopeId;
-use bun_sema::hir::{ExprId, ExprKind, IdList, StmtId, StmtKind};
+use bun_sema::bind::{Decl, ScopeId};
+use bun_sema::hir::{ExprId, ExprKind, IdList, PatKind, StmtId, StmtKind, UnOp};
 
+pub(in crate::lower) use self::loose_loops::LooseLoop;
 pub(in crate::lower) use self::suspending_loops::{SuspendingArm, SuspendingPart};
 use super::control::BreakTargetKind;
 use super::{FunctionLowering, commonjs, dispose, module, scope};
@@ -20,6 +22,7 @@ pub(in crate::lower) fn statements_behind(list: IdList<StmtId>, index: u32) -> I
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_statements(&mut self, statements: IdList<StmtId>) {
         let hir = self.file.hir;
+        let typeof_variables_around = self.typeof_variables.len();
         for index in 0..statements.len {
             let statement = hir.id_at(statements, index as usize);
             self.enter_suspending_rest(statement);
@@ -34,10 +37,36 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if dispose::find_resource_declarations(hir, statement).is_some() {
                 let rest = IdList::new(statements.start + index, statements.len - index);
                 self.lower_statements_with_resources(rest);
-                return;
+                break;
             }
             self.file.queries.note_idle_between_statements();
+            self.begin_appended_piece(statements, index);
             self.lower_statement_in_list(statement, statements_behind(statements, index));
+            self.end_appended_piece(statement);
+            self.note_typeof_variables(statement);
+        }
+        self.typeof_variables.truncate(typeof_variables_around);
+    }
+
+    fn note_typeof_variables(&mut self, statement: StmtId) {
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        let StmtKind::Var(declarations) = hir[statement].kind else {
+            return;
+        };
+        for declaration in declarations.iter() {
+            let decl = hir[declaration];
+            let (PatKind::Ident(_), Some(initializer)) = (hir[decl.pat].kind, decl.init.some())
+            else {
+                continue;
+            };
+            let initializer = self.file.skip_type_syntax(initializer);
+            if let ExprKind::Unary {
+                op: UnOp::Typeof, ..
+            } = hir[initializer].kind
+            {
+                self.typeof_variables
+                    .push(bound.declared_symbol(Decl::Var(decl.pat)));
+            }
         }
     }
 
@@ -266,8 +295,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let then_block = self.create_block_of_arm(yes);
         let after = self.create_block();
         let else_block = no.some().map(|no| self.create_block_of_arm(no));
+        self.begin_late_continue(test, yes);
         self.lower_condition(test, then_block, else_block.unwrap_or(after));
         self.lower_if_arm(then_block, yes, after);
+        self.end_late_continue(test, yes);
         if let Some(else_block) = else_block {
             self.lower_if_arm(else_block, no, after);
         }

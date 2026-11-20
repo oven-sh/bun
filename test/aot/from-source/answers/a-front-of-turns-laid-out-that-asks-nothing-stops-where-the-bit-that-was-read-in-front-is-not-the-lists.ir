@@ -1,7 +1,7 @@
 # -- source: main.cjs
 # var key = JSON.parse('"go"');
 # var halves = function (n) { var l = []; for (var k = 0; k < n; k++) l.push(k + 0.5); return l; }, wholes = function (n) { var l = []; for (var k = 0; k < n; k++) l.push(k); return l; };
-# var T = { go(a, b) { var s = 0; for (var i = 0; i < a.length; i++) s += a[i] * b[i]; return s; } };
+# var T = { go(a, b) { var s = 0; for (var i = 0; i < a.length; i++) s += a[i] * b[i & 15]; return s; } };
 # print(T[key](halves(16), halves(16)));
 # -- end of source
 # Every iteration of an unrolled loop trusts what the loop's entry checks have found. With testing=CheckProofsAtRunTime and testing=CheckBoundsAtRunTime the walk adds checks to each iteration,

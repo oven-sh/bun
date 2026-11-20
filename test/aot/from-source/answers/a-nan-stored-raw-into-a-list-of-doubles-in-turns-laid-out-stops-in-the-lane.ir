@@ -25,4 +25,4 @@
 # LIE-NEXT: found an unexpected value in the result of an operation
 # LIE: crashed with
 # RUN(COUNT): compile UnrolledLoopsEmitted mechanisms=all testing=CheckBoundsInEmittersOnly,AssumeNoNaNStores
-# COUNT: statistic UnrolledLoopsEmitted 30
+# COUNT: statistic UnrolledLoopsEmitted 28

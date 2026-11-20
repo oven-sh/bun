@@ -119,7 +119,8 @@ across CI runs, allowlist both forms.
 
 Rust v0 mangled names carry a crate-hash (`Cs[base62]_`) that changes across
 target triples and toolchain versions. The allowlist uses `<rust-hash>` as a
-placeholder; the tool canonicalizes both sides before comparing.
+placeholder; the tool canonicalizes both sides before comparing. An entry that
+ends in `<generic-args>` covers every instance of a generic function.
 
 ## Allowlist format
 

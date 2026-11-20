@@ -1842,8 +1842,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 )
             } else if cwd_.len() < buf.len() {
                 buf[..cwd_.len()].copy_from_slice(cwd_);
-                buf[cwd_.len()] = 0;
-                Some(bun_core::ZStr::from_buf(&buf[..], cwd_.len()))
+                Some(bun_core::ZStr::nul_terminate(&mut buf, cwd_.len()))
             } else {
                 None
             };

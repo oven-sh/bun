@@ -11,6 +11,7 @@
 //! `"workers": count`, how many test files ran at once while the times were taken: `--shard` under `--aot` weighs a shard's build
 //! and its longest file against the sum of its times by that, which every shard reads alike, and not by its own `--parallel`.
 
+use core::ops::Range;
 use std::io::Write as _;
 
 use bun_collections::StringArrayHashMap;
@@ -21,7 +22,6 @@ use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{Fd, File};
 
-use super::parallel::file_range::FileRange;
 use bun_collections::index_sort;
 
 pub(crate) struct Timings {
@@ -92,9 +92,7 @@ impl Timings {
         let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
             Ok(p) => p,
             Err(_) => {
-                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                    Output::error_writer(),
-                ));
+                let _ = log.print(Output::error_writer());
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: --timings file <b>{}<r> is not valid JSON",
                     bstr::BStr::new(path)
@@ -182,24 +180,7 @@ impl Timings {
     /// Its worker grew by over a gigabyte when the file was last measured.
     pub(crate) fn is_heavy(&self, abs_path: &[u8]) -> bool {
         self.growth_of(abs_path)
-            .is_some_and(|megabytes| megabytes > 1024)
-    }
-
-    /// What the heaviest of `files` took. A run needs room for it, so heavy files that took no more together may run at once.
-    pub(crate) fn largest_growth(&self, files: &[Interned]) -> u32 {
-        let growths = files
-            .iter()
-            .filter_map(|file| self.growth_of(file.as_bytes()));
-        growths.max().unwrap_or(0)
-    }
-
-    /// What `count` of `files` take together where each takes the average. A file without a record counts as nothing.
-    pub(crate) fn growth_of_average_files(&self, files: &[Interned], count: u32) -> u32 {
-        let growths = files
-            .iter()
-            .filter_map(|file| self.growth_of(file.as_bytes()));
-        let sum: u64 = growths.map(u64::from).sum();
-        u32::try_from(sum * u64::from(count) / (files.len() as u64).max(1)).unwrap_or(u32::MAX)
+            .is_some_and(|megabytes| bun_test_schedule::is_heavy(megabytes.into()))
     }
 
     pub(crate) fn record_growth(&mut self, abs_path: &[u8], megabytes: u32) {
@@ -239,7 +220,7 @@ impl Timings {
     /// of their imports) land in the same process and hit its module cache;
     /// by duration so a directory of slow integration tests is spread over
     /// several runs instead of becoming one shard's tail.
-    pub(crate) fn partition(&self, files: &[Interned], k: u32) -> Vec<FileRange> {
+    pub(crate) fn partition(&self, files: &[Interned], k: u32) -> Vec<Range<usize>> {
         let costs = self.costs(files);
         let n = files.len() as u32;
         let mut remaining: u64 = costs.iter().sum();
@@ -259,7 +240,7 @@ impl Timings {
                 i += 1;
             }
             remaining -= load;
-            ranges.push(FileRange { lo, hi: i });
+            ranges.push(lo as usize..i as usize);
         }
         ranges
     }
@@ -268,9 +249,9 @@ impl Timings {
     /// front of `files`; returns how many were kept.
     pub(crate) fn select_shard(&self, files: &mut [Interned], shard: Shard) -> usize {
         index_sort::sort_slice_by(files, |a, b| strings::order(a.as_bytes(), b.as_bytes()));
-        let r = self.partition(files, shard.count)[(shard.index - 1) as usize];
-        files.copy_within(r.lo as usize..r.hi as usize, 0);
-        (r.hi - r.lo) as usize
+        let r = self.partition(files, shard.count)[(shard.index - 1) as usize].clone();
+        files.copy_within(r.clone(), 0);
+        r.len()
     }
 
     /// Slowest first; files with no recorded duration go before everything

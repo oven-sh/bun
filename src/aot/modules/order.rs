@@ -44,6 +44,8 @@ pub(super) enum SitePosition {
 pub(super) enum SiteKey {
     Call(ExprId),
     ImportEquals(ImportEqualsId),
+    /// The call makes a function that evaluates the module.
+    Request(ExprId),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -658,6 +660,20 @@ fn plan_file_sites(
                 callback: inner.callback,
             },
             position,
+            is_proven: true,
+            evaluates: true,
+            start: hir[call].pos,
+        });
+    }
+    for (call, inner) in modules.wrapped.requests_in(file) {
+        planned.sites.push(PlannedSite {
+            key: SiteKey::Request(call),
+            referrer: text.enclosing_module(call),
+            target: ModuleRef::Inner {
+                file,
+                callback: inner.callback,
+            },
+            position: SitePosition::Late,
             is_proven: true,
             evaluates: true,
             start: hir[call].pos,

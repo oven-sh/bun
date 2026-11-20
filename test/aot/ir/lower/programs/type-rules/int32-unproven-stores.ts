@@ -1,6 +1,6 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// DIAGNOSTIC: UnprovenInt32 40
+// DIAGNOSTIC: UnprovenInt32 39
 
 // A value stored into an `int32` that is not one by proof stops the build, and the message says what was found and what to write. type-rules/int32-checked-at-run-time has the flows that the build does not see.
 import type { int32 } from "bun";
@@ -140,10 +140,5 @@ console.log(kept, cursor, point, subtract(1, 2), times(1, 2), half(1), negative(
 // CHECK-NEXT: PropDefine v20, v18 key="line"
 // CHECK-NEXT: PropDefine v20, v7 key="column"
 // CHECK-NEXT: v24 = Undefined
-// CHECK-NEXT: v25 = TypeTest v24 testedType=object
-// CHECK-NEXT: Branch v25 -> taken b4(| 0), notTaken b5(v20)
-// CHECK-NEXT: b4(v26):
-// CHECK-NEXT: Jump -> next b5(v26)
-// CHECK-NEXT: b5(v27):
-// CHECK-NEXT: Return v27
+// CHECK-NEXT: Return v20
 // CHECK-NEXT: }

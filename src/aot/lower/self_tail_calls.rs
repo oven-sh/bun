@@ -9,14 +9,14 @@ use bun_sema::import_sites::is_exported;
 use smallvec::SmallVec;
 
 use crate::ir::{BlockId, LocalVariable, PositionFlags, ValueId};
-use crate::lower::FunctionLowering;
 use crate::lower::call::Arguments;
 use crate::lower::scope::{BindingRef, Storage};
+use crate::lower::{FileLowering, FunctionLowering};
 
 pub(in crate::lower) struct SelfTailLoop {
-    function: FnId,
     header: BlockId,
     parameters: SmallVec<[(SymbolId, Atom); 4]>,
+    calls: SmallVec<[ExprId; 4]>,
 }
 
 pub(in crate::lower) fn function_held_by(
@@ -141,38 +141,46 @@ fn is_quotient(hir: &hir::File<'_>, bound: &Bound<'_>, value: ExprId) -> bool {
     }
 }
 
-fn push_tail_calls(hir: &hir::File<'_>, value: ExprId, calls: &mut SmallVec<[ExprId; 4]>) {
+fn push_tail_calls(
+    file: &FileLowering<'_, '_, '_, '_>,
+    mut value: ExprId,
+    calls: &mut SmallVec<[ExprId; 4]>,
+) {
     if value.is_none() {
         return;
+    }
+    let hir = file.hir;
+    while let Some(operand) = file.unconverted_operand(value) {
+        value = operand;
     }
     match hir[value].kind {
         ExprKind::Call(_) => calls.push(value),
         ExprKind::Cond { branches, .. } => {
             let Branches { yes, no } = hir.branches(branches);
-            push_tail_calls(hir, yes, calls);
-            push_tail_calls(hir, no, calls);
+            push_tail_calls(file, yes, calls);
+            push_tail_calls(file, no, calls);
         }
         ExprKind::Binary {
             op: BinOp::Comma | BinOp::And | BinOp::Or | BinOp::Nullish,
             right,
             ..
-        } => push_tail_calls(hir, right, calls),
+        } => push_tail_calls(file, right, calls),
         _ => {}
     }
 }
 
 fn collect_tail_calls(
-    hir: &hir::File<'_>,
-    bound: &Bound<'_>,
+    file: &FileLowering<'_, '_, '_, '_>,
     function: FnId,
 ) -> Option<(SmallVec<[ExprId; 4]>, usize)> {
+    let (hir, bound) = (file.hir, file.bound);
     let mut calls = SmallVec::new();
     let mut number_of_calls = 0;
     let mut pending: Vec<TreeNode> = Vec::new();
     match hir[function].body {
         FnBody::Block(statements) => pending.extend(hir.ids(statements).map(TreeNode::Stmt)),
         FnBody::Expr(expression) => {
-            push_tail_calls(hir, expression, &mut calls);
+            push_tail_calls(file, expression, &mut calls);
             pending.push(TreeNode::Expr(expression));
         }
         FnBody::None => return None,
@@ -181,7 +189,7 @@ fn collect_tail_calls(
         match node {
             TreeNode::Function(_) | TreeNode::Class(_) => return None,
             TreeNode::Stmt(statement) => match hir[statement].kind {
-                StmtKind::Return(value) => push_tail_calls(hir, value, &mut calls),
+                StmtKind::Return(value) => push_tail_calls(file, value, &mut calls),
                 StmtKind::Var(declarations) => {
                     for declaration in declarations.iter() {
                         match bound.variable_kind(hir, declaration) {
@@ -227,7 +235,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !self.file.scopes.calls_itself(function) {
             return;
         }
-        let Some((parameters, modified)) = self.find_self_tail_loop(function) else {
+        let Some((parameters, calls, modified)) = self.find_self_tail_loop(function) else {
             return;
         };
         let header = self.create_block();
@@ -236,9 +244,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.switch_to(header);
         self.builder.loop_hint();
         self.self_tail_loop = Some(SelfTailLoop {
-            function,
             header,
             parameters,
+            calls,
         });
     }
 
@@ -253,6 +261,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         function: FnId,
     ) -> Option<(
         SmallVec<[(SymbolId, Atom); 4]>,
+        SmallVec<[ExprId; 4]>,
         SmallVec<[LocalVariable; 8]>,
     )> {
         let (hir, bound) = (self.file.hir, self.file.bound);
@@ -287,20 +296,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .iter()
             .map(|&(symbol, _)| !bound.is_stable_binding(symbol))
             .collect();
-        let (calls, number_of_calls) = collect_tail_calls(hir, bound, function)?;
-        let mut number_of_jumps = 0;
+        let (mut calls, number_of_calls) = collect_tail_calls(self.file, function)?;
+        calls.retain(|&mut call| {
+            matches!(hir[call].kind, ExprKind::Call(site) if self.is_call_of(function, &hir[site]))
+        });
+        calls.sort_unstable();
         let mut computes_argument = false;
         let mut passes_quotient = false;
-        for call in calls {
+        for &call in &calls {
             let ExprKind::Call(site) = hir[call].kind else {
                 continue;
             };
-            let site = hir[site];
-            if !self.is_call_of(function, &site) {
-                continue;
-            }
-            number_of_jumps += 1;
-            let mut arguments = hir.ids(site.args);
+            let mut arguments = hir.ids(hir[site].args);
             for (index, parameter) in written.params.iter().enumerate() {
                 let argument = arguments.next();
                 let is_passed_on = self.is_passed_on(argument, parameters[index].0);
@@ -323,7 +330,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         }
         let has_invariant = is_modified.contains(&false);
-        let keeps_types = number_of_jumps == number_of_calls && !passes_quotient;
+        let keeps_types = calls.len() == number_of_calls && !passes_quotient;
         if !computes_argument || !(has_invariant || keeps_types) {
             return None;
         }
@@ -334,7 +341,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 modified.push(local.variable);
             }
         }
-        Some((parameters, modified))
+        Some((parameters, calls, modified))
     }
 
     fn is_passed_on(&self, argument: Option<ExprId>, parameter: SymbolId) -> bool {
@@ -357,9 +364,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         called == function && !has_spread && !may_be_mocked
     }
 
-    pub(in crate::lower) fn try_lower_self_tail_call(&mut self, site: Call) -> Option<ValueId> {
-        let function = self.self_tail_loop.as_ref()?.function;
-        if !self.is_call_of(function, &site) {
+    pub(in crate::lower) fn try_lower_self_tail_call(
+        &mut self,
+        call: ExprId,
+        site: Call,
+    ) -> Option<ValueId> {
+        let calls = &self.self_tail_loop.as_ref()?.calls;
+        if calls.binary_search(&call).is_err() {
             return None;
         }
         let hir = self.file.hir;

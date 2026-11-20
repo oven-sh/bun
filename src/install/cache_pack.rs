@@ -496,7 +496,7 @@ fn pack_entry(
                 #[cfg(unix)]
                 {
                     let len = sys::readlinkat(entry.dir, entry.basename, &mut target_buf[..])?;
-                    let target = ZStr::from_buf(&target_buf[..], len);
+                    let target = ZStr::nul_terminate(&mut target_buf, len);
                     if len > MAX_PACK_PATH_LEN
                         || !bun_archive::is_symlink_target_safe(rel, target, &mut join_buf)
                     {
@@ -527,7 +527,7 @@ fn pack_entry(
 /// Write every cache entry the loaded lockfile needs, and the cache has, to `destination`.
 pub fn pack(pm: &mut PackageManager, destination: &[u8]) -> Result<PackSummary, Error> {
     let entries = lockfile_entries(pm);
-    let cache_dir = pm.get_cache_directory();
+    let cache_dir = pm.get_cache_directory().handle.fd();
     let output = if pm.options.dry_run {
         None
     } else {
@@ -657,15 +657,17 @@ impl Reader {
         self.pos += size;
     }
 
-    /// `out` becomes `len` bytes and a NUL.
-    fn read_z(&mut self, out: &mut Vec<u8>, len: usize) -> Result<(), Error> {
-        out.clear();
-        out.resize(len + 1, 0);
-        self.read_exact(&mut out[..len])
+    /// Reads `len` bytes into `buf`.
+    fn read_z<'a>(&mut self, buf: &'a mut Vec<u8>, len: usize) -> Result<&'a ZStr, Error> {
+        buf.clear();
+        buf.resize(len + 1, 0);
+        let buf = buf.as_mut_slice();
+        self.read_exact(&mut buf[..len])?;
+        Ok(ZStr::nul_terminate(buf, len))
     }
 
-    /// Leaves the record's path in `path`, NUL-terminated.
-    fn header(&mut self, path: &mut Vec<u8>) -> Result<Header, Error> {
+    /// Reads the record's path into `buf`.
+    fn header<'a>(&mut self, buf: &'a mut Vec<u8>) -> Result<(Header, &'a ZStr), Error> {
         self.record += 1;
         let mut head = [0u8; 5];
         self.read_exact(&mut head)?;
@@ -674,20 +676,17 @@ impl Reader {
         if path_len > MAX_PACK_PATH_LEN {
             return Err(self.refuse("path is too long", b""));
         }
-        self.read_z(path, path_len)?;
+        let path = self.read_z(buf, path_len)?;
         let mut mode = [0u8; 4];
         self.read_exact(&mut mode)?;
         let mut size = [0u8; 8];
         self.read_exact(&mut size)?;
         let size = u64::from_le_bytes(size);
         if size > self.len.saturating_sub(self.pos) {
-            return Err(self.refuse("truncated pack file", &path[..path_len]));
+            return Err(self.refuse("truncated pack file", path));
         }
-        Ok(Header {
-            kind,
-            mode: u32::from_le_bytes(mode),
-            size,
-        })
+        let mode = u32::from_le_bytes(mode);
+        Ok((Header { kind, mode, size }, path))
     }
 }
 
@@ -726,7 +725,7 @@ impl Drop for Staging {
 }
 
 fn staged_name(buf: &mut [u8; 21], n: usize) -> &ZStr {
-    ZStr::from_cstr(bun_fmt::itoa_z(buf, n as u64))
+    bun_fmt::itoa_z(buf, n as u64)
 }
 
 /// Read the `size` bytes of package `name` into the new directory `staging`/`staged`.
@@ -754,8 +753,7 @@ fn unpack_package(
     let mut join_buf = None;
 
     loop {
-        let header = r.header(&mut path)?;
-        let rel = ZStr::from_slice_with_nul(&path);
+        let (header, rel) = r.header(&mut path)?;
         if r.pos > end || header.size > end - r.pos {
             return Err(r.refuse("record runs past end of package", rel.as_bytes()));
         }
@@ -799,10 +797,9 @@ fn unpack_package(
                 if header.size > MAX_PACK_PATH_LEN as u64 {
                     return Err(r.refuse("symlink target is too long", rel.as_bytes()));
                 }
-                r.read_z(&mut target, header.size as usize)?;
+                let target = r.read_z(&mut target, header.size as usize)?;
                 #[cfg(unix)]
                 {
-                    let target = ZStr::from_slice_with_nul(&target);
                     if strings::contains_char(target.as_bytes(), 0)
                         || !bun_archive::is_symlink_target_safe(
                             rel.as_bytes(),
@@ -819,10 +816,13 @@ fn unpack_package(
                 }
                 // Tarball extraction makes none here either, so no pack made here has one.
                 #[cfg(not(unix))]
-                return Err(r.refuse(
-                    "symlinks cannot be unpacked on this platform",
-                    rel.as_bytes(),
-                ));
+                {
+                    let _ = target;
+                    return Err(r.refuse(
+                        "symlinks cannot be unpacked on this platform",
+                        rel.as_bytes(),
+                    ));
+                }
             }
             _ => return Err(r.refuse("unknown kind of record", rel.as_bytes())),
         }
@@ -871,7 +871,7 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
     // A virus scanner or indexer may have the new files open. See `cache_publish::RenameRetry`.
     let mut retries: u32 = 0;
     loop {
-        let dir = sys::open_dir_at_windows_a(
+        let dir = sys::Dir::from_fd(sys::open_dir_at_windows_a(
             from_dir,
             from.as_bytes(),
             sys::WindowsOpenDirOptions {
@@ -879,9 +879,9 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
                 iterable: false,
                 ..Default::default()
             },
-        )?;
-        let result = sys::windows::move_opened_file_at(dir, to_dir, to_w, false);
-        let _ = sys::close(dir);
+        )?);
+        let result = sys::windows::move_opened_file_at(dir.fd(), to_dir, to_w, false);
+        drop(dir);
         let Err(err) = result else {
             return Ok(true);
         };
@@ -917,7 +917,7 @@ fn create_index_link(cache_dir: Fd, cache_dir_path: &[u8], entry: &ZStr) {
 /// Restore the entries of the pack at `pack_path` that the cache does not have.
 pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary, Error> {
     let mut r = Reader::open(pack_path)?;
-    let cache_dir = pm.get_cache_directory();
+    let cache_dir = pm.get_cache_directory().handle.fd();
     let staging = Staging::create(pm.get_temporary_directory().handle.fd())?;
     let mut summary = UnpackSummary::default();
     let mut staged: Vec<(ZBox, ResolutionTag)> = Vec::new();
@@ -926,8 +926,7 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
     let mut previous: Vec<u8> = Vec::new();
 
     loop {
-        let header = r.header(&mut path)?;
-        let name = ZStr::from_slice_with_nul(&path);
+        let (header, name) = r.header(&mut path)?;
         match header.kind {
             _ if header.mode != 0 => return Err(r.refuse("malformed record", name.as_bytes())),
             KIND_PACKAGE => {}

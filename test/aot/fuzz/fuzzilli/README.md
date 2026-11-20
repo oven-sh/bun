@@ -232,7 +232,7 @@ Each of these sweeps has fault injections that 240 of its programs, 60 in a buil
 | `write-promise-chain-sweep.ts` | `AssumeArgumentsNeverEscape`, `AssumeUnknownCallsReturnUndefined` |
 | `write-stepped-element-sweep.ts` | `SkipUnrollEntryChecks`, `OverstateTypedArrayLength` |
 | `write-replaced-function-sweep.ts` | `AssumeInlineBuiltinsPure`, `AssumeGuardsAndFacts` |
-| `write-static-loop-sweep.ts`, `write-text-order-sweep.ts` | `AssumeNullishHostResults` |
+| `write-static-loop-sweep.ts`, `write-text-order-sweep.ts`, `write-private-field-sweep.ts` | `AssumeNullishHostResults` |
 | `write-construction-sweep.ts` | `AssumeUnknownCallsReturnUndefined`, `MisnumberFunctionRecords` |
 | `write-comparison-value-sweep.ts` | `TreatEqualIntegersAsLess` |
 | `write-grid-loop-sweep.ts` | `AssumeIndexesInBounds`, `SkipStorageChecks` |
@@ -249,4 +249,70 @@ Each of these sweeps has fault injections that 240 of its programs, 60 in a buil
 | `write-captured-store-sweep.ts` | `AssumeIndexesInBounds`, `IgnoreLoopArrayStores` |
 | `write-place-store-sweep.ts` | `IgnoreLoopArrayStores`, `MisplaceUncheckedAccesses` |
 | `write-comparator-sweep.ts` | `MisplaceUncheckedReads`, `TreatEqualIntegersAsLess` |
-| `write-named-loop-sweep.ts` | `AssumeGuardsAndFacts` |
+| `write-named-loop-sweep.ts`, `write-replaced-object-sweep.ts` | `AssumeGuardsAndFacts` |
+| `write-truncated-read-sweep.ts` | `AssumeNoNaNStores`, `AssumeIndexesInBounds` |
+| `write-straight-store-sweep.ts` | `AssumeNoNaNStores`, `AssumeSpillSlotsDead` |
+| `write-repeated-birth-sweep.ts` | `AssumeGuardsAndFacts`, `IgnoreEscapeAfterUnknownCall` |
+| `write-handled-list-sweep.ts` | `IgnoreLoopArrayStores`, `IgnoreFreshArrayEscapes` |
+| `write-pattern-protocol-sweep.ts` | `IgnoreEscapeAfterUnknownCall`, `DropLengthCheckedReads` |
+| `write-matched-table-sweep.ts` | `AssumeInvariantArrayStorage`, `SkipStorageChecks` |
+| `write-pattern-shape-sweep.ts`, `write-joined-text-sweep.ts` | `TreatEqualIntegersAsLess`, `AssumeSpillSlotsDead` |
+| `write-trimmed-text-sweep.ts` | `MisplaceHoistedArrayStorage`, `DropLengthCheckedReads` |
+| `write-built-key-sweep.ts`, `write-constant-field-sweep.ts`, `write-defined-member-sweep.ts` | `AssumeGuardsAndFacts` |
+| `write-field-order-sweep.ts` | `AssumeGuardsAndFacts`, `SkipFencesAfterLateStores` |
+| `write-row-nest-sweep.ts` | `SkipLengthChecks`, `MisplaceUncheckedAccesses` |
+| `write-stencil-sweep.ts` | `AssumeNoNaNStores`, `SkipStorageChecks` |
+| `write-list-life-sweep.ts` | `AssumeInBoundsElementsPresent`, `IgnoreFreshArrayEscapes` |
+| `write-bundled-module-sweep.ts` | `AssumeUnknownCallsReturnUndefined`, `AssumeArgumentsNeverEscape` |
+| `write-yielded-number-sweep.ts` | `OverstateTypedArrayLength`, `AssumeIndexesInBounds` |
+| `write-generator-method-sweep.ts`, `write-built-code-sweep.ts`, `write-cut-text-sweep.ts` | `MisfoldBranchInSweep` |
+| `write-nested-push-sweep.ts` | `IgnoreLoopArrayStores`, `SkipLengthChecks` |
+| `write-nested-state-sweep.ts` | `AssumeLocalArrayReceivers`, `MisroundLoopBounds` |
+| `write-digit-arithmetic-sweep.ts` | `SkipCapacityChecks`, `SkipUnrollTripCountCheck` |
+| `write-changed-collection-sweep.ts` | `IgnoreEscapeAfterUnknownCall`, `AssumeArgumentsNeverEscape` |
+| `write-wrapped-module-sweep.ts` | `AssumeGuardsAndFacts`, `DropLengthCheckedReads` |
+| `write-imported-common-sweep.ts` | `AssumeUnknownCallsReturnUndefined`, `DropLengthCheckedReads` |
+| `write-bare-loop-sweep.ts`, `write-bare-pair-sweep.ts` | `IgnoreLoopArrayStores`, `SkipLengthChecks` |
+| `write-bare-branch-sweep.ts` | `AssumeInlineBuiltinsPure`, `SkipBoundsProof` |
+| `write-bare-call-sweep.ts` | `OverstateBoundArgumentCount`, `AssumeUnknownCallsReturnUndefined` |
+| `write-bare-birth-sweep.ts` | `SkipClassGuards`, `AssumeGuardsAndFacts` |
+| `write-bare-condition-sweep.ts` | `TreatEqualIntegersAsLess`, `DropEdgeInSweep` |
+| `write-bare-promise-sweep.ts` | `SkipFencesAfterLateStores`, `AssumeUnknownCallsReturnUndefined` |
+| `write-heap-view-sweep.ts` | `AssumeIndexesInBounds`, `DropLengthCheckedReads` |
+| `write-bare-getter-sweep.ts` | `AssumeGuardsAndFacts`, `DropLastCase` |
+| `write-bare-iterate-sweep.ts` | `AssumeInvariantArrayStorage`, `IgnoreFreshArrayEscapes` |
+| `write-indirect-element-sweep.ts` | `AssumeArithmeticElementUsers`, `MisplaceUncheckedAccesses` |
+| `write-bare-sum-sweep.ts` | `SkipBoundsProof`, `SkipUnrollTripCountCheck` |
+| `write-carried-text-sweep.ts` | `SkipInt32Reboxing`, `DropLengthCheckedReads` |
+| `write-matrix-sweep.ts` | `MisplaceHoistedArrayStorage`, `SkipUnrollEntryChecks` |
+| `write-product-modulo-sweep.ts` | `OverstateTypedArrayLength`, `SkipBoundsProof` |
+| `write-second-name-sweep.ts` | `AssumeUnknownCallsReturnUndefined`, `AssumeGuardsAndFacts` |
+| `write-aliased-nest-sweep.ts` | `AssumeInvariantArrayStorage`, `MisplaceHoistedArrayStorage` |
+| `write-heir-field-sweep.ts` | `IgnoreEscapeAfterUnknownCall`, `SkipFencesAfterLateStores` |
+| `write-store-and-test-sweep.ts` | `SkipLengthChecks`, `MisplaceUncheckedAccesses` |
+| `write-ring-index-sweep.ts` | `AssumeArithmeticElementUsers`, `OverstateTypedArrayLength` |
+| `write-number-text-sweep.ts` | `SkipInt32Reboxing`, `AssumeIndexesInBounds` |
+| `write-growing-match-sweep.ts` | `IgnoreFreshArrayEscapes`, `DropEdgeInSweep` |
+| `write-literal-fill-sweep.ts` | `IgnoreLoopArrayStores`, `AssumeLocalArrayReceivers` |
+| `write-function-name-sweep.ts` | `MisnumberFunctionRecords`, `AssumeUnknownCallsReturnUndefined` |
+| `write-proxy-trap-sweep.ts` | `AssumeUnknownCallsReturnUndefined`, `DropLengthCheckedReads` |
+| `write-local-object-sweep.ts` | `SkipInt32Reboxing`, `SkipUnrollTripCountCheck` |
+| `write-first-turn-sweep.ts` | `AssumeArithmeticElementUsers`, `MisplaceHoistedArrayStorage` |
+| `write-converted-store-sweep.ts` | `AssumeNoNaNStores`, `SkipBoundsProof` |
+| `write-wide-index-sweep.ts` | `AssumeIndexesInBounds`, `DropLengthCheckedReads` |
+| `write-narrowed-capture-sweep.ts` | `MisnumberFunctionRecords`, `OverstateTypedArrayLength` |
+| `write-hole-read-sweep.ts` | `IgnoreFreshArrayEscapes`, `MisplaceHoistedArrayStorage` |
+| `write-folded-key-sweep.ts` | `AssumeInlineBuiltinsPure`, `DropLengthCheckedReads` |
+| `write-two-statements-sweep.ts` | `MisplaceUncheckedAccesses`, `IgnoreCollectorSpillReads` |
+| `write-two-members-sweep.ts` | `AssumeNullishHostResults`, `SwapBuiltinCellNumbers` |
+| `write-function-call-sweep.ts` | `AssumePermanentlyPristineIterables`, `SkipUnrollTripCountCheck` |
+| `write-asked-text-sweep.ts` | `AssumeInlineBuiltinsPure`, `AssumeIndexesInBounds` |
+| `write-outgrown-counter-sweep.ts` | `MisplaceHoistedArrayStorage`, `OverstateTypedArrayLength` |
+| `write-changed-member-sweep.ts` | `AssumeGuardsAndFacts`, `MisnumberFunctionRecords` |
+| `write-moved-elements-sweep.ts` | `AssumeNoNaNStores`, `SkipStorageChecks` |
+| `write-known-text-sweep.ts` | `AssumeUnknownCallsReturnUndefined`, `AssumeArgumentsNeverEscape` |
+| `write-laid-in-steps-sweep.ts` | `AssumeGuardsAndFacts`, `IgnoreEscapeAfterUnknownCall` |
+| `write-constant-place-sweep.ts` | `AssumeInBoundsElementsPresent`, `IgnoreLoopArrayStores` |
+| `write-seen-early-sweep.ts` | `IgnoreMarksInShapeChecks`, `SkipFencesAfterLateStores` |
+| `write-changed-parent-sweep.ts` | `SkipHierarchyGuards`, `SkipClassGuards` |
+| `write-same-each-time-sweep.ts` | `SkipUnrollTripCountCheck`, `SkipLengthChecks` |

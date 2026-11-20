@@ -17,7 +17,7 @@
 # f1 = swap, f2 = up, f3 = down, f4 = turned
 # RUN(EVENT): compile ArraysGuardedUnderSpeculatedCounters InlineeStoredArraysNotGuarded mechanisms=all
 # EVENT: statistic ArraysGuardedUnderSpeculatedCounters 2
-# EVENT: statistic InlineeStoredArraysNotGuarded 3
+# EVENT: statistic InlineeStoredArraysNotGuarded 1
 # RUN(UP): walk f2 mechanisms=all
 # UP-LABEL: code f2:Body
 # UP: = GetArrayElement {{*}}level=Proven [keyIsIntegral

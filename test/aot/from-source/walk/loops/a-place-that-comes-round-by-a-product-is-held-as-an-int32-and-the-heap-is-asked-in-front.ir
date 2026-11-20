@@ -1,5 +1,5 @@
 # `place` enters as an int32 and comes round as `2 * place + 1`, that plus one, or itself: a whole number by the plain walk, held as a double.
-# A product with a whole number is a step of a counter like a sum: the typed copy holds the place as an int32 where it comes round (one test at the back edge),
+# A product with a whole number is a step of a counter like a sum: the typed copy holds the place as an int32 where it comes round (a position inside the list: no test at the back edge),
 # so its keys are integers made without a test, and the list, which the turns store into, is asked once in front: 91,760 instructions a sort of 48 fractions become 29,840.
 # The other copy, which takes the place as any whole number, stands first.
 # -- source: main.js
@@ -16,3 +16,4 @@
 # CHECK: = PutDoubleIndex
 # CHECK: = PutDoubleIndex
 # CHECK: = TypeTest {{*}}testedType=i32
+# CHECK-NOT: = TypeTest

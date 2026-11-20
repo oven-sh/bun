@@ -9,6 +9,7 @@ mod tests;
 use bun_sema::bind::{BindingStability, CodeUnit, Decl, ScopeId, SymbolId};
 use bun_sema::hir::{ExprId, FnId};
 use bun_sema::import_sites::{ImportSiteKind, JsxImport};
+use bun_sema::program::FileId;
 
 pub(in crate::lower) use self::loop_updates::is_let_declaration;
 use super::analysis::{ArgumentsObjects, ScopeAnalysis, SlotKey, find_by_key, sort_unique};
@@ -38,6 +39,7 @@ struct Context<'x, 's> {
 /// `file`: a link or a mock word leads to it.
 fn is_read_through_instance(
     modules: &ModuleGraph,
+    reader: FileId,
     binding: ImportBinding,
     named: Option<ModuleRef>,
 ) -> bool {
@@ -54,7 +56,10 @@ fn is_read_through_instance(
             modules.has_instances(file) || modules.holds_mock_in_variable(file)
         }
         ModuleRef::Runtime(_) => modules.is_named_by_mock(module),
-        ModuleRef::External { .. } => modules.is_absent_module(module),
+        ModuleRef::External { .. } => {
+            modules.is_absent_module(module)
+                || modules.is_found_by_loader_for_test_file(module, reader)
+        }
         _ => false,
     };
     let reaches_mock = |module| match module {
@@ -82,7 +87,7 @@ fn find_instance_imports(input: &ScopeInput<'_, '_>) -> Vec<SymbolId> {
             Some(SiteAnswer::Module(named)) => Some(named),
             _ => None,
         };
-        is_read_through_instance(modules, binding, named)
+        is_read_through_instance(modules, file, binding, named)
     });
     imports.map(|it| it.0).collect()
 }
@@ -98,7 +103,7 @@ pub(super) fn is_instance_jsx_import(input: &ScopeInput<'_, '_>, import: JsxImpo
     };
     let bindings = modules.jsx_bindings(file).iter();
     let mut bindings = bindings.filter(|it| it.0 == import);
-    bindings.any(|&(_, binding)| is_read_through_instance(modules, binding, named))
+    bindings.any(|&(_, binding)| is_read_through_instance(modules, file, binding, named))
 }
 
 struct NormalizedUses {
@@ -178,9 +183,25 @@ impl<'x, 's> Context<'x, 's> {
             };
             let is_repeated = walk.is_repeated_scope[index];
             let is_entered_once = unit == CodeUnit::File && !is_repeated;
+            let is_at_module_level = match unit {
+                CodeUnit::File => is_parent_at_module_level,
+                CodeUnit::Function(callback) if is_body_of_inner_module(walk, callback) => {
+                    let (file, is_top) = (input.file, context.is_top_of_unit(index, callback));
+                    match is_top {
+                        true => {
+                            has_module_variables
+                                && input
+                                    .modules
+                                    .runs_body_once(ModuleRef::Inner { file, callback })
+                        }
+                        false => is_parent_at_module_level,
+                    }
+                }
+                CodeUnit::Function(_) | CodeUnit::FieldInitializer(_) => false,
+            };
             context
                 .is_module_level_scope
-                .push(is_parent_at_module_level && is_entered_once);
+                .push(is_at_module_level && !is_repeated);
             if context.has_instances {
                 let scopes = &mut context.is_entered_once_per_instance;
                 let is_parent_entered_once = parent.is_none_or(|parent| scopes[parent]);
@@ -188,6 +209,22 @@ impl<'x, 's> Context<'x, 's> {
             }
         }
         context
+    }
+
+    #[inline]
+    fn is_top_of_unit(&self, scope: usize, function: FnId) -> bool {
+        self.input.bound.fns[function.idx()].scope.idx() == scope
+    }
+
+    fn is_top_of_module_body(&self, scope: ScopeId) -> bool {
+        scope == self.file_scope
+            || match self.input.bound.code_unit(scope) {
+                CodeUnit::Function(function) => {
+                    self.is_module_level_scope[scope.idx()]
+                        && self.is_top_of_unit(scope.idx(), function)
+                }
+                CodeUnit::File | CodeUnit::FieldInitializer(_) => false,
+            }
     }
 
     #[inline]
@@ -252,6 +289,12 @@ impl<'x, 's> Context<'x, 's> {
     fn is_holder_without_value(&self, binding: BindingRef) -> bool {
         binding.is_listed_in(&self.holders_without_value)
     }
+}
+
+fn is_body_of_inner_module(walk: &ScopeWalk, function: FnId) -> bool {
+    walk.function_of_fn[function.idx()].is_some_and(|walked| {
+        walked != WalkedFunctionId::MODULE_BODY && walk.functions[walked.index()].creator.is_none()
+    })
 }
 
 fn find_module_bodies(walk: &ScopeWalk) -> Vec<WalkedFunctionId> {

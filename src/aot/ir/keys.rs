@@ -1,6 +1,6 @@
 use bun_sema::bind::CommonJsVariable;
 use bun_sema::check::aot::{ClassDeclaration, ClassRef, FunctionRef, ObjectOrigin, TypeIdentity};
-use bun_sema::hir::MemberId;
+use bun_sema::hir::{ExprId, FnId, MemberId};
 use bun_sema::program::{FileId, Sym};
 
 use crate::builtins::RuntimeModule;
@@ -19,9 +19,30 @@ pub enum FunctionKey {
     ImplicitConstructor(ClassRef),
     InstanceInitializer(ClassRef),
     StaticInitializer(ClassRef),
-    AccessorGetter { file: FileId, member: MemberId },
-    AccessorSetter { file: FileId, member: MemberId },
-    PrivateNameTest { file: FileId, member: MemberId },
+    AccessorGetter {
+        file: FileId,
+        member: MemberId,
+    },
+    AccessorSetter {
+        file: FileId,
+        member: MemberId,
+    },
+    PrivateNameTest {
+        file: FileId,
+        member: MemberId,
+    },
+    ModuleRequest {
+        file: FileId,
+        call: ExprId,
+    },
+    /// The getter that a helper defines on a copy. `helper` is the one that it would create, `getter` the one that it would enter.
+    CopiedGetter {
+        file: FileId,
+        helper: FnId,
+        getter: FnId,
+    },
+    /// Constructs what Object.create() makes below the literal that the variable holds.
+    PrototypeMaker(Sym),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -41,6 +62,7 @@ pub enum LayoutKey {
         file: FileId,
         call: u32,
     },
+    PrototypeMaker(Sym),
     Container(Sym),
     Environment {
         file: FileId,
@@ -98,6 +120,9 @@ pub enum VariableKey {
     HasSeveralInstances(FileId),
     /// `true` as soon as a direct eval of the file has been handed a text.
     EvaluationMark(FileId),
+    /// A static field that assignments add to a class: `C.name = value`.
+    AddedStatic(Sym),
+    PrototypeMaker(Sym),
 }
 
 impl FunctionKey {
@@ -110,7 +135,10 @@ impl FunctionKey {
             | FunctionKey::Instantiation(file)
             | FunctionKey::AccessorGetter { file, .. }
             | FunctionKey::AccessorSetter { file, .. }
-            | FunctionKey::PrivateNameTest { file, .. } => file,
+            | FunctionKey::PrivateNameTest { file, .. }
+            | FunctionKey::ModuleRequest { file, .. }
+            | FunctionKey::CopiedGetter { file, .. } => file,
+            FunctionKey::PrototypeMaker(variable) => variable.file,
             FunctionKey::Source(function) | FunctionKey::Signature(function) => function.file,
             FunctionKey::ClassSignature(class)
             | FunctionKey::ImplicitConstructor(class)
@@ -174,7 +202,7 @@ impl LayoutKey {
             | LayoutKey::CreatedObject { file, .. }
             | LayoutKey::Environment { file, .. }
             | LayoutKey::ModuleInstance(file) => Some(file),
-            LayoutKey::Container(symbol) => Some(symbol.file),
+            LayoutKey::Container(symbol) | LayoutKey::PrototypeMaker(symbol) => Some(symbol.file),
         }
     }
 }
@@ -199,6 +227,9 @@ impl VariableKey {
             VariableKey::InnerModuleExports(callback) => Some(callback.file),
             VariableKey::PrivateState { state, .. } => Some(state.file),
             VariableKey::RequiredAnswer(holder) => Some(holder.file),
+            VariableKey::AddedStatic(symbol) | VariableKey::PrototypeMaker(symbol) => {
+                Some(symbol.file)
+            }
             VariableKey::SyntheticExport(_)
             | VariableKey::Copy(_)
             | VariableKey::MockOfRuntimeModule(_) => None,
@@ -254,6 +285,15 @@ mod tests {
             FunctionKey::PrivateNameTest {
                 file: FILE,
                 member: MEMBER,
+            },
+            FunctionKey::ModuleRequest {
+                file: FILE,
+                call: ExprId(3),
+            },
+            FunctionKey::CopiedGetter {
+                file: FILE,
+                helper: FnId(1),
+                getter: FnId(2),
             },
         ];
         for key in keys {

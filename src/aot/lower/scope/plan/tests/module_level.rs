@@ -70,7 +70,7 @@ fn names_of_a_commonjs_file_that_runs_once_are_variables() {
 
 #[test]
 fn commonjs_top_level_binding_is_captured() {
-    let immutable = "let a = 1; module.exports = function f() { return a; };";
+    let immutable = "let a = {}; module.exports = function f() { return a; };";
     analyze_source_that_runs_again("main.cjs", immutable, |probe| {
         assert_eq!(probe.placement_of("a").storage, Storage::Local);
         assert_eq!(probe.captures_of("f"), [probe.copy_of("a")]);

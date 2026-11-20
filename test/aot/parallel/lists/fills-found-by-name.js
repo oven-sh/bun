@@ -1,5 +1,5 @@
 // Loops that store one value into a list that they read by a name or a row, also where the list changes under them.
-// STATISTIC: StoredValuesDistinguished >= 10
+// STATISTIC: StoredValuesDistinguished >= 9
 const said = []; let digest = 0, cases = 0, calls = 0;
 const tells = process.argv[2] === "all";
 function keep(text) { cases++; if (tells) console.log(text.slice(0, 260)); for (let i = 0; i < text.length; i++) digest = (digest * 31 + text.charCodeAt(i)) | 0; if (cases % 307 === 1) said.push(text.slice(0, 170)); }

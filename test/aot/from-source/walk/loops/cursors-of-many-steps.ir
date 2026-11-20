@@ -1,0 +1,10 @@
+# f1 = fill
+# -- source: main.mjs
+# function fill(view, from, turns) { let at = from; for (let turn = 0; turn < turns; turn++) { view[at++] = turn; view[at++] = turn; view[at++] = turn; view[at++] = turn; view[at++] = turn; view[at++] = turn; view[at++] = turn; view[at++] = turn; view[at++] = turn; view[at++] = turn; } return at; }
+# globalThis.unseen = [fill];
+# print(fill(new Int32Array(40), (0, eval)("2"), 3));
+# -- end of source
+# A position that a loop steps ten times a turn is asked for an integer in front of the loop.
+# RUN: walk f1 mechanisms=all
+# CHECK: TypeTest v1 testedType=i
+# CHECK: PutTypedArrayElement {{*}}keyIsIntegral

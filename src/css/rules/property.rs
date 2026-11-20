@@ -6,15 +6,15 @@ use crate::{PrintErr, Printer};
 
 use crate::css_values::syntax::ParsedComponent;
 
-pub struct PropertyRule {
-    pub name: DashedIdent,
-    pub(crate) syntax: SyntaxString,
+pub struct PropertyRule<'bump> {
+    pub name: DashedIdent<'bump>,
+    pub(crate) syntax: SyntaxString<'bump>,
     pub(crate) inherits: bool,
-    pub(crate) initial_value: Option<ParsedComponent>,
+    pub(crate) initial_value: Option<ParsedComponent<'bump>>,
     pub(crate) loc: Location,
 }
 
-impl PropertyRule {
+impl PropertyRule<'_> {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -63,8 +63,8 @@ impl PropertyRule {
     }
 }
 
-impl PropertyRule {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+impl<'bump> PropertyRule<'bump> {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         // `SyntaxString` and `ParsedComponent` provide inherent
         // `deep_clone(&self, &Arena)` impls.
         Self {
@@ -78,12 +78,12 @@ impl PropertyRule {
 }
 
 // ─── PropertyRule parse ───────────────────────────────────────────────────
-impl PropertyRule {
+impl<'bump> PropertyRule<'bump> {
     pub(crate) fn parse(
-        name: DashedIdent,
-        input: &mut css::Parser,
+        name: DashedIdent<'bump>,
+        input: &mut css::Parser<'_, 'bump>,
         loc: Location,
-    ) -> css::Result<PropertyRule> {
+    ) -> css::Result<'bump, PropertyRule<'bump>> {
         use css::css_parser::RuleBodyParser;
         use css::{Delimiters, ParserError};
         let mut p = PropertyRuleDeclarationParser {
@@ -135,8 +135,8 @@ impl PropertyRule {
     }
 }
 
-pub(crate) struct PropertyRuleDeclarationParser {
-    pub syntax: Option<SyntaxString>,
+pub(crate) struct PropertyRuleDeclarationParser<'bump> {
+    pub syntax: Option<SyntaxString<'bump>>,
     pub inherits: Option<bool>,
     /// Where the value starts. It is read once the whole body has given the `syntax`.
     pub initial_value: Option<css::ParserState>,
@@ -149,14 +149,14 @@ const _: () = {
     };
     use css::{Parser, ParserError, Result};
 
-    impl DeclarationParser for PropertyRuleDeclarationParser {
+    impl<'bump> DeclarationParser<'bump> for PropertyRuleDeclarationParser<'bump> {
         type Declaration = ();
 
         fn parse_value(
             this: &mut Self,
-            name: &'static [u8],
-            input: &mut Parser,
-        ) -> Result<Self::Declaration> {
+            name: &'bump [u8],
+            input: &mut Parser<'_, 'bump>,
+        ) -> Result<'bump, Self::Declaration> {
             crate::match_ignore_ascii_case! { name, {
                 b"syntax" => {
                     this.syntax = Some(SyntaxString::parse(input)?);
@@ -181,7 +181,7 @@ const _: () = {
         }
     }
 
-    impl RuleBodyItemParser for PropertyRuleDeclarationParser {
+    impl<'bump> RuleBodyItemParser<'bump> for PropertyRuleDeclarationParser<'bump> {
         fn parse_qualified(_this: &Self) -> bool {
             false
         }
@@ -191,12 +191,12 @@ const _: () = {
         }
     }
 
-    impl AtRuleParser for PropertyRuleDeclarationParser {
+    impl<'bump> AtRuleParser<'bump> for PropertyRuleDeclarationParser<'bump> {
         type Prelude = ();
         type AtRule = ();
     }
 
-    impl QualifiedRuleParser for PropertyRuleDeclarationParser {
+    impl<'bump> QualifiedRuleParser<'bump> for PropertyRuleDeclarationParser<'bump> {
         type Prelude = ();
         type QualifiedRule = ();
     }

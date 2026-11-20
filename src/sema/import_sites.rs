@@ -18,7 +18,7 @@ mod wrapper_variables;
 mod written_arms;
 
 pub use call_sites::{
-    RequireCall, RequireCallForm, WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY,
+    MockWordsInText, RequireCall, RequireCallForm, WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY,
     does_import_meta_resolve_ask_resolver, ends_in_call_that_reads_frame_of_caller,
     find_heritage_constructed, find_heritage_of_super_call, find_module_printed_as_require,
     find_require_call, is_linked_by_bundler, is_module_call_of_plugin, is_name_read_by_transpiler,
@@ -245,6 +245,8 @@ pub(crate) struct ImportScan<'s> {
     pub paths_of_changed_files: &'s [ChangedPath],
     pub module_relative_reads: &'s [(ExprId, Atom)],
     pub module_relative_patterns: &'s [(ExprId, Atom, Atom)],
+    pub reads_ruled_out: &'s [(ExprId, Atom)],
+    pub patterns_ruled_out: &'s [(ExprId, Atom, Atom)],
     pub caller_relative_reads: &'s [CallerRelativeRead],
     pub unknown_path_reads: &'s [ExprId],
     pub path_queries: &'s [ExprId],
@@ -253,6 +255,7 @@ pub(crate) struct ImportScan<'s> {
     pub reads_below_working_folder: &'s [(ExprId, Atom)],
     pub named_paths: &'s [NamedPath],
     pub paths_created: &'s [Atom],
+    pub web_assembly_names: &'s [(ExprId, Atom)],
     pub reading_functions: &'s [SymbolId],
     /// What leads to the file's own folder and is passed to a function, as in `find(__dirname)`, each with the function, or is handed on otherwise, as in `{ cwd: __dirname }`. Not the operand of a read that is known, the text that such a read gives, or what a started process is passed.
     pub own_folder_arguments: &'s [(ExprId, Option<ExprId>)],

@@ -29,7 +29,6 @@
 # LOOP: isLoopHead=true
 # LOOP-NOT: = GetSlot [[crate]]
 # LOOP: = IsSlotFilled [[crate]] key="tint"
-# LOOP: = GetSlot [[crate]] key="tint"
 # RUN(NAME): walk f3 mechanisms=all
 # NAME-LABEL: code f3:Body
 # NAME: = PutSlot {{*}} key="a" receivers=[L1]

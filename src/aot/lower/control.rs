@@ -244,15 +244,32 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.control.entries.push(entry);
     }
 
-    pub(in crate::lower) fn set_continue_target(&mut self, of: StmtId, target: BlockId) {
+    /// Returns the block that was the target.
+    pub(in crate::lower) fn set_continue_target(
+        &mut self,
+        of: StmtId,
+        target: BlockId,
+    ) -> Option<BlockId> {
         for entry in self.control.entries.iter_mut().rev() {
             if let ControlEntry::ContinueTarget { statement, block } = entry
                 && *statement == of
             {
-                *block = target;
-                return;
+                return Some(std::mem::replace(block, target));
             }
         }
+        None
+    }
+
+    /// Whether something is cleaned up on the way from here to the next iteration.
+    pub(in crate::lower) fn cleans_up_before_next_iteration(&self, of: StmtId) -> bool {
+        let is_target = |entry: &ControlEntry| matches!(entry, ControlEntry::ContinueTarget { statement, .. } if *statement == of);
+        let entries = self.control.entries.iter().rev();
+        let mut inside = entries.take_while(|entry| !is_target(entry));
+        inside.any(|entry| matches!(entry, ControlEntry::Cleanup(_)))
+    }
+
+    pub(in crate::lower) fn emit_continue(&mut self, of: StmtId) {
+        self.emit_exit(Exit::Continue(of), None);
     }
 
     pub(crate) fn stands_in_loop(&self) -> bool {

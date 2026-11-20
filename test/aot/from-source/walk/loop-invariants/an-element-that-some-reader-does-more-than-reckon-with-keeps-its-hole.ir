@@ -1,3 +1,4 @@
+# LIBRARY: own
 # -- source: an-element-that-some-reader-does-more-than-reckon-with-keeps-its-hole.ts
 # declare function sink(value: unknown): void;
 # function weigh(x: number[], y: number[]): number { let p = 0, holes = 0; for (let i = 0; i < x.length; i++) { p += x[i] * y[i]; if (x[i] === undefined) holes++; } return holes * 1000000 + (p === p ? p : -1); }

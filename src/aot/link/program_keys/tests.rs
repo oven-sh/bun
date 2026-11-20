@@ -9,7 +9,7 @@ use crate::link::testing::{
 use crate::modules::SyntheticExportId;
 use bun_sema::bind::{CommonJsVariable, SymbolId};
 use bun_sema::check::aot::ClassRef;
-use bun_sema::hir::{ClassId, ExprId, MemberId, TypeNodeId};
+use bun_sema::hir::{ClassId, ExprId, FnId, MemberId, TypeNodeId};
 use bun_sema::program::{FileId, Sym};
 use bun_sema::session::Session;
 use core::fmt::Debug;
@@ -202,7 +202,20 @@ fn next_function_key(key: FunctionKey) -> Option<FunctionKey> {
         FunctionKey::StaticInitializer(_) => FunctionKey::AccessorGetter { file, member },
         FunctionKey::AccessorGetter { .. } => FunctionKey::AccessorSetter { file, member },
         FunctionKey::AccessorSetter { .. } => FunctionKey::PrivateNameTest { file, member },
-        FunctionKey::PrivateNameTest { .. } => return None,
+        FunctionKey::PrivateNameTest { .. } => {
+            let call = ExprId(1);
+            FunctionKey::ModuleRequest { file, call }
+        }
+        FunctionKey::ModuleRequest { .. } => {
+            let (helper, getter) = (FnId(1), FnId(1));
+            FunctionKey::CopiedGetter {
+                file,
+                helper,
+                getter,
+            }
+        }
+        FunctionKey::CopiedGetter { .. } => FunctionKey::PrototypeMaker(SYMBOL),
+        FunctionKey::PrototypeMaker(_) => return None,
     })
 }
 
@@ -232,7 +245,8 @@ fn next_layout_key(key: LayoutKey) -> Option<LayoutKey> {
             },
         },
         LayoutKey::UntypedLiteral { .. } => LayoutKey::CreatedObject { file, call: 1 },
-        LayoutKey::CreatedObject { .. } => LayoutKey::Container(SYMBOL),
+        LayoutKey::CreatedObject { .. } => LayoutKey::PrototypeMaker(SYMBOL),
+        LayoutKey::PrototypeMaker(_) => LayoutKey::Container(SYMBOL),
         LayoutKey::Container(_) => LayoutKey::Environment {
             file,
             environment: 1,
@@ -274,7 +288,9 @@ fn next_variable_key(key: VariableKey) -> Option<VariableKey> {
         VariableKey::InstanceOf(_) => VariableKey::InstanceAllocator(FILE),
         VariableKey::InstanceAllocator(_) => VariableKey::HasSeveralInstances(FILE),
         VariableKey::HasSeveralInstances(_) => VariableKey::EvaluationMark(FILE),
-        VariableKey::EvaluationMark(_) => return None,
+        VariableKey::EvaluationMark(_) => VariableKey::AddedStatic(SYMBOL),
+        VariableKey::AddedStatic(_) => VariableKey::PrototypeMaker(SYMBOL),
+        VariableKey::PrototypeMaker(_) => return None,
     })
 }
 

@@ -195,13 +195,13 @@ impl<'s> Files<'s> {
 
     /// Adds `file.PatternAmbientModules` to `c.patternAmbientModules`.
     pub(super) fn add_pattern_ambient_modules(&mut self, file: FileId) {
-        for at in 0..self.modules[file.idx()].bound.pattern_ambient_modules.len() {
-            let (name, id) = self.modules[file.idx()].bound.pattern_ambient_modules[at];
+        for at in 0..self.bound(file).pattern_ambient_modules.len() {
+            let (name, id) = self.bound(file).pattern_ambient_modules[at];
             let text = self.atoms.bytes(name);
             let Some(star) = strings::index_of_char_usize(text, b'*') else {
                 continue;
             };
-            let mut declarations = self.modules[file.idx()].bound.symbol(id).decls.iter();
+            let mut declarations = self.bound(file).symbol(id).decls.iter();
             let attributes = declarations.find_map(|it| match *it {
                 Decl::Module(m) => Some(self.hir(file)[m].attributes),
                 _ => None,

@@ -7,10 +7,13 @@ declare function $throwTypeError(message: string): never;
 declare function $isConstructor(value: unknown): boolean;
 declare function $putByValDirect(array: unknown, index: number, value: unknown): void;
 declare function $arrayPush(array: unknown[], value: unknown): void;
+declare function $appendElement(array: unknown[], value: unknown): void;
 declare function $iteratorGenericClose(iterator: object): void;
 declare function $iteratorGenericNext(next: unknown, iterator: unknown): any;
 declare function $ifAbruptCloseIterator(iterator: object, value: unknown): void;
 declare function $isCollectionIteratorClosedMark(value: unknown): boolean;
+declare function $toString(value: unknown): string;
+declare function $toLength(value: unknown): number;
 
 $visibility = "Private";
 export function toArray(this: unknown): unknown[] {
@@ -50,7 +53,10 @@ export function from(this: any, items: Iterable<unknown>, mapper: any, thisArg?:
   // Nobody but this loop holds the list. So a push defines what the language defines there, and the length is the index.
   const made: unknown[] = [];
   for (const value of items)
-    $arrayPush(made, thisArg === undefined ? mapper(value, made.length) : $call(mapper, thisArg, value, made.length));
+    $appendElement(
+      made,
+      thisArg === undefined ? mapper(value, made.length) : $call(mapper, thisArg, value, made.length),
+    );
   return made;
 }
 
@@ -72,12 +78,13 @@ declare function $arrayFromFastWithoutMapFn(constructor: unknown, items: unknown
 $visibility = "Public";
 export function fromIterable(this: unknown, items: Iterable<unknown>): unknown[] {
   if ($isArrayIterator(items)) return [...items];
+  if ($isSet(items) || $isRegExpStringIterator(items)) return [...items];
   if (typeof items !== "string") {
     const copied = $arrayFromFastWithoutMapFn(this, items);
     if (copied) return copied;
   }
   const result: unknown[] = [];
-  for (const value of items) $arrayPush(result, value);
+  for (const value of items) $appendElement(result, value);
   return result;
 }
 
@@ -92,7 +99,7 @@ export function viewFrom(this: any, items: Iterable<unknown>, mapper: any, thisA
   let values = typeof items !== "string" ? $arrayFromFastWithoutMapFn(Array, items) : undefined;
   if (!values) {
     values = [];
-    for (const value of items) $arrayPush(values, value);
+    for (const value of items) $appendElement(values, value);
   }
   const count = values.length;
   const result = new this(count);
@@ -299,6 +306,7 @@ export function stepIterator(iterator: unknown, next: unknown): unknown {
     }
     return status === $generatorStepStatusCompleted ? $collectionIteratorClosedMark() : value;
   } else if (next === $nextOfStepsOverText) return stepOverText(iterator as StepsOverText);
+  else if (next === $regExpStringIteratorProtoNext && $isRegExpStringIterator(iterator)) return stepMatches(iterator);
   const result = $iteratorGenericNext(next, iterator);
   return result.done ? $collectionIteratorClosedMark() : result.value;
 }
@@ -351,6 +359,28 @@ export function stepIteratorInWay(iterator: unknown, way: unknown): unknown {
     return status === $generatorStepStatusCompleted ? $collectionIteratorClosedMark() : value;
   }
   return $collectionIteratorClosedMark();
+}
+
+declare function $isRegExpStringIterator(value: unknown): boolean;
+declare function $stepMatchIterator(iterator: unknown): unknown;
+declare const $regExpStringIteratorProtoNext: unknown;
+
+// `for (const match of s.matchAll(regExp))`, where the engine knows nothing of one of the two: as `next` of the iterator does it, but nobody sees the object that a call of it would answer with.
+$visibility = "Private";
+export function wayToStepMatches(iterator: unknown, next: unknown): number | boolean | undefined {
+  if ($isRegExpStringIterator(iterator)) return next === $regExpStringIteratorProtoNext ? 6 : undefined;
+  return wayToStepIterator(iterator, next);
+}
+
+$visibility = "Private";
+export function stepMatchesInWay(iterator: unknown, way: unknown): unknown {
+  return way === 6 ? stepMatches(iterator) : stepIteratorInWay(iterator, way);
+}
+
+function stepMatches(iterator: unknown): unknown {
+  if (!$isRegExpStringIterator(iterator)) return $collectionIteratorClosedMark();
+  const match = $stepMatchIterator(iterator);
+  return match === null ? $collectionIteratorClosedMark() : match;
 }
 
 $visibility = "Private";

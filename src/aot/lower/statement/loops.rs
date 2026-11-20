@@ -30,7 +30,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         header
     }
 
-    fn lower_loop_body(
+    pub(super) fn lower_loop_body(
         &mut self,
         statement: StmtId,
         body: StmtId,
@@ -79,20 +79,27 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn is_local_variable(&self, name: ExprId) -> bool {
+        self.find_local(name)
+            .is_some_and(|is_immutable| !is_immutable)
+    }
+
+    /// Whether the local of that name is immutable.
+    pub(super) fn find_local(&self, name: ExprId) -> Option<bool> {
         let bound = self.file.bound;
         if !matches!(self.file.hir[name].kind, ExprKind::Ident(_))
             || bound.dynamic_lookup_scope(NodeData::Expr(name)).is_some()
         {
-            return false;
+            return None;
         }
         let Binding::Symbol(symbol) = bound.binding(name) else {
-            return false;
+            return None;
         };
         let scopes = &self.file.scopes;
-        scopes.form(symbol) == BindingForm::Stored
-            && scopes
-                .placement(BindingRef::Symbol(symbol))
-                .is_some_and(|place| place.storage == Storage::Local && !place.is_immutable)
+        if scopes.form(symbol) != BindingForm::Stored {
+            return None;
+        }
+        let place = scopes.placement(BindingRef::Symbol(symbol))?;
+        (place.storage == Storage::Local).then_some(place.is_immutable)
     }
 
     fn lower_test_after_step(
@@ -177,11 +184,42 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 statement: found,
                 loop_statement: statement,
                 resumed,
+                late_continue: None,
             },
         })
     }
 
+    fn is_falsy_literal(&self, expression: ExprId) -> bool {
+        let hir = self.file.hir;
+        let is_zero = |literal: ExprId| match hir[literal].kind {
+            ExprKind::False | ExprKind::Null => Some(true),
+            ExprKind::True => Some(false),
+            ExprKind::Number(number) => Some(hir.numbers[number as usize] == 0.0),
+            _ => None,
+        };
+        let expression = self.file.skip_type_syntax(expression);
+        match hir[expression].kind {
+            ExprKind::Unary {
+                op: UnOp::Not,
+                operand,
+            } => is_zero(self.file.skip_type_syntax(operand)) == Some(false),
+            _ => is_zero(expression) == Some(true),
+        }
+    }
+
+    /// `do { .. } while (0)`: the body runs once. Compilers of other languages write blocks to break out of in this way.
+    fn lower_body_run_once(&mut self, statement: StmtId, body: StmtId) {
+        let after = self.create_block();
+        self.lower_loop_body(statement, body, after, after);
+        self.jump(after);
+        self.continue_in(after);
+    }
+
     pub(super) fn lower_do_while(&mut self, statement: StmtId, body: StmtId, test: ExprId) {
+        if self.is_falsy_literal(test) {
+            self.lower_body_run_once(statement, body);
+            return;
+        }
         let test_block = self.create_block();
         let after = self.create_block();
         let header = self.begin_loop(statement);
@@ -196,6 +234,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(super) fn lower_for(&mut self, statement: StmtId, init: StmtId) {
         let scope = self.enter_own_scope(statement);
+        let enclosing_loops = self.loose_loops.len();
+        let loose = self.find_loose_loop(statement);
+        self.loose_loops.extend(loose);
         match dispose::find_resource_declarations(self.file.hir, init) {
             Some(declarations) => {
                 self.lower_head_resources(declarations, &mut |lowering| {
@@ -208,9 +249,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     Some(_) => self.lower_statement(init),
                     None => {}
                 }
-                self.lower_for_loop(statement);
+                if self.loose_loops.is_empty() || !self.lower_loose_loop(statement) {
+                    self.lower_for_loop(statement);
+                }
             }
         }
+        self.loose_loops.truncate(enclosing_loops);
         self.leave_own_scope(scope);
     }
 

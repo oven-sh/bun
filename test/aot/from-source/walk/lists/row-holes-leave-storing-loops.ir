@@ -14,7 +14,7 @@
 # RUN(UPDATE): walk f1 mechanisms=all
 # UPDATE-LABEL: code f1:Body
 # UPDATE: = IsElementPresent {{*}}arrayStorage=Int32
-# UPDATE: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isPresent]
+# UPDATE: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent]
 # UPDATE: = Add {{*}} form=Integers
 # UPDATE: = PutContiguousIndex {{*}}hasNumericStorage]
 # RUN(ANSWERS): run-in-shell

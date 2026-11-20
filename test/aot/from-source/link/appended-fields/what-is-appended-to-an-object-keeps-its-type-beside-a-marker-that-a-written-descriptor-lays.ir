@@ -12,6 +12,6 @@
 # RUN: link fields mechanisms=all
 # CHECK: "marked" appended proven=true writers-known
 # CHECK: "tools" appended proven=L{{*}} writers-known
-# CHECK: "count" appended proven=i32 writers-known
+# CHECK: "count" appended proven=int[0, 2147483647] writers-known
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 20 true 3

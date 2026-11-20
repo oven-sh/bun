@@ -198,44 +198,19 @@ for (const [name, f] of all) { try { console.log(name + ": " + show(await f()));
 // CHECK-NEXT: v6 = GetSuperBase v0
 // CHECK-NEXT: v7 = SuperConstruct v6, v1, v2, v3 layout=[[L_4]]
 // CHECK-NEXT: v8 = Convert v7 declared={type=[[L_4]]}
-// CHECK-NEXT: v9 = TypeTest v5 testedType=absent
-// CHECK-NEXT: Branch v9 -> taken b1(| 0), notTaken b12(| 0)
-// CHECK-NEXT: b1(v10):
-// CHECK-NEXT: v11 = IsUnlockedInstance v8 testedType=[[L_4]]
-// CHECK-NEXT: Branch v11 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
+// CHECK-NEXT: v9 = IsUnlockedInstance v8 testedType=[[L_4]]
+// CHECK-NEXT: Branch v9 -> taken b1(), notTaken b2()
+// CHECK-NEXT: b1():
 // CHECK-NEXT: PropDefine v8, v4 key="z"
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v13 = Undefined
-// CHECK-NEXT: PropDefine v8, v13 key="z"
+// CHECK-NEXT: Jump -> next b3()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v11 = Undefined
+// CHECK-NEXT: PropDefine v8, v11 key="z"
 // CHECK-NEXT: PropSet v8, v4 key="z"
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: v17 = TypeTest v16 testedType=object
-// CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b5(v18):
-// CHECK-NEXT: Jump -> next b10(v18)
-// CHECK-NEXT: b6(v19):
-// CHECK-NEXT: v20 = TypeTest v19 testedType=undefined
-// CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b11(| 0)
-// CHECK-NEXT: b7(v21):
-// CHECK-NEXT: v22 = TypeTest v8 testedType=absent
-// CHECK-NEXT: Branch v22 -> taken b8(| 0), notTaken b9(| 0)
-// CHECK-NEXT: b8(v23):
-// CHECK-NEXT: v24 = NewRuntimeError runtimeError=UninitializedThis
-// CHECK-NEXT: Throw v24
-// CHECK-NEXT: b9(v25):
-// CHECK-NEXT: Jump -> next b10(v25)
-// CHECK-NEXT: b10(v26):
-// CHECK-NEXT: Return v26
-// CHECK-NEXT: b11(v27):
-// CHECK-NEXT: v28 = NewRuntimeError runtimeError=DerivedConstructorResult name="Point3"
-// CHECK-NEXT: Throw v28
-// CHECK-NEXT: b12(v29):
-// CHECK-NEXT: v30 = NewRuntimeError runtimeError=ThisAlreadyBound
-// CHECK-NEXT: Throw v30
+// CHECK-NEXT: Jump -> next b3()
+// CHECK-NEXT: b3():
+// CHECK-NEXT: v14 = Undefined
+// CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Derived1"
 // CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_5]]] {

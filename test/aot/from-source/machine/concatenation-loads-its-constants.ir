@@ -22,8 +22,7 @@
 # CHECK: unit f4:Body
 # CHECK-NOT: CreateConstant
 # CHECK: Call Stub ConcatenateWithConstants.FirstAndThirdOfThree
-# CHECK: Number32 Number StringCell "/c"
-# CHECK: Call Stub ConcatenateWithConstants.ThirdOfThree
+# CHECK-NOT: Call Stub ConcatenateWithConstants.
 # RUN(FIRST): bytes f1 mechanisms=all-Inlining
 # FIRST: Number32 Number StringCell "Hello, "
 # FIRST: Call Stub ConcatenateWithConstants.FirstAndThirdOfThree

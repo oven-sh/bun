@@ -336,10 +336,8 @@ describe("an output Response that outlives its rewrite does not keep the pending
   });
 });
 
-// Each .on() / .onDocument() call heap-allocates an ElementHandler / DocumentHandler
-// struct via bun.default_allocator. When the HTMLRewriter is garbage-collected,
-// LOLHTMLContext.deinit() must destroy those allocations. Previously it only
-// unprotected the held JSValues and leaked the struct memory.
+// Each .on() / .onDocument() call stores a native registration, which has to be
+// freed when the HTMLRewriter is garbage-collected.
 //
 // RSS is a high-water mark — Bun.gc(true) collects every wrapper and its
 // lol-html builder, but the allocators don't promptly hand pages back to the
@@ -452,7 +450,7 @@ test("async handler reject/cancel on native-stream input releases the pipe", asy
       resolve();
       await first.catch(() => {});
 
-      // suspend-then-resume-then-sync-throw (resume_rewrite → fail)
+      // suspend-then-resume-then-sync-throw (resume → fail)
       await new HTMLRewriter()
         .on("p", { async element() {} })
         .on("div", {
@@ -1847,4 +1845,63 @@ test.concurrent("onEndTag() on a parked element whose rewrite was collected", as
   expect(withoutAsanWarning(stderr)).toBe("");
   expect(stdout).toBe(JSON.stringify({ parked: 20, returnedTheElement: 20 }));
   expect(exitCode).toBe(0);
+});
+
+// Reading the output resumes a rewrite that was held back, so a handler runs inside clone() or
+// text(). A shell redirect marks the body used whatever is reading it. (The first case leaked a
+// root. All four used the replaced body, which crashed debug builds.)
+describe.concurrent("a handler uses up the output body while it is being read", () => {
+  async function check(method: string, makeStream: string) {
+    const code = /* js */ `
+      const { heapStats } = require("bun:jsc");
+      let shell;
+      function run() {
+        const input = new Response(
+          new ReadableStream({
+            type: "direct",
+            pull(controller) {
+              controller.write(Buffer.alloc(32768, "x"));
+              controller.write("<b>");
+              controller.end();
+            },
+          }),
+        );
+        const out = new HTMLRewriter()
+          .on("b", {
+            element() {
+              shell = Bun.$\`\${process.execPath} --version < \${out}\`.quiet().then(() => {});
+            },
+          })
+          .transform(input);
+        ${makeStream};
+        const ranBefore = !!shell;
+        const result = out.${method}();
+        return { ranInside: !ranBefore && !!shell, bodyUsed: out.bodyUsed, result };
+      }
+      const { ranInside, bodyUsed, result } = run();
+      await shell;
+      const { length } = await (result instanceof Response ? result.text() : result);
+      Bun.gc(true);
+      const rootedStreams = heapStats().protectedObjectTypeCounts.ReadableStream ?? 0;
+      process.stdout.write(JSON.stringify({ ranInside, bodyUsed, length, rootedStreams }));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(withoutAsanWarning(stderr)).toBe("");
+    expect(stdout).toBe(JSON.stringify({ ranInside: true, bodyUsed: true, length: 32771, rootedStreams: 0 }));
+    expect(exitCode).toBe(0);
+  }
+
+  test.each(["clone", "text"])("%s() after out.body", method => check(method, "out.body"));
+
+  // POSIX refuses at once to open "/" for writing, which leaves the body rooting its stream.
+  test.skipIf(isWindows).each(["clone", "text"])("%s() after a failed Bun.write", method =>
+    check(method, `Bun.write("/", out).catch(() => {})`),
+  );
 });

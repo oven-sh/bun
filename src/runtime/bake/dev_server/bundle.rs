@@ -1,6 +1,7 @@
 //! Starting bundles: choosing entry points, the bundle queue, and plugin loading.
 
 use super::*;
+use bun_ptr::detach_lifetime_mut;
 
 impl DevServer {
     pub(super) fn append_route_entry_points_if_not_stale(
@@ -8,8 +9,8 @@ impl DevServer {
         entry_points: &mut EntryPointList,
         rbi: route_bundle::Index,
     ) -> crate::Result<()> {
-        let server_file_names = self.server_graph.bundled_files.keys();
-        let client_file_names = self.client_graph.bundled_files.keys();
+        let server_file_names = self.graphs.server.bundled_files.keys();
+        let client_file_names = self.graphs.client.bundled_files.keys();
 
         // Build a list of all files that have not yet been bundled.
         // Note: split borrow — `route_bundle_ptr`/`type_ptr` are `&mut self`;
@@ -50,8 +51,8 @@ impl DevServer {
                 }
                 // A router whose pages also run in the browser: the same files, in the client graph.
                 for path in self.client_page_files(bundle.route_index).iter() {
-                    let stale = match self.client_graph.get_file_index(path) {
-                        Some(index) => self.client_graph.stale_files.is_set(index.get() as usize),
+                    let stale = match self.graphs.client.get_file_index(path) {
+                        Some(index) => self.graphs.client.stale_files.is_set(index.get() as usize),
                         None => true,
                     };
                     if stale {
@@ -66,7 +67,7 @@ impl DevServer {
 
         if let Some(map) = &self.has_tailwind_plugin_hack {
             for abs_path in map.keys() {
-                let Some(file) = self.client_graph.bundled_files.get(abs_path) else {
+                let Some(file) = self.graphs.client.bundled_files.get(abs_path) else {
                     continue;
                 };
                 if file.kind == FileKind::Css {
@@ -111,9 +112,9 @@ impl DevServer {
             }};
         }
         match side {
-            bake::Graph::Client => check!(&self.client_graph, |_file| true),
+            bake::Graph::Client => check!(&self.graphs.client, |_file| true),
             // The server and SSR graphs share one record per file. Only a JS record tracks which graph bundled it.
-            bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph, |file| {
+            bake::Graph::Server | bake::Graph::Ssr => check!(&self.graphs.server, |file| {
                 file.file_kind() != FileKind::Js
                     || if side == bake::Graph::Ssr {
                         file.is_ssr
@@ -141,11 +142,13 @@ impl DevServer {
         let file_index = from_opaque_file_id::<SIDE>(file);
         let stale = match SIDE {
             bake::Side::Server => self
-                .server_graph
+                .graphs
+                .server
                 .stale_files
                 .is_set(file_index.get() as usize),
             bake::Side::Client => self
-                .client_graph
+                .graphs
+                .client
                 .stale_files
                 .is_set(file_index.get() as usize),
         };
@@ -266,9 +269,9 @@ impl DevServer {
 
     pub(crate) fn on_plugins_resolved(
         &mut self,
-        plugins: Option<*mut crate::api::js_bundler::Plugin>,
+        plugins: ::core::ptr::NonNull<crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
-        self.bundler_options.plugin = plugins.and_then(::core::ptr::NonNull::new);
+        self.plugins = Some(Plugins::Borrowed(plugins));
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
         Ok(())
@@ -277,17 +280,9 @@ impl DevServer {
     pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
         self.plugin_state = PluginState::Err;
         // Completing the last request on a stopped server frees `self`, so count as a pending request until the end.
-        let mut server = self.server;
-        if let Some(server) = server.as_mut() {
-            server.on_pending_request();
-        }
+        let _pending = self.server.map(PendingRequest::new);
         while let Some(item) = self.next_bundle.requests.pop_first() {
-            // SAFETY: `pop_first` returns a valid `*mut Node<DeferredRequest>`;
-            // `data` was initialized by `defer_request`.
-            unsafe {
-                let d = (*item).data.assume_init_mut();
-                d.abort_and_deref();
-            }
+            item.take_handler().fail();
         }
         // Reset these routes so their next request gets the plugin error.
         for &route_bundle_index in self.next_bundle.route_queue.keys() {
@@ -295,9 +290,6 @@ impl DevServer {
                 route_bundle::State::Unqueued;
         }
         self.next_bundle.route_queue.clear_retaining_capacity();
-        if let Some(server) = server.as_mut() {
-            server.on_static_request_complete();
-        }
         // TODO: allow recovery from this state
         Ok(())
     }
@@ -352,12 +344,9 @@ impl DevServer {
             agent.notify_bundle_start(self.inspector_server_id, &mut trigger_files);
         }
 
-        self.incremental_result.reset();
+        self.graphs.incremental_result.reset();
 
-        // Ref server to keep it from closing.
-        if let Some(server) = self.server.as_mut() {
-            server.on_pending_request();
-        }
+        let pending_request = self.server.map(PendingRequest::new);
 
         // Boxed so its address is stable: `bv2.graph.heap: &'static Arena`
         // borrows it (self-ref via `CurrentBundle`, see Note on
@@ -375,9 +364,8 @@ impl DevServer {
         // the move of `heap` into `bv2.graph.heap` and lives exactly as long
         // as `bv2`.
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            // SAFETY: `self.vm().event_loop()` is the live per-thread `jsc::EventLoop`.
             Some(::core::ptr::NonNull::from(heap.alloc(
-                bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
+                bun_event_loop::AnyEventLoop::js(self.vm().event_loop_ptr()),
             )));
 
         let heap_ptr: *const bun_alloc::Arena = &raw const *heap;
@@ -385,35 +373,42 @@ impl DevServer {
         // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
         // is stable for the lifetime of `bv2.graph.heap`'s borrow.
         let heap_ref: &'static bun_alloc::Arena = unsafe { &*heap_ptr };
-        let server_transpiler: *mut Transpiler<'static> = &raw mut *self.server_transpiler;
+        // SAFETY: `self` holds the transpilers at a fixed address and outlives every use of `bv2`.
+        // Until `bv2` is dropped, nothing else uses the client and SSR ones. `self` still uses the
+        // server one on this thread (`finalize_bundle`).
+        let (ssr_transpiler, server_transpiler, client_transpiler) = unsafe {
+            (
+                self.ssr_transpiler
+                    .as_mut()
+                    .map(|ssr| detach_lifetime_mut(ssr)),
+                detach_lifetime_mut(&mut self.server_transpiler),
+                detach_lifetime_mut(&mut self.client_transpiler),
+            )
+        };
+        let framework = server_transpiler.options.framework.clone();
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
-            // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
-            unsafe { &mut *server_transpiler },
+            server_transpiler,
             Some(bundler::bundle_v2::BakeOptions {
-                framework: self.framework.as_bundler_view(),
-                client_transpiler: ::core::ptr::NonNull::from(&mut *self.client_transpiler),
-                ssr_transpiler: ::core::ptr::NonNull::from(&mut self.ssr_transpiler).cast(),
-                plugins: self.bundler_options.plugin,
+                framework: framework.expect("set by DevServer::init"),
+                client_transpiler,
+                ssr_transpiler,
+                plugins: self.plugins.as_ref().map(Plugins::as_non_null),
             }),
             heap_ref,
             event_loop,
-            false, // watching is handled separately
             Some(::core::ptr::NonNull::from(
                 bun_threading::work_pool::WorkPool::get(),
             )),
             heap_ref,
-        )?;
-        bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
+        );
+        bv2.bun_watcher = Some(Arc::clone(&self.bun_watcher));
         bv2.asynchronous = true;
-        let dev_handle = self.bundler_handle();
-        bv2.dev_server = Some(dev_handle);
-        bv2.linker.dev_server = Some(dev_handle);
+        bv2.dev_server = Some(self.bundler_handle());
 
         {
-            self.graph_safety_lock.lock();
-            self.client_graph.reset();
-            self.server_graph.reset();
-            self.graph_safety_lock.unlock();
+            let _g = self.graph_safety_lock.guard();
+            self.graphs.client.reset();
+            self.graphs.server.reset();
         }
 
         // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY
@@ -445,9 +440,9 @@ impl DevServer {
             requests: ::core::mem::take(&mut self.next_bundle.requests),
             script_requests: Vec::new(),
             resolution_failure_entries: Default::default(),
+            pending_request,
         });
 
-        self.next_bundle.requests = deferred_request::List::default();
         self.next_bundle.route_queue.clear_retaining_capacity();
         Ok(())
     }
@@ -475,53 +470,14 @@ impl DevServer {
         debug_assert!(self.current_bundle.is_none());
 
         // If there were pending requests, begin another bundle.
-        if self.next_bundle.reload_event.is_some() || !self.next_bundle.requests.first.is_null() {
+        if self.next_bundle.has_reload_event || self.next_bundle.requests.first().is_some() {
             let mut entry_points = EntryPointList::empty();
 
-            let (is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {
-                'brk: {
-                    // SAFETY: `event` points into `*self.watcher_atomics` (its
-                    // own heap allocation); the slot is exclusively owned by
-                    // this thread until recycled below.
-                    let reload_event_timer = unsafe { (*event).timer };
-
-                    let self_ptr: *mut DevServer = self;
-                    let mut current: *mut HotReloadEvent = event;
-                    loop {
-                        // SAFETY: `self_ptr` is `self`; `*current` lives in
-                        // `*self.watcher_atomics` (a separate heap allocation),
-                        // disjoint from the graph/watcher fields
-                        // `process_file_list` mutates. Both exclusive borrows
-                        // end with this call.
-                        unsafe {
-                            HotReloadEvent::process_file_list(
-                                &mut *current,
-                                &mut *self_ptr,
-                                &mut entry_points,
-                            )
-                        };
-                        // SAFETY: `current` points into `*self.watcher_atomics`;
-                        // `recycle_event_from_dev_server` only reads/swaps that
-                        // slot and returns the next exclusively-owned one (a
-                        // slot in `self.watcher_atomics.events[..]`).
-                        let Some(next) = (unsafe {
-                            WatcherAtomics::recycle_event_from_dev_server(
-                                self.watcher_atomics.as_ptr(),
-                                current,
-                            )
-                        }) else {
-                            break;
-                        };
-                        current = next;
-                        // SAFETY: `current` is the freshly acquired exclusive slot.
-                        #[cfg(debug_assertions)]
-                        debug_assert!(unsafe { (*current).debug_mutex.try_lock() });
-                    }
-
-                    break 'brk (true, reload_event_timer);
-                }
+            let is_reload = core::mem::take(&mut self.next_bundle.has_reload_event);
+            let timer = if is_reload {
+                self.process_reload_events(&mut entry_points)
             } else {
-                (false, Instant::now())
+                Instant::now()
             };
 
             // Note: iterate by index — `route_bundle_ptr` /
@@ -548,7 +504,10 @@ impl DevServer {
                             self.router.type_ptr_const(route.r#type).server_file
                         });
                         let file_index = from_opaque_file_id::<{ bake::Side::Server }>(file);
-                        self.server_graph.stale_files.set(file_index.get() as usize);
+                        self.graphs
+                            .server
+                            .stale_files
+                            .set(file_index.get() as usize);
                     }
                     self.append_route_entry_points_if_not_stale(
                         &mut entry_points,

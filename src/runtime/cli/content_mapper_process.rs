@@ -8,27 +8,29 @@
 //! The process may go on after the check, as it does for `Bun.build`. `Programs::close` cleans up everything: the
 //! programs have exited, the pipes and the loop are closed, and the thread has ended.
 
-use core::ffi::CStr;
+use core::cell::Cell;
 use core::time::Duration;
 use std::ffi::CString;
 use std::sync::Arc;
 
-use bun_core::Output;
+use bun_core::{Output, ZStr};
 use bun_event_loop::EventLoopHandle;
-use bun_event_loop::MiniEventLoop::{self as mini_event_loop, MiniEventLoop};
-#[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteResult, WriteStatus};
+use bun_event_loop::MiniEventLoop as mini_event_loop;
+use bun_io::{
+    BufferedReader, IoEvent, Owner, PollTag, ReadResult, StreamingWriter, WriteHandler,
+    WriteResult, WriteStatus,
+};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags};
+use bun_ptr::AliasableBox;
 use bun_sema_driver::host::{
     Call, CallError, Connection, Json, Mapper, Transport, receive_from_content_mapper, to_native,
 };
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
-use bun_spawn::{ProcessHandle, Rusage, SpawnEnv, SpawnOptions, Status, Stdio};
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
+use bun_spawn::{
+    Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions, Status, Stdio,
+};
 use bun_threading::Guarded;
 
 /// A program, as the threads that call it see it.
@@ -56,7 +58,7 @@ enum Command {
 }
 
 /// The I/O thread's loop, for `wakeup`, which any thread may call.
-struct LoopToWake(*mut bun_uws::Loop);
+struct LoopToWake(*const bun_uws::Loop);
 
 // SAFETY: the pointer is only used to wake the loop, under the lock of the `Inbox` that has it. The I/O thread removes
 // it from there before it ends. The loop is that thread's own `MiniEventLoop`. A VM in the process has a loop of its
@@ -92,7 +94,6 @@ impl KillSwitch {
         inbox.is_closed = matches!(command, Command::Stop);
         inbox.commands.push(command);
         if let Some(event_loop) = &inbox.event_loop {
-            // Not `Loop::wakeup`: its `&mut Loop` would alias the one that the I/O thread has while it ticks.
             // SAFETY: see `LoopToWake`.
             unsafe { bun_uws::us_wakeup_loop(event_loop.0) };
         }
@@ -212,21 +213,20 @@ fn closed() -> CallError {
     }
 }
 
-/// Returns the process of `program`, unless it couldn't be started. `children` are live.
-fn child_of(children: &[*mut Child], program: &Arc<Program>) -> Option<*mut Child> {
-    // SAFETY: the caller's contract. Nothing ever borrows this field mutably.
-    let is_of_program = |it: &&*mut Child| unsafe { Arc::ptr_eq(&(***it).program, program) };
-    children.iter().find(is_of_program).copied()
+/// Returns the process of `program`, unless it couldn't be started.
+fn child_of<'a>(children: &'a [AliasableBox<Child>], program: &Arc<Program>) -> Option<&'a Child> {
+    let is_of_program = |it: &&AliasableBox<Child>| Arc::ptr_eq(&it.program, program);
+    children.iter().find(is_of_program).map(|it| &**it)
 }
 
 fn run_io_thread(inbox: &Guarded<Inbox>) {
     // `Output`'s writers are per-thread state, and this thread isn't from Bun's pool. So are the bounds of the stack,
     // which the JSON parser asks for.
     Output::Source::configure_thread();
-    let mini: *mut MiniEventLoop = mini_event_loop::init_global(None, None);
+    let mini = mini_event_loop::init_global(None);
     let event_loop = EventLoopHandle::init_mini(mini);
-    inbox.lock().event_loop = Some(LoopToWake(event_loop.loop_()));
-    let mut children: Vec<*mut Child> = Vec::new();
+    inbox.lock().event_loop = Some(LoopToWake(core::ptr::from_ref(event_loop.loop_())));
+    let mut children: Vec<AliasableBox<Child>> = Vec::new();
     let mut is_stopping = false;
     loop {
         let commands = std::mem::take(&mut inbox.lock().commands);
@@ -235,75 +235,56 @@ fn run_io_thread(inbox: &Guarded<Inbox>) {
                 Command::Start(program) => children.extend(Child::start(program, event_loop)),
                 Command::Write { program, bytes } => {
                     if let Some(child) = child_of(&children, &program) {
-                        // SAFETY: the children are live until the end of this function, and nothing borrows this one.
-                        unsafe { Child::write(child, &bytes) };
+                        child.write(&bytes);
                     }
                 }
                 Command::Kill(program) => {
                     if let Some(child) = child_of(&children, &program) {
-                        // SAFETY: as above.
-                        unsafe { Child::kill(child) };
+                        child.kill();
                     }
                 }
                 Command::Stop => {
                     is_stopping = true;
-                    for &child in &children {
-                        // SAFETY: as above.
-                        unsafe { Child::kill(child) };
+                    for child in &children {
+                        child.kill();
                     }
                 }
             }
         }
-        // SAFETY: as above.
-        if is_stopping && children.iter().all(|&it| unsafe { (*it).has_exited }) {
+        if is_stopping && children.iter().all(|it| it.has_exited.get()) {
             break;
         }
         // Returns after an event, or after `wakeup`, even if that was called before this.
-        // SAFETY: `mini` is this thread's loop, which is freed below.
-        unsafe { (*mini).tick_once(core::ptr::null_mut()) };
+        mini.tick_once(core::ptr::null_mut());
     }
     inbox.lock().event_loop = None;
-    for &child in &children {
+    for child in &children {
         // The loop no longer watches the process.
-        // SAFETY: as above.
-        unsafe { (*child).process = None };
+        // SAFETY: nothing borrows the child now, and this writes to no other field of it.
+        unsafe { (*child.as_ptr()).process = None };
     }
-    // The children outlive the loop, because on Windows a pipe's close callback runs when the loop is closed.
+    // The children outlive the loop, because on Windows a write's callback runs when the loop is closed.
     // SAFETY: every process has exited, `on_process_exit` has closed its pipes, and no other thread has the loop.
+    // Neither `mini` nor `event_loop` is used from here on.
     unsafe { mini_event_loop::free_global() };
-    for child in children {
-        // SAFETY: allocated in `Child::adopt`, and nothing refers to it anymore.
-        unsafe { bun_core::heap::destroy(child) };
-    }
+    drop(children);
 }
 
 /// A running program. Only the I/O thread uses it. The pipes and the process call back into it while one of its
-/// functions runs, so all of them get a raw pointer and borrow one field at a time.
+/// functions runs, so it's only ever borrowed shared.
 pub(crate) struct Child {
     program: Arc<Program>,
     event_loop: EventLoopHandle,
+    /// `None` once the loop no longer watches the process.
     process: Option<ProcessHandle>,
-    stdin: StreamingWriter<Child>,
+    stdin: StreamingWriter,
     stdout: BufferedReader,
-    has_exited: bool,
-}
-
-#[cfg(not(windows))]
-pub(crate) type Poll = StreamingWriter<Child>;
-
-/// A pipe between this process and a new one.
-fn pipe() -> Stdio {
-    #[cfg(unix)]
-    return Stdio::Buffer;
-    #[cfg(windows)]
-    return Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-        uv::Pipe,
-    >())));
+    has_exited: Cell<bool>,
 }
 
 impl Child {
     /// Starts `program`. If that fails, its connection ends with the reason, and there's no child.
-    fn start(program: Arc<Program>, event_loop: EventLoopHandle) -> Option<*mut Child> {
+    fn start(program: Arc<Program>, event_loop: EventLoopHandle) -> Option<AliasableBox<Child>> {
         match Child::spawn(&program, event_loop) {
             Ok(spawned) => Some(Child::adopt(program, event_loop, spawned)),
             Err(detail) => {
@@ -344,15 +325,15 @@ impl Child {
             return Err([b"fork/exec ", name, why].concat());
         };
         let has_nul = || [b"fork/exec ", name, b": invalid argument"].concat();
-        let mut argv = vec![executable.as_cstr().to_owned()];
+        let mut arguments = Vec::new();
         for argument in program.argv.iter().skip(1) {
-            argv.push(CString::new(&argument[..]).map_err(|_| has_nul())?);
+            arguments.push(CString::new(&argument[..]).map_err(|_| has_nul())?);
         }
-        let argv: Vec<&CStr> = argv.iter().map(CString::as_c_str).collect();
-        #[cfg_attr(unix, expect(unused_mut))]
-        let mut options = SpawnOptions {
-            stdin: pipe(),
-            stdout: pipe(),
+        let arguments = arguments.iter().map(|it| ZStr::from_cstr(it));
+        let argv: Vec<&ZStr> = core::iter::once(executable).chain(arguments).collect();
+        let options = SpawnOptions {
+            stdin: Stdio::Buffer,
+            stdout: Stdio::Buffer,
             stderr: Stdio::Inherit,
             cwd: Box::from(directory),
             #[cfg(windows)]
@@ -368,121 +349,88 @@ impl Child {
         #[cfg(unix)]
         let _ = event_loop;
         let describe = |why: &[u8]| [b"fork/exec ", executable.as_bytes(), b": ", why].concat();
-        match bun_spawn::spawn_process_cstr(&options, &argv, SpawnEnv::Inherit) {
+        match bun_spawn::spawn_process_z(&options, &argv, None) {
             Ok(Ok(spawned)) => Ok(spawned),
-            failed => {
-                // The pipes are still this function's.
-                #[cfg(windows)]
-                options.deinit();
-                Err(match failed {
-                    Ok(Err(error)) => describe(error.name()),
-                    Err(error) => describe(error.name().as_bytes()),
-                    Ok(Ok(_)) => Vec::new(),
-                })
-            }
+            Ok(Err(error)) => Err(describe(error.name())),
+            Err(error) => Err(describe(error.name().as_bytes())),
         }
     }
 
     /// Watches the new process and its pipes.
-    #[cfg_attr(unix, expect(unused_mut))]
     fn adopt(
         program: Arc<Program>,
         event_loop: EventLoopHandle,
         mut spawned: bun_spawn::SpawnProcessResult,
-    ) -> *mut Child {
-        let this = bun_core::heap::into_raw(Box::new(Child {
-            program,
-            event_loop,
-            process: None,
-            stdin: StreamingWriter::default(),
-            stdout: BufferedReader::init::<Child>(),
-            has_exited: false,
-        }));
-        #[cfg(unix)]
-        let (stdin, stdout) = (spawned.stdin, spawned.stdout);
-        #[cfg(windows)]
+    ) -> AliasableBox<Child> {
         let (stdin, stdout) = (spawned.stdin.take(), spawned.stdout.take());
         let process = spawned.to_process_handle(event_loop);
-        // SAFETY: `this` was allocated above, and is freed after the process has exited. Each statement borrows one
-        // field, and none of these calls runs a callback that touches the same field.
-        let started = unsafe {
-            (*this).stdin.set_parent(this);
-            (*this).stdout.set_parent(this.cast());
-            let started = Child::start_pipes(this, stdin, stdout);
-            process
-                .process_mut()
-                .set_exit_handler(bun_spawn::ProcessExit::new(
-                    bun_spawn::ProcessExitKind::ContentMapper,
-                    this,
-                ));
-            started
-        };
-        // The exit handler borrows the field, so use the allocation instead.
-        let allocation = process.as_ptr();
-        // SAFETY: as above. The field's handle keeps the process alive.
-        let process = unsafe {
-            (*this).process = Some(process);
-            &mut *allocation
-        };
-        if let Err(error) = process.watch_or_reap()
-            && !process.has_exited()
+        // The exit handler runs under `watch_or_reap` and `on_exit`, so they don't go through the child's handle.
+        let watched = process.this_ptr();
+        let child = AliasableBox::new(Child {
+            program,
+            event_loop,
+            process: Some(process),
+            stdin: StreamingWriter::default(),
+            stdout: BufferedReader::init(),
+            has_exited: Cell::new(false),
+        });
+        let this = child.as_ptr();
+        // SAFETY: `this` is the allocation that holds the writer and the reader. It stays where it is, and is only
+        // borrowed shared, until it's freed, which is after the process has exited and the loop is closed.
+        unsafe {
+            let writer = Owner::new(PollTag::ContentMapperWriter, this.cast());
+            child.stdin.set_owner(writer);
+            let reader = Owner::new(PollTag::ContentMapperReader, this.cast());
+            child.stdout.set_owner(reader);
+        }
+        let started = child.start_pipes(stdin, stdout);
+        // SAFETY: as above. The child's handle on the process is dropped before the child is.
+        watched.set_exit_handler(unsafe { ProcessExit::new(ProcessExitKind::ContentMapper, this) });
+        if let Err(error) = Process::watch_or_reap(watched)
+            && !watched.has_exited()
         {
-            process.on_exit(Status::Err(error), &bun_core::ffi::zeroed::<Rusage>());
+            let rusage = bun_core::ffi::zeroed::<Rusage>();
+            Process::on_exit(watched, Status::Err(error), &rusage);
         }
         if let Err(error) = started {
             let detail = [b"pipe: ", error.name()].concat();
-            // SAFETY: as above.
-            unsafe {
-                Child::connection(this).end(CallError::NotStarted { detail });
-                Child::kill(this);
-            }
+            child.connection().end(CallError::NotStarted { detail });
+            child.kill();
         }
-        this
+        child
     }
 
-    /// # Safety
-    /// `this` is live, and nothing borrows `stdin` or `stdout`.
     #[cfg(unix)]
-    unsafe fn start_pipes(
-        this: *mut Child,
-        stdin: Option<bun_sys::Fd>,
-        stdout: Option<bun_sys::Fd>,
+    fn start_pipes(
+        &self,
+        stdin: Option<bun_sys::File>,
+        stdout: Option<bun_sys::File>,
     ) -> bun_sys::Result<()> {
-        use bun_sys::FdExt as _;
         let (Some(stdin), Some(stdout)) = (stdin, stdout) else {
             return Err(bun_sys::Error::from_code(
                 bun_sys::E::EBADF,
                 bun_sys::Tag::pipe,
             ));
         };
-        let _ = bun_sys::set_nonblocking(stdin);
-        let _ = bun_sys::set_nonblocking(stdout);
-        // SAFETY: the caller's contract.
-        let (writer, reader) = unsafe { (&mut (*this).stdin, &mut (*this).stdout) };
-        if let Err(error) = writer.start(stdin, true) {
-            // Neither took its descriptor.
-            stdin.close();
-            stdout.close();
-            return Err(error);
+        let _ = bun_sys::set_nonblocking(stdin.fd());
+        let _ = bun_sys::set_nonblocking(stdout.fd());
+        let event_loop = self.event_loop.as_event_loop_ctx();
+        self.stdin.start(self, event_loop, stdin.fd(), true)?;
+        // The writer closes it from now on.
+        let _ = stdin.into_raw();
+        self.stdin.set_poll_flag(FilePollFlag::Socket);
+        self.stdout
+            .update_flags(|flags| flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
+        // The reader takes its descriptor, whether or not it can wait for it.
+        match self.stdout.start(event_loop, stdout.into_raw(), true)? {
+            ReadResult::Err(error) => Err(error),
+            ReadResult::Pending | ReadResult::Done => Ok(()),
         }
-        if let Some(poll) = writer.handle.get_poll() {
-            poll.set_flag(FilePollFlag::Socket);
-        }
-        reader
-            .flags
-            .insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
-        reader.start(stdout, true)?;
-        if let Some(poll) = reader.handle.get_poll() {
-            poll.set_flag(FilePollFlag::Socket);
-        }
-        Ok(())
     }
 
-    /// # Safety
-    /// `this` is live, and nothing borrows `stdin` or `stdout`.
     #[cfg(windows)]
-    unsafe fn start_pipes(
-        this: *mut Child,
+    fn start_pipes(
+        &self,
         stdin: bun_spawn::SpawnedStdio,
         stdout: bun_spawn::SpawnedStdio,
     ) -> bun_sys::Result<()> {
@@ -493,143 +441,104 @@ impl Child {
                 bun_sys::Tag::pipe,
             ));
         };
-        // SAFETY: the caller's contract. The writer owns the pipe from here on.
-        unsafe {
-            (*this).stdin.set_pipe(bun_core::heap::into_raw(stdin));
-            (*this).stdout.set_source(bun_io::Source::Pipe(stdout));
-            (*this).stdin.start_with_current_pipe()?;
-            (*this).stdout.start_with_current_pipe()
-        }
+        self.stdin.start_with_pipe(self, stdin);
+        self.stdout.start_with_pipe(stdout)
     }
 
-    /// # Safety
-    /// `this` is live for `'a`.
-    unsafe fn connection<'a>(this: *mut Child) -> &'a Connection {
-        // SAFETY: the caller's contract. Nothing ever borrows this field mutably.
-        let program: &Arc<Program> = unsafe { &(*this).program };
-        &program.connection
+    fn connection(&self) -> &Connection {
+        &self.program.connection
     }
 
-    /// # Safety
-    /// `this` is live, and nothing borrows `stdin`.
-    unsafe fn write(this: *mut Child, bytes: &[u8]) {
+    fn write(&self, bytes: &[u8]) {
         // What the pipe doesn't accept now is buffered, and written when the loop says the pipe has room.
-        // SAFETY: the caller's contract.
-        let result = unsafe { (*this).stdin.write(bytes) };
+        let result = self.stdin.write(self, bytes);
         if matches!(result, WriteResult::Err(_) | WriteResult::Done(_)) {
-            // SAFETY: the caller's contract.
-            unsafe { Child::kill(this) };
+            self.kill();
         }
     }
 
     /// Every failure ends here: the process is killed, and `on_process_exit` then ends the connection, which wakes
     /// every thread that's waiting for a response.
-    ///
-    /// # Safety
-    /// `this` is live.
-    unsafe fn kill(this: *mut Child) {
-        // SAFETY: the caller's contract.
-        if let Some(process) = unsafe { (*this).process.as_ref() }
+    fn kill(&self) {
+        if let Some(process) = &self.process
             && !process.has_exited()
         {
             let _ = process.kill(bun_sys::SignalCode::SIGKILL.0);
         }
     }
 
-    fn on_write(_: *mut Child, _: usize, _: WriteStatus) {}
+    pub(crate) fn on_writer_io(&self, event: IoEvent) {
+        self.stdin.on_io(self, event);
+    }
 
-    #[cfg(windows)]
-    fn on_ready(_: *mut Child) {}
+    pub(crate) fn on_io(&self, event: IoEvent) {
+        self.read(Some(event));
+    }
 
-    fn on_close(_: *mut Child) {}
-
-    /// The program closed its standard input, or exited.
-    fn on_write_error(this: *mut Child, _: bun_sys::Error) {
-        // SAFETY: the writer's parent is live.
-        unsafe { Child::kill(this) };
+    fn read(&self, event: Option<IoEvent>) {
+        let event_loop = self.event_loop.as_event_loop_ctx();
+        let reader = &self.stdout;
+        match reader.read_chunks(event_loop, event, |chunk, _| self.on_read_chunk(&chunk)) {
+            ReadResult::Pending => {}
+            // The program closed its standard output, so it can't answer anymore.
+            ReadResult::Done | ReadResult::Err(_) => self.kill(),
+        }
     }
 
     /// Returns false to stop reading.
-    fn on_read_chunk(this: *mut Child, chunk: &[u8], _: ReadState) -> bool {
-        // SAFETY: the reader's parent is live.
-        let connection = unsafe { Child::connection(this) };
-        match receive_from_content_mapper(connection, chunk) {
+    fn on_read_chunk(&self, chunk: &[u8]) -> bool {
+        match receive_from_content_mapper(self.connection(), chunk) {
             Ok(replies) if replies.is_empty() => true,
             Ok(replies) => {
-                // SAFETY: as above. The reader runs this callback, so nothing borrows `stdin`.
-                unsafe { Child::write(this, &replies) };
+                self.write(&replies);
                 true
             }
             // The program doesn't follow the protocol. The connection has ended.
             Err(_) => {
-                // SAFETY: as above.
-                unsafe { Child::kill(this) };
+                self.kill();
                 false
             }
         }
     }
 
-    /// The program closed its standard output, so it can't answer anymore.
-    fn on_reader_done(this: *mut Child) {
-        // SAFETY: the reader's parent is live.
-        unsafe { Child::kill(this) };
+    fn on_process_exit(&self, status: &Status) {
+        self.has_exited.set(true);
+        // Read the responses that the pipe still has. Then close it, because a process that the program started
+        // may keep the other end open forever.
+        #[cfg(unix)]
+        if !self.stdout.is_done() && self.stdout.get_fd() != bun_sys::Fd::INVALID {
+            self.read(None);
+        }
+        if !self.stdout.is_done() {
+            self.stdout.deinit();
+        }
+        self.stdin.end(self);
+        // `ProcessState.ExitCode`
+        let code = match status {
+            Status::Exited(exited) => i32::from(exited.code),
+            _ => -1,
+        };
+        self.connection().end(CallError::Exited { code });
+    }
+}
+
+impl WriteHandler for Child {
+    fn on_write(&self, _: usize, _: WriteStatus) {}
+
+    /// The program closed its standard input, or exited.
+    fn on_error(&self, _: bun_sys::Error) {
+        self.kill();
     }
 
-    /// # Safety
-    /// `this` is live, and nothing borrows `stdin` or `stdout`.
-    unsafe fn on_process_exit(this: *mut Child, status: &Status) {
-        // SAFETY: the caller's contract.
-        unsafe {
-            (*this).has_exited = true;
-            // Read the responses that the pipe still has. Then close it, because a process that the program started
-            // may keep the other end open forever.
-            let reader = &raw mut (*this).stdout;
-            #[cfg(unix)]
-            if !(*reader).is_done() && (*reader).get_fd() != bun_sys::Fd::INVALID {
-                BufferedReader::read(reader);
-            }
-            if !(*reader).is_done() {
-                (*reader).deinit();
-            }
-            (*this).stdin.end();
-            // `ProcessState.ExitCode`
-            let code = match status {
-                Status::Exited(exited) => i32::from(exited.code),
-                _ => -1,
-            };
-            Child::connection(this).end(CallError::Exited { code });
-        }
-    }
+    fn on_close(&self) {}
+
+    /// The child outlives the loop, and so every write.
+    #[cfg(windows)]
+    fn set_has_inflight_write(&self, _: bool) {}
 }
 
 bun_spawn::link_impl_ProcessExit! {
     ContentMapper for Child => |this| {
-        on_process_exit(_process, status, _rusage) => Child::on_process_exit(this, &status),
+        on_process_exit(status, _rusage) => (*this).on_process_exit(&status),
     }
-}
-
-bun_io::impl_buffered_reader_parent! {
-    ContentMapper for Child;
-    feature = Check;
-    has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, has_more| Child::on_read_chunk(this, &chunk, has_more);
-    on_reader_done  = |this| Child::on_reader_done(this);
-    on_reader_error = |this, _error| Child::on_reader_done(this);
-    loop_           = |this| (*this).event_loop.native_loop();
-    event_loop      = |this| (*this).event_loop.as_event_loop_ctx();
-}
-
-bun_io::impl_streaming_writer_parent! {
-    Child;
-    poll_tag   = bun_io::posix_event_loop::poll_tag::CONTENT_MAPPER_WRITER,
-    borrow     = ptr,
-    on_write   = on_write,
-    on_error   = on_write_error,
-    on_ready   = on_ready,
-    on_close   = on_close,
-    event_loop = |this| (*this).event_loop.as_event_loop_ctx(),
-    uws_loop   = |this| (*this).event_loop.r#loop(),
-    uv_loop    = |this| (*this).event_loop.uv_loop(),
-    ref_       = |_this| (),
-    deref      = |_this| (),
 }

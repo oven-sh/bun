@@ -6,9 +6,10 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_ast::ExportsKind;
 use bun_ast::Source;
 use bun_core::{FeatureFlags, env_var};
-use bun_core::{String as BunString, StringView, ZStr};
+use bun_core::{String as BunString, ZStr};
 use bun_js_parser::lower::defer_requires::has_react_compiler;
 use bun_js_parser::{CacheLookup, ParsedForCache, ParserOptions};
+use bun_js_printer::Printed;
 use bun_js_printer::analyze_transpiled_module::ModuleInfo;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
@@ -89,7 +90,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
 /// Version 52: Every directive is printed: a `"use strict"` in a function body too, and the
 /// prologue of the file first.
-const EXPECTED_VERSION: u32 = 52;
+/// Version 53: A regex literal is printed as it is written, and an entry is LATIN1 or UTF16, the width of its text.
+const EXPECTED_VERSION: u32 = 53;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -127,7 +129,7 @@ pub struct Encoding(u8);
 
 impl Encoding {
     pub(crate) const NONE: Encoding = Encoding(0);
-    pub(crate) const UTF8: Encoding = Encoding(1);
+    // 1 was UTF8, before version 53.
     pub(crate) const UTF16: Encoding = Encoding(2);
     pub(crate) const LATIN1: Encoding = Encoding(3);
 }
@@ -251,7 +253,7 @@ impl Metadata {
 
         self.output_encoding = Encoding(output_encoding_raw);
         match self.output_encoding {
-            Encoding::UTF8 | Encoding::UTF16 | Encoding::LATIN1 => {}
+            Encoding::UTF16 | Encoding::LATIN1 => {}
             // Invalid encoding
             _ => return Err(crate::CrateError::UnknownEncoding),
         }
@@ -263,6 +265,7 @@ impl Metadata {
 #[derive(Default)]
 pub struct Entry {
     pub metadata: Metadata,
+    /// The bytes `put` was given, in their width: 8-bit for `LATIN1`, 16-bit for `UTF16`.
     pub output_code: BunString,
     pub sourcemap: Box<[u8]>,
     pub esm_record: Box<[u8]>,
@@ -277,7 +280,7 @@ impl Entry {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
-        output_code: &BunString,
+        output_code: Printed<'_>,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.save");
@@ -307,8 +310,6 @@ impl Entry {
                     },
                     output_encoding: if output_code.is_utf16() {
                         Encoding::UTF16
-                    } else if output_code.is_utf8() {
-                        Encoding::UTF8
                     } else {
                         Encoding::LATIN1
                     },
@@ -401,51 +402,6 @@ impl Entry {
             BunString::EMPTY
         } else {
             match self.metadata.output_encoding {
-                Encoding::UTF8 => {
-                    // PERF: a per-call arena (`output_code_allocator`) here
-                    // would let the ~1.2 MB scratch buffer
-                    // be bump-freed with the parse arena. Instead this
-                    // `pread_box`'s into a `Box<[u8]>`
-                    // on the worker thread's mimalloc heap, which — even after
-                    // the consumer's `String::clone_utf8` + drop — leaves the
-                    // segment resident in that thread heap (build/create-vue
-                    // bench regression).
-                    //
-                    // Instead, pread straight into a WTF-allocated Latin-1
-                    // buffer (`WTF::StringImpl::tryCreateUninitialized` →
-                    // bmalloc, not the worker mimalloc heap). Transpiler
-                    // output is overwhelmingly pure ASCII, in which case the
-                    // buffer *is* the final `BunString` and we skip the
-                    // 1.2 MB `clone_utf8` memcpy the consumer used to do at
-                    // RuntimeTranspilerStore.rs / jsc_hooks.rs. Only if the
-                    // bytes contain non-ASCII UTF-8 do we fall back to
-                    // `clone_utf8` (transcode → UTF-16) and deref the scratch.
-                    let len = self.metadata.output_byte_length as usize;
-                    let (scratch, bytes) = BunString::create_uninitialized_latin1(len);
-                    // `(dead, &mut [])` on WTF allocation failure; `len > 0`
-                    // (handled above), so an empty slice means OOM.
-                    if bytes.is_empty() {
-                        return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
-                    }
-                    let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
-                    if read_bytes as u64 != self.metadata.output_byte_length {
-                        return Err(crate::CrateError::MissingData);
-                    }
-
-                    if self.metadata.output_hash != 0 && hash(bytes) != self.metadata.output_hash {
-                        return Err(crate::CrateError::InvalidHash);
-                    }
-
-                    if bun_core::strings::is_all_ascii(bytes) {
-                        // Fast path: ASCII ⊂ Latin-1, so `scratch` is already
-                        // the correct `BunString`.
-                        scratch
-                    } else {
-                        // Rare path: real multi-byte UTF-8. Transcode into a
-                        // fresh WTF string; the Latin-1 scratch drops.
-                        BunString::clone_utf8(bytes)
-                    }
-                }
                 Encoding::LATIN1 => {
                     let len = self.metadata.output_byte_length as usize;
                     let (latin1, bytes) = BunString::create_uninitialized_latin1(len);
@@ -784,7 +740,7 @@ impl RuntimeTranspilerCache {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
-        source_code: &BunString,
+        output_code: Printed<'_>,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
@@ -817,7 +773,7 @@ impl RuntimeTranspilerCache {
             features_hash,
             sourcemap,
             esm_record,
-            source_code,
+            output_code,
             exports_kind,
         )
     }
@@ -840,7 +796,7 @@ impl RuntimeTranspilerCache {
 
     pub fn put(
         &self,
-        output_code: &[u8],
+        output_code: Printed<'_>,
         sourcemap: &[u8],
         module_info: Option<&ModuleInfo>,
     ) -> bun_js_printer::Result<()> {
@@ -871,7 +827,7 @@ impl RuntimeTranspilerCache {
             },
             sourcemap,
             &esm_record,
-            &StringView::ascii(output_code),
+            output_code,
             parsed.exports_kind,
         );
         if let Err(err) = result {

@@ -268,11 +268,6 @@ impl Generated {
         optimize: bool,
         external_strings: Option<NonNull<EncoderStringTable>>,
     ) -> Option<Self> {
-        let f = match format {
-            Format::Esm => generateCachedModuleByteCodeFromSourceCode,
-            Format::Cjs => generateCachedCommonJSProgramByteCodeFromSourceCode,
-            _ => return None,
-        };
         // An executable stores the chunk as `encode_text_module` writes it (Latin-1, or UTF-16 when non-ASCII) and
         // aliases it at runtime; a `.jsc` next to a bundle is keyed on the file's bytes read as Latin-1.
         let source = match external_strings.and_then(|_| bun_core::strings::first_non_ascii(input))
@@ -280,11 +275,35 @@ impl Generated {
             Some(first_non_ascii) => utf16_source(input, first_non_ascii as usize),
             None => BunString::clone_latin1(input),
         };
+        Self::from_string(
+            format,
+            &source,
+            source_provider_url,
+            depth,
+            optimize,
+            external_strings,
+        )
+    }
+
+    /// JSC accepts the bytecode only for a source string equal to `source`.
+    fn from_string(
+        format: Format,
+        source: &BunString,
+        source_provider_url: &BunString,
+        depth: u32,
+        optimize: bool,
+        external_strings: Option<NonNull<EncoderStringTable>>,
+    ) -> Option<Self> {
+        let f = match format {
+            Format::Esm => generateCachedModuleByteCodeFromSourceCode,
+            Format::Cjs => generateCachedCommonJSProgramByteCodeFromSourceCode,
+            _ => return None,
+        };
         // SAFETY: `source` is live for the call.
         Self::new(|bytes, size, handle| unsafe {
             f(
                 source_provider_url,
-                &source,
+                source,
                 depth,
                 optimize,
                 bytes,
@@ -329,6 +348,20 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
 /// For a VM of this process. `depth`: of the functions that are compiled.
 pub fn generate(format: Format, source: &[u8], url: &BunString, depth: u32) -> Option<Box<[u8]>> {
     __bun_jsc_generate_cached_bytecode(format, source, url, depth, false, None)
+}
+
+/// [`__bun_jsc_generate_cached_bytecode`] of the string the module loader hands to JSC, which can be 16-bit.
+pub(crate) fn generate_for_string(
+    format: Format,
+    source: &BunString,
+    source_provider_url: &BunString,
+    depth: u32,
+    optimize: bool,
+) -> Option<Box<[u8]>> {
+    crate::initialize(crate::InitializeOptions::default());
+    let bytecode =
+        Generated::from_string(format, source, source_provider_url, depth, optimize, None)?;
+    Some(Box::from(&*bytecode))
 }
 
 /// A `JSC::BytecodeLinkEncoder` on the calling thread's bytecode VM; every later call must come from the same thread.

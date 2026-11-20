@@ -16,7 +16,7 @@ use bun_collections::HiveArrayFallback;
 use bun_core::{MutableString, String, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::JsKeepAlive;
-use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
+use bun_js_printer::{self as js_printer, RuntimePrinter};
 use bun_paths;
 use bun_ptr::BackRef;
 use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
@@ -47,12 +47,8 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // Debug source dumping (debug-only helpers; no-ops in release)
 // ──────────────────────────────────────────────────────────────────────────
 
-fn dump_source(maps: &SavedSourceMap, specifier: &[u8], printer: &BufferPrinter) {
-    dump_source_string(maps, specifier, printer.ctx.get_written());
-}
-
-fn dump_source_string(maps: &SavedSourceMap, specifier: &[u8], written: &[u8]) {
-    if let Err(e) = dump_source_string_failiable(maps, specifier, written) {
+fn dump_source_string(maps: &SavedSourceMap, specifier: &[u8], source_code: &String) {
+    if let Err(e) = dump_source_string_failiable(maps, specifier, source_code) {
         bun_core::debug_warn!("Failed to dump source string: {}", e.name());
     }
 }
@@ -65,7 +61,7 @@ static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
 fn dump_source_string_failiable(
     maps: &SavedSourceMap,
     specifier: &[u8],
-    written: &[u8],
+    source_code: &String,
 ) -> crate::CrateResult<()> {
     if !cfg!(debug_assertions) {
         return Ok(());
@@ -76,6 +72,9 @@ fn dump_source_string_failiable(
     {
         return Ok(());
     }
+
+    // The file is UTF-8 whether the module is Latin-1 or UTF-16.
+    let written = source_code.to_utf8();
 
     let mut holder = BUN_DEBUG_HOLDER.lock();
 
@@ -109,7 +108,7 @@ fn dump_source_string_failiable(
 
         let base = bun_paths::basename(specifier);
         let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
-        if let Err(e) = File::write_file(parent.fd, base_z, written) {
+        if let Err(e) = File::write_file(parent.fd, base_z, &written) {
             bun_core::debug_warn!(
                 "Failed to dump source string: writeFile {}",
                 crate::CrateError::from(e).name()
@@ -160,7 +159,7 @@ fn dump_source_string_failiable(
     } else {
         let base = bun_paths::basename(specifier);
         let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
-        let _ = File::write_file(dir.fd, base_z, written);
+        let _ = File::write_file(dir.fd, base_z, &written);
     }
 
     Ok(())
@@ -438,7 +437,7 @@ unsafe impl unbounded_queue::Linked for TranspilerJob {
 //
 // Not `thread_local!`: its `LocalKey` wrapper showed up on the async-import hot path. The buffer is not freed at thread exit.
 #[thread_local]
-static SOURCE_CODE_PRINTER: Cell<Option<Box<BufferPrinter>>> = Cell::new(None);
+static SOURCE_CODE_PRINTER: Cell<Option<Box<RuntimePrinter>>> = Cell::new(None);
 
 /// `module_loader`: the `JSModuleLoader` that fetched, or empty for the global object's.
 fn fulfill(
@@ -808,7 +807,7 @@ impl TranspilerJob {
             );
 
             if bun_core::env::DUMP_SOURCE {
-                dump_source_string(source_mappings, specifier, entry.output_code.byte_slice());
+                dump_source_string(source_mappings, specifier, &entry.output_code);
             }
 
             let module_info = if use_isolation_source_provider_cache
@@ -876,19 +875,21 @@ impl TranspilerJob {
             }
         }
 
-        let mut source_code_printer =
-            scopeguard::guard(SOURCE_CODE_PRINTER.take().unwrap_or_default(), |printer| {
+        let mut source_code_printer = scopeguard::guard(
+            SOURCE_CODE_PRINTER
+                .take()
+                .unwrap_or_else(|| Box::new(RuntimePrinter::new())),
+            |printer| {
                 SOURCE_CODE_PRINTER.set(Some(printer));
-            });
+            },
+        );
 
-        source_code_printer.ctx.reset();
+        source_code_printer.reset();
 
         // Cap buffer size to prevent unbounded growth
         const MAX_BUFFER_CAP: usize = 512 * 1024;
-        if source_code_printer.ctx.buffer.list.capacity() > MAX_BUFFER_CAP {
-            // printer.ctx.buffer.deinit() → Drop
-            let writer = BufferWriter::init();
-            **source_code_printer = BufferPrinter::init(writer);
+        if source_code_printer.capacity() > MAX_BUFFER_CAP {
+            **source_code_printer = RuntimePrinter::new();
         }
 
         let printed_ast = PrintedAst::new(&parse_result.ast);
@@ -937,20 +938,15 @@ impl TranspilerJob {
             return;
         }
 
-        if bun_core::env::DUMP_SOURCE {
-            dump_source(source_mappings, specifier, &source_code_printer);
-        }
-
         let source_code = 'brk: {
-            let written = source_code_printer.ctx.get_written();
+            let printed = source_code_printer.printed();
+            let buffer_len = printed.byte_slice().len();
 
-            let result = String::clone_latin1(written);
+            let result = printed.to_string();
 
             // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
-            if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {
-                // printer.ctx.buffer.deinit() → Drop
-                let writer = BufferWriter::init();
-                **source_code_printer = BufferPrinter::init(writer);
+            if buffer_len > 1024 * 1024 * 2 || unsafe { (*vm).smol } {
+                **source_code_printer = RuntimePrinter::new();
             }
             // else: the thread-local keeps the buffer.
 
@@ -966,6 +962,11 @@ impl TranspilerJob {
 
             break 'brk result;
         };
+
+        if bun_core::env::DUMP_SOURCE {
+            dump_source_string(source_mappings, specifier, &source_code);
+        }
+
         this.resolved_source = ResolvedSource {
             module_info: module_info.map(|mi| {
                 use analyze_transpiled_module::ModuleInfoExt;

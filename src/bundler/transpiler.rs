@@ -2041,7 +2041,7 @@ pub use js_printer::Format as PrintFormat;
 // PERF: this whole `print*` chain was generic over `W: WriterTrait`, but every
 // call site in the tree (jsc_hooks.rs, RuntimeTranspilerStore.rs,
 // JSTranspiler.rs, and the in-crate `transform()` path) passes the same concrete
-// `&mut BufferPrinter`. Leaving the public entry points generic forced each
+// `BufferPrinter`, bare or in a `RuntimePrinter`. Generic public entry points forced each
 // downstream crate (bun_runtime / bun_jsc / bun_install / bun_bundler) to stamp
 // out its own copy of the 109-fn `Printer<W,A,B,C,D>` recursion tree —
 // `llvm-nm --print-size` showed `bun_js_printer` .text at 1,367 KB,
@@ -2056,7 +2056,7 @@ impl<'a> Transpiler<'a> {
         print_arena: &Arena,
         mut ast: bun_ast::Ast,
         source: &bun_ast::Source,
-        writer: &mut js_printer::BufferPrinter,
+        writer: js_printer::AstWriter<'_>,
         format: js_printer::Format,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
@@ -2156,7 +2156,7 @@ impl<'a> Transpiler<'a> {
     fn print_esm_cold<const ENABLE_SOURCE_MAP: bool>(
         &self,
         print_arena: &Arena,
-        writer: &mut js_printer::BufferPrinter,
+        writer: js_printer::AstWriter<'_>,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
@@ -2175,7 +2175,7 @@ impl<'a> Transpiler<'a> {
             mangled_props: None,
             ..Default::default()
         };
-        js_printer::print_ast::<false, ENABLE_SOURCE_MAP>(
+        js_printer::print_ast_into::<false, ENABLE_SOURCE_MAP>(
             writer,
             print_arena,
             ast,
@@ -2196,7 +2196,7 @@ impl<'a> Transpiler<'a> {
     fn print_ast_esm_ascii_not_bun_cold<const ENABLE_SOURCE_MAP: bool>(
         &self,
         print_arena: &Arena,
-        writer: &mut js_printer::BufferPrinter,
+        writer: js_printer::AstWriter<'_>,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
@@ -2222,7 +2222,7 @@ impl<'a> Transpiler<'a> {
     fn print_ast_esm_ascii<const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
         &self,
         print_arena: &Arena,
-        writer: &mut js_printer::BufferPrinter,
+        writer: js_printer::AstWriter<'_>,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
@@ -2260,7 +2260,7 @@ impl<'a> Transpiler<'a> {
             target: to_bundle_enums_target(self.options.target),
             ..Default::default()
         };
-        js_printer::print_ast::<IS_BUN, ENABLE_SOURCE_MAP>(
+        js_printer::print_ast_into::<IS_BUN, ENABLE_SOURCE_MAP>(
             writer,
             print_arena,
             ast,
@@ -2292,14 +2292,14 @@ impl<'a> Transpiler<'a> {
             print_arena,
             result.ast,
             &result.source,
-            writer,
+            writer.into(),
             format,
             None,
             None,
         )
     }
 
-    // PERF: `#[inline(never)]` + concrete `&mut BufferPrinter` — see `print`
+    // PERF: `#[inline(never)]` + concrete `&mut RuntimePrinter` — see `print`
     // above. Keeping it non-generic collapses the four cross-crate
     // copies of `print_expr<…>` (244 KB → ~61 KB).
     /// `print_arena` is the same per-call arena that built `result.ast` —
@@ -2309,7 +2309,7 @@ impl<'a> Transpiler<'a> {
         &self,
         print_arena: &Arena,
         result: ParseResult,
-        writer: &mut js_printer::BufferPrinter,
+        writer: &mut js_printer::RuntimePrinter,
         format: js_printer::Format,
         handler: js_printer::SourceMapHandler<'_>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
@@ -2324,7 +2324,7 @@ impl<'a> Transpiler<'a> {
                 print_arena,
                 result.ast,
                 &result.source,
-                writer,
+                writer.into(),
                 format,
                 Some(handler),
                 module_info,
@@ -2334,7 +2334,7 @@ impl<'a> Transpiler<'a> {
             print_arena,
             result.ast,
             &result.source,
-            writer,
+            writer.into(),
             format,
             Some(handler),
             module_info,

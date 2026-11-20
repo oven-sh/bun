@@ -11,7 +11,7 @@ use crate::engine::{
 use crate::ir::generated::{BlockRole, RegExpFlags};
 use crate::ir::{StringId, TypeId, TypeTable, ValueId};
 use crate::lower::call::Arguments;
-use crate::lower::context::regexp_pattern_as_printed;
+use crate::lower::context::{can_ask_engine_about_pattern, regexp_pattern_as_printed};
 use crate::lower::{FileLowering, FunctionLowering};
 
 const TOO_MANY_NESTED_DISJUNCTIONS: &[u8] =
@@ -119,8 +119,12 @@ pub(super) fn lower_regexp_literal(
     let written = lowering.file.queries.atom_bytes(pattern);
     let text = match lowering.file.is_in_known_evaluation(literal) {
         true => Cow::Borrowed(written),
-        false => regexp_pattern_as_printed(written),
+        false => regexp_pattern_as_printed(written, letters),
     };
+    if !can_ask_engine_about_pattern(&text) {
+        let pattern = lowering.file.intern_bytes(&text);
+        return emit_regexp_construction(lowering, pattern, letters);
+    }
     let creation = classify_regexp_literal(&text, letters);
     if creation == RegExpLiteralCreation::NeverBuilt
         && let Some(message) = describe_regexp_construction_error(&text, letters)
@@ -268,10 +272,13 @@ fn ends_in_array_literal(file: &FileLowering<'_, '_, '_, '_>, iterable: ExprId) 
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use super::regexp_flags;
     use crate::compile::testing::lower_program_replacing;
-    use crate::ir::Opcode;
     use crate::ir::generated::RegExpFlags;
+    use crate::ir::{Opcode, StringId};
+    use crate::lower::context::{can_ask_engine_about_pattern, regexp_pattern_as_printed};
 
     fn count_closures_that_wait(program: &str, function: &str) -> usize {
         let lowered = lower_program_replacing(&[("a.js", program)], &[]);
@@ -361,5 +368,122 @@ export {head} indexes() {{ return {{ {indexes} }}; }}"
         assert_eq!(regexp_flags(b"uv"), None);
         assert_eq!(regexp_flags(b"vu"), None);
         assert_eq!(regexp_flags(b"dgimsuvy"), None);
+    }
+
+    #[test]
+    fn pattern_is_printed_as_it_is_written() {
+        let written = [
+            "caf\u{e9}",
+            "a\u{1f430}b",
+            "a\\\u{e9}b",
+            "[\\\u{2013}\\\u{2014}]",
+            "a\tb\x7f",
+            "[\0]\\\0",
+        ];
+        for written in written {
+            for flags in ["", "u", "dgimsy"] {
+                let printed = regexp_pattern_as_printed(written.as_bytes(), flags.as_bytes());
+                assert!(matches!(printed, Cow::Borrowed(_)), "{written:?} {flags}");
+                assert_eq!(&*printed, written.as_bytes());
+            }
+        }
+        let printed = regexp_pattern_as_printed("[\u{e9}\t]".as_bytes(), b"v");
+        assert!(matches!(printed, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn raw_zero_under_unicode_sets_is_printed_as_an_escape() {
+        let cases: [(&[u8], &[u8]); 5] = [
+            (b"[\0]x", b"[\\u0000]x"),
+            (b"\\\0", b"\\\0"),
+            (b"\\\\\0", b"\\\\\\u0000"),
+            (b"\\\\\\\0\0", b"\\\\\\\0\\u0000"),
+            (
+                "\u{e9}[\0-\\\0]\0".as_bytes(),
+                "\u{e9}[\\u0000-\\\0]\\u0000".as_bytes(),
+            ),
+        ];
+        for (written, printed) in cases {
+            assert_eq!(&*regexp_pattern_as_printed(written, b"gv"), printed);
+        }
+    }
+
+    #[test]
+    fn ill_formed_pattern_is_printed_as_bun_run_reads_it() {
+        let cases: [(&[u8], &[u8]); 3] = [
+            (b"a\xE9", "a\u{fffd}".as_bytes()),
+            (b"a\xFF\xED\xA0\x80", b"a\xC3\xBF\xED\xA0\x80"),
+            (b"\xED\xA0\xBD\xED\xB0\xB0", "\u{1f430}".as_bytes()),
+        ];
+        for (written, printed) in cases {
+            assert_eq!(&*regexp_pattern_as_printed(written, b""), printed);
+        }
+    }
+
+    #[test]
+    fn engine_is_asked_about_no_pattern_with_half_a_surrogate_pair() {
+        // `[\uD800-\uE000]` and `[\uDFFF-\uD800]`: read with U+FFFD for each byte of a half, the first is out of order and the second is not.
+        let halves: [&[u8]; 3] = [
+            b"[\xED\xA0\x80-\xEE\x80\x80]",
+            b"[\xED\xBF\xBF-\xED\xA0\x80]",
+            b"a\xFF\xED\xA0\x80",
+        ];
+        for written in halves {
+            let printed = regexp_pattern_as_printed(written, b"");
+            assert!(!can_ask_engine_about_pattern(&printed), "{written:x?}");
+        }
+        let whole: [&[u8]; 4] = [
+            b"[a-z]",
+            "[\u{e9}-\u{1f430}]".as_bytes(),
+            b"a\xE9",
+            b"\xED\xA0\xBD\xED\xB0\xB0",
+        ];
+        for written in whole {
+            let printed = regexp_pattern_as_printed(written, b"");
+            assert!(can_ask_engine_about_pattern(&printed), "{written:x?}");
+        }
+    }
+
+    fn patterns_of_literals(program: &str) -> Vec<Vec<u8>> {
+        let lowered = lower_program_replacing(&[("a.js", program)], &[]);
+        let fragment = &lowered[0].1.fragment;
+        let tables = fragment.tables.take();
+        let mut patterns = Vec::new();
+        for (_, function) in &fragment.functions {
+            for value in function.body.blocks().flat_map(|block| block.values()) {
+                if value.opcode == Opcode::NewRegExp {
+                    let pattern = StringId::from_word(value.fields[0]);
+                    patterns.push(tables.strings.get(pattern).to_vec());
+                }
+            }
+        }
+        patterns
+    }
+
+    #[test]
+    fn literal_has_the_pattern_that_is_printed() {
+        let literals = [
+            "/caf\u{e9}/",
+            "/\u{4e2d}\u{6587}+/u",
+            "/a\u{1f430}b/u",
+            "/[\0]x/v",
+            "/a\\\u{e9}b/",
+            "/a\0b/",
+            "/a\tb/",
+        ];
+        let program = format!(
+            "export function probe() {{ return [{}]; }}",
+            literals.join(", ")
+        );
+        let expected: [&[u8]; 7] = [
+            "caf\u{e9}".as_bytes(),
+            "\u{4e2d}\u{6587}+".as_bytes(),
+            "a\u{1f430}b".as_bytes(),
+            b"[\\u0000]x",
+            "a\\\u{e9}b".as_bytes(),
+            b"a\0b",
+            b"a\tb",
+        ];
+        assert_eq!(patterns_of_literals(&program), expected);
     }
 }

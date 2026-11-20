@@ -1,4 +1,5 @@
 use bun_ast::{Loc, Source};
+use bun_core::strings::EncodingNonAscii;
 use bun_core::{MutableString, strings};
 use bun_paths::fs::FileSystem;
 use bun_ptr::RawSlice;
@@ -342,6 +343,9 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     // to avoid replicating the previous mapping if we don't need to.
     pub line_starts_with_mapping: bool,
     pub cover_lines_without_mappings: bool,
+
+    /// How `output` is encoded during the print: `Utf8`, or `Latin1` for one byte per UTF-16 code unit.
+    pub output_encoding: EncodingNonAscii,
 }
 
 impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
@@ -360,6 +364,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
             line_offset_table_first_non_ascii: RawSlice::EMPTY,
             line_starts_with_mapping: false,
             cover_lines_without_mappings: false,
+            output_encoding: EncodingNonAscii::Utf8,
         }
     }
 }
@@ -466,20 +471,26 @@ impl NewBuilder<'_, VLQSourceMap> {
             && !self.line_starts_with_mapping
             && self.has_prev_state;
 
+        let latin1 = self.output_encoding == EncodingNonAscii::Latin1;
         let mut i: usize = 0;
         let n: usize = slice.len();
         let mut c: i32;
         while i < n {
-            let len = strings::wtf8_byte_sequence_length_with_invalid(slice[i]);
-            let mut cp_bytes = [0u8; 4];
-            let take = (len as usize).min(n - i);
-            cp_bytes[..take].copy_from_slice(&slice[i..i + take]);
-            c = strings::decode_wtf8_rune_t::<i32>(
-                cp_bytes,
-                len,
-                strings::UNICODE_REPLACEMENT as i32,
-            );
-            i += len as usize;
+            if latin1 {
+                c = i32::from(slice[i]);
+                i += 1;
+            } else {
+                let len = strings::wtf8_byte_sequence_length_with_invalid(slice[i]);
+                let mut cp_bytes = [0u8; 4];
+                let take = (len as usize).min(n - i);
+                cp_bytes[..take].copy_from_slice(&slice[i..i + take]);
+                c = strings::decode_wtf8_rune_t::<i32>(
+                    cp_bytes,
+                    len,
+                    strings::UNICODE_REPLACEMENT as i32,
+                );
+                i += len as usize;
+            }
 
             match c {
                 14..=127 => {

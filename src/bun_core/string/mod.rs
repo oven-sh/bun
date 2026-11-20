@@ -2076,6 +2076,28 @@ pub mod printer {
         ]
     }
 
+    /// The offset of each raw U+0000 that a regex literal's print spells `\u0000`: under the `v` flag, unless a backslash escapes it (oven-sh/WebKit#595).
+    pub fn regexp_nul_offsets_to_escape<'a>(
+        text: &'a [u8],
+        flags: &[u8],
+    ) -> impl Iterator<Item = usize> + 'a {
+        let has_v_flag = strings::contains_char(flags, b'v');
+        let mut from = 0;
+        core::iter::from_fn(move || {
+            if !has_v_flag {
+                return None;
+            }
+            loop {
+                let nul = strings::index_of_char_pos(text, 0, from)?;
+                from = nul + 1;
+                let backslashes = text[..nul].iter().rev().take_while(|&&b| b == b'\\');
+                if backslashes.count() % 2 == 0 {
+                    return Some(nul);
+                }
+            }
+        })
+    }
+
     /// Byte-sink alias so `write_pre_quoted_string` works for `Vec<u8>`,
     /// `MutableString`, and any other `crate::io::Write` sink.
     pub use crate::io::Write as PrinterWriter;

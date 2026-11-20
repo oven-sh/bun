@@ -1558,3 +1558,69 @@ test("reports an error for a coverage directory longer than the path buffer", as
   expect(stderr).toContain("ENAMETOOLONG: File name too long: Failed to write lcov.info");
   expect(exitCode).toBe(1);
 });
+
+// A regex literal is transpiled as written, so the text JSC compiles is 8-bit with characters above
+// 0x7F, or UTF-16, and coverage counts its offsets in code units. Each variant has as many code units
+// on every line as the ASCII one (an astral character is two), so its lcov record is the ASCII one's.
+test("non-ASCII regex text does not shift coverage lines", async () => {
+  const units = 41;
+  const repeat = (piece: string, times: number) => Buffer.alloc(Buffer.byteLength(piece) * times, piece).toString();
+  // While it prints, the transpiler holds each code unit in one byte, and `ñ` as 0xF1: the start of a
+  // four-byte sequence in UTF-8. Each text ends in one that would start such a sequence, so a source map
+  // that read those bytes as UTF-8 would miss the newline after the `/;` and move every later line.
+  const variants = { ascii: repeat("x", units), latin1: repeat("ñ", units), utf16: repeat("ñ中🐰", 10) + "ñ" };
+  expect(Object.values(variants).map(text => text.length)).toEqual([units, units, units]);
+  using dir = tempDir(
+    "cov-non-ascii-regex",
+    Object.fromEntries(
+      Object.entries(variants).map(([name, text]) => [
+        name,
+        {
+          "demo.ts": `export const re = /${text}/;
+export function covered() {
+  return re.source.length;
+}
+export function uncovered() {
+  return 1;
+}
+export function alsoUncovered() {
+  return 2;
+}
+`,
+          "demo.test.ts": `
+import { expect, test } from "bun:test";
+import { covered } from "./demo";
+
+test("source text has the expected length", () => {
+  expect(covered()).toBe(${units});
+});
+`,
+        },
+      ]),
+    ),
+  );
+  const [ascii, latin1, utf16] = await Promise.all(
+    Object.keys(variants).map(async variant => {
+      const cwd = path.join(String(dir), variant);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "./demo.test.ts"],
+        cwd,
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 1 pass\n");
+      expect(exitCode).toBe(0);
+      const record = readFileSync(path.join(cwd, "coverage", "lcov.info"), "utf8")
+        .split("end_of_record")
+        .find(record => record.includes("\nSF:demo.ts\n"));
+      expect(record).toBeDefined();
+      return record!;
+    }),
+  );
+  // `uncovered` and `alsoUncovered` start on lines 5 and 8.
+  expect(ascii).toContain("\nDA:5,0\n");
+  expect(ascii).toContain("\nDA:8,0\n");
+  expect({ latin1, utf16 }).toEqual({ latin1: ascii, utf16: ascii });
+});

@@ -577,9 +577,9 @@ pub unsafe extern "C" fn Bun__standaloneModuleKey(
     if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
         return core::ptr::null();
     }
-    match standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name)) {
+    let file = standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name));
+    match file.and_then(crate::compiled_program::key_of_named_file) {
         Some(canonical) => {
-            let canonical = crate::compiled_program::entry_module_key(canonical);
             *out_len = canonical.len();
             canonical.as_ptr()
         }

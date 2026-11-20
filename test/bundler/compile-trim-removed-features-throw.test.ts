@@ -198,11 +198,89 @@ for (const kind of ["plain", "aot"] as const) {
 
       afterAll(() => dir[Symbol.dispose]());
 
+      test("dynamic standard-stream access does not exit the process", async () => {
+        expect(await findExits(executable, cwd, ["process.stdin", "process.stdout", "process.stderr"])).toEqual([]);
+      });
+
       test.concurrent.each(Object.keys(snippets))(
         "%s does not exit the process",
         async name => expect(await findExits(executable, cwd, snippets[name]!)).toEqual([]),
         120_000,
       );
+    },
+  );
+
+  describe.skipIf(!canTrim || (kind === "aot" && !!unsupported))(
+    `standard-stream constructor exceptions in trimmed ${kind} executables`,
+    () => {
+      describe.each(["stdin", "stdout", "stderr"] as const)("process.%s", name => {
+        const constructor = name === "stdin" ? "ReadStream" : "WriteStream";
+        const dir = tempDir(`compile-trim-stdio-${kind}-${name}`, {
+          "program.ts": `
+            const fs = require("node:fs");
+            const original = new Error("stdio constructor sentinel");
+            const Constructor = fs.${constructor};
+            let calls = 0;
+            let caught: unknown;
+            fs.${constructor} = function () {
+              calls++;
+              throw original;
+            };
+            try {
+              void process.${name};
+            } catch (error) {
+              caught = error;
+            } finally {
+              fs.${constructor} = Constructor;
+            }
+            fs.writeSync(1, JSON.stringify({ calls, caughtOriginal: caught === original }) + "\\n");
+            process.exitCode = calls === 1 && caught === original ? 0 : 1;
+            // A named .on call retains the full builder without reading the stream before injection.
+            process.${name}.on("error", () => {
+              process.exitCode = 1;
+              fs.writeSync(2, "stream error\\n");
+            });
+            ${name === "stdin" ? `fs.writeSync(1, "recovered stdin " + process.stdin.fd + "\\n");` : `process.${name}.write("recovered ${name}\\n");`}
+          `,
+        });
+        const cwd = String(dir);
+        const executable = join(cwd, "program");
+
+        beforeAll(async () => {
+          await Bun.build({
+            entrypoints: [join(cwd, "program.ts")],
+            compile: { outfile: executable, trim: true, aot: kind === "aot" },
+          });
+        }, 120_000);
+
+        afterAll(() => dir[Symbol.dispose]());
+
+        test.concurrent("catches the original error once and recovers", async () => {
+          await using child = Bun.spawn({
+            cmd: [executable],
+            cwd,
+            env: bunEnv,
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          child.stdin.end();
+          const [stdout, stderr, exitCode] = await Promise.all([
+            child.stdout.text(),
+            child.stderr.text(),
+            child.exited,
+          ]);
+          expect({ stdout, stderr, exitCode, signal: child.signalCode }).toEqual({
+            stdout:
+              JSON.stringify({ calls: 1, caughtOriginal: true }) +
+              "\n" +
+              (name === "stdin" ? "recovered stdin 0\n" : name === "stdout" ? "recovered stdout\n" : ""),
+            stderr: name === "stderr" ? "recovered stderr\n" : "",
+            exitCode: 0,
+            signal: null,
+          });
+        });
+      });
     },
   );
 }

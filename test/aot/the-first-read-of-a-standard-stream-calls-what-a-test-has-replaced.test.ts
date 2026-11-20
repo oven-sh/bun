@@ -45,8 +45,8 @@ for (const stream of ["stdout", "stderr"]) {
           console.log(written, calls > 0);`,
   );
   runsAsPlain(
-    `process.${stream} is undefined behind an Object.keys that its modules throw on`,
-    "undefined",
+    `process.${stream} throws behind an Object.keys that its modules throw on`,
+    "threw TypeError",
     `
           Object.keys = nonsense;
           const kind = typeof process.${stream};
@@ -74,8 +74,8 @@ runsAsPlain(
 );
 
 runsAsPlain(
-  "process.stdin is undefined behind an Object.keys that its modules throw on",
-  "undefined",
+  "process.stdin throws behind an Object.keys that its modules throw on",
+  "threw TypeError",
   `
           Object.keys = nonsense;
           const kind = typeof process.stdin;

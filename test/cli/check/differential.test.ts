@@ -1,13 +1,23 @@
 import { afterAll, expect, test } from "bun:test";
-import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunExe, isASAN, isDebug, isWindows } from "harness";
 import { existsSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
-import { endChildren, longLimit, spawn } from "../children";
-import { env, inBatches, linesOf, modulesInCycles, tsc, writtenCases } from "./differential";
+import { longLimit, spawn } from "../children";
+import {
+  endChecks,
+  env,
+  inBatches,
+  linesOf,
+  modulesInCycles,
+  outputOf,
+  tempDir,
+  tsc,
+  writtenCases,
+} from "./differential";
 import { hasRunner } from "./typescript-go/conformance";
 
-afterAll(endChildren);
+afterAll(endChecks);
 
 // Small programs generated as cross products and checked by both `bun check` and TypeScript 7, which have to agree. No
 // expected output is stored, because TypeScript is the oracle. Each program is one function on one line, so a line
@@ -666,10 +676,9 @@ test.concurrent.skipIf(!tsc)("reports TS2354 at the first helper syntax checked,
 
 /** Error lines printed by `cmd`, in `tsc --pretty false` format, grouped by line of `a.ts`. */
 async function errorsOf(cmd: string[], cwd: string) {
-  await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
-  const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const { stdout } = await outputOf(cmd, cwd);
   const byLine = new Map<number, string[]>();
-  for (const text of stdout.split("\n")) {
+  for (const text of stdout.split(/\r?\n/)) {
     const line = /^a\.ts\((\d+),\d+\): error TS\d+: /.exec(text)?.[1];
     if (line) byLine.set(+line, [...(byLine.get(+line) ?? []), text].sort());
   }
@@ -815,9 +824,11 @@ differential.each(loopShapes)("matches tsc for a variable in a loop that's assig
     const body = shape.replace("I", () => initializer).replace("A", () => withReference(assigned, `(${read})`));
     return `() { let s: S | null = mk(); ${body} }`;
   });
-  const { onlyTypeScriptReports, onlyBunReports } = await checkBoth(loopDeclarations, functions);
+  const { theirs, ours, onlyTypeScriptReports, onlyBunReports } = await checkBoth(loopDeclarations, functions);
   expect(onlyTypeScriptReports).toEqual([]);
   expect(onlyBunReports).toEqual([]);
+  // And on a line that both report, the messages are the same.
+  expect([...ours]).toEqual([...theirs]);
 });
 
 // A walk that gets 2,000 levels deep fails with TS2563. A statement in a loop can be on the stack one more time for
@@ -1170,8 +1181,7 @@ differential("matches tsc on callbacks for every callee, callback form and call 
 
 /** Groups `cmd`'s output by line of `a.ts`. A continuation line belongs to the error above it. */
 async function messagesOf(cmd: string[], cwd: string) {
-  await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
-  const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const { stdout } = await outputOf(cmd, cwd);
   const byLine = new Map<number, string[]>();
   let line = 0;
   for (const text of stdout.split(/\r?\n/)) {
@@ -2045,6 +2055,8 @@ differential("matches tsc on valid and invalid values of tsconfig.json options",
     results.push({ options, bun, tsc: typescript });
   });
   expect(results.filter(it => !Bun.deepEquals(it.bun, it.tsc))).toEqual([]);
+  // The oracle has something to say about the values that aren't valid.
+  expect(results.filter(it => it.tsc.length > 0).length).toBeGreaterThan(cases.length / 4);
 });
 
 // Every kind of value that isn't valid JSON, and arrays containing `null`, in every kind of position.
@@ -2155,6 +2167,8 @@ differential("matches tsc on values that aren't valid JSON in tsconfig.json", as
     results.push({ text, bun, tsc: typescript });
   });
   expect(results.filter(it => !Bun.deepEquals(it.bun, it.tsc))).toEqual([]);
+  // The oracle has something to say about most of them.
+  expect(results.filter(it => it.tsc.length > 0).length).toBeGreaterThan(cases.length / 2);
 });
 
 // `tsc -b` reports project by project, in build order. A file that two projects include is reported for each.
@@ -2657,6 +2671,8 @@ differential("matches tsc on paths in an extended tsconfig file", async () => {
     results.push({ base, bun, tsc: typescript });
   });
   expect(results.filter(it => !Bun.deepEquals(it.bun, it.tsc))).toEqual([]);
+  // The oracle has something to say about most of them.
+  expect(results.filter(it => it.tsc.length > 0).length).toBeGreaterThan(cases.length / 2);
 });
 
 // File names that differ only in case. On a case-insensitive file system, `import "./Button"` finds `button.ts`. It's
@@ -2994,8 +3010,7 @@ differential("checks the same files as tsc for every project layout and command 
     for (const side of ["theirs", "ours"]) for (const path in it[3]) files[`${index}/${side}/${path}`] = it[3][path];
   using dir = tempDir("bun-check-contract", files);
   const outcomeOf = async (cmd: string[], cwd: string, root: string) => {
-    await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { stdout, exitCode } = await outputOf(cmd, cwd);
     const lines = stdout.replaceAll("\\", "/").replaceAll(root.replaceAll("\\", "/"), "").split(/\r?\n/);
     // tsc exits with 2 if it wrote files despite errors.
     return { lines: lines.filter(line => line.trim()), fails: exitCode !== 0 };

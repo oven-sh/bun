@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
+import { createServer as createHttpServer } from "node:http";
 import * as net from "node:net";
 
 // https://github.com/oven-sh/bun/issues/9180
@@ -264,4 +265,117 @@ describe("response Connection: close closes the socket", () => {
       socket.destroy();
     }
   });
+});
+
+// A slow SSE source must not hold the HTTP headers hostage until the first
+// body chunk. Fetch resolves on complete response headers, before body data.
+test("streaming response sends headers before any body chunk", async () => {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    fetch() {
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            controller = c;
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+
+  const aborter = new AbortController();
+  try {
+    const response = await fetch(server.url, { signal: aborter.signal });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+
+    // No body chunk was queued before these assertions. The response is
+    // already visible to the client, and the stream can still deliver data.
+    controller.enqueue(new TextEncoder().encode("first"));
+    controller.close();
+    expect(await response.text()).toBe("first");
+  } finally {
+    aborter.abort();
+    try {
+      controller?.close();
+    } catch {}
+  }
+});
+
+// Direct streams use a different pump, but the client must still receive a
+// complete HTTP header block while the producer is waiting for its first write.
+test("direct streaming response sends headers before any body chunk", async () => {
+  let releaseBody!: () => void;
+  const bodyReady = new Promise<void>(resolve => {
+    releaseBody = resolve;
+  });
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            await bodyReady;
+            controller.write("first");
+            controller.close();
+          },
+        } as any),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+
+  const aborter = new AbortController();
+  try {
+    const response = await fetch(server.url, { signal: aborter.signal });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+    releaseBody();
+    expect(await response.text()).toBe("first");
+  } finally {
+    releaseBody();
+    aborter.abort();
+  }
+});
+
+// Passing a native fetch body through Bun.serve uses the ByteStream path,
+// not the JS stream pump. Its headers must likewise precede the first chunk.
+test("proxied native byte stream sends headers before its upstream body", async () => {
+  let releaseBody: (() => void) | undefined;
+  const upstream = createHttpServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.flushHeaders();
+    releaseBody = () => res.end("first");
+  });
+  upstream.listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const upstreamPort = (upstream.address() as net.AddressInfo).port;
+
+  const aborter = new AbortController();
+  try {
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      async fetch() {
+        const response = await fetch(`http://127.0.0.1:${upstreamPort}/`);
+        return new Response(response.body, { headers: { "content-type": "text/event-stream" } });
+      },
+    });
+
+    const response = await fetch(server.url, { signal: aborter.signal });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+    releaseBody?.();
+    expect(await response.text()).toBe("first");
+  } finally {
+    releaseBody?.();
+    aborter.abort();
+    upstream.closeAllConnections();
+    await new Promise<void>(resolve => upstream.close(() => resolve()));
+  }
 });

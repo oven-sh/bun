@@ -5275,10 +5275,10 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
   },
 );
 
-// A latin1 or ascii target gets one byte for each code point: '?' when the target cannot encode it,
-// and one '?' for a surrogate pair. The lengths sit on both sides of the simdutf block sizes and of
-// the 1000 bytes above which a typed array is allocated with malloc.
-it("transcode to latin1 and ascii writes one byte for each code point", () => {
+// A latin1 or ascii target gets one byte for each code point that ICU keeps: '?' when the target
+// cannot encode it, and one '?' for a surrogate pair. The lengths sit on both sides of the simdutf
+// block sizes and of the 1000 bytes above which a typed array is allocated with malloc.
+it("transcode to latin1 and ascii writes one byte for each code point that ICU keeps", () => {
   const { transcode } = BufferModule;
   const questionMark = Buffer.from("?");
   for (const length of [1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 1001]) {
@@ -5316,6 +5316,194 @@ it("transcode to latin1 and ascii writes one byte for each code point", () => {
       }
     }
   }
+});
+
+// ICU's converter writes nothing for a default-ignorable code point that the target cannot encode,
+// so Node does not either. The expected bytes in these tests are the ones Node v26.3.0 returns.
+describe("transcode to latin1 and ascii skips a default-ignorable code point", () => {
+  const { transcode } = BufferModule;
+  // IS_DEFAULT_IGNORABLE_CODE_POINT: https://github.com/unicode-org/icu/blob/release-78.3/icu4c/source/common/ucnv_err.cpp#L68-L86
+  const icuSkips = [
+    [0x00ad, 0x00ad],
+    [0x034f, 0x034f],
+    [0x061c, 0x061c],
+    [0x115f, 0x115f],
+    [0x1160, 0x1160],
+    [0x17b4, 0x17b5],
+    [0x180b, 0x180f],
+    [0x200b, 0x200f],
+    [0x202a, 0x202e],
+    [0x2060, 0x206f],
+    [0x3164, 0x3164],
+    [0xfe00, 0xfe0f],
+    [0xfeff, 0xfeff],
+    [0xffa0, 0xffa0],
+    [0xfff0, 0xfff8],
+    [0x1bca0, 0x1bca3],
+    [0x1d173, 0x1d17a],
+    [0xe0000, 0xe0fff],
+  ];
+
+  it("in text", () => {
+    // [text, to ascii, to latin1]
+    const cases = {
+      "byte order mark": ["\uFEFFname;city", "name;city", "name;city"],
+      "zero width space": ["name;\u200Bcity", "name;city", "name;city"],
+      "left-to-right mark": ["name;city\u200E", "name;city", "name;city"],
+      "word joiner": ["name\u2060;city", "name;city", "name;city"],
+      "variation selector": ["1\uFE0F name", "1 name", "1 name"],
+      "soft hyphen, which latin1 has": ["co\u00ADop", "coop", "co\u00ADop"],
+      "zero width joiner between two emoji": ["\u{1F468}\u200D\u{1F469}", "??", "??"],
+      "language tag, a surrogate pair": ["a\u{E0001}b", "ab", "ab"],
+      "nothing else": ["\uFEFF\u200B\u{E0001}", "", ""],
+      "euro sign, which is not default-ignorable": ["5 \u20AC", "5 ?", "5 ?"],
+    };
+    const actual = {};
+    const expected = {};
+    for (const [name, [text, ascii, latin1]] of Object.entries(cases)) {
+      for (const from of ["utf8", "ucs2"]) {
+        for (const to of ["ascii", "latin1", "binary"]) {
+          const key = `${name}, ${from} to ${to}`;
+          actual[key] = transcode(Buffer.from(text, from), from, to).toString("latin1");
+          expected[key] = to === "ascii" ? ascii : latin1;
+        }
+      }
+    }
+    expect(actual).toEqual(expected);
+  });
+
+  it("from a latin1 source and next to ill-formed input", () => {
+    // [source, from, to, result]
+    const cases = [
+      ["41ad42", "latin1", "ascii", "4142"],
+      ["41ad42", "binary", "ascii", "4142"],
+      ["41ad42", "latin1", "latin1", "41ad42"],
+      // An ascii source has no U+00AD: its byte 0xAD decodes to U+FFFD.
+      ["41ad42", "ascii", "latin1", "413f42"],
+      ["41ad42", "ascii", "ascii", "413f42"],
+      // A lone surrogate, then U+200B, then "A".
+      ["40db0b204100", "ucs2", "ascii", "3f41"],
+      // U+200B, then an odd byte.
+      ["0b2041", "ucs2", "latin1", ""],
+      // An invalid byte, then U+200B, then "A".
+      ["c0e2808b41", "utf8", "latin1", "3f41"],
+    ];
+    expect(cases.map(([source, from, to]) => transcode(Buffer.from(source, "hex"), from, to).toString("hex"))).toEqual(
+      cases.map(([, , , result]) => result),
+    );
+  });
+
+  // Only a latin1 source has the byte of a skipped code point: 0xAD. An ascii source decodes it to U+FFFD.
+  it("for each byte of a latin1 or ascii source", () => {
+    const source = Buffer.from(Array.from({ length: 256 }, (_, byte) => byte));
+    const ascii = source.subarray(0, 128);
+    expect({
+      "latin1 to latin1": transcode(source, "latin1", "latin1"),
+      "latin1 to ascii": transcode(source, "latin1", "ascii"),
+      "ascii to latin1": transcode(source, "ascii", "latin1"),
+      "ascii to ascii": transcode(source, "ascii", "ascii"),
+    }).toEqual({
+      "latin1 to latin1": source,
+      "latin1 to ascii": Buffer.concat([ascii, Buffer.alloc(127, "?")]),
+      "ascii to latin1": Buffer.concat([ascii, Buffer.alloc(128, "?")]),
+      "ascii to ascii": Buffer.concat([ascii, Buffer.alloc(128, "?")]),
+    });
+  });
+
+  it("for every code point in ICU's list and no other", () => {
+    const skipped = new Uint8Array(0x110000);
+    for (const [first, last] of icuSkips) skipped.fill(1, first, last + 1);
+
+    // One call for each 4096 code points, with "x" in front of each code point.
+    const blockSize = 0x1000;
+    const units = new Uint16Array(blockSize * 3);
+    const ascii = new Uint8Array(blockSize * 2);
+    const latin1 = new Uint8Array(blockSize * 2);
+    const wrong = [];
+    for (let block = 0; block < 0x110000; block += blockSize) {
+      let unitCount = 0;
+      let asciiLength = 0;
+      let latin1Length = 0;
+      for (let codePoint = block; codePoint < block + blockSize; codePoint++) {
+        if (codePoint >= 0xd800 && codePoint <= 0xdfff) continue;
+        units[unitCount++] = ascii[asciiLength++] = latin1[latin1Length++] = 0x78;
+        if (codePoint > 0xffff) {
+          units[unitCount++] = 0xd800 + ((codePoint - 0x10000) >> 10);
+          units[unitCount++] = 0xdc00 + ((codePoint - 0x10000) & 0x3ff);
+        } else {
+          units[unitCount++] = codePoint;
+        }
+        if (codePoint <= 0x7f) ascii[asciiLength++] = codePoint;
+        else if (!skipped[codePoint]) ascii[asciiLength++] = 0x3f;
+        if (codePoint <= 0xff) latin1[latin1Length++] = codePoint;
+        else if (!skipped[codePoint]) latin1[latin1Length++] = 0x3f;
+      }
+      const source = Buffer.from(units.buffer, 0, unitCount * 2);
+      for (const [to, expected] of [
+        ["ascii", ascii.subarray(0, asciiLength)],
+        ["latin1", latin1.subarray(0, latin1Length)],
+      ]) {
+        if (!transcode(source, "ucs2", to).equals(expected)) {
+          wrong.push(`U+${block.toString(16)} to U+${(block + blockSize - 1).toString(16)}, to ${to}`);
+        }
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  // A skipped code point makes the result shorter than its source. The lengths are those of the test above.
+  it("at each result length", () => {
+    const ranges = icuSkips.map(([first, last]) => `\\u{${first.toString(16)}}-\\u{${last.toString(16)}}`);
+    const skipped = new RegExp(`[${ranges.join("")}]`, "u");
+    for (const length of [1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 1001]) {
+      // `length` code points that are not skipped in every shape but the last.
+      const latin1Only = Buffer.alloc(length, "A\u00e9", "latin1").toString("latin1");
+      const half = length >> 1;
+      const shapes = {
+        "U+200B last": latin1Only + "\u200B",
+        "U+FEFF first": "\uFEFF" + latin1Only,
+        "U+E0001 in the middle": latin1Only.slice(0, half) + "\u{E0001}" + latin1Only.slice(half),
+        "U+0100 first and U+200B last": "\u0100" + latin1Only.slice(1) + "\u200B",
+        "U+200B after each": latin1Only.replace(/./gsu, "$&\u200B"),
+        "U+200B only": Buffer.alloc(length * 3, "\u200B").toString(),
+      };
+      for (const [shape, text] of Object.entries(shapes)) {
+        for (const [to, notEncodable] of [
+          ["latin1", /[^\x00-\xff]/gu],
+          ["ascii", /[^\x00-\x7f]/gu],
+        ]) {
+          const expected = Buffer.from(
+            text.replace(notEncodable, codePoint => (skipped.test(codePoint) ? "" : "?")),
+            "latin1",
+          );
+          for (const from of ["ucs2", "utf8"]) {
+            expect(transcode(Buffer.from(text, from), from, to), `${length} x ${shape}, ${from} to ${to}`).toEqual(
+              expected,
+            );
+          }
+        }
+      }
+    }
+  });
+
+  it("but keeps it for a utf8 or ucs2 target", () => {
+    const text = "\uFEFFa\u200Bb\u00AD\u{E0001}";
+    const utf8 = Buffer.from(text, "utf8");
+    const ucs2 = Buffer.from(text, "ucs2");
+    expect({
+      "utf8 to ucs2": transcode(utf8, "utf8", "ucs2"),
+      "ucs2 to utf8": transcode(ucs2, "ucs2", "utf8"),
+      "utf8 to utf8": transcode(utf8, "utf8", "utf8"),
+      "ucs2 to ucs2": transcode(ucs2, "ucs2", "ucs2"),
+      "latin1 to utf8": transcode(Buffer.from([0x41, 0xad]), "latin1", "utf8"),
+    }).toEqual({
+      "utf8 to ucs2": ucs2,
+      "ucs2 to utf8": utf8,
+      "utf8 to utf8": utf8,
+      "ucs2 to ucs2": ucs2,
+      "latin1 to utf8": Buffer.from("A\u00AD", "utf8"),
+    });
+  });
 });
 
 // transcode() sized its result, and the UTF-16 copy of the source it converts through, with

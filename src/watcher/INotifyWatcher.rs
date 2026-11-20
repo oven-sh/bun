@@ -172,8 +172,7 @@ impl INotifyWatcher {
 
                     // IN_MODIFY is very noisy
                     // we do a 0.1ms sleep to try to coalesce events better
-                    const DOUBLE_READ_THRESHOLD: usize = Event::LARGEST_SIZE * (max_count / 2);
-                    if read_len < DOUBLE_READ_THRESHOLD {
+                    if has_room(bytes, read_len) {
                         let mut fds = [system::pollfd {
                             fd: self.fd.fd().native(),
                             events: (libc::POLLIN | libc::POLLERR) as _,
@@ -238,6 +237,11 @@ impl INotifyWatcher {
             }
         }
     }
+}
+
+/// `read` fails with EINVAL when the next event does not fit in the rest of the buffer.
+fn has_room(bytes: &[u8], read_len: usize) -> bool {
+    bytes.len() - read_len >= Event::LARGEST_SIZE
 }
 
 impl Watcher {

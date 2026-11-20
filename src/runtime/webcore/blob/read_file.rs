@@ -237,7 +237,6 @@ pub(crate) struct ReadFile {
     pub(crate) io_request: io::Request,
     pub(crate) io_parking: super::IoParking,
     pub(crate) could_block: bool,
-    pub(crate) close_after_io: bool,
     pub(crate) state: AtomicU8, // ClosingState
 }
 
@@ -307,7 +306,6 @@ impl ReadFile {
             },
             io_parking: super::IoParking::new(),
             could_block: false,
-            close_after_io: false,
             state: AtomicU8::new(ClosingState::Running as u8),
         }
     }
@@ -323,14 +321,6 @@ impl ReadFile {
             node: Default::default(),
             callback: Self::do_read_loop_task,
         };
-        // On kqueue platforms we use one-shot mode, so:
-        // - we don't need to unregister
-        // - we don't need to delete from kqueue
-        if bun_core::Environment::IS_KQUEUE {
-            // unless pending IO has been scheduled in-between.
-            self.close_after_io = self.io_request.scheduled;
-        }
-
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -345,13 +335,6 @@ impl ReadFile {
             node: Default::default(),
             callback: Self::do_read_loop_task,
         };
-        // On kqueue platforms we use one-shot mode, so:
-        // - we don't need to unregister
-        // - we don't need to delete from kqueue
-        if bun_core::Environment::IS_KQUEUE {
-            // unless pending IO has been scheduled in-between.
-            self.close_after_io = self.io_request.scheduled;
-        }
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -416,7 +399,6 @@ impl ReadFile {
             self.fail_cancelled();
             return self.on_finish();
         }
-        self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_readable);
         io::IoRequestLoop::schedule(&mut self.io_request);
@@ -521,21 +503,11 @@ impl ReadFile {
     }
 
     fn on_finish(&mut self) {
-        let close_after_io = self.close_after_io;
+        bloblog!("ReadFile.onFinish");
         self.size = self.buffer.len() as SizeType;
-
-        {
-            if self.do_close(self.is_allowed_to_close()) {
-                bloblog!("ReadFile.onFinish() = deferred");
-                // we have to wait for the close to finish
-                return;
-            }
-        }
-        if !close_after_io {
-            if let Some(io_task) = self.io_task.take() {
-                bloblog!("ReadFile.onFinish() = immediately");
-                io_task.finish();
-            }
+        self.do_close(self.is_allowed_to_close());
+        if let Some(io_task) = self.io_task.take() {
+            io_task.finish();
         }
     }
 

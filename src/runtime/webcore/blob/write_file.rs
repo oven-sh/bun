@@ -104,7 +104,6 @@ pub(crate) struct WriteFile {
     pub(crate) total_written: usize,
 
     pub(crate) could_block: bool,
-    pub(crate) close_after_io: bool,
     pub(crate) mkdirp_if_not_exists: bool,
 }
 
@@ -251,7 +250,6 @@ impl WriteFile {
             self.fail_cancelled();
             return self.on_finish();
         }
-        self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_writable);
         io::IoRequestLoop::schedule(&mut self.io_request);
@@ -279,7 +277,6 @@ impl WriteFile {
             state: AtomicU8::new(ClosingState::Running as u8),
             total_written: 0,
             could_block: false,
-            close_after_io: false,
             mkdirp_if_not_exists,
         };
         Ok(write_file)
@@ -366,14 +363,9 @@ impl WriteFile {
     fn on_finish(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onFinish()");
 
-        let close_after_io = self.close_after_io;
-        if self.do_close(self.is_allowed_to_close()) {
-            return;
-        }
-        if !close_after_io {
-            if let Some(io_task) = self.io_task.take() {
-                io_task.finish();
-            }
+        self.do_close(self.is_allowed_to_close());
+        if let Some(io_task) = self.io_task.take() {
+            io_task.finish();
         }
     }
 
@@ -439,11 +431,6 @@ impl WriteFile {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` = `&mut self.task`
         // (intrusive) registered in `on_writable`/`init`; recover parent.
         let this = unsafe { WriteFile::from_task_ptr(task) };
-        // On kqueue platforms we use one-shot mode, so we don't need to unregister.
-        if bun_core::Environment::IS_KQUEUE {
-            // SAFETY: `this` is the live parent (see above); scoped access.
-            unsafe { (*this).close_after_io = false };
-        }
         // SAFETY: `this` is the live parent (see above); exclusive borrow scoped to the call.
         unsafe { (*this).do_write_loop() };
     }

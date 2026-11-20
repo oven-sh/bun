@@ -195,3 +195,45 @@ test.skipIf(!isLinux || !cc)("read() is called again after EAGAIN from a regular
   expect(stderr).toContain("matched read() calls on target: 3\n");
   expect(exitCode).toBe(0);
 });
+
+test.skipIf(!isLinux)("a write that has waited ends while other jobs hold every pool thread", async () => {
+  using dir = tempDir("bun-file-fd-read", {});
+  const script = `
+    import { fill, openFifo, untilWatched } from ${JSON.stringify(join(import.meta.dir, "..", "io", "fifo-helpers.ts"))};
+    import { mkdirSync, openSync, read, readSync, writeSync } from "node:fs";
+    const open = dir => (mkdirSync(dir), openFifo(dir));
+    using full = open("full");
+    using silent = open("silent");
+    const [writer, reader] = [openSync(full.path, "w"), openSync(silent.path, "r")]; // They block.
+    const buffer = Buffer.alloc(fill(full.writer));
+    function take(length) {
+      for (;;) {
+        try {
+          return readSync(full.reader, buffer, 0, length);
+        } catch (e) {
+          if (e.code !== "EAGAIN") throw e;
+        }
+      }
+    }
+
+    const file = Bun.file(writer);
+    file.size;
+    const written = Bun.write(file, new Blob([Buffer.alloc(buffer.length + 1)]));
+    await untilWatched(writer);
+    take(buffer.length);
+    // The job is in write(), with one byte that does not fit.
+    take(1);
+    for (let i = 0; i < 8; i++) read(reader, Buffer.alloc(1), () => {});
+    take(buffer.length);
+    console.log((await written) - buffer.length);
+    writeSync(silent.writer, "12345678");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    cwd: String(dir),
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
+});

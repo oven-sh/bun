@@ -5732,9 +5732,7 @@ pub(crate) trait FileCloser: Sized {
 
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
-    fn close_after_io(&self) -> bool;
-    fn state(&self) -> &core::sync::atomic::AtomicU8;
-    fn io_request(&mut self) -> &mut bun_io::Request;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn io_poll(&mut self) -> &mut bun_io::Poll;
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
 
@@ -5744,9 +5742,6 @@ pub(crate) trait FileCloser: Sized {
     fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_>;
 
     fn on_io_request_closed(this: &mut Self) {
-        this.io_poll()
-            .flags
-            .remove(bun_io::Flags::WasEverRegistered);
         *this.task() = bun_jsc::WorkPoolTask {
             node: Default::default(),
             callback: Self::on_close_io_request,
@@ -5762,19 +5757,11 @@ pub(crate) trait FileCloser: Sized {
     /// `container_of` deref locally, so a fn-level qualifier is redundant.
     fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask);
 
-    fn do_close(&mut self, is_allowed_to_close_fd: bool) -> bool {
-        if self.close_after_io() {
-            self.state().store(
-                ClosingState::Closing as u8,
-                core::sync::atomic::Ordering::SeqCst,
-            );
-            let io_request = self.io_request();
-            // The io thread reads `callback` after popping the request: a plain store would race.
-            io_request.store_callback_seq_cst(Self::schedule_close);
-            if !io_request.scheduled {
-                bun_io::IoRequestLoop::schedule(io_request);
-            }
-            return true;
+    fn do_close(&mut self, is_allowed_to_close_fd: bool) {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let fd = self.opened_fd();
+            self.io_poll().unregister(fd);
         }
 
         if is_allowed_to_close_fd
@@ -5785,13 +5772,11 @@ pub(crate) trait FileCloser: Sized {
             let _ = self.opened_fd().close_allowing_bad_file_descriptor(None);
             self.set_opened_fd(Fd::INVALID);
         }
-
-        false
     }
 }
 
 /// Implements [`FileCloser`] for a task struct with the standard field set
-/// (`opened_fd`, `close_after_io`, `state`, `io_request`, `io_poll`, `task`),
+/// (`opened_fd`, `io_request`, `io_poll`, `task`),
 /// an inherent `update()`, and a [`bun_io::Tag`] variant named after the type.
 /// The type must also carry `bun_threading::intrusive_work_task!` and
 /// `bun_io::intrusive_io_request!`, which provide the parent-pointer recovery
@@ -5807,15 +5792,7 @@ macro_rules! impl_file_closer {
             fn set_opened_fd(&mut self, fd: ::bun_sys::Fd) {
                 self.opened_fd = fd;
             }
-            fn close_after_io(&self) -> bool {
-                self.close_after_io
-            }
-            fn state(&self) -> &::core::sync::atomic::AtomicU8 {
-                &self.state
-            }
-            fn io_request(&mut self) -> &mut ::bun_io::Request {
-                &mut self.io_request
-            }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             fn io_poll(&mut self) -> &mut ::bun_io::Poll {
                 &mut self.io_poll
             }
@@ -5856,9 +5833,7 @@ macro_rules! impl_file_closer {
                 // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
                 // recover parent.
                 let this = unsafe { $T::from_task_ptr(task) };
-                // SAFETY: `this` is the live parent (see above); scoped access.
-                unsafe { (*this).close_after_io = false };
-                // SAFETY: as above; exclusive borrow scoped to the call.
+                // SAFETY: `this` is the live parent (see above); exclusive borrow scoped to the call.
                 $T::update(unsafe { &mut *this });
             }
         }

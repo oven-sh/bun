@@ -665,12 +665,7 @@ impl IoRequestLoop {
                                 close.fd,
                                 close.poll.flags.contains(Flags::Registered)
                             );
-                            // Only remove from the interest list if it was previously registered.
-                            // Otherwise, epoll gets confused.
-                            // This state can happen if polling for readable/writable previously failed.
-                            if close.poll.flags.contains(Flags::WasEverRegistered) {
-                                close.poll.unregister_with_fd(watcher_fd, close.fd);
-                            }
+                            close.poll.unregister(close.fd);
                             tickets.armed.remove(&close.poll.ticket);
                             (close.on_done)(close.ctx);
                         }
@@ -1251,12 +1246,16 @@ impl Poll {
         }
     }
 
+    /// The thread that has the job. epoll keeps a one-shot entry that has fired.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn unregister_with_fd(&mut self, watcher_fd: Fd, fd: Fd) {
+    pub fn unregister(&mut self, fd: Fd) {
+        let (true, Some(io)) = (self.flags.remove(Flags::WasEverRegistered), LOOP.get()) else {
+            return;
+        };
         // SAFETY: valid fds; null event is allowed for CTL_DEL on Linux ≥ 2.6.9.
         unsafe {
             libc::epoll_ctl(
-                watcher_fd.native(),
+                io.pollfd().native(),
                 linux::EPOLL_CTL_DEL,
                 fd.native(),
                 core::ptr::null_mut(),
@@ -1404,6 +1403,8 @@ impl Poll {
 
         let errno = sys::get_errno(ctl);
         if errno != E::SUCCESS {
+            // Not left to the pool: the next job on the descriptor may be faster.
+            self.unregister(fd);
             return Err(sys::Error::from_code(errno, sys::Tag::epoll_ctl));
         }
         // Only mark if it successfully registered.

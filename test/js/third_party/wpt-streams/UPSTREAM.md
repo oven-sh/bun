@@ -4,14 +4,14 @@ Vendored byte-for-byte from `web-platform-tests/wpt`:
 
 - **Commit:** `1cfa3004f4ac74aa007591529aba9e9246b1f1bf`
 - **Fetched:** 2026-07-01
-- **Source directories:** `streams/`, plus `common/gc.js`
+- **Source directories:** `streams/`, plus `common/gc.js` and `compression/idlharness.https.any.js`
 
 To re-vendor, pin the same (or a newer, reviewed) commit before copying any files:
 
 ```sh
 git -c advice.detachedHead=false clone --depth=1 --filter=blob:none --sparse \
     https://github.com/web-platform-tests/wpt /tmp/wpt
-git -C /tmp/wpt sparse-checkout set streams common
+git -C /tmp/wpt sparse-checkout set streams common compression interfaces resources
 git -C /tmp/wpt checkout 1cfa3004f4ac74aa007591529aba9e9246b1f1bf
 ```
 
@@ -32,6 +32,10 @@ git -C /tmp/wpt checkout 1cfa3004f4ac74aa007591529aba9e9246b1f1bf
   `// META: script=/resources/WebIDLParser.js` server alias to the webidl2 bundle
   and serves `/interfaces/<spec>.idl` fetches from the vendored files
   (`fetch_spec` in `wpt-streams.test.ts`).
+- `compression/idlharness.https.any.js`, `interfaces/compression.idl` — the WebIDL
+  surface test of `CompressionStream` and `DecompressionStream`, which the Compression
+  Standard defines with the `GenericTransformStream` mixin of `streams.idl`. The other
+  `compression/` tests are not vendored.
 
 Vendored file contents must never be modified. All adaptation lives in
 `../wpt-testharness-shim.ts` / `wpt-streams.test.ts`.

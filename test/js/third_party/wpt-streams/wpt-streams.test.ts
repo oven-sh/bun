@@ -1,4 +1,5 @@
-// Runs the vendored Web Platform Tests streams suite (streams/**/*.any.js)
+// Runs the vendored Web Platform Tests streams suite (streams/**/*.any.js, and
+// compression/idlharness.https.any.js for the two compression stream classes)
 // against Bun's Web Streams implementation. The .any.js files and the
 // streams/resources/*.js helpers are byte-identical to upstream; every
 // adaptation lives in ../wpt-testharness-shim.ts and this driver, following the
@@ -47,8 +48,8 @@ const expectedFailures = expectations.failures as Record<string, string>;
 // files were discovered and how many WPT subtests were registered, so a file
 // that stops evaluating (or a subtest that stops being registered) turns the
 // suite red instead of silently shrinking it while it stays green.
-const EXPECTED_FILES = 69;
-const EXPECTED_SUBTESTS = 1402;
+const EXPECTED_FILES = 70;
+const EXPECTED_SUBTESTS = 1422;
 
 // Record mode: run everything except known process-crashers (no todos), never
 // fail the bun test, and journal every result so expectations.json /
@@ -128,7 +129,7 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
-const files = [...walk(join(ROOT, "streams"))].filter(f => f.endsWith(".any.js"));
+const files = ["streams", "compression"].flatMap(dir => [...walk(join(ROOT, dir))]).filter(f => f.endsWith(".any.js"));
 
 // `// META: script=` includes are classic scripts sharing the test file's
 // global scope in WPT, so they are concatenated ahead of the test source.
@@ -177,7 +178,7 @@ function buildSource(file: string, rel: string): string {
 // member closures capture `var` loop variables), `async_test` starts
 // immediately, `promise_test`s are serialized — and every collected subtest is
 // then adjudicated against expectations.json individually.
-const DYNAMIC_REGISTRATION_FILES = new Set(["idlharness.any.js"]);
+const DYNAMIC_REGISTRATION_FILES = new Set(["idlharness.any.js", "idlharness.https.any.js"]);
 
 type Collected = { name: string; error?: unknown };
 async function preExecute(file: string, rel: string): Promise<Collected[]> {

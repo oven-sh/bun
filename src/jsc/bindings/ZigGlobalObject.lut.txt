@@ -25,69 +25,69 @@
   global                          GlobalObject_getGlobalThis                           PropertyCallback
 
   Bun                             GlobalObject::m_bunObject                            CellProperty|DontDelete|ReadOnly
-  File                            GlobalObject::m_JSDOMFileConstructor                 CellProperty
+  File                            GlobalObject::m_JSDOMFileConstructor                 DontEnum|CellProperty
   crypto                          GlobalObject::m_cryptoObject                         CellProperty
   navigator                       GlobalObject::m_navigatorObject                      CellProperty
   performance                     GlobalObject::m_performanceObject                    CellProperty
   process                         GlobalObject::m_processObject                        CellProperty
 
-  Blob                            Bun::Bindgen::Generated::Blob::getBlobConstructor PropertyCallback
+  Blob                            Bun::Bindgen::Generated::Blob::getBlobConstructor DontEnum|PropertyCallback
   Buffer                          GlobalObject::m_JSBufferClassStructure               ClassStructure
   BuildError                      Bun::Bindgen::Generated::ResolveMessage::getBuildMessageConstructor PropertyCallback
   BuildMessage                    Bun::Bindgen::Generated::ResolveMessage::getBuildMessageConstructor PropertyCallback
-  Crypto                          Bun::Bindgen::Generated::Crypto::getCryptoConstructor PropertyCallback
+  Crypto                          Bun::Bindgen::Generated::Crypto::getCryptoConstructor DontEnum|PropertyCallback
   HTMLRewriter                    Bun::Bindgen::Generated::HtmlRewriter::getHTMLRewriterConstructor PropertyCallback
-  Request                         Bun::Bindgen::Generated::Response::getRequestConstructor PropertyCallback
+  Request                         Bun::Bindgen::Generated::Response::getRequestConstructor DontEnum|PropertyCallback
   ResolveError                    Bun::Bindgen::Generated::ResolveMessage::getResolveMessageConstructor PropertyCallback
   ResolveMessage                  Bun::Bindgen::Generated::ResolveMessage::getResolveMessageConstructor PropertyCallback
-  Response                        Bun::Bindgen::Generated::Response::getResponseConstructor PropertyCallback
-  TextDecoder                     Bun::Bindgen::Generated::TextDecoder::getTextDecoderConstructor PropertyCallback
+  Response                        Bun::Bindgen::Generated::Response::getResponseConstructor DontEnum|PropertyCallback
+  TextDecoder                     Bun::Bindgen::Generated::TextDecoder::getTextDecoderConstructor DontEnum|PropertyCallback
 
-  AbortController                 AbortControllerConstructorCallback                   PropertyCallback
-  AbortSignal                     AbortSignalConstructorCallback                       PropertyCallback
-  BroadcastChannel                BroadcastChannelConstructorCallback                  PropertyCallback
+  AbortController                 AbortControllerConstructorCallback                   DontEnum|PropertyCallback
+  AbortSignal                     AbortSignalConstructorCallback                       DontEnum|PropertyCallback
+  BroadcastChannel                BroadcastChannelConstructorCallback                  DontEnum|PropertyCallback
   ByteLengthQueuingStrategy       ByteLengthQueuingStrategyConstructorCallback         DontEnum|PropertyCallback
-  CloseEvent                      CloseEventConstructorCallback                        PropertyCallback
-  CompressionStream               CompressionStreamConstructorCallback                 PropertyCallback
+  CloseEvent                      CloseEventConstructorCallback                        DontEnum|PropertyCallback
+  CompressionStream               CompressionStreamConstructorCallback                 DontEnum|PropertyCallback
   CountQueuingStrategy            CountQueuingStrategyConstructorCallback              DontEnum|PropertyCallback
-  CryptoKey                       CryptoKeyConstructorCallback                         PropertyCallback
-  CustomEvent                     CustomEventConstructorCallback                       PropertyCallback
-  DecompressionStream             DecompressionStreamConstructorCallback               PropertyCallback
-  DOMException                    DOMExceptionConstructorCallback                      PropertyCallback
-  ErrorEvent                      ErrorEventConstructorCallback                        PropertyCallback
-  Event                           EventConstructorCallback                             PropertyCallback
-  EventTarget                     EventTargetConstructorCallback                       PropertyCallback
-  FormData                        DOMFormDataConstructorCallback                       PropertyCallback
-  Headers                         FetchHeadersConstructorCallback                      PropertyCallback
-  MessageChannel                  MessageChannelConstructorCallback                    PropertyCallback
-  MessageEvent                    MessageEventConstructorCallback                      PropertyCallback
-  MessagePort                     MessagePortConstructorCallback                       PropertyCallback
-  Performance                     PerformanceConstructorCallback                       PropertyCallback
-  PerformanceEntry                PerformanceEntryConstructorCallback                  PropertyCallback
-  PerformanceMark                 PerformanceMarkConstructorCallback                   PropertyCallback
-  PerformanceMeasure              PerformanceMeasureConstructorCallback                PropertyCallback
-  PerformanceObserver             PerformanceObserverConstructorCallback               PropertyCallback
-  PerformanceObserverEntryList    PerformanceObserverEntryListConstructorCallback      PropertyCallback
-  PerformanceResourceTiming       PerformanceResourceTimingConstructorCallback         PropertyCallback
-  PerformanceServerTiming         PerformanceServerTimingConstructorCallback           PropertyCallback
-  PerformanceTiming               PerformanceTimingConstructorCallback                 PropertyCallback
+  CryptoKey                       CryptoKeyConstructorCallback                         DontEnum|PropertyCallback
+  CustomEvent                     CustomEventConstructorCallback                       DontEnum|PropertyCallback
+  DecompressionStream             DecompressionStreamConstructorCallback               DontEnum|PropertyCallback
+  DOMException                    DOMExceptionConstructorCallback                      DontEnum|PropertyCallback
+  ErrorEvent                      ErrorEventConstructorCallback                        DontEnum|PropertyCallback
+  Event                           EventConstructorCallback                             DontEnum|PropertyCallback
+  EventTarget                     EventTargetConstructorCallback                       DontEnum|PropertyCallback
+  FormData                        DOMFormDataConstructorCallback                       DontEnum|PropertyCallback
+  Headers                         FetchHeadersConstructorCallback                      DontEnum|PropertyCallback
+  MessageChannel                  MessageChannelConstructorCallback                    DontEnum|PropertyCallback
+  MessageEvent                    MessageEventConstructorCallback                      DontEnum|PropertyCallback
+  MessagePort                     MessagePortConstructorCallback                       DontEnum|PropertyCallback
+  Performance                     PerformanceConstructorCallback                       DontEnum|PropertyCallback
+  PerformanceEntry                PerformanceEntryConstructorCallback                  DontEnum|PropertyCallback
+  PerformanceMark                 PerformanceMarkConstructorCallback                   DontEnum|PropertyCallback
+  PerformanceMeasure              PerformanceMeasureConstructorCallback                DontEnum|PropertyCallback
+  PerformanceObserver             PerformanceObserverConstructorCallback               DontEnum|PropertyCallback
+  PerformanceObserverEntryList    PerformanceObserverEntryListConstructorCallback      DontEnum|PropertyCallback
+  PerformanceResourceTiming       PerformanceResourceTimingConstructorCallback         DontEnum|PropertyCallback
+  PerformanceServerTiming         PerformanceServerTimingConstructorCallback           DontEnum|PropertyCallback
+  PerformanceTiming               PerformanceTimingConstructorCallback                 DontEnum|PropertyCallback
   ReadableByteStreamController    ReadableByteStreamControllerConstructorCallback      DontEnum|PropertyCallback
   ReadableStream                  ReadableStreamConstructorCallback                    DontEnum|PropertyCallback
   ReadableStreamBYOBReader        ReadableStreamBYOBReaderConstructorCallback          DontEnum|PropertyCallback
   ReadableStreamBYOBRequest       ReadableStreamBYOBRequestConstructorCallback         DontEnum|PropertyCallback
   ReadableStreamDefaultController ReadableStreamDefaultControllerConstructorCallback   DontEnum|PropertyCallback
   ReadableStreamDefaultReader     ReadableStreamDefaultReaderConstructorCallback       DontEnum|PropertyCallback
-  SubtleCrypto                    SubtleCryptoConstructorCallback                      PropertyCallback
-  TextDecoderStream               TextDecoderStreamConstructorCallback                 PropertyCallback
-  TextEncoder                     TextEncoderConstructorCallback                       PropertyCallback
-  TextEncoderStream               TextEncoderStreamConstructorCallback                 PropertyCallback
+  SubtleCrypto                    SubtleCryptoConstructorCallback                      DontEnum|PropertyCallback
+  TextDecoderStream               TextDecoderStreamConstructorCallback                 DontEnum|PropertyCallback
+  TextEncoder                     TextEncoderConstructorCallback                       DontEnum|PropertyCallback
+  TextEncoderStream               TextEncoderStreamConstructorCallback                 DontEnum|PropertyCallback
   TransformStream                 TransformStreamConstructorCallback                   DontEnum|PropertyCallback
   TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback DontEnum|PropertyCallback
   URL                             DOMURLConstructorCallback                            DontEnum|PropertyCallback
-  URLPattern                      URLPatternConstructorCallback                        PropertyCallback
+  URLPattern                      URLPatternConstructorCallback                        DontEnum|PropertyCallback
   URLSearchParams                 URLSearchParamsConstructorCallback                   DontEnum|PropertyCallback
-  WebSocket                       WebSocketConstructorCallback                         PropertyCallback
-  Worker                          WorkerConstructorCallback                            PropertyCallback
+  WebSocket                       WebSocketConstructorCallback                         DontEnum|PropertyCallback
+  Worker                          WorkerConstructorCallback                            DontEnum|PropertyCallback
   WritableStream                  WritableStreamConstructorCallback                    DontEnum|PropertyCallback
   WritableStreamDefaultController WritableStreamDefaultControllerConstructorCallback   DontEnum|PropertyCallback
   WritableStreamDefaultWriter     WritableStreamDefaultWriterConstructorCallback       DontEnum|PropertyCallback

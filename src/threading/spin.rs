@@ -4,8 +4,8 @@ use std::sync::LazyLock;
 
 /// Temporary: `BUN_TMP_TUNE=0=1,3=4096` replaces defaults, to measure variants.
 pub fn tune(index: usize, default: u64) -> u64 {
-    static VALUES: LazyLock<[Option<u64>; 16]> = LazyLock::new(|| {
-        let mut values = [None; 16];
+    static VALUES: LazyLock<[Option<u64>; 32]> = LazyLock::new(|| {
+        let mut values = [None; 32];
         let text = bun_core::getenv_z(bun_core::zstr!("BUN_TMP_TUNE")).unwrap_or_default();
         for pair in bun_core::strings::split(text, b",") {
             if let Some((key, value)) = bun_core::strings::split_once_char(pair, b'=')

@@ -430,6 +430,15 @@ impl Port {
         if self.has_work() || !has_other_cpu() || tune(3, 1) == 0 {
             return false;
         }
+        if tune(3, 1) > 1 {
+            self.park(Some(tune(3, 1)), false);
+            if self.end.get() == 0 {
+                return false;
+            }
+            self.dispatch_batch(on_event);
+            self.prepare();
+            return true;
+        }
         let deadline = now_ns() + SOON_NS;
         while !self.fill_batch(Timeout::Now) {
             if now_ns() > deadline {

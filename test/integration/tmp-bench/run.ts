@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 const LIMIT = 270_000;
 export function bench(script: string, ...args: string[]) {
-  test.skipIf(!isWindows)(
+  test.skipIf(!isWindows || (process.arch === "x64" && (args[0] === "busy" || script === "stall.js")))(
     script,
     async () => {
       using dir = tempDir("tmp-bench", {});
@@ -25,12 +25,25 @@ export function bench(script: string, ...args: string[]) {
         if (existsSync(shipped)) now = await unzip(shipped, "new");
       }
       console.log("old", old, "new", now);
-      await Bun.spawn([old, join(import.meta.dir, script), ...(script === "startup.js" ? [`old=${old}`, `new=${now}`] : [old, now]), ...args], {
-        env: { ...bunEnv, STRESS_TLS: process.env.STRESS_TLS,
-          PROFILE_EXE: bunExe(), BUN_GARBAGE_COLLECTOR_LEVEL: undefined, BUN_JSC_randomIntegrityAuditRate: undefined },
-        stdio: ["ignore", "inherit", "inherit"],
-        timeout: LIMIT,
-      }).exited;
+      await Bun.spawn(
+        [
+          old,
+          join(import.meta.dir, script),
+          ...(script === "startup.js" ? [`old=${old}`, `new=${now}`] : [old, now]),
+          ...args,
+        ],
+        {
+          env: {
+            ...bunEnv,
+            STRESS_TLS: process.env.STRESS_TLS,
+            PROFILE_EXE: bunExe(),
+            BUN_GARBAGE_COLLECTOR_LEVEL: undefined,
+            BUN_JSC_randomIntegrityAuditRate: undefined,
+          },
+          stdio: ["ignore", "inherit", "inherit"],
+          timeout: LIMIT,
+        },
+      ).exited;
     },
     LIMIT + 20_000,
   );

@@ -23,6 +23,16 @@ const MIN_SHARED_QUANTUM: u64 = 4096;
 const MAX_SHARED_OVERFLOWS: u32 = 2;
 const FRACTION_BITS: u32 = 24;
 
+/// Of a packet in its burst.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Place {
+    #[default]
+    Later,
+    /// The last burst may still be leaving.
+    First,
+    FirstAfterGap,
+}
+
 #[derive(Default)]
 pub(super) struct Pacer {
     /// How many packets go out without delay.
@@ -129,18 +139,21 @@ impl Pacer {
         }
     }
 
-    /// Returns whether the packet starts a burst.
     #[inline]
-    pub(super) fn on_sent(&mut self, now: Instant, len: u16) -> bool {
+    pub(super) fn on_sent(&mut self, now: Instant, len: u16) -> Place {
         let time = self.time_per_byte.saturating_mul(len.into());
         let pause = Duration::from_micros(time.saturating_mul(PAUSE) >> FRACTION_BITS);
-        let starts_burst = now - self.last_sent_at > pause.min(MAX_PAUSE) && now >= self.left_at;
+        let place = match now - self.last_sent_at > pause.min(MAX_PAUSE) {
+            true if now >= self.left_at => Place::FirstAfterGap,
+            true => Place::First,
+            false => Place::Later,
+        };
         self.last_sent_at = now;
         self.left_at =
             self.left_at.max(now) + Duration::from_micros((time / 4 * 3) >> FRACTION_BITS);
         if self.burst_tokens > 0 {
             self.burst_tokens -= 1;
-            return starts_burst;
+            return place;
         }
         self.rest = self.rest.saturating_sub(len.into());
         self.sent_since_overflow += u64::from(len);
@@ -153,7 +166,7 @@ impl Pacer {
         let time = time.saturating_add(self.remainder);
         self.remainder = time % (1 << FRACTION_BITS);
         self.next = self.next + Duration::from_micros(time >> FRACTION_BITS);
-        starts_burst
+        place
     }
 
     /// For the first packet of a burst, which finds room in a queue that has only this sender to fill it.

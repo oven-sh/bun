@@ -614,6 +614,17 @@ fn streams_do_not_write_out_of_turn() {
 }
 
 #[test]
+fn streams_that_arrive_late_keep_their_place() {
+    let raw = Raw::client().config(|it| it.sends_in_order = true);
+    let mut raw = raw.connected();
+    for id in [0, 12, 16, 8, 4] {
+        raw.write(id, b"a", true);
+        raw.peer.send(id, &filler(0, 40_000), true);
+    }
+    assert_eq!(ids(turns(&mut raw)), [0, 4, 8, 12, 16]);
+}
+
+#[test]
 fn urgent_streams_go_first() {
     let mut raw = Raw::client()
         .config(|it| it.sends_in_order = true)

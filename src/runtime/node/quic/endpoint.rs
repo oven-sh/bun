@@ -1455,6 +1455,9 @@ impl QuicEndpoint {
         if self.is_drained() {
             self.finish_close();
         } else {
+            (self.sessions.get().iter())
+                .filter_map(|&it| self.live_session(it))
+                .for_each(QuicSession::expect_end);
             self.schedule_process();
         }
     }

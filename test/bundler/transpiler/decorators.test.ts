@@ -1101,6 +1101,7 @@ test("removes decorated declare and abstract fields from a class expression", as
 test("lowering many decorated instance fields into a large constructor body stays linear", async () => {
   // Hold N fixed; compare M=100 vs M=50000. If the splice-after-super() were O(M*N)
   // instead of O(M+N), tLarge/tSmall would be ~5x (debug) / ~90x (release) here, not ~2x.
+  const limit = 60_000;
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1120,17 +1121,20 @@ test("lowering many decorated instance fields into a large constructor body stay
           tsconfig: { compilerOptions: { experimentalDecorators: true } },
         });
         function time(M, src) {
-          const start = process.cpuUsage();
+          const start = process.threadCpuUsage();
           const out = t.transformSync(src);
-          const { user, system } = process.cpuUsage(start);
+          const { user, system } = process.threadCpuUsage(start);
           if (!out.includes("this.f0 = 0") || !out.includes("this.f" + (M - 1) + " = " + (M - 1)))
             throw new Error("instance-field initializers missing from lowered constructor at M=" + M);
           return (user + system) / 1000;
         }
         // The least of several runs, in turns and in time of the processor: what else the machine does can only add.
+        // The time is that of this thread: the collector's threads are busy beside the first transform, and where
+        // only one turn fits there is no other sample. Seven turns take about a minute on a debug build, so no turn
+        // starts once half of the child's time is gone.
         const [small, large] = [gen(100), gen(50000)];
         let [tSmall, tLarge] = [Infinity, Infinity];
-        for (let i = 0; i < 7; i++) {
+        for (let i = 0; i < 7 && (i === 0 || performance.now() < ${limit / 2}); i++) {
           tSmall = Math.min(tSmall, time(100, small));
           tLarge = Math.min(tLarge, time(50000, large));
         }
@@ -1140,7 +1144,7 @@ test("lowering many decorated instance fields into a large constructor body stay
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
-    timeout: 60_000,
+    timeout: limit,
     killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

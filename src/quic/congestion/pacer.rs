@@ -45,6 +45,8 @@ pub(super) struct Pacer {
     overflows: u32,
     sent_since_overflow: u64,
     last_sent_at: Instant,
+    /// When what has been sent is through an interface that is only faster than the pace by a third.
+    left_at: Instant,
     /// The share of bursts whose first packet was lost, in millionths.
     lost_starts: u32,
     /// Others fill the queue as well. It takes in more of those that wake up more often, unless all of them send
@@ -121,7 +123,7 @@ impl Pacer {
     }
 
     pub(super) fn on_idle_restart(&mut self, now: Instant, is_recovering: bool) {
-        self.next = self.next.min(now);
+        (self.next, self.left_at) = (self.next.min(now), now);
         if !is_recovering {
             self.burst_tokens = BURST;
         }
@@ -132,8 +134,10 @@ impl Pacer {
     pub(super) fn on_sent(&mut self, now: Instant, len: u16) -> bool {
         let time = self.time_per_byte.saturating_mul(len.into());
         let pause = Duration::from_micros(time.saturating_mul(PAUSE) >> FRACTION_BITS);
-        let starts_burst = now - self.last_sent_at > pause.min(MAX_PAUSE);
+        let starts_burst = now - self.last_sent_at > pause.min(MAX_PAUSE) && now >= self.left_at;
         self.last_sent_at = now;
+        self.left_at =
+            self.left_at.max(now) + Duration::from_micros((time / 4 * 3) >> FRACTION_BITS);
         if self.burst_tokens > 0 {
             self.burst_tokens -= 1;
             return starts_burst;

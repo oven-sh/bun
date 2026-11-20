@@ -214,7 +214,7 @@ enum class Reply : uint8_t {
     // Unsolicited — fires the onNavigated/onNavigationFailed callback.
     // Same viewId in header; these arrive BEFORE the corresponding
     // NavDone/NavFailed reply so the callback fires before `await` resumes.
-    NavEvent = 10, // u32 urlLen, url, u32 titleLen, title
+    NavEvent = 10, // u32 urlLen, url, u32 titleLen, title, u8 endsNavigation
     NavFailEvent = 11, // u32 errLen, err
 
     // Unsolicited — fires the console callback or forwards to the global

@@ -37,9 +37,16 @@ const mockCDP = /* js */ `
         sock.terminate();
       },
     };
+    // The main frame's id is the target's id, as in Chrome: session "S<n>"
+    // is attached to target "T<n>".
+    const mainFrameId = sessionId => "T" + sessionId.slice(1);
     function commit(sessionId, url, loaderId) {
       lastUrl = url;
-      mock.emit("Page.frameNavigated", { frame: { id: "F", loaderId, url, mimeType: "text/html" }, type: "Navigation" }, sessionId);
+      mock.emit(
+        "Page.frameNavigated",
+        { frame: { id: mainFrameId(sessionId), loaderId, url, mimeType: "text/html" }, type: "Navigation" },
+        sessionId,
+      );
       if (mock.completeLoads) mock.emit("Page.loadEventFired", { timestamp: loads }, sessionId);
     }
     const server = Bun.serve({
@@ -64,7 +71,7 @@ const mockCDP = /* js */ `
               return reply({ sessionId: "S" + params.targetId.slice(1) });
             case "Page.navigate": {
               const loaderId = "L" + ++loads;
-              reply({ frameId: "F", loaderId });
+              reply({ frameId: mainFrameId(sessionId), loaderId });
               return commit(sessionId, params.url, loaderId);
             }
             case "Page.reload":

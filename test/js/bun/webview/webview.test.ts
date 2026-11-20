@@ -324,6 +324,154 @@ it("onNavigated callback fires", async () => {
   expect(view.onNavigated).toBe(null);
 });
 
+// A navigation that stays in the same document (a #fragment change) gets no
+// didFinishNavigation:. The host settles it from the same-document delegate
+// instead, once per navigation, and a history traversal within the document
+// reports through the same path.
+it("navigate() to a #fragment of the current page resolves and fires onNavigated once", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response("<title>frag</title><h1>hi</h1>", { headers: { "content-type": "text/html" } }),
+  });
+  const base = `http://127.0.0.1:${server.port}/`;
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(base);
+  const urls: string[] = [];
+  view.onNavigated = (url: string) => void urls.push(url);
+
+  await view.navigate(base + "#one");
+  expect({ url: view.url, hash: await view.evaluate("location.hash"), loading: view.loading }).toEqual({
+    url: base + "#one",
+    hash: "#one",
+    loading: false,
+  });
+  // The URL the view is already at is a reload for WebKit (FrameLoadType::Same),
+  // which ends with didFinishNavigation:. A fragment seen before is a
+  // same-document navigation again.
+  await view.navigate(base + "#one");
+  await view.navigate(base + "#two");
+  await view.navigate(base + "#one");
+  // A URL that only the parser makes equal to the current document (no "/"
+  // before the "#") is a same-document navigation as well.
+  await view.navigate(base.slice(0, -1) + "#three");
+  expect(urls).toEqual([base + "#one", base + "#one", base + "#two", base + "#one", base + "#three"]);
+
+  // A traversal between two #fragment entries reports through the same path.
+  // goBack() is acknowledged at once on WebKit, so wait for the report.
+  const traversed = Promise.withResolvers<string>();
+  view.onNavigated = (url: string) => traversed.resolve(url);
+  await view.goBack();
+  expect(await traversed.promise).toBe(base + "#one");
+  expect(await view.evaluate("location.hash")).toBe("#one");
+});
+
+it("a pushState() by the page updates view.url and fires onNavigated", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response("<title>spa</title><h1>hi</h1>", { headers: { "content-type": "text/html" } }),
+  });
+  const base = `http://127.0.0.1:${server.port}/`;
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(base);
+  const urls: string[] = [];
+  view.onNavigated = (url: string) => void urls.push(url);
+  await view.evaluate("history.pushState({}, '', '/app/home'), 0");
+  // The NavEvent is ahead of the next reply on the pipe.
+  await view.evaluate("1");
+  expect({ url: view.url, urls, loading: view.loading }).toEqual({
+    url: base + "app/home",
+    urls: [base + "app/home"],
+    loading: false,
+  });
+});
+
+it("a replaceState() while the document loads does not end navigate() or clear loading", async () => {
+  let releaseImage = () => {};
+  const imageHeld = new Promise<void>(resolve => (releaseImage = resolve));
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/late.gif") {
+        await imageHeld;
+        return new Response("GIF89a", { headers: { "content-type": "image/gif" } });
+      }
+      return new Response(
+        "<title>spa</title><script>history.replaceState({}, '', '/app/home')</script><img src='/late.gif'>",
+        { headers: { "content-type": "text/html" } },
+      );
+    },
+  });
+  const base = `http://127.0.0.1:${server.port}/`;
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  const seen: [string, boolean][] = [];
+  const replaced = Promise.withResolvers<void>();
+  view.onNavigated = (url: string) => {
+    seen.push([url, view.loading]);
+    if (seen.length === 1) replaced.resolve();
+  };
+  const started = view.navigate(base + "spa");
+  // The page's own commit reports while the held image keeps the navigation
+  // in flight. The load ends it, and the callback runs before the promise resolves.
+  await replaced.promise;
+  const whileHeld = await Promise.race([started.then(() => "navigate() settled"), view.evaluate("1")]);
+  expect(whileHeld).toBe(1);
+  releaseImage();
+  await started;
+  expect({ url: view.url, loading: view.loading, seen }).toEqual({
+    url: base + "app/home",
+    loading: false,
+    seen: [
+      [base + "app/home", true],
+      [base + "app/home", false],
+    ],
+  });
+});
+
+// A hash router sets location.hash as its document loads. WebKit reports that
+// the same way as a #fragment navigate() of the view's own. The navigation
+// has a document load of its own, so only that load ends it.
+it("a location.hash change by the loading document does not end navigate() early", async () => {
+  let releaseImage = () => {};
+  const imageHeld = new Promise<void>(resolve => (releaseImage = resolve));
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/late.gif") {
+        await imageHeld;
+        return new Response("GIF89a", { headers: { "content-type": "image/gif" } });
+      }
+      return new Response("<title>router</title><script>location.hash = '#/home'</script><img src='/late.gif'>", {
+        headers: { "content-type": "text/html" },
+      });
+    },
+  });
+  const base = `http://127.0.0.1:${server.port}/`;
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  const routed = Promise.withResolvers<void>();
+  view.onNavigated = (url: string) => {
+    if (url === base + "app#/home") routed.resolve();
+  };
+  const started = view.navigate(base + "app");
+  // The document has changed its hash and its image is held: navigate() is
+  // still pending.
+  await routed.promise;
+  const whileHeld = await Promise.race([
+    started.then(() => "navigate() settled"),
+    view.evaluate("document.readyState"),
+  ]);
+  expect(whileHeld).not.toBe("navigate() settled");
+  expect(view.loading).toBe(true);
+  releaseImage();
+  await started;
+  expect({ url: view.url, loading: view.loading, readyState: await view.evaluate("document.readyState") }).toEqual({
+    url: base + "app#/home",
+    loading: false,
+    readyState: "complete",
+  });
+});
+
 it("console callback receives (type, ...args)", async () => {
   const calls: [string, ...unknown[]][] = [];
   await using view = new Bun.WebView({

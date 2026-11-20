@@ -52,7 +52,6 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/HashSet.h>
 #include <wtf/HexNumber.h>
-#include <wtf/NakedPtr.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
@@ -848,6 +847,9 @@ JSC::JSValue WebSocket::callHandler(const JSC::Identifier& name, const JSC::ArgL
         return {};
 
     auto& vm = context->vm();
+    // A node:vm timeout doesn't forbid script, so the check above passes while its termination unwinds.
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return {};
     JSC::JSLockHolder lock(vm);
     auto* globalObject = context->jsGlobalObject();
     JSC::JSValue function = wrapper->m_handlers->getDirect(vm, name);
@@ -859,10 +861,13 @@ JSC::JSValue WebSocket::callHandler(const JSC::Identifier& name, const JSC::ArgL
     JSC::EnsureStillAliveScope protectedWrapper(wrapper);
     AsyncContextScope asyncContext(globalObject, m_asyncContext.getValue());
     Bun::ModuleGraphContextScope moduleGraphContext(*context);
-    NakedPtr<JSC::Exception> exception;
-    JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::Other, function, callData, wrapper->m_owner.get(), arguments, exception);
-    if (exception) {
-        reportException(globalObject, exception.get());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::Other, function, callData, wrapper->m_owner.get(), arguments);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        if (scope.clearExceptionExceptTermination())
+            reportException(globalObject, exception);
+        // Beneath script (send() calls the stream's `write` handler), a termination stays pending and ends that script too.
+        Bun::takeTerminationOutsideScript(vm, scope);
         return {};
     }
     return result;
@@ -874,8 +879,8 @@ void WebSocket::callHandlerWithBuffer(const JSC::Identifier& name, std::span<con
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     JSC::JSUint8Array* buffer = createBuffer(globalObject, bytes);
     if (!buffer || scope.exception()) [[unlikely]] {
-        scope.clearExceptionExceptTermination();
-        reportFailure({ "Failed to allocate memory"_s, {}, {} });
+        if (scope.clearExceptionExceptTermination())
+            reportFailure({ "Failed to allocate memory"_s, {}, {} });
         return;
     }
 

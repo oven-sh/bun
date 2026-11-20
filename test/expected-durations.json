@@ -16,6 +16,22 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-path-leads-to-its-file-where-the-sources-are-gone.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/library-class-fields.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/library-comparisons.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/library-loads.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/hardened-zstd.test.ts": {
     "default": 2000,
     "asan": 8000

@@ -1906,6 +1906,10 @@
     "aot/what-a-build-says-is-written-at-once.test.ts",
     "aot/files-that-load-again-by-module.test.ts",
     "aot/the-global-object-that-goes-somewhere-opens-no-test-run.test.ts",
-    "aot/a-todo-for-one-platform-counts-there-alone.test.ts"
+    "aot/a-todo-for-one-platform-counts-there-alone.test.ts",
+    "aot/a-path-leads-to-its-file-where-the-sources-are-gone.test.ts",
+    "aot/library-class-fields.test.ts",
+    "aot/library-comparisons.test.ts",
+    "aot/library-loads.test.ts"
   ]
 }

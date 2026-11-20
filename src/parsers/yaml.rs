@@ -154,8 +154,6 @@ pub enum YamlParseError {
     StackOverflow,
 }
 
-bun_core::oom_from_alloc!(YamlParseError);
-
 /// Already logged, like every other `SyntaxError`.
 impl From<bun_ast::SourceTooLarge> for YamlParseError {
     fn from(_: bun_ast::SourceTooLarge) -> Self {

@@ -885,7 +885,6 @@ pub mod kernel32 {
             lpOverlapped: *mut c_void,
         ) -> BOOL;
         pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
-        pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub safe fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
         /// `lpOverlapped` is required even for synchronous handles: its `Offset` is the range start.
@@ -976,7 +975,7 @@ pub mod kernel32 {
     };
     pub use super::{GetSystemInfo, SYSTEM_INFO, SetCurrentDirectoryW, SetFilePointerEx};
 }
-pub use kernel32::{GetCurrentProcess, GetExitCodeProcess, GetLastError};
+pub use kernel32::{GetCurrentProcess, GetLastError};
 
 pub const INFINITE: DWORD = 0xFFFF_FFFF;
 pub const WAIT_TIMEOUT: DWORD = 258;

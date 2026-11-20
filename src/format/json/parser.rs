@@ -44,8 +44,6 @@ pub(super) const BLANK_AFTER: u8 = 1 << 0;
 pub(super) const REWRITTEN: u8 = 1 << 1;
 /// An array of numbers: each line gets as many as fit.
 pub(super) const CONCISE: u8 = 1 << 2;
-/// With `quoteProps: "consistent"`: one of the object's names needs its quotes, so all get them.
-pub(super) const QUOTED_NAMES: u8 = 1 << 3;
 /// A name that's a string and is printed without its quotes.
 pub(super) const UNQUOTED: u8 = 1 << 4;
 /// A name that isn't a string and is printed in quotes.
@@ -775,9 +773,6 @@ impl Reader<'_, '_> {
     #[cold]
     fn make_names_consistent(&mut self, object: u32, requires_quotes: bool, mut sum: u32) -> u32 {
         let end = self.tree.nodes[object as usize].next;
-        if requires_quotes {
-            self.tree.nodes[object as usize].flags |= QUOTED_NAMES;
-        }
         let mut name = object + 1;
         while name < end {
             let node = self.tree.nodes[name as usize];

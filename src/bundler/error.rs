@@ -36,8 +36,6 @@ pub enum Error {
     FormatError,
     #[error("ResolveMessage")]
     ResolveMessage,
-    #[error("JSError")]
-    Js(bun_core::JsError),
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -120,8 +118,6 @@ impl Error {
             Self::EmptyAST => "EmptyAST",
             Self::FormatError => "FormatError",
             Self::ResolveMessage => "ResolveMessage",
-            Self::Js(bun_core::JsError::OutOfMemory) => "OutOfMemory",
-            Self::Js(_) => "JSError",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),

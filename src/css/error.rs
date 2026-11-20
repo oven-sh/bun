@@ -169,8 +169,6 @@ impl ErrorLocation {
 pub enum PrinterErrorKind {
     /// A [std::fmt::Error](std::fmt::Error) was encountered in the underlying destination.
     fmt_error,
-    /// The CSS modules pattern must end with `[local]` for use in CSS grid.
-    invalid_css_modules_pattern_in_grid,
     /// Substituting parent selectors for `&` while compiling CSS nesting for
     /// the configured targets exceeded the expansion limit.
     maximum_nesting_expansion,
@@ -186,9 +184,6 @@ impl fmt::Display for PrinterErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::fmt_error => f.write_str("Formatting error occurred"),
-            Self::invalid_css_modules_pattern_in_grid => {
-                f.write_str("CSS modules pattern must end with '[local]' when used in CSS grid")
-            }
             Self::maximum_nesting_expansion => f.write_str(
                 "Maximum nesting expansion exceeded when compiling CSS nesting for the configured targets",
             ),
@@ -235,10 +230,6 @@ pub enum ParserError<'bump> {
     unexpected_token(Token<'bump>),
     /// Maximum nesting depth was reached.
     maximum_nesting_depth,
-    unexpected_value {
-        expected: &'bump [u8],
-        received: &'bump [u8],
-    },
     input_too_large,
 }
 
@@ -267,9 +258,6 @@ impl fmt::Display for ParserError<'_> {
             ),
             Self::unexpected_token(token) => write!(f, "Unexpected token: {}", token),
             Self::maximum_nesting_depth => f.write_str("Maximum CSS nesting depth exceeded"),
-            Self::unexpected_value { expected, received } => {
-                write!(f, "Expected {}, received {}", BStr::new(expected), BStr::new(received))
-            }
             Self::input_too_large => f.write_str("CSS file is too large to parse (2 GiB maximum)"),
         }
     }

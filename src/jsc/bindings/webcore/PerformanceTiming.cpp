@@ -32,15 +32,7 @@
 #include "PerformanceTiming.h"
 #include <wtf/TZoneMallocInlines.h>
 
-// #include "Document.h"
-// #include "DocumentEventTiming.h"
-// #include "DocumentLoadTiming.h"
-// #include "DocumentLoader.h"
-// #include "FrameLoader.h"
-// #include "LocalFrame.h"
-// #include "NetworkLoadMetrics.h"
 #include "Performance.h"
-// #include "ResourceResponse.h"
 
 namespace WebCore {
 

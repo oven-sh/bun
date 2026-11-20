@@ -1,0 +1,100 @@
+---
+title: "bun bake"
+description: "Serve an app from the pages in app/pages, an optional app/server.ts and optional build plugins, with hot reloading"
+---
+
+<Warning>
+  `bun bake` is experimental. It is on in canary builds. In other builds, set the environment variable
+  `BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE=1`.
+</Warning>
+
+`bun bake` serves the app in the working directory with Bun's dev server. It reads three places:
+
+- `app/pages/`: the HTML pages.
+- `app/server.ts`: your server code. This file is optional.
+- `bake.config.ts`: build plugins. This file is optional.
+
+```txt File Tree icon="folder-tree"
+app/
+  pages/
+    index.html          → /
+    about.html          → /about
+    docs/
+      index.html        → /docs
+      install.html      → /docs/install
+  server.ts
+bake.config.ts
+```
+
+```bash terminal icon="terminal"
+bun bake
+```
+
+Each page is bundled with its scripts and stylesheets, the same as an [HTML import](/bundler/fullstack). Edits to pages reload in the browser. Changes to `app/server.ts` and the files that it imports apply without a restart. An error in them shows until you fix it.
+
+`bun bake` always runs the dev server, also with `NODE_ENV=production`. It is not for production.
+
+## Pages
+
+Every `.html` file in `app/pages/` is a page. Its path is its URL:
+
+- `index.html` is the URL of its folder: `app/pages/docs/index.html` is `/docs`.
+- Any other file drops the `.html`: `app/pages/docs/install.html` is `/docs/install`.
+
+A page cannot have `[`, `]`, `:`, `*`, `?`, `#` or `%` in its path, because its URL must be fixed. Other characters are allowed: `app/pages/über.html` is `/über`, and Bun serves it at `/%C3%BCber`, the URL that browsers request.
+
+## Server code
+
+The default export of `app/server.ts` holds options of [`Bun.serve()`](/runtime/http/server), the same as `export default` in a file that `bun` runs. A [Hono](https://hono.dev) app works: `export default app`.
+
+- `routes`: more routes. A route cannot have the URL of a page.
+- `fetch`: handles each request that no page and no route matched.
+- `websocket`, `error`, `tls` and the other options of `Bun.serve()`.
+- `port`, `hostname` and `unix`: where to listen. `--port` and `--host` take precedence.
+
+```ts title="app/server.ts" icon="/icons/typescript.svg"
+export default {
+  routes: {
+    "/api/hello": () => Response.json({ message: "Hello" }),
+  },
+  fetch(req) {
+    return new Response("Not found", { status: 404 });
+  },
+};
+```
+
+`bun bake` starts the server. Do not call `Bun.serve()` in `app/server.ts`. The program is `bun bake` itself, so `app/server.ts` is not the entry module: `import.meta.main` is `false`, `Bun.main` is an empty string, and `process.argv` holds the path of `bun` followed by the arguments of `bun bake`. Without a `fetch`, a request that no page and no route matched gets a 404.
+
+## Plugins
+
+The default export of `bake.config.ts` lists build plugins. They are [Bun plugins](/bundler/plugins), and `bun bake` runs them on the pages and the files that the pages import.
+
+```ts title="bake.config.ts" icon="/icons/typescript.svg"
+import { defineConfig } from "bun:bake";
+import tailwind from "bun-plugin-tailwind";
+
+export default defineConfig({
+  plugins: [tailwind],
+});
+```
+
+The default export can also be a function. It gets `{ mode }`, which is `"development"` in `bun bake`. The plugins in `[serve.static] plugins` of `bunfig.toml` also apply, before the plugins of `bake.config.ts`.
+
+When `bake.config.ts` changes, `bun bake` starts again, so that the new plugins apply. A change to a file that `bake.config.ts` imports, such as a local plugin, does not: restart `bun bake` for it.
+
+## Options
+
+| Flag                               | Description                                                                                                         |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `--port <NUM>`                     | The port. The default is `$PORT`, or 3000.                                                                          |
+| `--host <STR>`, `--hostname <STR>` | The hostname. The default is `localhost`. `host:3000` also sets the port.                                           |
+| `--console`                        | Print the browser's console logs.                                                                                   |
+| `--no-console`                     | Do not print the browser's console logs.                                                                            |
+| `--check`                          | Type check the project first, and again after each change. With type errors, `bun bake` does not serve the project. |
+| `--no-clear-screen`                | Do not clear the terminal on a reload.                                                                              |
+
+A flag and its value can also be one argument: `--port=3000`. `--check` and `--no-clear-screen` mean the same before `bake`: `bun --check bake` is the same as `bun bake --check`. With `--check`, `bun bake` starts again after each change instead of reloading in place, so that it can type check again. `bun bake` has no `--watch` or `--hot`: it always reloads.
+
+## A `bake` script or file of your own
+
+When `package.json` has a `bake` script, `bun bake` runs that script. A file named `bake.ts` (or `bake.js`, and so on) also takes precedence. To start the dev server in that project, rename the script or the file.

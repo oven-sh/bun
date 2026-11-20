@@ -1164,6 +1164,8 @@ insertFinalNewline = false
     [options(`plugins = ["./plugin.js"], fooDepth = -inf`), "fooDepth must be a finite number"],
     [options(`plugins = ["./plugin.js"], fooDepth = nan`), "fooDepth must be a finite number"],
     [options(`plugins = ["./plugin.js"], fooDepth = 1e400`), "fooDepth must be a finite number"],
+    [options(`plugins = ["./plugin.js"], fooDepths = [1, inf]`), "fooDepths must only have finite numbers"],
+    [options(`plugins = ["./plugin.js"], foo = { depths = [{ max = nan }] }`), "foo must only have finite numbers"],
     [`overides = []`, `Unknown key "overides" in [fmt]\n  Did you mean "overrides"?`],
   ])("rejects %s with: %s", async (line, message) => {
     const result = await format({ ...bunfig(line), "a.js": "a  ;\n" });

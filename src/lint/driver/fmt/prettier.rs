@@ -33,12 +33,11 @@ pub(crate) struct Prettier<'e> {
 }
 
 /// What `bunfig.toml` and the command line say for one file that is handed over.
-#[derive(Default)]
 pub(crate) struct ForFile<'a> {
     /// [`Configs::bunfig_overrides_for`](super::config::Configs::bunfig_overrides_for)
     pub(crate) overrides: &'a [(&'a [u8], &'a [u8])],
     /// [`Configs::passthrough_for`](super::config::Configs::passthrough_for)
-    pub(crate) passthrough: &'a [(&'a [u8], &'a [u8])],
+    pub(crate) passthrough: &'a super::config::Passthrough<'a>,
     /// The plugins that `--plugin` and `bunfig.toml` list for the file. A path among them is absolute.
     pub(crate) plugins: &'a [Vec<u8>],
 }
@@ -132,11 +131,13 @@ impl<'e> Prettier<'e> {
         // and the command line, as it does for the built-in formatter.
         let mut flags = self.flags.clone();
         flags.extend((file.overrides.iter()).map(|it| (it.0.to_vec(), flag_value(it.1))));
-        flags.extend((file.passthrough.iter()).map(|it| (it.0.to_vec(), passthrough_value(it.1))));
+        let of_plugins = &file.passthrough;
+        let of_plugins = of_plugins.earlier.iter().chain(&of_plugins.current);
+        flags.extend(of_plugins.map(|it| (it.0.to_vec(), passthrough_value(it.1))));
         how.push((b"flags".to_vec(), Json::Object(flags)));
         let plugins = strings(file.plugins.iter().map(|it| &it[..]));
         how.push((b"plugins".to_vec(), plugins));
-        let names = strings(file.passthrough.iter().map(|it| it.0));
+        let names = strings(file.passthrough.current.iter().map(|it| it.0));
         how.push((b"passThrough".to_vec(), names));
         let or_null = |it: Option<&[u8]>| it.map_or(Json::Null, |it| Json::String(it.to_vec()));
         how.push((b"path".to_vec(), or_null(path)));

@@ -658,15 +658,32 @@ fn set_override_options(
         if !may_use_plugin || known().any(|it| it.eq_ignore_ascii_case(&key.name)) {
             return unknown_key(&key.name, key.at, b"fmt.overrides.options", keys());
         }
+        let value_as_json = json_of(value)?;
         // JSON has no such number, so Prettier would get `null` and use the plugin's default.
-        if matches!(&value.data, Data::ENumber(number) if !number.value().is_finite()) {
-            return reject(value.loc, &[&key.name, b" must be a finite number"]);
+        if let Some(number) = non_finite_in(value) {
+            let message: &[u8] = match std::ptr::eq(number, value) {
+                true => b" must be a finite number",
+                false => b" must only have finite numbers",
+            };
+            return reject(number.loc, &[&key.name, message]);
         }
         let mut json = Vec::new();
-        write_json(&mut json, &json_of(value)?);
+        write_json(&mut json, &value_as_json);
         it.passthrough.push((key.name, json));
     }
     Ok(())
+}
+
+/// The first `inf` or `nan` in `value`, also inside an array or a table. [`json_of`] has checked how deep `value` goes.
+fn non_finite_in(value: &Expr) -> Option<&Expr> {
+    match &value.data {
+        Data::ENumber(number) if !number.value().is_finite() => Some(value),
+        Data::EArray(items) => items.slice().iter().find_map(non_finite_in),
+        Data::EObject(table) => (table.properties.iter())
+            .filter_map(|it| it.value.as_ref())
+            .find_map(non_finite_in),
+        _ => None,
+    }
 }
 
 /// Parses `[[fmt.overrides]]`. Same shape as in a `.prettierrc`. `options` takes the `[fmt]` keys that affect output,

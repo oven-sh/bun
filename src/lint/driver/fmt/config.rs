@@ -295,6 +295,16 @@ impl<'a> PluginView<'a> {
     }
 }
 
+/// [`Configs::passthrough_for`]
+#[derive(Default)]
+pub(crate) struct Passthrough<'a> {
+    /// From the entries before the one whose `plugins` the file has. They can be options of a plugin that the file
+    /// doesn't list anymore, and Prettier ignores an option that none of its plugins has.
+    pub(crate) earlier: Vec<(&'a [u8], &'a [u8])>,
+    /// From that entry and the ones after it. A name among these that none of the file's plugins has is a mistake.
+    pub(crate) current: Vec<(&'a [u8], &'a [u8])>,
+}
+
 pub(crate) struct Config {
     pub(crate) path: Vec<u8>,
     settings: Settings,
@@ -1983,8 +1993,25 @@ impl<'c> Configs<'c> {
 
     /// The options of plugins that `[[fmt.overrides]]` sets for the file at `path`, in the order they apply. Values
     /// are JSON text, and strings have quotes.
-    pub(crate) fn passthrough_for(&self, path: &[u8]) -> Vec<(&[u8], &[u8])> {
-        self.in_bunfig_overrides(path, |it| &it.passthrough)
+    pub(crate) fn passthrough_for(&self, path: &[u8]) -> Passthrough<'_> {
+        if self.overrides.iter().all(|it| it.passthrough.is_empty()) {
+            return Passthrough::default();
+        }
+        let relative = paths::relative(&self.bunfig_base_directory, path);
+        let matching: Vec<&Override> = (self.overrides.iter())
+            .filter(|it| it.matches(&relative))
+            .collect();
+        // The file has the `plugins` of this entry: [`Configs::plugin_view`].
+        let listed_at = matching.iter().rposition(|it| it.plugins.is_some());
+        let (earlier, current) = matching.split_at(listed_at.unwrap_or(0));
+        fn options<'s>(entries: &[&'s Override]) -> Vec<(&'s [u8], &'s [u8])> {
+            let all = entries.iter().flat_map(|it| &it.passthrough);
+            all.map(|it| (&it.0[..], &it.1[..])).collect()
+        }
+        Passthrough {
+            earlier: options(earlier),
+            current: options(current),
+        }
     }
 
     /// The path of the configuration file that applies in `scope`.

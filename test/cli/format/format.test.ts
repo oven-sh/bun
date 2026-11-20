@@ -4838,6 +4838,89 @@ exports.options = { fooStyle: { type: "string" }, fooDepth: { type: "int" } };
       timeout,
     );
 
+    // The options of every entry that matches a file are merged, and its plugins are those of the last entry with a
+    // list. So an earlier entry can set an option of a plugin that the file no longer lists. Prettier ignores it.
+    test(
+      "an option of an entry whose plugins a later entry replaces is no error for the file",
+      async () => {
+        const other = `exports.languages = [{ name: "Foo", parsers: ["foo"], extensions: [".foo"] }];
+exports.options = { otherStyle: { type: "string" } };
+`;
+        const later = (option: string) =>
+          `[[fmt.overrides]]\nfiles = ["legacy/**"]\noptions = { plugins = ["./other.js"], ${option} = "old" }\n`;
+        const bunfig = (option: string) => `${scoped(["*.foo"], ', fooStyle = "wide"')}\n${later(option)}`;
+        const files = { ...project, "other.js": other, "legacy/b.foo": "c   d\n" };
+        const reads = ["a.foo", "legacy/b.foo", log];
+        const [result, misspelled] = await Promise.all([
+          format({ ...files, "bunfig.toml": bunfig("otherStyle") }, [], { reads }),
+          format({ ...files, "bunfig.toml": bunfig("otherStlye") }, [], { reads }),
+        ]);
+        expect(result.stderr).not.toContain("Unknown option");
+        expect(result.files).toMatchObject({ "a.foo": "a b\n", "legacy/b.foo": "c d\n" });
+        const inLegacy = callsOf(result).find(it => it.filepath.endsWith("b.foo"));
+        expect(inLegacy).toEqual({
+          parser: "foo",
+          fooStyle: "wide",
+          otherStyle: "old",
+          plugins: [resolve(dirname(inLegacy!.filepath), "..", "other.js")],
+          filepath: inLegacy!.filepath,
+        });
+        expect(result.exitCode).toBe(0);
+        // The last entry lists the file's plugins, so its own options are still checked against them.
+        expect(misspelled.stderr).toContain(
+          'Unknown option "otherStlye" in [[fmt.overrides]]: no listed plugin declares it',
+        );
+        expect(misspelled.files).toMatchObject({ "a.foo": "a b\n", "legacy/b.foo": "c   d\n" });
+        expect(misspelled.exitCode).toBe(2);
+      },
+      timeout,
+    );
+
+    // The list is of the files that bun fmt formats. A plugin that it doesn't include takes files out of the list, so
+    // --list-files says so, as a run does. The base stopped before the list for such a plugin of --plugin.
+    test.each([
+      ["--plugin", {}, ["--plugin", "prettier-plugin-brace-style"], "", "1 file was"],
+      // The plugin is also listed for bunfig.toml, which bun fmt formats.
+      ["[fmt]", { "bunfig.toml": `[fmt]\nplugins = ["prettier-plugin-brace-style"]\n` }, [], "", "2 files were"],
+      [
+        "an entry of [[fmt.overrides]]",
+        {
+          "bunfig.toml": `[[fmt.overrides]]\nfiles = ["a.js"]\noptions = { plugins = ["prettier-plugin-brace-style"] }\n`,
+        },
+        [],
+        "bunfig.toml\n",
+        "1 file was",
+      ],
+    ] as const)(
+      "--list-files names the plugin of %s that leaves a file out of the list",
+      async (_, config, flags, listed, left) => {
+        const files = { ...config, "a.js": "a  ;\n" };
+        const [result, allowed] = await Promise.all([
+          format(files, [...flags, "--list-files"]),
+          format(files, [...flags, "--list-files", "--allow-unsupported"]),
+        ]);
+        expect(result.raw).toBe(listed);
+        expect(result.stderr).toContain(
+          `error: ${left} not formatted because --plugin or [fmt] plugins lists plugins that bun fmt does not include: prettier-plugin-brace-style` +
+            useAnEntry(left.startsWith("1 ") ? "it" : "them"),
+        );
+        expect(result.exitCode).toBe(2);
+        expect(allowed.raw.split("\n")).toContain("a.js");
+        expect(allowed.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    // A plugin of the Prettier config did the same before, without a word. That stays.
+    test(
+      "--list-files leaves out a file for a plugin of the Prettier config that bun fmt does not include",
+      async () => {
+        const files = { ".prettierrc": '{ "plugins": ["prettier-plugin-brace-style"] }\n', "a.js": "a  ;\n" };
+        expect(await format(files, ["--list-files"])).toMatchObject({ raw: "", stderr: "", exitCode: 0 });
+      },
+      timeout,
+    );
+
     // Prettier throws an UndefinedParserError for a name, and a ConfigError for a `parser`, that none of its plugins has.
     // Nothing is wrong with the file or with Prettier, so neither error is shown.
     test.each([

@@ -45,7 +45,7 @@ async function optionNamesWith(prettier, plugins) {
 // `getOptionsForFile` of Prettier's command line, and `format`. The message: the length of what follows as JSON, that, the text.
 // The JSON: `path`, or `null` for text that has no file name, `config`: the configuration file, or `null`, `usesConfig`: not `--no-config`, `editorconfig`, `flags`: the options
 // that the command line and `bunfig.toml` set for the file, `plugins`: the plugins that they list for it, a path among them being
-// absolute, `passThrough`: the names in `flags` that only a plugin can know, `precedence`: `--config-precedence`, `looksAtStdin`:
+// absolute, `passThrough`: the names in `flags` that one of those plugins must have, `precedence`: `--config-precedence`, `looksAtStdin`:
 // the text is standard input, with `--check` or `--list-different`.
 async function formatWithPrettier() {
   const headLength = messageWords(1)[0];

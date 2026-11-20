@@ -1251,6 +1251,13 @@ struct LeftForSide<'a> {
 }
 
 impl<'a> LeftForSide<'a> {
+    /// Who lists the plugins of `--plugin`, `[fmt]` and `[[fmt.overrides]]`, and what to do. Such a plugin applies to
+    /// every file unless an override lists it, and only a `parser` gives it files.
+    const FLAGS: (&'static str, &'static str) = (
+        "--plugin or [fmt] plugins lists",
+        "Put the plugin in a [[fmt.overrides]] entry with \"files\" and the plugin's \"parser\" to send those files to your installed Prettier, or use",
+    );
+
     /// Counts a file that is skipped for `names`, if there are any.
     fn add(&mut self, names: impl Iterator<Item = &'a [u8]>) {
         let mut names = names.peekable();
@@ -1706,7 +1713,7 @@ impl Run<'_> {
         let view = configs.plugin_view(scope, path);
         // No entry of `[[fmt.overrides]]` matches text without a file name.
         let overrides = path.map_or_else(Vec::new, |it| configs.bunfig_overrides_for(it));
-        let passthrough = path.map_or_else(Vec::new, |it| configs.passthrough_for(it));
+        let passthrough = path.map_or_else(Default::default, |it| configs.passthrough_for(it));
         let for_file = prettier::ForFile {
             overrides: &overrides,
             passthrough: &passthrough,
@@ -2177,6 +2184,13 @@ impl Run<'_> {
                     .extend_from_slice(&paths::relative(cwd, &target.path));
                 self.out.stdout.push(b'\n');
             }
+            // A plugin of `--plugin` or `bunfig.toml` that isn't included is an error in every mode. The files that
+            // are left out for a plugin of the Prettier config are not listed, and nothing more is said about them.
+            self.report_skipped_for(
+                &left_for_plugins.for_flags,
+                LeftForSide::FLAGS.0,
+                LeftForSide::FLAGS.1,
+            );
             return self.out;
         }
         // Largest first, so no thread starts a big file when the others are nearly done.
@@ -2543,30 +2557,25 @@ impl Run<'_> {
 
     /// Reports the files of `left`, and what to do about them. The plugins of each side get an error of their own.
     fn report_skipped_for_plugins(&mut self, left: &LeftForPlugins) {
-        // A plugin of the flags applies to every file unless an override lists it, and only a `parser` gives it files.
-        let sides = [
-            (&left.for_config, "the Prettier config uses", "Use"),
-            (
-                &left.for_flags,
-                "--plugin or [fmt] plugins lists",
-                "Put the plugin in a [[fmt.overrides]] entry with \"files\" and the plugin's \"parser\" to send those files to your installed Prettier, or use",
-            ),
-        ];
-        for (side, who, advice) in sides {
-            let count = side.count;
-            let (noun, it) = match count {
-                0 => continue,
-                1 => ("file was", "it"),
-                _ => ("files were", "them"),
-            };
-            let text = format!(
-                "{count} {noun} not formatted because {who} plugins that bun fmt does not include: "
-            );
-            let end =
-                format!("\n  {advice} --allow-unsupported to format {it} without the plugins.");
-            let names = side.names.join(&b", "[..]);
-            self.error(&[text.as_bytes(), &names, end.as_bytes()].concat());
-        }
+        self.report_skipped_for(&left.for_config, "the Prettier config uses", "Use");
+        self.report_skipped_for(&left.for_flags, LeftForSide::FLAGS.0, LeftForSide::FLAGS.1);
+    }
+
+    /// Reports the files of `side`, if there are any. `who` lists the plugins, and `advice` starts the sentence about
+    /// `--allow-unsupported`.
+    fn report_skipped_for(&mut self, side: &LeftForSide, who: &str, advice: &str) {
+        let count = side.count;
+        let (noun, it) = match count {
+            0 => return,
+            1 => ("file was", "it"),
+            _ => ("files were", "them"),
+        };
+        let text = format!(
+            "{count} {noun} not formatted because {who} plugins that bun fmt does not include: "
+        );
+        let end = format!("\n  {advice} --allow-unsupported to format {it} without the plugins.");
+        let names = side.names.join(&b", "[..]);
+        self.error(&[text.as_bytes(), &names, end.as_bytes()].concat());
     }
 
     /// Warns about the packages that must be installed before more files can go to the project's own Prettier.

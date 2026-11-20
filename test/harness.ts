@@ -28,6 +28,24 @@ export const isAndroid = process.platform === "android";
 export const isPosix = isMacOS || isLinux || isFreeBSD || isAndroid;
 export const isWindows = process.platform === "win32";
 /**
+ * Whether the tests run on an Android kernel. Termux runs the linux build, so `process.platform` is
+ * `"linux"` there. This mirrors `is_android_kernel` in `src/sys/linux_syscall.rs`: the kernel release
+ * string names Android, or Android's dynamic linker lives under the `ANDROID_ROOT` that Android init
+ * sets for every process.
+ */
+export const isAndroidKernel =
+  isAndroid ||
+  (isLinux &&
+    (os.release().toLowerCase().includes("android") ||
+      (!!process.env.ANDROID_ROOT && fs.existsSync(join(process.env.ANDROID_ROOT, "bin", "linker64")))));
+/**
+ * Error codes a spawn with a uid or gid the process cannot set reports. Android's app seccomp policy
+ * answers `setuid`/`setgid` with SIGSYS, which bun turns into ENOSYS (`onSIGSYS` in
+ * `src/jsc/bindings/c-bindings.cpp`). Node on Android reports the same code. Everywhere else the kernel
+ * returns EPERM.
+ */
+export const setuidDeniedCodes: readonly ("EPERM" | "ENOSYS")[] = isAndroidKernel ? ["EPERM", "ENOSYS"] : ["EPERM"];
+/**
  * Whether the tests are running as uid 0. Root bypasses file and directory
  * mode bits, so tests that expect EACCES from a `chmod 000` fixture skip on it,
  * while tests that need to setuid/setgid a child only run on it. Always false

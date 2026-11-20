@@ -1205,7 +1205,7 @@ impl SendQueue {
         self.schedule_deferred();
     }
 
-    /// The peer's process has exited. Its last messages can still be in the socket.
+    /// The peer's process has exited, or a send to it has failed. Its last messages can still be in the socket.
     pub(crate) fn close_after_exit(&self) {
         #[cfg(not(windows))]
         if !self.pending_close.get() {
@@ -1546,6 +1546,9 @@ impl SendQueue {
             Done::Partial | Done::NoProgress => {}
             Done::Error => {
                 // error. close socket.
+                #[cfg(not(windows))]
+                self.close_after_exit();
+                #[cfg(windows)]
                 self.close_socket(CloseReason::Failure, CloseFrom::User);
             }
         }

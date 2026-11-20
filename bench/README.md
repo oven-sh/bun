@@ -3,6 +3,9 @@
 # the repo root does not install benchmark dependencies such as mitata.
 bun install
 
+# a directory that declares its own dependencies (json5, scanner, xml,
+# yaml, ...) needs `bun install` in that directory too.
+
 bun run ffi
 bun run log
 bun run gzip

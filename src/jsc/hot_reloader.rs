@@ -20,9 +20,8 @@ use bun_resolver::fs::PathName;
 use bun_resolver::fs::{self as Fs, FileSystem};
 use bun_sys::Fd;
 use bun_watcher::WatchItemColumns as _;
-use bun_watcher::{Op as WatchOp, Watcher};
+use bun_watcher::{Op as WatchOp, OwnedWatcher, Watcher};
 
-use crate::event_loop::ConcurrentTaskItem as ConcurrentTask;
 use crate::virtual_machine::{HotReload, VirtualMachine};
 use bun_event_loop::task_tag;
 
@@ -57,8 +56,10 @@ pub fn enable_hot_module_reloading(
 }
 
 /// `bun build --watch`.
-pub fn enable_hot_module_reloading_for_bundler(transpiler: &mut Transpiler<'_>) {
-    transpiler.resolver.watcher = Some(HotReloader::new(transpiler).start());
+pub fn enable_hot_module_reloading_for_bundler(transpiler: &mut Transpiler<'_>) -> OwnedWatcher {
+    let watcher = HotReloader::new(transpiler).start();
+    transpiler.resolver.watcher = Some(Arc::clone(&watcher));
+    watcher
 }
 
 /// `bun test --changed --watch` reruns for these only, not for every change git knows of.
@@ -220,8 +221,7 @@ impl HotReloader {
         PENDING_RELOADS.fetch_add(1, Ordering::Relaxed);
 
         BunDebugger__willHotReload();
-        let task = ConcurrentTask::create_boxed(Box::new(HotReloadTask));
-        let _ = handle.post(crate::LoopKind::Regular, task);
+        let _ = handle.post(crate::LoopKind::Regular, Box::new(HotReloadTask));
 
         // The JS thread emits kill-signal listeners then execve; if it's stuck in sync code it
         // never drains the posted task. Arm a one-shot timer that forces the reload after a
@@ -316,7 +316,7 @@ impl HotReloader {
         }
     }
 
-    fn start(self) -> Arc<Watcher> {
+    fn start(self) -> OwnedWatcher {
         let watcher = match Watcher::init(Box::new(self), FileSystem::get().top_level_dir()) {
             Ok(w) => w,
             Err(err) => {
@@ -494,9 +494,8 @@ impl bun_watcher::WatcherContext for HotReloader {
                                         let basename = bun_paths::basename(self.main.file);
                                         let exists = if basename.len() < name_buf.len() {
                                             name_buf[..basename.len()].copy_from_slice(basename);
-                                            name_buf[basename.len()] = 0;
-                                            // SAFETY: name_buf[..=basename.len()] is NUL-terminated.
-                                            let z = ZStr::from_buf(&name_buf[..], basename.len());
+                                            let z =
+                                                ZStr::nul_terminate(&mut name_buf, basename.len());
                                             files[event.index as usize].as_ref().is_some_and(
                                                 |dir| bun_sys::faccessat(dir.fd(), z).is_ok(),
                                             )
@@ -527,10 +526,8 @@ impl bun_watcher::WatcherContext for HotReloader {
                                                 } else {
                                                     zbuf[..affected_path.len()]
                                                         .copy_from_slice(affected_path);
-                                                    zbuf[affected_path.len()] = 0;
-                                                    // SAFETY: zbuf is NUL-terminated at len.
-                                                    let z = ZStr::from_buf(
-                                                        &zbuf[..],
+                                                    let z = ZStr::nul_terminate(
+                                                        &mut zbuf,
                                                         affected_path.len(),
                                                     );
                                                     bun_sys::access(z, libc::F_OK).is_err()
@@ -597,9 +594,8 @@ impl bun_watcher::WatcherContext for HotReloader {
                                     } else {
                                         zbuf[..self.main.file.len()]
                                             .copy_from_slice(self.main.file);
-                                        zbuf[self.main.file.len()] = 0;
-                                        // SAFETY: zbuf is NUL-terminated at len.
-                                        let z = ZStr::from_buf(&zbuf[..], self.main.file.len());
+                                        let z =
+                                            ZStr::nul_terminate(&mut zbuf, self.main.file.len());
                                         bun_sys::access(z, libc::F_OK).is_ok()
                                     }
                                 };

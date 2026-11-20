@@ -275,6 +275,62 @@ test.skipIf(isWindows)("a dev server that fails to start leaves no descriptor op
   expect(exitCode).toBe(0);
 });
 
+test.concurrent.each([
+  ["before it has bundled anything", false],
+  ["after it has bundled a page", true],
+])("a dev server that is stopped %s leaves no descriptor open", async (_, bundle) => {
+  using dir = tempDir("bake-stopped-descriptors", {
+    "index.html": `<!DOCTYPE html><script type="module" src="./index.ts"></script>`,
+    "index.ts": `console.log(1);`,
+    "fixture.ts": `
+      import { dlopen } from "bun:ffi";
+      import { readdirSync } from "node:fs";
+      import html from "./index.html";
+
+      let openDescriptors = () => readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      if (process.platform === "win32") {
+        const { symbols } = dlopen("kernel32.dll", {
+          GetCurrentProcess: { args: [], returns: "ptr" },
+          GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
+        });
+        openDescriptors = () => {
+          const count = new Uint32Array(1);
+          if (!symbols.GetProcessHandleCount(symbols.GetCurrentProcess(), count)) throw new Error("no handle count");
+          return count[0];
+        };
+      }
+      async function startAndStop() {
+        const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+        if (${bundle}) await (await fetch(server.url, { keepalive: false })).text();
+        await server.stop(true);
+      }
+      await startAndStop();
+      Bun.gc(true);
+      // On Windows, threads that start later have handles too.
+      const count = process.platform === "win32" ? 32 : 16;
+      const limit = openDescriptors() + count / 2;
+      for (let i = 0; i < count; i++) await startAndStop();
+      for (const deadline = Date.now() + 2000; openDescriptors() > limit && Date.now() < deadline; ) {
+        Bun.gc(true);
+        await Bun.sleep(1);
+      }
+      console.log(openDescriptors() > limit ? "left open" : "closed");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toBe("closed\n");
+  expect(exitCode).toBe(0);
+});
+
 // /proc/self/fd is Linux-only.
 test.skipIf(!isLinux).each([
   ["a file", (name: string) => writeFileSync(name, "")],
@@ -322,7 +378,7 @@ test.skipIf(!isLinux || !isASAN)("the watcher of a stopped dev server releases w
     "b/.keep": "",
     "c/.keep": "",
     "fixture.ts": `
-      import { readdirSync, readlinkSync, writeFileSync } from "node:fs";
+      import { readdirSync, readlinkSync } from "node:fs";
       import html from "./index.html";
 
       const watched = () =>
@@ -336,10 +392,8 @@ test.skipIf(!isLinux || !isASAN)("the watcher of a stopped dev server releases w
         await (await fetch(server.url, { keepalive: false })).text();
         console.log(watched() >= 3);
       })();
-      // The watcher thread ends at the first change after the server is collected.
       for (let i = 0; i < 200 && watched() > 0; i++) {
         Bun.gc(true);
-        writeFileSync("a/.keep", "");
         await Bun.sleep(1);
       }
       console.log(watched() === 0 ? "closed" : "left open");

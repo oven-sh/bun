@@ -386,7 +386,6 @@ impl InitCommand {
             }
             let mut ifdir_z = ifdir.to_vec();
             ifdir_z.push(0);
-            // SAFETY: ifdir_z[len-1] == 0 written above.
             let ifdir_zstr = ZStr::from_slice_with_nul(&ifdir_z[..]);
             if let Err(err) = bun_sys::chdir(ifdir_zstr) {
                 bun_core::pretty_errorln!(
@@ -1529,9 +1528,7 @@ impl Template {
                         target_z.push(0);
                         let mut dest_z = template_file.path.to_vec();
                         dest_z.push(0);
-                        // SAFETY: NUL-terminated above.
                         let target_zstr = ZStr::from_slice_with_nul(&target_z[..]);
-                        // SAFETY: NUL-terminated above.
                         let dest_zstr = ZStr::from_slice_with_nul(&dest_z[..]);
                         if bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_err() {
                             break 'symlink_cursor_rule;
@@ -1556,8 +1553,7 @@ impl Template {
             };
 
             let _ = Assets::create_new(
-                ZStr::from_static(b"CLAUDE.md\0"),
-                // SAFETY: literal is NUL-terminated
+                bun_core::zstr!("CLAUDE.md"),
                 Self::AGENT_RULE[end_of_frontmatter..].trim_ascii_start(),
             );
         }
@@ -1605,9 +1601,7 @@ impl Template {
                     if written >= total {
                         return false;
                     }
-                    pathbuf[written] = 0;
-                    // SAFETY: NUL written at pathbuf[written].
-                    ZStr::from_buf(&pathbuf[..], written)
+                    ZStr::nul_terminate(&mut pathbuf, written)
                 };
 
                 if bun_sys::exists(path.as_bytes()) {

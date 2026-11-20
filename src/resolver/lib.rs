@@ -63,7 +63,6 @@ pub use standalone_module_graph::{
 /// in-tree types (`FileSystem`, `RealFS`, `Entry`, ...).
 pub mod fs {
     use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-    use std::io::Write as _;
 
     use bun_core::ZStr;
 
@@ -199,7 +198,7 @@ pub mod fs {
             extname: &[u8],
             buf: &'b mut [u8],
             hash: u64,
-        ) -> crate::CrateResult<&'b mut ZStr> {
+        ) -> crate::CrateResult<&'b ZStr> {
             // bun_core has no `time` module yet; use std directly.
             let nanos: u128 = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -207,22 +206,16 @@ pub mod fs {
                 .unwrap_or(0);
             let hex_value: u64 = hash ^ (nanos as u64);
 
-            let len = buf.len();
-            let mut cursor = &mut buf[..];
-            write!(
-                &mut cursor,
-                ".{:x}-{:X}.{}",
-                hex_value,
-                TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
-                bstr::BStr::new(extname),
+            bun_core::fmt::buf_print_z(
+                buf,
+                format_args!(
+                    ".{:x}-{:X}.{}",
+                    hex_value,
+                    TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
+                    bstr::BStr::new(extname),
+                ),
             )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-            let written = len - cursor.len();
-            if written >= len {
-                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
-            }
-            buf[written] = 0;
-            Ok(ZStr::from_buf_mut(buf, written))
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))
         }
 
         /// Only for `RealFS::entries`, whose methods take `&mut self`; otherwise use [`get`](Self::get).
@@ -1180,7 +1173,7 @@ pub mod fs {
             existing_fd: Fd,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
-            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+            use bun_paths::resolve_path::{join_abs_string_buf_z_checked, platform};
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
 
@@ -1192,24 +1185,19 @@ pub mod fs {
 
             let combo: [&[u8]; 2] = [dir_, base];
             let mut outpath = bun_paths::path_buffer_pool::get();
-            let join_capacity = outpath.len() - 2;
-            let Some(entry_path) = join_abs_string_buf_checked::<platform::Auto>(
+            let join_capacity = outpath.len() - 1;
+            let Some(absolute_path_c) = join_abs_string_buf_z_checked::<platform::Auto>(
                 self.cwd,
                 &mut outpath[..join_capacity],
                 &combo,
             ) else {
                 return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
             };
-            let entry_path_len = entry_path.len();
-
-            outpath[entry_path_len + 1] = 0;
-            outpath[entry_path_len] = 0;
-            let absolute_path_c = ZStr::from_buf(&outpath[..], entry_path_len);
 
             #[cfg(windows)]
             {
-                use bun_sys::windows as w;
-                use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
+                use bun_sys::windows::{self as w, Win32ErrorExt as _};
+                use std::os::windows::io::AsRawHandle as _;
                 let _ = (existing_fd, store_fd);
                 let file = bun_sys::get_file_attributes(absolute_path_c)
                     .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
@@ -1247,33 +1235,28 @@ pub mod fs {
                     &mut wbuf.0[..],
                     absolute_path_c.as_bytes(),
                 );
-                // SAFETY: `wpath` is NUL-terminated UTF-16; null security/template handles.
-                let handle = unsafe {
-                    HandleOrInvalid::from_raw_handle(w::CreateFileW(
-                        wpath.as_ptr(),
-                        0,
-                        w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
-                        core::ptr::null_mut(),
-                        w::OPEN_EXISTING,
-                        // FILE_FLAG_BACKUP_SEMANTICS lets us open directories;
-                        // omitting FILE_FLAG_OPEN_REPARSE_POINT makes Windows
-                        // follow the full reparse chain to the final target.
-                        w::FILE_FLAG_BACKUP_SEMANTICS,
-                        core::ptr::null_mut(),
-                    ))
-                };
-                let Ok(owned) = OwnedHandle::try_from(handle) else {
-                    if is_dangling_link_error(w::last_system_errno().to_e()) {
-                        cache.kind = EntryKind::Dangling;
+                let owned = match w::CreateFileW(
+                    wpath,
+                    0,
+                    w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+                    w::OPEN_EXISTING,
+                    // FILE_FLAG_BACKUP_SEMANTICS lets us open directories;
+                    // omitting FILE_FLAG_OPEN_REPARSE_POINT makes Windows
+                    // follow the full reparse chain to the final target.
+                    w::FILE_FLAG_BACKUP_SEMANTICS,
+                ) {
+                    Ok(owned) => owned,
+                    Err(err) => {
+                        if is_dangling_link_error(err.to_e()) {
+                            cache.kind = EntryKind::Dangling;
+                        }
+                        // anything else keeps the kind from the link's own directory bit
+                        return Ok(cache);
                     }
-                    // anything else keeps the kind from the link's own directory bit
-                    return Ok(cache);
                 };
                 let handle = owned.as_raw_handle();
 
-                let mut info: w::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
-                // SAFETY: `handle` is valid; `info` is a valid out-param.
-                if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
+                if let Ok(info) = w::GetFileInformationByHandle(handle) {
                     cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
                         EntryKind::Dir
                     } else {
@@ -1737,9 +1720,7 @@ pub mod dir_entry_accessor {
                         &[entry.dir, path_.as_bytes()],
                     );
                     let len = slice.len();
-                    buf[len] = 0;
-                    // SAFETY: buf[len] == 0 written above
-                    ZStr::from_buf(&buf[..], len)
+                    ZStr::nul_terminate(&mut buf, len)
                 } else {
                     path_
                 }

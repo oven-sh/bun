@@ -390,25 +390,6 @@ impl FetchTasklet {
         unsafe { &*this }
     }
 
-    /// Wrap a borrowed body chunk in a `StreamResult::Temporary*` for
-    /// synchronous delivery to `ByteStream::on_data`.
-    ///
-    /// INVARIANT (module): `chunk` borrows `scheduled_response_buffer` (or
-    /// another tasklet-owned buffer) which strictly outlives the synchronous
-    /// `on_data` call per the `StreamResult::Temporary*` contract — `on_data`
-    /// copies/consumes before returning and never retains the slice.
-    #[inline]
-    fn temporary_chunk(chunk: &[u8], done: bool) -> StreamResult {
-        // See INVARIANT above. `RawSlice` is non-owning; backing buffer
-        // outlives the synchronous `on_data` call.
-        let v = bun_ptr::RawSlice::new(chunk);
-        if done {
-            StreamResult::TemporaryAndDone(v)
-        } else {
-            StreamResult::Temporary(v)
-        }
-    }
-
     #[inline]
     fn abort_signal(&self) -> Option<&AbortSignal> {
         self.abort_handle.signal()
@@ -644,8 +625,8 @@ impl FetchTasklet {
                     bun_jsc::strong::Optional::create(js_err, &global_this),
                 )));
             }
-            // A failure result is terminal (`to_result` forces `has_more =
-            // false` once `fail` is set), so everything pending must settle
+            // A failure result is terminal (only `InFlightRequest::finish`
+            // reports `fail`), so everything pending must settle
             // here: a still-streaming request-body sink does not exempt the
             // response body. Returning right after `sink.cancel()` used to
             // leave a buffered `arrayBuffer()`/`text()` promise pending
@@ -679,14 +660,14 @@ impl FetchTasklet {
                 bytes.size_hint.set(self.get_size_hint());
                 *buffer_reset = false;
                 let chunk = self.scheduled_response_buffer.list.as_slice();
-                bytes.on_data(Self::temporary_chunk(chunk, true));
+                bytes.on_data(StreamResult::TemporaryAndDone(chunk));
                 return Ok(());
             }
         } else if let Some(bytes) = self.response_stream.bytes() {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived response_stream");
             bytes.size_hint.set(self.get_size_hint());
             let chunk = self.scheduled_response_buffer.list.as_slice();
-            bytes.on_data(Self::temporary_chunk(chunk, false));
+            bytes.on_data(StreamResult::Temporary(chunk));
             if self.response_stream.is_held() {
                 self.after_body_chunk_delivered(&bytes);
             }
@@ -706,11 +687,11 @@ impl FetchTasklet {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
                     if self.result.has_more {
-                        bytes.on_data(Self::temporary_chunk(chunk, false));
+                        bytes.on_data(StreamResult::Temporary(chunk));
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(&global_this);
-                        bytes.on_data(Self::temporary_chunk(chunk, true));
+                        bytes.on_data(StreamResult::TemporaryAndDone(chunk));
                     }
 
                     return Ok(());

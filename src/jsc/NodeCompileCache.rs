@@ -176,8 +176,7 @@ fn type_name(is_cjs: bool) -> &'static str {
 
 fn sha256(bytes: &[u8]) -> [u8; HASH_SIZE] {
     let mut out = [0u8; HASH_SIZE];
-    // SAFETY: `out` is exactly the 32 bytes SHA256 writes.
-    unsafe { boring::SHA256(bytes.as_ptr(), bytes.len(), out.as_mut_ptr()) };
+    bun_sha_hmac::sha::hashers::SHA256::hash(bytes, &mut out);
     out
 }
 
@@ -1023,7 +1022,7 @@ fn write_persist_job_locked(
 
     let mut dest_z = [0u8; 17];
     dest_z[..16].copy_from_slice(&basename);
-    let dest_zstr = ZStr::from_buf(&dest_z, 16);
+    let dest_zstr = ZStr::from_slice_with_nul(&dest_z);
     let final_display = if logging {
         format!(
             "{}{}{}",

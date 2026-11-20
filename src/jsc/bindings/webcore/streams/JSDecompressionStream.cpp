@@ -7,6 +7,7 @@
 #include "JSCompressionStreamShared.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMPrototype.h"
 #include "JSDOMWrapperCache.h"
 #include "JSReadableStream.h"
 #include "JSStreamsRuntime.h"
@@ -18,7 +19,6 @@
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SubspaceInlines.h>
@@ -30,50 +30,19 @@ using namespace Bun::WebStreams;
 
 // ─── JSDecompressionStreamPrototype ─────────────────────────────────────────
 
-static JSC_DECLARE_CUSTOM_GETTER(jsDecompressionStreamPrototypeGetter_constructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsDecompressionStreamPrototypeGetter_readable);
 static JSC_DECLARE_CUSTOM_GETTER(jsDecompressionStreamPrototypeGetter_writable);
 static JSC_DECLARE_HOST_FUNCTION(jsDecompressionStreamPrototype_inspectCustom);
 
-class JSDecompressionStreamPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSDecompressionStreamPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSDecompressionStreamPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSDecompressionStreamPrototype))) JSDecompressionStreamPrototype(vm, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDecompressionStreamPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSDecompressionStreamPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDecompressionStreamPrototype, JSDecompressionStreamPrototype::Base);
+using JSDecompressionStreamPrototype = JSDOMPrototype<JSDecompressionStream>;
 
 static const HashTableValue JSDecompressionStreamPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsDecompressionStreamPrototypeGetter_constructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSDecompressionStreamPrototype::constructorGetter, 0 } },
     { "readable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDecompressionStreamPrototypeGetter_readable, 0 } },
     { "writable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsDecompressionStreamPrototypeGetter_writable, 0 } },
 };
 
-const ClassInfo JSDecompressionStreamPrototype::s_info = { "DecompressionStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDecompressionStreamPrototype) };
+template<> const ClassInfo JSDecompressionStreamPrototype::s_info = { "DecompressionStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDecompressionStreamPrototype) };
 
 JSC_DEFINE_HOST_FUNCTION(jsDecompressionStreamPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -89,7 +58,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDecompressionStreamPrototype_inspectCustom, (JSGlobal
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "DecompressionStream"_s, data));
 }
 
-void JSDecompressionStreamPrototype::finishCreation(VM& vm)
+template<> void JSDecompressionStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSDecompressionStream::info(), JSDecompressionStreamPrototypeTableValues, *this);
@@ -100,32 +69,10 @@ void JSDecompressionStreamPrototype::finishCreation(VM& vm)
 // JSDecompressionStreamConstructor = JSStreamConstructor<JSDecompressionStream>.
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDecompressionStreamConstructor::construct(JSGlobalObject*, CallFrame*);
-template<> JSValue JSDecompressionStreamConstructor::prototypeForStructure(JSC::VM&, const JSDOMGlobalObject&);
 template<> void JSDecompressionStreamConstructor::finishCreation(JSC::VM&, JSDOMGlobalObject&);
 template<> GCClient::IsoSubspace* JSDecompressionStreamConstructor::subspaceForImpl(JSC::VM&);
-template<> void JSDecompressionStreamConstructor::visitChildren(JSCell*, JSC::AbstractSlotVisitor&);
-template<> void JSDecompressionStreamConstructor::visitChildren(JSCell*, JSC::SlotVisitor&);
-template<>
-template<typename Visitor>
-void JSDecompressionStreamConstructor::visitChildrenImpl(JSCell*, Visitor&);
 
 template<> const ClassInfo JSDecompressionStreamConstructor::s_info = { "DecompressionStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDecompressionStreamConstructor) };
-
-template<> JSValue JSDecompressionStreamConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return globalObject.functionPrototype();
-}
-
-template<>
-template<typename Visitor>
-void JSDecompressionStreamConstructor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSDecompressionStreamConstructor>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_instanceStructure);
-}
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSDecompressionStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSDecompressionStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {
@@ -197,9 +144,7 @@ Structure* JSDecompressionStream::createStructure(VM& vm, JSGlobalObject* global
 
 JSObject* JSDecompressionStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSDecompressionStreamPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSDecompressionStreamPrototype::create(vm, &globalObject, structure);
+    return JSDecompressionStreamPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSObject* JSDecompressionStream::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -215,16 +160,6 @@ JSValue JSDecompressionStream::getConstructor(VM& vm, const JSGlobalObject* glob
 GCClient::IsoSubspace* JSDecompressionStream::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSDecompressionStream, UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDecompressionStream, m_subspaceForDecompressionStream));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsDecompressionStreamPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSDecompressionStreamPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, scope);
-    return JSValue::encode(JSDecompressionStream::getConstructor(vm, prototype->globalObject()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDecompressionStreamPrototypeGetter_readable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))

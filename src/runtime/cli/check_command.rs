@@ -3,6 +3,7 @@
 //! bundling, after the bundler has read every file ([`check_for_build_command`],
 //! [`check_for_bun_build`]).
 
+use super::short_run;
 use bstr::BStr;
 
 use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
@@ -534,6 +535,7 @@ impl CheckCommand {
         if options.aot {
             compile_check::exec(options)
         }
+        short_run::expect_many_threads();
         let (cwd, command_line) = (working_directory(), &options.command_line);
         // The closure returns the report so that it's never dropped. The process exits instead.
         let (exit_code, _report) = run(
@@ -688,7 +690,8 @@ fn has_types_with(by_extension: &[(Vec<u8>, ScriptKind)], path: &[u8]) -> bool {
 pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<BeforeRead> {
     use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     use bun_sema_driver::host::to_native;
-    let (watcher, cwd) = (vm.bun_watcher.get().clone()?, working_directory());
+    let watcher = std::sync::Arc::clone(vm.bun_watcher.get().as_deref()?);
+    let cwd = working_directory();
     Some(Box::new(move |path| {
         if !bun_core::strings::contains(path, b"/node_modules/") {
             // The watcher keys files by their native path.

@@ -1425,8 +1425,7 @@ impl<'a> Linker<'a> {
         off += 1;
         buf[off..off + package_name.len()].copy_from_slice(package_name);
         off += package_name.len();
-        buf[off] = 0;
-        let package_dir = ZStr::from_buf(&buf[..], off);
+        let package_dir = ZStr::nul_terminate(buf, off);
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -1560,8 +1559,8 @@ impl<'a> Linker<'a> {
             }
             let found = join_z_checked::<PlatformAuto>(package_dir, buf, &[candidate])
                 .filter(|abs| sys::exists_z(abs));
-            if let Some(len) = found.map(ZStr::len) {
-                return Some(ZStr::from_buf(buf, len));
+            if found.is_some() {
+                return found;
             }
         }
 
@@ -1642,8 +1641,7 @@ impl<'a> Linker<'a> {
             return None;
         }
         buf[dir_len..len].copy_from_slice(name);
-        buf[len] = 0;
-        Some(ZStr::from_buf(buf, len))
+        Some(ZStr::nul_terminate(buf, len))
     }
 
     // target: what the symlink points to

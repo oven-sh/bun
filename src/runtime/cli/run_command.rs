@@ -189,9 +189,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ];
             for shell in HARDCODED_POPULAR_ONES {
                 path_buf[..shell.len()].copy_from_slice(shell);
-                path_buf[shell.len()] = 0;
-                // SAFETY: NUL-terminated above.
-                let z = ZStr::from_buf(&path_buf[..], shell.len());
+                let z = ZStr::nul_terminate(path_buf, shell.len());
                 if bun_sys::is_executable_file_path(z) {
                     return Some(shell.len());
                 }
@@ -1013,11 +1011,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         bun_jsc::initialize(bun_jsc::InitializeOptions {
             eval_mode: ctx.runtime_options.eval.eval_and_print,
-            one_shot: bun_jsc::is_one_shot_eval_invocation(),
+            one_shot: bun_jsc::is_one_shot_eval_invocation()
+                && !ctx.runtime_options.eval.reads_configuration,
             runs_compiled_code: crate::cli::run_compiled::runs_compiled_code(),
             locks_builtins: crate::cli::run_compiled::is_checked(),
             ..Default::default()
         });
+        if ctx.runtime_options.eval.reads_configuration {
+            bun_jsc::expect_configuration();
+        }
         bun_ast::initialize_store();
 
         let options = VmInitOptions {
@@ -1122,7 +1124,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `Transpiler::init`).
         bun_http::async_http::load_env(unsafe { vm.log.get().unwrap().as_mut() }, vm.env_loader());
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
@@ -1269,7 +1271,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `Transpiler::init`).
         bun_http::async_http::load_env(unsafe { vm.log.get().unwrap().as_mut() }, vm.env_loader());
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
@@ -1411,6 +1413,15 @@ impl Run<'_> {
 
         Self::add_conditional_globals(global, ctx);
 
+        if ctx.runtime_options.eval.reads_configuration {
+            bun_removable_features::removable_body_behind_value!(Tools, {
+                crate::read_ahead::enable(vm, true);
+                let script = ctx.runtime_options.eval.script;
+                let configuration = bun_lint_driver::configuration_read_by(script);
+                crate::read_ahead::expect(configuration.into_iter());
+            });
+        }
+
         // ── redis preconnect (must run under the API lock) ─────────────────
         'do_redis_preconnect: {
             if !ctx.runtime_options.redis_preconnect {
@@ -1427,12 +1438,10 @@ impl Run<'_> {
                     let Some(redis) = bun_object.get(global, "redis")? else {
                         return Ok(());
                     };
-                    let Some(client) =
-                        redis.as_class_ref::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
-                    else {
+                    let Some(client) = crate::valkey_jsc::js_valkey::js::from_js(&redis) else {
                         return Ok(());
                     };
-                    client.do_connect(global, redis)?;
+                    client.do_connect(global, (&client).into());
                     Ok(())
                 })
             };
@@ -1563,6 +1572,7 @@ impl Run<'_> {
         // standalone executable has no transpiler garbage, and its unlinked code blocks came from the embedded bytecode
         // cache — deleting them here only means decoding them again on first call — so leave its heap to the collector.
         if vm.standalone_module_graph.is_none()
+            && !ctx.runtime_options.eval.reads_configuration
             && (vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count() > 0)
         {
             global.vm().release_weak_refs();
@@ -1853,9 +1863,7 @@ impl RunCommand {
             // bytes in the per-process `cli_arena()` instead of leaking
             // (PORTING.md §Forbidden bars per-call leaks).
             let stored: &'static [u8] = cli_arena().alloc_slice_copy(&target_path_buffer[..=total]);
-            // SAFETY: `stored[total] == 0` (written above before the copy);
-            // arena-backed slice lives for process lifetime.
-            Ok(ZStr::from_buf(&stored[..], total))
+            Ok(ZStr::from_slice_with_nul(stored))
         }
     }
 
@@ -2657,16 +2665,7 @@ impl RunCommand {
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_core::w!("\\??\\");
             buf[..root.len()].copy_from_slice(root);
-            let cwd_len = unsafe {
-                sys::windows::kernel32::GetCurrentDirectoryW(
-                    (buf.len() - 4) as u32,
-                    buf.as_mut_ptr().add(root.len()),
-                )
-            } as usize;
-            'try_bunx_file: {
-                if cwd_len == 0 {
-                    break 'try_bunx_file;
-                }
+            if let Ok(cwd_len) = sys::windows::GetCurrentDirectoryW(&mut buf[root.len()..]) {
                 let mut ptr = root.len() + cwd_len;
                 let prefix = bun_core::w!("\\node_modules\\.bin\\");
                 buf[ptr..ptr + prefix.len()].copy_from_slice(prefix);
@@ -2921,10 +2920,7 @@ impl RunCommand {
             }
             joined.len()
         };
-        script_name_buf[open_len] = 0;
-        // SAFETY: `script_name_buf[open_len] == 0` written above;
-        // `script_name_buf[..open_len]` is init.
-        let open_z = bun_core::ZStr::from_buf(&script_name_buf[..], open_len);
+        let open_z = bun_core::ZStr::nul_terminate(&mut script_name_buf, open_len);
 
         let absolute_script_path: Box<[u8]> = {
             let Ok(file) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0)
@@ -3210,9 +3206,7 @@ impl RunCommand {
             return;
         }
         zbuf[..path.len()].copy_from_slice(path);
-        zbuf[path.len()] = 0;
-        // SAFETY: NUL-terminated above.
-        let z = ZStr::from_buf(&zbuf[..], path.len());
+        let z = ZStr::nul_terminate(&mut zbuf, path.len());
         let _ = sys::unlink(z);
     }
 
@@ -3370,34 +3364,10 @@ impl RunCommand {
                 }
             }
         }
-        #[cfg(unix)]
-        {
-            let mut size: libc::winsize = bun_core::ffi::zeroed();
-            // SAFETY: ioctl with valid winsize ptr
-            if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &raw mut size) } == 0 {
-                if size.ws_col > 0 {
-                    return size.ws_col;
-                }
-            }
+        match bun_core::output::File::from(Fd::stdout()).winsize() {
+            Some(size) if size.col > 0 => size.col,
+            _ => 80,
         }
-        #[cfg(windows)]
-        {
-            if let Some(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
-                let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
-                // SAFETY: FFI Win32 `GetConsoleScreenBufferInfo`. `handle`
-                // is a valid console output HANDLE from GetStdHandle and
-                // `csbi` is a valid mutable CONSOLE_SCREEN_BUFFER_INFO out-ptr.
-                if unsafe { sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
-                    != sys::windows::FALSE
-                {
-                    let w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-                    if w > 0 {
-                        return u16::try_from(w).expect("int cast");
-                    }
-                }
-            }
-        }
-        80
     }
 
     /// Renders `path` to stdout. Returns the process exit code.
@@ -3609,10 +3579,8 @@ impl RunCommand {
                                 let base = value.base();
                                 path_buf[dir_slice_len..dir_slice_len + base.len()]
                                     .copy_from_slice(base);
-                                path_buf[dir_slice_len + base.len()] = 0;
-                                // SAFETY: NUL terminator written above
                                 let slice =
-                                    ZStr::from_buf(&path_buf[..], dir_slice_len + base.len());
+                                    ZStr::nul_terminate(&mut path_buf, dir_slice_len + base.len());
                                 if !sys::is_executable_file_path(slice) {
                                     continue;
                                 }

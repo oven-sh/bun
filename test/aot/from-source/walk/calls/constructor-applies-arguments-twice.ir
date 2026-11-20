@@ -1,22 +1,18 @@
 # -- source: main.cjs
-# var Lib = {};
-# Lib.math = {};
+# var Loft = {};
 # (function () {
-#   function V() { V.Vec.apply(this, arguments); this.constructor === V && this.Vec.apply(this, arguments); }
-#   Lib.math.Vec = V;
+#   function Sail() { Loft.cut.apply(this, arguments); if (arguments.length > 1) this.hem.apply(this, arguments); }
+#   Sail.prototype.hem = function (wide, tall) { this.edge = wide + tall * 2; };
+#   Sail.prototype.wind = function () { return this.area - this.edge; };
+#   Loft.Sail = Sail;
 # })();
-# (function () {
-#   var V = Lib.math.Vec;
-#   V.Vec = function () {};
-#   V.prototype.Vec = function (x, y) { this.x = x; this.y = y; };
-#   V.prototype.sum = function () { return this.x + this.y; };
-# })();
-# function run(count) {
-#   var V = Lib.math.Vec, sum = 0;
-#   for (var i = 0; i < count; i++) sum += new V(i, 0.5).sum();
+# Loft.cut = function (wide, tall) { this.area = wide * tall; };
+# function fleet(count) {
+#   var Sail = Loft.Sail, sum = 0;
+#   for (var i = 0; i < count; i++) sum += new Sail(i, 0.5).wind();
 #   return sum;
 # }
-# console.log(run(10), run(100));
+# console.log(fleet(10), fleet(100));
 # -- end of source
 # The guards of the names that the constructor reads are checked before the loop. Each call is copied, so neither the object nor its arguments object is made.
 # RUN: walk f1 mechanisms=all

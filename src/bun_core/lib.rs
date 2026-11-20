@@ -1,5 +1,5 @@
-#![feature(adt_const_params)]
-#![feature(core_io, core_io_borrowed_buf)]
+#![feature(adt_const_params, allocator_ext)]
+#![feature(core_io, core_io_borrowed_buf, vec_split_at_spare)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
 #![allow(non_snake_case)]
@@ -29,7 +29,7 @@ pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 pub use c_str_list::{CStrList, CStrRef, CStringList};
 
 /// Shared state-machine tag for the streaming (de)compressors in
-/// `bun_brotli` / `bun_zlib` / `bun_zstd`.
+/// `bun_zstd`.
 pub mod compress {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum State {
@@ -132,10 +132,6 @@ impl<T> RawSlice<T> {
         RawSlice(core::ptr::from_ref(s))
     }
     #[inline]
-    pub const fn as_ptr(self) -> *const [T] {
-        self.0
-    }
-    #[inline]
     pub const fn len(self) -> usize {
         self.0.len()
     }
@@ -203,45 +199,23 @@ unsafe impl<T: Sync> Send for RawSlice<T> {}
 // SAFETY: same reasoning as the `Send` impl above — `&[T]: Sync ⇔ T: Sync`.
 unsafe impl<T: Sync> Sync for RawSlice<T> {}
 
-/// Process-global envp slice. On Windows the
-/// startup path `bun_sys::windows::env::convert_env_to_wtf8` overwrites this
-/// with a WTF-8-encoded envp slice; `getenvZ` then reads it via
-/// `os::environ()`. POSIX builds leave it empty and use libc's `environ`.
+/// The WTF-8 envp that `bun_sys::windows::env::convert_env_to_wtf8` sets at startup.
 #[cfg(windows)]
 pub mod os {
-    use core::ffi::c_char;
+    use crate::CStrList;
 
-    // Stored as raw (ptr, len) — NOT `&'static mut [_]` — so `environ()` (which
-    // hands out a shared `&[_]`) never aliases a live `&mut`. A `&'static mut`
-    // global would be UB the moment a reader
-    // borrows while a writer holds the swapped-out `&mut`.
-    static mut ENVIRON: (*mut *mut c_char, usize) = (core::ptr::null_mut(), 0);
+    static mut ENVIRON: CStrList<'static> = CStrList::new(&[None]);
 
-    /// Swap in a new envp slice; returns the previous (ptr, len) pair.
-    /// SAFETY: single-threaded startup only.
-    pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
-        // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
-        // under rust_2024_compatibility, and we never need a borrow here.
-        unsafe { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
+    /// # Safety
+    /// No other thread can call [`environ`] yet, and only the last item of `environ` is `None`.
+    pub unsafe fn set_environ(environ: CStrList<'static>) {
+        // SAFETY: fn contract.
+        unsafe { ENVIRON = environ };
     }
-    /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
-    /// elements for the process lifetime (leaked allocation).
-    pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {
-        unsafe {
-            core::ptr::write(&raw mut ENVIRON, (ptr, len));
-        }
-    }
-    /// Borrowed view of the current envp slice (read side of the `ENVIRON` global).
-    /// SAFETY: caller must not race with `set_environ`.
-    pub unsafe fn environ() -> &'static [*mut c_char] {
-        unsafe {
-            let (p, n) = core::ptr::read(&raw const ENVIRON);
-            if p.is_null() {
-                &[]
-            } else {
-                core::slice::from_raw_parts(p, n)
-            }
-        }
+    /// Empty until [`set_environ`] is called.
+    pub fn environ() -> CStrList<'static> {
+        // SAFETY: only `set_environ` writes it, before another thread can get here.
+        unsafe { ENVIRON }
     }
 }
 
@@ -360,6 +334,13 @@ pub mod vec {
         v.extend((0..n).map(f));
     }
 
+    /// `vec![0; len]` that reports a refusal. The allocator does not touch pages that are new from the OS.
+    pub fn try_zeroed<T: bun_pod::Zeroable>(len: usize) -> Result<Vec<T>, bun_alloc::AllocError> {
+        let zeroed = Box::<[T]>::try_new_zeroed_slice(len).map_err(|_| bun_alloc::AllocError)?;
+        // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
+        Ok(unsafe { zeroed.assume_init() }.into_vec())
+    }
+
     /// Extend `v` by `n` `T::default()` elements and return a mutable slice
     /// of the newly-appended tail (`&mut v[prev_len .. prev_len + n]`).
     ///
@@ -447,22 +428,6 @@ pub mod vec {
         unsafe { spare_bytes_mut(v) }
     }
 
-    /// View the **entire** allocation `v[0..capacity]` as `&mut [u8]`.
-    /// For the spare-only `[len..capacity]` view use [`spare_bytes_mut`].
-    ///
-    /// # Safety
-    /// Bytes in `[len, capacity)` are uninitialized; treat that tail as
-    /// write-only (same contract as [`spare_bytes_mut`]). The caller must not
-    /// rely on the tail's prior contents.
-    #[inline]
-    pub unsafe fn allocated_bytes_mut(v: &mut Vec<u8>) -> &mut [u8] {
-        let cap = v.capacity();
-        // SAFETY: `as_mut_ptr()` returns a pointer valid for `cap` bytes of
-        // the backing allocation; caller upholds the write-only contract on
-        // the uninitialized tail.
-        unsafe { core::slice::from_raw_parts_mut(v.as_mut_ptr(), cap) }
-    }
-
     /// Advance `v.len()` by `n` after a producer has initialized the first
     /// `n` bytes of [`spare_bytes_mut`]`(v)`.
     ///
@@ -518,10 +483,20 @@ pub mod vec {
         max: usize,
         fill: impl FnOnce(BorrowedCursor<'_, T>) -> R,
     ) -> R {
-        let spare = v.spare_capacity_mut();
+        append_behind(v, max, |_, spare| fill(spare))
+    }
+
+    /// The same, and `fill` gets to see what is in `v`.
+    #[inline]
+    pub fn append_behind<T: Copy, R>(
+        v: &mut Vec<T>,
+        max: usize,
+        fill: impl FnOnce(&[T], BorrowedCursor<'_, T>) -> R,
+    ) -> R {
+        let (items, spare) = v.split_at_spare_mut();
         let max = max.min(spare.len());
         let mut buf = BorrowedBuf::from(&mut spare[..max]);
-        let result = fill(buf.unfilled());
+        let result = fill(items, buf.unfilled());
         let filled = buf.len();
         // SAFETY: the filled part of a `BorrowedBuf` is initialized, and starts where `v` ends.
         unsafe { v.set_len(v.len() + filled) };
@@ -729,9 +704,9 @@ macro_rules! from_field_ptr {
 /// Zig's `@fieldParentPtr`).
 ///
 /// ```ignore
-/// bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client;
-///     fn parent;             // (&mut self) -> &JSValkeyClient
-///     fn mut parent_ptr;     // (&mut self) -> *mut JSValkeyClient
+/// bun_core::impl_field_parent! { CapturedWriter => PipeReader.captured_writer;
+///     fn parent;             // (&mut self) -> &PipeReader
+///     fn mut parent_mut;     // (&mut self) -> *mut PipeReader
 /// }
 /// bun_core::impl_field_parent! { FileReader => Source.context;
 ///     pub fn shared parent_const; // (&self) -> &Source     — only compiles while FileReader: !Freeze
@@ -2510,6 +2485,14 @@ pub mod ffi {
     pub fn boxed_zeroed<T: Zeroable>() -> Box<T> {
         // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
         unsafe { Box::<T>::new_zeroed().assume_init() }
+    }
+
+    /// [`boxed_zeroed`] for memory that may be refused.
+    #[inline]
+    pub fn try_boxed_zeroed<T: Zeroable>() -> Result<Box<T>, bun_alloc::AllocError> {
+        let zeroed = Box::<T>::try_new_zeroed().map_err(|_| bun_alloc::AllocError)?;
+        // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
+        Ok(unsafe { zeroed.assume_init() })
     }
 
     /// Safe `uname(2)` wrapper: zero-init a `utsname`, call `libc::uname`, return

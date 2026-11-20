@@ -436,30 +436,17 @@ impl<'a> InstallCtx<'a> {
     }
 }
 
-// `io_heap::Intrusive` takes the comparator via `HeapContext::less` on the
-// `Context` type, so `sort_by_started_at` is provided via a trait impl on a
-// ZST `StartedAtCtx`.
-#[derive(Default, Clone, Copy)]
-pub struct StartedAtCtx;
-pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>, StartedAtCtx>;
+pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>>;
 
 impl<'a> io_heap::HeapNode for LifecycleScriptSubprocess<'a> {
     #[inline]
     fn heap(&self) -> &io_heap::IntrusiveField<Self> {
         &self.heap
     }
-}
 
-impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     #[inline]
-    unsafe fn less(
-        &self,
-        a: *mut LifecycleScriptSubprocess<'a>,
-        b: *mut LifecycleScriptSubprocess<'a>,
-    ) -> bool {
-        // SAFETY: `a`/`b` are live heap nodes owned by the intrusive heap; the
-        // heap only calls `less` on nodes it has been handed via `insert`.
-        unsafe { (*a).started_at < (*b).started_at }
+    fn less(&self, other: &Self) -> bool {
+        self.started_at < other.started_at
     }
 }
 
@@ -491,7 +478,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     fn event_loop(&self) -> bun_event_loop::EventLoopHandle {
-        bun_event_loop::EventLoopHandle::from_any(&self.manager().event_loop)
+        self.manager().event_loop
     }
 
     /// `true` if the reader has ended.

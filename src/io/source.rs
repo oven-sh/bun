@@ -28,7 +28,7 @@ pub enum Source {
 pub struct OpenTty(bun_ptr::BackRef<Tty, bun_ptr::Mut>);
 
 impl OpenTty {
-    pub fn as_ptr(&self) -> *mut Tty {
+    fn as_ptr(&self) -> *mut Tty {
         self.0.as_ptr()
     }
 
@@ -117,6 +117,24 @@ impl OpenFile {
         })
     }
 
+    /// # Safety
+    /// On `Ok` the bytes of `iov` stay until `callback` runs.
+    pub(crate) unsafe fn submit_write(
+        &self,
+        iov: uv::uv_buf_t,
+        callback: unsafe extern "C" fn(*mut uv::fs_t),
+    ) -> bun_sys::Result<()> {
+        assert!(self.can_start());
+        self.prepare();
+        let (loop_, fs, file) = (self.loop_.uv_loop(), self.as_ptr().cast(), self.file);
+        // SAFETY: fn contract, and as in `submit_read`.
+        let rc = unsafe { uv::uv_fs_write(loop_, fs, file, &raw const iov, 1, -1, Some(callback)) };
+        rc.to_result(bun_sys::Tag::write).inspect_err(|_| {
+            // SAFETY: `uv_fs_write` returned an error, so no pool thread has `fs`.
+            unsafe { self.complete(false) }
+        })
+    }
+
     /// The callback fires with UV_ECANCELED, or as usual if it is too late to cancel.
     pub(crate) fn stop(&self) {
         if self.state.get() != FileState::Operating {
@@ -156,12 +174,7 @@ impl Drop for OpenFile {
 /// - The `fs` is properly deinitialized before reuse
 /// - Cancellation is only attempted when an operation is in-flight
 ///
-/// Typical usage pattern:
-/// 1. Check `can_start()` - returns true if ready for a new operation
-/// 2. Call `prepare()` - marks fs as in-use
-/// 3. Set up buffer and call `uv_fs_write()` (`submit_read()` does both steps for a read)
-/// 4. In callback, call `on_complete()` first to clean up
-/// 5. Process the result
+/// `submit_read()` / `submit_write()` start an operation, and its callback calls `on_complete()` first.
 ///
 /// Cancellation:
 /// - Call `stop()` to cancel an in-flight operation
@@ -174,7 +187,7 @@ pub struct File {
     fs: UnsafeCell<uv::fs_t>,
 
     /// The reader or writer that hears of a completion.
-    pub(crate) parent: Cell<*mut c_void>,
+    parent: Cell<*mut c_void>,
 
     loop_: &'static bun_uws_sys::Loop,
 
@@ -248,7 +261,7 @@ impl File {
 
     /// Mark the file as in-use for an operation.
     /// Must only be called when can_start() returns true.
-    pub(crate) fn prepare(&self) {
+    fn prepare(&self) {
         debug_assert!(self.can_start());
         self.state.set(FileState::Operating);
     }
@@ -257,7 +270,7 @@ impl File {
     ///
     /// # Safety
     /// libuv has refused the operation, or is calling its callback.
-    pub(crate) unsafe fn complete(&self, was_canceled: bool) {
+    unsafe fn complete(&self, was_canceled: bool) {
         debug_assert!(self.is_busy());
         if was_canceled {
             debug_assert!(self.state.get() == FileState::Canceling);
@@ -354,7 +367,7 @@ impl Source {
         self.file().map(|file| file.as_ptr().cast())
     }
 
-    pub fn ref_(&mut self) {
+    pub(crate) fn ref_(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.ref_(),
             Source::Tty(tty) => tty.uv.ref_(),
@@ -362,7 +375,7 @@ impl Source {
         }
     }
 
-    pub fn unref(&mut self) {
+    pub(crate) fn unref(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.unref(),
             Source::Tty(tty) => tty.uv.unref(),

@@ -2,11 +2,14 @@
 // prints, one line per scenario, the frontend messages that the client sent.
 // It is a subprocess because a broken build aborts in these scenarios.
 import { SQL } from "bun";
+import type { Socket } from "node:net";
 import {
+  loopbackFence,
   pgBindComplete,
   pgBindParameters,
   pgCommandComplete,
   pgDataRow,
+  pgHold,
   pgMockServer,
   pgParameterDescription,
   pgParseComplete,
@@ -22,7 +25,9 @@ setTimeout(() => process.exit(124), 25_000).unref();
 let frames: string[] = [];
 let bound = Buffer.alloc(0);
 let parameterCount = 0;
-const mock = await pgMockServer((type, body) => {
+let session: Socket;
+const mock = await pgMockServer((type, body, socket) => {
+  session = socket;
   switch (type) {
     case "P":
       frames.push("P");
@@ -39,7 +44,7 @@ const mock = await pgMockServer((type, body) => {
       const params = pgBindParameters(body);
       bound = params[0] ?? Buffer.alloc(0);
       frames.push(`B(${params.map(String).join(",")})`);
-      return pgBindComplete();
+      return String(bound) === "second" ? [pgHold, pgBindComplete()] : pgBindComplete();
     }
     case "E":
       frames.push("E");
@@ -92,12 +97,84 @@ async function run(options: { prepare?: boolean }, warmOuter: boolean, kind: Nes
   return { outer, nested: await settle(nested), frames };
 }
 
+const connect = () => new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1 });
+
+/** Bun.build() runs the event loop until an async setup() settles. */
+function runEventLoop(until: Promise<unknown> = loopbackFence()) {
+  const plugins = [{ name: "wait", setup: async () => void (await until) }];
+  Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins });
+}
+
+/** `act` runs at the third read of the hole: for the types, for the conversion, for the Bind. */
+async function withHole(act: (query: SQL.Query<any>, buffered?: Promise<unknown>) => void, ahead = false) {
+  await using sql = connect();
+  const statement = (values: unknown[]) => sql.unsafe("select $1 as v, $2, $3", values);
+  await statement(["warm", "y", "1"]);
+  frames = [];
+
+  const query = statement(["x", , "1"]);
+  let reads = 0;
+  Object.defineProperty(Array.prototype, "1", {
+    configurable: true,
+    get() {
+      if (this.length === 3 && this[0] === "x" && ++reads === 3) act(query, buffered);
+      return "y";
+    },
+    set(value) {
+      Object.defineProperty(this, "1", { value, writable: true, enumerable: true, configurable: true });
+    },
+  });
+  const buffered = ahead ? settle(statement(["ahead", "y", "1"]).execute()) : undefined;
+  const result = await settle(query);
+  delete (Array.prototype as any)[1];
+  const next = await settle(statement(["next", "y", "1"]));
+  return { ahead: await buffered, result, next, frames };
+}
+
 const scenarios: Record<string, () => Promise<unknown>> = {
   "prepared statement": () => run({}, true),
   "prepared statement, nested query without parameters": () => run({}, true, "no parameter"),
   "prepared statement, nested simple query": () => run({}, true, "simple"),
   "first execution": () => run({}, false),
   "prepare: false": () => run({ prepare: false }, false),
+  "cancel() in the middle of a Bind": () => withHole(query => query.cancel()),
+  "a Bind waits for the query ahead": () => withHole((_, buffered) => runEventLoop(buffered), true),
+  "a Bind waits for the query ahead, then cancels its own": () =>
+    withHole((query, buffered) => (runEventLoop(buffered), query.cancel()), true),
+  "a Bind waits for the query ahead, then throws": () =>
+    withHole((_, buffered) => {
+      runEventLoop(buffered);
+      throw new RangeError("boom");
+    }, true),
+  async "a ParameterDescription comes in during the conversion"() {
+    await using sql = connect();
+    await sql`select ${text("warm")} as v, ${text("y")}`;
+    const param = {
+      toString() {
+        session.write(pgParameterDescription([25, 25]));
+        runEventLoop();
+        return "x";
+      },
+    };
+    return { result: await settle(sql`select ${param} as v, ${text("y")}`) };
+  },
+  async "a reply comes in while the query ahead resolves"() {
+    await using sql = connect();
+    await sql`select ${"warm"} as v`;
+    let armed = true;
+    // Read when the promise of a query is resolved with its rows.
+    Object.defineProperty(Array.prototype, "then", {
+      configurable: true,
+      get() {
+        if (!armed || this[0]?.v !== "first") return;
+        armed = false;
+        mock.release();
+        runEventLoop();
+      },
+    });
+    const queries = [sql`select ${"first"} as v`.execute(), sql`select ${"second"} as v`.execute()];
+    return { results: await Promise.all(queries.map(settle)) };
+  },
 };
 
 for (const name of JSON.parse(process.env.SCENARIOS!) as string[]) {

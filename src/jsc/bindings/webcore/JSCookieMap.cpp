@@ -2,8 +2,6 @@
 #include "JSCookieMap.h"
 
 #include "Cookie.h"
-#include "DOMClientIsoSubspaces.h"
-#include "DOMIsoSubspaces.h"
 #include "IDLTypes.h"
 #include "JSCookie.h"
 #include "JSDOMBinding.h"
@@ -20,31 +18,14 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMIterator.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include <JavaScriptCore/DateInstance.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
 #include <variant>
 #include "HTTPParsers.h"
 namespace WebCore {
 
 using namespace JSC;
-
-// Define the toWrapped template function for CookieMap
-template<typename ExceptionThrower>
-CookieMap* toWrapped(JSGlobalObject& lexicalGlobalObject, ExceptionThrower&& exceptionThrower, JSValue value)
-{
-    auto& vm = getVM(&lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* impl = JSCookieMap::toWrapped(vm, value);
-    if (!impl) [[unlikely]]
-        exceptionThrower(lexicalGlobalObject, scope);
-    return impl;
-}
 
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_get);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_toSetCookieHeaders);
@@ -57,41 +38,8 @@ static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_keys);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_values);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_forEach);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookieMapPrototypeGetter_size);
-static JSC_DECLARE_CUSTOM_GETTER(jsCookieMapConstructor);
 
-class JSCookieMapPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSCookieMapPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSCookieMapPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCookieMapPrototype))) JSCookieMapPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCookieMapPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSCookieMapPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCookieMapPrototype, JSCookieMapPrototype::Base);
-
+using JSCookieMapPrototype = JSDOMPrototype<JSCookieMap>;
 using JSCookieMapDOMConstructor = JSDOMConstructor<JSCookieMap>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -219,7 +167,7 @@ template<> void JSCookieMapDOMConstructor::initializeProperties(VM& vm, JSDOMGlo
 }
 
 static const HashTableValue JSCookieMapPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookieMapConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSCookieMapPrototype::constructorGetter, 0 } },
     { "get"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_get, 1 } },
     { "toSetCookieHeaders"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_toSetCookieHeaders, 0 } },
     { "has"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_has, 1 } },
@@ -233,9 +181,9 @@ static const HashTableValue JSCookieMapPrototypeTableValues[] = {
     { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookieMapPrototypeGetter_size, 0 } },
 };
 
-const ClassInfo JSCookieMapPrototype::s_info = { "CookieMap"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCookieMapPrototype) };
+template<> const ClassInfo JSCookieMapPrototype::s_info = { "CookieMap"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCookieMapPrototype) };
 
-void JSCookieMapPrototype::finishCreation(VM& vm)
+template<> void JSCookieMapPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSCookieMap::info(), JSCookieMapPrototypeTableValues, *this);
@@ -245,48 +193,14 @@ void JSCookieMapPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSCookieMap::s_info = { "CookieMap"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCookieMap) };
 
-JSCookieMap::JSCookieMap(Structure* structure, JSDOMGlobalObject& globalObject, Ref<CookieMap>&& impl)
-    : JSDOMWrapper<CookieMap>(structure, globalObject, WTF::move(impl))
-{
-}
-
-void JSCookieMap::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-}
-
 JSObject* JSCookieMap::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSCookieMapPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSCookieMapPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSCookieMap::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSCookieMap>(vm, globalObject);
+    return JSCookieMapPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSValue JSCookieMap::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSCookieMapDOMConstructor, DOMConstructorID::CookieMap>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-void JSCookieMap::destroy(JSC::JSCell* cell)
-{
-    JSCookieMap* thisObject = static_cast<JSCookieMap*>(cell);
-    thisObject->JSCookieMap::~JSCookieMap();
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsCookieMapConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSCookieMapPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSCookieMap::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsCookieMapPrototypeGetter_size, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
@@ -638,35 +552,6 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_forEachCaller(JSG
 JSC_DEFINE_HOST_FUNCTION(jsCookieMapPrototypeFunction_forEach, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     return IDLOperation<JSCookieMap>::call<jsCookieMapPrototypeFunction_forEachCaller>(*lexicalGlobalObject, *callFrame, "forEach");
-}
-
-GCClient::IsoSubspace* JSCookieMap::subspaceForImpl(VM& vm)
-{
-    return WebCore::subspaceForImpl<JSCookieMap, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCookieMap, m_subspaceForCookieMap));
-}
-
-void JSCookieMap::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSCookieMap>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    Base::analyzeHeap(cell, analyzer);
-}
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<CookieMap>&& impl)
-{
-    return createWrapper<CookieMap>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CookieMap& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-CookieMap* JSCookieMap::toWrapped(JSC::VM& vm, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSCookieMap>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 size_t JSCookieMap::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)

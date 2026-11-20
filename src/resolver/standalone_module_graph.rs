@@ -184,10 +184,21 @@ pub trait StandaloneModuleGraph: Send + Sync {
                 false => return None,
             };
             let path = program.public_path_of_source(public_root, on_build_machine)?;
-            match bun_sys::exists(on_build_machine) {
-                true => None,
-                false => find_among_files(public_root, &path),
+            if bun_sys::exists(on_build_machine) || program.holds_module_at(&path) {
+                return None;
             }
+            let file = find_among_files(public_root, &path)?;
+            let is_found_in_image = || {
+                let module = program.resolve_module_on_disk(
+                    public_root,
+                    source_dir,
+                    specifier,
+                    is_require,
+                    search,
+                );
+                module.is_some()
+            };
+            (self.compiled_entry_point(file).is_none() || !is_found_in_image()).then_some(file)
         });
         let module = file.map(|name| match self.compiled_entry_point(name) {
             Some(entry_point) => entry_point.module_path,

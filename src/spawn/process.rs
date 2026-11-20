@@ -801,7 +801,7 @@ pub use waiter_thread_posix::WaiterThreadPosix as WaiterThread;
 pub mod waiter_thread_posix {
     use super::*;
     use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New as AnyTaskNew};
-    use bun_event_loop::ConcurrentTask::{ConcurrentTask, TaskTag};
+    use bun_event_loop::ConcurrentTask::TaskTag;
     use bun_event_loop::task_tag;
     use bun_threading::UnboundedQueue;
 
@@ -1006,17 +1006,11 @@ pub mod waiter_thread_posix {
             EventLoopHandle::Js { .. } => {
                 // Its own: the JS thread may free the process before `post` has returned.
                 let poster = (process.js_poster().cloned()).expect("JS-owned process has a poster");
-                let ct = ConcurrentTask::create_boxed(Box::new(ResultTask {
+                poster.post_boxed(Box::new(ResultTask {
                     result,
                     subprocess: process,
                     rusage: *rusage,
                 }));
-                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                    // VM torn down: nobody will observe this exit. Free the
-                    // task and drop the ref its delivery would have released.
-                    // SAFETY: the task made above.
-                    drop(unsafe { ct.task.into_boxed::<ResultTask<T>>() });
-                }
             }
             EventLoopHandle::Mini(mini) => {
                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
@@ -1063,9 +1057,7 @@ pub mod waiter_thread_posix {
         let thread = std::thread::Builder::new()
             .stack_size(STACK_SIZE)
             .spawn(move || {
-                Output::Source::configure_named_thread_no_js(bun_core::ZStr::from_static(
-                    b"Waitpid\0",
-                ));
+                Output::Source::configure_named_thread_no_js(bun_core::zstr!("Waitpid"));
                 let mut rusage = rusage_zeroed();
                 let result = posix_spawn::wait4(pid, 0, Some(&mut rusage));
                 post_wait_result(process.get(), result, &rusage);
@@ -1144,9 +1136,7 @@ pub mod waiter_thread_posix {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 let one: [u8; 8] = (1usize).to_ne_bytes();
-                // SAFETY: write(2) is async-signal-safe; eventfd valid after start().
-                let n = unsafe { libc::write(INSTANCE.eventfd().native(), one.as_ptr().cast(), 8) };
-                if n < 0 {
+                if bun_sys::write(INSTANCE.eventfd(), &one).is_err() {
                     panic!("Failed to write to eventfd");
                 }
             }
@@ -1187,8 +1177,7 @@ pub mod waiter_thread_posix {
     }
 
     fn loop_() {
-        // SAFETY: NUL-terminated literal.
-        Output::Source::configure_named_thread(bun_core::ZStr::from_static(b"Waitpid\0"));
+        Output::Source::configure_named_thread(bun_core::zstr!("Waitpid"));
         WaiterThreadPosix::reload_handlers();
         let mut active = Vec::new();
 
@@ -1213,8 +1202,7 @@ pub mod waiter_thread_posix {
                     continue 'outer;
                 }
 
-                // SAFETY: valid pollfd array.
-                let _ = unsafe { libc::poll(polls.as_mut_ptr(), 1, i32::MAX) };
+                let _ = bun_core::poll_once(&mut polls, i32::MAX);
             }
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             {
@@ -1469,10 +1457,10 @@ mod spawn_process_body {
         }
     }
 
-    /// [`spawn_process`] for callers holding borrowed C strings: builds the `argv` pointer block.
-    pub fn spawn_process_cstr(
+    /// [`spawn_process`] for callers holding borrowed strings: builds the `argv` pointer block.
+    pub fn spawn_process_z(
         options: &SpawnOptions<'_>,
-        argv: &[&core::ffi::CStr],
+        argv: &[&bun_core::ZStr],
         envp: Option<CStrList<'_>>,
     ) -> Result<bun_sys::Result<SpawnProcessResult>, crate::Error> {
         let argv = argv.iter().map(|&arg| Some(arg.into()));
@@ -2230,7 +2218,7 @@ mod spawn_process_body {
 
             #[cfg(windows)]
             {
-                let envp = Some(options.envp.unwrap_or_else(|| bun_sys::environ_list()));
+                let envp = Some(options.envp.unwrap_or_else(|| bun_core::os::environ()));
                 if options.stdin != SyncStdio::Buffer
                     && options.stderr != SyncStdio::Buffer
                     && options.stdout != SyncStdio::Buffer
@@ -2256,6 +2244,8 @@ mod spawn_process_body {
             Bun__noOrphans_begin, Bun__noOrphans_onExit, Bun__noOrphans_onFork,
             Bun__noOrphans_releaseKq,
         };
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        use bun_sys::linux::{PrctlOp, prctl};
 
         /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
         /// construction, unregisters on drop.
@@ -2439,8 +2429,7 @@ mod spawn_process_body {
                 // the defer immediately below — registered here (not in the
                 // post-spawn `defer if (no_orphans)` block) so spawn-failure
                 // early returns don't leave subreaper armed process-wide.
-                // SAFETY: prctl
-                let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
+                let _ = prctl(PrctlOp::SET_CHILD_SUBREAPER, 1);
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             scopeguard::defer! {
@@ -2451,8 +2440,7 @@ mod spawn_process_body {
                     // between disarm and `onProcessExit`→`killDescendants()` escapes
                     // to init.
                     ParentDeathWatchdog::kill_subreaper_adoptees(siblings);
-                    // SAFETY: prctl
-                    let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0) };
+                    let _ = prctl(PrctlOp::SET_CHILD_SUBREAPER, 0);
                 }
             }
 
@@ -2664,8 +2652,7 @@ mod spawn_process_body {
                         break;
                     }
 
-                    // SAFETY: valid pollfd array
-                    let rc = unsafe { libc::poll(poll_fds_buf.as_mut_ptr(), poll_len as _, -1) };
+                    let rc = bun_core::poll_once(&mut poll_fds_buf[..poll_len], -1);
                     match bun_sys::get_errno(rc as isize) {
                         bun_sys::E::SUCCESS => {}
                         bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,
@@ -2866,8 +2853,7 @@ mod spawn_process_body {
             let mut child_exited = false;
             let mut child_status: Option<Status> = None;
             loop {
-                // SAFETY: an empty changelist registers nothing.
-                let got = match unsafe { bun_sys::kevent(kq_fd, &[], &mut events[..], None) } {
+                let got = match bun_sys::kevent_wait(kq_fd, &mut events[..], None) {
                     Err(err) => return Some(Err(err)),
                     Ok(c) => c,
                 };
@@ -3036,13 +3022,11 @@ mod spawn_process_body {
             // restore on return so the next caller — or `bun run`'s own
             // post-script lifetime — keeps the backstop.
             if ppid > 1 {
-                // SAFETY: prctl
-                let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, 0) };
+                let _ = prctl(PrctlOp::SET_PDEATHSIG, 0);
             }
             scopeguard::defer! {
                 if ppid > 1 {
-                    // SAFETY: prctl
-                    let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
+                    let _ = prctl(PrctlOp::SET_PDEATHSIG, libc::SIGKILL as _);
                 }
             }
             if ppid > 1 && getppid() != ppid {
@@ -3139,8 +3123,7 @@ mod spawn_process_body {
                     push(&mut buf, &mut pfds_len, file.fd());
                 }
 
-                // SAFETY: valid pollfd array
-                let rc = unsafe { libc::poll(buf.as_mut_ptr(), pfds_len as _, timeout_ms) };
+                let rc = bun_core::poll_once(&mut buf[..pfds_len], timeout_ms);
                 match bun_sys::get_errno(rc as isize) {
                     bun_sys::E::SUCCESS => {}
                     bun_sys::E::EAGAIN | bun_sys::E::EINTR => {}
@@ -3225,8 +3208,8 @@ mod spawn_process_body {
 } // mod spawn_process_body
 
 pub use spawn_process_body::spawn_process;
-pub use spawn_process_body::spawn_process_cstr;
 #[cfg(unix)]
 pub use spawn_process_body::spawn_process_posix;
+pub use spawn_process_body::spawn_process_z;
 
 pub use spawn_process_body::sync;

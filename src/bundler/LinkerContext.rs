@@ -678,6 +678,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             }
 
             let mut queue = std::collections::VecDeque::new();
+            let mut loaded_files = vec![LoadedFiles::Unasked; self.graph.files.len()];
 
             // Code splitting: Determine which entry points can reach which files. This
             // has to happen after tree shaking because there is an implicit dependency
@@ -685,7 +686,12 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             // first before determining which entry points can reach which files.
             for i in 0..entry_points_len {
                 let entry_point = self.graph.entry_points.items_source_index()[i];
-                self.mark_file_reachable_for_code_splitting(&mut queue, entry_point, i);
+                self.mark_file_reachable_for_code_splitting(
+                    &mut queue,
+                    &mut loaded_files,
+                    entry_point,
+                    i,
+                );
             }
         }
 
@@ -2131,10 +2137,18 @@ pub enum TreeShakeWork {
     },
 }
 
+#[derive(Clone)]
+pub(crate) enum LoadedFiles {
+    Unasked,
+    AskedOnce,
+    Listed(Box<[crate::IndexInt]>),
+}
+
 impl LinkerContext<'_, '_> {
     pub(crate) fn mark_file_reachable_for_code_splitting(
         &mut self,
         queue: &mut std::collections::VecDeque<crate::IndexInt>,
+        loaded_files: &mut [LoadedFiles],
         source_index: crate::IndexInt,
         entry_points_count: usize,
     ) {
@@ -2156,11 +2170,26 @@ impl LinkerContext<'_, '_> {
             bits.set(entry_points_count);
 
             let file_entry_bits = self.graph.files.items_entry_bits();
-            self.for_each_file_loaded_by(source_index, |other| {
+            let mut load = |other: crate::IndexInt| {
                 if !file_entry_bits[other as usize].is_set(entry_points_count) {
                     queue.push_back(other);
                 }
-            });
+            };
+            match &mut loaded_files[source_index as usize] {
+                LoadedFiles::Listed(files) => files.iter().copied().for_each(load),
+                asked @ LoadedFiles::Unasked => {
+                    self.for_each_file_loaded_by(source_index, load);
+                    *asked = LoadedFiles::AskedOnce;
+                }
+                asked @ LoadedFiles::AskedOnce => {
+                    let mut files = Vec::new();
+                    self.for_each_file_loaded_by(source_index, |other| files.push(other));
+                    files.sort_unstable();
+                    files.dedup();
+                    files.iter().copied().for_each(&mut load);
+                    *asked = LoadedFiles::Listed(files.into_boxed_slice());
+                }
+            }
         }
     }
 

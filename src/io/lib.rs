@@ -54,8 +54,9 @@ pub mod parent_death_watchdog;
 pub mod parent_death_watchdog {
     use core::ffi::c_void;
     use core::sync::atomic::{AtomicBool, Ordering};
-    use std::os::windows::io::{AsRawHandle as _, HandleOrNull, IntoRawHandle as _, OwnedHandle};
+    use std::os::windows::io::{AsRawHandle as _, IntoRawHandle as _};
 
+    use bun_core::wstr;
     use bun_sys::windows;
 
     use crate::posix_event_loop::EventLoopCtx;
@@ -95,17 +96,14 @@ pub mod parent_death_watchdog {
         if ENABLED.swap(true, Ordering::Relaxed) {
             return;
         }
-        // SAFETY: Win32 FFI; null args are documented-valid (anonymous Job).
-        unsafe {
-            // Export so a nested Bun spawned via `Bun.spawn([process.execPath,
-            // ...])` self-arms its own Job and parent-watch (POSIX parity).
-            let _ = windows::SetEnvironmentVariableW(
-                bun_core::w!("BUN_FEATURE_FLAG_NO_ORPHANS\0").as_ptr(),
-                bun_core::w!("1\0").as_ptr(),
-            );
-            ensure_kill_on_close_job();
-            arm_parent_watch();
-        }
+        // Export so a nested Bun spawned via `Bun.spawn([process.execPath,
+        // ...])` self-arms its own Job and parent-watch (POSIX parity).
+        let _ = windows::SetEnvironmentVariableW(
+            wstr!("BUN_FEATURE_FLAG_NO_ORPHANS"),
+            Some(wstr!("1")),
+        );
+        ensure_kill_on_close_job();
+        arm_parent_watch();
     }
 
     static JOB_ASSIGNED: AtomicBool = AtomicBool::new(false);
@@ -123,11 +121,7 @@ pub mod parent_death_watchdog {
         let Some(job) = windows::create_kill_on_close_job() else {
             return;
         };
-        // SAFETY: `job` is open; the other is this process's pseudo-handle.
-        if unsafe {
-            windows::AssignProcessToJobObject(job.as_raw_handle(), windows::GetCurrentProcess())
-        } != 0
-        {
+        if windows::AssignProcessToJobObject(&job, windows::GetCurrentProcess()).is_ok() {
             let _ = job.into_raw_handle();
         }
     }
@@ -139,26 +133,18 @@ pub mod parent_death_watchdog {
     /// creator exists but its DACL denies us (e.g. a SYSTEM service spawned
     /// us via `CreateProcessAsUser`), skip the parent watch best-effort; the
     /// Job Object half already covers descendants.
-    unsafe fn arm_parent_watch() {
-        const ERROR_INVALID_PARAMETER: u32 = 87;
-        let ppid = getppid();
-        if ppid == 0 {
+    fn arm_parent_watch() {
+        let Some(ppid @ 1..) = windows::parent_process_id() else {
             return;
-        }
-        // SAFETY: Win32 FFI; by-value args, failure → NULL. SYNCHRONIZE for
-        // the wait, PROCESS_QUERY_LIMITED_INFORMATION for `GetProcessTimes`.
-        let parent = unsafe {
-            HandleOrNull::from_raw_handle(windows::OpenProcess(
-                windows::SYNCHRONIZE | windows::PROCESS_QUERY_LIMITED_INFORMATION,
-                0,
-                ppid,
-            ))
         };
-        let Ok(parent) = OwnedHandle::try_from(parent) else {
-            if windows::GetLastError() == ERROR_INVALID_PARAMETER {
-                windows::kernel32::ExitProcess(EXIT_CODE as u32);
+        // For the wait and for `GetProcessTimes`.
+        let access = windows::SYNCHRONIZE | windows::PROCESS_QUERY_LIMITED_INFORMATION;
+        let parent = match windows::OpenProcess(access, ppid) {
+            Ok(parent) => parent,
+            Err(windows::Win32Error::INVALID_PARAMETER) => {
+                windows::kernel32::ExitProcess(EXIT_CODE as u32)
             }
-            return;
+            Err(_) => return,
         };
         // PID-reuse guard: `InheritedFromUniqueProcessId` is frozen at our
         // creation, so if the creator already exited and its PID was reused we
@@ -167,80 +153,23 @@ pub mod parent_death_watchdog {
         if !is_original_parent(parent.as_raw_handle()) {
             windows::kernel32::ExitProcess(EXIT_CODE as u32);
         }
-        let mut wait: windows::HANDLE = core::ptr::null_mut();
-        // SAFETY: `&mut wait` is a valid out-param; `parent` is a valid
-        // waitable handle; `on_parent_exit_cb` has the `WAITORTIMERCALLBACK`
-        // ABI; `Context` is unused.
-        if unsafe {
-            windows::RegisterWaitForSingleObject(
-                &raw mut wait,
-                parent.as_raw_handle(),
-                on_parent_exit_cb,
-                core::ptr::null_mut(),
-                windows::INFINITE,
-                windows::WT_EXECUTEONLYONCE,
-            )
-        } != 0
-        {
-            let _ = parent.into_raw_handle();
-        }
-    }
-
-    /// `InheritedFromUniqueProcessId` via direct ntdll call. Not
-    /// `uv_os_getppid`: libuv loads `NtQueryInformationProcess` lazily in
-    /// `uv__winapi_init`, and `enable()` runs from `main()` before that.
-    fn getppid() -> u32 {
-        // SAFETY: out-param is a valid `PROCESS_BASIC_INFORMATION`; the pseudo
-        // handle needs no access rights.
-        unsafe {
-            let mut pbi: windows::PROCESS_BASIC_INFORMATION = bun_core::ffi::zeroed_unchecked();
-            let rc = windows::ntdll::NtQueryInformationProcess(
-                windows::GetCurrentProcess(),
-                windows::ProcessBasicInformation,
-                core::ptr::from_mut(&mut pbi).cast(),
-                core::mem::size_of::<windows::PROCESS_BASIC_INFORMATION>() as u32,
-                core::ptr::null_mut(),
-            );
-            if !windows::NT_SUCCESS(rc) {
-                return 0;
-            }
-            pbi.InheritedFromUniqueProcessId as u32
-        }
+        let _ = windows::call_when_signaled(parent, on_parent_exit_cb);
     }
 
     fn is_original_parent(parent: windows::HANDLE) -> bool {
-        let Some(parent_created) = creation_time(parent) else {
+        let Ok(parent_times) = windows::GetProcessTimes(parent) else {
             return false;
         };
-        let Some(self_created) = creation_time(windows::GetCurrentProcess()) else {
+        let Ok(self_times) = windows::GetProcessTimes(windows::GetCurrentProcess()) else {
             return true;
         };
-        parent_created <= self_created
-    }
-
-    fn creation_time(h: windows::HANDLE) -> Option<u64> {
-        let mut t: [windows::FILETIME; 4] = bun_core::ffi::zeroed();
-        // SAFETY: `h` is either the pseudo-handle or a handle we opened; out
-        // params are valid `FILETIME` slots.
-        if unsafe {
-            windows::GetProcessTimes(
-                h,
-                &raw mut t[0],
-                &raw mut t[1],
-                &raw mut t[2],
-                &raw mut t[3],
-            )
-        } == 0
-        {
-            return None;
-        }
-        Some((u64::from(t[0].dwHighDateTime) << 32) | u64::from(t[0].dwLowDateTime))
+        parent_times.creation <= self_times.creation
     }
 
     /// Thread-pool callback: the parent's process object signaled. Matches the
     /// Linux `PR_SET_PDEATHSIG` SIGKILL path (hard exit, no Rust-side
     /// unwinding); the Job Object reaps descendants when our handles close.
-    unsafe extern "system" fn on_parent_exit_cb(_ctx: *mut c_void, _timed_out: windows::BOOLEAN) {
+    extern "system" fn on_parent_exit_cb(_ctx: *mut c_void, _timed_out: windows::BOOLEAN) {
         windows::kernel32::ExitProcess(EXIT_CODE as u32);
     }
 
@@ -364,7 +293,7 @@ pub mod pipe_read_scratch;
 #[path = "PipeReader.rs"]
 pub mod pipe_reader;
 #[path = "PipeWriter.rs"]
-pub mod pipe_writer;
+mod pipe_writer;
 #[path = "pipes.rs"]
 pub mod pipes;
 pub use pipe_read_scratch::{PipeReadScratch, PipeReadScratchGuard};
@@ -383,7 +312,10 @@ pub use write::{AsFmt, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, R
 pub use max_buf as MaxBuf;
 pub use pipes::{Chunk, FileType, ReadState};
 
-pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult, WriteStatus};
+pub use pipe_writer::{
+    BufferedWriteHandler, BufferedWriter, StreamBuffer, StreamingWriter, WriteHandler, WriteResult,
+    WriteStatus,
+};
 #[cfg(windows)]
 pub use source::Source;
 
@@ -657,8 +589,7 @@ impl IoRequestLoop {
     }
 
     pub(crate) fn tick(&self) {
-        // SAFETY: literal is NUL-terminated; len excludes the NUL.
-        let name = bun_core::ZStr::from_static(b"IO Watcher\0");
+        let name = bun_core::zstr!("IO Watcher");
         bun_core::Output::Source::configure_named_thread(name);
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1540,19 +1471,11 @@ pub mod waker {
         }
 
         pub fn wait(&self) {
-            // eventfd reads are always exactly 8 bytes (u64 counter). Use a u64
-            // directly instead of type-punning through usize, which would be UB
-            // on any 32-bit target and needs no `&mut *raw` reborrow here.
-            let mut bytes: u64 = 0;
-            // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::read(self.get_fd().native(), (&raw mut bytes).cast(), 8) };
+            let _ = self.eventfd.read(&mut [0; size_of::<u64>()]);
         }
 
         pub fn wake(&self) {
-            // eventfd writes are always exactly 8 bytes (u64 increment).
-            let bytes: u64 = 1;
-            // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::write(self.get_fd().native(), (&raw const bytes).cast(), 8) };
+            let _ = bun_sys::write(self.get_fd(), &1u64.to_ne_bytes());
         }
     }
 

@@ -1,10 +1,12 @@
 //! Finds the files to format: `expandPatterns` from Prettier's command line, plus its ignore rules. With an oxfmt
 //! configuration file, it's oxfmt's `ScopedWalker` instead.
 
+use super::Finished;
 use super::cli::Options;
 use super::config::{Configs, Flavor, Scope, oxc_glob, prettier_glob};
 use crate::gitignore::{self, Chain, GitIgnores};
 use crate::run::{Fatal, Pool};
+use crate::walk::{AwaitTurn, Worker, walk_and_work};
 use crate::{fs, paths};
 use bun_collections::index_sort;
 use bun_core::strings;
@@ -14,7 +16,7 @@ use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_threading::Guarded;
 use std::cell::LazyCell;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// A file to format.
 pub(crate) struct Target {
@@ -29,6 +31,35 @@ pub(crate) struct Target {
     pub(crate) is_named: bool,
     /// `Some` if the file has hard links. The other links can be targets too.
     pub(crate) linked: Option<fs::Identity>,
+    /// The result, if it was formatted [`Meanwhile`].
+    pub(crate) done: Option<Box<Finished>>,
+    /// Of what was read [`Meanwhile`], before the search had ended.
+    pub(crate) hash_of_text: Option<u64>,
+}
+
+/// When to look at a file that a search has found.
+pub(crate) enum When {
+    Now,
+    AfterSearch,
+    Never,
+}
+
+/// Formats files before the search for them has ended.
+pub(crate) struct Meanwhile<'a> {
+    pub(crate) when: &'a (dyn Fn(&Target) -> When + Sync),
+    /// Called once on each thread. What it returns is called with a file, and with whether the search has succeeded.
+    /// That returns false if nothing is left to do or to say about the file.
+    pub(crate) start: &'a (dyn Fn() -> Box<dyn FnMut(&mut Target, bool) -> bool + 'a> + Sync),
+    /// True if a file was found that isn't among the results of the search.
+    pub(crate) has_left_out_files: AtomicBool,
+    /// The number of files for which that has returned false.
+    pub(crate) unchanged: AtomicUsize,
+}
+
+impl Meanwhile<'_> {
+    fn has_found_files(meanwhile: Option<&Self>) -> bool {
+        meanwhile.is_some_and(|it| it.has_left_out_files.load(Ordering::Relaxed))
+    }
 }
 
 /// The expansion of the arguments, in the order Prettier processes them.
@@ -386,23 +417,25 @@ pub(crate) fn language_for_oxfmt(path: &[u8], formats_svelte: bool) -> Language 
     }
 }
 
-/// Each ASCII byte's weight in `a.localeCompare(b)`: punctuation, then digits, then letters regardless of case. Always
-/// above zero.
-const WEIGHTS: [u16; 256] = {
-    const ORDER: &[u8] = b"\t\n\r _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789";
+/// Each byte's weight in `a.localeCompare(b)`: punctuation, then digits, then letters regardless of case, then all
+/// others. Always above zero.
+const WEIGHTS: [u8; 256] = {
+    const ORDER: &[u8] =
+        b"\t\n\r _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789abcdefghijklmnopqrstuvwxyz";
     let mut weights = [0; 256];
+    let (mut at, mut next) = (0, 1);
+    while at < ORDER.len() {
+        weights[ORDER[at] as usize] = next;
+        weights[ORDER[at].to_ascii_uppercase() as usize] = next;
+        (at, next) = (at + 1, next + 1);
+    }
     let mut byte = 0;
     while byte < 256 {
-        weights[byte] = match byte as u8 {
-            letter @ (b'a'..=b'z' | b'A'..=b'Z') => 100 + letter.to_ascii_lowercase() as u16,
-            _ => 300 + byte as u16,
-        };
+        if weights[byte] == 0 {
+            weights[byte] = next;
+            next += 1;
+        }
         byte += 1;
-    }
-    let mut at = 0;
-    while at < ORDER.len() {
-        weights[ORDER[at] as usize] = 1 + at as u16;
-        at += 1;
     }
     weights
 };
@@ -410,12 +443,9 @@ const WEIGHTS: [u16; 256] = {
 /// A key whose byte order matches how `a.localeCompare(b)` sorts the paths: the weights, then the inverted bytes, so
 /// that `a` sorts before `A` if nothing else differs.
 fn collation_key(path: &[u8]) -> Vec<u8> {
-    let mut key = Vec::with_capacity(path.len() * 3 + 2);
-    key.extend(
-        path.iter()
-            .flat_map(|byte| WEIGHTS[usize::from(*byte)].to_be_bytes()),
-    );
-    key.extend_from_slice(&[0, 0]);
+    let mut key = Vec::with_capacity(path.len() * 2 + 1);
+    key.extend(path.iter().map(|byte| WEIGHTS[usize::from(*byte)]));
+    key.push(0);
     key.extend(path.iter().map(|byte| !byte));
     key
 }
@@ -626,14 +656,17 @@ fn search(
     base: &[u8],
     matches: &(dyn Fn(&[u8]) -> bool + Sync),
     enters: &(dyn Fn(&[u8]) -> bool + Sync),
+    // Asked last, with the absolute path.
+    keeps: &(dyn Fn(&[u8], &Scope) -> bool + Sync),
     // Git's ignore files that apply in `base`, or `None` if they aren't read.
     git: Option<GitIgnores>,
+    (ignores_unknown, meanwhile): (bool, Option<&Meanwhile<'_>>),
 ) -> Result<Vec<Target>, Fatal> {
-    let (mut found, mut failure) = (Guarded::new(Vec::new()), Guarded::new(None::<Fatal>));
+    let mut found = Guarded::new(Vec::new());
     let reads_gitignore = git.is_some();
     let git = git.unwrap_or_default();
     let above = configs.for_directory(base)?;
-    let mut level = vec![Directory {
+    let first = Directory {
         path: base.to_vec(),
         is_first: true,
         git,
@@ -642,98 +675,130 @@ fn search(
             base,
         ),
         above,
-    }];
-    while !level.is_empty() && failure.lock().is_none() {
-        let mut next = Guarded::new(Vec::new());
-        pool.for_each(level.len(), 1, &|index| {
-            let directory = &level[index];
-            let Some(mut listing) = fs::list(&directory.path) else {
+    };
+    let scripts_run = configs.scripts_run.load(Ordering::Relaxed);
+    let mut unchanged = Guarded::new(Vec::new());
+    let start_worker = || -> Worker<'_, Target> {
+        let mut format = meanwhile.map(|it| (it, (it.start)()));
+        let (found, unchanged) = (&found, &unchanged);
+        Box::new(move |mut target, has_succeeded| {
+            if let Some((meanwhile, format)) = &mut format
+                && !format(&mut target, has_succeeded)
+            {
+                meanwhile.has_left_out_files.store(true, Ordering::Relaxed);
+                meanwhile.unchanged.fetch_add(1, Ordering::Relaxed);
+                if !has_succeeded {
+                    unchanged.lock().push(target);
+                }
                 return;
-            };
-            let entries = std::mem::take(&mut listing.entries);
-            let scope = match directory.is_first {
-                true => Ok(Arc::clone(&directory.above)),
-                false => configs.for_listed_directory(
-                    &directory.path,
-                    entries.iter().map(|it| (&it.name[..], it.is_directory)),
-                    &directory.above,
-                ),
-            };
-            let scope = match scope {
-                Ok(scope) => scope,
-                Err(error) => {
-                    failure.lock().get_or_insert(error);
-                    return;
-                }
-            };
-            let ignore_patterns = configs.config_ignores(&scope);
-            let starts_over = !directory.is_first
-                && !std::ptr::eq(configs.config_ignores(&directory.above), ignore_patterns);
-            let is_ignored_by_configuration = directory.is_ignored_by_configuration && !starts_over;
-            let mut git = directory.git.clone();
-            if reads_gitignore && !directory.is_first {
-                git = git.and_in(&directory.path, |name| {
-                    entries.iter().any(|it| it.name == name)
-                });
             }
-            let (mut files, mut directories) = (Vec::new(), Vec::new());
-            // Links are neither followed nor formatted.
-            for entry in entries.iter().filter(|it| !it.is_link) {
-                let path = paths::join(&directory.path, &entry.name);
-                if ignored.is_never_visited(&path, &entry.name, entry.is_directory) {
-                    continue;
+            found.lock().push(target);
+        })
+    };
+    let visit = |directory: &Directory, await_turn: AwaitTurn<'_>| {
+        let Some(mut listing) = fs::list(&directory.path) else {
+            return Ok(Default::default());
+        };
+        let entries = std::mem::take(&mut listing.entries);
+        let scope = match directory.is_first {
+            true => Arc::clone(&directory.above),
+            false => configs.for_listed_directory(
+                &directory.path,
+                entries.iter().map(|it| (&it.name[..], it.is_directory)),
+                &directory.above,
+                await_turn,
+            )?,
+        };
+        let ignore_patterns = configs.config_ignores(&scope);
+        let starts_over = !directory.is_first
+            && !std::ptr::eq(configs.config_ignores(&directory.above), ignore_patterns);
+        let is_ignored_by_configuration = directory.is_ignored_by_configuration && !starts_over;
+        let mut git = directory.git.clone();
+        if reads_gitignore && !directory.is_first {
+            git = git.and_in(&directory.path, |name| {
+                entries.iter().any(|it| it.name == name)
+            });
+        }
+        let (mut files, mut directories, mut now) = (Vec::new(), Vec::new(), Vec::new());
+        // Links are neither followed nor formatted.
+        for entry in entries.iter().filter(|it| !it.is_link) {
+            let path = paths::join(&directory.path, &entry.name);
+            if ignored.is_never_visited(&path, &entry.name, entry.is_directory) {
+                continue;
+            }
+            let relative = paths::relative(&ignored.cwd, &path);
+            if ignored.ignores_entry(&path, entry.is_directory)
+                || git.is_ignored(&path, entry.is_directory)
+            {
+                if match entry.is_directory {
+                    true => enters(&relative),
+                    false => matches(&relative),
+                } {
+                    ignored.skipped_a_match.store(true, Ordering::Relaxed);
                 }
-                let relative = paths::relative(&ignored.cwd, &path);
-                if ignored.ignores_entry(&path, entry.is_directory)
-                    || git.is_ignored(&path, entry.is_directory)
-                {
-                    if match entry.is_directory {
-                        true => enters(&relative),
-                        false => matches(&relative),
-                    } {
-                        ignored.skipped_a_match.store(true, Ordering::Relaxed);
-                    }
-                    continue;
-                }
-                let is_ignored_by_configuration = is_ignored_by_configuration
-                    || gitignore::is_ignored(ignore_patterns, &path, entry.is_directory);
-                if entry.is_directory {
-                    if enters(&relative) {
-                        directories.push(Directory {
-                            path,
-                            above: Arc::clone(&scope),
-                            is_first: false,
-                            git: git.clone(),
-                            is_ignored_by_configuration,
-                        });
-                    }
-                } else if !is_ignored_by_configuration
-                    && matches(&relative)
-                    && let Some((size, linked)) = listing.size_and_identity_of(&entry.name)
-                {
-                    files.push(Target {
+                continue;
+            }
+            let is_ignored_by_configuration = is_ignored_by_configuration
+                || gitignore::is_ignored(ignore_patterns, &path, entry.is_directory);
+            if entry.is_directory {
+                if enters(&relative) {
+                    directories.push(Directory {
                         path,
-                        size,
-                        scope: Arc::clone(&scope),
-                        ignores_unknown: false,
-                        is_named: false,
-                        linked,
+                        above: Arc::clone(&scope),
+                        is_first: false,
+                        git: git.clone(),
+                        is_ignored_by_configuration,
                     });
                 }
+            } else if !is_ignored_by_configuration
+                && matches(&relative)
+                && keeps(&path, &scope)
+                && let Some((size, linked)) = listing.size_and_identity_of(&entry.name)
+            {
+                let target = Target {
+                    path,
+                    size,
+                    scope: Arc::clone(&scope),
+                    ignores_unknown,
+                    is_named: false,
+                    linked,
+                    done: None,
+                    hash_of_text: None,
+                };
+                match meanwhile.map(|it| (it, (it.when)(&target))) {
+                    Some((_, When::Now)) => now.push((target, size)),
+                    Some((it, When::Never)) => it.has_left_out_files.store(true, Ordering::Relaxed),
+                    _ => files.push(target),
+                }
             }
-            if !files.is_empty() {
-                found.lock().append(&mut files);
-            }
-            if !directories.is_empty() {
-                next.lock().append(&mut directories);
-            }
-        });
-        level = std::mem::take(next.get_mut());
+        }
+        if !files.is_empty() {
+            found.lock().append(&mut files);
+        }
+        Ok((directories, now))
+    };
+    let mut left = walk_and_work(pool, first, &visit, &start_worker)?;
+    left.append(found.get_mut());
+    // A configuration file can write files, and what counts is what they have once all have run.
+    if let Some(meanwhile) = meanwhile
+        && configs.scripts_run.load(Ordering::Relaxed) != scripts_run
+    {
+        let has_changed = |it: &Target| {
+            it.hash_of_text.is_some_and(|hash| {
+                !fs::read(&it.path).is_ok_and(|now| bun_wyhash::hash(&now) == hash)
+            })
+        };
+        let changed = pool.map(&left, &has_changed);
+        for (target, _) in left.iter_mut().zip(changed).filter(|it| it.1) {
+            target.done = None;
+        }
+        let changed = pool.map(unchanged.get_mut(), &has_changed);
+        for (target, _) in unchanged.get_mut().drain(..).zip(changed).filter(|it| it.1) {
+            meanwhile.unchanged.fetch_sub(1, Ordering::Relaxed);
+            left.push(target);
+        }
     }
-    match failure.get_mut().take() {
-        Some(error) => Err(error),
-        None => Ok(std::mem::take(found.get_mut())),
-    }
+    Ok(left)
 }
 
 enum Entry {
@@ -749,6 +814,7 @@ pub(crate) fn expand(
     ignored: &mut Ignored,
     patterns: &[Vec<u8>],
     error_on_unmatched_pattern: bool,
+    meanwhile: Option<&Meanwhile<'_>>,
 ) -> Result<Vec<Expanded>, Fatal> {
     let cwd = ignored.cwd.clone();
     let mut expanded = Vec::new();
@@ -790,6 +856,8 @@ pub(crate) fn expand(
     let ignored = &*ignored;
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
     let mut is_anything_ignored = false;
+    let is_only_entry = entries.len() == 1;
+    let meanwhile = meanwhile.filter(|_| is_only_entry);
     for (entry, input, raw_argument) in entries {
         // The prefix of the paths that `fast-glob` returns, which they're sorted by.
         let mut pattern_base: (Vec<u8>, Vec<u8>) = (Vec::new(), cwd.clone());
@@ -809,6 +877,8 @@ pub(crate) fn expand(
                         ignores_unknown: false,
                         is_named: true,
                         linked,
+                        done: None,
+                        hash_of_text: None,
                     }],
                 };
                 (
@@ -823,8 +893,9 @@ pub(crate) fn expand(
                     continue;
                 }
                 let git = ignored.git_ignores_in(&path);
-                let mut found = search(configs, pool, ignored, &path, &|_| true, &|_| true, git)?;
-                found.iter_mut().for_each(|it| it.ignores_unknown = true);
+                let (all, any) = (&|_: &[u8]| true, &|_: &[u8], _: &Scope| true);
+                let how = (true, meanwhile);
+                let found = search(configs, pool, ignored, &path, all, all, any, git, how)?;
                 pattern_base = (paths::relative(&cwd, &path), path);
                 (found, b"No supported files were found in the directory")
             }
@@ -864,7 +935,9 @@ pub(crate) fn expand(
                             true => glob.may_match_inside(&absolute(relative)),
                             false => glob.may_match_inside(relative),
                         },
+                        &|_, _| true,
                         ignored.git_ignores_in(&base),
+                        (false, meanwhile),
                     )?,
                     _ => Vec::new(),
                 };
@@ -872,7 +945,7 @@ pub(crate) fn expand(
             }
         };
         let skipped_a_match = ignored.skipped_a_match.swap(false, Ordering::Relaxed);
-        if found.is_empty() {
+        if found.is_empty() && !Meanwhile::has_found_files(meanwhile) {
             // Prettier finds the files and then skips each one, so this isn't an error.
             if skipped_a_match {
                 is_anything_ignored = true;
@@ -889,14 +962,20 @@ pub(crate) fn expand(
                 paths::join(base_prefix, &paths::relative(&pattern_base.1, &target.path))
             }
         };
-        index_sort::sort_slice_by_cached_key(&mut found[..], |target| collation_key(&key(target)));
+        let keys = pool.map(&found, &|target| collation_key(&key(target)));
+        let mut order = pool.sorted(keys.len(), &|a, b| keys[a].cmp(&keys[b]));
+        index_sort::apply_permutation_in_place(&mut found, &mut order);
         for target in found {
-            if seen.insert(target.path.clone()) {
+            if is_only_entry || seen.insert(target.path.clone()) {
                 expanded.push(Expanded::File(target));
             }
         }
     }
-    if expanded.is_empty() && !is_anything_ignored && error_on_unmatched_pattern {
+    if expanded.is_empty()
+        && !is_anything_ignored
+        && error_on_unmatched_pattern
+        && !Meanwhile::has_found_files(meanwhile)
+    {
         let patterns = patterns.join(&b' ');
         expanded.push(Expanded::Error(
             [b"No matching files. Patterns: ", &patterns[..]].concat(),
@@ -912,6 +991,7 @@ pub(crate) fn expand_as_oxfmt(
     ignored: &mut Ignored,
     patterns: &[Vec<u8>],
     error_on_unmatched_pattern: bool,
+    meanwhile: Option<&Meanwhile<'_>>,
 ) -> Result<Vec<Expanded>, Fatal> {
     let cwd = ignored.cwd.clone();
     let (mut targets, mut globs, mut excluded) = (Vec::new(), Vec::new(), Vec::new());
@@ -971,7 +1051,12 @@ pub(crate) fn expand_as_oxfmt(
             fs::Kind::File => paths::dirname(path),
         });
     }
+    // A file without a parser is silently skipped and isn't counted.
+    let has_parser = |path: &[u8], scope: &Scope| {
+        language_for_oxfmt(path, configs.formats_svelte(scope, Some(path))) != Language::Unknown
+    };
     let mut found: Vec<Target> = Vec::new();
+    let meanwhile = meanwhile.filter(|_| targets.len() == 1);
     for (path, kind, size, linked) in &targets {
         if *kind == fs::Kind::Directory {
             let matches =
@@ -986,12 +1071,14 @@ pub(crate) fn expand_as_oxfmt(
                 path,
                 &matches,
                 &|_| true,
+                &has_parser,
                 Some(git),
+                (false, meanwhile),
             )?);
             continue;
         }
         let scope = configs.for_directory(paths::dirname(path))?;
-        if !is_ignored(configs.config_ignores(&scope), path, *kind) {
+        if !is_ignored(configs.config_ignores(&scope), path, *kind) && has_parser(path, &scope) {
             found.push(Target {
                 path: path.clone(),
                 size: *size,
@@ -999,17 +1086,14 @@ pub(crate) fn expand_as_oxfmt(
                 scope,
                 ignores_unknown: true,
                 is_named: false,
+                done: None,
+                hash_of_text: None,
             });
         }
     }
-    // A file without a parser is silently skipped and isn't counted.
-    found.retain(|it| {
-        language_for_oxfmt(&it.path, configs.formats_svelte(&it.scope, Some(&it.path)))
-            != Language::Unknown
-    });
-    index_sort::sort_slice_by(&mut found[..], |a, b| a.path.cmp(&b.path));
+    pool.sort_by_path(&mut found, |it| &it.path);
     found.dedup_by(|a, b| a.path == b.path);
-    if found.is_empty() && error_on_unmatched_pattern {
+    if found.is_empty() && error_on_unmatched_pattern && !Meanwhile::has_found_files(meanwhile) {
         let error = b"Expected at least one target file. All matched files may have been excluded by ignore rules.";
         return Ok(vec![Expanded::Error(error.to_vec())]);
     }

@@ -1,6 +1,4 @@
 use core::cell::Cell;
-#[cfg(not(windows))]
-use core::ffi::c_char;
 use core::ffi::{c_int, c_void};
 
 use bun_core::{String as BunString, Utf8Bytes};
@@ -23,12 +21,10 @@ use bun_sys::{self, SystemErrno};
 use bun_uws as uws;
 #[cfg(not(windows))]
 use libc::sockaddr_storage;
-#[cfg(not(windows))]
-use libc::{IF_NAMESIZE, if_indextoname, if_nametoindex};
 
 use crate::api::SocketAddress;
 use crate::generated_bindgen::udp_socket::js_UDPSocket as js;
-use crate::socket::socket_address::inet::{self, INET6_ADDRSTRLEN, sockaddr_in, sockaddr_in6};
+use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 
 bun_output::declare_scope!(UdpSocket, visible);
 
@@ -74,12 +70,6 @@ fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
 
 use bun_core::ip_address;
 use bun_sys::net::Address;
-
-unsafe extern "C" {
-    // libc byte-order conversions are pure on the integer argument — no
-    // pointer/aliasing/thread preconditions — so declare them `safe fn`.
-    safe fn ntohs(nshort: u16) -> u16;
-}
 
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
@@ -182,7 +172,7 @@ extern "C" fn on_data(
         // SAFETY: `buf` is valid for the duration of this callback per uws
         // contract; each access reborrows it per-statement so no reference
         // spans the JS calls below.
-        let peer = unsafe { (*buf).get_peer(i) };
+        let peer = Address::from_ref(unsafe { (*buf).get_peer(i) });
 
         let mut addr_buf = [0u8; INET6_ADDRSTRLEN + 1];
         let hostname: Option<&[u8]>;
@@ -190,35 +180,20 @@ extern "C" fn on_data(
         let mut scope_id: Option<u32> = None;
         let is_ipv6: bool;
 
-        // SAFETY: peer points to a sockaddr_storage; family discriminates the cast.
-        match peer.ss_family as c_int {
-            f if f == inet::AF_INET => {
-                is_ipv6 = false;
-                // SAFETY: family == AF_INET so peer is sockaddr_in.
-                let peer4 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in>() };
-                // SAFETY: src points to in_addr, dst is INET6_ADDRSTRLEN+1 bytes.
-                hostname = unsafe {
-                    bun_cares_sys::ntop(f, (&raw const peer4.addr).cast(), &mut addr_buf)
-                };
-                port = ntohs(peer4.port);
+        if let Some(peer4) = peer.as_in4() {
+            is_ipv6 = false;
+            hostname = bun_cares_sys::ntop(bun_core::bytes_of(&peer4.addr), &mut addr_buf);
+            port = u16::from_be(peer4.port);
+        } else if let Some(peer6) = peer.as_in6() {
+            is_ipv6 = true;
+            hostname = bun_cares_sys::ntop(&peer6.addr, &mut addr_buf);
+            port = u16::from_be(peer6.port);
+            if peer6.scope_id != 0 {
+                scope_id = Some(peer6.scope_id);
             }
-            f if f == inet::AF_INET6 => {
-                is_ipv6 = true;
-                // SAFETY: family == AF_INET6 so peer is sockaddr_in6.
-                let peer6 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in6>() };
-                // SAFETY: src points to in6_addr, dst is INET6_ADDRSTRLEN+1 bytes.
-                hostname = unsafe {
-                    bun_cares_sys::ntop(f, (&raw const peer6.addr).cast(), &mut addr_buf)
-                };
-                port = ntohs(peer6.port);
-                if peer6.scope_id != 0 {
-                    scope_id = Some(peer6.scope_id);
-                }
-            }
-            _ => {
-                i += 1;
-                continue;
-            }
+        } else {
+            i += 1;
+            continue;
         }
 
         if hostname.is_none() || port == 0 {
@@ -238,14 +213,8 @@ extern "C" fn on_data(
             'blk: {
                 #[cfg(not(windows))]
                 {
-                    let mut buffer = [0u8; IF_NAMESIZE + 1];
-                    // SAFETY: buffer is IF_NAMESIZE+1 bytes, NUL-terminated by zero-init.
-                    if !unsafe { if_indextoname(id, buffer.as_mut_ptr().cast::<c_char>()) }
-                        .is_null()
-                    {
-                        // SAFETY: if_indextoname wrote a NUL-terminated string.
-                        let name = unsafe { bun_core::ffi::cstr(buffer.as_ptr().cast::<c_char>()) }
-                            .to_bytes();
+                    let mut buffer = [0u8; libc::IF_NAMESIZE];
+                    if let Some(name) = bun_sys::net::if_indextoname(id, &mut buffer) {
                         break 'blk BunString::create_format(format_args!(
                             "{}%{}",
                             bstr::BStr::new(span),
@@ -673,7 +642,7 @@ impl UDPSocket {
                 on_drain,
                 on_close,
                 on_recv_error,
-                hostname_z.as_ptr(),
+                &hostname_z,
                 config.port,
                 config.flags,
                 Some(&mut err),
@@ -752,7 +721,7 @@ impl UDPSocket {
             let address_z = connect.address.to_owned_slice_z();
             // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
             let ret = uws::udp::Socket::opaque_mut(this.socket.get().unwrap())
-                .connect(address_z.as_ptr(), connect.port as u32);
+                .connect(&address_z, connect.port as u32);
             if ret != 0 {
                 if let Some(sys_err) = errno_sys(ret, bun_sys::Tag::connect) {
                     return Err(cx.global().throw_value(sys_err.to_js(cx.global())));
@@ -1425,18 +1394,16 @@ impl UDPSocket {
     ) -> JsResult<bool> {
         let _ = self;
         let str = address_val.to_bun_string(global_this)?;
-        let address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
-        let bytes_len = address_slice.len() - 1; // exclude trailing NUL
+        let address = str.to_owned_slice_z();
 
-        let Some(ip) = ip_address::to_ip_address(&address_slice[..bytes_len]) else {
+        let Some(ip) = ip_address::to_ip_address(address.as_bytes()) else {
             return Ok(false);
         };
         let mut addr = Address::from_ip(ip, port);
         if ip.is_ipv6() {
-            if let Some(percent) =
-                bun_core::strings::index_of_char_usize(&address_slice[..bytes_len], b'%')
+            if let Some(percent) = bun_core::strings::index_of_char_usize(address.as_bytes(), b'%')
             {
-                if percent + 1 < bytes_len {
+                if percent + 1 < address.len() {
                     let iface_id: u32 = 'blk: {
                         #[cfg(windows)]
                         {
@@ -1445,7 +1412,7 @@ impl UDPSocket {
                             // Same rules as WTF::parseIntegerAllowingTrailingJunk<int32_t>:
                             // skip leading ASCII whitespace, optional '-' (no '+'), parse leading
                             // decimal digits, ignore trailing junk; nullopt on no-digits/overflow.
-                            let zone = &address_slice[percent + 1..bytes_len];
+                            let zone = &address.as_bytes()[percent + 1..];
                             let mut i = 0usize;
                             while i < zone.len()
                                 && matches!(zone[i], b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
@@ -1475,12 +1442,8 @@ impl UDPSocket {
                         }
                         #[cfg(not(windows))]
                         {
-                            // SAFETY: address_slice is NUL-terminated; offset is in-bounds.
-                            let index = unsafe {
-                                if_nametoindex(
-                                    address_slice.as_ptr().add(percent + 1).cast::<c_char>(),
-                                )
-                            };
+                            let index =
+                                bun_sys::net::if_nametoindex(address.substring(percent + 1));
                             if index > 0 {
                                 break 'blk index;
                             }
@@ -1705,7 +1668,7 @@ pub(crate) fn connect(
         return Err(global_this.throw(format_args!("Socket is closed")));
     };
     // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-    if uws::udp::Socket::opaque_mut(socket).connect(connect_host.as_ptr(), port as u32) == -1 {
+    if uws::udp::Socket::opaque_mut(socket).connect(&connect_host, port as u32) == -1 {
         return Err(global_this.throw(format_args!("Failed to connect socket")));
     }
     this.connect_info.set(Some(ConnectInfo { port }));
@@ -2008,19 +1971,13 @@ pub(crate) fn dgram_bind_fd(fd: i32, address: &[u8], port: i32, flags: i32) -> b
             ));
         };
         let addr = Address::from_ip(ip, port);
-        let socklen = addr.socklen() as libc::socklen_t;
-        let storage = addr.into_storage();
+        let addr = addr.as_bytes();
 
         // IPV6_V6ONLY, SO_REUSEADDR/SO_REUSEPORT and bind(2) go through bsd.cpp
         // so this doesn't fork its platform gate.
-        // SAFETY: storage was initialized above for socklen bytes.
+        // SAFETY: `addr` is a `sockaddr_in` or `sockaddr_in6`.
         let rc = unsafe {
-            uws::udp::raw::bsd_bind_udp_fd(
-                fd,
-                std::ptr::from_ref(&storage).cast(),
-                socklen as c_int,
-                flags,
-            )
+            uws::udp::raw::bsd_bind_udp_fd(fd, addr.as_ptr().cast(), addr.len() as c_int, flags)
         };
         if rc != 0 {
             return Err(bun_sys::Error::from_code_int(
@@ -2046,30 +2003,12 @@ pub(crate) fn dgram_get_sock_name_fd<'a>(
     #[cfg(not(windows))]
     {
         let fd = dgram_known_fd(fd).map_err(|err| err.into_error(&cx.heap))?;
-        let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
-        let mut len = size_of::<sockaddr_storage>() as libc::socklen_t;
-        // SAFETY: getsockname(2) writes at most `len` bytes into storage.
-        let rc = unsafe {
-            libc::getsockname(
-                fd,
-                std::ptr::from_mut(&mut storage).cast(),
-                std::ptr::from_mut(&mut len),
-            )
-        };
-        if rc != 0 {
-            return Err(
-                bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::open)
-                    .into_error(&cx.heap),
-            );
-        }
-        let (bytes, port): (&[u8], u16) = if storage.ss_family == inet::AF_INET as libc::sa_family_t
-        {
-            // SAFETY: the family says this is a sockaddr_in.
-            let addr4 = unsafe { &*std::ptr::from_ref(&storage).cast::<sockaddr_in>() };
+        let addr = bun_sys::net::getsockname(bun_sys::Fd::from_native(fd)).map_err(|err| {
+            bun_sys::Error::from_code_int(err.errno.into(), bun_sys::Tag::open).into_error(&cx.heap)
+        })?;
+        let (bytes, port): (&[u8], u16) = if let Some(addr4) = addr.as_in4() {
             (bun_core::bytes_of(&addr4.addr), u16::from_be(addr4.port))
-        } else if storage.ss_family == inet::AF_INET6 as libc::sa_family_t {
-            // SAFETY: the family says this is a sockaddr_in6.
-            let addr6 = unsafe { &*std::ptr::from_ref(&storage).cast::<sockaddr_in6>() };
+        } else if let Some(addr6) = addr.as_in6() {
             (&addr6.addr, u16::from_be(addr6.port))
         } else {
             return Err(bun_sys::Error::from_code_int(
@@ -2100,43 +2039,19 @@ pub(crate) fn dgram_guess_handle_type(fd: i32) -> BunString {
         if fd < 0 {
             break 'kind "UNKNOWN";
         }
-        let mut st: libc::stat = bun_core::ffi::zeroed();
-        // SAFETY: fstat(2) with a zeroed out-param.
-        let rc = unsafe { libc::fstat(fd, std::ptr::from_mut(&mut st)) };
-        if rc != 0 {
+        let fd = bun_sys::Fd::from_native(fd);
+        let Ok(st) = bun_sys::fstat(fd) else {
             break 'kind "UNKNOWN";
-        }
+        };
         let mode = st.st_mode & libc::S_IFMT;
         if mode == libc::S_IFSOCK {
-            let mut sock_type: c_int = 0;
-            let mut len = size_of::<c_int>() as libc::socklen_t;
-            // SAFETY: getsockopt(2) writes an int into sock_type.
-            let rc = unsafe {
-                libc::getsockopt(
-                    fd,
-                    libc::SOL_SOCKET,
-                    libc::SO_TYPE,
-                    std::ptr::from_mut(&mut sock_type).cast::<c_void>(),
-                    std::ptr::from_mut(&mut len),
-                )
-            };
-            if rc != 0 {
+            let Some(sock_type) = bun_sys::net::socket_type(fd) else {
                 break 'kind "UNKNOWN";
-            }
-            let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
-            let mut slen = size_of::<sockaddr_storage>() as libc::socklen_t;
-            // SAFETY: getsockname(2) writes at most slen bytes into storage.
-            let rc = unsafe {
-                libc::getsockname(
-                    fd,
-                    std::ptr::from_mut(&mut storage).cast(),
-                    std::ptr::from_mut(&mut slen),
-                )
             };
-            if rc != 0 {
+            let Ok(addr) = bun_sys::net::getsockname(fd) else {
                 break 'kind "UNKNOWN";
-            }
-            let family = storage.ss_family as c_int;
+            };
+            let family = addr.family();
             break 'kind match sock_type {
                 libc::SOCK_DGRAM if family == libc::AF_INET || family == libc::AF_INET6 => "UDP",
                 libc::SOCK_STREAM if family == libc::AF_INET || family == libc::AF_INET6 => "TCP",
@@ -2148,9 +2063,7 @@ pub(crate) fn dgram_guess_handle_type(fd: i32) -> BunString {
             break 'kind "PIPE";
         }
         if mode == libc::S_IFCHR {
-            // SAFETY: isatty(3) on a non-negative fd.
-            let is_tty = unsafe { libc::isatty(fd) } == 1;
-            break 'kind if is_tty { "TTY" } else { "FILE" };
+            break 'kind if bun_sys::isatty(fd) { "TTY" } else { "FILE" };
         }
         if mode == libc::S_IFREG {
             break 'kind "FILE";
@@ -2165,16 +2078,7 @@ pub(crate) fn dgram_guess_handle_type(fd: i32) -> BunString {
 pub(crate) fn dgram_listen_fd(fd: i32) -> bun_sys::Result<()> {
     #[cfg(not(windows))]
     {
-        let fd = dgram_owned_fd(fd)?;
-        // SAFETY: listen(2) on a descriptor this module created.
-        let rc = unsafe { libc::listen(fd, 511) };
-        if rc != 0 {
-            return Err(bun_sys::Error::from_code_int(
-                bun_sys::last_errno(),
-                bun_sys::Tag::listen,
-            ));
-        }
-        Ok(())
+        bun_sys::net::listen(bun_sys::Fd::from_native(dgram_owned_fd(fd)?), 511)
     }
     #[cfg(windows)]
     {

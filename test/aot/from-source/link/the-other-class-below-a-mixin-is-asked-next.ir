@@ -1,12 +1,12 @@
 # -- source: main.cjs
-# function mixin(S) { if (S === undefined) S = Object; return class Mixed extends S { total(n) { var t = 0; for (var i = 0; i < n; i++) t += this.get(i, 1); return t; } }; } var mixed = mixin;
-# class Base extends mixed() { constructor(m) { super(); this.m = m; } put(v) { this.m = v; } }
-# class View extends Base { get(i, j) { return this.m.get(j, i); } }
-# class Never extends Base { get(i, j) { return this.m.get(i, j); } }
-# class M extends mixed(Array) { constructor(r) { super(r); for (var i = 0; i < r; i++) this[i] = [i, i / 2, i, i]; this.rows = r; } get(i, j) { return this[i][j]; } put(v) { this.rows = v; } }
-# function never(m) { return new Never(m); }
-# var m = new M(4), v = new View(m);
-# print(m.total(4), v.total(4));
+# function hilly(Ground) { if (!Ground) Ground = Object; return class Hill extends Ground { drops(n) { var low = 0; for (var i = 0; i < n; i++) low -= this.spot(i, 3 - i); return low; } }; } var raised = hilly;
+# class Sheet extends raised() { constructor(land) { super(); this.land = land; } over(land) { this.land = land; } }
+# class Snow extends Sheet { spot(i, k) { return this.land.spot(i, k) / 2 - 1; } }
+# class Ice extends Sheet { spot(i, k) { return this.land.spot(i, k) - 4; } }
+# class Land extends raised(Array) { constructor(r) { super(r); for (var i = 0; i < r; i++) this[i] = [i, i / 2, -i, 2 - i]; this.rows = r; } spot(i, k) { return this[i][k]; } over(rows) { this.rows = rows; } }
+# function freezes(land) { return new Ice(land); }
+# var land = new Land(4), snow = new Snow(land);
+# print(land.drops(4), snow.drops(4));
 # -- end of source
 # Where the receiver is not of the subclass known by its structure, a loop asks for the other class that the program constructs.
 # RUN: walk f11 mechanisms=all
@@ -14,8 +14,8 @@
 # CHECK: HasStructureOfClass {{*}}layout=L4
 # CHECK: ShapeTest {{*}}layouts=[L2]
 # RUN(ANSWER): run-in-shell
-# ANSWER: 3 3.5
+# ANSWER: -5 1.5
 # ANSWER-NEXT: exited with 0
 # RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
-# CHECKED: 3 3.5
+# CHECKED: -5 1.5
 # CHECKED-NEXT: exited with 0

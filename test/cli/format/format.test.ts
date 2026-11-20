@@ -119,6 +119,9 @@ async function formatChecked(files: Record<string, string>, args: string[], opti
 const slowdown = (odd: { cpu: number }, plain: { cpu: number }) =>
   odd.cpu / Math.max(plain.cpu, isWindows ? 1 / 64 : 0);
 
+/** What's already formatted is formatted too. */
+const formatsAll = { BUN_FEATURE_FLAG_DISABLE_SETTLED_FORMAT: "1" };
+
 /** True if the temporary directory is inside a repository. */
 const isInRepository = (function look(directory: string): boolean {
   const isRoot = [".git", ".jj"].some(name => existsSync(join(directory, name)));
@@ -6356,6 +6359,67 @@ exports.format = async text => "by Prettier";
     });
   });
 
+  // The time of the last access tells that a file has been read, where the file system keeps it.
+  const unread = (path: string) => utimesSync(path, 1, Date.now() / 1000);
+  const keepsAccessTime = (() => {
+    if (!isLinux) return false;
+    using dir = tempDir("format-atime", { a: "a" });
+    unread(join(String(dir), "a"));
+    readFileSync(join(String(dir), "a"));
+    return statSync(join(String(dir), "a")).atimeMs > 1000;
+  })();
+  /** `saved` is written once `bun fmt` has read `read`. */
+  async function formatWhileSaving(files: Record<string, string>, flags: string[], read: string, saved: string[]) {
+    const all = {
+      ...files,
+      "z/prettier.config.cjs": `const fs = require("fs");
+const isRead = () => fs.statSync(__dirname + "/../${read}").atimeMs > 1000;
+const end = Date.now() + ${keepsAccessTime ? 20_000 : 0};
+while (!isRead() && Date.now() < end) Bun.sleepSync(1);
+fs.writeFileSync(__dirname + "/was-read.txt", String(isRead()));
+fs.writeFileSync(__dirname + "/../${saved[0]}", ${JSON.stringify(saved[1])});
+module.exports = {};
+`,
+      ".prettierignore": "*.cjs\n",
+      "z/b.js": "b;\n",
+      // Enough for the search to go on on several threads.
+      ...Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`d${i}/b.js`, "b;\n"])),
+    };
+    const result = await format(all, [...flags, "--threads=4", "."], {
+      reads: [...Object.keys(files), "z/was-read.txt"],
+      before: dir => unread(join(dir, read)),
+    });
+    if (keepsAccessTime) expect(result.files["z/was-read.txt"]).toBe("true");
+    return result;
+  }
+
+  test.each([
+    ["before( 1 )\n", "after( 2 )\n", [], "after(2);\n", 0],
+    ["before(1);\n", "after( 2 )\n", [], "after(2);\n", 0],
+    ["before(\n", "after( 2 )\n", [], "after(2);\n", 0],
+    ["before(1);\n", "after( 2 )\n", ["--check"], "after( 2 )\n", 1],
+    ["before( 1 )\n", "after(2);\n", ["--check"], "after(2);\n", 0],
+  ])("a file that is saved while the search goes on: %j, %j, %j", async (before, saved, flags, after, exitCode) => {
+    const result = await formatWhileSaving({ "a.js": before }, flags, "a.js", ["a.js", saved]);
+    expect(result.files["a.js"]).toBe(after);
+    expect(result.exitCode).toBe(exitCode);
+  });
+
+  test("a tsconfig.json that is saved while the search goes on", async () => {
+    const files = {
+      ".prettierrc": `{ "plugins": ["prettier-plugin-organize-imports"] }\n`,
+      "tsconfig.json": `{ "compilerOptions": { "jsx": "react-jsx" } }\n`,
+      "a.tsx": `import React from "react";\nexport const a = <a />;\n`,
+      // `a.tsx` has to wait for the end of the search. This is found after it, and doesn't.
+      "y/.prettierrc": "{}\n",
+      "y/b.js": "b;\n",
+    };
+    const saved = ["tsconfig.json", `{ "compilerOptions": { "jsx": "react" } }\n`];
+    const result = await formatWhileSaving(files, [], "y/b.js", saved);
+    expect(result.files["a.tsx"]).toBe(files["a.tsx"]);
+    expect(result.exitCode).toBe(0);
+  });
+
   test.each([
     ["arrays", (depth: number) => Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString()],
     [
@@ -7553,16 +7617,17 @@ try {
       "// Returns the sum.\nfunction add(first, second) {\n  const sum = first + second; // a number\n  return [sum, { first, second }];\n}\n\n";
     const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
     for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }]) {
-      const run = (text: (index: number) => string) =>
+      const run = (text: (index: number) => string, env = {}) =>
         format(
           {
             ...configuration,
             ...Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])),
           },
           ["--check", "--log-level", "silent"],
+          { env },
         );
       const odd = await run(index => texts[index]);
-      const plain = await run(() => ordinary.repeat(length / ordinary.length));
+      const plain = await run(() => ordinary.repeat(length / ordinary.length), formatsAll);
       // 2.3 to 3 on Linux and 8.3 on Windows when all is well. One shape that takes quadratic time adds 9 or more.
       expect(slowdown(odd, plain)).toBeLessThan(isWindows ? 16 : 8);
     }
@@ -9566,7 +9631,7 @@ describe.concurrent("path handling", () => {
       stderr: "inherit",
     });
     const stdout = await proc.stdout.text();
-    const { config } = JSON.parse(stdout.slice(stdout.lastIndexOf("<marker>") + "<marker>".length));
+    const { config } = JSON.parse(stdout.split("<marker>").at(-2)!);
     // Nothing is installed there, so each group gets an error.
     expect(config.groups.map(({ error, ...which }: { error: string }) => [typeof error, which])).toEqual(
       groups.map(({ classes, ...which }) => ["string", which]),
@@ -11258,5 +11323,92 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
       "experimental-cli",
       "lsp",
     ]);
+  });
+});
+
+describe.concurrent("files that are formatted, or nearly", () => {
+  const around = (text: string) => {
+    const settled = Array.from({ length: 8 }, (_, i) => `function f${i}(a) {\n  return a + ${i};\n}\n`).join("\n");
+    return `${settled}\n${text}\n${settled.replaceAll("function f", "function g")}`;
+  };
+  const cases: [name: string, text: string, options?: object][] = [
+    ["a.ts", "export const shown = (\n  n: number,\n): number => (n > 0 ? Math.floor(n) : 0);\n", { printWidth: 44 }],
+    ["a.js", "h();\n", { useTabs: true }],
+    ["a.js", "h();\n", { tabWidth: 4 }],
+    ["a.ts", "export const shown = (\n  n: number,\n): number => (n > 0 ? Math.floor(n) : 0);\n", { printWidth: 43 }],
+    ["a.ts", "const inked = columns.flatMap(\n  (count, x) => (count > 0 ? [x] : []),\n);\n", { printWidth: 43 }],
+    ["a.ts", "const inked = columns.flatMap(\n  (count, x) => (count > 0 ? [x] : []),\n);\n", { printWidth: 42 }],
+    [
+      "a.tsx",
+      `mock(\n  "../../a/long/enough/path/to/a/module",\n  <T,>() => ({\n    a: 1,\n  }),\n);\n`,
+      { printWidth: 50 },
+    ],
+    ["a.ts", "function h(\n  a: A,\n): (\n  b: B,\n\n  c: C,\n) => D {\n  return a;\n}\n"],
+    ["a.ts", "h(() => ({}.x as Api).size());\n"],
+    ["a.ts", "h(() => ({ a: 1 } as unknown as Api).size() + 1);\n"],
+    ["a.ts", "({ a: 1 } as any, b);\n"],
+    ["a.tsx", `const a = <span extends className="a" />;\n`],
+    ["a.js", "async(...() => {});\n"],
+    ["a.js", "async ()\n{\n  d;\n}\n"],
+    ["a.js", "const // a\n// b\nv = 1,\n  w = 2;\n"],
+    ["a.ts", "class C {\n  export // a\n  constructor() {}\n}\n", { semi: false }],
+    ["a.js", "function h() {\n  one();\n  two( );\n  three();\n}\n"],
+    ["a.js", "h(() => {\n  one();\n\n\n  two();\n});\n"],
+    ["a.js", "debugger;\nh( );\n"],
+    ["a.js", "let f0;\n"],
+    ["a.js", "export const a = 1;\nexport { b as a };\n"],
+    ["a.js", "// prettier-ignore\nh( );\n"],
+    ["a.js", "h();\n", { endOfLine: "crlf" }],
+    ["a.jsx", 'const a = (\n  <a>\n    b{" "}\n    <c />\n  </a>\n);\n'],
+    ["a.js", "const a = css`\n  color:red;\n`;\n"],
+    ["a.ts", "function h({\n  a,\n  b, // c\n}: {/* d */}) {}\n"],
+    ["a.jsx", "h = import(<a />);\n"],
+    ["a.js", "h(\n  function () {\n    return a;\n  },\n  b /* c */\n);\n", { trailingComma: "none" }],
+  ];
+  test.each([".prettierrc", ".oxfmtrc.json"])("are treated like any other file with %s", async configuration => {
+    const files: Record<string, string> = {};
+    cases.forEach(([name, text, options = {}], i) => {
+      files[`${i}/${configuration}`] = JSON.stringify(options);
+      files[`${i}/alone.${name}`] = text;
+      files[`${i}/among.${name}`] = around(text);
+      files[`${i}/crlf.${name}`] = around(text).replaceAll("\n", "\r\n");
+    });
+    const reads = Object.keys(files);
+    const results = [];
+    for (const env of [{}, formatsAll]) {
+      const runs = await Promise.all([format(files, ["-l"], { env }), format(files, [], { env, reads })]);
+      results.push(runs.map(({ cpu, raw, ...rest }) => rest));
+    }
+    expect(results[0]).toEqual(results[1]);
+    expect(results[0][0].stdout).toContain("0/among.a.ts");
+  });
+
+  test("are written whether they're found early or late", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 40; i++)
+      files[
+        `${Array(i % 8)
+          .fill("d")
+          .join("/")}/${i}.js`.replace(/^\//, "")
+      ] = `f( ${i} )`;
+    const reads = Object.keys(files);
+    const result = await format(files, [], { reads });
+    expect(Object.values(result.files)).toEqual(reads.map(it => `f(${/(\d+)\.js/.exec(it)![1]});\n`));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.skipIf(isDebug || isASAN)("take a fraction of the time", async () => {
+    const files = {
+      "a.js": around("h();\n")
+        .repeat(6000)
+        .replace(/function \w+/g, "x = function ")
+        .replace(/^}$/gm, "};"),
+    };
+    // The first run of an executable takes longer.
+    await format({ "a.js": formatted }, ["-l"]);
+    const start = await format({ "a.js": formatted }, ["-l"]);
+    const [settled, all] = [await format(files, ["-l"]), await format(files, ["-l"], { env: formatsAll })];
+    expect([settled.stdout, all.stdout]).toEqual(["", ""]);
+    expect(all.cpu - start.cpu).toBeGreaterThan(1.5 * (settled.cpu - start.cpu));
   });
 });

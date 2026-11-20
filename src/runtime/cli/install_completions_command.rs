@@ -223,10 +223,12 @@ impl InstallCompletionsCommand {
             let filename: &[u8] = match shell {
                 Shell::Unknown => {
                     Output::err_generic(
-                        "Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash.",
+                        "Unknown or unsupported shell. Set $SHELL to one of zsh, fish, or bash.",
                         format_args!(""),
                     );
-                    note!("To manually output completions, run 'bun getcompletes'");
+                    note!(
+                        "To manually output completions, run 'env SHELL=bash bun completions \\> file'"
+                    );
                     Global::exit(fail_exit_code);
                 }
                 Shell::Pwsh => {

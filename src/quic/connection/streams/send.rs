@@ -2,7 +2,7 @@ use core::ops::Range;
 use std::collections::VecDeque;
 
 use super::stream::UNKNOWN_SIZE;
-use super::{Flags, State, Stream, Streams};
+use super::{Flags, State, Stream, Streams, Table};
 use crate::coding::{MAX_VARINT, Write, varint_len};
 use crate::connection::sent::{Control, Frames, SentFrame};
 use crate::event::{Event, StreamEvent};
@@ -42,11 +42,11 @@ fn line_up(line: &mut Line, entry: (u64, StreamId)) {
     }
 }
 
-/// Of those that are as urgent as the first stream.
+/// Of those that are as urgent as the first stream, unless it is younger.
 fn first_serial(line: &Line) -> Option<usize> {
-    let class = (line.front()?.0 / SERIAL) | 1;
-    let at = line.partition_point(|it| it.0 / SERIAL < class);
-    line.get(at).filter(|it| it.0 / SERIAL == class).map(|_| at)
+    let first = line.front().map(|&(rank, id)| (rank | SERIAL, id))?;
+    let at = line.partition_point(|it| it.0 / SERIAL < first.0 / SERIAL);
+    line.get(at).filter(|it| **it <= first).map(|_| at)
 }
 
 /// Less is older, or more urgent. Streams that take turns have none.
@@ -63,6 +63,16 @@ fn is_under_way(stream: &Stream) -> bool {
             true => stream.send.len() > beyond_limit,
             false => stream.send.unsent_len() > LITTLE || stream.flags.contains(Flags::AWAITS_DATA),
         }
+}
+
+impl Stream {
+    /// How many bytes the application is left with.
+    #[inline]
+    pub(crate) fn set_unwritten(&mut self, len: u64) {
+        let (has_much, end) = (len >= WRITE_CHUNK, self.send.end() + len);
+        self.flags.set(Flags::HAS_MUCH_TO_WRITE, has_much);
+        (self.flags).set(Flags::WILL_BE_LONG, has_much && end > LONG_LEN);
+    }
 }
 
 impl State {
@@ -305,7 +315,7 @@ impl State {
             && stream.send.sent() > 0;
         let is_serial = match takes_turns {
             true => is_ending && is_past(0),
-            false => is_past(LONG_LEN),
+            false => is_past(LONG_LEN) || stream.flags.contains(Flags::WILL_BE_LONG),
         };
         let turn = match takes_turns && !is_ending {
             true => self.turns + u64::from(is_past(BULK_LEN)) * BULK_HANDICAP,
@@ -322,6 +332,48 @@ impl State {
             true => first_serial(&self.sendable).unwrap_or(0),
             false => 0,
         }
+    }
+
+    /// Where it is in `writable`, and whether it is ahead of an older stream.
+    #[inline]
+    fn next_to_write(&mut self, table: &Table) -> (Option<usize>, bool) {
+        let leader = (self.leader).filter(|it| table.get(it.1).is_some_and(is_under_way));
+        self.update_credit_ahead(leader.and_then(|it| table.get(it.1)));
+        let line = &self.writable;
+        let is_due = |it: &(u64, StreamId), max_unsent| {
+            table.get(it.1).is_some_and(|it| {
+                it.write_round != self.write_round && it.send.unsent_len() <= max_unsent
+            })
+        };
+        let serial = first_serial(line);
+        let alternates = (self.sendable.front()).is_some_and(|it| it.0 & SERIAL == 0);
+        let max_unsent = u64::from(alternates) * WRITE_CHUNK;
+        let mut at = serial
+            .filter(|&at| line.get(at).is_some_and(|it| is_due(it, max_unsent)))
+            .or_else(|| line.iter().position(|it| is_due(it, u64::MAX)));
+        self.spare_credit = match self.send_credit() {
+            credit @ LITTLE.. if at == serial && at > Some(0) => credit / 2,
+            _ => 0,
+        };
+        let age_at = |at: Option<usize>| age(*line.get(at?)?);
+        let oldest = [leader, age_at(Some(0)), age_at(serial)];
+        let oldest = oldest.into_iter().flatten().min();
+        let is_ahead = |at| age_at(at).is_some_and(|it| oldest < Some(it));
+        if is_ahead(at) && self.credit_ahead < self.min_credit {
+            let can_pass = |it: &(u64, StreamId)| {
+                (table.get(it.1)).is_some_and(|stream| self.can_pass(*it, stream))
+            };
+            let passing = (line.iter().take_while(|_| self.has_passing)).position(can_pass);
+            (self.has_passing, self.spare_credit) = (passing.is_some(), 0);
+            let urgency = |at| line.get(at).map(|it| it.0 / (2 * SERIAL));
+            at = ([passing, Some(0), serial].into_iter().flatten())
+                .filter(|&at| Some(at) == passing || age_at(Some(at)) == oldest)
+                .filter(|&at| line.get(at).is_some_and(|it| is_due(it, u64::MAX)))
+                .min_by_key(|&at| urgency(at));
+        }
+        let is_ahead = is_ahead(at);
+        self.leader = age_at(at).filter(|_| !is_ahead).or(leader);
+        (at, is_ahead)
     }
 
     #[inline]
@@ -398,45 +450,7 @@ impl Streams {
         }
         let Self { table, state, .. } = self;
         while state.awaits_writes() {
-            let leader = (state.leader).filter(|it| table.get(it.1).is_some_and(is_under_way));
-            state.update_credit_ahead(leader.and_then(|it| table.get(it.1)));
-            let is_due = |it: &(u64, StreamId), max_unsent| {
-                table.get(it.1).is_some_and(|it| {
-                    it.write_round != state.write_round && it.send.unsent_len() <= max_unsent
-                })
-            };
-            let line = &state.writable;
-            let serial = first_serial(line);
-            let alternates = (state.sendable.front()).is_some_and(|it| it.0 & SERIAL == 0);
-            let max_unsent = u64::from(alternates) * WRITE_CHUNK;
-            let mut at = serial
-                .filter(|&at| line.get(at).is_some_and(|it| is_due(it, max_unsent)))
-                .or_else(|| line.iter().position(|it| is_due(it, u64::MAX)));
-            state.spare_credit = match state.send_credit() {
-                credit @ LITTLE.. if at == serial && at > Some(0) => credit / 2,
-                _ => 0,
-            };
-            let age_at = |at: Option<usize>| age(*line.get(at?)?);
-            let oldest = [leader, age_at(Some(0)), age_at(serial)];
-            let oldest = oldest.into_iter().flatten().min();
-            let is_ahead = |at| age_at(at).is_some_and(|it| oldest < Some(it));
-            if is_ahead(at) && state.credit_ahead < state.min_credit {
-                let can_pass = |it: &(u64, StreamId)| {
-                    (table.get(it.1)).is_some_and(|stream| state.can_pass(*it, stream))
-                };
-                let passing = line
-                    .iter()
-                    .take_while(|_| state.has_passing)
-                    .position(can_pass);
-                (state.has_passing, state.spare_credit) = (passing.is_some(), 0);
-                let urgency = |at| line.get(at).map(|it| it.0 / (2 * SERIAL));
-                at = ([passing, Some(0), serial].into_iter().flatten())
-                    .filter(|&at| Some(at) == passing || age_at(Some(at)) == oldest)
-                    .filter(|&at| line.get(at).is_some_and(|it| is_due(it, u64::MAX)))
-                    .min_by_key(|&at| urgency(at));
-            }
-            let is_ahead = is_ahead(at);
-            state.leader = age_at(at).filter(|_| !is_ahead).or(leader);
+            let (at, is_ahead) = state.next_to_write(table);
             let id = at.and_then(|at| state.writable.remove(at)).map(|it| it.1);
             let Some((id, stream)) = id.and_then(|id| table.get_mut(id).map(|it| (id, it))) else {
                 state.is_write_round_over = true;

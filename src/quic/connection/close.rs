@@ -239,6 +239,14 @@ impl Connection {
         }
     }
 
+    /// In place of [`Config::progress_timeout`](crate::Config::progress_timeout).
+    pub fn set_progress_timeout(&mut self, now: Instant, timeout: Duration) {
+        if self.is_receiving() {
+            self.progress_timeout = timeout;
+            self.restart_progress_timer(now);
+        }
+    }
+
     /// For when the application may be silent for `timeout`, or for ever if it is zero, until it has no streams left.
     pub fn allow_silence(&mut self, now: Instant, timeout: Duration) {
         if !timeout.is_zero() && timeout <= self.idle_timeout || !self.is_receiving() {

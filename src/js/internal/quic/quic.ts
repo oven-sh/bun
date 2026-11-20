@@ -2089,7 +2089,7 @@ class QuicStream {
     }
     const handle = this.#handle;
     this[kFinishClose](error);
-    handle!.destroy(cascadingFromSessionDestroy);
+    handle?.destroy(cascadingFromSessionDestroy);
   }
 
   /**

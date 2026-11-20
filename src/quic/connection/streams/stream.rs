@@ -45,6 +45,7 @@ bitflags::bitflags! {
         const RESET_BY_PEER = 1 << 26;
         const AWAITS_DATA = 1 << 27;
         const HAS_MUCH_TO_WRITE = 1 << 28;
+        const WILL_BE_LONG = 1 << 29;
     }
 }
 

@@ -623,48 +623,48 @@ fn long_streams_are_not_passed_for_ever() {
 #[test]
 fn the_first_long_response_shares_the_path_with_the_short_ones() {
     let mut raw = sending(true, 1_100_000);
-    let before = raw.streams[&3].len();
-    for _ in 0..3 {
+    let quarter = (4_400_000 - raw.streams[&3].len()) / 4;
+    for len in [1, 3, 1, 1, 1, 1, 1].map(|it| it * quarter) {
         let id = raw.peer.open(Unidirectional);
-        raw.peer.send(id, &filler(0, 1_500_000), true);
+        raw.peer.send(id, &filler(0, len), true);
     }
     let mut finished = Vec::new();
-    while finished.len() < 4 {
+    while finished.len() < 8 {
         raw.advance(RTT / 8);
         raw.send("ack");
         let frames = raw.frames();
-        let sent = raw.streams.values().map(Vec::len).sum::<usize>() - before;
         let ends = groups(&frames).into_iter().filter(|it| it[0] == "fin");
-        finished.extend(ends.map(|it| (it[1].to_owned(), sent)));
+        finished.extend(ends.map(|it| it[1].to_owned()));
     }
-    assert!(finished.iter().map(|it| &it.0).eq(["3", "7", "11", "15"]));
-    let rest = 4_400_000 - before;
-    assert!((rest * 9 / 5..rest * 11 / 5).contains(&finished[0].1));
+    let long = finished.iter().position(|it| it == "3").unwrap();
+    assert!((3..6).contains(&long), "{finished:?}");
+    finished.remove(long);
+    assert_eq!(finished, ["7", "15", "19", "23", "27", "31", "11"]);
 }
 
 /// The peer returns credit in halves of its windows, for what it has read of all streams or of the first one that it has
 /// not read to the end. Returns how much the others have sent when the first one is at two thirds.
 fn sent_ahead(reads_in_order: bool, window: usize, stream_window: usize) -> usize {
-    const LEN: usize = 3_000_000;
+    const LENS: [usize; 3] = [3_000_000, 1_000_000, 1_000_000];
     let raw = Raw::client().config(|it| it.sends_in_order = true);
     let parameters = format!("max_data={window} max_stream_data_uni={stream_window}");
     let mut raw = raw.with(&parameters).connected();
     let ids = [(); 3].map(|()| raw.peer.open(Unidirectional));
-    for id in ids {
-        raw.peer.send(id, &filler(0, LEN), true);
+    for (id, len) in ids.into_iter().zip(LENS) {
+        raw.peer.send(id, &filler(0, len), true);
     }
     let (mut limit, mut stream_limits, mut ahead) = (window, [stream_window; 3], None);
     for _ in 0..1000 {
         raw.forget();
         raw.advance(RTT / 4);
         let lens = ids.map(|id| raw.streams.get(&id).map_or(0, Vec::len));
-        let done = lens.iter().take_while(|&&it| it == LEN).count();
-        if lens[0] > LEN * 2 / 3 {
+        let done = lens.iter().zip(&LENS).take_while(|it| it.0 == it.1).count();
+        if lens[0] > LENS[0] * 2 / 3 {
             ahead.get_or_insert(lens[1] + lens[2]);
         }
         let open = if reads_in_order { done + 1 } else { 3 };
         let (mut frames, read) = (String::from("ack"), lens.iter().take(open).sum::<usize>());
-        if read == 3 * LEN {
+        if lens == LENS {
             return ahead.unwrap();
         }
         for ((id, len), limit) in ids.iter().zip(lens).zip(&mut stream_limits).take(open) {

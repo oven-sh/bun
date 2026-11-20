@@ -1,6 +1,6 @@
 //! What the application does with streams, and what it is told.
 
-use super::streams::{Flags, Half, Load, Role, State, Stream, WRITE_CHUNK};
+use super::streams::{Flags, Half, Load, Role, State, Stream};
 use super::{Connection, Ending};
 use crate::endpoint::Shared;
 use crate::error::{Error, Result, http3_code};
@@ -89,8 +89,7 @@ impl Connection {
             }
             state.made_progress = true;
         }
-        let has_much = (data.len() - taken.len()) as u64 >= WRITE_CHUNK;
-        stream.flags.set(Flags::HAS_MUCH_TO_WRITE, has_much);
+        stream.set_unwritten((data.len() - taken.len()) as u64);
         if taken.len() < data.len() {
             state.want_write(id, stream);
         }

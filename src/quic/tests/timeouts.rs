@@ -314,6 +314,17 @@ fn progress_at_the_last_moment() {
 }
 
 #[test]
+fn progress_timeout_that_is_set_later() {
+    let mut raw = Raw::client().config(|it| it.progress_timeout = Duration::ZERO);
+    raw = raw.connected();
+    raw.advance(1000);
+    let now = raw.now;
+    (raw.connection()).set_progress_timeout(now, Duration::from_secs(5));
+    assert_eq!(raw.wait_for_the_end(), 5000);
+    assert_eq!(raw.error(), Some((Transport, APPLICATION_ERROR)));
+}
+
+#[test]
 fn application_that_may_be_silent() {
     const LIMIT: u64 = 300;
     for (progress, allowed, is_kept_alive, end) in [

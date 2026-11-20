@@ -91,6 +91,7 @@ const DEFAULT_MAX_HEADER_LENGTH: u64 = 16384;
 const TICKET_DELIVERY_DELAY: Duration = Duration::from_millis(500);
 /// For how long a peer that cannot send more has to wait for a reader.
 const READER_DELAY: Duration = Duration::from_secs(1);
+const CLOSING_PROGRESS_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Indices into the session stats buffer — must match
 /// [`SESSION_STATS_FIELDS`] positions exactly (the JS layer reads the
@@ -1452,6 +1453,9 @@ impl QuicSession {
 
     fn apply_graceful_close(&self, (layer, code, reason): Close<Layer>) {
         self.update(|conn| conn.set_close_error(layer, code, &reason));
+        if self.is_server {
+            self.update(|conn| conn.set_progress_timeout(now(), CLOSING_PROGRESS_TIMEOUT));
+        }
         if self.is_http3() && self.has_opened_stream() {
             // RFC 9114 §5.2.
             self.update(Connection::go_away);

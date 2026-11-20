@@ -171,6 +171,8 @@ struct Tokenizer<'a> {
     buffer: Vec<Range>,
     /// Tokens pushed back with `back`. `None` is a pushed-back `undefined`.
     returned: Vec<Option<Token>>,
+    /// Whether `ignore_unclosed` found no unescaped `'`, `"` or `)`, in this order. No later token has one behind it.
+    no_unescaped: [bool; 3],
     last_bad_paren: Option<usize>,
     /// Cached offset of the first `)` after the last `(` examined. The outer `None` means it isn't known.
     next_close: Option<Option<usize>>,
@@ -203,6 +205,15 @@ impl<'a> Tokenizer<'a> {
                 return Some(next);
             }
         }
+    }
+
+    /// `find_unescaped`, unless `ignore_unclosed` has found none before. `no_unescaped` has `closer` at `slot`.
+    #[inline]
+    fn find_closer(&self, closer: u8, slot: usize, from: usize) -> Option<usize> {
+        if self.no_unescaped[slot] {
+            return None;
+        }
+        self.find_unescaped(closer, from)
     }
 
     /// `interpolation` in `postcss-scss`. `next` is the offset of the `#`. Returns the offset of the `}`.
@@ -344,8 +355,11 @@ impl<'a> Tokenizer<'a> {
                     && !matches!(n, Some(b'\'' | b'"'))
                     && !n.is_some_and(u8::is_ascii_whitespace)
                 {
-                    let close = match self.find_unescaped(b')', pos) {
-                        None if ignore_unclosed => pos,
+                    let close = match self.find_closer(b')', 2, pos) {
+                        None if ignore_unclosed => {
+                            self.no_unescaped[2] = true;
+                            pos
+                        }
                         close => close.ok_or_else(|| {
                             self.rejection.note(Message::UnclosedBracket, pos as u32)
                         })?,
@@ -403,8 +417,12 @@ impl<'a> Tokenizer<'a> {
                 (kind, next) = (TokenKind::String, at);
             }
             b'\'' | b'"' => {
-                let close = match self.find_unescaped(code, pos) {
-                    None if ignore_unclosed => pos + 1,
+                let slot = usize::from(code == b'"');
+                let close = match self.find_closer(code, slot, pos) {
+                    None if ignore_unclosed => {
+                        self.no_unescaped[slot] = true;
+                        pos + 1
+                    }
                     close => close
                         .ok_or_else(|| self.rejection.note(Message::UnclosedString, pos as u32))?,
                 };
@@ -522,7 +540,7 @@ pub(crate) struct Node {
     pub(crate) params: Range,
     /// `params`, if it differs from `raws.params.raw`.
     pub(crate) clean_params: Option<Box<[u8]>>,
-    /// Flags added by `postcss-less`.
+    /// Flags added by `postcss-less`. `extend` is a declaration's: only Prettier's `massageAstNode` reads a rule's.
     pub(crate) extend: bool,
     pub(crate) mixin: bool,
     pub(crate) function: bool,
@@ -619,17 +637,22 @@ fn clean(css: &[u8], tokens: &[Token], custom_property: bool) -> Option<Box<[u8]
     (!is_clean).then(|| value.into_boxed_slice())
 }
 
-/// `/extend\(.+\)/i.test(text)`
-fn has_extend(text: &[u8], prefix: &[u8]) -> bool {
-    let lower = text.to_ascii_lowercase();
+/// `/extend\(.+\)/i.test(text)`. Out of line: only Less calls it, and inlined into `decl` it costs CSS and SCSS too.
+#[inline(never)]
+fn has_extend(text: &[u8]) -> bool {
     let mut from = 0;
-    while let Some(at) = text::index_of_from(&lower, prefix, from) {
-        let rest = &lower[at + prefix.len()..];
+    while let Some(open) = bun_core::strings::index_of_char_pos(text, b'(', from) {
+        from = open + 1;
+        if !text::ends_with_ignore_ascii_case(&text[..open], b"extend") {
+            continue;
+        }
+        let rest = &text[from..];
         let line = &rest[..bun_core::strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len())];
         if bun_core::strings::last_index_of_char(line, b')').is_some_and(|close| close > 0) {
             return true;
         }
-        from = at + 1;
+        // A later `extend(` on this line has no `)` after it either, so skip the line.
+        from += line.len();
     }
     false
 }
@@ -1004,9 +1027,8 @@ impl<'a> Parser<'a> {
 
     fn rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Rejected> {
         match self.syntax {
-            Syntax::Css => self.base_rule(tokens),
+            Syntax::Css | Syntax::Less => self.base_rule(tokens),
             Syntax::Scss => self.scss_rule(tokens),
-            Syntax::Less => self.less_rule(tokens),
         }
     }
 
@@ -1203,7 +1225,6 @@ impl<'a> Parser<'a> {
                 clean_value
                     .as_deref()
                     .unwrap_or_else(|| self.texts.of(value)),
-                b"extend(",
             );
         let node = self.node(id);
         node.prop = prop;
@@ -1547,18 +1568,6 @@ impl<'a> Parser<'a> {
         Ok(is_interpolation)
     }
 
-    fn less_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Rejected> {
-        self.base_rule(tokens)?;
-        let node = &mut self.nodes[self.last_node as usize];
-        node.extend = has_extend(
-            node.clean_selector
-                .as_deref()
-                .unwrap_or_else(|| self.texts.of(node.selector)),
-            b":extend(",
-        );
-        Ok(())
-    }
-
     /// `isInlineComment`
     fn less_inline_comment(&mut self, mut token: Token) -> Result<bool, Rejected> {
         let text = self.text_of(token);
@@ -1661,6 +1670,7 @@ fn parse_from(
             shift: 0,
             buffer: Vec::new(),
             returned: Vec::new(),
+            no_unescaped: [false; 3],
             last_bad_paren: None,
             next_close: None,
         },

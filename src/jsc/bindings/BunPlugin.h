@@ -374,6 +374,10 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, con
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
+// Whether the code that runs is in the async context of the running factory of a module mock of a preload: the factory, what it calls, and what it started. A module that it loads with import() runs outside.
+// What a vi.mockObject(value, { spy: true }) call spies on there stays for every test file, as the mock does.
+// A module mock that the factory makes is not asked here: it goes by its own isFromPreload. A factory that this one runs answers for itself, and so does what the factory has started once it has settled.
+bool isFactoryOfPreloadRunning(Zig::GlobalObject*);
 #if ENABLE(AOT)
 // The same for the namespace object of a compiled module. Null for any other object.
 JSC::JSObject* compiledMockExportHolder(JSC::JSGlobalObject*, JSC::JSObject* moduleNamespace, const JSC::Identifier& name);

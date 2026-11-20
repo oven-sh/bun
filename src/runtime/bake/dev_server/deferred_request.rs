@@ -150,6 +150,7 @@ impl Handler {
                 r.response.write_status(b"500 Internal Server Error");
                 r.response.write_header_int(b"Content-Length", 0);
                 r.response.end_without_body(true);
+                r.response.close_if_done_and_marked();
             }
             Handler::Aborted => {}
         }

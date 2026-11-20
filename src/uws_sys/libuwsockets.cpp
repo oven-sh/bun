@@ -985,11 +985,7 @@ extern "C"
       uwsRes->resetTimeout();
     }
   }
-  /* Completion gate for response-end paths that bypass internalEnd (the
-   * sendfile path): closes the socket when the connection is marked to close
-   * (Connection: close, peer FIN, close-when-idle), the response is complete,
-   * and every outgoing byte has been flushed. Corked responses are left to the
-   * cork() wrapper's own post-uncork gate. */
+  /* Completion gate for the ends that bypass internalEnd (sendfile, uws_res_end_without_body). Uncorks first, as internalEnd does: cork() skips its own gate when another socket's cork() took this response's slot. */
   void uws_res_close_if_done_and_marked(int ssl, uws_res_r res)
   {
     /* A callback upstream of this gate may already have closed the socket;
@@ -1001,17 +997,19 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      if (!uwsRes->AsyncSocket<true>::isCorked())
+      auto *data = uwsRes->getHttpResponseData();
+      if (!(data->state & uWS::HttpResponseData<true>::HTTP_RESPONSE_PENDING) && uwsRes->uncorkCompletedResponse())
       {
-        uwsRes->closeIfDoneAndMarked(uwsRes->getHttpResponseData());
+        uwsRes->closeIfDoneAndMarked(data);
       }
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      if (!uwsRes->AsyncSocket<false>::isCorked())
+      auto *data = uwsRes->getHttpResponseData();
+      if (!(data->state & uWS::HttpResponseData<false>::HTTP_RESPONSE_PENDING) && uwsRes->uncorkCompletedResponse())
       {
-        uwsRes->closeIfDoneAndMarked(uwsRes->getHttpResponseData());
+        uwsRes->closeIfDoneAndMarked(data);
       }
     }
   }
@@ -1062,12 +1060,7 @@ extern "C"
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
-      /* No close gate here: callers (FileResponseStream::finish,
-       * DevServer/HTMLBundle error paths) keep using the response after this
-       * returns, so closing inside this call would destruct the ext under
-       * them. Corked callers get the cork() wrapper's post-uncork gate;
-       * uncorked ones run uws_res_close_if_done_and_marked themselves once
-       * they are done with the response. */
+      /* No close gate here: a close runs the server's close callbacks under the caller, and on a stopped dev server they free the DevServer that DevServer::defer_request still uses. A caller that neither onData nor cork() gates runs uws_res_close_if_done_and_marked. */
     }
     else
     {

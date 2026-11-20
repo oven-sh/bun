@@ -841,6 +841,5 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, CookieSameSite sameSite)
     }
     }
     __builtin_unreachable();
-    return {};
 }
 }

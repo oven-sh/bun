@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/writable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c4f69041e727ea49f8d66fa3f8f67afdeb35bed13010cbc51b1284fa631e851b.
+// Written against that file with the SHA-256 e5d0089944e11f7588b8ddc2415573beee478f397e6ba544a7d0a745834772de.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // A bit simpler than readable streams.
@@ -70,6 +70,7 @@ const enum Flag {
   AfterWritePending = 1 << 28,
   Buffered = 1 << 29,
   Ended = 1 << 30,
+  WritingBatch = 1 << 31,
   WritingErroredCorkedOrConstructed = Writing | Errored | Corked | Constructed,
   WritingSync = Writing | Sync | ExpectWriteCb,
   WritingSyncWithCallback = Writing | Sync | ExpectWriteCb | WriteCb,
@@ -345,7 +346,11 @@ function writeOrBuffer(
   state.length += len;
 
   const flags = state[kState];
-  if ((flags & Flag.WritingErroredCorkedOrConstructed) !== Flag.Constructed) {
+  if (
+    (flags & Flag.WritingErroredCorkedOrConstructed) !== Flag.Constructed ||
+    // Not in Node: _writev has called back, and bytes that it wrote before that are waiting. See `writeBuffered`.
+    ((flags & Flag.WritingBatch) !== 0 && state.length > len)
+  ) {
     bufferWrite(state, chunk, encoding, callback);
   } else {
     state.writelen = len;
@@ -560,11 +565,16 @@ function errorBuffer(state: WritableState): void {
 
 // If there's something in the buffer waiting, then process it.
 function clearBuffer(stream: $Node.Writable, state: WritableState): void {
+  while (writeBuffered(stream, state));
+}
+
+// Returns true if it left something that no write in flight will come back for.
+function writeBuffered(stream: $Node.Writable, state: WritableState): boolean {
   if (
     (state[kState] & (Flag.Destroyed | Flag.BufferProcessing | Flag.Corked | Flag.Buffered | Flag.Constructed)) !==
     (Flag.Buffered | Flag.Constructed)
   ) {
-    return;
+    return false;
   }
 
   const objectMode = (state[kState] & Flag.ObjectMode) !== 0;
@@ -573,10 +583,11 @@ function clearBuffer(stream: $Node.Writable, state: WritableState): void {
   const bufferedLength = buffered.length - bufferedIndex;
 
   if (!bufferedLength) {
-    return;
+    return false;
   }
 
   let i = bufferedIndex;
+  let again = false;
 
   state[kState] |= Flag.BufferProcessing;
   if (bufferedLength > 1 && stream._writev) {
@@ -590,14 +601,34 @@ function clearBuffer(stream: $Node.Writable, state: WritableState): void {
               buffered[n]!.callback(err);
             }
           };
-    // Make a copy of `buffered` if it's going to be used by `callback` above,
-    // since `doWrite` will mutate the array.
-    const chunks = (state[kState] & Flag.AllNoop) !== 0 && i === 0 ? buffered : ArrayPrototypeSlice.$call(buffered, i);
+    // Always a copy: `doWrite` will mutate the array, and must not find in it what is kept below.
+    const chunks = ArrayPrototypeSlice.$call(buffered, i);
     (chunks as any).allBuffers = (state[kState] & Flag.AllBuffers) !== 0;
 
-    doWrite(stream, state, true, state.length, chunks, "", callback);
+    // After an error, `errorBuffer` can be walking `buffered`.
+    const batchEnd = (state[kState] & Flag.Errored) === 0 ? buffered.length : Infinity;
 
-    resetBuffer(state);
+    state[kState] |= Flag.WritingBatch;
+    try {
+      doWrite(stream, state, true, state.length, chunks, "", callback);
+    } finally {
+      state[kState] &= ~Flag.WritingBatch;
+    }
+
+    const written = buffered.length - batchEnd;
+    if (written > 0 && state.length > state.writelen) {
+      // Node resets the buffer over a write() made by _writev, and loses what is not empty. An http2 session
+      // can make one on its transport.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/writable.js#L775-L777
+      state[kBufferedValue] = ArrayPrototypeSlice.$call(buffered, batchEnd);
+      state.bufferedIndex = 0;
+      buffered.length = batchEnd;
+      again = (state[kState] & (Flag.Writing | Flag.Errored)) === 0;
+    } else {
+      // Node goes on counting the empty ones, and then finishes only through _final.
+      if (written > 0) state.pendingcb! -= written;
+      resetBuffer(state);
+    }
   } else {
     do {
       const { chunk, encoding, callback } = buffered[i]!;
@@ -616,6 +647,7 @@ function clearBuffer(stream: $Node.Writable, state: WritableState): void {
     }
   }
   state[kState] &= ~Flag.BufferProcessing;
+  return again;
 }
 
 Writable.prototype._write = function (this: $Node.Writable, chunk: unknown, encoding: string, cb: WriteCallback) {

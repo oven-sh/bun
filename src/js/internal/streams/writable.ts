@@ -65,6 +65,7 @@ const kAfterWriteTickInfo = 1 << 27;
 const kAfterWritePending = 1 << 28;
 const kBuffered = 1 << 29;
 const kEnded = 1 << 30;
+const kWritingBatch = 1 << 31;
 
 // TODO(benjamingr) it is likely slower to do it this way than with free functions
 function makeBitMapDescriptor(bit) {
@@ -500,7 +501,12 @@ function writeOrBuffer(stream, state, chunk, encoding, callback) {
 
   state.length += len;
 
-  if ((state[kState] & (kWriting | kErrored | kCorked | kConstructed)) !== kConstructed) {
+  const flags = state[kState];
+  if (
+    (flags & (kWriting | kErrored | kCorked | kConstructed)) !== kConstructed ||
+    // Not in Node: _writev has called back, and bytes that it wrote before that are waiting. See `writeBuffered`.
+    ((flags & kWritingBatch) !== 0 && state.length > len)
+  ) {
     if ((state[kState] & kBuffered) === 0) {
       state[kState] |= kBuffered;
       state[kBufferedValue] = [];
@@ -688,11 +694,16 @@ function errorBuffer(state) {
 
 // If there's something in the buffer waiting, then process it.
 function clearBuffer(stream, state) {
+  while (writeBuffered(stream, state));
+}
+
+// Returns true if it left something that no write in flight will come back for.
+function writeBuffered(stream, state) {
   if (
     (state[kState] & (kDestroyed | kBufferProcessing | kCorked | kBuffered | kConstructed)) !==
     (kBuffered | kConstructed)
   ) {
-    return;
+    return false;
   }
 
   const objectMode = (state[kState] & kObjectMode) !== 0;
@@ -700,10 +711,11 @@ function clearBuffer(stream, state) {
   const bufferedLength = buffered.length - bufferedIndex;
 
   if (!bufferedLength) {
-    return;
+    return false;
   }
 
   let i = bufferedIndex;
+  let again = false;
 
   state[kState] |= kBufferProcessing;
   if (bufferedLength > 1 && stream._writev) {
@@ -717,14 +729,34 @@ function clearBuffer(stream, state) {
               buffered[n].callback(err);
             }
           };
-    // Make a copy of `buffered` if it's going to be used by `callback` above,
-    // since `doWrite` will mutate the array.
-    const chunks = (state[kState] & kAllNoop) !== 0 && i === 0 ? buffered : ArrayPrototypeSlice.$call(buffered, i);
+    // Always a copy: `doWrite` will mutate the array, and must not find in it what is kept below.
+    const chunks = ArrayPrototypeSlice.$call(buffered, i);
     chunks.allBuffers = (state[kState] & kAllBuffers) !== 0;
 
-    doWrite(stream, state, true, state.length, chunks, "", callback);
+    // After an error, `errorBuffer` can be walking `buffered`.
+    const batchEnd = (state[kState] & kErrored) === 0 ? buffered.length : Infinity;
 
-    resetBuffer(state);
+    state[kState] |= kWritingBatch;
+    try {
+      doWrite(stream, state, true, state.length, chunks, "", callback);
+    } finally {
+      state[kState] &= ~kWritingBatch;
+    }
+
+    const written = buffered.length - batchEnd;
+    if (written > 0 && state.length > state.writelen) {
+      // Node resets the buffer over a write() made by _writev, and loses what is not empty. An http2 session
+      // can make one on its transport.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/writable.js#L775-L777
+      state[kBufferedValue] = ArrayPrototypeSlice.$call(buffered, batchEnd);
+      state.bufferedIndex = 0;
+      buffered.length = batchEnd;
+      again = (state[kState] & (kWriting | kErrored)) === 0;
+    } else {
+      // Node goes on counting the empty ones, and then finishes only through _final.
+      if (written > 0) state.pendingcb -= written;
+      resetBuffer(state);
+    }
   } else {
     do {
       const { chunk, encoding, callback } = buffered[i];
@@ -743,6 +775,7 @@ function clearBuffer(stream, state) {
     }
   }
   state[kState] &= ~kBufferProcessing;
+  return again;
 }
 
 Writable.prototype._write = function (chunk, encoding, cb) {

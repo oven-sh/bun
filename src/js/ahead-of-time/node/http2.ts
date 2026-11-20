@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 af60e27fc7471035d7ab111c49f3e3c62f10731b978b9d79183754a01f0abf12.
+// Written against that file with the SHA-256 5f586612605c5170d58dc47cd4f9b966cc85ea514434acad44182c7043cb39b8.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -2156,6 +2156,9 @@ enum StreamState {
   EndedBeforeHeaders = 1 << 11, // 100000000000 = 2048
   // The native side closed the stream (the peer's RST_STREAM, a protocol error), not destroy().
   ClosedByNative = 1 << 12, // 1000000000000 = 4096
+  // EndStreamSent from inside end(chunk). The writable is not ending yet, so it takes a write() from inside
+  // that call, which is too late for a frame.
+  EndedWithChunk = 1 << 13, // 10000000000000 = 8192
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2977,6 +2980,10 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
       this.once("ready", this._writev.bind(this, data, callback));
       return;
     }
+    if ((this[bunHTTP2StreamStatus] & StreamState.EndedWithChunk) !== 0) {
+      process.nextTick(callback);
+      return;
+    }
     const writevPerf = this[kPerfState];
     if (writevPerf !== undefined) {
       if (writevPerf.firstByteSent === 0) writevPerf.firstByteSent = performance.now() - writevPerf.start;
@@ -3026,6 +3033,7 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
           this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
+          if (this[kEndingWithChunk] === true) this[bunHTTP2StreamStatus] |= StreamState.EndedWithChunk;
           // HALF_CLOSED_LOCAL settled synchronously; the dispatch was suppressed.
           if ((status & ~kWriteFlushedWithoutCallback) === 5) markWritableDone(this);
         }
@@ -3043,6 +3051,10 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
     if (this.pending) {
       // Not submitted yet (queued behind the peer's concurrency limit): wait for the id.
       this.once("ready", this._write.bind(this, chunk, encoding, callback));
+      return;
+    }
+    if ((this[bunHTTP2StreamStatus] & StreamState.EndedWithChunk) !== 0) {
+      process.nextTick(callback);
       return;
     }
     const writePerf = this[kPerfState];
@@ -3073,6 +3085,7 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
           this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
+          if (this[kEndingWithChunk] === true) this[bunHTTP2StreamStatus] |= StreamState.EndedWithChunk;
           // HALF_CLOSED_LOCAL settled synchronously; the dispatch was suppressed.
           if ((status & ~kWriteFlushedWithoutCallback) === 5) markWritableDone(this);
         }

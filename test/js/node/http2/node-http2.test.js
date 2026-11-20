@@ -7297,6 +7297,48 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 
+  it("nested settings() issued during the transport's _writev", async () => {
+    const chunks = [];
+    const lastPing = Buffer.from("LASTPING");
+    const [idle, issued, receivedAll, failed] = Array.from({ length: 4 }, () => Promise.withResolvers());
+    const until = ({ promise }) => Promise.race([promise, failed.promise]);
+    let issue = () => issued.resolve(Promise.try(nested.settings.issue, sess));
+    const transport = new Duplex({
+      read() {},
+      writev(buffered, cb) {
+        chunks.push(Buffer.concat(buffered.map(({ chunk }) => chunk)));
+        if (buffered.length > 1) {
+          const run = issue;
+          issue = undefined;
+          run?.();
+        }
+        if (chunks.at(-1).includes(lastPing)) receivedAll.resolve();
+        setImmediate(() => {
+          cb();
+          idle.resolve();
+        });
+      },
+    });
+    const sess = http2.connect("http://localhost:1", { createConnection: () => transport });
+    sess.on("error", failed.reject).on("close", () => failed.reject(new Error("closed")));
+    try {
+      await until(idle);
+      // settings() writes at once: the first is in flight, and the others wait for _writev.
+      for (let i = 0; i < 3; i++) sess.settings({ maxConcurrentStreams: 100 + i });
+      await until(issued);
+      sess.ping(lastPing, () => {});
+      await until(receivedAll);
+
+      const { frames, complete } = parseFrames(Buffer.concat(chunks));
+      expect({ types: frames.map(f => f.type), complete }).toEqual({
+        types: [...Array(5).fill(FRAME.SETTINGS), FRAME.PING],
+        complete: true,
+      });
+    } finally {
+      sess.destroy();
+    }
+  });
+
   // The same transport under a TLS socket. tls.connect({ socket: duplex }) is a native socket to
   // the session, but every write to it hands a TLS record to the Duplex, so it runs _write just
   // as synchronously. The frames are read from what a TLS server decrypts.

@@ -916,7 +916,7 @@ files = ["*.astro"]
 options = { plugins = ["prettier-plugin-astro"], astroAllowShorthand = true }
 ```
 
-Bun doesn't know the options of a plugin, so your installed Prettier checks the names when a file of the entry goes to it. An option that no listed plugin declares is an error for that file. If several entries match a file, their options are merged, and an option from an entry before the one that gives the file its `plugins` is passed on without that check. A key that is a `[fmt]` key or a flag in another case, like `printwidth`, is an error when `bunfig.toml` is read. So is an option of a built-in plugin, like `tailwindFunctions`: use Bun's own key there, like `sortTailwindcss`.
+Bun doesn't know the options of a plugin, so your installed Prettier checks the names when a file of the entry goes to it. An option that no listed plugin declares is an error for that file. If several entries match a file, their options are merged, and an option from an entry before the one that gives the file its `plugins` is passed on without that check. A key that is a `[fmt]` key or a flag in another case, like `printwidth`, is an error when `bunfig.toml` is read. So is an option of a built-in plugin, like `tailwindFunctions`. For the files that Bun formats, Bun's own key does the same, like `sortTailwindcss`. Bun's own keys don't reach your installed Prettier, so for a file that goes there, set the plugin's option in a Prettier config.
 
 `prettier` and the plugins must be installed in the project. Bun starts Prettier only when a file goes to it.
 

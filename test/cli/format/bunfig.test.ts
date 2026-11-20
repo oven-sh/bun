@@ -1168,7 +1168,7 @@ insertFinalNewline = false
       ["svelteSortOrder", `"scripts-markup-styles"`, "svelte"],
     ].map(([name, value, own]) => [
       options(`plugins = ["prettier-plugin-tailwindcss", "prettier-plugin-astro"], ${name} = ${value}`),
-      `"${name}" is an option of a plugin that is built into bun fmt, which only reads it from a Prettier config\n  Use "${own}" here`,
+      `"${name}" is an option of a plugin that is built into bun fmt, which only reads it from a Prettier config\n  "${own}" does the same for the files that bun fmt formats. For a file that goes to your installed Prettier, set the option in a Prettier config.`,
     ]),
     // JSON, which is what Prettier gets, has no such number.
     [options(`plugins = ["./plugin.js"], fooDepth = inf`), "fooDepth must be a finite number"],

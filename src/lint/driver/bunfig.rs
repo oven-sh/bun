@@ -658,8 +658,9 @@ fn set_override_options(
         }
         // Only the installed Prettier would get it, and Bun does such a plugin's work for the files it formats.
         if let Some(own) = crate::fmt::cli::own_key_for_plugin_option(&key.name) {
-            let why: &[u8] = b"\" is an option of a plugin that is built into bun fmt, which only reads it from a Prettier config\n  Use \"";
-            return reject(key.at, &[b"\"", &key.name, why, own, b"\" here"]);
+            let why: &[u8] = b"\" is an option of a plugin that is built into bun fmt, which only reads it from a Prettier config\n  \"";
+            let advice: &[u8] = b"\" does the same for the files that bun fmt formats. For a file that goes to your installed Prettier, set the option in a Prettier config.";
+            return reject(key.at, &[b"\"", &key.name, why, own, advice]);
         }
         let value_as_json = json_of(value)?;
         // JSON has no such number, so Prettier would get `null` and use the plugin's default.

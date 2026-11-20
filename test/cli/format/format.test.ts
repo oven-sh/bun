@@ -4963,6 +4963,31 @@ exports.options = { otherStyle: { type: "string" } };
       timeout,
     );
 
+    // bunfig.toml refuses the options of a built-in plugin, and its own keys for them are not Prettier's. So for a
+    // file that goes to Prettier, the Prettier config is where such an option is set.
+    test(
+      "a file that goes to Prettier gets the option of a built-in plugin from the Prettier config, not from [fmt]",
+      async () => {
+        const files = {
+          ...packages,
+          ".prettierrc": '{ "tailwindFunctions": ["clsx"] }\n',
+          "bunfig.toml": `[fmt]\nplugins = ["prettier-plugin-astro"]\nsortTailwindcss = { functions = ["cva"] }\n`,
+          "a.astro": "<p   >a</p>\n",
+        };
+        const result = await format(files, ["a.astro"], { reads: ["a.astro", log] });
+        expect(result.files["a.astro"]).toBe("<p >a</p>\n");
+        expect(callsOf(result)).toEqual([
+          {
+            tailwindFunctions: ["clsx"],
+            plugins: ["prettier-plugin-astro"],
+            filepath: expect.stringMatching(/[\\/]a\.astro$/),
+          },
+        ]);
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
     test(
       "Prettier loads the plugins of [fmt] together with those of the Prettier config",
       async () => {

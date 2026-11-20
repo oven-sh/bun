@@ -17,7 +17,7 @@ import {
 } from "harness";
 import { createServer } from "http";
 import type { AddressInfo } from "net";
-import { basename, join, relative, resolve } from "path";
+import { basename, dirname, join, relative, resolve } from "path";
 import { pathToFileURL } from "url";
 import {
   check_npm_auth_type,
@@ -294,19 +294,38 @@ it("bun add --only-missing should not install existing package", async () => {
   }
 });
 
-// Writes `source` to entry-point.ts and returns what `bun <command> --analyze` adds to package.json. `urls` collects
-// its registry requests.
+// Writes `source` to entry-point.ts and returns what `bun <command> --analyze <entry>` adds to package.json. `urls`
+// collects its registry requests. `files` are written beside it. The registry answers 404 for the `absent` names.
 async function analyze(
   command: "add" | "install",
   source: string,
-  { packageJson = { name: "foo" }, urls = [] }: { packageJson?: object; urls?: string[] } = {},
+  {
+    packageJson = { name: "foo" },
+    urls = [],
+    files = {},
+    absent = [],
+    entry = "./entry-point.ts",
+  }: {
+    packageJson?: object;
+    urls?: string[];
+    files?: Record<string, string>;
+    absent?: string[];
+    entry?: string;
+  } = {},
 ) {
-  setHandler(dummyRegistry(urls));
+  const registry = dummyRegistry(urls);
+  setHandler(request =>
+    absent.some(name => request.url.endsWith(`/${name}`)) ? new Response(null, { status: 404 }) : registry(request),
+  );
   await writeFile(join(package_dir, "package.json"), JSON.stringify({ version: "0.0.1", ...packageJson }));
   await writeFile(join(package_dir, "entry-point.ts"), source);
+  for (const [path, contents] of Object.entries(files)) {
+    await mkdir(dirname(join(package_dir, path)), { recursive: true });
+    await writeFile(join(package_dir, path), contents);
+  }
   // The registry has no tarball for most of these names.
   await using proc = spawn({
-    cmd: [bunExe(), command, "--analyze", "--lockfile-only", "./entry-point.ts"],
+    cmd: [bunExe(), command, "--analyze", "--lockfile-only", entry],
     cwd: package_dir,
     stdout: "pipe",
     stderr: "pipe",
@@ -370,6 +389,148 @@ it("bun add --analyze leaves out builtins, paths and aliases, with or without a 
       `,
     ),
   ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
+});
+
+// A `url()` in a stylesheet and the URL of an asset in a page name a file, with or without "./". They do not name a
+// package to install.
+describe("--analyze and a URL in CSS or HTML", () => {
+  it.each([
+    [
+      "url() in a stylesheet",
+      `import "./styles.css"; import "bar";`,
+      {
+        "styles.css": `body { background: url(images/bg.png); } a { background: url(icon.png); }`,
+        "images/bg.png": "png",
+        "icon.png": "png",
+      },
+    ],
+    [
+      "url() with a query and a fragment",
+      `import "./styles.css"; import "bar";`,
+      {
+        "styles.css": `body { background: url(images/sprite.svg?v=2#top); } a { background: url("icon.svg#mark"); }`,
+        "images/sprite.svg": "<svg/>",
+        "icon.svg": "<svg/>",
+      },
+    ],
+    [
+      "url() in @font-face",
+      `import "./styles.css"; import "bar";`,
+      {
+        "styles.css": `@font-face { font-family: f; src: url(fonts/f.woff2) format("woff2"), url(f.ttf); }`,
+        "fonts/f.woff2": "woff2",
+        "f.ttf": "ttf",
+      },
+    ],
+    [
+      "url() of a file that is not there",
+      `import "./styles.css"; import "bar";`,
+      { "styles.css": `body { background: url(images/missing.png); } a { background: url(missing.png); }` },
+    ],
+    [
+      "<link>, <img>, <video> and <source> in a page",
+      `import * as page from "./page.html"; import "bar"; console.log(page);`,
+      {
+        "page.html": `<!doctype html>
+          <link rel="manifest" href="site.webmanifest">
+          <img src="images/photo.webp?v=1">
+          <img src="photo.jpeg">
+          <video src="media/clip.webm" poster="media/poster.avif"></video>
+          <audio><source src="media/sound.flac"></audio>`,
+        "site.webmanifest": "{}",
+        "images/photo.webp": "webp",
+        "photo.jpeg": "jpeg",
+        "media/clip.webm": "webm",
+        "media/poster.avif": "avif",
+        "media/sound.flac": "flac",
+      },
+    ],
+  ])("bun add --analyze does not take %s for a package", async (_, source, files) => {
+    const urls: string[] = [];
+    expect(await analyze("add", source, { files, urls })).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
+    expect(urls).toEqual([`${root_url}/bar`]);
+  });
+
+  it("bun install --analyze installs for a page that is the entry point", async () => {
+    // The registry has no package with the name of the image, and one missing package stops the install.
+    expect(
+      await analyze("install", "", {
+        entry: "./page.html",
+        files: {
+          "page.html": `<!doctype html><img src="photo.webp"><script type="module" src="./front.ts"></script>`,
+          "front.ts": `import "bar";`,
+          "photo.webp": "webp",
+        },
+        absent: ["photo.webp"],
+      }),
+    ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
+  });
+
+  // These name a package when no file is beside the importer. `<link rel="stylesheet" href="tailwindcss">` is how
+  // the docs load Tailwind in a page.
+  it("bun add --analyze adds the package that an @import, a scoped url(), a stylesheet <link> or a <script> names", async () => {
+    expect(
+      await analyze("add", `import "./styles.css"; import * as page from "./page.html"; console.log(page);`, {
+        files: {
+          "styles.css": `@import "normalize.css"; @import "sheets/dist/x.css";
+            a { background: url(@scope/icons/check.svg); }`,
+          "page.html": `<!doctype html>
+            <link rel="stylesheet" href="tailwindcss">
+            <script type="module" src="from-a-page"></script>`,
+        },
+      }),
+    ).toEqual({
+      added: ["@scope/icons", "from-a-page", "normalize.css", "sheets", "tailwindcss"],
+      errors: [],
+      exitCode: 0,
+    });
+  });
+
+  // Open: an @import or a composes path without "./" also names a file beside the stylesheet, and the scan does
+  // not look there. Now it adds `base.module.css`, `reset.css` and `theme`. This case fails until the scan looks.
+  it.failing("bun add --analyze reads an @import or a composes path as a file beside the stylesheet", async () => {
+    expect(
+      await analyze(
+        "add",
+        `import "./styles.css"; import styles from "./a.module.css"; import "bar"; console.log(styles);`,
+        {
+          files: {
+            "styles.css": `@import "reset.css"; @import "theme/dark.css";`,
+            "reset.css": `a { color: red; }`,
+            "theme/dark.css": `a { color: blue; }`,
+            "a.module.css": `.button { composes: base from "base.module.css"; }`,
+            "base.module.css": `.base { color: blue; }`,
+          },
+        },
+      ),
+    ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
+  });
+
+  // Windows: `bun create <component>` does not reach its install step there (see create-jsx.test.ts).
+  it.todoIf(isWindows)("bun create <component> does not install the directory of a url()", async () => {
+    using dir = tempDir("create-css-url", {
+      "package.json": JSON.stringify({ name: "foo" }),
+      "App.tsx": `import "./App.css"; export default function App() { return <div className="card" />; }`,
+      "App.css": `.card { background: url(images/bg.png); mask: url(icon.svg); }`,
+      "images/bg.png": "png",
+      "icon.svg": "<svg/>",
+    });
+    // The registry has no packages, so the install fails at its first request.
+    using registry = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 404 }) });
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "./App.tsx"],
+      cwd: String(dir),
+      // `bun create` prints a CA store flag of BUN_OPTIONS in the install line.
+      env: { ...env, BUN_CONFIG_REGISTRY: registry.url.href, BUN_OPTIONS: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.split(/\r?\n/).find(line => line.includes("--only-missing install"))).toBe(
+      "$ bun --only-missing install -- react-dom@19 react@19",
+    );
+  });
 });
 
 it("bun add --analyze does not add the package that the rest of a bun: specifier names", async () => {

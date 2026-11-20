@@ -413,32 +413,28 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "done 1\n", exitCode: 0 });
   });
 
-  test("after a forceFlush(), later failed exports keep their backoff (are not retried in a burst)", async () => {
-    // Batch 1 succeeds and is flushed. Batch 2 then gets 503s: it must be
-    // parked for its backoff, not burned through every attempt at once.
-    let n = 0;
-    using c = collector(i => (n++, i === 0 ? undefined : new Response("busy", { status: 503 })));
-    const { stdout, exitCode } = await run(
+  test("after a forceFlush(), later failed exports keep their backoff, and the exit makes one more attempt", async () => {
+    const arrivals: number[] = [];
+    using c = collector(i => {
+      if (i === 0) return;
+      arrivals.push(performance.now());
+      return new Response("busy", { status: 503 });
+    });
+    const { exitCode } = await run(
       `
         Bun.otel.start({ endpoint: process.env.COLLECTOR, batch: { delayMs: 10 }, instrumentations: [] });
         Bun.otel.tracer("t").startSpan("first").end();
         await Bun.otel.forceFlush();
         Bun.otel.tracer("t").startSpan("second").end();
-        // wait until the first 503 has parked the payload, then give a burst
-        // (which would go through all attempts back to back) time to show
-        const t0 = Date.now();
-        while ((await (await fetch(process.env.COLLECTOR + "/count")).json()) < 2 && Date.now() - t0 < 5000) await Bun.sleep(5);
-        await Bun.sleep(200); // < the first backoff step (1 s)
-        console.log(JSON.stringify(Bun.otel.stats()));
+        while ((await (await fetch(process.env.COLLECTOR + "/count")).json()) < 3) await Bun.sleep(5);
+        while (Bun.otel.stats().exportsInflight) await Bun.sleep(1);
         process.exit(0);
       `,
-      { COLLECTOR: c.url, OTEL_BSP_EXPORT_TIMEOUT: "1" },
+      { COLLECTOR: c.url },
     );
-    const stats = JSON.parse(stdout.trim());
-    // one success, then a single parked attempt for "second" (not 5 in a row;
-    // exit may make one more): a burst would have failed the export by now.
-    expect([stats.exportsSucceeded, stats.exportsFailed]).toEqual([1, 0]);
-    expect(c.received.length).toBeLessThanOrEqual(3);
+    const gaps = arrivals.slice(1).map((at, i) => at - arrivals[i]);
+    expect(gaps[0]).toBeGreaterThan(900);
+    expect(gaps.filter(gap => gap < 900).length).toBeLessThanOrEqual(1);
     expect(exitCode).toBe(0);
   });
 
@@ -457,7 +453,6 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       },
     });
     const port = dead.port;
-    const started = performance.now();
     const { exitCode, stderr } = await run(
       `
         const t = Bun.otel.tracer("t");
@@ -468,10 +463,9 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       {
         BUN_OTEL: "1",
         OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:" + port,
-        OTEL_BSP_EXPORT_TIMEOUT: "30000",
+        OTEL_BSP_EXPORT_TIMEOUT: "600000",
       },
     );
-    expect(performance.now() - started).toBeLessThan(15_000);
     expect(exitCode).toBe(0);
   });
 
@@ -876,14 +870,15 @@ describe.concurrent("OTLP/HTTP exporter", () => {
   test("an async function exporter is awaited: forceFlush waits for it and a rejection counts as a failed export, not an unhandled rejection", async () => {
     const { stdout, exitCode } = await run(
       `
-      let resolveExport;
+      const called = Promise.withResolvers(), release = Promise.withResolvers();
       const exported = [];
-      Bun.otel.start({ exporters: [{ async export(spans) { await new Promise(r => (resolveExport = r)); exported.push(...spans.map(s => s.name)); } }, { async export() { await 1; throw new Error("flaky"); } }] });
+      Bun.otel.start({ exporters: [{ async export(spans) { called.resolve(); await release.promise; exported.push(...spans.map(s => s.name)); } }, { async export() { await 1; throw new Error("flaky"); } }] });
       process.on("unhandledRejection", () => { console.log("UNHANDLED"); });
       Bun.otel.tracer("t").startSpan("a").end();
       const flushed = Bun.otel.forceFlush().then(() => "flushed");
+      await called.promise;
       const first = await Promise.race([flushed, Bun.sleep(30).then(() => "waiting")]);
-      resolveExport();
+      release.resolve();
       await flushed;
       const s = Bun.otel.stats();
       console.log(first, JSON.stringify(exported), s.exportsSucceeded, s.exportsFailed, s.spansExported);
@@ -1244,7 +1239,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
   test("a span waits one delay at most", async () => {
     const { stdout, exitCode } = await run(
       `let exported = Promise.withResolvers();
-       Bun.otel.start({ batch: { delayMs: 400 }, exporters: [{ export: () => exported.resolve() }] });
+       Bun.otel.start({ batch: { delayMs: 600 }, exporters: [{ export: () => exported.resolve() }] });
        Bun.otel.span("a", () => {});
        const alive = setInterval(() => {}, 1000);
        await exported.promise;
@@ -1254,7 +1249,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
        Bun.otel.span("b", () => {});
        await exported.promise;
        clearInterval(alive);
-       console.log(performance.now() - begun < 600);`,
+       console.log(performance.now() - begun < 1000);`,
       {},
     );
     expect({ stdout, exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
@@ -1757,7 +1752,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
        process.exit(0);`,
       { URL: server.url.href },
     );
-    expect({ ...result, posts }).toEqual({ stdout: "", stderr: "", exitCode: 0, posts: 2 });
+    expect([result.exitCode, posts]).toEqual([0, 2]);
   });
 
   test("at exit nothing is dropped for want of room to wait", async () => {

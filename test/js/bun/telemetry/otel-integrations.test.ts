@@ -469,13 +469,12 @@ describe("WebSocket", () => {
           const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/");
           await new Promise(r => (ws.onopen = r));
           ws.send("x");
-          await Bun.sleep(20);
           ws.close();
           await new Promise(r => (ws.onclose = r));
         }
-        await Bun.sleep(20);
-        await Bun.otel.forceFlush();
-        const m = spans.filter(s => s.name === "websocket.message");
+        let m;
+        do await Bun.sleep(1), await Bun.otel.forceFlush();
+        while ((m = spans.filter(s => s.name === "websocket.message")).length < 3);
         console.log(JSON.stringify([m.length, m[0]?.status.code, Bun.otel.stats().spansPending]));
         server.stop(true);
         process.exit(0);
@@ -513,7 +512,7 @@ describe("WebSocket", () => {
         });
         const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/");
         ws.onopen = () => { ws.send("handled"); ws.send("x"); };
-        const how = await Promise.race([promise, Bun.sleep(500).then(() => "no-unhandled")]);
+        const how = await promise;
         ws.close();
         await Bun.sleep(10);
         await Bun.otel.forceFlush();

@@ -247,6 +247,11 @@ impl Connection {
         }
     }
 
+    /// For what the application does apart from reading and writing.
+    pub fn note_progress(&mut self) {
+        self.streams.state.made_progress = true;
+    }
+
     /// For when the application may be silent for `timeout`, or for ever if it is zero, until it has no streams left.
     pub fn allow_silence(&mut self, now: Instant, timeout: Duration) {
         if !timeout.is_zero() && timeout <= self.idle_timeout || !self.is_receiving() {

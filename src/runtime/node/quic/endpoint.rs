@@ -141,7 +141,7 @@ pub(crate) struct QuicEndpoint {
     /// ArrayBuffer and this struct, so the pointers are valid for our life).
     state: *mut EndpointState,
     stats: *mut u64,
-    closing: Cell<bool>,
+    pub(super) closing: Cell<bool>,
     closed: Cell<bool>,
 
     binding: Cell<Option<Binding>>,

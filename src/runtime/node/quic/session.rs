@@ -1005,6 +1005,11 @@ impl QuicSession {
                 if !self.has_listener(LISTENER_FLAG_DATAGRAM) || self.peer_cert_rejected.get() {
                     return Ok(());
                 }
+                if self.endpoint_ref().is_some_and(|ep| ep.closing.get())
+                    && !self.is_close_deferred.get()
+                {
+                    self.update(Connection::note_progress);
+                }
                 let buf = ArrayBuffer::create_buffer(global, &payload)?;
                 callbacks::run(
                     global,

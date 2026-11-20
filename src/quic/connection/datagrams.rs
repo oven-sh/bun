@@ -61,7 +61,6 @@ impl Connection {
         }
         if self.datagrams.undelivered_len < MAX_UNDELIVERED_LEN {
             self.datagrams.undelivered_len += data.len() + OVERHEAD;
-            self.streams.state.made_progress = true;
             let data = data.to_vec();
             self.emit(Event::Datagram { data, is_early });
         }

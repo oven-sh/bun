@@ -285,12 +285,13 @@ fn keep_alive_counts_from_the_last_packet() {
 #[test]
 fn application_that_neither_reads_nor_writes() {
     type Step = fn(&mut Raw);
-    let cases: [(Step, u64); 6] = [
+    let cases: [(Step, u64); 7] = [
         (|_| {}, 5000 - 2 * RTT - 1000),
         (|it| it.send("stream 0 0 a"), 5000),
         (|it| it.send("fin 0 0 -"), 5000),
         (|it| it.request_packets("a"), 5000),
-        (|it| it.send("datagram a"), 5000),
+        (|it| it.send("datagram a"), 5000 - 2 * RTT - 1000),
+        (|it| it.connection().note_progress(), 5000),
         (|it| it.connection().send_datagram(1, vec![0]), 5000),
     ];
     for (step, timeout) in cases {

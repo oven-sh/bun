@@ -906,6 +906,18 @@ test.skipIf(!!unsupported).concurrent.each([
   expect(exitCode).toBe(1);
 });
 
+test.skipIf(!!unsupported || locksEnvironment)(
+  "an --aot executable does not take BUN_JSC_useDecimalOperators from the environment",
+  async () => {
+    const sources = {
+      "main.js": `console.log(new Decimal(1) == new Decimal(1), eval("new Decimal(1) == new Decimal(1)"));`,
+    };
+    const result = await compileAndRun(["--aot"], sources, env, { ...off, BUN_JSC_useDecimalOperators: "1" });
+    expect(result).toEqual({ stdout: "false false\n", stderr: "", exitCode: 0 });
+  },
+  120_000,
+);
+
 // 1.5m. It is not in the proposal.
 const literals = { ...env, BUN_JSC_useDecimalLiterals: "1" };
 

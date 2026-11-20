@@ -524,6 +524,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 #endif
             if (runsCompiledCode || locksBuiltins)
                 JSC::Options::useShadowRealm() = false;
+            // After the loop: compiled code has no operators for Decimals, so == would answer otherwise in eval().
+            if (runsCompiledCode)
+                JSC::Options::useDecimalOperators() = false;
             // This is the only assertOptionsAreCoherent() rule that BUN_JSC_* can break, and that assertion aborts.
             if (JSC::Options::useWasm() && !JSC::Options::useWasmIPInt() && !(JSC::Options::useBBQJIT() && JSC::Options::useJIT())) [[unlikely]] {
                 constexpr auto message = "BUN_JSC_useWasmIPInt=0 (needs useJIT and useBBQJIT, or BUN_JSC_useWasm=0)"_s;

@@ -26,6 +26,18 @@ const files = {
     import kit from "kit"; import scoped from "@scope/kit";
     export default [kit.part.name, scoped.part.name];
   `,
+  // jest.requireActual(), jest.requireMock() and jest.createMockFromModule() load the instance that require() in the file loads.
+  "by-jest.cjs": `
+    const { jest } = require("bun:test");
+    const kit = require("kit");
+    module.exports = [
+      jest.requireActual("kit") === kit,
+      jest.requireActual("kit/part.cjs") === kit.part,
+      typeof jest.requireMock("kit").part,
+      typeof jest.createMockFromModule("kit").part,
+      jest.requireActual("two-files") === require("two-files"),
+    ];
+  `,
   // Its files ask for each other and for other packages.
   "by-other.cjs": `module.exports = require("other").kit;`,
   // The program's own files are refused, and so are those of a package that nothing from disk has asked for by name.
@@ -38,6 +50,9 @@ const files = {
   "node_modules/@scope/kit/package.json": `{ "name": "@scope/kit", "main": "lib/index.cjs" }`,
   "node_modules/@scope/kit/lib/index.cjs": `exports.part = require("../part.cjs");`,
   "node_modules/@scope/kit/part.cjs": counter("scoped part"),
+  "node_modules/two-files/package.json": `{ "name": "two-files", "exports": { "import": "./index.mjs", "require": "./index.cjs" } }`,
+  "node_modules/two-files/index.mjs": `export const build = "import";`,
+  "node_modules/two-files/index.cjs": `exports.build = "require";`,
   "node_modules/other/package.json": `{ "name": "other", "main": "index.cjs" }`,
   "node_modules/other/index.cjs": `exports.kit = require("kit").part.name + " of other";`,
   "node_modules/tool/package.json": `{ "name": "tool", "main": "index.cjs" }`,
@@ -68,6 +83,7 @@ afterAll(() => kept?.[Symbol.dispose]());
 const answers: [string, string, string][] = [
   ["by-name.cjs", `["kit part",10,true,true,10]`, "[1,1,1,1]"],
   ["by-import.mjs", `{"default":["kit part","scoped part"]}`, "[1,1,1,1]"],
+  ["by-jest.cjs", `[true,true,"object","object",true]`, "[1,1,1,1]"],
   ["by-other.cjs", `"kit part of other"`, "[1,1,1,1]"],
   ["by-path.cjs", `"MODULE_NOT_FOUND"`, "[1,1,1,1]"],
   ["by-relative.cjs", `"MODULE_NOT_FOUND"`, "[1,1,1,1]"],

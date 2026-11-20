@@ -234,14 +234,20 @@ declare module "bun:test" {
     function dontMock(id: string): typeof jest;
     /**
      * `require()` the real module `id`, even if it's mocked.
+     *
+     * If `id` isn't mocked, it resolves the way the calling file loads it: like `require(id)` in a file that Bun runs
+     * as CommonJS, like an `import` in an ES module. Jest resolves it like `require(id)` in every file. If `id` is
+     * mocked, the result is the module that the mock replaced.
      */
     function requireActual<T = any>(id: string): T;
     /**
-     * `require()` the mocked version of the module `id`, even if it isn't mocked.
+     * `require()` the mocked version of the module `id`, even if it isn't mocked. `id` resolves as for
+     * {@link requireActual}.
      */
     function requireMock<T = any>(id: string): T;
     /**
-     * `require()` the real module `id` and return a copy where every function is a mock.
+     * `require()` the real module `id` and return a copy where every function is a mock. `id` resolves as for
+     * {@link requireActual}.
      */
     function createMockFromModule<T = any>(id: string): Mocked<T>;
     /**

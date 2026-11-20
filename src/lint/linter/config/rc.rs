@@ -21,10 +21,10 @@ use crate::linter::registry::{
     Registry, canonical_oxlint_plugin, is_oxlint_rule_key, oxlint_rule_key, oxlint_written_name,
     parse_rule_id,
 };
-use crate::linter::resolved::find_js_rule;
+use crate::linter::resolved::{ConfiguredRule, ResolvedConfig, find_js_rule};
 use crate::options::Json;
 use crate::paths;
-use crate::rule::{Meta, Plugin};
+use crate::rule::{Frameworks, Meta, Plugin};
 use bun_core::strings;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::borrow::Cow;
@@ -438,7 +438,7 @@ const PRINTED_SETTINGS: &[u8] = br#"{
   "jest": { "version": null }
 }"#;
 
-/// `"deny"`, or `["deny", [..]]`.
+/// `"deny"`, or `["deny", ..]` with the options: what the loader reads, unlike oxlint 1.92 (oxc-project/oxc#28972).
 fn printed_setting(severity: Severity, options: &[Json]) -> Json {
     let severity: &[u8] = match severity {
         Severity::Off => b"allow",
@@ -448,13 +448,18 @@ fn printed_setting(severity: Severity, options: &[Json]) -> Json {
     let severity = Json::String(severity.to_vec());
     match options {
         [] => severity,
-        options => Json::Array(vec![severity, Json::Array(options.to_vec())]),
+        options => Json::Array(
+            std::iter::once(severity)
+                .chain(options.iter().cloned())
+                .collect(),
+        ),
     }
 }
 
 /// The `rules` of `json` as oxlint prints them in an override, which is as written.
 fn printed_rules(json: &Json) -> Json {
-    let rules = json.get(b"rules").and_then(Json::as_object);
+    let rules = json.get(b"rules").map(with_eslint_severities);
+    let rules = rules.as_ref().and_then(Json::as_object);
     let printed = rules.unwrap_or_default().iter().filter_map(|(id, value)| {
         let setting = RuleSetting::new(id, value)?;
         Some((
@@ -1042,38 +1047,8 @@ impl Rc<'_, '_> {
         lacking
     }
 
-    /// Returns what oxlint's `--print-config` prints for the file `json`: its contents, plus the plugins of the files
-    /// it extends and the rules that are on where no override applies. `categories_at` is the index of the object with
-    /// the categories' rules.
-    fn printed(&self, json: &Json, categories_at: usize) -> Vec<(Vec<u8>, Json)> {
-        let mut rules: Vec<(Vec<u8>, &RuleSetting)> = Vec::new();
-        let mut rule_index_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
-        for (at, object) in self.reader.objects.iter().enumerate() {
-            let is_told = |it: &&RuleSetting| {
-                (at != categories_at || it.severity != Severity::Off)
-                    && it.builtin_plugin.is_none_or(|it| self.has_plugin(it))
-            };
-            let is_native = |it: &&RuleSetting| {
-                it.builtin_plugin.is_some()
-                    || find_js_rule(&self.reader.js_plugins, &it.id).is_none()
-            };
-            for setting in object.rules.iter().filter(is_told).filter(is_native) {
-                let key = oxlint_rule_key(&setting.id);
-                match rule_index_by_key.get(&key) {
-                    Some(&rule_index) => rules[rule_index].1 = setting,
-                    None => {
-                        rule_index_by_key.insert(key.clone(), rules.len());
-                        rules.push((printed_key(&key), setting));
-                    }
-                }
-            }
-        }
-        // ESLint's rules come first.
-        crate::utils::sort::sort_by(&mut rules, |a, b| {
-            parse_rule_id(&a.0).cmp(&parse_rule_id(&b.0))
-        });
-        let rules =
-            (rules.into_iter()).map(|(key, it)| (key, printed_setting(it.severity, &it.options)));
+    /// What oxlint's `--print-config` prints for the file `json`, except for `rules`: [`Config::oxlint_print_config`].
+    fn skeleton(&self, json: &Json) -> Vec<(Vec<u8>, Json)> {
         let is_on = |name: &&&[u8]| {
             (self.file_plugins.iter()).any(|it| canonical_oxlint_plugin(it) == **name)
         };
@@ -1101,6 +1076,8 @@ impl Rc<'_, '_> {
         }
         let overrides = json.get(b"overrides").and_then(Json::as_array);
         let overrides = overrides.unwrap_or_default().iter().map(|item| {
+            let item = shape::override_with_keys(item);
+            let item = &*item;
             let or_null = |it: Option<Json>| it.unwrap_or(Json::Null);
             let entries = [
                 (&b"files"[..], printed_patterns(item, b"files")),
@@ -1134,7 +1111,6 @@ impl Rc<'_, '_> {
             (&b"plugins"[..], Some(Json::Array(plugins.collect()))),
             (&b"jsPlugins"[..], json.get(b"jsPlugins").cloned()),
             (&b"categories"[..], Some(Json::Object(categories.collect()))),
-            (&b"rules"[..], Some(Json::Object(rules.collect()))),
             (&b"settings"[..], Some(settings)),
             (
                 &b"env"[..],
@@ -1180,6 +1156,239 @@ impl Rc<'_, '_> {
             }
         });
         objects.collect()
+    }
+}
+
+/// What `--print-config` prints for an `.oxlintrc.json`, except for `rules`: [`Config::oxlint_print_config`].
+#[derive(Default)]
+pub(super) struct Dump {
+    /// The config file's contents as oxlint prints them, without `rules`.
+    skeleton: Vec<(Vec<u8>, Json)>,
+    /// The index of the object with the categories' rules.
+    categories_at: usize,
+    /// The index of the first override. The objects before it are the config files'.
+    overrides_from: usize,
+    /// The index of the first object of [`Rc::rules_by_file_kind`].
+    generated_from: usize,
+    /// [`Rc::categories`]: those of the config files and the command line.
+    categories: Vec<(Vec<u8>, Severity)>,
+}
+
+/// Sets `key` to `value` in the object `into`, in place of an earlier value.
+fn set_entry(into: &mut Json, key: &[u8], value: Json) {
+    let Json::Object(entries) = into else {
+        *into = Json::Object(vec![(key.to_vec(), value)]);
+        return;
+    };
+    match entries.iter_mut().find(|it| it.0 == key) {
+        Some(entry) => entry.1 = value,
+        None => entries.push((key.to_vec(), value)),
+    }
+}
+
+impl Config {
+    /// Returns what oxlint's `--print-config` prints, if the config was built from an `.oxlintrc.json`.
+    pub fn oxlint_print_config(&self) -> Json {
+        let files: super::Indices = (0..self.oxlint_dump.overrides_from as u32).collect();
+        self.oxlint_printed(None, &files)
+    }
+
+    /// The same for `file`, which is absolute, with the overrides that apply to it applied and left out. `None` if the
+    /// file isn't linted. `detected` is as for [`Config::get_with_frameworks`].
+    pub fn oxlint_print_config_for(
+        &self,
+        registry: &Registry,
+        file: &[u8],
+        detected: Frameworks,
+    ) -> Option<Json> {
+        let matched = self.objects_for(file, detected).ok()?;
+        let resolved = self.resolved(registry, &matched);
+        Some(self.oxlint_printed(Some((registry, &resolved)), &matched))
+    }
+
+    /// [`Dump::skeleton`] with the `rules` of the objects at `matched`: those written, and those that `categories` turn
+    /// on. With `applied`, the merge of those objects, each rule has the severity and options of the merge.
+    fn oxlint_printed(
+        &self,
+        applied: Option<(&Registry, &ResolvedConfig)>,
+        matched: &[u32],
+    ) -> Json {
+        let dump = &self.oxlint_dump;
+        let added = self.plugins_of_overrides(matched);
+        let mut told: Vec<(Vec<u8>, &RuleSetting)> = Vec::new();
+        let mut index_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let written = matched.iter().map(|it| *it as usize);
+        let written = written.filter(|it| *it < dump.generated_from);
+        for (at, object) in written.filter_map(|at| Some((at, self.objects.get(at)?))) {
+            // A rule that `categories` turn on is listed only if it's on.
+            let is_told = |it: &&RuleSetting| {
+                (at != dump.categories_at && !it.yields) || it.severity != Severity::Off
+            };
+            let is_native = |it: &&RuleSetting| {
+                it.builtin_plugin.is_some() || find_js_rule(&self.js_plugins, &it.id).is_none()
+            };
+            for setting in object.rules.iter().filter(is_told).filter(is_native) {
+                let key = oxlint_rule_key(&setting.id);
+                match index_by_key.get(&key) {
+                    Some(&index) => told[index].1 = setting,
+                    None => {
+                        index_by_key.insert(key.clone(), told.len());
+                        told.push((key, setting));
+                    }
+                }
+            }
+        }
+        let mut applied_by_key: FxHashMap<Vec<u8>, &ConfiguredRule> = FxHashMap::default();
+        for rule in applied.map(|it| it.1.configured()).into_iter().flatten() {
+            let id = match rule.name() {
+                Some(name) => name.to_vec(),
+                None => crate::linter::RuleId::Known(rule.entry.meta).to_vec(),
+            };
+            applied_by_key.insert(oxlint_rule_key(&id), rule);
+        }
+        let mut rules: Vec<(Vec<u8>, Json)> = Vec::with_capacity(told.len());
+        for (key, setting) in told {
+            let printed = match applied_by_key.get(&key) {
+                Some(rule) => printed_setting(rule.severity, &rule.options),
+                // The merge skips an override's category rules unless the override changes the plugins.
+                None if applied.is_some() && setting.yields => printed_setting(Severity::Off, &[]),
+                None => printed_setting(setting.severity, &setting.options),
+            };
+            rules.push((printed_key(&key), printed));
+        }
+        let js_rules = applied.map(|it| &it.1.js_rules[..]).unwrap_or_default();
+        for rule in js_rules {
+            let printed = printed_setting(rule.severity, &rule.options);
+            rules.push((rule.configured.rule.id.to_vec(), printed));
+        }
+        // Loaded again, the printed `categories` turn on the rules of the plugins that only an override lists. List
+        // those that aren't on for the file as off.
+        let is_on = |it: &&(Vec<u8>, Severity)| it.1 != Severity::Off;
+        for (category, _) in dump.categories.iter().filter(is_on).filter(|_| added != 0) {
+            let lists = categories::CATEGORIES
+                .iter()
+                .find(|it| it.0.as_bytes() == category);
+            let lists = lists.map(|it| it.1.iter()).unwrap_or_default();
+            for (plugin, names) in lists {
+                let Some(plugin) = Plugin::from_oxlint_prefix(plugin.as_bytes()) else {
+                    continue;
+                };
+                if added & (1 << (plugin.in_oxlint() as u32)) == 0 {
+                    continue;
+                }
+                let names = strings::split(names.as_bytes(), b" ").filter(|it| !it.is_empty());
+                let entries =
+                    names.filter_map(|name| applied?.0.get_preferring(plugin, name, true));
+                for entry in entries {
+                    let key = oxlint_rule_key(&crate::linter::RuleId::Known(entry.meta).to_vec());
+                    if index_by_key.contains_key(&key) {
+                        continue;
+                    }
+                    let printed = match applied_by_key.get(&key) {
+                        Some(rule) => printed_setting(rule.severity, &rule.options),
+                        None => printed_setting(Severity::Off, &[]),
+                    };
+                    index_by_key.insert(key.clone(), rules.len());
+                    rules.push((printed_key(&key), printed));
+                }
+            }
+        }
+        // ESLint's rules come first.
+        crate::utils::sort::sort_by(&mut rules, |a, b| {
+            parse_rule_id(&a.0).cmp(&parse_rule_id(&b.0))
+        });
+        let mut entries: Vec<(Vec<u8>, Json)> = Vec::with_capacity(dump.skeleton.len() + 3);
+        for (key, value) in &dump.skeleton {
+            let value = match &key[..] {
+                // Applied, or in the rest: an extended file's rules, plugins, categories and options are merged into
+                // the config file's, and its other fields don't count.
+                b"overrides" | b"extends" | b"jsPlugins" | b"options" if applied.is_some() => {
+                    continue;
+                }
+                b"plugins" if applied.is_some() => self.plugins_printed_for(value, added),
+                b"categories" if applied.is_some() => {
+                    let categories = PRINTED_CATEGORIES.iter().filter_map(|name| {
+                        let severity = dump.categories.iter().find(|it| it.0 == *name)?.1;
+                        Some((name.to_vec(), printed_setting(severity, &[])))
+                    });
+                    Json::Object(categories.collect())
+                }
+                b"env" | b"globals" if applied.is_some() => {
+                    self.with_overrides_applied(key, value, matched)
+                }
+                _ => value.clone(),
+            };
+            entries.push((key.clone(), value));
+            if key == b"categories" {
+                entries.push((b"rules".to_vec(), Json::Object(std::mem::take(&mut rules))));
+            }
+            if applied.is_none() {
+                continue;
+            }
+            if key == b"plugins" && !self.js_plugins.is_empty() {
+                entries.push((b"jsPlugins".to_vec(), self.js_plugins_printed()));
+            }
+            if key == b"globals" && !self.oxlintrc_options.is_empty() {
+                let options = Json::Object(self.oxlintrc_options.clone());
+                entries.push((b"options".to_vec(), options));
+            }
+        }
+        Json::Object(entries)
+    }
+
+    /// The plugins of the overrides at `matched`, as [`plugin_bits`].
+    fn plugins_of_overrides(&self, matched: &[u32]) -> u32 {
+        let overrides = matched
+            .iter()
+            .filter_map(|it| self.objects.get(*it as usize));
+        let sets = overrides.filter_map(|it| it.override_plugin_sets);
+        sets.fold(0, |all, (own, _)| all | own)
+    }
+
+    /// `printed`, the config files' plugins as oxlint prints them, plus `added`, the plugins of the matched overrides.
+    fn plugins_printed_for(&self, printed: &Json, added: u32) -> Json {
+        if added == 0 {
+            return printed.clone();
+        }
+        let listed = printed.as_array().unwrap_or_default();
+        let is_on = |name: &&&[u8]| {
+            let is_listed = listed.iter().any(|it| it.as_str() == Some(name));
+            let bit = Plugin::from_oxlint_prefix(name).map(|it| 1 << (it.in_oxlint() as u32));
+            is_listed || bit.is_some_and(|it| added & it != 0)
+        };
+        let plugins = PRINTED_PLUGINS.iter().filter(is_on);
+        Json::Array(plugins.map(|it| Json::String(it.to_vec())).collect())
+    }
+
+    /// Every loaded plugin, by name and module: a plugin that an override lists is loaded for every file.
+    fn js_plugins_printed(&self) -> Json {
+        let entries = self.js_plugins.iter().map(|plugin| {
+            let module = plugin.location.as_ref().and_then(|it| it.get(b"module"));
+            Json::Object(vec![
+                (b"name".to_vec(), Json::String(plugin.name.to_vec())),
+                (b"specifier".to_vec(), module.cloned().unwrap_or(Json::Null)),
+            ])
+        });
+        Json::Array(entries.collect())
+    }
+
+    /// The config file's `env` or `globals` (`key`), with the entries of the overrides at `matched` set over it.
+    fn with_overrides_applied(&self, key: &[u8], printed: &Json, matched: &[u32]) -> Json {
+        let dump = &self.oxlint_dump;
+        let mut value = printed.clone();
+        let overrides = matched.iter().map(|it| *it as usize);
+        let overrides =
+            overrides.filter(|it| (dump.overrides_from..dump.generated_from).contains(it));
+        for object in overrides.filter_map(|it| self.objects.get(it)) {
+            let own = match key {
+                b"env" => object.language_options.get(b"$env").cloned(),
+                _ => printed_globals(&object.language_options),
+            };
+            for (name, setting) in own.as_ref().and_then(Json::as_object).unwrap_or_default() {
+                set_entry(&mut value, name, setting.clone());
+            }
+        }
+        value
     }
 }
 
@@ -1286,12 +1495,13 @@ impl Config {
                 &lacking.join(&b", "[..]),
             ]);
         }
-        let oxlint_print_config = rc.printed(json, categories_at);
+        let skeleton = rc.skeleton(json);
         // A setting for a rule of a plugin that isn't on has no effect.
         let mut objects = std::mem::take(&mut rc.reader.objects);
         for object in &mut objects {
             (object.rules).retain(|it| it.builtin_plugin.is_none_or(|it| rc.has_plugin(it)));
         }
+        let overrides_from = objects.len();
         objects.append(&mut rc.take_overrides());
         rc.reader.objects = objects;
         let is_off = |id: &[u8]| {
@@ -1314,6 +1524,7 @@ impl Config {
         let mut unknown_rules = std::mem::take(&mut rc.reader.unknown_rules);
         unknown_rules.retain(|id| !is_off(id) && is_on(id));
         rc.reader.unknown_rules = unknown_rules;
+        let generated_from = rc.reader.objects.len();
         let mut by_kind_of_file = rc.rules_by_file_kind();
         rc.reader.objects.append(&mut by_kind_of_file);
         let oxlintrc_options = std::mem::take(&mut rc.options);
@@ -1321,7 +1532,13 @@ impl Config {
             // `oxc/no-barrel-file` depends on this.
             without_modules: !rc.has_plugin(Plugin::Import),
             oxlintrc_options,
-            oxlint_print_config,
+            oxlint_dump: Dump {
+                skeleton,
+                categories_at,
+                overrides_from,
+                generated_from,
+                categories: std::mem::take(&mut rc.categories),
+            },
             ..rc.reader.finish(Semantics {
                 keeps_options: false,
                 accepts_all_plugins: true,

@@ -692,7 +692,7 @@ pub struct Config {
     /// The `options` of an `.oxlintrc.json` and of the files it extends.
     oxlintrc_options: Vec<(Vec<u8>, Json)>,
     /// [`Config::oxlint_print_config`]
-    oxlint_print_config: Vec<(Vec<u8>, Json)>,
+    oxlint_dump: rc::Dump,
     notes: Vec<Vec<u8>>,
     advice: Vec<Vec<u8>>,
     unknown_rules: Vec<Box<[u8]>>,
@@ -1002,11 +1002,6 @@ impl Config {
         &self.advice
     }
 
-    /// Returns what oxlint's `--print-config` prints, if the config was built from an `.oxlintrc.json`.
-    pub fn oxlint_print_config(&self) -> Json {
-        Json::Object(self.oxlint_print_config.clone())
-    }
-
     /// `options[name]` of an `.oxlintrc.json`, or else of a file it extends.
     pub fn oxlintrc_option(&self, name: &[u8]) -> Option<&Json> {
         let mut options = self.oxlintrc_options.iter();
@@ -1218,20 +1213,29 @@ impl Config {
         file: &[u8],
         detected: Frameworks,
     ) -> FileConfig {
+        match self.objects_for(file, detected) {
+            Ok(matching) => FileConfig::Matched(self.resolved(registry, &matching)),
+            Err(unmatched) => unmatched,
+        }
+    }
+
+    /// The objects that [`Config::get_with_frameworks`] merges for `file`, or else the reason it has no config.
+    fn objects_for(&self, file: &[u8], detected: Frameworks) -> Result<Indices, FileConfig> {
         let relative = self.relative(file);
         if paths::is_external(&relative) {
-            return FileConfig::External;
+            return Err(FileConfig::External);
         }
         let is_ignored = || {
             self.is_directory_ignored(paths::dirname(file), Dotfiles::AsConfigured)
                 || self.is_ignored_globally(&relative, Dotfiles::AsConfigured)
         };
         if !self.lints_all_named_files && is_ignored() {
-            return FileConfig::Ignored;
+            return Err(FileConfig::Ignored);
         }
         // ESLint 8 lints every file it's given, whatever its name.
         let missing = self.missing_frameworks(detected);
-        self.get_if(registry, file, !self.is_legacy, missing)
+        self.matching_if(file, !self.is_legacy, missing)
+            .ok_or(FileConfig::Unconfigured)
     }
 
     /// The same for a file that's known to be inside the base path and not ignored: the code that walks the directories
@@ -1248,14 +1252,18 @@ impl Config {
         must_match: bool,
         missing: Frameworks,
     ) -> FileConfig {
-        let relative = self.relative(file);
-        match self.matching(file, &Candidate::new(&relative), None, must_match) {
-            Some(mut matching) => {
-                self.remove_unmet(&mut matching, missing);
-                FileConfig::Matched(self.resolved(registry, &matching))
-            }
+        match self.matching_if(file, must_match, missing) {
+            Some(matching) => FileConfig::Matched(self.resolved(registry, &matching)),
             None => FileConfig::Unconfigured,
         }
+    }
+
+    /// [`Config::get_if`] before the merge: the objects that apply to `file`.
+    fn matching_if(&self, file: &[u8], must_match: bool, missing: Frameworks) -> Option<Indices> {
+        let relative = self.relative(file);
+        let mut matching = self.matching(file, &Candidate::new(&relative), None, must_match)?;
+        self.remove_unmet(&mut matching, missing);
+        Some(matching)
     }
 
     /// Frameworks that some config object requires and that aren't in `detected`.

@@ -6,6 +6,7 @@ import {
   readableStreamToBytes,
   readableStreamToText,
 } from "bun";
+import { heapStats } from "bun:jsc";
 import { describe, expect, it, test } from "bun:test";
 import {
   bunEnv,
@@ -22,7 +23,7 @@ import {
 import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import { Duplex, PassThrough, Readable, Writable, addAbortSignal, finished, pipeline } from "node:stream";
 import {
   consumers as directConsumers,
   expected as directExpected,
@@ -329,6 +330,198 @@ describe("ReadableStream.prototype.tee", () => {
 });
 
 // Repeating tee() on a branch or textStream() on a text stream builds a chain of streams that call each other natively.
+describe("addAbortSignal() on a ReadableStream that Bun drives", () => {
+  it.skipIf(isWindows)("closes the file of a native source", async () => {
+    using dir = tempDir("abort-native-source", {});
+    const path = join(String(dir), "fifo");
+    mkfifo(path, 0o666);
+    // Keeps the FIFO open for writing, so that no read of it ends.
+    const writer = openSync(path, "r+");
+    try {
+      const reads = [];
+      const sources = () => heapStats().objectTypeCounts.FileInternalReadableStreamSource ?? 0;
+      Bun.gc(true);
+      const before = sources();
+      for (let i = 0; i < 30; i++) {
+        const controller = new AbortController();
+        const stream = file(path).stream();
+        addAbortSignal(controller.signal, stream);
+        const read = stream.getReader().read();
+        controller.abort();
+        reads.push(
+          await read.then(
+            () => "fulfilled",
+            e => e.name,
+          ),
+        );
+      }
+      expect(reads).toEqual(Array(30).fill("AbortError"));
+      for (let i = 0; i < 20 && sources() - before > 5; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      expect(sources() - before).toBeLessThanOrEqual(5);
+    } finally {
+      closeSync(writer);
+    }
+  });
+
+  it.each(["unread", "read"])("ends the request of a fetch() body that is %s", async state => {
+    const aborted = Promise.withResolvers();
+    await using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        request.signal.addEventListener("abort", () => aborted.resolve("aborted"));
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("x");
+              await controller.flush();
+              await aborted.promise;
+            },
+          }),
+        );
+      },
+    });
+    const { body } = await fetch(server.url);
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, body);
+    let read;
+    if (state === "read") {
+      const reader = body.getReader();
+      expect((await reader.read()).value).toEqual(new Uint8Array([120]));
+      read = expect(reader.read()).rejects.toMatchObject({ name: "AbortError" });
+    }
+    controller.abort();
+    expect(await aborted.promise).toBe("aborted");
+    await (read ?? expect(body.getReader().read()).rejects.toMatchObject({ name: "AbortError" }));
+  });
+
+  // Readable.fromWeb() of a stream with a read in flight never gets that read, aborted or not. On Windows a started one always has one.
+  it.each(isWindows ? ["an unstarted"] : ["an unstarted", "a started"])(
+    "leaves %s native source alone that Readable.fromWeb() took over",
+    async state => {
+      using dir = tempDir("abort-transferred-source", { "file.txt": Buffer.alloc(2_000_000, "x").toString() + "end" });
+      const stream = file(join(String(dir), "file.txt")).stream();
+      // The stream keeps what it pulled before it was taken over, so only the end of the file is checked.
+      if (state === "a started") stream.getReader().releaseLock();
+      const controller = new AbortController();
+      const readable = Readable.fromWeb(addAbortSignal(controller.signal, stream));
+      let last;
+      for await (const chunk of readable) {
+        if (!last) controller.abort();
+        last = chunk;
+      }
+      expect(last.subarray(-3).toString()).toBe("end");
+    },
+  );
+
+  it("cancels the stream under a textStream()", async () => {
+    const cancelled = [];
+    const source = new ReadableStream({
+      pull() {
+        return new Promise(() => {});
+      },
+      cancel(reason) {
+        cancelled.push(reason);
+      },
+    });
+    const stream = new Response(source).textStream();
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, stream);
+    const read = stream.getReader().read();
+    controller.abort();
+    const error = await read.then(
+      () => undefined,
+      e => e,
+    );
+    expect(error).toMatchObject({ name: "AbortError" });
+    expect(cancelled).toEqual([error]);
+  });
+
+  it("errors the writable side of a TransformStream", async () => {
+    const cancelled = [];
+    const source = new ReadableStream({
+      pull(c) {
+        c.enqueue("x");
+      },
+      cancel(reason) {
+        cancelled.push(reason);
+      },
+    });
+    const transform = new TransformStream();
+    const piped = source.pipeTo(transform.writable);
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, transform.readable);
+    const reader = transform.readable.getReader();
+    expect(await reader.read()).toEqual({ value: "x", done: false });
+    controller.abort();
+    const error = await piped.then(
+      () => undefined,
+      e => e,
+    );
+    expect(error).toMatchObject({ name: "AbortError" });
+    await expect(reader.closed).rejects.toBe(error);
+    expect(cancelled).toEqual([error]);
+  });
+
+  it.each(["resolves", "rejects", "throws"])("calls the cancel() of a transformer once, which %s", async how => {
+    const reasons = [];
+    const rejection = new Error("cancel() failed");
+    const transform = new TransformStream({
+      cancel(reason) {
+        reasons.push(reason);
+        if (how === "throws") throw rejection;
+        return how === "rejects" ? Promise.reject(rejection) : undefined;
+      },
+    });
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, transform.readable);
+    const reader = transform.readable.getReader();
+    const writer = transform.writable.getWriter();
+    const write = writer.write("x").then(
+      () => undefined,
+      e => e,
+    );
+    const queued = writer.write("y").then(
+      () => undefined,
+      e => e,
+    );
+    expect(await reader.read()).toEqual({ value: "x", done: false });
+    controller.abort();
+    const error = await reader.closed.catch(e => e);
+    expect(error).toMatchObject({ name: "AbortError" });
+    expect(reasons).toEqual([error]);
+    expect(await write).toBeUndefined();
+    expect(await queued).toBe(how === "resolves" ? error : rejection);
+    await writer.abort().catch(() => {});
+    await writer.closed.catch(() => {});
+    expect(reasons).toEqual([error]);
+  });
+
+  it("leaves a JavaScript source and the other branch of a tee() alone, as controller.error() does", async () => {
+    const cancelled = [];
+    let sourceController;
+    const source = new ReadableStream({
+      start(c) {
+        sourceController = c;
+      },
+      cancel(reason) {
+        cancelled.push(reason);
+      },
+    });
+    const [aborted, other] = source.tee();
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, aborted);
+    controller.abort();
+    await expect(aborted.getReader().read()).rejects.toMatchObject({ name: "AbortError" });
+    sourceController.enqueue("x");
+    expect(await other.getReader().read()).toEqual({ value: "x", done: false });
+    expect(cancelled).toEqual([]);
+  });
+});
+
 describe("a deep chain of natively linked streams doesn't overflow the stack", () => {
   // Gives every link a tick to start, do its initial pull, and queue a read on its parent.
   const settle = `await new Promise(resolve => setImmediate(resolve));`;

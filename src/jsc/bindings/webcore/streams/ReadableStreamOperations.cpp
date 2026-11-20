@@ -23,6 +23,7 @@
 #include "JSStreamPipeToOperation.h"
 #include "JSStreamTeeState.h"
 #include "JSStreamsRuntime.h"
+#include "JSTransformStream.h"
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultWriter.h"
 #include "ObjectBindings.h"
@@ -312,6 +313,8 @@ void readableStreamCloseIfPossible(JSGlobalObject* globalObject, JSReadableStrea
         readableStreamClose(globalObject, stream);
 }
 
+static void textDecodeErrorAndCancelSource(JSGlobalObject*, JSReadableStreamDefaultController*, JSValue error);
+
 // `$webStreamControllerError` — what node:stream's addAbortSignal() does to a WHATWG stream.
 // Node keeps a bound `controller.error` on the stream under a symbol; Bun's controllers live
 // in C++, so the dispatch happens here instead and the common case allocates nothing.
@@ -321,9 +324,25 @@ void webStreamControllerError(JSGlobalObject* globalObject, JSReadableStream* st
     if (stream->m_state != ReadableStreamState::Readable)
         return;
     switch (stream->m_controllerKind) {
-    case ControllerKind::Default:
-        readableStreamDefaultControllerError(globalObject, defaultControllerOf(stream), error);
-        return;
+    case ControllerKind::Default: {
+        auto* controller = defaultControllerOf(stream);
+        switch (controller->m_algorithms.kind) {
+        // Deliberate divergence from Node v26.3.0: these two drive something that nothing but this stream can stop. A JavaScript source and the branches of a tee are left as controller.error() leaves them.
+        case SourceKind::Transform:
+            return transformStreamReadableError(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()), error);
+        case SourceKind::TextDecode:
+            return textDecodeErrorAndCancelSource(globalObject, controller, error);
+        case SourceKind::Nothing:
+        case SourceKind::JavaScript:
+        case SourceKind::TeeBranch:
+        case SourceKind::ByteTeeBranch:
+        case SourceKind::FromIterable:
+        case SourceKind::CrossRealm:
+        case SourceKind::Native:
+            return readableStreamDefaultControllerError(globalObject, controller, error);
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
     case ControllerKind::Byte:
         readableByteStreamControllerError(globalObject, byteControllerOf(stream), error);
         return;
@@ -335,7 +354,8 @@ void webStreamControllerError(JSGlobalObject* globalObject, JSReadableStream* st
         return;
     case ControllerKind::None:
     case ControllerKind::NativeSink:
-        // No spec controller to reset a queue on; error the stream itself.
+        // No spec controller to reset a queue on; error the stream itself. A lazy source never starts now.
+        stream->m_bunMode = BunStreamMode::Default;
         readableStreamError(globalObject, stream, error);
         return;
     }
@@ -1058,6 +1078,28 @@ static void textDecodeCancelDeferred(JSGlobalObject* globalObject, JSValue reaso
     RELEASE_AND_RETURN(scope, resolvePromise(globalObject, uncheckedDowncast<JSPromise>(context->getInternalField(1)), cancelResult));
 }
 
+static void textDecodeErrorAndCancelSource(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue error)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Error the output first so any second pending TextDecode read request's
+    // closeSteps (fired by cancelling the source) no-ops on canCloseOrEnqueue.
+    // Grab the reader before erroring: ClearAlgorithms nulls algorithmContext.
+    auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
+    readableStreamDefaultControllerError(globalObject, controller, error);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!reader || !reader->m_stream)
+        return;
+    auto* cancelResult = readableStreamReaderGenericCancel(globalObject, reader, error);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (cancelResult)
+        markPromiseAsHandled(vm, cancelResult);
+    if (reader->m_stream) {
+        readableStreamDefaultReaderRelease(globalObject, reader);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
 void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk)
 {
     auto& vm = getVM(globalObject);
@@ -1081,23 +1123,7 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
     } else {
         auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not a BufferSource"_s);
         RETURN_IF_EXCEPTION(scope, void());
-        // Error the output first so any second pending TextDecode read request's
-        // closeSteps (fired by cancelling the source) no-ops on canCloseOrEnqueue.
-        // Grab the reader before erroring: ClearAlgorithms nulls algorithmContext.
-        auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
-        readableStreamDefaultControllerError(globalObject, controller, error);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (reader) {
-            auto* cancelResult = readableStreamReaderGenericCancel(globalObject, reader, error);
-            RETURN_IF_EXCEPTION(scope, void());
-            if (cancelResult)
-                markPromiseAsHandled(vm, cancelResult);
-            if (reader->m_stream) {
-                readableStreamDefaultReaderRelease(globalObject, reader);
-                RETURN_IF_EXCEPTION(scope, void());
-            }
-        }
-        return;
+        RELEASE_AND_RETURN(scope, textDecodeErrorAndCancelSource(globalObject, controller, error));
     }
     JSString* decoded;
     if (isShared) [[unlikely]] {

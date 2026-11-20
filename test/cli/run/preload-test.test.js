@@ -4,6 +4,7 @@ import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
+import { pathToFileURL } from "url";
 const preloadModule = `
 import {plugin} from 'bun';
 
@@ -38,6 +39,119 @@ process.exit(0);
 const bunfig = `preload = ["./preload.js"]`;
 
 describe("preload", () => {
+  // #42469: AOT treats a literal ? in a decoded path as a query.
+  test.todo("compiled modules retain encoded file URL identity", async () => {
+    using dir = tempDir("compiled-file-url-identity", {
+      "entry.ts": `
+        import { pathToFileURL } from "node:url";
+        const name: string = process.argv[2] ?? "literal?dir/dep.ts";
+        const key = pathToFileURL(import.meta.dir + "/" + name).href;
+        const first = require(key);
+        const second = require(key.replace("%3F", "%3f"));
+        const dataKey = pathToFileURL(import.meta.dir + "/literal?dir/data.json").href;
+        const data = await import(dataKey, { with: { type: "json" } });
+        console.log(first.value, first === second, data.default.value);
+      `,
+      "literal?dir/dep.ts": "export const value = 42;",
+      "literal?dir/data.json": '{"value":42}',
+    });
+    const executable = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "entry.ts",
+        "literal?dir/dep.ts",
+        "literal?dir/data.json",
+        "--root",
+        ".",
+        "--outfile",
+        executable,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildOut, buildError, buildExit] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect({ buildOut: buildExit ? buildOut : "", buildError: buildExit ? buildError : "", buildExit }).toEqual({
+      buildOut: "",
+      buildError: "",
+      buildExit: 0,
+    });
+    await using proc = Bun.spawn({ cmd: [executable], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "42 true 42\n", stderr: "", exitCode: 0 });
+  });
+
+  describe.each(["--import", "--preload", "-r"])("%s file URLs", flag => {
+    test.concurrent.each(["plain", "with space"])("loads a preload from %s", async folder => {
+      using dir = tempDir("preload-file-url", {
+        [`${folder}/preload.mjs`]: `globalThis.preloaded = true;`,
+        "main.mjs": `console.log(globalThis.preloaded);`,
+      });
+      const url = pathToFileURL(join(String(dir), folder, "preload.mjs"));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag, url.href, "main.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+    });
+
+    test.concurrent.each(["?generation=1", "#generation-1"])("keeps existing resolution of suffix %s", async suffix => {
+      using dir = tempDir("preload-file-url-suffix", {
+        "with space/preload.mjs": `throw new Error("preload must not run");`,
+        "main.mjs": `console.log("main must not run");`,
+      });
+      const url = pathToFileURL(join(String(dir), "with space", "preload.mjs")).href + suffix;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag, url, "main.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "",
+        stderr: `error: preload not found ${JSON.stringify(url)}\n`,
+        exitCode: 1,
+      });
+    });
+
+    test.concurrent("rejects an invalid file URL without resolving its fragment as a package import", async () => {
+      using dir = tempDir("preload-invalid-file-url", {
+        "package.json": JSON.stringify({ imports: { "#preload": "./wrong.mjs" } }),
+        "wrong.mjs": `console.log("wrong preload");`,
+        "main.mjs": `console.log("main must not run");`,
+      });
+      const url = "file://%zz#preload";
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag, url, "main.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "",
+        stderr: `error: preload not found ${JSON.stringify(url)}\n`,
+        exitCode: 1,
+      });
+    });
+  });
+
   test.todo("works", async () => {
     const preloadDir = join(realpathSync(tmpdir()), "bun-preload-test");
     mkdirSync(preloadDir, { recursive: true });

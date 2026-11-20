@@ -28,12 +28,40 @@ test.describe("TestContext", () => {
 
   test("assert", t => {
     t.assert.ok(typeof t.assert === "object", "test() argument has an assert property");
-    const actual = Object.keys(t.assert).sort();
-    const expected = Object.keys({ ...assert })
-      .filter(key => !["CallTracker", "AssertionError", "strict"].includes(key))
-      .concat(["fileSnapshot", "snapshot"])
-      .sort();
-    t.assert.deepEqual(actual, expected, "test() argument is the same as the node:assert module");
+    // Exact for the Node version that bun reports (v26.3.0). When a newer Node adds keys, add them here,
+    // to buildContextAssert in src/js/node/test.ts, and to test/js/node/test/parallel/test-runner-assert.js.
+    const expected = [
+      "deepEqual",
+      "deepStrictEqual",
+      "doesNotMatch",
+      "doesNotReject",
+      "doesNotThrow",
+      "equal",
+      "fail",
+      "fileSnapshot",
+      "ifError",
+      "match",
+      "notDeepEqual",
+      "notDeepStrictEqual",
+      "notEqual",
+      "notStrictEqual",
+      "ok",
+      "partialDeepStrictEqual",
+      "rejects",
+      "snapshot",
+      "strictEqual",
+      "throws",
+    ];
+    t.assert.deepEqual(Object.keys(t.assert).sort(), expected, "t.assert has the keys that node gives it");
+  });
+
+  test("assert ignores node:assert exports outside the list", t => {
+    assert.notAnAssertion = () => {};
+    try {
+      t.assert.strictEqual(Object.hasOwn(t.assert, "notAnAssertion"), false);
+    } finally {
+      delete assert.notAnAssertion;
+    }
   });
 
   test("diagnostic()", t => {

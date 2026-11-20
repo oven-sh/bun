@@ -5,8 +5,10 @@ const test = require('node:test');
 
 test('expected methods are on t.assert', (t) => {
   const uncopiedKeys = [
+    'Assert',
     'AssertionError',
-    'CallTracker',
+    'CallTracker', // removed in Node v25.0.0 (DEP0173); bun's node:assert still exports it
+    'options',
     'strict',
   ];
   const assertKeys = Object.keys(assert).filter((key) => !uncopiedKeys.includes(key));

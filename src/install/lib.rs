@@ -94,6 +94,7 @@ pub use lockfile_real::{DEFAULT_TRUSTED_DEPENDENCIES_LIST, default_trusted_depen
 pub mod audit_fix;
 #[path = "bin.rs"]
 pub mod bin_real;
+pub mod bundle;
 pub mod cache_pack;
 pub(crate) mod cache_publish;
 pub mod dedupe;

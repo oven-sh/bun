@@ -147,7 +147,6 @@ pub mod options {
     }
 }
 pub use crate::parse::parse_entry::{Options as ParserOptions, Parser};
-pub use crate::renamer;
 pub use crate::scan::scan_side_effects::SideEffects;
 
 pub(crate) use bun_ast::base::Ref;
@@ -275,10 +274,6 @@ pub mod Runtime {
         /// - Wraps last expression in { value: expr } for result capture
         /// - Assigns functions to context for persistence
         pub repl_mode: bool,
-
-        // Vestigial bool stub retained until its last reader (parseJSXElement.rs)
-        // is ported to the real predicate; defaults false and is otherwise inert.
-        pub jsx_optimization_inline: bool,
     }
 
     impl Default for Features {
@@ -325,7 +320,6 @@ pub mod Runtime {
                 bundler_feature_flags: None,
                 define_hash: None,
                 repl_mode: false,
-                jsx_optimization_inline: false,
             }
         }
     }
@@ -436,8 +430,6 @@ pub mod Runtime {
 }
 pub type RuntimeFeatures = Runtime::Features;
 pub(crate) type RuntimeImports = Runtime::Imports;
-
-pub use crate::p::P;
 
 // NOTE(b0): `pub use bun_js_printer as js_printer;` removed — js_printer is same-tier mutual
 // (js_printer depends on js_parser). Downstream callers import bun_js_printer directly.

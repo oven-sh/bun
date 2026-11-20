@@ -14,26 +14,6 @@ pub enum Error {
     SignError,
 }
 
-impl Error {
-    #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub(crate) fn name(&self) -> &'static str {
-        match self {
-            Self::MissingCredentials => "MissingCredentials",
-            Self::InvalidMethod => "InvalidMethod",
-            Self::InvalidPath => "InvalidPath",
-            Self::InvalidEndpoint => "InvalidEndpoint",
-            Self::InvalidSessionToken => "InvalidSessionToken",
-            Self::SignError => "SignError",
-        }
-    }
-}
-
-impl bun_core::output::ErrName for Error {
-    fn name(&self) -> &[u8] {
-        (*self).name().as_bytes()
-    }
-}
-
 impl From<crate::credentials::SignError> for Error {
     fn from(e: crate::credentials::SignError) -> Self {
         use crate::credentials::SignError;

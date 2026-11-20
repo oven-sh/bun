@@ -209,6 +209,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     /// `do { .. } while (0)`: the body runs once. Compilers of other languages write blocks to break out of in this way.
     fn lower_body_run_once(&mut self, statement: StmtId, body: StmtId) {
+        self.create_functions_before_loop(statement);
         let after = self.create_block();
         self.lower_loop_body(statement, body, after, after);
         self.jump(after);

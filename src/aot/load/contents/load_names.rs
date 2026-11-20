@@ -109,6 +109,14 @@ pub(crate) fn names_plugin(files: &dyn CodeView<'_>) -> bool {
     })
 }
 
+pub(crate) fn is_object_handed_on(files: &dyn CodeView<'_>, object: BuiltinId) -> bool {
+    let mut compiled = files.compiled_files().iter();
+    compiled.any(|&file| {
+        parsed_source_in(files, file)
+            .is_some_and(|source| source.builtins.exposed().contains(&object))
+    })
+}
+
 pub(crate) fn mentions_plugin(files: &dyn CodeView<'_>) -> bool {
     let mut compiled = files.compiled_files().iter();
     compiled.any(|&file| {

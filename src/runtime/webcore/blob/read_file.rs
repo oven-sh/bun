@@ -282,15 +282,18 @@ impl FdOp for ReadFile {
             match self.read_some(fd, max, &mut stack_buffer) {
                 Ok(0) => break,
                 Ok(_) => {}
-                Err(err) if err.get_errno() == bun_sys::E::EAGAIN => self.could_block = true,
-                Err(err) => {
+                Err(err) if err.get_errno() != bun_sys::E::EAGAIN => {
+                    self.buffer = Vec::new();
                     let mut err = Box::<SystemError>::from(err);
                     err.path = self.path_for_error();
                     return Err(err);
                 }
+                Err(_) => self.could_block = true,
             }
         }
-        self.buffer.shrink_to_fit();
+        if self.buffer.len() + 16_000 < self.buffer.capacity() {
+            self.buffer.shrink_to_fit();
+        }
         Ok(Step::Done)
     }
 

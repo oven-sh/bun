@@ -248,6 +248,8 @@ allows src/sema/import_sites/alternatives/execution.rs the environment of the pr
     matches!(hir.member_key(e), Some((host, MemberKey::Name(known::env))) if is_process(hir, bound, host, &[]))
 allows src/sema/import_sites/call_sites.rs a query behind a specifier
     if strings::contains_char(inputs.atoms.bytes(name), b'?'));
+allows src/bundler/aot/defines.rs a dotted path of --define
+    matches!(path.root, DefineRoot::Global(name) if contains_char(atoms.bytes(name), b'.'))
 allows src/sema/import_sites/call_sites.rs a constructor that cannot be followed
     return by_binding.unwrap_or(name == known::Worker);
 allows src/aot/test_runs/files_of_run.rs a name that may be a loader

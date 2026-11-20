@@ -3257,6 +3257,7 @@ declare module "bun" {
       | "fs-router"
       | "terminal"
       | "cron"
+      | "otel"
       | "secrets"
       | "markdown"
       | "yaml"

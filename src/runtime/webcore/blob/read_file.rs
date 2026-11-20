@@ -34,6 +34,7 @@ use bun_sys::Stat;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 use bun_sys::{self, Fd};
+use bun_telemetry_jsc::{NativeSpan, fs as traced_fs};
 #[cfg(not(windows))]
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
@@ -66,12 +67,16 @@ pub(crate) struct NewReadFileHandler<F: ReadFileToJs> {
     pub(crate) context: Blob,
     pub(crate) promise: JSPromiseStrong,
     pub global_this: bun_ptr::BackRef<JSGlobalObject>,
+    span: NativeSpan,
     _f: PhantomData<F>,
 }
 
 impl<F: ReadFileToJs> NewReadFileHandler<F> {
     pub(crate) fn new(context: Blob, global_this: &JSGlobalObject) -> Self {
         Self {
+            span: traced_fs::begin(global_this, "read", "", || {
+                context.store.get().as_ref()?.get_path()
+            }),
             context,
             promise: JSPromiseStrong::default(),
             global_this: bun_ptr::BackRef::new(global_this),
@@ -94,9 +99,14 @@ impl<F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<F> {
             context: blob,
             mut promise,
             global_this,
+            span,
             ..
         } = *{ self };
         let global_this = global_this.get();
+        span.settle(match &maybe_bytes {
+            ReadFileResultType::Result(_) => None,
+            ReadFileResultType::Err(err) => Some(err),
+        });
         let promise = promise.swap();
         match maybe_bytes {
             ReadFileResultType::Result(result) => {

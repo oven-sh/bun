@@ -3817,6 +3817,25 @@ pub(crate) fn write_file_with_source_destination(
 ///   comes from JS must go through [`write_destination_from_js`] first.
 pub(crate) fn write_file_internal(
     cx: &bun_jsc::JsThread<'_>,
+    destination: &mut PathOrBlob,
+    data: JSValue,
+    options: WriteFileOptions,
+) -> JsResult<JSValue> {
+    // S3 is no file system.
+    if matches!(destination, PathOrBlob::Blob(blob) if blob.is_s3()) {
+        return write_to_destination(cx, destination, data, options);
+    }
+    let span = bun_telemetry_jsc::fs::begin_promise(cx.global(), "write", || match destination {
+        PathOrBlob::Path(PathOrFileDescriptor::Path(path)) => Some(path.slice()),
+        PathOrBlob::Path(PathOrFileDescriptor::Fd(_)) => None,
+        PathOrBlob::Blob(blob) => blob.store.get().as_ref()?.get_path(),
+    });
+    let result = write_to_destination(cx, destination, data, options);
+    span.end_with(cx.global(), result)
+}
+
+fn write_to_destination(
+    cx: &bun_jsc::JsThread<'_>,
     path_or_blob_: &mut PathOrBlob,
     data: JSValue,
     options: WriteFileOptions,

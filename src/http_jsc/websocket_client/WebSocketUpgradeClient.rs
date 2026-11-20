@@ -55,6 +55,7 @@ use crate::websocket_client::ErrorCode;
 // bun_runtime::socket::SSLConfig and bridges to this lower-tier type via
 // `into_http()`.
 use bun_http::ssl_config::SSLConfig;
+use bun_telemetry_jsc::{Failed, Instrument, SpanCell, http_client as traced};
 
 bun_core::define_scoped_log!(log, WebSocketUpgradeClient, visible);
 bun_core::declare_scope!(alloc, hidden);
@@ -225,6 +226,8 @@ pub struct HTTPClient<const SSL: bool> {
     /// a `Sec-WebSocket-Extensions` header anyway, the handshake fails per
     /// RFC 6455 §9.1.
     offered_deflate: bool,
+
+    span: SpanCell,
 }
 
 // Handler set referenced by the dispatch table (kind = `.ws_client_upgrade[_tls]`).
@@ -301,7 +304,28 @@ where
         let pathname_slice = pathname.to_utf8();
         let client_protocol_slice = client_protocol.to_utf8();
 
-        let extra_headers = encode_headers(header_names, header_values);
+        let mut extra_headers = encode_headers(header_names, header_values);
+        let mut span = traced::begin(vm.global(), Instrument::WebSocket, &mut extra_headers);
+        span.describe(|r| {
+            let authority = HostFormatter {
+                host: &host_slice,
+                port: Some(port).filter(|port| *port != 0),
+                is_https: target_is_secure,
+            };
+            let scheme = if target_is_secure { "wss" } else { "ws" };
+            let url = format!(
+                "{scheme}://{authority}{}",
+                bstr::BStr::new(&*pathname_slice)
+            );
+            r.set_name(b"websocket.connect");
+            r.url(url.as_bytes());
+            match unix_socket_path.filter(|path| !path.is_empty()) {
+                Some(path) => r
+                    .attr("network.transport", "unix")
+                    .server(&path.to_utf8(), 0),
+                None => r.server(&host_slice, port),
+            };
+        });
 
         let proxy_host_slice: Option<Utf8Bytes> = proxy_host.map(|ph| ph.to_utf8());
         let target_authorization_slice: Option<Utf8Bytes> =
@@ -469,6 +493,7 @@ where
             expected_accept: request_result.expected_accept,
             offered_deflate: extensions_slice.is_some(),
             subprotocols: JsCell::new(subprotocols),
+            span: span.into(),
         });
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client.as_ptr());
         let this = client.this_ptr();
@@ -586,6 +611,7 @@ where
     /// `handle_close` from the socket userdata pointer, and the trailing
     /// `deref` may free `this`.
     pub(crate) fn cancel(this: ThisPtr<Self>) {
+        this.span.take().end();
         this.clear_data();
 
         // Either of the below two operations - closing the TCP socket or clearing the C++ reference could trigger a deref
@@ -625,6 +651,10 @@ where
         tcp.close(uws::CloseCode::Normal);
     }
 
+    fn fail_span(&self, code: ErrorCode) {
+        (self.span.take()).settle(Failed(<&'static str>::from(code).as_bytes(), b""));
+    }
+
     /// Notifies C++ at most once. If we're reading a non-upgrade response's body, that response was
     /// already reported as the outcome, so this only ends the body instead of reporting a failure.
     fn report_failure(
@@ -633,6 +663,7 @@ where
         system_code: BunString,
         detail: BunString,
     ) {
+        this.fail_span(code);
         if let Some((ws, _cpp_ref)) = this.outgoing_websocket.replace(None) {
             match this.response_body.take() {
                 Some(body) => ws.did_end_response_body(
@@ -1396,6 +1427,7 @@ where
         deflate_params: Option<WebSocketDeflate::Params>,
         remain_buf: &[u8],
     ) {
+        this.span.take().end();
         // Ownership transfer: `overflow` is handed through C++
         // (`WebSocket__didConnect` → `Bun__WebSocketClient__init`/`_initWithTunnel`)
         // as an opaque box to the connected client.
@@ -1576,6 +1608,7 @@ where
                 BunString::EMPTY,
             );
         } else {
+            this.fail_span(ErrorCode::FailedToConnect);
             this.state.set(State::Failed);
         }
 

@@ -132,6 +132,7 @@ pub mod task_tag {
         AsyncCpTask,
         ShellAsyncCpTask,
         StreamPending,
+        Telemetry,
         ThreadSafeFunction,
         ThreadSafeFunctionRefRequest,
         UvDnsPollFree,            // a closed c-ares uv_poll_t (windows)

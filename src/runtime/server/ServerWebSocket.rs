@@ -4,6 +4,7 @@ use bun_core::Utf8Bytes;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{self, Callable, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
+use bun_telemetry_jsc::websocket::TracedSocket;
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};
@@ -36,6 +37,7 @@ pub(crate) struct ServerWebSocket {
     this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
     signal: Cell<Option<PendingAbortSignal>>,
+    traced: TracedSocket,
 }
 
 // We pack the per-socket data into this struct below:
@@ -506,6 +508,7 @@ impl ServerWebSocket {
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(flags),
             signal: Cell::new(signal),
+            traced: TracedSocket::new(global_object),
         }
         .into_js_wrapper(global_object);
         let js_value = this_value.to_js();
@@ -693,16 +696,23 @@ impl ServerWebSocket {
         };
         let arguments = [self.js_value().unwrap_or(JSValue::UNDEFINED), data];
 
-        let result = match call_corked(
+        let is_binary = opcode == Opcode::Binary;
+        let span = (self.traced).begin_message(global_object, is_binary, message.len());
+        let active = span.enter(global_object);
+        let result = call_corked(
             ws,
             global_object,
-            on_message_handler,
+            active.adopt(on_message_handler),
             JSValue::UNDEFINED,
             &arguments,
-        ) {
+        );
+        drop(active);
+        let result = match result {
             Ok(result) => result,
             Err(e) => {
                 let err_value = global_object.take_error(e);
+                span.fail(global_object, err_value);
+                span.end();
                 return self.handler().run_error_callback(
                     on_error,
                     global_object,
@@ -711,6 +721,9 @@ impl ServerWebSocket {
                 );
             }
         };
+
+        span.end_with_result(global_object, result);
+        self.traced.keep_if_unsettled(span);
 
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
@@ -828,6 +841,7 @@ impl ServerWebSocket {
         let server = handler.server;
         let was_closed = self.is_closed();
         self.update_flags(|f| f.set_closed(true));
+        self.traced.closed();
         // Whoever set the closed flag owns the decrement; close()/terminate()
         // and on_open's error path each decrement themselves when they flip it.
         scopeguard::defer! {

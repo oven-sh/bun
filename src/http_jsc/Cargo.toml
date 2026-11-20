@@ -30,6 +30,7 @@ bun_jsc.workspace = true
 bun_deflate.workspace = true
 bun_ptr.workspace = true
 bun_sha_hmac.workspace = true
+bun_telemetry_jsc.workspace = true
 bun_uws.workspace = true
 bun_uws_sys.workspace = true
 bun_zlib.workspace = true

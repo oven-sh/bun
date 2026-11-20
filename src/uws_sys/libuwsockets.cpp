@@ -99,6 +99,16 @@ static auto makeBehavior(const uws_socket_behavior_t &behavior, void *upgradeCon
   return generic_handler;
 }
 
+/* glibc's strncasecmp consults the locale, at 160 instructions a request. */
+template <size_t N>
+static inline bool uws_header_is(std::string_view k, const char (&lowerCase)[N]) {
+  if (k.length() != N - 1) return false;
+  for (size_t i = 0; i < N - 1; i++) {
+    if ((static_cast<unsigned char>(k[i]) | 0x20) != static_cast<unsigned char>(lowerCase[i])) return false;
+  }
+  return true;
+}
+
 extern "C"
 {
 
@@ -902,6 +912,11 @@ extern "C"
     }
   }
 
+  uint32_t *uws_res_telemetry_tag(int ssl, uws_res_r res) {
+    if (ssl) return &((uWS::HttpResponse<true> *)res)->getHttpResponseData()->telemetryTag;
+    return &((uWS::HttpResponse<false> *)res)->getHttpResponseData()->telemetryTag;
+  }
+
   void uws_res_mark_wrote_content_length_header(int ssl, uws_res_r res) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1336,6 +1351,71 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
         stringViewFromC(lower_case_header, lower_case_header_length));
     *dest = value.data();
     return value.length();
+  }
+
+  /* One pass over the header block for the headers telemetry needs. */
+  struct uws_header_slice_t {
+    const char *ptr;
+    size_t len;
+  };
+  struct uws_telemetry_headers_t {
+    struct uws_header_slice_t host, user_agent, traceparent, tracestate, baggage, forwarded, x_forwarded_for;
+    /* Length of the path part of the URL (up to '?'). */
+    uint32_t path_len;
+    /* The request line said HTTP/1.0. */
+    uint8_t http10;
+    /* More than one tracestate / baggage field was present (combine them). */
+    uint8_t tracestate_repeated;
+    uint8_t baggage_repeated;
+    /* More than one traceparent field: W3C says the header is then invalid. */
+    uint8_t traceparent_repeated;
+  };
+  void uws_req_telemetry_headers(uws_req_t *res, struct uws_telemetry_headers_t *out)
+  {
+    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
+    memset(out, 0, sizeof(*out));
+    out->path_len = (uint32_t)uwsReq->getUrl().length();
+    out->http10 = uwsReq->isAncient() ? 1 : 0;
+    for (auto header : *uwsReq)
+    {
+      std::string_view k = header.first;
+      struct uws_header_slice_t *slot = nullptr;
+      switch (k.length()) {
+      case 4: if (uws_header_is(k, "host")) slot = &out->host; break;
+      case 10: if (uws_header_is(k, "user-agent")) slot = &out->user_agent;
+               else if (uws_header_is(k, "tracestate")) slot = &out->tracestate; break;
+      case 11: if (uws_header_is(k, "traceparent")) slot = &out->traceparent; break;
+      case 7: if (uws_header_is(k, "baggage")) slot = &out->baggage; break;
+      case 9: if (uws_header_is(k, "forwarded")) slot = &out->forwarded; break;
+      case 15: if (uws_header_is(k, "x-forwarded-for")) slot = &out->x_forwarded_for; break;
+      default: break;
+      }
+      if (slot && !slot->ptr) {
+        slot->ptr = header.second.data();
+        slot->len = header.second.length();
+      } else if (slot == &out->tracestate) {
+        /* W3C: multiple tracestate / baggage fields are one list; flag it so
+         * the caller re-reads that header joined (rare). */
+        out->tracestate_repeated = 1;
+      } else if (slot == &out->baggage) {
+        out->baggage_repeated = 1;
+      } else if (slot == &out->traceparent) {
+        out->traceparent_repeated = 1;
+      }
+    }
+  }
+
+  /* Every value of a (lower-case) header name, in order; for repeated headers. */
+  typedef void (*uws_header_value_handler)(const char *value, size_t value_len, void *user_data);
+  void uws_req_for_each_header_value(uws_req_t *res, const char *lower_case_name, size_t name_len, uws_header_value_handler handler, void *user_data)
+  {
+    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
+    std::string_view name(lower_case_name, name_len);
+    for (auto header : *uwsReq)
+    {
+      if (header.first.length() == name.length() && !strncasecmp(header.first.data(), name.data(), name.length()))
+        handler(header.second.data(), header.second.length(), user_data);
+    }
   }
 
   size_t uws_req_get_parameter(uws_req_t *res, unsigned short index,

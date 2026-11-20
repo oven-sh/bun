@@ -17,6 +17,7 @@ use crate::server::file_response_stream::{
 };
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_jsc::bun_string_jsc;
+use bun_telemetry_jsc::http_server::AnsweredRequest;
 
 use crate::server::{
     AnyServer, FileResponseStream, HTTPStatusText, PendingRequest, RangeRequest, Served,
@@ -254,8 +255,10 @@ impl FileRoute {
     ) {
         debug_assert!(this.server.get().is_some());
         let route = PendingRequest::new(RefPtr::from_this(this));
+        let mut span = AnsweredRequest::default();
         if let Some(server) = this.server.get() {
             resp.timeout(server.config().idle_timeout);
+            span = server.begin_span(&req, resp, this.as_ptr().cast_const().cast());
         }
         let store = this.blob.store().unwrap().clone();
         let Some(path) = store.get_path() else {
@@ -288,7 +291,7 @@ impl FileRoute {
         };
         let fd = StreamFd::Owned(fd);
 
-        match this.serve(fd.get(), path, &mut req, resp, method) {
+        match this.serve(fd.get(), path, &mut req, resp, method, &mut span) {
             Serve::Done => {}
             Serve::Stream {
                 file_type,
@@ -306,7 +309,7 @@ impl FileRoute {
                     offset,
                     length,
                     idle_timeout: server.config().idle_timeout,
-                    owner: StreamOwner::FileRoute(route),
+                    owner: StreamOwner::FileRoute(route, span),
                 });
             }
         }
@@ -319,6 +322,7 @@ impl FileRoute {
         req: &mut AnyRequest,
         resp: AnyResponse,
         method: Method,
+        span: &mut AnsweredRequest,
     ) -> Serve {
         let (can_serve_file, offset, size, file_type, pollable) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
@@ -391,6 +395,7 @@ impl FileRoute {
 
         req.set_yield(false);
 
+        span.set_status(status_code);
         write_any_status(resp, status_code);
         if self.has_date_header {
             resp.mark_wrote_date_header();

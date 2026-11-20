@@ -12,6 +12,7 @@ use bun_ptr::{RefPtr, ThisPtr};
 
 use bun_http_types::MimeType::MimeType;
 use bun_jsc::HTTPHeaderName;
+use bun_telemetry_jsc::http_server::AnsweredRequest;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
@@ -252,9 +253,11 @@ impl StaticRoute {
 
     // HEAD requests have no body.
     pub(crate) fn on_head_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
+        let mut span = this.begin_span(&req, resp);
         // Evaluate conditional request preconditions for HEAD with 200 status
         if this.status_code == 200 {
-            if Self::render_precondition(this, &mut req, resp) {
+            if let Some(status) = Self::render_precondition(this, &mut req, resp) {
+                span.set_status(status);
                 return;
             }
         }
@@ -288,6 +291,17 @@ impl StaticRoute {
         resp.end_without_body(resp.should_close_connection());
     }
 
+    /// It ends when the response is handed to the socket.
+    #[inline]
+    fn begin_span(&self, req: &AnyRequest, resp: AnyResponse) -> AnsweredRequest {
+        let Some(server) = self.server.get() else {
+            return AnsweredRequest::default();
+        };
+        let mut span = server.begin_span(req, resp, core::ptr::from_ref(self).cast());
+        span.set_status(self.status_code);
+        span
+    }
+
     pub(crate) fn on_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
         if method == Method::GET {
@@ -296,6 +310,7 @@ impl StaticRoute {
             Self::on_head_request(this, req, resp);
         } else {
             // For other methods, use the original behavior
+            let _span = this.begin_span(&req, resp);
             let mut req = req;
             req.set_yield(false);
             Self::on(this, resp);
@@ -303,9 +318,11 @@ impl StaticRoute {
     }
 
     pub(crate) fn on_get(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
+        let mut span = this.begin_span(&req, resp);
         // Evaluate conditional request preconditions for GET with 200 status
         if this.status_code == 200 {
-            if Self::render_precondition(this, &mut req, resp) {
+            if let Some(status) = Self::render_precondition(this, &mut req, resp) {
+                span.set_status(status);
                 return;
             }
         }
@@ -484,8 +501,12 @@ impl StaticRoute {
     }
 
     /// RFC 9110 §13.2.2 precondition evaluation. Writes a 412 or 304 response
-    /// and returns `true` when a precondition short-circuits the request.
-    fn render_precondition(this: ThisPtr<Self>, req: &mut AnyRequest, resp: AnyResponse) -> bool {
+    /// and returns its status when a precondition short-circuits the request.
+    fn render_precondition(
+        this: ThisPtr<Self>,
+        req: &mut AnyRequest,
+        resp: AnyResponse,
+    ) -> Option<u16> {
         let etag = this.headers.get(b"etag").filter(|v| !v.is_empty());
         // Deferred: `parse_http_date` allocates + calls into WTF; only run it
         // when the client actually sent a date-based conditional header.
@@ -534,7 +555,7 @@ impl StaticRoute {
         };
 
         if !not_modified {
-            return false;
+            return None;
         }
 
         Self::render_bodiless(this, req, resp, 304)
@@ -546,7 +567,7 @@ impl StaticRoute {
         req: &mut AnyRequest,
         resp: AnyResponse,
         status: u16,
-    ) -> bool {
+    ) -> Option<u16> {
         req.set_yield(false);
         Self::retain_for_response(this, resp);
         this.do_write_status(status, resp);
@@ -556,6 +577,6 @@ impl StaticRoute {
         }
         resp.end_without_body(resp.should_close_connection());
         Self::on_response_complete(this, resp);
-        true
+        Some(status)
     }
 }

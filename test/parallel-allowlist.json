@@ -281,6 +281,7 @@
   ],
   "excludeFiles": [
     "aot/mock-commonjs-sites.test.ts",
+    "aot/opentelemetry-in-an-executable.test.ts",
     "aot/plain-bun.test.ts",
     "bundler/bundler_compile_aot.test.ts",
     "bundler/compile-aot-heap-snapshot.test.ts",

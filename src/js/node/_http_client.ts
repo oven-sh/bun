@@ -51,6 +51,7 @@ function emitErrorEvent(request, error) {
   // Every request-error path funnels here (ECONNREFUSED, DNS, parse error,
   // reset): close the trace span; deduped by the per-request flag.
   traceClientResponseEnd(request);
+  if (hasClientSpans) request[kClientSpan]?.end(request.res, error);
   request.emit("error", error);
 }
 
@@ -155,6 +156,9 @@ function rewriteForProxiedHttp(req, reqOptions) {
 // 'e' across the response/error/destroy/close paths. Near-zero cost when off.
 const kHttpTraceCat = "node,node.http";
 const kTraceRequestActive = Symbol("kTraceRequestActive");
+const kClientSpan = Symbol("kClientSpan");
+let hasClientSpans = false;
+const isOpenTelemetrySpanWanted = $bindgen("telemetry_internals.bind.ts", "httpClientEnabled");
 let traceEvents: typeof import("internal/trace_events").default;
 function traceClientResponseEnd(req) {
   if (req[kTraceRequestActive]) {
@@ -360,7 +364,7 @@ function ClientRequest(input?, options?, cb?): void {
     }
   }
 
-  const optionsHeaders = options.headers;
+  let optionsHeaders = options.headers;
   const headersArray = ArrayIsArray(optionsHeaders);
   if (!headersArray) {
     if (optionsHeaders) {
@@ -395,6 +399,12 @@ function ClientRequest(input?, options?, cb?): void {
       this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
     }
 
+    if (isOpenTelemetrySpanWanted()) {
+      hasClientSpans = true;
+      const { startClientSpan } = require("internal/http/client_span");
+      this[kClientSpan] = startClientSpan(this, this.method, protocol, host, port, this.path);
+    }
+
     if (this.getHeader("expect")) {
       if (this._header) {
         throw $ERR_HTTP_HEADERS_SENT("render");
@@ -406,6 +416,13 @@ function ClientRequest(input?, options?, cb?): void {
       rewriteForProxiedHttp(this, optsWithoutSignal);
     }
   } else {
+    if (isOpenTelemetrySpanWanted()) {
+      hasClientSpans = true;
+      const { HeaderList, startClientSpan } = require("internal/http/client_span");
+      const headers = new HeaderList(optionsHeaders);
+      this[kClientSpan] = startClientSpan(headers, this.method, protocol, host, port, this.path);
+      optionsHeaders = headers.list as typeof optionsHeaders;
+    }
     rewriteForProxiedHttp(this, optsWithoutSignal);
     this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", optionsHeaders);
   }
@@ -523,6 +540,7 @@ ClientRequest.prototype.destroy = function destroy(err) {
   // Close the http.client.request trace span if no response ever arrived
   // (req.destroy()/abort before headers); deduped by the per-request flag.
   traceClientResponseEnd(this);
+  if (hasClientSpans) this[kClientSpan]?.end(this.res, err);
 
   // If we're aborting, we don't care about any more response data.
   const res = this.res;
@@ -573,8 +591,11 @@ function socketCloseListenerInner() {
   if (res) {
     // Socket closed before we emitted 'end' below.
     if (!res.complete) {
-      res.destroy(new ConnResetException("aborted"));
+      const error = new ConnResetException("aborted");
+      if (hasClientSpans) req[kClientSpan]?.end(res, error);
+      res.destroy(error);
     }
+    if (hasClientSpans) req[kClientSpan]?.end(res);
     closeRequest(req);
     if (!res.aborted && res.readable) {
       res.push(null);
@@ -721,6 +742,11 @@ function processClientData(socket, d, parser) {
 
       const bodyHead = d.slice(bytesParsed, d.length);
 
+      if (hasClientSpans) {
+        req[kClientSpan]?.received(res);
+        req[kClientSpan]?.end(res);
+      }
+
       const eventName = req.method === "CONNECT" ? "connect" : "upgrade";
       if (req.listenerCount(eventName) > 0) {
         req.upgradeOrConnect = true;
@@ -852,6 +878,7 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
   // The response arrived: close the 'http.client.request' span (Node ends it
   // here, in parserOnIncomingClient, before handing the response to the user).
   traceClientResponseEnd(req);
+  if (hasClientSpans) req[kClientSpan]?.received(res);
   req.res = res;
   res.req = req;
 
@@ -916,6 +943,7 @@ function responseKeepAlive(req) {
 
 function responseOnEnd() {
   const req = this.req;
+  if (hasClientSpans) req[kClientSpan]?.end(this);
   const socket = req.socket;
 
   if (socket) {
@@ -1075,6 +1103,7 @@ function destroyRequestOnSocketNT(req, socket, err) {
   // The request is dead with no parser: close the trace span on the paths
   // that skip emitErrorEvent above (proxy tunnel; error already emitted).
   traceClientResponseEnd(req);
+  if (hasClientSpans) req[kClientSpan]?.end(undefined, err);
   closeRequest(req);
 }
 

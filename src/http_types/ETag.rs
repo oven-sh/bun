@@ -315,6 +315,19 @@ impl Headers {
             .unwrap_or_else(|_| bun_alloc::out_of_memory());
     }
 
+    pub fn set(&mut self, name: &[u8], value: &[u8]) {
+        self.remove(name);
+        self.append(name, value);
+    }
+
+    pub fn remove(&mut self, name: &[u8]) {
+        while let Some(i) = (self.entries.items_name().iter())
+            .position(|n| strings::eql_case_insensitive_ascii(self.as_str(*n), name, true))
+        {
+            self.entries.ordered_remove(i);
+        }
+    }
+
     pub fn get_content_disposition(&self) -> Option<&[u8]> {
         self.get(b"content-disposition")
     }

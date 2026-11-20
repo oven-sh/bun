@@ -140,6 +140,7 @@ pub enum Tag {
     EventLoopDelayMonitor,
     CronJob,
     GcRepeating,
+    TelemetryFlush,
     QuicEndpoint,
     FakeTimersTick,
     ViWait,
@@ -167,7 +168,8 @@ impl Tag {
             | Tag::DateHeaderTimer
             | Tag::BunTest
             | Tag::EventLoopDelayMonitor
-            | Tag::GcRepeating => true,
+            | Tag::GcRepeating
+            | Tag::TelemetryFlush => true,
             Tag::TimeoutObject
             | Tag::ImmediateObject
             | Tag::StatWatcherScheduler

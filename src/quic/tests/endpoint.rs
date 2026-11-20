@@ -207,6 +207,24 @@ fn connections_take_turns() {
 }
 
 #[test]
+fn turns_are_short_while_the_socket_is_backed_up() {
+    let mut raw = Raw::server();
+    raw.peer.tls.hello_len = 56_000;
+    raw.connect_to(1);
+    raw.connect_to(2);
+    raw.connection();
+    for (is_backed_up, max_len, expected) in [
+        (true, 20, &[(1, 8), (2, 8), (1, 4)][..]),
+        (false, 20, &[(2, 20)]),
+    ] {
+        raw.peer.endpoint.set_backed_up(is_backed_up);
+        let runs = raw.runs(&mut Batch::default(), max_len);
+        let turns = runs.iter().map(|it| (it.0, it.1 / it.2));
+        assert_eq!(turns.collect::<Vec<_>>(), expected);
+    }
+}
+
+#[test]
 fn clients_are_answered_two_at_a_time() {
     let mut raw = Raw::client();
     raw.waits = false;

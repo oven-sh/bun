@@ -35,6 +35,8 @@ const MAX_REPLIES: usize = 256;
 const USUAL_RESET_LENS: Range<usize> = 43..62;
 /// As many of the largest ones as a run of a [`Batch`] can have.
 const DATAGRAMS_PER_TURN: usize = 44;
+/// While the socket sets the pace, it takes long until all have had their turn.
+const DATAGRAMS_PER_SHORT_TURN: usize = 8;
 /// Of the number of connections that are put in order. The others are not going to transmit soon.
 const SORTED_BITS: u32 = 9;
 /// The other clients wait until the established connections have been served.
@@ -205,6 +207,7 @@ pub struct Endpoint {
     deadlines: Deadlines,
     with_events: VecDeque<u32>,
     to_transmit: VecDeque<u32>,
+    is_backed_up: bool,
     /// For [`Self::favor_longest_waiting`].
     order: Vec<u64>,
     replies: VecDeque<(Addresses, Vec<u8>)>,
@@ -235,6 +238,7 @@ impl Endpoint {
             deadlines: Deadlines::default(),
             with_events: VecDeque::new(),
             to_transmit: VecDeque::new(),
+            is_backed_up: false,
             order: Vec::new(),
             replies: VecDeque::new(),
         }
@@ -687,13 +691,17 @@ impl Endpoint {
             batch.bytes.extend_from_slice(&datagram);
             batch.commit(&addresses, start);
         }
+        let max_turn = match self.is_backed_up {
+            true => DATAGRAMS_PER_SHORT_TURN,
+            false => DATAGRAMS_PER_TURN,
+        };
         while batch.len() < max_len
             && let Some(index) = self.to_transmit.pop_front()
         {
             let slot = self.slots.at_mut(index);
             slot.may_transmit = false;
             if let Some(connection) = &mut slot.connection {
-                let turn = DATAGRAMS_PER_TURN.min(max_len - batch.len());
+                let turn = max_turn.min(max_len - batch.len());
                 if connection.transmit(now, batch, turn, &mut self.shared) {
                     enqueue(&mut self.to_transmit, &mut slot.may_transmit, index);
                 }
@@ -704,6 +712,12 @@ impl Endpoint {
                 visit(connection);
             }
         }
+    }
+
+    /// Whether the socket has not taken all there was to send.
+    #[inline]
+    pub fn set_backed_up(&mut self, is_backed_up: bool) {
+        self.is_backed_up = is_backed_up;
     }
 
     #[inline]

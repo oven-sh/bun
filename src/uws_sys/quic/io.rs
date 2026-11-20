@@ -321,6 +321,7 @@ impl Outbox {
             }
             self.send(&binding);
         }
+        endpoint.set_backed_up(self.is_blocked);
         self.flushed_at = now();
     }
 

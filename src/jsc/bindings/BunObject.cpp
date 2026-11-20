@@ -35,6 +35,7 @@
 #include "JSDOMException.h"
 #include "JSDOMConvert.h"
 #include "wtf/Compiler.h"
+#include "wtf/MathExtras.h"
 #include "PathInlines.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "BunObject+exports.h"
@@ -280,9 +281,7 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
             throwRangeError(globalObject, throwScope, "Maximum length must be >= 0"_s);
             return {};
         }
-        if (!std::isinf(number)) {
-            maxLength = JSC::toUInt32(number);
-        }
+        maxLength = clampTo<size_t>(number);
     }
 
     bool asUint8Array = false;

@@ -130,6 +130,16 @@ JSObject* createJSWebViewPrototype(VM& vm, JSGlobalObject* globalObject)
 
 using WebViewProto::VirtualKey;
 
+NEVER_INLINE static void throwClosed(JSGlobalObject* g, ThrowScope& scope, StringView method)
+{
+    Bun::ERR::INVALID_STATE(scope, g, makeString("WebView."_s, method, ": view is closed"_s));
+}
+
+NEVER_INLINE static void throwBusy(JSGlobalObject* g, ThrowScope& scope, ASCIILiteral what)
+{
+    Bun::ERR::INVALID_STATE(scope, g, makeString(what, " is already pending"_s));
+}
+
 static JSWebView* unwrapThis(JSGlobalObject* globalObject, ThrowScope& scope, CallFrame* callFrame, ASCIILiteral method)
 {
     auto* thisObject = dynamicDowncast<JSWebView>(callFrame->thisValue());
@@ -138,18 +148,22 @@ static JSWebView* unwrapThis(JSGlobalObject* globalObject, ThrowScope& scope, Ca
         return nullptr;
     }
     if (thisObject->m_closed) {
-        Bun::ERR::INVALID_STATE(scope, globalObject, makeString("WebView."_s, method, ": view is closed"_s));
+        throwClosed(globalObject, scope, method);
         return nullptr;
     }
     return thisObject;
 }
 
-// Slot-empty check + INVALID_STATE. Separate from unwrapThis because each
-// method uses a different slot.
-static bool checkSlot(JSGlobalObject* g, ThrowScope& scope, const WriteBarrier<JSPromise>& slot, ASCIILiteral what)
+// The last step before every dispatch, after argument conversion: user code there (valueOf, getters, toJSON) can close the view or start another operation on it.
+static bool checkReady(JSGlobalObject* g, ThrowScope& scope, JSWebView* view, CallFrame* callFrame, const WriteBarrier<JSPromise>& slot, ASCIILiteral what)
 {
-    if (slot) {
-        Bun::ERR::INVALID_STATE(scope, g, makeString(what, " is already pending"_s));
+    if (view->m_closed) [[unlikely]] {
+        // The callee is the function reifyStaticPropertyTable made for this method, named after its key.
+        throwClosed(g, scope, uncheckedDowncast<JSFunction>(callFrame->jsCallee())->name(g->vm()));
+        return false;
+    }
+    if (slot) [[unlikely]] {
+        throwBusy(g, scope, what);
         return false;
     }
     return true;
@@ -224,7 +238,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncNavigate, (JSGlobalObject * globalObj
     WTF::String url = urlArg.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingNavigate, "a navigation"_s)) return {};
+    if (!checkReady(globalObject, scope, thisObject, callFrame, thisObject->m_pendingNavigate, "a navigation"_s)) return {};
     return JSValue::encode(thisObject->navigate(globalObject, url));
 }
 
@@ -242,7 +256,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncEvaluate, (JSGlobalObject * globalObj
     WTF::String script = scriptArg.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingEval, "an evaluate()"_s)) return {};
+    if (!checkReady(globalObject, scope, thisObject, callFrame, thisObject->m_pendingEval, "an evaluate()"_s)) return {};
     return JSValue::encode(thisObject->evaluate(globalObject, script));
 }
 
@@ -328,12 +342,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalO
                 "encoding must be a string"_s);
     }
 
-    // checkSlot after option parsing: opts->get() can invoke Proxy getters
-    // that call view.close() between the guard and the screenshot() send.
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingScreenshot, "a screenshot()"_s)) return {};
-    if (thisObject->m_closed)
-        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "WebView is closed"_s);
-
+    if (!checkReady(globalObject, scope, thisObject, callFrame, thisObject->m_pendingScreenshot, "a screenshot()"_s)) return {};
     thisObject->m_screenshotEncoding = encoding;
     return JSValue::encode(thisObject->screenshot(globalObject, format, quality));
 }
@@ -398,11 +407,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncCdp, (JSGlobalObject * globalObject, 
                 "params must be a JSON-serializable object"_s);
     }
 
-    // Same TOCTOU as screenshot: JSONStringify can call a user-supplied
-    // .toJSON() that closes the view between the earlier guards and send.
-    if (thisObject->m_closed)
-        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "WebView is closed"_s);
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingCdp, "a cdp()"_s)) return {};
+    if (!checkReady(globalObject, scope, thisObject, callFrame, thisObject->m_pendingCdp, "a cdp()"_s)) return {};
     return JSValue::encode(thisObject->cdp(globalObject, method, paramsJson));
 }
 
@@ -459,7 +464,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "selector"_s, arg0, "must not be empty"_s);
         }
         if (!parseOpts(callFrame->argument(1))) return {};
-        if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+        if (!checkReady(globalObject, scope, thisObject, callFrame, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
         return JSValue::encode(thisObject->clickSelector(globalObject, selector, timeout, button, mods, clickCount));
     }
 
@@ -470,7 +475,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
     RETURN_IF_EXCEPTION(scope, {});
     if (!parseOpts(callFrame->argument(2))) return {};
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkReady(globalObject, scope, thisObject, callFrame, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->click(globalObject,
         static_cast<float>(x), static_cast<float>(y), button, mods, clickCount));
 }
@@ -489,7 +494,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncType, (JSGlobalObject * globalObject,
     WTF::String text = textArg.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkReady(globalObject, scope, thisObject, callFrame, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->type(globalObject, text));
 }
 
@@ -522,7 +527,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject
             "must be a virtual key name (Enter, Tab, Escape, Arrow*, etc.) or a single character"_s);
     }
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkReady(globalObject, scope, thisObject, callFrame, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->press(globalObject, vk, mods,
         vk == VirtualKey::Character ? key : WTF::String()));
 }
@@ -546,7 +551,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScroll, (JSGlobalObject * globalObjec
         return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "dx/dy"_s,
             jsNumber(std::isfinite(dx) ? dy : dx), "must be finite"_s);
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkReady(globalObject, scope, thisObject, callFrame, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->scroll(globalObject, dx, dy));
 }
 
@@ -597,7 +602,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObj
         }
     }
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkReady(globalObject, scope, thisObject, callFrame, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->scrollTo(globalObject, selector, timeout, block));
 }
 
@@ -618,7 +623,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncResize, (JSGlobalObject * globalObjec
     if (h == 0 || h > 16384)
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "height"_s, 1, 16384, jsNumber(h));
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkReady(globalObject, scope, thisObject, callFrame, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->resize(globalObject, w, h));
 }
 
@@ -638,7 +643,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncBack, (JSGlobalObject * globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "goBack"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
+    if (!checkReady(globalObject, scope, thisObject, callFrame, navSlot(thisObject), "a navigation"_s)) return {};
     return JSValue::encode(thisObject->goBack(globalObject));
 }
 
@@ -649,7 +654,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncForward, (JSGlobalObject * globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "goForward"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
+    if (!checkReady(globalObject, scope, thisObject, callFrame, navSlot(thisObject), "a navigation"_s)) return {};
     return JSValue::encode(thisObject->goForward(globalObject));
 }
 
@@ -660,7 +665,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncReload, (JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "reload"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
+    if (!checkReady(globalObject, scope, thisObject, callFrame, navSlot(thisObject), "a navigation"_s)) return {};
     return JSValue::encode(thisObject->reload(globalObject));
 }
 

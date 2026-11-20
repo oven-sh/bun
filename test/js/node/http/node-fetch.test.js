@@ -4,14 +4,16 @@ import fetch2, { fetch, Headers, Request, Response } from "node-fetch";
 import assert from "node:assert";
 import { constants, createPrivateKey } from "node:crypto";
 import { once } from "node:events";
-import { readFileSync } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
+import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
 import * as stream from "stream";
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { tempDir, tls as tlsCert } from "harness";
 
 const originalResponse = globalThis.Response;
 const originalRequest = globalThis.Request;
@@ -489,6 +491,284 @@ test("node-fetch request body streams properly", async () => {
   const allData = Buffer.concat(receivedChunks).toString();
   expect(allData).toBe("first chunksecond chunkthird chunk");
   expect(requestBodyComplete).toBe(true);
+});
+
+// node-fetch pipes a stream body into the request inside fetch(), so a "data" listener that the caller
+// attaches right after the call (eas-cli does this for upload progress) shares every chunk with the
+// request. A request that reads the stream only once the connection is ready gets nothing.
+// https://github.com/oven-sh/bun/issues/47865
+describe("node-fetch fetch() subscribes to a stream body inside the call", () => {
+  test.each([true, false])(
+    "a 'data' listener attached after the call drains nothing (Content-Length: %p)",
+    async declared => {
+      using server = serveRequestBody();
+      const body = new stream.Readable({ read() {} });
+      const headers = declared ? { "Content-Length": "11" } : {};
+      const response = fetch2(server.url, { method: "POST", body, headers });
+      const seen = [];
+      body.on("data", chunk => seen.push(chunk.toString()));
+      body.push("hello ");
+      body.push("world");
+      body.push(null);
+      expect(await (await response).text()).toBe("hello world");
+      expect(seen.join("")).toBe("hello world");
+    },
+  );
+
+  // Several high water marks, so the request pauses and resumes the file stream more than once.
+  test.each(["PUT", "put"])(
+    "an fs.ReadStream body with a progress listener arrives in full over TLS (%s)",
+    async method => {
+      const size = 8 * 64 * 1024;
+      using dir = tempDir("node-fetch-upload", { "blob.bin": Buffer.alloc(size, 7) });
+      using server = Bun.serve({
+        port: 0,
+        tls: tlsCert,
+        fetch: async req => new Response(String((await req.arrayBuffer()).byteLength)),
+      });
+      const body = createReadStream(path.join(String(dir), "blob.bin"));
+      const response = fetch2(server.url, {
+        method,
+        body,
+        headers: { "Content-Length": String(size) },
+        tls: { rejectUnauthorized: false },
+      });
+      let progress = 0;
+      let chunks = 0;
+      body.on("data", chunk => {
+        progress += chunk.length;
+        chunks++;
+      });
+      expect(await (await response).text()).toBe(String(size));
+      expect(progress).toBe(size);
+      expect(chunks).toBeGreaterThan(1);
+    },
+  );
+
+  // node-fetch takes the method from the Request when init has none, and sends the body of a Request.
+  test("the body and the method can come from a Request", async () => {
+    using server = Bun.serve({ port: 0, fetch: async req => new Response(`${req.method}:${await req.text()}`) });
+    const fromInit = new stream.Readable({ read() {} });
+    const fromRequest = new stream.Readable({ read() {} });
+    const headers = { "Content-Length": "11" };
+    const responses = [
+      fetch2(new Request(server.url, { method: "PUT" }), { body: fromInit, headers }),
+      fetch2(new Request(server.url, { method: "PATCH", body: fromRequest, headers })),
+    ];
+    const seen = [];
+    for (const body of [fromInit, fromRequest]) {
+      body.on("data", chunk => seen.push(chunk.toString()));
+      body.push("hello ");
+      body.push("world");
+      body.push(null);
+    }
+    const texts = await Promise.all(responses.map(async response => (await response).text()));
+    expect(texts).toEqual(["PUT:hello world", "PATCH:hello world"]);
+    expect(seen.join("")).toBe("hello worldhello world");
+  });
+
+  // The native fetch rejects a Request whose body stream was used by an earlier fetch() the same way.
+  test("a second fetch() of a Request with a stream body rejects", async () => {
+    using server = serveRequestBody();
+    const body = new stream.Readable({ read() {} });
+    const request = new Request(server.url, { method: "POST", body });
+    const first = fetch2(request);
+    body.push("hello world");
+    body.push(null);
+    expect(await (await first).text()).toBe("hello world");
+    expect(await fetch2(request).catch(e => e.message)).toBe("Body object should not be disturbed or locked");
+  });
+
+  test("fetch() of a Request whose stream body a body method read rejects", async () => {
+    using server = serveRequestBody();
+    const body = new stream.Readable({ read() {} });
+    const request = new Request(server.url, { method: "POST", body });
+    body.push("hello world");
+    body.push(null);
+    expect(await request.text()).toBe("hello world");
+    expect(await fetch2(request).catch(e => e.message)).toBe("Body object should not be disturbed or locked");
+  });
+
+  test("a setEncoding() body sends its bytes", async () => {
+    using server = serveRequestBody();
+    const body = new stream.Readable({ read() {} });
+    body.setEncoding("utf8");
+    const response = fetch2(server.url, { method: "POST", body });
+    body.on("data", () => {});
+    body.push("héllo ");
+    body.push("wörld");
+    body.push(null);
+    expect(await (await response).text()).toBe("héllo wörld");
+  });
+
+  test("an objectMode body sends its string chunks", async () => {
+    using server = serveRequestBody();
+    const body = stream.Readable.from(["ab", "cd"]);
+    const response = fetch2(server.url, { method: "POST", body });
+    const seen = [];
+    body.on("data", chunk => seen.push(chunk));
+    expect(await (await response).text()).toBe("abcd");
+    expect(seen).toEqual(["ab", "cd"]);
+  });
+
+  test("an objectMode body with an object chunk rejects", async () => {
+    using server = serveRequestBody();
+    const response = fetch2(server.url, { method: "POST", body: stream.Readable.from([{ a: 1 }]) });
+    expect(await response.catch(e => `${e.constructor.name}: ${e.message}`)).toBe(
+      "TypeError: write() expects a string, ArrayBufferView, or ArrayBuffer",
+    );
+  });
+
+  // minipass 3 to 5 (tar, fs-minipass): a Stream that is not a Readable, with Symbol.asyncIterator, that buffers
+  // its writes until the first "data" listener and then hands every chunk to the listeners only.
+  class BufferedLegacyStream extends stream.Stream {
+    buffered = [];
+    flowing = false;
+    ended = false;
+    write(chunk) {
+      if (this.flowing) this.emit("data", chunk);
+      else this.buffered.push(chunk);
+      return true;
+    }
+    end() {
+      this.ended = true;
+      if (this.flowing) this.emit("end");
+    }
+    on(event, listener) {
+      super.on(event, listener);
+      if (event === "data" && !this.flowing) {
+        this.flowing = true;
+        for (const chunk of this.buffered.splice(0)) this.emit("data", chunk);
+        if (this.ended) this.emit("end");
+      } else if (event === "end" && this.ended && this.flowing) {
+        listener();
+      }
+      return this;
+    }
+    async *[Symbol.asyncIterator]() {
+      const chunks = [];
+      let done = false;
+      let wake;
+      this.on("data", chunk => {
+        chunks.push(chunk);
+        wake?.();
+      });
+      this.on("end", () => {
+        done = true;
+        wake?.();
+      });
+      while (true) {
+        if (chunks.length) yield chunks.shift();
+        else if (done) return;
+        else await new Promise(resolve => (wake = resolve));
+      }
+    }
+  }
+
+  test("a legacy Stream with Symbol.asyncIterator sends its bytes to the request and to a later listener", async () => {
+    using server = serveRequestBody();
+    const body = new BufferedLegacyStream();
+    const response = fetch2(server.url, { method: "POST", body });
+    const seen = [];
+    body.on("data", chunk => seen.push(chunk.toString()));
+    body.write(Buffer.from("hello "));
+    body.write(Buffer.from("world"));
+    body.end();
+    expect(await (await response).text()).toBe("hello world");
+    expect(seen.join("")).toBe("hello world");
+  });
+
+  test.each([true, false])(
+    "a Readable body that fails after the call rejects (own error listener: %p)",
+    async ownListener => {
+      using server = serveRequestBody();
+      const body = new stream.Readable({ read() {} });
+      if (ownListener) body.on("error", () => {});
+      const response = fetch2(server.url, { method: "POST", body });
+      body.push("hello ");
+      const error = new Error("upload failed");
+      body.destroy(error);
+      expect(await response.catch(e => e)).toBe(error);
+    },
+  );
+
+  test("an fs.ReadStream body that cannot open rejects", async () => {
+    using server = serveRequestBody();
+    using dir = tempDir("node-fetch-missing", {});
+    const response = fetch2(server.url, { method: "POST", body: createReadStream(path.join(String(dir), "missing")) });
+    expect(await response.catch(e => e.code)).toBe("ENOENT");
+  });
+
+  // node-fetch destroys the body with the AbortError: https://github.com/node-fetch/node-fetch/blob/v2.7.0/src/index.js#L80-L92
+  test("an abort after the call destroys the body with the AbortError", async () => {
+    using server = serveRequestBody();
+    const controller = new AbortController();
+    const body = new stream.Readable({ read() {} });
+    const response = fetch2(server.url, { method: "POST", body, signal: controller.signal });
+    body.push("hello");
+    const failed = new Promise(resolve => body.once("error", resolve));
+    controller.abort();
+    expect(await response.catch(e => e.name)).toBe("AbortError");
+    expect((await failed).name).toBe("AbortError");
+    expect(body.destroyed).toBe(true);
+  });
+
+  test.each([undefined, "HEAD", "head"])(
+    "a request with a stream body and method %s rejects and leaves the stream alone",
+    async method => {
+      using server = serveRequestBody();
+      const body = new stream.Readable({ read() {} });
+      const response = fetch2(server.url, { method, body });
+      expect(await response.catch(e => `${e.constructor.name}: ${e.message}`)).toBe(
+        "TypeError: fetch() request with GET/HEAD method cannot have body.",
+      );
+      expect(body.listenerCount("data")).toBe(0);
+    },
+  );
+
+  test("the bytes read before the connection is ready stay within the high water mark", async () => {
+    // A server that accepts but never answers the TLS handshake: the request never pulls its body.
+    const sockets = [];
+    const server = net.createServer(socket => sockets.push(socket.on("error", () => {})));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      let reads = 0;
+      const body = new stream.Readable({
+        highWaterMark: 64 * 1024,
+        read() {
+          reads++;
+          setImmediate(() => this.push(Buffer.alloc(16 * 1024)));
+        },
+      });
+      const response = fetch2(`https://127.0.0.1:${server.address().port}/`, { method: "POST", body });
+      response.catch(() => {});
+      // The web stream queues one high water mark, then the Readable fills its own buffer and stops.
+      const limit = 2 * 4 + 1;
+      const deadline = Date.now() + 2000;
+      while (body.readableLength < body.readableHighWaterMark && reads <= limit && Date.now() < deadline) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      expect(reads).toBeLessThanOrEqual(limit);
+      expect(body.readableLength).toBe(body.readableHighWaterMark);
+      expect(body.isPaused()).toBe(true);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+      await once(server, "close");
+    }
+  });
+});
+
+// node-fetch's Response accepts a stream that emits strings, as an http.IncomingMessage with setEncoding() does.
+test("node-fetch Response reads a setEncoding() body", async () => {
+  const body = new stream.Readable({ read() {} });
+  body.setEncoding("utf8");
+  const response = new Response(body);
+  body.push("héllo");
+  body.push(null);
+  // The web stream pulls the chunks before a reader is attached.
+  await once(body, "end");
+  expect(await response.text()).toBe("héllo");
 });
 
 // @kubernetes/client-node passes an https.Agent (with ca/cert/key) to node-fetch: https://github.com/oven-sh/bun/issues/19754

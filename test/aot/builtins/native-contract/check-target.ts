@@ -1,8 +1,9 @@
+import { types } from "node:util";
 import type { Candidate } from "../differential/instances";
 import type { Realm } from "../differential/members";
 import { releaseKeptValues, undefinedCandidate } from "../differential/instances";
-import { Log } from "../differential/log";
-import { runSets, type RunOptions } from "../differential/observe";
+import { Log, type LogEvent } from "../differential/log";
+import { runSets, type MadeCall, type RunOptions } from "../differential/observe";
 import { changesIn, type OperandSet, type Run } from "../differential/runs";
 import { findChangedBuiltinObjects, haveChangedAgain, lookingAtBuiltinObjectsInEveryCall, takeBack } from "../differential/snapshots";
 import { isObject, operandUses, type OperandUse } from "../differential/table-description";
@@ -10,6 +11,8 @@ import { describeChangeOfBuiltinObject, findOperandChanges, keyOfChange, type Op
 import {
   collectNamesRead,
   createSet,
+  descriptorCandidate,
+  isRecordingCallback,
   kindsFor,
   optionBags,
   kindsOfRealObjects,
@@ -43,6 +46,9 @@ const setsPerWait = 64;
 const endsItsReceiver = /(abort|close|destroy|detach|dispose|end|finish|kill|shutdown|stop|terminate)\w*(\/\d+)?$/i;
 const millisecondsPerTarget = 20_000;
 const usesDescriptors = /NodeJSFS|node_fs_binding|\bfs\b/;
+// By its name such a member leaves its work with another thread and answers through its first argument, once.
+const answersThroughCallback = /%NodeJSFS%\.prototype\.\w+Cb$/;
+const isCallOfFirstArgument = ({ trap, origin }: LogEvent) => trap === "apply" && origin.kind === "Operand" && origin.operand === 0;
 
 // On a real object a definition shows as another value or as other attributes, like a store or a descriptor.
 const usesDeclaring = Object.fromEntries(operandUses.map(use => [use, [use]])) as Record<OperandUse, OperandUse[]>;
@@ -54,6 +60,25 @@ type Outcome = { set: OperandSet; didReturn: boolean; message: string; kindOfRes
 
 function kindOf(value: unknown): string {
   return isObject(value) ? Object.prototype.toString.call(value) : typeof value;
+}
+
+async function untilSettled(promise: Promise<unknown>): Promise<void> {
+  try {
+    await promise;
+  } catch {}
+}
+
+async function untilCalled(log: Log): Promise<void> {
+  while (!log.events.some(isCallOfFirstArgument)) await new Promise(resolve => setImmediate(resolve));
+}
+
+// The thread that a call left its work with has the number of the descriptor until it answers. Closed before that, the number goes to
+// the next file that the test opens, and the thread works on that file.
+function untilAnswered(path: string, { set, log, args, completion }: MadeCall): Promise<void> | undefined {
+  if (completion.kind === "Threw" || !set.arguments.includes(descriptorCandidate)) return undefined;
+  if (types.isPromise(completion.value)) return untilSettled(completion.value);
+  // Behind another first argument the descriptor is the one that is never closed.
+  return answersThroughCallback.test(path) && isRecordingCallback(log, args[0]) ? untilCalled(log) : undefined;
 }
 
 function messageOf({ completion }: Run): string {
@@ -104,7 +129,10 @@ class Checker {
     const { name, path, mode, isInTable, hasOwnReceiver, length, argumentCount } = target;
     // A call that returns may have moved, cut or closed the file that a number names.
     const mayReturn = !endsItsReceiver.test(name) && !usesDescriptors.test(path);
-    this.#options = { leavesOperandsAsMade: run => (mayReturn || run.completion.kind === "Threw") && changesIn(run).length === 0 };
+    this.#options = {
+      leavesOperandsAsMade: run => (mayReturn || run.completion.kind === "Threw") && changesIn(run).length === 0,
+      untilAnswered: usesDescriptors.test(path) ? call => untilAnswered(path, call) : undefined,
+    };
     this.names = Array.from({ length: argumentCount }, () => new Map());
     this.report = {
       name,

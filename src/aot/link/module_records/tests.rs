@@ -305,6 +305,7 @@ fn es_module_record_has_body_and_requests() {
         import './first.js';
         import defer * as later from './later.js';
         import 'node:path';
+        import 'node:http';
         console.log(later);
     ";
     let program = link_program(&[
@@ -318,6 +319,7 @@ fn es_module_record_has_body_and_requests() {
     assert!(record.body.is_some());
     assert!(!record.positions.line_starts.is_empty());
     let path = ModuleId::new(runtime_module_index(&program, RuntimeModule::NodePath));
+    let http = ModuleId::new(runtime_module_index(&program, RuntimeModule::NodeHttp));
     let request = |target, phase| ModuleRequest {
         target,
         phase,
@@ -327,11 +329,17 @@ fn es_module_record_has_body_and_requests() {
         is_hoisted: false,
         star_place: None,
     };
+    // The load of node:path shows nowhere, so the statement leaves the module to its first use. That of node:http shows.
+    let left_to_first_use = ModuleRequest {
+        completes: false,
+        ..request(path, ImportPhase::Defer)
+    };
     let expected_requests = [
         request(module_named(&program, "second.js"), ImportPhase::Evaluation),
         request(module_named(&program, "first.js"), ImportPhase::Evaluation),
         request(module_named(&program, "later.js"), ImportPhase::Defer),
-        request(path, ImportPhase::Evaluation),
+        left_to_first_use,
+        request(http, ImportPhase::Evaluation),
     ];
     assert_eq!(record.requests, expected_requests);
     let expected = Module {

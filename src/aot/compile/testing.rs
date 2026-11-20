@@ -515,6 +515,7 @@ fn with_loaded_bind_input<R>(
                 || build.options.aot.admits_inspector,
             any_module_loads_again: runs_tests && contents.any_module_loads_again,
             runs_tests,
+            loads_builtins_at_first_use: false,
             runner_starts_entry_points: runs_tests,
             written_entry_point_count: build.options.entry_points.len(),
             entry_points_run_again: false,

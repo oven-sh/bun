@@ -7,6 +7,9 @@
 //! may still say, where the importer links, that a program can write what the load reads: then the module runs there, as it
 //! did before.
 
+#[cfg(test)]
+mod tests;
+
 use super::imports::FileImports;
 use super::interop::ImportPhase;
 use super::module_set::ModuleSet;

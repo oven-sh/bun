@@ -315,26 +315,6 @@ describe("lex shell", () => {
       { "Delimit": {} },
       {
         "Redirect": {
-          "stdin": true,
-          "stdout": false,
-          "stderr": false,
-          "append": false,
-          duplicate_out: false,
-          "__unused": 0,
-        },
-      },
-      { "Text": "file.txt" },
-      { "Delimit": {} },
-      { "Eof": {} },
-    ];
-    result = lex`cmd1 0> file.txt`;
-    expect(JSON.parse(result)).toEqual(expected);
-
-    expected = [
-      { "Text": "cmd1" },
-      { "Delimit": {} },
-      {
-        "Redirect": {
           "stdin": false,
           "stdout": true,
           "stderr": false,
@@ -449,6 +429,85 @@ describe("lex shell", () => {
     ];
     result = lex`cmd1 &>> file.txt`;
     expect(JSON.parse(result)).toEqual(expected);
+  });
+
+  // https://github.com/oven-sh/bun/issues/47822
+  describe("fd duplication", () => {
+    const cmd = [{ Text: "cmd1" }, { Delimit: {} }];
+    const stdoutToStderr = { Redirect: redirect({ stderr: true, duplicate_out: true }) };
+    const stderrToStdout = { Redirect: redirect({ stdout: true, duplicate_out: true }) };
+
+    test.each([
+      ["cmd1 >&2", [...cmd, stdoutToStderr, { Eof: {} }]],
+      ["cmd1 1>&2", [...cmd, stdoutToStderr, { Eof: {} }]],
+      ["cmd1 2>&1", [...cmd, stderrToStdout, { Eof: {} }]],
+      ["cmd1 >& 2", [...cmd, stdoutToStderr, { Eof: {} }]],
+      ["cmd1 >&\t2", [...cmd, stdoutToStderr, { Eof: {} }]],
+      ["cmd1>&2", [...cmd, stdoutToStderr, { Eof: {} }]],
+      ["cmd1 >&2;", [...cmd, stdoutToStderr, { Semicolon: {} }, { Eof: {} }]],
+      ["cmd1 >&2|cmd1", [...cmd, stdoutToStderr, { Pipe: {} }, ...cmd, { Eof: {} }]],
+      ["cmd1 >&2 arg", [...cmd, stdoutToStderr, { Text: "arg" }, { Delimit: {} }, { Eof: {} }]],
+      // `n>&n` duplicates an fd onto itself. Nothing to do, so no token.
+      ["cmd1 >&1", [...cmd, { Eof: {} }]],
+      ["cmd1 1>&1", [...cmd, { Eof: {} }]],
+      ["cmd1 2>&2", [...cmd, { Eof: {} }]],
+      ["cmd1 <&0", [...cmd, { Eof: {} }]],
+      ["cmd1 0<&0", [...cmd, { Eof: {} }]],
+      ["cmd1 0>&0", [...cmd, { Eof: {} }]],
+      ["cmd1 1<&1", [...cmd, { Eof: {} }]],
+      ["cmd1 2<&2", [...cmd, { Eof: {} }]],
+      ["cmd1 >&1 arg", [...cmd, { Text: "arg" }, { Delimit: {} }, { Eof: {} }]],
+      // An fd number starts a word.
+      [
+        "cmd1 abc3>out",
+        [
+          ...cmd,
+          { Text: "abc3" },
+          { Delimit: {} },
+          { Redirect: redirect({ stdout: true }) },
+          { Text: "out" },
+          { Delimit: {} },
+          { Eof: {} },
+        ],
+      ],
+      ["cmd1 file2>&1", [...cmd, { Text: "file2" }, { Delimit: {} }, { Eof: {} }]],
+      [
+        "cmd1 -9>out",
+        [
+          ...cmd,
+          { Text: "-9" },
+          { Delimit: {} },
+          { Redirect: redirect({ stdout: true }) },
+          { Text: "out" },
+          { Delimit: {} },
+          { Eof: {} },
+        ],
+      ],
+      [
+        "cmd1\t2>out",
+        [
+          { Text: "cmd1\t" },
+          { Delimit: {} },
+          { Redirect: redirect({ stderr: true }) },
+          { Text: "out" },
+          { Delimit: {} },
+          { Eof: {} },
+        ],
+      ],
+      // `0<` takes a file, with no append flag.
+      ["cmd1 0< f", [...cmd, { Redirect: redirect({ stdin: true }) }, { Text: "f" }, { Delimit: {} }, { Eof: {} }]],
+      // The number ends at a command substitution close or an escaped newline.
+      [
+        "$(cmd1 2>&1)",
+        [{ CmdSubstBegin: {} }, ...cmd, stderrToStdout, { Delimit: {} }, { CmdSubstEnd: {} }, { Eof: {} }],
+      ],
+      ["cmd1 2>&1\\\ncmd1", [...cmd, stderrToStdout, ...cmd, { Eof: {} }]],
+      // Quoted and escaped forms stay text.
+      ['cmd1 ">&2"', [{ Text: "cmd1" }, { Delimit: {} }, { DoubleQuotedText: ">&2" }, { Eof: {} }]],
+      ["cmd1 >\\&2", [...cmd, { Redirect: redirect({ stdout: true }) }, { Text: "&2" }, { Delimit: {} }, { Eof: {} }]],
+    ])("%s", (source, expected) => {
+      expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+    });
   });
 
   test("obj_ref", () => {

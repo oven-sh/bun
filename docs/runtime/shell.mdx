@@ -135,8 +135,10 @@ Redirect a command's _input_ or _output_ with the typical Bash operators:
 - `>>` or `1>>` redirect stdout, _appending_ to the destination, instead of overwriting
 - `2>>` redirect stderr, _appending_ to the destination, instead of overwriting
 - `&>>` redirect both stdout and stderr, _appending_ to the destination, instead of overwriting
-- `1>&2` redirect stdout to stderr (writes to stdout go to stderr instead)
+- `>&2` or `1>&2` redirect stdout to stderr (writes to stdout go to stderr instead)
 - `2>&1` redirect stderr to stdout (writes to stderr go to stdout instead)
+
+A file descriptor duplicated onto itself (`>&1`, `1>&1`, `2>&2`, `<&0`, `0<&0`) does nothing, as in Bash. Bun Shell only redirects file descriptors 0, 1 and 2. A form that uses another file descriptor, such as `3>&1`, is a parse error that names the form.
 
 Bun Shell also supports redirecting from and to JavaScript objects.
 

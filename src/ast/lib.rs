@@ -1456,6 +1456,15 @@ impl Log {
     // TODO(dylan-conway): rename and replace `addErrorFmt`
     #[inline]
     pub fn add_error_fmt_opts(&mut self, args: fmt::Arguments<'_>, opts: AddErrorOptions<'_>) {
+        self.add_error_fmt_opts_with_notes(args, opts, Box::default())
+    }
+
+    pub fn add_error_fmt_opts_with_notes(
+        &mut self,
+        args: fmt::Arguments<'_>,
+        opts: AddErrorOptions<'_>,
+        notes: Box<[Data]>,
+    ) {
         let text = alloc_print(args);
         self.add_formatted_msg(
             Kind::Err,
@@ -1465,7 +1474,7 @@ impl Log {
                 len: opts.len,
             },
             text,
-            Box::default(),
+            notes,
             opts.redact_sensitive_information,
         )
     }

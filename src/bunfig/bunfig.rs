@@ -224,6 +224,25 @@ impl<'a> Parser<'a, '_> {
         Err(crate::Error::InvalidBunfig)
     }
 
+    fn add_error_format_with_note(
+        &mut self,
+        loc: bun_ast::Loc,
+        args: core::fmt::Arguments<'_>,
+        note: &'static [u8],
+    ) -> crate::Result<()> {
+        self.log.add_error_fmt_opts_with_notes(
+            args,
+            bun_ast::ErrorOpts {
+                source: Some(self.source),
+                loc,
+                redact_sensitive_information: true,
+                ..Default::default()
+            },
+            Box::new([bun_ast::range_data(None, bun_ast::Range::NONE, note)]),
+        );
+        Err(crate::Error::InvalidBunfig)
+    }
+
     fn expect_string(&mut self, expr: &Expr) -> crate::Result<()> {
         match &expr.data {
             ExprData::EString(_) => Ok(()),
@@ -256,11 +275,10 @@ impl<'a> Parser<'a, '_> {
         self.expect(expr, ExprTag::ENumber)?;
         let value = expr.as_number().expect("infallible: type checked");
         if self.ctx.test_options.coverage.enabled && !(0.0..=1.0).contains(&value) {
-            self.add_error_format(
+            self.add_error_format_with_note(
                 expr.loc,
-                format_args!(
-                    "{key} must be a fraction between 0 and 1 (use 0.1 for 10%), got {value}"
-                ),
+                format_args!("{key} must be a fraction between 0 and 1, got {value}"),
+                b"use 0.1 for 10%",
             )?;
         }
         Ok(value)

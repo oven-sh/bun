@@ -1591,16 +1591,17 @@ export function multiply(a: number, b: number) { return a * b; }
       stderr: normalizeBunSnapshot(stderr, dir),
     };
   }
-  const rangeError = (key: string, value: string) =>
-    `${key} must be a fraction between 0 and 1 (use 0.1 for 10%), got ${value}`;
+  const rangeError = (key: string, value: string) => `${key} must be a fraction between 0 and 1, got ${value}`;
 
   test.concurrent("the error points at the value", async () => {
     const { stderr, exitCode } = await run(`[test]\ncoverage = true\ncoverageThreshold = 10\n`);
     expect(stderr).toMatchInlineSnapshot(`
 "3 | coverageThreshold = 10
                         ^
-error: test.coverageThreshold must be a fraction between 0 and 1 (use 0.1 for 10%), got 10
+error: test.coverageThreshold must be a fraction between 0 and 1, got 10
     at <dir>/bunfig.toml:3:21
+
+note: use 0.1 for 10%
 
 Invalid Bunfig: failed to load bunfig"
 `);

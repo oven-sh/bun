@@ -1224,7 +1224,7 @@ impl<'a> Transpiler<'a> {
                 }
             };
             if let Some(opened_file) = this_parse.opened_file
-                && let Some(resolver::cache::SourceFd::Owned(file)) = entry.file
+                && let Some(bun_sys::MaybeOwnedFile::Owned(file)) = entry.file
             {
                 *opened_file = Some(file);
             }

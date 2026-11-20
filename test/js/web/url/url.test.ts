@@ -202,6 +202,170 @@ describe("url", () => {
     }
   });
 
+  // A backslash ends a path segment only in a special URL (http, https, ws, wss, ftp, file). In any other URL it is a
+  // character of the segment, so ".\x" and "..\x" are not dot segments.
+  describe("dots before a backslash in the path of a non-special URL", () => {
+    it("are kept by the constructor", () => {
+      const fill = (length: number) => Buffer.alloc(length, "s").toString();
+      // Each input is its own serialization.
+      const inputs = [
+        "zz:/.\\x",
+        "zz:/..\\x",
+        "zz:/a/..\\x",
+        "zz:/a/.\\",
+        "zz://h/.\\x",
+        "zz://h/..\\",
+        "zz:/a/b/..\\..\\x",
+        "zz:/a/%2e\\x",
+        "zz:/a/%2E%2e\\x",
+        "zz:/a/.%2E\\",
+        "zz://u:p@h:8/a/..\\?q#f",
+        "git://h/a/.\\b/..\\c",
+        // The parser reads a path 16 code units at a time.
+        `zz://h/${fill(16)}/..\\${fill(16)}/.\\${fill(16)}`,
+        `zz:/${fill(33)}/%2e%2e\\${fill(17)}`,
+      ];
+      expect(inputs.map(input => new URL(input).href)).toEqual(inputs);
+      expect(inputs.map(input => URL.canParse(input))).toEqual(inputs.map(() => true));
+      expect(new URL("zz:/a/..\\x").pathname).toBe("/a/..\\x");
+      expect(new URL("zz://h/.\\x").pathname).toBe("/.\\x");
+      // Without a host, the segment can be the first one of the path.
+      expect(new URL("zz:/.\\x").pathname).toBe("/.\\x");
+      expect(new URL("zz:/..\\x?q#f").pathname).toBe("/..\\x");
+      expect(new URL("a:/.\\").pathname).toBe("/.\\");
+      // The parser removes a tab and a newline before it reads the segment.
+      expect(new URL("zz:/a/.\t\\x").href).toBe("zz:/a/.\\x");
+      expect(new URL("zz:/a/.\n.\\x").href).toBe("zz:/a/..\\x");
+      // A 16-bit string.
+      expect(new URL("zz:/a/..\\\u4e2d").href).toBe("zz:/a/..\\%E4%B8%AD");
+    });
+
+    it("are kept beside dot segments, which are removed", () => {
+      expect(new URL("zz:/a/.\\b/../c").href).toBe("zz:/a/c");
+      expect(new URL("zz:/a/..\\/./x").href).toBe("zz:/a/..\\/x");
+      expect(new URL("zz:/a/..\\/../x").href).toBe("zz:/a/x");
+      expect(new URL("zz:/a/b/..\\/..").href).toBe("zz:/a/b/");
+    });
+
+    it("are kept in a relative URL and in its base", () => {
+      expect(new URL("..\\x", "zz:/a/b/c").href).toBe("zz:/a/b/..\\x");
+      expect(new URL(".\\x", "zz://h/a/b").href).toBe("zz://h/a/.\\x");
+      expect(new URL("/.\\x", "zz://h/a/b").href).toBe("zz://h/.\\x");
+      expect(new URL("%2e%2e\\x", "zz://h/a/b/c").href).toBe("zz://h/a/b/%2e%2e\\x");
+      expect(URL.parse("..\\x", "zz:/a/b/c")?.href).toBe("zz:/a/b/..\\x");
+      expect(new URL("x", "zz:/a/.\\b/c").href).toBe("zz:/a/.\\b/x");
+      expect(new URL("..", "zz:/a/..\\b/c").href).toBe("zz:/a/");
+      expect(new URL("x", "zz:/a/b/..\\c").href).toBe("zz:/a/b/x");
+    });
+
+    it("are kept by the setters", () => {
+      const url = new URL("zz://h/q?s#f");
+      url.pathname = "/a/..\\x";
+      expect(url.href).toBe("zz://h/a/..\\x?s#f");
+      url.pathname = ".\\";
+      expect(url.href).toBe("zz://h/.\\?s#f");
+      url.href = "zz:/a/b/%2e.\\x";
+      expect(url.href).toBe("zz:/a/b/%2e.\\x");
+
+      // Without a host, each setter finds the path where it starts.
+      const hostless = new URL("zz:/.\\x");
+      hostless.pathname = hostless.pathname;
+      expect(hostless.href).toBe("zz:/.\\x");
+      hostless.search = "?q";
+      hostless.hash = "#f";
+      expect(hostless.href).toBe("zz:/.\\x?q#f");
+      hostless.host = "h:1";
+      expect(hostless.href).toBe("zz://h:1/.\\x?q#f");
+      hostless.port = "";
+      expect(hostless.href).toBe("zz://h/.\\x?q#f");
+      hostless.pathname = "/a/..\\";
+      expect([hostless.href, hostless.pathname]).toEqual(["zz://h/a/..\\?q#f", "/a/..\\"]);
+    });
+
+    it("are kept by the other callers of the parser", () => {
+      expect(URL.parse("zz:/a/..\\x")?.href).toBe("zz:/a/..\\x");
+      expect(new Request("zz:/a/..\\x").url).toBe("zz:/a/..\\x");
+      expect(Response.redirect("zz:/a/..\\x").headers.get("location")).toBe("zz:/a/..\\x");
+
+      // A pattern for /x does not match the path /a/..\x.
+      expect(new URLPattern("zz://h/x").test("zz://h/a/..\\x")).toBe(false);
+      expect(new URLPattern("zz://h/a/*").test("zz://h/a/..\\x")).toBe(true);
+      expect(new URLPattern("zz://h/*").exec("zz://h/.\\x")?.pathname).toEqual({
+        input: "/.\\x",
+        groups: { "0": ".\\x" },
+      });
+      const any = new URLPattern({ protocol: "zz", pathname: "/*" });
+      expect(any.exec({ protocol: "zz", pathname: "/..\\x" })?.pathname.input).toBe("/..\\x");
+      // In a pattern, "\\" is one backslash.
+      const pattern = new URLPattern({ protocol: "zz", pathname: "/.\\\\x" });
+      expect(pattern.pathname).toBe("/.\\\\x");
+      expect(pattern.test("zz://h/.\\x")).toBe(true);
+      expect(pattern.test({ protocol: "zz", pathname: "/.\\x" })).toBe(true);
+      expect(pattern.test("zz://h/x")).toBe(false);
+    });
+
+    // These pass with and without the change. They fail if a backslash stops being a separator in a special URL, or
+    // if a slash, "?" or "#" stops ending a dot segment in a non-special URL.
+    it("are dot segments in a special URL, and before a slash in every URL", () => {
+      expect(new URL("http://h/.\\x").href).toBe("http://h/x");
+      expect(new URL("https://h/a/..\\x").href).toBe("https://h/x");
+      expect(new URL("ws://h/a/b/%2e%2E\\").href).toBe("ws://h/a/");
+      expect(new URL("wss://h/a/b/.%2e\\x").href).toBe("wss://h/a/x");
+      expect(new URL("ftp://h/a/.\\x").href).toBe("ftp://h/a/x");
+      expect(new URL("file:///a/..\\x").href).toBe("file:///x");
+      expect(new URL("http://h/a/b/..\\..\\x").href).toBe("http://h/x");
+      expect(new URL("..\\x", "http://h/a/b/c").href).toBe("http://h/a/x");
+      expect(new URL(".\\x", "file:///a/b").href).toBe("file:///a/x");
+      const url = new URL("http://h/q");
+      url.pathname = "/a/..\\x";
+      expect(url.href).toBe("http://h/x");
+      expect(new URLPattern("http://h/x").test("http://h/a/..\\x")).toBe(true);
+
+      expect(new URL("zz:/a/../x").href).toBe("zz:/x");
+      expect(new URL("zz:/a/./x").href).toBe("zz:/a/x");
+      expect(new URL("zz:/a/b/..?q").href).toBe("zz:/a/?q");
+      expect(new URL("zz:/a/b/.#f").href).toBe("zz:/a/b/#f");
+      expect(new URL("zz:/a/b/%2e%2E").href).toBe("zz:/a/");
+      // No slash before the dots, and an opaque path.
+      expect(new URL("zz:/a\\..\\x").href).toBe("zz:/a\\..\\x");
+      expect(new URL("zz:.\\x").href).toBe("zz:.\\x");
+    });
+  });
+
+  // The pathname setter looks at the start of its value: it adds the "/" that a path starts with and, without a host,
+  // the "/." that keeps a path starting with "//" from being read as a host. The parser removes tab and newline from
+  // the value, so they are not part of that start.
+  it("the pathname setter reads the start of its value without tab and newline", () => {
+    const set = (href: string, value: string) => {
+      const url = new URL(href);
+      url.pathname = value;
+      return [url.href, url.pathname, url.host];
+    };
+    expect(set("zz:/a/b", "//")).toEqual(["zz:/.//", "//", ""]);
+    expect(set("zz:/a/b", "//x")).toEqual(["zz:/.//x", "//x", ""]);
+    expect(set("zz:/a/b", "/\t/evil/x")).toEqual(["zz:/.//evil/x", "//evil/x", ""]);
+    expect(set("zz:/a/b", "\t//x")).toEqual(["zz:/.//x", "//x", ""]);
+    expect(set("zz:/a/b", "/\n\r/")).toEqual(["zz:/.//", "//", ""]);
+    expect(set("zz:/a/b", "\n/x")).toEqual(["zz:/x", "/x", ""]);
+    expect(set("zz:/a/b", "\t")).toEqual(["zz:/", "/", ""]);
+    // A backslash is not a slash in a non-special URL. Without a host, an empty value leaves the path "/".
+    expect(set("zz:/a/b", "\\x")).toEqual(["zz:/\\x", "/\\x", ""]);
+    expect(set("zz://h/a", "\\x")).toEqual(["zz://h/\\x", "/\\x", "h"]);
+    expect(set("zz:/.//a", "")).toEqual(["zz:/", "/", ""]);
+    // The path that is replaced starts with a dot.
+    expect(set("zz:/.a/b", "//")).toEqual(["zz:/.//", "//", ""]);
+    expect(set("zz:/.a/b", "/\t/evil/x")).toEqual(["zz:/.//evil/x", "//evil/x", ""]);
+    expect(set("zz:/..\\x", "//")).toEqual(["zz:/.//", "//", ""]);
+    // With a host, "//" is two empty segments, and an empty path stays empty.
+    expect(set("zz://h/a", "\t//x")).toEqual(["zz://h//x", "//x", "h"]);
+    expect(set("zz://h/a", "\t")).toEqual(["zz://h", "", "h"]);
+    // A special URL, where a backslash is a slash.
+    expect(set("http://h/a", "\t/x")).toEqual(["http://h/x", "/x", "h"]);
+    expect(set("http://h/a", "\n\\x")).toEqual(["http://h/x", "/x", "h"]);
+    expect(set("http://h/a", "//")).toEqual(["http://h//", "//", "h"]);
+    expect(set("http://h/a", "\t")).toEqual(["http://h/", "/", "h"]);
+  });
+
   it("resolves against repeated, alternating and invalid string bases consistently", () => {
     // The last successfully parsed base string is cached; make sure hits, misses and failures all behave.
     const a = "https://a.example/dir/page";
@@ -323,6 +487,121 @@ describe("url", () => {
 }`);
     // A path whose first segment merely starts with "." gets no guard.
     expect(util.inspect(new URL("foo:/.foo"), { showHidden: true })).toContain("pathname_start: 4,");
+    // search_start is derived from the pathname's length, so it is only right if the pathname getter keeps the "/.".
+    const inspected = util.inspect(new URL("foo:/.foo?x"), { showHidden: true });
+    expect(inspected).toContain("pathname: '/.foo',");
+    expect(inspected).toContain("pathname_start: 4,");
+    expect(inspected).toContain("search_start: 9,");
+  });
+
+  // URL Standard section 4.5 step 3: a URL with a null host serializes a path whose first segment is empty with a "/."
+  // guard in front of it (foo:/.//b), and the pathname getter leaves that guard out. The guard is only ever in front of
+  // "//"; a first segment that merely starts with "." (foo:/.a, git:/.git/config) is part of the pathname.
+  describe("pathname of a host-less URL whose first segment starts with a dot", () => {
+    const pathnames = (inputs: string[]) => Object.fromEntries(inputs.map(input => [input, new URL(input).pathname]));
+
+    it("keeps the dotted first segment", () => {
+      expect(
+        pathnames([
+          "foo:/.a/b",
+          "git:/.git/config",
+          "myapp:/.well-known/assetlinks.json",
+          "foo:/..a",
+          "foo:/.a",
+          "foo:/.a?q#f",
+          "foo:/.%2Fa",
+          "foo:/.a//b",
+          "foo:/./.a",
+        ]),
+      ).toEqual({
+        "foo:/.a/b": "/.a/b",
+        "git:/.git/config": "/.git/config",
+        "myapp:/.well-known/assetlinks.json": "/.well-known/assetlinks.json",
+        "foo:/..a": "/..a",
+        "foo:/.a": "/.a",
+        "foo:/.a?q#f": "/.a",
+        "foo:/.%2Fa": "/.%2Fa",
+        "foo:/.a//b": "/.a//b",
+        "foo:/./.a": "/.a",
+      });
+    });
+
+    it("still omits the /. guard and normalizes dot segments", () => {
+      expect(
+        pathnames([
+          "foo:/.//b",
+          "foo:/..//b",
+          "foo:/.//.a",
+          "foo:/./b",
+          "foo:/.",
+          "foo://h/.a",
+          "foo:///.a",
+          "https://h/.a",
+          "file:/.a",
+        ]),
+      ).toEqual({
+        "foo:/.//b": "//b",
+        "foo:/..//b": "//b",
+        "foo:/.//.a": "//.a",
+        "foo:/./b": "/b",
+        "foo:/.": "/",
+        "foo://h/.a": "/.a",
+        "foo:///.a": "/.a",
+        "https://h/.a": "/.a",
+        "file:/.a": "/.a",
+      });
+      expect(new URL("foo:/.//b").href).toBe("foo:/.//b");
+      expect(new URL("foo:/.a/b").href).toBe("foo:/.a/b");
+    });
+
+    it("resolves relative references against such a URL", () => {
+      const resolve = (input: string, base: string) => {
+        const url = new URL(input, base);
+        return { href: url.href, pathname: url.pathname };
+      };
+      expect({
+        "x against foo:/.a/b": resolve("x", "foo:/.a/b"),
+        "../y against foo:/.a/b/c": resolve("../y", "foo:/.a/b/c"),
+        "/.a against foo:/.//b": resolve("/.a", "foo:/.//b"),
+        "//b against foo:/.a": resolve("//b", "foo:/.a"),
+      }).toEqual({
+        "x against foo:/.a/b": { href: "foo:/.a/x", pathname: "/.a/x" },
+        "../y against foo:/.a/b/c": { href: "foo:/.a/y", pathname: "/.a/y" },
+        "/.a against foo:/.//b": { href: "foo:/.a", pathname: "/.a" },
+        "//b against foo:/.a": { href: "foo://b", pathname: "" },
+      });
+    });
+
+    it("setters", () => {
+      const set = (input: string, property: "pathname" | "host" | "search" | "protocol", value: string) => {
+        const url = new URL(input);
+        url[property] = value;
+        return { href: url.href, host: url.host, pathname: url.pathname };
+      };
+      expect({
+        "foo:/x pathname=/.a/b": set("foo:/x", "pathname", "/.a/b"),
+        "foo:/.a pathname=/b": set("foo:/.a", "pathname", "/b"),
+        "foo:/.a pathname=//b": set("foo:/.a", "pathname", "//b"),
+        "foo:/.//b pathname=/.c": set("foo:/.//b", "pathname", "/.c"),
+        "foo:/.a search=?x": set("foo:/.a", "search", "?x"),
+        "foo:/.a protocol=bar": set("foo:/.a", "protocol", "bar"),
+        "foo:/.a host=h": set("foo:/.a", "host", "h"),
+        "foo:/.a host=h:1": set("foo:/.a", "host", "h:1"),
+        "foo:/.//b host=h": set("foo:/.//b", "host", "h"),
+        "foo:/.//b host=h:1": set("foo:/.//b", "host", "h:1"),
+      }).toEqual({
+        "foo:/x pathname=/.a/b": { href: "foo:/.a/b", host: "", pathname: "/.a/b" },
+        "foo:/.a pathname=/b": { href: "foo:/b", host: "", pathname: "/b" },
+        "foo:/.a pathname=//b": { href: "foo:/.//b", host: "", pathname: "//b" },
+        "foo:/.//b pathname=/.c": { href: "foo:/.c", host: "", pathname: "/.c" },
+        "foo:/.a search=?x": { href: "foo:/.a?x", host: "", pathname: "/.a" },
+        "foo:/.a protocol=bar": { href: "bar:/.a", host: "", pathname: "/.a" },
+        "foo:/.a host=h": { href: "foo://h/.a", host: "h", pathname: "/.a" },
+        "foo:/.a host=h:1": { href: "foo://h:1/.a", host: "h:1", pathname: "/.a" },
+        "foo:/.//b host=h": { href: "foo://h//b", host: "h", pathname: "//b" },
+        "foo:/.//b host=h:1": { href: "foo://h:1//b", host: "h:1", pathname: "//b" },
+      });
+    });
   });
   it("works", () => {
     const inputs = [

@@ -236,7 +236,7 @@ XML files can be directly imported. Bun parses them with its native XML 1.0 pars
 
 ```ts
 import doc from "./config.xml";
-console.log(doc.config["@version"]);
+console.log(doc);
 
 // via import attribute:
 import feed from "./export.rss" with { type: "xml" };

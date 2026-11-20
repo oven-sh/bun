@@ -1,7 +1,9 @@
 import { file, spawn } from "bun";
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { Console } from "node:console";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 
 it("should log to console correctly", async () => {
   const { stdout, stderr, exited } = spawn({
@@ -85,6 +87,69 @@ it("console.dir treats a BigInt depth like the same number", async () => {
   expect(big7).toBe(num7);
   expect(bigNegative).toBe(numNegative);
   expect(exitCode).toBe(0);
+});
+
+describe("console.table logs a first argument that is not an object alone", () => {
+  // Each row is a script and the stdout Node.js prints for it. Node.js logs
+  // only `tabularData` here, so `properties` is not a format argument.
+  const rows: [script: string, stdout: string][] = [
+    [`console.table("a %s", ["b"])`, "a %s"],
+    [`console.table(5, ["x"])`, "5"],
+    [`console.table("%d%%", [50])`, "%d%%"],
+    [`console.table("[%j]", undefined)`, "[%j]"],
+    [`console.table(null, ["x"])`, "null"],
+    [`console.table("%c styled", ["color: red"])`, "%c styled"],
+    [`console.table("a %s", ["b"], "c")`, "a %s"],
+    [`console.table("plain")`, "plain"],
+    [`console.table(undefined, [])`, "undefined"],
+    [`console.table(true, [])`, "true"],
+    [`console.table(5n, [])`, "5n"],
+    [`console.table(Symbol("s"), [])`, "Symbol(s)"],
+    // A label before the rows prints the label only.
+    [`console.table("Users:", [{ name: "ann" }])`, "Users:"],
+    [`console.group("g"); console.table("a %s", ["b"]); console.table(5, ["x"]); console.groupEnd()`, "g\n  a %s\n  5"],
+    // `properties` is still validated.
+    [`try { console.table("a", "b"); } catch (e) { console.log(e.name); }`, "TypeError"],
+    [`try { console.table(5, null); } catch (e) { console.log(e.name); }`, "TypeError"],
+    // `properties` is never read.
+    [
+      `let calls = 0;
+       const props = Object.defineProperty([], 0, { get: () => ++calls });
+       props.toString = () => ++calls;
+       console.table("a %s", props);
+       console.log("calls=" + calls)`,
+      "a %s\ncalls=0",
+    ],
+    [`console.table(5, Object.defineProperty([], 0, { get() { throw new Error("boom"); } }))`, "5"],
+  ];
+  const expected = rows.map(([, stdout]) => stdout + "\n").join("");
+
+  it("on the global console", async () => {
+    // An object is still a table that `properties` filters. Bun draws it in its own style.
+    const table = `console.table([{ a: 1, b: 2 }], ["a"])`;
+    const drawn = "┌───┬───┐\n│   │ a │\n├───┼───┤\n│ 0 │ 1 │\n└───┴───┘\n";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", [...rows.map(([script]) => script), table].join(";\n")],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + drawn, stderr: "", exitCode: 0 });
+  });
+
+  it("on the Console class of node:console", () => {
+    let written = "";
+    const sink = new Writable({
+      write(chunk, _encoding, callback) {
+        written += chunk;
+        callback();
+      },
+    });
+    const instance = new Console(sink);
+    for (const [script] of rows) new Function("console", script)(instance);
+    expect(written).toBe(expected);
+  });
 });
 
 it("console.group", async () => {

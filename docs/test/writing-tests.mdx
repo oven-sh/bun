@@ -84,7 +84,7 @@ If a test or hook still blocks the event loop 5 seconds after its timeout, `bun 
 
 - The tests and files after it do not run, and neither do `afterEach` and `afterAll` hooks.
 - Bun prints no summary, and it writes no JUnit report and no coverage report.
-- With [`--parallel`](/test/parallel), only the worker that runs the file ends. That file fails, the other files still run, and Bun writes the summary and the reports.
+- With [`--parallel`](/test/parallel), only the worker that runs the file ends. That file fails, the other files still run, and Bun writes the summary and the reports. The coverage report lacks the files that this worker ran.
 
 A test that works for more than 5 seconds past its timeout without a return to the event loop also ends the process, even if it would finish later. Give such a test a longer timeout, or a timeout of `0`.
 
@@ -93,6 +93,7 @@ The process does not end for:
 - a test or hook with a timeout of `0`
 - code at the top level of a test file or of a `--preload` script, and `describe()` callbacks, which have no timeout
 - a test that a debugger has paused
+- a test that waits for the reader of its output, as in `bun test | less`
 - `bun test --watch`, which prints a warning. A change to a file starts the tests again.
 
 The default timeout for each test is 5000ms (5 seconds) unless you override it with this timeout option or `jest.setTimeout()`.

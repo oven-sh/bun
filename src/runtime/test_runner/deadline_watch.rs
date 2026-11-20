@@ -218,8 +218,9 @@ fn publish(deadline: Timespec, is_in_callback: bool, entry: Option<Entry<'_>>) {
 ///
 /// It counts its sleeps and not the clock: while the whole process is stopped (SIGSTOP, a native
 /// debugger, a suspended machine) a deadline can pass by any amount, and the JavaScript thread
-/// handles it as soon as the process runs again. A sleep that took much longer than it asked for
-/// is such a stop, and counts for nothing.
+/// handles it as soon as the process runs again. So a sleep counts for no more than it asked for,
+/// however long it took. That is also what a sleep counts for on a machine whose processors are all
+/// busy, where the thread wakes up late every time.
 ///
 /// The count starts again after a sleep in which the JavaScript thread could not run for a reason
 /// that is not the test's: see `waits_for_somebody_else`.
@@ -230,6 +231,9 @@ fn watch() {
     const LOOKS_PER_GRACE: u64 = 4;
     const SLEEPS_PER_GRACE: u64 = 8;
     Output::Source::configure_thread_no_js();
+    // With every processor busy, as with tests that loop, the watch would wake up late by many time slices.
+    #[cfg(windows)]
+    bun_sys::windows::raise_priority_of_current_thread();
     let now = || Timespec::now(TimespecMockMode::ForceRealTime).ns();
 
     // Of which `generation` it has seen the deadline in the past, and for how long.
@@ -275,8 +279,8 @@ fn watch() {
         let slept_ns = now().saturating_sub(before);
         if waits_for_somebody_else(is_held, writes) {
             overdue.1 = 0;
-        } else if slept_ns <= sleep_ns.saturating_mul(2) {
-            overdue.1 = overdue.1.saturating_add(slept_ns);
+        } else {
+            overdue.1 = overdue.1.saturating_add(slept_ns.min(sleep_ns));
         }
     }
 }
@@ -313,11 +317,7 @@ fn is_traced() -> bool {
     }
     #[cfg(windows)]
     {
-        #[link(name = "kernel32")]
-        unsafe extern "system" {
-            safe fn IsDebuggerPresent() -> i32;
-        }
-        IsDebuggerPresent() != 0
+        bun_sys::windows::is_debugger_present()
     }
     #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos", windows)))]
     {

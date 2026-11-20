@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync } from "fs";
+import { readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isFlaky, isLinux, isWindows, tempDir } from "harness";
 import path from "path";
 
@@ -79,9 +79,9 @@ test.concurrent.each([
     ["(fail) blocks", leftBlocked("this test")],
   ],
   [
-    // Without the loop it passes, though it ends 1250ms after its timeout: the timer of the test only fires in the event loop.
-    "work after a timer that takes too long",
-    `test("blocks", async () => { await wait(1); block(1500); });`,
+    // On its own it passes, long after its timeout: the timer of the test only fires in the event loop.
+    "work after a timer that takes 10 seconds",
+    `test("blocks", async () => { await wait(1); block(10_000); });`,
     ["(fail) blocks", leftBlocked("this test")],
   ],
   [
@@ -150,6 +150,37 @@ test.concurrent(
     );
     expect(run).toEqual({
       lines: ["ran: body,finally", "(fail) overruns", "  ^ this test timed out after 250ms.", "(pass) after it"],
+      signalCode: null,
+      exitCode: 1,
+      files: ["a.test.ts"],
+    });
+  },
+  20_000,
+);
+
+// The report of an error runs code of the test after the test has returned: here a getter that takes longer than the
+// timeout and 100ms more. What the runner does between two tests has no timeout.
+test.concurrent(
+  "an error that takes long to report does not end the run",
+  async () => {
+    const run = await runTestFile(
+      fixture(`
+        test("throws", () => {
+          const error = new Error("thrown");
+          let calls = 0;
+          Object.defineProperty(error, "message", {
+            get() {
+              if (calls++ === 0) block(600);
+              return "thrown";
+            },
+          });
+          throw error;
+        });
+        test("after it", () => {});`),
+      { graceMs: 100 },
+    );
+    expect(run).toEqual({
+      lines: ["error: thrown", "(fail) throws", "  ^ this test timed out after 250ms.", "(pass) after it"],
       signalCode: null,
       exitCode: 1,
       files: ["a.test.ts"],
@@ -384,8 +415,15 @@ test.concurrent.skipIf(isWindows)(
       output += chunk;
       if (output.includes("Ran 1 test across 1 file.")) break;
     }
-    proc.kill("SIGKILL");
-    await proc.exited;
+    // How often the thread that watches the tests has slept: every 12.5ms while the test was late, which is 212 times.
+    const sleeps = isLinux
+      ? readdirSync(`/proc/${proc.pid}/task`)
+          .map(thread => `/proc/${proc.pid}/task/${thread}`)
+          .filter(thread => readFileSync(`${thread}/comm`, "utf8").trim() === "TestTimeout")
+          .map(thread =>
+            Number(/^voluntary_ctxt_switches:\s*(\d+)/m.exec(readFileSync(`${thread}/status`, "utf8"))![1]),
+          )
+      : [];
     const lines = output
       .split("\n")
       .filter(line => /^\((pass|fail)\) |^warn: |^  \^ |^error: |^Ran /.test(line))
@@ -397,9 +435,7 @@ test.concurrent.skipIf(isWindows)(
       "  ^ this test timed out after 250ms.",
       "Ran 1 test across 1 file.",
     ]);
-    // The test sleeps, so what the process uses in those 3 seconds is what the thread that watches it uses.
-    const cpuSeconds = Number(proc.resourceUsage()!.cpuTime.total) / 1e6;
-    expect(cpuSeconds).toBeLessThan(1.5);
+    if (isLinux) expect(sleeps.map(count => (count < 1000 ? "under 1000" : count))).toEqual(["under 1000"]);
   },
   20_000,
 );

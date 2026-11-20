@@ -213,3 +213,23 @@ impl Sent {
         late
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn what_is_settled_is_skipped() {
+        let mut packet = SentPacket {
+            number: 0,
+            flight: Flight::default(),
+            first_frame: 0,
+            frame_count: 0,
+            control: Control::empty(),
+            fate: Fate::Acked,
+            settled: 0,
+        };
+        let distances = [3, 2, 70_000, 1].map(|len| packet.settle(len));
+        assert_eq!(distances, [1, 3, 3, 65_535]);
+    }
+}

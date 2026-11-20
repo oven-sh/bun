@@ -182,3 +182,14 @@ impl Stream {
         matches!(self.role, Role::Typed(_))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_flag_has_its_own_bit() {
+        let count = <Flags as bitflags::Flags>::FLAGS.len();
+        assert_eq!(Flags::all().bits().count_ones() as usize, count);
+    }
+}

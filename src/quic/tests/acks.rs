@@ -29,6 +29,7 @@ fn fewer_packets_are_acknowledged_at_once_the_more_there_are() {
         (26, 2),
         (82, 3),
         (200, 9),
+        (99, 10),
         (30, 10),
         (10, 3),
         (10, 2),
@@ -124,13 +125,20 @@ fn late_packets_are_acknowledged_however_many_gaps_follow() {
         let numbers = (0..count).map(|it| format!(" {}", from - 2 * it));
         numbers.collect::<String>()
     };
-    for (late, below) in [(1891, 9), (1889, 8), (101, 8)] {
+    for (late, next, below) in [
+        (1891, None, 9),
+        (1889, None, 8),
+        (101, None, 8),
+        (101, Some(901), 8),
+    ] {
         let mut raw = Raw::client().connected();
         for number in 1..=1000 {
             raw.send_as(2 * number, "ping");
         }
         raw.forget();
+        raw.waits = false;
         raw.send_as(late, "ping");
+        next.inspect(|&it| raw.send_as(it, "ping"));
         let (top, above) = (even(2000, 32), even(late + 63 - 2 * below, 31 - below));
         let (range, below) = (format!("{}-{}", late - 1, late + 1), even(late - 3, below));
         assert_eq!(raw.packets(), format!("1[ack{top}{above} {range}{below}]"));
@@ -188,10 +196,15 @@ fn what_is_known_to_be_acknowledged_is_left_out() {
 /// RFC 9000 §13.2.3.
 #[test]
 fn packets_that_are_missing_for_long_are_not_waited_for() {
-    for (pause, ack) in [(RTT, "1[ack 1-4 +2500]"), (20 * RTT, "")] {
+    for (start, first, pause, ack) in [
+        (0, "ping, ack", RTT, "1[ack 1-4 +2500]"),
+        (0, "ping, ack", 20 * RTT, ""),
+        (20 * RTT, "ping", RTT, "1[ack 1-4 +2500]"),
+    ] {
         let mut raw = Raw::client().connected();
-        for number in 2..5 {
-            raw.send_as(number, "ping, ack");
+        raw.advance(start);
+        for (number, frames) in [(2, first), (3, "ping, ack"), (4, "ping, ack")] {
+            raw.send_as(number, frames);
             raw.advance(pause);
             raw.forget();
         }

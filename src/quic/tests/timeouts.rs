@@ -407,6 +407,20 @@ fn silence_is_allowed_from_now_on_and_until_no_stream_is_left() {
 }
 
 #[test]
+fn silence_has_to_be_allowed_again_for_later_streams() {
+    let mut raw = Raw::client().connected();
+    raw.send("fin 0 0 a");
+    let now = raw.now;
+    raw.connection().allow_silence(now, Duration::ZERO);
+    raw.peer.send(0, b"a", true);
+    raw.advance(RTT);
+    raw.send("ack");
+    raw.send("stream 4 0 a");
+    raw.advance(20_000);
+    assert_eq!(raw.frames(), "ping, fin 0 0 a");
+}
+
+#[test]
 fn silence_cannot_be_allowed_after_the_end() {
     let mut raw = Raw::client().connected();
     raw.peer.polls = false;
@@ -420,7 +434,7 @@ fn silence_cannot_be_allowed_after_the_end() {
 
 #[test]
 fn connection_that_the_peer_may_have_given_up() {
-    for (idle, fresh_for) in [(32_000, 30_000), (1600, 1600 - 202)] {
+    for (idle, fresh_for) in [(32_000, 30_000), (1600, 1600 - 202), (300, 450 - 150)] {
         let raw = Raw::server().config(|it| it.parameters.max_idle_timeout_millis = idle);
         let mut raw = raw.connected();
         raw.send("padding 3");

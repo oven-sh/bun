@@ -486,20 +486,26 @@ fn pacer_looks_further_ahead_in_a_shared_queue() {
 
 #[test]
 fn bursts_that_lose_their_ends_overflow_a_queue() {
-    for (bursts, is_overflow) in [
-        (&["...xxx"][..], true),
-        (&["....xx"], false),
-        (&["..xxx."], false),
-        (&["xxxxxx"], false),
-        (&["xxx.xx"], false),
-        (&["....xx", ".....x"], true),
-        (&[".....x", ".....x", ".....x"], true),
-        (&["....xx", "......", "......", "......", ".....x"], true),
+    for (bursts, expected) in [
+        (&["...xxx"][..], 1),
+        (&["....xx"], 0),
+        (&["..xxx."], 0),
+        (&["xxxxxx"], 0),
+        (&["xxx.xx"], 0),
+        (&["....xx", ".....x"], 1),
+        (&[".....x", ".....x", ".....x"], 1),
+        (&["....xx", "......", "......", "......", ".....x"], 1),
         (
             &["....xx", "......", "......", "......", "......", ".....x"],
-            false,
+            0,
         ),
-        (&[".....x", "xxxxxx"], true),
+        (
+            &["....xx", "......", "......", "......", "......", "....xx"],
+            0,
+        ),
+        (&[".....x", "xxxxxx"], 1),
+        (&["...xxx", "....xx"], 1),
+        (&["...xxx", "...xxx"], 2),
     ] {
         let mut sender = Sender::new(Algorithm::Cubic);
         sender.rtt.update(millis(11), Duration::ZERO);
@@ -507,14 +513,29 @@ fn bursts_that_lose_their_ends_overflow_a_queue() {
             sender.wait(millis(1)).send(6);
         }
         assert_eq!(sender.controller.pacer.quantum().div_ceil(SEGMENT), 6);
+        let mut overflows = 0;
         for (flight, fate) in sender.flights.iter().zip(bursts.concat().bytes()) {
             match fate {
                 b'x' => (sender.controller).on_lost(flight, flight.sequence % 6 == 0),
                 _ => sender.controller.on_acked(flight),
             }
+            let feedback = &mut sender.controller.feedback;
+            overflows += u32::from(core::mem::take(&mut feedback.is_overflow));
         }
-        let feedback = &sender.controller.feedback;
-        assert_eq!(feedback.is_overflow, is_overflow, "{bursts:?}");
+        assert_eq!(overflows, expected, "{bursts:?}");
+    }
+}
+
+#[test]
+fn bursts_that_lose_their_starts_share_a_queue() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    for (bursts, lost, is_shared) in [(5, 1, false), (1, 1, true), (600, 0, true), (150, 0, false)]
+    {
+        for _ in 0..bursts {
+            sender.wait(millis(1)).send(2).wait(millis(1));
+            sender.feedback(lost, 2);
+        }
+        assert_eq!(sender.controller.pacer.bonus() == 0, is_shared);
     }
 }
 
@@ -991,7 +1012,8 @@ fn bbr_starts_up_until_short_transfers_suffer_high_loss() {
         let startup_rate = sender.rounds(6, millis(10)).pacing_rate();
         for round in 1..=4 {
             sender.run_dry().send(segments).wait(micros(rtt));
-            sender.feedback(lost, usize::MAX);
+            sender.feedback(lost, segments as usize - lost - 1);
+            sender.wait(micros(1)).feedback(0, 1);
             assert_eq!(sender.pacing_rate() < startup_rate, is_high && round == 4);
         }
     }

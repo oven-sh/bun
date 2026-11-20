@@ -1,6 +1,7 @@
 use bun_quic::Direction::Unidirectional;
 use bun_quic::{Algorithm, Duration};
 
+use crate::harness::paths::{NEW, OLD, new_id};
 use crate::harness::raw::Kind::{Handshake, Short};
 use crate::harness::raw::{RTT, Raw};
 
@@ -128,6 +129,21 @@ fn spin_bit() {
             });
             assert_eq!(spins, expected);
         }
+    }
+}
+
+#[test]
+fn spin_bit_starts_over_with_another_id_or_path() {
+    for (address, frames) in [(OLD, new_id(1, 1)), (NEW, "respond".into())] {
+        let mut raw = Raw::client().connected();
+        raw.flipped = 1 << 5;
+        raw.send("ping");
+        raw.move_to(address);
+        raw.send_expanded("ping");
+        assert_eq!(raw.take()[0].first >> 5 & 1, 1);
+        raw.send(&format!("{frames}, ping"));
+        raw.connection().acknowledge();
+        assert_eq!(raw.take()[0].first >> 5 & 1, 0);
     }
 }
 

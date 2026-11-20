@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use bun_quic::Direction::Unidirectional;
 use bun_quic::Layer::Transport;
 use bun_quic::{Batch, ConnectionId, Duration, Instant, StreamId, TokenBucket};
 
@@ -232,6 +233,28 @@ fn turns_are_short_while_the_socket_is_backed_up() {
 }
 
 #[test]
+fn who_has_waited_longest_sends_first() {
+    for (early, late) in [(0, 1), (1, 0)] {
+        let raw = Raw::client().connected();
+        let first = raw.peer.handle;
+        let mut raw = raw.again();
+        raw.addresses.peer.set_port(1001);
+        let mut raw = raw.connected();
+        let handles = [first, raw.peer.handle];
+        // The late one times out sooner, as it has two packets in flight.
+        for (at, millis) in [(early, 0), (late, 10), (late, 10)] {
+            raw.peer.handle = handles[at];
+            let id = raw.peer.open(Unidirectional);
+            raw.connection().write(StreamId(id), b"a");
+            raw.peer.process(raw.now + Duration::from_millis(millis));
+        }
+        let sent = raw.peer.process(raw.now + Duration::from_millis(100));
+        let order = sent.iter().map(|it| usize::from(it.0.peer.port()) - 1000);
+        assert_eq!(order.collect::<Vec<_>>(), [early, early, late, late]);
+    }
+}
+
+#[test]
 fn clients_are_answered_two_at_a_time() {
     let mut raw = Raw::client();
     raw.waits = false;
@@ -318,10 +341,12 @@ fn handling_events_can_give_rise_to_packets() {
 #[test]
 fn a_connection_ends_even_if_it_never_gets_to_send() {
     let mut raw = Raw::client().connected();
-    raw.advance(1000);
+    raw.advance(29_900);
     let now = raw.now;
     raw.connection().abort(now, Transport, 1, b"");
     assert!(!raw.peer.poll(now));
+    let idle = raw.peer.endpoint.timeout().unwrap();
+    raw.peer.endpoint.handle_timeouts(idle);
     let end = raw.peer.endpoint.timeout().unwrap();
     assert!(end > now + Duration::from_millis(3 * (RTT + 25)));
     raw.peer.endpoint.handle_timeouts(end);

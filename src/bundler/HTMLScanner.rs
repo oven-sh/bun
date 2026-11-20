@@ -18,21 +18,44 @@ pub enum OutputSink<'a> {
     /// buffer (statically dispatched — this is the throughput-sensitive user).
     /// The pipe owns the rewriter that owns this sink, so the back-reference
     /// invariant holds structurally.
-    Buffer(bun_ptr::BackRef<bun_ptr::JsCell<Vec<u8>>>),
+    Buffer(bun_ptr::BackRef<OutputBuffer>),
     /// The bundler's HTML scanner.
     Callback(Box<dyn FnMut(&[u8]) + 'a>),
+}
+
+#[derive(Default)]
+pub struct OutputBuffer {
+    pub bytes: bun_ptr::JsCell<Vec<u8>>,
+    /// There was no memory for a chunk. What was held and what follows is dropped.
+    pub is_incomplete: core::cell::Cell<bool>,
+}
+
+impl OutputBuffer {
+    #[inline]
+    fn append(&self, chunk: &[u8]) {
+        self.bytes.with_mut(|bytes| {
+            if chunk.len() <= bytes.capacity() - bytes.len() || self.grow(bytes, chunk.len()) {
+                bytes.extend_from_slice(chunk);
+            }
+        });
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow(&self, bytes: &mut Vec<u8>, additional: usize) -> bool {
+        if self.is_incomplete.get() || bytes.try_reserve(additional).is_err() {
+            *bytes = Vec::new();
+            self.is_incomplete.set(true);
+        }
+        !self.is_incomplete.get()
+    }
 }
 
 impl lol_html::OutputSink for OutputSink<'_> {
     #[inline]
     fn handle_chunk(&mut self, chunk: &[u8]) {
         match self {
-            // lol-html signals end-of-document with one zero-length chunk.
-            OutputSink::Buffer(buffer) => {
-                if !chunk.is_empty() {
-                    buffer.with_mut(|buffer| buffer.extend_from_slice(chunk));
-                }
-            }
+            OutputSink::Buffer(buffer) => buffer.append(chunk),
             OutputSink::Callback(callback) => Self::call(callback, chunk),
         }
     }

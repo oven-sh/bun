@@ -500,6 +500,8 @@ pub mod fault_inject {
     pub const SSL_WRITE: c_int = 13;
     /// Not a syscall: the room for a chunk in the buffer for the body of a `fetch()` response.
     pub const FETCH_BODY_BUFFER: c_int = 14;
+    /// Not a syscall: the room for a chunk in the buffer of a `ByteStream`.
+    pub const BYTE_STREAM_BUFFER: c_int = 15;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;

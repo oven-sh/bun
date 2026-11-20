@@ -19,8 +19,10 @@ pub const BODY_HIGH_WATER_MARK: usize = 256 * 1024;
 /// Receive backpressure for a body handed to JS. Whichever side holds bytes no consumer has
 /// taken moves `Flowing -> Paused` once they reach the high-water mark; whoever takes them
 /// moves `Paused -> Flowing` and schedules a resume. The transport applies `Paused` after the
-/// next read. Two terminal states: `BufferAll` (a consumer wants the whole body) and
-/// `Abandoned` (nothing will read it; the transport is being shut down, drop what arrives).
+/// next read. Three states end that, and each gives way to those behind it only: `BufferAll`
+/// (a consumer wants the whole body), `Refused` (there was no memory for a part of it; the
+/// request fails) and `Abandoned` (nothing will read it; the transport is being shut down, drop
+/// what arrives).
 /// `Unclaimed`: `Flowing` before a consumer attaches. See `Signals::hold_for_consumer`.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -30,6 +32,7 @@ pub enum BodyReceiveMode {
     BufferAll = 2,
     Abandoned = 3,
     Unclaimed = 4,
+    Refused = 5,
 }
 
 impl BodyReceiveMode {
@@ -40,8 +43,15 @@ impl BodyReceiveMode {
             2 => Self::BufferAll,
             3 => Self::Abandoned,
             4 => Self::Unclaimed,
+            5 => Self::Refused,
             _ => Self::Flowing,
         }
+    }
+
+    /// A consumer takes the body piece by piece.
+    #[inline]
+    pub(crate) fn is_demand_driven(self) -> bool {
+        matches!(self, Self::Flowing | Self::Paused | Self::Unclaimed)
     }
 }
 
@@ -88,17 +98,17 @@ impl Signals {
             .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Paused as u8)
     }
 
-    /// `Flowing`, `Paused` or `Unclaimed`: a consumer takes the body piece by piece.
     #[inline]
-    pub(crate) fn is_demand_driven(self) -> bool {
+    pub(crate) fn body_receive_mode(self) -> Option<BodyReceiveMode> {
         self.body_receive_mode
             .map(bun_ptr::BackRef::from)
-            .is_some_and(|a| {
-                matches!(
-                    BodyReceiveMode::from_u8(a.load(Ordering::Acquire)),
-                    BodyReceiveMode::Flowing | BodyReceiveMode::Paused | BodyReceiveMode::Unclaimed
-                )
-            })
+            .map(|a| BodyReceiveMode::from_u8(a.load(Ordering::Acquire)))
+    }
+
+    #[inline]
+    pub(crate) fn is_demand_driven(self) -> bool {
+        self.body_receive_mode()
+            .is_some_and(BodyReceiveMode::is_demand_driven)
     }
 
     /// `Unclaimed -> Paused`: a whole body waits for the consumer, which resumes the transport.
@@ -211,12 +221,24 @@ impl Store {
         self.try_transition_receive_mode(BodyReceiveMode::Paused, BodyReceiveMode::Flowing)
     }
 
-    /// Terminal: never pause again. Returns whether it was paused.
+    /// Never pause again. Returns whether it was paused.
     #[inline]
     pub fn receive_all(&self) -> bool {
         self.body_receive_mode
-            .swap(BodyReceiveMode::BufferAll as u8, Ordering::AcqRel)
-            == BodyReceiveMode::Paused as u8
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |mode| {
+                (BodyReceiveMode::from_u8(mode).is_demand_driven())
+                    .then_some(BodyReceiveMode::BufferAll as u8)
+            })
+            == Ok(BodyReceiveMode::Paused as u8)
+    }
+
+    #[inline]
+    pub fn refuse(&self) {
+        let _ = self
+            .body_receive_mode
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |mode| {
+                (mode != BodyReceiveMode::Abandoned as u8).then_some(BodyReceiveMode::Refused as u8)
+            });
     }
 
     /// Terminal.

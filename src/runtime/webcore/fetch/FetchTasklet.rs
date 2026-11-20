@@ -28,6 +28,7 @@ use crate::generated_bindgen::fetch_tasklet::{
 };
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
+use crate::webcore::byte_stream::PinnedBytes;
 use crate::webcore::fetch::fetch_request_body_sink::FetchRequestBodySink;
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
 use crate::webcore::response::HeadersRef;
@@ -164,8 +165,6 @@ pub struct FetchTasklet {
     pub(crate) request_body_len_written: u64,
     /// The count missed and `WriteMessageType::LengthMismatch` was sent.
     pub(crate) request_body_mismatched: bool,
-    /// There was no memory for a part of the response body. HTTP thread only.
-    response_body_incomplete: bool,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
     pub poll_ref: KeepAlive,
@@ -617,40 +616,8 @@ impl FetchTasklet {
         );
 
         if !success {
-            let mut err = self.on_reject();
-            let mut js_err = JSValue::ZERO;
-            // if we are streaming update with error
-            if let Some(bytes) = self.response_stream.take() {
-                js_err = err.to_js(&global_this);
-                js_err.ensure_still_alive();
-                bytes.on_data(StreamResult::Err(StreamError::JSValue(
-                    bun_jsc::strong::Optional::create(js_err, &global_this),
-                )));
-            }
-            // A failure result is terminal (only `InFlightRequest::finish`
-            // reports `fail`), so everything pending must settle
-            // here: a still-streaming request-body sink does not exempt the
-            // response body. Returning right after `sink.cancel()` used to
-            // leave a buffered `arrayBuffer()`/`text()` promise pending
-            // forever when a fetch with an in-flight streaming request body
-            // was aborted mid-response.
-            if self.sink_mut().is_some() && js_err.is_empty() {
-                js_err = err.to_js(&global_this);
-                js_err.ensure_still_alive();
-            }
-            // if we are buffering resolve the promise
-            if let Some(response) = self.native_response.get().as_deref() {
-                // body value now owns the error
-                let body = response.get_body_value();
-                body.to_error_instance(err, &global_this)?;
-            }
-            // Cancel the request-body sink last: closing the sink signal fires
-            // the controller's onClose synchronously, which can re-enter the
-            // tasklet.
-            if !js_err.is_empty() {
-                self.cancel_request_body_sink(js_err);
-            }
-            return Ok(());
+            let err = self.on_reject();
+            return self.fail_body(err, self.response_stream.take());
         }
 
         // body can be marked as used but we still need to pipe the data
@@ -662,14 +629,19 @@ impl FetchTasklet {
                 bytes.size_hint.set(self.get_size_hint());
                 *buffer_reset = false;
                 let chunk = self.scheduled_response_buffer.list.as_slice();
-                bytes.on_data(StreamResult::TemporaryAndDone(chunk));
+                let delivered = bytes.try_on_data(StreamResult::TemporaryAndDone(chunk));
+                if delivered.is_err() {
+                    return self.fail_body_without_memory(bytes);
+                }
                 return Ok(());
             }
         } else if let Some(bytes) = self.response_stream.bytes() {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived response_stream");
             bytes.size_hint.set(self.get_size_hint());
             let chunk = self.scheduled_response_buffer.list.as_slice();
-            bytes.on_data(StreamResult::Temporary(chunk));
+            if bytes.try_on_data(StreamResult::Temporary(chunk)).is_err() {
+                return self.fail_body_without_memory(bytes);
+            }
             if self.response_stream.is_held() {
                 self.after_body_chunk_delivered(&bytes);
             }
@@ -750,6 +722,55 @@ impl FetchTasklet {
             }
         }
         Ok(())
+    }
+
+    fn fail_body(&mut self, mut err: BodyValueError, stream: Option<PinnedBytes>) -> JsResult<()> {
+        let global_this = self.global_this;
+        let mut js_err = JSValue::ZERO;
+        // if we are streaming update with error
+        if let Some(bytes) = stream {
+            js_err = err.to_js(&global_this);
+            js_err.ensure_still_alive();
+            bytes.on_data(StreamResult::Err(StreamError::JSValue(
+                bun_jsc::strong::Optional::create(js_err, &global_this),
+            )));
+        }
+        // No more of the body is delivered, so everything pending must settle
+        // here: a still-streaming request-body sink does not exempt the
+        // response body. Returning right after `sink.cancel()` used to
+        // leave a buffered `arrayBuffer()`/`text()` promise pending
+        // forever when a fetch with an in-flight streaming request body
+        // was aborted mid-response.
+        if self.sink_mut().is_some() && js_err.is_empty() {
+            js_err = err.to_js(&global_this);
+            js_err.ensure_still_alive();
+        }
+        // if we are buffering resolve the promise
+        if let Some(response) = self.native_response.get().as_deref() {
+            // body value now owns the error
+            let body = response.get_body_value();
+            body.to_error_instance(err, &global_this)?;
+        }
+        // Cancel the request-body sink last: closing the sink signal fires
+        // the controller's onClose synchronously, which can re-enter the
+        // tasklet.
+        if !js_err.is_empty() {
+            self.cancel_request_body_sink(js_err);
+        }
+        Ok(())
+    }
+
+    /// `stream` could not take a chunk.
+    #[cold]
+    fn fail_body_without_memory(&mut self, stream: PinnedBytes) -> JsResult<()> {
+        self.response_stream.release();
+        self.result.fail = Some(bun_alloc::AllocError.into());
+        let err = self.on_reject();
+        let result = self.fail_body(err, Some(stream));
+        if self.result.has_more {
+            self.on_stream_cancelled();
+        }
+        result
     }
 
     /// SAFETY: `this` is the tasklet of a posted update. The last update may free it.
@@ -1780,7 +1801,6 @@ impl FetchTasklet {
             declared_request_body_len: None,
             request_body_len_written: 0,
             request_body_mismatched: false,
-            response_body_incomplete: false,
             promise,
             concurrent_task: ConcurrentTask::default(),
             poll_ref: KeepAlive::default(),
@@ -2321,14 +2341,15 @@ impl FetchTasklet {
 
         let success = task_ref.result.is_success();
 
-        if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Abandoned {
+        let receive_mode = task_ref.signal_store.body_receive_mode();
+        if receive_mode == BodyReceiveMode::Abandoned {
             if task_ref.scheduled_response_buffer.list.capacity() > 0 {
                 task_ref.scheduled_response_buffer = MutableString::default();
             }
             if success && task_ref.result.has_more {
                 return;
             }
-        } else if success && !task_ref.response_body_incomplete {
+        } else if success && receive_mode != BodyReceiveMode::Refused {
             let scheduled = &mut task_ref.scheduled_response_buffer;
             if body.is_empty() && !body_owned.is_empty() && scheduled.list.is_empty() {
                 scheduled.list = body_owned;
@@ -2336,7 +2357,7 @@ impl FetchTasklet {
                 // Grow to Content-Length once so the per-packet append below
                 // doesn't leave the ~2x doubling over-capacity that the
                 // ArrayBuffer would adopt. Only for a consumer that wants the whole body.
-                if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::BufferAll {
+                if receive_mode == BodyReceiveMode::BufferAll {
                     if let http::BodySize::ContentLength(n) = task_ref.body_size {
                         if n > scheduled.list.capacity() {
                             let additional = n
@@ -2353,7 +2374,7 @@ impl FetchTasklet {
                 };
                 if append_to_body(scheduled, chunk).is_err() {
                     *scheduled = MutableString::default();
-                    task_ref.response_body_incomplete = true;
+                    task_ref.signal_store.refuse();
                     // Not `abort_transport()`: a reader that comes before the failure would get an empty body.
                     if let Some(id) = task_ref.async_http_id {
                         http::HTTPThread::schedule_shutdown(id);
@@ -2366,12 +2387,10 @@ impl FetchTasklet {
                 task_ref.signal_store.pause_receive();
             }
         }
-        if task_ref.response_body_incomplete {
-            if task_ref.result.has_more {
-                task_ref.signal_store.pause_receive();
-            } else {
-                task_ref.result.fail = Some(bun_alloc::AllocError.into());
-            }
+        if !task_ref.result.has_more
+            && task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Refused
+        {
+            task_ref.result.fail = Some(bun_alloc::AllocError.into());
         }
 
         if let Err(has_schedule_callback) = task_ref.has_schedule_callback.compare_exchange(

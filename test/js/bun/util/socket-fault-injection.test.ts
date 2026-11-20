@@ -34,6 +34,7 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
       "ssl_loop_buffer",
       "ssl_write",
       "fetch_body_buffer",
+      "byte_stream_buffer",
     ] as const) {
       expect(() => fault.set({ syscall, action: "short", bytes: 1 })).toThrow(/only supported for syscall/);
     }
@@ -45,7 +46,14 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
   // A zero return only means something for the data syscalls (EOF on the read
   // side, backpressure on the write side); connect's wrapper returns errno.
   test("set() rejects 'zero' for syscalls with no zero-return semantics", () => {
-    for (const syscall of ["connect", "accept", "ssl_loop_buffer", "ssl_write", "fetch_body_buffer"] as const) {
+    for (const syscall of [
+      "connect",
+      "accept",
+      "ssl_loop_buffer",
+      "ssl_write",
+      "fetch_body_buffer",
+      "byte_stream_buffer",
+    ] as const) {
       expect(() => fault.set({ syscall, action: "zero" })).toThrow(/only supported for syscall/);
     }
     for (const syscall of ["recv", "send", "writev", "sendmsg", "recvmsg"] as const) {
@@ -74,11 +82,14 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     expect(fault.set({ syscall: "recv", action: "errno", errno: "ECONNRESET", fd: 3 })).toBe(true);
   });
 
-  test.each(["session_buffer", "fetch_body_buffer"] as const)("set() rejects 'fd' for %s, too", syscall => {
-    expect(() => fault.set({ syscall, action: "errno", errno: "ENOMEM", fd: 3 })).toThrow(
-      `rule.fd is not supported for syscall "${syscall}"`,
-    );
-  });
+  test.each(["session_buffer", "fetch_body_buffer", "byte_stream_buffer"] as const)(
+    "set() rejects 'fd' for %s, too",
+    syscall => {
+      expect(() => fault.set({ syscall, action: "errno", errno: "ENOMEM", fd: 3 })).toThrow(
+        `rule.fd is not supported for syscall "${syscall}"`,
+      );
+    },
+  );
 
   test("set() rejects unknown errno name", () => {
     expect(() => fault.set({ syscall: "recv", action: "errno", errno: "ENOSUCHERR" as any })).toThrow(

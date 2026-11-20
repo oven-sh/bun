@@ -770,8 +770,8 @@ export function storedOutgoingHeaders(message: any): Record<string, [string, unk
 /**
  * The syscalls instrumented in bsd.cpp, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
- * "poll_start", "session_buffer", "ssl_write", "fetch_body_buffer"; see fault_inject.h for the
- * per-hook description). Arming anything else is rejected.
+ * "poll_start", "session_buffer", "ssl_write", "fetch_body_buffer", "byte_stream_buffer"; see
+ * fault_inject.h for the per-hook description). Arming anything else is rejected.
  */
 export type SocketFaultSyscall =
   | "recv"
@@ -785,7 +785,8 @@ export type SocketFaultSyscall =
   | "poll_start"
   | "session_buffer"
   | "ssl_write"
-  | "fetch_body_buffer";
+  | "fetch_body_buffer"
+  | "byte_stream_buffer";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;

@@ -3651,18 +3651,23 @@ impl<'a> HTTPClient<'a> {
     }
 
     /// Output budget of one decode pass. h1 only: h2/h3 detach before held input could drain.
+    /// `Err`: more of the body is of no use.
     #[inline]
-    fn decompress_output_cap(&self) -> usize {
-        if self.flags.protocol == Protocol::Http1_1 && self.signals.is_demand_driven() {
-            signals::BODY_HIGH_WATER_MARK
-        } else {
-            usize::MAX
+    fn decompress_output_cap(&self) -> crate::Result<usize> {
+        use signals::BodyReceiveMode as Mode;
+        match self.signals.body_receive_mode() {
+            Some(Mode::Refused) => Err(bun_alloc::AllocError.into()),
+            Some(Mode::Abandoned) => Err(crate::Error::Aborted),
+            Some(mode) if mode.is_demand_driven() && self.flags.protocol == Protocol::Http1_1 => {
+                Ok(signals::BODY_HIGH_WATER_MARK)
+            }
+            _ => Ok(usize::MAX),
         }
     }
 
     /// Decodes what has arrived under the consumer's budget. Returns whether to report bytes.
     fn process_received_body(&mut self, is_final_chunk: bool) -> crate::Result<bool> {
-        let mut max_output = self.decompress_output_cap();
+        let mut max_output = self.decompress_output_cap()?;
         if max_output != usize::MAX && self.state.encoding.is_compressed() {
             // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
             if self.signals.is_receive_paused() {
@@ -3676,7 +3681,7 @@ impl<'a> HTTPClient<'a> {
                     return Ok(false);
                 }
                 // A consumer attached after the cap was read.
-                max_output = self.decompress_output_cap();
+                max_output = self.decompress_output_cap()?;
             }
         }
         // `process_body_buffer` takes `&mut self.state`, so the bytes move out first.

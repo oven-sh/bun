@@ -4594,6 +4594,7 @@ pub(crate) mod testing_apis {
                 Syscall::SessionBuffer => fi::SESSION_BUFFER,
                 Syscall::SslWrite => fi::SSL_WRITE,
                 Syscall::FetchBodyBuffer => fi::FETCH_BODY_BUFFER,
+                Syscall::ByteStreamBuffer => fi::BYTE_STREAM_BUFFER,
             };
 
             let action: c_int = match rule.action {
@@ -4663,6 +4664,7 @@ pub(crate) mod testing_apis {
                 fi::SSL_LOOP_BUFFER => Some("ssl_loop_buffer"),
                 fi::SESSION_BUFFER => Some("session_buffer"),
                 fi::FETCH_BODY_BUFFER => Some("fetch_body_buffer"),
+                fi::BYTE_STREAM_BUFFER => Some("byte_stream_buffer"),
                 _ => None,
             };
             if let Some(buffer) = buffer

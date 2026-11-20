@@ -23,7 +23,7 @@ pub struct StringJoiner<'a> {
 
 enum Node<'a> {
     /// Borrowed for `'a`; the caller's data must stay valid until the joiner's
-    /// last read (`done`/`done_with_end`/`node_slices`/`contains`/`last_byte`).
+    /// last read (`done`/`done_with_end`/`move_to`/`node_slices`/`contains`/`last_byte`).
     Borrowed(&'a [u8]),
     /// Heap-allocated by this joiner (via `push_owned`/`push_cloned`); freed
     /// when the node drops.
@@ -137,18 +137,23 @@ impl<'a> StringJoiner<'a> {
             return Ok(Box::default());
         }
         let len = self.len;
-        self.len = 0;
 
         // `Vec::with_capacity` + `extend_from_slice` is zero-fill-free
         // (each push is a `memcpy` into spare capacity), and since the final
         // `len == capacity` the `into_boxed_slice` is a no-realloc move.
         let mut out = Vec::<u8>::with_capacity(len);
+        self.move_to(&mut out);
+        debug_assert_eq!(out.len(), len);
+        Ok(out.into_boxed_slice())
+    }
+
+    /// For a caller that has reserved the room by itself.
+    pub fn move_to(&mut self, out: &mut Vec<u8>) {
+        self.len = 0;
         for node in self.nodes.drain(..) {
             out.extend_from_slice(node.slice());
             // `drop(node)` frees the buffer when owned.
         }
-        debug_assert_eq!(out.len(), len);
-        Ok(out.into_boxed_slice())
     }
 
     /// Same as `.done`, but appends extra slice `end`

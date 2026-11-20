@@ -720,10 +720,18 @@ pub struct S3DownloadStreamWrapper {
 }
 
 impl S3DownloadStreamWrapper {
+    const OUT_OF_MEMORY: Error::S3Error<'static> = Error::S3Error {
+        code: b"OutOfMemory",
+        message: b"Out of memory",
+    };
+
     pub(crate) fn on_error(&self, err: &Error::S3Error) {
-        let Some(bytes) = self.stream.take() else {
-            return;
-        };
+        if let Some(bytes) = self.stream.take() {
+            self.fail(&bytes, err);
+        }
+    }
+
+    fn fail(&self, bytes: &ByteStream, err: &Error::S3Error) {
         bytes.on_data(crate::webcore::streams::StreamResult::Err(
             crate::webcore::streams::StreamError::JSValue(bun_jsc::strong::Optional::create(
                 s3_error_to_js(err, &self.global, Some(&self.path)),
@@ -737,9 +745,11 @@ impl S3DownloadStreamWrapper {
             let Some(bytes) = self.stream.bytes() else {
                 return;
             };
-            bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
-                chunk.list.as_slice(),
-            ));
+            let chunk = crate::webcore::streams::StreamResult::Temporary(chunk.list.as_slice());
+            if bytes.try_on_data(chunk).is_err() {
+                self.on_stream_cancelled();
+                return self.fail(&bytes, &Self::OUT_OF_MEMORY);
+            }
             // `on_data` can cancel us, which releases the hold.
             if self.stream.is_held() {
                 self.after_chunk_delivered(&bytes);
@@ -749,9 +759,10 @@ impl S3DownloadStreamWrapper {
         let Some(bytes) = self.stream.take() else {
             return;
         };
-        bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
-            chunk.list.as_slice(),
-        ));
+        let chunk = crate::webcore::streams::StreamResult::TemporaryAndDone(chunk.list.as_slice());
+        if bytes.try_on_data(chunk).is_err() {
+            self.fail(&bytes, &Self::OUT_OF_MEMORY);
+        }
     }
 
     /// The other half of this rule is in `S3HttpDownloadStreamingTask::process_http_callback`

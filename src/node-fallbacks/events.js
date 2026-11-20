@@ -49,20 +49,22 @@ EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
 
 function emitError(emitter, args) {
   var { _events: events } = emitter;
-  args[0] ??= new Error("Unhandled error.");
-  if (!events) throw args[0];
-  var errorMonitor = events[kErrorMonitor];
-  if (errorMonitor) {
-    for (var handler of ArrayPrototypeSlice.call(errorMonitor)) {
-      handler.apply(emitter, args);
+  if (events) {
+    var errorMonitor = events[kErrorMonitor];
+    if (errorMonitor) {
+      for (var handler of ArrayPrototypeSlice.call(errorMonitor)) {
+        handler.apply(emitter, args);
+      }
+    }
+    var handlers = events.error;
+    if (handlers) {
+      for (var handler of ArrayPrototypeSlice.call(handlers)) {
+        handler.apply(emitter, args);
+      }
+      return true;
     }
   }
-  var handlers = events.error;
-  if (!handlers) throw args[0];
-  for (var handler of ArrayPrototypeSlice.call(handlers)) {
-    handler.apply(emitter, args);
-  }
-  return true;
+  throw unhandledError(args[0]);
 }
 
 function addCatch(emitter, promise, type, args) {
@@ -414,6 +416,24 @@ function ERR_INVALID_ARG_TYPE(name, type, value) {
 function ERR_OUT_OF_RANGE(name, range, value) {
   const err = new RangeError(`The "${name}" argument is out of range. It must be ${range}. Received ${value}`);
   err.code = "ERR_OUT_OF_RANGE";
+  return err;
+}
+
+// https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/events.js#L468-L500
+function unhandledError(er) {
+  // Node asks `er instanceof Error` only. Error.isError also takes an Error of another realm, as events.ts does.
+  if (Error.isError?.(er) || er instanceof Error) return er;
+  let message = "Unhandled error.";
+  if (typeof er === "string") {
+    // maxStringLength: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/util/inspect.js#L230
+    message += ` ('${er.slice(0, 1e4)}')`;
+  } else if (Object(er) !== er) {
+    // Node prints util.inspect(er) for an object too. Here an object has no text: String() runs the object's code.
+    message += ` (${String(er)}${typeof er === "bigint" ? "n" : ""})`;
+  }
+  const err = new Error(message);
+  err.code = "ERR_UNHANDLED_ERROR";
+  err.context = er;
   return err;
 }
 

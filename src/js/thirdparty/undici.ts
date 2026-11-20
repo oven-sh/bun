@@ -1,12 +1,17 @@
 const EventEmitter = require("node:events");
 const dc = require("node:diagnostics_channel");
 const { isArrayBuffer } = require("node:util/types");
+const { isIP } = require("internal/net/isIP");
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectPrototypeToString = Object.prototype.toString;
 const kEmptyObject = ObjectCreate(null);
 
-var fetch: (input: string | URL | Request, init?: object) => Promise<Response> = Bun.fetch;
+const nativeFetch = Bun.fetch as unknown as ((input: string | URL | Request, init?: object) => Promise<Response>) & {
+  preconnect: typeof Bun.fetch.preconnect;
+};
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
 const Response: typeof globalThis.Response = bindings[0];
 const Request: typeof globalThis.Request = bindings[1];
@@ -34,6 +39,423 @@ class FileReader extends EventTarget {
 function notImplemented(): never {
   throw new Error("This function is not yet implemented in Bun");
 }
+
+// The shim's dispatchers expose their `connect` options through this symbol;
+// dispatchers without it leave the request unchanged.
+const kConnectFor = Symbol("kConnectFor");
+
+function resolveConnect(dispatcher) {
+  if (dispatcher == null) dispatcher = getGlobalDispatcher();
+  if (dispatcher != null && typeof dispatcher[kConnectFor] === "function") {
+    return dispatcher[kConnectFor]();
+  }
+  return undefined;
+}
+
+// Bounded like undici's connector: connect.timeout (default 10s, 0 disables)
+// covers the lookup, so a hook that never calls back fails with
+// ConnectTimeoutError. The timer stays ref'd so a pending lookup keeps the
+// process alive the way an open socket would.
+function runLookup(lookup, hostname, connect, signal): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    let onAbort;
+    const timeout = connect.timeout === undefined ? 10_000 : connect.timeout;
+    let timer;
+    if (typeof timeout === "number" && timeout > 0 && Number.isFinite(timeout)) {
+      timer = setTimeout(
+        () => fail(new ConnectTimeoutError(`lookup for "${hostname}" timed out after ${timeout}ms`)),
+        timeout,
+      );
+    }
+    const settle = fn => value => {
+      clearTimeout(timer);
+      if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+      fn(value);
+    };
+    const ok = settle(resolve);
+    const fail = settle(reject);
+    if (signal != null) {
+      onAbort = () => fail(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    try {
+      // The options net.connect passes to a custom lookup (family 0 = any).
+      lookup(hostname, { family: connect.family ?? 0, hints: connect.hints ?? 0, all: false }, (err, address) => {
+        if (err) return fail(err);
+        if ($isArray(address)) {
+          // `all: true` shape: [{ address, family }, ...]
+          address = address.length > 0 ? address[0]?.address : undefined;
+        }
+        if (typeof address !== "string" || isIP(address) === 0) {
+          return fail(
+            new TypeError(`lookup did not return a valid IP address for "${hostname}" (received ${String(address)})`),
+          );
+        }
+        ok(address);
+      });
+    } catch (e) {
+      // A synchronous throw must still remove the abort listener.
+      fail(e);
+    }
+  });
+}
+
+// request() also accepts the raw flat header form ["name", "value", ...],
+// which the Headers constructor rejects.
+function headersFromRequestOptions(inputHeaders) {
+  if ($isArray(inputHeaders)) {
+    const { length } = inputHeaders;
+    if (length > 0 && typeof inputHeaders[0] === "string") {
+      if (length % 2 !== 0) {
+        throw new InvalidArgumentError("headers array must be even");
+      }
+      const headers = new Headers();
+      for (let i = 0; i < length; i += 2) {
+        headers.append(inputHeaders[i], inputHeaders[i + 1]);
+      }
+      return headers;
+    }
+  }
+  return new Headers(inputHeaders || kEmptyObject);
+}
+
+// One hop's connector work: the pinned `url`, `host` for the Host header, `serverName` for SNI.
+async function applyConnect(url, connect, signal) {
+  const { protocol } = url;
+  // data:, blob: and file: never open a socket, so the connector does not apply.
+  if (protocol === "data:" || protocol === "blob:" || protocol === "file:") return undefined;
+  if (protocol !== "http:" && protocol !== "https:") {
+    // "host:port/path" parses as a scheme, so the hook cannot see the host: fail closed.
+    throw new TypeError(`URL scheme must be http or https (received ${protocol})`);
+  }
+  if (typeof connect === "function") {
+    throw new NotSupportedError("custom connect functions are not supported in Bun's undici compatibility layer");
+  }
+  const lookup = connect.lookup;
+  if (typeof lookup !== "function") return undefined;
+  const https = protocol === "https:";
+  const { hostname } = url;
+  // URL#hostname keeps the brackets on IPv6 literals.
+  const bare = hostname.charCodeAt(0) === 0x5b /* [ */ ? hostname.slice(1, -1) : hostname;
+  if (isIP(bare) !== 0) {
+    // No lookup to run; the connector's TLS options still apply over HTTPS.
+    return https && connectTls(connect) !== undefined ? { url, https } : undefined;
+  }
+  const address = await runLookup(lookup, bare, connect, signal);
+  const host = url.host;
+  const pinned = new URL(url);
+  pinned.hostname = isIP(address) === 6 ? `[${address}]` : address;
+  // The URL setter ignores an address it cannot represent (an IPv6 zone id,
+  // for example); treat that as a failed lookup instead of resolving `host` again.
+  if (pinned.hostname === hostname) {
+    throw new TypeError(`lookup returned an address a URL cannot carry for "${hostname}" (received ${address})`);
+  }
+  return { url: pinned, host, https, serverName: https ? bare : undefined };
+}
+
+// The connect options undici's connector hands to tls.connect.
+const kConnectTlsKeys = [
+  "ca",
+  "cert",
+  "key",
+  "passphrase",
+  "rejectUnauthorized",
+  "checkServerIdentity",
+  "ciphers",
+  "crl",
+  "servername",
+];
+
+function connectTls(connect) {
+  let out;
+  for (let i = 0; i < kConnectTlsKeys.length; i++) {
+    const key = kConnectTlsKeys[i];
+    const value = connect[key];
+    if (value !== undefined) (out ??= {})[key] = value;
+  }
+  return out;
+}
+
+// Per-hop init: connector TLS, then the request's tls, then the pinned serverName; pinned hops are direct.
+function connectInit(init, hop, connect) {
+  const out = { ...init };
+  const { host, serverName } = hop;
+  if (host !== undefined) {
+    if (init?.session != null) {
+      // The session's proxy and TLS are not visible here, so a pinned hop cannot honor them.
+      throw new NotSupportedError(
+        "a Bun.FetchSession cannot be combined with a connect.lookup hook; pass proxy and tls as request options instead",
+      );
+    }
+    if (init?.proxy === undefined) out.proxy = false;
+    else if (init.proxy && !hop.https) {
+      // The absolute-form request line would carry the pinned IP to the proxy.
+      throw new NotSupportedError(
+        "a proxy cannot be combined with a connect.lookup hook over http; the proxy resolves the hostname itself",
+      );
+    }
+  }
+  if (hop.https) {
+    const fromConnect = connectTls(connect);
+    if (fromConnect !== undefined || serverName !== undefined) {
+      const tls = mergeConnectTls(init, fromConnect);
+      out.tls = serverName === undefined ? tls : pinnedTls(tls, serverName);
+    }
+  }
+  return out;
+}
+
+// A request `tls` replaces a Bun.FetchSession's TLS wholesale, so the two cannot be layered.
+function mergeConnectTls(init, fromConnect) {
+  if (init?.session != null && init?.tls == null) {
+    throw new NotSupportedError(
+      "a Bun.FetchSession cannot be combined with an Agent's connect options over HTTPS; pass the TLS options as the request's tls option instead",
+    );
+  }
+  return fromConnect === undefined ? init?.tls : { ...fromConnect, ...init?.tls };
+}
+
+// No lookup hook: stay native, which keeps `tls` across its own redirect following.
+function withConnectTls(url, init, connect) {
+  const { protocol } = url;
+  // An http: start can redirect to https:; with a session its TLS stays as is.
+  if (protocol !== "https:" && (protocol !== "http:" || init?.session != null)) return init;
+  const fromConnect = connectTls(connect);
+  if (fromConnect === undefined) return init;
+  return { ...init, tls: mergeConnectTls(init, fromConnect) };
+}
+
+function isPlainInput(input) {
+  return input !== null && typeof input === "object" && !(input instanceof Request) && !(input instanceof URL);
+}
+
+// Copied before the lookup await, as native fetch copies a buffered body at call time.
+function snapshotBody(body) {
+  if (body == null || typeof body !== "object") return body;
+  if (isArrayBuffer(body)) return body.slice(0);
+  if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength).slice();
+  if (body instanceof URLSearchParams) return new URLSearchParams(body);
+  if (body instanceof FormData) {
+    const copy = new FormData();
+    for (const [name, value] of body) copy.append(name, value);
+    return copy;
+  }
+  return body;
+}
+
+// Bodies that cannot be sent twice: a web or node stream, or any other
+// (async) iterable that is not one of the buffered BodyInit shapes.
+function isStreamingBody(body) {
+  if (body == null || typeof body !== "object") return false;
+  if (typeof body === "string" || isArrayBuffer(body) || ArrayBuffer.isView(body)) return false;
+  if (body instanceof Blob || body instanceof FormData || body instanceof URLSearchParams) return false;
+  return (
+    body instanceof ReadableStream ||
+    typeof body[Symbol.asyncIterator] === "function" ||
+    typeof body[Symbol.iterator] === "function" ||
+    (typeof body.pipe === "function" && typeof body.on === "function")
+  );
+}
+
+// The `tls` option for a pinned hop: the caller's own tls options, plus the
+// original hostname as serverName unless they set one themselves.
+function pinnedTls(tls, serverName) {
+  if (tls == null || typeof tls !== "object") return { serverName };
+  if (tls.serverName != null || tls.servername != null) return tls;
+  return { ...tls, serverName };
+}
+
+function fetchFailed(cause) {
+  // Codegen rewrites `new TypeError` to $makeTypeError, which drops the
+  // options bag, so `cause` is defined manually (same attributes).
+  const wrapped = new TypeError("fetch failed");
+  ObjectDefineProperty(wrapped, "cause", {
+    __proto__: null,
+    configurable: true,
+    enumerable: false,
+    value: cause,
+    writable: true,
+  });
+  return wrapped;
+}
+
+function isRedirectStatus(status) {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
+// Follows the redirect chain from here (redirect: "manual" per hop) so the
+// lookup hook sees every hostname; native fetch's own `follow` would resolve
+// redirect targets with the OS resolver, bypassing the hook.
+async function followRedirectsWithConnect(url, init, connect, opts) {
+  let { method, body, headers, limit, redirectError, hopError, lookupError } = opts;
+  const { signal } = init;
+  method = typeof method === "string" ? method.toUpperCase() : "GET";
+  for (let hops = 0; ;) {
+    let pin;
+    try {
+      pin = await applyConnect(url, connect, signal);
+    } catch (err) {
+      // An abort reason surfaces as-is, like native fetch rejecting on abort.
+      if (signal?.aborted && err === signal.reason) throw err;
+      throw lookupError(err);
+    }
+    const hopHeaders = new Headers(headers);
+    let target = url.href;
+    let hopInit = init;
+    if (pin !== undefined) {
+      target = pin.url.href;
+      const { host } = pin;
+      if (host !== undefined && !hopHeaders.has("host")) hopHeaders.set("host", host);
+      hopInit = connectInit(init, pin, connect);
+    }
+    const resp = await nativeFetch(target, { ...hopInit, method, headers: hopHeaders, body, redirect: "manual" });
+    const { status } = resp;
+    // An empty Location is no redirect target, as in native following.
+    const location = isRedirectStatus(status) ? resp.headers.get("location") || null : null;
+    if (location === null) {
+      // The Response was fetched from the pinned IP with redirect: "manual";
+      // report the logical URL and redirect state the caller asked about.
+      ObjectDefineProperty(resp, "url", { __proto__: null, configurable: true, value: url.href });
+      ObjectDefineProperty(resp, "redirected", { __proto__: null, configurable: true, value: hops > 0 });
+      return resp;
+    }
+    // Intermediate response; release its connection now instead of at GC.
+    resp.body?.cancel()?.$then(undefined, () => {});
+    if (++hops > limit) throw redirectError();
+    const next = new URL(location, url);
+    if (next.protocol !== "http:" && next.protocol !== "https:") {
+      // file:, data: and blob: targets never reach the lookup hook, and native
+      // following rejects them too (UnsupportedRedirectProtocol).
+      throw hopError(`cannot follow the ${status} redirect to ${next.href}: URL scheme must be http or https`);
+    }
+    if (next.origin !== url.origin) {
+      // The same set native following strips on a cross-origin hop.
+      headers.delete("authorization");
+      headers.delete("proxy-authorization");
+      headers.delete("cookie");
+      headers.delete("host");
+    }
+    if (
+      (status === 303 && method !== "GET" && method !== "HEAD") ||
+      ((status === 301 || status === 302) && method === "POST")
+    ) {
+      method = "GET";
+      body = undefined;
+      // The request-body-header names (https://fetch.spec.whatwg.org/#request-body-header-name).
+      headers.delete("content-encoding");
+      headers.delete("content-language");
+      headers.delete("content-location");
+      headers.delete("content-type");
+      headers.delete("content-length");
+    } else if (isStreamingBody(body)) {
+      throw hopError(
+        `cannot follow the ${status} redirect to ${next.href}: the request body is a stream that was already sent; use a buffered body to follow redirects`,
+      );
+    }
+    url = next;
+  }
+}
+
+// Usage errors surface as-is; connection-phase failures become the
+// TypeError("fetch failed") undici's fetch rejects with, the cause attached.
+function fetchLookupError(err) {
+  return err instanceof NotSupportedError || err instanceof InvalidArgumentError ? err : fetchFailed(err);
+}
+
+async function fetchWithConnect(input, init, connect) {
+  // Native fetch also takes a plain { url, ...init } object as input; its
+  // fields (Bun-specific ones like tls and proxy included) act as init.
+  if (isPlainInput(input)) {
+    init = { ...input, ...init };
+    input = input.url;
+  }
+  const isRequest = input instanceof Request;
+  const url = new URL(isRequest ? input.url : input);
+  const redirectMode = init?.redirect ?? (isRequest ? input.redirect : undefined) ?? "follow";
+  const signal = init?.signal ?? (isRequest ? input.signal : undefined);
+  if (redirectMode !== "follow") {
+    // Neither mode follows a redirect, so only the first hop is pinned.
+    const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
+    const body = snapshotBody(init?.body);
+    let pin;
+    try {
+      pin = await applyConnect(url, connect, signal);
+    } catch (err) {
+      if (signal?.aborted && err === signal.reason) throw err;
+      throw fetchLookupError(err);
+    }
+    if (pin === undefined) {
+      if (init == null) return nativeFetch(input, undefined);
+      const plainInit = { ...init, headers };
+      if (body !== undefined) plainInit.body = body;
+      return nativeFetch(input, plainInit);
+    }
+    const { host } = pin;
+    if (host !== undefined && !headers.has("host")) headers.set("host", host);
+    const hopInit = { ...connectInit(init, pin, connect), headers, body, redirect: redirectMode };
+    if (isRequest) {
+      // Taken from the Request directly; a second Request would tee a stream body.
+      if (hopInit.method === undefined) hopInit.method = input.method;
+      if (hopInit.signal === undefined) hopInit.signal = signal;
+      if (hopInit.body === undefined) hopInit.body = input.body ?? undefined;
+    }
+    const resp = await nativeFetch(pin.url.href, hopInit);
+    ObjectDefineProperty(resp, "url", { __proto__: null, configurable: true, value: url.href });
+    return resp;
+  }
+  const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
+  const method = init?.method ?? (isRequest ? input.method : "GET");
+  let body = snapshotBody(init?.body);
+  const requestBody = body === undefined && isRequest ? input.body : null;
+  if (requestBody != null) {
+    // A memory or file body becomes a (lazy) Blob again: Content-Length, and replayable on 307/308.
+    const source = requestBody.$bunNativePtr;
+    const tag = source == null ? "" : ObjectPrototypeToString.$call(source);
+    if (tag === "[object BlobInternalReadableStreamSource]" || tag === "[object FileInternalReadableStreamSource]") {
+      const blob = await input.blob();
+      // A pipe or tty has no size: native fetch would read it to EOF synchronously, so it streams.
+      body = Number.isFinite(blob.size) ? blob : blob.stream();
+    } else {
+      body = requestBody;
+    }
+  }
+  // Bun's own maxRedirects option bounds the chain as it does natively.
+  const maxRedirects = init?.maxRedirects;
+  return followRedirectsWithConnect(url, { ...init, signal }, connect, {
+    method,
+    body,
+    headers,
+    limit: Number.isInteger(maxRedirects) && maxRedirects >= 0 ? maxRedirects : 20,
+    redirectError: () => fetchFailed(new Error("redirect count exceeded")),
+    hopError: message => fetchFailed(new Error(message)),
+    lookupError: fetchLookupError,
+  });
+}
+
+function fetch(input, init) {
+  try {
+    let dispatcher = init?.dispatcher;
+    const plain = isPlainInput(input);
+    // The plain { url, ...init } input form can carry the dispatcher itself.
+    if (dispatcher === undefined && plain) dispatcher = input.dispatcher;
+    const connect = resolveConnect(dispatcher);
+    if (connect == null) return nativeFetch(input, init);
+    // Per-hop work is needed only for a lookup hook (or a custom connector to reject).
+    if (typeof connect !== "function" && typeof connect.lookup !== "function") {
+      if (plain) {
+        init = { ...input, ...init };
+        input = input.url;
+      }
+      const url = new URL(input instanceof Request ? input.url : input);
+      return nativeFetch(input, withConnectTls(url, init, connect));
+    }
+    return fetchWithConnect(input, init, connect);
+  } catch (e) {
+    return Promise.$reject(e);
+  }
+}
+fetch.preconnect = nativeFetch.preconnect;
 
 /**
  * An object representing a URL.
@@ -149,6 +571,7 @@ interface RequestOptions {
   query?: ConstructorParameters<typeof globalThis.URLSearchParams>[0] | null;
   reset?: boolean;
   throwOnError?: boolean;
+  dispatcher?: Dispatcher | null;
 }
 
 async function request(
@@ -183,7 +606,7 @@ async function request(
     throwOnError = false,
     body: inputBody,
     maxRedirections,
-    // dispatcher,
+    dispatcher,
   } = options;
 
   // TODO: More validations
@@ -219,16 +642,53 @@ async function request(
 
   const followRedirects = maxRedirections != null && maxRedirections > 0;
 
-  const resp: Response & { trailers?: undefined } = await fetch(url, {
-    signal,
-    mode: "cors",
-    method,
-    headers: inputHeaders || kEmptyObject,
-    body: inputBody,
-    redirect: followRedirects ? "follow" : "manual",
-    maxRedirects: followRedirects ? maxRedirections : undefined,
-    keepalive: !reset,
-  });
+  const connect = resolveConnect(dispatcher);
+  const hasLookup = connect != null && (typeof connect === "function" || typeof connect.lookup === "function");
+
+  // undici's raw flat header array is normalized on every path.
+  const requestHeaders = $isArray(inputHeaders)
+    ? headersFromRequestOptions(inputHeaders)
+    : inputHeaders || kEmptyObject;
+
+  let resp: Response & { trailers?: undefined };
+  if (hasLookup && followRedirects) {
+    resp = await followRedirectsWithConnect(new URL(url), { signal, mode: "cors", keepalive: !reset }, connect, {
+      method,
+      body: snapshotBody(inputBody),
+      headers: new Headers(requestHeaders),
+      limit: maxRedirections,
+      redirectError: () => new Error("redirected too many times"),
+      hopError: message => new Error(message),
+      lookupError: err => err,
+    });
+  } else {
+    let init: object = {
+      signal,
+      mode: "cors",
+      method,
+      headers: requestHeaders,
+      body: inputBody,
+      redirect: followRedirects ? "follow" : "manual",
+      maxRedirects: followRedirects ? maxRedirections : undefined,
+      keepalive: !reset,
+    };
+    if (hasLookup) {
+      // Snapshot before the await: the caller keeps its own URL, headers and body.
+      url = new URL(url);
+      const headers = new Headers(requestHeaders);
+      init = { ...init, headers, body: snapshotBody(inputBody) };
+      const pin = await applyConnect(url, connect, signal);
+      if (pin !== undefined) {
+        url = pin.url;
+        const { host } = pin;
+        if (host !== undefined && !headers.has("host")) headers.set("host", host);
+        init = connectInit(init, pin, connect);
+      }
+    } else if (connect != null) {
+      init = withConnectTls(new URL(url), init, connect);
+    }
+    resp = await nativeFetch(url, init);
+  }
 
   const { status: statusCode, headers, trailers } = resp;
 
@@ -268,7 +728,22 @@ class MockAgent {
 function mockErrors() {}
 
 class Dispatcher extends EventEmitter {}
-class Agent extends Dispatcher {}
+class Agent extends Dispatcher {
+  #connect;
+
+  constructor(opts) {
+    super();
+    const connect = opts?.connect;
+    if (connect != null && typeof connect !== "function" && typeof connect !== "object") {
+      throw new InvalidArgumentError("connect must be a function or an object");
+    }
+    this.#connect = connect ?? undefined;
+  }
+
+  [kConnectFor]() {
+    return this.#connect;
+  }
+}
 class Pool extends Dispatcher {
   request() {}
 }
@@ -320,23 +795,35 @@ const interceptors = {
 };
 
 // Error classes
-class UndiciError extends Error {}
+class UndiciError extends Error {
+  name = "UndiciError";
+  code = "UND_ERR";
+}
 class AbortError extends UndiciError {}
 class HTTPParserError extends Error {}
 class HeadersTimeoutError extends UndiciError {}
 class HeadersOverflowError extends UndiciError {}
 class BodyTimeoutError extends UndiciError {}
 class RequestContentLengthMismatchError extends UndiciError {}
-class ConnectTimeoutError extends UndiciError {}
+class ConnectTimeoutError extends UndiciError {
+  name = "ConnectTimeoutError";
+  code = "UND_ERR_CONNECT_TIMEOUT";
+}
 class ResponseStatusCodeError extends UndiciError {}
-class InvalidArgumentError extends UndiciError {}
+class InvalidArgumentError extends UndiciError {
+  name = "InvalidArgumentError";
+  code = "UND_ERR_INVALID_ARG";
+}
 class InvalidReturnValueError extends UndiciError {}
 class RequestAbortedError extends AbortError {}
 class ClientDestroyedError extends UndiciError {}
 class ClientClosedError extends UndiciError {}
 class InformationalError extends UndiciError {}
 class SocketError extends UndiciError {}
-class NotSupportedError extends UndiciError {}
+class NotSupportedError extends UndiciError {
+  name = "NotSupportedError";
+  code = "UND_ERR_NOT_SUPPORTED";
+}
 class ResponseContentLengthMismatchError extends UndiciError {}
 class BalancedPoolMissingUpstreamError extends UndiciError {}
 class ResponseExceededMaxSizeError extends UndiciError {}

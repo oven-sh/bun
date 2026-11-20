@@ -274,6 +274,16 @@ impl Bbr {
         self.update_window(feedback.acked, capacity);
     }
 
+    /// `None` unless the path is what limits the rate.
+    pub(super) fn starts_cycle(&self, now: Instant) -> Option<bool> {
+        match self.mode {
+            Mode::ProbeBandwidth { phase, since } if !self.is_last_sample_limited => {
+                Some(phase == 0 && since == now)
+            }
+            _ => None,
+        }
+    }
+
     /// §4.1.1.
     fn update_bandwidth(&mut self, now: Instant, acked: u64, newest: &Flight) {
         if let Some(sample) = self.sampler.on_delivered(now, acked, newest) {

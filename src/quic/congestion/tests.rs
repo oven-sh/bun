@@ -540,6 +540,50 @@ fn bursts_get_shorter_after_an_overflow_and_whenever_cubic_backs_off() {
     }
 }
 
+/// Returns the quantum in KiB after each period, given what is delivered and lost in a cycle with such a quantum.
+fn quanta(periods: usize, mut cycle: impl FnMut(usize, u64) -> (u64, u64)) -> Vec<u64> {
+    let (mut pacer, mut now, rtt) = (Pacer::default(), START, Rtt::default());
+    (0..5).for_each(|_| pacer.on_overflow());
+    pacer.set_rate(16 * 1024, millis(1), &rtt);
+    pacer.try_longer_bursts(now, &Feedback::default(), Some(true));
+    let period = |at| {
+        for step in 1..=10 {
+            let (acked, lost) = cycle(at, pacer.quantum() / 1024);
+            let feedback = Feedback {
+                acked: acked * SEGMENT,
+                lost: lost * SEGMENT,
+                ..Feedback::default()
+            };
+            now = now + millis(10);
+            pacer.on_overflow();
+            pacer.try_longer_bursts(now, &feedback, Some(step == 10));
+            pacer.set_rate(16 * 1024, millis(1), &rtt);
+        }
+        pacer.quantum() / 1024
+    };
+    (0..periods).map(period).collect()
+}
+
+#[test]
+fn bursts_get_longer_as_far_as_it_makes_no_difference() {
+    assert_eq!(quanta(5, |_, _| (110, 10)), [4, 8, 16, 16, 16]);
+    assert_eq!(
+        quanta(5, |_, len| (110 - len / 8, 10 + len / 3)),
+        [4, 8, 16, 16, 16]
+    );
+    for worse in [(105, 10), (110, 18), (110, 90)] {
+        let quanta = quanta(40, |_, len| if len > 4 { worse } else { (110, 10) });
+        assert_eq!(quanta.iter().filter(|&&it| it > 4).count(), 3);
+        assert!(quanta.iter().all(|it| (4..=8).contains(it)));
+    }
+}
+
+#[test]
+fn bursts_get_short_again_when_the_path_changes() {
+    let quanta = quanta(8, |at, _| if at < 5 { (110, 10) } else { (104, 10) });
+    assert_eq!(quanta, [4, 8, 16, 16, 16, 8, 2, 2]);
+}
+
 #[test]
 fn sampler_takes_the_lower_of_both_rates() {
     // The second packet follows the delivery of the first.

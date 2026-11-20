@@ -5,6 +5,7 @@ mod bbr;
 mod cubic;
 mod pacer;
 mod rtt;
+mod trial;
 mod windowed_filter;
 
 use bbr::Bbr;
@@ -338,7 +339,10 @@ impl Controller {
         }
         match &mut self.model {
             Model::Cubic(cubic) => cubic.on_feedback(now, &feedback, rtt),
-            Model::Bbr(bbr) => bbr.on_feedback(now, &feedback, rtt),
+            Model::Bbr(bbr) => {
+                bbr.on_feedback(now, &feedback, rtt);
+                (self.pacer).try_longer_bursts(now, &feedback, bbr.starts_cycle(now));
+            }
         }
         self.update_pacing_rate(rtt);
     }

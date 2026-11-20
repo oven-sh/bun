@@ -1,6 +1,8 @@
 //! RFC 9002 §7.7.
 
+use super::Feedback;
 use super::rtt::{GRANULARITY, Rtt};
+use super::trial::Trial;
 use crate::time::{Duration, Instant};
 
 /// In packets.
@@ -62,6 +64,9 @@ pub(super) struct Pacer {
     /// Others fill the queue as well. It takes in more of those that wake up more often, unless all of them send
     /// bursts in proportion to their rates.
     is_shared: bool,
+    /// What the rate comes to in [`GRANULARITY`].
+    steady: u64,
+    trial: Trial,
 }
 
 impl Pacer {
@@ -75,6 +80,7 @@ impl Pacer {
         }
         .min(self.max_quantum());
         let steady = len.saturating_mul(GRANULARITY.as_micros()) / per.as_micros().max(1);
+        self.steady = steady;
         let limit = match self.is_shared {
             true => (steady / 2).clamp(MIN_SHARED_QUANTUM, MAX_QUANTUM),
             false => 0,
@@ -134,6 +140,9 @@ impl Pacer {
 
     pub(super) fn on_idle_restart(&mut self, now: Instant, is_recovering: bool) {
         (self.next, self.left_at) = (self.next.min(now), now);
+        if now - self.last_sent_at > self.max_lag {
+            self.trial = Trial::default();
+        }
         if !is_recovering {
             self.burst_tokens = BURST;
         }
@@ -186,6 +195,31 @@ impl Pacer {
     }
 
     pub(super) fn on_overflow(&mut self) {
-        (self.overflows, self.sent_since_overflow) = ((self.overflows + 1).min(MAX_OVERFLOWS), 0);
+        self.overflows = (self.overflows + 1).min(self.max_overflows());
+        self.sent_since_overflow = 0;
+    }
+
+    fn max_overflows(&self) -> u32 {
+        MAX_OVERFLOWS - self.trial.spared
+    }
+
+    #[inline]
+    pub(super) fn try_longer_bursts(
+        &mut self,
+        now: Instant,
+        feedback: &Feedback,
+        starts_cycle: Option<bool>,
+    ) {
+        let before = self.max_overflows();
+        let is_relevant = !self.is_shared && (self.overflows > 0 || before < MAX_OVERFLOWS);
+        let Some(starts_cycle) = starts_cycle.filter(|_| is_relevant) else {
+            return self.trial.interrupt();
+        };
+        let are_short = self.overflows > 0 && MAX_QUANTUM >> before < self.steady.min(MAX_QUANTUM);
+        self.trial.update(now, feedback, starts_cycle, are_short);
+        self.overflows = match self.max_overflows() > before {
+            true => before + 1,
+            false => self.overflows.min(self.max_overflows()),
+        };
     }
 }

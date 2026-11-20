@@ -54,6 +54,8 @@ By default, the client reads connection information from the following environme
 - `VALKEY_URL`
 - If not set, defaults to `"redis://localhost:6379"`
 
+An empty value counts as not set.
+
 ### Connection Lifecycle
 
 The Redis client automatically handles connections in the background:
@@ -410,6 +412,7 @@ const client = new RedisClient("redis://localhost:6379", {
   //   cert: "path/to/cert.pem",
   //   key: "path/to/key.pem",
   //   serverName: "redis.example.com", // SNI and the name the certificate must match (default: the URL host)
+  //   checkServerIdentity: (hostname, cert) => undefined, // replaces the name check; return an Error to refuse
   // }
 });
 ```
@@ -424,6 +427,8 @@ When a connection is lost, the client automatically attempts to reconnect with e
 4. While disconnected, the client:
    - Queues commands if `enableOfflineQueue` is true (default)
    - Rejects commands immediately if `enableOfflineQueue` is false
+5. A timeout or a busy server counts as one retry. Errors such as `WRONGPASS` end the retries
+6. The client selects the database of the last confirmed `SELECT` again, if its user may
 
 ---
 

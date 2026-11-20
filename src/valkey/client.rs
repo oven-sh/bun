@@ -1,13 +1,14 @@
 //! The client without its socket, timers and script: every method returns what is left to do.
 
 use std::collections::VecDeque;
+use std::num::NonZeroU32;
 
 use bun_collections::OffsetByteList;
 use bun_core::strings;
 
 use crate::command::{self, ACKS, Ack, Reply};
 use crate::valkey_protocol::{Push, RESPValue, RedisError, ReplyScanner, ScanResult, ValkeyReader};
-use State::{Backoff, Closed, Ending, Idle, Opening, Ready, Select, Spare, SpareSelect};
+use State::{Backoff, Closed, Ending, Idle, Opening, Ready, Spare};
 
 const FIRST_DELAY_MS: u32 = 50;
 const MAX_DELAY_MS: u32 = 2000;
@@ -41,21 +42,19 @@ impl Default for Config {
     }
 }
 
+/// With a tag of its own: one in a niche costs every command its decoding.
+#[repr(u8)]
 enum State {
     /// Never dialed, or only by a [`Client::preconnect`] that failed.
     Idle,
     Opening(Step, By),
-    /// HELLO was accepted; the reply to SELECT is due.
-    Select,
-    Ready,
-    /// As `Select`, but script has not touched the client.
-    SpareSelect,
-    /// As `Ready`, but script has not touched the client.
+    /// Connected, but script has not touched the client.
     Spare,
+    Ready(Selected),
     /// The socket is closing, or the dial gave none: [`Client::lost`] is due.
     Ending(End),
     /// A dial is due, from the retry timer or from `connect()`.
-    Backoff(Retries),
+    Backoff(Ask),
     /// Until [`Client::connect`].
     Closed,
 }
@@ -65,23 +64,49 @@ enum Step {
     Dial,
     /// HELLO is written, and SELECT behind it if there is a database.
     Hello,
+    /// HELLO was accepted with this; the reply to SELECT is due. Boxed to keep the state small.
+    Select(Box<RESPValue>),
 }
 
 /// Since the server last took a connection.
 type Retries = u32;
 
+/// What script selected, for the next handshake.
+type Selected = Option<u32>;
+
 #[derive(Copy, Clone)]
 enum By {
     /// Script has not touched the client: one attempt, and back to `Idle`.
     Flag,
-    Script(Retries),
+    Script(Ask),
 }
 
 impl By {
-    fn retries(self) -> Retries {
+    fn claimed(self) -> Ask {
         match self {
-            By::Flag => 0,
-            By::Script(retries) => retries,
+            By::Flag => Ask::FIRST,
+            By::Script(ask) => ask,
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+struct Ask(Goal, Selected);
+
+#[derive(Copy, Clone)]
+enum Goal {
+    Connect(Retries),
+    /// Replaces a connection that script had.
+    Reconnect(NonZeroU32),
+}
+
+impl Ask {
+    const FIRST: Self = Ask(Goal::Connect(0), None);
+
+    fn retries(self) -> Retries {
+        match self.0 {
+            Goal::Connect(retries) => retries,
+            Goal::Reconnect(retries) => retries.get(),
         }
     }
 }
@@ -105,6 +130,8 @@ enum Expect {
     Reply(Reply),
     /// Whichever acknowledgement comes next: a count would shift every later reply once a peer sent fewer.
     Ack,
+    /// Once confirmed, the next handshake selects this database.
+    Database(u32),
 }
 
 struct InFlight<P> {
@@ -139,7 +166,7 @@ pub enum Input<'a> {
 
 pub enum Event<P> {
     Ignored,
-    /// With the reply to HELLO.
+    /// With the reply to HELLO, once the handshake is complete.
     Connected(RESPValue),
     Resolved {
         promise: P,
@@ -160,6 +187,8 @@ pub enum Event<P> {
         message: Box<[u8]>,
         error: RedisError,
     },
+    /// The server cannot take the handshake now: for [`Client::abandon_handshake`], else as [`Event::Broken`].
+    Busy(Box<[u8]>),
 }
 
 /// Whom an acknowledgement answers.
@@ -225,10 +254,19 @@ fn refused<P>(message: &[u8], error: RedisError) -> Event<P> {
         b"ERR max number of clients",
     ];
     if PASSING.iter().any(|prefix| message.starts_with(prefix)) {
-        broken(message, RedisError::ConnectionClosed)
+        Event::Busy(message.into())
     } else {
         broken(message, error)
     }
+}
+
+fn write_select(database: u32, out: &mut Vec<u8>) {
+    let mut digits = bun_core::fmt::ItoaBuf::new();
+    command::encode(
+        b"SELECT",
+        &[bun_core::fmt::itoa(&mut digits, database)],
+        out,
+    );
 }
 
 impl<P> Client<P> {
@@ -251,24 +289,21 @@ impl<P> Client<P> {
 
     pub fn is_connected(&self) -> bool {
         match self.state {
-            Select | Ready | SpareSelect | Spare => true,
+            Ready(_) | Spare => true,
             Idle | Opening(..) | Ending(_) | Backoff(_) | Closed => false,
         }
     }
 
-    fn is_ready(&self) -> bool {
-        match self.state {
-            Ready | Spare => true,
-            Idle | Opening(..) | Select | SpareSelect | Ending(_) | Backoff(_) | Closed => false,
-        }
+    pub fn is_dialing(&self) -> bool {
+        matches!(self.state, Opening(Step::Dial, _))
     }
 
     pub fn is_preconnect(&self) -> bool {
         match self.state {
             Opening(_, by) | Ending(End::Policy(by)) => matches!(by, By::Flag),
-            SpareSelect | Spare | Ending(End::FailedUnclaimed) => true,
+            Spare | Ending(End::FailedUnclaimed) => true,
             Ending(End::Requested(_) | End::Final | End::Failed) => false,
-            Idle | Select | Ready | Backoff(_) | Closed => false,
+            Idle | Ready(_) | Backoff(_) | Closed => false,
         }
     }
 
@@ -279,7 +314,7 @@ impl<P> Client<P> {
     /// An event is still to come.
     pub fn is_active(&self) -> bool {
         match self.state {
-            Opening(..) | Select | Ready | SpareSelect | Spare | Ending(_) | Backoff(_) => true,
+            Opening(..) | Ready(_) | Spare | Ending(_) | Backoff(_) => true,
             Idle | Closed => false,
         }
     }
@@ -288,7 +323,7 @@ impl<P> Client<P> {
         match self.state {
             Ending(End::Failed | End::FailedUnclaimed) | Closed => true,
             Ending(End::Policy(_) | End::Requested(_) | End::Final) => false,
-            Idle | Opening(..) | Select | Ready | SpareSelect | Spare | Backoff(_) => false,
+            Idle | Opening(..) | Ready(_) | Spare | Backoff(_) => false,
         }
     }
 
@@ -330,14 +365,19 @@ impl<P> Client<P> {
     /// An explicit `connect()`, ahead of [`Self::claim_and_dial`] and [`Self::redial`].
     pub fn connect(&mut self) {
         match self.state {
-            Backoff(_) | Closed => self.state = Backoff(0),
+            Closed => self.state = Backoff(Ask::FIRST),
+            Backoff(Ask(ref mut goal, _)) => *goal = Goal::Connect(0),
             // The close of a dial without a TLS context is still due, and no retry can build one.
             Ending(End::Failed | End::FailedUnclaimed) => self.state = Ending(End::Final),
             Ending(End::Requested(retries)) => {
-                self.state = Ending(End::Policy(By::Script(retries)));
+                self.state = Ending(End::Policy(By::Script(Ask(Goal::Connect(retries), None))));
             }
-            Opening(..) | SpareSelect | Spare | Ending(End::Policy(_)) => self.claim(),
-            Idle | Select | Ready | Ending(End::Final) => {}
+            Opening(_, ref mut by) | Ending(End::Policy(ref mut by)) => {
+                let ask @ Ask(_, selected) = by.claimed();
+                *by = By::Script(Ask(Goal::Connect(ask.retries()), selected));
+            }
+            Spare => self.claim(),
+            Idle | Ready(_) | Ending(End::Final) => {}
         }
     }
 
@@ -347,10 +387,10 @@ impl<P> Client<P> {
                 return Close::Nothing;
             }
             Ending(End::FailedUnclaimed) => (End::Failed, Close::Nothing),
-            Ending(End::Policy(by)) => (End::Requested(by.retries()), Close::Nothing),
-            Opening(_, by) => (End::Requested(by.retries()), Close::Socket),
-            Select | Ready | SpareSelect | Spare => (End::Requested(0), Close::Socket),
-            Backoff(retries) => (End::Requested(retries), Close::Retry(Attempt(()))),
+            Ending(End::Policy(by)) => (End::Requested(by.claimed().retries()), Close::Nothing),
+            Opening(_, by) => (End::Requested(by.claimed().retries()), Close::Socket),
+            Ready(_) | Spare => (End::Requested(0), Close::Socket),
+            Backoff(ask) => (End::Requested(ask.retries()), Close::Retry(Attempt(()))),
         };
         self.state = Ending(end);
         close
@@ -360,13 +400,12 @@ impl<P> Client<P> {
     pub fn claim(&mut self) {
         match self.state {
             Opening(_, ref mut by) | Ending(End::Policy(ref mut by)) => {
-                *by = By::Script(by.retries());
+                *by = By::Script(by.claimed());
             }
-            SpareSelect => self.state = Select,
-            Spare => self.state = Ready,
+            Spare => self.state = Ready(None),
             Ending(End::FailedUnclaimed) => self.state = Ending(End::Failed),
             Ending(End::Requested(_) | End::Final | End::Failed) => {}
-            Idle | Select | Ready | Backoff(_) | Closed => {}
+            Idle | Ready(_) | Backoff(_) | Closed => {}
         }
     }
 
@@ -374,7 +413,7 @@ impl<P> Client<P> {
     #[must_use]
     pub fn claim_and_dial(&mut self) -> Option<Attempt> {
         self.claim();
-        self.leave_idle(By::Script(0))
+        self.leave_idle(By::Script(Ask::FIRST))
     }
 
     /// A dial that script did not ask for. If it is lost unclaimed, the first command dials again.
@@ -389,10 +428,10 @@ impl<P> Client<P> {
 
     #[must_use]
     pub fn redial(&mut self) -> Option<Attempt> {
-        let Backoff(retries) = self.state else {
+        let Backoff(ask) = self.state else {
             return None;
         };
-        Some(self.dial(By::Script(retries)))
+        Some(self.dial(By::Script(ask)))
     }
 
     fn dial(&mut self, by: By) -> Attempt {
@@ -414,10 +453,7 @@ impl<P> Client<P> {
         };
         self.state = Opening(Step::Hello, by);
         let Config {
-            username,
-            password,
-            database,
-            ..
+            username, password, ..
         } = &self.config;
         let user: &[u8] = if username.is_empty() {
             b"default"
@@ -428,10 +464,10 @@ impl<P> Client<P> {
         let anonymous = username.is_empty() && password.is_empty();
         let out = &mut self.output.byte_list;
         command::encode(b"HELLO", &hello[..if anonymous { 1 } else { 4 }], out);
-        if *database > 0 {
-            let mut digits = bun_core::fmt::ItoaBuf::new();
-            let database = bun_core::fmt::itoa(&mut digits, *database);
-            command::encode(b"SELECT", &[database], out);
+        let Ask(_, selected) = by.claimed();
+        let database = selected.unwrap_or(self.config.database);
+        if database > 0 {
+            write_select(database, out);
         }
     }
 
@@ -440,19 +476,28 @@ impl<P> Client<P> {
     pub fn fail(&mut self) -> Option<Vec<P>> {
         self.state = Ending(match self.state {
             Idle | Backoff(_) | Ending(End::Failed | End::FailedUnclaimed) | Closed => return None,
-            Opening(_, By::Flag) | SpareSelect | Spare | Ending(End::Policy(By::Flag)) => {
-                End::FailedUnclaimed
-            }
+            Opening(_, By::Flag) | Spare | Ending(End::Policy(By::Flag)) => End::FailedUnclaimed,
             Ending(End::Policy(By::Script(_)) | End::Requested(_) | End::Final) => End::Failed,
-            Opening(_, By::Script(_)) | Select | Ready => End::Failed,
+            Opening(_, By::Script(_)) | Ready(_) => End::Failed,
         });
         Some(self.take_pending())
+    }
+
+    /// For a reason that passes. Whether that costs only this attempt: the caller closes the socket, else it fails.
+    #[must_use]
+    pub fn abandon_handshake(&mut self) -> bool {
+        let Opening(_, by @ By::Script(Ask(Goal::Reconnect(_), _))) = self.state else {
+            return false;
+        };
+        self.state = Ending(End::Policy(by));
+        true
     }
 
     /// The TLS session broke. `Some` if that counts as a lost connection and not as a failed handshake.
     #[must_use]
     pub fn session_broke(&mut self) -> Option<Vec<P>> {
-        (self.is_connected() && self.config.enable_auto_reconnect).then(|| self.take_in_flight())
+        let said_hello = self.is_connected() || matches!(self.state, Opening(Step::Select(_), _));
+        (said_hello && self.config.enable_auto_reconnect).then(|| self.take_in_flight())
     }
 
     /// The socket closed, or there never was one.
@@ -461,26 +506,28 @@ impl<P> Client<P> {
         self.input.clear_and_free();
         self.scanner.reset();
 
-        let policy = match self.state {
-            Opening(_, By::Script(retries))
-            | Ending(End::Policy(By::Script(retries)))
-            | Backoff(retries) => Ok(retries),
-            Select | Ready => Ok(0),
-            Opening(_, By::Flag)
-            | SpareSelect
-            | Spare
-            | Ending(End::Policy(By::Flag) | End::FailedUnclaimed) => Err((Idle, Reason::Final)),
+        let next = match self.state {
+            Opening(_, By::Script(Ask(goal, selected)))
+            | Ending(End::Policy(By::Script(Ask(goal, selected))))
+            | Backoff(Ask(goal, selected)) => Ok(match goal {
+                Goal::Connect(n) => Ask(Goal::Connect(n.saturating_add(1)), selected),
+                Goal::Reconnect(n) => Ask(Goal::Reconnect(n.saturating_add(1)), selected),
+            }),
+            Ready(selected) => Ok(Ask(Goal::Reconnect(NonZeroU32::MIN), selected)),
+            Opening(_, By::Flag) | Spare | Ending(End::Policy(By::Flag) | End::FailedUnclaimed) => {
+                Err((Idle, Reason::Final))
+            }
             Ending(End::Requested(_)) => Err((Closed, Reason::Requested)),
             Idle | Ending(End::Final | End::Failed) | Closed => Err((Closed, Reason::Final)),
         };
-        let (state, reason) = match policy {
+        let (state, reason) = match next {
             Err(over) => over,
             Ok(_) if owner_is_gone || !self.config.enable_auto_reconnect => (Closed, Reason::Final),
-            Ok(retries) if retries >= self.config.max_retries => (Closed, Reason::RetriesUsedUp),
-            Ok(retries) => {
-                self.state = Backoff(retries + 1);
+            Ok(ask) if ask.retries() > self.config.max_retries => (Closed, Reason::RetriesUsedUp),
+            Ok(ask) => {
+                self.state = Backoff(ask);
                 return Lost::Retry {
-                    delay_ms: (FIRST_DELAY_MS << retries.min(9)).min(MAX_DELAY_MS),
+                    delay_ms: (FIRST_DELAY_MS << (ask.retries().min(10) - 1)).min(MAX_DELAY_MS),
                     in_flight: self.take_in_flight(),
                 };
             }
@@ -494,6 +541,17 @@ impl<P> Client<P> {
 
     fn take_in_flight(&mut self) -> Vec<P> {
         let in_flight = core::mem::take(&mut self.in_flight);
+        match &mut self.state {
+            // Script was leaving the database that it selected before.
+            Ready(selected) | Backoff(Ask(_, selected)) => {
+                selected.take_if(|from| {
+                    in_flight
+                        .iter()
+                        .any(|it| matches!(it.expect, Expect::Database(to) if to != *from))
+                });
+            }
+            Idle | Opening(..) | Spare | Ending(_) | Closed => {}
+        }
         in_flight.into_iter().map(|it| it.promise).collect()
     }
 
@@ -525,6 +583,13 @@ impl<P> Client<P> {
     ) -> Sent {
         let expect = match ACKS.get_ascii_case_insensitive(name) {
             Some(_) => Expect::Ack,
+            None if matches!(
+                (name.len(), name.first().map(u8::to_ascii_lowercase)),
+                (5, Some(b'r')) | (6, Some(b's'))
+            ) =>
+            {
+                (self.database_after(name, args)).map_or(Expect::Reply(reply), Expect::Database)
+            }
             None => Expect::Reply(reply),
         };
         let request = InFlight { expect, promise };
@@ -532,8 +597,7 @@ impl<P> Client<P> {
         let batches = can_pipeline && self.config.enable_auto_pipelining;
         let connected = self.is_connected();
 
-        let goes_now =
-            !batches && self.is_ready() && self.queue.is_empty() && self.in_flight.is_empty();
+        let goes_now = !batches && connected && self.queue.is_empty() && self.in_flight.is_empty();
 
         let mut bytes = Vec::new();
         let out = if goes_now {
@@ -558,10 +622,22 @@ impl<P> Client<P> {
         }
     }
 
+    /// RESET forgets the choice, as it does the rest of the session.
+    #[inline(never)]
+    fn database_after<A: AsRef<[u8]>>(&self, name: &[u8], args: &[A]) -> Option<u32> {
+        match args {
+            [database] if name.eq_ignore_ascii_case(b"SELECT") => Some(
+                bun_core::fmt::parse_int(database.as_ref(), 10).unwrap_or(self.config.database),
+            ),
+            [] if name.eq_ignore_ascii_case(b"RESET") => Some(self.config.database),
+            _ => None,
+        }
+    }
+
     /// Moves the head of the queue to [`Self::output`] if it travels alone. Whether [`Self::batch`] is due.
     #[must_use]
     pub fn advance(&mut self) -> bool {
-        if !self.output.is_empty() || !self.is_ready() {
+        if !self.output.is_empty() || !self.is_connected() {
             return false;
         }
         if self.in_flight.is_empty()
@@ -659,22 +735,33 @@ impl<P> Client<P> {
     }
 
     fn route(&mut self, value: RESPValue) -> Event<P> {
-        match self.state {
-            Ready | Spare => self.on_reply(value),
-            Opening(Step::Hello, by) => self.on_hello(value, by),
-            Select => self.on_select(value, Ready),
-            SpareSelect => self.on_select(value, Spare),
-            Idle | Opening(Step::Dial, _) | Ending(_) | Backoff(_) | Closed => Event::Ignored,
+        // Spares every reply the move below.
+        if let Ready(_) = self.state {
+            return self.on_reply(value);
         }
+        let event;
+        (self.state, event) = match core::mem::replace(&mut self.state, Closed) {
+            Opening(Step::Hello, by) => self.on_hello(value, by),
+            Opening(Step::Select(hello), by) => self.on_select(value, hello, by),
+            state @ (Ready(_) | Spare) => {
+                self.state = state;
+                return self.on_reply(value);
+            }
+            state @ (Idle | Opening(Step::Dial, _) | Ending(_) | Backoff(_) | Closed) => {
+                (state, Event::Ignored)
+            }
+        };
+        event
     }
 
-    fn on_hello(&mut self, value: RESPValue, by: By) -> Event<P> {
+    fn on_hello(&self, value: RESPValue, by: By) -> (State, Event<P>) {
         use RedisError::{AuthenticationFailed, UnsupportedProtocol};
-        match value {
+        let Ask(_, selected) = by.claimed();
+        let refusal = match value {
             RESPValue::Error(message) => {
                 // Redis 5 has no HELLO. It echoes the arguments, and the password is one.
-                let echo = strings::split_once(&message, b", with args beginning with");
-                let message = echo.map_or(&*message, |(message, _)| message);
+                let echo = strings::split_once(&message, b" with args beginning with");
+                let message = echo.map_or(&*message, |(it, _)| it.strip_suffix(b",").unwrap_or(it));
                 refused(message, AuthenticationFailed)
             }
             RESPValue::SimpleString(ref text) if **text != *b"OK" => broken(
@@ -692,27 +779,38 @@ impl<P> Client<P> {
             {
                 broken(b"Server does not support RESP3", UnsupportedProtocol)
             }
+            RESPValue::SimpleString(_) | RESPValue::Map(_)
+                if selected.unwrap_or(self.config.database) > 0 =>
+            {
+                return (Opening(Step::Select(Box::new(value)), by), Event::Ignored);
+            }
             RESPValue::SimpleString(_) | RESPValue::Map(_) => {
-                self.state = match (by, self.config.database) {
-                    (By::Flag, 0) => Spare,
-                    (By::Flag, 1..) => SpareSelect,
-                    (By::Script(_), 0) => Ready,
-                    (By::Script(_), 1..) => Select,
-                };
-                Event::Connected(value)
+                return (Self::connected(by), Event::Connected(value));
             }
             _ => broken(
                 b"Authentication failed with unexpected response",
                 AuthenticationFailed,
             ),
-        }
+        };
+        (Opening(Step::Hello, by), refusal)
     }
 
-    fn on_select(&mut self, value: RESPValue, next: State) -> Event<P> {
-        match value {
+    fn on_select(&mut self, value: RESPValue, hello: Box<RESPValue>, by: By) -> (State, Event<P>) {
+        let refusal = match value {
             RESPValue::SimpleString(text) if *text == *b"OK" => {
-                self.state = next;
-                Event::Ignored
+                return (Self::connected(by), Event::Connected(*hello));
+            }
+            // Script selected with rights that it gets in `onconnect`, which has to run.
+            RESPValue::Error(message)
+                if let By::Script(Ask(goal, Some(_))) = by
+                    && message.starts_with(b"NOPERM ") =>
+            {
+                let by = By::Script(Ask(goal, None));
+                if self.config.database == 0 {
+                    return (Self::connected(by), Event::Connected(*hello));
+                }
+                write_select(self.config.database, &mut self.output.byte_list);
+                return (Opening(Step::Select(hello), by), Event::Ignored);
             }
             RESPValue::Error(message) => refused(&message, RedisError::InvalidCommand),
             RESPValue::SimpleString(_) => broken(
@@ -723,6 +821,14 @@ impl<P> Client<P> {
                 b"Received non-SELECT response while in the SELECT state.",
                 RedisError::InvalidResponse,
             ),
+        };
+        (Opening(Step::Select(hello), by), refusal)
+    }
+
+    fn connected(by: By) -> State {
+        match by {
+            By::Flag => Spare,
+            By::Script(Ask(_, selected)) => Ready(selected),
         }
     }
 
@@ -749,6 +855,18 @@ impl<P> Client<P> {
                 value: RESPValue::Boolean(int > 0),
                 as_buffer: false,
             },
+            (RESPValue::SimpleString(text), Expect::Database(database)) => {
+                // QUEUED: whether EXEC runs it is not tracked.
+                if let Ready(selected) = &mut self.state {
+                    let holds = matches!(&*text, b"OK" | b"RESET") || *selected == Some(database);
+                    *selected = (holds && database != self.config.database).then_some(database);
+                }
+                Event::Resolved {
+                    promise,
+                    value: RESPValue::SimpleString(text),
+                    as_buffer: false,
+                }
+            }
             (value, expect) => Event::Resolved {
                 promise,
                 value,
@@ -792,7 +910,7 @@ impl<P> Client<P> {
             return Event::Ignored;
         }
         match self.in_flight.front().map(|it| it.expect) {
-            None | Some(Expect::Reply(_)) if !self.is_subscriber => {
+            None | Some(Expect::Reply(_) | Expect::Database(_)) if !self.is_subscriber => {
                 self.answer(RESPValue::Push(push))
             }
             _ => broken(

@@ -210,6 +210,8 @@ JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, const SubspaceForIn
 
         if (init.hasOutputConstraints)
             heapData.outputConstraintSpaces().append(space);
+        if (init.isGlobalObject)
+            heapData.globalObjectSpaces().append(space);
     }
 
     clientSlot = makeUnique<JSC::GCClient::IsoSubspace>(*space).release();

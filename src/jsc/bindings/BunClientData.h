@@ -138,6 +138,9 @@ public:
             func(*space);
     }
 
+    // The subspaces of the classes that derive from JSC::JSGlobalObject. Only on the thread that owns the VM.
+    Vector<JSC::IsoSubspace*>& globalObjectSpaces() { return m_globalObjectSpaces; }
+
 private:
     Lock m_lock;
 
@@ -147,6 +150,7 @@ private:
     JSC::IsoSubspace m_domNamespaceObjectSpace;
 
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
+    Vector<JSC::IsoSubspace*> m_globalObjectSpaces;
 };
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
@@ -264,9 +268,6 @@ public:
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
 
-    // Bumped by Bun::GlobalScope's constructor/destructor.
-    size_t liveGlobalObjectCount { 0 };
-
     JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
     void setDecoderStringTable(std::span<const uint8_t>);
 
@@ -362,6 +363,7 @@ struct SubspaceForInit {
         Destructible,
         Custom } cellType;
     bool hasOutputConstraints;
+    bool isGlobalObject;
 };
 
 JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM&, const SubspaceForInit&, SubspaceSlots, const JSC::HeapCellType& (*getCustomHeapCellType)());
@@ -374,6 +376,7 @@ inline constexpr SubspaceForInit subspaceForInit {
         : std::is_base_of_v<JSC::JSDestructibleObject, T> ? SubspaceForInit::CellType::Destructible
                                                           : SubspaceForInit::CellType::Cell,
     static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(T::visitOutputConstraints) != static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(JSC::JSCell::visitOutputConstraints),
+    std::is_base_of_v<JSC::JSGlobalObject, T>,
 };
 
 // Holds only `T::destroy`, so every VM uses the same one.

@@ -626,6 +626,7 @@ export const tablesReadByNobody: readonly string[] = [
   "JSCookieMapPrototypeTableValues", // webcore/JSCookieMap.cpp
   "JSCookiePrototypeTableValues", // webcore/JSCookie.cpp
   "JSDatabaseSyncPrototypeTableValues", // sqlite/NodeSqlite.cpp
+  "JSDedicatedWorkerGlobalScopePrototypeTableValues", // webcore/JSWorkerGlobalScope.cpp: above the global object of a Web Worker alone
   "JSDirentPrototypeTableValues", // NodeDirent.cpp
   "JSHashPrototypeTableValues", // node/crypto/JSHash.cpp
   "JSHmacPrototypeTableValues", // node/crypto/JSHmac.cpp
@@ -642,6 +643,8 @@ export const tablesReadByNobody: readonly string[] = [
   "JSStatementSyncPrototypeTableValues", // sqlite/NodeSqlite.cpp
   "JSStatsPrototypeTableValues", // NodeFSStatBinding.cpp
   "JSWasmStreamingCompilerPrototypeTableValues", // webcore/JSWasmStreamingCompiler.cpp
+  "JSWorkerGlobalScopePrototypeTableValues", // webcore/JSWorkerGlobalScope.cpp: above the global object of a Web Worker alone
+  "JSWorkerLocationPrototypeTableValues", // webcore/JSWorkerLocation.cpp: `location` of a Web Worker alone
   "JSX509CertificatePrototypeTableValues", // JSX509CertificatePrototype.cpp
   "NodeVMModulePrototypeTableValues", // NodeVMModule.cpp
   "RequireFunctionPrototypeValues", // JSCommonJSModule.cpp

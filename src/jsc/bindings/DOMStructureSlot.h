@@ -58,7 +58,8 @@ namespace WebCore {
                                                                                                                                                                                                         macro(JSWorker)                                  \
                                                                                                                                                                                                             macro(JSWritableStream)                      \
                                                                                                                                                                                                                 macro(JSWritableStreamDefaultController) \
-                                                                                                                                                                                                                    macro(JSWritableStreamDefaultWriter)
+                                                                                                                                                                                                                    macro(JSWritableStreamDefaultWriter) \
+                                                                                                                                                                                                                        macro(JSWorkerLocation)
 
 #define DOM_STRUCTURE_SLOT_FORWARD_DECLARE(name) class name;
 FOR_EACH_DOM_STRUCTURE_SLOT(DOM_STRUCTURE_SLOT_FORWARD_DECLARE)

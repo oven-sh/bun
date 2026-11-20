@@ -156,6 +156,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForPerformanceServerTiming { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForWorker { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForWorkerGlobalScope { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForWorkerLocation { nullptr };
 
     GCClient::IsoSubspace* m_clientSubspaceForBakeGlobalScope { nullptr };
 

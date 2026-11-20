@@ -44,6 +44,8 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <variant>
 #include "BunProcess.h"
+#include "JSWorkerGlobalScope.h"
+#include "ZigGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -217,12 +219,16 @@ JSC_DEFINE_HOST_FUNCTION(jsEventTargetGetEventListenersCount, (JSC::JSGlobalObje
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* thisValue = dynamicDowncast<WebCore::JSEventTarget>(callFrame->argument(0));
-    if (!thisValue) return JSC::JSValue::encode(JSC::jsUndefined());
+    WebCore::EventTarget* target = nullptr;
+    if (auto* thisValue = dynamicDowncast<WebCore::JSEventTarget>(callFrame->argument(0)))
+        target = &thisValue->wrapped();
+    else if (auto* workerGlobalScope = WebCore::workerGlobalScopeOf(callFrame->argument(0)))
+        target = &workerGlobalScope->eventTarget();
+    if (!target) return JSC::JSValue::encode(JSC::jsUndefined());
     JSC::JSString* eventName = callFrame->argument(1).toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     String str = eventName->value(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto size = thisValue->wrapped().eventListeners(makeAtomString(str)).size();
+    auto size = target->eventListeners(makeAtomString(str)).size();
     return JSC::JSValue::encode(JSC::jsNumber(size));
 }

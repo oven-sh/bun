@@ -15,6 +15,7 @@
 #include <JavaScriptCore/ObjectPrototypeInlines.h>
 #include <cmath>
 #include "JSEventTarget.h"
+#include "JSWorkerGlobalScope.h"
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "_NativeModule.h"
 
@@ -1264,7 +1265,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsEventTarget,
         JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
-    return JSValue::encode(jsBoolean(cell->inherits<WebCore::JSEventTarget>()));
+    // The global object of a Web Worker is an EventTarget (a DedicatedWorkerGlobalScope), as in Node.
+    return JSValue::encode(jsBoolean(cell->inherits<WebCore::JSEventTarget>() || WebCore::workerGlobalScopeOf(value)));
 }
 
 namespace Zig {

@@ -81,6 +81,15 @@ pub fn set_sampling_profiler_directory(this: &VirtualMachine, directory: &BunStr
         .set(Some(absolute_directory(directory)));
 }
 
+/// `vm.main` as stored (not the `Bun.main` override), or empty. The `location` of a Web Worker reads it.
+// HOST_EXPORT(Bun__VirtualMachine__main, c)
+pub fn main(this: &VirtualMachine) -> BunString {
+    match this.main() {
+        Some(main) => BunString::clone_utf8(main),
+        None => BunString::EMPTY,
+    }
+}
+
 // HOST_EXPORT(Bun__reportUnhandledError, c)
 pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
     crate::mark_binding!();

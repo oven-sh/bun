@@ -71,6 +71,13 @@ const heldInOneWay: Record<string, string[]> = {
 };
 const engineInOneWay: Record<string, string[]> = {
   "bun test": ["console.timeStamp: is missing", "process.mainModule: is an accessor"],
+  // The global object of a Web Worker is a DedicatedWorkerGlobalScope (JSWorkerGlobalScope.cpp); the table lists the main realm's names.
+  "a Worker": [
+    "globalThis.DedicatedWorkerGlobalScope: is not in the table",
+    "globalThis.WorkerGlobalScope: is not in the table",
+    "globalThis.WorkerLocation: is not in the table",
+    "globalThis.location: is not in the table",
+  ],
   // The bundler's `require` in place of a module's own.
   "an executable": [
     "%ModuleRequirePrototype%.cache: is an accessor",

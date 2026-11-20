@@ -1565,6 +1565,126 @@ interface Navigator {
 
 declare var navigator: Navigator;
 
+/**
+ * The location of a Web Worker: the URL of the script the worker was started
+ * with. A file path is a `file:` URL. A `blob:` or `data:` URL is kept as is.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WorkerLocation)
+ */
+interface WorkerLocation {
+  readonly href: string;
+  readonly origin: string;
+  readonly protocol: string;
+  readonly host: string;
+  readonly hostname: string;
+  readonly port: string;
+  readonly pathname: string;
+  readonly search: string;
+  readonly hash: string;
+  toString(): string;
+}
+declare var WorkerLocation: {
+  prototype: WorkerLocation;
+  new (): WorkerLocation;
+};
+
+/**
+ * The global scope of a Web Worker (`new Worker()`). `self instanceof WorkerGlobalScope`
+ * is true inside such a worker.
+ *
+ * Not defined on the main thread or in a `node:worker_threads` worker.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WorkerGlobalScope)
+ */
+interface WorkerGlobalScopeEventMap {
+  error: ErrorEvent;
+}
+
+interface WorkerGlobalScope extends EventTarget {
+  readonly location: WorkerLocation;
+  readonly self: WorkerGlobalScope & typeof globalThis;
+  onerror: ((this: WorkerGlobalScope, ev: ErrorEvent) => any) | null;
+  addEventListener<K extends keyof WorkerGlobalScopeEventMap>(
+    type: K,
+    listener: (this: WorkerGlobalScope, ev: WorkerGlobalScopeEventMap[K]) => any,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: string,
+    listener: Bun.EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  removeEventListener<K extends keyof WorkerGlobalScopeEventMap>(
+    type: K,
+    listener: (this: WorkerGlobalScope, ev: WorkerGlobalScopeEventMap[K]) => any,
+    options?: boolean | EventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: string,
+    listener: Bun.EventListenerOrEventListenerObject,
+    options?: boolean | EventListenerOptions,
+  ): void;
+}
+declare var WorkerGlobalScope: {
+  prototype: WorkerGlobalScope;
+  new (): WorkerGlobalScope;
+};
+
+/**
+ * The global scope of a Web Worker (`new Worker()`): the prototype of its `globalThis`.
+ *
+ * Not defined on the main thread or in a `node:worker_threads` worker.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/DedicatedWorkerGlobalScope)
+ */
+interface DedicatedWorkerGlobalScopeEventMap extends WorkerGlobalScopeEventMap {
+  message: MessageEvent;
+  messageerror: MessageEvent;
+}
+
+interface DedicatedWorkerGlobalScope extends WorkerGlobalScope {
+  onmessage: ((this: DedicatedWorkerGlobalScope, ev: MessageEvent) => any) | null;
+  /**
+   * Post a message to the parent thread.
+   */
+  postMessage(message: any, transfer: Bun.Transferable[]): void;
+  postMessage(message: any, options?: Bun.StructuredSerializeOptions): void;
+  addEventListener<K extends keyof DedicatedWorkerGlobalScopeEventMap>(
+    type: K,
+    listener: (this: DedicatedWorkerGlobalScope, ev: DedicatedWorkerGlobalScopeEventMap[K]) => any,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: string,
+    listener: Bun.EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  removeEventListener<K extends keyof DedicatedWorkerGlobalScopeEventMap>(
+    type: K,
+    listener: (this: DedicatedWorkerGlobalScope, ev: DedicatedWorkerGlobalScopeEventMap[K]) => any,
+    options?: boolean | EventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: string,
+    listener: Bun.EventListenerOrEventListenerObject,
+    options?: boolean | EventListenerOptions,
+  ): void;
+}
+declare var DedicatedWorkerGlobalScope: {
+  prototype: DedicatedWorkerGlobalScope;
+  new (): DedicatedWorkerGlobalScope;
+};
+
+/**
+ * The location of the current Web Worker (`new Worker()`).
+ *
+ * Only defined in a Web Worker thread. On the main thread and in a
+ * `node:worker_threads` worker it is `undefined`.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/WorkerGlobalScope/location)
+ */
+declare var location: Bun.__internal.UseLibDomIfAvailable<"location", WorkerLocation>;
+
 interface BlobPropertyBag {
   /** Set a default "type". Not yet implemented. */
   type?: string;

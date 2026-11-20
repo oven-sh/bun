@@ -183,19 +183,44 @@ test("require.resolve with relative path and options.paths (Next.js use case)", 
   }
 });
 
-test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is not an array", () => {
+test("Module._resolveFilename throws ERR_INVALID_ARG_VALUE if options.paths is not an array", () => {
+  const fakeParent = new Module("/some/other/directory/file.js");
+  fakeParent.filename = "/some/other/directory/file.js";
+  fakeParent.paths = Module._nodeModulePaths("/some/other/directory");
+
+  const thrownBy = fn => {
+    try {
+      fn();
+    } catch ({ name, code, message }) {
+      return { name, code, message };
+    }
+    return {};
+  };
+  // Node returns a builtin id before it reads options.paths, so the request is a package name.
+  const resolveFilename = paths => () => Module._resolveFilename("test-package", fakeParent, false, { paths });
+  const invalidString = {
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_VALUE",
+    message: "The property 'options.paths' is invalid. Received '/some/path'",
+  };
+
   // Test with string (which is iterable but not an array)
-  expect(() => {
-    Module._resolveFilename("path", __filename, false, { paths: "/some/path" });
-  }).toThrow();
+  expect(thrownBy(resolveFilename("/some/path"))).toEqual(invalidString);
 
   // Test with Set (which is iterable but not an array)
-  expect(() => {
-    Module._resolveFilename("path", __filename, false, { paths: new Set(["/some/path"]) });
-  }).toThrow();
+  expect(thrownBy(resolveFilename(new Set(["/some/path"]))).code).toBe("ERR_INVALID_ARG_VALUE");
 
   // Test with object (not iterable)
-  expect(() => {
-    Module._resolveFilename("path", __filename, false, { paths: { 0: "/some/path" } });
-  }).toThrow();
+  expect(thrownBy(resolveFilename({ 0: "/some/path" })).code).toBe("ERR_INVALID_ARG_VALUE");
+
+  // require.resolve() reaches the same check when a replacement of Module._resolveFilename forwards to the original.
+  const original = Module._resolveFilename;
+  Module._resolveFilename = function (request, parent, isMain, options) {
+    return original.call(this, request, parent, isMain, options);
+  };
+  try {
+    expect(thrownBy(() => require.resolve("test-package", { paths: "/some/path" }))).toEqual(invalidString);
+  } finally {
+    Module._resolveFilename = original;
+  }
 });

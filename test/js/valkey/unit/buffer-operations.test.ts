@@ -108,6 +108,16 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
     expect(out).toBeInstanceOf(Uint8Array);
     expect(out).toStrictEqual(value);
   });
+
+  test("sendBuffer reads back a binary hash field and a DUMP payload", async () => {
+    const [key, copy] = [ctx.generateKey("binary-hash"), ctx.generateKey("binary-hash-copy")];
+    const value = Buffer.of(0xff, 0xfe, 0x00, 0x41);
+    await ctx.redis.hset(key, "f", value);
+    expect(await ctx.redis.sendBuffer("HGET", [key, "f"])).toEqual(value);
+
+    await ctx.redis.send("RESTORE", [copy, 0, await ctx.redis.sendBuffer("DUMP", [key])]);
+    expect(await ctx.redis.sendBuffer("HGETALL", [copy])).toEqual({ f: value });
+  });
 });
 
 function expectAssert(value: unknown): asserts value {

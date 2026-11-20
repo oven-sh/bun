@@ -8,7 +8,7 @@
 # print(o instanceof Other, 1 instanceof One, 1 instanceof Two, o.m());
 # -- end of source
 # RUN: link fields mechanisms=all
-# CHECK: field {{*}} "x" proven=i32
+# CHECK: field {{*}} "x" proven=int[0, 2147483647]
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: true true true 1
 # RUN(NONE): run-in-shell mechanisms=none

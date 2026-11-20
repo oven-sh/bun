@@ -7,5 +7,8 @@
 # -- end of source
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body
-# FORM: StringBuilderBegin
-# FORM: StringBuilderToString
+# No text is in a builder here: each turn passes the whole text to the URL.
+# FORM-NOT: StringBuilderBegin
+# FORM: CallBuiltin {{*}}overload=CompilerHelpersScanPlainURL
+# FORM: CallBuiltin {{*}}overload=URL/1
+# FORM-NOT: StringBuilderBegin

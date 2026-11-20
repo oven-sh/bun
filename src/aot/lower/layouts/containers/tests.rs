@@ -125,14 +125,8 @@ Object.defineProperty(exports, \"plain\", { enumerable: false });
     );
     let expected = [
         ("marker", FIXED),
-        (
-            "getter",
-            FieldForm::IS_ACCESSOR | FieldForm::IS_NOT_CONFIGURABLE,
-        ),
-        (
-            "method",
-            FieldForm::IS_ACCESSOR | FieldForm::IS_NOT_ENUMERABLE,
-        ),
+        ("getter", PLAIN),
+        ("method", PLAIN),
         ("open", PLAIN),
         (
             "shown",

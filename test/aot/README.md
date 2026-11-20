@@ -75,7 +75,7 @@ More comment lines at the top say how it is built and run. These are the common 
 | `// Env: NAME=value` | the environment of both runs |
 | `// Exit code: <n>` | what both runs end with. Without it, a reference run that does not exit with 0 fails the program |
 | `// Under: <flags>: <why>` | one more build with those flags |
-| `// STATISTIC: <name> >= <n>` | holds a counter of the build to a number, to show that an optimization ran. Also `=` and `<=` |
+| `// STATISTIC: <name> >= <n>` | holds a counter of the build to a number, to show that an optimization ran. Also `=` and `<=`. `// STATISTIC on x64:` asks it on that processor alone |
 | `// Todo: it grows: <why>`, `// Todo: "<word>" \| "<word in its place>": <why>`, `// Todo: only frames (..): <why>` | a known difference of one of these three kinds. The program still runs, and fails once it passes. No other difference can be marked |
 
 A program that differs from plain Bun on purpose ends with what it must print:
@@ -109,6 +109,7 @@ A test that does not pass today is a `test.todo(..)` with its body.
 | --- | --- |
 | `bun test/aot/tools/bisect.ts <program> [--bun <bun>]` | Builds a program that differs from plain Bun with each switch, and prints the fewest that set the answer right |
 | `bun test/aot/tools/same-output.ts --before <bun> --after <bun> <program or folder>..` | Compares the IR and the machine code that two Buns make, for a change that is meant to change nothing |
+| `bun test/aot/tools/compare-check-orders.ts [--bun=<bun>] <program or folder>..` | Builds programs with their files type-checked in several orders. The messages and the IR must be the same in each |
 | `bun test/aot/tools/ir-test-from-source.ts main.ts > main.ir` | Drafts an `.ir` test of the engine from a small program |
 | `bun test/aot/tools/update-ir-tests.ts <file or folder>..` | Rewrites such a file from the source it holds, as `bun test -u` does for snapshots |
 

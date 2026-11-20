@@ -15,7 +15,7 @@
 # -- end of source
 # RUN(ONE): walk f3 mechanisms=all
 # ONE: frame 1 callee=f2
-# ONE: = IsUnmodifiedGenerator
+# ONE: = MakesPlainGenerators
 # ONE-NOT: function=f2 traits
 # RUN(ANSWERS): run-in-shell hand = function () { };
 # ANSWERS: undefined 1 1 undefined 7 9 t endfy0fy0f

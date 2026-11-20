@@ -47,6 +47,33 @@ pub(crate) fn live_count() -> f64 {
     c::us_ssl_ctx_live_count() as f64
 }
 
+/// An out-string of `us_ssl_parse_pkcs12`: null, or `len` bytes from libc `malloc`.
+#[derive(Default)]
+struct MallocPem {
+    ptr: *mut core::ffi::c_char,
+    len: usize,
+}
+
+impl MallocPem {
+    fn bytes(&self) -> Option<&[u8]> {
+        // SAFETY: see the type.
+        (!self.ptr.is_null())
+            .then(|| unsafe { core::slice::from_raw_parts(self.ptr.cast::<u8>(), self.len) })
+    }
+}
+
+impl Drop for MallocPem {
+    fn drop(&mut self) {
+        unsafe extern "C" {
+            fn free(ptr: *mut core::ffi::c_void);
+        }
+        if !self.ptr.is_null() {
+            // SAFETY: see the type.
+            unsafe { free(self.ptr.cast()) };
+        }
+    }
+}
+
 impl SecureContext {
     pub(crate) fn constructor(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<Self> {
         let global = cx.global();
@@ -55,8 +82,7 @@ impl SecureContext {
     }
 
     fn config_from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<SSLConfig> {
-        // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
         // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
         Ok(SSLConfig::from_js(vm, global, options, true)?.unwrap_or_else(SSLConfig::zero))
     }
@@ -103,15 +129,11 @@ impl SecureContext {
         if pfx_bytes.is_empty() {
             return Err(global.throw(format_args!("PFX certificate argument is mandatory")));
         }
-        let mut out_key: *mut core::ffi::c_char = core::ptr::null_mut();
-        let mut out_cert: *mut core::ffi::c_char = core::ptr::null_mut();
-        let mut out_ca: *mut core::ffi::c_char = core::ptr::null_mut();
-        let mut key_len = 0usize;
-        let mut cert_len = 0usize;
-        let mut ca_len = 0usize;
+        let mut key = MallocPem::default();
+        let mut cert = MallocPem::default();
+        let mut ca = MallocPem::default();
         let mut err_reason: *const core::ffi::c_char = core::ptr::null();
-        // SAFETY: the buffers are live for the call; the out-pointers are
-        // freed below with libc free per the helper's contract.
+        // SAFETY: the buffers are live for the call.
         let ok = unsafe {
             c::us_ssl_parse_pkcs12(
                 pfx_bytes.as_ptr().cast(),
@@ -119,18 +141,15 @@ impl SecureContext {
                 pass_owned
                     .as_ref()
                     .map_or(core::ptr::null(), |v| v.as_ptr().cast()),
-                &raw mut out_key,
-                &raw mut key_len,
-                &raw mut out_cert,
-                &raw mut cert_len,
-                &raw mut out_ca,
-                &raw mut ca_len,
+                &raw mut key.ptr,
+                &raw mut key.len,
+                &raw mut cert.ptr,
+                &raw mut cert.len,
+                &raw mut ca.ptr,
+                &raw mut ca.len,
                 &raw mut err_reason,
             )
         };
-        unsafe extern "C" {
-            fn free(ptr: *mut core::ffi::c_void);
-        }
         if ok == 0 {
             let reason = if err_reason.is_null() {
                 ""
@@ -148,39 +167,11 @@ impl SecureContext {
             };
             return Err(global.throw(format_args!("{message}")));
         }
-        let _free = scopeguard::guard((out_key, out_cert, out_ca), |(key, cert, ca)| {
-            // SAFETY: allocated by the helper with malloc; `ca` may be null.
-            unsafe {
-                free(key.cast());
-                free(cert.cast());
-                if !ca.is_null() {
-                    free(ca.cast());
-                }
-            }
-        });
         let result = JSValue::create_empty_object(global, 0);
-        // SAFETY: the helper returned NUL-terminated PEM (ASCII) strings of the
-        // given lengths; `to_js` copies into the JS heap.
-        let (key_slice, cert_slice, ca_slice) = unsafe {
-            (
-                core::slice::from_raw_parts(out_key.cast::<u8>(), key_len),
-                core::slice::from_raw_parts(out_cert.cast::<u8>(), cert_len),
-                (!out_ca.is_null() && ca_len > 0)
-                    .then(|| core::slice::from_raw_parts(out_ca.cast::<u8>(), ca_len)),
-            )
-        };
-        result.put(
-            global,
-            b"key",
-            EncodedSlice::latin1(key_slice).to_js(global),
-        );
-        result.put(
-            global,
-            b"cert",
-            EncodedSlice::latin1(cert_slice).to_js(global),
-        );
-        if let Some(ca_slice) = ca_slice {
-            result.put(global, b"ca", EncodedSlice::latin1(ca_slice).to_js(global));
+        for (name, pem) in [(&b"key"[..], &key), (b"cert", &cert), (b"ca", &ca)] {
+            if let Some(pem) = pem.bytes() {
+                result.put(global, name, EncodedSlice::latin1(pem).to_js(global));
+            }
         }
         Ok(result)
     }
@@ -236,11 +227,10 @@ impl SecureContext {
 
         let cached = cpp::Bun__SecureContextCache__get(global, key);
         if !cached.is_empty() {
-            if let Some(existing) = Self::from_js(cached) {
+            if let Some(existing) = Self::from_js(&cached) {
                 // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
                 // cert to a connection. Full-digest compare is 32 bytes; cheap.
-                // SAFETY: the struct is stored inline in the wrapper, which `cached` keeps alive.
-                if unsafe { (*existing).digest.get() } == d {
+                if existing.digest.get() == d {
                     return Ok(cached);
                 }
             }
@@ -270,18 +260,7 @@ impl SecureContext {
         d: [u8; 32],
     ) -> JsResult<SecureContext> {
         let mut err = uws::create_bun_socket_error_t::none;
-        // Note: spec is `global.bunVM().rareData().sslCtxCache()`. In the
-        // Rust crate split, `bun_jsc::RareData::ssl_ctx_cache()` returns an
-        // opaque cycle-break stub; the concrete per-VM `SSLContextCache` lives
-        // on this crate's `RuntimeState` (one per JS thread, same lifetime as
-        // `RareData`). Reach it via the thread-local — same instance
-        // `Bun__RareData__sslCtxCache` hands out over FFI.
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState` installed by
-        // `init_runtime_state`; the embedded `ssl_ctx_cache` has a stable
-        // address for the VM's lifetime and is only touched from the JS thread.
-        let cache = unsafe { &mut (*state).ssl_ctx_cache };
+        let cache = crate::jsc_hooks::ssl_ctx_cache();
         let Some(ctx) = cache.get_or_create_digest(ctx_opts, d, &mut err) else {
             // `err` is only set for the input-validation paths (bad PEM, missing
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the

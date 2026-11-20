@@ -41,43 +41,45 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     {
         let DevServer {
             magic: _,
-            root: _,
             inspector_server_id: _,
             configuration_hash_key: _,
             vm: _,
-            vm_handle: _,
             server: _,
             router: _,
             route_bundles: _,
             graph_safety_lock: _,
-            client_graph: _,
-            server_graph: _,
+            graphs:
+                Graphs {
+                    root: _,
+                    client: _,
+                    server: _,
+                    incremental_result: _,
+                    route_lookup: _,
+                    assets: _,
+                    bundling_failures: _,
+                },
             barrel_files_with_deferrals: _,
             barrel_needed_exports: _,
-            incremental_result: _,
-            route_lookup: _,
             html_router: _,
-            assets: _,
             source_maps: _,
-            bundling_failures: _,
             frontend_only: _,
             has_tailwind_plugin_hack: _,
             server_fetch_function_callback: _,
             server_register_update_callback: _,
             bun_watcher: _,
             directory_watchers: _,
-            watcher_atomics: _,
+            pending_reload_event: _,
+            spare_reload_event: _,
             testing_batch_events: _,
             generation: _,
             bundles_since_last_error: _,
             framework: _,
-            bundler_framework_views: _,
-            bundler_options: _,
             server_transpiler: _,
             client_transpiler: _,
             ssr_transpiler: _,
             log: _,
             plugin_state: _,
+            plugins: _,
             current_bundle: _,
             next_bundle: _,
             deferred_request_pool: _,
@@ -107,7 +109,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .plugin_state
     //   .server_register_update_callback
     //   .server_fetch_function_callback
-    //   .watcher_atomics
+    //   .pending_reload_event, .spare_reload_event
 
     // pointers that are not considered a part of DevServer
     //   .vm
@@ -117,39 +119,35 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .ssr_transpiler
     //   .log
     //   .framework
-    //   .bundler_options
     //   .broadcast_console_log_from_browser_to_server
 
     // to be counted.
-    // .root
-    other_bytes += dev.root.len();
+    // .graphs.root
+    other_bytes += dev.graphs.root.len();
     // .router
     other_bytes += dev.router.memory_cost();
     // .route_bundles
     for bundle in dev.route_bundles.iter() {
         other_bytes += bundle.memory_cost();
     }
-    // .bundler_framework_views (the pointed-to Frameworks are owned elsewhere;
-    // count the Vec's own backing store)
-    other_bytes += memory_cost_array_list(&dev.bundler_framework_views);
-    // .server_graph
+    // .graphs.server
     {
-        let cost = dev.server_graph.memory_cost_detailed();
+        let cost = dev.graphs.server.memory_cost_detailed();
         incremental_graph_server += cost.graph;
         js_code += cost.code;
         source_maps += cost.source_maps;
     }
-    // .client_graph
+    // .graphs.client
     {
-        let cost = dev.client_graph.memory_cost_detailed();
+        let cost = dev.graphs.client.memory_cost_detailed();
         incremental_graph_client += cost.graph;
         js_code += cost.code;
         source_maps += cost.source_maps;
     }
     // .barrel_files_with_deferrals
     // .barrel_needed_exports
-    // .assets
-    assets += dev.assets.memory_cost();
+    // .graphs.assets
+    assets += dev.graphs.assets.memory_cost();
     // .active_websocket_connections
     other_bytes += dev.active_websocket_connections.capacity() * size_of::<*const HmrSocket>();
     // .source_maps
@@ -160,7 +158,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             source_maps += file.memory_cost();
         }
     }
-    // .incremental_result
+    // .graphs.incremental_result
     {
         // Exhaustiveness check — fails to compile when
         // an IncrementalResult field is added/removed/renamed.
@@ -174,24 +172,30 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             failures_removed: _,
             client_components_affected: _,
             failures_added: _,
-        } = &dev.incremental_result;
+        } = &dev.graphs.incremental_result;
         // .had_adjusted_edges (bool — no heap)
         // .client_components_added
-        other_bytes += memory_cost_array_list(&dev.incremental_result.client_components_added);
+        other_bytes +=
+            memory_cost_array_list(&dev.graphs.incremental_result.client_components_added);
         // .framework_routes_affected
-        other_bytes += memory_cost_array_list(&dev.incremental_result.framework_routes_affected);
+        other_bytes +=
+            memory_cost_array_list(&dev.graphs.incremental_result.framework_routes_affected);
         // .client_components_removed
-        other_bytes += memory_cost_array_list(&dev.incremental_result.client_components_removed);
+        other_bytes +=
+            memory_cost_array_list(&dev.graphs.incremental_result.client_components_removed);
         // .failures_removed
-        other_bytes += memory_cost_array_list(&dev.incremental_result.failures_removed);
+        other_bytes += memory_cost_array_list(&dev.graphs.incremental_result.failures_removed);
         // .client_components_affected
-        other_bytes += memory_cost_array_list(&dev.incremental_result.client_components_affected);
+        other_bytes +=
+            memory_cost_array_list(&dev.graphs.incremental_result.client_components_affected);
         // .failures_added
-        other_bytes += memory_cost_array_list(&dev.incremental_result.failures_added);
+        other_bytes += memory_cost_array_list(&dev.graphs.incremental_result.failures_added);
         // .html_routes_soft_affected
-        other_bytes += memory_cost_array_list(&dev.incremental_result.html_routes_soft_affected);
+        other_bytes +=
+            memory_cost_array_list(&dev.graphs.incremental_result.html_routes_soft_affected);
         // .html_routes_hard_affected
-        other_bytes += memory_cost_array_list(&dev.incremental_result.html_routes_hard_affected);
+        other_bytes +=
+            memory_cost_array_list(&dev.graphs.incremental_result.html_routes_hard_affected);
     }
     // .has_tailwind_plugin_hack
     if let Some(hack) = &dev.has_tailwind_plugin_hack {
@@ -212,28 +216,28 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     other_bytes +=
         dev.html_router.map.capacity() * (size_of::<*const HTMLBundleRoute>() + size_of::<&[u8]>());
     // DevServer does not count the referenced HTMLBundle.HTMLBundleRoutes
-    // .bundling_failures
+    // .graphs.bundling_failures
     // The map stores `OwnerPacked → SerializedFailure`, so the failure
     // payloads live in `.values()`.
-    other_bytes += memory_cost_slice(dev.bundling_failures.values());
-    for failure in dev.bundling_failures.values() {
+    other_bytes += memory_cost_slice(dev.graphs.bundling_failures.values());
+    for failure in dev.graphs.bundling_failures.values() {
         other_bytes += failure.data.len();
     }
     // All entries are owned by the bundler arena, not DevServer, except for the request lists
     // .current_bundle
     if let Some(bundle) = &dev.current_bundle {
-        // `SinglyLinkedList::len()` is an O(N) walk; only the node count matters.
-        other_bytes += bundle.requests.len() * size_of::<deferred_request::Node>();
+        other_bytes += bundle.requests.iter().count() * size_of::<deferred_request::Node>();
         other_bytes += memory_cost_array_list(&bundle.script_requests);
         other_bytes += bundle.script_requests.len() * size_of::<DeferredScriptRequest>();
     }
     // .next_bundle
     {
-        other_bytes += dev.next_bundle.requests.len() * size_of::<deferred_request::Node>();
+        other_bytes +=
+            dev.next_bundle.requests.iter().count() * size_of::<deferred_request::Node>();
         other_bytes += memory_cost_array_hash_map(&dev.next_bundle.route_queue);
     }
-    // .route_lookup
-    other_bytes += memory_cost_array_hash_map(&dev.route_lookup);
+    // .graphs.route_lookup
+    other_bytes += memory_cost_array_hash_map(&dev.graphs.route_lookup);
     // .testing_batch_events
     match &dev.testing_batch_events {
         TestingBatchEvents::Disabled => {}
@@ -297,19 +301,13 @@ impl DevServer {
 }
 
 impl DevServer {
-    #[inline]
-    pub(super) fn timer_heap(&self) -> &mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
-    }
-
     pub(crate) fn emit_memory_visualizer_message_timer(timer: *mut EventLoopTimer) {
         // SAFETY: `timer` points to the `memory_visualizer_timer` field of a DevServer.
         let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
         debug_assert!(dev.magic == Magic::Valid);
         dev.emit_memory_visualizer_message();
-        dev.memory_visualizer_timer.state = EventLoopTimerState::FIRED;
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
-        dev.timer_heap().update(timer, &next);
+        crate::jsc_hooks::timer_all().update(timer, &next);
     }
 
     pub(crate) fn emit_memory_visualizer_message(&mut self) {

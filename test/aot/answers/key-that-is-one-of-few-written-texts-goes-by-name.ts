@@ -28,8 +28,8 @@ function inArms(n: number) { const p = new Point(); let s = 0; for (let i = 0; i
 function ofThree(n: number) { const p = new Point(); let s = 0; for (let i = 0; i < n; i++) { const k = i % 3 === 0 ? "x" : i % 3 === 1 ? "y" : "z"; if (i & 2) s += 100; s += p[k]; } return [s]; }
 function stores(n: number) { const p = new Point(); for (let i = 0; i < n; i++) { const k = i & 1 ? "x" : "y"; if (i & 2) p.z += 1; p[k] = i; } return [p.x * 1000 + p.y * 10 + p.z]; }
 function outside(n: number) { const p = new Point(); const k = n & 1 ? "x" : "y"; if (n & 2) n += 100; return [p[k] + n]; }
-function ofAnyone(p: Point, n: number) { let s = 0; for (let i = 0; i < n; i++) { const k = i & 1 ? "x" : "y"; if (i & 2) s += 100; s += p[k]; } return [s]; }
+function ofAnyone(p: any, n: number) { let s = 0; for (let i = 0; i < n; i++) { const k = i & 1 ? "x" : "y"; if (i & 2) s += 100; s += p[k]; } return [s]; }
 function tell(f: () => unknown[]) { try { report(f()[0]); } catch (e) { report((e as Error).name); } }
 tell(() => inArms(5)); tell(() => ofThree(7)); tell(() => stores(6)); tell(() => outside(1)); tell(() => outside(2)); tell(() => ofAnyone(new Point(), 5));
-const odd: any = { get x() { return 10; }, y: "text" }; tell(() => ofAnyone(odd, 4)); tell(() => ofAnyone(null as any, 2)); tell(() => ofAnyone(undefined as any, 0));
+const odd: any = JSON.parse('{"y":"text"}'); Object.defineProperty(odd, "x", { get() { return 10; } }); tell(() => ofAnyone(odd, 4)); tell(() => ofAnyone(null as any, 2)); tell(() => ofAnyone(undefined as any, 0));
 report("end");

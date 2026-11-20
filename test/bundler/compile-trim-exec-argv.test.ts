@@ -29,9 +29,8 @@ import {
 
 /** For each part of Bun that an option is declared to need, an option that needs it. */
 const optionThatNeeds: Record<string, string> = {
-  AotCompiler: "--aot",
+  AotCompiler: "--debug-aot",
   Bunfig: "--config",
-  Check: "--check",
   Fetch: "--fetch-preconnect",
   Inspector: "--inspect",
   Install: "--install",

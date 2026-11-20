@@ -184,18 +184,14 @@ impl<'s> Checker<'_, 's> {
             FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
                 Some(constant)
             }
-            FoldedValue::Unknown => decisions.constant_read(key),
+            FoldedValue::Unknown => {
+                let constant = decisions.constant_read(key);
+                constant.or_else(|| decisions.constant_of_let(key))
+            }
         };
         match constant {
             Some(Constant::String(text)) => Some(text),
             _ => None,
         }
-    }
-
-    #[inline]
-    pub(in crate::check) fn is_short_circuited_link(&self, file: FileId, link: ExprId) -> bool {
-        self.files
-            .compiled(file)
-            .is_some_and(|compiled| compiled.analysis.decisions.is_short_circuited_link(link))
     }
 }

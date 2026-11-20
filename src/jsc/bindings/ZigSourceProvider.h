@@ -17,8 +17,6 @@ class SourceProvider;
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/Structure.h>
 
-struct bun_ModuleInfoDeserialized;
-
 namespace Zig {
 
 class GlobalObject;
@@ -46,9 +44,7 @@ public:
         return m_cachedBytecode.copyRef();
     };
 
-    // Taken from the ResolvedSource at create(); freed in the destructor (or
-    // earlier by BunAnalyzeTranspiledModule once consumed).
-    bun_ModuleInfoDeserialized* m_moduleInfo { nullptr };
+    std::unique_ptr<bun_ModuleInfoDeserialized> m_moduleInfo;
     uint32_t m_tag { 0 };
     bool m_alreadyBundled { false };
     bool m_dependsOnMoreThanSource { false };
@@ -61,7 +57,7 @@ private:
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
         : Base(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType, resolvedSource.is_static ? JSC::SourceProvenance::Static : JSC::SourceProvenance::GeneratedAtRuntime)
-        , m_moduleInfo(std::exchange(resolvedSource.module_info, nullptr))
+        , m_moduleInfo(WTF::move(resolvedSource.module_info))
         , m_tag(resolvedSource.tag)
         , m_alreadyBundled(resolvedSource.already_bundled)
         , m_dependsOnMoreThanSource(resolvedSource.depends_on_more_than_source)

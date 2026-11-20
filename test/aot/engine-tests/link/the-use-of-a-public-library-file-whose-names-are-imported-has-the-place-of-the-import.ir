@@ -4,8 +4,8 @@
 # LIBRARY: own
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: features
-# CHECK: by BunSqlite unnamed at f0
-# CHECK: by BunSqliteDatabase unnamed at f0
+# CHECK: by BunSqlite named at f0
+# CHECK: by BunSqliteDatabase named at f0
 
 layout L0 module=m1 fields=[{key="Database" declared={type=anything} flags=[IsRequired]}]
 variable g0 name="Database" module=m1 declared={type=anything}

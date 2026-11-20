@@ -13,12 +13,14 @@
 # And the slot was planned as a literal's accessor (enumerable, configurable): this descriptor creates one that cannot be configured: the run time asks for equal attributes before it lays a getter into a slot,
 # so the field left its slot at the definition and every typed read failed at IsSlotFilled. A listed field that accessors alone fill is planned in the ONE form that the written descriptors create.
 # RUN(FIELD): link fields mechanisms=all
-# FIELD: field L1.0 "add" {{*}}filled-by-accessors-alone form=not-configurable.accessor.
+# FIELD: field L1.0 "add" {{*}}filled-by-accessors-alone accessor-from-birth form=not-configurable.accessor.
 # RUN(HELD): link held calls mechanisms=all
 # HELD: call f2 {{*}}-> f1
 # RUN(CALLED): walk f2 mechanisms=all
 # CALLED: callee=f1
-# CALLED: = IsSlotFilled {{*}}key="add"
+# The accessor is in its slot from the birth of the literal: nothing asks whether the slot is filled.
+# RUN(FILLED): walk f2 mechanisms=all
+# FILLED-NOT: = IsSlotFilled {{*}}key="add"
 # Since a-getter-that-a-written-descriptor-lays-for-good-is-proven-once-it-is-laid.ir the half in the slot is proven once it is laid: the walk looks whether the slot is filled and tests the getter no more.
 # RUN(GETTER): walk f2 mechanisms=all
 # GETTER-NOT: testedType=f3

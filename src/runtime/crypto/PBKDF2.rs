@@ -135,7 +135,7 @@ impl JobContext for Pbkdf2Job {
 
     fn then(mut this: Self, js: Pbkdf2Js, cx: &JsThread<'_>) -> JsResult<()> {
         let global_this = cx.global();
-        let event_loop = global_this.bun_vm().event_loop_mut();
+        let event_loop = global_this.bun_vm().event_loop();
         let callback = js.callback.get();
         if this.err {
             let err = global_this.create_error_instance(format_args!("PBKDF2 derivation failed"));
@@ -149,10 +149,8 @@ impl JobContext for Pbkdf2Job {
             return Ok(());
         }
 
-        let output_slice = core::mem::take(&mut this.output);
-        debug_assert!(output_slice.len() == this.pbkdf2.length);
-        // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
-        match JSValue::create_buffer(global_this, output_slice.leak()) {
+        debug_assert!(this.output.len() == this.pbkdf2.length);
+        match JSValue::create_buffer(global_this, core::mem::take(&mut this.output)) {
             Ok(buffer_value) => event_loop.run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,

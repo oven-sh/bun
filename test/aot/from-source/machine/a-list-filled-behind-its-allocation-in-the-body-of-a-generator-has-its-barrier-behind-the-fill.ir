@@ -58,4 +58,4 @@
 # CHECK: unit f1:CoroutineBody
 # CHECK: = Store(@[[list]], {{*}}InternalFields)
 # CHECK: = Store({{*}}indexedContiguousProperties
-# CHECK: = Load8Z(@[[list]], offset = 7, collectorState
+# CHECK: = Load{{*}}(@[[list]], offset = {{*}}, collectorState

@@ -27,7 +27,6 @@ struct HkdfJobCtx {
 
     void runTask(JSC::JSGlobalObject*);
     JSCallbackArgs runFromJS(JSC::JSGlobalObject*);
-    void deinit();
 
     ncrypto::Digest m_digest;
     size_t m_length;
@@ -35,13 +34,7 @@ struct HkdfJobCtx {
     WTF::Vector<uint8_t> m_info;
     WTF::Vector<uint8_t> m_salt;
 
-    std::optional<ByteSource> m_result;
-
-    WTF_MAKE_TZONE_ALLOCATED(HkdfJobCtx);
-};
-
-struct HkdfJob {
-    static void createAndSchedule(JSC::JSGlobalObject*, HkdfJobCtx&&, JSC::JSValue callback);
+    std::optional<ncrypto::DataPointer> m_result;
 };
 
 } // namespace Bun

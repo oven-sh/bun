@@ -67,10 +67,11 @@ test.concurrent("stdin with 'readable' event handler should receive data when pa
       bunExe(),
       "-e",
       `
+      const chunks = [];
       const handleReadable = () => {
         let chunk;
         while ((chunk = process.stdin.read())) {
-          console.log("got chunk", JSON.stringify(chunk));
+          chunks.push(chunk);
         }
       };
       
@@ -78,6 +79,7 @@ test.concurrent("stdin with 'readable' event handler should receive data when pa
       process.stdin.pause();
       
       setTimeout(() => {
+        console.log("got", JSON.stringify(Buffer.concat(chunks)));
         process.exit(1);
       }, 1000);
       `,
@@ -95,7 +97,7 @@ test.concurrent("stdin with 'readable' event handler should receive data when pa
   await proc.exited;
 
   expect(await proc.stdout.text()).toMatchInlineSnapshot(`
-    "got chunk {"type":"Buffer","data":[97,98,99,10,100,101,102,10]}
+    "got {"type":"Buffer","data":[97,98,99,10,100,101,102,10]}
     "
   `);
   expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);

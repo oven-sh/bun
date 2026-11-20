@@ -9,13 +9,10 @@
 # Here a module variable is stored before the pattern, so no iteration guard is built on the operand of the pattern.
 # The iteration of the third row, which has an iterator of its own, increments `count` once.
 # Fault injection, testing=AssumeIterationsRestartable: the iteration guard is built even though the iteration has already stored.
-# The iteration of the third row restarts after its store and increments `count` twice.
+# The build stops there (an-iteration-that-cannot-be-undone-and-restarts-stops-the-build.ir). Under the net of effects the run does.
 # RUN: run-in-shell mechanisms=all
 # CHECK: 56 4
 # CHECK-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=AssumeIterationsRestartable
-# LIE: 56 5
-# LIE-NEXT: exited with 0
 # RUN(HELD): run-in-shell mechanisms=all testing=AssumeIterationsRestartable,CheckEffectsAtRunTime
 # HELD: bun: internal AOT error: effects check failed
 # HELD-NEXT: a loop iteration restarts in the generic version, so the compiler's state says that nothing observable happened in it

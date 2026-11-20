@@ -4,7 +4,7 @@
 # const kept: Ledger[] = []; for (let i = 0; i < 20; i++) kept.push(new Ledger(i));
 # const parts: string[] = ["a", "b", "c"];
 # function joins(bag: any) { let text = ""; for (const part of parts) { text = `${text}${part},`; } return "" + text + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine; }
-# print(kept.length, joins(JSON.parse('{"twine":1}')));
+# print(kept.length, joins(kept[3]).length, joins(JSON.parse('{"twine":1}')));
 # -- end of source
 # The guard of joins() fails on a parsed record, so its slow version runs, and that believes nothing of `parts`. It ran the whole protocol in every turn: a call of next(), a look for `done`, a look for `value`: 266 instructions a turn,
 # where the same body without a guard takes 108. A body that knows nothing of what it iterates asks it in front of the loop whether it is a list as made and goes by index where it is, with the protocol as the other way: a question
@@ -17,4 +17,4 @@
 # SLOW-NOT: level=Proven
 # SLOW-NOT: CheckProof
 # RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
-# ANSWERS: 20 a,b,c,111111111111111111111111
+# ANSWERS: 20 30 a,b,c,111111111111111111111111

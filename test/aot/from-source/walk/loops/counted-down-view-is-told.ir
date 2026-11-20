@@ -1,0 +1,24 @@
+# -- source: counted-down-view-is-told.js
+# const table = {
+#   sum(data) {
+#     let i = data.length, sum = 0;
+#     while (i--)
+#       sum += data[i];
+#     return sum;
+#   },
+# };
+# const name = JSON.parse('"sum"');
+# print(table[name](new Uint8Array([4, 5])));
+# print(table[name]([1, 2, 300]));
+# print(table[name]({ length: 2, 1: 9 }));
+# print(table[name](new Float64Array([0.5, 1])));
+# -- end of source
+# RUN: compile ArrayOrUint8ArrayLoopsVersioned mechanisms=all
+# CHECK: statistic ArrayOrUint8ArrayLoopsVersioned 1
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 9
+# SHELL-NEXT: 303
+# SHELL-NEXT: NaN
+# SHELL-NEXT: 1.5
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same

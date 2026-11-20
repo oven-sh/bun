@@ -1,6 +1,8 @@
 import { test, vi } from "bun:test";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
+// Runs the event loop that many times: jobs, unhandled rejections and immediates run each time, and no clock decides.
+const spinEventLoop = async (count = 20) => { while (count-- > 0) await new Promise(done => setImmediate(done)); };
 const key = require.resolve("./lib.mjs");
 const ran = () => (globalThis.ran ?? []).join();
 const tell = f => { try { return f(); } catch (e) { return e.name; } };
@@ -11,6 +13,6 @@ test("the second test file stores under the key and asks for the original", asyn
   vi.doMock("./dep.mjs", async () => { (globalThis.ran ??= []).push("factory of b"); await new Promise(resolve => setTimeout(resolve, 5)); globalThis.ran.push("factory end"); return { d: "mocked in b" }; });
   const actual = await vi.importActual("./lib.mjs");
   console.log("SAID asked", actual.a, tell(() => actual.seen()), ran());
-  await new Promise(resolve => setTimeout(resolve, 40));
+  await spinEventLoop();
   console.log("SAID later", tell(() => actual.seen()), ran());
 });

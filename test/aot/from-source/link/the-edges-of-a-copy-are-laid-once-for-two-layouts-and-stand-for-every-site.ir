@@ -2,10 +2,10 @@
 # observed, for the two layouts; the other places lay none. They stand for all three: the text that `late` stores into a Source behind every copy in the program's text
 # is found under `x` of the Copy, and what lies under `own`, which each place writes itself, is what the places write. A copy of a layout onto itself lays no edge.
 # RUN: link fields mechanisms=all
-# CHECK: field L0.0 "x" proven=i32|string writers-known
-# CHECK: field L1.0 "own" proven=true|i32 writers-known
-# CHECK: field L1.1 "x" proven=i32|string writers-known
-# CHECK: field L1.2 "y" proven=i32 writers-known
+# CHECK: field L0.0 "x" proven=int[0, 2147483647]|string writers-known
+# CHECK: field L1.0 "own" proven=true|int[0, 2147483647] writers-known
+# CHECK: field L1.1 "x" proven=int[0, 2147483647]|string writers-known
+# CHECK: field L1.2 "y" proven=int[0, 2147483647] writers-known
 # -- source: main.ts
 # export {};
 # interface Source { x: number | string; y: number }

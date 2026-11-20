@@ -1,10 +1,12 @@
 import { test, vi } from "bun:test";
 globalThis.bodies = [];
+const timer = Promise.withResolvers();
+globalThis.timerFires = timer.resolve;
 let open;
 const gate = new Promise(done => (open = done));
 const settle = async () => {
   open();
-  for (let turn = 0; turn < 3; turn++) await new Promise(done => setImmediate(done));
+  for (let turn = 0; turn < 20; turn++) await new Promise(done => setImmediate(done));
 };
 const short = error => "threw " + String(error.message).replace(/\/\S*\//g, "").slice(0, 34);
 const required = name => {
@@ -22,6 +24,7 @@ test("a timer that the body sets fails the test", async () => {
   });
   say(required("./pond.mjs"));
   await settle();
-  await new Promise(done => setTimeout(done, 100));
+  await timer.promise;
+  await settle();
   say("the test went on");
 });

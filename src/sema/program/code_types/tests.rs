@@ -104,7 +104,7 @@ impl Host for LinkedDirectory {
 }
 
 struct FinishedModule<'q, 's, 'r> {
-    module: ArenaBox<'s, Module<'s>>,
+    module: ArenaBox<'s, ModuleWithTrees<'s>>,
     question: TypesQuestion<'q, 's, 'r>,
 }
 

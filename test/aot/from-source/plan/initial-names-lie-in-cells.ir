@@ -1,0 +1,21 @@
+# The cell has room for three references. `alias` and `kind` are declared first and are stored together; `target` is stored alone and together with `mapper`.
+# An object needs no extension if every name that its maker's caller stores lies in the cell: the names that lack the fewest others are chosen first.
+# -- source: initial-names-lie-in-cells.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Flags { None = 0, A = 1, B = 2 }
+# class Mark { tag: string; constructor(tag: string) { this.tag = tag; } }
+# interface Links { flags: Flags; more: Flags; last: Flags; alias?: Mark; kind?: Mark; target?: Mark; mapper?: Mark; }
+# function LinksMaker(this: Links) { this.flags = Flags.None; this.more = Flags.A; this.last = Flags.B; }
+# declare function makerFromOutside(): new () => Links;
+# function makeLinks(): Links { const made = new (makerFromOutside())(); made.more = Flags.B; return made; }
+# function aliasOf(alias: Mark, kind: Mark): Links { const made = makeLinks(); made.alias = alias; made.kind = kind; return made; }
+# function copyOf(target: Mark, mapper: Mark): Links { const made = makeLinks(); made.target = target; made.mapper = mapper; return made; }
+# function targetOf(target: Mark): Links { const made = makeLinks(); made.target = target; return made; }
+# sink(aliasOf, copyOf, targetOf, new (LinksMaker as any)());
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: size=48
+# CHECK: "alias" appended OptionalCell32 Inline
+# CHECK: "kind" appended JSValue OutOfLine
+# CHECK: "target" appended OptionalCell32 Inline
+# CHECK: "mapper" appended OptionalCell32 Inline

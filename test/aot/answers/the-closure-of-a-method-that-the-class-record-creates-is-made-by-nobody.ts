@@ -5,13 +5,13 @@
 // # every method cost a closure at the start of the program. Now such a DefineMethod takes one read off its function, and what nobody reads is not made.
 // # `plain` has six members that the record creates. `mixed` has members that it does not create: a key that is computed, and methods that hold a
 // # variable of the function round them. Each evaluation of a class makes members of its own.
-// # f2 = plain
+// # plain is written once for each of its two calls: f4 = the copy of the first
 // # OPTIONS: testing=ForceStraightCompilation
 // # RUN(STRAIGHT): compile StraightUnitsCompiled mechanisms=all
 // # STRAIGHT-NOT: statistic StraightUnitsCompiled 0
-// # RUN(FRAME): bytes f2:Body mechanisms=all
+// # RUN(FRAME): bytes f4:Body mechanisms=all
 // # REQUIRES(FRAME): x86_64 as-written
-// # FRAME: frame=80@
+// # FRAME: frame=0@
 // # RUN: run-in-shell $SHELL
 // # CHECK: 16 of 16 of 16
 // # CHECK-NEXT: exited with 0

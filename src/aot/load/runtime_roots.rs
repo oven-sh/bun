@@ -1,7 +1,7 @@
 use bun_ast::Loader;
 use bun_options_types::aot_options::AotOptions;
 use bun_removable_features::Feature;
-use bun_sema::program::{CodeAnswer, Files, HostModuleId};
+use bun_sema::program::{CodeAnswer, FileId, Files, HostModuleId};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashSet, SharedSort};
 
@@ -10,6 +10,8 @@ use crate::builtins::table::{ModuleFlags, module_by_specifier, module_data, runt
 use crate::builtins::{
     AsksOfText, BuiltinId, Platforms, RuntimeFunction, RuntimeModule, RuntimeUses,
 };
+use crate::ir::InParallel;
+use crate::ir::parallel::map_each;
 use crate::load::contents::ProgramContents;
 use crate::load::contents::load_names::find_library_modules_that_unknown_names_may_stand_for;
 use crate::load::loaders::{HostLoaderKind, host_loader_kind};
@@ -39,14 +41,31 @@ fn has_source(module: RuntimeModule) -> bool {
     module_data(module).flags.contains(ModuleFlags::HAS_SOURCE)
 }
 
-pub(crate) fn builtins_used_at_start(options: &AotOptions) -> Vec<BuiltinId> {
+/// Whether the run may interpret a file.
+pub(crate) fn may_interpret_files(options: &AotOptions) -> bool {
+    options.runs_tests && !options.checks_only
+}
+
+#[derive(Copy, Clone)]
+pub(crate) struct StartOfRun {
+    pub keeps_code_without_names: bool,
+    pub stays_in_compiled_files: bool,
+}
+
+pub(crate) fn builtins_used_at_start(options: &AotOptions, start: StartOfRun) -> Vec<BuiltinId> {
     let read_for = |feature: &Feature| match feature {
         Feature::Sql => Some(BuiltinId::Bun_sql),
         _ => None,
     };
     let features = options.features_of_embedded_options.iter();
     let warnings = (options.warns_of_rejections).then_some(BuiltinId::WarningsOfRejections);
-    features.filter_map(read_for).chain(warnings).collect()
+    let interprets_files = may_interpret_files(options) && !start.stays_in_compiled_files;
+    let interpreted = interprets_files.then_some(BuiltinId::InterpretedFiles);
+    let interpreted_async = (interprets_files && start.keeps_code_without_names)
+        .then_some(BuiltinId::InterpretedAsyncFiles);
+    let further = warnings.into_iter().chain(interpreted);
+    let further = further.chain(interpreted_async);
+    features.filter_map(read_for).chain(further).collect()
 }
 
 pub(crate) fn uses_of_what_start_reads(
@@ -65,9 +84,50 @@ pub(crate) fn uses_of_what_start_reads(
 #[derive(Copy, Clone)]
 pub(crate) struct FurtherLibraryCode<'a> {
     pub used_at_start: &'a [BuiltinId],
+    pub may_interpret_files: bool,
+    pub leaves_compiled_files: bool,
     pub serves_unseen_code: bool,
     pub loads_code_from_disk: bool,
     pub has_file_that_asks_for_it: bool,
+}
+
+#[derive(Default)]
+struct RootsOfFiles {
+    host_loaded: FxHashSet<RuntimeModule>,
+    functions: FxHashSet<RuntimeFunction>,
+    named: Vec<RuntimeModule>,
+    asks_of_texts: AsksOfText,
+    imports_uncompiled_code: bool,
+    asks_module_of_host: bool,
+    lets_in_what_nobody_names: bool,
+    lets_it_in_beside_uses_of_files: bool,
+}
+
+impl RootsOfFiles {
+    fn add_file(&mut self, application: &Files<'_>, file: FileId) {
+        self.lets_it_in_beside_uses_of_files |=
+            loader_by_name(application.module(file).file_name()) == Loader::Napi;
+        if let Some(compiled) = application.compiled(file) {
+            self.lets_it_in_beside_uses_of_files |=
+                host_loader_kind(compiled.loader) == Some(HostLoaderKind::Loader(Loader::Napi));
+            let implied = compiled.implied_answers.iter().filter_map(implied_module);
+            self.host_loaded.extend(implied);
+            self.imports_uncompiled_code |= compiled.code_answers.iter().any(is_uncompiled_code);
+            let mut imported = compiled.code_answers.iter().filter_map(implied_module);
+            self.asks_module_of_host |= imported.any(has_source);
+        }
+        if let Some(source) = parsed_source(application, file) {
+            self.functions.extend(source.builtins.called_functions());
+            self.host_loaded.extend(source.builtins.loaded_modules());
+            let named = source.named_modules().iter().map(|it| it.module);
+            self.named.extend(named);
+            let uses = source.builtins.uses();
+            self.lets_in_what_nobody_names |= uses.lets_in_what_nobody_names;
+            self.lets_it_in_beside_uses_of_files |= source.contents.names.may_go_to_loader_of_host;
+            self.asks_module_of_host |= uses.has_module_of_host();
+            self.asks_of_texts.add(&uses.asks);
+        }
+    }
 }
 
 pub(crate) fn collect_runtime_roots(
@@ -76,6 +136,7 @@ pub(crate) fn collect_runtime_roots(
     runtime_modules: &RuntimeModules,
     platform: Platforms,
     further: FurtherLibraryCode<'_>,
+    in_parallel: InParallel<'_>,
 ) -> RuntimeRoots {
     let used_at_start = uses_of_what_start_reads(further.used_at_start, platform);
     let mut host_loaded: FxHashSet<RuntimeModule> = used_at_start.modules.iter().copied().collect();
@@ -87,30 +148,32 @@ pub(crate) fn collect_runtime_roots(
     let mut lets_in_what_nobody_names = further.has_file_that_asks_for_it;
     let mut lets_it_in_beside_uses_of_files = used_at_start.lets_in_what_nobody_names;
     let mut asks_of_texts = used_at_start.asks;
-    for &file in application.compiled_files() {
-        lets_it_in_beside_uses_of_files |=
-            loader_by_name(application.module(file).file_name()) == Loader::Napi;
-        if let Some(compiled) = application.compiled(file) {
-            lets_it_in_beside_uses_of_files |=
-                host_loader_kind(compiled.loader) == Some(HostLoaderKind::Loader(Loader::Napi));
-            host_loaded.extend(compiled.implied_answers.iter().filter_map(implied_module));
-            imports_uncompiled_code |= compiled.code_answers.iter().any(is_uncompiled_code);
-            let mut imported = compiled.code_answers.iter().filter_map(implied_module);
-            asks_module_of_host |= imported.any(has_source);
+    const FILES_IN_CHUNK: usize = 256;
+    let chunks: Vec<&[FileId]> = application
+        .compiled_files()
+        .chunks(FILES_IN_CHUNK)
+        .collect();
+    let roots_of_chunks = map_each(chunks, in_parallel, &|chunk: &[FileId]| {
+        let mut roots = RootsOfFiles::default();
+        for &file in chunk {
+            roots.add_file(application, file);
         }
-        if let Some(source) = parsed_source(application, file) {
-            functions.extend(source.builtins.called_functions());
-            host_loaded.extend(source.builtins.loaded_modules());
-            named.extend(source.named_modules().iter().map(|it| it.module));
-            lets_in_what_nobody_names |= source.builtins.uses().lets_in_what_nobody_names;
-            lets_it_in_beside_uses_of_files |= source.contents.names.may_go_to_loader_of_host;
-            asks_module_of_host |= source.builtins.uses().has_module_of_host();
-            asks_of_texts.add(&source.builtins.uses().asks);
-        }
+        roots
+    });
+    for mut roots in roots_of_chunks {
+        host_loaded.extend(roots.host_loaded);
+        functions.extend(roots.functions);
+        named.append(&mut roots.named);
+        asks_of_texts.add(&roots.asks_of_texts);
+        imports_uncompiled_code |= roots.imports_uncompiled_code;
+        asks_module_of_host |= roots.asks_module_of_host;
+        lets_in_what_nobody_names |= roots.lets_in_what_nobody_names;
+        lets_it_in_beside_uses_of_files |= roots.lets_it_in_beside_uses_of_files;
     }
     lets_in_what_nobody_names |= lets_it_in_beside_uses_of_files;
     named.extend(find_library_modules_that_unknown_names_may_stand_for(
         application,
+        in_parallel,
     ));
     named.shared_sort_unstable_by_key(|module| module.registry_id());
     named.dedup();
@@ -142,6 +205,14 @@ pub(crate) fn collect_runtime_roots(
         || contents.names_worker_constructor
         || contents.loads_by_unknown_name
         || contents.loads_by_unknown_path;
+    if further.may_interpret_files && (further.leaves_compiled_files || imports_uncompiled_code) {
+        let interpreter = uses_of_what_start_reads(&[BuiltinId::InterpretedFiles], platform);
+        functions.extend(&interpreter.functions);
+        if keeps_code_without_names {
+            let of_async = uses_of_what_start_reads(&[BuiltinId::InterpretedAsyncFiles], platform);
+            functions.extend(&of_async.functions);
+        }
+    }
     let holds_what_unseen_code_finds = keeps_code_without_names || lets_in_what_nobody_names;
     let without_names = match holds_what_unseen_code_finds {
         true => RuntimeUses::of_unseen_code(platform),
@@ -316,6 +387,7 @@ mod tests {
         runtime_functions,
     };
     use crate::compile::testing::{default_settings, with_loaded_build, with_loaded_test_run};
+    use crate::ir::run_serially;
     use crate::load::runtime_modules::RuntimeFileKind;
     use crate::load::{ProjectId, host_platform};
 
@@ -325,6 +397,8 @@ mod tests {
 
     const NOTHING_FURTHER: FurtherLibraryCode<'static> = FurtherLibraryCode {
         used_at_start: &[],
+        may_interpret_files: false,
+        leaves_compiled_files: false,
         serves_unseen_code: false,
         loads_code_from_disk: false,
         has_file_that_asks_for_it: false,
@@ -347,6 +421,7 @@ mod tests {
                 runtime_modules,
                 host_platform(),
                 further,
+                &run_serially,
             )
         })
     }
@@ -359,6 +434,7 @@ mod tests {
                 runtime_modules,
                 host_platform(),
                 NOTHING_FURTHER,
+                &run_serially,
             );
             roots.paths.len()
         })
@@ -391,6 +467,7 @@ mod tests {
                     &runtime,
                     host_platform(),
                     NOTHING_FURTHER,
+                    &run_serially,
                 );
                 roots.paths.len()
             })
@@ -473,6 +550,39 @@ mod tests {
         let of_a_printed_value = collect_roots_of("console.log(f);", &runtime);
         for path in &of_a_printed_value.paths {
             assert!(by_option.paths.contains(path));
+        }
+    }
+
+    #[test]
+    fn interpreter_callees_are_roots_when_unnamed_code_is_kept() {
+        let runtime = runtime_modules();
+        let in_test_run = FurtherLibraryCode {
+            may_interpret_files: true,
+            leaves_compiled_files: true,
+            ..NOTHING_FURTHER
+        };
+        let within_compiled_files = FurtherLibraryCode {
+            may_interpret_files: true,
+            ..NOTHING_FURTHER
+        };
+        let of_nothing = collect_roots_beside("export {};", &runtime, within_compiled_files);
+        assert_eq!(
+            of_nothing.paths,
+            collect_roots_of("export {};", &runtime).paths
+        );
+        let of_interpreter =
+            uses_of_what_start_reads(&[BuiltinId::InterpretedFiles], host_platform());
+        let outside = collect_roots_beside("export {};", &runtime, in_test_run);
+        for &function in &of_interpreter.functions {
+            let path = runtime.function_file_path(function).unwrap();
+            assert!(outside.paths.contains(&path), "{function:?}");
+        }
+        let next_to_host_code = collect_roots_beside("process.openStdin();", &runtime, in_test_run);
+        let called = uses_of_what_start_reads(&[BuiltinId::InterpretedAsyncFiles], host_platform());
+        assert!(!called.functions.is_empty());
+        for &function in &called.functions {
+            let path = runtime.function_file_path(function).unwrap();
+            assert!(next_to_host_code.paths.contains(&path), "{function:?}");
         }
     }
 

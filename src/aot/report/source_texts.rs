@@ -9,7 +9,9 @@ use crate::engine::Position;
 use crate::ir::StringTable;
 use crate::ir::ids::{Id, ModuleId};
 use crate::load::read_file_bytes;
-use std::sync::OnceLock;
+use std::cell::UnsafeCell;
+use std::ops::Range;
+use std::sync::{Arc, OnceLock};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ModuleOrigin {
@@ -28,10 +30,39 @@ enum Text {
     },
 }
 
+/// The function sources of many modules in one block, which goes back to the system as soon as the engine has them.
+#[derive(Default)]
+pub struct FunctionSources(UnsafeCell<Box<[u8]>>);
+
+// SAFETY: it only changes in `release`.
+unsafe impl Sync for FunctionSources {}
+// SAFETY: as a box of bytes.
+unsafe impl Send for FunctionSources {}
+
+impl FunctionSources {
+    pub fn new(sources: Box<[u8]>) -> FunctionSources {
+        FunctionSources(UnsafeCell::new(sources))
+    }
+
+    fn get(&self) -> &[u8] {
+        // SAFETY: nothing reads them during `release`.
+        unsafe { &*self.0.get() }
+    }
+
+    /// # Safety
+    ///
+    /// No other thread uses them, and nothing borrows them.
+    unsafe fn release(&self) {
+        // SAFETY: the caller's promise.
+        unsafe { *self.0.get() = Box::default() };
+    }
+}
+
 pub struct ModuleSource {
     pub path: Box<[u8]>,
     text: Text,
     erased_type_ranges: Option<PackedTypeRanges>,
+    function_source: Option<(Arc<FunctionSources>, Range<usize>)>,
     origin: ModuleOrigin,
 }
 
@@ -41,6 +72,7 @@ impl ModuleSource {
             path: path.into(),
             text: Text::Kept(text.into()),
             erased_type_ranges: None,
+            function_source: None,
             origin: ModuleOrigin::Program,
         }
     }
@@ -60,6 +92,19 @@ impl ModuleSource {
     pub fn with_function_source(self, erased_type_ranges: Option<PackedTypeRanges>) -> Self {
         ModuleSource {
             erased_type_ranges,
+            ..self
+        }
+    }
+
+    /// Its function source is `part` of `sources`.
+    pub fn with_function_source_in(
+        self,
+        sources: &Arc<FunctionSources>,
+        part: Range<usize>,
+    ) -> Self {
+        debug_assert_eq!(part.len(), self.function_source_len());
+        ModuleSource {
+            function_source: Some((Arc::clone(sources), part)),
             ..self
         }
     }
@@ -94,10 +139,27 @@ impl ModuleSource {
         types.map_or(0, |types| types.kept_len(self.len()))
     }
 
+    /// Nothing if it lies in no `FunctionSources`, or in one that is released.
+    pub fn held_function_source(&self) -> Option<&[u8]> {
+        let (sources, part) = self.function_source.as_ref()?;
+        sources.get().get(part.clone())
+    }
+
     pub fn copy_function_source_to(&self, destination: &mut [u8]) {
-        if let Some(types) = &self.erased_type_ranges
+        if let Some(held) = self.held_function_source() {
+            destination.copy_from_slice(held);
+            return;
+        }
+        if self.erased_type_ranges.is_some()
             && let Some(text) = self.text()
         {
+            self.remove_types_from(text, destination);
+        }
+    }
+
+    /// `text` is the module's.
+    pub fn remove_types_from(&self, text: &[u8], destination: &mut [u8]) {
+        if let Some(types) = &self.erased_type_ranges {
             types.remove_from(text, destination);
         }
     }
@@ -129,6 +191,7 @@ impl ModuleSource {
 #[derive(Default)]
 pub struct SourceTexts {
     modules: Vec<Option<ModuleSource>>,
+    function_sources: Arc<FunctionSources>,
     written_names: Vec<u8>,
 }
 
@@ -136,8 +199,24 @@ impl SourceTexts {
     pub fn new(modules: Vec<Option<ModuleSource>>) -> SourceTexts {
         SourceTexts {
             modules,
+            function_sources: Arc::default(),
             written_names: Vec::new(),
         }
+    }
+
+    pub fn with_function_sources(self, function_sources: Arc<FunctionSources>) -> SourceTexts {
+        SourceTexts {
+            function_sources,
+            ..self
+        }
+    }
+
+    /// # Safety
+    ///
+    /// No other thread uses the function sources, and nothing borrows one.
+    pub unsafe fn release_function_sources(&self) {
+        // SAFETY: the caller's promise.
+        unsafe { self.function_sources.release() };
     }
 
     pub fn set_written_names(&mut self, names: Vec<u8>) {
@@ -155,7 +234,8 @@ impl SourceTexts {
 
     pub fn size_of_texts(&self) -> usize {
         let sources = self.modules.iter().flatten();
-        sources.map(ModuleSource::kept_len).sum()
+        let texts: usize = sources.map(ModuleSource::kept_len).sum();
+        texts + self.function_sources.get().len()
     }
 
     pub fn origin(&self, module: ModuleId) -> ModuleOrigin {
@@ -298,6 +378,44 @@ mod tests {
         assert_eq!(source.function_source_len(), text.len());
         assert!(source.text() == Some(&text[..]));
         assert!(source.function_source() == text);
+    }
+
+    #[test]
+    fn module_without_function_source_is_not_read_again() {
+        let file = std::env::temp_dir().join(format!("aot-read-again-{}.ts", std::process::id()));
+        std::fs::write(&file, b"a();").unwrap();
+        let path = from_native(file.as_os_str().as_encoded_bytes());
+        let source = ModuleSource::new_on_disk(b"/p/a.ts", &path, b"a();");
+        assert!(source.function_source().is_empty());
+        std::fs::write(&file, b"b();").unwrap();
+        let text = source.text().map(<[u8]>::to_vec);
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(text, None);
+    }
+
+    #[test]
+    fn released_function_source_is_unavailable() {
+        let sources = Arc::new(FunctionSources::new(Box::from(*b"a();b();")));
+        let source = |path: &str, text: &str, part: Range<usize>| {
+            let source = ModuleSource::new(path.as_bytes(), text.as_bytes());
+            let source = source.with_function_source(Some(PackedTypeRanges::default()));
+            Some(source.with_function_source_in(&sources, part))
+        };
+        let modules = vec![
+            source("/p/a.ts", "a();", 0..4),
+            source("/p/b.ts", "b();", 4..8),
+        ];
+        let texts = SourceTexts::new(modules).with_function_sources(Arc::clone(&sources));
+        let second = texts.get(ModuleId::new(1)).unwrap();
+        assert_eq!(texts.size_of_texts(), 16);
+        assert_eq!(second.held_function_source(), Some(&b"b();"[..]));
+        assert_eq!(BString::from(second.function_source()), "b();");
+
+        // SAFETY: this is the only thread, and nothing is borrowed.
+        unsafe { texts.release_function_sources() };
+        assert_eq!(texts.size_of_texts(), 8);
+        assert_eq!(second.held_function_source(), None);
+        assert_eq!(BString::from(second.function_source()), "b();");
     }
 
     #[test]

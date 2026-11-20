@@ -1,7 +1,7 @@
 # `const Walks = B => class extends B { walk(n) { .. } }`, `class Animal extends Eats(Walks(Base)) {}`: the parent of a class in such an arrow is a value. The names above a layout were gathered along the written bases
 # alone and ended there: Animal, the one class of which objects are made, was not known to bear `walk`, the class in the arrow was the only holder of { at, food, walk }, and the test of its shape failed at every object.
 # The held reading has seen which class arrives as the parent. The names are gathered past it, and of several holders of all the names one that is only a step of such a chain gives way to the class below it.
-# A guess: the shape is tested at the run. An object of the class in the arrow itself, and one of the class at the top, go the closed way and answer the same.
+# A guess: the shape is tested at the run. The program makes objects of a class in the arrow itself too: those of Eats(Walks(Base)) are asked beside the Animals. All answer the same.
 # f1 = f . L0 = the class in Walks, L1 = the class in Eats, L2 = Base, L3 = Animal
 # -- source: an-object-of-a-class-below-mixins-is-expected-by-the-names-above-it.cjs
 # "use strict";
@@ -14,8 +14,8 @@
 # print(f(as, 1), f(as, 2), f(others, 3));
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# CHECK: = ShapeTest {{*}}layouts=[L3]
-# CHECK: = PutSlot {{*}}key="food" receivers=[L3]
+# CHECK: = ShapeTest {{*}}L3
+# CHECK: = PutSlot {{*}}key="food" receivers=[{{*}}L3
 # RUN(ARROW): walk f1 mechanisms=all
 # ARROW-NOT: = ShapeTest {{*}}layouts=[L0]
 # RUN(ANSWERS): run-in-shell

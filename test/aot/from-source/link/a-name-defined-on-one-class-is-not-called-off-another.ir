@@ -10,7 +10,7 @@
 # print(said, o.x + 1, Tagged.make(new Tagged()));
 # -- end of source
 # RUN: link fields mechanisms=all
-# CHECK: field {{*}} "x" proven=i32
+# CHECK: field {{*}} "x" proven=int[0, 2147483647]
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: TypeError 2 1
 # RUN(NONE): run-in-shell mechanisms=none

@@ -1,0 +1,43 @@
+// Scanners whose side paths store before they run other code, in nested iterations: the code swaps, freezes and changes what the loops hold.
+"use strict"; var calls = 0;
+function isWord(code) { if (code < 48) return code === 36; if (code < 58) return true; if (code < 65) return false; if (code < 91) return true; if (code < 97) return code === 95; if (code < 123) return true; return code >= 0xaa && wide.test(String.fromCharCode(code)); }
+function isOther(code) { return code > 100 || globalThis.note({ state: {}, list: [], input: "" }, code) > 2; }
+function noteA(s, w) { s.state.sum = s.state.sum + 1; return globalThis.note(s, w) + "A"; } function noteB(s, w) { return "B" + typeof w; }
+var wide = new RegExp("[" + "\xaa-\xff" + "]");
+var State = function () { function State() {} var proto = State.prototype; proto.init = function () { this.pos = 0; this.line = 1; this.sum = 0; this.hits = 0; this.last = -1; this.flag = false; }; proto.copy = function () { var _this = this; var state = new State(); Object.keys(this).forEach(function (key) { state[key] = _this[key]; }); return state; }; return State; }();
+function inheritsLoose(a, b) { a.prototype = Object.create(b.prototype); a.prototype.constructor = a; a.__proto__ = b; }
+var Base = function () { function Base(input, list) { this.state = new State(); this.state.init(); this.input = input; this.list = list; } var proto = Base.prototype;
+ proto.at = function at() { var code = this.input.charCodeAt(this.state.pos); if (code <= 0xd7ff || code >= 0xe000) return code; return (code << 10) + this.input.charCodeAt(this.state.pos + 1) - 0x35fdc00; };
+ proto.raise = function raise(pos, m) { if (globalThis.note(this, m) > 6) throw new RangeError("raise" + pos); }; proto.pick = function pick(n) { return n & 1 ? noteA : noteB; }; return Base; }();
+var Scanner = function (Super) { inheritsLoose(Scanner, Super); function Scanner() { return Super.apply(this, arguments) || this; } var proto = Scanner.prototype;
+ proto.run0 = function run0() { var w = "", first = true, start = this.state.pos, total = 0; while (this.state.pos < this.input.length) { var ch = this.at(); if (isWord(ch)) { this.state.pos += ch <= 0xffff ? 1 : 2; } else if (ch === 92) { this.state.flag = true; w += this.input.slice(start, this.state.pos); var esc = this.state.pos; if (this.input.charCodeAt(++this.state.pos) !== 92) this.raise(this.state.pos, "x"); if (!(first ? isWord : isOther)(this.input.charCodeAt(this.state.pos + 1), true)) { this.state.hits += 2; } start = this.state.pos; ++this.state.pos; } else { break; } first = false; } return w + String(this.input).slice(start, this.state.pos) + "|" + first + total; };
+ proto.run1 = function run1() { var w = "", first = true, start = this.state.pos, total = 0; loop: while (this.state.pos < this.input.length) { var ch = this.input.charCodeAt(this.state.pos); switch (ch) { case 32: case 97: ++this.state.pos; break; case 92: this.state.hits++; (first ? noteA : noteB)(this, w); this.state.pos++; break; case 98: this.state.line++; this.state.pos += 1; break; default: break loop; } total++; } return w + String(this.input).slice(start, this.state.pos) + "|" + first + total; };
+ proto.run2 = function run2() { var w = "", first = true, start = this.state.pos, total = 0; for (var i = this.state.pos; i < this.input.length; i++) { var ch = this.input.charCodeAt(i); if (ch === 92) { this.state["k" + (total & 3)] = total; if (globalThis.note(this, w) > 4) return "early" + this.state.pos; } else { this.state.sum += ch; } this.state.pos = i + 1; total += first ? 1 : 2; first = !first; } return w + String(this.input).slice(start, this.state.pos) + "|" + first + total; };
+ proto.run3 = function run3() { var w = "", first = true, start = this.state.pos, total = 0; while (this.state.pos < this.input.length) { var ch = this.input.charCodeAt(this.state.pos); if (ch === 97) { ++this.state.pos; } else if (ch === 92) { this.state.flag = true; try { globalThis.note(this, w); this.raise(3); } catch (e) { w += e.message; } ++this.state.pos; } else if (ch === 98) { this.state.flag = true; this.pick(total)(this, w); ++this.state.pos; } else break; first = !first; } return w + String(this.input).slice(start, this.state.pos) + "|" + first + total; };
+ proto.run4 = function run4() { var w = "", first = true, start = this.state.pos, total = 0; for (var i = 0; i < this.list.length; i++) { var x = this.list[i]; if (x === 92) { this.state.last = i; this.state.late = total; for (var q = 0; q < 3; q++) globalThis.note(this, q); } else { this.state.sum += x; } this.state.pos++; total++; } return w + String(this.input).slice(start, this.state.pos) + "|" + first + total; };
+ proto.run5 = function run5() { var w = "", first = true, start = this.state.pos, total = 0; var pos = this.state.pos; while (pos < this.input.length) { var ch = this.input.charCodeAt(pos); if (ch > 96 && ch < 123) { pos++; total += ch; } else if (ch === 92) { this.state.pos = pos; this.state.hits++; w += this.pick(total)(this, w); this.state.pos++; pos = this.state.pos; } else break; total++; } this.state.pos = pos; return w + String(this.input).slice(start, this.state.pos) + "|" + first + total; }; return Scanner; }(Base);
+globalThis.kept = [State, Scanner, Base]; if (process.argv[9]) { new State()[process.argv[9]] = 1; new Scanner("", [])[process.argv[9]] = 1; }
+var hooks = [function (s, w) { calls++;  return calls; },
+function (s, w) { calls++; if (calls === 2) s.state = Object.assign(new State(), s.state); return calls; },
+function (s, w) { calls++; if (calls === 2) s.state = Object.assign({ plain: 1 }, s.state); return calls; },
+function (s, w) { calls++; if (calls === 3) s.state.pos = s.state.pos + 0.5; return calls; },
+function (s, w) { calls++; if (calls === 4) s.state.pos = String(s.state.pos); return calls; },
+function (s, w) { calls++; if (calls === 2) s.input = s.input + "aa\\a"; return calls; },
+function (s, w) { calls++; if (calls === 2) s.input = new String(s.input); return calls; },
+function (s, w) { calls++; s.list.push(calls & 1 ? 92 : 1.5); if (calls > 5) s.list.length = 3; return calls; },
+function (s, w) { calls++; if (calls === 3) Object.freeze(s.state); return calls; },
+function (s, w) { calls++; if (calls === 2) { let v = s.state.pos; Object.defineProperty(s.state, "pos", { get() { return v; }, set(x) { v = x + (x & 1); }, configurable: true, enumerable: true }); } return calls; },
+function (s, w) { calls++; if (calls === 2) s.at = function () { return this.input.charCodeAt(this.state.pos); }; return calls; },
+function (s, w) { calls++; if (calls === 3) State.prototype.sum = 5, delete s.state.sum; return calls; },
+function (s, w) { calls++; s.state["x" + calls] = calls; return calls; },
+function (s, w) { calls++; if (calls === 3) s.state = s.state.copy(); return calls; },
+function (s, w) { calls++; if (calls === 2) s.state = new Proxy(s.state, {}); return calls; },
+function (s, w) { calls++; if (calls === 3) throw new TypeError("hook"); return calls; },
+function (s, w) { calls++; if (calls === 2) Object.setPrototypeOf(s.state, { copy() { return this; } }); return calls; },
+function (s, w) { calls++; if (calls === 2) s.list = s.list.map(String); return calls; }];
+var inputs = ["abc", "ab\\cd\\ef gh", "\\\\a\\", "aaaa\\aaaaaaaa\\bbbbbbbb\\ b\\a", "a\u00e9\\\u{1f600}b\\", "", "a a b\\a b a\\a", "\u{1f600}\u{1f600}a", "aaaabbbbaaaabbbb\\\\\\\\aaaa"];
+var lists = [[1, 2, 92, 3, 92], [92, 92, 92], [1.5, 92, 2.5, 92, 92, 92], [], [1, "2", 92, null, 92], [1, 92, , 3, 92]];
+function show(s) { try { return JSON.stringify(s.state) + s.list.length + String(s.input).length; } catch (e) { return e.constructor.name; } }
+function one(s, k) { try { switch (k % 6) { case 0: return s.run0(); case 1: return s.run1(); case 2: return s.run2(); case 3: return s.run3(); case 4: return s.run4(); default: return s.run5(); } } catch (e) { return e.constructor.name + ":" + String(e.message).slice(0, 30); } }
+function drive(round) { var out = []; for (var h = 0; h < hooks.length; h++) { globalThis.note = hooks[h]; for (var k = 0; k < inputs.length; k++) { for (var r = 0; r < 6; r++) { calls = round; var s = new Scanner(inputs[k], lists[k % lists.length].slice()); out.push(h + " " + k + " " + r + " " + one(s, r) + calls + show(s)); delete State.prototype.sum; } } } return out; }
+for (var round = 0; round < 2; round++) { var lines = drive(round), all = 0; for (var i = 0; i < lines.length; i++) { for (var j = 0; j < lines[i].length; j++) all = (Math.imul(all, 31) + lines[i].charCodeAt(j)) | 0; if (i % 54 === 53) { console.log(round, i, all, lines[i].slice(0, 60)); all = 0; } } }

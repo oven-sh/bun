@@ -162,8 +162,6 @@ pub mod Runtime {
     use bun_core::strings;
     use bun_wyhash::Wyhash;
 
-    use bun_ast::RuntimeTranspilerCache;
-
     // ─────────────────────────── Runtime.Features ───────────────────────────
 
     pub struct Features {
@@ -240,6 +238,10 @@ pub mod Runtime {
         pub unwrap_commonjs_packages: &'static [&'static [u8]],
 
         pub commonjs_at_runtime: bool,
+        /// See `defer_requires::LOADS`.
+        pub lists_loads: bool,
+        /// See `defer_requires.rs`. Needs `lists_loads`.
+        pub defers_requires: bool,
         pub unwrap_commonjs_to_esm: bool,
 
         pub emit_decorator_metadata: bool,
@@ -248,12 +250,6 @@ pub mod Runtime {
         /// If true and if the source is transpiled as cjs, don't wrap the module.
         /// This is used for `--print` entry points so we can get the result.
         pub remove_cjs_module_wrapper: bool,
-
-        // `?*bun.jsc.RuntimeTranspilerCache` — raw `*mut` (not `&'a mut`)
-        // so `Features` stays `'static`-bounded inside `Parser::Options` and avoids
-        // the borrowck self-borrow that `&'a mut` would induce while `P` holds
-        // `&mut Options`.
-        pub runtime_transpiler_cache: Option<*mut RuntimeTranspilerCache>,
 
         // TODO: make this a bitset of all unsupported features
         pub lower_using: bool,
@@ -318,11 +314,12 @@ pub mod Runtime {
                 code_coverage: false,
                 unwrap_commonjs_packages: &[],
                 commonjs_at_runtime: false,
+                lists_loads: false,
+                defers_requires: false,
                 unwrap_commonjs_to_esm: false,
                 emit_decorator_metadata: false,
                 standard_decorators: false,
                 remove_cjs_module_wrapper: false,
-                runtime_transpiler_cache: None,
                 lower_using: true,
                 ascii_only: false,
                 bundler_feature_flags: None,
@@ -334,22 +331,6 @@ pub mod Runtime {
     }
 
     impl Features {
-        /// Reborrow the optional `RuntimeTranspilerCache` back-pointer.
-        ///
-        /// `&self` receiver (not `&mut`) so call sites may hold other shared
-        /// borrows of `p.options.*` across the returned `&mut` (e.g.
-        /// `cache.get(p.source, &raw const p.options, p.options.jsx.parse)`).
-        /// Callers must not hold two results live at once. Centralises the raw
-        /// deref so the four parse-entry use sites stay safe.
-        #[inline]
-        #[allow(clippy::mut_from_ref)]
-        pub(crate) fn runtime_transpiler_cache_mut(&self) -> Option<&mut RuntimeTranspilerCache> {
-            // SAFETY: `runtime_transpiler_cache` is `Option<*mut _>` (see PORT
-            // NOTE on the field) — the caller that populated it guarantees the
-            // pointee is unique to this parse and outlives `Features`.
-            self.runtime_transpiler_cache.map(|p| unsafe { &mut *p })
-        }
-
         /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
         /// Returns an owned `Box<StringSet>`, or `None` if no flags are provided.
         /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
@@ -376,8 +357,6 @@ pub mod Runtime {
         //
         // Takes `Wyhash` (NOT `Wyhash11`).
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
-            debug_assert!(self.runtime_transpiler_cache.is_some());
-
             let bools: [bool; 19] = [
                 self.top_level_await,
                 self.auto_import_jsx,
@@ -408,6 +387,10 @@ pub mod Runtime {
             // `P::runs_imports_in_turn` depends on both, even when `P::uses_test_api` is false. Other files hash nothing extra.
             if self.is_test_entry_point {
                 hasher.update(&[b'e', u8::from(self.vitest_globals)]);
+            }
+
+            if self.lists_loads {
+                hasher.update(&[b'l', u8::from(self.defers_requires)]);
             }
 
             // Hash --feature flags. These directly affect transpiled output via
@@ -1012,9 +995,12 @@ pub(crate) fn statement_cares_about_scope(stmt: &Stmt) -> bool {
     match stmt.data {
         SBlock(_) | SEmpty(_) | SDebugger(_) | SExpr(_) | SIf(_) | SFor(_) | SForIn(_)
         | SForOf(_) | SDoWhile(_) | SWhile(_) | SWith(_) | STry(_) | SSwitch(_) | SReturn(_)
-        | SThrow(_) | SBreak(_) | SContinue(_) | SDirective(_) | SLabel(_) => false,
+        | SThrow(_) | SBreak(_) | SContinue(_) | SLabel(_) => false,
 
         SLocal(ref local) => local.kind != js_ast::LocalKind::KVar,
+        // With `keep_directives` the string that starts a block is one. Outside the block it could become
+        // the directive of a function.
+        SDirective(_) => true,
         _ => true,
     }
 }
@@ -1115,8 +1101,10 @@ pub struct ParsedPath<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StrictModeFeature {
+    DeleteBareName,
     EvalOrArguments,
     ReservedWord,
+    WithStatement,
 }
 
 #[derive(Clone, Copy)]
@@ -1169,12 +1157,6 @@ impl StringVoidMap {
         entry.found_existing
     }
 
-    fn init() -> Result<StringVoidMap, bun_core::Error> {
-        Ok(StringVoidMap {
-            map: StringHashMap::default(),
-        })
-    }
-
     fn reset(&mut self) {
         // We must reset or the hash table will contain invalid pointers
         self.map.clear();
@@ -1183,13 +1165,17 @@ impl StringVoidMap {
     /// Returns an RAII guard that derefs to `&mut StringVoidMap` and is
     /// returned to the pool on `Drop`.
     #[inline]
-    pub(crate) fn get() -> bun_collections::pool::PoolGuard<'static, StringVoidMap> {
+    pub(crate) fn get() -> bun_collections::pool::PoolGuard<StringVoidMap> {
         StringVoidMapPool::get()
     }
 }
 
 impl bun_collections::pool::ObjectPoolType for StringVoidMap {
-    const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(StringVoidMap::init);
+    fn init() -> Self {
+        StringVoidMap {
+            map: StringHashMap::default(),
+        }
+    }
     #[inline]
     fn reset(&mut self) {
         StringVoidMap::reset(self)
@@ -1379,7 +1365,7 @@ pub struct PropertyOpts {
     pub(crate) class_has_extends: bool,
     pub(crate) allow_ts_decorators: bool,
     pub(crate) is_ts_abstract: bool,
-    pub(crate) ts_decorators: ExprNodeList,
+    pub(crate) ts_decorators: js_ast::StoreSlice<Expr>,
     pub(crate) has_argument_decorators: bool,
     pub(crate) has_class_decorators: bool,
 }
@@ -1395,7 +1381,7 @@ impl Default for PropertyOpts {
             class_has_extends: false,
             allow_ts_decorators: false,
             is_ts_abstract: false,
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: js_ast::StoreSlice::EMPTY,
             has_argument_decorators: false,
             has_class_decorators: false,
         }
@@ -1525,7 +1511,12 @@ pub struct ParseStatementOptions<'a> {
     pub(crate) is_name_optional: bool,
     pub(crate) is_typescript_declare: bool,
     pub(crate) is_for_loop_init: bool,
+    /// The statement list is a module, function or namespace body, so it can start with a
+    /// directive prologue. `parse_stmts_up_to` reads it and does not pass it on.
+    pub(crate) allow_directive_prologue: bool,
 }
+
+const _: () = assert!(core::mem::size_of::<ParseStatementOptions>() == 32);
 
 impl<'a> ParseStatementOptions<'a> {
     pub(crate) fn has_decorators(&self) -> bool {
@@ -1747,7 +1738,8 @@ pub fn new_lazy_export_ast_impl<'bump>(
     // same pattern.
     let lexer = js_lexer::Lexer::init_without_reading(&mut temp_log, source, bump);
     let log_ptr = lexer.log;
-    let mut parser = Parser {
+    let range = lexer.range();
+    let parser = Parser {
         options: opts,
         bump,
         lexer,
@@ -1756,11 +1748,9 @@ pub fn new_lazy_export_ast_impl<'bump>(
         log: log_ptr,
         orig_error_count: 0,
     };
-    let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
+    let result = match parser.into_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,
         Err(err) => {
-            let range = parser.lexer.range();
-            drop(parser);
             if temp_log.errors == 0 {
                 log_to_copy_into.add_range_error(Some(source), range, err.name().as_bytes());
             }
@@ -1768,7 +1758,6 @@ pub fn new_lazy_export_ast_impl<'bump>(
             return Ok(None);
         }
     };
-    drop(parser);
 
     temp_log.append_to(log_to_copy_into);
     match result {
@@ -1776,8 +1765,8 @@ pub fn new_lazy_export_ast_impl<'bump>(
             ast.has_lazy_export = true;
             Ok(Some(*ast))
         }
-        // `to_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
-        _ => unreachable!("to_lazy_export_ast returns Result::Ast"),
+        // `into_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
+        _ => unreachable!("into_lazy_export_ast returns Result::Ast"),
     }
 }
 

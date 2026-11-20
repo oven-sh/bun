@@ -36,29 +36,28 @@ pub(super) const GRAMMAR_ERRORS: [u32; 164] = [
 impl Checker<'_, '_> {
     /// `IsCheckJSEnabledForFile`
     pub(super) fn is_check_js(&self, file: FileId) -> bool {
-        self.hir(file)
-            .check_directive
+        (self.files().module(file).facts.check_directive)
             .unwrap_or_else(|| self.files().options.check_js == Some(true))
     }
 
     /// `IsPlainJSFile`: JavaScript for which checking is neither enabled nor disabled.
     pub(super) fn is_plain_js(&self, file: FileId) -> bool {
-        let hir = self.hir(file);
-        hir.is_js && hir.check_directive.is_none() && self.files().options.check_js.is_none()
+        let facts = self.files().module(file).facts;
+        facts.is_js && facts.check_directive.is_none() && self.files().options.check_js.is_none()
     }
 
     /// `SkipTypeChecking`: true if anything other than syntax errors is reported.
     pub fn reports_semantic_errors(&self, file: FileId) -> bool {
         let options = &self.files().options;
-        let hir = self.hir(file);
+        let module = self.files().module(file);
         if options.no_check
-            || options.skip_lib_check && hir.kind == FileKind::Declaration
-            || options.skip_default_lib_check && self.files().module(file).is_lib
+            || options.skip_lib_check && module.facts.kind == FileKind::Declaration
+            || options.skip_default_lib_check && module.is_lib
         {
             return false;
         }
-        hir.check_directive != Some(false)
-            && (!hir.is_js || self.is_plain_js(file) || self.is_check_js(file))
+        module.facts.check_directive != Some(false)
+            && (!module.facts.is_js || self.is_plain_js(file) || self.is_check_js(file))
     }
 }
 

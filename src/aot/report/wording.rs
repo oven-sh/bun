@@ -2,8 +2,8 @@ use bun_trim::UnseenCodeCause;
 
 use super::levels::AccessColumn;
 use crate::ir::generated::{
-    AllocationEscapeReason, AllocationHeapCause, CodeForm, KnowledgeLevel, TypeTestFailure,
-    UnprovenCause,
+    AllocationEscapeReason, AllocationHeapCause, CodeForm, KnowledgeLevel, TypeOriginReason,
+    TypeTestFailure, UnprovenCause,
 };
 
 pub(super) const DOCUMENTATION_URL: &[u8] = b"https://bun.com/docs/compiler/explain#";
@@ -43,6 +43,206 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
         ),
     };
     CauseWording { message, fix }
+}
+
+/// The message has a place for a name. Without a wording the cause of the operation says everything that is known.
+pub(super) struct OriginWording {
+    pub before_name: &'static str,
+    pub unnamed: &'static str,
+    pub after_name: &'static str,
+    pub fix: &'static str,
+}
+
+impl OriginWording {
+    pub(super) fn message(&self, name: &[u8]) -> Vec<u8> {
+        let name = match name.is_empty() {
+            true => self.unnamed.as_bytes(),
+            false => name,
+        };
+        [
+            self.before_name.as_bytes(),
+            name,
+            self.after_name.as_bytes(),
+        ]
+        .concat()
+    }
+}
+
+pub(super) fn origin_wording(reason: TypeOriginReason) -> Option<OriginWording> {
+    let (before_name, unnamed, after_name, fix) = match reason {
+        TypeOriginReason::Unknown | TypeOriginReason::Untracked => return None,
+        TypeOriginReason::BuiltinResult => (
+            "The compiler doesn't know the shape of what ",
+            "this call",
+            " returns.",
+            "check its fields and build a new object from them.",
+        ),
+        TypeOriginReason::CallResult => (
+            "The compiler doesn't know what ",
+            "this call",
+            " returns, because it can't tell which function is called.",
+            "call the function directly, or narrow the result.",
+        ),
+        TypeOriginReason::PropertyRead => (
+            "The compiler doesn't know the shape of what is read from ",
+            "here",
+            ".",
+            "check its fields and build a new object from them.",
+        ),
+        TypeOriginReason::OutsideCaller => (
+            "Code that the compiler can't see can call ",
+            "this function",
+            " with any values.",
+            "check the arguments where the function starts, or call it from compiled code.",
+        ),
+        TypeOriginReason::ExposedObject => (
+            "Code that the compiler can't see can store anything in the fields of ",
+            "objects that it gets here",
+            ".",
+            "pass a copy, or only the values that are needed.",
+        ),
+        TypeOriginReason::ExposedVariable => (
+            "Code that the compiler can't see can assign anything to ",
+            "this variable",
+            ".",
+            "copy it into a constant and use that.",
+        ),
+        TypeOriginReason::CaughtException => (
+            "A caught exception can be anything",
+            "",
+            ".",
+            "narrow it, for example with instanceof.",
+        ),
+        TypeOriginReason::OtherValue => (
+            "A value that isn't an object gets to places that hold objects: ",
+            "this one",
+            ".",
+            "keep it in a variable or a field of its own.",
+        ),
+        TypeOriginReason::ArrayArgument => (
+            "new Array() makes its argument an element unless that's a number, and ",
+            "this value",
+            " may not be one yet.",
+            "make it a number before the array is created: declare it with const, above its first use.",
+        ),
+        TypeOriginReason::OtherBuiltin => (
+            "A built-in object, such as an array or a map, gets to places that hold other objects: ",
+            "this one",
+            ".",
+            "keep it in a variable or a field of its own.",
+        ),
+        TypeOriginReason::OtherFunction => (
+            "A function gets to places that hold objects: ",
+            "this one",
+            ".",
+            "keep it in a variable or a field of its own.",
+        ),
+        TypeOriginReason::ManyShapes => (
+            "Objects of too many shapes come together in ",
+            "this access",
+            ".",
+            "keep them apart, or give them one class.",
+        ),
+        TypeOriginReason::ManyFunctions => (
+            "More than one function can be called here, so the call is indirect and its result has no type",
+            "",
+            ".",
+            "call the function directly, or narrow the result.",
+        ),
+        TypeOriginReason::ChangedShape => (
+            "Objects of ",
+            "this class",
+            " change their shape: a property is added, deleted or redefined.",
+            "declare every property in the class and assign them there.",
+        ),
+        TypeOriginReason::MissingField => (
+            "The compiler can't prove that the object has this field already, so each access checks for it",
+            "",
+            ".",
+            "assign the field on every path of the constructor, or in every literal.",
+        ),
+        TypeOriginReason::CheckedElement => (
+            "The compiler can't prove that this element exists, so each access checks for it",
+            "",
+            ".",
+            "nothing to fix unless it's in hot code. Then loop from 0 to the length, over an array without holes.",
+        ),
+        TypeOriginReason::CheckedResult => (
+            "The result of ",
+            "this call",
+            " is checked each time, because it can take a slow path that returns anything.",
+            "nothing to fix unless it's in hot code. Then use a loop or an index instead.",
+        ),
+        TypeOriginReason::CheckedKeys => (
+            "Copying or listing the properties of an object checks that it has no others",
+            "",
+            ".",
+            "nothing to fix unless it's in hot code. Then name the properties one by one.",
+        ),
+        TypeOriginReason::StaticField => (
+            "A static field is added to its class when the class is evaluated",
+            "",
+            ".",
+            "nothing to fix: it runs once.",
+        ),
+        TypeOriginReason::ComputedName => (
+            "The name of this property is only known when the program runs, so it is looked up",
+            "",
+            ".",
+            "use a Map, or an array with numbers as indexes.",
+        ),
+        TypeOriginReason::BuiltinProperty => (
+            "Properties of built-in objects, functions and primitive values are looked up by name",
+            "",
+            ".",
+            "read it outside your loops.",
+        ),
+    };
+    Some(OriginWording {
+        before_name,
+        unnamed,
+        after_name,
+        fix,
+    })
+}
+
+/// There may be a faster way to write it, but no type or declaration to change.
+pub(super) fn has_fix(reason: TypeOriginReason) -> bool {
+    !matches!(
+        reason,
+        TypeOriginReason::CheckedElement
+            | TypeOriginReason::CheckedKeys
+            | TypeOriginReason::CheckedResult
+            | TypeOriginReason::StaticField
+    )
+}
+
+pub(super) fn origin_code(reason: TypeOriginReason) -> &'static str {
+    match reason {
+        TypeOriginReason::Unknown => "",
+        TypeOriginReason::Untracked => "untracked-value",
+        TypeOriginReason::BuiltinResult => "builtin-result",
+        TypeOriginReason::CallResult => "call-result",
+        TypeOriginReason::PropertyRead => "property-read",
+        TypeOriginReason::OutsideCaller => "outside-caller",
+        TypeOriginReason::ExposedObject => "exposed-object",
+        TypeOriginReason::ExposedVariable => "exposed-variable",
+        TypeOriginReason::CaughtException => "caught-exception",
+        TypeOriginReason::OtherValue => "other-value",
+        TypeOriginReason::ArrayArgument => "array-argument",
+        TypeOriginReason::OtherBuiltin => "other-builtin",
+        TypeOriginReason::OtherFunction => "other-function",
+        TypeOriginReason::ManyShapes => "many-shapes",
+        TypeOriginReason::ManyFunctions => "many-functions",
+        TypeOriginReason::ChangedShape => "changed-shape",
+        TypeOriginReason::MissingField => "missing-field",
+        TypeOriginReason::CheckedElement => "checked-element",
+        TypeOriginReason::CheckedResult => "checked-result",
+        TypeOriginReason::CheckedKeys => "checked-keys",
+        TypeOriginReason::StaticField => "static-field",
+        TypeOriginReason::BuiltinProperty => "builtin-property",
+        TypeOriginReason::ComputedName => "computed-name",
+    }
 }
 
 pub(super) fn failure_sentence(failure: TypeTestFailure) -> &'static str {

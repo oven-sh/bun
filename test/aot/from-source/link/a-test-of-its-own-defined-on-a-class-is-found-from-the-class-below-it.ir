@@ -9,7 +9,7 @@
 # -- end of source
 # RUN: link fields mechanisms=all
 # CHECK-NOT: field {{*}} "x" proven=i32
-# CHECK: field {{*}} "y" proven=i32
+# CHECK: field {{*}} "y" proven=int[0, 2147483647]
 # CHECK-NOT: field {{*}} "x" proven=i32
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: false text string true 2

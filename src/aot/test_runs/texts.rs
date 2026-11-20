@@ -379,10 +379,7 @@ struct Tree<'a, 's> {
 
 impl<'a, 's> Tree<'a, 's> {
     fn text_of(&self, text: Atom) -> &'a [u8] {
-        match text.is_none() {
-            true => &b""[..],
-            false => self.atoms.bytes(text),
-        }
+        self.atoms.bytes(text)
     }
 
     fn is_dead(&self, expression: ExprId) -> bool {
@@ -944,6 +941,7 @@ impl<'a, 's> TextReader<'a, 's> {
         CodeInTexts { written, handed_on }
     }
 
+    /// `names` are those of the file's atoms.
     pub(super) fn finish(self, names: &BuiltinNames) -> (FoundInTexts, FoundInTexts) {
         if self.candidates.is_empty() {
             return Default::default();

@@ -14,6 +14,8 @@ pub(super) struct RunOrder {
     first_function_use: OnceCell<u32>,
 }
 
+/// Finds the first statement of a file that may call one of the file's functions, or pass one to
+/// other code. No function of the file runs before it.
 struct FunctionUses<'a, 's> {
     hir: &'a File<'s>,
     bound: &'a Bound<'s>,
@@ -29,6 +31,8 @@ impl<'a, 's> FunctionUses<'a, 's> {
             exported: exported_symbols(hir, bound),
             variables_with_functions: FxHashSet::default(),
         };
+        // An import cycle may call it before the first statement: plain Bun also moves classes and
+        // default exports up.
         let mut statements = hir.ids(hir.body);
         if uses.exported.iter().any(|&it| uses.holds_function(it))
             || statements.any(|it| uses.is_default_function(it))
@@ -102,6 +106,7 @@ impl<'a, 's> FunctionUses<'a, 's> {
         match self.hir[e].kind {
             ExprKind::Ident(_) => self.names_function(e),
             ExprKind::Call(_) => self.bound.eval_scope(e).is_some(),
+            // The factory of an element is called without a mention of it.
             ExprKind::Jsx(_)
             | ExprKind::JsxText(_)
             | ExprKind::ImportCall { .. }
@@ -266,6 +271,7 @@ impl RunOrder {
         }
     }
 
+    /// Like `is_read_behind`, for a read in a function too.
     pub(super) fn is_initialized_at<'s>(
         &self,
         hir: &File<'s>,

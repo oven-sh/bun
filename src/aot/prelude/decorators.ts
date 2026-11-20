@@ -363,6 +363,17 @@ export function applyPrivateAccessorDecorators(
   return descriptor;
 }
 
+// No decorator adds an initializer once its member is decorated. Empty lists are dropped, and the list of lists with them.
+export function keepInitializerLists(lists: any): any {
+  ("frames are of bun:wrap");
+  let kept: any;
+  for (let i = 0, count = lists.length; i < count; i++) {
+    if (lists[i].length) kept = lists;
+    else lists[i] = undefined;
+  }
+  return kept;
+}
+
 export function runInitializers(initializers: any, receiver: any): void {
   ("frames are of bun:wrap");
   for (let i = 0, count = initializers.length; i < count; i++) initializers[i].call(receiver);

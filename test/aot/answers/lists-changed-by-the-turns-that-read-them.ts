@@ -13,7 +13,10 @@
 // # INNER: = HasArrayStorage
 // # INNER: = GetArrayStorage
 // # RUN(WAITS): walk f21:CoroutineBody mechanisms=all
+// # WAITS-LABEL: code f21:CoroutineBody
 // # WAITS-NOT: = GetArrayStorage
+// # WAITS: isLoopHead=true
+// # WAITS: = GetArrayStorage
 // # RUN(HANDS): walk f22:CoroutineBody mechanisms=all
 // # HANDS-NOT: = GetArrayStorage
 // # At the end the shell runs the same text itself: every answer is the same.

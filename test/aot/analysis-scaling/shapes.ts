@@ -231,6 +231,50 @@ export const shapes: Shape[] = [
     }),
   },
   {
+    name: "a file whose path an object holds that is spread into itself",
+    counted: "assignments",
+    sizes: [1_000, 4_000],
+    instructionsPerItem: 500_000,
+    bytesPerItem: 32 * 1024,
+    write: count => ({
+      "main.ts": `import "./helpers.cjs";\n`,
+      "helpers.cjs": `const fs = require("fs"), path = require("path");\nlet options = { file: path.join(__dirname, "a.txt") };\n${Array.from({ length: count + 1 }, (_, index) => `exports.set${index} = more => { options = { ...options, ...more }; };\n`).join("")}exports.load = () => fs.readFileSync(options.file, "utf8");\n`,
+    }),
+  },
+  {
+    name: "a file whose path a field holds that other classes have too",
+    counted: "classes",
+    sizes: [1_000, 4_000],
+    instructionsPerItem: 1_000_000,
+    bytesPerItem: 64 * 1024,
+    write: count => ({
+      "main.ts": `import "./helpers.cjs";\n`,
+      "helpers.cjs": `const fs = require("fs"), path = require("path");\n${Array.from({ length: count + 1 }, (_, index) => `exports.Store${index} = class { set(folder) { this.file = path.join(__dirname, folder + ".txt"); } load() { return fs.readFileSync(this.file, "utf8"); } };\n`).join("")}`,
+    }),
+  },
+  {
+    name: "a file whose path a property holds that is joined onto itself",
+    counted: "assignments",
+    sizes: [1_000, 4_000],
+    instructionsPerItem: 3_000_000,
+    bytesPerItem: 32 * 1024,
+    write: count => ({
+      "main.ts": `import "./helpers.cjs";\n`,
+      "helpers.cjs": `const fs = require("fs"), path = require("path");\nconst options = { folder: __dirname };\n${Array.from({ length: count + 1 }, (_, index) => `if (process.env.MADE_UP_${index}) options.folder = path.join(options.folder, "x${index}");\n`).join("")}exports.load = () => fs.readFileSync(path.join(options.folder, "a.txt"), "utf8");\n`,
+    }),
+  },
+  {
+    name: "a module whose folder a property holds that is joined onto itself or kept",
+    counted: "assignments",
+    sizes: [1_000, 4_000],
+    instructionsPerItem: 3_000_000,
+    bytesPerItem: 32 * 1024,
+    write: count => ({
+      "main.ts": `import "./helpers.cjs";\n`,
+      "helpers.cjs": `const path = require("path");\nconst options = { folder: __dirname };\n${Array.from({ length: count + 1 }, (_, index) => `options.folder = process.env.MADE_UP_${index} ? path.join(options.folder, "x${index}") : options.folder;\n`).join("")}exports.load = () => require(path.join(options.folder, "a.cjs"));\n`,
+    }),
+  },
+  {
     name: "declared interface recursing through conditional types",
     counted: "properties",
     sizes: [1, 2, 3, 12],

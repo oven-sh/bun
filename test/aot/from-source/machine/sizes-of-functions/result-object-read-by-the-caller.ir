@@ -12,8 +12,8 @@
 # (globalThis as any).answer = check(+input, +input);
 # -- end of source
 # The compiler before this one: 6 instructions, 1 of them patches.
-# When the bound was taken: steps: operations 6, patches 1, moves 3, unlikely or rare 0.
-# RUN(X64): steps most:9 f2 mechanisms=all-Inlining
+# The callee passes the two fields in registers and makes no object: operations 8 (two of them extracts in place of the loads), patches 1, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:11 f2 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f2:Body
-# X64-NEXT: steps: at most 9
+# X64-NEXT: steps: at most 11

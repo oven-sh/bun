@@ -44,8 +44,7 @@ test("t", async () => {
     vi.dynamicImportSettled().then(() => order.push("first")),
     vi.dynamicImportSettled().then(() => order.push("second")),
   ]);
-  // Which of the two settles first is not fixed.
-  say("two calls", order[0], order.slice(1).sort().join());
+  say("two calls", order.join());
 
   await import("./settled.js");
   start("settled")();

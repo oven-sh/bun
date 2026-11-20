@@ -17,9 +17,9 @@
 # X64-LABEL: unit f1:Body
 # X64-NEXT: steps: at most 55
 # The compiler before this one: 3 instructions, 0 of them patches.
-# When the bound was taken: loop: operations 5, patches 0, moves 0, unlikely 0 ; loop: operations 4, patches 0, moves 0, unlikely 0.
-# RUN(X64N6): loops most:5,4 f1 mechanisms=all-Inlining
+# When the bound was taken: loop: operations 4, patches 0, moves 0, unlikely 0 ; loop: operations 5, patches 0, moves 0, unlikely 0.
+# RUN(X64N6): loops most:4,5 f1 mechanisms=all-Inlining
 # REQUIRES(X64N6): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64N6-LABEL: unit f1:Body
-# X64N6-NEXT: loop: at most 5
 # X64N6-NEXT: loop: at most 4
+# X64N6-NEXT: loop: at most 5

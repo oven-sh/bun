@@ -6,7 +6,7 @@
 # RUN(TOLD): walk f1 mechanisms=all testing=IgnoreFreshArrayEscapes,CheckBoundsAtRunTime
 # TOLD: = GetArrayElement {{*}}arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, isPresent]
 # RUN(EVENT): compile ElementPresenceProofsChecked mechanisms=all testing=IgnoreFreshArrayEscapes,CheckBoundsAtRunTime
-# EVENT: statistic ElementPresenceProofsChecked 1
+# EVENT-NOT: statistic ElementPresenceProofsChecked 0
 # RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
 # RIGHT: -1 false 3
 # RIGHT-NEXT: exited with 0

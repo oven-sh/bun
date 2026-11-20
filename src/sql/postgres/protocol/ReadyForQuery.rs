@@ -7,10 +7,10 @@ pub struct ReadyForQuery {
 }
 
 impl ReadyForQuery {
-    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
-        mut reader: NewReader<Container>,
-    ) -> Result<Self, AnyPostgresError> {
-        reader.length()?;
+    pub fn decode_internal(reader: &NewReader<'_>) -> Result<Self, AnyPostgresError> {
+        if reader.body_length()? == 0 {
+            return Err(AnyPostgresError::InvalidMessage);
+        }
 
         Ok(Self {
             transaction_status: reader.int::<u8>()?,

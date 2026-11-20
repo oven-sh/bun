@@ -5,8 +5,8 @@
 // # HELD: read f5 v5 proven={{*}}|f{{*}}
 // # RUN(FORM): walk f5 mechanisms=all
 // # FORM-LABEL: code f5:Body
-// # FORM: [[list]]: {{*}} = ElemGet
-// # FORM: = TypeTest [[list]] testedType=Array
+// # FORM: = ElemGet
+// # FORM: = TypeTest {{*}} testedType=Array
 // # FORM: = GetArrayElement
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL

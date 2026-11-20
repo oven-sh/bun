@@ -2,6 +2,7 @@ mod birth_targets;
 mod classes;
 mod containers;
 mod dictionaries;
+mod namespace_literals;
 mod object_types;
 mod own_fields;
 mod reached;
@@ -9,6 +10,7 @@ mod reached;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use bun_sema::atom::Atom;
 use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::ExprId;
 use bun_sema::program::FileId;
@@ -22,9 +24,9 @@ use crate::ir::{DeclaredType, Id, LayoutId, LayoutKey, PropertyKeyId, TypeId};
 
 pub(in crate::lower) use self::classes::{class_position, define_class_layout, private_key};
 pub use self::containers::NamesCreatedOnExports;
-pub(in crate::lower) use self::object_types::KnownOrders;
 pub use self::object_types::ObjectTypeKey;
-use self::object_types::{DescribedNames, ListedFields, SortedMember};
+use self::object_types::{DescribedNames, HolderInProgress, ListedFields, SortedMember};
+pub(in crate::lower) use self::object_types::{KnownOrders, can_be_field};
 pub(in crate::lower) use self::own_fields::OwnFields;
 
 #[derive(Default)]
@@ -34,17 +36,18 @@ pub(crate) struct LayoutState {
     listed_fields: Vec<Option<Rc<ListedFields>>>,
     source_types: Vec<SmallVec<[CheckerTypeId; 1]>>,
     types_of_layouts: FxHashSet<(LayoutId, CheckerTypeId)>,
-    holder_in_progress: Option<CheckerTypeId>,
+    holder_in_progress: Option<HolderInProgress>,
     holders: FxHashMap<CheckerTypeId, CheckerTypeId>,
     growing: FxHashSet<LayoutId>,
-    object_types: FxHashMap<CheckerTypeId, Option<LayoutId>>,
     sorted_members: FxHashMap<CheckerTypeId, Arc<[SortedMember]>>,
     described_names: DescribedNames,
     dictionaries: FxHashMap<CheckerTypeId, bool>,
     literals: FxHashMap<ExprId, LayoutId>,
     written_types_of_literals: FxHashMap<ExprId, (LayoutId, CheckerTypeId)>,
     literals_in_progress: SmallVec<[ExprId; 2]>,
+    first_namespace_literals: Option<FxHashMap<ExprId, ExprId>>,
     literals_opened_at_once: FxHashSet<ExprId>,
+    names_on_literals: Option<FxHashMap<ExprId, SmallVec<[Atom; 2]>>>,
     variables_that_leave_whole: Option<Rc<FxHashSet<bun_sema::bind::SymbolId>>>,
     class_types: Vec<(ClassRef, CheckerTypeId)>,
     layouts_seen_as_objects: FxHashSet<LayoutId>,
@@ -180,7 +183,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(crate) fn note_what_is_built(&mut self, ty: TypeId, limit: LimitId) {
-        let Some(layouts) = self.collect_reached_layouts(ty, limit) else {
+        let Some(layouts) = self.collect_reached_layouts(ty, limit, true) else {
             return;
         };
         for layout in layouts {
@@ -216,8 +219,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 | LayoutKey::Library(_)
                 | LayoutKey::UntypedLiteral { .. }
                 | LayoutKey::CreatedObject { .. }
+                | LayoutKey::PrototypeMaker(_)
                 | LayoutKey::Container(_)
-                | LayoutKey::Environment { .. } => {}
+                | LayoutKey::Environment { .. }
+                | LayoutKey::ModuleInstance(_) => {}
             }
         }
         self.define_object_types();

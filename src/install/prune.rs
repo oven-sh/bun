@@ -7,7 +7,7 @@ use std::sync::Arc;
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::time::nano_timestamp;
-use bun_core::{Global, Output, ZStr, handle_oom, strings};
+use bun_core::{Global, Output, ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::SEP;
 use bun_paths::path_options::AssumeOk as _;
@@ -241,13 +241,6 @@ fn split_store_key(key: &[u8]) -> (Box<[u8]>, Option<Box<[u8]>>) {
         _ => name.into(),
     };
     (alias, Some(version.into()))
-}
-
-fn zname(name: &[u8]) -> Vec<u8> {
-    let mut z = Vec::with_capacity(name.len() + 1);
-    z.extend_from_slice(name);
-    z.push(0);
-    z
 }
 
 pub(crate) fn sort_names(names: &mut Vec<Box<[u8]>>) {
@@ -1747,7 +1740,7 @@ pub(crate) fn remove_copies_of_the_older_layout(
         workspace_filters,
         tree::Layout::Older,
     ) {
-        remove_from_older_places(manager, &places, cache);
+        remove_from_older_places(manager, &places, cache.handle.fd());
         restore_tree(&mut manager.lockfile, saved);
     }
 }
@@ -1762,7 +1755,8 @@ fn tarball_may_contain(
 ) -> bool {
     let lockfile: &Lockfile = &manager.lockfile;
     let res = &lockfile.packages.items_resolution()[pkg_id as usize];
-    let entry: Box<[u8]> = match res.tag {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let entry = match res.tag {
         // Apart from bundled dependencies, Bun doesn't install the `node_modules` folder of a
         // workspace, a `file:` folder or a git checkout.
         ResolutionTag::Workspace | ResolutionTag::Folder | ResolutionTag::Git => return false,
@@ -1770,23 +1764,22 @@ fn tarball_may_contain(
             let name = lockfile.packages.items_name()[pkg_id as usize];
             crate::package_manager::cached_npm_package_folder_name(
                 manager,
+                &mut buf,
                 name.slice(&lockfile.buffers.string_bytes),
                 res.npm().version,
                 None,
             )
         }
         ResolutionTag::Github => {
-            crate::package_manager::cached_github_folder_name(manager, res.github(), None)
+            crate::package_manager::cached_github_folder_name(manager, &mut buf, res.github(), None)
         }
         // A tarball dependency can contain anything.
         _ => return true,
-    }
-    .as_bytes()
-    .into();
+    };
     // An installed package is never downloaded again, so a missing cache entry won't come back.
     // Treat it as not having the folder.
-    let folder = zname(&join(&join(&entry, b"node_modules"), alias));
-    sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&folder)).unwrap_or(true)
+    let folder = ZBox::from_bytes(join(&join(entry.as_bytes(), b"node_modules"), alias));
+    sys::directory_exists_at(cache, &folder).unwrap_or(true)
 }
 
 /// The path of a tree's `node_modules`, relative to the project root.
@@ -1915,9 +1908,7 @@ fn links_package(
             )
         }
     };
-    let stat = |dir: &Dir, path: &[u8]| {
-        sys::fstatat(dir.fd(), ZStr::from_slice_with_nul(&zname(path))).ok()
-    };
+    let stat = |dir: &Dir, path: &[u8]| sys::fstatat(dir.fd(), &ZBox::from_bytes(path)).ok();
     let (Some(link), Some(target)) = (stat(entry.dir, entry.name), stat(&Dir::cwd(), &target))
     else {
         return false;
@@ -2100,7 +2091,7 @@ fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<
 /// Anything that removes entries from the store or from a `node_modules` must open the folder with
 /// this function. It never follows a symlink, and adds it to `linked_folders` instead.
 fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> Option<Dir> {
-    let st = sys::lstat(ZStr::from_slice_with_nul(&zname(folder))).ok()?;
+    let st = sys::lstat(&ZBox::from_bytes(folder)).ok()?;
     match sys::kind_from_mode(st.st_mode as sys::Mode) {
         EntryKind::Directory => Dir::cwd()
             .open_at_with(folder, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
@@ -2215,7 +2206,7 @@ fn open_real_subdir(dir: &Dir, name: &[u8]) -> Option<Dir> {
 
 #[cfg(not(windows))]
 fn lstat_kind(dir: &Dir, name: &[u8]) -> EntryKind {
-    match sys::lstatat(dir.fd(), ZStr::from_slice_with_nul(&zname(name))) {
+    match sys::lstatat(dir.fd(), &ZBox::from_bytes(name)) {
         Ok(st) => sys::kind_from_mode(st.st_mode as sys::Mode),
         Err(_) => EntryKind::Unknown,
     }
@@ -2368,7 +2359,7 @@ fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> D
             };
             let protected =
                 reachable::packages_from(lockfile, resolutions, &unselected, false, full);
-            wanted.unmanaged.set_union(&protected.unmanaged);
+            wanted.set_union(&protected);
         }
     }
     wanted
@@ -2628,9 +2619,9 @@ fn plan_store_entry_leftovers(store: &Dir, entry: &[u8], plan: &mut Plan) {
 }
 
 fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
-    let z = zname(name);
+    let z = ZBox::from_bytes(name);
     let mut buf = bun_paths::path_buffer_pool::get();
-    let len = sys::readlinkat(dir.fd(), ZStr::from_slice_with_nul(&z), buf.as_mut_slice()).ok()?;
+    let len = sys::readlinkat(dir.fd(), &z, buf.as_mut_slice()).ok()?;
     let mut components = strings::tokenize_any(&buf.as_slice()[..len], b"/\\");
     while let Some(component) = components.next() {
         if component == b".bun" {
@@ -2644,8 +2635,7 @@ fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
 }
 
 fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
-    let z = zname(name);
-    let z = ZStr::from_slice_with_nul(&z);
+    let z = &ZBox::from_bytes(name);
     let result = sys::unlinkat(dir.fd(), z);
     #[cfg(windows)]
     let result = result.or_else(|_| sys::rmdirat(dir.fd(), z));
@@ -2731,13 +2721,13 @@ fn execute(plan: &Plan, quiet: bool) -> usize {
 }
 
 fn rmdir(dir: &Dir, name: &[u8]) {
-    let z = zname(name);
-    let _ = sys::rmdirat(dir.fd(), ZStr::from_slice_with_nul(&z));
+    let z = ZBox::from_bytes(name);
+    let _ = sys::rmdirat(dir.fd(), &z);
 }
 
 fn is_dangling(dir: &Dir, name: &[u8]) -> bool {
-    let z = zname(name);
-    match sys::fstatat(dir.fd(), ZStr::from_slice_with_nul(&z)) {
+    let z = ZBox::from_bytes(name);
+    match sys::fstatat(dir.fd(), &z) {
         Ok(_) => false,
         Err(err) => matches!(err.get_errno(), E::ENOENT | E::ENOTDIR),
     }
@@ -2879,8 +2869,7 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
             continue;
         }
         if let Some((bin_path, global_node_modules)) = global {
-            let dest = zname(&join(bin_path, name));
-            let dest = ZStr::from_slice_with_nul(&dest);
+            let dest = &ZBox::from_bytes(join(bin_path, name));
             match sys::readlink(dest, link.as_mut_slice()) {
                 Ok(len)
                     if crate::bin_real::Linker::link_leads_into(
@@ -2891,9 +2880,7 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
                 _ => continue,
             }
         } else {
-            let z = zname(name);
-            let z = ZStr::from_slice_with_nul(&z);
-            if let Ok(len) = sys::readlinkat(bin.fd(), z, link.as_mut_slice())
+            if let Ok(len) = sys::readlinkat(bin.fd(), entry.name.as_zstr(), link.as_mut_slice())
                 && (link[..len].strip_prefix(b"../"))
                     .is_some_and(|path| leads_into_package(parent, path))
             {
@@ -2902,7 +2889,6 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
         }
         dangling.push(name.into());
     }
-    drop(iter);
     let mut removed = false;
     for name in &dangling {
         removed |= remove_link(bin, name).is_ok();

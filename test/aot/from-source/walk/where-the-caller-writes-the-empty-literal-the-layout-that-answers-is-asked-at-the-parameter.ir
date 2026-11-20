@@ -3,10 +3,11 @@
 # as likely (a read of a name that a literal of the caller lacks has no typed form: a second turn bought nothing there). f1 = configure.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: = ShapeTest {{*}}layouts=[L2] [rejectsMarkedObjects]
+# CHECK: = GetSlotOrUndefined {{*}}key="encoding" receivers=[L0, L2] level=Proven
+# CHECK: = ShapeTest {{*}}layouts=[L2]
 # CHECK: = GetSlot {{*}}key="encoding" receivers=[L2] level=Proven
 # CHECK-NOT: layouts=[L0]
-# CHECK: = GetSlot {{*}}key="limit" receivers=[L2] level=Proven
+# CHECK: = GetSlot {{*}}key="length" receivers=[L2] level=Proven
 # -- source: where-the-caller-writes-the-empty-literal-the-layout-that-answers-is-asked-at-the-parameter.cjs
 # function configure(stream, opts) {
 #   var encoding = opts.encoding !== undefined ? opts.encoding : null;

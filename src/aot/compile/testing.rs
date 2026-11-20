@@ -91,7 +91,7 @@ pub(crate) fn lower_program_without(
                     project.request,
                     &roles,
                     &files_to_lower,
-                    &|checker, file| lower_file(&inputs, checker, file),
+                    &|checker, file| lower_file(&inputs, checker, file, None),
                 );
                 checked.lowered
             })
@@ -121,7 +121,7 @@ pub(crate) fn lower_program_replacing(
                     project.request,
                     &roles,
                     &files_to_lower,
-                    &|checker, file| lower_file(&inputs, checker, file),
+                    &|checker, file| lower_file(&inputs, checker, file, None),
                 );
                 checked.lowered
             })
@@ -156,7 +156,7 @@ pub(crate) fn lower_program_below_object_prototype(
                     project.request,
                     &roles,
                     &files_to_lower,
-                    &|checker, file| lower_file(&inputs, checker, file),
+                    &|checker, file| lower_file(&inputs, checker, file, None),
                 );
                 checked.lowered
             })
@@ -454,7 +454,7 @@ fn lower_project_files(
             project.request,
             &roles,
             &files_to_lower,
-            &|checker, file| lower_file(&inputs, checker, file),
+            &|checker, file| lower_file(&inputs, checker, file, None),
         );
         checked.lowered
     })

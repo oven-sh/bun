@@ -11,9 +11,9 @@ import {
   computeDepFlags,
   computeFlags,
   computeHardeningFlags,
+  extraFlagsFor,
+  fileOverrides,
   hardeningFlags,
-  safeStackDependencies,
-  safeStackFlags,
 } from "../../scripts/build/flags.ts";
 import { cargoBuildInvocation } from "../../scripts/build/rust.ts";
 import type { DirectBuild } from "../../scripts/build/source.ts";
@@ -307,23 +307,22 @@ test("--hardened=on strips with llvm-strip, which keeps PT_GNU_RELRO, or not at 
   expect(linuxConfig({}, String(dir), mockToolchain({ llvmStrip: undefined })).strip).toEndWith("strip");
 });
 
-const librariesThatCallBackIntoJavaScript = ["boringssl", "cares", "lsquic", "lsqpack", "sqlite", "tinycc"] as const;
-
-test("the libraries that never call back into JavaScript keep their arrays on a second stack", () => {
+test("the kernels of zstd, which never call back into JavaScript, keep their arrays on a second stack", () => {
   using dir = tempDir("build-hardened-flags-safe-stack", {});
   const on = linuxConfig({ hardened: true }, String(dir));
   const off = linuxConfig({}, String(dir));
-  expect(safeStackDependencies).toContain("zlib");
-  for (const name of safeStackDependencies) {
-    expect(safeStackFlags(on, name)).toEqual(["-fsanitize=safe-stack"]);
-    expect(safeStackFlags(off, name)).toEqual([]);
-  }
-  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc", "WebKit"] as const)
-    expect(safeStackFlags(on, name)).toEqual([]);
-  expect(everyFlagOf(on).cxx).toContain("-DBUN_SAFE_STACK=1");
-  expect(everyFlagOf(on).dependencyC).not.toContain("-fsanitize=safe-stack");
-  expect(Object.values(everyFlagOf(off)).flat()).not.toContain("-DBUN_SAFE_STACK=1");
   const withAddressSanitizer = linuxConfig({ hardened: true, asan: true }, String(dir));
-  expect(safeStackFlags(withAddressSanitizer, "zlib")).toEqual([]);
+  const filesWithIt = (cfg: Config) => [
+    ...new Set(
+      fileOverrides.map(it => it.file).filter(file => extraFlagsFor(cfg, file).includes("-fsanitize=safe-stack")),
+    ),
+  ];
+  expect(filesWithIt(on)).toEqual(["src/jsc/bindings/highway_zstd.cpp"]);
+  expect(filesWithIt({ ...on, debug: true })).toEqual(filesWithIt(on));
+  expect(filesWithIt(off)).toEqual([]);
+  expect(filesWithIt(withAddressSanitizer)).toEqual([]);
+  expect(everyFlagOf(on).cxx).toContain("-DBUN_SAFE_STACK=1");
+  expect(Object.values(everyFlagOf(on)).flat()).not.toContain("-fsanitize=safe-stack");
+  expect(Object.values(everyFlagOf(off)).flat()).not.toContain("-DBUN_SAFE_STACK=1");
   expect(everyFlagOf(withAddressSanitizer).cxx).not.toContain("-DBUN_SAFE_STACK=1");
 });

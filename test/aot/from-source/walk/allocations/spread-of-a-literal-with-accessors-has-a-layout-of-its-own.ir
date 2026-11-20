@@ -1,0 +1,12 @@
+# f2 = copy
+# -- source: main.mjs
+# function box(width, height) { return { width, get area() { return this.width * height; }, set area(v) { this.width = v / height; } }; }
+# function copy(k) { const s = { ...box(k & 7, 3) }; return s.width + s.area; }
+# let n = 0; for (let k = 0; k < 20; k++) n += copy(k);
+# print(n);
+# -- end of source
+# The copy holds values: the accessors of the literal keep their slots.
+# RUN: walk f2:Body mechanisms=all
+# CHECK: = NewObject {{*}}layout=L0 fields=[1]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 248

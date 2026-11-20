@@ -110,8 +110,7 @@ impl FileScan<'_, '_> {
     }
 
     fn is_in_variable_alone(&self, symbol: SymbolId) -> bool {
-        self.is_stable(symbol)
-            && self.bound.export_symbol_of_value_symbol_if_exported(symbol) == symbol
+        self.is_stable(symbol) && self.bound.exported_value(symbol) == symbol
     }
 
     fn find_variable_of_class(&self, class: ClassId) -> Option<SymbolId> {

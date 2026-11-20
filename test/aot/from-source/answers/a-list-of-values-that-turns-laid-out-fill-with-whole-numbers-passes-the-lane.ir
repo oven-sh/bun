@@ -12,4 +12,4 @@
 # CHECK: 0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3 0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3 0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3
 # CHECK-NEXT: exited with 0
 # RUN(COUNT): compile UnrolledLoopTypeProofsChecked mechanisms=all testing=CheckBoundsInEmittersOnly
-# COUNT: statistic UnrolledLoopTypeProofsChecked 48
+# COUNT: statistic UnrolledLoopTypeProofsChecked 54

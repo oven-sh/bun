@@ -1,7 +1,7 @@
 use bun_sema::bind::{
     Binding, Bound, CodeUnit, Decl, ScopeId, ScopeKind, SymbolId, is_among_parameters,
 };
-use bun_sema::hir::{self, FnKind};
+use bun_sema::hir::{self, ExprKind, FnId, FnKind, StmtKind};
 
 use super::{BindingRef, ScopeSlot};
 
@@ -38,7 +38,7 @@ pub(super) fn find_container_binding(
             _ => return None,
         };
         let binding = bound.declared_symbol(declaration).some()?;
-        let names_container = bound.export_symbol_of_value_symbol_if_exported(binding) == container
+        let names_container = bound.exported_value(binding) == container
             || bound.symbol_of_declaration(declaration) == container;
         let parameter = bound.container_parameter(scope).some();
         parameter.filter(|_| names_container)
@@ -75,6 +75,39 @@ pub(super) struct ScopeObjectSearch {
     pub(super) asks_with_objects_alone: bool,
 }
 
+/// Whether the code at `pos` is in the text of the only eval of `function`, which runs once in an activation: the text is an
+/// expression and declares nothing, so that the activation has no variables of evals while the code runs.
+fn is_in_only_eval(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId, pos: u32) -> bool {
+    let mut known = hir.known_evaluations.iter();
+    let evaluated = known.find(|it| !it.is_in_global_scope && (it.start..it.end).contains(&pos));
+    let Some(evaluation) = evaluated else {
+        return false;
+    };
+    let mut evals = (bound.runtime.eval_scopes().iter())
+        .filter(|entry| bound.code_unit(entry.1.scope) == CodeUnit::Function(function));
+    let (Some(&(eval, _)), None) = (evals.next(), evals.next()) else {
+        return false;
+    };
+    if !matches!(hir[eval].kind, ExprKind::Call(call) if call == evaluation.call) {
+        return false;
+    }
+    let at = hir[eval].pos;
+    let is_loop_around = |statement: &hir::Stmt| {
+        let is_loop = matches!(
+            statement.kind,
+            StmtKind::For { .. }
+                | StmtKind::While { .. }
+                | StmtKind::DoWhile { .. }
+                | StmtKind::ForOf { .. }
+                | StmtKind::ForIn { .. }
+        );
+        is_loop
+            && (statement.start..statement.loc.end).contains(&at)
+            && statement.start > hir[function].start
+    };
+    !hir.stmts.iter().any(is_loop_around)
+}
+
 pub(super) fn for_each_scope_object(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -88,7 +121,9 @@ pub(super) fn for_each_scope_object(
             ScopeKind::With(_) => visit(BindingRef::Slot(scope, ScopeSlot::WithObject)),
             _ if search.asks_with_objects_alone => {}
             ScopeKind::Fn(function) => {
-                if !is_among_parameters(hir, function, from, search.pos) {
+                if !is_among_parameters(hir, function, from, search.pos)
+                    && !is_in_only_eval(hir, bound, function, search.pos)
+                {
                     visit(BindingRef::Slot(scope, ScopeSlot::EvalVariables));
                 }
                 if scope != search.declaring_scope {

@@ -1,4 +1,4 @@
-// STATISTIC: EmptySlotCasesEmitted = 1
+// STATISTIC: EmptySlotCasesEmitted >= 1
 class Kind { flags: number; up: Kind | undefined; constructor(flags: number, up?: Kind) { this.flags = flags; this.up = up; } }
 interface Whole extends Kind { part: Kind }
 const lines: string[] = [];

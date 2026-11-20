@@ -20,70 +20,25 @@
 
 #pragma once
 
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 #include "PerformanceTiming.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
-class JSPerformanceTiming : public JSDOMWrapper<PerformanceTiming> {
+class JSPerformanceTiming final : public JSDOMInterface<JSPerformanceTiming, PerformanceTiming> {
 public:
-    using Base = JSDOMWrapper<PerformanceTiming>;
-    static JSPerformanceTiming* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceTiming>&& impl)
-    {
-        JSPerformanceTiming* ptr = new (NotNull, JSC::allocateCell<JSPerformanceTiming>(globalObject->vm())) JSPerformanceTiming(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static PerformanceTiming* toWrapped(JSC::VM&, JSC::JSValue);
-    static void destroy(JSC::JSCell*);
+    using JSDOMInterface::JSDOMInterface;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceTiming, m_subspaceForPerformanceTiming);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-
-protected:
-    JSPerformanceTiming(JSC::Structure*, JSDOMGlobalObject&, Ref<PerformanceTiming>&&);
-
-    DECLARE_DEFAULT_FINISH_CREATION;
+    bool isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral*) const { return false; }
 };
-
-class JSPerformanceTimingOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, PerformanceTiming*)
-{
-    static NeverDestroyed<JSPerformanceTimingOwner> owner;
-    return &owner.get();
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, PerformanceTiming&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceTiming* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<PerformanceTiming>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<PerformanceTiming>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<PerformanceTiming> {
     using WrapperClass = JSPerformanceTiming;
-    using ToWrappedReturnType = PerformanceTiming*;
 };
 
 } // namespace WebCore

@@ -13,12 +13,9 @@
 //! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`,
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
-// `bun.ptr.CowSlice(T)` / `CowSliceZ` — the lifetime-free struct port (owns or
-// borrows a raw slice with `init_owned`/`borrow_subslice`/`length`). Callers
-// that need the struct-shaped API (e.g. `pack_command::Pattern`) reach for
-// `cow_slice::CowSlice<u8>`.
-#[path = "CowSlice.rs"]
-pub mod cow_slice;
+mod cell_ext;
+pub use cell_ext::{CellExt, OptionCellExt, VecCellExt};
+
 mod js_cell;
 pub use js_cell::JsCell;
 
@@ -29,6 +26,9 @@ pub use bun_core::external_shared;
 pub use bun_core::{ExternalShared, ExternalSharedDescriptor, WTFString};
 // `cast_fn_ptr` and `RawSlice` likewise moved to `bun_core`; re-export.
 pub use bun_core::{RawSlice, cast_fn_ptr};
+
+mod aliasable_box;
+pub use aliasable_box::AliasableBox;
 
 pub mod raw_ref_count;
 pub mod weak_ptr;
@@ -156,13 +156,6 @@ impl<T: ?Sized> BackRef<T, Mut> {
         // SAFETY: caller guarantees exclusivity; BackRef invariant guarantees
         // liveness/alignment; `Mut` records write provenance.
         unsafe { self.0.as_mut() }
-    }
-}
-
-impl<T, P> BackRef<T, P> {
-    #[inline]
-    pub const fn dangling() -> Self {
-        BackRef(core::ptr::NonNull::dangling(), core::marker::PhantomData)
     }
 }
 
@@ -315,45 +308,6 @@ pub unsafe fn detach_lifetime_ref<'a, T: ?Sized>(r: &T) -> &'a T {
 pub unsafe fn detach_lifetime_mut<'a, T: ?Sized>(r: &mut T) -> &'a mut T {
     // SAFETY: caller contract — `r` is live and exclusively held for `'a`.
     unsafe { &mut *core::ptr::from_mut::<T>(r) }
-}
-
-/// Marker trait for types whose `&mut self` methods launder `self` through
-/// `core::hint::black_box` (PORT_NOTES_PLAN **R-2**) before dispatching a
-/// re-entrant parent/user callback, then reborrow via [`LaunderedSelf::r`].
-///
-/// This trait makes the reborrow sound without scattering
-/// `unsafe { &mut *this }` at every field access.
-///
-/// # Safety (impl contract)
-/// For every method on `Self` that calls [`r`](Self::r):
-/// - `Self` is an inline/intrusive field of a heap object that is **never
-///   freed** during the re-entrant callback (the laundered raw pointer aliases
-///   a `&mut self` whose stack frame is still live);
-/// - re-entry runs on the **single JS thread** (no concurrent `&mut Self`);
-/// - each `&mut Self` produced by [`r`](Self::r) is short-lived and is the
-///   sole live borrow at the point of use — never held across the next
-///   parent/user dispatch.
-pub unsafe trait LaunderedSelf: Sized {
-    /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer.
-    ///
-    /// `this` is the `black_box`-laundered address of an outer `&mut self`;
-    /// the laundered raw pointer carries no `noalias`, so the compiler may not
-    /// cache fields across re-entry. See the trait-level safety contract for
-    /// the encapsulated invariant.
-    // The safety contract is on `unsafe impl LaunderedSelf` (the implementor
-    // promises every `this` it passes is a live laundered `&mut self`); the
-    // method is safe-to-call by design — that's the point of `unsafe trait`.
-    // Clippy's `not_unsafe_ptr_arg_deref` doesn't see the trait-level
-    // invariant; making this `unsafe fn` would force 89 call sites to restate
-    // a contract they cannot violate.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    #[inline(always)]
-    fn r<'a>(this: *mut Self) -> &'a mut Self {
-        debug_assert!(!this.is_null());
-        // SAFETY: `LaunderedSelf` impl contract — `this` aliases a live
-        // `&mut self` on the single JS thread; sole borrow at point of use.
-        unsafe { &mut *this }
-    }
 }
 
 /// Shorter alias for [`detach_lifetime_ref`] — two workstreams converged on
@@ -611,7 +565,7 @@ unsafe impl<T: ?Sized + Sync, P> Sync for BackRef<T, P> {}
 // it across a call that could reach the same slot. Under that protocol the
 // single `unsafe` in [`get_mut`] is sound; keeping it here (rather than at
 // each host-fn call site) is the same centralisation trade-off `BackRef::get`
-// / `LaunderedSelf::r` already make in this crate.
+// already makes in this crate.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A nullable slot for a lifetime-erased `&mut T` borrowed from an outer scope.

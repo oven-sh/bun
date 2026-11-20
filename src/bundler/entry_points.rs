@@ -7,7 +7,6 @@ use bun_core::strings;
 use bun_paths::MAX_PATH_BYTES;
 use bun_wyhash::{self, Wyhash11};
 
-use crate::Transpiler;
 use bun_js_parser as js_ast;
 
 // `Path`/`PathName` come from the lower-tier `bun_paths::fs` shim
@@ -38,7 +37,7 @@ pub struct ServerEntryPoint {
 
 impl ServerEntryPoint {
     pub fn generate(
-        entry: &mut ServerEntryPoint,
+        &mut self,
         is_hot_reload_enabled: bool,
         path_to_use: &[u8],
     ) -> crate::Result<()> {
@@ -116,8 +115,8 @@ impl ServerEntryPoint {
         // Free the previous buffer on regenerate (hot reload) instead of
         // leaking it. `contents` is either "" or a previously generated buffer.
         // (Handled implicitly: assigning to `Box<[u8]>` drops the old one.)
-        entry.contents = code.into_boxed_slice();
-        entry.generated = true;
+        self.contents = code.into_boxed_slice();
+        self.generated = true;
         Ok(())
     }
 }
@@ -128,9 +127,7 @@ impl ServerEntryPoint {
 // protected. This is mostly a workaround for being unable to call ESM exported
 // functions from C++. When that is resolved, we should remove this.
 pub struct MacroEntryPoint {
-    /// The label, then the code.
     code_buffer: [u8; MAX_PATH_BYTES * 2 + 500],
-    label_len: usize,
     code_len: usize,
 }
 
@@ -138,20 +135,14 @@ impl Default for MacroEntryPoint {
     fn default() -> Self {
         Self {
             code_buffer: [0u8; MAX_PATH_BYTES * 2 + 500],
-            label_len: 0,
             code_len: 0,
         }
     }
 }
 
 impl MacroEntryPoint {
-    /// The `macro:` specifier the generated module is loaded as.
-    pub fn label(&self) -> &[u8] {
-        &self.code_buffer[..self.label_len]
-    }
-
     pub fn code(&self) -> &[u8] {
-        &self.code_buffer[self.label_len..][..self.code_len]
+        &self.code_buffer[..self.code_len]
     }
 
     pub fn generate_id(
@@ -193,23 +184,19 @@ impl MacroEntryPoint {
 
     pub fn generate(
         entry: &mut MacroEntryPoint,
-        _: &mut Transpiler,
         import_path: &Fs::PathName,
         function_name: &[u8],
         macro_id: i32,
-        macro_label_: &[u8],
     ) -> crate::Result<()> {
         let dir_to_use: &[u8] = if import_path.dir.is_empty() {
             b""
         } else {
             import_path.dir_with_trailing_slash()
         };
-        let label_len = macro_label_.len();
-        entry.code_buffer[..label_len].copy_from_slice(macro_label_);
 
         let code_len: usize = 'brk: {
             if import_path.base == b"bun" {
-                let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
+                let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[..]);
                 write!(
                     &mut cursor,
                     "//Auto-generated file\n\
@@ -234,7 +221,7 @@ impl MacroEntryPoint {
                 break 'brk cursor.position() as usize;
             }
 
-            let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
+            let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[..]);
             write!(
                 &mut cursor,
                 "//Auto-generated file\n\
@@ -287,7 +274,6 @@ impl MacroEntryPoint {
             cursor.position() as usize
         };
 
-        entry.label_len = label_len;
         entry.code_len = code_len;
         Ok(())
     }

@@ -14,6 +14,7 @@
 # RUN(ONCE): run-in-shell mechanisms=all --aotCountsPath=/dev/null publish = function (total) { const rows = JSON.parse("[" + Array.from({ length: 400 }, (_, i) => `{"name":"n${i}","price":${i},"count":2}`).join(",") + "]"); const general = () => aotOperationCount("operationAOTGetByIdAndCache"); const fills = () => aotOperationCount("operationAOTFillSiteAnswers"); const generalBefore = general(), fillsBefore = fills(); print(total(rows)); print("general reads by the run time:", general() - generalBefore); print("asked to file or to fill:", fills() - fillsBefore); };
 # ONCE: 159600
 # ONCE-NEXT: general reads by the run time: 0
+# Each of the two sites fills its row once, where it claims it, however many rows there are.
 # ONCE-NEXT: asked to file or to fill: 2
 # ONCE-NEXT: exited with 0
 # RUN(GETTER): run-in-shell mechanisms=all --aotCountsPath=/dev/null publish = function (total) { const rows = JSON.parse("[" + Array.from({ length: 40 }, (_, i) => `{"name":"n${i}","price":${i},"count":2}`).join(",") + "]"); let asked = 0; Object.defineProperty(rows[0], "price", { get() { asked++; return 1000; } }); print(total(rows), asked); };

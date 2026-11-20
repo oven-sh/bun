@@ -5,13 +5,14 @@ use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 use crate::LinkerContext;
 use crate::js_meta;
 use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap, debug};
+use crate::linker_graph::is_external_dynamic_import;
 use crate::{
-    Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt, Ref,
-    RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
+    Chunk, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt, Ref, RefImportData,
+    ResolvedExports, StableRef, WrapKind, chunk,
 };
 
 pub(crate) fn compute_cross_chunk_dependencies<'a>(
-    c: &mut LinkerContext<'a>,
+    c: &mut LinkerContext<'_, 'a>,
     chunks: &mut [Chunk<'a>],
 ) -> Result<(), bun_alloc::AllocError> {
     if !c.graph.code_splitting {
@@ -30,52 +31,31 @@ pub(crate) fn compute_cross_chunk_dependencies<'a>(
         .collect();
 
     {
-        // Constructed on the stack and dropped at scope end.
-        //
-        // `ctx` / `symbols` / `chunks` are stored as raw pointers so the struct does not
-        // hold a borrow on `c` or `chunks` across the sequential `walk` loop below.
-        //
-        // Derive `ctx_ptr` from the `&mut` (not `from_ref`) so the raw carries `c`'s own
-        // Unique provenance: under Stacked Borrows the subsequent `split_mut` reborrows
-        // are children of that tag, so `&*ctx_ptr` in `walk()` (which reads
-        // `c.graph.files.{ptrs,len}` via `is_external_dynamic_import`) stays valid.
-        // `from_ref(c)` would push a SharedRO tag that the `&mut c.graph.X` reborrows
-        // pop, leaving the raw dangling under SB.
-        //
-        // Lifetime-erase the `LinkerContext<'_>` so the struct's `'a` (which
-        // ties only the local SoA-column borrows) is not forced to equal the
-        // LinkerContext's invariant `'_`. `NonNull::from(&mut *c)` preserves
-        // `c`'s Unique provenance (see note above).
-        let ctx_ref = bun_ptr::BackRef::from(
-            core::ptr::NonNull::from(&mut *c).cast::<LinkerContext<'static>>(),
-        );
-        // `BackRef` from raw place addr (not `BackRef::new(&…)`) so no
-        // intermediate `&` borrow is pushed before the `split_mut()` calls
-        // below — matches the `ctx_ref` construction pattern just above.
-        let symbols_ref = bun_ptr::BackRef::from(core::ptr::NonNull::from(&mut c.graph.symbols));
-
+        let module_preload = c.module_preload();
         let ast = c.graph.ast.split_mut();
-        let meta = c.graph.meta.split_mut();
-        let files = c.graph.files.split_mut();
+        let (meta, files) = (&c.graph.meta, &c.graph.files);
 
         let mut cross_chunk_dependencies = CrossChunkDependencies {
-            chunks: bun_ptr::BackRef::new(&*chunks),
+            chunks,
             chunk_meta: &mut chunk_metas,
             parts: ast.parts,
             import_records: ast.import_records,
-            flags: meta.flags,
+            flags: meta.items_flags(),
             ast_flags: ast.flags,
-            entry_point_chunk_indices: files.entry_point_chunk_index,
-            imports_to_bind: meta.imports_to_bind,
+            entry_point_chunk_indices: files.items_entry_point_chunk_index(),
+            imports_to_bind: meta.items_imports_to_bind(),
             wrapper_refs: ast.wrapper_ref,
             exports_refs: ast.exports_ref,
-            sorted_and_filtered_export_aliases: meta.sorted_and_filtered_export_aliases,
-            resolved_exports: meta.resolved_exports,
-            ctx: ctx_ref,
-            symbols: symbols_ref,
+            sorted_and_filtered_export_aliases: meta.items_sorted_and_filtered_export_aliases(),
+            resolved_exports: meta.items_resolved_exports(),
+            entry_point_kinds: files.items_entry_point_kind(),
+            parts_live: &c.graph.parts_live,
+            preload_entries: module_preload.then_some(&c.preload_entries),
+            chunks_runtime_ref: c.chunks_runtime_ref,
+            symbols: &c.graph.symbols,
         };
 
-        for (idx, chunk) in chunks.iter_mut().enumerate() {
+        for (idx, chunk) in chunks.iter().enumerate() {
             cross_chunk_dependencies.walk(chunk, idx);
         }
     }
@@ -85,11 +65,7 @@ pub(crate) fn compute_cross_chunk_dependencies<'a>(
 
 struct CrossChunkDependencies<'a, 'bump> {
     chunk_meta: &'a mut [ChunkMeta],
-    // `BackRef` — the same `[Chunk]` slice is also iterated mutably by
-    // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
-    // (disjoint from the per-iteration `&mut Chunk`). The slice outlives the struct
-    // (caller stack frame).
-    chunks: bun_ptr::BackRef<[Chunk<'bump>]>,
+    chunks: &'a [Chunk<'bump>],
     parts: &'a [bun_ast::PartList<'bump>],
     import_records: &'a mut [bun_ast::import_record::List<'bump>],
     flags: &'a [js_meta::Flags],
@@ -100,19 +76,11 @@ struct CrossChunkDependencies<'a, 'bump> {
     exports_refs: &'a [Ref],
     sorted_and_filtered_export_aliases: &'a [js_meta::SortedAndFilteredExportAliases],
     resolved_exports: &'a [ResolvedExports],
-    // `BackRef` — `walk` aliases `c.graph` columns alongside the
-    // `LinkerContext` / `Symbol.Map`; borrowck cannot express that split, so
-    // opt out here via `BackRef` (safe `Deref` at each use site in `walk`). Lifetime
-    // erased (`'static`) so the outer `CrossChunkDependencies<'_>` borrow is not tied
-    // to the LinkerContext's own invariant lifetime parameter.
-    ctx: bun_ptr::BackRef<LinkerContext<'static>>,
-    // `BackRef` — `walk` mutates per-chunk symbol slots via
-    // `Map::assign_chunk_index(&self)`, which is a Relaxed store to
-    // `Symbol.chunk_index: AtomicU32`, so a shared `&Map` suffices. Holding
-    // `&mut Map` here would conflict with the `&LinkerContext` deref of `ctx`
-    // (which also reaches `c.graph.symbols`); `BackRef::Deref` yields the
-    // shared `&Map` each `walk` call needs.
-    symbols: bun_ptr::BackRef<bun_ast::symbol::Map>,
+    entry_point_kinds: &'a [crate::EntryPoint::Kind],
+    parts_live: &'a [AutoBitSet],
+    preload_entries: Option<&'a AutoBitSet>,
+    chunks_runtime_ref: Ref,
+    symbols: &'a bun_ast::symbol::Map,
 }
 
 impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
@@ -123,19 +91,10 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
     // `symbols.assign_chunk_index(ref)` (Relaxed atomic store to
     // `Symbol.chunk_index: AtomicU32`; per-symbol-ref disjoint by chunk
     // membership — debug-asserted in `assign_chunk_index`).
-    // Reads `ctx`/`chunks`/SoA columns shared. Never forms `&mut
-    // LinkerContext` (`ctx` is a `BackRef`, deref'd to `&`).
-    fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
+    fn walk(&mut self, chunk: &Chunk, chunk_index: usize) {
         let deps = self;
-        // `ctx` / `chunks` are `BackRef`s into `LinkerContext` / the caller's chunk
-        // slice, valid for the link pass (see note on the struct fields).
-        // `chunks` aliases the slice the caller iterates mutably but is only read here.
-        let ctx: &LinkerContext<'_> = deps.ctx.get();
-        // `BackRef` into `LinkerContext.graph.symbols`, valid for the link
-        // pass. Shared `&Map` — per-slot writes go through
-        // `Symbol.chunk_index: AtomicU32`; no `&mut Map` is materialized.
-        let symbols: &bun_ast::symbol::Map = deps.symbols.get();
-        let _chunks: &[Chunk] = deps.chunks.get();
+        let symbols = deps.symbols;
+        let chunks = deps.chunks;
         let chunk_meta = &mut deps.chunk_meta[chunk_index];
         // Go through `chunk_meta.imports` / `chunk_meta.dynamic_imports`.
         let entry_point_chunk_indices = deps.entry_point_chunk_indices;
@@ -152,7 +111,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
 
             // Go over each part in this file that's marked for inclusion in this chunk
             let parts = deps.parts[source_index as usize].as_slice();
-            let parts_live = &ctx.graph.parts_live[source_index as usize];
+            let parts_live = &deps.parts_live[source_index as usize];
             let import_records = deps.import_records[source_index as usize].as_mut_slice();
             let imports_to_bind = &deps.imports_to_bind[source_index as usize];
             let wrap = deps.flags[source_index as usize].wrap;
@@ -167,16 +126,17 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                 for &import_record_id in part.import_record_indices.slice() {
                     let import_record = &mut import_records[import_record_id as usize];
                     if import_record.source_index.is_valid()
-                        && ctx.is_external_dynamic_import(import_record, source_index)
+                        && is_external_dynamic_import(
+                            /* code_splitting */ true,
+                            deps.entry_point_kinds,
+                            import_record,
+                            source_index,
+                        )
                     {
                         let other_chunk_index =
                             entry_point_chunk_indices[import_record.source_index.get() as usize];
-                        // Slice copy (fat pointer):
-                        // `path.text` borrows the chunk's
-                        // `unique_key` backing buffer (`LinkerContext.unique_key_buf`),
-                        // which outlives the link pass.
-                        import_record.path.text = _chunks[other_chunk_index as usize].unique_key;
-                        import_record.path.pretty = _chunks[other_chunk_index as usize].id_key;
+                        import_record.path.text = chunks[other_chunk_index as usize].unique_key;
+                        import_record.path.pretty = chunks[other_chunk_index as usize].id_key;
                         import_record.source_index = Index::INVALID;
                         import_record
                             .flags
@@ -313,12 +273,10 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     }
                 }
 
-                if ctx.module_preload()
-                    && ctx
-                        .preload_entries
-                        .is_set(chunk.entry_point.source_index() as usize)
+                if let Some(preload_entries) = deps.preload_entries
+                    && preload_entries.is_set(chunk.entry_point.source_index() as usize)
                 {
-                    let chunks_ref = symbols.follow(ctx.chunks_runtime_ref);
+                    let chunks_ref = symbols.follow(deps.chunks_runtime_ref);
                     let _ = chunk_meta.imports.put(chunks_ref, ()); // OOM-only Result
                 }
 
@@ -636,11 +594,11 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     // from the loop above to know which chunk declares each binding).
     {
         debug!("Generating cross-chunk imports");
-        let mut list: Vec<CrossChunkImport> = Vec::new();
+        let mut order: Vec<u32> = Vec::new();
         let mut evaluation_rank: Vec<u32> = vec![u32::MAX; chunks.len()];
         // We move the per-chunk fields we
         // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
-        // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`
+        // the `chunk` borrow, hand the whole `chunks` slice to `sort_cross_chunk_imports`
         // (which only reads `chunks[other].exports_to_other_chunks` — disjoint), then write
         // the fields back at loop end.
         for chunk_index in 0..chunks.len() {
@@ -666,8 +624,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             for (rank, &other) in reached.iter().enumerate() {
                 evaluation_rank[other as usize] = rank as u32;
             }
-            CrossChunkImport::sorted_cross_chunk_imports(
-                &mut list,
+            Chunk::sort_cross_chunk_imports(
+                &mut order,
                 chunks,
                 &mut imports_from_other_chunks,
                 c.graph.stable_source_indices.slice(),
@@ -676,19 +634,20 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             for &other in reached.iter() {
                 evaluation_rank[other as usize] = u32::MAX;
             }
-            let cross_chunk_imports_input: &[CrossChunkImport] = list.as_slice();
-            for cross_chunk_import in cross_chunk_imports_input {
+            for &index in &order {
                 match c.options.output_format {
                     OutputFormat::Esm => {
                         let import_record_index =
                             u32::try_from(cross_chunk_imports.len() as usize).expect("int cast");
 
+                        let sorted_import_items =
+                            &imports_from_other_chunks.values()[index as usize];
                         let mut clauses =
                             bun_alloc::ArenaVec::<bun_ast::ClauseItem>::with_capacity_in(
-                                cross_chunk_import.sorted_import_items.len() as usize,
+                                sorted_import_items.len(),
                                 c.arena(),
                             );
-                        for item in cross_chunk_import.sorted_import_items.slice() {
+                        for item in sorted_import_items {
                             clauses.push(bun_ast::ClauseItem {
                                 name: bun_ast::LocRef {
                                     ref_: item.r#ref,
@@ -702,7 +661,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
                         cross_chunk_imports.push(chunk::ChunkImport {
                             import_kind: bun_ast::ImportKind::Stmt,
-                            chunk_index: cross_chunk_import.chunk_index,
+                            chunk_index: imports_from_other_chunks.keys()[index as usize],
                         });
                         let items_ptr = bun_ast::StoreSlice::new_mut(clauses.into_bump_slice_mut());
                         // Allocated directly from the arena —

@@ -1,7 +1,6 @@
 use std::io::Write as _;
 
 use bun_alloc::Arena;
-use bun_ast::Log;
 use bun_core::String as BunString;
 use bun_core::output::{ColorDepth, Source as OutputSource};
 use bun_css::values::color::RGBA;
@@ -184,9 +183,7 @@ pub(crate) fn color<'a>(
     use bun_css::CssColor;
     use bun_css::values::color::{Colorspace as _, HSL, LAB, SRGB};
 
-    let log = Log::init();
-
-    let parsed_color: css::CssColorParseResult = match input {
+    let parsed_color: Option<CssColor> = match input {
         ColorInput::Missing => {
             return Err(cx
                 .global()
@@ -208,23 +205,23 @@ pub(crate) fn color<'a>(
                 255
             };
 
-            Ok(CssColor::Rgba(RGBA {
+            Some(CssColor::Rgba(RGBA {
                 alpha,
                 red,
                 green,
                 blue,
             }))
         }
-        ColorInput::List(list) => Ok(CssColor::Rgba(rgba_from_list(cx.global(), list.to_js())?)),
+        ColorInput::List(list) => Some(CssColor::Rgba(rgba_from_list(cx.global(), list.to_js())?)),
         ColorInput::Buffer(buffer) => {
             let (global, buffer) = (cx.global(), buffer.to_js());
-            Ok(CssColor::Rgba(if buffer.js_type() == JSType::DataView {
+            Some(CssColor::Rgba(if buffer.js_type() == JSType::DataView {
                 rgba_from_channels(&ColorChannels::from_js(global, buffer)?)
             } else {
                 rgba_from_list(global, buffer)?
             }))
         }
-        ColorInput::Channels(channels) => Ok(CssColor::Rgba(rgba_from_channels(&channels))),
+        ColorInput::Channels(channels) => Some(CssColor::Rgba(rgba_from_channels(&channels))),
         ColorInput::Text(text) => {
             // MimallocArena::new() calls mi_heap_new(), so defer creation to the
             // paths that actually allocate.
@@ -236,27 +233,14 @@ pub(crate) fn color<'a>(
                 css::css_parser::ParserOpts::CLIP_COLORS,
                 None,
             );
-            CssColor::parse(&mut parser)
+            CssColor::parse(&mut parser).ok()
         }
     };
     let heap = &cx.heap;
 
     match parsed_color {
-        Err(err) => {
-            if log.msgs.is_empty() {
-                return Ok(None);
-            }
-
-            let kind_name = match err.basic().kind {
-                css::BasicParseErrorKind::unexpected_token(_) => "unexpected_token",
-                css::BasicParseErrorKind::end_of_input => "end_of_input",
-                css::BasicParseErrorKind::at_rule_invalid(_) => "at_rule_invalid",
-                css::BasicParseErrorKind::at_rule_body_invalid => "at_rule_body_invalid",
-                css::BasicParseErrorKind::qualified_rule_invalid => "qualified_rule_invalid",
-            };
-            return Err(heap.error(format_args!("color() failed to parse {}", kind_name)));
-        }
-        Ok(result) => {
+        None => Ok(None),
+        Some(result) => {
             let format: OutputColorFormat = if output_format == OutputColorFormat::Ansi {
                 match OutputSource::color_depth() {
                     // No color terminal, therefore return an empty string

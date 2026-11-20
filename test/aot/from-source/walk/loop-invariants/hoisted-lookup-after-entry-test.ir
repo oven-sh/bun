@@ -11,7 +11,7 @@
 # CHECK-NEXT: inlineBuiltin=MapGet
 # CHECK-NOT: Branch
 # CHECK: inlineBuiltin=MapHas
-# CHECK-NEXT: Jump -> next
+# CHECK-NEXT: Branch
 # CHECK-NOT: inlineBuiltin=Map
 # -- source: hoisted-lookup-after-entry-test.ts
 # const table = new Map<string, number>([["a", 5], ["b", 7]]);

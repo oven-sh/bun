@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bun_sema::atom::Atom;
 use bun_sema::bind::{
     Binding, BindingKind, CodeUnit, CommonJsVariable, Decl, FunctionFlags, Parent, PatParent,
@@ -395,11 +397,12 @@ impl FileLowering<'_, '_, '_, '_> {
         {
             return None;
         }
-        if self.enums_that_stay_as_born.is_none() {
-            let listed = self.list_enums_that_stay_as_born();
-            self.enums_that_stay_as_born = Some(listed);
+        if self.lists.enums_that_stay_as_born.get().is_none() {
+            let lists = Arc::clone(&self.lists);
+            let listed = &lists.enums_that_stay_as_born;
+            listed.get_or_init(|| self.list_enums_that_stay_as_born());
         }
-        let listed = self.enums_that_stay_as_born.as_ref()?;
+        let listed = self.lists.enums_that_stay_as_born.get()?;
         let value = *listed.get(&variable)?.get(&name)?;
         Some((variable, value))
     }

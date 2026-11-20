@@ -3,7 +3,7 @@
 // so a turn looks no name up and asks nothing but whether the loop goes on: the product alone may be too large for a whole number of 32 bits.
 // STATISTIC: ValuesInDouble <= 9 Todo: the count takes in the functions of Bun's library that come into this executable
 // STATISTIC: AccessesGuarded = 0
-// STATISTIC: AccessesUnknown = 0 Todo: the count takes in the functions of Bun's library that come into this executable
+// STATISTIC: AccessesUnknown = 0
 const defaults = { a: 1, b: 2 };
 function spread(options) {
   return { ...defaults, ...options };

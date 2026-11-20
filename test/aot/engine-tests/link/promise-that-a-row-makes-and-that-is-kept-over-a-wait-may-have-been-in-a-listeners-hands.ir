@@ -1,4 +1,4 @@
-# setImmediate(() => {});  async function use() { const held = new Response("made up").text(); await 0; later(await held); }  function later(v) { return v; }  use();
+# process.on("unhandledRejection", (reason, promise) => {});  async function use() { const held = new Response("made up").text(); await 0; later(await held); }  function later(v) { return v; }  use();
 # RUN: link functions mechanisms=all
 # CHECK: function f2 callers-known
 # CHECK-NEXT: parameter 0
@@ -7,11 +7,11 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
   b0():
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="setImmediate" [isFreeName]
-    v2 = Convert v1 declared={type=builtin(SetImmediate) flags=[IsExpected]}
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="on"
+    v2 = String string="unhandledRejection"
     v3 = NewClosure function=f3
-    v4 = Call v2, -, v3 calleeName="setImmediate"
+    v4 = Call v1, v0, v2, v3 calleeKey="on"
     v5 = NewClosure function=f1
     v6 = Call v5, - calleeName="use"
     v7 = Undefined
@@ -37,8 +37,8 @@ function f2 name="later" module=m0 length=1 thisType={type=anything} parameters=
   b0(v0: anything):
     Return v0
 }
-function f3 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
-  b0():
-    v0 = Undefined
-    Return v0
+function f3 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    Return v2
 }

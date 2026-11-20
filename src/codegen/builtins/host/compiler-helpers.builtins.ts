@@ -15,6 +15,7 @@ const helpersIn = (file: string, usesByHelper: Readonly<Record<string, UsesByPar
         runsUnseenCode: false,
         uses,
         implementation: b.compiled(file, name),
+        ...(name === "applyMethodDecorators" ? { marks: ["AppliesMethodDecorators"] as const } : {}),
       } satisfies b.FunctionField,
     ]),
   );
@@ -81,8 +82,57 @@ const sortInPlace = (name: string) =>
     implementation: b.compiled("prelude/array-sort", name),
   }) satisfies b.FunctionField;
 
+// Array.prototype.toSorted for an array and a comparator.
+const sortedCopy = (name: string) =>
+  ({
+    args: { array: b.instance("Array"), comparator: b.callable },
+    returns: b.instance("Array").fresh.dense,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    runsUnseenCode: false,
+    uses: {
+      array: [b.contentsStoredIn(b.resultSlot("element"))],
+      comparator: [
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "Repeatedly",
+          this: b.undefined,
+          args: [b.slot("array", "element"), b.slot("array", "element")],
+          result: "Escapes",
+        }),
+      ],
+    },
+    implementation: b.compiled("prelude/array-sort", name),
+  }) satisfies b.FunctionField;
+
+// The compiler inlines this if a comparator is the difference of the keys of its arguments. It is never called.
+const sortByKeysInPlace = {
+  args: { array: b.instance("Array"), comparator: b.callable, direction: b.any },
+  returns: b.operand("array"),
+  capability: "js",
+  throws: true,
+  runsOnlyOperandCode: true,
+  runsUnseenCode: false,
+  uses: {
+    array: [b.returned, b.readsContents(), b.movesElements],
+    comparator: [
+      b.called({
+        afterwards: "TouchesOnlyWhatRowNames",
+        times: "Repeatedly",
+        this: b.undefined,
+        args: [b.slot("array", "element")],
+        result: "Escapes",
+      }),
+    ],
+    direction: b.inspected,
+  },
+  implementation: b.compiled("prelude/array-sort", "sortByKeys"),
+} satisfies b.FunctionField;
+
 // A helper calls the functions that a list holds, and defines on a class what they return. No word says either.
 const calledOrChanged = [b.everything];
+const changedOrReturned = [b.everything, b.returned];
 const kept = [b.retained];
 const usedAsKey = [b.retained, b.runs("ToPrimitive")];
 
@@ -295,7 +345,7 @@ export default b.declarations(
       implementation: b.compiled("prelude/test-files", "askRunOfTestFile"),
     },
     ...helpersIn("prelude/decorators", {
-      decorateClass: { decorators: calledOrChanged, target: calledOrChanged },
+      decorateClass: { decorators: calledOrChanged, target: changedOrReturned },
       decorateMethod: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
       decorateProperty: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
       decorateParameter: {
@@ -319,7 +369,7 @@ export default b.declarations(
       createPrivateStorage: { test: kept, get: kept, set: kept },
       applyClassDecorators: {
         decorators: calledOrChanged,
-        target: calledOrChanged,
+        target: changedOrReturned,
         name: kept,
         metadata: calledOrChanged,
         initializers: calledOrChanged,
@@ -333,7 +383,7 @@ export default b.declarations(
       },
       applyPrivateMethodDecorators: {
         decorators: calledOrChanged,
-        value: calledOrChanged,
+        value: changedOrReturned,
         element: calledOrChanged,
         test: calledOrChanged,
         metadata: calledOrChanged,
@@ -370,8 +420,9 @@ export default b.declarations(
         valueInitializers: calledOrChanged,
         extraInitializers: calledOrChanged,
       },
+      keepInitializerLists: { lists: calledOrChanged },
       runInitializers: { initializers: calledOrChanged, receiver: calledOrChanged },
-      runValueInitializers: { initializers: calledOrChanged, receiver: calledOrChanged, value: calledOrChanged },
+      runValueInitializers: { initializers: calledOrChanged, receiver: calledOrChanged, value: changedOrReturned },
     }),
     maxOfList: extremumOfList("maxOfList"),
     minOfList: extremumOfList("minOfList"),
@@ -398,7 +449,10 @@ export default b.declarations(
       mapper: calledForEachIndex(b.operand("value"), b.instance("Array")),
     }),
     sortByDifference: sortInPlace("sortByDifference"),
+    sortByKeys: sortByKeysInPlace,
     sortByReversedDifference: sortInPlace("sortByReversedDifference"),
+    toSortedByDifference: sortedCopy("toSortedByDifference"),
+    toSortedByReversedDifference: sortedCopy("toSortedByReversedDifference"),
     // The protocol of iteration, for a loop over a value of which the engine knows nothing. The engine calls the functions directly, and goes by what their code does.
     ...helpersIn("prelude/iterator-consumers", {
       openIterator: { iterable: calledOrChanged },
@@ -406,6 +460,8 @@ export default b.declarations(
       stepIterator: { iterator: calledOrChanged, next: calledOrChanged },
       wayToStepIterator: { iterator: calledOrChanged, next: calledOrChanged },
       stepIteratorInWay: { iterator: calledOrChanged, way: calledOrChanged },
+      wayToStepMatches: { iterator: calledOrChanged, next: calledOrChanged },
+      stepMatchesInWay: { iterator: calledOrChanged, way: calledOrChanged },
       closeIterator: { iterator: calledOrChanged },
       closeIteratorAfterThrow: { iterator: calledOrChanged },
     }),

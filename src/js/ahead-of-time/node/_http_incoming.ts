@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_incoming.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 28181b2c5a22f824a8caebb17a1f5a3d65525df1d060b79b1a452932b3f20a1f.
+// Written against that file with the SHA-256 8dfb6a3f77efcc14719693a0cc0e53ae6aa839d46a2806b0e9814f38650a780c.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_incoming"
@@ -212,6 +212,11 @@ declare global {
       [kAbortController]: AbortController | null;
     }
 
+    /** A stream that a program passes to a response in place of a request, with the members that the response reads. */
+    interface SubstituteRequest extends Readable, Omit<IncomingMessage, keyof Readable> {
+      [kAutoDestroyed]: boolean | undefined;
+    }
+
     type IncomingMessageConstructor = typeof IncomingMessage;
   }
 }
@@ -398,7 +403,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "aborted", {
 });
 
 // Materializes on first read from the bytes captured on the native handle
-// (takeRawHeaders). Assignment (the llhttp client path, or user code)
+// (takeRawHeaders). Assignment (the client path, or user code)
 // short-circuits materialization through the setter.
 function getRawHeaders(this: $Node.IncomingMessage) {
   let raw = this[kRawHeaders];

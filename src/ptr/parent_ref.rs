@@ -53,21 +53,6 @@ impl<T: ?Sized> ParentRef<T, crate::Shared> {
             _provenance: core::marker::PhantomData,
         }
     }
-
-    /// Wrap a raw `*const T` (FFI / `container_of` recovery).
-    ///
-    /// # Safety
-    /// `p` must be non-null, properly aligned, and point to a `T` that remains
-    /// live and at a stable address for the entire lifetime of every
-    /// `ParentRef` copied from the result.
-    #[inline]
-    pub const unsafe fn from_raw(p: *const T) -> Self {
-        Self {
-            // SAFETY: caller contract — `p` is non-null.
-            ptr: unsafe { NonNull::new_unchecked(p.cast_mut()) },
-            _provenance: core::marker::PhantomData,
-        }
-    }
 }
 
 impl<T: ?Sized> ParentRef<T, crate::Mut> {
@@ -92,8 +77,9 @@ impl<T: ?Sized> ParentRef<T, crate::Mut> {
     /// retains permission to write.
     ///
     /// # Safety
-    /// Same liveness/alignment contract as [`from_raw`](Self::from_raw). The
-    /// caller additionally asserts `p` was derived with mutable provenance.
+    /// `p` must be non-null, properly aligned, derived with mutable provenance,
+    /// and point to a `T` that remains live and at a stable address for the
+    /// entire lifetime of every `ParentRef` copied from the result.
     #[inline]
     pub const unsafe fn from_raw_mut(p: *mut T) -> Self {
         Self {
@@ -146,11 +132,6 @@ impl<T: ?Sized, P> ParentRef<T, P> {
         // SAFETY: ParentRef invariant — pointee outlives every copy of `self`;
         // non-null, aligned, dereferenceable. `&T` is `SharedReadOnly`.
         unsafe { self.ptr.as_ref() }
-    }
-
-    #[inline]
-    pub fn as_const_ptr(self) -> *const T {
-        self.ptr.as_ptr()
     }
 }
 

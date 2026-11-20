@@ -9,10 +9,11 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, normalizeBunSnapshot, tls as tlsCert } from "harness";
+import diagnostics from "node:diagnostics_channel";
 import { EventEmitter, once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Readable, Writable } from "node:stream";
+import { Duplex, Readable, Writable } from "node:stream";
 import tls from "node:tls";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
@@ -260,6 +261,155 @@ describe("PING (checklist §3.7)", () => {
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
     c.destroy();
   });
+});
+
+/** A socket for a session that is written in JS. */
+class Transport extends Duplex {
+  onNextWrite: (() => void) | undefined;
+
+  constructor(private send: (chunk: Buffer) => void = () => {}) {
+    super();
+  }
+
+  _read() {}
+
+  _write(chunk: Buffer, _: string, done: () => void) {
+    this.send(chunk);
+    const { onNextWrite } = this;
+    this.onNextWrite = undefined;
+    onNextWrite?.();
+    done();
+  }
+}
+
+test("a PING sent from the transport of another session goes out", async () => {
+  const url = `http://127.0.0.1:${port}`;
+  const socket = net.connect(port, "127.0.0.1");
+  const transport = new Transport(chunk => socket.write(chunk));
+  socket.on("data", chunk => transport.push(chunk));
+  const sessions = [http2.connect(url, { createConnection: () => transport }), http2.connect(url), http2.connect(url)];
+  const ping = (session: http2.ClientHttp2Session) =>
+    new Promise<void>((resolve, reject) => session.ping(error => (error ? reject(error) : resolve())));
+  try {
+    await Promise.all(sessions.map(session => once(session, "remoteSettings").then(() => ping(session))));
+    const [overTransport, next, third] = sessions;
+    for (const session of [next, third]) {
+      const pings: Promise<void>[] = [];
+      transport.onNextWrite = () => pings.push(ping(session));
+      pings.push(ping(overTransport));
+      expect(pings.length).toBe(1);
+      // Sessions share a buffer for what they write in one turn, so this has the first one send.
+      pings.push(ping(next));
+      expect(pings.length).toBe(3);
+      await Promise.all(pings);
+    }
+  } finally {
+    for (const session of sessions) session.destroy();
+    socket.destroy();
+  }
+});
+
+test.each<[string, string[]]>([
+  ["request()", ["HEADERS 1", "RST_STREAM 1"]],
+  ["a queued request", ["HEADERS 1", "HEADERS 3", "RST_STREAM 3"]],
+  ["write()", ["HEADERS 1", "RST_STREAM 1"]],
+  ["a queued write", ["HEADERS 1", "RST_STREAM 1"]],
+  ["end()", ["HEADERS 1", "RST_STREAM 1"]],
+  ["sendTrailers()", ["HEADERS 1", "DATA 1", "RST_STREAM 1"]],
+  ["sendTrailers({})", ["HEADERS 1", "DATA 1", "RST_STREAM 1"]],
+])("a signal is fired from the transport of another session during %s", async (during, expected) => {
+  const raw = await RawH2Server.listen();
+  const socket = net.connect(raw.port, "127.0.0.1");
+  const [toClient, toOther] = [new Transport(chunk => socket.write(chunk)), new Transport()];
+  const client = http2.connect("http://localhost", { createConnection: () => toClient });
+  const other = http2.connect("http://localhost", { createConnection: () => toOther });
+  const controller = new AbortController();
+  const { signal } = controller;
+  const failed = Promise.withResolvers<NodeJS.ErrnoException>();
+  let aborted = 0;
+  const request = () =>
+    client
+      .request({ ":method": "POST" }, { signal, waitForTrailers: during.startsWith("sendTrailers") })
+      .on("aborted", () => aborted++)
+      .on("error", failed.resolve);
+  const fireOnNextWrite = () => {
+    toOther.onNextWrite = () => controller.abort();
+    other.ping(() => {});
+  };
+  try {
+    // One stream at a time, and for a write to be queued, no window.
+    const settings = "000300000001" + (during === "a queued write" ? "000400000000" : "");
+    toClient.push(encodeFrame(FrameType.SETTINGS, 0, 0, Buffer.from(settings, "hex")));
+    await once(client, "remoteSettings");
+    const first = during === "a queued request" ? client.request().resume() : undefined;
+    const req = during === "request()" ? undefined : request();
+    if (during === "a queued write") req!.write("a");
+    if (during.startsWith("sendTrailers")) await Promise.all([once(req!, "wantTrailers"), req!.end("a")]);
+    // With all of that sent, and out of the read, so that the next push is read at once.
+    await new Promise(setImmediate);
+    if (first) {
+      first.prependListener("close", fireOnNextWrite);
+      toClient.push(encodeFrame(FrameType.HEADERS, 0x4 | 0x1, 1, Buffer.from([0x88])));
+      await once(first, "close");
+    } else {
+      fireOnNextWrite();
+      expect(signal.aborted).toBe(false);
+      if (during === "request()") request().end("a");
+      else if (during === "write()") req!.write("a");
+      else if (during === "end()") req!.end();
+      else if (during === "sendTrailers()") req!.sendTrailers({ "x-a": "b" });
+      else if (during === "sendTrailers({})") req!.sendTrailers({});
+      else toClient.push(encodeFrame(FrameType.WINDOW_UPDATE, 0, 1, Buffer.from("00000001", "hex")));
+    }
+    expect(signal.aborted).toBe(true);
+    expect((await failed.promise).code).toBe("ABORT_ERR");
+    // What destroying the stream has put off goes out ahead of the PING.
+    await new Promise(setImmediate);
+    client.ping(() => {});
+    await raw.waitFor(f => f.type === FrameType.PING);
+    const names = Object.keys(FrameType);
+    expect({
+      frames: raw.frames.filter(f => f.streamId !== 0).map(f => `${names[f.type]} ${f.streamId}`),
+      code: raw.frames.find(f => f.type === FrameType.RST_STREAM)?.payload.readUInt32BE(0),
+      queued: client.state.outboundQueueSize,
+    }).toEqual({ frames: expected, code: ErrorCode.CANCEL, queued: 0 });
+    if (/queued|write/.test(during)) expect(aborted).toBe(1);
+  } finally {
+    client.destroy();
+    other.destroy();
+    socket.destroy();
+    raw.close();
+  }
+});
+
+test.each(["reads", "writes"])("a queued write goes out when a session that may not send %s", async action => {
+  const [mine, other] = await Promise.all(
+    [new Transport(), new Transport()].map(async transport => {
+      const session = http2.connect("http://localhost", { createConnection: () => transport });
+      // No window.
+      transport.push(encodeFrame(FrameType.SETTINGS, 0, 0, Buffer.from("000400000000", "hex")));
+      await once(session, "remoteSettings");
+      const [first, second] = [1, 3].map(() => session.request({ ":method": "POST" }).on("error", () => {}));
+      first.write("a");
+      await new Promise(setImmediate);
+      return { transport, session, second };
+    }),
+  );
+  const windowUpdate = (id: number) => encodeFrame(FrameType.WINDOW_UPDATE, 0, id, Buffer.from("00000001", "hex"));
+  try {
+    mine.transport.push(windowUpdate(3));
+    await new Promise(setImmediate);
+    mine.session.ping(() => {});
+    const written = new Promise(resolve => mine.second.write("b", resolve));
+    expect(mine.session.state.outboundQueueSize).toBe(2);
+    if (action === "reads") other.transport.push(windowUpdate(0));
+    else other.second.write("c");
+    await written;
+    expect(mine.session.state.outboundQueueSize).toBe(1);
+  } finally {
+    mine.session.destroy();
+    other.session.destroy();
+  }
 });
 
 describe("WINDOW_UPDATE (checklist §6)", () => {
@@ -616,6 +766,155 @@ describe("a response that the server resets after its headers", () => {
     } finally {
       client.destroy();
       server.close();
+    }
+  });
+});
+
+describe.each(["GET", "POST"] as const)("a response to %s whose headers are not sent", method => {
+  type Respond = (stream: http2.ServerHttp2Stream, headers: http2.OutgoingHttpHeaders) => void;
+  const ways: [string, Respond][] = [
+    ["respond()", (stream, headers) => stream.respond(headers)],
+    ["respond() with endStream", (stream, headers) => stream.respond(headers, { endStream: true })],
+    ["respond(), end(body)", (stream, headers) => (stream.respond(headers), stream.end("~"))],
+    [
+      "respond() with waitForTrailers",
+      (stream, headers) => (stream.respond(headers, { waitForTrailers: true }), stream.end()),
+    ],
+    [
+      "respond() with waitForTrailers and a 'wantTrailers' listener",
+      (stream, headers) => {
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "1" }));
+        stream.respond(headers, { waitForTrailers: true });
+        stream.end("~");
+      },
+    ],
+    [
+      "additionalHeaders(), respond()",
+      (stream, headers) => (stream.additionalHeaders({ ":status": 103, ...headers }), stream.respond()),
+    ],
+  ];
+  const tooLong = { "x-long": Buffer.alloc(1000, "~").toString() };
+
+  const request = (id: number) =>
+    encodeFrame(FrameType.HEADERS, method === "GET" ? 0x5 : 0x4, id, requestHeaderBlock(method));
+  // Enough for a WINDOW_UPDATE.
+  const body = Array(method === "GET" ? 0 : 3).fill(encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(16000)));
+
+  /** The frames of all streams but 3, whose handler calls `respond`. */
+  async function framesOf(options: http2.ServerOptions, respond: (first: any, second: any, onClose: any) => void) {
+    const server = http2.createServer(options);
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    // What _destroy() leaves for the next turn of the event loop is sent by then.
+    const onClose = () => setImmediate(resolve);
+    let first: http2.ServerHttp2Stream;
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (stream.id === 1) first = stream.once("close", onClose);
+      else respond(first, stream, onClose);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.send(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), request(1), request(3), ...body]));
+      await closed;
+      // Whatever else the server had to send comes before its answer to this.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      return c.frames.filter(f => f.streamId !== 0 && f.streamId !== 3).map(describeFrame);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  }
+  const describeFrame = (f: Pick<Frame, "streamId" | "type" | "payload">) =>
+    `${f.streamId} ${Object.keys(FrameType)[f.type]}${f.type === FrameType.RST_STREAM ? " " + f.payload[3] : ""}`;
+
+  test.each(ways)("%s over maxSendHeaderBlockLength resets the stream", async (_, respond) => {
+    const sent = await framesOf({ maxSendHeaderBlockLength: 1000 }, first => respond(first, tooLong));
+    expect(sent).toEqual(["1 RST_STREAM 6"]);
+  });
+
+  test.each(ways)("%s over maxSessionMemory resets the stream", async (_, respond) => {
+    const sent = await framesOf({ maxSessionMemory: 1 }, (first, second) => {
+      second.respond();
+      second.write(Buffer.alloc(2 * 1024 * 1024));
+      respond(first, {});
+    });
+    expect(sent).toEqual(["1 RST_STREAM 11"]);
+  });
+
+  test("read() sends no WINDOW_UPDATE from then on", async () => {
+    const sent = await framesOf({ maxSendHeaderBlockLength: 1000 }, first => {
+      first._readableState.highWaterMark = 1;
+      setImmediate(() => (first.respond(tooLong), first.read(first.readableLength)));
+    });
+    expect(sent).toEqual(["1 RST_STREAM 6"]);
+  });
+
+  test("respond() on a pushed stream resets that one", async () => {
+    let id: number | undefined;
+    const sent = await framesOf({ maxSendHeaderBlockLength: 1000 }, (first, _, onClose) =>
+      first.pushStream({}, (_: any, pushed: any) => {
+        id = pushed.id;
+        pushed.on("error", () => {}).once("close", onClose);
+        pushed.respond(tooLong);
+      }),
+    );
+    expect(sent.filter(frame => frame !== "1 WINDOW_UPDATE")).toEqual(["1 PUSH_PROMISE", `${id} RST_STREAM 6`]);
+  });
+
+  test("pushStream() fails from then on", async () => {
+    let code: string | undefined;
+    const sent = await framesOf({ maxSendHeaderBlockLength: 1000 }, first => {
+      first.respond(tooLong);
+      first.pushStream({}, (error: any) => (code = error?.code));
+    });
+    expect({ sent, code }).toEqual({ sent: ["1 RST_STREAM 6"], code: "ERR_HTTP2_INVALID_STREAM" });
+  });
+
+  test("pushStream() releases the streams that it has reserved", async () => {
+    const refs: WeakRef<object>[] = [];
+    const onCreated = ({ stream }: any) => void (stream.id % 2 === 0 && refs.push(new WeakRef(stream)));
+    const transport = new Transport();
+    const server = http2.createServer({ maxSendHeaderBlockLength: 1000 });
+    server.emit("connection", transport);
+    diagnostics.subscribe("http2.server.stream.created", onCreated);
+    try {
+      transport.push(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), request(1)]));
+      const [stream] = await once(server, "stream");
+      stream.on("error", () => {}).respond(tooLong);
+      for (let i = 0; i < 32; i++) stream.pushStream({}, () => {});
+      expect(refs.length).toBe(32);
+      expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
+    } finally {
+      diagnostics.unsubscribe("http2.server.stream.created", onCreated);
+      transport.destroy();
+    }
+  });
+
+  test("RST_STREAM is sent once, also if the server reads right after it", async () => {
+    const chunks: Buffer[] = [];
+    const transport = new Transport(chunk => chunks.push(Buffer.from(chunk)));
+    const server = http2.createServer({ maxSendHeaderBlockLength: 1000 });
+    server.emit("connection", transport);
+    try {
+      transport.push(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), request(1)]));
+      const [stream] = await once(server, "stream");
+      // Out of that read, so that the next push is read at once.
+      await new Promise(setImmediate);
+      await new Promise(resolve => {
+        stream.on("error", () => {});
+        stream.on("close", () => {
+          transport.push(encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)));
+          setImmediate(resolve);
+        });
+        stream.respond(tooLong);
+      });
+      await new Promise(setImmediate);
+      const reset = encodeFrame(FrameType.RST_STREAM, 0, 1, Buffer.from([0, 0, 0, ErrorCode.FRAME_SIZE_ERROR]));
+      expect(Buffer.concat(chunks).toString("hex").split(reset.toString("hex")).length - 1).toBe(1);
+    } finally {
+      transport.destroy();
     }
   });
 });
@@ -1149,6 +1448,381 @@ function requestHeaderBlock(method: "GET" | "POST", extra: Buffer = Buffer.alloc
   ]);
 }
 
+describe("SETTINGS_HEADER_TABLE_SIZE (RFC 9113 §4.3.1)", () => {
+  const headerTableSize = (value: number) => {
+    const entry = Buffer.alloc(6);
+    entry.writeUInt16BE(1);
+    entry.writeUInt32BE(value, 2);
+    return entry;
+  };
+  const isBlock = (id: number) => (f: Frame) => f.type === FrameType.HEADERS && f.streamId === id;
+  const isSettings = (ack: number) => (f: Frame) => f.type === FrameType.SETTINGS && (f.flags & 0x1) === ack;
+  const END = 0x4 | 0x1; // END_HEADERS | END_STREAM
+
+  async function listen(options: http2.ServerOptions, onStream: (stream: http2.ServerHttp2Stream) => void) {
+    const server = http2.createServer(options);
+    server.on("sessionError", () => {});
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      onStream(stream);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return { port: (server.address() as net.AddressInfo).port, [Symbol.dispose]: () => void server.close() };
+  }
+
+  // x-a: b as a literal that enters the table, as one that does not, and as a reference to the table.
+  const [enters, staysOut, indexed] = ["4083f2b0ff818f", "0083f2b0ff818f", "be"];
+  const fromThePeer: [sizes: number[], update: string, first: string, second: string][] = [
+    [[0], "20", staysOut, staysOut],
+    [[35], "3f04", staysOut, staysOut],
+    [[36], "3f05", enters, indexed],
+    [[0, 4096], "203fe11f", enters, indexed],
+    [[200, 100, 300], "3f453f8d02", enters, indexed],
+    [[4096], "3fe11f", enters, indexed],
+    [[65536], "3fe11f", enters, indexed],
+  ];
+
+  test.each(fromThePeer)("a server that is sent %j", async (sizes, update, first, second) => {
+    using server = await listen({}, stream => stream.respond({ "x-a": "b" }, { sendDate: false, endStream: true }));
+    const c = await RawH2.connect(server.port);
+    try {
+      c.sendPreface();
+      c.sendFrame(FrameType.SETTINGS, 0, 0, Buffer.concat(sizes.map(headerTableSize)));
+      const blocks: string[] = [];
+      for (const id of [1, 3]) {
+        c.sendFrame(FrameType.HEADERS, END, id, requestHeaderBlock("GET"));
+        blocks.push((await c.waitFor(isBlock(id))).payload.toString("hex"));
+      }
+      expect(blocks).toEqual([update + "88" + first, "88" + second]);
+    } finally {
+      c.destroy();
+    }
+  });
+
+  test.each(fromThePeer)("a client that is sent %j", async (sizes, update, first, second) => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      await raw.waitFor(isSettings(0));
+      for (const size of sizes) {
+        raw.sendFrame(FrameType.SETTINGS, 0, 0, headerTableSize(size));
+        await once(client, "remoteSettings");
+      }
+      const blocks: string[] = [];
+      for (const id of [1, 3]) {
+        const headers = { ":authority": "a", "x-a": "b", [http2.sensitiveHeaders]: [":authority"] };
+        client.request(headers).on("error", () => {});
+        blocks.push((await raw.waitFor(isBlock(id))).payload.toString("hex"));
+      }
+      expect(blocks).toEqual([update + "11811f828684" + first, "11811f828684" + second]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test.each(["pushStream", "additionalHeaders", "sendTrailers"])("%s() sends the size update", async method => {
+    const opened = Promise.withResolvers<void>();
+    using server = await listen({}, async stream => {
+      if (method === "sendTrailers") stream.respond({}, { waitForTrailers: true });
+      opened.resolve();
+      await once(stream.session!, "remoteSettings");
+      if (method === "pushStream") stream.pushStream({ ":path": "/" }, (_, push) => push.on("error", () => {}));
+      else if (method === "additionalHeaders") stream.additionalHeaders({ ":status": 103 });
+      else stream.on("wantTrailers", () => stream.sendTrailers({ "x-a": "b" })).end();
+    });
+    const c = await RawH2.connect(server.port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, END, 1, requestHeaderBlock("GET"));
+      await opened.promise;
+      c.sendFrame(FrameType.SETTINGS, 0, 0, headerTableSize(0));
+      const { payload } = await c.waitFor(
+        f =>
+          f.type === FrameType.PUSH_PROMISE ||
+          (f.type === FrameType.HEADERS && (method !== "sendTrailers" || (f.flags & 0x1) !== 0)),
+      );
+      expect(payload[method === "pushStream" ? 4 : 0]).toBe(0x20);
+    } finally {
+      c.destroy();
+    }
+  });
+
+  const update = { 0: "20", 1: "21", 4096: "3fe11f", 4097: "3fe21f", 8192: "3fe13f", 8193: "3fe23f" };
+  test.each([
+    [0, false, 4096, "response"],
+    [0, false, 4097, "GOAWAY 9"],
+    [0, true, 0, "response"],
+    [0, true, 1, "GOAWAY 9"],
+    [8192, false, 8192, "response"],
+    [8192, false, 8193, "GOAWAY 9"],
+    [8192, true, 8192, "response"],
+    [8192, true, 8193, "GOAWAY 9"],
+  ] as const)(
+    "ours is %d, acknowledged: %p, and the peer picks %d: %s",
+    async (ours, acknowledged, picked, expected) => {
+      for (const isInitial of [true, false]) {
+        using server = await listen(isInitial ? { settings: { headerTableSize: ours } } : {}, stream => {
+          if (!isInitial && stream.id === 1) stream.session!.settings({ headerTableSize: ours });
+          stream.respond({}, { endStream: true });
+        });
+        const c = await RawH2.connect(server.port);
+        try {
+          c.sendPreface();
+          c.sendEmptySettings();
+          if (!isInitial) c.sendSettingsAck();
+          c.sendFrame(FrameType.HEADERS, END, 1, requestHeaderBlock("GET"));
+          await c.waitFor(isBlock(1));
+          if (acknowledged) c.sendSettingsAck();
+          const block = Buffer.concat([Buffer.from(update[picked], "hex"), requestHeaderBlock("GET")]);
+          c.sendFrame(FrameType.HEADERS, END, 3, block);
+          const answer = await c.waitFor(f => isBlock(3)(f) || f.type === FrameType.GOAWAY);
+          expect(isBlock(3)(answer) ? "response" : `GOAWAY ${goawayErrorCode(answer)}`).toBe(expected);
+        } finally {
+          c.destroy();
+        }
+      }
+    },
+  );
+
+  // What the peer sends with none, one and both of them acknowledged.
+  test.each([
+    [[0, 8192], ["", update[8192] + enters, indexed], "response response response"],
+    [[0, 8192], [update[8192] + enters, indexed, indexed], "response response response"],
+    [[0, 8192], [enters, indexed], "response response"],
+    [[0, 1], [enters, indexed], "response GOAWAY 9"],
+    [[8192, 0], [update[8192] + enters, indexed, update[0]], "response response response"],
+    [[8192, 0], [update[8192] + enters, indexed, update[1]], "response response GOAWAY 9"],
+    [[8192, 0], [update[8192] + enters, indexed, indexed], "response response GOAWAY 9"],
+    [[100, 8192], [update[0], enters + indexed], "response response"],
+    [[100, 8192], [update[0] + enters + indexed], "GOAWAY 9"],
+  ] as const)("ours is %j, one right after the other (%#)", async (ours, blocks, expected) => {
+    using server = await listen({}, stream => {
+      if (stream.id === 1) for (const headerTableSize of ours) stream.session!.settings({ headerTableSize });
+      stream.respond({}, { endStream: true });
+    });
+    const c = await RawH2.connect(server.port);
+    const request = async (id: number, hex: string) => {
+      const [, sizeUpdate, field] = hex.match(/^(20|21|3fe13f|)(.*)$/)!.map(part => Buffer.from(part, "hex"));
+      c.sendFrame(FrameType.HEADERS, END, id, Buffer.concat([sizeUpdate, requestHeaderBlock("GET"), field]));
+      const answer = await c.waitFor(f => isBlock(id)(f) || f.type === FrameType.GOAWAY);
+      return isBlock(id)(answer) ? "response" : `GOAWAY ${goawayErrorCode(answer)}`;
+    };
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      expect(await request(1, "")).toBe("response");
+      const answers: string[] = [];
+      for (const block of blocks) {
+        answers.push(await request(3 + 2 * answers.length, block));
+        c.sendSettingsAck();
+      }
+      expect(answers.join(" ")).toBe(expected);
+    } finally {
+      c.destroy();
+    }
+  });
+
+  test("ours is acknowledged from within the write that sends it", async () => {
+    const server = http2.createServer({ settings: { headerTableSize: 0 } });
+    const second = Promise.withResolvers<number>();
+    server.on("sessionError", second.reject);
+    server.on("stream", stream => {
+      if (stream.id === 3) second.resolve(stream.session!.localSettings.headerTableSize!);
+      else stream.session!.settings({ headerTableSize: 4096 });
+      stream.respond();
+      stream.end();
+    });
+    const request = (id: number, size: 0 | 4096) =>
+      encodeFrame(
+        FrameType.HEADERS,
+        END,
+        id,
+        Buffer.concat([Buffer.from(update[size], "hex"), requestHeaderBlock("GET")]),
+      );
+    let acks = 0;
+    const transport = new Duplex({
+      read() {},
+      write(chunk, _, done) {
+        for (let at = 0; at < chunk.length; at += 9 + chunk.readUIntBE(at, 3)) {
+          if (chunk[at + 3] !== FrameType.SETTINGS || chunk[at + 4] !== 0) continue;
+          this.push(encodeFrame(FrameType.SETTINGS, 0x1, 0));
+          this.push(++acks === 1 ? request(1, 0) : request(3, 4096));
+        }
+        done();
+      },
+    });
+    try {
+      transport.push(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0)]));
+      server.emit("connection", transport);
+      expect(await second.promise).toBe(4096);
+    } finally {
+      transport.destroy();
+    }
+  });
+
+  async function withTwoClients(
+    run: (clients: {
+      client: http2.ClientHttp2Session;
+      other: http2.ClientHttp2Session;
+      onOtherWrite: (once: () => void) => void;
+      change: (settings: http2.Settings) => Promise<void>;
+      get: () => Promise<http2.IncomingHttpHeaders>;
+    }) => Promise<void>,
+  ) {
+    using server = await listen({}, stream => {
+      const { headerTableSize, initialWindowSize } = stream.session!.remoteSettings;
+      stream.respond({ "x-sizes": `${headerTableSize} ${initialWindowSize}` }, { endStream: true });
+    });
+    const transport = new Transport();
+    const client = http2.connect(`http://127.0.0.1:${server.port}`);
+    const other = http2.connect("http://localhost", { createConnection: () => transport });
+    const get = () => once(client.request().resume(), "response").then(([headers]) => headers);
+    try {
+      expect((await get())["x-sizes"]).toBe("4096 65535");
+      await run({
+        client,
+        other,
+        onOtherWrite: once => (transport.onNextWrite = once),
+        change: settings =>
+          new Promise((resolve, reject) => client.settings(settings, error => (error ? reject(error) : resolve()))),
+        get,
+      });
+    } finally {
+      client.destroy();
+      other.destroy();
+    }
+  }
+
+  test("ours is changed from the transport of another session while it is being changed", () =>
+    withTwoClients(async ({ client, other, onOtherWrite, change, get }) => {
+      const changes: Promise<void>[] = [];
+      onOtherWrite(() => changes.push(change({ headerTableSize: 0, initialWindowSize: 70000 })));
+      other.ping(() => {});
+      expect(changes.length).toBe(0);
+      changes.push(change({ headerTableSize: 2048 }));
+      expect(changes.length).toBe(2);
+      await Promise.all(changes);
+      for (const _ of ["right away", "after an unrelated change"]) {
+        expect(client.localSettings).toMatchObject({ headerTableSize: 2048, initialWindowSize: 70000 });
+        expect((await get())["x-sizes"]).toBe("2048 70000");
+        await change({ maxConcurrentStreams: 10 });
+      }
+    }));
+
+  test("ours is changed from the transport of another session that a getter of the settings writes to", () =>
+    withTwoClients(async ({ other, onOtherWrite, change, get }) => {
+      const changes: Promise<void>[] = [];
+      const customSettings = {
+        get 100() {
+          onOtherWrite(() => changes.push(change({ headerTableSize: 0 })));
+          other.ping(() => {});
+          return 1;
+        },
+      };
+      changes.push(change({ headerTableSize: 2048, customSettings }));
+      // Once after the values are validated, and once after they are read.
+      expect(changes.length).toBe(3);
+      await Promise.all(changes);
+      for (const _ of ["right away", "after an unrelated change", "with the table in use"]) {
+        expect((await get())["x-sizes"]).toBe("2048 65535");
+        await change({ maxConcurrentStreams: 10 });
+      }
+    }));
+
+  test("a client is destroyed from the transport of another session while it reads one", async () => {
+    const [toClient, toOther] = [new Transport(), new Transport()];
+    const client = http2.connect("http://localhost", { createConnection: () => toClient });
+    const other = http2.connect("http://localhost", { createConnection: () => toOther });
+    try {
+      toClient.push(encodeFrame(FrameType.SETTINGS, 0, 0));
+      await once(client, "remoteSettings");
+      // Out of that read, so that the next push is read at once.
+      await new Promise(setImmediate);
+      toOther.onNextWrite = () => client.destroy();
+      other.ping(() => {});
+      expect(client.destroyed).toBe(false);
+      toClient.push(encodeFrame(FrameType.SETTINGS, 0, 0, headerTableSize(0)));
+      expect(client.destroyed).toBe(true);
+    } finally {
+      client.destroy();
+      other.destroy();
+    }
+  });
+
+  test.each([
+    [0, 65536],
+    [65536, 0],
+    [65536, 4096],
+    [100, 200],
+  ])("%d on the server and %d on the client", async (onServer, onClient) => {
+    const value = (n: number) => Buffer.alloc(n * 7, String(n)).toString();
+    using server = await listen({ settings: { headerTableSize: onServer } }, stream =>
+      stream.respond({ "x-id": value(stream.id! % 40), "x-same": "same" }, { endStream: true }),
+    );
+    const client = http2.connect(`http://127.0.0.1:${server.port}`, { settings: { headerTableSize: onClient } });
+    try {
+      for (let i = 0; i < 45; i++) {
+        const req = client.request({ "x-i": value(i % 40), "x-same": "same" });
+        const [headers] = await once(req.resume(), "response");
+        expect([headers["x-id"], headers["x-same"]]).toEqual([value(req.id! % 40), "same"]);
+      }
+    } finally {
+      client.destroy();
+    }
+  });
+});
+
+test.each([
+  ["respond", 0],
+  ["pushStream", 0],
+  ["sendTrailers", 1],
+])("%s() sends nothing once a header value has destroyed the session", async (method, blocks) => {
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    const headers = { "x-a": { toString: () => (stream.session!.destroy(), "b") } as unknown as string };
+    if (method === "respond") return stream.respond(headers);
+    if (method === "pushStream") return stream.pushStream({ ":path": "/", ...headers }, () => {});
+    stream.respond({}, { waitForTrailers: true });
+    stream.on("wantTrailers", () => stream.sendTrailers(headers)).end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+  try {
+    c.sendPreface();
+    c.sendEmptySettings();
+    c.sendFrame(FrameType.HEADERS, 0x4 | 0x1, 1, requestHeaderBlock("GET"));
+    await c.waitClosed();
+    const sent = c.frames.filter(f => f.type === FrameType.HEADERS || f.type === FrameType.PUSH_PROMISE);
+    expect(sent.length).toBe(blocks);
+  } finally {
+    c.destroy();
+    server.close();
+  }
+});
+
+test.each([
+  [-1, "ERR_HTTP2_STREAM_ERROR"],
+  [0, 200],
+])("maxSendHeaderBlockLength is measured as in Node (%d)", async (spare, expected) => {
+  const headers = { ":method": "GET", ":path": "/", ":scheme": "http", ":authority": "a", "x-a": "b" };
+  const estimate = Object.entries(headers).reduce((sum, [name, value]) => sum + 12 + name.length + value.length, 17);
+  const client = http2.connect(`http://127.0.0.1:${port}`, { maxSendHeaderBlockLength: estimate + spare });
+  try {
+    const req = client.request(headers).resume();
+    const result = await once(req, "response").then(
+      ([response]) => response[":status"],
+      error => error.code,
+    );
+    expect(result).toBe(expected);
+  } finally {
+    client.destroy();
+  }
+});
+
 const CONTENT_LENGTH_5 = Buffer.concat([Buffer.from([0x0f, 0x0d]), hpackLiteral("5")]);
 
 describe("request header and body framing (RFC 9113 §8.1)", () => {
@@ -1566,7 +2240,7 @@ describe("inbound stream lifecycle", () => {
     }
   });
 
-  // A header-value `toString` runs user JS while sendTrailers holds the native `&mut Stream`;
+  // A header-value `toString` runs user JS while sendTrailers holds the native `&Stream`;
   // feeding the stream's own RST_STREAM (then another read) back into the parser from that
   // callback must not free the Stream out from under the caller (use-after-free under ASAN).
   test("re-entrant read() from a trailer-value toString does not free the in-use stream", async () => {

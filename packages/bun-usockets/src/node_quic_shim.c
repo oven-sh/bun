@@ -184,9 +184,15 @@ static void nq_on_path_switch(lsquic_conn_t *c, int validated, int is_preferred,
     }
 }
 
-/* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts. */
+/* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lsqpack.ts. */
 _Static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, chain_next_idx) == sizeof(char *) + 24,
     "LSXPACK_MAX_STRLEN must be UINT32_MAX");
+
+_Static_assert(ssl_compliance_policy_fips_202205 == 1 && ssl_compliance_policy_wpa3_192_202304 == 3 &&
+    ssl_early_data_unknown == 0 && ssl_early_data_disabled == 1 && ssl_early_data_no_session_offered == 5 &&
+    X509_V_FLAG_CRL_CHECK == 0x4 && X509_V_FLAG_CRL_CHECK_ALL == 0x8 &&
+    X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS == 0x40000000,
+    "update the constants in src/runtime/node/quic/tls.rs");
 
 #define US_NQ_HSET_MIN_BUF 256
 
@@ -436,7 +442,7 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
     lsquic_engine_init_settings(s, flags);
     s->es_versions = (1u << LSQVER_I001) | (1u << LSQVER_I002);
     s->es_ecn = 0;
-    /* Static-table-only encoding, as quic.c does. The dynamic table also makes
+    /* Static-table-only encoding, as quic.cpp does. The dynamic table also makes
      * the decoder stream carry acks, and lsquic delays a server's MAX_STREAMS
      * grant while that stream has unsent data (lsquic_qdh_arm_if_unsent). */
     s->es_qpack_enc_max_size = 0;
@@ -533,7 +539,7 @@ lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
         api.ea_hsi_ctx = NQ_HSI_CTX_PACK(settings->es_max_h3_header_pairs,
                                          settings->es_max_h3_header_bytes);
     }
-    return lsquic_engine_new(flags, &api);
+    return us_quic_engine_new(flags, &api);
 }
 
 const struct sockaddr *us_nq_spec_dest(const struct lsquic_out_spec *s) { return s->dest_sa; }
@@ -552,7 +558,7 @@ void us_nq_stream_reset(lsquic_stream_t *s, uint64_t code) {
 
 /* ───── node:quic loop driver ─────
  *
- * The corking model quic.c uses for Bun.serve's HTTP/3 listener: JS marks the
+ * The corking model quic.cpp uses for Bun.serve's HTTP/3 listener: JS marks the
  * endpoint pending and one pass runs per loop turn, so a burst of writes is
  * one engine pass and one sendmmsg batch instead of one per call.
  */

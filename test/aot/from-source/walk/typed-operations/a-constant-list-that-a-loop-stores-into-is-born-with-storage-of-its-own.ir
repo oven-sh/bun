@@ -11,8 +11,8 @@
 # -- end of source
 # A list of constants shares its storage with every other list made at that place. The front of a typed loop that stores into the list asks for storage that can be written, so such a list was never let in:
 # all turns ran the slow loop. Where a function stores into a constant list in a loop in which the list was not born, the run time is asked to give the constant lists that it stores into storage of their own, in the kind of
-# their constants. A list that is only read shares as before, also where it stands beside one that is stored into, and so does one that is born and stored into in the same turn: there the dearer birth
-# would not be paid back. A short list of zeros alone is born in line with a storage of its own.
+# their constants. A list that is only read shares as before, also where it stands beside one that is stored into. A short list that is born and stored into in the same turn is born in line with storage of its own:
+# the first store into shared storage cost 500 instructions a turn. So is a short list of zeros alone.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = Data {{*}}encoding=TreeWithOwnStorage
@@ -21,7 +21,8 @@
 # READ: = Data {{*}}encoding=CopyOnWriteArray
 # RUN(TURN): walk f3 mechanisms=all
 # TURN-LABEL: code f3:Body
-# TURN: = Data {{*}}encoding=CopyOnWriteArray
+# TURN: = NewArray
+# TURN-NOT: encoding=
 # RUN(BESIDE): walk f4 mechanisms=all
 # BESIDE-LABEL: code f4:Body
 # BESIDE: = Data {{*}}encoding=CopyOnWriteArray
@@ -29,9 +30,9 @@
 # RUN(BOTH): walk f5 mechanisms=all
 # BOTH-LABEL: code f5:Body
 # BOTH: = Data {{*}}encoding=TreeWithOwnStorage
-# BOTH-NOT: encoding=TreeWithOwnStorage
-# BOTH: = Data {{*}}encoding=CopyOnWriteArray
-# BOTH-NOT: encoding=TreeWithOwnStorage
+# BOTH-NOT: encoding=
+# BOTH: = NewArray
+# BOTH-NOT: encoding=
 # RUN(ZEROS): walk f6 mechanisms=all
 # ZEROS-LABEL: code f6:Body
 # ZEROS-NOT: encoding=

@@ -1,7 +1,8 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExeAtLeast, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "node:test";
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -520,4 +521,210 @@ test("mock.property/mock.method survive a polluted Object.prototype", async () =
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "ok", exitCode: 0 });
+});
+
+describe("node:test run() signal", () => {
+  const fixture = join(import.meta.dirname, "fixtures", "30-run-signal.js");
+  const node = nodeExeAtLeast("26.3.0");
+
+  // The fixture has the tests of run({ signal }) that Node.js passes too. They start real children, six at a time here.
+  test("passes the tests that Node.js passes", async () => {
+    using dir = tempDir("node-test-run-signal", {});
+    const { exitCode, stderr } = await runTests(["30-run-signal.js"], { RUN_SIGNAL_DIR: String(dir) }, [
+      "--concurrent",
+    ]);
+
+    // The todo test is the one difference from Node.js. Three tests need POSIX signals.
+    const summary = stderr.split("\n").flatMap(line => line.match(/^ *(\d+ (?:pass|skip|todo|fail))$/)?.[1] ?? []);
+    expect({ summary, stderr, exitCode }).toMatchObject({
+      summary: isWindows ? ["8 pass", "3 skip", "1 todo", "0 fail"] : ["11 pass", "1 todo", "0 fail"],
+      exitCode: 0,
+    });
+  }, 30_000);
+
+  test.skipIf(!node)(
+    "Node.js passes the same tests",
+    async () => {
+      using dir = tempDir("node-test-run-signal-node", {});
+      await using proc = Bun.spawn({
+        cmd: [node!, "--v8-pool-size=1", "--test-reporter=tap", fixture],
+        env: { ...bunEnv, UV_THREADPOOL_SIZE: "2", RUN_SIGNAL_DIR: String(dir) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const summary = stdout.split("\n").filter(line => /^# (fail|cancelled|todo) /.test(line));
+      expect({ summary, stdout, stderr, exitCode }).toMatchObject({
+        summary: ["# fail 0", "# cancelled 0", "# todo 0"],
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
+
+  // What the runner publishes for a file that the signal cancelled, then for the end of the run.
+  const verdictThenEnd = [
+    "test:complete",
+    "test:fail",
+    "test:plan",
+    ...Array.from({ length: 8 }, () => "test:diagnostic"),
+    "test:summary",
+  ];
+  const passedThenEnd = ["test:summary", ...verdictThenEnd.slice(2)];
+
+  // Node.js has the same rule, but its result here depends on how the pipe splits the output of the child.
+  test("publishes nothing of the child after a listener aborts, not even the rest of a line", async () => {
+    using dir = tempDir("node-test-run-prefix", {
+      "prefix.js": `
+        process.stdout.write("prefix");
+        require("node:test").test("its event follows the prefix on one line", () => {});
+      `,
+    });
+    const controller = new AbortController();
+    const stream = run({ files: ["prefix.js"], cwd: String(dir), env: bunEnv, signal: controller.signal });
+    const publishedAfterAbort: string[] = [];
+    const emit = stream.emit;
+    stream.emit = function (this: typeof stream, type: string, data: any) {
+      if (controller.signal.aborted && type.startsWith("test:")) publishedAfterAbort.push(type);
+      const result = emit.apply(this, arguments as any);
+      if (type === "test:stdout" && data.message === "prefix\n") controller.abort();
+      return result;
+    } as any;
+    const { promise: ended, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("end", resolve).on("error", reject).resume();
+    await ended;
+
+    expect(publishedAfterAbort).toEqual(verdictThenEnd);
+  }, 30_000);
+
+  test("ends a file at the abort, whatever the child of the file does", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dirname, "fixtures", "run-controlled-child-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const cancelled = (name: string, tests: number) => ({
+      success: false,
+      counts: { tests, passed: tests - 1, failed: 0, cancelled: 1 },
+      failed: [{ name, failureType: "testAborted", isReason: true }],
+    });
+    const passed = { success: true, counts: { tests: 1, passed: 1, failed: 0, cancelled: 0 }, failed: [] };
+    const failedWithStderr = {
+      published: ["first line\n", "third line\r\n", "last line, with no newline\n"],
+      outcome: {
+        success: false,
+        counts: { tests: 1, passed: 0, failed: 1, cancelled: 0 },
+        failed: [{ name: "a.js", failureType: "testCodeFailure", isReason: false }],
+      },
+      message: "first line\n\nthird line\r\nlast line, with no newline",
+      kills: 1,
+    };
+    const destroyed = (endedAtThrow: boolean) => ({ endedAtThrow, destroyedWith: "the listener throws", kills: 1 });
+    const destroyedAtOnce = { ...destroyed(true), afterTheEnd: { readsTheOtherPipe: true, published: [] } };
+    const destroyedAtEndOfStdout = {
+      ...destroyed(false),
+      endedAtEndOfStdout: true,
+      publishedAfterThrow: ["test:pass"],
+    };
+    const wrapped = {
+      outcome: {
+        success: false,
+        counts: { tests: 1, passed: 0, failed: 0, cancelled: 1 },
+        failed: [{ name: "a.js", failureType: "testAborted", isReason: false }],
+      },
+      error: { name: "AbortError", message: "The test was aborted", causeIsTheReason: true },
+    };
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "the abort comes while the child runs": {
+        endedAtAbort: true,
+        publishedAfterAbort: verdictThenEnd,
+        publishedAfterTheEnd: [],
+        outcome: cancelled("a.js", 2),
+        kills: 1,
+        detailsKeys: {
+          "test:pass before the abort": ["duration_ms", "type"],
+          "test:complete a.js": ["duration_ms", "type", "error", "passed"],
+          "test:fail a.js": ["duration_ms", "type", "error"],
+        },
+        spawnFollowsTheSignal: false,
+        decodedAfterAbort: 0,
+        readsThePipes: true,
+        closedAPipe: false,
+      },
+      "a listener aborts in the middle of a chunk": {
+        endedAtAbort: true,
+        publishedAfterAbort: verdictThenEnd,
+        outcome: cancelled("a.js", 2),
+        kills: 1,
+      },
+      "the abort comes after stdout ended, and the child never exits": {
+        endedAtAbort: true,
+        publishedAfterAbort: verdictThenEnd,
+        outcome: cancelled("a.js", 2),
+        kills: 1,
+      },
+      // Node.js ends a file at the exit of its child and the end of stdout. An abort after that leaves the verdict.
+      "the abort comes after the child exited, while only stderr is open": {
+        endedAtAbort: true,
+        publishedAfterAbort: passedThenEnd,
+        outcome: passed,
+        kills: 1,
+      },
+      // Node.js fails the file with the error of a listener, as an uncaught exception, and goes on:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/harness.js#L164-L165
+      // Bun destroys the stream with that error, on main too. These rows pin when, and what comes after.
+      "a test:stdout listener throws, with a signal": destroyedAtOnce,
+      "a test:stdout listener throws, without a signal": destroyedAtOnce,
+      // The runner publishes the rest of stdout first, as on main.
+      "a test:stderr listener throws, with a signal": destroyed(false),
+      "a test:stderr listener throws, without a signal": destroyed(false),
+      "a test:stderr listener throws, then stdout ends and the child runs on, with a signal": destroyedAtEndOfStdout,
+      "a test:stderr listener throws, then stdout ends and the child runs on, without a signal": destroyedAtEndOfStdout,
+      "a test:stderr listener throws after stdout ended, and the child runs on, with a signal": destroyed(true),
+      "a test:stderr listener throws after stdout ended, and the child runs on, without a signal": destroyed(true),
+      "a test:stdout listener aborts, then throws": destroyed(true),
+      "a test:stderr listener aborts, then throws": destroyed(true),
+      "a test:stderr listener aborts, then throws, after stdout ended": destroyed(true),
+      "a test:stderr listener aborts, then throws, after the child exited": destroyed(true),
+      "the child of the first file does not start": {
+        outcome: {
+          success: false,
+          counts: { tests: 2, passed: 1, failed: 1, cancelled: 0 },
+          failed: [{ name: "a.js", failureType: "testCodeFailure", isReason: false }],
+        },
+        error: { code: "ERR_TEST_FAILURE", message: "spawn ENOENT", causeIsTheSpawnError: true },
+        spawns: 1,
+      },
+      "the child writes to stderr and exits with code 1, with a signal": failedWithStderr,
+      "the child writes to stderr and exits with code 1, without a signal": failedWithStderr,
+      "the abort comes after the file ended": {
+        endedAtAbort: true,
+        outcome: cancelled("b.js", 2),
+        killsOfTheFirstChild: 1,
+        killsOfTheSecondChild: 1,
+        abortListeners: { whileTheSecondFileRuns: 1, afterTheRun: 0 },
+      },
+      // Node.js publishes the first file and a plan of 1. It reports the other two to listeners after the summary.
+      "the signal is aborted before run(), with three files": {
+        outcome: {
+          success: false,
+          counts: { tests: 3, passed: 0, failed: 0, cancelled: 3 },
+          failed: ["a.js", "b.js", "c.js"].map(name => ({ name, failureType: "testAborted", isReason: true })),
+        },
+        plan: 3,
+        spawns: 0,
+      },
+      "a test:dequeue listener aborts": { endedAtAbort: true, outcome: cancelled("a.js", 1), spawns: 0 },
+      "the reason is a string": wrapped,
+      "the reason is a frozen object": wrapped,
+      "details objects that inherit from Object.prototype": [],
+    });
+    expect(exitCode).toBe(0);
+  }, 30_000);
 });

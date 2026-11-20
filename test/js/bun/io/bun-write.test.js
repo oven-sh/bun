@@ -1802,6 +1802,22 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
   });
 });
 
+it.skipIf(isWindows)("Bun.write() goes on each time a pipe has room", async () => {
+  using dir = tempDir("bun-write-pipe", {});
+  using fifo = openFifo(String(dir));
+  const room = fill(fifo.writer);
+  const file = Bun.file(fifo.writer);
+  file.size; // Finds out that it is not a regular file.
+  const write = Bun.write(file, new Blob([Buffer.alloc(8 * room)]));
+  let drained = 0;
+  while (Bun.peek.status(write) === "pending") {
+    await Bun.sleep(1);
+    drained += drain(fifo.reader);
+  }
+  expect(await write).toBe(8 * room);
+  expect(drained + drain(fifo.reader)).toBe(9 * room);
+});
+
 describe.skipIf(!isLinux).concurrent("Bun.write() to a pipe that is full", () => {
   const data = new Blob([Buffer.alloc(1 << 20, "a")]);
   /** `.size` makes the file find out that it is not a regular one. */

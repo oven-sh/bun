@@ -2,7 +2,7 @@
 
 use core::ops::DerefMut;
 use core::sync::atomic::{AtomicU64, Ordering};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, btree_map};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::linux::EPOLL;
@@ -11,7 +11,9 @@ use bun_threading::Guarded;
 #[cfg(not(all(test, target_os = "linux")))]
 use bun_threading::WorkPool;
 #[cfg(all(test, target_os = "linux"))]
-use tests::WorkPool;
+use tests::{WorkPool, epoll_ctl};
+
+use crate::Waker;
 
 bun_core::define_scoped_log!(log, Loop, visible);
 
@@ -66,9 +68,11 @@ impl Drop for JobFd {
 pub struct Key(u64);
 
 impl Key {
+    const NO_JOB: Self = Self(0);
+
     #[inline]
     pub fn next() -> (Self, Canceller) {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
+        static NEXT: AtomicU64 = AtomicU64::new(Key::NO_JOB.0 + 1);
         // Only has to be unique.
         let key = Self(NEXT.fetch_add(1, Ordering::Relaxed));
         (key, Canceller::Live(key))
@@ -104,8 +108,8 @@ impl Tombstone {
     fn place(key: Key) -> Self {
         let previous = key.slots().insert(key, Slot::Cancelled);
         if let Some(Slot::Armed(interest, fd, resume)) = previous {
-            let fd = fd.disarm(interest);
-            FdWait { key, interest, fd }.queue(resume);
+            let (poller, fd) = (fd.poller(), Idle::WasArmed(fd));
+            FdWait { key, interest, fd }.queue(poller, resume);
         }
         Self(key)
     }
@@ -117,7 +121,7 @@ impl Drop for Tombstone {
     }
 }
 
-/// The descriptor of a job that is not armed.
+/// The descriptor of a job that is not in the table.
 pub struct FdWait {
     key: Key,
     interest: Interest,
@@ -127,7 +131,7 @@ pub struct FdWait {
 impl FdWait {
     #[inline]
     pub fn new(key: Key, interest: Interest, fd: JobFd) -> Self {
-        let fd = Idle::new(fd);
+        let fd = Idle::New(fd);
         Self { key, interest, fd }
     }
 
@@ -136,56 +140,54 @@ impl FdWait {
         self.fd.get()
     }
 
+    /// The job is here, so only a tombstone can have its slot.
     fn check_cancelled(&self) -> sys::Result<()> {
-        match self.key.slots().get(&self.key) {
-            Some(Slot::Cancelled) => Err(self.interest.cancelled()),
-            _ => Ok(()),
+        match self.key.slots().contains_key(&self.key) {
+            true => Err(self.interest.cancelled()),
+            false => Ok(()),
         }
     }
 
     /// Pool thread. `resume` is called once, on the pool. The descriptor is closed before an `Err`.
     pub fn park(self, resume: impl FnOnce(sys::Result<Self>) + Send + 'static) {
-        match self.check_cancelled() {
-            Ok(()) => self.queue(Box::new(resume)),
-            Err(err) => self.fail(err, resume),
-        }
-    }
-
-    /// On this thread: the pool may have no other.
-    fn fail(self, err: sys::Error, resume: impl FnOnce(sys::Result<Self>)) {
-        drop(self);
-        resume(Err(err));
-    }
-
-    fn queue(self, resume: Resume) {
-        let mut io = IO.lock();
-        match io.poller() {
-            Ok(poller) => {
-                io.queue.push((self, resume));
-                drop(io);
-                poller.wake();
-            }
-            // Only from `park`: an armed job had a poller.
+        let poller = IO.lock().poller();
+        match poller.and_then(|poller| self.check_cancelled().map(|()| poller)) {
+            Ok(poller) => self.queue(poller, Box::new(resume)),
+            // On this thread: the pool may have no other.
             Err(err) => {
-                drop(io);
-                self.fail(err, resume);
+                drop(self);
+                resume(Err(err));
             }
         }
     }
 
-    /// IO thread. Under the lock, so that `cancel` cannot close the descriptor first.
-    fn arm(self, poller: Poller, resume: Resume) {
+    fn queue(self, poller: Poller, resume: Resume) {
+        IO.lock().queue.push((self, resume));
+        poller.wake();
+    }
+
+    /// IO thread. The kernel may take its time, so not under the lock that `cancel` takes.
+    fn arm(self, changes: &mut Changes, resume: Resume) {
+        let cancelled = self.check_cancelled();
         let Self { key, interest, fd } = self;
-        let mut slots = key.slots();
-        let armed = match slots.get(&key) {
-            Some(Slot::Cancelled) => Err((fd.forget(), interest.cancelled())),
-            _ => fd.arm(poller, interest, key),
+        let armed = match cancelled {
+            Ok(()) => changes.add(fd, interest, key),
+            Err(err) => Err((changes.remove(fd, interest), err)),
         };
-        match armed {
-            Ok(fd) => drop(slots.insert(key, Slot::Armed(interest, fd, resume))),
-            Err((fd, err)) => {
+        let fd = match armed {
+            Ok(fd) => fd,
+            Err((fd, err)) => return Self::new(key, interest, fd).wake(Err(err), resume),
+        };
+        let mut slots = key.slots();
+        match slots.entry(key) {
+            btree_map::Entry::Vacant(slot) => {
+                slot.insert(Slot::Armed(interest, fd, resume));
+            }
+            // Cancelled meanwhile.
+            btree_map::Entry::Occupied(_) => {
                 drop(slots);
-                Self { key, interest, fd }.wake(Err(err), resume);
+                let fd = changes.remove(Idle::WasArmed(fd), interest);
+                Self::new(key, interest, fd).wake(Err(interest.cancelled()), resume);
             }
         }
     }
@@ -200,8 +202,21 @@ impl FdWait {
 
 type Resume = Box<dyn FnOnce(sys::Result<FdWait>) + Send>;
 
+enum Idle {
+    New(JobFd),
+    WasArmed(Armed),
+}
+
+impl Idle {
+    #[inline]
+    fn get(&self) -> Fd {
+        let (Self::New(fd) | Self::WasArmed(Armed { fd, .. })) = self;
+        fd.get()
+    }
+}
+
 /// A failure hands the descriptor back: the pool closes it.
-type Arming = Result<Armed, (Idle, sys::Error)>;
+type Arming = Result<Armed, (JobFd, sys::Error)>;
 
 /// A job without a slot is on the pool, in the queue, or has ended.
 enum Slot {
@@ -217,7 +232,7 @@ fn fire(key: Key, outcome: sys::Result<()>) {
     match slots.remove(&key) {
         Some(Slot::Armed(interest, fd, resume)) => {
             drop(slots);
-            let fd = fd.fired();
+            let fd = Idle::WasArmed(fd);
             FdWait { key, interest, fd }.wake(outcome, resume);
         }
         Some(Slot::Cancelled) => drop(slots.insert(key, Slot::Cancelled)),
@@ -227,78 +242,105 @@ fn fire(key: Key, outcome: sys::Result<()>) {
 
 type Queue = Vec<(FdWait, Resume)>;
 
+enum Thread {
+    /// Until the first wait.
+    Missing,
+    NotSpawned(Poller),
+    Running(Poller),
+}
+
 struct Io {
-    /// From the first wait on.
-    poller: Option<Poller>,
+    thread: Thread,
     /// Arming from the pool costs a busy pipe a third of its speed: the job then wakes too late.
     queue: Queue,
 }
 
 static IO: Guarded<Io> = Guarded::new(Io {
-    poller: None,
+    thread: Thread::Missing,
     queue: Queue::new(),
 });
 
 impl Io {
     /// If starting fails, the next call retries.
     fn poller(&mut self) -> sys::Result<Poller> {
-        Ok(match self.poller {
-            Some(poller) => poller,
-            None => *self.poller.insert(Poller::start()?),
-        })
+        let poller = match self.thread {
+            Thread::Missing => Poller::new()?,
+            Thread::NotSpawned(poller) => poller,
+            Thread::Running(poller) => return Ok(poller),
+        };
+        self.thread = Thread::NotSpawned(poller);
+        poller.spawn()?;
+        self.thread = Thread::Running(poller);
+        Ok(poller)
     }
 }
 
 /// Never closed.
 #[derive(Clone, Copy)]
-struct Poller([Fd; POLLER_FDS]);
+struct Poller {
+    fd: Fd,
+    waker: &'static Waker,
+}
 
-impl Poller {
-    fn arm_queued(self, jobs: &mut Queue) {
+impl Changes {
+    fn arm_queued(&mut self, jobs: &mut Queue) {
         core::mem::swap(jobs, &mut IO.lock().queue);
         for (wait, resume) in jobs.drain(..) {
             wait.arm(self, resume);
         }
     }
+}
+
+impl Poller {
+    #[cold]
+    fn new() -> sys::Result<Self> {
+        let waker = Waker::init().map_err(|err| {
+            let errno = match err {
+                crate::Error::Sys(errno) => errno,
+                _ => E::ENOMEM,
+            };
+            sys::Error::from_code(errno, sys::Tag::open)
+        })?;
+        let fd = Self::watch(&waker)?;
+        let waker = Box::leak(Box::new(waker));
+        Ok(Self { fd, waker })
+    }
+
+    #[cfg(not(all(test, target_os = "linux")))]
+    fn wake(self) {
+        self.waker.wake();
+    }
 
     #[cfg(not(all(test, target_os = "linux")))]
     #[cold]
-    fn start() -> sys::Result<Self> {
-        let files = Self::create()?;
-        let poller = Self(files.each_ref().map(sys::File::fd));
-        poller.add_waker()?;
+    fn spawn(self) -> sys::Result<()> {
         std::thread::Builder::new()
             .stack_size(1024 * 1024 * 2)
             .spawn(move || {
                 bun_core::Output::Source::configure_named_thread(bun_core::zstr!("IO Watcher"));
-                poller.wait()
+                self.wait()
             })
+            .map(drop)
             .map_err(|err| {
                 sys::Error::from_code_int(
                     err.raw_os_error().unwrap_or(libc::EAGAIN),
                     sys::Tag::pthread_create,
                 )
-            })?;
-        Ok(Self(files.map(sys::File::into_raw)))
+            })
     }
 }
 
 // ─── epoll ───────────────────────────────────────────────────────────────────
 
+/// IO thread. Applied at once.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-const POLLER_FDS: usize = 2;
+struct Changes(Poller);
 
 /// epoll keeps a one-shot entry that has fired.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-enum Idle {
-    New(JobFd),
-    Fired(Armed),
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
 struct Armed {
     /// Dropped first.
-    _entry: Entry,
+    entry: Entry,
     fd: JobFd,
 }
 
@@ -314,107 +356,84 @@ impl Drop for Entry {
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-impl Idle {
-    #[inline]
-    fn new(fd: JobFd) -> Self {
-        Self::New(fd)
+impl Armed {
+    fn poller(&self) -> Poller {
+        self.entry.0
     }
+}
 
-    #[inline]
-    fn get(&self) -> Fd {
-        let (Self::New(fd) | Self::Fired(Armed { fd, .. })) = self;
-        fd.get()
-    }
-
-    fn arm(self, poller: Poller, interest: Interest, key: Key) -> Arming {
-        log!("register({})", self.get());
-        let interest = match interest {
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl Changes {
+    fn add(&mut self, fd: Idle, interest: Interest, key: Key) -> Arming {
+        log!("register({})", fd.get());
+        let events = match interest {
             Interest::Readable => EPOLL::IN,
             Interest::Writable => EPOLL::OUT,
         };
-        let events = interest | EPOLL::HUP | EPOLL::ERR | EPOLL::ONESHOT;
-        let op = match self {
-            Self::New(_) => EPOLL::CTL_ADD,
-            Self::Fired(_) => EPOLL::CTL_MOD,
+        let op = match fd {
+            Idle::New(_) => EPOLL::CTL_ADD,
+            Idle::WasArmed(_) => EPOLL::CTL_MOD,
         };
-        match (poller.ctl(op, self.get(), events, key), self) {
-            (Err(err), this) => Err((this.forget(), err)),
-            (Ok(()), Self::Fired(armed)) => Ok(armed),
-            (Ok(()), Self::New(fd)) => Ok(Armed {
-                _entry: Entry(poller, fd.get()),
+        let Self(poller) = *self;
+        let added = epoll_ctl(poller.fd, op, fd.get(), events | EPOLL::ONESHOT, key);
+        match (added, fd) {
+            (Err(err), fd) => Err((self.remove(fd, interest), err)),
+            (Ok(()), Idle::WasArmed(armed)) => Ok(armed),
+            (Ok(()), Idle::New(fd)) => Ok(Armed {
+                entry: Entry(poller, fd.get()),
                 fd,
             }),
         }
     }
 
     /// Does not leave the entry to the pool: the next job on the descriptor may be faster.
-    fn forget(self) -> Self {
-        let (Self::New(fd) | Self::Fired(Armed { fd, .. })) = self;
-        Self::New(fd)
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-impl Armed {
-    /// Leaves it to `Idle::forget`, on the IO thread.
-    fn disarm(self, _: Interest) -> Idle {
-        self.fired()
-    }
-
-    fn fired(self) -> Idle {
-        Idle::Fired(self)
+    fn remove(&mut self, fd: Idle, _: Interest) -> JobFd {
+        let (Idle::New(fd) | Idle::WasArmed(Armed { fd, .. })) = fd;
+        fd
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl Poller {
-    fn create() -> sys::Result<[sys::File; POLLER_FDS]> {
-        let waker = sys::File::from_fd(sys::eventfd(0, 0)?);
+    fn watch(waker: &Waker) -> sys::Result<Fd> {
         let raw = crate::safe_c::epoll_create1(libc::EPOLL_CLOEXEC);
-        match sys::get_errno(raw) {
-            E::SUCCESS => Ok([sys::File::from_fd(Fd::from_native(raw)), waker]),
-            err => Err(sys::Error::from_code(err, sys::Tag::epoll_create1)),
-        }
+        let epoll = match sys::get_errno(raw) {
+            E::SUCCESS => sys::File::from_fd(Fd::from_native(raw)),
+            err => return Err(sys::Error::from_code(err, sys::Tag::epoll_create1)),
+        };
+        // Edge-triggered: no need to read its counter.
+        let (events, key) = (EPOLL::IN | EPOLL::ET, Key::NO_JOB);
+        epoll_ctl(epoll.fd(), EPOLL::CTL_ADD, waker.get_fd(), events, key)?;
+        Ok(epoll.into_raw())
+    }
+}
+
+#[cfg(any(all(not(test), target_os = "linux"), target_os = "android"))]
+fn epoll_ctl(epoll: Fd, op: i32, fd: Fd, events: u32, key: Key) -> sys::Result<()> {
+    let events = events | EPOLL::HUP | EPOLL::ERR;
+    let event = libc::epoll_event { events, u64: key.0 };
+    // SAFETY: `wait` does not take the data for an address.
+    let rc = unsafe { sys::linux::epoll_ctl(epoll.native(), op, fd.native(), &event) };
+    match sys::get_errno(rc) {
+        E::SUCCESS => Ok(()),
+        err => Err(sys::Error::from_code(err, sys::Tag::epoll_ctl)),
     }
 }
 
 #[cfg(any(all(not(test), target_os = "linux"), target_os = "android"))]
 impl Poller {
-    /// Edge-triggered: no need to read its counter. No job has its key.
-    fn add_waker(self) -> sys::Result<()> {
-        let [_, waker] = self.0;
-        self.ctl(EPOLL::CTL_ADD, waker, EPOLL::IN | EPOLL::ET, Key::next().0)
-    }
-
-    fn wake(self) {
-        let [_, waker] = self.0;
-        let _ = sys::write(waker, &1u64.to_ne_bytes());
-    }
-
-    fn ctl(self, op: i32, fd: Fd, events: u32, key: Key) -> sys::Result<()> {
-        let ([epoll, _], event) = (self.0, libc::epoll_event { events, u64: key.0 });
-        // SAFETY: `wait` does not take the data for an address.
-        let rc = unsafe { sys::linux::epoll_ctl(epoll.native(), op, fd.native(), &event) };
-        match sys::get_errno(rc) {
-            E::SUCCESS => Ok(()),
-            err => Err(sys::Error::from_code(err, sys::Tag::epoll_ctl)),
-        }
-    }
-
     fn remove(self, fd: Fd) {
-        let [epoll, _] = self.0;
-        let _ = sys::linux::epoll_ctl_del(epoll.native(), fd.native());
+        let _ = sys::linux::epoll_ctl_del(self.fd.native(), fd.native());
     }
 
     fn wait(self) {
-        let [epoll, _] = self.0;
         let mut events: [libc::epoll_event; 256] = [bun_core::ffi::zeroed(); 256];
         let mut jobs = Queue::new();
         loop {
-            self.arm_queued(&mut jobs);
+            Changes(self).arm_queued(&mut jobs);
             // SAFETY: `events` is writable for its length.
             let rc = unsafe {
-                libc::epoll_wait(epoll.native(), events.as_mut_ptr(), events.len() as _, -1)
+                libc::epoll_wait(self.fd.native(), events.as_mut_ptr(), events.len() as _, -1)
             };
             match sys::get_errno(rc) {
                 E::EINTR => continue,
@@ -435,13 +454,16 @@ impl Poller {
 
 // ─── kqueue ──────────────────────────────────────────────────────────────────
 
+#[cfg(target_os = "freebsd")]
+type KEvent = libc::kevent;
+#[cfg(target_os = "macos")]
+type KEvent = libc::kevent64_s;
+
+/// IO thread. Applied by the next wait, which reports a failure as an event.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-const POLLER_FDS: usize = 1;
+struct Changes(Poller, Vec<KEvent>);
 
 /// kqueue deletes a one-shot entry when it reports it.
-#[cfg(any(target_os = "macos", target_os = "freebsd"))]
-struct Idle(JobFd);
-
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 struct Armed {
     poller: Poller,
@@ -449,101 +471,107 @@ struct Armed {
 }
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-impl Idle {
-    #[inline]
-    fn new(fd: JobFd) -> Self {
-        Self(fd)
-    }
-
-    #[inline]
-    fn get(&self) -> Fd {
-        self.0.get()
-    }
-
-    fn arm(self, poller: Poller, interest: Interest, key: Key) -> Arming {
-        log!("register({})", self.get());
-        match poller.change(&self.0, interest, libc::EV_ADD | libc::EV_ONESHOT, key.0) {
-            Ok(_) => Ok(Armed { poller, fd: self.0 }),
-            Err(err) => Err((self, err)),
-        }
-    }
-
-    fn forget(self) -> Self {
-        self
+impl Armed {
+    fn poller(&self) -> Poller {
+        self.poller
     }
 }
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-impl Armed {
-    fn disarm(self, interest: Interest) -> Idle {
-        // Fails if the entry was just reported, or if script closed the descriptor.
-        let _ = (self.poller).change(&self.fd, interest, libc::EV_DELETE, 0);
-        self.fired()
+impl Changes {
+    fn add(&mut self, fd: Idle, interest: Interest, key: Key) -> Arming {
+        log!("register({})", fd.get());
+        let (Idle::New(fd) | Idle::WasArmed(Armed { fd, .. })) = fd;
+        let flags = libc::EV_ADD | libc::EV_ONESHOT;
+        self.1.push(change(fd.get(), interest, flags, key));
+        Ok(Armed { poller: self.0, fd })
     }
 
-    fn fired(self) -> Idle {
-        Idle(self.fd)
+    /// By descriptor: after a report, this can be the entry of another job.
+    fn remove(&mut self, fd: Idle, interest: Interest) -> JobFd {
+        match fd {
+            Idle::New(fd) => fd,
+            Idle::WasArmed(Armed { fd, .. }) => {
+                (self.1).push(change(fd.get(), interest, libc::EV_DELETE, Key::NO_JOB));
+                fd
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+fn change(fd: Fd, interest: Interest, flags: u16, key: Key) -> KEvent {
+    let mut change: KEvent = bun_core::ffi::zeroed();
+    change.ident = fd.native() as _;
+    change.filter = match interest {
+        Interest::Readable => libc::EVFILT_READ,
+        Interest::Writable => libc::EVFILT_WRITE,
+    };
+    change.flags = flags;
+    change.udata = key.0 as _;
+    change
+}
+
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+fn kevent(kqueue: Fd, changes: &[KEvent], events: &mut [KEvent]) -> sys::Result<usize> {
+    #[cfg(target_os = "macos")]
+    // SAFETY: `wait` does not take `udata` for an address.
+    let rc = unsafe { sys::darwin::kevent64(kqueue.native(), changes, events, 0, None) };
+    #[cfg(target_os = "freebsd")]
+    // SAFETY: as above, and the slices are valid for their lengths. `sys::kevent` would repeat the changes.
+    let rc = unsafe {
+        libc::kevent(
+            kqueue.native(),
+            changes.as_ptr(),
+            changes.len() as _,
+            events.as_mut_ptr(),
+            events.len() as _,
+            core::ptr::null(),
+        )
+    };
+    match sys::get_errno(rc) {
+        E::SUCCESS => Ok(rc as usize),
+        // In the wait, after the changes.
+        E::EINTR => Ok(0),
+        err => Err(sys::Error::from_code(err, sys::Tag::kevent)),
     }
 }
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 impl Poller {
-    fn create() -> sys::Result<[sys::File; POLLER_FDS]> {
-        match sys::kqueue() {
-            Ok(kqueue) => Ok([sys::File::from_fd(kqueue)]),
-            // Like `sys::eventfd`.
-            Err(err) => Err(sys::Error::from_code(err.get_errno(), sys::Tag::open)),
-        }
+    /// The waker has a kqueue of its own, and no `udata` in it.
+    #[cfg(target_os = "macos")]
+    fn watch(waker: &Waker) -> sys::Result<Fd> {
+        Ok(waker.get_fd())
     }
 
-    fn add_waker(self) -> sys::Result<usize> {
-        self.kevent(0, libc::EVFILT_USER, libc::EV_ADD | libc::EV_CLEAR, 0, 0)
-    }
-
-    fn wake(self) {
-        let _ = self.kevent(0, libc::EVFILT_USER, 0, libc::NOTE_TRIGGER, 0);
-    }
-
-    fn change(self, fd: &JobFd, interest: Interest, flags: u16, udata: u64) -> sys::Result<usize> {
-        let filter = match interest {
-            Interest::Readable => libc::EVFILT_READ,
-            Interest::Writable => libc::EVFILT_WRITE,
-        };
-        self.kevent(fd.get().native() as _, filter, flags, 0, udata)
-    }
-
-    fn kevent(
-        self,
-        ident: usize,
-        filter: i16,
-        flags: u16,
-        fflags: u32,
-        udata: u64,
-    ) -> sys::Result<usize> {
-        let [kqueue] = self.0;
-        let mut change: libc::kevent = bun_core::ffi::zeroed();
-        (change.ident, change.filter) = (ident, filter);
-        (change.flags, change.fflags) = (flags, fflags);
-        change.udata = core::ptr::without_provenance_mut(udata as usize);
-        // Without room for events, kevent() does not wait and reports a failed change in errno.
-        // SAFETY: `wait` does not take `udata` for an address.
-        let changed = unsafe { sys::kevent(kqueue, &[change], &mut [], None) };
-        // Script must not see `kqueue` in the error.
-        changed.map_err(|err| sys::Error::from_code(err.get_errno(), sys::Tag::kevent))
+    #[cfg(target_os = "freebsd")]
+    fn watch(waker: &Waker) -> sys::Result<Fd> {
+        let kqueue = sys::File::from_fd(sys::kqueue()?);
+        // Edge-triggered: no need to read its counter.
+        let flags = libc::EV_ADD | libc::EV_CLEAR;
+        let add = change(waker.get_fd(), Interest::Readable, flags, Key::NO_JOB);
+        kevent(kqueue.fd(), &[add], &mut [])?;
+        Ok(kqueue.into_raw())
     }
 
     fn wait(self) {
-        let [kqueue] = self.0;
-        let mut events: [libc::kevent; 256] = [bun_core::ffi::zeroed(); 256];
+        let mut events = Vec::new();
         let mut jobs = Queue::new();
         loop {
-            self.arm_queued(&mut jobs);
-            let count = sys::kevent_wait(kqueue, &mut events, None)
+            let mut changes = Changes(self, Vec::new());
+            changes.arm_queued(&mut jobs);
+            // Room for a failure of each change.
+            events.resize(changes.1.len().max(256), bun_core::ffi::zeroed());
+            events.shrink_to_fit();
+            let count = kevent(self.fd, &changes.1, &mut events)
                 .unwrap_or_else(|err| bun_core::Output::panic(format_args!("{err}")));
             for event in &events[..count] {
-                if event.filter != libc::EVFILT_USER {
-                    fire(Key(event.udata.addr() as u64), Ok(()));
-                }
+                let outcome = match event.flags & libc::EV_ERROR {
+                    0 => Ok(()),
+                    _ => Err(sys::Error::from_code_int(event.data as _, sys::Tag::kevent)),
+                };
+                fire(Key(event.udata as u64), outcome);
             }
         }
     }
@@ -551,7 +579,7 @@ impl Poller {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::sync::mpsc;
 
     use super::*;
@@ -562,27 +590,17 @@ mod tests {
     static IO_THREAD: Guarded<()> = Guarded::new(());
 
     impl Poller {
-        pub(super) fn start() -> sys::Result<Self> {
-            Ok(Self(Self::create()?.map(sys::File::into_raw)))
+        pub(super) fn spawn(self) -> sys::Result<()> {
+            Ok(())
         }
 
         /// Does what the IO thread would.
         pub(super) fn wake(self) {
+            self.waker.wake();
             let io_thread = IO_THREAD.lock();
-            self.arm_queued(&mut Vec::new());
+            Changes(self).arm_queued(&mut Vec::new());
             drop(io_thread);
             WorkPool::run();
-        }
-
-        pub(super) fn ctl(self, op: i32, fd: Fd, _: u32, key: Key) -> sys::Result<()> {
-            assert!(self.0[0].is_valid());
-            let known = ENTRIES.lock().contains_key(&fd.native());
-            if known == (op == EPOLL::CTL_ADD) {
-                let err = if known { E::EEXIST } else { E::ENOENT };
-                return Err(sys::Error::from_code(err, sys::Tag::epoll_ctl));
-            }
-            ENTRIES.lock().insert(fd.native(), key);
-            Ok(())
         }
 
         pub(super) fn remove(self, fd: Fd) {
@@ -590,8 +608,24 @@ mod tests {
         }
     }
 
+    pub(super) fn epoll_ctl(_: Fd, op: i32, fd: Fd, _: u32, key: Key) -> sys::Result<()> {
+        if let Some(mut canceller) = CANCELS_IN_CTL.take() {
+            canceller.cancel();
+            CANCELLED_IN_CTL.set(Some(canceller));
+        }
+        let known = ENTRIES.lock().contains_key(&fd.native());
+        if known == (op == EPOLL::CTL_ADD) {
+            let err = if known { E::EEXIST } else { E::ENOENT };
+            return Err(sys::Error::from_code(err, sys::Tag::epoll_ctl));
+        }
+        ENTRIES.lock().insert(fd.native(), key);
+        Ok(())
+    }
+
     thread_local! {
         static SCHEDULED: RefCell<Vec<Box<dyn FnOnce()>>> = RefCell::default();
+        static CANCELS_IN_CTL: Cell<Option<Canceller>> = Cell::default();
+        static CANCELLED_IN_CTL: Cell<Option<Canceller>> = Cell::default();
     }
 
     pub(super) struct WorkPool;
@@ -690,6 +724,19 @@ mod tests {
     }
 
     #[test]
+    fn a_job_is_cancelled_while_the_kernel_adds_its_entry() {
+        let (wait, canceller) = new(1008);
+        let changes = &mut Changes(IO.lock().poller().ok().unwrap());
+        CANCELS_IN_CTL.set(Some(canceller));
+        let (sender, ended) = mpsc::channel();
+        let resume = move |woken: sys::Result<FdWait>| sender.send(woken.err()).unwrap();
+        wait.arm(changes, Box::new(resume));
+        assert!(entry(1008).is_none());
+        WorkPool::run();
+        assert_eq!(ended.recv().unwrap().unwrap().get_errno(), E::ECANCELED);
+    }
+
+    #[test]
     fn a_queued_job_that_is_cancelled_makes_room_for_the_next() {
         let ((first, mut canceller), (second, _second)) = (new(1004), new(1004));
         let keys = (first.key, second.key);
@@ -743,10 +790,10 @@ mod tests {
         first.park(move |woken| sender.send(woken.ok()).unwrap());
         ready(keys.0);
         ENTRIES.lock().remove(&1006);
-        let poller = IO.lock().poller().ok().unwrap();
+        let changes = &mut Changes(IO.lock().poller().ok().unwrap());
         let first = idle.recv().unwrap().unwrap();
-        first.arm(poller, Box::new(|woken| assert!(woken.is_err())));
-        second.arm(poller, Box::new(|woken| assert!(woken.is_ok())));
+        first.arm(changes, Box::new(|woken| assert!(woken.is_err())));
+        second.arm(changes, Box::new(|woken| assert!(woken.is_ok())));
         WorkPool::run();
         assert!(entry(1006) == Some(keys.1));
         ready(keys.1);

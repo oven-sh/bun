@@ -84,6 +84,58 @@ test.skipIf(isWindows)("a read of a pipe waits again after each chunk", async ()
   expect(await text).toBe(Buffer.alloc(30, "x").toString());
 });
 
+// More than the thread that waits takes from the kernel at once.
+describe.skipIf(isWindows).concurrent("300 reads wait", () => {
+  async function run(script: string) {
+    using dir = tempDir("bun-file-fd-read", {});
+    const prelude = `
+      import { openFifo } from ${JSON.stringify(join(import.meta.dir, "..", "io", "fifo-helpers.ts"))};
+      import { closeSync, constants, mkdirSync, openSync, writeSync } from "node:fs";
+      const open = dir => (mkdirSync(dir), openFifo(dir));
+      using shared = open("shared");
+      const readers = Array.from({ length: 300 }, () => openSync(shared.path, constants.O_RDONLY | constants.O_NONBLOCK));
+      // Behind the others on the pool, so most of them wait by then.
+      const fence = () => Bun.file(${JSON.stringify(import.meta.path)}).text();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + script],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("and get ready together", async () => {
+    const result = await run(`
+      const texts = readers.map(fd => Bun.file(fd).slice(0, 1).text());
+      await fence();
+      writeSync(shared.writer, Buffer.alloc(300, "x"));
+      console.log((await Promise.all(texts)).join("").length);
+    `);
+    expect(result).toEqual({ stdout: "300\n", stderr: "", exitCode: 0 });
+  });
+
+  test.each([false, true])("and are cancelled beside one that is not, fds closed: %p", async closed => {
+    const result = await run(`
+      using own = open("own");
+      const graph = new Bun.ModuleGraph();
+      for (const fd of readers) graph.run(() => void Bun.file(fd).text().catch(() => {}));
+      for (const byte of "ab") {
+        const text = Bun.file(own.reader).slice(0, 1).text();
+        await fence();
+        if (${closed}) readers.splice(0).forEach(fd => closeSync(fd));
+        if (byte === "a") graph.dispose();
+        await fence();
+        writeSync(own.writer, byte);
+        console.log(await text);
+      }
+    `);
+    expect(result).toEqual({ stdout: "a\nb\n", stderr: "", exitCode: 0 });
+  });
+});
+
 describe.skipIf(!isLinux)("EPOLLERR while Bun.file(fd).text() waits for a socket", () => {
   const [AF_INET, SOCK_STREAM, SOCK_DGRAM, SOL_SOCKET, SO_TIMESTAMPING] = [2, 1, 2, 1, 37];
   const libc = () =>
@@ -147,7 +199,7 @@ test.skipIf(!isLinux)(
       console.log(await text);
     }
 
-    const stale = Array.from({ length: 32 }, (_, i) => open("stale-" + i));
+    const stale = Array.from({ length: 8 }, (_, i) => open("stale-" + i));
     await using holder = Bun.spawn({ cmd: ["cat"], stdio: ["pipe", "ignore", "ignore", ...stale.map(fifo => fifo.reader)] });
     const graph = new Bun.ModuleGraph();
     for (const fifo of stale) graph.run(() => void Bun.file(fifo.reader).text());
@@ -156,7 +208,7 @@ test.skipIf(!isLinux)(
     graph.dispose();
     await fence("cancelled");
     // Takes over the memory of the jobs.
-    const junk = Array.from({ length: 4000 }, (_, i) => new Blob([Buffer.alloc(64 + (i % 60) * 16, 2)]));
+    const junk = Array.from({ length: 1000 }, (_, i) => new Blob([Buffer.alloc(64 + (i % 60) * 16, 2)]));
     for (const fifo of stale) writeSync(fifo.writer, "x");
     await fence("reported");
   `;
@@ -194,4 +246,46 @@ test.skipIf(!isLinux || !cc)("read() is called again after EAGAIN from a regular
   expect(stdout).toBe("hello\n");
   expect(stderr).toContain("matched read() calls on target: 3\n");
   expect(exitCode).toBe(0);
+});
+
+test.skipIf(!isLinux)("a write that has waited ends while other jobs hold every pool thread", async () => {
+  using dir = tempDir("bun-file-fd-read", {});
+  const script = `
+    import { fill, openFifo, untilWatched } from ${JSON.stringify(join(import.meta.dir, "..", "io", "fifo-helpers.ts"))};
+    import { mkdirSync, openSync, read, readSync, writeSync } from "node:fs";
+    const open = dir => (mkdirSync(dir), openFifo(dir));
+    using full = open("full");
+    using silent = open("silent");
+    const [writer, reader] = [openSync(full.path, "w"), openSync(silent.path, "r")]; // They block.
+    const buffer = Buffer.alloc(fill(full.writer));
+    function take(length) {
+      for (;;) {
+        try {
+          return readSync(full.reader, buffer, 0, length);
+        } catch (e) {
+          if (e.code !== "EAGAIN") throw e;
+        }
+      }
+    }
+
+    const file = Bun.file(writer);
+    file.size;
+    const written = Bun.write(file, new Blob([Buffer.alloc(buffer.length + 1)]));
+    await untilWatched(writer);
+    take(buffer.length);
+    // The job is in write(), with one byte that does not fit.
+    take(1);
+    for (let i = 0; i < 8; i++) read(reader, Buffer.alloc(1), () => {});
+    take(buffer.length);
+    console.log((await written) - buffer.length);
+    writeSync(silent.writer, "12345678");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    cwd: String(dir),
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
 });

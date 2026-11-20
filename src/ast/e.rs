@@ -630,7 +630,10 @@ pub struct JSXElement {
 
     pub flags: crate::flags::JSXElementBitset,
 
+    /// Closing name, `>` for a fragment, or `/` for a self-closing tag.
     pub close_tag_loc: crate::Loc,
+    /// The `<` of an explicit closing tag.
+    pub close_tag_start_loc: crate::Loc,
 }
 impl Default for JSXElement {
     fn default() -> Self {
@@ -641,6 +644,7 @@ impl Default for JSXElement {
             key_prop_index: -1,
             flags: crate::flags::JSXElementBitset::default(),
             close_tag_loc: crate::Loc::EMPTY,
+            close_tag_start_loc: crate::Loc::EMPTY,
         }
     }
 }
@@ -1862,6 +1866,31 @@ impl EString {
             return crate::lexer_tables::is_identifier_utf16(self.slice16());
         }
         crate::lexer_tables::is_identifier(self.slice(bump))
+    }
+
+    /// Return whether the string is one complete JSX name with an optional namespace.
+    pub fn is_jsx_name(&self, bump: &Bump) -> bool {
+        let str_ = self.flattened(bump);
+        let text = str_.string(bump);
+        let text = bun_core::handle_oom(text);
+        let iter = strings::CodepointIterator::init(text);
+        let mut cursor = strings::Cursor::default();
+        let mut needs_start = true;
+        let mut has_namespace = false;
+        while iter.next(&mut cursor) {
+            if needs_start {
+                if !bun_core::identifier::is_identifier_start(cursor.c) {
+                    return false;
+                }
+                needs_start = false;
+            } else if cursor.c == 0x3A && !has_namespace {
+                needs_start = true;
+                has_namespace = true;
+            } else if cursor.c != 0x2D && !crate::lexer_tables::is_identifier_continue(cursor.c) {
+                return false;
+            }
+        }
+        !needs_start
     }
 
     /// Compares two strings lexicographically for JavaScript semantics.

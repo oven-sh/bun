@@ -69,6 +69,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // without aliasing the `&mut Stmt` we also pass through. The deref'd `&mut S::*`
         // points into the arena, not into `*stmt`.
         let data_copy = stmt.data;
+        let output_start = stmts.len();
+        let jsx_start = p.preserved_jsx.elements.len();
+        let outlined_start = p.react_compiler_outlined_from_nested.len();
         match data_copy {
             StmtData::SDirective(_) | StmtData::SComment(_) | StmtData::SEmpty(_) => {
                 p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
@@ -123,7 +126,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Only used by the bundler for lazy export ASTs.
             StmtData::SLazyExport(_) => unreachable!(),
+        }?;
+
+        if jsx_start != p.preserved_jsx.elements.len()
+            && outlined_start == p.react_compiler_outlined_from_nested.len()
+            && let Some(output) = stmts.get(output_start..)
+        {
+            p.preserved_jsx.record_statements(output, jsx_start);
         }
+        Ok(())
     }
 
     // ─── visitors ───────────────────────────────────────────────────────────
@@ -1886,12 +1897,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.should_remove_dead_statements() {
             if let Some(effects) = effects {
                 if effects.value {
-                    if data.no.is_none()
-                        || !SideEffects::should_keep_stmt_in_dead_control_flow(
-                            data.no.unwrap(),
-                            p.arena,
-                        )
-                    {
+                    if data.no.is_none() || !p.keep_stmt_in_dead_control_flow(data.no.unwrap()) {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
                             if let Some(test) = SideEffects::simplify_unused_expr(p, data.test) {
@@ -1911,7 +1917,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 } else {
                     // The test is falsy
-                    if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes, p.arena) {
+                    if !p.keep_stmt_in_dead_control_flow(data.yes) {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
                             if let Some(test) = SideEffects::simplify_unused_expr(p, data.test) {
@@ -2015,6 +2021,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         RelocateVarsMode::Normal,
                     );
                     if let Some(relocated) = relocate.stmt {
+                        p.preserved_jsx.move_statement(for_init, relocated);
                         data.init = Some(relocated);
                     }
                 }
@@ -2050,10 +2057,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let js_ast::binding::Data::BIdentifier(b_id) = decl.binding.data {
                             if let Some(val) = decl.value {
                                 let id_ref = b_id.r#ref;
-                                stmts.push(Stmt::assign(
+                                let assignment = Stmt::assign(
                                     Expr::init_identifier(id_ref, decl.binding.loc),
                                     val,
-                                ));
+                                );
+                                p.preserved_jsx.move_statement(data.init, assignment);
+                                stmts.push(assignment);
                                 decl.value = None;
                             }
                         }
@@ -2064,6 +2073,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         RelocateVarsMode::ForInOrForOf,
                     );
                     if let Some(relocated_stmt) = relocate.stmt {
+                        p.preserved_jsx.move_statement(data.init, relocated_stmt);
                         data.init = relocated_stmt;
                     }
                 }
@@ -2095,6 +2105,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         RelocateVarsMode::ForInOrForOf,
                     );
                     if let Some(relocated_stmt) = relocate.stmt {
+                        p.preserved_jsx.move_statement(data.init, relocated_stmt);
                         data.init = relocated_stmt;
                     }
                 }

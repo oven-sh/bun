@@ -42,6 +42,27 @@ async function expectSameAsBunTest(files: Record<string, string>, args?: string[
 }
 
 describe.skipIf(!supported)("bun test --aot", () => {
+  test.concurrent("points to the first preserved JSX element", async () => {
+    using dir = tempDir("test-aot-preserve-location", {
+      "a.test.tsx": "/** @jsxRuntime preserve */\n\nconsole.log(<div><span /></div>);\n",
+    });
+    const { stderr, exitCode } = await runTests(String(dir), true, [], false);
+    expect(stderr).toContain("--aot does not support preserved JSX");
+    expect(stderr).toMatch(/a\.test\.tsx:3:13\b/);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("reports the syntax error in a file with preserved JSX", async () => {
+    using dir = tempDir("test-aot-preserve-syntax", {
+      "a.test.tsx": "\nexport const element = <div />;\nexport const broken = ;\n",
+    });
+    const { stderr, exitCode } = await runTests(String(dir), true, ["--jsx-runtime=preserve"], false);
+    expect(stderr).toContain("Unexpected ;");
+    expect(stderr).toMatch(/a\.test\.tsx:3:23\b/);
+    expect(stderr).not.toContain("--aot does not support preserved JSX");
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("passes, failures, skips, todos and hooks in several files", async () => {
     const { stderr, exitCode } = await expectSameAsBunTest({
       "a.test.ts": `

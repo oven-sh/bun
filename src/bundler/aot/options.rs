@@ -256,6 +256,7 @@ fn jsx_settings(pragma: &jsx::Pragma) -> JsxSettings {
     JsxSettings {
         runtime: match pragma.runtime {
             jsx::Runtime::Classic => JsxRuntime::Classic,
+            jsx::Runtime::Preserve => JsxRuntime::Preserve,
             jsx::Runtime::Automatic | jsx::Runtime::_None => JsxRuntime::Automatic,
         },
         is_development: pragma.development,

@@ -823,7 +823,36 @@ pub mod parse_worker {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {
-                        bun_js_parser::Result::Ast(ast) => Ok(JSAst::init(*ast)),
+                        bun_js_parser::Result::Ast(ast) => {
+                            if let Some(loc) = ast.first_preserved_jsx {
+                                let message: Option<&[u8]> = match topts.compile_mode {
+                                    options::CompileMode::Executable => {
+                                        Some(b"Cannot preserve JSX when compiling an executable")
+                                    }
+                                    options::CompileMode::StandaloneHtml => {
+                                        Some(b"Cannot preserve JSX when compiling standalone HTML")
+                                    }
+                                    options::CompileMode::HtmlRoute => {
+                                        Some(b"Cannot preserve JSX in a served HTML route")
+                                    }
+                                    options::CompileMode::None if topts.bytecode => {
+                                        Some(b"Cannot preserve JSX when generating bytecode")
+                                    }
+                                    options::CompileMode::None if topts.has_dev_server() => {
+                                        Some(b"Cannot preserve JSX in a development server bundle")
+                                    }
+                                    options::CompileMode::None if topts.framework.is_some() => {
+                                        Some(b"Cannot preserve JSX when building a Bake app")
+                                    }
+                                    options::CompileMode::None => None,
+                                };
+                                if let Some(message) = message {
+                                    log.add_error(Some(source), loc, message);
+                                    return Err(crate::Error::ParserError);
+                                }
+                            }
+                            Ok(JSAst::init(*ast))
+                        }
                         bun_js_parser::Result::Cached
                         | bun_js_parser::Result::AlreadyBundled(_) => {
                             unreachable!("bundler parse never yields Cached/AlreadyBundled")

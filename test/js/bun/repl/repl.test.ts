@@ -332,6 +332,30 @@ async function withTerminalRepl(
 }
 
 describe.concurrent("Bun REPL", () => {
+  test("reports preserved JSX and continues reading input", async () => {
+    const { stdout, outputs, exitCode } = await runRepl([
+      'throw new Error("old")',
+      "1 + 2",
+      "/** @jsxRuntime preserve */ <div />",
+      "console.log(_error.message, _)",
+      "4 + 5",
+      ".exit",
+    ]);
+    expect(stdout).toContain("[repl]:1:29");
+    expect(outputs[2]).toContain("Cannot preserve JSX in a file that Bun runs");
+    expect(outputs[3]).toContain("Cannot preserve JSX in a file that Bun runs 3");
+    expect(outputs[4]).toBe("9");
+    expect(exitCode).toBe(0);
+  });
+
+  test("reports JSX in a bare object literal at its original column", async () => {
+    using dir = tempDir("repl-preserve-object-literal", { "bunfig.toml": 'jsx = "preserve"' });
+    const { stdout, exitCode } = await runRepl(["{ node: <div /> }", ".exit"], { cwd: String(dir) });
+    expect(stdout).toContain("1 | { node: <div /> }");
+    expect(stdout).toMatch(/Cannot preserve JSX in a file that Bun runs\r?\n +at \[repl\]:1:9/);
+    expect(exitCode).toBe(0);
+  });
+
   describe("basic evaluation", () => {
     test("prints the value of each evaluated line", async () => {
       const { outputs, stderr, exitCode } = await runRepl([
@@ -888,6 +912,14 @@ describe.concurrent("Bun REPL", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout: stripAnsi(stdout), stderr: stripAnsi(stderr), exitCode };
     }
+
+    test.each(["-e", "-p"])("%s reports preserved JSX in the eval source", async flag => {
+      const { stdout, stderr, exitCode } = await runReplWith([flag, "/** @jsxRuntime preserve */\n<div />"]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("Cannot preserve JSX in a file that Bun runs");
+      expect(stderr).toContain("[eval]:2:1");
+      expect(exitCode).toBe(1);
+    });
 
     test("-e evaluates and exits without a welcome message or the result", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "1 + 1"]);

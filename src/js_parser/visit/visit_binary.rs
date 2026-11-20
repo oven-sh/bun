@@ -135,44 +135,25 @@ impl BinaryExpressionVisitor {
             }
         }
 
-        // Mark the control flow as dead if the branch is never taken
+        // The folding cases below discard these short-circuited operands.
         match e_.op {
-            Op::Code::BinLogicalOr => {
-                if SideEffects::to_boolean(p, &e_.left.data).is_some_and(|k| k.value) {
-                    // "true || dead"
-                    let old = p.is_control_flow_dead;
-                    p.is_control_flow_dead = true;
-                    p.visit_expr(&mut e_.right);
-                    p.is_control_flow_dead = old;
-                } else {
-                    p.visit_expr(&mut e_.right);
-                }
+            Op::Code::BinLogicalOr
+                if SideEffects::to_boolean(p, &e_.left.data).is_some_and(|k| k.value) =>
+            {
+                p.visit_discarded_expr(&mut e_.right);
             }
-            Op::Code::BinLogicalAnd => {
-                if SideEffects::to_boolean(p, &e_.left.data).is_some_and(|k| !k.value) {
-                    // "false && dead"
-                    let old = p.is_control_flow_dead;
-                    p.is_control_flow_dead = true;
-                    p.visit_expr(&mut e_.right);
-                    p.is_control_flow_dead = old;
-                } else {
-                    p.visit_expr(&mut e_.right);
-                }
+            Op::Code::BinLogicalAnd
+                if SideEffects::to_boolean(p, &e_.left.data).is_some_and(|k| !k.value) =>
+            {
+                p.visit_discarded_expr(&mut e_.right);
             }
-            Op::Code::BinNullishCoalescing => {
-                if SideEffects::to_null_or_undefined(p, &e_.left.data).is_some_and(|k| !k.value) {
-                    // "notNullOrUndefined ?? dead"
-                    let old = p.is_control_flow_dead;
-                    p.is_control_flow_dead = true;
-                    p.visit_expr(&mut e_.right);
-                    p.is_control_flow_dead = old;
-                } else {
-                    p.visit_expr(&mut e_.right);
-                }
+            Op::Code::BinNullishCoalescing
+                if SideEffects::to_null_or_undefined(p, &e_.left.data)
+                    .is_some_and(|k| !k.value) =>
+            {
+                p.visit_discarded_expr(&mut e_.right);
             }
-            _ => {
-                p.visit_expr(&mut e_.right);
-            }
+            _ => p.visit_expr(&mut e_.right),
         }
         p.decorator_class_name = prev_decorator_class_name;
 

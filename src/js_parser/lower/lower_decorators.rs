@@ -348,13 +348,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let mut obj_expr = tgt_idx.target;
                             self.rewrite_private_accesses_in_expr(&mut obj_expr, map);
                             // `x.#m(...)` becomes `__privateGet(x, _m).call(x, ...)`, which
-                            // references the receiver twice. Only identifiers and `this` can
-                            // be repeated safely; any other receiver is captured in a
-                            // temporary so its side effects run once and nested private
-                            // calls don't duplicate the whole subtree (the duplication is
-                            // exponential in the length of a chain like `o.#m().#m().#m()`).
+                            // references the receiver twice. Capture the receiver if evaluating
+                            // it has side effects or the getter can change the binding.
+                            let invokes_getter =
+                                info.getter_fn_ref.is_some() || info.accessor_desc_ref.is_some();
                             let (get_obj, this_arg) = match &obj_expr.data {
-                                js_ast::ExprData::EIdentifier(id) => {
+                                js_ast::ExprData::EIdentifier(id) if !invokes_getter => {
                                     let obj_ref = id.ref_;
                                     (obj_expr, self.use_ref(obj_ref, obj_expr.loc))
                                 }
@@ -436,7 +435,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EObject(e) => {
                 for prop in e.properties.slice_mut() {
-                    self.rewrite_private_accesses_in_property(prop, map);
+                    self.rewrite_private_accesses_in_property(prop, map, false);
+                }
+            }
+            js_ast::ExprData::EJsxElement(e) => {
+                if let Some(tag) = &mut e.tag {
+                    self.rewrite_private_accesses_in_expr(tag, map);
+                }
+                for prop in e.properties.slice_mut() {
+                    self.rewrite_private_accesses_in_property(prop, map, false);
+                }
+                for child in e.children.slice_mut() {
+                    self.rewrite_private_accesses_in_expr(child, map);
                 }
             }
             js_ast::ExprData::ETemplate(e) => {
@@ -464,12 +474,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         body: &mut G::FnBody,
         map: &PrivateLoweredMap,
     ) {
-        // A `var` of the body is not visible to a parameter default: the
-        // receiver temporaries of the defaults stay with the enclosing function.
         for arg in args.slice_mut() {
-            self.rewrite_private_accesses_in_binding(arg.binding, map);
+            self.rewrite_private_accesses_in_binding(arg.binding, map, true);
             if let Some(default) = &mut arg.default {
-                self.rewrite_private_accesses_in_expr(default, map);
+                self.rewrite_private_accesses_in_initializer(default, map);
             }
         }
         let temps_before = self.temp_refs_to_declare.len();
@@ -482,7 +490,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.rewrite_private_accesses_in_expr(extends, map);
         }
         for prop in class.properties.slice_mut() {
-            self.rewrite_private_accesses_in_property(prop, map);
+            self.rewrite_private_accesses_in_property(prop, map, true);
         }
     }
 
@@ -490,6 +498,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         prop: &mut Property,
         map: &PrivateLoweredMap,
+        is_class_member: bool,
     ) {
         if prop.flags.contains(Flags::Property::IsComputed)
             && let Some(key) = &mut prop.key
@@ -500,39 +509,85 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.rewrite_private_accesses_in_expr(value, map);
         }
         if let Some(initializer) = &mut prop.initializer {
-            self.rewrite_private_accesses_in_expr(initializer, map);
+            if is_class_member {
+                self.rewrite_private_accesses_in_initializer(initializer, map);
+            } else {
+                self.rewrite_private_accesses_in_expr(initializer, map);
+            }
         }
         if let Some(block) = prop.class_static_block_mut() {
+            let temps_before = self.temp_refs_to_declare.len();
             self.rewrite_private_accesses_in_stmts(block.stmts.slice_mut(), map);
+            if let Some(decl) = self.drain_capture_temp_decls(temps_before, block.loc) {
+                block.stmts.insert(0, decl);
+            }
         }
+    }
+
+    /// Keep receiver captures local to one evaluation of a field or parameter initializer.
+    fn rewrite_private_accesses_in_initializer(
+        &mut self,
+        expr: &mut Expr,
+        map: &PrivateLoweredMap,
+    ) {
+        let temps_before = self.temp_refs_to_declare.len();
+        self.rewrite_private_accesses_in_expr(expr, map);
+        let Some(decl) = self.drain_capture_temp_decls(temps_before, expr.loc) else {
+            return;
+        };
+        // Initializers here cannot contain `await` or `yield` in this scope.
+        let ret = self.s(S::Return { value: Some(*expr) }, expr.loc);
+        let target = self.new_expr(
+            E::Arrow {
+                body: G::FnBody {
+                    loc: expr.loc,
+                    stmts: self.arena.alloc_slice_copy(&[decl, ret]).into(),
+                },
+                ..Default::default()
+            },
+            expr.loc,
+        );
+        *expr = self.new_expr(
+            E::Call {
+                target,
+                ..Default::default()
+            },
+            expr.loc,
+        );
     }
 
     fn rewrite_private_accesses_in_binding(
         &mut self,
         binding: js_ast::Binding,
         map: &PrivateLoweredMap,
+        is_parameter: bool,
     ) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(binding.loc);
             return;
         }
+        let rewrite = if is_parameter {
+            Self::rewrite_private_accesses_in_initializer
+        } else {
+            Self::rewrite_private_accesses_in_expr
+        };
         match binding.data {
             js_ast::b::B::BArray(mut array) => {
                 for item in array.items_mut() {
-                    self.rewrite_private_accesses_in_binding(item.binding, map);
+                    self.rewrite_private_accesses_in_binding(item.binding, map, is_parameter);
                     if let Some(default) = &mut item.default_value {
-                        self.rewrite_private_accesses_in_expr(default, map);
+                        rewrite(self, default, map);
                     }
                 }
             }
             js_ast::b::B::BObject(mut object) => {
                 for prop in object.properties_mut() {
                     if prop.flags.contains(Flags::Property::IsComputed) {
-                        self.rewrite_private_accesses_in_expr(&mut prop.key, map);
+                        rewrite(self, &mut prop.key, map);
                     }
-                    self.rewrite_private_accesses_in_binding(prop.value, map);
+                    self.rewrite_private_accesses_in_binding(prop.value, map, is_parameter);
                     if let Some(default) = &mut prop.default_value {
-                        self.rewrite_private_accesses_in_expr(default, map);
+                        rewrite(self, default, map);
                     }
                 }
             }
@@ -619,7 +674,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::StmtData::SLocal(data) => {
                     for decl in data.decls.slice_mut() {
-                        self.rewrite_private_accesses_in_binding(decl.binding, map);
+                        self.rewrite_private_accesses_in_binding(decl.binding, map, false);
                         if let Some(v) = &mut decl.value {
                             self.rewrite_private_accesses_in_expr(v, map);
                         }
@@ -717,7 +772,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_private_accesses_in_stmts(body, map);
                     if let Some(c) = &mut data.catch {
                         if let Some(binding) = c.binding {
-                            self.rewrite_private_accesses_in_binding(binding, map);
+                            self.rewrite_private_accesses_in_binding(binding, map, false);
                         }
                         let cb = c.body.slice_mut();
                         self.rewrite_private_accesses_in_stmts(cb, map);
@@ -839,13 +894,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Both run once per call or instance, and the nearest statement list is
     /// outside the function or class they belong to.
-    fn is_param_default_or_field_initializer(&self) -> bool {
+    pub(crate) fn is_param_default_or_field_initializer(&self) -> bool {
         let mut scope = self.current_scope_ref();
         loop {
             match scope.kind {
                 js_ast::scope::Kind::FunctionArgs => return true,
                 // Set for a field's initializer, not for its key or decorators.
-                js_ast::scope::Kind::ClassBody => return scope.forbid_arguments,
+                js_ast::scope::Kind::ClassBody if scope.forbid_arguments => return true,
                 _ if scope.kind_stops_hoisting() => return false,
                 _ => scope = scope.parent.unwrap(),
             }
@@ -1326,10 +1381,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut leading = (!leading.is_empty()).then(|| p.make_static_block(&leading, loc));
         if !private_lowered_map.is_empty() {
             for member in members.iter_mut().chain(leading.as_mut()) {
-                p.rewrite_private_accesses_in_property(member, &private_lowered_map);
+                p.rewrite_private_accesses_in_property(member, &private_lowered_map, true);
             }
             for effect in constructor_effects.iter_mut() {
-                p.rewrite_private_accesses_in_expr(effect, &private_lowered_map);
+                p.rewrite_private_accesses_in_initializer(effect, &private_lowered_map);
             }
         }
 

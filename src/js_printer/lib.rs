@@ -2365,6 +2365,236 @@ pub(crate) mod __gated_printer {
             self.print_identifier(name);
         }
 
+        fn next_utf16_code_point(text: &[u16], i: &mut usize) -> u32 {
+            let (code_point, len) = strings::decode_wtf16_raw(&text[*i..]);
+            *i += usize::from(len);
+            code_point
+        }
+
+        fn print_utf16_as_utf8(&mut self, text: &[u16]) {
+            let mut i = 0usize;
+            while i < text.len() {
+                let c = Self::next_utf16_code_point(text, &mut i);
+                let mut buf = [0u8; 4];
+                let len = encode_wtf8_rune_t(&mut buf, c);
+                self.print(&buf[..len]);
+            }
+        }
+
+        fn jsx_attribute_quote_for_utf8(&self, text: &[u8]) -> Option<u8> {
+            let mut single = true;
+            let mut double = true;
+            let iter = CodepointIterator::init(text);
+            let mut cursor = strings::Cursor::default();
+
+            while iter.next(&mut cursor) {
+                let c = cursor.c as u32;
+                if !Self::can_print_code_point_raw_in_jsx(c) {
+                    return None;
+                }
+
+                match c {
+                    0x26 => return None,
+                    0x22 => double = false,
+                    0x27 => single = false,
+                    _ => {}
+                }
+            }
+
+            if double {
+                Some(b'"')
+            } else if single {
+                Some(b'\'')
+            } else {
+                None
+            }
+        }
+
+        fn jsx_attribute_quote_for_utf16(&self, text: &[u16]) -> Option<u8> {
+            let mut single = true;
+            let mut double = true;
+            let mut i = 0usize;
+
+            while i < text.len() {
+                let c = Self::next_utf16_code_point(text, &mut i);
+                if !Self::can_print_code_point_raw_in_jsx(c) {
+                    return None;
+                }
+
+                match c {
+                    0x26 => return None,
+                    0x22 => double = false,
+                    0x27 => single = false,
+                    _ => {}
+                }
+            }
+
+            if double {
+                Some(b'"')
+            } else if single {
+                Some(b'\'')
+            } else {
+                None
+            }
+        }
+
+        fn can_print_text_as_jsx_child_utf8(&self, text: &[u8]) -> bool {
+            let iter = CodepointIterator::init(text);
+            let mut cursor = strings::Cursor::default();
+
+            while iter.next(&mut cursor) {
+                let c = cursor.c as u32;
+                if !Self::can_print_code_point_raw_in_jsx(c) {
+                    return false;
+                }
+
+                match c {
+                    0x26 | 0x3C | 0x3E | 0x7B | 0x7D => return false,
+                    _ => {}
+                }
+            }
+
+            true
+        }
+
+        fn can_print_text_as_jsx_child_utf16(&self, text: &[u16]) -> bool {
+            let mut i = 0usize;
+
+            while i < text.len() {
+                let c = Self::next_utf16_code_point(text, &mut i);
+                if !Self::can_print_code_point_raw_in_jsx(c) {
+                    return false;
+                }
+
+                match c {
+                    0x26 | 0x3C | 0x3E | 0x7B | 0x7D => return false,
+                    _ => {}
+                }
+            }
+
+            true
+        }
+
+        fn can_print_code_point_raw_in_jsx(c: u32) -> bool {
+            c >= FIRST_ASCII as u32
+                && (!ASCII_ONLY || c <= LAST_ASCII as u32)
+                && !(FIRST_HIGH_SURROGATE as u32..=LAST_LOW_SURROGATE as u32).contains(&c)
+                && !matches!(c, 0x2028 | 0x2029)
+        }
+
+        fn print_jsx_string_expression(&mut self, str_: &E::String) {
+            let str_ = str_.flattened(self.bump);
+            self.print(b"{");
+            self.print_string_literal_e_string(&*str_, false);
+            self.print(b"}");
+        }
+
+        fn print_jsx_attribute_value_string(&mut self, str_: &E::String) {
+            let str_ = str_.flattened(self.bump);
+            if str_.is_utf8() {
+                if let Some(quote) = self.jsx_attribute_quote_for_utf8(str_.slice8()) {
+                    self.print(quote);
+                    self.print(str_.slice8());
+                    self.print(quote);
+                    return;
+                }
+            } else if let Some(quote) = self.jsx_attribute_quote_for_utf16(str_.slice16()) {
+                self.print(quote);
+                self.print_utf16_as_utf8(str_.slice16());
+                self.print(quote);
+                return;
+            }
+
+            self.print_jsx_string_expression(&str_);
+        }
+
+        fn can_print_as_jsx_child_text(&self, str_: &E::String) -> bool {
+            let str_ = str_.flattened(self.bump);
+            if str_.is_utf8() {
+                !str_.slice8().is_empty() && self.can_print_text_as_jsx_child_utf8(str_.slice8())
+            } else {
+                !str_.slice16().is_empty() && self.can_print_text_as_jsx_child_utf16(str_.slice16())
+            }
+        }
+
+        fn print_jsx_text(&mut self, str_: &E::String) {
+            let str_ = str_.flattened(self.bump);
+            if str_.is_utf8() {
+                self.print(str_.slice8());
+            } else {
+                self.print_utf16_as_utf8(str_.slice16());
+            }
+        }
+
+        /// A string child prints as JSX text when it is safe to and the child
+        /// before it was not text: two adjacent texts would re-parse as one.
+        fn is_jsx_text_child(&self, child: &Expr, prev_was_text: bool) -> bool {
+            !prev_was_text
+                && child
+                    .data
+                    .e_string()
+                    .is_some_and(|str_| self.can_print_as_jsx_child_text(&str_))
+        }
+
+        fn print_jsx_tag(&mut self, tag: Expr, map_opening_tag: bool) {
+            match &tag.data {
+                ExprData::EIdentifier(id) => {
+                    let name = self.name_for_symbol(id.ref_);
+                    if map_opening_tag {
+                        self.add_source_mapping_for_name(tag.loc, name, id.ref_);
+                    }
+                    self.print(name);
+                }
+                ExprData::EImportIdentifier(id) => {
+                    let symbol = self.import_symbol_for_printing(id.ref_);
+                    debug_assert!(symbol.import_item_status != js_ast::ImportItemStatus::Missing);
+                    let (ref_, property) = symbol
+                        .namespace_alias
+                        .as_ref()
+                        .map_or((id.ref_, &[][..]), |namespace| {
+                            (namespace.namespace_ref, namespace.alias.slice())
+                        });
+                    let name = self.name_for_symbol(ref_);
+                    if map_opening_tag {
+                        self.add_source_mapping_for_name(tag.loc, name, ref_);
+                    }
+                    self.print(name);
+                    if !property.is_empty() {
+                        self.print(b".");
+                        self.print(property);
+                    }
+                }
+                ExprData::EString(str_) => {
+                    if map_opening_tag {
+                        self.add_source_mapping(tag.loc);
+                    }
+                    self.print_jsx_text(str_);
+                }
+                ExprData::EThis(_) => {
+                    if map_opening_tag {
+                        self.add_source_mapping(tag.loc);
+                    }
+                    self.print(b"this");
+                }
+                ExprData::EDot(dot) => {
+                    if dot.optional_chain.is_none()
+                        && dot.is_import_property_use
+                        && let Some(binding) = self.import_member_binding(dot.target, &dot.name)
+                    {
+                        self.print_jsx_tag(binding, map_opening_tag);
+                        return;
+                    }
+                    self.print_jsx_tag(dot.target, map_opening_tag);
+                    self.print(b".");
+                    if map_opening_tag {
+                        self.add_source_mapping(dot.name_loc);
+                    }
+                    self.print(dot.name.slice());
+                }
+                _ => unreachable!("the JSX visitor validates the tag expression"),
+            }
+        }
+
         pub(crate) fn print_clause_alias(&mut self, alias: &[u8]) {
             if !strings::contains_non_bmp_code_point_or_is_invalid_identifier(alias) {
                 self.print_space_before_identifier();
@@ -4224,12 +4454,7 @@ pub(crate) mod __gated_printer {
                     // Potentially use a property access instead of an identifier
                     let mut did_print = false;
 
-                    let ref_ = if self.options.module_type != bundle_opts::Format::InternalBakeDev {
-                        self.symbols().follow(e.ref_)
-                    } else {
-                        e.ref_
-                    };
-                    let symbol = self.symbols().get_const(ref_).unwrap();
+                    let symbol = self.import_symbol_for_printing(e.ref_);
 
                     if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
                         self.print_undefined(expr.loc, level);
@@ -4252,7 +4477,7 @@ pub(crate) mod __gated_printer {
                                 }
                                 self.print_space_before_identifier();
                                 self.add_source_mapping(expr.loc);
-                                self.print_namespace_alias(import_record, namespace);
+                                self.print_namespace_alias(namespace);
 
                                 if wrap {
                                     self.print(b")");
@@ -4292,18 +4517,7 @@ pub(crate) mod __gated_printer {
 
                             self.print_space_before_identifier();
                             self.add_source_mapping(expr.loc);
-                            self.print_symbol(namespace.namespace_ref);
-                            let alias = namespace.alias.slice();
-                            if lexer::is_identifier(alias) {
-                                self.print(b".");
-                                // TODO: addSourceMappingForName
-                                self.print_identifier(alias);
-                            } else {
-                                self.print(b"[");
-                                // TODO: addSourceMappingForName
-                                self.print_string_literal_utf8(alias, false);
-                                self.print(b"]");
-                            }
+                            self.print_namespace_alias(namespace);
 
                             if wrap {
                                 self.print(b")");
@@ -4482,7 +4696,137 @@ pub(crate) mod __gated_printer {
                     self.print_string_characters_utf8(name, b'"');
                     self.print(b'"');
                 }
-                ExprData::EJsxElement(_) | ExprData::EPrivateIdentifier(_) => {
+                ExprData::EJsxElement(e_) => {
+                    if self.prev_op_end == self.writer.written() && self.writer.prev_char() == b'<'
+                    {
+                        self.print(b" ");
+                    }
+                    self.add_source_mapping(expr.loc);
+                    self.print(b"<");
+                    if let Some(tag) = e_.tag {
+                        self.print_jsx_tag(tag, true);
+                    }
+
+                    if e_.tag.is_some() {
+                        for prop in e_.properties.slice() {
+                            if prop.kind == G::PropertyKind::Spread {
+                                self.print(b" {...");
+                                self.print_expr(
+                                    prop.value.expect("infallible: spread prop has value"),
+                                    Level::Comma,
+                                    ExprFlag::none(),
+                                );
+                                self.print(b"}");
+                                continue;
+                            }
+
+                            let key = prop.key.expect("infallible: prop has key");
+                            let name = key
+                                .data
+                                .e_string()
+                                .expect("infallible: JSX attribute name is a string");
+                            if !name.is_jsx_name(self.bump) {
+                                self.print(b" {...{");
+                                self.print_expr(key, Level::Comma, ExprFlag::none());
+                                self.print(b": ");
+                                self.print_expr(
+                                    prop.value.expect("infallible: shorthand prop has value"),
+                                    Level::Comma,
+                                    ExprFlag::none(),
+                                );
+                                self.print(b"}}");
+                                continue;
+                            }
+
+                            self.print(b" ");
+                            self.add_source_mapping(key.loc);
+                            self.print_jsx_text(&name);
+                            if prop.flags.contains(js_ast::flags::Property::WasShorthand) {
+                                continue;
+                            }
+                            if let Some(value) = prop.value {
+                                self.print(b"=");
+                                match &value.data {
+                                    ExprData::EString(str_) => {
+                                        self.add_source_mapping(value.loc);
+                                        self.print_jsx_attribute_value_string(str_);
+                                    }
+                                    _ => {
+                                        self.print(b"{");
+                                        self.print_expr(value, Level::Comma, ExprFlag::none());
+                                        self.print(b"}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let children = e_.children.slice();
+                    if e_.flags.contains(js_ast::flags::JSXElement::IsSelfClosing) {
+                        self.print_space();
+                        self.add_source_mapping(e_.close_tag_loc);
+                        self.print(b"/>");
+                    } else {
+                        self.print(b">");
+                        // Text keeps its element on one line: a line break beside
+                        // it would re-parse as different whitespace.
+                        let mut has_text = false;
+                        let mut prev_was_text = false;
+                        for child in children {
+                            prev_was_text = self.is_jsx_text_child(child, prev_was_text);
+                            has_text |= prev_was_text;
+                        }
+                        let is_single_line =
+                            self.options.minify_whitespace || children.len() < 2 || has_text;
+                        if !is_single_line {
+                            self.indent();
+                        }
+
+                        let mut prev_was_text = false;
+                        for child in children {
+                            if !is_single_line {
+                                self.print_newline();
+                                self.print_indent();
+                            }
+
+                            let is_text = self.is_jsx_text_child(child, prev_was_text);
+                            prev_was_text = is_text;
+                            match &child.data {
+                                ExprData::EString(str_) => {
+                                    self.add_source_mapping(child.loc);
+                                    if is_text {
+                                        self.print_jsx_text(str_);
+                                    } else {
+                                        self.print_jsx_string_expression(str_);
+                                    }
+                                }
+                                ExprData::EJsxElement(_) => {
+                                    self.print_expr(*child, Level::Lowest, ExprFlag::none());
+                                }
+                                _ => {
+                                    self.print(b"{");
+                                    self.print_expr(*child, Level::Comma, ExprFlag::none());
+                                    self.print(b"}");
+                                }
+                            }
+                        }
+
+                        if !is_single_line {
+                            self.unindent();
+                            self.print_newline();
+                            self.print_indent();
+                        }
+
+                        self.add_source_mapping(e_.close_tag_start_loc);
+                        self.print(b"</");
+                        if let Some(tag) = e_.tag {
+                            self.add_source_mapping(e_.close_tag_loc);
+                            self.print_jsx_tag(tag, false);
+                        }
+                        self.print(b">");
+                    }
+                }
+                ExprData::EPrivateIdentifier(_) => {
                     if cfg!(debug_assertions) {
                         Output::panic(format_args!(
                             "Unexpected expression of type .{}",
@@ -4536,11 +4880,16 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_namespace_alias(
-            &mut self,
-            _import_record: &ImportRecord,
-            namespace: &G::NamespaceAlias,
-        ) {
+        fn import_symbol_for_printing(&self, ref_: Ref) -> &'a js_ast::Symbol {
+            let ref_ = if self.options.module_type != bundle_opts::Format::InternalBakeDev {
+                self.symbols().follow(ref_)
+            } else {
+                ref_
+            };
+            self.symbols().get_const(ref_).unwrap()
+        }
+
+        pub(crate) fn print_namespace_alias(&mut self, namespace: &G::NamespaceAlias) {
             self.print_symbol(namespace.namespace_ref);
 
             // In the case of code like this:
@@ -5610,13 +5959,10 @@ pub(crate) mod __gated_printer {
                                 if let Some(symbol) = symbol {
                                     if let Some(namespace) = &symbol.namespace_alias {
                                         if namespace.was_originally_property_access {
-                                            let import_record = self.import_record(
-                                                namespace.import_record_index as usize,
-                                            );
                                             self.print(b"var ");
                                             self.print_symbol(item.name.ref_);
                                             self.print_equals();
-                                            self.print_namespace_alias(import_record, namespace);
+                                            self.print_namespace_alias(namespace);
                                             self.print_semicolon_after_statement();
                                             array.swap_remove(i);
 

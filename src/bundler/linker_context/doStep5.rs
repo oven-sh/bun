@@ -231,14 +231,11 @@ impl LinkerContext<'_, '_> {
                     if let Some(symbol) = c.graph.symbols.get_const(import_ref) {
                         if symbol.kind == bun_ast::symbol::Kind::TsEnum {
                             if let Some(enum_data) = c.graph.ts_enums.get(&import_ref) {
-                                let mut found_non_inlined_enum = false;
-
-                                for (name, prop_use) in properties.iter() {
-                                    if enum_data.get(name).is_none() {
-                                        found_non_inlined_enum = true;
-                                        use_.merge(SymbolUse::unscoped(prop_use.count_estimate));
-                                    }
-                                }
+                                // A JSX member tag still reads the enum object.
+                                let found_non_inlined_enum =
+                                    properties.iter().any(|(name, prop_use)| {
+                                        prop_use.is_jsx_tag || enum_data.get(name).is_none()
+                                    });
 
                                 if !found_non_inlined_enum {
                                     if use_.count_estimate() == 0 {
@@ -251,7 +248,6 @@ impl LinkerContext<'_, '_> {
                     }
                 }
 
-                // Common path: this import isn't a TypeScript enum
                 for prop_use in properties.values() {
                     use_.merge(SymbolUse::unscoped(prop_use.count_estimate));
                 }

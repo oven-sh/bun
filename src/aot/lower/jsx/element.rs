@@ -192,6 +192,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(tag) = hir[element.jsx].tag.some() else {
             let settings = self.file.compiled.jsx;
             let fragment = match settings.runtime {
+                JsxRuntime::Preserve => unreachable!("preserved JSX is rejected before lowering"),
                 JsxRuntime::Automatic => self.get_jsx_import(JsxImport::Fragment),
                 JsxRuntime::Classic => {
                     self.lower_jsx_member_path(element, JsxRoot::Fragment, &settings.fragment)

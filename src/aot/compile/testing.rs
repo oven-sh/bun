@@ -643,6 +643,7 @@ pub(crate) struct TestProject {
     directory: Vec<u8>,
     pub(crate) entry_points: Vec<Vec<u8>>,
     in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
+    jsx_runtime_override: Option<JsxRuntime>,
     limits: LimitValues,
     paths: PathOptions,
     pub(crate) root_directory: Option<&'static [u8]>,
@@ -682,6 +683,8 @@ impl TestProject {
         in_memory_files.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         TestProject {
             in_memory_files,
+            jsx_runtime_override: (settings.jsx.runtime == JsxRuntime::Preserve)
+                .then_some(JsxRuntime::Preserve),
             ..TestProject::on_disk(PROJECT_DIRECTORY, &entry_points)
         }
     }
@@ -698,6 +701,7 @@ impl TestProject {
             directory: directory.to_vec(),
             entry_points: entry_points.clone(),
             in_memory_files: Vec::new(),
+            jsx_runtime_override: None,
             limits: LimitValues::for_host(),
             paths: PathOptions {
                 module_prefix: b"/$bunfs/root/".to_vec(),
@@ -763,6 +767,10 @@ impl TestProject {
 
     pub(crate) fn options<'a>(&'a self, libs: Libs<'a>) -> Options<'a> {
         let (test_files, paths_of_preloads) = self.paths_listed_by_runner();
+        let mut code = CodeOptions::bun_run(&from_native(&self.directory));
+        if let Some(runtime) = self.jsx_runtime_override {
+            code.jsx.runtime = runtime;
+        }
         Options {
             aot: &self.aot,
             executable_identity: ExecutableIdentity([0; 16]),
@@ -773,7 +781,7 @@ impl TestProject {
                 entry_points_that_run_first: (paths_of_preloads.iter())
                     .map(|path| from_native(path))
                     .collect(),
-                ..CodeOptions::bun_run(&from_native(&self.directory))
+                ..code
             },
             typescript_libs: libs,
             load: LoadOptions {
@@ -806,6 +814,7 @@ fn write_configuration(settings: &TranspileSettings) -> Vec<u8> {
     let jsx = &settings.jsx;
     let jsx_emit: &[u8] = match (jsx.runtime, jsx.is_development) {
         (JsxRuntime::Classic, _) => b"react",
+        (JsxRuntime::Preserve, _) => b"preserve",
         (JsxRuntime::Automatic, true) => b"react-jsxdev",
         (JsxRuntime::Automatic, false) => b"react-jsx",
     };
@@ -827,7 +836,9 @@ fn write_configuration(settings: &TranspileSettings) -> Vec<u8> {
             options.push(("jsxFactory", dotted_name(&jsx.factory)));
             options.push(("jsxFragmentFactory", dotted_name(&jsx.fragment)));
         }
-        JsxRuntime::Automatic => options.push(("jsxImportSource", string(&jsx.import_source))),
+        JsxRuntime::Automatic | JsxRuntime::Preserve => {
+            options.push(("jsxImportSource", string(&jsx.import_source)))
+        }
     }
     options.extend([
         (

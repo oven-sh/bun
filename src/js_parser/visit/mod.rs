@@ -32,10 +32,102 @@ use bun_collections::VecExt;
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::StrictModeKind;
 use bun_collections::HashMap;
-use core::ptr::NonNull;
+use core::{ops::Range, ptr::NonNull};
+use smallvec::SmallVec;
+use std::rc::Rc;
 
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
+
+enum PreservedJsxRange {
+    Single(Range<usize>),
+    Shared(Rc<Range<usize>>),
+}
+
+/// Track JSX locations by the statement payload that emits their syntax.
+/// A rewrite that moves syntax to another payload moves its locations with it.
+pub(crate) struct PreservedJsx<'a> {
+    // Keeping indices stable while nested visitors invalidate locations.
+    pub(crate) elements: BumpVec<'a, Option<bun_ast::Loc>>,
+    // Hoisted statements can separate the ranges of adjacent declarations.
+    statements: HashMap<*const (), SmallVec<[PreservedJsxRange; 1]>>,
+}
+
+impl<'a> PreservedJsx<'a> {
+    pub(crate) fn new(arena: &'a bun_alloc::Arena) -> Self {
+        Self {
+            elements: BumpVec::new_in(arena),
+            statements: HashMap::default(),
+        }
+    }
+
+    fn record_statements(&mut self, stmts: &[Stmt], start: usize) {
+        let end = self.elements.len();
+        if start == end || stmts.is_empty() {
+            return;
+        }
+
+        if let [stmt] = stmts {
+            if let Some(key) = stmt.data.payload_ptr() {
+                let ranges = self.statements.entry(key).or_default();
+                ranges.retain(|range| match range {
+                    PreservedJsxRange::Single(range) => range.start < start || range.end > end,
+                    PreservedJsxRange::Shared(_) => true,
+                });
+                ranges.push(PreservedJsxRange::Single(start..end));
+            }
+            return;
+        }
+
+        // Sharing the range keeps its locations until every lowered statement drops its syntax.
+        let range = Rc::new(start..end);
+        for stmt in stmts {
+            if let Some(key) = stmt.data.payload_ptr() {
+                self.statements
+                    .entry(key)
+                    .or_default()
+                    .push(PreservedJsxRange::Shared(Rc::clone(&range)));
+            }
+        }
+    }
+
+    fn take_statement_ranges(&mut self, stmt: Stmt) -> Option<SmallVec<[PreservedJsxRange; 1]>> {
+        if self.statements.is_empty() {
+            return None;
+        }
+        let key = stmt.data.payload_ptr()?;
+        self.statements.remove(&key)
+    }
+
+    fn move_statement(&mut self, from: Stmt, into: Stmt) {
+        if self.statements.is_empty() {
+            return;
+        }
+        let Some(key) = into.data.payload_ptr() else {
+            return;
+        };
+        let ranges = self.take_statement_ranges(from);
+        let Some(ranges) = ranges else {
+            return;
+        };
+        self.statements.entry(key).or_default().extend(ranges);
+    }
+
+    fn discard_statement(&mut self, stmt: Stmt) {
+        let ranges = self.take_statement_ranges(stmt);
+        if let Some(ranges) = ranges {
+            for range in ranges {
+                let range = match range {
+                    PreservedJsxRange::Single(range) => Some(range),
+                    PreservedJsxRange::Shared(range) => Rc::into_inner(range),
+                };
+                if let Some(range) = range {
+                    self.elements[range].fill(None);
+                }
+            }
+        }
+    }
+}
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
@@ -771,6 +863,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
             }
             StmtData::SLocal(mut st) => {
+                let jsx_start = self.preserved_jsx.elements.len();
+                let outlined_start = self.react_compiler_outlined_from_nested.len();
                 for dec in st.decls.slice_mut() {
                     self.visit_binding(dec.binding, None);
                     if let Some(val) = dec.value.as_mut() {
@@ -778,6 +872,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 st.kind = self.select_local_kind(st.kind);
+                if outlined_start == self.react_compiler_outlined_from_nested.len() {
+                    self.preserved_jsx
+                        .record_statements(core::slice::from_ref(&stmt), jsx_start);
+                }
             }
             _ => {
                 self.panic("Unexpected stmt in visitForLoopInit", format_args!(""));
@@ -1500,6 +1598,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         shadow_ref
     }
 
+    pub(crate) fn keep_stmt_in_dead_control_flow(&mut self, stmt: Stmt) -> bool {
+        let mut on_strip_syntax = |stmt| self.preserved_jsx.discard_statement(stmt);
+        let keep = SideEffects::should_keep_stmt_in_dead_control_flow(stmt, &mut on_strip_syntax);
+        if !keep {
+            self.preserved_jsx.discard_statement(stmt);
+        }
+        keep
+    }
+
     // Try separating the list for appending, so that it's not a pointer.
     pub(crate) fn visit_stmts(
         &mut self,
@@ -1531,12 +1638,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Save the current control-flow liveness. This represents if we are
             // currently inside an "if (false) { ... }" block.
             let old_is_control_flow_dead = p.is_control_flow_dead;
+            let preserved_jsx_start = p.preserved_jsx.elements.len();
             // Restored manually at block end. The error
             // path (`?`) skips restore; acceptable because callers `.expect()` or
             // propagate fatally (parse abort) — no resumption after error.
 
             let mut before: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
             let mut after: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
+
+            let prev_nearest_stmt_list = p.nearest_stmt_list;
+            // BACKREF — `before` outlives this block; raw NonNull avoids
+            // the `&'a mut` borrow conflict. Derive via `addr_of_mut!` (no intermediate
+            // `&mut`) so the pointer shares the local's base tag and survives the
+            // direct `&mut before` reborrows in the loop below (Stacked Borrows).
+            p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
 
             // Preprocess TypeScript enums to improve code generation. Otherwise
             // uses of an enum before that enum has been declared won't be inlined:
@@ -1569,13 +1684,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // visit all statements first
             let mut visited: ListManaged<'a, Stmt> =
                 ListManaged::with_capacity_in(stmts.len(), p.arena);
-
-            let prev_nearest_stmt_list = p.nearest_stmt_list;
-            // BACKREF — `before` outlives this block; raw NonNull avoids
-            // the `&'a mut` borrow conflict. Derive via `addr_of_mut!` (no intermediate
-            // `&mut`) so the pointer shares the local's base tag and survives the
-            // direct `&mut before` reborrows in the loop below (Stacked Borrows).
-            p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
 
             let mut preprocessed_enum_i: usize = 0;
 
@@ -1765,7 +1873,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut end: usize = 0;
                 for idx in 0..visited.len() {
                     let item = visited[idx];
-                    if !SideEffects::should_keep_stmt_in_dead_control_flow(item, p.arena) {
+                    if !p.keep_stmt_in_dead_control_flow(item) {
                         continue;
                     }
 
@@ -1782,6 +1890,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmts.extend_from_slice(&before);
             stmts.extend_from_slice(&visited[..visited_count]);
             stmts.extend_from_slice(&after);
+            if stmts.is_empty() {
+                p.preserved_jsx.elements[preserved_jsx_start..].fill(None);
+            }
 
             // manual restore for the block-level `defer`s
             p.nearest_stmt_list = prev_nearest_stmt_list;
@@ -1849,9 +1960,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !p.options.features.minify_syntax {
             let mut is_control_flow_dead = false;
             stmts.retain(|stmt| {
-                if is_control_flow_dead
-                    && !SideEffects::should_keep_stmt_in_dead_control_flow(*stmt, p.arena)
-                {
+                if is_control_flow_dead && !p.keep_stmt_in_dead_control_flow(*stmt) {
                     return false;
                 }
                 match stmt.data {
@@ -1940,7 +2049,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         for stmt in stmts.iter().copied() {
             if is_control_flow_dead
                 && dead_code_elimination
-                && !SideEffects::should_keep_stmt_in_dead_control_flow(stmt, p.arena)
+                && !p.keep_stmt_in_dead_control_flow(stmt)
             {
                 // Strip unnecessary statements if the control flow is dead here
                 continue;
@@ -2037,6 +2146,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         match local.decls.len_u32() {
                             1 => {
+                                p.preserved_jsx.move_statement(output[prev_idx], stmt);
                                 local.decls.clear();
                                 let new_len = output.len() - 1;
                                 output.truncate(new_len);
@@ -2073,6 +2183,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
                             if local.can_merge_with(&prev_local) {
                                 prev_local.decls.extend_from_slice(local.decls.slice());
+                                p.preserved_jsx.move_statement(stmt, *prev_stmt);
                                 continue;
                             }
                         }
@@ -2093,6 +2204,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     && s_expr.does_not_affect_tree_shaking;
                                 prev_expr.value =
                                     Expr::join_with_comma(prev_expr.value, s_expr.value);
+                                p.preserved_jsx.move_statement(stmt, *prev_stmt);
                                 continue;
                             }
                         } else if let StmtData::SLocal(prev_local) = prev_stmt.data {
@@ -2126,6 +2238,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             {
                                                 decl.value = Some(bin_assign.right);
                                                 p.ignore_usage(left_id.ref_);
+                                                p.preserved_jsx.move_statement(stmt, *prev_stmt);
                                                 continue;
                                             }
                                         }
@@ -2145,6 +2258,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if !prev_stmt.is_super_call() {
                                 s_switch.test =
                                     Expr::join_with_comma(prev_expr.value, s_switch.test);
+                                p.preserved_jsx.move_statement(prev_stmt, stmt);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -2159,6 +2273,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
                                 s_if.test = Expr::join_with_comma(prev_expr.value, s_if.test);
+                                p.preserved_jsx.move_statement(prev_stmt, stmt);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -2181,6 +2296,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     prev_expr.value,
                                     ret.value.unwrap(),
                                 ));
+                                p.preserved_jsx.move_statement(prev_stmt, stmt);
                                 output[prev_idx] = stmt;
                                 continue;
                             }
@@ -2202,7 +2318,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                output[prev_idx] = p.s(
+                                let merged = p.s(
                                     S::Throw {
                                         value: Expr::join_with_comma(
                                             prev_expr.value,
@@ -2211,6 +2327,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     },
                                     stmt.loc,
                                 );
+                                p.preserved_jsx.move_statement(prev_stmt, merged);
+                                p.preserved_jsx.move_statement(stmt, merged);
+                                output[prev_idx] = merged;
                                 continue;
                             }
                         }

@@ -10,6 +10,7 @@ import {
   rmSync,
   statSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
 } from "fs";
 import { bunEnv, bunExe, bunRun, isWindows, MAX_PATH_BYTES, tempDir, tmpdirSync } from "harness";
@@ -69,6 +70,77 @@ beforeEach(() => {
 });
 
 describe("transpiler cache", () => {
+  test("preserve rejects JSX in node_modules with cold and warm transpiler caches", async () => {
+    using dir = tempDir("jsx-preserve-cache", {
+      "main.ts": 'import value from "dep"; console.log(value);',
+      "node_modules/dep/index.js":
+        "const React = { createElement: type => type }; export default <div/>;\n//" +
+        Buffer.alloc(5 * 1024, "p").toString(),
+    });
+    const cache = join(String(dir), "cache");
+    const childEnv = {
+      ...bunEnv,
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache,
+      BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+    };
+    for (const warm of [false, true]) {
+      if (warm) {
+        const runClassic = async () => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "--jsx-runtime=classic", "main.ts"],
+            cwd: String(dir),
+            env: childEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "div\n", stderr: "", exitCode: 0 });
+        };
+        await runClassic();
+        const entries = readdirSync(cache).map(name => join(cache, name));
+        expect(entries).toHaveLength(1);
+        const [entry] = entries;
+        // A cache miss transpiles the same source again and replaces the file.
+        utimesSync(entry, 1, 1);
+        const mtime = statSync(entry, { bigint: true }).mtimeNs;
+        await runClassic();
+        expect(statSync(entry, { bigint: true }).mtimeNs).toBe(mtime);
+      }
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--jsx-runtime=preserve", "main.ts"],
+        cwd: String(dir),
+        env: childEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("Cannot preserve JSX in a file that Bun runs");
+      expect(stderr.replaceAll("\\", "/")).toContain("node_modules/dep/index.js");
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  test.each([false, true])("keeps JSX side effects distinct (cache warmed with flag: %s)", async initial => {
+    const entry = join(temp_dir, "entry.jsx");
+    writeFileSync(
+      entry,
+      'const React = { createElement: () => console.log("jsx ran") };\n<div />;\nconsole.log("done");\n//' +
+        "x".repeat(5 * 1024),
+    );
+
+    async function run(sideEffects: boolean) {
+      const flags = sideEffects ? ["--jsx-side-effects"] : [];
+      const result = await bunRun(["--jsx-runtime=classic", ...flags, entry], env);
+      expect(result).toSpawn(sideEffects ? "jsx ran\ndone" : "done");
+    }
+
+    await run(initial);
+    expect(newCacheCount()).toBe(1);
+    await run(!initial);
+    await run(initial);
+  });
+
   test("works", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "a"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");

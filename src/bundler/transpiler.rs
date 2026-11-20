@@ -509,9 +509,16 @@ impl<'a> Transpiler<'a> {
             let top_level_dir = Fs::FileSystem::get().top_level_dir();
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
-                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
-                    if self.options.transform_options.jsx.is_none() {
+                    let uses_default_jsx = self
+                        .options
+                        .transform_options
+                        .jsx
+                        .as_ref()
+                        .is_none_or(|jsx| jsx.runtime == api::JsxRuntime::_none);
+                    if uses_default_jsx {
+                        let side_effects = self.options.jsx.side_effects;
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                        self.options.jsx.side_effects |= side_effects;
                     }
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;
@@ -697,6 +704,23 @@ pub struct ParseResult<'a> {
     pub source_contents_backing: resolver::cache::Contents,
 }
 
+/// Check that the parsed source can be handed to the runtime.
+pub fn require_runnable_js(
+    ast: &bun_ast::Ast<'_>,
+    source: &bun_ast::Source<'_>,
+    log: &mut bun_ast::Log,
+) -> Result<(), crate::Error> {
+    if let Some(loc) = ast.first_preserved_jsx {
+        log.add_error(
+            Some(source),
+            loc,
+            b"Cannot preserve JSX in a file that Bun runs",
+        );
+        return Err(crate::Error::ParserError);
+    }
+    Ok(())
+}
+
 impl<'a> ParseResult<'a> {
     #[inline]
     fn empty_with(
@@ -718,12 +742,9 @@ impl<'a> ParseResult<'a> {
 
 /// Per-file inputs to the transpiler's parse step.
 impl ParseOptions<'_, '_> {
-    /// What a package with the "aot" condition says about JSX, decorators and class fields, in place of what the program says.
+    /// Apply the AOT package's JSX, decorator, and class field settings.
     pub fn apply_aot_package_config(&mut self, own: &TSConfigJSON) {
-        self.jsx = own.merge_jsx(crate::options_impl::jsx::Pragma {
-            development: self.jsx.development,
-            ..Default::default()
-        });
+        self.jsx = own.merge_aot_package_jsx(&self.jsx);
         self.emit_decorator_metadata = own.emit_decorator_metadata;
         self.experimental_decorators = own.experimental_decorators;
         self.use_define_for_class_fields = own.use_define_for_class_fields != Some(false);

@@ -161,6 +161,17 @@ macro_rules! impl_statement_data {
     // Pointer-payload variants: stored via Store / arena.
     ( ptr: $( ($ty:ty, $variant:ident) ),* $(,)?
       ; inline: $( ($ity:ty, $ivariant:ident) ),* $(,)? ) => {
+        impl Data {
+            /// Return the arena payload address for use as a statement identity.
+            pub fn payload_ptr(self) -> Option<*const ()> {
+                match self {
+                    $(Self::$variant(payload) => Some(payload.as_ptr().cast()),)*
+                    $(Self::$ivariant(_) => None,)*
+                    Self::SLazyExport(payload) => Some(payload.as_ptr().cast()),
+                }
+            }
+        }
+
         $(
             impl StatementData for $ty {
                 #[inline]

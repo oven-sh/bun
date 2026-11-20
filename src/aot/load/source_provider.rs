@@ -351,6 +351,7 @@ pub fn apply_jsx_settings(pragma: &mut jsx::Pragma, settings: &JsxSettings) {
     pragma.runtime = match settings.runtime {
         JsxRuntime::Classic => jsx::Runtime::Classic,
         JsxRuntime::Automatic => jsx::Runtime::Automatic,
+        JsxRuntime::Preserve => jsx::Runtime::Preserve,
     };
     pragma.development = settings.is_development;
     if !settings.factory.is_empty() {
@@ -427,7 +428,8 @@ fn parse_without_bundler(
     let mut log = Log::init();
     let parsed =
         Parser::init(options, &mut log, &source, define, &arena).and_then(|parser| parser.parse());
-    parsed.is_ok() && !log.has_errors()
+    matches!(parsed, Ok(bun_js_parser::Result::Ast(ast)) if ast.first_preserved_jsx.is_none())
+        && !log.has_errors()
 }
 
 pub struct WithoutServices;

@@ -54,6 +54,23 @@ devTest("symbol collision with import identifier", {
     await dev.fetch("/").equals("Hello, 456, 987!");
   },
 });
+devTest("reports preserved JSX before evaluating a route", {
+  framework: minimalFramework,
+  files: {
+    "routes/plain.tsx": `/** @jsxRuntime preserve */\nexport default () => new Response("ready");`,
+    "routes/index.tsx": `/** @jsxRuntime preserve */\nconst element = <div />;\nexport default () => new Response(String(element));`,
+  },
+  async test(dev) {
+    await dev.fetch("/plain").equals("ready");
+    {
+      await using c = await dev.client("/", {
+        errors: ["routes/index.tsx:2:17: error: Cannot preserve JSX in a development server bundle"],
+      });
+    }
+    await dev.write("routes/index.tsx", `export default () => new Response("fixed");`);
+    await dev.fetch("/").equals("fixed");
+  },
+});
 devTest('uses "development" condition', {
   framework: minimalFramework,
   files: {

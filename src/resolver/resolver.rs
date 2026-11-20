@@ -1044,6 +1044,8 @@ impl<'a> Resolver<'a> {
         let Some(package_json) = dir_info.package_json() else {
             return;
         };
+        // Not `dir`: it can be in a buffer that reading the directory wrote again.
+        let dir = dir_info.abs_path;
         let mut buf = bun_paths::path_buffer_pool::get();
         for field in package_json.main_fields.values() {
             let target = bun_paths::resolve_path::join_abs_string_buf_checked::<

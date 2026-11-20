@@ -1149,7 +1149,7 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
 
     appendFileSync(join(String(dir), "setup.ts"), "// touched\n");
     expect(await runs.next()).toEqual({ files: ["wa.test.ts", "wb.test.ts"], summary: "Ran 2 tests across 2 files." });
-  }, 60_000);
+  });
 
   const watchFixture = {
     "package.json": JSON.stringify({ name: "watch", type: "module" }),
@@ -1170,7 +1170,7 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
 
     rmSync(join(String(dir), "dep-a.ts"));
     expect(await runs.next()).toEqual({ files: ["wa.test.ts"], summary: "Ran 1 test across 1 file." });
-  }, 60_000);
+  });
 
   test("a renamed test file runs under its new name", async () => {
     using dir = tempDir("test-changed-watch-rename", watchFixture);
@@ -1184,7 +1184,7 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     // The watcher knows the old name alone. Git lists the new one.
     renameSync(join(String(dir), "wc.test.ts"), join(String(dir), "wd.test.ts"));
     expect(await runs.next()).toEqual({ files: ["wb.test.ts", "wd.test.ts"], summary: "Ran 2 tests across 2 files." });
-  }, 60_000);
+  });
 
   test("a renamed test file whose name has capitals runs under its new name", async () => {
     using dir = tempDir("test-changed-watch-rename-capitals", {
@@ -1203,30 +1203,26 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
       files: ["renamed.test.ts", "wb.test.ts"],
       summary: "Ran 2 tests across 2 files.",
     });
-  }, 60_000);
+  });
 
   // Linux only: it stops the process until /proc says that every thread is stopped.
-  test.skipIf(!isLinux)(
-    "a dependency deleted together with its import reruns the importer alone",
-    async () => {
-      using dir = tempDir("test-changed-watch-delete-with-import", watchFixture);
-      initRepo(String(dir));
-      appendFileSync(join(String(dir), "wb.test.ts"), "// dirty\n");
+  test.skipIf(!isLinux)("a dependency deleted together with its import reruns the importer alone", async () => {
+    using dir = tempDir("test-changed-watch-delete-with-import", watchFixture);
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "wb.test.ts"), "// dirty\n");
 
-      const runs = runsOf(String(dir));
-      await using proc = runs.proc;
-      expect(await runs.next()).toEqual({ files: ["wb.test.ts"], summary: "Ran 1 test across 1 file." });
+    const runs = runsOf(String(dir));
+    await using proc = runs.proc;
+    expect(await runs.next()).toEqual({ files: ["wb.test.ts"], summary: "Ran 1 test across 1 file." });
 
-      // Stopped, so that the watcher gets both in one batch.
-      proc.kill("SIGSTOP");
-      await untilEveryThreadIs("T", proc.pid);
-      rmSync(join(String(dir), "dep-a.ts"));
-      writeFileSync(join(String(dir), "wa.test.ts"), watchFixture["wc.test.ts"]);
-      proc.kill("SIGCONT");
-      expect(await runs.next()).toEqual({ files: ["wa.test.ts"], summary: "Ran 1 test across 1 file." });
-    },
-    60_000,
-  );
+    // Stopped, so that the watcher gets both in one batch.
+    proc.kill("SIGSTOP");
+    await untilEveryThreadIs("T", proc.pid);
+    rmSync(join(String(dir), "dep-a.ts"));
+    writeFileSync(join(String(dir), "wa.test.ts"), watchFixture["wc.test.ts"]);
+    proc.kill("SIGCONT");
+    expect(await runs.next()).toEqual({ files: ["wa.test.ts"], summary: "Ran 1 test across 1 file." });
+  });
 
   test("trigger file path handed to restarted runs has a 128-bit random hex suffix", async () => {
     using dir = tempDir("test-changed-watch-trigger-name", {

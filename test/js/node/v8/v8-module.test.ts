@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import { GCProfiler, getHeapStatistics, isStringOneByteRepresentation } from "node:v8";
-import vm from "node:vm";
 import { Worker } from "node:worker_threads";
 
 describe("v8.getHeapStatistics", () => {

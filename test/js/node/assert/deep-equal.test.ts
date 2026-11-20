@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import assert from "node:assert";
 import { createPrivateKey, createPublicKey, createSecretKey, generateKeyPairSync } from "node:crypto";
 import util from "node:util";
+import cycles from "./partial-deep-equal-cycles-fixture.cjs";
 
 type Thunk = () => unknown;
 
@@ -1357,5 +1358,515 @@ describe("AssertionError", () => {
     const custom = new RangeError("custom");
     const error = caught(() => assert.deepStrictEqual(1, 2, custom));
     expect(error).toBe(custom);
+  });
+});
+
+// An answer below is that of a new Node.js process, but where a test says that Bun gives another one. The fixture
+// says how to check that with Node.js.
+describe("assert.partialDeepStrictEqual with cycles", () => {
+  const { partOfTree, ring, tree } = cycles;
+  const answerOf: (actual: unknown, expected: unknown) => string = cycles.answerOf;
+  const besideRings = cycles.besideRings as (actual: unknown, expected: unknown) => [unknown, unknown];
+  const fails = (fn: () => void) => expect(fn).toThrow(assert.AssertionError);
+
+  test("a parent link in actual does not fail a part that matches", () => {
+    assert.partialDeepStrictEqual(tree(), partOfTree("Program"));
+    fails(() => assert.partialDeepStrictEqual(tree(), partOfTree("Script")));
+
+    // With no array on the way. Bun 1.3.14 passed this one.
+    const root: any = { type: "root" };
+    root.child = { type: "kid", parent: root };
+    assert.partialDeepStrictEqual(root, { child: { type: "kid", parent: { type: "root" } } });
+  });
+
+  test("an actual that holds itself matches a finite expected of any depth", () => {
+    const self: any = {};
+    self.a = self;
+    assert.partialDeepStrictEqual(self, { a: {} });
+    assert.partialDeepStrictEqual(self, { a: { a: { a: {} } } });
+    fails(() => assert.partialDeepStrictEqual(self, { a: { a: { b: 1 } } }));
+
+    const list: unknown[] = [1];
+    list.push(list);
+    assert.partialDeepStrictEqual(list, [1, [1]]);
+  });
+
+  test("the way back goes through a Map value, a Set member, a class field or an Error cause", () => {
+    const viaMap = { kind: "root", kids: new Map() };
+    viaMap.kids.set("k", { kind: "kid", up: viaMap });
+    assert.partialDeepStrictEqual(viaMap, { kids: new Map([["k", { kind: "kid", up: { kind: "root" } }]]) });
+
+    const viaSet = { kind: "root", kids: new Set() };
+    viaSet.kids.add({ kind: "kid", up: viaSet });
+    assert.partialDeepStrictEqual(viaSet, { kids: new Set([{ kind: "kid", up: { kind: "root" } }]) });
+
+    class Node {
+      kids: Node[] = [];
+      declare type: string;
+      declare parent?: Node;
+      constructor(type: string, parent?: Node) {
+        this.type = type;
+        this.parent = parent;
+        parent?.kids.push(this);
+      }
+    }
+    const root = new Node("root");
+    new Node("kid", root);
+    assert.partialDeepStrictEqual(root, { kids: [{ type: "kid", parent: { type: "root" } }] });
+
+    const holder: any = { name: "holder" };
+    holder.error = new Error("boom", { cause: holder });
+    assert.partialDeepStrictEqual(holder, { error: new Error("boom", { cause: { name: "holder" } }) });
+  });
+
+  test("an expected that comes back to itself under an actual that ends in it", () => {
+    const expected: any = { v: 1 };
+    expected.self = expected;
+    assert.partialDeepStrictEqual({ v: 1, self: { v: 1, self: expected } }, expected);
+  });
+
+  test("objects met again at other depths are compared while no pair repeats", () => {
+    const tail: any = { v: 2 };
+    tail.next = tail;
+    const expected: any = { v: 1 };
+    expected.next = { v: 2, next: expected };
+    // `actual.next.next.v` is 2 and `expected.next.next.v` is 1.
+    fails(() => assert.partialDeepStrictEqual({ v: 1, next: tail }, expected));
+  });
+
+  test("the answer does not depend on what was compared before", () => {
+    // Node.js looks for cycles in every later comparison of the process once one has thrown.
+    assert.partialDeepStrictEqual(ring(2), ring(2));
+    expect(() =>
+      assert.partialDeepStrictEqual(
+        {
+          get v() {
+            throw new Error("from a getter");
+          },
+        },
+        { v: 1 },
+      ),
+    ).toThrow("from a getter");
+    assert.partialDeepStrictEqual(tree(), partOfTree("Program"));
+  });
+
+  // From here on a pair of objects is inside its own comparison. Node.js runs out of stack there and compares
+  // again with its memos.
+  test("rings of one length pass and rings of different lengths fail", () => {
+    assert.partialDeepStrictEqual(ring(2), ring(2));
+    fails(() => assert.partialDeepStrictEqual(ring(2), ring(2, 2)));
+    fails(() => assert.partialDeepStrictEqual(ring(1), ring(2)));
+    fails(() => assert.partialDeepStrictEqual(ring(3), ring(1)));
+    fails(() => assert.partialDeepStrictEqual(ring(2), ring(3)));
+  });
+
+  test("the memos then decide for every other part of the same comparison", () => {
+    fails(() =>
+      assert.partialDeepStrictEqual({ loop: ring(1), ast: tree() }, { loop: ring(1), ast: partOfTree("Program") }),
+    );
+
+    // An expected with no key passes before the memos are asked.
+    const actual: any = {};
+    actual.a = actual.b = actual.c = actual;
+    const expected: any = { a: {} };
+    expected.b = expected;
+    assert.partialDeepStrictEqual(actual, expected);
+  });
+
+  test("under the memos every kind of value is still compared", () => {
+    const beside = besideRings;
+    fails(() => assert.partialDeepStrictEqual(...beside(new Error("a"), new Error("b"))));
+    assert.partialDeepStrictEqual(...beside(new Error("a"), new Error("a")));
+    fails(() => assert.partialDeepStrictEqual(...beside(new Date(1), new Date(2))));
+    assert.partialDeepStrictEqual(...beside(new Date(1), new Date(1)));
+    fails(() => assert.partialDeepStrictEqual(...beside(new Uint8Array([1, 2]), new Uint8Array([3]))));
+    assert.partialDeepStrictEqual(...beside([1, [2, 3]], [[3]]));
+    fails(() => assert.partialDeepStrictEqual(...beside([1], [1, 1])));
+    assert.partialDeepStrictEqual(...beside(new Map([[{ k: 1 }, { v: 1, w: 2 }]]), new Map([[{ k: 1 }, { v: 1 }]])));
+    fails(() => assert.partialDeepStrictEqual(...beside(new Set([{ v: 1 }]), new Set([{ v: 2 }]))));
+    assert.partialDeepStrictEqual(...beside(new Set([{ v: 1 }]), new Set()));
+  });
+
+  test("the named keys of an array are compared before its elements", () => {
+    // The named key of the first candidate differs, so its elements, which come back to it, are not compared.
+    // The second candidate ends at the expected array itself.
+    const expectedList: any = [];
+    expectedList.push(expectedList);
+    expectedList.p = 2;
+    const first: any = [];
+    first.push(first);
+    first.p = 1;
+    const second: any = [expectedList];
+    second.p = 2;
+    assert.partialDeepStrictEqual(
+      { lists: [first, second], ast: tree() },
+      { lists: [expectedList], ast: partOfTree("Program") },
+    );
+
+    // The key `p` is not on `actual`, and the elements before it come back to the pair.
+    const actual: unknown[] = [];
+    const holder = { a: actual };
+    actual.push(actual, holder, holder);
+    const expected: unknown[] = [];
+    const inner: any = [expected, expected];
+    inner.p = 1;
+    expected.push({ a: inner });
+    fails(() => assert.partialDeepStrictEqual(actual, expected));
+  });
+
+  test("a member that both Sets hold is its own match", () => {
+    // The lookup finds it: no other member of `actual` is compared with it.
+    const reads: string[] = [];
+    const other = {
+      get v() {
+        reads.push("other");
+        return 1;
+      },
+    };
+    const shared = { v: 1 };
+    assert.partialDeepStrictEqual(new Set([other, shared]), new Set([shared]));
+    expect(reads).toEqual([]);
+
+    // A primitive that the Set of `actual` does not hold has no match: no member is compared with it.
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    expect(answerOf(new Set([proxy]), new Set([1]))).toBe("fail");
+    // And a primitive of `actual` is no match for an object: the two are not compared.
+    expect(answerOf(new Set([1]), new Set([proxy]))).toBe("fail");
+    // A function is a value with no other match too: the Set does not hold this one, so no member is compared.
+    expect(answerOf(new Set([proxy, 0, 1]), new Set([{}, () => {}]))).toBe("fail");
+
+    // In a Set of one or two, an earlier member of `expected` can take it. Then it needs another member of `actual`.
+    const taken = { v: 1, w: 2 };
+    fails(() => assert.partialDeepStrictEqual(new Set([taken, { v: 1, z: 1 }]), new Set([{ v: 1 }, taken])));
+    assert.partialDeepStrictEqual(new Set([taken, { v: 1, w: 2, z: 1 }]), new Set([{ v: 1 }, taken]));
+    // It took itself, so a later member of `expected` needs another member of `actual`.
+    fails(() => assert.partialDeepStrictEqual(new Set([taken, { z: 1 }]), new Set([taken, { v: 1 }])));
+    // In a Set of three or more it stays its own match. The third member can be any value.
+    assert.partialDeepStrictEqual(new Set([taken, { v: 1, z: 1 }, 0]), new Set([{ v: 1 }, taken]));
+    fails(() => assert.partialDeepStrictEqual(new Set([taken, { z: 1 }, 0]), new Set([taken, { v: 1 }])));
+
+    // The order of such members in the Sets does not matter: none of them is compared.
+    const members = [0, 1, 2].map(() => ({
+      get v() {
+        reads.push("member");
+        return 1;
+      },
+    }));
+    assert.partialDeepStrictEqual(
+      new Set([members[1], members[0], members[2]]),
+      new Set([members[2], members[0], members[1]]),
+    );
+    expect(reads).toEqual([]);
+  });
+
+  test("a Set of actual is looked up as it is before a member is compared", () => {
+    // The getter takes 2 away from `actual`, which held it when the comparison of the Sets began.
+    const shrinks = new Set<unknown>([
+      {
+        get n() {
+          shrinks.delete(2);
+          return 1;
+        },
+      },
+      2,
+      1,
+    ]);
+    assert.partialDeepStrictEqual(shrinks, new Set([{ n: 1 }, 2]));
+    expect(shrinks.has(2)).toBe(false);
+
+    // `actual` does not hold 2, so the Sets differ, and the getter that adds 2 does not run.
+    const grows = new Set<unknown>([
+      {
+        get n() {
+          grows.add(2);
+          return 1;
+        },
+      },
+      0,
+      1,
+    ]);
+    expect(answerOf(grows, new Set([{ n: 1 }, 2]))).toBe("fail");
+    expect(grows.has(2)).toBe(false);
+  });
+
+  test("operand code runs once, and once more when a pair is inside its own comparison", () => {
+    const counted = (reads: { count: number }, value: number) => ({
+      get v() {
+        reads.count++;
+        return value;
+      },
+    });
+    const plain = { count: 0 };
+    assert.partialDeepStrictEqual({ a: counted(plain, 1) }, { a: { v: 1 } });
+    expect(plain.count).toBe(1);
+
+    const beside = { count: 0 };
+    assert.partialDeepStrictEqual({ a: counted(beside, 1), loop: ring(1) }, { a: { v: 1 }, loop: ring(1) });
+    expect(beside.count).toBe(2);
+
+    // A list of six whose last item holds itself: each run reads each item one time.
+    const inside = { count: 0 };
+    const listOf = (item: () => any) => {
+      const items = Array.from({ length: 6 }, item);
+      items.forEach((each, i) => (each.next = items[Math.min(i + 1, 5)]));
+      return items[0];
+    };
+    assert.partialDeepStrictEqual(
+      listOf(() => counted(inside, 1)),
+      listOf(() => ({ v: 1 })),
+    );
+    expect(inside.count).toBe(12);
+  });
+
+  test("no other candidate is read once a pair is inside its own comparison", () => {
+    const reads: string[] = [];
+    const later = {
+      get v() {
+        reads.push("later");
+        return 1;
+      },
+    };
+    // The ring is the first candidate of each search. The second run ends the search at it.
+    assert.partialDeepStrictEqual([ring(1), later], [ring(1)]);
+    assert.partialDeepStrictEqual(new Set([ring(1), later]), new Set([ring(1)]));
+    assert.partialDeepStrictEqual(
+      new Map<unknown, unknown>([
+        [ring(1), 1],
+        [later, 1],
+      ]),
+      new Map([[ring(1), 1]]),
+    );
+    assert.partialDeepStrictEqual(
+      new Map<unknown, unknown>([
+        [{ k: 1 }, ring(1)],
+        [{ k: 1 }, later],
+      ]),
+      new Map([[{ k: 1 }, ring(1)]]),
+    );
+    const key = { v: 1 };
+    assert.partialDeepStrictEqual(
+      new Map<unknown, unknown>([
+        [key, ring(1)],
+        [later, 1],
+      ]),
+      new Map([[key, ring(1)]]),
+    );
+    // The entry of a key that both Maps hold is found by lookup, behind another candidate.
+    assert.partialDeepStrictEqual(
+      new Map<unknown, unknown>([
+        [later, 1],
+        [key, ring(1)],
+      ]),
+      new Map([[key, ring(1)]]),
+    );
+    expect(reads).toEqual([]);
+
+    // What follows the search is read, in the second run only.
+    assert.partialDeepStrictEqual([ring(1), later, later], [ring(1), { v: 1 }]);
+    assert.partialDeepStrictEqual(new Set([ring(1), later, { v: 2 }]), new Set([ring(1), { v: 1 }]));
+    assert.partialDeepStrictEqual(
+      new Map<unknown, unknown>([
+        [{ k: 1 }, ring(1)],
+        [{ k: 2 }, later],
+        [{ k: 3 }, 1],
+      ]),
+      new Map<unknown, unknown>([
+        [{ k: 1 }, ring(1)],
+        [{ k: 2 }, { v: 1 }],
+      ]),
+    );
+    expect(reads).toEqual(["later", "later", "later"]);
+  });
+
+  test("the end of the stack is an error only when the second run reaches it too", () => {
+    // A new object for each read: no pair of objects comes twice, and the comparison cannot end. The getter takes
+    // some stack of its own: the run gives up while there is stack for it.
+    const recurse = (depth: number): number => (depth ? recurse(depth - 1) + 1 : 0);
+    const fresh = (): object => ({
+      v: 1,
+      get next() {
+        recurse(256);
+        return fresh();
+      },
+    });
+    expect(answerOf(fresh(), ring(1))).toBe("fail");
+    // The same pair comes again after 10,100 levels.
+    expect(answerOf(ring(100), ring(101))).toBe("fail");
+    // The second run compares many pairs before the one that ends it, and is inside of few at a time.
+    const wide = () => Array.from({ length: 8000 }, () => ({ v: 1 }));
+    expect(answerOf({ wide: wide(), next: fresh() }, { wide: wide(), next: ring(1) })).toBe("fail");
+    // The same holds for Errors: their fields are compared ahead of their pairs.
+    const errors = () => Array.from({ length: 8000 }, () => new Error("x"));
+    expect(answerOf({ errors: errors(), next: fresh() }, { errors: errors(), next: ring(1) })).toBe("fail");
+
+    let deep: any = {};
+    let deepToo: any = {};
+    const actual = deep;
+    const expected = deepToo;
+    for (let i = 0; i < 100000; i++) {
+      deep = deep.x = {};
+      deepToo = deepToo.x = {};
+    }
+    expect(answerOf(actual, expected)).toBe("RangeError");
+  });
+
+  // Node.js has less stack than Bun, so its answers differ from these where its first run does not fit.
+  // A list of objects, and a list of Maps: a pair of Maps can take less stack under the memos than without them.
+  const listsOf = {
+    objects: {
+      item: (v: number): any => ({ v }),
+      link: (item: any, key: string, to: unknown) => void (item[key] = to),
+    },
+    Maps: {
+      item: (v: number): any => new Map([["v", v]]),
+      link: (item: any, key: string, to: unknown) => void item.set(key, to),
+    },
+  };
+  test.each(["objects", "Maps"] as const)(
+    "a deep list of %s with no pair that repeats is never left to the memos",
+    kind => {
+      const { item, link } = listsOf[kind];
+      // A list with links in both directions, against its part that goes to the last item and one link back. The
+      // memos fail that link back, because only `actual` was there before.
+      const answerAt = (depth: number) => {
+        const items = Array.from({ length: depth }, (_, v) => item(v));
+        items.forEach((each, i) => {
+          if (i > 0) link(each, "previous", items[i - 1]);
+          if (i < depth - 1) link(each, "next", items[i + 1]);
+        });
+        let expected = item(depth - 1);
+        link(expected, "previous", item(depth - 2));
+        for (let v = depth - 2; v >= 0; v--) {
+          const outer = item(v);
+          link(outer, "next", expected);
+          expected = outer;
+        }
+        return answerOf(items[0], expected);
+      };
+      // Deeper by a quarter each time, until a list does not pass: that list has no stack.
+      let depth = 64;
+      let answer: string;
+      do {
+        depth += depth >> 2;
+        answer = answerAt(depth);
+      } while (answer === "pass");
+      expect(answer).toBe("RangeError");
+    },
+  );
+
+  test("the depth of the caller does not change an answer that fits in half of the stack", () => {
+    // With little stack left, the first run has no room. The memos give other answers than it for the first six.
+    const inActual = { p: { q: { p: {} } } };
+    const loop: any = { v: 2 };
+    loop.next = loop;
+    const expectedRing: any = { v: 1 };
+    expectedRing.next = { v: 2, next: expectedRing };
+    // A list of 64 arrays, where the last one has a link back.
+    const list: unknown[] = [];
+    let last = list;
+    let expectedList: unknown[] = [63, [62]];
+    for (let i = 0; i < 63; i++) {
+      const next: unknown[] = [];
+      last.push(i, next);
+      if (i === 62) next.push(63, last);
+      last = next;
+      expectedList = [62 - i, expectedList];
+    }
+    // A link up in the part that is compared first, and 64 levels in the part that is compared after it. A getter
+    // gives those levels: operand code runs between the call and the end of the stack.
+    const levels = () => {
+      let deepest: object = { end: 1 };
+      for (let i = 0; i < 64; i++) deepest = { in: deepest };
+      return deepest;
+    };
+    const deep = levels();
+    const linkUp: any = {
+      first: {},
+      get second() {
+        return deep;
+      },
+    };
+    linkUp.first.up = linkUp;
+    // A mismatch behind 64 levels. The memos pass it, because both sides were there before.
+    const shared = levels();
+    const deepRing: any = { deep: shared, v: 1 };
+    deepRing.next = { v: 2, next: deepRing };
+    const deepLoop: any = { deep: levels(), v: 2 };
+    deepLoop.next = deepLoop;
+    // The operands, the answer, and whether the comparison needs only a few levels of stack.
+    const pairs: Array<[unknown, unknown, string, boolean?]> = [
+      [tree(), partOfTree("Program"), "pass", true],
+      [{ p: { q: inActual } }, inActual, "pass"],
+      [{ v: 1, next: loop }, expectedRing, "fail"],
+      [list, expectedList, "pass"],
+      [linkUp, { first: { up: { second: {} } }, second: levels() }, "pass"],
+      [{ deep: shared, v: 1, next: deepLoop }, deepRing, "fail"],
+      // A pair that repeats goes to the memos from every caller.
+      [ring(3), ring(3), "pass", true],
+    ];
+    const answers = pairs.map(() => new Set<string>());
+    const recurse = (depth: number): number => (depth ? recurse(depth - 1) + 1 : 0);
+    const hasStackFor = (calls: number) => {
+      try {
+        recurse(calls);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    let smallWithNoAnswer = 0;
+    // Only the memos can end this comparison: its pair comes again after 10,100 levels.
+    const rings = [ring(100), ring(101)] as const;
+    const answersOfRings: string[] = [];
+    // The stack ends at the deepest call. On the way back, every 48th caller compares the pairs. A caller has
+    // stack enough when 128 of them in a row got no RangeError.
+    let deepest = 0;
+    let left = 128;
+    const down = (level: number) => {
+      deepest = level;
+      try {
+        down(level + 1);
+      } finally {
+        if (left > 0 && (deepest - level) % 48 === 0) {
+          left--;
+          const hasStack = hasStackFor(64);
+          pairs.forEach(([actual, expected, , small], i) => {
+            const answer = answerOf(actual, expected);
+            if (answer === "RangeError") {
+              left = 128;
+              if (small && hasStack) smallWithNoAnswer++;
+            }
+            answers[i].add(answer);
+          });
+        }
+        // A caller in the lower half of the stack, then one in the upper half.
+        if (level === (deepest >> 2) * 3 || level === deepest >> 2) answersOfRings.push(answerOf(...rings));
+      }
+    };
+    expect(() => down(0)).toThrow(RangeError);
+    expect(answers.map(answersOfPair => [...answersOfPair].filter(answer => answer !== "RangeError"))).toEqual(
+      pairs.map(([, , answer]) => [answer]),
+    );
+    // A call from the lower half has all of the stack, and no memos where that ends.
+    expect(smallWithNoAnswer).toBe(0);
+    expect(answersOfRings).toEqual(["RangeError", "fail"]);
+  });
+
+  describe("as the first comparison of a new Node.js process", () => {
+    for (const { name, node, pair, bun } of cycles.rows) {
+      test(bun ? `${name} (Node.js: ${node}, Bun: ${bun})` : name, () => {
+        expect(answerOf(...(pair() as [unknown, unknown]))).toBe(bun ?? node);
+      });
+    }
+
+    test.each(Object.keys(cycles.generated.node))("%s: generated pairs", kinds => {
+      const differences: Record<number, string> = {};
+      for (let seed = 0; seed < cycles.generated.seeds; seed++) {
+        const answer = answerOf(...(cycles.build(seed, kinds) as [unknown, unknown]));
+        if (answer !== cycles.answerOfNode(kinds, seed)) differences[seed] = answer;
+      }
+      expect(differences).toEqual((cycles.generated.bun as Record<string, Record<number, string>>)[kinds] ?? {});
+    });
   });
 });

@@ -844,19 +844,55 @@ fn only_short_streams_write_ahead_of_one_that_waits() {
 
 #[test]
 fn long_streams_that_come_in_pieces_are_passed_as_well() {
-    for (before, expected) in [(100_000, "2 writable"), (140_000, "6 writable")] {
+    for (before, pauses, expected) in [
+        (100_000, false, "2 writable"),
+        (140_000, false, "6 writable"),
+        (140_000, true, "2 writable"),
+    ] {
         let mut raw = Raw::server().connected();
         let ids = [(); 3].map(|()| raw.peer.open(Unidirectional));
-        raw.peer.send(ids[0], &filler(0, before), false);
+        raw.peer.send(ids[2], &filler(0, 300_000), false);
         turns(&mut raw);
+        raw.peer.send(ids[0], &filler(0, before), false);
+        if pauses {
+            turns(&mut raw);
+        }
         raw.peer.log.clear();
-        for (id, len) in [(ids[2], 900_000), (ids[0], 60_000), (ids[1], 60_000)] {
+        for (id, len) in [(ids[2], 900_000), (ids[0], 40_000), (ids[1], 60_000)] {
             raw.peer.send(id, &filler(0, len), false);
         }
         raw.process();
         turns(&mut raw);
         assert_eq!(raw.peer.log[0], expected);
     }
+}
+
+#[test]
+fn streams_that_pause_are_not_long() {
+    let mut raw = Raw::server().connected();
+    let ids = [(); 2].map(|()| raw.peer.open(Unidirectional));
+    raw.peer.send(ids[0], &filler(0, 200_000), false);
+    turns(&mut raw);
+    for id in ids {
+        raw.peer.send(id, &filler(0, 8_000), false);
+    }
+    raw.process();
+    assert_eq!(turns(&mut raw), [(ids[0], 12), (ids[1], 0)]);
+}
+
+#[test]
+fn streams_that_are_written_to_the_end_keep_their_place() {
+    let mut raw = Raw::server().connected();
+    let older = [(); 20].map(|()| raw.peer.open(Unidirectional))[0];
+    raw.peer.send(older, &filler(0, 200_000), true);
+    raw.process();
+    raw.advance(RTT);
+    raw.send("ack");
+    let younger = raw.peer.open(Unidirectional);
+    raw.peer.send(younger, &filler(0, 80_000), true);
+    raw.advance(RTT);
+    raw.send("ack");
+    assert_eq!(ids(turns(&mut raw)).last(), Some(&younger));
 }
 
 #[test]

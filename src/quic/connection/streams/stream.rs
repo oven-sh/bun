@@ -78,6 +78,8 @@ pub(crate) struct Stream {
     pub(super) share: u64,
     /// How many bytes the application is left with.
     pub(super) unwritten: u64,
+    /// Where it last ran out of bytes to send.
+    pub(super) busy_from: u64,
     /// Up to where it is this stream's turn to send.
     pub(super) turn_end: u64,
     pub(crate) write_round: u64,
@@ -118,6 +120,7 @@ impl Stream {
             first_turn: 0,
             share: 0,
             unwritten: 0,
+            busy_from: 0,
             turn_end: 0,
             write_round: 0,
             reset_code: 0,

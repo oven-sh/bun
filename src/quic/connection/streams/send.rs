@@ -14,7 +14,7 @@ const MIN_UNSENT: u64 = 8 * 1024;
 /// By how much what is unsent has to be below the target for the application to be asked for more.
 pub(in crate::connection) const WRITE_CHUNK: u64 = 32 * 1024;
 const TURN_LEN: u64 = 16 * 1024;
-/// By how many turns a stream gives way that has sent this much, and has more than a little to send.
+/// By how many turns a stream gives way that has sent this much in one go, and has more than a little to send.
 const BULK_HANDICAP: u64 = 8;
 const BULK_LEN: u64 = 128 * 1024;
 const LITTLE: u64 = 2 * 1024;
@@ -79,8 +79,12 @@ impl Stream {
     /// How many bytes the application is about to offer.
     #[inline]
     pub(crate) fn expect(&mut self, len: u64) {
-        if len > self.unwritten && self.send.end() >= BULK_LEN {
-            self.flags.insert(Flags::KEEPS_COMING);
+        if len > self.unwritten {
+            if self.unwritten + self.send.unsent_len() == 0 {
+                self.busy_from = self.send.end();
+            }
+            let keeps_coming = self.send.end() >= self.busy_from + BULK_LEN;
+            self.flags.set(Flags::KEEPS_COMING, keeps_coming);
         }
     }
 
@@ -362,7 +366,9 @@ impl State {
             false => is_past(LONG_LEN) || stream.flags.contains(Flags::WILL_BE_LONG),
         };
         let turn = match (takes_turns, is_ending) {
-            (true, false) => self.turns + u64::from(is_past(BULK_LEN)) * BULK_HANDICAP,
+            (true, false) => {
+                self.turns + u64::from(is_past(stream.busy_from + BULK_LEN)) * BULK_HANDICAP
+            }
             (true, true) if !is_serial => 0,
             _ => stream.first_turn,
         };

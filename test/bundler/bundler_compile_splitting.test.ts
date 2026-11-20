@@ -656,6 +656,51 @@ describe("bundler", () => {
       });
     }
 
+    // An import() of a stylesheet loads a chunk of the executable that holds the class names, with and without
+    // --bytecode. The entry point holds its own copy of them.
+    for (const bytecode of [false, true]) {
+      itBundled(`compile/splitting/DynamicImportOfCSSModule-${bytecode ? "bytecode" : "source"}`, {
+        compile: true,
+        splitting: true,
+        bytecode,
+        format: "esm",
+        backend: "cli",
+        files: {
+          "/entry.ts": /* js */ `
+            import styles from "./x.module.css";
+            const lazy = await import("./x.module.css");
+            console.log(Object.keys(styles).join(), Object.keys(lazy).sort().join(), lazy.default.foo === styles.foo);
+          `,
+          "/x.module.css": `.foo { color: red }`,
+        },
+        run: { stdout: "foo default,foo true" },
+      });
+    }
+
+    // The chunk of shared.ts is a TypeScript chunk: PathLike is a type, so the module record of the chunk has no
+    // export of that name. The copy of the class names that the chunk holds does not make it a JavaScript chunk.
+    itBundled("compile/splitting/SharedTypeScriptChunkThatImportsCSSModule", {
+      compile: true,
+      splitting: true,
+      bytecode: true,
+      format: "esm",
+      backend: "cli",
+      files: {
+        "/a.ts": `import { cls, PathLike } from "./shared"; export { PathLike }; console.log("a", cls);`,
+        "/b.ts": `import { cls } from "./shared"; console.log("b", cls);`,
+        "/shared.ts": /* js */ `
+          import styles from "./x.module.css";
+          import { PathLike, existsSync } from "node:fs";
+          export { PathLike };
+          export const cls: string = typeof styles.foo + existsSync("/");
+        `,
+        "/x.module.css": `.foo { color: red }`,
+      },
+      entryPointsRaw: ["./a.ts", "./b.ts"],
+      outfile: "dist/out",
+      run: { file: "dist/out", stdout: "a stringtrue" },
+    });
+
     // A chunk that is only linked statically has no module namespace object.
     itBundled("compile/splitting/NamespaceObjectsOnlyForImportedChunks", {
       compile: true,

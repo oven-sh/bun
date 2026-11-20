@@ -2,7 +2,7 @@ use crate::BundledAst as JSAst;
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::server_component_boundary;
-use bun_collections::MultiArrayList;
+use bun_collections::{ArrayHashMap, MultiArrayList};
 use enum_map::EnumMap;
 
 use crate::IndexStringMap::IndexStringMap;
@@ -75,6 +75,8 @@ pub struct Graph<'a> {
     /// OutputPiece.Kind.HTMLManifest corresponds to indices into the array.
     pub(crate) html_imports: Vec<IndexInt>,
 
+    pub(crate) css_js_stubs: CssJsStubs,
+
     pub(crate) estimated_file_loader_count: u32,
 
     /// For Bake, a count of the CSS asts is used to make precise
@@ -114,6 +116,64 @@ impl<'a> core::ops::Index<usize> for CssAsts<'a> {
     type Output = Option<Box<BundlerStyleSheet<'a>>>;
     fn index(&self, source_index: usize) -> &Self::Output {
         self.0.get(source_index).unwrap_or(&None)
+    }
+}
+
+/// What a JS stub is for: its stylesheet, the target of its importers (the graphs of `bun build --app` can share one stylesheet row), and whether it is the target of a split `import()`. That stub is an entry point and prints every class name in its own chunk. The other stub of the stylesheet prints the class names that the files that import it read.
+pub(crate) type CssJsStubKey = (IndexInt, options::Target, bool);
+
+/// The JS modules that export the class names of stylesheets: the last rows of the graph (esbuild's "JavaScript stub").
+#[derive(Default)]
+pub(crate) struct CssJsStubs {
+    /// The source index of the first stub. Stub `first + i` has the key `stubs.keys()[i]`.
+    first: IndexInt,
+    stubs: ArrayHashMap<CssJsStubKey, ()>,
+}
+
+impl CssJsStubs {
+    pub(crate) fn new(first: IndexInt, stubs: ArrayHashMap<CssJsStubKey, ()>) -> Self {
+        Self { first, stubs }
+    }
+
+    /// The stylesheet whose class names the stub at `source_index` exports.
+    #[inline]
+    pub(crate) fn stylesheet_of(&self, source_index: IndexInt) -> Option<IndexInt> {
+        self.stubs
+            .keys()
+            .get(source_index.checked_sub(self.first)? as usize)
+            .map(|&(stylesheet, ..)| stylesheet)
+    }
+
+    /// The stub that an `import` or a `require()` in JavaScript of `target` names for the value of `stylesheet`.
+    #[inline]
+    pub(crate) fn stub_of(
+        &self,
+        stylesheet: IndexInt,
+        target: options::Target,
+    ) -> Option<IndexInt> {
+        self.stub_with_key((stylesheet, target, false))
+    }
+
+    #[inline]
+    fn stub_with_key(&self, key: CssJsStubKey) -> Option<IndexInt> {
+        if self.stubs.is_empty() {
+            return None;
+        }
+        Some(self.first + self.stubs.get_index(&key)? as IndexInt)
+    }
+
+    /// The stubs of `stylesheet`: for each target whose JavaScript reads a value from it, and for a split `import()` of it.
+    pub(crate) fn stubs_of(&self, stylesheet: IndexInt) -> impl Iterator<Item = IndexInt> + '_ {
+        (0..<options::Target as enum_map::Enum>::LENGTH).flat_map(move |target| {
+            let target = <options::Target as enum_map::Enum>::from_usize(target);
+            [false, true]
+                .into_iter()
+                .filter_map(move |is_split| self.stub_with_key((stylesheet, target, is_split)))
+        })
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.stubs.count()
     }
 }
 
@@ -176,6 +236,19 @@ bitflags::bitflags! {
 }
 
 impl<'a> Graph<'a> {
+    /// A stylesheet, or the JS stub of one. Each chunk that needs its class names prints a copy of its JS parts: it is a file of no one JS chunk, and no chunk imports its symbols from another.
+    #[inline]
+    pub(crate) fn holds_class_names(&self, source_index: IndexInt) -> bool {
+        self.css_asts[source_index as usize].is_some()
+            || self.css_js_stubs.stylesheet_of(source_index).is_some()
+    }
+
+    /// Every other file: its parts print in the one JS chunk that has its entry bits.
+    #[inline]
+    pub(crate) fn has_one_js_chunk(&self, source_index: IndexInt) -> bool {
+        !self.holds_class_names(source_index)
+    }
+
     pub(crate) fn new(heap: &'a ThreadLocalArena, pool: ThreadPool) -> Self {
         Self {
             css_asts: CssAsts::default(),
@@ -192,6 +265,7 @@ impl<'a> Graph<'a> {
             build_graphs: EnumMap::default(),
             server_component_boundaries: server_component_boundary::List::default(),
             html_imports: Vec::new(),
+            css_js_stubs: CssJsStubs::default(),
             estimated_file_loader_count: 0,
             css_file_count: 0,
             kit_referenced_server_data: false,

@@ -39,6 +39,7 @@ pub(crate) fn find_imported_css_files_in_js_order(
     let all_import_records = this.graph.ast.items_import_records();
     let all_loaders = this.parse_graph().input_files.items_loader();
     let all_parts = this.graph.ast.items_parts();
+    let css_js_stubs = &this.parse_graph().css_js_stubs;
 
     // Explicit-stack DFS (was per-edge recursive). `Enter` pushes
     // successors in discovery order then reverses the tail so `Leave`
@@ -84,6 +85,12 @@ pub(crate) fn find_imported_css_files_in_js_order(
                     stack.push(Frame::Enter(record.source_index));
                 }
             }
+        }
+        // The JS stub of a stylesheet stands where the stylesheet is imported.
+        if let Some(stylesheet) = css_js_stubs.stylesheet_of(source_index.get())
+            && !visited.is_set(stylesheet as usize)
+        {
+            stack.push(Frame::Enter(Index::init(stylesheet)));
         }
         // Only CSS files contribute to `order`; skip the `Leave` for
         // everything else. The entry point was always visited with

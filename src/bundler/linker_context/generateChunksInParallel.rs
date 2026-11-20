@@ -1138,12 +1138,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                     input_path,
                     display_size: display_size as u32,
                     output_kind,
-                    input_loader: if chunk.entry_point.is_entry_point() {
-                        c.parse_graph().input_files.items_loader()
-                            [chunk.entry_point.source_index() as usize]
-                    } else {
-                        Loader::Js
-                    },
+                    input_loader: c.chunk_input_loader(chunk),
                     output_path: Box::from(chunk.final_rel_path.as_ref()),
                     is_executable: chunk.flags.contains(crate::chunk::Flags::IS_EXECUTABLE),
                     source_map_index,

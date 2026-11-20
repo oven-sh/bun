@@ -56,6 +56,7 @@ pub(crate) fn scan_imports_and_exports(
 
     {
         let css_asts = &this.parse_graph().css_asts;
+        let css_js_stubs = &this.parse_graph().css_js_stubs;
         let ast = this.graph.ast.split_mut();
         let meta = this.graph.meta.split_mut();
         let dyn_ref_aliases = meta.dynamic_import_referenced_aliases;
@@ -375,6 +376,8 @@ pub(crate) fn scan_imports_and_exports(
                 export_star_map: HashMap::default(),
                 export_star_records: ast.export_star_import_records,
                 output_format,
+                css_asts,
+                css_js_stubs,
                 wrap_stack: Vec::new(),
                 export_star_stack: Vec::new(),
             };
@@ -1340,7 +1343,7 @@ fn should_call_runtime_require(format: options::Format) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 // DependencyWrapper
 // ──────────────────────────────────────────────────────────────────────────
-struct DependencyWrapper<'a> {
+struct DependencyWrapper<'a, 'css> {
     flags: &'a mut [js_meta::Flags],
     exports_kind: &'a mut [ExportsKind],
     import_records: &'a [ImportRecordList<'a>],
@@ -1348,6 +1351,8 @@ struct DependencyWrapper<'a> {
     entry_point_kinds: &'a [EntryPoint::Kind],
     export_star_records: &'a [bun_alloc::AstVec<u32>],
     output_format: options::Format,
+    css_asts: &'a crate::Graph::CssAsts<'css>,
+    css_js_stubs: &'a crate::Graph::CssJsStubs,
     wrap_stack: Vec<IndexInt>,
     export_star_stack: Vec<ExportStarFrame>,
 }
@@ -1367,7 +1372,7 @@ enum ExportStarEntry {
     Pushed,
 }
 
-impl DependencyWrapper<'_> {
+impl DependencyWrapper<'_, '_> {
     /// Marks `source_index` as `EsmWithDynamicFallback` if it transitively
     /// `export *`s from a file whose exports are not statically analyzable
     /// (CommonJS, or an unresolved external `export *`), along with every file
@@ -1469,6 +1474,20 @@ impl DependencyWrapper<'_> {
                     ExportsKind::Cjs => WrapKind::Cjs,
                     _ => WrapKind::Esm,
                 };
+            }
+
+            // A stylesheet and its JS stubs were one file: a wrapper of one is a wrapper of all, and of the files that the stylesheet imports.
+            if let Some(stylesheet) = self.css_js_stubs.stylesheet_of(source_index) {
+                if !self.flags[stylesheet as usize].did_wrap_dependencies {
+                    self.wrap_stack.push(stylesheet);
+                }
+            } else if self.css_js_stubs.len() > 0 && self.css_asts[source_index as usize].is_some()
+            {
+                for stub in self.css_js_stubs.stubs_of(source_index) {
+                    if !self.flags[stub as usize].did_wrap_dependencies {
+                        self.wrap_stack.push(stub);
+                    }
+                }
             }
 
             for record in self.import_records[source_index as usize].as_slice() {

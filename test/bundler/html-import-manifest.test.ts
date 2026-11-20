@@ -452,6 +452,44 @@ console.log("About manifest:", aboutHtml);
     },
   });
 
+  // The page's script reads the class names of a stylesheet from a module of their own. The stylesheet, and
+  // the files that its url() and its `composes` name, are still what the page loads.
+  // A stylesheet inlines a file under 128 KB as a data: URL. These are copied.
+  const image = (fill: string) => Buffer.alloc(128 * 1024, fill).toString();
+  for (const [name, client] of Object.entries({
+    static: `import styles from "./card.module.css"; console.log(styles.card);`,
+    dynamic: `import("./card.module.css").then(styles => console.log(styles.default.card));`,
+  })) {
+    for (const splitting of [false, true]) {
+      itBundled(`html-import/assets-of-a-stylesheet-that-the-script-reads-${name}${splitting ? "-splitting" : ""}`, {
+        outdir: "out/",
+        splitting,
+        target: "bun",
+        entryPoints: ["/server.js"],
+        files: {
+          "/server.js": `
+            import html from "./client.html";
+            console.log(html.index);
+          `,
+          "/client.html": `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head><body></body></html>`,
+          "/client.js": client,
+          "/card.module.css": `.card { composes: base from "./base.module.css"; background: url("./card.png"); }`,
+          "/base.module.css": `.base { list-style-image: url("./base.png"); }`,
+          "/card.png": image("a"),
+          "/base.png": image("b"),
+        },
+
+        onAfterBundle(api) {
+          const [manifest] = readManifests(api, "out/server.js");
+          expect(inputs(manifest).filter(([, loader]) => loader === "file")).toEqual([
+            ["base.png", "file"],
+            ["card.png", "file"],
+          ]);
+        },
+      });
+    }
+  }
+
   // Each page only gets the chunks and assets its own code can load.
   itBundled("html-import/splitting-attributes-lazy-chunks-to-their-page", {
     outdir: "out/",

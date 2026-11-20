@@ -1,4 +1,6 @@
 import { describe, expect } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { readdirSync } from "node:fs";
 import path from "node:path";
 import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
@@ -305,6 +307,44 @@ h1 {
     },
   });
 
+  // The script of a page reads the class names of a stylesheet that the page also links.
+  itBundled("html/script-reads-stylesheet-value", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.module.css">
+    <script type="module" src="./script.js"></script>
+  </head>
+</html>`,
+      "/script.js": `
+import * as styles from "./styles.module.css";
+import("./lazy.module.css").then(lazy => console.log(JSON.stringify(styles), JSON.stringify(lazy.default)));`,
+      "/styles.module.css": `.title { color: red }`,
+      "/lazy.module.css": `.lazy { color: blue }`,
+    },
+    entryPoints: ["/index.html"],
+    async onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html.match(/rel="stylesheet"/g)).toHaveLength(1);
+      const script = html.match(/src="(.*\.js)"/)![1];
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(api.outdir, script)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: '{"default":{"title":"title_-MSaAA"},"title":"title_-MSaAA"} {"lazy":"lazy_zrZbVw"}\n',
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  });
+
   // Test multiple HTML entry points
   itBundled("html/multiple-entries", {
     outdir: "out/",
@@ -477,6 +517,34 @@ export const initNav = () => console.log('Navigation initialized');`,
           /<script type="module" crossorigin src="[^"]+"><\/script><link rel="modulepreload"/,
         );
       }
+    },
+  });
+
+  // The scripts of two pages import one stylesheet and read no class name. q.js, which require() loads, imports it
+  // too, so each script prints an empty wrapper for the class names. That wrapper needs no runtime: the pages share
+  // no chunk and preload nothing.
+  itBundled("html/unread-class-names-in-a-wrapper-add-no-chunk", {
+    outdir: "out/",
+    files: {
+      "/a.html": `<!DOCTYPE html><html><head><script type="module" src="./a.js"></script></head><body></body></html>`,
+      "/b.html": `<!DOCTYPE html><html><head><script type="module" src="./b.js"></script></head><body></body></html>`,
+      "/a.js": `import styles from "./x.module.css"; console.log("a"); globalThis.later = () => require("./q.js");`,
+      "/b.js": `import styles from "./x.module.css"; console.log("b");`,
+      "/q.js": `import styles from "./x.module.css"; console.log("q"); export const q = 1;`,
+      "/x.module.css": `.foo { color: red }`,
+    },
+    entryPoints: ["/a.html", "/b.html"],
+    splitting: true,
+    onAfterBundle(api) {
+      const pages = ["a", "b"].map(name => api.readFile(`out/${name}.html`));
+      const scripts = pages.map(html => html.match(/<script[^>]*src="\.\/([^"]+\.js)"/)![1]);
+      expect(
+        readdirSync(api.outdir)
+          .filter(file => file.endsWith(".js"))
+          .sort(),
+      ).toEqual([...scripts].sort());
+      for (const html of pages) expect(html).not.toContain("modulepreload");
+      expect(api.readFile("out/" + scripts[1])).not.toContain("import");
     },
   });
 

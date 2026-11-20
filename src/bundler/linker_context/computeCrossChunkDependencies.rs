@@ -32,6 +32,7 @@ pub(crate) fn compute_cross_chunk_dependencies<'a>(
 
     {
         let module_preload = c.module_preload();
+        let css_js_stubs = &c.parse_graph().css_js_stubs;
         let ast = c.graph.ast.split_mut();
         let (meta, files) = (&c.graph.meta, &c.graph.files);
 
@@ -53,6 +54,7 @@ pub(crate) fn compute_cross_chunk_dependencies<'a>(
             preload_entries: module_preload.then_some(&c.preload_entries),
             chunks_runtime_ref: c.chunks_runtime_ref,
             symbols: &c.graph.symbols,
+            css_js_stubs,
         };
 
         for (idx, chunk) in chunks.iter().enumerate() {
@@ -81,6 +83,7 @@ struct CrossChunkDependencies<'a, 'bump> {
     preload_entries: Option<&'a AutoBitSet>,
     chunks_runtime_ref: Ref,
     symbols: &'a bun_ast::symbol::Map,
+    css_js_stubs: &'a crate::Graph::CssJsStubs,
 }
 
 impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
@@ -116,6 +119,8 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
             let imports_to_bind = &deps.imports_to_bind[source_index as usize];
             let wrap = deps.flags[source_index as usize].wrap;
             let wrapper_ref = deps.wrapper_refs[source_index as usize];
+            // The class names of a stylesheet have a copy in each chunk that holds them: their symbols are in no one chunk, and no chunk imports them.
+            let is_copy = deps.css_js_stubs.stylesheet_of(source_index).is_some();
 
             for (part_index, part) in parts.iter().enumerate() {
                 if !parts_live.is_set(part_index) {
@@ -161,7 +166,9 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                 // the same name should already be marked as all being in a single
                 // chunk. In that case this will overwrite the same value below which
                 // is fine.
-                symbols.assign_chunk_index(&part.declared_symbols, chunk_index as u32);
+                if !is_copy {
+                    symbols.assign_chunk_index(&part.declared_symbols, chunk_index as u32);
+                }
 
                 let used_refs = part.symbol_uses.keys();
 
@@ -310,6 +317,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
 /// reached, in order, through this one).
 fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_alloc::AllocError> {
     let mut chunk_of_file = vec![u32::MAX; c.graph.files.len()];
+    let css_js_stubs = &c.parse_graph().css_js_stubs;
     let mut inert = AutoBitSet::init_empty(chunks.len())?;
     for (chunk_index, chunk) in chunks.iter().enumerate() {
         if !matches!(chunk.content, chunk::Content::Javascript(_)) {
@@ -317,6 +325,10 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_a
         }
         let mut runs_nothing = !chunk.entry_point.is_entry_point();
         for &source_index in chunk.files_with_parts_in_chunk.keys() {
+            // A copy of the class names of a stylesheet runs nothing, and no chunk imports it from another.
+            if css_js_stubs.stylesheet_of(source_index).is_some() {
+                continue;
+            }
             chunk_of_file[source_index as usize] = chunk_index as u32;
             runs_nothing = runs_nothing && c.loading_file_has_no_side_effects(source_index);
         }
@@ -448,6 +460,17 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         chunk_index,
                     );
                 }
+            } else {
+                // The symbols of a JS stub are in no chunk: a chunk that names one holds a copy of the stub (`add_class_names_to_chunks`).
+                debug_assert!(
+                    c.parse_graph()
+                        .css_js_stubs
+                        .stylesheet_of(import_ref.source_index())
+                        .is_none()
+                        || chunks[chunk_index]
+                            .files_with_parts_in_chunk
+                            .contains(&import_ref.source_index())
+                );
             }
         }
 

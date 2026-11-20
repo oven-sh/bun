@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
@@ -486,6 +486,218 @@ export default function () {
     const script = html.match(/<script type="module" src="\/([^"]*_bun[^"]*\.js)"><\/script>/);
     expect(script).toBeTruthy();
     expect(existsSync(path.join(String(dir), "dist", script![1]))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  // A route (server graph) and the client entry point (client graph) each read the class names of a CSS module
+  // from a module of their own graph. With an `onResolve` plugin that declines the import, the two graphs share
+  // one row for the stylesheet. Without one, each graph has its own row: there the route also imports y.css,
+  // because two graphs cannot write the same CSS file.
+  const classNames = `{"foo":"foo_e7Ht-A"}`;
+  const namespace = `{"default":${classNames},"foo":"foo_e7Ht-A"}`;
+  test.concurrent.each([
+    {
+      name: "import * as, one stylesheet row for both graphs",
+      declines: true,
+      route: `import * as styles from "../x.module.css"; export default () => JSON.stringify(styles);`,
+      client: `import * as styles from "./x.module.css"; console.log(JSON.stringify(styles));`,
+      value: namespace,
+    },
+    {
+      name: "require() and import, one stylesheet row for both graphs",
+      declines: true,
+      route: `const styles = require("../x.module.css"); export default () => JSON.stringify(styles);`,
+      client: `import styles from "./x.module.css"; console.log(JSON.stringify(styles));`,
+      value: classNames,
+    },
+    {
+      name: "import(), one stylesheet row for both graphs",
+      declines: true,
+      route: `export default async () => JSON.stringify(await import("../x.module.css"));`,
+      client: `console.log(JSON.stringify(await import("./x.module.css")));`,
+      value: namespace,
+    },
+    {
+      name: "import * as, one stylesheet row for each graph",
+      declines: false,
+      route: `import "../y.css"; import * as styles from "../x.module.css"; export default () => JSON.stringify(styles);`,
+      client: `import * as styles from "./x.module.css"; console.log(JSON.stringify(styles));`,
+      value: namespace,
+    },
+    // One graph reads the class names and the other has a bare import: the value is in the graph that reads it only.
+    {
+      name: "the route reads the class names, the client imports the stylesheet",
+      declines: true,
+      route: `import styles from "../x.module.css"; export default () => JSON.stringify(styles);`,
+      client: `const { a } = require("./w.ts"); console.log("client", a);`,
+      files: { "w.ts": `import "./x.module.css"; export const a = 1;` },
+      value: classNames,
+      stdout: "client 1",
+      clientHoldsNoClassNames: true,
+    },
+    {
+      name: "the client reads the class names, the route imports the stylesheet",
+      declines: true,
+      route: `import "../x.module.css"; export default () => "route";`,
+      client: `import * as styles from "./x.module.css"; console.log(JSON.stringify(styles));`,
+      value: "route",
+      stdout: namespace,
+    },
+  ])(
+    "a framework route and its client entry point read a CSS module: $name",
+    async ({ declines, route, client, value, stdout: clientStdout = value, files = {}, clientHoldsNoClassNames }) => {
+      using dir = tempDir("bake-production-css-module-value", {
+        "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          const scripts = meta.modules.map(m => '<script type="module" src="' + m + '"></script>').join("");
+          return { files: { "index.html": "<body>page=" + (await meta.pageModule.default()) + scripts + "</body>" } };
+        }
+      `,
+        "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        const plugins = ${declines ? `[{ name: "declines", setup(build) { build.onResolve({ filter: /\\.css$/ }, () => undefined); } }]` : "undefined"};
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] }, plugins } };
+      `,
+        "x.module.css": `.foo{color:red}`,
+        "y.css": `.y{color:blue}`,
+        "routes/index.ts": route,
+        "client.ts": client,
+        ...files,
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "./app.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExitCode] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      const dist = path.join(String(dir), "dist");
+      const html = await Bun.file(path.join(dist, "index.html"))
+        .text()
+        .catch(() => buildStderr);
+      expect(html).toContain("page=" + value + "<script");
+
+      const script = html.match(/<script type="module" src="\/([^"]*_bun[^"]*\.js)"><\/script>/)![1];
+      await using run = Bun.spawn({
+        cmd: [bunExe(), path.join(dist, script)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect(stdout.trim()).toBe(clientStdout);
+      if (clientHoldsNoClassNames) {
+        const scripts = readdirSync(path.join(dist, "_bun")).filter(file => file.endsWith(".js"));
+        const holders = scripts.filter(file => readFileSync(path.join(dist, "_bun", file), "utf8").includes("foo_"));
+        expect(holders).toEqual([]);
+      }
+      expect(exitCode).toBe(0);
+      expect(buildExitCode).toBe(0);
+    },
+  );
+
+  // The route and the client entry point each have a module with the class names of one stylesheet row. What is
+  // wrong with a `composes` of that stylesheet is reported once.
+  test.concurrent("a composes error of a CSS module that two graphs read is reported once", async () => {
+    using dir = tempDir("bake-production-css-module-composes-error", {
+      "server.ts": `
+        export async function prerender(meta) {
+          return { files: { "index.html": "<body>page=" + (await meta.pageModule.default()) + "</body>" } };
+        }
+      `,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        const plugins = [{ name: "declines", setup(build) { build.onResolve({ filter: /\\.css$/ }, () => undefined); } }];
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] }, plugins } };
+      `,
+      "x.module.css": `.foo{composes: nope; color:red}`,
+      "routes/index.ts": `import styles from "../x.module.css"; export default () => JSON.stringify(styles);`,
+      "client.ts": `import styles from "./x.module.css"; console.log(JSON.stringify(styles));`,
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(stderr.match(/The name "nope" never appears in/g)).toHaveLength(1);
+    expect(exitCode).toBe(1);
+  });
+
+  // With a separate SSR graph, three graphs share the row of the stylesheet, and each graph has an import() of it:
+  // the route (server graph), the copy of Button that the server loads through `ssrManifest` (SSR graph) and the
+  // copy of Button for the browser (client graph). Each import() loads a chunk of its own graph.
+  test.concurrent("a route and a client component import() one CSS module with a separate SSR graph", async () => {
+    using dir = tempDir("bake-production-css-module-ssr", {
+      "server.ts": `
+        import { ssrManifest } from "bun:bake/server";
+        export async function prerender(meta) {
+          const [[client, { Button }]] = Object.entries(ssrManifest);
+          const ssr = await import(Button.specifier);
+          const body = "page=" + (await meta.pageModule.default()) + " ssr=" + (await ssr.Button()) + " client=" + client;
+          return { files: { "index.html": "<body>" + body + "</body>" } };
+        }
+      `,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        const serverComponents = {
+          separateSSRGraph: true,
+          serverRuntimeImportSource: "./rsc.ts",
+          serverRegisterClientReferenceExport: "registerClientReference",
+        };
+        const plugins = [{ name: "declines", setup(build) { build.onResolve({ filter: /\\.css$/ }, () => undefined); } }];
+        export default { app: { framework: { fileSystemRouterTypes: [fsr], serverComponents }, plugins } };
+      `,
+      "rsc.ts": `export function registerClientReference(value, file, uid) { return { value, file, uid }; }`,
+      "client.ts": `console.log("client");`,
+      "x.module.css": `.foo{color:red}`,
+      "routes/index.ts": `
+        import { Button } from "../components/Button";
+        export default async () => JSON.stringify(await import("../x.module.css")) + " " + Button.uid;
+      `,
+      "components/Button.ts": `
+        "use client";
+        export async function Button() { return JSON.stringify(await import("../x.module.css")); }
+      `,
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    const dist = path.join(String(dir), "dist");
+    const html = await Bun.file(path.join(dist, "index.html"))
+      .text()
+      .catch(() => stderr);
+    const client = html.match(/ client=\.\/([^<]+\.js)<\/body>$/)?.[1];
+    expect(html).toBe(`<body>page=${namespace} Button ssr=${namespace} client=./${client}</body>`);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), "-e", `import { Button } from "./${client}"; console.log(await Button());`],
+      env: bunEnv,
+      cwd: path.join(dist, "_bun"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , runExitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(stdout.trim()).toBe(namespace);
+    expect(runExitCode).toBe(0);
     expect(exitCode).toBe(0);
   });
 

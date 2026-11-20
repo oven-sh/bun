@@ -31,6 +31,10 @@ pub(crate) fn generate_code_for_lazy_export(
         exports_kind = bun_ast::ExportsKind::Cjs;
         this.graph.ast.items_exports_kind_mut()[source_index as usize] = exports_kind;
     }
+    // The stylesheet whose local names this file exports: the file itself when no JavaScript reads them, or the stylesheet of a JS stub.
+    let css_js_stubs = &this.parse_graph().css_js_stubs;
+    let stub_of = css_js_stubs.stylesheet_of(source_index);
+    let stylesheet = stub_of.unwrap_or(source_index);
     let part = &mut this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice()[1];
     let stmts = part.stmts;
     if stmts.is_empty() {
@@ -38,11 +42,30 @@ pub(crate) fn generate_code_for_lazy_export(
     }
     if exports_kind != bun_ast::ExportsKind::Cjs {
         part.stmts = bun_ast::StoreSlice::EMPTY;
+        // The emptied part of a stub is in no chunk, as it is in none on the row of a stylesheet. Other lazy exports keep theirs.
+        if stub_of.is_some() {
+            part.can_be_removed_if_unused = true;
+        }
     }
+
+    // Each chunk that holds the class names prints a copy of their `__esm` wrapper, and a copy with no class name to declare prints `() => {}`. So the parts that declare them use `__esm`, not the wrapper part (`create_wrapper_for_file`).
+    let declarations_use_esm_runtime = stub_of.is_some()
+        && this.graph.meta.items_flags()[source_index as usize].wrap == crate::WrapKind::Esm
+        && this.options.output_format != crate::options::OutputFormat::InternalBakeDev;
 
     let all_sources = this.parse_graph().input_files.items_source();
     let all_css_asts = &this.parse_graph().css_asts;
-    let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
+    let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[stylesheet as usize].as_deref();
+    // A stylesheet can have a stub for each target: one of them reports what is wrong with its `composes`.
+    let reports_nothing = stub_of.is_some()
+        && maybe_css_ast.is_some_and(|css_ast| css_ast.composes.count() > 0)
+        && css_js_stubs.stubs_of(stylesheet).next() != Some(source_index);
+    let mut unreported = bun_ast::Log::init();
+    let log = if reports_nothing {
+        &mut unreported
+    } else {
+        log
+    };
 
     let module_ref = this.graph.ast.items_module_ref()[source_index as usize];
 
@@ -63,7 +86,7 @@ pub(crate) fn generate_code_for_lazy_export(
             }
             let mut exports = E::Object::default();
 
-            let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[source_index as usize];
+            let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[stylesheet as usize];
 
             struct Graph<'a, 'bump> {
                 all_import_records: &'a [bun_ast::import_record::List<'a>],
@@ -111,7 +134,7 @@ pub(crate) fn generate_code_for_lazy_export(
                     ),
                     ExportedName::Global(name) => Expr::init(E::String::init(name), stmt.loc),
                 };
-                let names = visitor.exported_names(css_ast, ref_, source_index, log);
+                let names = visitor.exported_names(css_ast, ref_, stylesheet, log);
                 let value = if let [name] = names {
                     name_expr(name)
                 } else {
@@ -231,8 +254,25 @@ pub(crate) fn generate_code_for_lazy_export(
                     // that actually end up being used, and we don't know which ones will
                     // end up actually being used at this point (since import binding hasn't
                     // happened yet). So we need to wait until after tree shaking happens.
+                    // Module code cannot declare a variable of these names: the variable gets another name, and the export keeps its alias.
+                    let alias = name;
+                    let name: &[u8] = match alias {
+                        b"arguments" => b"_arguments",
+                        b"eval" => b"_eval",
+                        b"await" => b"_await",
+                        _ => alias,
+                    };
                     let generated =
-                        this.generate_named_export_in_file(source_index, module_ref, name, name)?;
+                        this.generate_named_export_in_file(source_index, module_ref, name, alias)?;
+                    if declarations_use_esm_runtime {
+                        this.graph.generate_symbol_import_and_use(
+                            source_index,
+                            generated.1,
+                            this.esm_runtime_ref,
+                            1,
+                            Index::RUNTIME,
+                        )?;
+                    }
                     let new_stmts: &mut [Stmt] =
                         alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                             S::Local {
@@ -269,6 +309,15 @@ pub(crate) fn generate_code_for_lazy_export(
 
                 let generated =
                     this.generate_named_export_in_file(source_index, module_ref, name, b"default")?;
+                if declarations_use_esm_runtime {
+                    this.graph.generate_symbol_import_and_use(
+                        source_index,
+                        generated.1,
+                        this.esm_runtime_ref,
+                        1,
+                        Index::RUNTIME,
+                    )?;
+                }
                 let new_stmts: &mut [Stmt] =
                     alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                         S::ExportDefault {

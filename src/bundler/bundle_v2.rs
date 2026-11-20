@@ -1920,13 +1920,55 @@ pub mod bv2_impl {
         /// Files which are imported by CSS and inlined in CSS
         pub(crate) additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSet,
 
+        /// `None`: the graph has no stylesheet.
+        pub(crate) css_js_stubs: Option<CssJsStubAllotment>,
+        /// With HMR lowering, the parts of each file: the `import` statements of one path share a record there.
+        pub(crate) hmr_parts: Option<&'a [bun_ast::part::List<'bump>]>,
+
         pub(crate) stack: Vec<ReachFrame>,
+    }
+
+    /// The JS stubs that the walk allots (see `CssJsStubs`), and the records that import them.
+    pub(crate) struct CssJsStubAllotment {
+        /// The source index of the first stub: the row count of the graph during the walk.
+        first: IndexInt,
+        /// The key of each stub, in source index order.
+        stubs: ArrayHashMap<crate::Graph::CssJsStubKey, ()>,
+        /// Per stub: the walk has left it.
+        walked: Vec<bool>,
+        /// (importer, import record, stub): the records that import a stub once it has a row.
+        records: Vec<(IndexInt, u32, IndexInt)>,
+        /// (importer, import record): the `import` statements of a stylesheet that read no value. They import the stub too when a record of that target reads one.
+        bare_records: Vec<(IndexInt, u32)>,
+    }
+
+    fn import_has_binding(import: &bun_ast::S::Import) -> bool {
+        !import.star_name_loc.is_empty() || import.items.len() > 0 || import.default_name.is_some()
+    }
+
+    /// Whether the `import` statement of `record` in `parts` has a binding.
+    fn import_statement_reads_value(parts: &[bun_ast::Part], record: u32) -> bool {
+        parts
+            .iter()
+            .flat_map(|part| part.stmts.slice())
+            .any(|stmt| match &stmt.data {
+                bun_ast::StmtData::SImport(import) => {
+                    import.import_record_index == record && import_has_binding(import)
+                }
+                _ => false,
+            })
     }
 
     #[derive(Copy, Clone)]
     pub enum ReachFrame {
         Enter {
             source_index: Index,
+            was_dynamic_import: bool,
+        },
+        /// A record that imports the JS stub of `stylesheet`. The stub has no row and no bit in `visited` yet.
+        EnterStub {
+            stub: Index,
+            stylesheet: Index,
             was_dynamic_import: bool,
         },
         Leave {
@@ -1969,6 +2011,32 @@ pub mod bv2_impl {
                         if CHECK_DYNAMIC_IMPORTS && was_dynamic_import {
                             self.dynamic_import_entry_points
                                 .put(source_index.get(), ())
+                                .expect("unreachable");
+                        }
+                        continue;
+                    }
+                    ReachFrame::EnterStub {
+                        stub,
+                        stylesheet,
+                        was_dynamic_import,
+                    } => {
+                        let Some(allotment) = self.css_js_stubs.as_mut() else {
+                            continue;
+                        };
+                        let walked = &mut allotment.walked[(stub.get() - allotment.first) as usize];
+                        if !core::mem::replace(walked, true) {
+                            // Pushed in reverse: the stylesheet, then the stub leaves.
+                            self.stack.push(ReachFrame::Leave {
+                                source_index: stub,
+                                was_dynamic_import,
+                            });
+                            self.stack.push(ReachFrame::Enter {
+                                source_index: stylesheet,
+                                was_dynamic_import: false,
+                            });
+                        } else if CHECK_DYNAMIC_IMPORTS && was_dynamic_import {
+                            self.dynamic_import_entry_points
+                                .put(stub.get(), ())
                                 .expect("unreachable");
                         }
                         continue;
@@ -2016,7 +2084,8 @@ pub mod bv2_impl {
                     }
                 }
 
-                let is_css = self.all_loaders[source_index.get() as usize].is_css();
+                let loader = self.all_loaders[source_index.get() as usize];
+                let is_css = loader.is_css();
 
                 let import_record_list_id = source_index;
                 let mut has_redirect = false;
@@ -2098,6 +2167,60 @@ pub mod bv2_impl {
                                         .flags
                                         .insert(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE);
                                 }
+                            }
+                            // A record that reads a value imports the JS stub (not in esbuild: a stylesheet has a stub there whoever imports it).
+                            if let Some(allotment) = self.css_js_stubs.as_mut()
+                                && next_source.is_valid()
+                                && self.all_loaders[next_source.get() as usize].is_css()
+                                && !is_css
+                                && loader != Loader::Html
+                                && match import_record.kind {
+                                    // An `import` of the path of a stylesheet as an HTML page has the row of the stylesheet.
+                                    ImportKind::Require
+                                    | ImportKind::Dynamic
+                                    | ImportKind::HtmlManifest => true,
+                                    ImportKind::Stmt => {
+                                        let reads_value = !import_record.flags.contains(
+                                            bun_ast::ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT,
+                                        ) || self.hmr_parts.is_some_and(
+                                            |all_parts| {
+                                                import_statement_reads_value(
+                                                    &all_parts[source_index.get() as usize],
+                                                    ir_idx as u32,
+                                                )
+                                            },
+                                        );
+                                        if !reads_value {
+                                            allotment
+                                                .bare_records
+                                                .push((source_index.get(), ir_idx as u32));
+                                        }
+                                        reads_value
+                                    }
+                                    _ => false,
+                                }
+                            {
+                                let target = self.all_targets[source_index.get() as usize];
+                                // A split `import()` loads a chunk that holds every class name. The other readers share a stub that holds the class names that they read.
+                                let entry = bun_core::handle_oom(allotment.stubs.get_or_put((
+                                    next_source.get(),
+                                    target,
+                                    was_dynamic_import,
+                                )));
+                                let stub = allotment.first
+                                    + IndexInt::try_from(entry.index).expect("int cast");
+                                if !entry.found_existing {
+                                    allotment.walked.push(false);
+                                }
+                                allotment
+                                    .records
+                                    .push((source_index.get(), ir_idx as u32, stub));
+                                self.stack.push(ReachFrame::EnterStub {
+                                    stub: Index::init(stub),
+                                    stylesheet: next_source,
+                                    was_dynamic_import,
+                                });
+                                continue;
                             }
                             self.stack.push(ReachFrame::Enter {
                                 source_index: next_source,
@@ -2181,6 +2304,16 @@ pub mod bv2_impl {
                 additional_files_needed_outside_css: &mut additional_files_needed_outside_css,
                 additional_files_imported_by_css_and_inlined:
                     &mut additional_files_imported_by_css_and_inlined,
+                css_js_stubs: (self.graph.css_file_count > 0).then(|| CssJsStubAllotment {
+                    first: self.graph.input_files.len() as IndexInt,
+                    stubs: ArrayHashMap::new(),
+                    walked: Vec::new(),
+                    records: Vec::new(),
+                    bare_records: Vec::new(),
+                }),
+                hmr_parts: (self.transpiler.options.output_format
+                    == options::Format::InternalBakeDev)
+                    .then_some(&*ast.parts),
                 stack: Vec::new(),
             };
 
@@ -2198,32 +2331,14 @@ pub mod bv2_impl {
                 }
             }
 
-            if bun_core::env::IS_DEBUG && ReachableFiles.is_visible() {
-                bun_core::scoped_log!(
-                    ReachableFiles,
-                    "Reachable count: {} / {}",
-                    visitor.reachable.len(),
-                    self.graph.input_files.len()
-                );
-                let sources = self.graph.input_files.items_source();
-                let targets = visitor.all_targets;
-                for idx in visitor.reachable.iter() {
-                    let source = &sources[idx.get() as usize];
-                    bun_core::scoped_log!(
-                        ReachableFiles,
-                        "reachable file: #{} {} ({}) target=.{}",
-                        source.index.0,
-                        bun_core::fmt::quote(source.path.pretty),
-                        bstr::BStr::new(&source.path.text),
-                        <&'static str>::from(targets[idx.get() as usize]),
-                    );
-                }
-            }
-
             // reshaped for borrowck — release the visitor's `&mut`
             // borrows on the two bitsets and `input_files` columns before the
             // cleanup loop reads them.
-            let ReachableFileVisitor { reachable, .. } = visitor;
+            let ReachableFileVisitor {
+                reachable,
+                css_js_stubs,
+                ..
+            } = visitor;
 
             let input_files_cols = self.graph.input_files.split_mut();
             let additional_files: &mut [bun_alloc::AstVec<crate::AdditionalFile>] =
@@ -2245,7 +2360,203 @@ pub mod bv2_impl {
                 }
             }
 
+            if let Some(allotment) = css_js_stubs {
+                self.add_css_js_stubs(allotment, &reachable)?;
+                if cfg!(debug_assertions) {
+                    self.assert_stylesheet_values_are_stubs(&reachable);
+                }
+            }
+
+            if bun_core::env::IS_DEBUG && ReachableFiles.is_visible() {
+                bun_core::scoped_log!(
+                    ReachableFiles,
+                    "Reachable count: {} / {}",
+                    reachable.len(),
+                    self.graph.input_files.len()
+                );
+                let sources = self.graph.input_files.items_source();
+                let targets = self.graph.ast.items_target();
+                for idx in reachable.iter() {
+                    let source = &sources[idx.get() as usize];
+                    bun_core::scoped_log!(
+                        ReachableFiles,
+                        "reachable file: #{} {} ({}) target=.{}",
+                        source.index.0,
+                        bun_core::fmt::quote(source.path.pretty),
+                        bstr::BStr::new(&source.path.text),
+                        <&'static str>::from(targets[idx.get() as usize]),
+                    );
+                }
+            }
+
             Ok(reachable.into_boxed_slice())
+        }
+
+        /// Adds the row of each allotted JS stub, and points the records that read a value at it.
+        fn add_css_js_stubs(
+            &mut self,
+            allotment: CssJsStubAllotment,
+            reachable: &[Index],
+        ) -> Result<(), Error> {
+            let CssJsStubAllotment {
+                first,
+                stubs,
+                walked: _,
+                records,
+                bare_records,
+            } = allotment;
+            if stubs.is_empty() {
+                return Ok(());
+            }
+            debug_assert_eq!(first as usize, self.graph.input_files.len());
+            // Each file comes after its dependencies: a stub is ahead of the files that import it. A file that the stylesheet itself imports is an error that the linker reports.
+            if cfg!(debug_assertions) {
+                let mut position = vec![usize::MAX; first as usize + stubs.count()];
+                for (i, source_index) in reachable.iter().enumerate() {
+                    position[source_index.get() as usize] = i;
+                }
+                for &(importer, _, stub) in &records {
+                    let (stylesheet, ..) = stubs.keys()[(stub - first) as usize];
+                    debug_assert!(
+                        position[stub as usize] < position[importer as usize]
+                            || position[importer as usize] < position[stylesheet as usize]
+                    );
+                }
+            }
+            for &(stylesheet, target, _) in stubs.keys() {
+                let (input_file, ast) = self.css_js_stub_row(
+                    stylesheet,
+                    self.graph.input_files.len() as IndexInt,
+                    target,
+                )?;
+                self.graph.input_files.append(input_file)?;
+                self.graph.ast.append(ast)?;
+            }
+            let ast = self.graph.ast.split_mut();
+            // The stubs have the class names of these stylesheets: the lazy export that the parser gave the row goes.
+            for &(stylesheet, ..) in stubs.keys() {
+                ast.flags[stylesheet as usize].remove(crate::bundled_ast::Flags::HAS_LAZY_EXPORT);
+                ast.parts[stylesheet as usize].as_mut_slice()[1] = bun_ast::Part {
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                };
+            }
+            let import_records = ast.import_records;
+            for (importer, record, stub) in records {
+                import_records[importer as usize].as_mut_slice()[record as usize].source_index =
+                    Index::init(stub);
+            }
+            // The stub stands for the stylesheet in every JS file of its target: a chunk prints the class names where it first imports the stylesheet, with a binding or without.
+            for (importer, record) in bare_records {
+                let record = &mut import_records[importer as usize].as_mut_slice()[record as usize];
+                let key = (
+                    record.source_index.get(),
+                    ast.target[importer as usize],
+                    false,
+                );
+                if let Some(index) = stubs.get_index(&key) {
+                    record.source_index =
+                        Index::init(first + IndexInt::try_from(index).expect("int cast"));
+                }
+            }
+            self.graph.css_js_stubs = crate::Graph::CssJsStubs::new(first, stubs);
+            Ok(())
+        }
+
+        /// The linker relies on this: only a statement with no binding still has a record of a stylesheet, and only when no file of that target reads a value of the stylesheet.
+        fn assert_stylesheet_values_are_stubs(&self, reachable: &[Index]) {
+            let loaders = self.graph.input_files.items_loader();
+            let all_import_records = self.graph.ast.items_import_records();
+            let all_parts = self.graph.ast.items_parts();
+            let targets = self.graph.ast.items_target();
+            for source_index in reachable {
+                let file = source_index.get() as usize;
+                if loaders[file].is_css() || loaders[file] == Loader::Html {
+                    continue;
+                }
+                let records = all_import_records[file].as_slice();
+                let is_stylesheet = |record: &ImportRecord| {
+                    record.source_index.is_valid()
+                        && loaders[record.source_index.get() as usize].is_css()
+                };
+                for record in records {
+                    debug_assert!(
+                        !(matches!(record.kind, ImportKind::Require | ImportKind::Dynamic)
+                            && is_stylesheet(record))
+                    );
+                    debug_assert!(
+                        !(record.kind == ImportKind::Stmt
+                            && is_stylesheet(record)
+                            && self
+                                .graph
+                                .css_js_stubs
+                                .stub_of(record.source_index.get(), targets[file])
+                                .is_some())
+                    );
+                }
+                for stmt in all_parts[file].iter().flat_map(|part| part.stmts.slice()) {
+                    let record = match &stmt.data {
+                        bun_ast::StmtData::SImport(import) if import_has_binding(import) => {
+                            import.import_record_index
+                        }
+                        bun_ast::StmtData::SExportFrom(export) => export.import_record_index,
+                        bun_ast::StmtData::SExportStar(export) => export.import_record_index,
+                        _ => continue,
+                    };
+                    debug_assert!(!is_stylesheet(&records[record as usize]));
+                }
+            }
+        }
+
+        /// The row of a JS stub: a lazy export with the path of its stylesheet and no text. The linker fills it.
+        fn css_js_stub_row(
+            &mut self,
+            stylesheet: IndexInt,
+            source_index: IndexInt,
+            target: options::Target,
+        ) -> Result<(crate::Graph::InputFile<'a>, JSAst<'a>), Error> {
+            let heap = self.graph.heap;
+            // One stylesheet row can have a stub in each graph of `bun build --app`. The path names the graph, as for the other rows.
+            let mut path = self.graph.input_files.items_source()[stylesheet as usize].path;
+            if target != self.graph.ast.items_target()[stylesheet as usize] {
+                path = self.path_with_pretty_initialized(&path, target)?;
+            }
+            let source: &'a bun_ast::Source<'a> = heap.alloc(bun_ast::Source {
+                path,
+                index: bun_ast::Index(source_index),
+                ..Default::default()
+            });
+            let side_effects = self.graph.input_files.items_side_effects()[stylesheet as usize];
+
+            let options = &self.transpiler_for_target(target).options;
+            let mut js_parser_options =
+                bun_js_parser::ParserOptions::init(options.jsx.clone(), Loader::Css);
+            crate::parse_task::parse_worker::set_bundle_parser_options(
+                &mut js_parser_options,
+                options,
+                target,
+                false,
+            );
+
+            let mut ast = self.lazy_export_ast(
+                target,
+                js_parser_options,
+                Expr::init(E::Object::default(), bun_ast::Loc { start: 0 }),
+                source,
+                b"",
+            )?;
+            ast.target = target;
+            // A chunk that prints the class names counts the characters of the stylesheet when it picks minified names, as it did when the row of the stylesheet held them.
+            ast.char_freq
+                .clone_from(&self.graph.ast.items_char_freq()[stylesheet as usize]);
+
+            // The default loader, not `Loader::Css` as in esbuild: the linker takes a row with that loader for a stylesheet.
+            let input_file = crate::Graph::InputFile {
+                source: source.clone(),
+                side_effects,
+                ..Default::default()
+            };
+            Ok((input_file, ast))
         }
 
         fn is_done(&mut self) -> bool {
@@ -3268,6 +3579,18 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        /// The reachable files and the linker graph, a copy of every row: it is made after the walk has added the JS stubs.
+        pub(crate) fn reachable_files_and_linker_graph(
+            &mut self,
+        ) -> Result<(Box<[Index]>, LinkerGraph<'a>), Error> {
+            let reachable_files = self.find_reachable_files()?;
+            let additional_output_files = self.process_files_to_copy(&reachable_files)?;
+            self.add_server_component_boundaries_as_extra_entry_points()?;
+            let mut linker_graph = self.create_linker_graph()?;
+            linker_graph.additional_output_files = additional_output_files;
+            Ok((reachable_files, linker_graph))
+        }
+
         pub(crate) fn create_linker_graph(&mut self) -> Result<LinkerGraph<'a>, Error> {
             let _trace = crate::perf::trace("Bundler.cloneAST");
             let mut linker_graph = LinkerGraph::new(self.graph.heap);
@@ -3791,15 +4114,11 @@ pub mod bv2_impl {
 
             this.process_server_component_manifest_files()?;
 
-            let reachable_files = this.find_reachable_files()?;
-            *reachable_files_count = reachable_files.len().saturating_sub(1); // - 1 for the runtime
-
-            let additional_output_files = this.process_files_to_copy(&reachable_files)?;
-
-            this.add_server_component_boundaries_as_extra_entry_points()?;
-
-            let mut linker_graph = this.create_linker_graph()?;
-            linker_graph.additional_output_files = additional_output_files;
+            let (reachable_files, linker_graph) = this.reachable_files_and_linker_graph()?;
+            // - 1 for the runtime. A JS stub does not count: its stylesheet does, as in the `inputs` of the metafile.
+            *reachable_files_count = reachable_files
+                .len()
+                .saturating_sub(1 + this.graph.css_js_stubs.len());
 
             let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
             let mut chunks = linker.link(this.transpiler.log_mut())?;
@@ -3921,14 +4240,7 @@ pub mod bv2_impl {
 
             this.process_server_component_manifest_files()?;
 
-            let reachable_files = this.find_reachable_files()?;
-
-            let additional_output_files = this.process_files_to_copy(&reachable_files)?;
-
-            this.add_server_component_boundaries_as_extra_entry_points()?;
-
-            let mut linker_graph = this.create_linker_graph()?;
-            linker_graph.additional_output_files = additional_output_files;
+            let (reachable_files, linker_graph) = this.reachable_files_and_linker_graph()?;
 
             let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
             let mut chunks = linker.link(this.transpiler.log_mut())?;
@@ -4766,15 +5078,9 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            let mut linker_graph = self.create_linker_graph()?;
+            let (reachable_files, linker_graph) = self.reachable_files_and_linker_graph()?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
-
-            let reachable_files = self.find_reachable_files()?;
-
-            linker_graph.additional_output_files = self.process_files_to_copy(&reachable_files)?;
-
-            self.add_server_component_boundaries_as_extra_entry_points()?;
 
             let mut linker = LinkerContext::load(self, linker_graph, &reachable_files)?;
             let mut chunks = linker.link(self.transpiler.log_mut())?;
@@ -6780,37 +7086,52 @@ pub mod bv2_impl {
                 ))
                 .as_bytes();
 
-            // Extract raw pointers so the `&mut self` borrow from
-            // `transpiler_for_target` doesn't overlap `self.arena()` below.
-            // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler /
-            // BACKREF set in `BundleV2::init`).
+            let ast_for_html_entrypoint = self.lazy_export_ast(
+                target,
+                js_parser_options,
+                Expr::init(
+                    E::EString {
+                        data: unique_key.into(),
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                ),
+                empty_html_file_source,
+                // We replace this runtime API call's ref later via .link on the Symbol.
+                b"__jsonParse",
+            )?;
+            Ok((empty_html_file_source, ast_for_html_entrypoint))
+        }
+
+        /// A lazy export of `expr` for the row of `source`, made on the bundle thread.
+        fn lazy_export_ast(
+            &mut self,
+            target: options::Target,
+            js_parser_options: bun_js_parser::ParserOptions<'a>,
+            expr: Expr,
+            source: &'a bun_ast::Source<'a>,
+            runtime_api_call: &'static [u8],
+        ) -> Result<JSAst<'a>, Error> {
+            let heap = self.graph.heap;
+            // Raw pointers, so that the `&mut self` borrow of `transpiler_for_target` ends here.
             let (define_ptr, log_ptr): (*mut bun_js_parser::Define, *mut bun_ast::Log) = {
                 let transpiler = self.transpiler_for_target(target);
                 (&raw mut *transpiler.options.define, transpiler.log)
             };
-
-            let ast_for_html_entrypoint = JSAst::init(
+            Ok(JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
                     heap,
-                    // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
+                    // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler, a BACKREF set in `BundleV2::init`).
                     unsafe { &mut *define_ptr },
                     js_parser_options,
                     // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
                     unsafe { &mut *log_ptr },
-                    Expr::init(
-                        E::EString {
-                            data: unique_key.into(),
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    ),
-                    empty_html_file_source,
-                    // We replace this runtime API call's ref later via .link on the Symbol.
-                    b"__jsonParse",
+                    expr,
+                    source,
+                    runtime_api_call,
                 )?
                 .ok_or(Error::ParserError)?,
-            );
-            Ok((empty_html_file_source, ast_for_html_entrypoint))
+            ))
         }
 
         fn generate_server_html_module(

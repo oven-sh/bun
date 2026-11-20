@@ -164,11 +164,7 @@ fn run<'h>(
     bundle.scan_for_secondary_paths();
     bundle.disambiguate_pretty_paths();
     bundle.process_server_component_manifest_files()?;
-    let mut linker_graph = bundle.create_linker_graph()?;
-
-    let reachable_files = bundle.find_reachable_files()?;
-    linker_graph.additional_output_files = bundle.process_files_to_copy(&reachable_files)?;
-    bundle.add_server_component_boundaries_as_extra_entry_points()?;
+    let (reachable_files, linker_graph) = bundle.reachable_files_and_linker_graph()?;
 
     let mut linker = LinkerContext::load(bundle, linker_graph, &reachable_files)?;
     let mut chunks = linker.link(bundle.transpiler.log_mut())?;

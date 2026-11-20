@@ -63,6 +63,120 @@ fn css_chunk_key<'a>(
     key
 }
 
+/// The class names of a stylesheet (its JS stub) have no chunk of their own: each chunk that needs them holds a copy, as each chunk held a copy of the JS parts of a stylesheet row before. `EntryWalk` says where in the chunk the copy prints.
+fn add_class_names_to_chunks(
+    c: &LinkerContext,
+    js_chunks: &mut ArrayHashMap<&[u8], Chunk>,
+    entry_point_to_js_chunk_idx: &[u32],
+) {
+    let parse_graph = c.parse_graph();
+    let css_js_stubs = &parse_graph.css_js_stubs;
+    let files_live = &c.graph.files_live;
+    let entry_bits = c.graph.files.items_entry_bits();
+    let entry_points_len = c.graph.entry_points.len();
+    let entry_source_indices = c.graph.entry_points.items_source_index();
+    let all_parts = c.graph.ast.items_parts();
+    let all_import_records = c.graph.ast.items_import_records();
+    let hold = |chunk: &mut Chunk, stub: IndexInt| {
+        let entry = bun_core::handle_oom(chunk.files_with_parts_in_chunk.get_or_put(stub));
+        if !entry.found_existing {
+            *entry.value_ptr = AtomicUsize::new(0);
+        }
+    };
+    // The chunks of `file` hold a copy of `stub`. With `reads` false, only those that load the stylesheet, as before.
+    let mut lead = |file: IndexInt, stub: IndexInt, reads: bool| {
+        let Some(stylesheet) = css_js_stubs.stylesheet_of(stub) else {
+            return;
+        };
+        let loads = &entry_bits[stylesheet as usize];
+        if c.graph.code_splitting {
+            if (reads || loads.has_intersection(&entry_bits[file as usize]))
+                && let Some(chunk_index) =
+                    js_chunks.get_index(&entry_bits[file as usize].bytes(entry_points_len))
+            {
+                hold(&mut js_chunks.values_mut()[chunk_index], stub);
+            }
+            return;
+        }
+        let mut entry_ids = entry_bits[file as usize].iterator::<true, true>();
+        while let Some(entry_id) = entry_ids.next() {
+            let chunk_index = entry_point_to_js_chunk_idx[entry_id];
+            if (reads || loads.is_set(entry_id)) && chunk_index != u32::MAX {
+                hold(&mut js_chunks.values_mut()[chunk_index as usize], stub);
+            }
+        }
+    };
+
+    // The edges of `for_each_edge` that lead to a stub: the import records, and the parts that a live part depends on.
+    for source_index in c.graph.reachable_files.iter() {
+        let file = source_index.get();
+        if !files_live.is_set(file as usize) || parse_graph.holds_class_names(file) {
+            continue;
+        }
+        let records = all_import_records[file as usize].as_slice();
+        let parts_live = &c.graph.parts_live[file as usize];
+        for (part_index, part) in all_parts[file as usize].as_slice().iter().enumerate() {
+            let is_live = parts_live.is_set(part_index);
+            for &record_id in part.import_record_indices.slice() {
+                let record = &records[record_id as usize];
+                if record.source_index.is_valid()
+                    && (record.kind == bun_ast::ImportKind::Stmt || is_live)
+                    && css_js_stubs
+                        .stylesheet_of(record.source_index.get())
+                        .is_some()
+                    && !c.is_external_dynamic_import(record, file)
+                {
+                    // The chunk printed a copy of the class names where it imports the stylesheet, whatever read them.
+                    lead(file, record.source_index.get(), false);
+                }
+            }
+            if !is_live {
+                continue;
+            }
+            // A live part names a class name or calls the wrapper of the class names: its chunk needs them, also when a fold of small chunks moved the file to a chunk that does not load the stylesheet.
+            for dependency in part.dependencies.iter() {
+                lead(file, dependency.source_index.get(), true);
+            }
+        }
+    }
+
+    // No file leads to the class names in two chunks: the chunk of an `import()` of the stylesheet, and the chunk of an entry point that exports class names when its file is in another chunk.
+    let flags = c.graph.meta.items_flags();
+    let resolved_exports = c.graph.meta.items_resolved_exports();
+    let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
+    let imports_to_bind = c.graph.meta.items_imports_to_bind();
+    for (entry_id, &entry_point) in entry_source_indices.iter().enumerate() {
+        let chunk_index = entry_point_to_js_chunk_idx[entry_id];
+        if chunk_index == u32::MAX || !files_live.is_set(entry_point as usize) {
+            continue;
+        }
+        let chunk = &mut js_chunks.values_mut()[chunk_index as usize];
+        if css_js_stubs.stylesheet_of(entry_point).is_some() {
+            hold(chunk, entry_point);
+            continue;
+        }
+        if chunk.files_with_parts_in_chunk.contains(&entry_point)
+            || flags[entry_point as usize].wrap == crate::WrapKind::Cjs
+        {
+            continue;
+        }
+        for alias in export_aliases[entry_point as usize].iter() {
+            let Some(export) = resolved_exports[entry_point as usize].get(alias) else {
+                continue;
+            };
+            let mut target = export.data.import_ref;
+            if let Some(import) =
+                imports_to_bind[export.data.source_index.get() as usize].get(&target)
+            {
+                target = import.data.import_ref;
+            }
+            if css_js_stubs.stylesheet_of(target.source_index()).is_some() {
+                hold(chunk, target.source_index());
+            }
+        }
+    }
+}
+
 #[inline(never)]
 pub(crate) fn compute_chunks<'a>(
     this: &mut LinkerContext<'_, 'a>,
@@ -92,6 +206,7 @@ pub(crate) fn compute_chunks<'a>(
 
     let entry_source_indices = this.graph.entry_points.items_source_index();
     let css_asts = &parse_graph.css_asts;
+    let css_js_stubs = &parse_graph.css_js_stubs;
     let mut html_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
     let loaders = parse_graph.input_files.items_loader();
     let sources = parse_graph.input_files.items_source();
@@ -239,11 +354,27 @@ pub(crate) fn compute_chunks<'a>(
                     hasher.final_()
                 };
 
-                let css_chunk_entry = css_chunks.get_or_put(css_chunk_key(
-                    &css_chunks,
-                    hash_to_use,
-                    order.slice(),
-                ))?;
+                let mut key = css_chunk_key(&css_chunks, hash_to_use, order.slice());
+                // The stylesheet of an `import()` can be an entry point too. Its JS stub takes the CSS chunk of that entry point.
+                if let Some(stylesheet) = css_js_stubs.stylesheet_of(source_index)
+                    && this.graph.files.items_entry_point_kind()[stylesheet as usize]
+                        .is_entry_point()
+                    && let Some(entry_id) = entry_source_indices
+                        .iter()
+                        .position(|&entry| entry == stylesheet)
+                {
+                    let mut own_bit = AutoBitSet::init_empty(this.graph.entry_points.len())?;
+                    own_bit.set(entry_id);
+                    let own = css_chunk_key(
+                        &css_chunks,
+                        bun_wyhash::hash(own_bit.bytes(this.graph.entry_points.len())),
+                        order.slice(),
+                    );
+                    if css_chunks.contains(&own) {
+                        key = own;
+                    }
+                }
+                let css_chunk_entry = css_chunks.get_or_put(key)?;
 
                 if let chunk::Content::Javascript(js) = &mut js_chunk_entry.value_ptr.content {
                     js.css_chunks = Box::<[u32]>::from(
@@ -318,7 +449,8 @@ pub(crate) fn compute_chunks<'a>(
     if js_chunks.count() > 0 {
         for source_index in this.graph.reachable_files.slice() {
             if this.graph.files_live.is_set(source_index.get() as usize) {
-                if css_asts[source_index.get() as usize].is_none() {
+                // A stylesheet is in no JS chunk, and its JS stub is in the chunks that `add_class_names_to_chunks` finds.
+                if parse_graph.has_one_js_chunk(source_index.get()) {
                     let entry_bits: &AutoBitSet = &file_entry_bits[source_index.get() as usize];
 
                     if this.graph.code_splitting {
@@ -404,6 +536,9 @@ pub(crate) fn compute_chunks<'a>(
                     }
                 }
             }
+        }
+        if css_js_stubs.len() > 0 {
+            add_class_names_to_chunks(this, &mut js_chunks, &*entry_point_to_js_chunk_idx);
         }
     }
 

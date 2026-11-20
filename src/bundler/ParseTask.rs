@@ -2124,6 +2124,48 @@ pub mod parse_worker {
     // runWithSourceCode
     // ───────────────────────────────────────────────────────────────────────────
 
+    /// The parser options that the options of a target decide: for a `ParseTask`, and for the JS stub of a stylesheet.
+    pub(crate) fn set_bundle_parser_options(
+        opts: &mut ParserOptions<'_>,
+        topts: &options::BundleOptions,
+        target: options::Target,
+        is_runtime: bool,
+    ) {
+        let output_format = topts.output_format;
+        opts.bundle = true;
+        opts.warn_about_unbundled_modules = false;
+        opts.features.allow_runtime = !is_runtime;
+        opts.features.unwrap_commonjs_to_esm =
+            output_format == options::Format::Esm && FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
+        opts.features.top_level_await = output_format == options::Format::Esm
+            || output_format == options::Format::InternalBakeDev;
+        opts.features.inlining = topts.minify_syntax;
+        // `bun_options_types::Format` and `bun_js_parser::options::Format` are distinct enums; map explicitly.
+        opts.output_format = match output_format {
+            options::Format::Esm => js_parser::options::Format::Esm,
+            options::Format::Cjs => js_parser::options::Format::Cjs,
+            options::Format::Iife => js_parser::options::Format::Iife,
+            options::Format::InternalBakeDev => js_parser::options::Format::InternalBakeDev,
+        };
+        opts.features.minify_syntax = topts.minify_syntax;
+        opts.features.is_library = topts.is_library;
+        opts.features.minify_identifiers = topts.minify_identifiers;
+        opts.features.minify_keep_names = topts.keep_names;
+        opts.features.minify_whitespace = topts.minify_whitespace;
+        opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
+        opts.features.no_macros = topts.no_macros;
+        // JavaScriptCore implements `using` / `await using` natively, so a Bun target does not lower them.
+        opts.features.lower_using = !target.is_bun();
+        opts.features.ascii_only = target.is_bun();
+        opts.features.hot_module_reloading =
+            output_format == options::Format::InternalBakeDev && !is_runtime;
+        opts.features.auto_polyfill_require =
+            output_format == options::Format::Esm && !opts.features.hot_module_reloading;
+        opts.ignore_dce_annotations = topts.ignore_dce_annotations && !is_runtime;
+        opts.tree_shaking = is_runtime || topts.tree_shaking;
+        opts.code_splitting = topts.code_splitting;
+    }
+
     pub(crate) fn run_with_source_code(
         task: &mut ParseTask<'static>,
         this: &mut crate::Worker,
@@ -2245,8 +2287,6 @@ pub mod parse_worker {
             }
         });
 
-        let output_format = topts.output_format;
-
         // D042: `crate::options::jsx::Pragma` IS `bun_js_parser::options::JSX::Pragma`
         // (both re-export `bun_options_types::jsx::Pragma`). `to_parser_jsx_pragma`
         // applies the `_None → Automatic` runtime fold the old `From` bridge did so
@@ -2255,8 +2295,7 @@ pub mod parse_worker {
             crate::transpiler::to_parser_jsx_pragma(task.jsx.clone()),
             loader,
         );
-        opts.bundle = true;
-        opts.warn_about_unbundled_modules = false;
+        set_bundle_parser_options(&mut opts, topts, target, task.source_index.is_runtime());
         // `AllowUnresolved` is the same nominal type on
         // both sides (re-export in options.rs). `'static` erasure: `topts` borrows
         // a worker-owned `Transpiler` that outlives the parse.
@@ -2274,28 +2313,9 @@ pub mod parse_worker {
         // SAFETY: the resolver outlives the parse, which only calls it from this thread.
         opts.import_meta_glob = Some(unsafe { Resolver::import_meta_glob_host(resolver) });
 
-        opts.features.allow_runtime = !task.source_index.is_runtime();
-        opts.features.unwrap_commonjs_to_esm =
-            output_format == options::Format::Esm && FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
-        opts.features.top_level_await = output_format == options::Format::Esm
-            || output_format == options::Format::InternalBakeDev;
         opts.features.auto_import_jsx = task.jsx.parse && topts.auto_import_jsx;
         opts.features.trim_unused_imports =
             loader.is_typescript() || topts.trim_unused_imports.unwrap_or(false);
-        opts.features.inlining = topts.minify_syntax;
-        // `bun_options_types::Format` and `bun_js_parser::options::Format` are
-        // distinct enums; map explicitly.
-        opts.output_format = match output_format {
-            options::Format::Esm => js_parser::options::Format::Esm,
-            options::Format::Cjs => js_parser::options::Format::Cjs,
-            options::Format::Iife => js_parser::options::Format::Iife,
-            options::Format::InternalBakeDev => js_parser::options::Format::InternalBakeDev,
-        };
-        opts.features.minify_syntax = topts.minify_syntax;
-        opts.features.is_library = topts.is_library;
-        opts.features.minify_identifiers = topts.minify_identifiers;
-        opts.features.minify_keep_names = topts.keep_names;
-        opts.features.minify_whitespace = topts.minify_whitespace;
         opts.use_define_for_class_fields = task.use_define_for_class_fields;
         opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
         // emitDecoratorMetadata implies legacy/experimental decorators, as it only
@@ -2303,8 +2323,6 @@ pub mod parse_worker {
         // TC39 standard decorators have their own metadata mechanism.
         opts.features.standard_decorators = !loader.is_typescript()
             || !(task.experimental_decorators || task.emit_decorator_metadata);
-        opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
-        opts.features.no_macros = topts.no_macros;
         // Modeled as
         // `Option<Box<StringSet>>` on both sides, so we deep-clone (small —
         // CLI-supplied flag set). PERF: retype
@@ -2314,14 +2332,6 @@ pub mod parse_worker {
             .bundler_feature_flags
             .as_deref()
             .map(|s| Box::new(bun_core::handle_oom(s.clone())));
-        // JavaScriptCore implements `using` / `await using` natively, so when
-        // targeting Bun there is no need to lower them.
-        opts.features.lower_using = !target.is_bun();
-        opts.features.ascii_only = target.is_bun();
-        opts.features.hot_module_reloading =
-            output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
-        opts.features.auto_polyfill_require =
-            output_format == options::Format::Esm && !opts.features.hot_module_reloading;
         opts.features.react_fast_refresh =
             topts.react_fast_refresh && loader.is_jsx() && !source.path.is_node_module();
         // Only `bun test` has a filter, and it compiles a hook in a `.ts` file too.
@@ -2438,9 +2448,6 @@ pub mod parse_worker {
             }
         }
 
-        opts.ignore_dce_annotations =
-            topts.ignore_dce_annotations && !task.source_index.is_runtime();
-
         // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
         // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
         // in which we inline `true`.
@@ -2450,12 +2457,6 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
-        opts.tree_shaking = if task.source_index.is_runtime() {
-            true
-        } else {
-            topts.tree_shaking
-        };
-        opts.code_splitting = topts.code_splitting;
         // A task that bypassed the resolver (plugin result, in-memory source).
         if task.module_type == options::ModuleType::Unknown {
             if let Some(from_ext) = _resolver::module_type_from_ext(task.path.name().ext) {

@@ -67,6 +67,20 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
+      // Module code cannot declare a variable named `arguments`, `eval` or `await`: the variable of such a key has
+      // another name, and the key is still an export.
+      itBundled("bun/loader-json-file-key-that-module-code-cannot-declare", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import * as data from './data.json';
+        import all from './data.json';
+        console.write(JSON.stringify([data.arguments, data.eval, data.await, data.arguments === all.arguments]));
+      `,
+          "/data.json": JSON.stringify({ arguments: { a: 1 }, eval: 2, await: 3 }),
+        },
+        run: { stdout: '[{"a":1},2,3,true]' },
+      });
       itBundled("bun/loader-toml-file", {
         target,
         files: {
@@ -967,9 +981,10 @@ describe("bundler", async () => {
       },
     });
 
-    // CSS imports are delivered out-of-band by the dev server, so the JS
-    // chunk only contains the importing module. This used to panic while
-    // linking the CSS file's lazy-export JS stub.
+    // The class names of a CSS module are a module of the JS chunk, like the
+    // value of any other data file. The CSS itself is delivered out-of-band.
+    // This used to panic while linking the CSS file's lazy-export JS stub, and
+    // then printed `import_styles_module` with no declaration.
     itBundled("bake-dev/loader-css-module-import", {
       format: "internal_bake_dev",
       outdir: "/out",
@@ -982,10 +997,66 @@ describe("bundler", async () => {
       },
       onAfterBundle(api) {
         const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
-        expect(api.readFile(join("/out", jsFile))).toContain('"entry.ts"');
+        const js = api.readFile(join("/out", jsFile));
+        const modules = js.slice(js.lastIndexOf("// styles.module.css"));
+        expect(modules).toMatchInlineSnapshot(`
+          "// styles.module.css
+            "styles.module.css"(hmr, module, exports) {
+              module.exports = {
+                foo: "foo_-MSaAA"
+              };
+            },
+
+            // entry.ts
+            "entry.ts": [ [
+              "styles.module.css", 1, "default",
+            ], [], [], (hmr) => {
+              var [import_styles_module] = hmr.imports;
+              hmr.updateImport = [(module) => import_styles_module = module];
+              console.log(import_styles_module.default.foo);
+            }, false],
+          }, {
+            main: "entry.ts"
+          });
+          "
+        `);
         const cssFile = readdirSync(api.outdir).find(x => x.endsWith(".css"))!;
         expect(api.readFile(join("/out", cssFile))).toContain("color: red");
       },
     });
+
+    // This format gives the `import` statements of one path one import record. A bare import ahead of an
+    // import that reads a value does not hide that the record reads a value.
+    for (const [name, statement, row] of [
+      [
+        "default",
+        `import styles from "./styles.module.css"; console.log(styles.foo);`,
+        `"styles.module.css", 1, "default",`,
+      ],
+      ["named", `import { foo } from "./styles.module.css"; console.log(foo);`, `"styles.module.css", 1, "foo",`],
+      [
+        "namespace",
+        `import * as styles from "./styles.module.css"; console.log(styles.foo);`,
+        `"styles.module.css", 0, // namespace import`,
+      ],
+      ["export-from", `export { foo } from "./styles.module.css";`, `"styles.module.css", 1, "foo",`],
+    ]) {
+      itBundled(`bake-dev/loader-css-module-import-after-bare-import-${name}`, {
+        format: "internal_bake_dev",
+        outdir: "/out",
+        files: {
+          "/entry.ts": `import "./styles.module.css";\n${statement}`,
+          "/styles.module.css": `.foo { color: red; }`,
+        },
+        onAfterBundle(api) {
+          const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
+          const js = api.readFile(join("/out", jsFile));
+          expect(js).toContain(
+            `"styles.module.css"(hmr, module, exports) {\n    module.exports = {\n      foo: "foo_-MSaAA"`,
+          );
+          expect(js).toContain(`"entry.ts": [ [\n    ${row}\n  ]`);
+        },
+      });
+    }
   });
 });

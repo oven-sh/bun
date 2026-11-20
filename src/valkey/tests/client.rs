@@ -1,6 +1,14 @@
+use std::collections::BTreeMap;
+
 use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Reason, Sent};
 use bun_valkey::command::Reply;
+use bun_valkey::listeners::{Name, Undo};
 use bun_valkey::valkey_protocol::RESPValue;
+
+#[unsafe(no_mangle)]
+extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
+    panic!("out of memory");
+}
 
 /// Stands in for wtf-bindings.cpp; no test sends a double.
 #[unsafe(no_mangle)]
@@ -59,7 +67,8 @@ struct Driver {
     /// How much the socket still takes.
     window: usize,
     batch_is_due: bool,
-    has_listeners: bool,
+    /// By channel, each as the number of the `subscribe()` that stored it.
+    listeners: BTreeMap<Name, Vec<u32>>,
     log: Vec<String>,
 }
 
@@ -71,7 +80,7 @@ impl Driver {
             sent: 0,
             window: usize::MAX,
             batch_is_due: false,
-            has_listeners: false,
+            listeners: BTreeMap::new(),
             log: Vec::new(),
         }
     }
@@ -152,6 +161,13 @@ impl Driver {
         self.send_as(command, Reply::Value);
     }
 
+    fn undo(&mut self, undo: Vec<Undo>) {
+        for Undo { channel, listeners } in undo {
+            self.listeners.get_mut(&channel).unwrap().drain(listeners);
+        }
+        self.listeners.retain(|_, it| !it.is_empty());
+    }
+
     fn read(&mut self, data: &str) {
         let mut input = self.client.feed(data.as_bytes());
         while let Some(event) = self.client.next_event(&mut input) {
@@ -171,23 +187,27 @@ impl Driver {
                     let buffer = if as_buffer { " as buffer" } else { "" };
                     format!("resolve #{promise} {}{buffer}", show(&value))
                 }
-                Event::Rejected { promise, message } => {
+                Event::Rejected {
+                    promise,
+                    message,
+                    undo,
+                } => {
+                    self.undo(undo);
                     format!("reject #{promise} {}", message.escape_ascii())
                 }
                 Event::Message(data) => format!("message {}", show(&data[0])),
                 Event::PatternMessage => "pattern message".into(),
                 Event::Subscribed(it) => acked("subscribed", it),
-                Event::Unsubscribed(it) => {
-                    if !self.has_listeners {
-                        self.client.leave_subscriber_mode();
-                    }
-                    acked("unsubscribed", it)
-                }
+                Event::Unsubscribed(it) => acked("unsubscribed", it),
                 Event::Broken { message, error } => {
                     self.log
                         .push(format!("broken {error:?} {}", message.escape_ascii()));
                     self.fail();
                     return self.lost();
+                }
+                Event::NotRestored { channel, message } => {
+                    let (channel, message) = (channel.escape_ascii(), message.escape_ascii());
+                    format!("not restored {channel} {message}")
                 }
                 Event::Busy(message) => {
                     self.log
@@ -217,13 +237,19 @@ impl Driver {
 
     fn lost(&mut self) {
         self.batch_is_due = false;
-        let line = match self.lose(false) {
-            Lost::ForGood { reason, pending } => format!("closed {pending:?} {reason:?}"),
+        let (line, undo) = match self.lose(false) {
+            Lost::ForGood {
+                reason,
+                pending,
+                undo,
+            } => (format!("closed {pending:?} {reason:?}"), undo),
             Lost::Retry {
                 delay_ms,
                 in_flight,
-            } => format!("retry in {delay_ms} {in_flight:?}"),
+                undo,
+            } => (format!("retry in {delay_ms} {in_flight:?}"), undo),
         };
+        self.undo(undo);
         self.log.push(line);
     }
 }
@@ -1246,8 +1272,8 @@ mod subscriptions {
                 "subscribed #1",
                 "write UNSUBSCRIBE a",
                 "write PING",
-                "subscribed #2",
-                "unsubscribed",
+                "ignored",
+                "unsubscribed #2",
                 "resolve #3 PONG",
             ]
         );
@@ -1299,18 +1325,10 @@ mod subscriptions {
                 "pattern message",
                 "unsubscribed #2 >punsubscribe a",
                 "subscribed #3 >ssubscribe x",
-                "subscribed",
+                "ignored",
                 "pattern message",
             ]
         );
-    }
-
-    #[test]
-    fn subscriber_mode_outlasts_the_connection() {
-        let mut it = subscriber();
-        it.lost();
-        it.handshake();
-        assert!(it.client.is_subscriber());
     }
 
     #[test]
@@ -1384,5 +1402,648 @@ mod subscriptions {
         }
         assert_eq!(it.take(), ["ignored"; 4]);
         assert!(!it.client.is_subscriber());
+    }
+
+    #[derive(Copy, Clone)]
+    enum Step {
+        Send(&'static str),
+        Subscribe(&'static str),
+        Unsubscribe(&'static str),
+        /// `unsubscribe(channel, listener)`, for a channel that keeps another.
+        Remove(&'static str, u32),
+        /// Kind, name (`_` for null) and count.
+        Ack(&'static str, &'static str, u32),
+        Read(&'static str),
+        Fail,
+        SessionBroke,
+        Close,
+        Connect,
+        Lost,
+        /// Up to the reply to HELLO.
+        Redial,
+    }
+    use Step::*;
+
+    fn run(config: Config, steps: &[Step]) -> Driver {
+        let mut it = Driver::connected(config);
+        let names = |text: &str| -> Vec<Name> {
+            let names = text.split_ascii_whitespace();
+            names.map(|it| it.as_bytes().into()).collect()
+        };
+        for step in steps {
+            match *step {
+                Send(command) => it.send(command),
+                Subscribe(channels) => {
+                    it.sent += 1;
+                    for name in names(channels) {
+                        it.listeners.entry(name).or_default().push(it.sent);
+                    }
+                    let _ = it.client.subscribe(&names(channels), it.sent);
+                }
+                Unsubscribe("") => {
+                    it.listeners.clear();
+                    it.client.clear_listeners();
+                    it.send("UNSUBSCRIBE");
+                }
+                Unsubscribe(channels) => {
+                    for name in names(channels) {
+                        it.listeners.remove(&name);
+                        it.client.retain_listeners(&name, |_| false);
+                    }
+                    it.send(&format!("UNSUBSCRIBE {channels}"));
+                }
+                Remove(channel, listener) => {
+                    let listeners = it.listeners.get_mut(channel.as_bytes()).unwrap();
+                    let keep = |index| listeners[index] != listener;
+                    it.client.retain_listeners(channel.as_bytes(), keep);
+                    listeners.retain(|it| *it != listener);
+                }
+                Ack(kind, name, count) => {
+                    let name = match name {
+                        "_" => name.into(),
+                        _ => format!("${}\r\n{name}", name.len()),
+                    };
+                    let len = kind.len();
+                    it.read(&format!(">3\r\n${len}\r\n{kind}\r\n{name}\r\n:{count}\r\n"));
+                }
+                Read(data) => it.read(&format!("{data}\r\n")),
+                Fail => it.fail(),
+                SessionBroke => drop(it.client.session_broke()),
+                Close => drop(it.client.close()),
+                Connect => it.client.connect(),
+                Lost => it.lost(),
+                Redial => {
+                    it.dial();
+                    it.start();
+                    it.read(HELLO);
+                }
+            }
+            it.advance();
+            it.checkpoint();
+        }
+        it
+    }
+
+    #[test]
+    fn surplus_acknowledgements() {
+        let rows: &[(&str, &[Step], &[&str])] = &[
+            (
+                "a name twice",
+                &[
+                    Send("SUBSCRIBE a a"),
+                    Send("SUBSCRIBE a"),
+                    Ack("subscribe", "a", 1),
+                    Ack("subscribe", "a", 1),
+                    Ack("subscribe", "a", 1),
+                ],
+                &["subscribed #1", "ignored", "subscribed #2"],
+            ),
+            (
+                "one left out in the middle",
+                &[
+                    Send("SUBSCRIBE a b c"),
+                    Send("SUBSCRIBE b"),
+                    Ack("subscribe", "a", 1),
+                    Ack("subscribe", "c", 2),
+                    Ack("subscribe", "b", 3),
+                ],
+                &["subscribed #1", "ignored", "subscribed #2"],
+            ),
+            (
+                "another kind under an owed name",
+                &[
+                    Send("SUBSCRIBE a b"),
+                    Send("UNSUBSCRIBE b"),
+                    Ack("subscribe", "a", 1),
+                    Ack("unsubscribe", "b", 1),
+                ],
+                &["subscribed #1", "unsubscribed #2"],
+            ),
+            (
+                "a message in between",
+                &[
+                    Send("SUBSCRIBE a b"),
+                    Send("SUBSCRIBE c"),
+                    Ack("subscribe", "a", 1),
+                    Ack("message", "a", 0),
+                    Ack("subscribe", "b", 2),
+                    Ack("subscribe", "c", 3),
+                ],
+                &["subscribed #1", "message a", "ignored", "subscribed #2"],
+            ),
+            (
+                "none is owed after a reply",
+                &[
+                    Send("SUBSCRIBE a b"),
+                    Send("PING"),
+                    Send("SUBSCRIBE b"),
+                    Ack("subscribe", "a", 1),
+                    Read("+PONG"),
+                    Ack("subscribe", "b", 2),
+                ],
+                &["subscribed #1", "resolve #2 PONG", "subscribed #3"],
+            ),
+            (
+                "none is owed on the next connection",
+                &[
+                    Send("SUBSCRIBE a b"),
+                    Ack("subscribe", "a", 1),
+                    Lost,
+                    Redial,
+                    Send("SUBSCRIBE b"),
+                    Ack("subscribe", "b", 1),
+                ],
+                &[
+                    "subscribed #1",
+                    "retry in 50 []",
+                    "connected map of 1",
+                    "subscribed #2",
+                ],
+            ),
+            (
+                "no arguments, then a subscribe",
+                &[
+                    Send("UNSUBSCRIBE"),
+                    Send("SUBSCRIBE c"),
+                    Ack("unsubscribe", "a", 1),
+                    Ack("unsubscribe", "b", 0),
+                    Ack("subscribe", "c", 1),
+                ],
+                &["unsubscribed #1", "ignored", "subscribed #2"],
+            ),
+            (
+                "no arguments with a pattern held, then a name",
+                &[
+                    Send("UNSUBSCRIBE"),
+                    Send("UNSUBSCRIBE x"),
+                    Ack("unsubscribe", "a", 3),
+                    Ack("unsubscribe", "b", 2),
+                    Ack("unsubscribe", "c", 1),
+                    Ack("unsubscribe", "x", 1),
+                ],
+                &["unsubscribed #1", "ignored", "ignored", "unsubscribed #2"],
+            ),
+            (
+                "no arguments three times",
+                &[
+                    Send("UNSUBSCRIBE"),
+                    Send("UNSUBSCRIBE"),
+                    Send("UNSUBSCRIBE"),
+                    Ack("unsubscribe", "a", 0),
+                    Ack("unsubscribe", "_", 0),
+                    Ack("unsubscribe", "_", 0),
+                ],
+                &["unsubscribed #1", "unsubscribed #2", "unsubscribed #3"],
+            ),
+            (
+                "no arguments twice, and a peer that counts 0 for no name",
+                &[
+                    Send("UNSUBSCRIBE"),
+                    Send("UNSUBSCRIBE"),
+                    Ack("unsubscribe", "a", 1),
+                    Ack("unsubscribe", "_", 0),
+                ],
+                &["unsubscribed #1", "unsubscribed #2"],
+            ),
+            (
+                "pipelined",
+                &[
+                    Send("PUNSUBSCRIBE a b"),
+                    Send("PUNSUBSCRIBE c"),
+                    Ack("punsubscribe", "a", 0),
+                    Ack("punsubscribe", "b", 0),
+                    Ack("punsubscribe", "c", 0),
+                ],
+                &[
+                    "unsubscribed #1 >punsubscribe a",
+                    "ignored",
+                    "unsubscribed #2 >punsubscribe c",
+                ],
+            ),
+        ];
+        for (name, steps, expected) in rows {
+            let mut log = run(Config::default(), steps).take();
+            log.retain(|line| !line.starts_with("write"));
+            assert_eq!(log, *expected, "{name}");
+        }
+    }
+
+    const A: Step = Ack("subscribe", "a", 1);
+
+    #[test]
+    fn listeners_left() {
+        let rows: &[(&str, &[Step], &str)] = &[
+            ("acknowledged", &[Subscribe("a b"), A, Lost], "a[1] b[1]"),
+            (
+                "queued by MULTI",
+                &[Subscribe("a"), Read("+QUEUED"), Lost],
+                "a[1]",
+            ),
+            ("refused", &[Subscribe("a b"), Read("-NO")], ""),
+            (
+                "refused, a name twice",
+                &[Subscribe("a a"), Read("-NO")],
+                "",
+            ),
+            (
+                "refused ahead of another",
+                &[Subscribe("a b"), Subscribe("a"), Read("-NO")],
+                "a[2]",
+            ),
+            (
+                "refused in subscriber mode, which fails the one behind it too",
+                &[
+                    Subscribe("a"),
+                    A,
+                    Subscribe("a b"),
+                    Subscribe("a"),
+                    Read("-NO"),
+                ],
+                "a[1]",
+            ),
+            (
+                "refused after an older listener went",
+                &[
+                    Subscribe("a"),
+                    Read("+QUEUED"),
+                    Subscribe("a"),
+                    Subscribe("a"),
+                    Remove("a", 1),
+                    Read("-NO"),
+                ],
+                "a[3]",
+            ),
+            (
+                "refused after its own listener went",
+                &[
+                    Subscribe("a"),
+                    Unsubscribe("a"),
+                    Subscribe("a"),
+                    Read("-NO"),
+                ],
+                "a[3]",
+            ),
+            (
+                "a raw request is refused",
+                &[Subscribe("a"), A, Send("SUBSCRIBE a"), Read("-NO")],
+                "a[1]",
+            ),
+            (
+                "dropped, one still queued",
+                &[Subscribe("a"), Subscribe("a b"), Lost],
+                "a[2] b[2]",
+            ),
+            (
+                "dropped twice",
+                &[
+                    Subscribe("a"),
+                    Subscribe("a"),
+                    Subscribe("a"),
+                    Lost,
+                    Redial,
+                    Lost,
+                ],
+                "a[3]",
+            ),
+            (
+                "closed",
+                &[
+                    Subscribe("a"),
+                    A,
+                    Subscribe("a"),
+                    Subscribe("a b"),
+                    Close,
+                    Lost,
+                ],
+                "a[1]",
+            ),
+            ("failed", &[Subscribe("a"), Subscribe("b"), Fail, Lost], ""),
+            (
+                "failed, and another queued ahead of the close",
+                &[Subscribe("a"), Fail, Connect, Subscribe("a"), Lost],
+                "",
+            ),
+            (
+                "the session broke",
+                &[Subscribe("a"), SessionBroke, Lost],
+                "",
+            ),
+            (
+                "answered in RESP2",
+                &[
+                    Subscribe("a"),
+                    Read("*3\r\n$9\r\nsubscribe\r\n$1\r\na\r\n:1"),
+                ],
+                "",
+            ),
+        ];
+        for (name, steps, expected) in rows {
+            let it = run(Config::default(), steps);
+            let left = (it.listeners.iter()).map(|(k, v)| format!("{}{v:?}", k.escape_ascii()));
+            assert_eq!(left.collect::<Vec<_>>().join(" "), *expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn modes() {
+        #[derive(Debug, PartialEq)]
+        enum Mode {
+            Fresh,
+            Plain,
+            Subscriber,
+        }
+        use Mode::*;
+        const P: Step = Ack("psubscribe", "p", 1);
+        const UN_A: Step = Ack("unsubscribe", "a", 0);
+        let rows: &[(&str, &[Step], Mode)] = &[
+            ("nothing yet", &[], Fresh),
+            (
+                "a raw request is refused",
+                &[Send("SUBSCRIBE a"), Read("-NO")],
+                Fresh,
+            ),
+            ("not acknowledged yet", &[Subscribe("a")], Plain),
+            ("acknowledged", &[Subscribe("a"), A], Subscriber),
+            (
+                "dropped with a listener",
+                &[Subscribe("a"), A, Lost],
+                Subscriber,
+            ),
+            (
+                "dropped with a pattern",
+                &[Send("PSUBSCRIBE p"), P, Lost],
+                Plain,
+            ),
+            (
+                "queued by MULTI, and restored",
+                &[Subscribe("a"), Read("+QUEUED"), Lost, Redial, A],
+                Subscriber,
+            ),
+            (
+                "unsubscribing",
+                &[Subscribe("a"), A, Unsubscribe("a")],
+                Subscriber,
+            ),
+            (
+                "unsubscribed",
+                &[Subscribe("a"), A, Unsubscribe("a"), UN_A],
+                Plain,
+            ),
+            (
+                "a listener is left",
+                &[Subscribe("a b"), A, Unsubscribe("a"), UN_A],
+                Subscriber,
+            ),
+            (
+                "unsubscribe is refused",
+                &[Subscribe("a"), A, Unsubscribe(""), Read("-NO")],
+                Plain,
+            ),
+            (
+                "unsubscribe is dropped",
+                &[Subscribe("a"), A, Unsubscribe(""), Lost],
+                Plain,
+            ),
+            (
+                "unsubscribe cannot be sent",
+                &[Subscribe("a"), A, Close, Lost, Unsubscribe("a")],
+                Plain,
+            ),
+            (
+                "the successor is refused",
+                &[
+                    Subscribe("a"),
+                    A,
+                    Unsubscribe("a"),
+                    Subscribe("b"),
+                    UN_A,
+                    Read("-NO"),
+                ],
+                Plain,
+            ),
+        ];
+        for (name, steps, expected) in rows {
+            let client = run(Config::default(), steps).client;
+            let mode = match (client.may_unsubscribe(), client.is_subscriber()) {
+                (false, _) => Fresh,
+                (true, false) => Plain,
+                (true, true) => Subscriber,
+            };
+            assert_eq!(mode, *expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn an_array_answers() {
+        const BROKEN: &str =
+            "broken UnsupportedProtocol Subscriptions need RESP3, but this connection uses RESP2";
+        for (command, first_item, expected) in [
+            ("SUBSCRIBE a", "subscribe", BROKEN),
+            ("PSUBSCRIBE a", "psubscribe", BROKEN),
+            ("SSUBSCRIBE a", "ssubscribe", BROKEN),
+            ("SUBSCRIBE a", "other", "resolve #1 ?"),
+            ("UNSUBSCRIBE a", "unsubscribe", "resolve #1 ?"),
+            ("UNSUBSCRIBE a", "subscribe", "resolve #1 ?"),
+            ("LRANGE k 0 0", "subscribe", "resolve #1 ?"),
+        ] {
+            let mut it = run(Config::default(), &[Send(command)]);
+            it.read(&format!("*1\r\n${}\r\n{first_item}\r\n", first_item.len()));
+            assert_eq!(it.log[1], expected, "{command}, {first_item}");
+        }
+    }
+
+    #[test]
+    fn restore() {
+        const B: Step = Ack("subscribe", "b", 2);
+        const PONG: Step = Read("+PONG");
+        const CONNECTED: &str = "connected map of 1";
+        const WRITE: &str = "write SUBSCRIBE a SUBSCRIBE b";
+        const PINGED: &[&str] = &[CONNECTED, WRITE, "write PING", "resolve #2 PONG"];
+        let rows: &[(&str, &[Step], &[&str])] = &[
+            ("acknowledged", &[Redial, Send("PING"), A, B, PONG], PINGED),
+            (
+                "plain replies",
+                &[Redial, Send("PING"), Read("+OK"), Read("+OK"), PONG],
+                PINGED,
+            ),
+            (
+                "all are refused",
+                &[Redial, Send("PING"), Read("-BUSY"), Read("-NOAUTH"), PONG],
+                &[
+                    CONNECTED,
+                    WRITE,
+                    "write PING",
+                    "not restored a BUSY",
+                    "not restored b NOAUTH",
+                    "resolve #2 PONG",
+                ],
+            ),
+            (
+                "pushes in between",
+                &[
+                    Redial,
+                    Send("PING"),
+                    A,
+                    Ack("message", "a", 0),
+                    Ack("invalidate", "k", 0),
+                    B,
+                    PONG,
+                ],
+                &[
+                    CONNECTED,
+                    WRITE,
+                    "write PING",
+                    "message a",
+                    "resolve #2 PONG",
+                ],
+            ),
+            (
+                "one is refused, and tried again on the next connection",
+                &[Redial, A, Read("-NOPERM no"), Lost, Redial],
+                &[
+                    CONNECTED,
+                    WRITE,
+                    "not restored b NOPERM no",
+                    "retry in 50 []",
+                    CONNECTED,
+                    WRITE,
+                ],
+            ),
+            (
+                "a stray acknowledgement does not answer what is behind it",
+                &[
+                    Redial,
+                    Send("PUNSUBSCRIBE p"),
+                    Ack("unsubscribe", "z", 0),
+                    A,
+                    B,
+                    Ack("punsubscribe", "p", 2),
+                ],
+                &[
+                    CONNECTED,
+                    WRITE,
+                    "write PUNSUBSCRIBE p",
+                    "unsubscribed",
+                    "unsubscribed #2 >punsubscribe p",
+                ],
+            ),
+            (
+                "an error behind it",
+                &[Redial, Send("PING"), A, B, Read("-NO")],
+                &[
+                    CONNECTED,
+                    WRITE,
+                    "write PING",
+                    "broken ServerError NO",
+                    "fail Some([2])",
+                    "closed [] Final",
+                ],
+            ),
+            (
+                "dropped",
+                &[Redial, Send("PING"), A, Lost],
+                &[CONNECTED, WRITE, "write PING", "retry in 100 [2]"],
+            ),
+            (
+                "dropped after it is answered",
+                &[Redial, A, B, Lost],
+                &[CONNECTED, WRITE, "retry in 50 []"],
+            ),
+            (
+                "an unsubscribe is queued",
+                &[Unsubscribe("a"), Redial, B],
+                &[CONNECTED, "write SUBSCRIBE b", "write UNSUBSCRIBE a"],
+            ),
+            (
+                "a subscribe is queued",
+                &[Subscribe("a c"), Redial, A, B, A],
+                &[CONNECTED, WRITE, "write SUBSCRIBE a c", "subscribed #2"],
+            ),
+            (
+                "only a queued listener is left",
+                &[Subscribe("a"), Remove("a", 1), Redial, B],
+                &[CONNECTED, "write SUBSCRIBE b", "write SUBSCRIBE a"],
+            ),
+            (
+                "no listener is left",
+                &[Unsubscribe(""), Redial],
+                &[CONNECTED, "write UNSUBSCRIBE"],
+            ),
+        ];
+        for (name, steps, expected) in rows {
+            let steps = [&[Subscribe("a b"), A, B, Lost], *steps].concat();
+            let mut log = run(Config::default(), &steps).take();
+            log.retain(|line| line != "ignored" && line != "write HELLO 3");
+            assert_eq!(log[3..], **expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn the_restore_follows_the_remembered_database() {
+        let steps = [
+            Subscribe("a"),
+            A,
+            Send("SELECT 1"),
+            Read("+OK"),
+            Lost,
+            Redial,
+            Read("+OK"),
+        ];
+        let log = run(Config::default(), &steps).take();
+        assert_eq!(
+            log[log.len() - 4..],
+            [
+                "write HELLO 3 SELECT 1",
+                "ignored",
+                "connected map of 1",
+                "write SUBSCRIBE a",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_session_that_breaks_in_the_restore_forgets_the_database_it_was_leaving() {
+        let steps = [
+            Subscribe("a"),
+            A,
+            Send("SELECT 1"),
+            Read("+OK"),
+            Lost,
+            Redial,
+            Read("+OK"),
+            Send("RESET"),
+            SessionBroke,
+            Lost,
+            Redial,
+        ];
+        let log = run(Config::default(), &steps).take();
+        assert_eq!(log[log.len() - 3], "write HELLO 3");
+    }
+
+    #[test]
+    fn the_restore_keeps_the_retries_and_the_database() {
+        let reach = [
+            Subscribe("a b"),
+            A,
+            Send("SELECT 1"),
+            Read("+OK"),
+            Lost,
+            Redial,
+            Read("+OK"),
+        ];
+        let select = "write HELLO 3 SELECT 1";
+        let rows: [(&[Step], [&str; 2]); 4] = [
+            (&[], ["retry in 100 []", select]),
+            (&[A], ["retry in 100 []", select]),
+            (&[A, A], ["retry in 50 []", select]),
+            (&[Close, Connect], ["retry in 100 []", "write HELLO 3"]),
+        ];
+        for (row, (steps, expected)) in rows.into_iter().enumerate() {
+            let mut it = run(Config::default(), &[&reach, steps, &[Lost]].concat());
+            it.dial();
+            it.start();
+            assert_eq!(it.log[it.log.len() - 2..], expected, "{row}");
+            assert_eq!(it.client.abandon_handshake(), row != 3, "{row}");
+        }
     }
 }

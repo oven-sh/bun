@@ -269,6 +269,8 @@ await client.unsubscribe(channel); // Unsubscribe a particular channel.
 await client.unsubscribe(channel, listener); // Unsubscribe a particular listener.
 ```
 
+After a reconnect, the client subscribes again to the channels that have listeners, so do not call `.subscribe()` from `onconnect`. If the server refuses a channel, Bun emits a process warning and the channel stays silent until the next connection: call `.close()` and `.connect()` to try again. Messages published while it was disconnected are lost, and `.psubscribe()` patterns are not restored.
+
 ## Advanced Usage
 
 ### Command Execution and Pipelining
@@ -372,7 +374,6 @@ The following commands disable automatic pipelining:
 - `SUBSCRIBE`
 - `PSUBSCRIBE`
 - `UNSUBSCRIBE`
-- `UNPSUBSCRIBE`
 
 ---
 

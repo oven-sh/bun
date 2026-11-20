@@ -2061,13 +2061,7 @@ describe("Valkey: Recovering After fail()", () => {
     }
   });
 
-  // subscribe() before connect() with the default offline queue stores the
-  // listener and queues the SUBSCRIBE; when the dial then fails for good the
-  // queued SUBSCRIBE is rejected but the listener stays, so the process is
-  // held alive. #33290 registers the listener on the server's subscribe
-  // confirmation instead, which closes this route; a -ERR reply to SUBSCRIBE
-  // (an ACL NOPERM, say) leaves the same orphan and is closed the same way.
-  test.todo("the process exits after a queued subscribe() is rejected by a dial that fails for good", async () => {
+  test("the process exits after a queued subscribe() is rejected by a dial that fails for good", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

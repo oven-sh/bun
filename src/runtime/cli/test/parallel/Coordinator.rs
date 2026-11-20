@@ -20,6 +20,7 @@ use crate::api::bun::process::Status as SpawnStatus;
 use crate::cli::run_compiled::log_first_time_in_test_run;
 use crate::cli::test::timings::Timings;
 use crate::test_command::CommandLineReporter;
+use crate::test_runner::deadline_watch;
 
 pub(crate) struct Coordinator<'a> {
     pub(crate) reporter: &'a CommandLineReporter,
@@ -427,6 +428,8 @@ impl<'a> Coordinator<'a> {
             self.ensure_header(idx);
         }
         let w = &mut self.workers[slot];
+        w.printed_watch_message |=
+            strings::contains(&w.captured, deadline_watch::MESSAGE.as_bytes());
         let _ = Output::error_writer().write_all(&w.captured);
         if !strings::ends_with_char(&w.captured, b'\n') {
             let _ = Output::error_writer().write_all(b"\n");
@@ -531,6 +534,7 @@ impl<'a> Coordinator<'a> {
 
         self.workers[slot].read_output_written_so_far();
         self.flush_captured(slot, Some(idx));
+        self.workers[slot].printed_watch_message = false;
         if self.last_header_idx == Some(idx) {
             self.end_group();
         }
@@ -580,9 +584,10 @@ impl<'a> Coordinator<'a> {
         }
         let phase = self.schedule.vacate(slot);
         self.workers[slot].read_output_written_so_far();
-        let blocked_event_loop =
-            ended_itself_for_blocked_event_loop(status, &self.workers[slot].captured);
         self.flush_captured(slot, phase.file());
+        // The exit code alone could be a test's own `process.exit(124)`.
+        let blocked_event_loop = self.workers[slot].printed_watch_message
+            && matches!(status, SpawnStatus::Exited(exit) if exit.code == deadline_watch::WORKER_EXIT_CODE);
         let panicked = is_panic_status(status);
         let is_after_panic = self.stop_reason == Some(StopReason::WorkerPanicked);
         match phase {
@@ -777,13 +782,6 @@ fn terminate(worker: &Worker) {
 #[cfg(unix)]
 fn terminate_process_group(pid: libc::pid_t) {
     let _ = bun_spawn::ffi::kill(-pid, libc::SIGTERM);
-}
-
-/// Whether `deadline_watch` ended the worker: a test blocked the event loop for too long after its timeout.
-fn ended_itself_for_blocked_event_loop(status: &SpawnStatus, printed: &[u8]) -> bool {
-    use crate::test_runner::deadline_watch::{MESSAGE, WORKER_EXIT_CODE};
-    matches!(status, SpawnStatus::Exited(exit) if exit.code == WORKER_EXIT_CODE)
-        && strings::contains(printed, MESSAGE.as_bytes())
 }
 
 /// Fatal signals that indicate Bun itself (or a native addon) crashed,

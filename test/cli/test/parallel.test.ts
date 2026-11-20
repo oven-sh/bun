@@ -312,6 +312,42 @@ test.skipIf(isWindows)(
   },
 );
 
+// The coordinator is blocked in a write for 2 seconds, by a reader that reads nothing. Nothing tells the reader when
+// the worker of b.test.js has ended. In that time the worker sends a result, prints that its test blocks, and ends,
+// and the coordinator then reads all three at once. A shell pipeline, because Bun.spawn() reads a pipe at once.
+test.skipIf(isWindows)(
+  "--parallel: a worker that a blocked event loop ends has timed out for a coordinator that was busy too",
+  async () => {
+    using dir = tempDir("parallel-blocked-event-loop-busy-coordinator", {
+      "a.test.js": `import {test} from "bun:test";
+        import {writeFileSync} from "fs";
+        test("prints", () => {
+          const line = Buffer.alloc(999, "x").toString();
+          for (let i = 0; i < 200; i++) console.log(line);
+        }, 10_000);
+        test("says that it has printed", () => writeFileSync("printed", ""));`,
+      "b.test.js": `import {test} from "bun:test";
+        import {existsSync} from "fs";
+        test("waits for the other file", async () => { while (!existsSync("printed")) await Bun.sleep(5); }, 10_000);
+        test("loops", () => { while (true) {} });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `("$0" test --parallel=2 --timeout=250; echo "exit: $?") 2>&1 | (sleep 2; cat)`, bunExe()],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_TEST_TIMEOUT_GRACE_MS: "250" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.split("\n").filter(line => /^✗ |^exit: /.test(line))).toEqual([
+      "✗ b.test.js (worker timed out: a test did not return to the event loop after its timeout)",
+      "exit: 1",
+    ]);
+  },
+);
+
 test("--parallel: a test that calls process.exit(124) is a worker that crashed, not one that timed out", async () => {
   using dir = tempDir("parallel-exit-124", {
     "a.test.js": `import {test} from "bun:test"; test("exits", () => process.exit(124));`,

@@ -179,7 +179,13 @@ function read(this: NativeReadable, maxToRead: number) {
       },
     );
   } else {
+    const state = this._readableState;
+    const length = state.length;
     this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
+    // `maybeReadMore_` stops once its `_read()` pushes a chunk the decoder kept whole (paused at hwm 0 it never reads).
+    if (state.length === length && typeof result !== "boolean" && !this[kCloseState][0]) {
+      process.nextTick(readAfterHeldChunk, this);
+    }
   }
 }
 
@@ -207,6 +213,11 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undef
 // EOF is pushed a tick after the last chunk. After a destroy() in between, Node emits 'close' without 'end'.
 function pushEof(stream: NativeReadable) {
   if (!stream.destroyed) stream.push(null);
+}
+
+// Not queued once EOF is: there a `read(0)` emits 'end' on a paused stream before anything has read it.
+function readAfterHeldChunk(stream: NativeReadable) {
+  if (!stream.destroyed) stream.read(0);
 }
 
 // `push()` returning false means the Readable's buffer is at/above hwm (or

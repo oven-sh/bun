@@ -3028,7 +3028,70 @@ declare module "bun" {
     allowBunRuntime?: boolean;
     exports?: {
       eliminate?: string[];
-      replace?: Record<string, string>;
+      /**
+       * Replace exported declarations of the file. Each key is the name of an
+       * exported `const`, `let`, `var`, `function` or `class` declaration, or
+       * `default` for `export default`. Its value is the replacement.
+       *
+       * - A string, number, boolean, `null` or `undefined` becomes the value
+       *   of the declaration. The declaration keeps its name.
+       * - `[name, value]` replaces the declaration with an export called
+       *   `name`. The export has the value `value`, which is a string,
+       *   number, boolean, `null` or `undefined`.
+       *
+       * Bun leaves these exports as they are:
+       * - `export function` and `export class`, when `deadCodeElimination`
+       *   is `false`. The default is `true`.
+       * - A name that a destructuring pattern declares, such as `a` in
+       *   `export const { a } = value`.
+       * - `export default class`, when the value for `default` is not a pair.
+       * - `export { local as name }` with no `from`, when the key is `name`.
+       *
+       * For that list the key is `local`, and only a pair works. A plain
+       * value adds a second declaration of `local`.
+       *
+       * For a pair or a map that you keep in a variable, write `as const`:
+       * `const pair = ["__N_SSG", true] as const`. Without a type, TypeScript
+       * infers an array for the pair and reports an error.
+       *
+       * Write each key as an identifier or `default`, and each `name` as an
+       * identifier. The constructor throws a `TypeError` for a key or a
+       * `name` such as `a-b`.
+       *
+       * Give each pair a `name` that the top level of the file does not
+       * declare. `transformSync()` throws when the top level declares a
+       * variable, function or class with that `name`, or when two replaced
+       * exports of one file take the same `name`.
+       *
+       * @example
+       * ```ts
+       * const transpiler = new Bun.Transpiler({
+       *   loader: "ts",
+       *   exports: {
+       *     replace: {
+       *       revalidate: 60,
+       *       getStaticProps: ["__N_SSG", true],
+       *     },
+       *   },
+       * });
+       *
+       * transpiler.transformSync(`
+       *   export const revalidate = readConfig().revalidate;
+       *   export const getStaticProps = async () => ({ props: await load() });
+       * `);
+       * // export const revalidate = 60;
+       * // export const __N_SSG = true;
+       * ```
+       */
+      replace?: Record<
+        string,
+        | string
+        | number
+        | boolean
+        | null
+        | undefined
+        | readonly [name: string, value: string | number | boolean | null | undefined]
+      >;
     };
     treeShaking?: boolean;
     trimUnusedImports?: boolean;

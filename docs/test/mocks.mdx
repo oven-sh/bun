@@ -807,6 +807,7 @@ test("lazy import", async () => {
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
+- If a factory awaits a module that is itself waiting at an `await import()` for that factory's mock, they wait on each other. A file with hoisted calls awaits most of its imports this way. If the test file then fails to load, a note of the error names the mocked module: `a mock.module() factory never settled for`. In a test, a hook or a `describe()` callback, the same wait ends in a timeout or in `never settled`, without that note. Load such a module after the factory returns, for example in a function that the mock exports.
 
 ## Implementation Details
 

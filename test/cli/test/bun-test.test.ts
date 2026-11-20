@@ -2868,6 +2868,300 @@ describe.concurrent("a test file that can never finish loading", () => {
     });
   });
 
+  const realModule = `export const value = "real";`;
+
+  // helper.ts has a hoisted vi.mock(), so it awaits its import of mod.ts. The factory for mod.ts runs then, and awaits helper.ts.
+  test("names a mock factory that awaits a module which awaits its mock", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test, vi } from "bun:test";
+        import { helper } from "./helper.ts";
+        vi.mock("./mod.ts", async () => {
+          const { helper } = await import("./helper.ts");
+          return { value: "mocked", helper };
+        });
+        test("never registered", () => void helper());
+      `,
+      "helper.ts": `
+        import { vi } from "bun:test";
+        import { value } from "./mod.ts";
+        vi.mock("./unrelated.ts", () => ({}));
+        export const helper = () => value;
+      `,
+      "mod.ts": realModule,
+    });
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+        'note: unsettled top-level await in "helper.ts"',
+        'note: an onLoad() plugin or a mock.module() factory never settled for "mod.ts"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("names a mock factory that never settles for a module that a file with a hoisted vi.mock() imports", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test, vi } from "bun:test";
+        import { value } from "./mod.ts";
+        vi.mock("./mod.ts", () => new Promise(() => {}));
+        test("never registered", () => void value);
+      `,
+      "mod.ts": realModule,
+    });
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+        'note: an onLoad() plugin or a mock.module() factory never settled for "mod.ts"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("names a mock factory that two modules wait for once", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { vi } from "bun:test";
+        vi.mock("./mod.ts", () => new Promise(() => {}));
+        await import("./first.ts");
+      `,
+      "first.ts": `
+        void import("./second.ts");
+        export const { value } = await import("./mod.ts");
+      `,
+      "second.ts": `export const { value } = await import("./mod.ts");`,
+      "mod.ts": realModule,
+    });
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+        'note: unsettled top-level await in "first.ts"',
+        'note: unsettled top-level await in "second.ts"',
+        'note: an onLoad() plugin or a mock.module() factory never settled for "mod.ts"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("names a mock factory that takes importOriginal, not the top-level await of its module", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test, vi } from "bun:test";
+        import { value } from "./mod.ts";
+        vi.mock("./mod.ts", importOriginal => new Promise(() => {}));
+        test("never registered", () => void value);
+      `,
+      "mod.ts": realModule,
+    });
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+        'note: an onLoad() plugin or a mock.module() factory never settled for "mod.ts"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("names a mock factory for a builtin module", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test, vi } from "bun:test";
+        import { hostname } from "node:os";
+        vi.mock("node:os", () => new Promise(() => {}));
+        test("never registered", () => void hostname);
+      `,
+    });
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+        'note: an onLoad() plugin or a mock.module() factory never settled for "node:os"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("names a mock factory beyond the five modules", async () => {
+    const files: Record<string, string> = {
+      "a.test.ts": `
+        import { vi } from "bun:test";
+        import "./importer0.ts";
+        vi.mock("./mod.ts", () => new Promise(() => {}));
+      `,
+      "mod.ts": realModule,
+    };
+    for (let i = 0; i < 5; i++) {
+      files[`importer${i}.ts`] = `
+        import { vi } from "bun:test";
+        import "./${i < 4 ? `importer${i + 1}` : "mod"}.ts";
+        vi.mock("./unrelated.ts", () => ({}));
+      `;
+    }
+    const { errors, counts, exitCode } = await runFiles(files);
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+        ...[0, 1, 2, 3].map(i => `note: unsettled top-level await in "importer${i}.ts"`),
+        'note: an onLoad() plugin or a mock.module() factory never settled for "mod.ts"',
+        "note: and 1 more",
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("doesn't name a mock factory whose import() no module awaits", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { vi } from "bun:test";
+        vi.mock("./mod.ts", () => new Promise(() => {}));
+        void import("./mod.ts");
+        await new Promise(() => {});
+      `,
+      "mod.ts": realModule,
+    });
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  // The mock patches stuck.ts in place, so the import() waits for the body of stuck.ts.
+  test("doesn't name a mock factory for a module that waits in its own body", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { mock } from "bun:test";
+        const { promise, resolve } = Promise.withResolvers();
+        globalThis.began = resolve;
+        void import("./stuck.ts");
+        await promise;
+        mock.module("./stuck.ts", () => new Promise(() => {}));
+        await import("./stuck.ts");
+      `,
+      "stuck.ts": `
+        globalThis.began();
+        await new Promise(() => {});
+        export const value = "real";
+      `,
+    });
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+        'note: unsettled top-level await in "stuck.ts"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  // The factory takes the original, whose body never ends, so the factory is never called.
+  test("doesn't name a mock factory that was not called", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { vi } from "bun:test";
+        const { promise, resolve } = Promise.withResolvers();
+        globalThis.began = resolve;
+        void import("./stuck.ts");
+        await promise;
+        vi.doMock("./stuck.ts", async importOriginal => ({ ...(await importOriginal()), value: "mocked" }));
+        await import("./stuck.ts");
+      `,
+      "stuck.ts": `
+        globalThis.began();
+        await new Promise(() => {});
+        export const value = "real";
+      `,
+    });
+    // A compiled run does not list the original, which runs from source.
+    const factories = errors.filter(line => line.includes("never settled for"));
+    expect({ errors: errors.slice(0, 3), factories, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+      ],
+      factories: [],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  // vi.importActual() resolves mod.ts. The import() after it is of stuck.ts.
+  test("doesn't name a mock factory for an import() of another module", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { vi } from "bun:test";
+        await vi.importActual("./mod.ts");
+        const stuck = import("./stuck.ts");
+        vi.doMock("./mod.ts", () => new Promise(() => {}));
+        void import("./mod.ts");
+        await stuck;
+      `,
+      "mod.ts": realModule,
+      "stuck.ts": `await new Promise(() => {});`,
+    });
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+        'note: unsettled top-level await in "stuck.ts"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  // The mock of node:fs is the file in __mocks__, which never finishes. No factory runs.
+  test("doesn't name a mock without a factory as a factory", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test, vi } from "bun:test";
+        import { existsSync } from "node:fs";
+        vi.mock("node:fs");
+        test("never registered", () => void existsSync);
+      `,
+      "__mocks__/fs.ts": `
+        await new Promise(() => {});
+        export const existsSync = () => "mocked";
+      `,
+    });
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+        'note: unsettled top-level await in "fs.ts"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
   test("--preload", async () => {
     const { errors, counts, exitCode } = await runFiles(
       { "preload.ts": "await new Promise(() => {});", "a.test.ts": passes },

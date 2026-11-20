@@ -334,6 +334,7 @@ class GlobalObject;
 } // namespace Zig
 
 namespace JSC {
+class CyclicModuleRecord;
 class JSModuleNamespaceObject;
 class JSSourceCode;
 }
@@ -373,6 +374,8 @@ bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
+bool isModuleMockFactoryRunning(Zig::GlobalObject*, const String& key);
+void appendModuleMocksWhoseFactoryAnImportAwaits(Zig::GlobalObject*, std::span<JSC::CyclicModuleRecord* const> evaluating, Vector<String>& keys);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
 #if ENABLE(AOT)
 // The same for the namespace object of a compiled module. Null for any other object.

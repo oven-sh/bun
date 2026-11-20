@@ -1,18 +1,18 @@
-# `function finish(leaf: Leaf, pos) { setPos(leaf, pos); .. }`, with `function setPos<T extends Range>(range: T, pos) { (range as { pos: number }).pos = pos; .. }` copied in.
-# The helper's parameter is written as any Range, and a list is a Range too (`interface Leaves extends Array<number>, Range`): a store by name on that has no typed form. What this copy is handed is the unit's own parameter, of which `Leaf` is written:
+# `function rolls(cart: Cart, hills) { slows(cart, 2); .. }`, with `function slows<Any extends Wheeled>(thing: Any, by) { .. (thing as { speed: number }).speed = speed; }` copied in.
+# The helper's parameter is written as anything Wheeled, and a list is Wheeled too (`interface Train extends Array<number>, Wheeled`): a store by name on that has no typed form. What this copy is handed is the unit's own parameter, of which `Cart` is written:
 # what both say is tested, and the store is typed behind the test. The cast in the helper is looked through.
-# f1 = setPos, f2 = finish
+# f1 = slows, f2 = rolls
 # -- source: helper-copied-in-expects-of-the-units-own-parameter-what-the-unit-does.ts
-# interface Range { pos: number; end: number }
-# interface Leaves extends Array<number>, Range {}
-# class Leaf implements Range { pos = 0; end = 0; kind = 1; }
-# function setPos<T extends Range>(range: T, pos: number): T { (range as { pos: number }).pos = pos; return range; }
-# function finish(leaf: Leaf, pos: number): Leaf { setPos(leaf, pos); return leaf; }
-# function finishAll(leaves: Leaves, pos: number): Leaves { return setPos(leaves, pos); }
-# sink(finish, finishAll, setPos, new Leaf());
+# interface Wheeled { speed: number; wheels: number }
+# interface Train extends Array<number>, Wheeled {}
+# class Cart implements Wheeled { speed = 9; wheels = 4; load = 30; }
+# function slows<Any extends Wheeled>(thing: Any, by: number): Any { const rolling = thing as { speed: number }; rolling.speed = by > 8 ? 0 : 8 - by; return thing; }
+# function rolls(cart: Cart, hills: number): Cart { const slower = slows(cart, hills * 2); return slower; }
+# function rattles(train: Train): Train { return slows(train, train.length); }
+# sink(rolls, slows, rattles, new Cart());
 # declare function sink(...values: unknown[]): void;
 # -- end of source
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
 # CHECK: = ShapeTest {{*}}layouts=[L0]
-# CHECK: PutSlot {{*}}key="pos" receivers=[L0] level=Proven
+# CHECK: PutSlot {{*}}key="speed" receivers=[L0] level=Proven

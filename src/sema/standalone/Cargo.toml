@@ -2,7 +2,6 @@
 name = "bun_sema_standalone"
 version.workspace = true
 edition.workspace = true
-build = "build.rs"
 
 [lib]
 path = "lib.rs"
@@ -29,9 +28,6 @@ bun_zstd.workspace = true
 bun_boringssl_sys.workspace = true
 libc.workspace = true
 bstr.workspace = true
-
-[build-dependencies]
-cc = "1"
 
 [lints]
 workspace = true

@@ -1,0 +1,8 @@
+function shown(word) {
+  "use strict";
+  return word + ":" + total() + " <!-- kept -->";
+}
+function strictThis() {
+  return (function () { return typeof this; })();
+}
+return { add: add, total: total, area: area, ring: ring, shown: shown, strictThis: strictThis };

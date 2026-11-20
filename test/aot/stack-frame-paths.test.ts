@@ -88,7 +88,7 @@ const files = {
     file(viaPackage());
     file(above());
   `,
-  // What packages do with the file of a frame, each in the form the package has it.
+  // What packages do with the file of a frame.
   "app/idioms.ts": `
     import { folderOfCaller, fileOfCaller, firstFileOutside, firstFrameWithASlash } from "reads-frames";
     import { viaHelper } from "./src/helper.cjs";
@@ -113,24 +113,34 @@ const files = {
   `,
   "app/node_modules/reads-frames/index.js": `
     const path = require("path");
-    function sites() {
-      const previous = Error.prepareStackTrace;
-      Error.prepareStackTrace = (_, found) => found;
-      const found = new Error().stack;
-      Error.prepareStackTrace = previous;
-      return found;
+    function places() {
+      const before = Error.prepareStackTrace;
+      try {
+        Error.prepareStackTrace = (error, calls) => ({ calls });
+        return new Error("where this is asked").stack.calls.slice(1);
+      } finally {
+        Error.prepareStackTrace = before;
+      }
     }
-    exports.folderOfCaller = function folderOfCaller() { return path.dirname(sites()[2].getFileName()); };
-    exports.fileOfCaller = function fileOfCaller() { return sites()[3]?.getFileName(); };
+    exports.folderOfCaller = function folderOfCaller() {
+      const [, caller] = places();
+      return path.dirname(caller.getFileName());
+    };
+    exports.fileOfCaller = function fileOfCaller() {
+      const [, , above] = places();
+      return above?.getFileName();
+    };
     exports.firstFileOutside = function firstFileOutside() {
-      const found = sites().slice(2);
-      let file;
-      do file = found.shift()?.getFileName(); while (found.length && file === "module.js");
-      return file;
+      for (const place of places().slice(1)) {
+        if (place.getFileName() !== "module.js") return place.getFileName();
+      }
     };
     exports.firstFrameWithASlash = function firstFrameWithASlash(error) {
-      const frame = error.stack.split("\\n").slice(1).find(frame => !/(node_modules)?[/\\\\]lib[/\\\\](core|browser|node|native|iife)[/\\\\]|^[^/\\\\]*$/.test(frame));
-      return frame?.replace(/\\s*at [^()]*\\(([^)]+)\\)/, "$1").replace(/^\\s*at /, "");
+      for (const line of error.stack.split("\\n").slice(1)) {
+        const open = line.indexOf("(");
+        const place = open < 0 ? line.trim().slice("at ".length) : line.slice(open + 1, line.lastIndexOf(")"));
+        if (place.includes("/") || place.includes(path.sep)) return place;
+      }
     };
   `,
 };

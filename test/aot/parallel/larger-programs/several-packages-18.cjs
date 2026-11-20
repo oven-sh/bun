@@ -1,4 +1,4 @@
-// Several packages in one program: trie-router, sorted-tree, matrix-nests, pattern-table, moo-lexer, json-reader
+// Several packages in one program: trie-router, sorted-tree, matrix-nests, pattern-table, marks-by-rooms, json-reader
 const output = {
   lines: 0, hash: 0, first: true
 };
@@ -510,86 +510,57 @@ const patternTable = (function () {
 }).call(exports);
   return module.exports;
 })();
-const mooLexer = (function () {
+const marksByRooms = (function () {
   const module = {
     exports: {
     }
 }, exports = module.exports;
   (function () {
-    // one big expression with named alternatives, states, and line counting
+    // one expression for each room, its alternatives told apart by the group that matched; rooms that lie on one another; rows and places counted
     'use strict';
-    function compile(states) {
-      const all = {
-    };
-      for (const name of Object.keys(states)) {
-        const rules = Object.keys(states[name]).map(k => Object.assign({ type: k },
-          states[name][k] instanceof RegExp ||
-          typeof states[name][k] === 'string' ? { match: states[name][k] } : states[name][k]));
-        const source = rules.map(r => '(' + (r.match instanceof RegExp ? r.match.source : r.match.replace(/[-\/\\^$*+?.()|[\]{}]/g,
-          '\\$&')) + ')').join('|');
-        all[name] = {
-          rules, re: new RegExp(source, 'my')
-      };
+    const plain = words => Array.from(words, c => (/[\w\s]/.test(c) ? c : '\\' + c)).join('');
+    class Reader {
+      constructor(rooms) {
+        this.rooms = new Map();
+        for (const [room, kinds] of Object.entries(rooms)) {
+          const ways = [];
+          for (const kind in kinds) ways.push({ like: kinds[kind].like || kinds[kind], kind, turn: kinds[kind].turn, down: kinds[kind].down, over: kinds[kind].over, up: kinds[kind].up });
+          const any = ways.map(way => '(' + (typeof way.like === 'string' ? plain(way.like) : way.like.source) + ')');
+          this.rooms.set(room, { ways, any: new RegExp(any.join('|'), 'my') });
+        }
+        this.begin('');
       }
-      return new Tokens(all, Object.keys(states)[0]);
-    }
-    class Tokens {
-      constructor(states, start) {
-        this.states = states;
-        this.startState = start;
-        this.reset('');
-      }
-      reset(text) {
-        this.buffer = text;
-        this.index = 0;
-        this.line = 1;
-        this.col = 1;
-        this.stack = [];
-        this.state = this.startState;
+      begin(words) {
+        this.room = this.rooms.keys().next().value;
+        this.below = [];
+        this.words = words;
+        this.row = this.place = 1;
+        this.at = 0;
         return this;
       }
-      next() {
-        if (this.index >= this.buffer.length) return undefined;
-        const {
-          re, rules
-      } = this.states[this.state];
-        re.lastIndex = this.index;
-        const m = re.exec(this.buffer);
-        if (!m) throw new Error('invalid syntax at line ' + this.line + ' col ' + this.col + ': ' + JSON.stringify(this.buffer.slice(this.index,
-          this.index + 6)));
-        let rule;
-        for (let i = 0; i < rules.length; i++) if (m[i + 1] !== undefined) {
-          rule = rules[i];
-          break;
-        }
-        const text = m[0];
-        let nl = 0, last = 0;
-        for (let i = 0; i < text.length; i++) if (text[i] === '\n') {
-          nl++;
-          last = i + 1;
-        }
-        const token = {
-          type: rule.type, value: rule.value ? rule.value(text) : text, text, line: this.line,
-            col: this.col, lineBreaks: nl
-      };
-        this.index += text.length;
-        this.line += nl;
-        this.col = nl ? text.length - last + 1 : this.col + text.length;
-        if (rule.pop) this.state = this.stack.pop();
-        else if (rule.push) {
-          this.stack.push(this.state);
-          this.state = rule.push;
-      } else if (rule.next) this.state = rule.next;
-        return token;
+      step() {
+        const room = this.rooms.get(this.room);
+        if (this.at === this.words.length) return null;
+        if (!room) throw new Error('above the first room');
+        room.any.lastIndex = this.at;
+        const hit = room.any.exec(this.words);
+        if (hit === null) throw new Error('nothing of ' + this.room + ' is like ' + JSON.stringify(this.words.substr(this.at, 5)) + ', row ' + this.row + ', place ' + this.place);
+        let group = 1;
+        while (hit[group] === undefined) group++;
+        const way = room.ways[group - 1], whole = hit[0], mark = { row: this.row, place: this.place, what: way.turn ? way.turn(whole) : whole, kind: way.kind };
+        const rows = whole.split('\n');
+        this.row += rows.length - 1;
+        if (rows.length > 1) this.place = 1;
+        this.place += rows.pop().length;
+        this.at += whole.length;
+        if (way.up) this.room = this.below.pop();
+        if (way.down) { this.below.push(this.room); this.room = way.down; }
+        if (way.over) this.room = way.over;
+        return mark;
       }
-      *[Symbol.iterator]() {
-        let t;
-        while ((t = this.next())) yield t;
-      }
+      each(f) { for (let mark = this.step(); mark; mark = this.step()) f(mark); return this; }
     }
-    module.exports = {
-      compile
-  };
+    module.exports = { read: rooms => new Reader(rooms) };
 }).call(exports);
   return module.exports;
 })();
@@ -983,50 +954,31 @@ function patternTableReplacedRun(lib) {
   }));
   }
 }
-function mooLexerTemplateStringsRun(lib) {
-  const lexer = lib.compile({ main: { ws: /[ \t]+/, nl: /\n/, num: { match: /\d+(?:\.\d+)?/,
-    value: Number }, name: /[a-z_]\w*/, open: { match: '`', push: 'lit' }, end: { match: '}',
-    pop: true }, op: /[-+*\/=(),;]/ }, lit: { interp: { match: '${', push: 'main' },
-    close: { match: '`', pop: true }, text: /(?:[^`$\\]|\\.|\$(?!\{))+/ } });
-  const inputs = ['a = 1 + 2.5;', '`hi ${ name } and ${ 1 + `in ${x}` }!`',
-    'x\ny = `l1\nl2 $5 ${z}`\nw', '`open', 'a # b', '', '`${}`', '}'];
-  for (let n = 0; n < 5; n++) for (const t of inputs) {
-    const out = [];
+function marksByRoomsNestedRun(lib) {
+  const reader = lib.read({ street: { gap: /[ \t]+/, row: /\n/, number: { like: /\d+(?:\.\d+)?/, turn: Number }, name: /[a-z_]\w*/, open: { like: '<', down: 'sign' }, out: { like: ')', up: true }, mark: /[-+*=(,;]/ }, sign: { into: { like: '@(', down: 'street' }, close: { like: '>', up: true }, words: /(?:[^<>@\\]|\\.|@(?!\())+/ } });
+  const pages = ['a = 1 + 2.5;', '<to @( name ) and @( 1 + <in @(x)> )!>', 'x\ny = <row 1\nrow 2 @5 @(z)>\nw', '<open', 'a # b', '', '<@()>', ')'];
+  for (let n = 0; n < 5; n++) for (const page of pages) {
+    const marks = [];
     try {
-      for (const k of lexer.reset(n % 2 ? t + ' q' + n : t)) if (k.type !== 'ws') out.push(k.type + '=' + JSON.stringify(k.value) + '@' + k.line + ',' + k.col);
-      say(n, out.join(' '));
-  } catch (e) {
-      say(n, out.length, e.message, lexer.state, lexer.stack.length);
-    }
+      reader.begin(n % 2 ? page + ' q' + n : page).each(mark => { if (mark.kind !== 'gap') marks.push(mark.kind + '=' + JSON.stringify(mark.what) + '@' + mark.row + ',' + mark.place); });
+      say(n, marks.join(' '));
+    } catch (e) { say(n, marks.length, e.message, reader.room, reader.below.length); }
   }
 }
-function mooLexerCssLikeRun(lib) {
-  const lexer = lib.compile({ top: { space: /\s+/, comment: /\/\*[^]*?\*\//,
-    sel: /[.#]?[\w-]+/, comma: ',', lbrace: { match: '{', next: 'body' } },
-    body: { space: /\s+/, prop: /[a-z-]+(?=\s*:)/, colon: ':',
-    val: { match: /[^;{}:\s][^;{}]*/, value: s => s.trim().toUpperCase() }, semi: ';',
-    rbrace: { match: '}', next: 'top' } } });
+function marksByRoomsRecipesRun(lib) {
+  const reader = lib.read({ list: { gap: /\s+/, note: /#[^\n]*/, dish: /[a-z]\w*/, and: '+', open: { like: '[', over: 'dish' } }, dish: { gap: /\s+/, part: /\w+(?==)/, is: '=', much: { like: /\d+(?:\.\d+)? ?\w*/, turn: much => much.trim().toUpperCase() }, next: '|', close: { like: ']', over: 'list' } } });
   for (let i = 0; i < 20; i++) {
-    const css = ['.a' + i + ', #b { color: red; width : ' + i + 'px }',
-      'p{margin:0 auto;}\n/* c\nd */ div { x:y }', 'h' + i + '{}', '.q { a: b; c }'][i % 4];
-    const rules = {
-  };
-    let cur, prop, sels = [];
+    const page = ['soup' + i + ' + stew [ salt=2 g | water=' + i + '.5 l ]', 'bread[flour=500|water=3 cups|]\n# rest\nan hour cake [ eggs=4 ]', 'tea' + i + '[]', '+ jam [ figs=1 | nuts=2 ]'][i % 4], book = {};
+    let dishes = [], part;
     try {
-      for (const t of lexer.reset(css)) {
-        if (t.type === 'sel') sels.push(t.value);
-        else if (t.type === 'lbrace') {
-          cur = {
-        };
-          for (const s of sels) rules[s] = cur;
-          sels = [];
-      } else if (t.type === 'prop') prop = t.value;
-        else if (t.type === 'val') cur[prop] = t.value;
-      }
-      say(i, JSON.stringify(rules), lexer.line, lexer.col);
-  } catch (e) {
-      say(i, e.message);
-    }
+      reader.begin(page).each(mark => {
+        if (mark.kind === 'dish') dishes.push(mark.what);
+        else if (mark.kind === 'part') part = mark.what;
+        else if (mark.kind === 'much') for (const dish of dishes) (book[dish] ??= {})[part] = mark.what;
+        else if (mark.kind === 'close') dishes = [];
+      });
+      say(i, JSON.stringify(book), reader.row, reader.place);
+    } catch (e) { say(i, e.message); }
   }
 }
 function jsonReaderDocumentsRun(lib) {
@@ -1080,8 +1032,8 @@ for (let round = 0; round < 4; round++) {
   patternTableLinesRun(patternTable);
   patternTableOwnRulesRun(patternTable);
   patternTableReplacedRun(patternTable);
-  mooLexerTemplateStringsRun(mooLexer);
-  mooLexerCssLikeRun(mooLexer);
+  marksByRoomsNestedRun(marksByRooms);
+  marksByRoomsRecipesRun(marksByRooms);
   jsonReaderDocumentsRun(jsonReader);
   jsonReaderWritingRun(jsonReader);
   output.first = false;

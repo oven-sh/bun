@@ -1,2 +1,2 @@
-function define(params) { const Parent = params?.Parent ?? Object; class Definition extends Parent {} return Definition; }
-console.log(typeof new (define())(), new (define({ Parent: Array }))() instanceof Array);
+function below(kind) { let top = Object; if (kind) top = kind.top; class Below extends top {} return Below; }
+console.log(typeof new (below())(), new (below({ top: Array }))() instanceof Array);

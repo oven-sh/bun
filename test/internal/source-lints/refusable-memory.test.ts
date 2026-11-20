@@ -41,9 +41,13 @@ test.each(crates)("bun_%s does not ask for memory in a way that aborts on a refu
   expect(found.sort()).toEqual([]);
 });
 
-test("bun_brotli uses memory::resize(), because Vec::resize() is slow in hardened builds", async () => {
-  const crate = path.resolve(import.meta.dir, "..", "..", "..", "src", "brotli");
-  const files = await Array.fromAsync(new Glob("**/*.rs").scan({ cwd: crate }));
-  expect(files).toContain("memory.rs");
+test.each([
+  ["brotli", "memory.rs"],
+  ["zstd", path.join("decoder", "array.rs")],
+])("src/%s uses resize() from %s, because Vec::resize() is slow in hardened builds", async (name, home) => {
+  const crate = path.resolve(import.meta.dir, "..", "..", "..", "src", name);
+  const all = await Array.fromAsync(new Glob("**/*.rs").scan({ cwd: crate }));
+  const files = all.filter(file => !file.split(path.sep).includes("tests"));
+  expect(files).toContain(home);
   expect(files.filter(file => readFileSync(path.join(crate, file), "utf8").includes(".resize("))).toEqual([]);
 });

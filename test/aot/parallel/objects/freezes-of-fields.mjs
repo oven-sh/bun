@@ -65,15 +65,14 @@ function loop(n) {
   return [o.a, o.b, failures];
 }
 line(loop(2), loop(5), loop(9));
-function elements(n) {
+function parcels(n) {
   const list = [];
   for (let i = 0; i < n; i++) {
-    const props = { className: "c" + (i % 3), children: i };
-    const element = { type: "div", key: null, props, owner: null };
-    Object.freeze(element.props);
-    Object.freeze(element);
-    list.push(element);
+    const parcel = { sender: null, label: { weight: i, street: "s" + (i % 3) }, seal: null, sort: "box" };
+    Object.freeze(parcel);
+    list.push(parcel);
+    Object.freeze(parcel.label);
   }
-  return list.filter(e => Object.isFrozen(e) && Object.isFrozen(e.props)).length + ":" + list[n - 1].props.className + strictly(() => { list[0].props.children = 9; }) + strictly(() => { list[0].key = "k"; });
+  return list.filter(p => Object.isFrozen(p.label) && Object.isFrozen(p)).length + ":" + list[n - 1].label.street + strictly(() => { list[0].label.weight = 9; }) + strictly(() => { list[0].seal = "red"; });
 }
-line(elements(3), elements(40));
+line(parcels(3), parcels(40));

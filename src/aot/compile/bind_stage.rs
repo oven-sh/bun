@@ -1757,6 +1757,7 @@ impl Build<'_> {
                         view.files(),
                         view.sources,
                         &graph,
+                        &self.started_workers.names_of_loads,
                         &left_out.files,
                         &in_parallel,
                     );

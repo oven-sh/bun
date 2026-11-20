@@ -2,6 +2,7 @@ use super::{EntryPointPaths, FolderPaths, FollowedName, LoadedProject};
 use crate::diagnostics::ProgramView;
 use crate::ir::{InParallel, collect_from_each, for_each_mut};
 use crate::link::ProgramModule;
+use crate::load::contents::entry_points::NameOfLoad;
 use crate::load::contents::worker_entries::source_path_of;
 use crate::load::sources::SourceKind;
 use crate::load::{
@@ -142,6 +143,7 @@ pub(super) fn collect_names_followed(
     files: &Files<'_>,
     sources: &Sources,
     graph: &ModuleGraph,
+    of_loads: &[NameOfLoad],
     left_out: &[FileId],
     in_parallel: InParallel<'_>,
 ) -> Vec<FollowedName> {
@@ -194,6 +196,21 @@ pub(super) fn collect_names_followed(
         }
     };
     let mut names = collect_from_each(files.compiled_files(), in_parallel, &collect);
+    for load in of_loads {
+        if [load.asked_in, load.leads_to]
+            .iter()
+            .any(|file| left_out.binary_search(file).is_ok())
+        {
+            continue;
+        }
+        let folder = list_folders(sources.public_path(load.asked_in)).join(&b'/');
+        let found = || Some(sources.public_path(load.leads_to).to_vec());
+        names.push(FollowedName {
+            folder_and_name_as_written: [&folder[..], b"//", &load.name[..]].concat(),
+            public_path_for_require: load.is_require.then(found).flatten(),
+            public_path_for_import: (!load.is_require).then(found).flatten(),
+        });
+    }
     names.shared_sort_unstable();
     names.dedup_by(|later, earlier| {
         let is_same = later.folder_and_name_as_written == earlier.folder_and_name_as_written;

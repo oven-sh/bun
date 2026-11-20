@@ -346,7 +346,9 @@ impl StandaloneModuleGraph {
                 compiled_program::is_removed_by_program(key)
                     && compiled_program::find_written_file(key).is_none()
             };
-            if !is_compiled_entry_point(index) && !is_removed() && !self.has_file_vanished(key) {
+            let is_listed_below =
+                || is_compiled_entry_point(index) && self.find_file_record(key).is_none();
+            if !is_listed_below() && !is_removed() && !self.has_file_vanished(key) {
                 push(key, false);
             }
         }
@@ -3850,21 +3852,12 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 
         let offset = string_payload.len();
 
-        let bound = bun_zstd::compress_bound(utf8.len());
-        // `ZSTD_compressBound` returns an *error code* (a value near
-        // `usize::MAX`) when the input size exceeds `ZSTD_MAX_INPUT_SIZE`;
-        // feeding that to `Vec::reserve` below would abort with a capacity
-        // overflow instead of failing the build.
-        if bun_zstd::is_error(bound) {
-            return Err(crate::Error::SourceMapTooLarge);
-        }
-        string_payload.reserve(bound);
-        if let bun_zstd::Result::Err(err_msg) =
-            bun_zstd::compress_append(string_payload, utf8, Some(1))
-        {
+        // Not just what this one needs, as more follow.
+        string_payload
+            .reserve(bun_zstd::compress_bound(utf8.len()).ok_or(crate::Error::SourceMapTooLarge)?);
+        if let Err(err) = bun_zstd::compress_append(string_payload, utf8, 1) {
             Output::panic(format_args!(
-                "Unexpected error compressing sourcemap: {}",
-                bstr::BStr::new(err_msg.as_bytes())
+                "Unexpected error compressing sourcemap: {err}"
             ));
         }
 

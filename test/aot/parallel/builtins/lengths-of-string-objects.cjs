@@ -5,10 +5,9 @@ const log = [];
 function two(n) { return new String(n).length == 1 ? "0" + n : n; }
 function three(n) { var s = new String(n); return s.length; }
 function pad(value, size, ch) {
-  var result = new String(value);
-  if (ch == null) ch = " ";
-  while (result.length < size) result = ch + result;
-  return result;
+  var said = new String(value), filler = ch === undefined || ch === null ? " " : ch;
+  for (; said.length < size;) said = filler + said;
+  return said;
 }
 function kinds(v) { try { return new String(v).length; } catch (e) { return e.name + " " + e.message; } }
 for (const n of [0, 7, 12, -3, 1.5, 1e21, NaN, "text", "", null, undefined, true, 10n, [1, 2], {}, { toString() { log.push("converted"); return "four"; } }, { toString() { return {}; }, valueOf() { return 12; } }, Symbol("s"), new String("object"), new Date(NaN)]) {

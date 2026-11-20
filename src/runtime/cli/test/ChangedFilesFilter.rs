@@ -7,12 +7,9 @@
 //!    graph (transitive imports) without linking or emitting code.
 //! 3. Starting from each changed file that appears in the graph, walk the
 //!    reverse import edges to find every test entry point that can reach it.
-//!    A changed file that is not in the graph starts from the files whose
-//!    import of it no longer resolves (it was deleted or renamed).
+//!    A deleted file starts from the files whose import of it no longer resolves.
 //!
-//! Only those test entry points are returned. Preloads are entry points of
-//! the scan too: every test file runs them, so a change that reaches one
-//! selects every test file.
+//! Only those test entry points are returned. A change that reaches a preload selects them all.
 
 use bun_bundler::mal_prelude::*;
 
@@ -60,8 +57,7 @@ pub(crate) struct Result<'a> {
     /// files that would not otherwise be loaded when a subset of tests runs.
     /// Owned by the caller; each element is individually allocated.
     pub(crate) module_graph_files: Vec<Box<[u8]>>,
-    /// Up to `CHANGED_SAMPLE` of the changed files, relative to the top-level
-    /// dir. Filled only when they select no test file.
+    /// Up to `CHANGED_SAMPLE` changed files, relative to the top-level dir, when they select no test file.
     pub(crate) changed_sample: Vec<Box<[u8]>>,
 }
 
@@ -81,8 +77,7 @@ struct Selection {
     affected: DynamicBitSet,
     /// A preload reaches a changed file. Every test file runs the preloads.
     preload_affected: bool,
-    /// Indexes into the changed set: the paths that the scan did not parse
-    /// and that no import and no preload names.
+    /// Indexes of the changed paths that no source, import or preload names.
     unclaimed: Vec<usize>,
 }
 
@@ -184,8 +179,7 @@ pub(crate) fn filter<'a>(
     scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
     scan_transpiler.resolver.opts.output_dir = Box::default();
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
-    // A preload may be a package, so they are resolved before imports of
-    // packages become external.
+    // Before packages become external: a preload may be a package.
     let preloads = resolve_preloads(&mut scan_transpiler.resolver, &ctx.preloads, top_level_dir);
     scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
 
@@ -313,8 +307,7 @@ pub(crate) fn filter<'a>(
             }
         }
 
-        // A changed path the scan did not parse is a deleted or renamed file
-        // when an import that resolves to no source names it.
+        // An import that resolves to no source names a deleted or renamed file.
         let mut unclaimed: Vec<usize> = (0..claimed.len()).filter(|&i| !claimed[i]).collect();
         let mut preload_affected = false;
         if !unclaimed.is_empty() {
@@ -389,8 +382,7 @@ pub(crate) fn filter<'a>(
     };
 
     let mut selection = select(&changed_files);
-    // The watcher names the files it watched. A test file that is gone was
-    // deleted or renamed: git knows the new name.
+    // A watched test file that is gone was deleted or renamed: git knows the new name.
     let is_gone_test_file = |&entry: &usize| {
         let path = &changed_files.keys()[entry];
         let name = without_extension(resolve_path::basename(path));
@@ -409,9 +401,8 @@ pub(crate) fn filter<'a>(
     }
 
     // A test file is selected if (a) its entry point source index is marked
-    // affected, (b) the test file itself is in the changed set (covers
-    // test files that failed to enter the graph for any reason), or (c) a
-    // preload is affected.
+    // affected, or (b) the test file itself is in the changed set (covers
+    // test files that failed to enter the graph for any reason).
     let mut write: usize = 0;
     // reshaped for borrowck — capture len before re-borrowing test_files
     let total = test_files.len();
@@ -451,8 +442,7 @@ pub(crate) fn filter<'a>(
     })
 }
 
-/// Resolves the preloads like the runtime does when it loads them. A preload
-/// in node_modules is left out: a change there is not a local edit.
+/// Resolves the preloads like the runtime. One in node_modules is no local file and is left out.
 fn resolve_preloads(
     resolver: &mut bun_resolver::Resolver<'_>,
     names: &[Box<[u8]>],
@@ -498,8 +488,7 @@ fn resolve_preloads(
     preloads
 }
 
-/// The changed paths that the scan did not parse, under each path that an
-/// import which resolves to no source can name them with.
+/// The changed paths that the scan did not parse, by each name an unresolved import can use.
 struct NamedByImports<'a> {
     paths: &'a [Box<[u8]>],
     /// (name, index into `paths`), sorted.
@@ -527,9 +516,7 @@ impl<'a> NamedByImports<'a> {
         Self { paths, names }
     }
 
-    /// `target` is a path that an import or a preload names and that resolved
-    /// to no source. Marks the changed paths that the resolver could have
-    /// picked for it while they existed, and reports whether there is one.
+    /// Marks the changed paths that `target`, which resolved to no source, could have resolved to.
     fn claim(&self, target: &[u8], claimed: &mut [bool]) -> bool {
         let target = strings::without_trailing_slash(target);
         let mut any = self.claim_named(target, |_| true, claimed);
@@ -628,8 +615,7 @@ pub(crate) fn init_watch_trigger() -> Option<ZBox> {
 /// If the previous process's watcher recorded which files triggered
 /// this restart, read the newline-separated absolute-path list out of
 /// the trigger file, delete the file, and return the set. Returns null
-/// if the file is absent or empty (in which case the caller falls back
-/// to querying git).
+/// if the file is absent or empty (the caller then asks git).
 fn consume_watch_trigger() -> Option<StringSet> {
     #[cfg(windows)]
     {
@@ -677,8 +663,7 @@ pub(crate) enum GitError {
 /// With `since == ""` this is the union of unstaged, staged, and
 /// untracked files. With a ref, it is `git diff --name-only <since>`
 /// unioned with untracked files (a brand-new file is "changed since"
-/// any prior commit). A deleted file is listed, and so is the old name
-/// of a renamed one: their importers are affected.
+/// any prior commit). A deleted file and the old name of a renamed one are listed too.
 fn get_changed_files(
     top_level_dir: &[u8],
     since: &[u8],
@@ -798,9 +783,7 @@ fn get_changed_files(
     Ok(set)
 }
 
-/// `git diff` that prints NUL-terminated paths relative to the repository
-/// root, whatever the user's git config says. With renames off, the old name
-/// of a renamed file is listed too.
+/// NUL-terminated paths from the repository root, whatever the git config says, with both names of a rename.
 const DIFF_NAMES: [&[u8]; 6] = [
     b"-c",
     b"diff.relative=false",
@@ -874,8 +857,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     }
 }
 
-/// Parse NUL-terminated repo-relative paths from `git -z` output, join each
-/// with the repository root, and insert it into `set`.
+/// Joins each NUL-terminated path of `git -z` output with the repository root into `set`.
 fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
     let mut buf = bun_paths::path_buffer_pool::get();
     for rel in strings::tokenize(stdout, b"\0") {

@@ -999,8 +999,7 @@ impl<'a> Resolver<'a> {
         self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
     }
 
-    /// Calls `each` with every absolute path that an import of `import_path` from `source_dir`
-    /// names through tsconfig.json "paths", whether a file answers it or not.
+    /// The paths that tsconfig.json "paths" maps the import to, existing or not.
     pub fn for_each_tsconfig_paths_target(
         &mut self,
         source_dir: &[u8],
@@ -1025,8 +1024,7 @@ impl<'a> Resolver<'a> {
         });
     }
 
-    /// Calls `each` with every absolute path that a main field of the package.json in `dir`
-    /// names, whether a file answers it or not. An import of `dir` resolves through them.
+    /// The paths that the main fields of the package.json in `dir` name, existing or not.
     pub fn for_each_main_field_target(&mut self, dir: &[u8], mut each: impl FnMut(&[u8])) {
         let Some(dir_info) = self.read_dir_info_ignore_error(dir) else {
             return;
@@ -5137,8 +5135,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Calls `accept` with each absolute path that "paths" of `tsconfig` maps `path` to, in the
-    /// order the resolver tries them, until it returns true.
+    /// Offers each "paths" target of `path` to `accept`, in order, until it returns true.
     fn find_tsconfig_paths_target(
         &mut self,
         tsconfig: &TSConfigJSON,

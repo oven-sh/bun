@@ -10,15 +10,18 @@
 //   independent    neither writes a name, the root of its target, that the other mentions
 //   the same       what `testaot link` prints in both readings, with the numbers of values struck and the lines sorted: the two sites change places
 //   the control    a store and the call that reads what it stored change places too, and the comparison must report it
+//
+// A program as written is a case, and so is each of its swaps. The case of a swap builds its own text and holds the tables against those of the program as
+// written, which are made once. A program lists its swaps by name: a swap that is no longer found fails its own case.
 import { expect } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "../engine/testaot";
+import { built, slot, spawned } from "../harness/commands";
 import { afterAll } from "../harness/default-timeout";
-import { withProgramOutput } from "../harness/flags";
+import { buildFlags, compileCommand, withProgramOutput, withThreads } from "../harness/flags";
 import { describe, test } from "../supported";
-import { build } from "./measure";
 
 const name = String.raw`[A-Za-z_$][\w$]*`;
 const path = String.raw`${name}(?:\.${name})*`;
@@ -110,13 +113,17 @@ function swapsOf(text: string, alsoDependent = false) {
 }
 
 const programs = {
-  "a set of functions that grew from another is called in front of it or behind it": `
+  "a set of functions that grew from another is called in front of it or behind it": {
+    text: `
 function one() {} function two() {} function three() {} function p() {} function q() {}
 let g0 = one; g0 = two; let g1 = g0; g1 = three;
 function both() { g0(p); g1(q); }
 both(); p(); q();
 `,
-  "one object goes out of sight and is kept in sight": `
+    swaps: ["g0(p) <> g1(q)", "both() <> p()", "p() <> q()"],
+  },
+  "one object goes out of sight and is kept in sight": {
+    text: `
 const kept = [];
 function keep(what) { kept.push(what); }
 function lose(what) { globalThis[String(Date.now())] = what; }
@@ -124,18 +131,31 @@ function run(thing, other) { keep(thing); lose(thing); keep(other); }
 run({ a: 1 }, { b: "two" });
 console.log(kept.length);
 `,
-  "two variables of the module take functions that meet at one call": `
+    swaps: ["keep(thing) <> lose(thing)", "lose(thing) <> keep(other)"],
+  },
+  "two variables of the module take functions that meet at one call": {
+    text: `
 function first() { return 1; } function second() { return "two"; } function third() { return null; }
 let held = first; let spare = second;
 function turn() { held = second; spare = third; take(held); take(spare); }
 function take(what) { return what(); }
 turn(); console.log(typeof take(held));
 `,
-  "members of two built-ins are called and one of them is handed on": `
+    swaps: ["held = second <> spare = third", "spare = third <> take(held)", "take(held) <> take(spare)"],
+  },
+  "members of two built-ins are called and one of them is handed on": {
+    text: `
 function hand(what) { return what; }
 function run() { console.log("a"); Math.max(1, 2); hand(console); JSON.stringify("b"); hand(Math); }
 run();
 `,
+    swaps: [
+      'console.log("a") <> Math.max(1, 2)',
+      "Math.max(1, 2) <> hand(console)",
+      'hand(console) <> JSON.stringify("b")',
+      'JSON.stringify("b") <> hand(Math)',
+    ],
+  },
 };
 
 const control = `
@@ -149,61 +169,84 @@ function run() {
 run();
 `;
 
+// `  parameter 0 expected=.. proven=f1|f2`: of each parameter that is proven to take functions alone, how many.
+const functionsProvenToArrive = (tables: string) =>
+  Array.from(
+    tables.matchAll(/^  parameter \d+ .*\bproven=(f\d+(?:\|f\d+)*)(?= |$)/gm),
+    ([, functions]) => functions.split("|").length,
+  );
+
+// A build here runs on one thread, and that of the largest program takes over a minute in a debug build: it gets more time than a command gets unless it
+// says so (../harness/commands.ts). That is half the limit of a case, which waits for two builds at most: its own, and that of its program as written.
+const limitOfABuild = 300_000;
+
 describe("compile/aot/independent-statements-change-places", () => {
   const folder = String(tempDir("aot-statements-change-places", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
   let numberOfTexts = 0;
 
   // Under a sanitizer the cases of a file run beside one another (../supported.ts): each text lies in a folder of its own, or one case builds what another has just written.
+  // Nothing here starts a program, so no build writes an executable. Nothing here reads what a build costs, so none is counted as ./measure counts one, in a process of its own.
+  // A build on one thread and a `testaot link` each keep one processor busy, and each takes a slot.
   async function tablesOf(text: string) {
     const own = join(folder, String(++numberOfTexts));
     mkdirSync(own);
     writeFileSync(join(own, "entry.js"), text);
     const wire = join(own, "program.ir");
-    await build({ folder: own, entry: "./entry.js" }, [withProgramOutput(wire)]);
-    const readings: string[] = [];
-    for (const reading of [[], ["held"]]) {
-      const { lines, exitCode } = await run(
-        "link",
-        wire,
-        ...reading,
-        "threads=1",
-        "mechanisms=all",
-        "exclude=CodeOutsideImage",
+    const flags = [withThreads(1), withProgramOutput(wire), buildFlags.withoutExecutable];
+    const command = [bunExe(), ...compileCommand, ...flags, "./entry.js"];
+    built(await slot(() => spawned(command, own, bunEnv, limitOfABuild)));
+    // The table of functions has a row for the body of the module and one for each function that the text writes.
+    const functionsWritten = text.match(/\bfunction\b/g)!.length;
+    const readings = { proving: "", held: "" };
+    for (const reading of ["proving", "held"] as const) {
+      const { lines, stderr, exitCode } = await slot(() =>
+        run(
+          "link",
+          wire,
+          ...(reading === "held" ? ["held"] : []),
+          "threads=1",
+          "mechanisms=all",
+          "exclude=CodeOutsideImage",
+        ),
       );
-      expect(exitCode).toBe(0);
-      expect(lines.length).toBeGreaterThan(20);
-      readings.push(
-        lines
-          .filter(line => !/^(referrer|counts) /.test(line))
-          .map(line =>
-            line
-              .replace(/\bv\d+\b/g, "v#")
-              .replace(/ (cycle|rank)=\d+| leaf| takes-arrivals| in-queue-from-start/g, ""),
-          )
-          .sort()
-          .join("\n"),
-      );
+      // The tables begin with the mechanisms that they were made under. A command that ends in front of them prints no such line.
+      expect({ stderr, exitCode, firstLine: lines[0] }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        firstLine: "mechanisms all",
+      });
+      expect(lines.filter(line => line.startsWith("function ")).length).toBeGreaterThan(functionsWritten);
+      readings[reading] = lines
+        .filter(line => !/^(referrer|counts) /.test(line))
+        .map(line =>
+          line.replace(/\bv\d+\b/g, "v#").replace(/ (cycle|rank)=\d+| leaf| takes-arrivals| in-queue-from-start/g, ""),
+        )
+        .sort()
+        .join("\n");
     }
     rmSync(own, { recursive: true, force: true });
     return readings;
   }
 
-  for (const [title, text] of Object.entries(programs)) {
-    test(
-      title,
-      async () => {
-        const swaps = swapsOf(text);
-        expect(swaps.length).toBeGreaterThan(0);
-        const asWritten = await tablesOf(text);
-        for (const swap of swaps)
-          expect({ swap: swap.title, tables: await tablesOf(swap.text) }).toEqual({
-            swap: swap.title,
-            tables: asWritten,
-          });
-      },
-      600_000,
-    );
+  const whenWritten = new Map<string, ReturnType<typeof tablesOf>>();
+  const asWritten = (text: string) => {
+    if (!whenWritten.has(text)) whenWritten.set(text, tablesOf(text));
+    return whenWritten.get(text)!;
+  };
+
+  for (const [title, { text, swaps }] of Object.entries(programs)) {
+    test(`${title}: as written`, async () => {
+      expect(swapsOf(text).map(swap => swap.title)).toEqual(swaps);
+      await asWritten(text);
+    }, 600_000);
+    for (const named of swaps) {
+      test(`${title}: ${named}`, async () => {
+        const swap = swapsOf(text).find(swap => swap.title === named);
+        if (!swap) throw new Error(`the program has no two independent statements ${named}`);
+        expect(await tablesOf(swap.text)).toEqual(await asWritten(text));
+      }, 600_000);
+    }
   }
 
   test("the control: a store and the call that reads it change places, and the tables differ", async () => {
@@ -213,6 +256,12 @@ describe("compile/aot/independent-statements-change-places", () => {
       "other() <> take(one)",
     ]);
     const dependent = swapsOf(control, true).find(swap => swap.title === "held = two <> take(held)")!;
-    expect(await tablesOf(dependent.text)).not.toEqual(await tablesOf(control));
+    const [swapped, written] = [await tablesOf(dependent.text), await tablesOf(control)];
+    expect(swapped).not.toEqual(written);
+    // What the comparison reports: as written `one` and `two` arrive at the parameter of `take`, behind the swap `one` alone.
+    expect({
+      written: functionsProvenToArrive(written.held),
+      swapped: functionsProvenToArrive(swapped.held),
+    }).toEqual({ written: [2], swapped: [1] });
   }, 600_000);
 });

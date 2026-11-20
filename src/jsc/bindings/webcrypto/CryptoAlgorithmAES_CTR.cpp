@@ -29,10 +29,7 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmAesCtrParams.h"
-#include "CryptoAlgorithmAesKeyParams.h"
 #include "CryptoKeyAES.h"
-#include <wtf/CrossThreadCopier.h>
 #include <wtf/FlipBytes.h>
 
 namespace WebCore {
@@ -53,7 +50,7 @@ static inline bool usagesAreInvalidForCryptoAlgorithmAES_CTR(CryptoKeyUsageBitma
 static bool parametersAreValid(const CryptoAlgorithmAesCtrParams& parameters)
 {
     using namespace CryptoAlgorithmAES_CTRInternal;
-    if (parameters.counterVector().size() != CounterSize)
+    if (parameters.counter.size() != CounterSize)
         return false;
     if (!parameters.length || parameters.length > 128)
         return false;
@@ -72,35 +69,35 @@ CryptoAlgorithmIdentifier CryptoAlgorithmAES_CTR::identifier() const
 
 void CryptoAlgorithmAES_CTR::encrypt(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& key, Vector<uint8_t>&& plainText, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    auto& aesParameters = downcast<CryptoAlgorithmAesCtrParams>(parameters);
+    auto& aesParameters = std::get<CryptoAlgorithmAesCtrParams>(parameters.dictionary);
     if (!parametersAreValid(aesParameters)) {
         exceptionCallback(OperationError, ""_s);
         return;
     }
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [parameters = crossThreadCopy(aesParameters), key = WTF::move(key), plainText = WTF::move(plainText)] {
+        [parameters = aesParameters, key = WTF::move(key), plainText = WTF::move(plainText)] {
             return platformEncrypt(parameters, downcast<CryptoKeyAES>(key.get()), plainText);
         });
 }
 
 void CryptoAlgorithmAES_CTR::decrypt(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& key, Vector<uint8_t>&& cipherText, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    auto& aesParameters = downcast<CryptoAlgorithmAesCtrParams>(parameters);
+    auto& aesParameters = std::get<CryptoAlgorithmAesCtrParams>(parameters.dictionary);
     if (!parametersAreValid(aesParameters)) {
         exceptionCallback(OperationError, ""_s);
         return;
     }
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [parameters = crossThreadCopy(aesParameters), key = WTF::move(key), cipherText = WTF::move(cipherText)] {
+        [parameters = aesParameters, key = WTF::move(key), cipherText = WTF::move(cipherText)] {
             return platformDecrypt(parameters, downcast<CryptoKeyAES>(key.get()), cipherText);
         });
 }
 
 void CryptoAlgorithmAES_CTR::generateKey(const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
 {
-    const auto& aesParameters = downcast<CryptoAlgorithmAesKeyParams>(parameters);
+    const auto& aesParameters = std::get<CryptoAlgorithmAesKeyParams>(parameters.dictionary);
 
     if (usagesAreInvalidForCryptoAlgorithmAES_CTR(usages)) {
         exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);

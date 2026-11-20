@@ -44,7 +44,7 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importJwk(CryptoAlgorithmIdentifier algorithm
     if (keyData.ext && !keyData.ext.value() && extractable)
         return nullptr;
     // BoringSSL has no multi-prime RSA.
-    if (keyData.oth)
+    if (keyData.hasOth)
         return nullptr;
 
     if (keyData.n.isNull() || keyData.e.isNull())
@@ -108,46 +108,38 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importJwk(CryptoAlgorithmIdentifier algorithm
     return CryptoKeyRSA::create(algorithm, hash.value_or(CryptoAlgorithmIdentifier::SHA_1), !!hash, *privateKeyComponents, extractable, usages);
 }
 
-JsonWebKey CryptoKeyRSA::exportJwk() const
+// An imported JWK can hold numbers of many MiB.
+std::optional<JsonWebKey> CryptoKeyRSA::exportJwk() const
 {
-    JsonWebKey result {};
-    result.kty = "RSA"_s;
-    result.key_ops = usages();
-    result.ext = extractable();
-
-    auto rsaComponents = exportData();
-
+    auto rsaComponents = exportData(WTF::FailureAction::Report);
     if (!rsaComponents)
-        return result;
+        return std::nullopt;
 
-    // public key
-    result.n = Bun::base64URLEncodeToString(rsaComponents->modulus());
-    result.e = Bun::base64URLEncodeToString(rsaComponents->exponent());
-    if (rsaComponents->type() == CryptoKeyRSAComponents::Type::Public)
-        return result;
+    bool failed = false;
+    auto encode = [&](const Vector<uint8_t>& number) {
+        auto encoded = Bun::base64URLEncodeToString(number, WTF::FailureAction::Report);
+        failed |= encoded.isNull() && !number.isEmpty();
+        return encoded;
+    };
 
-    // private key
-    result.d = Bun::base64URLEncodeToString(rsaComponents->privateExponent());
-    if (!rsaComponents->hasAdditionalPrivateKeyParameters())
-        return result;
-
-    result.p = Bun::base64URLEncodeToString(rsaComponents->firstPrimeInfo().primeFactor);
-    result.q = Bun::base64URLEncodeToString(rsaComponents->secondPrimeInfo().primeFactor);
-    result.dp = Bun::base64URLEncodeToString(rsaComponents->firstPrimeInfo().factorCRTExponent);
-    result.dq = Bun::base64URLEncodeToString(rsaComponents->secondPrimeInfo().factorCRTExponent);
-    result.qi = Bun::base64URLEncodeToString(rsaComponents->secondPrimeInfo().factorCRTCoefficient);
-    if (rsaComponents->otherPrimeInfos().isEmpty())
-        return result;
-
-    Vector<RsaOtherPrimesInfo> oth;
-    for (const auto& info : rsaComponents->otherPrimeInfos()) {
-        RsaOtherPrimesInfo otherInfo;
-        otherInfo.r = Bun::base64URLEncodeToString(info.primeFactor);
-        otherInfo.d = Bun::base64URLEncodeToString(info.factorCRTExponent);
-        otherInfo.t = Bun::base64URLEncodeToString(info.factorCRTCoefficient);
-        oth.append(WTF::move(otherInfo));
+    std::optional<JsonWebKey> result { std::in_place };
+    result->kty = "RSA"_s;
+    result->key_ops = usages();
+    result->ext = extractable();
+    result->n = encode(rsaComponents->modulus());
+    result->e = encode(rsaComponents->exponent());
+    if (rsaComponents->type() == CryptoKeyRSAComponents::Type::Private) {
+        result->d = encode(rsaComponents->privateExponent());
+        if (rsaComponents->hasAdditionalPrivateKeyParameters()) {
+            result->p = encode(rsaComponents->firstPrimeInfo().primeFactor);
+            result->q = encode(rsaComponents->secondPrimeInfo().primeFactor);
+            result->dp = encode(rsaComponents->firstPrimeInfo().factorCRTExponent);
+            result->dq = encode(rsaComponents->secondPrimeInfo().factorCRTExponent);
+            result->qi = encode(rsaComponents->secondPrimeInfo().factorCRTCoefficient);
+        }
     }
-    result.oth = WTF::move(oth);
+    if (failed)
+        result.reset();
     return result;
 }
 

@@ -28,13 +28,9 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmRsaHashedImportParams.h"
-#include "CryptoAlgorithmRsaHashedKeyGenParams.h"
-#include "CryptoAlgorithmRsaOaepParams.h"
 #include "CryptoKeyPair.h"
 #include "CryptoKeyRSA.h"
 #include <variant>
-#include <wtf/CrossThreadCopier.h>
 
 namespace WebCore {
 
@@ -64,7 +60,7 @@ void CryptoAlgorithmRSA_OAEP::encrypt(const CryptoAlgorithmParameters& parameter
     }
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [parameters = crossThreadCopy(downcast<CryptoAlgorithmRsaOaepParams>(parameters)), key = WTF::move(key), plainText = WTF::move(plainText)] {
+        [parameters = std::get<CryptoAlgorithmRsaOaepParams>(parameters.dictionary), key = WTF::move(key), plainText = WTF::move(plainText)] {
             return platformEncrypt(parameters, downcast<CryptoKeyRSA>(key.get()), plainText);
         });
 }
@@ -77,14 +73,14 @@ void CryptoAlgorithmRSA_OAEP::decrypt(const CryptoAlgorithmParameters& parameter
     }
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [parameters = crossThreadCopy(downcast<CryptoAlgorithmRsaOaepParams>(parameters)), key = WTF::move(key), cipherText = WTF::move(cipherText)] {
+        [parameters = std::get<CryptoAlgorithmRsaOaepParams>(parameters.dictionary), key = WTF::move(key), cipherText = WTF::move(cipherText)] {
             return platformDecrypt(parameters, downcast<CryptoKeyRSA>(key.get()), cipherText);
         });
 }
 
 void CryptoAlgorithmRSA_OAEP::generateKey(const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context)
 {
-    const auto& rsaParameters = downcast<CryptoAlgorithmRsaHashedKeyGenParams>(parameters);
+    const auto& rsaParameters = std::get<CryptoAlgorithmRsaHashedKeyGenParams>(parameters.dictionary);
 
     if (usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageKemMask)) {
         exceptionCallback(SyntaxError, "Unsupported key usage for a RSA key"_s);
@@ -99,14 +95,14 @@ void CryptoAlgorithmRSA_OAEP::generateKey(const CryptoAlgorithmParameters& param
     auto failureCallback = [capturedCallback = WTF::move(exceptionCallback)]() {
         capturedCallback(OperationError, ""_s);
     };
-    CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_OAEP, rsaParameters.hashIdentifier, true, rsaParameters.modulusLength, rsaParameters.publicExponentVector(), extractable, usages, WTF::move(keyPairCallback), WTF::move(failureCallback), &context);
+    CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier::RSA_OAEP, rsaParameters.hashIdentifier, true, rsaParameters.modulusLength, rsaParameters.publicExponent, extractable, usages, WTF::move(keyPairCallback), WTF::move(failureCallback), &context);
 }
 
 void CryptoAlgorithmRSA_OAEP::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
 {
     using namespace CryptoAlgorithmRSA_OAEPInternal;
 
-    const auto& rsaParameters = downcast<CryptoAlgorithmRsaHashedImportParams>(parameters);
+    const auto& rsaParameters = std::get<CryptoAlgorithmRsaHashedImportParams>(parameters.dictionary);
 
     RefPtr<CryptoKeyRSA> result;
     bool keyTypeMismatch = false;
@@ -165,7 +161,7 @@ void CryptoAlgorithmRSA_OAEP::importKey(CryptoKeyFormat format, KeyData&& data, 
             return;
         }
 
-        result = CryptoKeyRSA::importJwk(rsaParameters.identifier, rsaParameters.hashIdentifier, WTF::move(key), extractable, usages);
+        result = CryptoKeyRSA::importJwk(parameters.identifier, rsaParameters.hashIdentifier, WTF::move(key), extractable, usages);
         break;
     }
     case CryptoKeyFormat::Spki: {
@@ -174,7 +170,7 @@ void CryptoAlgorithmRSA_OAEP::importKey(CryptoKeyFormat format, KeyData&& data, 
             return;
         }
         // FIXME: <webkit.org/b/165436>
-        result = CryptoKeyRSA::importSpki(rsaParameters.identifier, rsaParameters.hashIdentifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
+        result = CryptoKeyRSA::importSpki(parameters.identifier, rsaParameters.hashIdentifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     }
     case CryptoKeyFormat::Pkcs8: {
@@ -213,7 +209,12 @@ void CryptoAlgorithmRSA_OAEP::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&&
     KeyData result;
     switch (format) {
     case CryptoKeyFormat::Jwk: {
-        JsonWebKey jwk = rsaKey.exportJwk();
+        auto exported = rsaKey.exportJwk();
+        if (!exported) {
+            exceptionCallback(OperationError, ""_s);
+            return;
+        }
+        auto& jwk = *exported;
         switch (rsaKey.hashAlgorithmIdentifier()) {
         case CryptoAlgorithmIdentifier::SHA_1:
             jwk.alg = String(ALG1);

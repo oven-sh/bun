@@ -26,13 +26,8 @@
 
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
-#include "JSCryptoAesKeyAlgorithm.h"
-#include "JSCryptoEcKeyAlgorithm.h"
-#include "JSCryptoHmacKeyAlgorithm.h"
 #include "JSCryptoKeyAlgorithm.h"
 #include "JSCryptoKeyUsage.h"
-#include "JSCryptoRsaHashedKeyAlgorithm.h"
-#include "JSCryptoRsaKeyAlgorithm.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructorNotConstructable.h"

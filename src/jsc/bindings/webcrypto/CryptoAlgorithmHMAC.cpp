@@ -28,7 +28,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmHmacKeyParams.h"
 #include "CryptoKeyHMAC.h"
 #include <variant>
 #include <wtf/text/Base64.h>
@@ -76,7 +75,7 @@ void CryptoAlgorithmHMAC::verify(const CryptoAlgorithmParameters&, Ref<CryptoKey
 
 void CryptoAlgorithmHMAC::generateKey(const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
 {
-    const auto& hmacParameters = downcast<CryptoAlgorithmHmacKeyParams>(parameters);
+    const auto& hmacParameters = std::get<CryptoAlgorithmHmacKeyParams>(parameters.dictionary);
 
     if (usagesAreInvalidForCryptoAlgorithmHMAC(usages)) {
         exceptionCallback(SyntaxError, "Unsupported key usage for an HMAC key"_s);
@@ -101,7 +100,7 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
 {
     using namespace CryptoAlgorithmHMACInternal;
 
-    const auto& hmacParameters = downcast<CryptoAlgorithmHmacKeyParams>(parameters);
+    const auto& hmacParameters = std::get<CryptoAlgorithmHmacKeyParams>(parameters.dictionary);
 
     if (usagesAreInvalidForCryptoAlgorithmHMAC(usages)) {
         // Node's import-path wording drops the article.
@@ -228,9 +227,15 @@ void CryptoAlgorithmHMAC::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& key
     KeyData result;
     switch (format) {
     case CryptoKeyFormat::RawSecret:
-    case CryptoKeyFormat::Raw:
-        result = Vector<uint8_t>(hmacKey.key());
+    case CryptoKeyFormat::Raw: {
+        Vector<uint8_t> bytes;
+        if (!bytes.tryAppend(hmacKey.key().span())) {
+            exceptionCallback(OperationError, ""_s);
+            return;
+        }
+        result = WTF::move(bytes);
         break;
+    }
     case CryptoKeyFormat::Jwk: {
         JsonWebKey jwk = hmacKey.exportJwk();
         if (jwk.k.isNull()) {

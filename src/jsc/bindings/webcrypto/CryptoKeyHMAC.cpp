@@ -29,7 +29,7 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmHmacKeyParams.h"
+#include "CryptoAlgorithmParameters.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "ExceptionOr.h"
 #include "JsonWebKey.h"
@@ -102,7 +102,7 @@ JsonWebKey CryptoKeyHMAC::exportJwk() const
 
     JsonWebKey result {};
     result.kty = "oct"_s;
-    result.k = Bun::base64URLEncodeToString(m_key);
+    result.k = Bun::base64URLEncodeToString(m_key, WTF::FailureAction::Report);
     result.key_ops = usages();
     result.ext = extractable();
     return result;
@@ -110,7 +110,7 @@ JsonWebKey CryptoKeyHMAC::exportJwk() const
 
 ExceptionOr<std::optional<size_t>> CryptoKeyHMAC::getKeyLength(const CryptoAlgorithmParameters& parameters)
 {
-    auto& aesParameters = downcast<CryptoAlgorithmHmacKeyParams>(parameters);
+    auto& aesParameters = std::get<CryptoAlgorithmHmacKeyParams>(parameters.dictionary);
 
     size_t result = aesParameters.length ? *(aesParameters.length) : getKeyLengthFromHash(aesParameters.hashIdentifier);
     if (result)

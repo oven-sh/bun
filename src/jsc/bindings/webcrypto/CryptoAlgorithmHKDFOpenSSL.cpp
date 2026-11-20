@@ -28,7 +28,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmHkdfParams.h"
 #include "CryptoKeyRaw.h"
 #include "OpenSSLUtilities.h"
 #include <openssl/hkdf.h>
@@ -42,7 +41,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmHKDF::platformDeriveBits(const Crypt
         return Exception { NotSupportedError };
 
     Vector<uint8_t> output(length / 8);
-    if (HKDF(output.begin(), output.size(), algorithm, key.key().begin(), key.key().size(), parameters.saltVector().begin(), parameters.saltVector().size(), parameters.infoVector().begin(), parameters.infoVector().size()) <= 0)
+    if (HKDF(output.begin(), output.size(), algorithm, key.key().begin(), key.key().size(), parameters.salt.begin(), parameters.salt.size(), parameters.info.begin(), parameters.info.size()) <= 0)
         return Exception { OperationError };
 
     return output;

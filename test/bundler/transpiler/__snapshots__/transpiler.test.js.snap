@@ -178,3 +178,417 @@ export {
 };
 "
 `;
+
+exports[`Bun.Transpiler using top level hoisting hoist-directive 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+"use wtf";
+function foo() {
+  "use wtf";
+  let __bun_temp_ref_1$ = [];
+  try {
+    const a = __using(__bun_temp_ref_1$, b, 0);
+  } catch (__bun_temp_ref_2$) {
+    var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+  } finally {
+    __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+  }
+}
+let __bun_temp_ref_5$ = [];
+try {
+  var a = __using(__bun_temp_ref_5$, b, 0);
+} catch (__bun_temp_ref_6$) {
+  var __bun_temp_ref_7$ = __bun_temp_ref_6$, __bun_temp_ref_8$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_5$, __bun_temp_ref_7$, __bun_temp_ref_8$);
+}
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-import 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+import"./foo";
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-export-star 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+
+export * from "./foo";
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-export-from 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+export { x, y } from "./foo";
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-export-clause 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  a,
+  c as "c!"
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-export-local-indirect 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var ac1 = [a, c], { x: [x1] } = foo;
+  var a1 = a, { y: [y1] } = foo;
+  var c1 = c, { z: [z1] } = foo;
+  var ac2 = [a, c], { x: [x2] } = foo;
+  var a2 = a, { y: [y2] } = foo;
+  var c2 = c, { z: [z2] } = foo;
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  x1,
+  y1,
+  z1
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-export-function-direct 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+export function foo1() {
+  return [a, c];
+}
+export function bar1() {
+  return [a, c, bar1];
+}
+function foo2() {
+  return [a, c];
+}
+function bar2() {
+  return [a, c, bar2];
+}
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-export-function-indirect 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+function foo1() {
+  return [a, c];
+}
+function bar1() {
+  return [a, c, bar1];
+}
+function foo2() {
+  return [a, c];
+}
+function bar2() {
+  return [a, c, bar2];
+}
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  foo1,
+  bar1
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-export-default-class-name-unused 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var Foo = class Foo {
+    ac = [a, c];
+  };
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  Foo as default
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-export-default-class-name-used 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var Foo = class Foo {
+    ac = [a, c, Foo];
+  };
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  Foo as default
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-export-default-class-anonymous 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var input_default = class {
+    ac = [a, c];
+  };
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  input_default as default
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-export-default-function-name-unused 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+function foo() {
+  return [a, c];
+}
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  foo as default
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-export-default-function-name-used 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+function foo() {
+  return [a, c, foo];
+}
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  foo as default
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-export-default-function-anonymous 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+function input_default() {
+  return [a, c];
+}
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  input_default as default
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting hoist-export-default-expr 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var input_default = [a, c];
+  var c = __using(__bun_temp_ref_1$, d, 0);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  input_default as default
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting await-using-export-default-class-anonymous 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 1);
+  var input_default = class {
+    ac = [a];
+  };
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  var __bun_temp_ref_5$ = __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+  __bun_temp_ref_5$ && await __bun_temp_ref_5$;
+}
+
+export {
+  input_default as default
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level hoisting await-using-export-default-async-generator 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+async function* input_default() {
+  yield a;
+}
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 1);
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  var __bun_temp_ref_5$ = __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+  __bun_temp_ref_5$ && await __bun_temp_ref_5$;
+}
+
+export {
+  input_default as default
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level with a default export exports.replace replaces the value 1`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var input_default = 42;
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  input_default as default
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level with a default export exports.replace replaces the value 2`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var foo = 42;
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  foo as default
+};
+"
+`;
+
+exports[`Bun.Transpiler using top level with a default export exports.replace replaces the value 3`] = `
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
+let __bun_temp_ref_1$ = [];
+try {
+  var a = __using(__bun_temp_ref_1$, b, 0);
+  var input_default = 42;
+} catch (__bun_temp_ref_2$) {
+  var __bun_temp_ref_3$ = __bun_temp_ref_2$, __bun_temp_ref_4$ = 1;
+} finally {
+  __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
+}
+
+export {
+  input_default as default
+};
+"
+`;

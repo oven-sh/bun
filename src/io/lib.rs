@@ -54,7 +54,7 @@ pub mod parent_death_watchdog;
 pub mod parent_death_watchdog {
     use core::ffi::c_void;
     use core::sync::atomic::{AtomicBool, Ordering};
-    use std::os::windows::io::{AsRawHandle as _, HandleOrNull, IntoRawHandle as _, OwnedHandle};
+    use std::os::windows::io::{AsRawHandle as _, IntoRawHandle as _};
 
     use bun_core::wstr;
     use bun_sys::windows;
@@ -134,25 +134,17 @@ pub mod parent_death_watchdog {
     /// us via `CreateProcessAsUser`), skip the parent watch best-effort; the
     /// Job Object half already covers descendants.
     fn arm_parent_watch() {
-        const ERROR_INVALID_PARAMETER: u32 = 87;
-        let ppid = getppid();
-        if ppid == 0 {
+        let Some(ppid @ 1..) = windows::parent_process_id() else {
             return;
-        }
-        // SAFETY: Win32 FFI; by-value args, failure → NULL. SYNCHRONIZE for
-        // the wait, PROCESS_QUERY_LIMITED_INFORMATION for `GetProcessTimes`.
-        let parent = unsafe {
-            HandleOrNull::from_raw_handle(windows::OpenProcess(
-                windows::SYNCHRONIZE | windows::PROCESS_QUERY_LIMITED_INFORMATION,
-                0,
-                ppid,
-            ))
         };
-        let Ok(parent) = OwnedHandle::try_from(parent) else {
-            if windows::GetLastError() == ERROR_INVALID_PARAMETER {
-                windows::kernel32::ExitProcess(EXIT_CODE as u32);
+        // For the wait and for `GetProcessTimes`.
+        let access = windows::SYNCHRONIZE | windows::PROCESS_QUERY_LIMITED_INFORMATION;
+        let parent = match windows::OpenProcess(access, ppid) {
+            Ok(parent) => parent,
+            Err(windows::Win32Error::INVALID_PARAMETER) => {
+                windows::kernel32::ExitProcess(EXIT_CODE as u32)
             }
-            return;
+            Err(_) => return,
         };
         // PID-reuse guard: `InheritedFromUniqueProcessId` is frozen at our
         // creation, so if the creator already exited and its PID was reused we
@@ -161,45 +153,7 @@ pub mod parent_death_watchdog {
         if !is_original_parent(parent.as_raw_handle()) {
             windows::kernel32::ExitProcess(EXIT_CODE as u32);
         }
-        let mut wait: windows::HANDLE = core::ptr::null_mut();
-        // SAFETY: `&mut wait` is a valid out-param; `parent` is a valid
-        // waitable handle; `on_parent_exit_cb` has the `WAITORTIMERCALLBACK`
-        // ABI; `Context` is unused.
-        if unsafe {
-            windows::RegisterWaitForSingleObject(
-                &raw mut wait,
-                parent.as_raw_handle(),
-                on_parent_exit_cb,
-                core::ptr::null_mut(),
-                windows::INFINITE,
-                windows::WT_EXECUTEONLYONCE,
-            )
-        } != 0
-        {
-            let _ = parent.into_raw_handle();
-        }
-    }
-
-    /// `InheritedFromUniqueProcessId` via direct ntdll call. Not
-    /// `uv_os_getppid`: libuv loads `NtQueryInformationProcess` lazily in
-    /// `uv__winapi_init`, and `enable()` runs from `main()` before that.
-    fn getppid() -> u32 {
-        // SAFETY: out-param is a valid `PROCESS_BASIC_INFORMATION`; the pseudo
-        // handle needs no access rights.
-        unsafe {
-            let mut pbi: windows::PROCESS_BASIC_INFORMATION = bun_core::ffi::zeroed_unchecked();
-            let rc = windows::ntdll::NtQueryInformationProcess(
-                windows::GetCurrentProcess(),
-                windows::ProcessBasicInformation,
-                core::ptr::from_mut(&mut pbi).cast(),
-                core::mem::size_of::<windows::PROCESS_BASIC_INFORMATION>() as u32,
-                core::ptr::null_mut(),
-            );
-            if !windows::NT_SUCCESS(rc) {
-                return 0;
-            }
-            pbi.InheritedFromUniqueProcessId as u32
-        }
+        let _ = windows::call_when_signaled(parent, on_parent_exit_cb);
     }
 
     fn is_original_parent(parent: windows::HANDLE) -> bool {
@@ -215,7 +169,7 @@ pub mod parent_death_watchdog {
     /// Thread-pool callback: the parent's process object signaled. Matches the
     /// Linux `PR_SET_PDEATHSIG` SIGKILL path (hard exit, no Rust-side
     /// unwinding); the Job Object reaps descendants when our handles close.
-    unsafe extern "system" fn on_parent_exit_cb(_ctx: *mut c_void, _timed_out: windows::BOOLEAN) {
+    extern "system" fn on_parent_exit_cb(_ctx: *mut c_void, _timed_out: windows::BOOLEAN) {
         windows::kernel32::ExitProcess(EXIT_CODE as u32);
     }
 
@@ -383,9 +337,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 pub use crate::closer::Closer;
 pub use crate::waker::Waker;
+use bun_sys::Fd;
 #[cfg(not(windows))]
-use bun_sys as sys;
-use bun_sys::{E, Fd};
+use bun_sys::{self as sys, E};
 
 // `loop` is a Rust keyword, so the static is
 // named `io_loop` but the runtime tagname is `"loop"` so `BUN_DEBUG_loop=1` works.
@@ -635,8 +589,7 @@ impl IoRequestLoop {
     }
 
     pub(crate) fn tick(&self) {
-        // SAFETY: literal is NUL-terminated; len excludes the NUL.
-        let name = bun_core::ZStr::from_static(b"IO Watcher\0");
+        let name = bun_core::zstr!("IO Watcher");
         bun_core::Output::Source::configure_named_thread(name);
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -899,8 +852,7 @@ impl Request {
     /// guarantees the callback write is visible to that read even when the
     /// store happens on a different thread than the one that scheduled the
     /// request. Rust has no `AtomicFnPtr`, so we lower to a volatile write
-    /// followed by a full fence (matches the existing pattern in
-    /// `webcore::blob::{read_file,write_file}`).
+    /// followed by a full fence.
     #[inline]
     pub fn store_callback_seq_cst(&mut self, cb: for<'a> fn(&'a mut Request) -> Action<'a>) {
         // SAFETY: `callback` is a plain pointer-sized field on `self`;
@@ -910,58 +862,7 @@ impl Request {
     }
 }
 
-// ─── Intrusive io_request → parent recovery ──────────────────────────────────
-// Mirrors `bun_threading::IntrusiveWorkTask`/`intrusive_work_task!`
-// (work_pool.rs:23) — same const-offset + provided `container_of` shape — so
-// `ReadFile`/`WriteFile` use one idiom for BOTH their intrusive fields (`task`
-// and `io_request`).
-
-/// A type that embeds an intrusive `io_request: `[`Request`] field. Declares the
-/// byte offset once and provides the canonical container-of recovery used by
-/// every `fn(&mut Request) -> Action` io-loop trampoline.
-///
-/// Implement via [`intrusive_io_request!`].
-///
-/// # Safety
-/// `IO_REQUEST_OFFSET` MUST equal `core::mem::offset_of!(Self, <io_request
-/// field>)`. [`from_io_request`](IntrusiveIoRequest::from_io_request) casts
-/// through the offset; a mismatch is UB.
-#[cfg(not(windows))]
-pub unsafe trait IntrusiveIoRequest: Sized {
-    /// `core::mem::offset_of!(Self, io_request)`.
-    const IO_REQUEST_OFFSET: usize;
-
-    /// Recover `*mut Self` from a `*mut Request` pointing at `self.io_request`
-    /// — the single canonical `container_of` for every io-loop trampoline.
-    ///
-    /// # Safety
-    /// `req` must point to the [`Request`] field at `Self::IO_REQUEST_OFFSET`
-    /// inside a live `Self` allocation that was scheduled via that field, and
-    /// the pointer's provenance must cover the whole allocation.
-    #[inline(always)]
-    unsafe fn from_io_request(req: *mut Request) -> *mut Self {
-        // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::container_of::<Self, _>(req, Self::IO_REQUEST_OFFSET) }
-    }
-}
-
-/// Implements [`IntrusiveIoRequest`] for a struct that embeds an intrusive
-/// `io_request: `[`Request`] field. Brings
-/// [`IntrusiveIoRequest::from_io_request`] into scope for the type's
-/// `fn(&mut Request) -> Action` trampolines.
-#[cfg(not(windows))]
-#[macro_export]
-macro_rules! intrusive_io_request {
-    ($ty:ty, $field:ident) => {
-        // SAFETY: `IO_REQUEST_OFFSET` is `offset_of!($ty, $field)`.
-        unsafe impl $crate::IntrusiveIoRequest for $ty {
-            const IO_REQUEST_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
-        }
-    };
-}
-
-/// Windows analogue of [`IntrusiveIoRequest`] for types that embed an
-/// intrusive `io_request: uv::fs_t` and recover the parent in
+/// For types that embed an intrusive `io_request: uv::fs_t` and recover the parent in
 /// `extern "C" fn(*mut uv::fs_t)` libuv callbacks.
 ///
 /// Implement via [`intrusive_uv_fs!`].
@@ -1459,8 +1360,6 @@ impl Poll {
     }
 }
 
-pub const RETRY: E = E::EAGAIN;
-
 pub type EventLoopHandle = EventLoopCtx;
 
 #[cfg(not(windows))]
@@ -1518,19 +1417,11 @@ pub mod waker {
         }
 
         pub fn wait(&self) {
-            // eventfd reads are always exactly 8 bytes (u64 counter). Use a u64
-            // directly instead of type-punning through usize, which would be UB
-            // on any 32-bit target and needs no `&mut *raw` reborrow here.
-            let mut bytes: u64 = 0;
-            // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::read(self.get_fd().native(), (&raw mut bytes).cast(), 8) };
+            let _ = self.eventfd.read(&mut [0; size_of::<u64>()]);
         }
 
         pub fn wake(&self) {
-            // eventfd writes are always exactly 8 bytes (u64 increment).
-            let bytes: u64 = 1;
-            // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::write(self.get_fd().native(), (&raw const bytes).cast(), 8) };
+            let _ = bun_sys::write(self.get_fd(), &1u64.to_ne_bytes());
         }
     }
 

@@ -7,6 +7,7 @@ use bun_ast::ExportsKind;
 use bun_ast::Source;
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, StringView, ZStr};
+use bun_js_parser::lower::defer_requires::has_react_compiler;
 use bun_js_parser::{CacheLookup, ParsedForCache, ParserOptions};
 use bun_js_printer::analyze_transpiled_module::ModuleInfo;
 use bun_paths::resolve_path::{self as path_handler, platform};
@@ -349,37 +350,20 @@ impl Entry {
             };
             let metadata_bytes: &[u8] = &metadata_buf[0..metadata_bytes_len];
 
-            let mut vecs_buf: [sys::PlatformIoVecConst; 4] = bun_core::ffi::zeroed();
-            let mut vecs_i: usize = 0;
-            vecs_buf[vecs_i] = sys::platform_iovec_const_create(metadata_bytes);
-            vecs_i += 1;
-            if !output_bytes.is_empty() {
-                vecs_buf[vecs_i] = sys::platform_iovec_const_create(output_bytes);
-                vecs_i += 1;
+            let mut vecs_buf = [sys::IoVec::new(metadata_bytes); 4];
+            let mut vecs_i: usize = 1;
+            for part in [output_bytes, sourcemap, esm_record] {
+                if !part.is_empty() {
+                    vecs_buf[vecs_i] = sys::IoVec::new(part);
+                    vecs_i += 1;
+                }
             }
-            if !sourcemap.is_empty() {
-                vecs_buf[vecs_i] = sys::platform_iovec_const_create(sourcemap);
-                vecs_i += 1;
-            }
-            if !esm_record.is_empty() {
-                vecs_buf[vecs_i] = sys::platform_iovec_const_create(esm_record);
-                vecs_i += 1;
-            }
-            let vecs: &[sys::PlatformIoVecConst] = &vecs_buf[0..vecs_i];
+            let vecs = &vecs_buf[0..vecs_i];
 
             let mut position: i64 = 0;
             let file_len = Metadata::SIZE + output_bytes.len() + sourcemap.len() + esm_record.len();
 
-            #[cfg(debug_assertions)]
-            {
-                let mut total: usize = 0;
-                for v in vecs {
-                    debug_assert!(v.len > 0);
-                    // `uv_buf_t::len` is `ULONG` (u32) on Windows, `usize` on POSIX.
-                    total += v.len as usize;
-                }
-                debug_assert!(file_len == total);
-            }
+            debug_assert!(file_len == vecs.iter().map(sys::IoVec::size).sum());
 
             let end_position = i64::try_from(file_len).expect("int cast");
             let _ = sys::preallocate_file(tmpfile.file.fd().cast(), 0, end_position);
@@ -393,15 +377,9 @@ impl Entry {
             }
         }
 
-        // The basename of a NUL-terminated
-        // path is itself NUL-terminated (it's a suffix), so we can hand it to
-        // `Tmpfile::finish` as a `&ZStr` without copying.
-        let dest_slice = destination_path.as_bytes();
-        let base = paths::basename(dest_slice);
-        // SAFETY: `base` is a suffix of `destination_path`, which the caller
-        // built via `get_cache_file_path` and is NUL-terminated at `dest_slice.len()`.
-        let base_z = unsafe { ZStr::from_raw(base.as_ptr(), base.len()) };
-        tmpfile.finish(base_z).map_err(|(err, _)| err)?;
+        let base_len = paths::basename(destination_path).len();
+        let base = destination_path.substring(destination_path.len() - base_len);
+        tmpfile.finish(base).map_err(|(err, _)| err)?;
         Ok(())
     }
 
@@ -620,10 +598,8 @@ impl RuntimeTranspilerCache {
         let cache_filename_len =
             Self::write_cache_filename(&mut buf[cache_dir_len + 1..], input_hash)?;
         let total = cache_dir_len + 1 + cache_filename_len;
-        buf[total] = 0;
 
-        // SAFETY: we wrote a NUL at buf[total] above.
-        Ok(ZStr::from_buf(&buf[..], total))
+        Ok(ZStr::nul_terminate(buf, total))
     }
 
     /// Writes the resolved cache directory into `buf` (NUL-terminated) and
@@ -846,7 +822,7 @@ impl RuntimeTranspilerCache {
         )
     }
 
-    pub(crate) fn is_disabled() -> bool {
+    pub fn is_disabled() -> bool {
         IS_DISABLED.load(Ordering::Relaxed)
     }
 
@@ -862,7 +838,7 @@ impl RuntimeTranspilerCache {
             .is_some_and(|entry| entry.metadata.features_hash == self.key.vitest_features_hash)
     }
 
-    pub(crate) fn put(
+    pub fn put(
         &self,
         output_code: &[u8],
         sourcemap: &[u8],
@@ -941,7 +917,11 @@ impl bun_js_parser::TranspilerCache for RuntimeTranspilerCache {
             return CacheLookup::Skipped;
         }
 
-        let input_hash = hash(&source.contents);
+        // The hash names the file. `bun lint` and `bun run` would take turns to overwrite it.
+        let features = &parser_options.features;
+        let defers_more = features.defers_requires && has_react_compiler(source.path.text);
+        let variant = u64::from(features.lists_loads) + u64::from(defers_more);
+        let input_hash = hash(&source.contents).wrapping_add(variant);
 
         let mut features_hasher = Wyhash::init(SEED);
         parser_options.hash_for_runtime_transpiler(&mut features_hasher, used_jsx);

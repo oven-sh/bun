@@ -19,7 +19,7 @@ use bun_sys::FdDirExt as _;
 use bun_sys::copy_file as CopyFile;
 use bun_url::URL;
 use bun_which::which;
-use bun_zlib as Zlib;
+use bun_zlib::{Inflater, inflate};
 
 use crate::Command;
 use crate::cli::run_command::RunCommand;
@@ -458,12 +458,16 @@ impl CreateCommand {
                 progress.refresh();
 
                 let mut tarball_buf_list: Vec<u8> = Vec::with_capacity(16384);
-                let mut gunzip = Zlib::ZlibReaderArrayList::init(
-                    tarball_bytes.list.as_slice(),
+                let status = Inflater::new(inflate::Container::ZlibOrGzip).inflate_to_vec(
+                    &mut tarball_bytes.list.as_slice(),
                     &mut tarball_buf_list,
-                )?;
-                gunzip.read_all(true)?;
-                drop(gunzip);
+                    usize::MAX,
+                );
+                match status {
+                    Ok(inflate::Status::StreamEnd) => {}
+                    Err(bun_zlib::Error::Alloc(error)) => return Err(error.into()),
+                    _ => return Err(bun_http::Error::Zlib.into()),
+                }
 
                 progress.root().set_name(b"Extracting ");
                 progress.root().append_to_name(template);
@@ -1539,8 +1543,7 @@ impl Example {
                 home_dir_buf[..entry_name.len()].copy_from_slice(entry_name);
                 home_dir_buf[entry_name.len()] = bun_paths::SEP;
                 home_dir_buf[entry_name.len() + 1..len].copy_from_slice(b"package.json");
-                home_dir_buf[len] = 0;
-                let path = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
+                let path = bun_core::ZStr::nul_terminate(&mut home_dir_buf, len);
 
                 if bun_sys::faccessat(folder, path).unwrap_or(false) {
                     examples.push(Example {

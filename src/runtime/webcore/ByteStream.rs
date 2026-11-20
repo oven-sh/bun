@@ -1,4 +1,5 @@
 use core::cell::Cell;
+use std::collections::TryReserveError;
 
 use bun_collections::VecExt;
 use bun_jsc::bindgen::{JsLocal, JsScope};
@@ -102,6 +103,12 @@ impl Buffered {
 
     fn extend(&self, chunk: &[u8]) {
         self.bytes.with_mut(|b| b.extend_from_slice(chunk));
+    }
+
+    fn try_extend(&self, chunk: &[u8]) -> Result<(), TryReserveError> {
+        self.bytes.with_mut(|b| b.try_reserve(chunk.len()))?;
+        self.extend(chunk);
+        Ok(())
     }
 
     /// Drop every buffered byte and release the allocation.
@@ -378,28 +385,20 @@ impl readable_stream::SourceContext for ByteStream {
 bun_core::impl_field_parent! { ByteStream => Source.context; pub fn shared parent_const; }
 
 impl ByteStream {
-    /// Init-time reset. Runs before the JS
-    /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
-    pub(crate) fn setup(&mut self) {
-        // Called immediately after `ByteStream::default()` construction;
-        // the old value owns nothing the new one
-        // reuses, so dropping it is the intended reset.
-        drop(core::mem::take(self));
-    }
-
-    /// Seeds the stream from the drain result; init-time like [`Self::setup`].
-    pub(crate) fn apply_drain_result(&mut self, drain_result: DrainResult) {
+    pub(crate) fn from_drain_result(drain_result: DrainResult) -> Self {
+        let mut this = Self::default();
         match drain_result {
             DrainResult::EstimatedSize(estimated_size) => {
-                self.high_water_mark = estimated_size as blob::SizeType;
-                self.size_hint.set(estimated_size as blob::SizeType);
+                this.high_water_mark = estimated_size as blob::SizeType;
+                this.size_hint.set(estimated_size as blob::SizeType);
             }
             DrainResult::Owned { list, size_hint } => {
-                self.buffered.adopt(list, 0);
-                self.size_hint.set(size_hint as blob::SizeType);
+                this.buffered.adopt(list, 0);
+                this.size_hint.set(size_hint as blob::SizeType);
             }
             DrainResult::Aborted => {}
         }
+        this
     }
 
     fn value(&self) -> JSValue {
@@ -648,14 +647,16 @@ impl ByteStream {
                     "ByteStream.onData appendSlice and action.fulfill()"
                 );
 
-                self.buffered.extend(stream.slice());
+                if self.buffered.try_extend(stream.slice()).is_err() {
+                    return self.reject_out_of_memory(action);
+                }
                 drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
                 action.fulfill(self.parent_const().global_this(), &mut blob);
-                return;
-            } else {
-                self.buffered.extend(stream.slice());
-                drop(stream);
+            } else if self.buffered.try_extend(stream.slice()).is_err()
+                && let Some(action) = self.buffer_action.replace(None)
+            {
+                self.reject_out_of_memory(action);
             }
 
             return;
@@ -725,6 +726,13 @@ impl ByteStream {
 
         self.append(stream, 0)
             .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+    }
+
+    fn reject_out_of_memory(&self, mut action: BufferAction) {
+        self.cancel_from_sink(None);
+        let global = self.parent_const().global_this();
+        let error = StrongOptional::create(global.create_out_of_memory_error(), global);
+        action.reject(global, &streams::StreamError::JSValue(error));
     }
 
     /// Buffer `stream`, whose first `offset` bytes a pending pull already took.

@@ -1,22 +1,22 @@
 # a field that a constructor function stores takes the member of the written type of `this`: the front end sends it so. A name that the maker stores behind the construction has no record:
 # Link appends it, and the types that the objects are written as say what lies under it, where each of them is guarded. The reference and the enum are held; `number`, with which nothing reckons, stays boxed and is not.
-# f1 = Type, f2 = make
+# f1 = Ferry, f2 = sails
 # -- source: field-of-a-constructor-function-takes-the-member-of-the-written-this.ts
 # declare function sink(...values: unknown[]): void;
-# enum TypeFlags { Any = 1, Union = 2, Object = 4 }
-# interface Sym { name: string }
-# interface Type { flags: TypeFlags; symbol: Sym; objectFlags: TypeFlags; size: number }
-# function Type(this: Type, flags: TypeFlags, symbol: Sym) { this.flags = flags; this.symbol = symbol; }
-# function make(flags: TypeFlags, symbol: Sym, objectFlags: TypeFlags, size: number): Type { const made: Type = new (Type as any)(flags, symbol); made.objectFlags = objectFlags; made.size = size; return made; }
-# const first: Sym = { name: "first" };
-# sink(make, first);
+# enum Sky { Rain = 1, Sun = 2, Wind = 4 }
+# interface Port { name: string }
+# interface Ferry { sky: Sky; port: Port; next: Sky; toll: number }
+# function Ferry(this: Ferry, sky: Sky, port: Port) { this.sky = sky === Sky.Rain ? Sky.Wind : sky; this.port = port; }
+# function sails(sky: Sky, port: Port, late: boolean, toll: number): Ferry { const ferry: Ferry = new (Ferry as any)(late ? Sky.Sun : sky, port); ferry.next = late ? Sky.Rain : sky; ferry.toll = toll; return ferry; }
+# const home: Port = { name: "home" };
+# sink(sails, home);
 # -- end of source
 # RUN: facts enforced mechanisms=all
-# CHECK: field {{*}} "flags" source=written type=i32 {{*}}slot=OptionalInt32
-# CHECK-NEXT: field {{*}} "symbol" source=written type=undefined|null|
-# CHECK-NEXT: field {{*}} "objectFlags" appended source=family type=i32 {{*}}slot=OptionalInt32
-# CHECK-NEXT: field {{*}} "size" appended source=family type=number {{*}}slot=JSValue
+# CHECK: field {{*}} "sky" source=written type=i32 {{*}}slot=OptionalInt32
+# CHECK-NEXT: field {{*}} "port" source=written type=undefined|null|
+# CHECK-NEXT: field {{*}} "next" appended source=family type=i32 {{*}}slot=OptionalInt32
+# CHECK-NEXT: field {{*}} "toll" appended source=family type=number {{*}}slot=JSValue
 # RUN(NEVER): facts enforced mechanisms=all
 # NEVER-NOT: differs-from-table
 # RUN(PLAN): plan layouts mechanisms=all
-# PLAN: slot {{*}} "symbol" {{*}} type=undefined|null|
+# PLAN: slot {{*}} "port" {{*}} type=undefined|null|

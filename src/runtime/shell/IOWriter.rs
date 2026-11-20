@@ -164,7 +164,7 @@ struct State {
     writer_idx: usize,
     total_bytes_written: usize,
     /// Set (and never cleared) by `fail_pending_writers`. A writer with a
-    /// stored error is dead: `enqueue`/`enqueue_fmt_bltn` must reject new
+    /// stored error is dead: `enqueue` must reject new
     /// chunks with this error instead of queueing them (see
     /// `handle_dead_writer`). The syscall error is kept (not the derived
     /// `SystemError`) so each rejected chunk gets its own freshly-derived
@@ -869,52 +869,6 @@ impl IOWriter {
         });
         self.enqueue_internal(child)
     }
-
-    /// Prefix `"{kind}: "` then format.
-    pub(crate) fn enqueue_fmt_bltn(
-        &self,
-        child: ChildPtr,
-        bytelist: Option<*mut Vec<u8>>,
-        kind: Option<crate::shell::builtin::Kind>,
-        args: core::fmt::Arguments<'_>,
-    ) -> Yield {
-        use std::io::Write as _;
-        let s = self.state();
-        let start = s.buf.len();
-        if let Some(k) = kind {
-            let _ = write!(&mut s.buf, "{}: ", k.as_str());
-        }
-        let _ = s.buf.write_fmt(args);
-        // `buf` is written *before* the dead-writer checks (the bytes are dead
-        // on the error path but no `Writer` references them, and an errored
-        // writer never drains again).
-        // NOTE: inline `handle_dead_writer` instead of calling the helper —
-        // the helper re-derives `state()` while `s` is still live, which is two
-        // simultaneous `&mut State` (UB under Stacked Borrows).
-        if s.flags.broken_pipe {
-            let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
-            return Yield::OnIoWriterChunk {
-                child,
-                written: 0,
-                err: Some(err),
-            };
-        }
-        if let Some(err) = &s.err {
-            return Yield::OnIoWriterChunk {
-                child,
-                written: 0,
-                err: Some(err.to_shell_system_error()),
-            };
-        }
-        let end = s.buf.len();
-        s.writers.push(Writer {
-            ptr: child,
-            len: end - start,
-            written: 0,
-            bytelist,
-        });
-        self.enqueue_internal(child)
-    }
 }
 
 enum WriteOutcome {
@@ -1049,7 +1003,7 @@ pub(crate) fn on_io_writer_chunk(
     use crate::shell::builtin::Builtin;
     use crate::shell::states::{cmd, cond_expr, pipeline};
     match child.tag {
-        WriterTag::Builtin => Builtin::on_io_writer_chunk(interp, child.node, written, err),
+        WriterTag::Builtin => Builtin::on_io_writer_chunk(interp, child.node, err),
         WriterTag::Cmd => cmd::Cmd::on_io_writer_chunk(interp, child.node, written, err),
         WriterTag::CondExpr => {
             cond_expr::CondExpr::on_io_writer_chunk(interp, child.node, written, err)

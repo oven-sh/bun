@@ -2,7 +2,7 @@
 // HTTP thread from buffering the entire response in memory.
 import { S3Client } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, forEachLine, isASAN, isDebug, isWindows, tempDir, tls, withoutAsanQuarantine } from "harness";
 import { once } from "node:events";
 import { statSync } from "node:fs";
 import { stat } from "node:fs/promises";
@@ -24,6 +24,15 @@ import {
   constants as zlibConstants,
   zstdCompressSync,
 } from "node:zlib";
+import {
+  Bits,
+  FIXED,
+  fixedDistanceCodes,
+  fixedLiteralCodes,
+  gzipHeader,
+  header,
+  putTokens,
+} from "../../node/zlib/zlib-golden/write";
 
 const CHUNK = 64 * 1024;
 const COUNT = 256; // 16 MiB
@@ -574,6 +583,19 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     return { ...server, url: `${secure ? "https" : "http"}://127.0.0.1:${server.port}/` };
   }
 
+  // An ambient NO_PROXY that lists 127.0.0.1 makes fetch() ignore its `proxy` option.
+  const env = {
+    ...bunEnv,
+    NO_PROXY: undefined,
+    no_proxy: undefined,
+    HTTP_PROXY: undefined,
+    http_proxy: undefined,
+    HTTPS_PROXY: undefined,
+    https_proxy: undefined,
+    ALL_PROXY: undefined,
+    all_proxy: undefined,
+  };
+
   // A CONNECT proxy that pipes both ways. bun does not pause a tunnelled socket, so the origin's
   // bytes keep arriving while the reader is paused.
   async function serveConnectProxy() {
@@ -711,6 +733,39 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     while (total < 300_000) total += (await reader.read()).value!.byteLength;
     await reader.cancel();
     expect(total).toBe(300_000);
+  });
+
+  // The same, with a budget that ends in the last match of the packet.
+  test("gzip: output the decoder still holds arrives without another packet", async () => {
+    const matches = Math.ceil(MARK / 258);
+    const tokens = [7, ...Array(matches).fill({ length: 258, distance: 1 })];
+    const expected = Buffer.alloc(1 + matches * 258, 7);
+    const block = putTokens(header(new Bits(), FIXED, false), tokens, fixedLiteralCodes, fixedDistanceCodes);
+    const wire = Buffer.concat([gzipHeader(), block.end()]);
+    await using server = await listening(
+      createTcpServer(s => {
+        s.on("error", () => {});
+        s.once("data", () =>
+          s.write(
+            Buffer.concat([
+              Buffer.from(`HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n`),
+              Buffer.from(wire.length.toString(16) + "\r\n"),
+              wire,
+              Buffer.from("\r\n"),
+            ]),
+          ),
+        );
+      }),
+    );
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    const reader = res.body!.getReader();
+    const chunks: Uint8Array[] = [];
+    for (let total = 0; total < expected.length; total += chunks.at(-1)!.length) {
+      chunks.push((await reader.read()).value!);
+    }
+    await reader.cancel();
+    expect(chunks.at(-1)!.length).toBe(expected.length - MARK);
+    expect(expected.equals(Buffer.concat(chunks))).toBe(true);
   });
 
   // `await (await fetch(url)).text()` turns the consumer to BufferAll, possibly while the HTTP
@@ -985,18 +1040,6 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
         const digest = new Bun.CryptoHasher("md5").update(body).digest("hex");
         process.stdout.write(JSON.stringify({ total: body.length, digest }));
       `;
-      // An ambient NO_PROXY that lists 127.0.0.1 makes fetch() ignore its `proxy` option.
-      const env = {
-        ...bunEnv,
-        NO_PROXY: undefined,
-        no_proxy: undefined,
-        HTTP_PROXY: undefined,
-        http_proxy: undefined,
-        HTTPS_PROXY: undefined,
-        https_proxy: undefined,
-        ALL_PROXY: undefined,
-        all_proxy: undefined,
-      };
       await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, connects: proxy.connects() }).toEqual({
@@ -1034,18 +1077,6 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
         const digest = new Bun.CryptoHasher("md5").update(body).digest("hex");
         process.stdout.write(JSON.stringify({ total: body.length, digest }) + "\\n");
       `;
-      // An ambient NO_PROXY that lists 127.0.0.1 makes fetch() ignore its `proxy` option.
-      const env = {
-        ...bunEnv,
-        NO_PROXY: undefined,
-        no_proxy: undefined,
-        HTTP_PROXY: undefined,
-        http_proxy: undefined,
-        HTTPS_PROXY: undefined,
-        https_proxy: undefined,
-        ALL_PROXY: undefined,
-        all_proxy: undefined,
-      };
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", script],
         env,
@@ -1092,6 +1123,521 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       }
       await abandon();
       await collectUntil(server.closed);
+    });
+  });
+
+  // The consumer sets the pace on every transport, and also once the transport is gone.
+  describe("however the response ends", () => {
+    const MIB = 1 << 20;
+    // More than a whole-body consumer gets in one turn of the HTTP thread.
+    const SIZE = 5 * MIB;
+    const repeat = (count: number, piece: Buffer, end: Buffer): Buffer[] => [...Array(count).fill(piece), end];
+    const mib = Buffer.alloc(MIB, 65);
+    // Less than one pass of the decoder.
+    const small = Buffer.alloc(MARK / 2, 65);
+    function withWrongCrc(member: Buffer) {
+      member[member.length - 8] ^= 1;
+      return member;
+    }
+    // All "A". When a damaged body fails shows how far the decoder has come.
+    const bodies: Record<string, () => [Enc, Buffer[]]> = {
+      whole: () => ["gzip", repeat(SIZE / small.length, gzipSync(small), gzipSync(""))],
+      wholeInOnePacket: () => ["zstd", repeat(SIZE / MIB, zstdCompressSync(mib), zstdCompressSync(""))],
+      damaged: () => ["gzip", repeat(SIZE / small.length, gzipSync(small), withWrongCrc(gzipSync("")))],
+      // Its end is far enough out for everything else in a test to come first.
+      damagedFarOut: () => ["zstd", repeat(256, zstdCompressSync(mib), Buffer.from("not zstd"))],
+      inflatedInOneCall: () => ["gzip", [gzipSync(Buffer.alloc(24 * MIB, 65))]],
+      // By its last four bytes, one call would do.
+      notInflatedInOneCall: () => ["gzip", repeat(39, gzipSync(mib), gzipSync(mib))],
+    };
+    function bodyFor(path: string) {
+      const [enc, pieces] = bodies[path.split("/").at(-1)!]();
+      return { enc, pieces, wire: Buffer.concat(pieces) };
+    }
+
+    type Origin = AsyncDisposable & { url: string; opts: object; end: () => Promise<unknown> };
+    const insecure = { tls: { rejectUnauthorized: false } };
+
+    async function http1(
+      framing: Framing,
+      how: "reset" | "end" | "end of the tunnel" | "late body",
+      secure = how === "end of the tunnel",
+    ): Promise<Origin> {
+      const raw: import("node:net").Socket[] = [];
+      const answered: import("node:net").Socket[] = [];
+      const late: (() => void)[] = [];
+      const firstAnswer = Promise.withResolvers<void>();
+      const handler = (s: import("node:net").Socket) => {
+        s.on("error", () => {});
+        s.once("data", request => {
+          const { enc, wire } = bodyFor(request.toString("latin1").split(" ")[1]);
+          const [field, before, after] = {
+            "content-length": [`Content-Length: ${wire.length}`, "", ""],
+            "chunked": ["Transfer-Encoding: chunked", `${wire.length.toString(16)}\r\n`, "\r\n0\r\n\r\n"],
+            "close-delimited": ["Connection: close", "", ""],
+          }[framing];
+          const head = `HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\n${field}\r\n\r\n`;
+          const body = Buffer.concat([Buffer.from(before), wire, Buffer.from(after)]);
+          if (how === "late body") late.push(() => s.write(body));
+          // One write, so the body is with the client when it has the head.
+          s.write(how === "late body" ? head : Buffer.concat([Buffer.from(head), body]));
+          answered.push(s);
+          firstAnswer.resolve();
+        });
+      };
+      const server = secure ? createTlsServer(tls, handler) : createTcpServer(handler);
+      server.on("connection", s => raw.push(s));
+      const listener = await listening(server);
+      const proxy = how === "end of the tunnel" ? await serveConnectProxy() : undefined;
+      return {
+        url: `${secure ? "https" : "http"}://127.0.0.1:${listener.port}/`,
+        opts: { ...insecure, proxy: proxy?.url },
+        async end() {
+          await firstAnswer.promise;
+          if (how === "reset") for (const s of raw) s.resetAndDestroy();
+          else if (how === "end") for (const s of answered) s.end();
+          else if (how === "late body") for (const write of late) write();
+          // A tunnelled socket is never paused, so the client answers the close.
+          else await Promise.all(answered.map(s => new Promise(closed => s.once("close", closed).end())));
+        },
+        async [Symbol.asyncDispose]() {
+          await proxy?.[Symbol.asyncDispose]();
+          await listener[Symbol.asyncDispose]();
+        },
+      };
+    }
+
+    type StreamEnd = "content-length" | "end of the stream" | "open stream";
+
+    async function http2(how: StreamEnd, pieceByPiece = false): Promise<Origin> {
+      const late: [ServerHttp2Stream, Buffer[]][] = [];
+      const server = createSecureServer({ ...tls, allowHTTP1: false });
+      server.on("stream", (stream: ServerHttp2Stream, headers) => {
+        const { enc, pieces, wire } = bodyFor(headers[":path"]!);
+        stream.on("error", () => {});
+        stream.respond({
+          ":status": 200,
+          "content-encoding": enc,
+          ...(how === "content-length" ? { "content-length": wire.length } : {}),
+        });
+        if (pieceByPiece) late.push([stream, pieces]);
+        else if (how === "end of the stream") stream.end(wire);
+        else stream.write(wire);
+      });
+      const listener = await listening(server);
+      // The client has read a piece when it answers the PING behind it.
+      async function send([stream, pieces]: (typeof late)[number]) {
+        const session = stream.session!;
+        for (const piece of pieces) {
+          stream.write(piece);
+          await new Promise(answered => session.ping(answered));
+        }
+      }
+      return {
+        ...listener,
+        url: `https://127.0.0.1:${listener.port}/`,
+        opts: { ...insecure, protocol: "http2" },
+        end: () => Promise.all(late.map(send)),
+      };
+    }
+
+    async function http3(how: StreamEnd | "late end of the stream"): Promise<Origin> {
+      const late: ReadableStreamDefaultController[] = [];
+      const server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        fetch(request) {
+          const { enc, wire } = bodyFor(request.url);
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(wire);
+              if (how === "end of the stream") controller.close();
+              if (how === "late end of the stream") late.push(controller);
+            },
+          });
+          return new Response(how === "content-length" ? wire : stream, { headers: { "content-encoding": enc } });
+        },
+      });
+      return {
+        url: server.url.href,
+        opts: { ...insecure, protocol: "http3" },
+        end: async () => late.forEach(controller => controller.close()),
+        [Symbol.asyncDispose]: () => server.stop(true),
+      };
+    }
+
+    // `ended()` has the origin end what it answered. It returns once another request is through,
+    // so the HTTP thread is past that. `read()` stops when the body ends or fails, or at `most`.
+    async function run(origin: Origin, script: string, extraEnv: object = {}) {
+      await using other = Bun.serve({ port: 0, fetch: () => new Response("other") });
+      const prelude = /* js */ `
+        const get = (path, more) => fetch(${JSON.stringify(origin.url)} + path, { ...${JSON.stringify(origin.opts)}, ...more });
+        const s3file = (key, endpoint = ${JSON.stringify(origin.url)}) =>
+          new Bun.S3Client({ accessKeyId: "t", secretAccessKey: "t", endpoint, bucket: "b" }).file(key);
+        const getOther = async () => (await fetch(${JSON.stringify(other.url.href)})).text();
+        async function ended() {
+          process.stdout.write("end\\n");
+          for await (const line of console) if (line === "go") break;
+          await getOther();
+        }
+        async function read(chunks, most = Infinity) {
+          let total = 0, foreign = 0, code;
+          try {
+            for await (const chunk of chunks) {
+              total += chunk.length;
+              if (!Buffer.alloc(chunk.length, 65).equals(chunk)) foreign++;
+              if (total >= most) break;
+            }
+          } catch (e) {
+            code = e.code;
+          }
+          return { total, foreign, code };
+        }
+        const report = result => process.stdout.write(JSON.stringify(result) + "\\n");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", prelude + script],
+        env: { ...env, ...extraEnv },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderr = proc.stderr.text();
+      const lines: string[] = [];
+      for await (const line of forEachLine(proc.stdout)) {
+        if (line === "end") {
+          await origin.end();
+          proc.stdin.write("go\n");
+          proc.stdin.end();
+        } else lines.push(line);
+      }
+      const exitCode = await proc.exited;
+      const result = lines.find(line => line.startsWith("{"));
+      if (!result) throw new Error(`client exited ${exitCode}: ${await stderr}`);
+      return { result: JSON.parse(result), stderr: await stderr, exitCode, lines };
+    }
+
+    const whole = { total: SIZE, foreign: 0 };
+    // What was decoded and not read yet is dropped with the error.
+    const mostOfIt = ({ total, ...rest }: { total: number }) => ({ most: total > SIZE - MIB || total, ...rest });
+
+    const origins: [string, () => Promise<Origin>][] = [
+      ["content-length, reset", () => http1("content-length", "reset")],
+      ["chunked, reset", () => http1("chunked", "reset")],
+      ["close-delimited, reset", () => http1("close-delimited", "reset")],
+      ["content-length, reset under TLS", () => http1("content-length", "reset", true)],
+      ["close-delimited, end", () => http1("close-delimited", "end")],
+      ["content-length, end of the tunnel", () => http1("content-length", "end of the tunnel")],
+      ["close-delimited, end of the tunnel", () => http1("close-delimited", "end of the tunnel")],
+      ["HTTP/2, content-length", () => http2("content-length")],
+      ["HTTP/2, content-length, piece by piece", () => http2("content-length", true)],
+      ["HTTP/2, end of the stream", () => http2("end of the stream")],
+      ["HTTP/2, open stream", () => http2("open stream")],
+      ["HTTP/3, content-length", () => http3("content-length")],
+      ["HTTP/3, end of the stream", () => http3("end of the stream")],
+      ["HTTP/3, open stream", () => http3("open stream")],
+    ];
+    describe.each(origins)("%s", (name, serve) => {
+      const isOpen = name.endsWith("open stream");
+      test.skipIf(isWindows && name.startsWith("HTTP/3"))("the body is decoded as it is read", async () => {
+        await using origin = await serve();
+        const { result, exitCode } = await run(
+          origin,
+          `const [damaged, streamed, buffered] = await Promise.all([get("damaged"), get("whole"), get("whole")]);
+           await ended();
+           report({
+             damaged: await read(damaged.body),
+             streamed: await read(streamed.body, ${isOpen ? SIZE : Infinity}),
+             buffered: ${isOpen ? "undefined" : "await read([await buffered.bytes()])"},
+           });`,
+        );
+        expect({ ...result, damaged: mostOfIt(result.damaged), exitCode }).toEqual({
+          damaged: { most: true, foreign: 0, code: "ZlibError" },
+          streamed: whole,
+          buffered: isOpen ? undefined : whole,
+          exitCode: 0,
+        });
+      });
+    });
+
+    describe.each(origins.filter(([name]) => /^(content-length, end of the tunnel|HTTP\/2, end)/.test(name)))(
+      "%s, body not read",
+      (_, serve) => {
+        test("the next request does not wait for it", async () => {
+          await using origin = await serve();
+          const { result, stderr, exitCode } = await run(
+            origin,
+            `const first = await get("whole");
+             await ended();
+             report({ first: await read(first.body), next: await read((await get("whole")).body) });`,
+            { BUN_CONFIG_MAX_HTTP_REQUESTS: "1" },
+          );
+          expect({ result, stderr, exitCode }).toEqual({
+            result: { first: whole, next: whole },
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+
+        test("the upload is cancelled short of its length, and the body is still there", async () => {
+          await using origin = await serve();
+          const { result, stderr, exitCode } = await run(
+            origin,
+            `const cancelled = Promise.withResolvers();
+             const body = new ReadableStream({
+               start: controller => controller.enqueue(new Uint8Array(1)),
+               cancel: cancelled.resolve,
+             });
+             const res = await get("whole", { method: "POST", body, duplex: "half", headers: { "content-length": "2" } });
+             await ended();
+             await cancelled.promise;
+             await getOther();
+             report(await read(res.body));`,
+          );
+          expect({ result, stderr, exitCode }).toEqual({ result: whole, stderr: "", exitCode: 0 });
+        });
+
+        // terminate() waits until the HTTP thread has handed the request back.
+        test("the worker that fetched it terminates", async () => {
+          await using origin = await serve();
+          const { result, stderr, exitCode } = await run(
+            origin,
+            `import { once } from "node:events";
+             import { Worker } from "node:worker_threads";
+             const worker = new Worker(
+               \`const { parentPort, workerData } = require("node:worker_threads");
+                 parentPort.on("message", () => {});
+                 fetch(...workerData).then(res => parentPort.postMessage((globalThis.res = res).status));\`,
+               { eval: true, workerData: ${JSON.stringify([origin.url + "damaged", origin.opts])} },
+             );
+             const [status] = await once(worker, "message");
+             await ended();
+             await worker.terminate();
+             report({ status });`,
+          );
+          expect({ result, stderr, exitCode }).toEqual({ result: { status: 200 }, stderr: "", exitCode: 0 });
+        });
+      },
+    );
+
+    test("a body that is not read does not keep what was uploaded", async () => {
+      await using origin = await http2("end of the stream");
+      const { result, stderr, exitCode } = await run(
+        origin,
+        `const upload = Buffer.alloc(${16 * MIB}, 1);
+         const post = () => get("whole", { method: "POST", body: upload });
+         const rss = async () => (await getOther(), Bun.gc(true), process.memoryUsage.rss());
+         const kept = [await post()];
+         const before = await rss();
+         for (let i = 0; i < 8; i++) kept.push(await post());
+         report({ grown: (await rss()) - before, last: await read(kept.at(-1).body) });`,
+        withoutAsanQuarantine(env),
+      );
+      // The uploads are 128 MiB.
+      const most = (isASAN || isDebug ? 80 : 48) * MIB;
+      expect({ ...result, grown: result.grown < most || result.grown, stderr, exitCode }).toEqual({
+        grown: true,
+        last: whole,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.each([
+      ["not read", ""],
+      ["not read to its end", "await res.body.getReader().read();"],
+    ])("a body that is %s counts towards the next collection", async (_, use) => {
+      await using origin = await http2("end of the stream");
+      const { result, stderr, exitCode } = await run(
+        origin,
+        `import { heapStats } from "bun:jsc";
+         const extra = () => heapStats().extraMemorySize - process.memoryUsage().arrayBuffers;
+         const before = extra();
+         for (let i = 0; i < 10; i++) {
+           const res = await get("whole");
+           ${use}
+         }
+         report({ MiB: (extra() - before) >> 20 });`,
+        { BUN_JSC_useGC: "0" },
+      );
+      // The last ones may still be on their way.
+      expect({ counted: result.MiB >= 8 || result.MiB, stderr, exitCode }).toEqual({
+        counted: true,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("the upload's cancel() may wait for the end of the body", async () => {
+      await using origin = await http2("end of the stream");
+      const { result, stderr, exitCode } = await run(
+        origin,
+        `const body = new ReadableStream({
+           start: controller => controller.enqueue(new Uint8Array(1)),
+           // Bun.build() runs the event loop until setup() has settled.
+           cancel() {
+             const setup = async () => report(await read((await response).body));
+             Bun.build({ entrypoints: ["/x.js"], files: { "/x.js": "" }, plugins: [{ name: "wait", setup }] });
+           },
+         });
+         const response = get("whole", { method: "POST", body, duplex: "half" });
+         await response;
+         // Answered behind the end of the first one, which does not keep the process alive.
+         await get("whole");`,
+      );
+      expect({ result, stderr, exitCode }).toEqual({ result: whole, stderr: "", exitCode: 0 });
+    });
+
+    // A damaged body is reported on stderr once the decoder gets there. `busy` occupies the HTTP
+    // thread, which then finds the consumer's request for more and its withdrawal together.
+    test.each([
+      ["res.body.cancel()", `res.body.cancel();`],
+      ["abort() after reader.read()", `res.body.getReader().read().catch(() => {}); abort.abort();`],
+      ["abort() after res.bytes()", `res.bytes().catch(() => {}); abort.abort();`],
+    ])("%s ends the decoding", async (_, giveUp) => {
+      await using origin = await http1("content-length", "end");
+      const { result, stderr, exitCode } = await run(
+        origin,
+        `const abort = new AbortController();
+         const held = await get("inflatedInOneCall");
+         const res = await get("damagedFarOut", { signal: abort.signal });
+         const busy = held.bytes();
+         ${giveUp}
+         report({ busy: (await busy).length, other: await getOther() });`,
+      );
+      expect({ result, stderr, exitCode }).toEqual({
+        result: { busy: 24 * MIB, other: "other" },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Bodies take turns, so the short one ends first though it was asked for last.
+    test.each([
+      [
+        "res.bytes()",
+        `const [far, res] = [await get("damagedFarOut"), await get("whole")];
+         const [long, short] = [far.bytes(), res.bytes()];`,
+      ],
+      [
+        "s3file.bytes()",
+        `import { once } from "node:events";
+         import { createServer } from "node:net";
+         const res = await get("whole");
+         const wire = await (await get("damagedFarOut", { decompress: false })).bytes();
+         const { promise: short, resolve } = Promise.withResolvers();
+         const bucket = createServer(socket =>
+           socket.once("data", () => {
+             const head = "HTTP/1.1 200 OK\\r\\nContent-Encoding: zstd\\r\\nContent-Length: " + wire.length + "\\r\\n\\r\\n";
+             socket.write(Buffer.concat([Buffer.from(head), wire]));
+             resolve(res.bytes());
+           }),
+         );
+         await once(bucket.listen(0, "127.0.0.1"), "listening");
+         const long = s3file("k", "http://127.0.0.1:" + bucket.address().port).bytes();`,
+      ],
+    ])("%s leaves room for another body", async (_, both) => {
+      await using origin = await http1("content-length", "end");
+      const { result, exitCode } = await run(
+        origin,
+        `${both}
+         report({ first: await Promise.race([short.then(bytes => bytes.length), long.catch(e => e.code)]) });
+         process.exit(0);`,
+      );
+      expect({ result, exitCode }).toEqual({ result: { first: SIZE }, exitCode: 0 });
+    });
+
+    test.each(["content-length", "chunked", "close-delimited"] as Framing[])(
+      "s3file.bytes() gets a whole %s body",
+      async framing => {
+        await using origin = await http1(framing, "end");
+        const { result, stderr, exitCode } = await run(
+          origin,
+          `const bytes = s3file("whole").bytes(); await ended(); report(await read([await bytes]));`,
+        );
+        expect({ result, stderr, exitCode }).toEqual({ result: whole, stderr: "", exitCode: 0 });
+      },
+    );
+
+    test("s3file.stream() is decoded as it is read after a reset", async () => {
+      await using origin = await http1("content-length", "reset");
+      const { result, exitCode } = await run(
+        origin,
+        `const stream = s3file("damaged").stream();
+         const reader = stream.getReader();
+         await reader.read();
+         reader.releaseLock();
+         await ended();
+         report(await read(stream));`,
+      );
+      expect({ ...mostOfIt(result), exitCode }).toEqual({ most: true, foreign: 0, code: "ZlibError", exitCode: 0 });
+    });
+
+    // The scopes log every pass, and every time reading from the socket starts again.
+    test.skipIf(!isDebug)("the socket is not read while there is input left to decode", async () => {
+      await using origin = await http1("close-delimited", "end");
+      const { result, lines, stderr, exitCode } = await run(
+        origin,
+        `const res = await get("whole"); await ended(); report(await read([await res.bytes()]));`,
+        { BUN_DEBUG_HTTPInternalState: "1", BUN_DEBUG_fetch: "1" },
+      );
+      const events = (lines.join("\n") + stderr).match(/Decompressing|resume receive/g)!;
+      expect({ result, passesBefore: events.indexOf("resume receive"), exitCode }).toEqual({
+        result: whole,
+        passesBefore: SIZE / MARK + 1,
+        exitCode: 0,
+      });
+    });
+
+    test.skipIf(!isDebug)("reading from the socket stops when a turn leaves input to decode", async () => {
+      await using origin = await http1("content-length", "late body");
+      const { result, lines, stderr, exitCode } = await run(
+        origin,
+        `const bytes = (await get("wholeInOnePacket")).bytes(); await ended(); report(await read([await bytes]));`,
+        { BUN_DEBUG_HTTPInternalState: "1", BUN_DEBUG_fetch: "1" },
+      );
+      const events = (lines.join("\n") + stderr).match(/Decompressing|pause receive/g)!;
+      expect({ result, passesBefore: events.indexOf("pause receive"), exitCode }).toEqual({
+        result: whole,
+        passesBefore: (4 * MIB) / MARK,
+        exitCode: 0,
+      });
+    });
+
+    test.skipIf(!isDebug)("only the first pass gets the room that one call would need", async () => {
+      await using origin = await http1("content-length", "end");
+      const { result, lines, stderr, exitCode } = await run(
+        origin,
+        `report(await read([await (await get("notInflatedInOneCall")).bytes()]));`,
+        { BUN_DEBUG_HTTPInternalState: "1" },
+      );
+      const passes = (lines.join("\n") + stderr).match(/Decompressing/g)!.length;
+      expect({ result, rest: passes > (8 * MIB) / MARK || passes, exitCode }).toEqual({
+        result: { total: 40 * MIB, foreign: 0 },
+        rest: true,
+        exitCode: 0,
+      });
+    });
+
+    // The upload is cancelled once the client has read the end of the stream.
+    test.skipIf(isWindows)("the HTTP/3 stream is not read while there is input left to decode", async () => {
+      await using origin = await http3("late end of the stream");
+      const { result, stderr, exitCode } = await run(
+        origin,
+        `let total = 0, atCancel;
+         const body = new ReadableStream({
+           start: controller => controller.enqueue(new Uint8Array(1)),
+           cancel: () => void (atCancel = total),
+         });
+         const reader = (await get("wholeInOnePacket", { method: "POST", body, duplex: "half" })).body.getReader();
+         total += (await reader.read()).value.length;
+         await ended();
+         for (let r; !(r = await reader.read()).done; ) total += r.value.length;
+         report({ total: atCancel, all: total });`,
+      );
+      expect({ ...mostOfIt(result), stderr, exitCode }).toEqual({ most: true, all: SIZE, stderr: "", exitCode: 0 });
     });
   });
 });

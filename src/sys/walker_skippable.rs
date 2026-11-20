@@ -162,27 +162,22 @@ impl Walker {
                             dirname_len += 1;
                         }
                         self.name_buffer.extend_from_slice(base.name.slice());
-                        let cur_len = self.name_buffer.len();
-                        self.name_buffer.push(0);
 
                         let mut dir = dir_fd;
                         if kind == sys::EntryKind::Directory {
                             dir = sys::open_dir_for_iteration_os_path(dir_fd, base.name.slice())?;
                             self.stack.push(StackItem {
                                 iter: dir_iterator::iterate(dir),
-                                dirname_len: cur_len,
+                                dirname_len: self.name_buffer.len(),
                             });
                         }
-                        // `name_buffer[cur_len] == 0` was written above; both views end at
-                        // `cur_len` and are NUL-terminated by that sentinel char. `from_buf`
-                        // ties the borrow to `&self.name_buffer` (no raw-pointer reslice).
+                        let path_len = self.name_buffer.len();
+                        self.name_buffer.push(0);
+                        let path = OSPathSliceZ::nul_terminate(&mut self.name_buffer, path_len);
                         return Ok(Some(WalkerEntry {
                             dir,
-                            basename: OSPathSliceZ::from_buf(
-                                &self.name_buffer[dirname_len..],
-                                cur_len - dirname_len,
-                            ),
-                            path: OSPathSliceZ::from_buf(&self.name_buffer, cur_len),
+                            basename: path.substring(dirname_len),
+                            path,
                             kind,
                         }));
                     } else {

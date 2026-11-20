@@ -59,9 +59,22 @@ export const readerModes: ReaderMode[] = systems.flatMap(system =>
   ),
 );
 
+const gzipFixedHeader = (flags: number) => Buffer.from([0x1f, 0x8b, 8, flags, 0, 0, 0, 0, 0, 255]);
+
+/** The optional fields that `flags` announce, for `gzipStored`. */
+export function gzipFields(flags: number) {
+  const fields = Buffer.concat([
+    Buffer.from(flags & 4 ? [3, 0, 1, 2, 3] : []),
+    Buffer.from(flags & 8 ? "name\0" : ""),
+    Buffer.from(flags & 16 ? "comment\0" : ""),
+  ]);
+  const crc = Bun.hash.crc32(Buffer.concat([gzipFixedHeader(flags), fields]));
+  return Buffer.concat([fields, Buffer.from(flags & 2 ? [crc & 0xff, (crc >>> 8) & 0xff] : [])]);
+}
+
 /** gzip with stored blocks, made by hand so that the bytes are the same whatever zlib does. */
 export function gzipStored(data: Uint8Array, { flags = 0, fields = Buffer.alloc(0) } = {}) {
-  const parts = [Buffer.from([0x1f, 0x8b, 8, flags, 0, 0, 0, 0, 0, 255]), fields];
+  const parts = [gzipFixedHeader(flags), fields];
   for (let at = 0; at === 0 || at < data.length; at += 65535) {
     const block = data.subarray(at, at + 65535);
     const head = Buffer.alloc(5);
@@ -109,15 +122,8 @@ function madeArchives() {
   for (let at = 0; at < 15; at++) for (const xor of [1, 0x80]) add(`gzip byte ${at} ^ ${xor}`, changed(gz, at, xor));
   for (let at = 1; at <= 8; at++) add(`gzip byte -${at} ^ 1`, changed(gz, -at, 1));
 
-  const fieldsOf = (flags: number) =>
-    Buffer.concat([
-      Buffer.from(flags & 4 ? [3, 0, 1, 2, 3] : []),
-      Buffer.from(flags & 8 ? "name\0" : ""),
-      Buffer.from(flags & 16 ? "comment\0" : ""),
-      Buffer.from(flags & 2 ? [0, 0] : []),
-    ]);
   for (let flags = 1; flags < 32; flags++) {
-    const fields = fieldsOf(flags);
+    const fields = gzipFields(flags);
     add(`gzip flags ${flags}`, gzipStored(tar, { flags, fields }));
     // The same header behind a whole member, where it is the start of another member or it is nothing.
     for (let cut = 0; cut < fields.length; cut++) {

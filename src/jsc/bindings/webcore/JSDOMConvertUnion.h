@@ -198,9 +198,8 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
 
                 using Type = typename std::remove_cvref_t<decltype(type)>::type;
                 using ImplementationType = typename Type::ImplementationType;
-                using RawType = typename Type::RawType;
 
-                auto castedValue = JSToWrappedOverloader<RawType>::toWrapped(lexicalGlobalObject, value);
+                auto castedValue = Converter<Type>::WrapperType::toWrapped(vm, value);
                 if (!castedValue)
                     return;
 

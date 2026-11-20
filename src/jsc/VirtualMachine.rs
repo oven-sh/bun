@@ -218,16 +218,6 @@ pub struct VirtualMachine {
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: JsCell<Vec<Box<[u8]>>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
-    /// LAYERING: the real type is `bun_runtime`'s
-    /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
-    ///
-    /// The HTMLRewriter sink whose lol-html `write()`/`end()`/`resume()` call
-    /// is currently on this VM's native stack, if any. Content handlers reach
-    /// their sink through it (to record a thrown exception, and to park the JS
-    /// wrapper + pending promise when an async handler suspends the rewrite).
-    /// Saved and restored LIFO around every lol-html call, so a handler body
-    /// that synchronously starts a nested `transform()` nests correctly.
-    pub html_rewriter_active_sink: Cell<Option<core::ptr::NonNull<c_void>>>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the
     // `bun_resolver::StandaloneModuleGraph` trait; we hold the same trait
@@ -585,9 +575,9 @@ pub unsafe extern "C" fn Bun__standaloneModuleKey(
     if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
         return core::ptr::null();
     }
-    match standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name)) {
+    let file = standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name));
+    match file.and_then(crate::compiled_program::key_of_named_file) {
         Some(canonical) => {
-            let canonical = crate::compiled_program::entry_module_key(canonical);
             *out_len = canonical.len();
             canonical.as_ptr()
         }
@@ -1138,15 +1128,6 @@ impl VirtualMachine {
             return None;
         }
         self.graph_contexts.get().get(&id).map(|context| &**context)
-    }
-
-    /// Whether a timer or pool job made for `context` under `generation` (the
-    /// [`test_isolation_generation`](Self::test_isolation_generation) of then) has outlived the
-    /// script it would continue: its context has stopped, or `bun test --isolate` has moved on to
-    /// another file since.
-    #[inline]
-    pub fn has_outlived_its_script(&self, context: crate::ContextId, generation: u32) -> bool {
-        generation != self.test_isolation_generation.get() || !self.is_context_live(context)
     }
 
     /// Whether the context `id` names has not stopped.
@@ -2302,7 +2283,8 @@ impl VirtualMachine {
     ///     listeners, sockets, watchers, subprocess/pipe/tty handles, in-flight
     ///     fetch/S3/Bun.build aborted or cancelled), socket groups and the DNS
     ///     channel closed.
-    ///  B. release — cron, memory pressure watch, user and GC-controller timers cancelled; child
+    ///  B. release — OS-level cron calls, memory pressure watch,
+    ///     user and GC-controller timers cancelled; child
     ///     workers joined; this VM's sqlite connections closed; **the wait**:
     ///     every ticket held off-thread comes back while queued work is
     ///     released without running; the handle closes; main: HTTP thread
@@ -2366,9 +2348,9 @@ impl VirtualMachine {
             unsafe { uws::Timer::close::<true>(t.as_ptr()) };
         }
         if let Some(hooks) = hooks {
-            (hooks.stop_watches_for_vm_teardown)(vm);
+            (hooks.stop_watches_for_vm_teardown)();
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
-            // +1 while runtime state and the JSC heap are alive. The heap itself
+            // loop ref while runtime state and the JSC heap are alive. The heap itself
             // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
             // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
             // this heap and keep being scheduled until ~VM returns.
@@ -2725,7 +2707,7 @@ pub struct RuntimeHooks {
     /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
     pub timer_min_delay_ms: fn() -> u32,
     /// `FakeTimers::abort_signal_timeout_clock()` of the calling thread's VM.
-    pub abort_signal_timeout_clock: fn() -> bun_core::TimespecMockMode,
+    pub abort_signal_timeout_clock: fn() -> bun_event_loop::EventLoopTimer::Clock,
     /// Reads the calling thread's `Timer::All`; see `timer_insert`.
     pub timers_left: fn() -> TimersLeft,
     /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
@@ -2792,12 +2774,10 @@ pub struct RuntimeHooks {
     /// `None` if parsing failed.
     pub parse_worker_exec_argv_flags:
         unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<WorkerExecArgvFlags>,
-    /// Cron jobs and the memory pressure watcher, while the loop and `RareData` are alive.
-    pub stop_watches_for_vm_teardown: fn(vm: &VirtualMachine),
-    /// `CronJob.clearAllForVM(vm, .reload)`.
-    /// The `.reload` mode preserves the next-fire schedule across the new
-    /// global so timers re-register instead of being torn down.
-    pub cron_clear_all_reload: fn(vm: &VirtualMachine),
+    /// OS-level cron calls and the memory pressure watcher, while the loop and `RareData` are alive.
+    pub stop_watches_for_vm_teardown: fn(),
+    /// Stops the in-process cron jobs. The reloaded script registers them again.
+    pub cron_clear_all_reload: fn(),
     /// Standalone-graph sourcemap load.
     /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`
     /// live above `bun_jsc`; the high tier reaches them via the graph's own
@@ -2821,7 +2801,7 @@ pub struct RuntimeHooks {
     pub retroactively_report_discovered_tests:
         fn(agent: &mut crate::debugger::TestReporterHandle, next_test_id: i32) -> i32,
     /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
-    /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
+    /// thread's `timer::All` heap so their JS pins drop
     /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
     /// callers (`global_exit`, `WebWorker::shutdown`) are in this crate.
     ///
@@ -2932,7 +2912,7 @@ impl VirtualMachine {
 
     /// The clock that an `AbortSignal.timeout()` armed now runs on.
     #[inline]
-    pub fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
+    pub fn abort_signal_timeout_clock() -> bun_event_loop::EventLoopTimer::Clock {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         (hooks.abort_signal_timeout_clock)()
     }
@@ -3066,7 +3046,6 @@ impl VirtualMachine {
             pending_unref_counter: Default::default(),
             preload: JsCell::default(),
             unhandled_pending_rejection_to_capture: None,
-            html_rewriter_active_sink: Cell::new(None),
             standalone_module_graph: opts.graph,
             finds_entry_points_by_path: opts.graph.is_some_and(|graph| {
                 graph
@@ -3807,6 +3786,38 @@ pub struct ResolveFunctionResult<'r> {
     pub(crate) query_string: &'r [u8],
 }
 
+/// What a specifier resolves to, for all VMs with `defers_requires`. Like Node.js's `Module._pathCache`, it is for good.
+pub struct SharedResolution(Vec<u8>);
+
+static SHARED_RESOLUTIONS: bun_threading::RwLock<
+    Option<bun_collections::HashMap<Vec<u8>, &'static [u8]>>,
+> = bun_threading::RwLock::new(None);
+
+impl SharedResolution {
+    pub fn new(directory: &[u8], specifier: &[u8], is_esm: bool) -> Self {
+        Self(match bun_paths::is_absolute(specifier) {
+            true => [&[u8::from(is_esm)], specifier].concat(),
+            false => [&[u8::from(is_esm)], directory, b"\0", specifier].concat(),
+        })
+    }
+
+    pub fn get(&self) -> Option<&'static [u8]> {
+        SHARED_RESOLUTIONS.read().as_ref()?.get(&self.0).copied()
+    }
+
+    pub fn set(self, path: &[u8]) {
+        if !bun_paths::is_absolute(path) {
+            return;
+        }
+        let mut all = SHARED_RESOLUTIONS.write();
+        let all = all.get_or_insert_default();
+        // `$Bun_defer` requires what it has resolved.
+        let itself = all.entry(Self::new(b"", path, false).0);
+        let path = *itself.or_insert_with(|| Box::leak(path.into()));
+        all.insert(self.0, path);
+    }
+}
+
 fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
@@ -4377,7 +4388,7 @@ impl VirtualMachine {
         if let Some(hooks) = runtime_hooks() {
             // The hook walks the VM's cron-job list and detaches each job from
             // the old global so the new global can re-register them post-reload.
-            (hooks.cron_clear_all_reload)(self);
+            (hooks.cron_clear_all_reload)();
         }
         // `JSGlobalObject::reload` drains microtasks + collects async + clears
         // the JSC module loader registry.
@@ -4806,6 +4817,20 @@ impl VirtualMachine {
             top_level_dir
         };
 
+        let is_shared = self.transpiler.get().options.defers_requires
+            && self.transpiler.get().resolver.custom_dir_paths.is_none()
+            && self.transpiler.get().options.macro_remap.count() == 0
+            && !self.finds_entry_points_by_path
+            && self.has_mutated_built_in_extensions.get() == 0
+            && self.commonjs_custom_extensions.get().len() == 0
+            && bun_paths::is_absolute(source_to_use);
+        let shared =
+            is_shared.then(|| SharedResolution::new(source_to_use, normalized_specifier, is_esm));
+        if let Some(path) = shared.as_ref().and_then(SharedResolution::get) {
+            (ret.path, ret.query_string) = (path, query_string);
+            return Ok(());
+        }
+
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
@@ -4951,6 +4976,9 @@ impl VirtualMachine {
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
         ret.path = result_path.text;
+        if let Some(shared) = shared {
+            shared.set(ret.path);
+        }
         if self.finds_entry_points_by_path
             && let Some(entry) = crate::compiled_program::find_entry_point_by_source_path(ret.path)
         {

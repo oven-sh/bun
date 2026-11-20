@@ -211,8 +211,9 @@ fn open_component_by_component(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> 
 /// `path` without its symlinks and with a NUL. Only what refuses symlinks may use it: the disk can change after this has read it.
 fn resolve_symlinks(dir: Fd, path: &ZStr, flags: i32, symlinks: Symlinks) -> Maybe<Vec<u8>> {
     fn read_link(dir: Fd, path: &mut Vec<u8>, target: &mut [u8]) -> Maybe<usize> {
+        let len = path.len();
         path.push(0);
-        let result = crate::readlinkat(dir, ZStr::from_slice_with_nul(path), target);
+        let result = crate::readlinkat(dir, ZStr::nul_terminate(path, len), target);
         path.pop();
         result
     }
@@ -310,8 +311,7 @@ fn z<'a>(path: &[u8], buf: &'a mut [u8], tag: Tag) -> Maybe<&'a ZStr> {
         return Err(Error::from_code(E::ENAMETOOLONG, tag).with_path(path));
     }
     buf[..path.len()].copy_from_slice(path);
-    buf[path.len()] = 0;
-    Ok(ZStr::from_buf(buf, path.len()))
+    Ok(ZStr::nul_terminate(buf, path.len()))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]

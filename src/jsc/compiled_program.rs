@@ -8,7 +8,7 @@ use bun_core::ffi::FfiSlice;
 use bun_exe_format::identity::{HostDescription, IdentityError, find_process_identity};
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_resolver::StandaloneModuleGraph;
-use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram};
+use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram, compare_source_paths};
 
 use crate::virtual_machine::standalone_module_graph;
 use crate::{JSGlobalObject, JSValue};
@@ -359,6 +359,14 @@ pub fn module_key(entry: &'static CompiledEntryPoint) -> &'static [u8] {
 
 pub fn entry_module_key<'a>(path: &'a [u8]) -> &'a [u8] {
     standalone_module_graph().map_or(path, |graph| entry_module_key_in(graph, path))
+}
+
+/// The key of the module that a program names by the name of a file of the executable. `None`: another module lies at that path, and the resolver finds it. The file of an entry point `part.cjs` is called `part.js`.
+pub(crate) fn key_of_named_file(name: &'static [u8]) -> Option<&'static [u8]> {
+    let key = entry_module_key(name);
+    let is_other_module =
+        || compiled_program().is_some_and(|program| program.holds_module_at(name));
+    (compare_source_paths(key, name).is_eq() || !is_other_module()).then_some(key)
 }
 
 fn module_key_in(
@@ -784,10 +792,6 @@ mod write_execute {
         let version = (version.next().flatten(), version.next().flatten());
         // glibc 2.34 moved libutil, librt and the services `files` and `dns` into libc.so.6.
         let is_merged = version >= (Some(2), Some(34));
-        // pthread_exit() unwinds with it, and only a reload calls that.
-        if !is_removed(Feature::HotReload) {
-            load(c"libgcc_s.so.1");
-        }
         if !is_merged && !is_removed(Feature::Terminal) {
             load(c"libutil.so.1");
         }

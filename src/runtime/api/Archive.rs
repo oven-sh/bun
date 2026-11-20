@@ -9,7 +9,6 @@ use bun_glob as glob;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult};
 use bun_jsc::{StringJsc as _, SysErrorJsc};
-use bun_ptr::RefPtr;
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
 use bun_sys::{self, Fd, FdDirExt as _, Mode};
@@ -25,22 +24,28 @@ pub(crate) enum Compression {
 #[derive(Clone, Copy)]
 pub(crate) struct GzipOptions {
     /// Compression level: 1 (fastest) to 12 (maximum compression). Default is 6.
-    pub level: u8,
+    pub level: bun_deflate::Level,
 }
 
 pub(crate) struct Archive {
-    /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
-    store: RefPtr<Store>,
+    /// The underlying data for the archive, see [`contents_of`].
+    data: Blob,
     /// Compression settings for this archive
     compress: Compression,
 }
 
 impl Archive {
-    /// Borrow the backing `RefPtr<Store>`.
-    #[inline]
-    pub(crate) fn store_ref(&self) -> &RefPtr<Store> {
-        &self.store
+    pub(crate) fn data(&self) -> &Blob {
+        &self.data
     }
+}
+
+/// The range of its store that `blob` covers, without its name and type. Free to cross threads.
+fn contents_of(blob: &Blob, global: &JSGlobalObject) -> Option<Blob> {
+    let contents = Blob::init_with_store(blob.store()?.clone(), global);
+    contents.offset.set(blob.offset.get());
+    contents.size.set(blob.size.get());
+    Some(contents)
 }
 
 impl Archive {
@@ -54,7 +59,7 @@ impl Archive {
         F: bun_jsc::ConsoleFormatter,
         W: core::fmt::Write,
     {
-        let data = self.store.shared_view();
+        let data = self.data.shared_view();
         let fmt_err = |_: core::fmt::Error| crate::Error::FormatError;
 
         writeln!(
@@ -131,25 +136,22 @@ impl Archive {
         let compress = parse_compression_options(global, options.to_js())?;
 
         // For Blob/Archive, ref the existing store (zero-copy)
-        if let Some(blob) = data.as_class_ref::<Blob>() {
-            if let Some(store) = blob.store.get().as_ref() {
-                return Ok(Self {
-                    store: store.clone(),
-                    compress,
-                });
-            }
+        if let Some(blob) = data.as_class_ref::<Blob>()
+            && let Some(data) = contents_of(&blob, global)
+        {
+            return Ok(Self { data, compress });
         }
 
         // For ArrayBuffer/TypedArray, copy the data
         if let Some(array_buffer) = data.as_array_buffer(global) {
             let data: Vec<u8> = array_buffer.slice().to_vec();
-            return Ok(create_archive(data, compress));
+            return Ok(create_archive(data, compress, global));
         }
 
         // For plain objects, build a tarball
         if data.is_object() {
             let data = build_tarball_from_object(global, data)?;
-            return Ok(create_archive(data, compress));
+            return Ok(create_archive(data, compress, global));
         }
 
         Err(global.throw_invalid_arguments(format_args!(
@@ -193,20 +195,23 @@ fn parse_compression_options(
         }
 
         // Parse level option (1-12, default 6)
-        let mut level: u8 = 6;
+        let mut level = bun_deflate::Level::DEFAULT;
         if let Some(level_val) = options_arg.get_truthy(global, "level")? {
             if !level_val.is_number() {
                 return Err(
                     global.throw_invalid_arguments(format_args!("Archive: level must be a number"))
                 );
             }
-            let level_num = level_val.to_int64();
-            if level_num < 1 || level_num > 12 {
+            let level_num = i32::try_from(level_val.to_int64()).ok();
+            let Some(valid) = level_num
+                .filter(|&level| level >= 1)
+                .and_then(bun_deflate::Level::new)
+            else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Archive: level must be between 1 and 12"
                 )));
-            }
-            level = u8::try_from(level_num).expect("int cast");
+            };
+            level = valid;
         }
 
         return Ok(Compression::Gzip(GzipOptions { level }));
@@ -216,9 +221,10 @@ fn parse_compression_options(
     Ok(Compression::None)
 }
 
-fn create_archive(data: Vec<u8>, compress: Compression) -> Archive {
-    let store = Store::init(data);
-    Archive { store, compress }
+fn create_archive(data: Vec<u8>, compress: Compression, global: &JSGlobalObject) -> Archive {
+    // `Blob::init` makes no store for no bytes, and the constructor takes such a Blob for an object.
+    let data = Blob::init_with_store(Store::init(data), global);
+    Archive { data, compress }
 }
 
 /// Shared helper that builds tarball bytes from a JS object
@@ -326,24 +332,14 @@ impl Archive {
             } else {
                 archive.compress
             };
-            return start_write_task(
-                &cx,
-                WriteData::Store(archive.store.clone()),
-                path_slice.slice(),
-                compress,
-            );
+            return start_write_task(&cx, archive.data.dupe(), path_slice.slice(), compress);
         }
 
         // For Blobs, use store reference with options compression
-        if let Some(blob) = data_arg.as_class_ref::<Blob>() {
-            if let Some(store) = blob.store.get().as_ref() {
-                return start_write_task(
-                    &cx,
-                    WriteData::Store(store.clone()),
-                    path_slice.slice(),
-                    options_compress,
-                );
-            }
+        if let Some(blob) = data_arg.as_class_ref::<Blob>()
+            && let Some(data) = contents_of(&blob, global)
+        {
+            return start_write_task(&cx, data, path_slice.slice(), options_compress);
         }
 
         // For ArrayBuffer/TypedArray, copy the data with options compression
@@ -351,7 +347,7 @@ impl Archive {
             let data = array_buffer.slice().to_vec();
             return start_write_task(
                 &cx,
-                WriteData::Owned(data),
+                Blob::init(data, global),
                 path_slice.slice(),
                 options_compress,
             );
@@ -362,7 +358,7 @@ impl Archive {
             let data = build_tarball_from_object(global, data_arg)?;
             return start_write_task(
                 &cx,
-                WriteData::Owned(data),
+                Blob::init(data, global),
                 path_slice.slice(),
                 options_compress,
             );
@@ -411,7 +407,7 @@ impl Archive {
             }
         }
 
-        start_extract_task(&cx, &self.store, path_slice.slice(), glob_patterns)
+        start_extract_task(&cx, &self.data, path_slice.slice(), glob_patterns)
     }
 }
 
@@ -486,14 +482,14 @@ impl Archive {
     /// Returns Promise<Blob> with the archive data (compressed if gzip was set in options)
     pub(crate) fn blob(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        start_blob_task(&cx, &self.store, self.compress, BlobOutputType::Blob)
+        start_blob_task(&cx, &self.data, self.compress, BlobOutputType::Blob)
     }
 
     /// Instance method: archive.bytes()
     /// Returns Promise<Uint8Array> with the archive data (compressed if gzip was set in options)
     pub(crate) fn bytes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        start_blob_task(&cx, &self.store, self.compress, BlobOutputType::Bytes)
+        start_blob_task(&cx, &self.data, self.compress, BlobOutputType::Bytes)
     }
 
     /// Instance method: archive.files(glob?)
@@ -510,7 +506,7 @@ impl Archive {
             glob_patterns = parse_pattern_arg(global, glob, b"Archive.files", b"glob")?;
         }
 
-        start_files_task(&cx, &self.store, glob_patterns)
+        start_files_task(&cx, &self.data, glob_patterns)
     }
 }
 
@@ -592,7 +588,7 @@ pub(crate) enum ExtractResult {
 }
 
 pub(crate) struct ExtractContext {
-    store: RefPtr<Store>,
+    data: Blob,
     path: Box<[u8]>,
     glob_patterns: Option<Vec<GlobPattern>>,
     result: ExtractResult,
@@ -628,7 +624,7 @@ impl ExtractContext {
         // If we have glob patterns, use filtered extraction
         if self.glob_patterns.is_some() {
             let count = match extract_to_disk_filtered(
-                self.store.shared_view(),
+                self.data.shared_view(),
                 &self.path,
                 self.glob_patterns.as_deref(),
             ) {
@@ -640,7 +636,7 @@ impl ExtractContext {
 
         // Otherwise use the fast path without filtering
         let count = match bun_archive::Archiver::extract_to_disk(
-            self.store.shared_view(),
+            self.data.shared_view(),
             &self.path,
             None,
             &mut (),
@@ -666,20 +662,17 @@ pub(crate) type ExtractTask = AsyncTask<ExtractContext>;
 
 fn start_extract_task(
     cx: &bun_jsc::JsThread<'_>,
-    store: &RefPtr<Store>,
+    data: &Blob,
     path: &[u8],
     glob_patterns: Option<Vec<GlobPattern>>,
 ) -> JsResult<JSValue> {
     let path_copy: Box<[u8]> = Box::from(path);
     // errdefer free(path_copy) — Drop handles it
 
-    let store = store.clone();
-    // errdefer store.deref() — Drop handles it
-
     Ok(ExtractTask::start(
         cx,
         ExtractContext {
-            store,
+            data: data.dupe(),
             path: path_copy,
             glob_patterns,
             result: ExtractResult::Err(ExtractError::ReadError),
@@ -700,7 +693,7 @@ enum BlobResult {
 }
 
 pub(crate) struct BlobContext {
-    store: RefPtr<Store>,
+    data: Blob,
     compress: Compression,
     output_type: BlobOutputType,
     result: BlobResult,
@@ -709,7 +702,7 @@ pub(crate) struct BlobContext {
 impl TaskContext for BlobContext {
     fn run(&mut self) {
         self.result = match &self.compress {
-            Compression::Gzip(opts) => match compress_gzip(self.store.shared_view(), opts.level) {
+            Compression::Gzip(opts) => match compress_gzip(self.data.shared_view(), opts.level) {
                 Ok(data) => BlobResult::Compressed(data),
                 Err(e) => BlobResult::Err(e),
             },
@@ -733,15 +726,10 @@ impl TaskContext for BlobContext {
                 }))
             }
             BlobResult::Uncompressed => Ok(match self.output_type {
-                BlobOutputType::Blob => {
-                    // The clone bumps the refcount; ownership of
-                    // the new ref transfers into the Blob via init_with_store.
-                    let store = self.store.clone();
-                    PromiseResult::Resolve(Blob::init_with_store(store, global).into_js(global))
-                }
+                BlobOutputType::Blob => PromiseResult::Resolve(self.data.dupe().into_js(global)),
                 BlobOutputType::Bytes => {
                     // On allocation failure, reject the promise instead of aborting.
-                    let view = self.store.shared_view();
+                    let view = self.data.shared_view();
                     let mut dup: Vec<u8> = Vec::new();
                     if dup.try_reserve_exact(view.len()).is_err() {
                         return Ok(PromiseResult::Reject(global.create_out_of_memory_error()));
@@ -761,17 +749,14 @@ pub(crate) type BlobTask = AsyncTask<BlobContext>;
 
 fn start_blob_task(
     cx: &bun_jsc::JsThread<'_>,
-    store: &RefPtr<Store>,
+    data: &Blob,
     compress: Compression,
     output_type: BlobOutputType,
 ) -> JsResult<JSValue> {
-    let store = store.clone();
-    // errdefer store.deref() — Drop handles it
-
     Ok(BlobTask::start(
         cx,
         BlobContext {
-            store,
+            data: data.dupe(),
             compress,
             output_type,
             result: BlobResult::Uncompressed,
@@ -785,13 +770,8 @@ enum WriteResult {
     SysErr(bun_sys::Error),
 }
 
-enum WriteData {
-    Owned(Vec<u8>),
-    Store(RefPtr<Store>),
-}
-
 pub(crate) struct WriteContext {
-    data: WriteData,
+    data: Blob,
     path: ZBox,
     compress: Compression,
     result: WriteResult,
@@ -813,10 +793,7 @@ impl TaskContext for WriteContext {
 
 impl WriteContext {
     fn do_run(&mut self) -> WriteResult {
-        let source_data: &[u8] = match &self.data {
-            WriteData::Owned(d) => d,
-            WriteData::Store(s) => s.shared_view(),
-        };
+        let source_data = self.data.shared_view();
         let compressed_buf;
         let data_to_write: &[u8] = match &self.compress {
             Compression::Gzip(opts) => {
@@ -851,14 +828,11 @@ pub(crate) type WriteTask = AsyncTask<WriteContext>;
 
 fn start_write_task(
     cx: &bun_jsc::JsThread<'_>,
-    data: WriteData,
+    data: Blob,
     path: &[u8],
     compress: Compression,
 ) -> JsResult<JSValue> {
     let path_z = ZBox::from_vec_with_nul(path.to_vec());
-
-    // Ref store if using store reference — already done by caller via Arc::clone into WriteData::Store.
-    // errdefer store.deref / free(data.owned) — handled by WriteData Drop on early return.
 
     Ok(WriteTask::start(
         cx,
@@ -896,7 +870,7 @@ enum FilesResult {
 // freeEntries deleted — Vec<FileEntry> drops each entry; FileEntry fields drop their boxes.
 
 pub(crate) struct FilesContext {
-    store: RefPtr<Store>,
+    data: Blob,
     glob_patterns: Option<Vec<GlobPattern>>,
     result: FilesResult,
 }
@@ -908,7 +882,7 @@ impl FilesContext {
             err => Ok(FilesResult::ArchiveErr(err)),
         };
         let mut reader =
-            match bun_archive::open_memory(self.store.shared_view(), tar::Dialect::General) {
+            match bun_archive::open_memory(self.data.shared_view(), tar::Dialect::General) {
                 Ok(reader) => reader,
                 Err(err) => return read_error(err),
             };
@@ -1002,18 +976,16 @@ pub(crate) type FilesTask = AsyncTask<FilesContext>;
 
 fn start_files_task(
     cx: &bun_jsc::JsThread<'_>,
-    store: &RefPtr<Store>,
+    data: &Blob,
     glob_patterns: Option<Vec<GlobPattern>>,
 ) -> JsResult<JSValue> {
-    let store = store.clone();
-    // errdefer store.deref() — Drop handles it
     // Ownership: On error, caller's errdefer frees glob_patterns.
     // On success, ownership transfers to FilesContext, which frees them in deinit().
 
     Ok(FilesTask::start(
         cx,
         FilesContext {
-            store,
+            data: data.dupe(),
             glob_patterns,
             result: FilesResult::Err(FilesError::ReadError),
         },
@@ -1026,11 +998,8 @@ fn start_files_task(
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 enum CompressError {
-    #[error("GzipInitFailed")]
-    GzipInitFailed,
     #[error("GzipCompressFailed")]
     GzipCompressFailed,
-    /// The output buffer (sized by the data being compressed) could not be allocated.
     #[error("OutOfMemory")]
     OutOfMemory,
 }
@@ -1044,20 +1013,13 @@ impl CompressError {
     }
 }
 
-fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
-    use bun_libdeflate_sys::libdeflate;
+fn compress_gzip(data: &[u8], level: bun_deflate::Level) -> Result<Vec<u8>, CompressError> {
+    use bun_deflate::{Error, Format};
 
-    let mut compressor =
-        libdeflate::OwnedCompressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;
-
-    let mut output = Vec::new();
-    let result = compressor
-        .compress_to_vec(data, &mut output, libdeflate::Encoding::Gzip)
-        .map_err(|_| CompressError::OutOfMemory)?;
-    if result.status != libdeflate::Status::Success {
-        return Err(CompressError::GzipCompressFailed);
-    }
-    Ok(output)
+    bun_deflate::compress_to_vec(data, Format::Gzip, level).map_err(|err| match err {
+        Error::Alloc(_) => CompressError::OutOfMemory,
+        _ => CompressError::GzipCompressFailed,
+    })
 }
 
 /// Check if a path is safe (no absolute paths or path traversal)
@@ -1318,7 +1280,7 @@ pub(crate) mod testing {
                 "\"{}\"... {} bytes crc32={:08x}",
                 name[..SHOWN].escape_ascii(),
                 name.len(),
-                bun_zlib::crc32_bytes(0, name),
+                bun_highway::crc32(0, name),
             );
         }
     }
@@ -1436,7 +1398,7 @@ pub(crate) mod testing {
                     run = Run::default();
                 }
                 Event::Data { offset, bytes } => {
-                    crc = bun_zlib::crc32_bytes(crc, bytes);
+                    crc = bun_highway::crc32(crc, bytes);
                     if offset != run.offset + run.len {
                         run.flush(&mut log);
                         run.offset = offset;

@@ -214,8 +214,6 @@ const args = (names: readonly string[]): Record<string, b.Type> =>
   Object.fromEntries(names.map(name => (name.startsWith("...") ? [name.slice(3), b.any.variadic] : [name, b.any])));
 
 const promise = b.any.returning("Promise");
-/** A command that cannot be sent answers the error and does not throw it. */
-const promiseOrError = b.any.returning("Promise", "Error");
 
 const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 
@@ -225,7 +223,6 @@ export const RedisClient = b.class({
   finalize: true,
   memoryCost: true,
   construct: {
-    passStructure: true,
     args: { url: b.any, options: b.any },
     capability: "js",
     throws: true,
@@ -241,7 +238,7 @@ export const RedisClient = b.class({
             name,
             {
               args: args(names),
-              returns: name === "connect" ? promise : promiseOrError,
+              returns: promise,
               capability: "js",
               throws: true,
               passThis: true,
@@ -251,7 +248,7 @@ export const RedisClient = b.class({
           ] as const,
       ),
       ["bufferedAmount", { getter: b.usize }] as const,
-      ["close", { capability: "js", throws: true }] as const,
+      ["close", { capability: "js", throws: true, passThis: true }] as const,
       ["connected", { getter: b.bool, pure: true }] as const,
       ["duplicate", { returns: promise, capability: "js", throws: true }] as const,
       ["onclose", eventHandler] as const,

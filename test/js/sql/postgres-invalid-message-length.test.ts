@@ -90,6 +90,8 @@ const malformed: { name: string; frame: Buffer }[] = [
   { name: "ErrorResponse declaring length 3", frame: pgRaw("E", Buffer.alloc(0), 3) },
   // An unrecognized message type takes the skip-by-declared-length path.
   { name: "unknown message type declaring length 3", frame: pgRaw("X", Buffer.alloc(0), 3) },
+  { name: "Authentication with no body", frame: pgRaw("R", Buffer.alloc(0)) },
+  { name: "Authentication that ends inside its Int32", frame: pgRaw("R", Buffer.alloc(3)) },
 ];
 
 test.each(malformed)("postgres: $name is a protocol error", async ({ frame }) => {
@@ -108,6 +110,14 @@ test("postgres: CommandComplete declaring length 3 fails the in-flight query", a
     code: "ERR_POSTGRES_INVALID_MESSAGE_LENGTH",
     name: "PostgresError",
   });
+});
+
+test("postgres: ReadyForQuery with no body is a protocol error", async () => {
+  const empty = pgRaw("Z", Buffer.alloc(0));
+  expect([(await connectError([empty])).code, (await queryError([empty])).code]).toEqual([
+    "ERR_POSTGRES_INVALID_MESSAGE",
+    "ERR_POSTGRES_INVALID_MESSAGE",
+  ]);
 });
 
 test("postgres: ReadyForQuery before AuthenticationOk rejects the connection instead of marking it ready", async () => {

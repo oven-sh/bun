@@ -2060,8 +2060,8 @@ enum StreamState {
   Closed = 1 << 3, // 01000 = 8
   StreamResponded = 1 << 4, // 10000 = 16
   WritableClosed = 1 << 5, // 100000 = 32
-  // The native side fully closed and freed the stream (state 7 delivered): there is
-  // nothing left to send on the wire for it.
+  // The native side fully closed and freed the stream (state 7 delivered, or a reset with
+  // NO_ERROR): there is nothing left to send on the wire for it.
   NativeClosed = 1 << 6, // 1000000 = 64
   // END_STREAM already rode the final DATA frame from _write/_writev; _final must not
   // emit the empty END_STREAM frame on top of it.
@@ -2233,6 +2233,26 @@ function markStreamClosed(stream: Http2Stream) {
 
     markWritableDone(stream);
   }
+}
+function abortWritable(stream: Http2Stream) {
+  if (stream._writableState.ending) return;
+  if (!stream.aborted) {
+    stream[kAborted] = true;
+    stream.emit("aborted");
+  }
+  // Set first: with nothing left to write, end() calls _final() before it returns.
+  stream[bunHTTP2StreamStatus] |= StreamState.EndedByClose;
+  stream.end();
+}
+// For a stream that emitStreamErrorNT does not destroy. Runs before the dropped writes call back, so no 'drain' follows.
+function closeIfLeftToRead(session: Http2Session, stream: Http2Stream, rstCode: number) {
+  if (rstCode !== NGHTTP2_NO_ERROR || !stream.readable || session[kSessionDestroyError] != null) return;
+  // A write fails from here on, and no 'end' follows an error.
+  stream.once("error", destroySelfOnEnd);
+  if (!stream.rstCode) stream.rstCode = rstCode;
+  stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+  markStreamClosed(stream);
+  if (!stream[kPush]) abortWritable(stream);
 }
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
@@ -2585,18 +2605,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         // For other rstCodes _destroy ends the readable so 'end' is suppressed.
         this.push(null);
       }
-      const { ending } = this._writableState;
-      if (!ending) {
-        // If the writable side of the Http2Stream is still open, emit the
-        // 'aborted' event and set the aborted flag.
-        if (!this.aborted) {
-          this[kAborted] = true;
-          this.emit("aborted");
-        }
-        // Set first: with nothing left to write, end() calls _final() before it returns.
-        this[bunHTTP2StreamStatus] |= StreamState.EndedByClose;
-        this.end();
-      }
+      abortWritable(this);
       this.rstCode = code;
       markStreamClosed(this);
       if (this.pending) {
@@ -2904,8 +2913,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        if (session[kTransportClosed]) {
-          // Sent, see writeToClosedTransport. No frames are built for it.
+        if (session[kTransportClosed] || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) !== 0) {
+          // No frames are built for it, see writeToClosedTransport.
           session[kDeferWriteCallback](callback);
           return;
         }
@@ -2969,8 +2978,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        if (session[kTransportClosed]) {
-          // Sent, see writeToClosedTransport. No frames are built for it.
+        if (session[kTransportClosed] || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) !== 0) {
+          // No frames are built for it, see writeToClosedTransport.
           session[kDeferWriteCallback](callback);
           return;
         }
@@ -3597,7 +3606,7 @@ class ServerHttp2Stream extends Http2Stream {
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
   respond(headers?: HeadersObject | any[] | null, options?: any) {
-    if (this.destroyed || this.session === undefined) {
+    if (this.destroyed || this.closed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
 
@@ -4139,7 +4148,7 @@ class ServerHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
-      if (old_state != 5 && old_state != 7) {
+      if (old_state != 5 && old_state != 7 && !stream.aborted) {
         stream[kAborted] = true;
         stream.emit("aborted");
       }
@@ -4152,6 +4161,7 @@ class ServerHttp2Session extends Http2Session {
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
+      closeIfLeftToRead(self, stream, error);
     },
     streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
       if (!self || typeof stream !== "object") return;
@@ -5174,7 +5184,7 @@ class ClientHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
-      if (old_state != 5 && old_state != 7) {
+      if (old_state != 5 && old_state != 7 && !stream.aborted) {
         stream[kAborted] = true;
         stream.emit("aborted");
       }
@@ -5186,6 +5196,7 @@ class ClientHttp2Session extends Http2Session {
 
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
+      closeIfLeftToRead(self, stream, error);
     }),
     streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
       if (!self || typeof stream !== "object") return;

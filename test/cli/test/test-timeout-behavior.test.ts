@@ -33,3 +33,18 @@ if (isFlaky && isLinux) {
     expect(combined).toContain("(pass) slow test after test timeout");
   });
 }
+
+test.concurrent("a hook with no timeout keeps its processes when an earlier timer fires", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", path.join(import.meta.dir, "process-kill-fixture-no-timeout.ts")],
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "inherit",
+    env: bunEnv,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(out).toContain("child: SIGKILL");
+  expect(err).not.toContain("dangling process");
+  expect(err).toContain("1 pass");
+  expect(exitCode).toBe(0);
+});

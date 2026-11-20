@@ -477,7 +477,8 @@ impl Execution {
                 let sequence = &sequences[0];
                 if let Some(entry) = sequence.active_entry.get() {
                     let now = Timespec::now_force_real_time();
-                    if buntest.sequence_entry(entry).timespec.get().order(&now) == core::cmp::Ordering::Less {
+                    let timespec = buntest.sequence_entry(entry).timespec.get();
+                    if !timespec.eql(&Timespec::EPOCH) && timespec.order(&now) == core::cmp::Ordering::Less {
                         let kill_count = global_this.bun_vm().auto_killer.kill();
                         if kill_count.processes > 0 {
                             bun_core::pretty_errorln!(

@@ -591,16 +591,39 @@ fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
     } else {
         return;
     };
-    // oxlint points at the expression whose type it is: the `a` in `!a`. tsgolint doesn't print a literal's type.
-    let is_literal = tsgolint_is_self_explanatory(expression);
-    cx.report(if is_oxlint && !is_literal { expression } else { node }, message)
-        .comments_apply_at(node)
-        .labels_with(|labels| {
-            if !is_literal {
-                labels.first(format!("Type: {}", tsgolint_type_name(ty)));
-                labels.push(node.outer_span(), "");
-            }
-        });
+    // For tsgolint the parentheses around the condition are a node.
+    let report = cx.report(if is_oxlint { node.outer_span() } else { node.span() }, message);
+    with_help(cx, report, || tsgolint_checked_value_help(ty, expression));
+}
+
+/// Adds tsgolint's help, which is only shown with an oxlint config. `None` is no help.
+fn with_help<'a>(cx: &Context<'a>, report: Report<'a>, help: impl FnOnce() -> Option<String>) -> Report<'a> {
+    match cx.language().is_oxlint {
+        true => report.help_with(|| help().unwrap_or_default()),
+        false => report,
+    }
+}
+
+/// tsgolint's `buildTypedValueDiagnostic`: it doesn't print a literal's type.
+#[cold]
+fn tsgolint_checked_value_help(ty: Type, node: Expr) -> Option<String> {
+    (!tsgolint_is_self_explanatory(node)).then(|| format!("The checked value has type `{}`.", tsgolint_type_name(ty)))
+}
+
+/// tsgolint's `buildTypeGuardDiagnostic`
+#[cold]
+fn tsgolint_type_guard_help(value: Type, predicate: Type) -> Option<String> {
+    let (value, predicate) = (tsgolint_type_name(value), tsgolint_type_name(predicate));
+    Some(format!(
+        "Type `{value}` already satisfies predicate type `{predicate}`. Remove the redundant type check."
+    ))
+}
+
+/// tsgolint's `buildComparisonDiagnostic`
+#[cold]
+fn tsgolint_comparison_help(left: Type, right: Type) -> Option<String> {
+    let (left, right) = (tsgolint_type_name(left), tsgolint_type_name(right));
+    Some(format!("The left side has type `{left}`, and the right side has type `{right}`."))
 }
 
 /// tsgolint's `typeNameForDiagnostic`: at most 120 characters.
@@ -674,21 +697,8 @@ fn check_node_for_nullish<'a>(node: Expr<'a>, is_assignment_target: bool, cx: &m
     } else {
         return;
     };
-    cx.report(node, message).labels_with(|labels| {
-        if !tsgolint_is_self_explanatory(node) {
-            labels.first(format!("Type: {}", tsgolint_type_name(ty)));
-            labels.push(node, "");
-        }
-    });
-}
-
-/// The span of the operator after `left`. `switch (left) { case node: }` has none, so it's `node`.
-fn operator_span<'a>(node: Expr<'a>, (left, right): (Expr<'a>, Expr<'a>), operator: BinOp) -> Span {
-    if node == right {
-        return node.outer_span();
-    }
-    let start = skip_trivia(left.file().text(), left.outer_span().end);
-    Span::new(start, start + bin_op_text(operator).len() as u32)
+    let report = cx.report(node, message);
+    with_help(cx, report, || tsgolint_checked_value_help(ty, node));
 }
 
 /// Reports a comparison of two literal types, and a comparison with `null` or `undefined` of something that can't be
@@ -711,20 +721,16 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
         (Some(left), Some(right)) => boolean_comparison(&left, operator, &right),
         _ => big_int_comparison(left_type, operator, right_type),
     };
+    // `switch (left) { case node: }`: for tsgolint the parentheses around the `case`'s expression are a node.
+    let report_span = if cx.language().is_oxlint && node == right { node.outer_span() } else { node.span() };
     if let Some(condition_is_true) = condition_is_true {
-        // oxlint points at the left operand, which for a `case` is the `switch`'s discriminant.
-        let report_span = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
-        cx.report(report_span, COMPARISON_BETWEEN_LITERAL_TYPES)
-            .comments_apply_at(operator_span(node, (left, right), operator))
+        let report = cx
+            .report(report_span, COMPARISON_BETWEEN_LITERAL_TYPES)
             .data("left", left_type.to_text())
             .data("operator", bin_op_text(operator))
             .data("right", right_type.to_text())
-            .data("trueOrFalse", if condition_is_true { "true" } else { "false" })
-            .labels_with(|labels| {
-                labels.first(format!("Type: {}", tsgolint_type_name(left_type)));
-                labels.push(right.outer_span(), format!("Type: {}", tsgolint_type_name(right_type)));
-                labels.push(operator_span(node, (left, right), operator), "");
-            });
+            .data("trueOrFalse", if condition_is_true { "true" } else { "false" });
+        with_help(cx, report, || tsgolint_comparison_help(left_type, right_type));
         return;
     }
 
@@ -749,20 +755,8 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
         || left_flags == TypeFlags::NULL && !is_comparable(right_type, TypeFlags::NULL)
         || right_flags == TypeFlags::NULL && !is_comparable(left_type, TypeFlags::NULL)
     {
-        // tsgolint 7.0's first label starts where the token before the left operand ends.
-        let operand = left.outer_span();
-        let start = cx.file().end_of_token_before(operand.start);
-        let report_span = if cx.language().is_oxlint { Span::new(start, operand.end) } else { node.span() };
-        cx.report(report_span, NO_OVERLAP_BOOLEAN_EXPRESSION)
-            .comments_apply_at(operator_span(node, (left, right), operator))
-            .labels_with(|labels| {
-                // The second label does the same.
-                let operand = right.outer_span();
-                let operand = Span::new(cx.file().end_of_token_before(operand.start), operand.end);
-                labels.first(format!("Type: {}", tsgolint_type_name(left_type)));
-                labels.push(operand, format!("Type: {}", tsgolint_type_name(right_type)));
-                labels.push(operator_span(node, (left, right), operator), "");
-            });
+        let report = cx.report(report_span, NO_OVERLAP_BOOLEAN_EXPRESSION);
+        with_help(cx, report, || tsgolint_comparison_help(left_type, right_type));
     }
 }
 
@@ -953,17 +947,20 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     if cx.slice(question_dot_operator) != b"?." {
         return;
     }
-    // oxlint points at the expression before the `?.`.
-    let report_span = if cx.language().is_oxlint { node_to_check.outer_span() } else { question_dot_operator };
-    cx.report(report_span, NEVER_OPTIONAL_CHAIN)
-        .comments_apply_at(question_dot_operator)
-        .labels_with(|labels| {
-            // The type it uses, without the `undefined` from a `?.` further left.
-            let ty = tsgolint_type_of(node_to_check).unwrap_or_else(|| get_constrained_type_at_location(node_to_check));
-            labels.first(format!("Type: {}", tsgolint_distinct_type_names(ty.get_non_nullable_type())));
-            labels.push(question_dot_operator, "");
-        })
-        .suggest(SUGGEST_REMOVE_OPTIONAL_CHAIN, |fixer| fixer.replace(question_dot_operator, fix));
+    // tsgolint reports the whole step of the chain.
+    let report_span = if cx.language().is_oxlint { node.span() } else { question_dot_operator };
+    let report = cx.report(report_span, NEVER_OPTIONAL_CHAIN);
+    with_help(cx, report, || {
+        let advice = "Remove the optional chain; the value cannot be `null` or `undefined`.";
+        if tsgolint_is_self_explanatory(node_to_check) {
+            return Some(advice.to_owned());
+        }
+        // The type it uses, without the `undefined` from a `?.` further left.
+        let ty = tsgolint_type_of(node_to_check).unwrap_or_else(|| get_constrained_type_at_location(node_to_check));
+        let ty = tsgolint_distinct_type_names(ty.get_non_nullable_type());
+        Some(format!("The checked value has type `{ty}`. {advice}"))
+    })
+    .suggest(SUGGEST_REMOVE_OPTIONAL_CHAIN, |fixer| fixer.replace(question_dot_operator, fix));
 }
 
 impl NoUnnecessaryCondition {
@@ -1006,19 +1003,14 @@ impl NoUnnecessaryCondition {
             }
         };
         if is_already_type {
-            cx.report(type_guard_asserted_argument.argument, TYPE_GUARD_ALREADY_IS_TYPE)
-                .data(
-                    "typeGuardOrAssertionFunction",
-                    match type_guard_asserted_argument.asserts {
-                        true => "assertion function",
-                        false => "type guard",
-                    },
-                )
-                .labels_with(|labels| {
-                    let (value, predicate) = (tsgolint_type_name(type_of_argument), tsgolint_type_name(asserted_type));
-                    labels.first(format!("Type {value} already satisfies predicate type {predicate}"));
-                    labels.push(type_guard_asserted_argument.argument, "");
-                });
+            let report = cx.report(type_guard_asserted_argument.argument, TYPE_GUARD_ALREADY_IS_TYPE).data(
+                "typeGuardOrAssertionFunction",
+                match type_guard_asserted_argument.asserts {
+                    true => "assertion function",
+                    false => "type guard",
+                },
+            );
+            with_help(cx, report, || tsgolint_type_guard_help(type_of_argument, asserted_type));
         }
     }
 
@@ -1106,13 +1098,13 @@ impl NoUnnecessaryCondition {
             (None, true) => (callback.span(), ALWAYS_TRUTHY_FUNC),
             (None, false) => (callback.span(), ALWAYS_FALSY_FUNC),
         };
-        cx.report(report_span, message).labels_with(|labels| {
+        let report = cx.report(report_span, message);
+        with_help(cx, report, || {
             let is_literal = matches!(callback.kind(), ExprKind::Fn(function)
                 if matches!(function.body(), FnBody::Expr(body) if tsgolint_is_self_explanatory(body)));
-            if !is_literal && let Some(ty) = return_type {
-                labels.first(format!("Return type: {}", tsgolint_type_name(ty)));
-                labels.push(report_span, "");
-            }
+            return_type
+                .filter(|_| !is_literal)
+                .map(|ty| format!("The callback returns type `{}`.", tsgolint_type_name(ty)))
         });
     }
 
@@ -1133,14 +1125,10 @@ impl NoUnnecessaryCondition {
                     Some(declaration) if declaration.is_in_linted_file() => declaration.span(),
                     _ => callback.outer_span(),
                 };
-                cx.report(report_span, TYPE_GUARD_ALREADY_IS_TYPE)
-                    .data("typeGuardOrAssertionFunction", "type guard")
-                    .labels_with(|labels| {
-                        let value = tsgolint_type_name(parameter.get_type());
-                        let predicate = tsgolint_type_name(predicate_type);
-                        labels.first(format!("Type {value} already satisfies predicate type {predicate}"));
-                        labels.push(report_span, "");
-                    });
+                let report = cx
+                    .report(report_span, TYPE_GUARD_ALREADY_IS_TYPE)
+                    .data("typeGuardOrAssertionFunction", "type guard");
+                with_help(cx, report, || tsgolint_type_guard_help(parameter.get_type(), predicate_type));
                 return;
             }
             let return_type = signature.get_return_type();

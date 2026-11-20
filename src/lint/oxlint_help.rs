@@ -182,7 +182,6 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x053BAE70, One(443), 0), // no-implied-eval noImpliedEvalError
     (0x058AAB56, One(813), 0), // prefer-template unexpectedStringConcatenation
     (0x05C2ED19, One(396), 0), // no-extend-native unexpected
-    (0x061995FF, One(640), 0), // no-unsafe-assignment anyAssignmentThis
     (0x0687884C, One(433), 0), // no-immediate-mutation
     (0x06EAECE6, One(299), 0), // no-conditional-in-test
     (0x071D498B, One(546), 0), // no-promise-in-callback
@@ -831,7 +830,6 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xAFEE01B5, One(559), 0), // no-restricted-exports restrictedDefault
     (0xAFEFB54A, One(562), 1), // no-restricted-imports patternWithCustomMessage
     (0xB01C9482, One(611), 0), // no-unassigned-import
-    (0xB053E134, One(640), 0), // no-unsafe-return unsafeReturnThis
     (0xB0BF39D1, One(732), 0), // prefer-describe-function-title
     (0xB0C09E23, One(587), 0), // no-static-element-interactions
     (0xB0CC8CAD, One(690), 1), // no-zero-fractions
@@ -1014,7 +1012,6 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xE09BFF21, Three(195), 0), // jsx-curly-brace-presence
     (0xE09D0B18, One(388), 1), // no-eq-null unexpected
     (0xE0D8226F, Three(344), 0), // no-document-cookie
-    (0xE0EBE6D3, One(650), 0), // no-unsafe-type-assertion unsafeToAnyTypeAssertion
     (0xE14757CE, Three(607), 0), // no-top-level-await
     (0xE19777DE, One(383), 1), // no-empty-function unexpected
     (0xE199E5B5, One(729), 0), // prefer-date-now
@@ -1081,7 +1078,6 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xF6C8740D, One(16), 1), // aria-activedescendant-has-tabindex
     (0xF6C8D03B, One(585), 0), // no-sparse-arrays unexpectedSparseArray
     (0xF82A7365, One(674), 0), // no-useless-iterator-to-array
-    (0xF834DBE7, One(649), 0), // no-unsafe-type-assertion unsafeOfAnyTypeAssertion
     (0xF84112AB, One(287), 0), // no-children-prop
     (0xF894B5A4, One(145), 0), // exhaustive-deps
     (0xF95AFE11, One(569), 0), // no-script-component-in-head

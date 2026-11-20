@@ -3,7 +3,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync, statSync, utimesSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
@@ -87,6 +87,88 @@ test.concurrent(
   },
 );
 
+// Recorded from oxlint 1.87.0 with tsgolint 7.0.2004, and from typescript-eslint 8.71.1.
+describe.concurrent("no-unsafe-assignment marks the target of a destructuring like the configured tool", () => {
+  const files = {
+    "tsconfig.json": `{ "compilerOptions": { "strict": true }, "include": ["*.ts"] }`,
+    "a.ts": `declare const x: { a: any; b: any };
+declare const t: [any, any, any];
+declare const xs: any[];
+declare let v: any;
+let a: number, b: number;
+({ a = 1 } = x);
+({ b: (b) } = x);
+[(a), ((b))] = t;
+const [c]: any[] = xs;
+for ({ v = 1 } of [{ v: 1 }]) {}
+export { a, b, c, v };
+`,
+  };
+  /** Runs `bun lint -f json a.ts` next to `config` and returns what it prints, parsed. */
+  async function run(config: Record<string, string>, args: string[] = []) {
+    using dir = tempDir("bun-lint-rules", { ...files, ...config });
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "-f", "json", ...args, "a.ts"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 1) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+    return JSON.parse(stdout);
+  }
+
+  test("with an oxlint config, tsgolint's node", async () => {
+    const oxlintrc = JSON.stringify({
+      plugins: ["typescript"],
+      categories: { correctness: "off" },
+      rules: { "typescript/no-unsafe-assignment": "error" },
+    });
+    type Span = { line: number; column: number; length: number };
+    const { diagnostics }: { diagnostics: { labels: { span: Span }[] }[] } = await run({ ".oxlintrc.json": oxlintrc }, [
+      "--type-aware",
+    ]);
+    const reports = diagnostics.map(it =>
+      it.labels.map(({ span }) => `${span.line}:${span.column}+${span.length}`).join(" | "),
+    );
+    expect(reports).toEqual([
+      // The name of a shorthand property, without its default.
+      "6:4+1",
+      // A target with its parentheses.
+      "7:7+3",
+      "8:2+3",
+      "8:7+5",
+      // A pattern without its type annotation.
+      "9:7+3",
+      // In the head of a `for`, the name of a shorthand property is a value that's assigned to the property.
+      "10:8+5",
+    ]);
+  });
+
+  test("with an ESLint config, typescript-eslint's node", async () => {
+    const eslintrc = JSON.stringify({
+      root: true,
+      parser: "@typescript-eslint/parser",
+      parserOptions: { project: true },
+      plugins: ["@typescript-eslint"],
+      rules: { "@typescript-eslint/no-unsafe-assignment": "error" },
+    });
+    type Message = { line: number; column: number; endLine: number; endColumn: number };
+    const [{ messages }]: { messages: Message[] }[] = await run({ ".eslintrc.json": eslintrc });
+    expect(messages.map(it => `${it.line}:${it.column}-${it.endLine}:${it.endColumn}`)).toEqual([
+      // The name with its default.
+      "6:4-6:9",
+      // A target without its parentheses.
+      "7:8-7:9",
+      "8:3-8:4",
+      "8:9-8:10",
+      // A pattern with its type annotation. Nothing in the head of a `for`.
+      "9:7-9:17",
+    ]);
+  });
+});
+
 test.concurrent("`>` and `}` in JSX text are parse errors, worded like espree's", async () => {
   const config = `export default [{ files: ["*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
   using dir = tempDir("bun-lint-rules", {
@@ -104,6 +186,143 @@ test.concurrent("`>` and `}` in JSX text are parse errors, worded like espree's"
     ].map(it => `1:16 ${it}`),
   );
   expect(exitCode).toBe(1);
+});
+
+// https://github.com/oven-sh/bun/issues/49341. This is what oxlint 1.87.0 with tsgolint 7.0.2004 reports: these rules
+// report the whole node, so a comment before its first line applies.
+test.concurrent(
+  "with an oxlint config, a disable comment applies to a type-aware report on several lines",
+  async () => {
+    const rules = ["no-unnecessary-condition", "no-unsafe-assignment", "no-unsafe-return", "no-unsafe-type-assertion"];
+    using dir = tempDir("bun-lint-rules", {
+      ".oxlintrc.json": JSON.stringify({
+        plugins: ["typescript"],
+        categories: { correctness: "off" },
+        rules: Object.fromEntries(rules.map(it => [`typescript/${it}`, "error"])),
+      }),
+      "tsconfig.json": `{ "compilerOptions": { "strict": true }, "include": ["*.ts"] }`,
+      "a.ts": [
+        `declare const payload: any;`,
+        `declare const names: string[];`,
+        `// oxlint-disable-next-line typescript/no-unsafe-type-assertion`,
+        `export const one = {} as { a: number };`,
+        `// oxlint-disable-next-line typescript/no-unsafe-type-assertion`,
+        `export const two = {`,
+        `} as { a: number };`,
+        `// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment`,
+        `export const {`,
+        `  first,`,
+        `} = payload;`,
+        `export const name = (): string =>`,
+        `  // oxlint-disable-next-line typescript/no-unsafe-return`,
+        `  payload.name;`,
+        `// oxlint-disable-next-line typescript/no-unnecessary-condition`,
+        `export const long = names.filter(`,
+        `  it => it.length > 1,`,
+        `)?.[0];`,
+        `export const three = {`,
+        `} as { a: number };`,
+        ``,
+      ].join("\n"),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "--type-aware", "--report-unused-disable-directives", "-f", "json", "a.ts"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (!stdout.startsWith("{")) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+    const { diagnostics } = JSON.parse(stdout);
+    expect(diagnostics.map(({ message, code, help, labels }: any) => ({ message, code, help, labels }))).toEqual([
+      {
+        message: "Unsafe type assertion: type '{ a: number; }' is more narrow than the original type.",
+        code: "typescript(no-unsafe-type-assertion)",
+        help: "The original expression has type `{}`, and the assertion changes it to `{ a: number; }`. Use a type guard to narrow the value before asserting a more specific type.",
+        labels: [{ span: { offset: 631, length: 20, line: 19, column: 22 } }],
+      },
+    ]);
+    expect(exitCode).toBe(1);
+  },
+);
+
+// Where tsgolint's node for a report isn't typescript-eslint's, the four rules above report a different range with an
+// oxlint config. These are typescript-eslint's ranges. tsgolint's help is for an oxlint config only.
+describe.concurrent("the rules that report tsgolint's nodes keep typescript-eslint's ranges and print no help", () => {
+  const rules = ["no-unnecessary-condition", "no-unsafe-assignment", "no-unsafe-return", "no-unsafe-type-assertion"];
+  const eslintrc = JSON.stringify({
+    root: true,
+    parser: "@typescript-eslint/parser",
+    parserOptions: { project: true },
+    plugins: ["@typescript-eslint"],
+    rules: Object.fromEntries(rules.map(it => [`@typescript-eslint/${it}`, "error"])),
+  });
+  const flags = rules.flatMap(it => ["--rule", `@typescript-eslint/${it}: error`]);
+  test.each([
+    ["with an ESLint config", { ".eslintrc.json": eslintrc }, []],
+    ["without a config", {}, ["--type-aware", ...flags]],
+  ])("%s", async (_, config, args) => {
+    using dir = tempDir("bun-lint-rules", {
+      ...config,
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "jsx": "preserve" }, "include": ["*.ts", "*.tsx"] }`,
+      "a.ts": [
+        `declare const x: any;`,
+        `declare const one: 1;`,
+        `declare const o: { a: number };`,
+        `export class C {`,
+        `  constructor(private p: string = x) {}`,
+        `}`,
+        `export const { k: v = x } = {} as { k?: string };`,
+        `export const f = (): string => (x);`,
+        `switch (one) {`,
+        `  case (2):`,
+        `}`,
+        `o?.a;`,
+        `if ((o)) {`,
+        `}`,
+        `export const t = (o as { a: 1 });`,
+        ``,
+      ].join("\n"),
+      "b.tsx": `declare const x: any;\ndeclare function Foo(props: { a: string }): null;\nexport const j = <Foo a={(x)} />;\n`,
+    });
+    const run = async (format: string) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", "-f", format, ...args, "a.ts", "b.tsx"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 1) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+      return stdout;
+    };
+    const [stdout, forAgents] = await Promise.all([run("json"), run("agent")]);
+    const results: { filePath: string; messages: Record<string, string | number>[] }[] = JSON.parse(stdout);
+    const reports = results.flatMap(({ filePath, messages }) =>
+      messages
+        .filter(it => rules.some(rule => it.ruleId === `@typescript-eslint/${rule}`))
+        .map(
+          it =>
+            `${basename(filePath)} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.ruleId} ${it.messageId}`,
+        ),
+    );
+    expect(reports).toEqual([
+      "a.ts 5:23-5:36 @typescript-eslint/no-unsafe-assignment anyAssignment",
+      "a.ts 7:19-7:24 @typescript-eslint/no-unsafe-assignment anyAssignment",
+      "a.ts 8:33-8:34 @typescript-eslint/no-unsafe-return unsafeReturn",
+      "a.ts 10:9-10:10 @typescript-eslint/no-unnecessary-condition comparisonBetweenLiteralTypes",
+      "a.ts 12:2-12:4 @typescript-eslint/no-unnecessary-condition neverOptionalChain",
+      "a.ts 13:6-13:7 @typescript-eslint/no-unnecessary-condition alwaysTruthy",
+      "a.ts 15:19-15:32 @typescript-eslint/no-unsafe-type-assertion unsafeTypeAssertion",
+      "b.tsx 3:14-3:33 @typescript-eslint/no-unsafe-assignment anyAssignment",
+      "b.tsx 3:27-3:28 @typescript-eslint/no-unsafe-assignment anyAssignment",
+    ]);
+    // The `agent` format prints a report's help in a `<help>` element.
+    const errors = forAgents.match(/<error [^]*?<\/error>/g) ?? [];
+    expect(errors.map(it => it.includes("<help>"))).toEqual(reports.map(() => false));
+  });
 });
 
 test.concurrent(

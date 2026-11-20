@@ -5254,7 +5254,7 @@ maybe(() => { return f; });
       });
 
       // The next tests lint the projects in oracle/plugins/oxlint. expected.json is what oxlint 1.87.0 with tsgolint
-      // 7.0.2003 reports for them.
+      // 7.0.2004 reports for them, and for a project with `tsgolint`, with that version.
       const found = (raw: string, names: string[]) => {
         const byProject = Object.fromEntries(names.map((it): [string, Set<string>] => [it, new Set()]));
         for (const it of JSON.parse(raw).diagnostics) {
@@ -5358,7 +5358,8 @@ maybe(() => { return f; });
         expect(foundExactly(raw, Object.keys(parenthesesExpected))).toEqual(parenthesesExpected);
       });
 
-      // messages.json has the messages of oxlint 1.87.0 with tsgolint 7.0.2003.
+      // messages.json has the messages of oxlint 1.87.0 with tsgolint 7.0.2004, and for an entry with `tsgolint`, with
+      // that version.
       test("rules that oxlint shares with ESLint and typescript-eslint print oxlint's messages", async () => {
         const { raw } = await lint(filesOfMessages(messages), ["-f", "json", "--type-aware"]);
         const printed = messagesOf(raw, messages).map((it, index) => `${messages[index].rule} ${it.join(" | ")}`);
@@ -5614,7 +5615,8 @@ maybe(() => { return f; });
               "src/lib.mjs": `export function make() { return "text"; }\n`,
               "src/use.ts": `import { make } from "./lib.mjs";\nexport const value = make();\n`,
             },
-            ["use.ts:2:22 typescript(no-unsafe-assignment)", "use.ts:2:22 typescript(no-unsafe-call)"],
+            // tsgolint 7.0.2004 reports the whole declaration for no-unsafe-assignment.
+            ["use.ts:2:14 typescript(no-unsafe-assignment)", "use.ts:2:22 typescript(no-unsafe-call)"],
           ],
           [
             "jsx and jsxImportSource, for a type inferred from an element's children",
@@ -6162,7 +6164,7 @@ maybe(() => { return f; });
       test.serial.each(fixKinds)(
         "the `%s` flags make the same changes as oxlint (type-aware rules: %p)",
         async (flags, typed) => {
-          // fixes.expected.json has the files as fixed by oxlint 1.87.0 with tsgolint 7.0.2003.
+          // fixes.expected.json has the files as fixed by oxlint 1.87.0 with tsgolint 7.0.2004.
           const some = fixCases
             .map((it, index) => ({ it, directory: directoryOf(index) }))
             .filter(({ it }) => !!it.typed === typed);
@@ -10863,7 +10865,7 @@ export async function f(any, text, maybe, list, result, choice) {
   /** @type {void} */ (/** @type {unknown} */ (later()));
   /** @type {Promise<void>} */ (/** @type {unknown} */ (text)); // 56 no-floating-promises
   if (/** @type {boolean} */ (/** @type {unknown} */ (later()))) nothing();
-  if (/** @type {Promise<boolean>} */ (/** @type {unknown} */ (text))) nothing(); // 63 no-misused-promises, 63 no-unnecessary-condition, 63 strict-boolean-expressions
+  if (/** @type {Promise<boolean>} */ (/** @type {unknown} */ (text))) nothing(); // 39 no-unnecessary-condition, 63 no-misused-promises, 63 strict-boolean-expressions
   if (/** @type {string} */ (maybe)) nothing();
   if (/** @type {string | undefined} */ (text)) nothing(); // 42 strict-boolean-expressions
   run(/** @type {() => void} */ (/** @type {unknown} */ (later)));

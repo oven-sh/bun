@@ -1,11 +1,16 @@
 // `bun lint` ports the rules that oxlint shares with ESLint and typescript-eslint from the originals. With an oxlint
 // config, their messages use oxlint's text.
 //
-//   OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2003> bun messages.ts <oxlint 1.87>
+//   OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2004> bun messages.ts <oxlint 1.87> [rule..]
 //
 // For each message id whose text is replaced, messages.json has a short input for which oxlint reports the problem that
 // `bun lint` reports with that id, plus oxlint's text and `help`. That problem is the only one reported for the input,
-// or the last one if the entry has an `index`. This script records the text and `help` from oxlint again.
+// or the last one if the entry has an `index`. This script records the text and `help` from oxlint again, with rules
+// only for their entries.
+//
+// tsgolint 7.0.2004 puts the types in the `help` of typescript/no-unnecessary-condition, typescript/no-unsafe-assignment,
+// typescript/no-unsafe-return and typescript/no-unsafe-type-assertion (oxc-project/tsgolint#1271). These rules also
+// have inputs for the forms of that `help`, under the id of a message whose text isn't replaced.
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -29,6 +34,11 @@ export type Entry = {
   message: string;
   /** The help text oxlint prints under it, if any. */
   help?: string;
+  /**
+   * The recording is from this version of tsgolint, which is older than the one named above: `bun lint` doesn't print
+   * the newer one's text yet. This script keeps the recording.
+   */
+  tsgolint?: string;
 };
 
 const path = join(import.meta.dir, "messages.json");
@@ -79,8 +89,8 @@ export const helpsOf = (stdout: string, all: Entry[]) =>
   reportsOf(stdout, all).map((it, index) => it[all[index].index ?? 0]?.help);
 
 if (import.meta.main) {
-  const oxlint = process.argv[2];
-  if (!oxlint) throw new Error("usage: bun messages.ts <oxlint>");
+  const [oxlint, ...rules] = process.argv.slice(2);
+  if (!oxlint) throw new Error("usage: bun messages.ts <oxlint> [rule..]");
   const cwd = mkdtempSync(join(tmpdir(), "oxlint-messages-"));
   try {
     for (const [file, text] of Object.entries(filesOf(entries))) {
@@ -96,6 +106,8 @@ if (import.meta.main) {
     let changed = 0;
     messagesOf(stdout, entries).forEach((messages, index) => {
       const it = entries[index];
+      // With rules, the other rules' entries keep their recordings.
+      if (it.tsgolint || (rules.length > 0 && !rules.includes(it.rule))) return;
       const at = it.index ?? 0;
       if (messages.length !== at + 1)
         throw new Error(`${it.rule} ${it.id}: oxlint reports ${messages.length} problems: ${JSON.stringify(it.code)}`);

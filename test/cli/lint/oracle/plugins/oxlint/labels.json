@@ -814,21 +814,8 @@
  "places/the-first-label-of-tsgolint": [
   "a.ts typescript(no-array-delete) 2:8+1 \"This expression evaluates to an array.\" | 2:1+6",
   "a.ts typescript(no-array-delete) 3:8+3 \"This expression evaluates to an array.\" | 3:1+6",
-  "a.ts typescript(no-unsafe-assignment) 13:18+1 \"Assigned value has type `any`.\" | 13:14+1 \"Target is inferred as `any`.\" | 13:16+1",
-  "a.ts typescript(no-unsafe-assignment) 14:31+14 \"Assigned value has type `Set<any>`.\" | 14:17+11 \"Target expects type `Set<string>`.\" | 14:29+1",
-  "a.ts typescript(no-unsafe-assignment) 15:20+1 \"Destructured source provides type `any[]`.\" | 15:14+3 \"This binding receives type `any`.\" | 15:14+3",
-  "a.ts typescript(no-unsafe-assignment) 16:20+3 \"Destructured source provides type `any`.\" | 16:15+1 \"This binding receives type `any`.\" | 16:15+1",
-  "a.ts typescript(no-unsafe-assignment) 17:22+8 \"Destructured source provides type `any`.\" | 17:16+1 \"This binding receives type `any`.\" | 17:16+1",
-  "a.ts typescript(no-unsafe-assignment) 17:27+1 \"Assigned value has type `any`.\" | 17:24+1 \"Target expects type `any`.\" | 17:25+1",
-  "a.ts typescript(no-unsafe-assignment) 18:22+1 \"Spread value has type `any[]`.\" | 18:19+3",
-  "a.ts typescript(no-unsafe-assignment) 19:23+3 \"Assigned value has type `any`.\" | 19:19+1 \"Target expects type `any`.\" | 19:21+1",
-  "a.ts typescript(no-unsafe-assignment) 20:22+1 \"Assigned value has type `any`.\" | 20:18+1 \"Target is inferred as `any`.\" | 20:20+1",
-  "a.ts typescript(no-unsafe-assignment) 21:19+1 \"Assigned value has type `any`.\" | 21:15+1 \"Target expects type `any`.\" | 21:17+1",
   "a.ts typescript(no-unsafe-enum-comparison) 12:5+1 \"Left operand: G\" | 12:11+3 \"Right operand: \\\"h\\\"\" | 12:5+9",
-  "a.ts typescript(no-unsafe-enum-comparison) 9:9+1 \"Switch value: G\" | 10:8+3 \"Case value: \\\"h\\\"\" | 10:3+9",
-  "a.ts typescript(no-unsafe-return) 4:30+1 \"Returned expression has type `any`.\" | 4:23+6",
-  "a.ts typescript(no-unsafe-return) 5:24+3 \"Returned expression has type `any`.\" | 5:21+2",
-  "a.ts typescript(no-unsafe-return) 6:43+14 \"Returned expression has type `Set<any>`.\" | 6:22+11 \"Function expects return type `Set<string>`.\" | 6:36+6"
+  "a.ts typescript(no-unsafe-enum-comparison) 9:9+1 \"Switch value: G\" | 10:8+3 \"Case value: \\\"h\\\"\" | 10:3+9"
  ],
  "places/the-first-label-of-tsgolint-2": [
   "a.ts typescript(no-unnecessary-type-conversion) 11:20+1 \"This expression already has type 'boolean'.\" | 11:18+2",
@@ -838,23 +825,7 @@
   "a.ts typescript(no-unnecessary-type-conversion) 6:18+1 \"This expression already has type 'string'.\" | 6:20+10",
   "a.ts typescript(no-unnecessary-type-conversion) 7:18+1 \"This expression already has type 'string'.\" | 7:19+5",
   "a.ts typescript(no-unnecessary-type-conversion) 8:23+1 \"This expression already has type 'string'.\" | 8:18+5",
-  "a.ts typescript(no-unnecessary-type-conversion) 9:19+1 \"This expression already has type 'number'.\" | 9:18+1",
-  "a.ts typescript(no-unsafe-type-assertion) 2:18+1 \"Original expression has type `unknown`.\" | 2:23+6 \"Asserted type is `string`.\" | 2:20+9",
-  "a.ts typescript(no-unsafe-type-assertion) 3:26+1 \"Original expression has type `unknown`.\" | 3:19+6 \"Asserted type is `string`.\" | 3:18+8",
-  "a.ts typescript(no-unsafe-type-assertion) 4:26+3 \"Original expression has type `unknown`.\" | 4:19+6 \"Asserted type is `string`.\" | 4:18+8"
- ],
- "no-unnecessary-condition/place": [
-  "a.ts typescript(no-unnecessary-condition) 10:17+4 \"Type: string\" | 11:7+5 \"Type: null\" | 11:5+2",
-  "a.ts typescript(no-unnecessary-condition) 12:18+1 \"Type: string\" | 12:18+1",
-  "a.ts typescript(no-unnecessary-condition) 13:18+1 \"Type: 1\" | 13:24+1 \"Type: 1\" | 13:20+3",
-  "a.ts typescript(no-unnecessary-condition) 2:5+1 \"Type: true\" | 2:5+1",
-  "a.ts typescript(no-unnecessary-condition) 3:6+1 \"Type: true\" | 3:5+2",
-  "a.ts typescript(no-unnecessary-condition) 4:8+1 \"Type: true\" | 4:5+5",
-  "a.ts typescript(no-unnecessary-condition) 5:18+1 \"Type: { c: 1; }\" | 5:19+2",
-  "a.ts typescript(no-unnecessary-condition) 6:18+3 \"Type: { c: 1; }\" | 6:21+2",
-  "a.ts typescript(no-unnecessary-condition) 7:18+3 \"Type: { f: 1; }\" | 7:21+2",
-  "a.ts typescript(no-unnecessary-condition) 8:17+2 \"Type: string\" | 8:23+5 \"Type: null\" | 8:20+3",
-  "a.ts typescript(no-unnecessary-condition) 9:5+1 \"Type: string\" | 9:10+10 \"Type: undefined\" | 9:7+3"
+  "a.ts typescript(no-unnecessary-type-conversion) 9:19+1 \"This expression already has type 'number'.\" | 9:18+1"
  ],
  "places/eslint-no-m-to-no-r": [
   "a.js eslint(no-new-func) 5:13+8 \"Dynamic function construction is used here.\" | 5:22+3 \"`Function` evaluates source text at runtime, similar to `eval`.\"",
@@ -951,10 +922,6 @@
   "a.ts typescript(no-unnecessary-type-parameters) 16:25+1 \"This is the only usage of type parameter T in the signature.\" | 16:19+1",
   "a.ts typescript(no-unnecessary-type-parameters) 17:19+1 \"This is the only usage of type parameter T in the signature.\" | 17:19+1",
   "a.ts typescript(no-unnecessary-type-parameters) 18:51+1 \"This is the only usage of type parameter T in the signature.\" | 18:19+16"
- ],
- "no-unnecessary-condition/element-access-before-an-optional-step": [
-  "a.ts typescript(no-unnecessary-condition) 11:1+3 \"Type: { b: 1; }\" | 11:4+2",
-  "a.ts typescript(no-unnecessary-condition) 6:1+4 \"Type: { b: 1; }\" | 6:5+2"
  ],
  "no-unused-vars/beside-an-infer-of-the-same-name": [
   "a.ts eslint(no-unused-vars) 5:37+1 \"'U' is declared here\"",
@@ -1230,13 +1197,6 @@
   "a.ts typescript(no-misused-promises) 17:12+2 \"This callback has type `() => Promise<void>`.\" | 14:23+10 \"This context accepts a `void`-returning callback through type `() => void`.\" | 17:12+2",
   "a.ts typescript(no-misused-promises) 7:3+1 \"This expression has type `Promise<{ a: 1; }>`.\" | 5:20+67"
  ],
- "disable-comments/no-unnecessary-condition": [
-  "a.ts typescript(no-unnecessary-condition) 13:3+1 \"Type: { b: { c: 1; }; }\" | 11:5+71",
-  "a.ts typescript(no-unnecessary-condition) 15:1+1 \"Type: { b: { c: 1; }; }\" | 16:3+2",
-  "a.ts typescript(no-unnecessary-condition) 21:1+3 \"Type: { c: 1; }\" | 22:3+2",
-  "a.ts typescript(no-unnecessary-condition) 24:5+1 \"Type: \\\"a\\\"\" | 25:7+3 \"Type: \\\"b\\\"\" | 25:3+3",
-  "a.ts typescript(no-unnecessary-condition) 4:3+1 \"Type: { b: { c: 1; }; }\" | 4:3+1"
- ],
  "disable-comments/no-unnecessary-type-conversion": [
   "a.ts typescript(no-unnecessary-type-conversion) 19:3+1 \"This expression already has type 'number'.\" | 17:1+76",
   "a.ts typescript(no-unnecessary-type-conversion) 28:3+1 \"This expression already has type 'string'.\" | 26:1+79",
@@ -1246,23 +1206,9 @@
  "disable-comments/no-unnecessary-type-parameters": [
   "a.ts typescript(no-unnecessary-type-parameters) 6:6+1 \"This is the only usage of type parameter U in the signature.\" | 4:19+1"
  ],
- "disable-comments/no-unsafe-assignment": [
-  "a.ts typescript(no-unsafe-assignment) 13:3+1 \"Assigned value has type `any`.\" | 11:14+3 \"Target is inferred as `any`.\" | 11:18+1",
-  "a.ts typescript(no-unsafe-assignment) 20:3+1 \"Assigned value has type `any`.\" | 18:1+1 \"Target expects type `1`.\" | 18:3+1",
-  "a.ts typescript(no-unsafe-assignment) 26:3+1 \"Spread value has type `any`.\" | 24:19+3",
-  "a.ts typescript(no-unsafe-assignment) 36:3+1 \"Assigned value has type `any`.\" | 34:30+1 \"Target expects type `1`.\" | 34:31+1",
-  "a.ts typescript(no-unsafe-assignment) 7:3+1 \"Assigned value has type `any`.\" | 5:14+1 \"Target is inferred as `any`.\" | 5:16+1"
- ],
  "disable-comments/no-unsafe-enum-comparison": [
   "a.ts typescript(no-unsafe-enum-comparison) 5:1+1 \"Left operand: E\" | 7:7+1 \"Right operand: 1\" | 5:1+76",
   "a.ts typescript(no-unsafe-enum-comparison) 9:9+1 \"Switch value: E\" | 10:8+1 \"Case value: 1\" | 10:3+14"
- ],
- "disable-comments/no-unsafe-return": [
-  "a.ts typescript(no-unsafe-return) 17:3+1 \"Returned expression has type `any`.\" | 15:21+2",
-  "a.ts typescript(no-unsafe-return) 8:10+68 \"Returned expression has type `any`.\" | 8:3+6"
- ],
- "disable-comments/no-unsafe-type-assertion": [
-  "a.ts typescript(no-unsafe-type-assertion) 7:3+1 \"Original expression has type `unknown`.\" | 5:19+6 \"Asserted type is `string`.\" | 5:18+8"
  ],
  "disable-comments/unbound-method": [
   "a.ts typescript(unbound-method) 7:4+1 \"This reference may be unbound and lose `this` context\" | 5:18+62"
@@ -1271,44 +1217,13 @@
   "a.ts typescript(no-duplicate-type-constituents) 14:5+1 \"Type '1' is first declared here.\" | 16:5+1",
   "a.ts typescript(no-duplicate-type-constituents) 2:5+6 \"Type 'string' is first declared here.\" | 3:5+6"
  ],
- "disable-comments/no-unsafe-assignment-lines-and-blocks": [
-  "a.ts typescript(no-unsafe-assignment) 12:3+1 \"Assigned value has type `any`.\" | 10:14+1 \"Target is inferred as `any`.\" | 10:16+1",
-  "a.ts typescript(no-unsafe-assignment) 5:3+1 \"Assigned value has type `any`.\" | 4:14+1 \"Target is inferred as `any`.\" | 4:16+1"
- ],
  "disable-comments/await-thenable-lines-and-blocks": [
   "a.ts typescript(await-thenable) 12:5+1 \"This expression is not Promise-like\" | 10:3+5",
   "a.ts typescript(await-thenable) 5:5+1 \"This expression is not Promise-like\" | 4:3+5"
  ],
- "disable-comments/no-unnecessary-condition-lines-and-blocks": [
-  "a.ts typescript(no-unnecessary-condition) 14:5+1 \"Type: \\\"a\\\"\" | 15:7+3 \"Type: \\\"b\\\"\" | 15:3+3",
-  "a.ts typescript(no-unnecessary-condition) 21:5+1 \"Type: \\\"a\\\"\" | 23:3+3 \"Type: \\\"b\\\"\" | 21:7+3",
-  "a.ts typescript(no-unnecessary-condition) 2:1+1 \"Type: { b: { c: 1; }; }\" | 3:3+2",
-  "a.ts typescript(no-unnecessary-condition) 7:1+1 \"Type: { b: { c: 1; }; }\" | 9:3+2"
- ],
- "disable-comments/no-unsafe-return-lines-and-blocks": [
-  "a.ts typescript(no-unsafe-return) 13:3+1 \"Returned expression has type `any`.\" | 11:3+2",
-  "a.ts typescript(no-unsafe-return) 5:3+1 \"Returned expression has type `any`.\" | 4:21+2"
- ],
- "disable-comments/no-unsafe-type-assertion-lines-and-blocks": [
-  "a.ts typescript(no-unsafe-type-assertion) 14:18+66 \"Original expression has type `unknown`.\" | 16:6+6 \"Asserted type is `string`.\" | 16:3+9",
-  "a.ts typescript(no-unsafe-type-assertion) 18:18+65 \"Original expression has type `unknown`.\" | 21:6+6 \"Asserted type is `string`.\" | 21:3+9",
-  "a.ts typescript(no-unsafe-type-assertion) 7:18+6 \"Original expression has type `unknown`.\" | 8:9+6 \"Asserted type is `string`.\" | 8:6+9"
- ],
  "disable-comments/unbound-method-lines-and-blocks": [
   "a.ts typescript(unbound-method) 13:4+1 \"This reference may be unbound and lose `this` context\" | 10:18+67",
   "a.ts typescript(unbound-method) 9:4+1 \"This reference may be unbound and lose `this` context\" | 6:18+67"
- ],
- "disable-comments/no-unsafe-assignment-kinds": [
-  "a.tsx typescript(no-unsafe-assignment) 11:5+1 \"Assigned value has type `any`.\" | 9:6+1 \"Target expects type `1`.\" | 9:8+1",
-  "a.tsx typescript(no-unsafe-assignment) 15:5+1 \"Assigned value has type `any`.\" | 14:22+1 \"Target expects type `1`.\" | 15:3+1",
-  "a.tsx typescript(no-unsafe-assignment) 21:5+1 \"Assigned value has type `any`.\" | 20:16+1 \"Target expects type `any`.\" | 21:3+1",
-  "a.tsx typescript(no-unsafe-assignment) 27:5+14 \"Assigned value has type `Set<any>`.\" | 26:17+11 \"Target expects type `Set<string>`.\" | 27:3+1",
-  "a.tsx typescript(no-unsafe-assignment) 33:5+1 \"Assigned value has type `any`.\" | 32:21+1 \"Target expects type `1`.\" | 33:3+1",
-  "a.tsx typescript(no-unsafe-assignment) 34:18+33 \"Assigned value has type `error`.\" | 34:14+1 \"Target is inferred as `error`.\" | 34:16+1",
-  "a.tsx typescript(no-unsafe-assignment) 37:3+1 \"Assigned value has type `any`.\" | 34:21+1 \"Target expects type `1`.\" | 36:3+1",
-  "a.tsx typescript(no-unsafe-assignment) 41:7+1 \"Assigned value has type `any`.\" | 40:3+1 \"Target expects type `1`.\" | 41:5+1",
-  "a.tsx typescript(no-unsafe-assignment) 49:5+1 \"Assigned value has type `any`.\" | 48:1+1 \"Target expects type `1`.\" | 49:3+1",
-  "a.tsx typescript(no-unsafe-assignment) 5:7+1 \"Assigned value has type `any`.\" | 4:6+1 \"Target expects type `1`.\" | 5:5+1"
  ],
  "disable-comments/no-unnecessary-type-conversion-kinds": [
   "a.ts typescript(no-unnecessary-type-conversion) 11:1+1 \"This expression already has type 'string'.\" | 11:2+79",
@@ -1323,11 +1238,6 @@
   "a.ts typescript(consistent-type-exports) 13:3+7 \"A as A2 is a type export, try `type A as A2`\" | 15:3+7 \"B as B2 is a type export, try `type B as B2`\"",
   "a.ts typescript(consistent-type-exports) 4:3+1 \"A is a type export, try `type A`\" | 5:3+1 \"B is a type export, try `type B`\""
  ],
- "disable-comments/no-unnecessary-condition-kinds": [
-  "a.ts typescript(no-unnecessary-condition) 16:3+1 \"Type: { b: 1; }\" | 16:3+1",
-  "a.ts typescript(no-unnecessary-condition) 19:8+1 \"Return type: never\" | 19:8+1",
-  "a.ts typescript(no-unnecessary-condition) 30:1+1 \"Type: never\" | 31:3+2"
- ],
  "disable-comments/no-misused-promises-kinds": [
   "a.ts typescript(no-misused-promises) 10:12+2 \"This callback has type `() => Promise<void>`.\" | 9:22+10 \"This context accepts a `void`-returning callback through type `() => void`.\" | 10:12+2",
   "a.ts typescript(no-misused-promises) 13:3+7 \"This callback has type `() => Promise<void>`.\" | 12:22+10 \"This context accepts a `void`-returning callback through type `() => void`.\" | 13:3+7",
@@ -1337,10 +1247,6 @@
  "options/array-callback-return-async-default": [
   "a.js eslint(array-callback-return) 3:7+9 | 3:21+16 \"This path may reach the end of the callback.\" | 3:3+3 \"\\\"Array.prototype.map\\\" is called here.\"",
   "a.js eslint(array-callback-return) 4:7+9 | 4:21+32 \"This path may reach the end of the callback.\" | 4:3+3 \"\\\"Array.prototype.map\\\" is called here.\""
- ],
- "disable-comments/no-unnecessary-condition-case": [
-  "a.ts typescript(no-unnecessary-condition) 13:11+1 \"Type: \\\"x\\\"\" | 14:10+3 \"Type: \\\"y\\\"\" | 14:10+3",
-  "a.ts typescript(no-unnecessary-condition) 3:11+1 \"Type: string\" | 4:9+10 \"Type: undefined\" | 4:10+9"
  ],
  "no-unused-vars/what-only-a-logical-assignment-changes-or-a-comma-discards": [
   "a.js eslint(no-unused-vars) 11:5+1 \"'o' is declared here\" | 11:9+1 \"it was last assigned here\"",
@@ -1384,119 +1290,11 @@
   "a.ts eslint(no-unused-vars) 4:40+1 \"'d' is declared here\"",
   "a.ts eslint(no-unused-vars) 4:46+1 \"'g' is declared here\""
  ],
- "no-unnecessary-condition/inside-an-optional-chain": [
-  "a.ts typescript(no-unnecessary-condition) 10:19+1 \"Type: [number, string]\" | 10:20+2",
-  "a.ts typescript(no-unnecessary-condition) 10:19+6 \"Type: number\" | 10:19+6",
-  "a.ts typescript(no-unnecessary-condition) 11:19+1 \"Type: [number, string]\" | 11:20+2",
-  "a.ts typescript(no-unnecessary-condition) 15:19+19 \"Type: number\" | 15:19+19",
-  "a.ts typescript(no-unnecessary-condition) 16:19+20 \"Type: number\" | 16:19+20",
-  "a.ts typescript(no-unnecessary-condition) 18:5+3 \"Type: number[]\" | 18:8+2",
-  "a.ts typescript(no-unnecessary-condition) 18:5+8 \"Type: number\" | 18:16+5 \"Type: null\" | 18:14+2",
-  "a.ts typescript(no-unnecessary-condition) 19:19+18 \"Type: { a: number; }\" | 19:19+18",
-  "a.ts typescript(no-unnecessary-condition) 20:36+2 \"Type: { a: number; }\" | 20:36+2",
-  "a.ts typescript(no-unnecessary-condition) 5:19+3 \"Type: number[]\" | 5:22+2",
-  "a.ts typescript(no-unnecessary-condition) 8:19+4 \"Type: number[]\" | 8:23+2",
-  "b.ts typescript(no-unnecessary-condition) 11:1+9 \"Type: () => number\" | 11:10+2",
-  "b.ts typescript(no-unnecessary-condition) 14:1+2 \"Type: Q\" | 14:3+2",
-  "b.ts typescript(no-unnecessary-condition) 14:1+8 \"Type: () => number\" | 14:9+2",
-  "b.ts typescript(no-unnecessary-condition) 17:1+4 \"Type: () => number\" | 17:5+2",
-  "b.ts typescript(no-unnecessary-condition) 21:1+8 \"Type: () => number\" | 21:9+2",
-  "b.ts typescript(no-unnecessary-condition) 9:1+8 \"Type: () => number\" | 9:9+2",
-  "c.ts typescript(no-unnecessary-condition) 10:1+8 \"Type: { g: { h: number; }; }\" | 10:9+2",
-  "c.ts typescript(no-unnecessary-condition) 11:1+10 \"Type: { h: number; }\" | 11:11+2",
-  "c.ts typescript(no-unnecessary-condition) 12:1+6 \"Type: { l: number; }\" | 12:7+2",
-  "c.ts typescript(no-unnecessary-condition) 13:1+8 \"Type: number\" | 13:9+2",
-  "c.ts typescript(no-unnecessary-condition) 14:1+4 \"Type: () => { l: number; }\" | 14:5+2",
-  "c.ts typescript(no-unnecessary-condition) 15:1+6 \"Type: { d: number; e?: number | undefined; }\" | 15:7+2",
-  "c.ts typescript(no-unnecessary-condition) 16:1+2 \"Type: Q\" | 16:3+2",
-  "c.ts typescript(no-unnecessary-condition) 16:1+7 \"Type: { d: number; e?: number | undefined; }\" | 16:8+2",
-  "c.ts typescript(no-unnecessary-condition) 17:1+4 \"Type: { c: { d: number; e?: number | undefined; }; f(): { g: { h: number; }; }; i?: { j: number; } | undefined; }\" | 17:5+2",
-  "c.ts typescript(no-unnecessary-condition) 17:1+9 \"Type: number\" | 17:10+2",
-  "c.ts typescript(no-unnecessary-condition) 21:1+6 \"Type: { d: number; e?: number | undefined; }\" | 21:7+2",
-  "c.ts typescript(no-unnecessary-condition) 5:1+4 \"Type: { c: { d: number; e?: number | undefined; }; f(): { g: { h: number; }; }; i?: { j: number; } | undefined; }\" | 5:5+2",
-  "c.ts typescript(no-unnecessary-condition) 6:1+4 \"Type: { c: { d: number; e?: number | undefined; }; f(): { g: { h: number; }; }; i?: { j: number; } | undefined; }\" | 6:5+2",
-  "c.ts typescript(no-unnecessary-condition) 6:1+7 \"Type: { d: number; e?: number | undefined; }\" | 6:8+2",
-  "d.ts typescript(no-unnecessary-condition) 10:42+3 \"Type: { d: boolean; e?: { f: number; } | undefined; }\" | 10:45+2",
-  "d.ts typescript(no-unnecessary-condition) 11:42+1 \"Type: L\" | 11:43+2",
-  "d.ts typescript(no-unnecessary-condition) 12:46+1 \"Type: L\" | 12:47+2",
-  "d.ts typescript(no-unnecessary-condition) 14:44+2 \"Type: { s?: { d: boolean; } | undefined; } | { s: { d: boolean; }; }\" | 14:46+2",
-  "d.ts typescript(no-unnecessary-condition) 15:56+1 \"Type: { d: boolean; e?: { f: number; } | undefined; }\" | 15:57+2",
-  "d.ts typescript(no-unnecessary-condition) 16:43+1 \"Type: L\" | 16:44+2",
-  "d.ts typescript(no-unnecessary-condition) 16:43+7 \"Type: boolean\" | 16:43+7",
-  "d.ts typescript(no-unnecessary-condition) 17:40+1 \"Type: L\" | 17:41+2",
-  "d.ts typescript(no-unnecessary-condition) 17:40+4 \"Type: { d: boolean; e?: { f: number; } | undefined; }\" | 17:40+4",
-  "d.ts typescript(no-unnecessary-condition) 4:41+1 \"Type: L\" | 4:42+2",
-  "d.ts typescript(no-unnecessary-condition) 5:43+1 \"Type: L\" | 5:44+2",
-  "d.ts typescript(no-unnecessary-condition) 6:43+3 \"Type: { d: boolean; e?: { f: number; } | undefined; }\" | 6:46+2",
-  "d.ts typescript(no-unnecessary-condition) 7:31+4 \"Type: { d: boolean; }\" | 7:35+2",
-  "d.ts typescript(no-unnecessary-condition) 9:43+1 \"Type: L\" | 9:44+2"
- ],
- "no-unnecessary-condition/after-an-index-with-a-question-mark": [
-  "a.ts typescript(no-unnecessary-condition) 10:1+3 \"Type: T[]\" | 10:4+2",
-  "a.ts typescript(no-unnecessary-condition) 10:1+8 \"Type: T\" | 10:9+2",
-  "a.ts typescript(no-unnecessary-condition) 11:1+3 \"Type: [T, T]\" | 11:4+2",
-  "a.ts typescript(no-unnecessary-condition) 11:1+8 \"Type: T\" | 11:9+2",
-  "a.ts typescript(no-unnecessary-condition) 12:1+6 \"Type: T\" | 12:7+2",
-  "a.ts typescript(no-unnecessary-condition) 13:1+11 \"Type: T[]\" | 13:12+2",
-  "a.ts typescript(no-unnecessary-condition) 13:1+16 \"Type: T\" | 13:17+2",
-  "a.ts typescript(no-unnecessary-condition) 13:1+6 \"Type: T[][]\" | 13:7+2",
-  "a.ts typescript(no-unnecessary-condition) 17:1+13 \"Type: T\" | 17:14+2",
-  "a.ts typescript(no-unnecessary-condition) 17:1+3 \"Type: Record<string, T[]>\" | 17:4+2",
-  "a.ts typescript(no-unnecessary-condition) 17:1+8 \"Type: T[]\" | 17:9+2",
-  "a.ts typescript(no-unnecessary-condition) 18:1+12 \"Type: T[]\" | 18:13+2",
-  "a.ts typescript(no-unnecessary-condition) 18:1+17 \"Type: T\" | 18:18+2",
-  "a.ts typescript(no-unnecessary-condition) 19:1+3 \"Type: T[]\" | 19:4+2",
-  "a.ts typescript(no-unnecessary-condition) 19:1+8 \"Type: T\" | 19:9+2",
-  "a.ts typescript(no-unnecessary-condition) 20:1+3 \"Type: T[]\" | 20:4+2",
-  "a.ts typescript(no-unnecessary-condition) 21:5+3 \"Type: T[]\" | 21:8+2",
-  "a.ts typescript(no-unnecessary-condition) 22:5+3 \"Type: T[]\" | 22:8+2",
-  "a.ts typescript(no-unnecessary-condition) 22:5+8 \"Type: T\" | 22:13+2",
-  "a.ts typescript(no-unnecessary-condition) 3:1+3 \"Type: T[]\" | 3:4+2",
-  "a.ts typescript(no-unnecessary-condition) 3:1+8 \"Type: T\" | 3:9+2",
-  "a.ts typescript(no-unnecessary-condition) 7:1+3 \"Type: T[]\" | 7:4+2",
-  "a.ts typescript(no-unnecessary-condition) 7:1+8 \"Type: T\" | 7:9+2"
- ],
- "no-unnecessary-condition/an-index-that-is-a-string": [
-  "a.ts typescript(no-unnecessary-condition) 10:1+8 \"Type: () => number\" | 10:9+2",
-  "a.ts typescript(no-unnecessary-condition) 12:1+9 \"Type: () => number\" | 12:10+2",
-  "a.ts typescript(no-unnecessary-condition) 15:1+2 \"Type: Q\" | 15:3+2",
-  "a.ts typescript(no-unnecessary-condition) 15:1+8 \"Type: () => number\" | 15:9+2",
-  "a.ts typescript(no-unnecessary-condition) 18:1+4 \"Type: () => number\" | 18:5+2",
-  "a.ts typescript(no-unnecessary-condition) 22:1+8 \"Type: () => number\" | 22:9+2",
-  "a.ts typescript(no-unnecessary-condition) 9:1+8 \"Type: () => number\" | 9:9+2"
- ],
  "restrict-plus-operands/the-left-side": [
   "a.ts typescript(restrict-plus-operands) 3:19+1 \"Type: number\" | 3:23+1 \"Type: bigint\" | 3:19+5"
  ],
  "no-duplicates/full-table": [
   "a.js import(no-duplicates) 111:26+11 \"It is first imported here\" | 112:26+14"
- ],
- "no-unnecessary-condition/what-a-predicate-returns-and-the-first-signature": [
-  "a.ts typescript(no-unnecessary-condition) 13:20+2 \"Type: { a: 1; }\" | 13:19+3",
-  "a.ts typescript(no-unnecessary-condition) 15:49+1 \"Type: MB\" | 15:47+3",
-  "a.ts typescript(no-unnecessary-condition) 18:76+4 \"Type: { a: 1; }\" | 18:76+4",
-  "a.ts typescript(no-unnecessary-condition) 1:37+3 \"Type: \\\"5\\\"\" | 1:45+3 \"Type: \\\"5\\\"\" | 1:41+3",
-  "a.ts typescript(no-unnecessary-condition) 23:19+9 \"Type: { id: 1; }\" | 23:28+2",
-  "a.ts typescript(no-unnecessary-condition) 24:46+15 \"Return type: true\" | 24:46+15",
-  "a.ts typescript(no-unnecessary-condition) 25:40+15 \"Return type: true\" | 25:40+15",
-  "a.ts typescript(no-unnecessary-condition) 26:40+5 \"Return type: true\" | 26:40+5",
-  "a.ts typescript(no-unnecessary-condition) 30:33+6 \"Return type: true\" | 30:33+6",
-  "a.ts typescript(no-unnecessary-condition) 6:38+3 \"Return type: true\" | 6:38+3"
- ],
- "no-unnecessary-condition/awaited-and-overloads": [
-  "c10.ts typescript(no-unnecessary-condition) 2:19+9 \"Type: { id: 1; }\" | 2:28+2"
- ],
- "no-unnecessary-condition/an-optional-index-before-two-question-marks": [
-  "a.ts typescript(no-unnecessary-condition) 10:66+11 \"Type: { [r: string]: number[]; }\" | 10:77+2",
-  "a.ts typescript(no-unnecessary-condition) 10:66+16 \"Type: number[]\" | 10:82+2",
-  "a.ts typescript(no-unnecessary-condition) 11:63+11 \"Type: { [r: string]: number[]; }\" | 11:74+2",
-  "a.ts typescript(no-unnecessary-condition) 11:63+16 \"Type: number[]\" | 11:63+16",
-  "a.ts typescript(no-unnecessary-condition) 3:122+26 \"Type: { [r: string]: number[]; }\" | 3:148+2",
-  "a.ts typescript(no-unnecessary-condition) 5:75+11 \"Type: { [r: string]: number[]; }\" | 5:86+2",
-  "a.ts typescript(no-unnecessary-condition) 6:66+11 \"Type: { [r: string]: number[]; }\" | 6:77+2"
- ],
- "no-unnecessary-condition/a-conditional-type-that-is-not-resolved": [
-  "a.ts typescript(no-unnecessary-condition) 8:84+6 \"Type: ParamsOf<CN, M>\" | 8:84+6"
  ],
  "adjacent-overload-signatures/where-it-points": [
   "a.ts typescript(adjacent-overload-signatures) 10:15+5 | 10:43+5",
@@ -1535,104 +1333,6 @@
   "b.ts typescript(no-useless-default-assignment) 4:29+3 \"Default value\" | 4:25+1 \"property type `string` is not nullish\" | 4:29+3",
   "b.ts typescript(no-useless-default-assignment) 5:25+1 \"Default value\" | 5:21+1 \"property type `number` is not nullish\" | 5:25+1",
   "b.ts typescript(no-useless-default-assignment) 8:32+1 \"Default value\" | 8:28+1 \"parameter type `number` is not nullish\" | 8:32+1"
- ],
- "no-unsafe-assignment/every-kind-of-target": [
-  "a.ts typescript(no-unsafe-assignment) 10:32+14 \"Assigned value has type `Set<any>`.\" | 10:18+11 \"Target expects type `Set<string>`.\" | 10:30+1",
-  "a.ts typescript(no-unsafe-assignment) 11:21+2 \"Destructured source provides type `any[]`.\" | 11:14+4 \"This binding receives type `any`.\" | 11:14+4",
-  "a.ts typescript(no-unsafe-assignment) 12:21+12 \"Destructured source provides type `any`.\" | 12:15+2 \"This binding receives type `any`.\" | 12:15+2",
-  "a.ts typescript(no-unsafe-assignment) 13:23+9 \"Destructured source provides type `any`.\" | 13:16+2 \"This binding receives type `any`.\" | 13:16+2",
-  "a.ts typescript(no-unsafe-assignment) 13:29+1 \"Assigned value has type `any`.\" | 13:25+2 \"Target expects type `any`.\" | 13:27+1",
-  "a.ts typescript(no-unsafe-assignment) 14:31+9 \"Destructured source provides type `any`.\" | 14:20+6 \"This binding receives type `any`.\" | 14:20+6",
-  "a.ts typescript(no-unsafe-assignment) 14:37+1 \"Assigned value has type `any`.\" | 14:33+2 \"Target expects type `{ c3: any; }`.\" | 14:35+1",
-  "a.ts typescript(no-unsafe-assignment) 15:23+2 \"Spread value has type `any[]`.\" | 15:20+3",
-  "a.ts typescript(no-unsafe-assignment) 16:23+1 \"Spread value has type `any`.\" | 16:20+3",
-  "a.ts typescript(no-unsafe-assignment) 17:26+1 \"Assigned value has type `any`.\" | 17:21+3 \"Target expects type `any`.\" | 17:24+1",
-  "a.ts typescript(no-unsafe-assignment) 18:28+1 \"Assigned value has type `any`.\" | 18:21+5 \"Target expects type `any`.\" | 18:26+1",
-  "a.ts typescript(no-unsafe-assignment) 19:26+1 \"Assigned value has type `any`.\" | 19:21+3 \"Target expects type `any`.\" | 19:24+1",
-  "a.ts typescript(no-unsafe-assignment) 20:28+1 \"Assigned value has type `any`.\" | 20:21+5 \"Target expects type `any`.\" | 20:26+1",
-  "a.ts typescript(no-unsafe-assignment) 21:28+1 \"Assigned value has type `any`.\" | 21:21+5 \"Target expects type `any`.\" | 21:26+1",
-  "a.ts typescript(no-unsafe-assignment) 21:41+1 \"Assigned value has type `any`.\" | 21:31+8 \"Target expects type `any`.\" | 21:39+1",
-  "a.ts typescript(no-unsafe-assignment) 21:47+1 \"Assigned value has type `any`.\" | 21:44+1 \"Target expects type `any`.\" | 21:45+1",
-  "a.ts typescript(no-unsafe-assignment) 22:30+1 \"Assigned value has type `any`.\" | 22:27+1 \"Target expects type `number`.\" | 22:28+1",
-  "a.ts typescript(no-unsafe-assignment) 22:38+1 \"Assigned value has type `any`.\" | 22:33+3 \"Target expects type `number`.\" | 22:36+1",
-  "a.ts typescript(no-unsafe-assignment) 23:22+1 \"Assigned value has type `any`.\" | 23:18+1 \"Target is inferred as `any`.\" | 23:20+1",
-  "a.ts typescript(no-unsafe-assignment) 23:37+1 \"Assigned value has type `any`.\" | 23:28+6 \"Target expects type `number`.\" | 23:35+1",
-  "a.ts typescript(no-unsafe-assignment) 23:46+1 \"Assigned value has type `any`.\" | 23:40+3 \"Target is inferred as `any`.\" | 23:44+1",
-  "a.ts typescript(no-unsafe-assignment) 23:65+1 \"Assigned value has type `any`.\" | 23:56+6 \"Target expects type `number`.\" | 23:63+1",
-  "a.ts typescript(no-unsafe-assignment) 23:79+1 \"Assigned value has type `any`.\" | 23:75+1 \"Target is inferred as `any`.\" | 23:77+1",
-  "a.ts typescript(no-unsafe-assignment) 24:23+1 \"Assigned value has type `any`.\" | 24:19+1 \"Target expects type `any`.\" | 24:21+1",
-  "a.ts typescript(no-unsafe-assignment) 24:38+1 \"Assigned value has type `any`.\" | 24:29+6 \"Target expects type `number`.\" | 24:36+1",
-  "a.ts typescript(no-unsafe-assignment) 24:47+1 \"Assigned value has type `any`.\" | 24:43+1 \"Target expects type `any`.\" | 24:45+1",
-  "a.ts typescript(no-unsafe-assignment) 24:62+1 \"Assigned value has type `any`.\" | 24:58+1 \"Target expects type `any`.\" | 24:60+1",
-  "a.ts typescript(no-unsafe-assignment) 25:27+3 \"Assigned value has type `any`.\" | 25:18+6 \"Target expects type `number`.\" | 25:25+1",
-  "a.ts typescript(no-unsafe-assignment) 26:19+10 \"Assigned value has type `any`.\" | 26:14+2 \"Target is inferred as `any`.\" | 26:17+1",
-  "a.ts typescript(no-unsafe-assignment) 27:14+1 \"Assigned value has type `any`.\" | 27:9+2 \"Target expects type `any`.\" | 27:12+1",
-  "a.ts typescript(no-unsafe-assignment) 7:19+1 \"Assigned value has type `any`.\" | 7:14+2 \"Target is inferred as `any`.\" | 7:17+1",
-  "a.ts typescript(no-unsafe-assignment) 8:27+1 \"Assigned value has type `any`.\" | 8:18+6 \"Target expects type `number`.\" | 8:25+1",
-  "a.ts typescript(no-unsafe-assignment) 9:29+1 \"Assigned value has type `any`.\" | 9:24+2 \"Target expects type `string`.\" | 9:27+1"
- ],
- "no-unsafe-assignment/the-contextual-type-under-a-computed-key": [
-  "a.ts typescript(no-unsafe-assignment) 21:11+1 \"Assigned value has type `any`.\" | 21:6+3 \"Target expects type `any`.\" | 21:9+1",
-  "a.ts typescript(no-unsafe-assignment) 21:25+1 \"Assigned value has type `any`.\" | 21:22+1 \"Target expects type `any`.\" | 21:23+1",
-  "a.ts typescript(no-unsafe-assignment) 22:11+1 \"Assigned value has type `any`.\" | 22:6+3 \"Target expects type `any`.\" | 22:9+1",
-  "a.ts typescript(no-unsafe-assignment) 22:25+1 \"Assigned value has type `any`.\" | 22:22+1 \"Target expects type `any`.\" | 22:23+1",
-  "a.ts typescript(no-unsafe-assignment) 23:11+15 \"Assigned value has type `any`.\" | 23:6+3 \"Target expects type `any`.\" | 23:9+1",
-  "a.ts typescript(no-unsafe-assignment) 23:41+15 \"Assigned value has type `any`.\" | 23:36+3 \"Target expects type `any`.\" | 23:39+1",
-  "a.ts typescript(no-unsafe-assignment) 24:12+1 \"Assigned value has type `any`.\" | 24:6+3 \"Target expects type `any`.\" | 24:9+1",
-  "a.ts typescript(no-unsafe-assignment) 24:29+8 \"Assigned value has type `any`.\" | 24:24+3 \"Target expects type `any`.\" | 24:27+1",
-  "a.ts typescript(no-unsafe-assignment) 24:52+2 \"Assigned value has type `any`.\" | 24:47+3 \"Target expects type `any`.\" | 24:50+1"
- ],
- "no-unsafe-assignment/the-name-of-a-binding-element": [
-  "a.ts typescript(no-unsafe-assignment) 10:27+15 \"Destructured source provides type `any`.\" | 10:20+2 \"This binding receives type `any`.\" | 10:20+2",
-  "a.ts typescript(no-unsafe-assignment) 10:32+8 \"Assigned value has type `any`.\" | 10:29+1 \"Target expects type `any`.\" | 10:30+1",
-  "a.ts typescript(no-unsafe-assignment) 10:46+17 \"Destructured source provides type `any`.\" | 10:20+2 \"This binding receives type `any`.\" | 10:20+2",
-  "a.ts typescript(no-unsafe-assignment) 10:52+8 \"Assigned value has type `any`.\" | 10:49+1 \"Target expects type `any`.\" | 10:50+1",
-  "a.ts typescript(no-unsafe-assignment) 11:28+12 \"Destructured source provides type `any`.\" | 11:16+2 \"This binding receives type `any`.\" | 11:16+2",
-  "a.ts typescript(no-unsafe-assignment) 12:27+10 \"Destructured source provides type `any`.\" | 12:21+2 \"This binding receives type `any`.\" | 12:21+2",
-  "a.ts typescript(no-unsafe-assignment) 12:41+12 \"Destructured source provides type `any`.\" | 12:21+2 \"This binding receives type `any`.\" | 12:21+2",
-  "a.ts typescript(no-unsafe-assignment) 13:17+10 \"Destructured source provides type `any`.\" | 13:11+2 \"This binding receives type `any`.\" | 13:11+2",
-  "a.ts typescript(no-unsafe-assignment) 1:21+8 \"Assigned value has type `any`.\" | 1:16+2 \"Target expects type `any`.\" | 1:19+1",
-  "a.ts typescript(no-unsafe-assignment) 1:33+10 \"Destructured source provides type `any`.\" | 1:16+2 \"This binding receives type `any`.\" | 1:16+2",
-  "a.ts typescript(no-unsafe-assignment) 1:47+12 \"Destructured source provides type `any`.\" | 1:16+2 \"This binding receives type `any`.\" | 1:16+2",
-  "a.ts typescript(no-unsafe-assignment) 2:22+10 \"Destructured source provides type `any`.\" | 2:16+2 \"This binding receives type `any`.\" | 2:16+2",
-  "a.ts typescript(no-unsafe-assignment) 2:36+12 \"Destructured source provides type `any`.\" | 2:16+2 \"This binding receives type `any`.\" | 2:16+2",
-  "a.ts typescript(no-unsafe-assignment) 3:23+12 \"Destructured source provides type `any`.\" | 3:16+2 \"This binding receives type `any`.\" | 3:16+2",
-  "a.ts typescript(no-unsafe-assignment) 4:27+12 \"Destructured source provides type `any`.\" | 4:16+2 \"This binding receives type `any`.\" | 4:16+2",
-  "a.ts typescript(no-unsafe-assignment) 5:25+10 \"Destructured source provides type `any`.\" | 5:15+2 \"This binding receives type `any`.\" | 5:15+2",
-  "a.ts typescript(no-unsafe-assignment) 6:20+8 \"Assigned value has type `any`.\" | 6:15+2 \"Target expects type `any`.\" | 6:18+1",
-  "a.ts typescript(no-unsafe-assignment) 7:31+15 \"Destructured source provides type `any`.\" | 7:24+2 \"This binding receives type `any`.\" | 7:24+2",
-  "a.ts typescript(no-unsafe-assignment) 7:36+8 \"Assigned value has type `any`.\" | 7:33+1 \"Target expects type `any`.\" | 7:34+1",
-  "a.ts typescript(no-unsafe-assignment) 7:51+22 \"Destructured source provides type `any`.\" | 7:24+2 \"This binding receives type `any`.\" | 7:24+2",
-  "a.ts typescript(no-unsafe-assignment) 7:61+8 \"Assigned value has type `any`.\" | 7:58+1 \"Target expects type `any`.\" | 7:59+1",
-  "a.ts typescript(no-unsafe-assignment) 8:33+22 \"Destructured source provides type `any`.\" | 8:24+2 \"This binding receives type `any`.\" | 8:24+2",
-  "a.ts typescript(no-unsafe-assignment) 8:43+8 \"Assigned value has type `any`.\" | 8:40+1 \"Target expects type `any`.\" | 8:41+1",
-  "a.ts typescript(no-unsafe-assignment) 9:30+15 \"Destructured source provides type `any`.\" | 9:19+2 \"This binding receives type `any`.\" | 9:19+2",
-  "a.ts typescript(no-unsafe-assignment) 9:35+8 \"Assigned value has type `any`.\" | 9:32+1 \"Target expects type `2 | undefined`.\" | 9:33+1"
- ],
- "types/an-alias-is-a-deferred-reference": [
-  "a.ts typescript(no-unsafe-assignment) 14:37+6 \"Assigned value has type `[any, any]`.\" | 14:18+16 \"Target expects type `[string, string]`.\" | 14:35+1",
-  "a.ts typescript(no-unsafe-assignment) 16:29+2 \"Assigned value has type `any[]`.\" | 16:18+8 \"Target expects type `string[]`.\" | 16:27+1",
-  "a.ts typescript(no-unsafe-assignment) 18:32+2 \"Assigned value has type `Set<any>`.\" | 18:18+11 \"Target expects type `Set<string>`.\" | 18:30+1",
-  "a.ts typescript(no-unsafe-return) 23:49+6 \"Returned expression has type `[any, any]`.\" | 23:23+16 \"Function expects return type `[string, string]`.\" | 23:42+6",
-  "a.ts typescript(no-unsafe-return) 24:35+2 \"Returned expression has type `any[]`.\" | 24:23+2 \"Function expects return type `SA`.\" | 24:28+6",
-  "a.ts typescript(no-unsafe-return) 25:41+2 \"Returned expression has type `any[]`.\" | 25:23+8 \"Function expects return type `string[]`.\" | 25:34+6",
-  "a.ts typescript(no-unsafe-return) 27:44+2 \"Returned expression has type `Set<any>`.\" | 27:23+11 \"Function expects return type `Set<string>`.\" | 27:37+6",
-  "a.ts typescript(no-unsafe-type-assertion) 21:23+2 \"Original expression has type `Set<any>`.\" | 21:29+3 \"Asserted type is `any`.\" | 21:26+6",
-  "a.ts typescript(no-unsafe-type-assertion) 21:23+9 \"Original expression has type `any`.\" | 21:36+13 \"Asserted type is `Set<any> & IS`.\" | 21:33+16",
-  "a.ts typescript(no-unsafe-type-assertion) 34:19+2 \"Original expression has type `any[]`.\" | 34:25+8 \"Asserted type is `string[]`.\" | 34:22+11",
-  "a.ts typescript(no-unsafe-type-assertion) 36:19+2 \"Original expression has type `Set<any>`.\" | 36:25+11 \"Asserted type is `Set<string>`.\" | 36:22+14"
- ],
- "no-unsafe-type-assertion/literals-under-an-assertion": [
-  "a.ts typescript(no-unsafe-type-assertion) 10:19+27 \"Original expression has type `[string, string, string]`.\" | 10:50+2 \"Asserted type is `CP`.\" | 10:47+5",
-  "a.ts typescript(no-unsafe-type-assertion) 17:19+8 \"Original expression has type `{ a: number; }`.\" | 17:31+24 \"Asserted type is `{ a: number; b: string; }`.\" | 17:28+27",
-  "a.ts typescript(no-unsafe-type-assertion) 9:19+9 \"Original expression has type `[string]`.\" | 9:32+2 \"Asserted type is `CP`.\" | 9:29+5",
-  "b.ts typescript(no-unsafe-type-assertion) 12:19+14 \"Original expression has type `Set<any>`.\" | 12:37+11 \"Asserted type is `Set<string>`.\" | 12:34+14",
-  "b.ts typescript(no-unsafe-type-assertion) 24:19+6 \"Original expression has type `[any, any]`.\" | 24:29+16 \"Asserted type is `[string, string]`.\" | 24:26+19",
-  "b.ts typescript(no-unsafe-type-assertion) 25:19+9 \"Original expression has type `[any, any, any]`.\" | 25:32+24 \"Asserted type is `[string, string, string]`.\" | 25:29+27",
-  "b.ts typescript(no-unsafe-type-assertion) 28:19+6 \"Original expression has type `[any, number]`.\" | 28:29+16 \"Asserted type is `[string, number]`.\" | 28:26+19",
-  "b.ts typescript(no-unsafe-type-assertion) 32:19+8 \"Original expression has type `[[any, any]]`.\" | 32:31+18 \"Asserted type is `[[string, string]]`.\" | 32:28+21",
-  "b.ts typescript(no-unsafe-type-assertion) 8:19+3 \"Original expression has type `[any]`.\" | 8:26+8 \"Asserted type is `[string]`.\" | 8:23+11",
-  "b.ts typescript(no-unsafe-type-assertion) 9:19+6 \"Original expression has type `any[]`.\" | 9:29+8 \"Asserted type is `string[]`.\" | 9:26+11"
  ],
  "no-unnecessary-type-parameters/an-object-type-that-is-met-twice": [
   "b.ts typescript(no-unnecessary-type-parameters) 18:69+1 \"This is the only usage of type parameter T in the signature.\" | 18:55+1",
@@ -1681,10 +1381,6 @@
   "a.ts typescript(no-unnecessary-type-parameters) 2:21+1 \"This is the only usage of type parameter V in the signature.\" | 2:12+1",
   "a.ts typescript(no-unnecessary-type-parameters) 4:23+1 \"This is the only usage of type parameter A in the signature.\" | 4:11+1",
   "a.ts typescript(no-unnecessary-type-parameters) 4:30+1 \"This is the only usage of type parameter B in the signature.\" | 4:14+1"
- ],
- "no-unsafe-assignment/methods-and-accessors-are-left-alone": [
-  "a.ts typescript(no-unsafe-assignment) 10:24+9 \"Assigned value has type `error`.\" | 10:21+1 \"Target expects type `error`.\" | 10:22+1",
-  "a.ts typescript(no-unsafe-assignment) 16:52+1 \"Assigned value has type `any`.\" | 16:49+1 \"Target expects type `any`.\" | 16:50+1"
  ],
  "constructor-super/what-is-found": [
   "a35.js eslint(constructor-super) 1:48+7 \"This path may call `super()` after it was already called.\" | 1:37+7 \"`super()` was first called here.\""
@@ -1842,18 +1538,6 @@
   "spread-array-assignment-target.ts typescript(no-misused-promises) 5:5+4 \"This expression has type `number[] | Promise<number>`.\" | 5:2+3",
   "spread-object-assignment-target.ts typescript(no-misused-promises) 5:7+4 \"This expression has type `Promise<number> | { a?: number | undefined; }`.\" | 5:4+3"
  ],
- "audit/no-unnecessary-condition/option-check-type-predicates": [
-  "array-predicate-type-guard-inline.ts typescript(no-unnecessary-condition) 5:30+9 \"Type string already satisfies predicate type string\" | 5:30+9",
-  "array-predicate-type-guard-reference.ts typescript(no-unnecessary-condition) 4:16+9 \"Type string already satisfies predicate type string\" | 4:16+9",
-  "assert-logical-right.ts typescript(no-unnecessary-condition) 7:13+1 \"Type: { p: number; }\" | 7:13+1",
-  "sentinel.ts typescript(no-unnecessary-condition) 3:27+1 \"Type string already satisfies predicate type string\" | 3:27+1",
-  "sentinel.ts typescript(no-unnecessary-condition) 6:8+1 \"Type: { p: number; }\" | 6:8+1",
-  "type-guard-fresh-literal.ts typescript(no-unnecessary-condition) 5:22+3 \"Type \\\"a\\\" already satisfies predicate type \\\"a\\\"\" | 5:22+3"
- ],
- "audit/no-unnecessary-condition/reported": [
-  "sentinel.ts typescript(no-unnecessary-condition) 2:18+1 \"Type: string\" | 2:19+2",
-  "sentinel.ts typescript(no-unnecessary-condition) 4:18+4 \"Type: string\" | 4:22+2"
- ],
  "audit/no-unnecessary-type-conversion/lib-es2015": [
   "sentinel.ts typescript(no-unnecessary-type-conversion) 2:8+6 \"This expression already has type '\\\"asdf\\\"'.\" | 2:1+6",
   "sentinel.ts typescript(no-unnecessary-type-conversion) 3:1+6 \"This expression already has type '\\\"asdf\\\"'.\" | 3:8+10",
@@ -1925,21 +1609,6 @@
  "audit/unbound-method/default-collator-augmented": [
   "collator-augmented.ts typescript(unbound-method) 12:38+7 \"This reference may be unbound and lose `this` context\" | 12:29+16",
   "sentinel.ts typescript(unbound-method) 8:41+6 \"This reference may be unbound and lose `this` context\" | 8:32+15"
- ],
- "audit/no-unsafe-assignment/exact-optional-property-types": [
-  "assign-array-hole-literal.ts typescript(no-unsafe-assignment) 6:9+13 \"Destructured source provides type `any`.\" | 6:2+0 \"This binding receives type `any`.\" | 6:2+0",
-  "sentinel.ts typescript(no-unsafe-assignment) 2:11+8 \"Assigned value has type `any`.\" | 2:7+1 \"Target is inferred as `any`.\" | 2:9+1",
-  "sentinel.ts typescript(no-unsafe-assignment) 3:19+8 \"Assigned value has type `any`.\" | 3:10+6 \"Target expects type `string`.\" | 3:17+1",
-  "sentinel.ts typescript(no-unsafe-assignment) 4:13+11 \"Destructured source provides type `any[]`.\" | 4:7+3 \"This binding receives type `any`.\" | 4:7+3",
-  "sentinel.ts typescript(no-unsafe-assignment) 5:24+14 \"Assigned value has type `Set<any>`.\" | 5:10+11 \"Target expects type `Set<string>`.\" | 5:22+1"
- ],
- "audit/no-unsafe-assignment/not-strict": [
-  "sentinel.ts typescript(no-unsafe-assignment) 2:11+8 \"Assigned value has type `any`.\" | 2:7+1 \"Target is inferred as `any`.\" | 2:9+1",
-  "sentinel.ts typescript(no-unsafe-assignment) 3:19+8 \"Assigned value has type `any`.\" | 3:10+6 \"Target expects type `string`.\" | 3:17+1",
-  "sentinel.ts typescript(no-unsafe-assignment) 4:13+11 \"Destructured source provides type `any[]`.\" | 4:7+3 \"This binding receives type `any`.\" | 4:7+3",
-  "sentinel.ts typescript(no-unsafe-assignment) 5:24+14 \"Assigned value has type `Set<any>`.\" | 5:10+11 \"Target expects type `Set<string>`.\" | 5:22+1",
-  "this-implicit-any.ts typescript(no-unsafe-assignment) 5:14+4 \"`this` has type `any`.\" | 5:9+1 \"Target is inferred as `any`.\" | 5:11+1",
-  "undefined-initializer.ts typescript(no-unsafe-assignment) 5:20+4 \"Assigned value has type `any`.\" | 5:12+5 \"Target is inferred as `any`.\" | 5:18+1"
  ],
  "audit/no-unnecessary-type-conversion/default": [
   "chain-inner-tostring.ts typescript(no-unnecessary-type-conversion) 7:18+4 \"This expression already has type 'string'.\" | 7:23+10",
@@ -2053,56 +1722,6 @@
   "sentinel.ts typescript(await-thenable) 2:9+1 \"This expression is not Promise-like\" | 2:3+5",
   "sentinel.ts typescript(await-thenable) 3:25+6 \"This value is not async iterable\" | 3:3+29",
   "sentinel.ts typescript(await-thenable) 6:22+1 \"This expression is not Promise-like\" | 6:21+3 \"Promise aggregator input\" | 6:22+1"
- ],
- "audit/no-unsafe-return/default": [
-  "alias-argument-not-deferred.ts typescript(no-unsafe-return) 6:10+14 \"Returned expression has type `Set<any>`.\" | 5:22+8 \"Function expects return type `Set<string>`.\" | 6:3+6",
-  "alias-union-member-eager.ts typescript(no-unsafe-return) 6:10+14 \"Returned expression has type `Set<any>`.\" | 5:22+28 \"Function expects return type `Set<string>`.\" | 6:3+6",
-  "circular-initializer.ts typescript(no-unsafe-return) 4:27+6 \"Returned expression has type `any`.\" | 4:24+2",
-  "circular-return-types.ts typescript(no-unsafe-return) 5:10+6 \"Returned expression has type `any`.\" | 5:3+6",
-  "circular-return-types.ts typescript(no-unsafe-return) 8:10+6 \"Returned expression has type `any`.\" | 8:3+6",
-  "constructor-return-any.ts typescript(no-unsafe-return) 7:12+8 \"Returned expression has type `any`.\" | 7:5+6",
-  "custom-thenable-any.ts typescript(no-unsafe-return) 10:10+1 \"Returned expression has type `Thenable`.\" | 10:3+6",
-  "disable-directive-arrow-body.ts typescript(no-unsafe-return) 7:3+8 \"Returned expression has type `any`.\" | 5:21+2",
-  "error-missing-module.ts typescript(no-unsafe-return) 6:10+5 \"Returned expression has type `error`.\" | 6:3+6",
-  "error-undeclared-identifier.ts typescript(no-unsafe-return) 5:10+12 \"Returned expression has type `error`.\" | 5:3+6",
-  "error-unresolved-type-name.ts typescript(no-unsafe-return) 6:10+5 \"Returned expression has type `error`.\" | 6:3+6",
-  "getter-unknown.ts typescript(no-unsafe-return) 7:12+8 \"Returned expression has type `any`.\" | 6:16+7 \"Function expects return type `unknown`.\" | 7:5+6",
-  "jsx-attribute.tsx typescript(no-unsafe-return) 5:35+14 \"Returned expression has type `Set<any>`.\" | 4:42+11 \"Function expects return type `Set<string>`.\" | 5:32+2",
-  "nested-intersection-thenable.ts typescript(no-unsafe-return) 5:10+1 \"Returned expression has type `Promise<any> | undefined`.\" | 5:3+6",
-  "optional-parameter-callback.ts typescript(no-unsafe-return) 5:12+14 \"Returned expression has type `Set<any>`.\" | 4:34+11 \"Function expects return type `Set<string>`.\" | 5:9+2",
-  "optional-property-assignment.ts typescript(no-unsafe-return) 5:19+14 \"Returned expression has type `Set<any>`.\" | 4:36+11 \"Function expects return type `Set<string>`.\" | 5:16+2",
-  "report-range-return-statement.ts typescript(no-unsafe-return) 6:10+29 \"Returned expression has type `any`.\" | 6:3+6",
-  "sentinel.ts typescript(no-unsafe-return) 3:10+13 \"Returned expression has type `any`.\" | 3:3+6",
-  "sentinel.ts typescript(no-unsafe-return) 5:36+13 \"Returned expression has type `any`.\" | 5:33+2",
-  "sentinel.ts typescript(no-unsafe-return) 7:10+14 \"Returned expression has type `Set<any>`.\" | 6:39+11 \"Function expects return type `Set<string>`.\" | 7:3+6",
-  "tuple-any-element.ts typescript(no-unsafe-return) 6:10+10 \"Returned expression has type `[any]`.\" | 5:22+8 \"Function expects return type `[string]`.\" | 6:3+6",
-  "union-null-assignment.ts typescript(no-unsafe-return) 5:17+14 \"Returned expression has type `Set<any>`.\" | 4:21+11 \"Function expects return type `Set<string>`.\" | 5:14+2",
-  "union-two-function-types.ts typescript(no-unsafe-return) 5:32+14 \"Returned expression has type `Set<any>`.\" | 4:22+11 \"Function expects return type `Set<string>`.\" | 5:29+2",
-  "union-undefined-variable.ts typescript(no-unsafe-return) 4:57+14 \"Returned expression has type `Set<any>`.\" | 4:24+11 \"Function expects return type `Set<string>`.\" | 4:54+2"
- ],
- "audit/no-unsafe-type-assertion/default": [
-  "angle-bracket-operand-on-next-line.ts typescript(no-unsafe-type-assertion) 6:3+5 \"Original expression has type `unknown`.\" | 5:22+6 \"Asserted type is `string`.\" | 5:21+8",
-  "catch-variable-unknown.ts typescript(no-unsafe-type-assertion) 7:3+5 \"Original expression has type `unknown`.\" | 7:12+3 \"Asserted type is `any`.\" | 7:9+6",
-  "circular-implicit-any.ts typescript(no-unsafe-type-assertion) 6:11+4 \"Original expression has type `any`.\" | 6:19+6 \"Asserted type is `string`.\" | 6:16+9",
-  "computed-class-member-name.ts typescript(no-unsafe-type-assertion) 6:4+3 \"Original expression has type `string`.\" | 6:11+4 \"Asserted type is `\\\"id\\\"`.\" | 6:8+7",
-  "deferred-alias-receiver.ts typescript(no-unsafe-type-assertion) 7:23+6 \"Original expression has type `Set<any>`.\" | 7:33+11 \"Asserted type is `Set<string>`.\" | 7:30+14",
-  "deferred-nested-in-alias.ts typescript(no-unsafe-type-assertion) 9:22+6 \"Original expression has type `Set<any>`.\" | 9:32+8 \"Asserted type is `Set<string>`.\" | 9:29+11",
-  "disable-next-line-before-statement.ts typescript(no-unsafe-type-assertion) 6:21+11 \"Original expression has type `unknown`.\" | 8:6+6 \"Asserted type is `string`.\" | 8:3+9",
-  "error-typed-asserted.ts typescript(no-unsafe-type-assertion) 4:21+3 \"Original expression has type `\\\"x\\\"`.\" | 4:28+11 \"Asserted type is `error`.\" | 4:25+14",
-  "error-typed-asserted.ts typescript(no-unsafe-type-assertion) 6:24+3 \"Original expression has type `Set<MissingType>`.\" | 6:31+11 \"Asserted type is `Set<string>`.\" | 6:28+14",
-  "error-typed-expression.ts typescript(no-unsafe-type-assertion) 4:21+12 \"Original expression has type `error`.\" | 4:37+6 \"Asserted type is `string`.\" | 4:34+9",
-  "fresh-object-in-array.ts typescript(no-unsafe-type-assertion) 4:21+16 \"Original expression has type `{ a: number; b: number; }[]`.\" | 4:41+15 \"Asserted type is `{ a: number; }[]`.\" | 4:38+18",
-  "fresh-object-in-conditional.ts typescript(no-unsafe-type-assertion) 5:20+34 \"Original expression has type `{ a: number; b: number; } | { a: number; }`.\" | 5:58+13 \"Asserted type is `{ a: number; }`.\" | 5:55+16",
-  "heritage-clause.ts typescript(no-unsafe-type-assertion) 5:31+5 \"Original expression has type `unknown`.\" | 5:40+16 \"Asserted type is `new () => object`.\" | 5:37+19",
-  "jsx-attribute.tsx typescript(no-unsafe-type-assertion) 13:33+5 \"Original expression has type `unknown`.\" | 13:42+6 \"Asserted type is `string`.\" | 13:39+9",
-  "jsx-attribute.tsx typescript(no-unsafe-type-assertion) 13:51+5 \"Original expression has type `unknown`.\" | 13:60+6 \"Asserted type is `number`.\" | 13:57+9",
-  "sentinel.ts typescript(no-unsafe-type-assertion) 2:21+5 \"Original expression has type `unknown`.\" | 2:30+6 \"Asserted type is `string`.\" | 2:27+9",
-  "sentinel.ts typescript(no-unsafe-type-assertion) 4:22+8 \"Original expression has type `any`.\" | 4:34+6 \"Asserted type is `number`.\" | 4:31+9",
-  "sentinel.ts typescript(no-unsafe-type-assertion) 5:22+4 \"Original expression has type `string`.\" | 5:30+3 \"Asserted type is `any`.\" | 5:27+6",
-  "tuple-readonly-target.ts typescript(no-unsafe-type-assertion) 6:21+4 \"Original expression has type `[any, string]`.\" | 6:29+16 \"Asserted type is `[string, string]`.\" | 6:26+19",
-  "type-parameter-constrained-by-type-parameter.ts typescript(no-unsafe-type-assertion) 5:10+5 \"Original expression has type `T`.\" | 5:19+1 \"Asserted type is `U`.\" | 5:16+4",
-  "type-parameter-constrained-by-type-parameter.ts typescript(no-unsafe-type-assertion) 8:10+5 \"Original expression has type `string`.\" | 8:19+1 \"Asserted type is `V`.\" | 8:16+4",
-  "unresolved-import.ts typescript(no-unsafe-type-assertion) 5:21+5 \"Original expression has type `error`.\" | 5:30+6 \"Asserted type is `string`.\" | 5:27+9"
  ],
  "audit/unbound-method/default": [
   "decorator-member.ts typescript(unbound-method) 9:8+4 \"This reference may be unbound and lose `this` context\" | 9:2+10",

@@ -362,10 +362,21 @@ impl PatchTask {
                             dep_id,
                             &pkg,
                             reads_bundle,
-                        ) {
-                            // --offline and not cached: already reported / skipped; nothing to patch
-                            Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
-                            other => other?.unwrap_or_else(|| unreachable!()),
+                        )
+                        .map(|task| task.map(core::ptr::from_mut::<crate::NetworkTask>))
+                        {
+                            Ok(task) => task.unwrap_or_else(|| unreachable!()),
+                            Err(err) => {
+                                // The bundler's turn waits for this download, which never comes.
+                                if reads_bundle {
+                                    manager.bundle_arrived(task_id);
+                                }
+                                return match err {
+                                    // --offline and not cached: already reported / skipped; nothing to patch
+                                    crate::network_task::ForTarballError::Offline => Ok(()),
+                                    err => Err(err.into()),
+                                };
+                            }
                         };
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);

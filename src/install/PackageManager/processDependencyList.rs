@@ -159,10 +159,11 @@ fn read_contained_package_json(package_dir: &[u8], folder: &[u8]) -> bun_sys::Ma
 
 impl PackageManager {
     /// Appends `package` and queues its dependencies, or reuses one of its name and resolution.
+    /// What the task read of a bundler's `node_modules` is moved out of `data`.
     fn append_extracted_package(
         &mut self,
         mut package: Package,
-        data: &ExtractData,
+        data: &mut ExtractData,
         package_id: &mut PackageID,
     ) -> Package {
         if let Some(existing_id) =
@@ -223,6 +224,9 @@ impl PackageManager {
         if self.is_bundler(&package) {
             // The package is extracted, so nothing is left to wait for but its turn.
             self.wait_for_bundle(package.meta.id, None);
+            if let Some(bundle) = data.bundle.take() {
+                self.keep_bundle(package.meta.id, bundle);
+            }
         } else {
             bun_core::handle_oom(
                 (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
@@ -407,7 +411,7 @@ impl PackageManager {
         &mut self,
         package_id: &mut PackageID,
         resolution: &Resolution,
-        data: &ExtractData,
+        data: &mut ExtractData,
         log_level: LogLevel,
     ) -> Option<Package> {
         match resolution.tag {
@@ -600,7 +604,7 @@ impl PackageManager {
         let Some((row, task_id)) = next else {
             return false;
         };
-        let Some(arrived) = self.remote_packages.arrived.remove(&task_id) else {
+        let Some(mut arrived) = self.remote_packages.arrived.remove(&task_id) else {
             return false;
         };
 
@@ -609,7 +613,7 @@ impl PackageManager {
         let Some(package) = self.process_extracted_tarball_package(
             &mut package_id,
             &arrived.resolution,
-            &arrived.data,
+            &mut arrived.data,
             log_level,
         ) else {
             return true;
@@ -658,12 +662,12 @@ impl PackageManager {
         });
     }
 
-    /// Keeps what a task read of the bundler `package_id` until the bundler's turn.
+    /// Keeps what a task read of the bundler `package_id` until the bundler's turn. More than one
+    /// task can read a git package that `bun update` adds again, and they read the same commit.
     #[cold]
     pub(crate) fn keep_bundle(&mut self, package_id: PackageID, contents: Box<BundleContents>) {
         let mut waiting = self.waiting_bundlers.iter_mut();
         if let Some(bundler) = waiting.find(|bundler| bundler.package_id == package_id) {
-            debug_assert!(bundler.contents.is_none(), "one task reads a bundler");
             bundler.contents = Some(contents);
         }
     }
@@ -675,6 +679,24 @@ impl PackageManager {
         for bundler in &mut self.waiting_bundlers {
             if bundler.extracts == Some(task_id) {
                 bundler.extracts = None;
+            }
+        }
+    }
+
+    /// The task `task_id` has extracted a tarball. If a bundler waits for it, what the task read
+    /// of the bundler is moved out of `bundle` and kept until the bundler's turn. A git, GitHub
+    /// or tarball package is not waiting yet: `append_extracted_package` keeps its `bundle`.
+    #[cold]
+    pub(crate) fn bundle_extracted(
+        &mut self,
+        task_id: Task::Id,
+        bundle: &mut Option<Box<BundleContents>>,
+    ) {
+        let mut waiting = self.waiting_bundlers.iter_mut();
+        if let Some(bundler) = waiting.find(|bundler| bundler.extracts == Some(task_id)) {
+            bundler.extracts = None;
+            if let Some(contents) = bundle.take() {
+                bundler.contents = Some(contents);
             }
         }
     }
@@ -736,10 +758,28 @@ impl PackageManager {
         true
     }
 
-    /// Queues the rows of a bundler, as `on_first_resolution` queues those of any other package.
+    /// Binds a bundler to what its tarball ships, and queues its rows as `on_first_resolution`
+    /// queues those of any other package. `Lockfile::bind_bundle` has bound the bundled ones, which
+    /// `bind_row` leaves as they are.
     fn take_bundle_turn(&mut self, index: usize) {
-        let bundler = self.waiting_bundlers.swap_remove(index);
-        let rows = self.lockfile.packages.items_dependencies()[bundler.package_id as usize];
+        let mut bundler = self.waiting_bundlers.swap_remove(index);
+        // The task that extracted the bundler could not read what it ships. A `ReadBundle` task
+        // and `folder_resolver` report theirs and keep nothing.
+        let failed_read = (bundler.contents.as_mut()).and_then(|contents| contents.error.take());
+        if let Some(error) = failed_read {
+            let name = self.lockfile.packages.items_name()[bundler.package_id as usize];
+            bun_ast::add_error_pretty!(
+                self.log_mut(),
+                None,
+                bun_ast::Loc::EMPTY,
+                "{} reading the bundled dependencies of <b>{}<r>",
+                crate::Error::from(error).name(),
+                bun_core::fmt::for_terminal(bstr::BStr::new(self.lockfile.str(&name))),
+            );
+        }
+        let rows = bun_core::handle_oom(
+            (self.lockfile).bind_bundle(bundler.package_id, bundler.contents.as_deref()),
+        );
         bun_core::handle_oom(
             (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
                 rows,

@@ -445,8 +445,8 @@ pub(crate) struct WaitingBundler {
     /// The task of this resolve that extracts the package's tarball, or that reads the package in
     /// the cache. `None` once the task has ended, or if there is none.
     pub(crate) extracts: Option<Task::Id>,
-    /// What the package ships in its own `node_modules`, once a `Task::Job::ReadBundle` has read
-    /// it.
+    /// What the package ships in its own `node_modules`, once the task that extracted the package
+    /// or a `Task::Job::ReadBundle` has read it. `Lockfile::bind_bundle` binds the rows to it.
     pub(crate) contents: Option<Box<crate::bundle::BundleContents>>,
 }
 

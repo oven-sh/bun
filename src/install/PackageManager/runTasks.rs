@@ -960,7 +960,7 @@ pub(crate) fn run_tasks(
                 manager.extracted_count += 1;
                 bun_core::analytics::Features::extracted_packages_inc();
                 if manager.waits_for_bundles() {
-                    manager.bundle_arrived(task.id);
+                    manager.bundle_extracted(task.id, &mut data.bundle);
                 }
 
                 if let Caller::HoistedLinker(installer) = &mut caller {

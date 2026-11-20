@@ -1223,8 +1223,10 @@ fn request_ahead(this: &mut PackageManager) {
 /// Requests what the row `id` of `item` will need when its turn comes, and looks ahead from it.
 fn request_row_ahead(this: &mut PackageManager, id: DependencyID, item: Lockfile::QueuedRows) {
     let row = queued_row(this, id, item);
-    // Most names come up many times, and one request serves all of them.
+    // Most names come up many times, and one request serves all of them. A bundled row asks for
+    // nothing: see `bind_row`.
     if row.behavior.is_optional_peer()
+        || row.behavior.is_bundled()
         || (row.version.try_npm().is_some_and(|npm| !npm.is_alias)
             && this.look_ahead.seen.contains_key(&row.name_hash))
     {
@@ -1915,6 +1917,12 @@ pub(crate) fn bind_row(
     is_root: bool,
 ) -> crate::Result<Row> {
     if dependency.behavior.is_optional_peer() {
+        return Ok(Row::Done);
+    }
+    // A bundled dependency is what its parent's tarball ships, which `Lockfile::bind_bundle` has
+    // bound it to. If the tarball ships none, it stays unresolved. Only an import of the runtime
+    // that misses it resolves it from the registry.
+    if dependency.behavior.is_bundled() && !is_root {
         return Ok(Row::Done);
     }
 

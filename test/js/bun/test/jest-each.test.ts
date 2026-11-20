@@ -59,6 +59,117 @@ describe("does not return zero", () => {
   expect(it.each([1, 2])("wat", () => {})).toBeUndefined();
 });
 
+// jest-each spreads the rows of a table only if every row is an array: `table.every(Array.isArray)`.
+// The expected calls are what Jest 30.5.2 prints for these files, but for the table with a hole.
+it("passes each row as one argument if a row of the table is not an array", async () => {
+  const values = (name: string) =>
+    `test.each(["", [1, 2]])("${name} %p", function () { console.log("${name} " + JSON.stringify(Array.from(arguments))); });`;
+  using dir = tempDir("jest-each-rows", {
+    "bun-test.test.js": `
+      import { afterAll, describe, test } from "bun:test";
+
+      const calls = { value: [], done: [], table: [], proxy: [], hole: [], describe: [] };
+      const shown = arg => (typeof arg === "function" ? "<done>" : arg === undefined ? "<undefined>" : arg);
+      const record = (label, args) => calls[label].push(Array.from(args, shown));
+      afterAll(() => console.log("bun:test " + JSON.stringify(calls)));
+
+      test.each([null, "", [], [1, 2], {}])("value %p", function (value) {
+        record("value", arguments);
+        if (typeof value === "function") value();
+      });
+      // The row is one argument, so a second parameter is \`done\`.
+      test.each([[], 1])("done %#", (value, done) => {
+        record("done", [value, done]);
+        done();
+      });
+      // Every row is an array: the rows are spread, and the parameter past the empty row is \`done\`.
+      test.each([[1, 2], []])("table %#", function (first) {
+        record("table", arguments);
+        if (typeof first === "function") first();
+      });
+      // A Proxy of an array is an array for Array.isArray(), so this table is spread.
+      test.each([[1, 2], new Proxy([3, 4], {})])("proxy %#", function () {
+        record("proxy", arguments);
+      });
+      // \`every()\` skips a hole, so this table is spread too. The hole is an \`undefined\` row. Jest fails on it.
+      test.each([[1, 2], , [3, 4]])("hole %#", function () {
+        record("hole", arguments);
+      });
+      describe.each([0, [5, 6]])("describe %p", function () {
+        record("describe", arguments);
+        test("inner", () => {});
+      });
+    `,
+    "globals.test.js": values("globals"),
+    "jest-globals.test.js": `import { test } from "@jest/globals";\n${values("@jest/globals")}`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "bun-test.test.js", "globals.test.js", "jest-globals.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const printedBy = (name: string) =>
+    stdout
+      .split("\n")
+      .filter(line => line.startsWith(name + " "))
+      .map(line => JSON.parse(line.slice(name.length + 1)));
+  expect({
+    "bun:test": printedBy("bun:test"),
+    "globals": printedBy("globals"),
+    "@jest/globals": printedBy("@jest/globals"),
+    titles: stderr
+      .split("\n")
+      .filter(line => line.startsWith("(pass) ") || line.startsWith("(fail) "))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+    exitCode,
+  }).toEqual({
+    "bun:test": [
+      {
+        value: [[null], [""], [[]], [[1, 2]], [{}]],
+        done: [
+          [[], "<done>"],
+          [1, "<done>"],
+        ],
+        table: [[1, 2], ["<done>"]],
+        proxy: [
+          [1, 2],
+          [3, 4],
+        ],
+        hole: [[1, 2], ["<undefined>"], [3, 4]],
+        describe: [[0], [[5, 6]]],
+      },
+    ],
+    "globals": [[""], [[1, 2]]],
+    "@jest/globals": [[""], [[1, 2]]],
+    titles: [
+      "(pass) value null",
+      '(pass) value ""',
+      "(pass) value []",
+      "(pass) value [ 1, 2 ]",
+      "(pass) value {}",
+      "(pass) done 0",
+      "(pass) done 1",
+      "(pass) table 0",
+      "(pass) table 1",
+      "(pass) proxy 0",
+      "(pass) proxy 1",
+      "(pass) hole 0",
+      "(pass) hole 1",
+      "(pass) hole 2",
+      "(pass) describe 0 > inner",
+      "(pass) describe [ 5, 6 ] > inner",
+      '(pass) globals ""',
+      "(pass) globals [ 1, 2 ]",
+      '(pass) @jest/globals ""',
+      "(pass) @jest/globals [ 1, 2 ]",
+    ],
+    exitCode: 0,
+  });
+});
+
 describe.concurrent("titles", () => {
   async function titlesOf(cases: [title: string, table: string][], prelude = "") {
     using dir = tempDir("jest-each-titles", {
@@ -339,6 +450,11 @@ describe.concurrent("titles", () => {
         ["$a 100%% %# %$ %s", `[{ a: 1 }]`],
         ["$a", `[{ a: "%s $b", b: 2 }]`],
         ["$a $b %s", `[[{ a: 1 }, { b: 2 }]]`],
+        // In a table of arrays, `$name` reads the first value of the row. Jest leaves these two titles as written.
+        ["$0 $# $length", `[[[5, 6], 1]]`],
+        ["case $#", `[[["a"], 1], [["b"], 2]]`],
+        // An array that is the whole row is a value, also behind a Proxy. Jest leaves these titles as written too.
+        ["$0 $#", `[0, [7], new Proxy([8], {})]`],
         ["$a $#", `[1, "s", null, [1]]`],
       ]),
     ).toEqual({
@@ -370,6 +486,12 @@ describe.concurrent("titles", () => {
         "1 100% 0 1 { a: 1 }",
         "%s $b",
         "1 $b { a: 1 }",
+        "5 0 2",
+        "case 0",
+        "case 1",
+        "$0 $#",
+        "$0 $#",
+        "$0 $#",
         "$a $#",
         "$a $#",
         "$a $#",

@@ -830,19 +830,7 @@ impl Linux {
                 let name: &[u8] = ev.name().unwrap_or_default();
 
                 let is_dir_child = ev.mask & IN::ISDIR != 0;
-                let event_type: WatchEventKind = if ev.mask
-                    & (IN::CREATE
-                        | IN::DELETE
-                        | IN::DELETE_SELF
-                        | IN::MOVE_SELF
-                        | IN::MOVED_FROM
-                        | IN::MOVED_TO)
-                    != 0
-                {
-                    WatchEventKind::Rename
-                } else {
-                    WatchEventKind::Change
-                };
+                let is_structural = ev.mask & !(IN::ATTRIB | IN::MODIFY | IN::ISDIR) != 0;
 
                 // Dispatch to every owner of this wd. The recursive branch below calls
                 // `addOne`/`walkAndAdd`, which insert into `wd_map` via `getOrPut` and
@@ -863,6 +851,19 @@ impl Linux {
                     };
                     let watcher = &mut watchers[id];
                     let watcher_path = watcher.path.as_bytes();
+
+                    // libuv: a directory's attribute change is "rename" (IN_ISDIR is
+                    // outside IN_ATTRIB|IN_MODIFY). node's recursive watcher drops it.
+                    let event_type = if is_structural {
+                        WatchEventKind::Rename
+                    } else if !is_dir_child {
+                        WatchEventKind::Change
+                    } else if watcher_recursive {
+                        oi += 1;
+                        continue;
+                    } else {
+                        WatchEventKind::Rename
+                    };
 
                     // Build the path relative to this owner's root.
                     let rel: &[u8] = if watcher.is_file {

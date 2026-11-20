@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { once } from "node:events";
 import { GCProfiler, getHeapStatistics, isStringOneByteRepresentation } from "node:v8";
 import { Worker } from "node:worker_threads";
@@ -348,30 +348,25 @@ describe("v8.getHeapStatistics", () => {
   });
 
   // total_heap_size_executable is half of the used size. A 32-bit shift wraps it from 2 GiB, and again from 4 GiB.
-  test.concurrent("reports sizes above 2 GiB", async () => {
+  // The pages of the buffers are not written, so they take no memory. Windows commits them, so it does not run this.
+  test.concurrent.skipIf(isWindows)("reports sizes above 2 GiB", async () => {
     const size = 2 ** 31 + 4096;
     const readings = (await runChild(/* js */ `
       const { getHeapStatistics } = require("node:v8");
       const buffers = [];
       const readings = [];
       for (let count = 1; count <= 2; count++) {
-        try {
-          // The pages are not written, so they take no memory where the system does not commit them.
-          buffers.push(new ArrayBuffer(${size}));
-        } catch {
-          break;
-        }
+        buffers.push(new ArrayBuffer(${size}));
         Bun.gc(true);
         const { used_heap_size, total_heap_size_executable } = getHeapStatistics();
-        readings.push({ used_heap_size, total_heap_size_executable });
+        readings.push({ buffers: buffers.length, used_heap_size, total_heap_size_executable });
       }
-      console.log(JSON.stringify(buffers.length === 2 ? readings : "the machine cannot reserve the buffers"));
-    `)) as { used_heap_size: number; total_heap_size_executable: number }[] | string;
+      console.log(JSON.stringify(readings));
+    `)) as { buffers: number; used_heap_size: number; total_heap_size_executable: number }[];
 
-    if (typeof readings === "string") return;
-    expect(readings).toHaveLength(2);
-    for (const [index, { used_heap_size, total_heap_size_executable }] of readings.entries()) {
-      expect(used_heap_size).toBeGreaterThanOrEqual((index + 1) * size);
+    expect(readings.map(reading => reading.buffers)).toEqual([1, 2]);
+    for (const { buffers, used_heap_size, total_heap_size_executable } of readings) {
+      expect(used_heap_size).toBeGreaterThanOrEqual(buffers * size);
       expect(total_heap_size_executable).toBe(Math.floor(used_heap_size / 2));
     }
   });

@@ -7,7 +7,7 @@ use super::related::FileSpan;
 use super::shape::{SpreadSymbolOptions, assignment_declaration};
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, UNREACHABLE};
-use crate::program::{EntityNameLookup, alias_like_expression};
+use crate::program::{EntityNameLookup, Transient, alias_like_expression};
 use smallvec::SmallVec;
 use std::rc::Rc;
 
@@ -224,6 +224,17 @@ enum IteratorMethod {
     Next,
     Return,
     Throw,
+}
+
+/// The symbol of a property, as what has its `Parent` and its `Declarations`.
+#[derive(Copy, Clone)]
+pub(super) enum PropSymbol {
+    /// A member, or an export of a module or a namespace.
+    Declared(Sym),
+    /// A property written in an object literal, whose `__object` parent the binder doesn't create.
+    InLiteral(FileId, hir::PropId),
+    /// The `prototype` of this class, which nothing declares.
+    PrototypeOf(Sym),
 }
 
 impl<'p, 's> Checker<'p, 's> {
@@ -789,13 +800,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `cloneTypeAsModuleType` assigns the type of the symbol it creates. A symbol created by
         // `combineValueAndTypeSymbols` has the type of the value.
-        if let Some((alias, is_combined)) = self.files().alias_of_transient_symbol(sym)
-            && let Some(ty) = if is_combined {
-                self.symbol_from_variable(alias).map(|(object, name)| {
-                    self.type_of_alias_target(AliasTarget::Property(object, name, None))
-                })
-            } else {
-                self.type_of_namespace_import(alias)
+        if let Some(created) = self.files().transient(sym)
+            && let Some(ty) = match created {
+                Transient::Combined { alias, .. } => {
+                    self.symbol_from_variable(alias).map(|(object, name)| {
+                        self.type_of_alias_target(AliasTarget::Property(object, name, None))
+                    })
+                }
+                Transient::ModuleClone { alias, .. } => self.type_of_namespace_import(alias),
             }
         {
             return ty;
@@ -1194,8 +1206,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let target = self.resolve_alias(alias).symbol()?;
-        let (_, is_combined) = files.alias_of_transient_symbol(target)?;
-        is_combined.then_some(target)
+        matches!(files.transient(target)?, Transient::Combined { .. }).then_some(target)
     }
 
     /// `getSymbolFlags`
@@ -1648,15 +1659,60 @@ impl<'p, 's> Checker<'p, 's> {
         Some((object, name))
     }
 
+    /// `valueSymbol` of `combineValueAndTypeSymbols` for `alias`: its `Parent` and `Declarations` come first.
+    pub(super) fn value_of_combined_symbol(&mut self, alias: Sym) -> Option<PropSymbol> {
+        let (module, name) = self.imported_from_export_equals(alias)?;
+        let (object, property) = self.exported_property(module, name)?;
+        self.symbol_of_prop(object, property)
+    }
+
+    /// `valueSymbol.Declarations` of `combineValueAndTypeSymbols` for `alias`, which come before those of the type.
+    pub(super) fn declarations_of_combined_value(
+        &mut self,
+        alias: Sym,
+    ) -> List<'p, (FileId, Decl)> {
+        match self.value_of_combined_symbol(alias) {
+            Some(PropSymbol::Declared(value)) => self.files().decls_of(value),
+            Some(PropSymbol::InLiteral(file, property)) => {
+                List::One((file, Decl::Property(property)))
+            }
+            Some(PropSymbol::PrototypeOf(_)) | None => List::default(),
+        }
+    }
+
+    /// What has the `Parent` of `property`, a property of `object`. `None` if no one declaration has it.
+    pub(super) fn symbol_of_prop(&self, object: TypeId, property: &Prop) -> Option<PropSymbol> {
+        match Self::value_declaration(property) {
+            Some(&PropSource::Symbol(symbol)) => Some(PropSymbol::Declared(symbol)),
+            Some(&PropSource::Literal(file, written)) => Some(PropSymbol::InLiteral(file, written)),
+            Some(_) => None,
+            // `bindClassLikeDeclaration`: `prototypeSymbol.Parent = symbol`
+            None if self.is_prototype_of_class(property) => match *self.data(object) {
+                TypeData::Anon {
+                    origin: Origin::ClassStatic(class),
+                    ..
+                } => Some(PropSymbol::PrototypeOf(class)),
+                _ => None,
+            },
+            None => None,
+        }
+    }
+
     /// The type of the value of `module`, which has `export = value`, if that type has a property
     /// `name`.
     fn owner_of_exported_property(&mut self, module: Sym, name: Atom) -> Option<TypeId> {
+        Some(self.exported_property(module, name)?.0)
+    }
+
+    /// `owner_of_exported_property`, and the property.
+    fn exported_property(&mut self, module: Sym, name: Atom) -> Option<(TypeId, &'p Prop<'p>)> {
         let value = self.resolve_external_module_symbol(module);
         let ty = self.type_of_alias_target(value);
         if self.is_any(ty) {
             return None;
         }
-        self.get_property_of_type_ex(ty, name, true).map(|_| ty)
+        let (property, _) = self.get_property_of_type_ex(ty, name, true)?;
+        Some((ty, property))
     }
 
     /// `symbolFromModule` of `getExternalModuleMember` when the module doesn't export a `default`,

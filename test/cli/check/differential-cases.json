@@ -18892,5 +18892,551 @@
       "a.ts": "declare function box<A extends any[], R>(o: { f: (...args: A) => R; args: A }): R;\ndeclare const c: boolean;\nfunction h(this: unknown, p: string | number) {\n    return p;\n}\nlet s: string | number = 1;\nouter: for (;;) {\n    for (;;) {\n        s = h.apply(null, ([s]));\n        if (c) continue outer;\n        if (!c) break outer;\n    }\n}\nlet t: string | number = 1;\nouter: for (;;) {\n    for (;;) {\n        t = h.apply(null, c ? [t] : [t]);\n        if (c) continue outer;\n        if (!c) break outer;\n    }\n}\nlet u: string | number = 1;\nouter: for (;;) {\n    for (;;) {\n        u = box({ f: h, args: [u] });\n        if (c) continue outer;\n        if (!c) break outer;\n    }\n}\nconst sentinel: number = \"\";\nexport {};\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
+  },
+  "name-combined-from-export-equals-p1": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Test { x: number }\n  interface Static { Test: string; make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-p2": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Test { x: number }\n  interface Static { Test: string; make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\ninterface Test { y: string }\nexport const n: Test = foo.make()\nexport function f() { return foo.make() }\nexport class C { p = foo.make(); m() { return foo.make() } }\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-p3": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: { Test: string; make: typeof make };\ndeclare namespace foo {\n  interface Test { x: number }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-p4": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.A & foo.B;\ndeclare namespace foo {\n  interface Test { x: number }\n  interface A { Test: string; make: typeof make }\n  interface B { Test: string }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-p5": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: { [K in \"Test\" | \"make\"]: K extends \"make\" ? typeof make : string };\ndeclare namespace foo {\n  interface Test { x: number }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-p6": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static<string>;\ndeclare namespace foo {\n  interface Test { x: number }\n  interface Static<T> { Test: T; make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-p7": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare class K { Test: string; make: typeof make }\ndeclare const foo: K;\ndeclare namespace foo {\n  interface Test { x: number }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-p8": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  type Test = { x: number };\n  class Kls { k: 1 }\n  interface Static { Test: string; Kls: number; make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test, Kls } from \"./index\";\ndeclare function make(): [Test, Kls];\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-p10": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Test { x: number }\n  namespace NS { interface I { i: 1 } }\n  interface Static { Test: string; NS: string; make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import { NS, Test } from 'foo'\nexport let x: NS.Missing;\nexport let y: Test.Missing;\nexport let z: NS.I = null!;\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-p11": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static<1> | foo.Static<2>;\ndeclare namespace foo {\n  interface Test { x: number }\n  namespace NS { interface I { i: 1 } }\n  interface Static<T> { Test: T; NS: T; make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo, { NS } from 'foo'\nexport const made = foo.make()\nexport let x: NS.Missing;\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-p12": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\nimport other = require(\"./other\");\ndeclare const foo: other.Static;\ndeclare namespace foo {\n  interface Test { x: number }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/other.d.ts": "export interface Static { Test: string; make: typeof import(\"./make\") }\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-p13": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Test { x: number }\n  interface Static { Test: string; make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "node_modules/foo/re.d.ts": "export { Test } from \"./index\";\nimport { Test } from \"./index\";\nexport declare function make2(): Test;\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import { make2 } from 'foo/re.js'\nimport type { Test } from 'foo/re.js'\nexport const made = make2()\nexport declare const t: Test\nexport const u = t\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-p14": {
+    "files": {
+      "node_modules/foo/index.d.ts": "declare const foo: foo.Static;\ndeclare namespace foo {\n  interface Test { x: number }\n  interface Static { Test: string }\n}\nexport = foo;\n",
+      "node_modules/foo/mk.d.ts": "import { Test } from \"./index\";\nexport { Test };\nexport declare function make3(): Test;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import { make3 } from 'foo/mk.js'\nexport const made = make3()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-s1": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import other = require(\"./other\");\ndeclare const foo: typeof other.v;\ndeclare namespace foo {\n  interface Test { x: number }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/other.d.ts": "declare class K { Test: string; make: typeof import(\"./make\") }\nexport declare const v: K;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-s1b": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import other = require(\"./other\");\ndeclare const foo: typeof other.v;\ndeclare namespace foo {\n  interface Test { x: number }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/other.d.ts": "declare class K { Test: string; make: typeof import(\"./make\") }\nexport declare const v: K;\nexport {};\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-s2": {
+    "files": {
+      "node_modules/foo/index.d.ts": "declare const foo: foo.Static<string>;\ndeclare namespace foo {\n  interface Test { x: number }\n  interface Static<T> { Test: T }\n}\nexport = foo;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import { Test } from 'foo'\n\nexport const v = Test\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-s2b": {
+    "files": {
+      "node_modules/foo/index.d.ts": "declare const foo: foo.Static<string>;\ndeclare namespace foo {\n  interface Static<T> { Test: T }\n}\nexport = foo;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import { Test } from 'foo'\nexport const n: number = Test\nexport const v = Test\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-s3": {
+    "files": {
+      "node_modules/foo/index.d.ts": "declare const foo: foo.Static;\ndeclare namespace foo {\n  interface Test { x: number }\n  interface Opt { o: number }\n  interface Static { Test(): string; Opt?: string }\n}\nexport = foo;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import { Test, Opt } from 'foo'\nexport const n: number = Test\nexport const o: number = Opt\nexport const t: Test = { x: 1 }\nexport const v = Test\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-s4": {
+    "files": {
+      "node_modules/foo/index.d.ts": "declare class K { Test: string }\ndeclare const foo: K;\ndeclare namespace foo {\n  interface Test { x: number }\n}\nexport = foo;\n",
+      "node_modules/foo/mk.d.ts": "import { Test } from \"./index\";\nexport { Test };\nexport declare function make3(): Test;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import { make3 } from 'foo/mk.js'\nexport const made = make3()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e1": {
+    "files": {
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from './lib.cjs'\nexport const made = foo.make()\n",
+      "src/lib.cts": "import make = require(\"./make.cjs\");\nconst foo = { Test: \"x\", make };\nnamespace foo { export interface Test { x: number } }\nexport = foo;\n",
+      "src/make.cts": "import { Test } from \"./lib.cjs\";\ndeclare function make(): Test;\nexport = make;\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e1b": {
+    "files": {
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from './lib.cjs'\nexport const made = foo.make()\n",
+      "src/lib.cts": "import make = require(\"./make.cjs\");\nconst foo = { Test: \"x\", make } as const;\nnamespace foo { export interface Test { x: number } }\nexport = foo;\n",
+      "src/make.cts": "import { Test } from \"./lib.cjs\";\ndeclare function make(): Test;\nexport = make;\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e1c": {
+    "files": {
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from './lib.cjs'\nexport const made = foo.make()\n",
+      "src/lib.cts": "import make = require(\"./make.cjs\");\nconst foo = { ...{ Test: \"x\" }, make };\nnamespace foo { export interface Test { x: number } }\nexport = foo;\n",
+      "src/make.cts": "import { Test } from \"./lib.cjs\";\ndeclare function make(): Test;\nexport = make;\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e3": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Test { x: number }\n  interface Static { \"Test\": string; make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e4": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: typeof foo.K;\ndeclare namespace foo {\n  interface Test { x: number }\n  class K { static Test: string; static make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e5": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Test { x: number }\n  interface Static { Test(): string; make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e6": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Test { x: number }\n  namespace inner { interface Base { Test: string } }\n  interface Static extends inner.Base { make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e7": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const k: \"Test\";\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Test { x: number }\n  interface Static { [k]: string; make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e8": {
+    "files": {
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import { make } from \"mk\"\nexport const made = make()\n",
+      "src/g.d.ts": "declare namespace graphics { interface Point { x: number; y: number } }\ndeclare var graphics: { Point: new (x: number, y: number) => graphics.Point };\ndeclare module \"graphics\" { export = graphics; }\ndeclare module \"mk\" { import { Point } from \"graphics\"; export function make(): Point; }\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e9": {
+    "files": {
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import { Point } from \"graphics\"\nexport function f(p: Point) { return [p] }\nexport const made = f(null!)\nexport const ctor = Point\n",
+      "src/g.d.ts": "declare namespace graphics { interface Point { x: number; y: number } }\ndeclare var graphics: { Point: new (x: number, y: number) => graphics.Point };\ndeclare module \"graphics\" { export = graphics; }\ndeclare module \"mk\" { import { Point } from \"graphics\"; export function make(): Point; }\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e10": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: ({ Test: string; make: typeof make });\ndeclare namespace foo {\n  interface Test { x: number }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e11": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ntype S = { Test: string; make: typeof make };\ndeclare const foo: S;\ndeclare namespace foo {\n  interface Test { x: number }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e12": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare class K { \"Test\": string; make: typeof make }\ndeclare const foo: K;\ndeclare namespace foo {\n  interface Test { x: number }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e14": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import ns = require(\"./ns\");\ndeclare const foo: typeof ns;\ndeclare namespace foo {\n  interface Test { x: number }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/ns.d.ts": "export { Test } from \"./x\";\nexport declare const make: typeof import(\"./make\");\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "node_modules/foo/x.d.ts": "export declare const Test: string;\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e15": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import ns = require(\"./ns\");\ndeclare const foo: typeof ns;\ndeclare namespace foo {\n  interface Test { x: number }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/ns.d.ts": "export declare const Test: string;\nexport declare const make: typeof import(\"./make\");\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-e17": {
+    "files": {
+      "node_modules/foo/index.d.ts": "export {}\n",
+      "node_modules/foo/other.d.ts": "declare class K { Test: string }\nexport declare const v: K;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import { v } from \"foo/other.js\"\nexport const made = v\nexport const arr = [v]\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-q1": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace other { interface Inner { x: number } }\ndeclare namespace foo {\n  export import Test = other.Inner;\n  interface Static { Test: string; make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-q1a": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Inner { x: number }\n  export { Inner as Test };\n  interface Static { Test: string; make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-q1b": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Static { Test: string; make: typeof make }\n}\ninterface Inner { x: number }\nexport type { Inner as Test };\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-q1c": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Static { Test: string; make: typeof make }\n}\ninterface Test { x: number }\nexport type { Test };\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-q1d": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Static { Other: string; make: typeof make }\n}\ninterface Inner { x: number }\nexport type { Inner as Test };\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-q1f": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Test { x: number }\n  interface Static { Test: string; make: typeof make }\n}\ninterface Unrelated { u: number }\nexport type { Unrelated };\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-q1h": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Static { Test: string; make: typeof make }\n}\ninterface Test { x: number }\nexport type { Test };\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nconst made = foo.make()\nexport const bad: { x: string } = made\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-q1i": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ninterface Hidden { Test: string; make: typeof make }\ndeclare const foo: Hidden;\ninterface Test { x: number }\nexport type { Test };\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-q1j": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ninterface Hidden { Test: string; make: typeof make }\ndeclare const foo: Hidden;\ndeclare namespace foo { interface Test { x: number } }\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-q1k": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Static { Test: string; make: typeof make }\n}\ninterface Test { x: number }\nexport type { Test };\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\ninterface Test { y: string }\nexport const n: Test = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-q3": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare const foo: foo.Static;\ndeclare namespace foo {\n  interface Test { x: number }\n  interface Static { Test(): void; make: typeof make }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-q4": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare namespace inner { const Test: string; const make: typeof import(\"./make\") }\ndeclare const foo: typeof inner;\ndeclare namespace foo {\n  interface Test { x: number }\n}\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-q5": {
+    "files": {
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from './lib.cjs'\nexport const made = foo.make()\n",
+      "src/lib.cts": "import make = require(\"./make.cjs\");\nconst foo = { Test: \"s\", make };\nnamespace foo {\n  export interface Test { x: number }\n}\nexport = foo;\n",
+      "src/make.cts": "import { Test } from \"./lib.cjs\";\nfunction make(): Test { return { x: 1 } }\nexport = make;\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-f1": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ninterface Hidden { Test: string; make: typeof make }\ndeclare const foo: Hidden;\ninterface Inner { x: number }\ndeclare namespace foo { export { Inner as Test } }\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "out7/a.d.mts": "import foo from 'foo';\nexport declare const made: foo.Test;\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-f1_ctl": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ninterface Hidden { Other: string; make: typeof make }\ndeclare const foo: Hidden;\ninterface Inner { x: number }\ndeclare namespace foo { export { Inner as Test } }\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { Test } from \"./index\";\ndeclare function make(): Test;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}\n",
+      "out7/a.d.mts": "import foo from 'foo';\nexport declare const made: foo.Test;\n",
+      "package.json": "{\"name\":\"r\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from 'foo'\nexport const made = foo.make()\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"types\": [], \"lib\": [\"es2022\"]}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-prototype-a1": {
+    "files": {
+      "node_modules/foo/index.d.ts": "declare class K {}\ndeclare const foo: typeof K;\ndeclare namespace foo { type prototype = string }\nexport = foo;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"types\":\"index.d.ts\"}\n",
+      "out-tsc/a.d.mts": "import { prototype } from \"foo\";\nexport declare const made: {};\nexport declare let t: prototype;\nexport type P = typeof prototype;\nexport declare function f(): {};\n",
+      "package.json": "{\"name\":\"project\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import { prototype } from \"foo\";\nexport const made = prototype;\nexport let t: prototype = \"x\";\nexport type P = typeof prototype;\nconst bad: number = prototype;\nconst bad2: number = t;\nexport function f() { return prototype; }\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"lib\": [\"es2022\"], \"types\": []}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-prototype-p1": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import make = require(\"./make\");\ndeclare class K { static make: typeof make; m(): void }\ndeclare const foo: typeof K;\ndeclare namespace foo { interface prototype { x: number } }\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { prototype } from \"./index\";\ndeclare function make(): prototype;\nexport = make;\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"types\":\"index.d.ts\"}\n",
+      "out-b/a.aot.ts": "// src/a.mts\nimport foo from \"foo\";\nconst made = foo.make();\nexport {\n  made\n};\n",
+      "out-b/a.d.mts": "import foo from \"foo\";\nexport declare const made: import(\"foo\").prototype;\n",
+      "out-b/a.js": "// src/a.mts\nimport foo from \"foo\";\nconst made = foo.make();\nexport {\n  made\n};\n",
+      "package.json": "{\"name\":\"project\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from \"foo\";\nexport const made = foo.make();\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"lib\": [\"es2022\"], \"types\": []}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-prototype-p2": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import other = require(\"./other\");\ndeclare const foo: typeof other.K;\ndeclare namespace foo { interface prototype { x: number } }\nexport = foo;\n",
+      "node_modules/foo/make.d.ts": "import { prototype } from \"./index\";\ndeclare function make(): prototype;\nexport = make;\n",
+      "node_modules/foo/other.d.ts": "export class K { static make: typeof import(\"./make\"); m(): void }\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"types\":\"index.d.ts\"}\n",
+      "out-b/a.aot.ts": "// src/a.mts\nimport foo from \"foo\";\nconst made = foo.make();\nexport {\n  made\n};\n",
+      "out-b/a.d.mts": "import foo from \"foo\";\nexport declare const made: import(\"foo\").prototype;\n",
+      "out-b/a.js": "// src/a.mts\nimport foo from \"foo\";\nconst made = foo.make();\nexport {\n  made\n};\n",
+      "out-tsc/a.d.mts": "export declare const made: import(\"foo/other.js\").K.prototype;\n",
+      "package.json": "{\"name\":\"project\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import foo from \"foo\";\nexport const made = foo.make();\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"lib\": [\"es2022\"], \"types\": []}, \"include\": [\"src\"]}\n"
+    }
+  },
+  "name-combined-from-export-equals-prototype-p5": {
+    "files": {
+      "node_modules/foo/index.d.ts": "import other = require(\"./other\");\ndeclare const foo: typeof other.K;\ndeclare namespace foo { namespace prototype { interface I { i: 1 } } }\nexport = foo;\n",
+      "node_modules/foo/other.d.ts": "export class K { m(): void }\n",
+      "node_modules/foo/package.json": "{\"name\":\"foo\",\"version\":\"1.0.0\",\"types\":\"index.d.ts\"}\n",
+      "package.json": "{\"name\":\"project\",\"private\":true,\"type\":\"module\"}\n",
+      "src/a.mts": "import { prototype } from \"foo\";\nexport let x: prototype.Missing;\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"target\": \"esnext\", \"module\": \"nodenext\", \"strict\": true, \"declaration\": true, \"noEmit\": true, \"skipLibCheck\": true, \"rootDir\": \"src\", \"lib\": [\"es2022\"], \"types\": []}, \"include\": [\"src\"]}\n"
+    }
   }
 }

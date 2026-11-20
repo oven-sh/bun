@@ -4411,6 +4411,8 @@ impl VirtualMachine {
             (hooks.end_hot_run_timers)(self, cancel);
         }
         self.hot_reload_counter.update(|n| n + 1);
+        // A directory event can take the entry point off the watchlist: watch it before the read.
+        self.add_main_to_watcher_if_needed();
         // reload_entry_point() stores into pending_internal_promise whenever it returns a promise.
         if let Err(err) = self.reload_entry_point(self.main()) {
             self.reject_failed_reload(err);

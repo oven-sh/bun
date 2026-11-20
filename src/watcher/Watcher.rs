@@ -122,6 +122,11 @@ pub trait WatcherContext: Send {
         evictions: &mut Evictions,
     );
     fn on_error(&mut self, err: sys::Error);
+    /// Whether a directory watch also reports a write to a file in it. `Watcher::init` asks once.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn watches_directory_writes(&self) -> bool {
+        true
+    }
 }
 
 impl Watcher {
@@ -137,7 +142,10 @@ impl Watcher {
             ctx,
         });
         let this = Arc::new(Watcher {
-            #[cfg(not(windows))]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            platform: Platform::new(top_level_dir)?
+                .with_directory_writes(thread.ctx.watches_directory_writes()),
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             platform: Platform::new(top_level_dir)?,
             #[cfg(windows)]
             port: Arc::clone(&thread.platform.port),

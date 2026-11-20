@@ -1680,14 +1680,14 @@ fn enqueue_row(manager: &mut PackageManager, row: DependencyID) {
 }
 
 /// Runs once everything else is resolved, because a dependency that `clean` is going to discard
-/// must not send a request to the registry. A bundled dependency stays as bun.lock has it: see
-/// `is_held_by_bundle`.
+/// must not send a request to the registry. A bundled dependency that a bun.lockb of Bun 1.4 or
+/// older links to such a workspace loses the link and stays unresolved: the workspace is gone,
+/// and the resolver binds no bundled dependency.
 #[cold]
 #[inline(never)]
 fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
     let rows: Vec<DependencyID> = {
         let lockfile: &Lockfile = &manager.lockfile;
-        let dependencies = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
         let pkg_resolutions = lockfile.packages.items_resolution();
         let root_edges = lockfile.packages.items_resolutions()[0].get(resolutions);
@@ -1706,7 +1706,6 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
                     .get(target as usize)
                     .is_some_and(|resolution| resolution.tag == ResolutionTag::Workspace)
                     && !root_edges.contains(&target)
-                    && !is_held_by_bundle(lockfile, owner as PackageID, &dependencies[row as usize])
                     && reached
                         .get_or_insert_with(|| {
                             reachable::packages(lockfile, resolutions, reachable::Options::all(0))
@@ -1727,7 +1726,12 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
         }
         any = true;
         manager.lockfile.buffers.resolutions[row as usize] = invalid_package_id;
-        enqueue_row(manager, row);
+        if !manager.lockfile.buffers.dependencies[row as usize]
+            .behavior
+            .is_bundled()
+        {
+            enqueue_row(manager, row);
+        }
     }
     if any {
         manager.drain_dependency_list();

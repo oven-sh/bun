@@ -61,7 +61,7 @@ test.skipIf(isWindows)("a file changes when its tool's path resolves to another 
   } as Config;
   const read = (name: "cc" | "cxx" | "hostCc" | "ld") => readFileSync(toolIdentityFile(cfg, name), "utf8");
 
-  writeToolIdentities(cfg);
+  writeToolIdentities(cfg, {});
   // Nothing of this machine in it: the same tool gives the same file anywhere.
   expect(read("cc")).toBe("clang version 21.1.8 (https://github.com/llvm/llvm-project 2078da43e25a)\n");
   expect(read("cxx")).toBe(read("cc"));
@@ -72,14 +72,14 @@ test.skipIf(isWindows)("a file changes when its tool's path resolves to another 
 
   // Same tools: every file is left alone, so nothing that depends on one rebuilds.
   const written = (["cc", "cxx", "hostCc", "ld"] as const).map(name => statSync(toolIdentityFile(cfg, name)).mtimeMs);
-  writeToolIdentities(cfg);
+  writeToolIdentities(cfg, {});
   expect((["cc", "cxx", "hostCc", "ld"] as const).map(name => statSync(toolIdentityFile(cfg, name)).mtimeMs)).toEqual(
     written,
   );
 
   rmSync(current);
   symlinkSync(join(root, "v23"), current, "dir");
-  writeToolIdentities(cfg);
+  writeToolIdentities(cfg, {});
   expect(read("cc")).toBe("clang version 23.1.1 (https://github.com/llvm/llvm-project 6dfe1677ab8d)\n");
   // The linker was not replaced: its file is untouched, and what only it produced stays.
   expect(statSync(toolIdentityFile(cfg, "ld")).mtimeMs).toBe(written[3]);
@@ -160,6 +160,8 @@ test.skipIf(isWindows).concurrent.each([
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: says, stderr: "" });
+  // An ask that took 5 seconds says so on stderr (scripts/build/probe.ts), and a busy machine is not what this is about.
+  const said = stderr.replace(/^`.+` took \d+s to answer\n/gm, "");
+  expect({ stdout: stdout.trim(), stderr: said }).toEqual({ stdout: says, stderr: "" });
   expect(exitCode).toBe(0);
 });

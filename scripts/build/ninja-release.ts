@@ -69,7 +69,17 @@ function whyNotRunnable(ninja: string): string | undefined {
  */
 export function ninjaIfPresent(cfg: NinjaConfig): string {
   const present = presentNinja(cfg);
-  return present !== undefined && whyNotRunnable(present) === undefined ? present : "ninja";
+  return present === undefined ? "ninja" : pinnedOrPath(present);
+}
+
+const say = (line: string) => process.stderr.write(`${nameColor("ninja", "[ninja]")} ${line}\n`);
+
+/** `pinned`, or `ninja` from PATH when this machine will not run it. Never silently: the other ninja can start the build log over. */
+function pinnedOrPath(pinned: string): string {
+  const why = whyNotRunnable(pinned);
+  if (why === undefined) return pinned;
+  say(`${pinned} cannot run on this machine (${why}); building with the ninja on PATH, without Rust pipelining`);
+  return "ninja";
 }
 
 /**
@@ -82,13 +92,8 @@ export function ninjaIfPresent(cfg: NinjaConfig): string {
  * `[WebKit] extracted to …`), on stderr like those: stdout is the built program's under build-then-exec.
  */
 export async function ensureNinja(cfg: NinjaConfig): Promise<string> {
-  const say = (line: string) => process.stderr.write(`${nameColor("ninja", "[ninja]")} ${line}\n`);
   const pinned = presentNinja(cfg) ?? (await fetchNinja(cfg, say));
-  if (pinned === undefined) return "ninja";
-  const why = whyNotRunnable(pinned);
-  if (why === undefined) return pinned;
-  say(`${pinned} cannot run on this machine (${why}); building with the ninja on PATH, without Rust pipelining`);
-  return "ninja";
+  return pinned === undefined ? "ninja" : pinnedOrPath(pinned);
 }
 
 /** Fetch the pinned release into the build cache. Undefined (after saying why) when that is not possible. */

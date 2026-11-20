@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { isGlibc, tempDir } from "harness";
+import { chmodSync } from "node:fs";
+import { join } from "node:path";
 
 import { binaryExpectations } from "../../scripts/build/binary-expectations.ts";
 import {
@@ -94,4 +96,31 @@ test("glibc reads them from 2.36 on", () => {
     true,
     true,
   ]);
+});
+
+// With --relr the build asks the host's glibc for its version, to know whether the host can run the binary for the
+// smoke test. A getconf that fails says there is no such glibc. One that was killed has not said that, and the ask
+// fails configure (scripts/build/probe.ts).
+test.skipIf(!isGlibc)("the host's glibc is asked through getconf, and no answer is not a no", () => {
+  using dir = tempDir("build-relr-getconf", {
+    "reads-them/getconf": "#!/bin/sh\necho 'glibc 2.36'\n",
+    "too-old/getconf": "#!/bin/sh\necho 'glibc 2.35'\n",
+    "fails/getconf": "#!/bin/sh\nexit 1\n",
+    // `kill` is not a builtin of every shell, and PATH is the fixture's.
+    "killed/getconf": "#!/bin/sh\nPATH=/bin:/usr/bin\nkill -KILL $$\n",
+  });
+  const canRunOnHost = (name: string) => {
+    chmodSync(join(String(dir), name, "getconf"), 0o755);
+    const { PATH } = process.env;
+    process.env.PATH = join(String(dir), name);
+    try {
+      const arch = process.arch === "arm64" ? "aarch64" : "x64";
+      return config({ relr: true, arch }, String(dir)).canRunOnHost;
+    } finally {
+      process.env.PATH = PATH;
+    }
+  };
+
+  expect(["reads-them", "too-old", "fails"].map(canRunOnHost)).toEqual([true, false, false]);
+  expect(() => canRunOnHost("killed")).toThrow("`getconf GNU_LIBC_VERSION` was killed by SIGKILL");
 });

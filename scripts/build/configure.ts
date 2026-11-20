@@ -504,7 +504,7 @@ async function generate<N extends string | undefined>(
   // (the discovered clang++ from `tools.ts`) so a contributor running `cargo`
   // directly / rust-analyzer use the same toolchain the ninja build does.
   generateCargoConfig(cfg);
-  writeToolIdentities(cfg);
+  writeToolIdentities(cfg, toolchain.toolIdentities);
   mark("generateCargoConfig");
 
   // Perl check: LUT codegen (create-hash-table.ts) shells out to the

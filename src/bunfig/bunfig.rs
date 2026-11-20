@@ -1831,6 +1831,16 @@ impl<'a> Parser<'a, '_> {
             }
         }
 
+        if let Some(react_compiler) = serve_obj.get(b"reactCompiler") {
+            match react_compiler.as_bool() {
+                Some(v) => self.ctx.args.serve_react_compiler = v,
+                None => self.add_error(
+                    react_compiler.loc,
+                    b"Expected reactCompiler to be a boolean",
+                )?,
+            }
+        }
+
         if let Some(minify) = serve_obj.get(b"minify") {
             if let Some(v) = minify.as_bool() {
                 self.ctx.args.serve_minify_syntax = Some(v);

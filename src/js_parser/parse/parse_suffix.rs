@@ -390,6 +390,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let list_loc = p.parse_call_args()?;
         let loc = left.loc;
         let target = *left;
+        if old_optional_chain.is_none()
+            && let ExprData::EIdentifier(callee) = &target.data
+            && p.load_name_from_ref(callee.ref_) == b"eval"
+        {
+            p.mark_parsed_direct_eval();
+        }
         *left = p.new_expr(
             E::Call {
                 target,

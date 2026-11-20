@@ -1578,4 +1578,22 @@ describe("bundler", () => {
       run: { stdout: "1" },
     });
   });
+
+  for (const format of ["cjs", "esm"] as const) {
+    itBundled(`jsx/FastRefreshNamedDefaultHooks-${format}`, {
+      files: {
+        "/index.tsx": `
+          globalThis.$RefreshSig$ = () => fn => fn;
+          globalThis.$RefreshReg$ = fn => { globalThis.registered = fn; };
+          function useThing() { return 1; }
+          export default function Counter() { return useThing(); }
+          console.log(Counter.name, Counter(), globalThis.registered === Counter);
+        `,
+      },
+      backend: "cli",
+      format,
+      reactFastRefresh: true,
+      run: { stdout: "Counter 1 true" },
+    });
+  }
 });

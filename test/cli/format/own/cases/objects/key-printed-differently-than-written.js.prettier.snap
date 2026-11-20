@@ -1,0 +1,95 @@
+------------------
+{ printWidth: 80 }
+------------------
+x = {
+  a: "this string is too long to fit on one line, even when it is on a line by itself",
+  abcd: "this string is too long to fit on one line, even when it is on a line by itself",
+  [0.5]:
+    "this string is too long to fit on one line, even when it is on a line by itself",
+  [5]: "this string is too long to fit on one line, even when it is on a line by itself",
+  [a]: "this string is too long to fit on one line, even when it is on a line by itself",
+  [-0.5]:
+    "this string is too long to fit on one line, even when it is on a line by itself",
+  [!0.5]:
+    "this string is too long to fit on one line, even when it is on a line by itself",
+  [typeof a]:
+    "this string is too long to fit on one line, even when it is on a line by itself",
+  ["ab"]:
+    "this string is too long to fit on one line, even when it is on a line by itself",
+  [a]: "this string is too long to fit on one line, even when it is on a line by itself",
+  [-1]: "this string is too long to fit on one line, even when it is on a line by itself",
+  [a++]:
+    "this string is too long to fit on one line, even when it is on a line by itself",
+  0.5: "this string is too long to fit on one line, even when it is on a line by itself",
+  a: "this string is too long to fit on one line, even when it is on a line by itself",
+};
+x = {
+  a: "this string is too long to fit on one line, even when it is on a line by itself",
+  // A comment in the object: every key is printed with its comments.
+  [0.5]:
+    "this string is too long to fit on one line, even when it is on a line by itself",
+};
+const {
+  a: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+} = c;
+const {
+  [5]: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+} = c;
+const {
+  [0.5]:
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+} = c;
+({
+  a: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+} = c);
+({
+  [5]: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+} = c);
+({
+  [0.5]:
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+} = c);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+x = {
+  a: "this string is too long to fit on one line, even when it is on a line by itself",
+  abcd: "this string is too long to fit on one line, even when it is on a line by itself",
+  [0.5]: "this string is too long to fit on one line, even when it is on a line by itself",
+  [5]: "this string is too long to fit on one line, even when it is on a line by itself",
+  [a]: "this string is too long to fit on one line, even when it is on a line by itself",
+  [-0.5]: "this string is too long to fit on one line, even when it is on a line by itself",
+  [!0.5]: "this string is too long to fit on one line, even when it is on a line by itself",
+  [typeof a]: "this string is too long to fit on one line, even when it is on a line by itself",
+  ["ab"]: "this string is too long to fit on one line, even when it is on a line by itself",
+  [a]: "this string is too long to fit on one line, even when it is on a line by itself",
+  [-1]: "this string is too long to fit on one line, even when it is on a line by itself",
+  [a++]: "this string is too long to fit on one line, even when it is on a line by itself",
+  0.5: "this string is too long to fit on one line, even when it is on a line by itself",
+  a: "this string is too long to fit on one line, even when it is on a line by itself",
+};
+x = {
+  a: "this string is too long to fit on one line, even when it is on a line by itself",
+  // A comment in the object: every key is printed with its comments.
+  [0.5]: "this string is too long to fit on one line, even when it is on a line by itself",
+};
+const {
+  a: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+} = c;
+const {
+  [5]: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+} = c;
+const {
+  [0.5]: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+} = c;
+({ a: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb } =
+  c);
+({
+  [5]: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+} = c);
+({
+  [0.5]: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+} = c);
+
+===================== End =====================

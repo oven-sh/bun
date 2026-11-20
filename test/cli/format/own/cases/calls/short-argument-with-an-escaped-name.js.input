@@ -1,0 +1,11 @@
+const x = f(\u{61}\u{61}\u{61}\u{61}\u{61}).ppppppppppppppppppppppppppppppppppppppppppppppp.qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq;
+const y = \u{66}\u{66}\u{66}\u{66}\u{66}().ppppppppppppppppppppppppppppppppppppppppppppppp.qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq;
+\u{41}bc.ddddddddddddddddddddddd().eeeeeeeeeeeeeeeeeeeeeeee().ffffffffffffffffffffffffff().gggggggggggggggggg();
+\u{61}.ddddddddddddddddddddddd().eeeeeeeeeeeeeeeeeeeeeeee().ffffffffffffffffffffffffff().gggggggggggggggggg();
+a[\u{41}bc].ddddddddddddddddddddddd().eeeeeeeeeeeeeeeeeeeeeeee().ffffffffffffffffffffffffff().gggggggggggggggggg();
+const aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = r\u{65}quire("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+ñá.ddddddddddddddddddddddd().eeeeeeeeeeeeeeeeeeeeeeee().ffffffffffffffffffffffffff().gggggggggggggggggg();
+x = Bo\u{6f}lean(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);
+d\u{65}fine(["aaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "ccccccccccccccccccccccccc"], function (a, b, c) {});
+b\u{65}foreEach(function (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) {});
+x = gr\u{61}phql(schema, `{ a { b } }`);

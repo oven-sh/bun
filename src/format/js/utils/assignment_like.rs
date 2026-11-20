@@ -10,7 +10,6 @@ use super::typecast::{
     comments_of_outermost_node, has_comments, has_leading_own_line_comment, is_cast_target,
 };
 use crate::js::format::{ExprOptions, FormatExpr, FormatTypeAnnotation};
-use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::print::arrow_function_expression::FormatJsArrowFunctionExpressionOptions;
 use crate::js::print::binary_like_expression::BinaryLikeExpression;
 use crate::js::print::class::write_comments_between_modifiers;
@@ -68,50 +67,118 @@ fn comments_stay_around_operator(f: &Formatter<'_>) -> bool {
 /// next to nothing.
 const MIN_OVERLAP_FOR_BREAK: u32 = 3;
 
-/// The printed width of the computed `key`, with its brackets, if it's a single piece of text, with no group in it and
-/// nothing that can break. Only such a key can be short. Prettier checks that `cleanDoc(keyDoc)` is a string.
-///
-/// oxfmt measures the source text in the brackets, whatever it is, without the comments around it.
-fn computed_key_width<'a>(key: Key<'a>, f: &Formatter<'a>) -> Option<usize> {
-    if f.options().flavor.is_oxfmt() {
-        return Some(f.source_text().span_width(key.inner_span(f.file())) + 2);
-    }
-    let span = key.span(f.file());
-    if let KeyKind::Computed(e) = key.kind() {
-        // A comment in the brackets is a separate piece.
-        return match !f.is_quiet() && has_comments(e, f) {
-            true => None,
-            false => plain_expression_width(e, f).map(|width| width + 2),
-        };
-    }
-    // A template is printed with a `lineSuffixBoundary`.
-    let is_template = f
-        .source_text()
-        .text_for(&span)
-        .get(1..)
-        .is_some_and(|it| it.trim_ascii_start().starts_with(b"`"));
-    (!is_template).then(|| f.source_text().span_width(span))
+/// The width below which a key is short.
+fn text_width_for_break(f: &Formatter<'_>) -> u32 {
+    f.options()
+        .indent_width
+        .value()
+        .saturating_add(MIN_OVERLAP_FOR_BREAK)
 }
 
-/// `{ a /* comment */: b }`: in Prettier a name with a comment is more than one piece of text, so it isn't short. oxfmt
-/// only looks at the name.
-fn comments_make_name_long<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
-    if f.is_quiet() || f.options().flavor.is_oxfmt() {
+/// What [`AssignmentLike::write_left`] knows about Prettier's `isObjectPropertyWithShortKey` once the left side is
+/// written. Prettier measures the printed key: `cleanDoc(keyDoc)` is a string narrower than [`text_width_for_break`].
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum LeftSide {
+    /// Not a key, or a key that's more than one piece of text: never short.
+    NotShort,
+    /// A key that Prettier prints as one string. It's short if the elements written for it are narrower than
+    /// [`text_width_for_break`]: [`is_short_text`].
+    OneString,
+    /// oxfmt measures the key without the comments around it, and finds it short.
+    Short,
+}
+
+impl LeftSide {
+    fn measured(width: usize, f: &Formatter<'_>) -> Self {
+        match width < text_width_for_break(f) as usize {
+            true => LeftSide::Short,
+            false => LeftSide::NotShort,
+        }
+    }
+}
+
+/// True if `elements` are text on one line, which Prettier's `cleanDoc` joins into one string, and that string is
+/// narrower than `threshold`.
+fn is_short_text(elements: &[FormatElement], threshold: u32) -> bool {
+    let mut width = 0;
+    for element in elements {
+        width += match element {
+            FormatElement::Nop | FormatElement::Cursor(_) => 0,
+            FormatElement::Space => 1,
+            FormatElement::Token(token) => token.len() as u32,
+            FormatElement::SourceText(text) | FormatElement::OwnedText(text)
+                if !text.width.is_multiline() =>
+            {
+                text.width.value()
+            }
+            _ => return false,
+        };
+        if width >= threshold {
+            return false;
+        }
+    }
+    true
+}
+
+/// See [`LeftSide`]: the computed `key`, which has just been written with its brackets.
+///
+/// oxfmt measures the source text in the brackets, without the comments around it, so its second run measures
+/// `[0.5]` where the first measured `[.5]`. A key that is one piece of text is measured as printed in that flavor too.
+fn computed_key_side<'a>(key: Key<'a>, f: &Formatter<'a>) -> LeftSide {
+    let is_one_string = is_computed_key_one_string(key, f);
+    if f.options().flavor.is_oxfmt() && (!is_one_string || computed_key_has_comments(key, f)) {
+        let width = f.source_text().span_width(key.inner_span(f.file())) + 2;
+        return LeftSide::measured(width, f);
+    }
+    match is_one_string {
+        true => LeftSide::OneString,
+        false => LeftSide::NotShort,
+    }
+}
+
+/// True if a comment is printed inside the brackets of the computed `key`: `[a] /* c */:`, `[-/* c */ 1]`.
+fn computed_key_has_comments<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
+    if f.is_quiet() {
         return false;
     }
-    let comments = f.comments().of_name(key.inner_span(f.file()).start);
-    !comments.leading.is_empty() || !comments.trailing.is_empty()
+    let inner_span = key.inner_span(f.file());
+    let owns_comments = match key.kind() {
+        KeyKind::Computed(e) => has_comments(e, f),
+        _ => {
+            let comments = f.comments().of_name(inner_span.start);
+            !comments.leading.is_empty() || !comments.trailing.is_empty()
+        }
+    };
+    owns_comments || f.comments().has_comment_in_span(inner_span)
 }
 
-/// See [`computed_key_width`]: `a`, `1`, `-1`, `!a`, `typeof a`, `a++`, `a!`, `await a`, `a as T`,
-/// `a<T>`. Not `a.b`, `a()`, `` `a` ``, `[]`.
-fn plain_expression_width<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<usize> {
-    let mut width = 0;
+/// See [`LeftSide`]: a key that isn't computed, which [`write_member_name`] has just written and measured as `width`.
+/// oxfmt only looks at the name. Prettier also sees the comments around it, which are in the written elements.
+fn member_name_side(width: usize, f: &Formatter<'_>) -> LeftSide {
+    match f.options().flavor.is_oxfmt() {
+        true => LeftSide::measured(width, f),
+        false => LeftSide::OneString,
+    }
+}
+
+/// True if the computed `key`, with its brackets, is printed as a single piece of text: Prettier's `cleanDoc(keyDoc)`
+/// is a string. Decided from the syntax, because the IR has no group around `{}`, `[]`, a function or a template where
+/// Prettier's document has one.
+fn is_computed_key_one_string<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
+    if let KeyKind::Computed(e) = key.kind() {
+        return is_plain_expression(e, f);
+    }
+    // A template is printed with a `lineSuffixBoundary`.
+    !f.source_text()
+        .text_for(&key.inner_span(f.file()))
+        .starts_with(b"`")
+}
+
+/// See [`is_computed_key_one_string`]: `a`, `1`, `-1`, `!a`, `typeof a`, `a++`, `a!`, `await a`, `a as T`, `a<T>`.
+/// Not `a.b`, `a()`, `` `a` ``, `[]`.
+fn is_plain_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let mut current = e;
     loop {
-        if current != e && expression_needs_parentheses(current, f) {
-            width += 2;
-        }
         current = match current.kind() {
             ExprKind::Ident(_)
             | ExprKind::This
@@ -121,52 +188,36 @@ fn plain_expression_width<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<usize> {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
-            | ExprKind::Regex(_) => {
-                return Some(width + f.source_text().span_width(current.span()));
-            }
-            ExprKind::ImportMeta => return Some(width + "import.meta".len()),
-            ExprKind::NewTarget => return Some(width + "new.target".len()),
-            // An operand with comments is in a group.
-            ExprKind::Unary { operand, .. } if has_comments(operand, f) => return None,
-            ExprKind::Unary { op, operand } => {
-                width += op.as_str().len() + usize::from(op.is_keyword());
-                operand
-            }
-            ExprKind::NonNull(inner) => {
-                width += current.non_null_count();
-                inner
-            }
-            ExprKind::Await(argument) => {
-                width += "await ".len();
-                argument
-            }
+            | ExprKind::Regex(_)
+            | ExprKind::ImportMeta
+            | ExprKind::NewTarget => return true,
+            ExprKind::Unary { operand, .. } => operand,
+            ExprKind::NonNull(inner) => inner,
+            ExprKind::Await(argument) => argument,
             ExprKind::As { .. } | ExprKind::AsConst(_) if current.is_angle_bracket_assertion() => {
-                return None;
+                return false;
             }
-            ExprKind::AsConst(inner) => {
-                width += " as const".len();
-                inner
-            }
-            ExprKind::As { expr, ty } => {
-                width += " as ".len() + plain_type_width(ty, f)?;
-                expr
-            }
-            ExprKind::Satisfies { expr, ty } => {
-                width += " satisfies ".len() + plain_type_width(ty, f)?;
+            ExprKind::AsConst(inner) => inner,
+            ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
+                if !is_plain_type(ty, f) {
+                    return false;
+                }
                 expr
             }
             ExprKind::Instantiation { expr, type_args } => {
-                width += plain_type_arguments_width(type_args, f)?;
+                if !is_plain_type_arguments(type_args, f) {
+                    return false;
+                }
                 expr
             }
-            _ => return None,
+            _ => return false,
         };
     }
 }
 
-/// See [`computed_key_width`]: `any`, `"a"`, `A.B`, `A<B>`, `A[]`, `A[B]`, `keyof A`, `typeof a`. Not `A | B`, `[A]`,
-/// `{}`, `` `a` ``. The width is that of the type's source text.
-fn plain_type_width<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> Option<usize> {
+/// See [`is_computed_key_one_string`]: `any`, `"a"`, `A.B`, `A<B>`, `A[]`, `A[B]`, `keyof A`, `typeof a`. Not
+/// `A | B`, `[A]`, `{}`, `` `a` ``.
+fn is_plain_type<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
     let mut rest: SmallVec<[TypeNode<'a>; 4]> = SmallVec::new();
     rest.push(ty);
     while let Some(current) = rest.pop() {
@@ -181,30 +232,31 @@ fn plain_type_width<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> Option<usize> {
             | TypeKind::Import { args, .. }
                 if !args.is_empty() =>
             {
-                plain_type_arguments_width(args, f)?;
+                if !is_plain_type_arguments(args, f) {
+                    return false;
+                }
             }
             TypeKind::Typeof { .. } | TypeKind::Import { .. } => {}
             _ => {
-                name_or_literal_type_width(current, f)?;
+                if !is_name_or_literal_type(current, f) {
+                    return false;
+                }
             }
         }
     }
-    Some(f.source_text().span_width(ty.span()))
+    true
 }
 
 /// `<A>`: a single type argument that's a name, a keyword or a literal is printed without a group.
-fn plain_type_arguments_width<'a>(
-    arguments: List<'a, TypeNode<'a>>,
-    f: &Formatter<'a>,
-) -> Option<usize> {
+fn is_plain_type_arguments<'a>(arguments: List<'a, TypeNode<'a>>, f: &Formatter<'a>) -> bool {
     match (arguments.len(), arguments.first()) {
-        (1, Some(only)) => Some(name_or_literal_type_width(only, f)? + 2),
-        _ => None,
+        (1, Some(only)) => is_name_or_literal_type(only, f),
+        _ => false,
     }
 }
 
-fn name_or_literal_type_width<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> Option<usize> {
-    let is_name_or_literal = match ty.kind() {
+fn is_name_or_literal_type<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
+    match ty.kind() {
         TypeKind::Keyword(_)
         | TypeKind::NumberLit(_)
         | TypeKind::BigIntLit { .. }
@@ -212,8 +264,7 @@ fn name_or_literal_type_width<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> Option
         TypeKind::StringLit(_) => !f.source_text().text_for(&ty.span()).starts_with(b"`"),
         TypeKind::Ref { args, .. } => args.is_empty(),
         _ => false,
-    };
-    is_name_or_literal.then(|| f.source_text().span_width(ty.span()))
+    }
 }
 
 /// A class property's decorators, modifiers, name, `?`, `!` and type.
@@ -328,26 +379,22 @@ impl<'a> AssignmentLike<'a> {
                 return None;
             }
         };
-        if !matches!(key.kind(), KeyKind::Ident(_)) || f.options().quote_properties.is_consistent()
-        {
+        let KeyKind::Ident(name) = key.kind() else {
+            return None;
+        };
+        if f.options().quote_properties.is_consistent() {
             return None;
         }
         let span = key.span(f.file());
-        let text_width_for_break = f
-            .options()
-            .indent_width
-            .value()
-            .saturating_add(MIN_OVERLAP_FOR_BREAK);
-        // Text is never wider than its byte length.
+        let text_width_for_break = text_width_for_break(f);
+        // The name is printed without its escapes, so it's never wider than its source text has bytes.
         let is_short = span.len() < text_width_for_break
-            || f.string_width(f.source_text().text_for(&span)) < text_width_for_break;
+            || f.string_width(name.bytes()) < text_width_for_break;
         Some((NameOnTheLeft::At(span), is_short))
     }
 
-    /// Returns true if the left side is a short name.
-    fn write_left(&self, f: &mut Formatter<'a>) -> bool {
-        let text_width_for_break =
-            f.options().indent_width.value() as usize + MIN_OVERLAP_FOR_BREAK as usize;
+    /// Writes the left side. See [`LeftSide`].
+    fn write_left(&self, f: &mut Formatter<'a>) -> LeftSide {
         match *self {
             AssignmentLike::VariableDeclarator(declarator) => {
                 let (id, ty) = (declarator.pat(), declarator.ty());
@@ -380,49 +427,49 @@ impl<'a> AssignmentLike<'a> {
                 if !f.is_quiet() {
                     write!(f, trailing_comments(id.as_ast_nodes()));
                 }
-                false
+                LeftSide::NotShort
             }
             AssignmentLike::AssignmentExpression(assignment) => {
                 write!(f, assignment.left());
-                false
+                LeftSide::NotShort
             }
             AssignmentLike::ObjectProperty(property) => match property.key() {
                 _ if property.kind() == PropKind::Shorthand => {
                     write!(f, property.value());
-                    false
+                    LeftSide::NotShort
                 }
                 Some(key) if key.is_computed() => {
                     write!(f, ["[", FormatKey::new(key, property.as_ast_nodes()), "]"]);
-                    computed_key_width(key, f).is_some_and(|width| width < text_width_for_break)
+                    computed_key_side(key, f)
                 }
                 Some(key) => {
-                    write_member_name(key, KeyParent::Property(property), f) < text_width_for_break
-                        && !comments_make_name_long(key, f)
+                    let width = write_member_name(key, KeyParent::Property(property), f);
+                    member_name_side(width, f)
                 }
-                None => false,
+                None => LeftSide::NotShort,
             },
             AssignmentLike::BindingProperty(property) => {
                 let node = AstNodes::BindingProperty(property);
                 match property.key() {
                     _ if property.is_shorthand() => {
                         write!(f, FormatBindingPropertyValue(property));
-                        false
+                        LeftSide::NotShort
                     }
                     Some(key) if key.is_computed() => {
                         write!(f, ["[", FormatKey::new(key, node), "]"]);
-                        computed_key_width(key, f).is_some_and(|width| width < text_width_for_break)
+                        computed_key_side(key, f)
                     }
                     Some(key) => {
-                        write_member_name(key, KeyParent::Node(node), f) < text_width_for_break
-                            && !comments_make_name_long(key, f)
+                        let width = write_member_name(key, KeyParent::Node(node), f);
+                        member_name_side(width, f)
                     }
-                    None => false,
+                    None => LeftSide::NotShort,
                 }
             }
             AssignmentLike::PropertyDefinition(property)
             | AssignmentLike::AccessorProperty(property) => {
                 write_property_definition_left(property, f);
-                false
+                LeftSide::NotShort
             }
         }
     }
@@ -536,9 +583,7 @@ impl<'a> AssignmentLike<'a> {
             if e.tag() == ExprTag::Call
                 && !is_type_cast
                 && let AstNodes::CallExpression(call) = e.as_ast_nodes()
-                && call.callee().is_some_and(|callee| {
-                    callee.tag() == ExprTag::Ident && callee.text() == b"require"
-                })
+                && call.callee().is_some_and(is_require)
             {
                 return AssignmentLikeLayout::NeverBreakAfterOperator;
             }
@@ -833,9 +878,14 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
         // on the left side's output.
         let outer_group = f.reserve_tag();
         let left_group = f.reserve_tag();
-        let is_left_short = self.write_left(f);
+        let left_side = self.write_left(f);
         let left = f.elements().get(left_group + 1..).unwrap_or_default();
         let is_left_text = left.len() <= 12 && left.iter().all(is_text_on_one_line);
+        let is_left_short = match left_side {
+            LeftSide::NotShort => false,
+            LeftSide::OneString => is_short_text(left, text_width_for_break(f)),
+            LeftSide::Short => true,
+        };
         let left_may_break = !is_left_text
             && f.elements_from(left_group + 1)
                 .may_directly_break(f.options().flavor);
@@ -883,8 +933,12 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
 /// `require("a")`
 fn is_require_call(e: Expr<'_>) -> bool {
     e.tag() == ExprTag::Call
-        && matches!(e.as_ast_nodes(), AstNodes::CallExpression(call)
-            if call.callee().is_some_and(|callee| callee.tag() == ExprTag::Ident && callee.text() == b"require"))
+        && matches!(e.as_ast_nodes(), AstNodes::CallExpression(call) if call.callee().is_some_and(is_require))
+}
+
+/// The name `require`, however it's escaped in the source.
+fn is_require(callee: Expr<'_>) -> bool {
+    matches!(callee.kind(), ExprKind::Ident(name) if name.is("require"))
 }
 
 impl<'a> AssignmentLike<'a> {
@@ -1132,7 +1186,9 @@ pub(crate) fn is_short_argument<'a>(
         false => bun_core::strings::wtf8_len_utf16(text) as usize,
     };
     match node {
-        AstNodes::IdentifierReference(_) => len(argument.text()) <= threshold,
+        AstNodes::IdentifierReference(_) => {
+            matches!(argument.kind(), ExprKind::Ident(name) if len(name.bytes()) <= threshold)
+        }
         AstNodes::RegExpLiteral(_) => {
             matches!(argument.kind(), ExprKind::Regex(regex) if len(regex.pattern()) <= threshold)
         }
@@ -1155,8 +1211,7 @@ pub(crate) fn is_short_argument<'a>(
         AstNodes::CallExpression(_) => argument.as_call_like().is_some_and(|call| {
             let callee = call.callee();
             call.args().is_empty()
-                && matches!(callee.kind(), ExprKind::Ident(_))
-                && len(callee.text()) <= threshold.saturating_sub(2)
+                && matches!(callee.kind(), ExprKind::Ident(name) if len(name.bytes()) <= threshold.saturating_sub(2))
         }),
         AstNodes::ThisExpression(_)
         | AstNodes::NullLiteral(_)

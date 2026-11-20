@@ -8,8 +8,9 @@ use crate::js::print::template::write_embedded_template_expression;
 use crate::prelude::*;
 use smallvec::SmallVec;
 
+/// True if `e` is one of `names`, however it's escaped in the source.
 fn is_identifier(e: Expr<'_>, names: &[&[u8]]) -> bool {
-    matches!(e.kind(), ExprKind::Ident(_)) && names.contains(&e.text())
+    matches!(e.kind(), ExprKind::Ident(name) if names.contains(&name.bytes()))
 }
 
 /// Returns the nodes whose leading comments can specify the language of the template `e`: the template itself, and an

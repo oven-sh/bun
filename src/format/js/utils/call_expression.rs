@@ -241,20 +241,18 @@ fn is_angular_test_wrapper_expression(e: Expr<'_>) -> bool {
 /// AngularJS's `inject(..)`, and Angular's `async(..)`, `fakeAsync(..)` and `waitForAsync(..)`. `e` is a call.
 pub(crate) fn is_angular_test_wrapper(e: Expr<'_>) -> bool {
     e.callee().is_some_and(|callee| {
-        callee.tag() == ExprTag::Ident
-            && matches!(
-                callee.text(),
-                b"async" | b"inject" | b"fakeAsync" | b"waitForAsync"
-            )
+        matches!(
+            callee.kind(),
+            ExprKind::Ident(name) if name.is_any(&["async", "inject", "fakeAsync", "waitForAsync"])
+        )
     })
 }
 
 fn is_unit_test_set_up_callee(callee: Expr<'_>) -> bool {
-    callee.tag() == ExprTag::Ident
-        && matches!(
-            callee.text(),
-            b"beforeEach" | b"beforeAll" | b"afterEach" | b"afterAll"
-        )
+    matches!(
+        callee.kind(),
+        ExprKind::Ident(name) if name.is_any(&["beforeEach", "beforeAll", "afterEach", "afterAll"])
+    )
 }
 
 /// The names in `a.b.c`, from the left. `None` if there are more than five, or it's anything but names and dots.
@@ -264,7 +262,10 @@ pub(crate) fn callee_name_iterator<'a>(e: Expr<'a>) -> Option<impl Iterator<Item
     for slot in &mut names {
         match current.as_ast_nodes() {
             AstNodes::IdentifierReference(_) => {
-                *slot = Some(current.text());
+                let ExprKind::Ident(name) = current.kind() else {
+                    return None;
+                };
+                *slot = Some(name.bytes());
                 return Some(names.into_iter().rev().flatten());
             }
             AstNodes::StaticMemberExpression(_) => {

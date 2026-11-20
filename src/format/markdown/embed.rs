@@ -14,7 +14,7 @@ fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> b
     ) && template.quasi_count() == 1
         && matches!(e.ast_parent(), AstNodes::TaggedTemplateExpression(tagged)
             if matches!(tagged.kind(), ExprKind::TaggedTemplate(call)
-                if matches!(call.callee().kind(), ExprKind::Ident(_)) && matches!(call.callee().text(), b"md" | b"markdown")))
+                if matches!(call.callee().kind(), ExprKind::Ident(name) if name.is_any(&["md", "markdown"]))))
         && template.cooked(0).is_some()
 }
 

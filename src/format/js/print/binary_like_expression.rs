@@ -121,8 +121,7 @@ impl<'a> BinaryLikeExpression<'a> {
                     callee != self.expr
                         && !call_expression.is_optional()
                         && call.args().len() == 1
-                        && matches!(callee.kind(), ExprKind::Ident(_))
-                        && callee.text() == b"Boolean"
+                        && matches!(callee.kind(), ExprKind::Ident(name) if name.is("Boolean"))
                 })
             }
             _ => false,

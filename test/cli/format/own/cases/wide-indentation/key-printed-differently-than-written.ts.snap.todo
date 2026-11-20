@@ -1,0 +1,109 @@
+-------------------------------
+{ printWidth: 80, tabWidth: 3 }
+-------------------------------
+x = {
+   [a as "'"]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
+   [a as A[B]]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
+   [a satisfies B]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
+   [a<B>]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
+   [a as 0.5]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
+   [a as keyof B]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
+   [a!]: "this string is too long to fit on one line, even when it is on a line by itself",
+   [a as {}]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
+};
+
+--------------------------------
+{ printWidth: 100, tabWidth: 3 }
+--------------------------------
+x = {
+   [a as "'"]: "this string is too long to fit on one line, even when it is on a line by itself",
+   [a as A[B]]: "this string is too long to fit on one line, even when it is on a line by itself",
+   [a satisfies B]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
+   [a<B>]: "this string is too long to fit on one line, even when it is on a line by itself",
+   [a as 0.5]: "this string is too long to fit on one line, even when it is on a line by itself",
+   [a as keyof B]:
+      "this string is too long to fit on one line, even when it is on a line by itself",
+   [a!]: "this string is too long to fit on one line, even when it is on a line by itself",
+   [a as {}]: "this string is too long to fit on one line, even when it is on a line by itself",
+};
+
+-------------------------------
+{ printWidth: 80, tabWidth: 4 }
+-------------------------------
+x = {
+    [a as "'"]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [a as A[B]]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [a satisfies B]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [a<B>]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [a as 0.5]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [a as keyof B]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [a!]: "this string is too long to fit on one line, even when it is on a line by itself",
+    [a as {}]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+};
+
+--------------------------------
+{ printWidth: 100, tabWidth: 4 }
+--------------------------------
+x = {
+    [a as "'"]: "this string is too long to fit on one line, even when it is on a line by itself",
+    [a as A[B]]: "this string is too long to fit on one line, even when it is on a line by itself",
+    [a satisfies B]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [a<B>]: "this string is too long to fit on one line, even when it is on a line by itself",
+    [a as 0.5]: "this string is too long to fit on one line, even when it is on a line by itself",
+    [a as keyof B]:
+        "this string is too long to fit on one line, even when it is on a line by itself",
+    [a!]: "this string is too long to fit on one line, even when it is on a line by itself",
+    [a as {}]: "this string is too long to fit on one line, even when it is on a line by itself",
+};
+
+--------------------------------
+{ printWidth: 80, tabWidth: 10 }
+--------------------------------
+x = {
+          [a as "'"]: "this string is too long to fit on one line, even when it is on a line by itself",
+          [a as A[B]]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
+          [a satisfies B]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
+          [a<B>]: "this string is too long to fit on one line, even when it is on a line by itself",
+          [a as 0.5]: "this string is too long to fit on one line, even when it is on a line by itself",
+          [a as keyof B]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
+          [a!]: "this string is too long to fit on one line, even when it is on a line by itself",
+          [a as {}]: "this string is too long to fit on one line, even when it is on a line by itself",
+};
+
+---------------------------------
+{ printWidth: 100, tabWidth: 10 }
+---------------------------------
+x = {
+          [a as "'"]: "this string is too long to fit on one line, even when it is on a line by itself",
+          [a as A[B]]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
+          [a satisfies B]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
+          [a<B>]: "this string is too long to fit on one line, even when it is on a line by itself",
+          [a as 0.5]: "this string is too long to fit on one line, even when it is on a line by itself",
+          [a as keyof B]:
+                    "this string is too long to fit on one line, even when it is on a line by itself",
+          [a!]: "this string is too long to fit on one line, even when it is on a line by itself",
+          [a as {}]: "this string is too long to fit on one line, even when it is on a line by itself",
+};
+
+===================== End =====================

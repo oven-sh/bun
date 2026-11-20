@@ -179,7 +179,7 @@ impl Decoder {
             pos = pos.saturating_add(used);
             if before_header_crc {
                 let header = rest.get(..used).unwrap_or_default();
-                self.header_crc = crc32_bytes(self.header_crc, header);
+                self.header_crc = crc32(self.header_crc, header);
             }
             if in_header {
                 self.header_len = self.header_len.saturating_add(used);

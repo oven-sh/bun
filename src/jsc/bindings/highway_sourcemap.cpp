@@ -39,6 +39,7 @@
 #include <hwy/foreach_target.h> // Must come before highway.h
 
 #include <hwy/highway.h>
+#include <hwy/cache_control.h>
 #include "highway_dispatch.h"
 
 #include <cstddef>
@@ -125,7 +126,7 @@ alignas(16) static constexpr uint8_t kLutRoll[16] = {
     0x00,
 };
 
-// Indices into the in/out state[10] array (mirrors the Rust-side ParseState).
+// Indices into the in/out state[9] array (mirrors the Rust-side ParseState).
 enum : size_t {
     kStGenLine = 0,
     kStGenCol = 1,
@@ -134,13 +135,12 @@ enum : size_t {
     kStSrcIdx = 4,
     kStNameIdx = 5,
     kStNeedsSort = 6,
-    kStHasNames = 7,
-    kStFastBlocks = 8,
-    kStSlowBlocks = 9,
+    kStFastBlocks = 7,
+    kStSlowBlocks = 8,
 };
 
 // Layout mirror of bun_highway::ParseMappingsState (#[repr(C)]). The kernel
-// indexes `state` as int32_t[10] via the kSt* constants above; the Rust side
+// indexes `state` as int32_t[9] via the kSt* constants above; the Rust side
 // reads named fields. These asserts pin the field order so a reorder on either
 // side fails the build instead of silently mis-seeding the scalar resume.
 struct ParseMappingsState {
@@ -151,11 +151,10 @@ struct ParseMappingsState {
     int32_t src_idx;
     int32_t name_idx;
     int32_t needs_sort;
-    int32_t has_names;
     int32_t fast_blocks;
     int32_t slow_blocks;
 };
-static_assert(sizeof(ParseMappingsState) == 10 * sizeof(int32_t), "ParseMappingsState size changed; update kSt* and the Rust mirror in bun_highway");
+static_assert(sizeof(ParseMappingsState) == 9 * sizeof(int32_t), "ParseMappingsState size changed; update kSt* and the Rust mirror in bun_highway");
 static_assert(offsetof(ParseMappingsState, gen_line) == kStGenLine * sizeof(int32_t), "kStGenLine out of sync with bun_highway::ParseMappingsState");
 static_assert(offsetof(ParseMappingsState, gen_col) == kStGenCol * sizeof(int32_t), "kStGenCol out of sync with bun_highway::ParseMappingsState");
 static_assert(offsetof(ParseMappingsState, orig_line) == kStOrigLine * sizeof(int32_t), "kStOrigLine out of sync with bun_highway::ParseMappingsState");
@@ -163,7 +162,6 @@ static_assert(offsetof(ParseMappingsState, orig_col) == kStOrigCol * sizeof(int3
 static_assert(offsetof(ParseMappingsState, src_idx) == kStSrcIdx * sizeof(int32_t), "kStSrcIdx out of sync with bun_highway::ParseMappingsState");
 static_assert(offsetof(ParseMappingsState, name_idx) == kStNameIdx * sizeof(int32_t), "kStNameIdx out of sync with bun_highway::ParseMappingsState");
 static_assert(offsetof(ParseMappingsState, needs_sort) == kStNeedsSort * sizeof(int32_t), "kStNeedsSort out of sync with bun_highway::ParseMappingsState");
-static_assert(offsetof(ParseMappingsState, has_names) == kStHasNames * sizeof(int32_t), "kStHasNames out of sync with bun_highway::ParseMappingsState");
 static_assert(offsetof(ParseMappingsState, fast_blocks) == kStFastBlocks * sizeof(int32_t), "kStFastBlocks out of sync with bun_highway::ParseMappingsState");
 static_assert(offsetof(ParseMappingsState, slow_blocks) == kStSlowBlocks * sizeof(int32_t), "kStSlowBlocks out of sync with bun_highway::ParseMappingsState");
 
@@ -476,6 +474,7 @@ size_t CountDelimsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len)
 //   out_generated[i] = { gen_line, gen_col }   (LineColumnOffset, repr(C))
 //   out_original[i]  = { orig_line, orig_col } (LineColumnOffset, repr(C))
 //   out_src_idx[i], out_name_idx[i]            (i32)
+// out_name_idx[i] is -1 for a 4-field segment: only a 5th field gives a row a name.
 // out_name_idx may be null (WithoutNames list variant); the kernel still
 // accumulates name_idx in state but skips the per-row store.
 size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
@@ -505,7 +504,6 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
     int32_t src_idx = state[kStSrcIdx];
     int32_t name_idx = state[kStNameIdx];
     int32_t needs_sort = state[kStNeedsSort];
-    int32_t has_names = state[kStHasNames];
 
     // sextets[] is N bytes of decoded base64 plus 16 bytes of slack so a
     // 16-byte shuffle load from `sextets + p` is in-bounds for any p < N.
@@ -542,6 +540,9 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
         comma5 |= (uint64_t { 1 } << i);
     const uint64_t kComma5 = comma5;
     const uint64_t kMask5 = MaskBelow(kSeg5 * 5);
+
+    // 8 cache lines of a { line, column } column.
+    constexpr size_t kPrefetchRows = 64;
 
     // Running output cursors. `os` advances by one per committed row; it
     // is the sole row counter (rows-so-far == os - out_src_idx). `og`/`oo`
@@ -585,7 +586,6 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                           s_ol = orig_line, s_oc = orig_col;
             int32_t sort = 0, range = 0;
             const int8_t* dp = deltas;
-            const int32_t nv = has_names ? name_idx : -1;
             for (size_t k = 0; k < kSeg5; ++k) {
                 const int32_t d0 = dp[0];
                 gen_col = WrapAdd(gen_col, d0);
@@ -601,7 +601,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 oo[2 * k + 1] = orig_col;
                 os[k] = src_idx;
                 if (on)
-                    on[k] = nv;
+                    on[k] = -1;
                 dp += 5;
             }
             if (HWY_UNLIKELY(range < 0)) {
@@ -641,6 +641,12 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
         // 3+-char VLQs and the ';'/invalid cases. On a measured 3.5 MB
         // tsc bundle 99.96% of segments are batch-eligible.
         if (HWY_LIKELY((semi_bits | invalid_bits) == 0 && delim_bits != 0)) {
+            // PERF: this path stores its rows late, after the loads of the staging arrays below stall, so it asks for the output kPrefetchRows ahead. Without that, its cycles per row on output that is not in the cache move by 25% with unrelated edits to this function.
+            hwy::Prefetch(og + 2 * kPrefetchRows);
+            hwy::Prefetch(oo + 2 * kPrefetchRows);
+            hwy::Prefetch(os + kPrefetchRows);
+            if (on)
+                hwy::Prefetch(on + kPrefetchRows);
             uint64_t dm = delim_bits;
             uint64_t cm = cont_bits;
             size_t bp = 0;
@@ -761,9 +767,8 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 std::memcpy(oo, borg, sizeof(int32_t) * 2 * m);
                 std::memcpy(os, bcol_si, sizeof(int32_t) * m);
                 if (on) {
-                    const int32_t nv = has_names ? name_idx : -1;
                     for (size_t i = 0; i < m; ++i)
-                        on[i] = nv;
+                        on[i] = -1;
                 }
             }
 
@@ -948,10 +953,8 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             src_idx = n_src_idx;
             orig_line = n_orig_line;
             orig_col = n_orig_col;
-            if (field_count == 5) {
-                name_idx = WrapAdd(name_idx, d_name);
-                has_names = 1;
-            }
+            // PERF: unconditional. d_name is 0 unless field_count == 5.
+            name_idx = WrapAdd(name_idx, d_name);
 
             og[0] = gen_line;
             og[1] = gen_col;
@@ -962,7 +965,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             oo += 2;
             os += 1;
             if (on) {
-                *on = has_names ? name_idx : -1;
+                *on = field_count == 5 ? name_idx : -1;
                 on += 1;
             }
 
@@ -998,7 +1001,6 @@ done:
     state[kStSrcIdx] = src_idx;
     state[kStNameIdx] = name_idx;
     state[kStNeedsSort] = needs_sort;
-    state[kStHasNames] = has_names;
     return static_cast<size_t>(os - out_src_idx);
 }
 

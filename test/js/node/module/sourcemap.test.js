@@ -1,5 +1,7 @@
 const { test, expect } = require("bun:test");
+const { readFileSync } = require("node:fs");
 const { SourceMap } = require("node:module");
+const { join } = require("node:path");
 const { bunEnv, bunExe, tempDir } = require("harness");
 
 test("SourceMap class exists", () => {
@@ -135,6 +137,100 @@ test("SourceMap with names returns name property correctly", () => {
       "originalSource": "test.js",
     }
   `);
+});
+
+// [generatedLine, generatedColumn, name] of each segment, as findEntry answers it.
+function namesOfSegments(mappings, segments) {
+  const sourceMap = new SourceMap({ version: 3, sources: ["a.ts"], names: ["x", "y"], mappings });
+  return segments.map(([line, column]) => [line, column, sourceMap.findEntry(line, column).name]);
+}
+
+// A segment has a name only when it has a fifth field: the name index of an
+// earlier five-field segment does not carry over to a four-field segment.
+// Each row is the mappings, then [generatedLine, generatedColumn, name] of
+// every segment. The names are the ones Node.js v26.3.0 answers.
+test.each([
+  ["AAAAA,IAAI;", [0, 0, "x"], [0, 4, undefined]],
+  ["AAAAA,CAAC,CAAC;", [0, 0, "x"], [0, 1, undefined], [0, 2, undefined]],
+  ["AAAAA;AAAA;", [0, 0, "x"], [1, 0, undefined]],
+  ["AAAAA,CAAC;AACA,CAAC;", [0, 0, "x"], [0, 1, undefined], [1, 0, undefined], [1, 1, undefined]],
+  ["AAAA,CAACA,CAAC;", [0, 0, undefined], [0, 1, "x"], [0, 2, undefined]],
+  // The name index changes between the four-field segments.
+  ["AAAAA,CAAC,CAACC,CAAC;", [0, 0, "x"], [0, 1, undefined], [0, 2, "y"], [0, 3, undefined]],
+  ["AAAAC,CAAC,CAACD,CAAC;", [0, 0, "y"], [0, 1, undefined], [0, 2, "x"], [0, 3, undefined]],
+  // The running name index survives a four-field segment and a ';'.
+  ["AAAAC,CAAC,CAACA", [0, 0, "y"], [0, 1, undefined], [0, 2, "y"]],
+  ["AAAAC;AACA;AACAA;AACA;", [0, 0, "y"], [1, 0, undefined], [2, 0, "y"], [3, 0, undefined]],
+  // The segments are at generated columns 10, 2 and 6: each row keeps its name when the rows are sorted.
+  ["UAAAC,RAAA,IAAAD;", [0, 2, undefined], [0, 6, "x"], [0, 10, "y"]],
+])("SourceMap gives a four-field segment no name: %s", (mappings, ...segments) => {
+  expect(namesOfSegments(mappings, segments)).toEqual(segments);
+});
+
+// Node.js v26.3.0 reads past the end of the mappings: a fifth field after a
+// four-field segment that ends the string, or a whole segment after a last
+// comma. So it answers names[nameIndex] for the last segment of each row here:
+// "x", "x", "y", "x", "x" and "x". ECMA-426 gives that segment no name.
+// https://github.com/nodejs/node/issues/63795
+test.each([
+  ["AAAAA,CAAC", [0, 0, "x"], [0, 1, undefined]],
+  ["AAAAA,CAAC,", [0, 0, "x"], [0, 1, undefined]],
+  ["AAAAC,CAAC", [0, 0, "y"], [0, 1, undefined]],
+  ["AAAA,CAAC", [0, 0, undefined], [0, 1, undefined]],
+  ["AAAA", [0, 0, undefined]],
+  ["AAAA,", [0, 0, undefined]],
+])("SourceMap gives a four-field segment that ends the mappings no name: %s", (mappings, ...segments) => {
+  expect(namesOfSegments(mappings, segments)).toEqual(segments);
+});
+
+test("SourceMap findOrigin gives a four-field segment no name", () => {
+  // Both lines have the same segments, so the answer is the same whether the
+  // arguments count from 0 or, as in Node.js, from 1.
+  const sourceMap = new SourceMap({
+    version: 3,
+    sources: ["a.ts"],
+    names: ["x", "y"],
+    mappings: "AAAAA,IAAI;AAAAA,IAAI;",
+  });
+  expect([sourceMap.findOrigin(1, 2).name, sourceMap.findOrigin(1, 6).name]).toEqual(["x", undefined]);
+});
+
+test("SourceMap answers every mapping of the tc39 basicMapping test", () => {
+  const fixtures = join(__dirname, "..", "test", "fixtures", "test426");
+  const { tests } = JSON.parse(readFileSync(join(fixtures, "source-map-spec-tests.json"), "utf8"));
+  const { sourceMapFile, testActions } = tests.find(({ name }) => name === "basicMapping");
+  const sourceMap = new SourceMap(JSON.parse(readFileSync(join(fixtures, "resources", sourceMapFile), "utf8")));
+
+  expect(testActions.length).toBe(12);
+  expect(
+    testActions.map(({ actionType, generatedLine, generatedColumn }) => {
+      const entry = sourceMap.findEntry(generatedLine, generatedColumn);
+      return {
+        actionType,
+        generatedLine,
+        generatedColumn,
+        originalSource: entry.originalSource,
+        originalLine: entry.originalLine,
+        originalColumn: entry.originalColumn,
+        mappedName: entry.name ?? null,
+      };
+    }),
+  ).toEqual(testActions);
+});
+
+// "g" has the VLQ continuation bit set, so the name field has no last digit.
+test.each([
+  ["in 5 bytes of mappings", "AAAAg", 4],
+  ["after 205 bytes that the SIMD decoder takes", Buffer.alloc(205, "CAAC,").toString() + "CAACg", 209],
+])("SourceMap rejects a name field that the mappings cut short %s", (_, mappings, offset) => {
+  let error;
+  try {
+    new SourceMap({ version: 3, sources: ["a.ts"], names: ["x"], mappings });
+  } catch (thrown) {
+    error = thrown;
+  }
+  expect(error).toBeInstanceOf(SyntaxError);
+  expect(error.message).toBe(`Invalid name index delta at ${offset}`);
 });
 
 test("SourceMap without names has undefined name property", () => {

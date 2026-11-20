@@ -106,6 +106,11 @@ async function dumpMappings(
 // [genColDelta, srcIdxDelta, origLineDelta, origColDelta, nameIdxDelta?]
 // segments. Returns probe points at every segment's ABSOLUTE
 // (generatedLine, generatedColumn) so findEntry hits it exactly.
+//
+// The string never ends with a separator. When its last segment has four
+// fields, Node.js v26.3.0 reads a fifth field past the end and answers
+// names[nameIndex] for that one segment. Here it has no name, like every
+// other 4-field segment (sourcemap.test.js has the same case).
 function build(lines: number[][][]): {
   mappings: string;
   probes: Array<[number, number]>;
@@ -235,8 +240,8 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
   });
 
   test("interleaved 4- and 5-field segments", async () => {
-    // 4-field segments between 5-field ones carry the PREVIOUS name index
-    // forward (scalar parser doesn't reset it).
+    // A 4-field segment has no name: the name index of the previous 5-field
+    // segment does not carry over to it.
     const segs: number[][] = [];
     for (let i = 0; i < 120; i++) {
       if (i % 3 === 0) segs.push([2, 0, 0, 1, i === 0 ? 0 : 1]);
@@ -246,6 +251,79 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     expect(mappings.length).toBeGreaterThanOrEqual(128);
     const scalar = await assertSimdMatchesScalar("4-5-mixed", mappings, sourcesLen, namesLen, probes);
     expect(scalar.error).toBeNull();
+    expect(scalar.entries.map(entry => entry.name)).toEqual(segs.map((_, i) => (i % 3 === 0 ? `n${i / 3}` : null)));
+  });
+
+  test("4-field segments after a 5-field segment have name: null in every decode path", async () => {
+    // Each run of 4-field segments comes after a 5-field segment with a
+    // different name index. A run is long enough to fill whole blocks of
+    // every vector width (16, 32 or 64 bytes), so each name store of the
+    // kernel writes rows that come after a name:
+    //   - a run of "CAAC," fills blocks for the uniform-block path,
+    //   - a run with a 2-char VLQ fills blocks for the batched path,
+    //   - a block with a 5-field segment or a ';' takes the general loop.
+    // The last segments do not fill a block, so the scalar loop decodes them.
+    const lines: number[][][] = [[]];
+    const expected: Array<string | null> = [];
+    let nameIndex = 0;
+    const named = (nameDelta: number, generatedColumnDelta = 1) => {
+      nameIndex += nameDelta;
+      lines[lines.length - 1].push([generatedColumnDelta, 0, 0, 1, nameDelta]);
+      expected.push(`n${nameIndex}`);
+    };
+    const unnamed = (count: number, generatedColumnDelta = 1) => {
+      for (let i = 0; i < count; i++) {
+        lines[lines.length - 1].push([generatedColumnDelta, 0, 0, 1]);
+        expected.push(null);
+      }
+    };
+    named(1);
+    unnamed(40);
+    named(2);
+    unnamed(40, 20);
+    named(-1);
+    // A 3-char VLQ takes the serial decode of the general loop, not the shuffle.
+    named(600);
+    unnamed(1, 600);
+    named(-600);
+    for (let i = 0; i < 3; i++) {
+      lines.push([]);
+      unnamed(3);
+    }
+    // Generated columns 9, 3, 4, 5: the sort moves each name with its row.
+    lines.push([]);
+    unnamed(1, 9);
+    named(2, -6);
+    unnamed(2);
+    lines.push([]);
+    named(1);
+    unnamed(40);
+    const { mappings, probes, sourcesLen, namesLen } = build(lines);
+    expect(mappings.length).toBeGreaterThanOrEqual(128);
+    const scalar = await assertSimdMatchesScalar("names-between-4-field", mappings, sourcesLen, namesLen, probes);
+    expect(scalar.error).toBeNull();
+    expect(expected.filter(name => name !== null)).toEqual(["n1", "n3", "n2", "n602", "n2", "n4", "n5"]);
+    expect(scalar.entries.map(entry => entry.name)).toEqual(expected);
+  });
+
+  test.skipIf(!isDebug)("the debug log counts the blocks of the fast paths and of the general loop", async () => {
+    // The kernel returns both counts in the state that Rust mirrors by hand
+    // (ParseMappingsState). A block of "CAAC," takes a fast path. A block
+    // with a ';' takes the general loop.
+    const blocks = async (mappings: string) => {
+      const { debug, error } = await dumpMappings(mappings, 1, 0, [], false);
+      const counts = debug.match(/simd rows=\d+ seg_bound=\d+ fast=(\d+) slow=(\d+) blocks/);
+      return { error, fast: Number(counts?.[1]) > 0, slow: Number(counts?.[2]) > 0 };
+    };
+    expect(
+      await Promise.all([
+        blocks(Buffer.alloc(999, "CAAC,").toString()),
+        blocks(Buffer.alloc(600, "AAAA,CAAC,CAAC;").toString()),
+      ]),
+    ).toEqual([
+      { error: null, fast: true, slow: false },
+      { error: null, fast: false, slow: true },
+    ]);
   });
 
   test("all-4-field map with non-empty names: every row has name: null", async () => {
@@ -270,10 +348,9 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
   test("4-field rows before the first 5-field segment keep name: null", async () => {
     // WithoutNames -> WithNames promotion: scalar copies pre-promotion rows
     // with name_index = -1 (to_named()), so rows before the first 5-field
-    // segment resolve to name: null, and 4-field rows AFTER it carry the
-    // previous 5-field's name forward. The first 5-field is placed in the
-    // same SIMD chunk as the preceding 4-field rows so the backfill path
-    // is exercised.
+    // segment resolve to name: null. 4-field rows AFTER it have no name
+    // either. The first 5-field is placed in the same SIMD chunk as the
+    // preceding 4-field rows so the backfill path is exercised.
     const segs: number[][] = [];
     for (let i = 0; i < 80; i++) segs.push([1, 0, 0, 1]);
     segs.push([1, 0, 0, 1, 0]); // first 5-field at index 80
@@ -285,8 +362,8 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     expect(scalar.entries[0].name).toBeNull();
     expect(scalar.entries[79].name).toBeNull();
     expect(scalar.entries[80].name).toBe("n0");
-    expect(scalar.entries[81].name).toBe("n0");
-    expect(scalar.entries[139].name).toBe("n0");
+    expect(scalar.entries[81].name).toBeNull();
+    expect(scalar.entries[139].name).toBeNull();
   });
 
   test("1-field (generated-column-only) segments are skipped but accumulate", async () => {

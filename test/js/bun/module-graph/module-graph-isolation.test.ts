@@ -868,18 +868,21 @@ const dir = String(
       export const write = path => void Bun.write(path, new Response(stream)).catch(() => {});
     `,
     "disposed-while-it-writes-a-stream.mjs": `
+      import { fileSinkInternals } from "bun:internal-for-testing";
       import fs from "node:fs";
       const path = import.meta.dir + "/streamed-" + process.pid;
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/writes-a-stream-that-never-ends.mjs");
+      const before = fileSinkInternals.liveCount();
+      const fileSinks = () => fileSinkInternals.liveCount() - before;
       graph.run(() => app.write(path));
       const { ino, dev } = fs.statSync(path);
       const isTheFile = fd => { try { const it = fs.fstatSync(fd); return it.ino === ino && it.dev === dev; } catch { return false; } };
       const fd = Array.from({ length: 256 }, (_, fd) => fd).find(isTheFile);
       graph.dispose();
       // (Next to nothing is allocated meanwhile: a collection would close it too.)
-      for (const deadline = Date.now() + 2000; isTheFile(fd) && Date.now() < deadline; ) await Bun.sleep(5);
-      console.log(JSON.stringify({ opened: fd !== undefined, leftOpen: isTheFile(fd) }));
+      for (const deadline = Date.now() + 2000; (isTheFile(fd) || fileSinks()) && Date.now() < deadline; ) await Bun.sleep(5);
+      console.log(JSON.stringify({ opened: fd !== undefined, leftOpen: isTheFile(fd), fileSinks: fileSinks() }));
       process.exit(0);
     `,
     "wraps-commonjs-its-own-way.cjs": `
@@ -3859,7 +3862,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   });
   test("the file that Bun.write() was streaming into is closed", async () => {
     expect(await runsFixture("disposed-while-it-writes-a-stream.mjs")).toEqual({
-      stdout: `{"opened":true,"leftOpen":false}`,
+      stdout: `{"opened":true,"leftOpen":false,"fileSinks":0}`,
       exitCode: 0,
     });
   });

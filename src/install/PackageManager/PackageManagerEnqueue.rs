@@ -23,7 +23,8 @@ use crate::lockfile::reachable;
 use crate::lockfile_real as Lockfile;
 use crate::network_task::{ForTarballError, add_error_or_warning, stored_string};
 use crate::package_manager_real::directories::{
-    try_get_cache_directory, try_get_temporary_directory, try_global_link_dir,
+    cached_npm_package_folder_name, is_package_in_cache, try_get_cache_directory,
+    try_get_temporary_directory, try_global_link_dir,
 };
 use crate::package_manager_real::options::{Do, OfflineMode};
 use crate::package_manager_real::process_dependency_list::ListedDependencies;
@@ -3132,7 +3133,8 @@ fn index_patched_versions(this: &mut PackageManager) -> Vec<(PackageNameHash, Se
 }
 
 /// Returns true if this install skips the dependency's package and everything below it, which is
-/// what `is_filtered_dependency_or_workspace` decides later. Its tarball isn't downloaded then.
+/// what `is_filtered_dependency_or_workspace` decides later. Its tarball isn't downloaded then,
+/// unless `ships_bundle` holds for it.
 fn is_row_unplaced(
     this: &PackageManager,
     package: &Package,
@@ -3167,17 +3169,79 @@ fn tarball_task(
         Task::Id::for_npm_package(this.lockfile.str(&name), package.resolution.npm().version);
     debug_assert!(!this.network_dedupe_map.contains(&task_id));
 
-    let task = run_tasks::generate_network_task_for_tarball(
+    let task = match run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
         None,
         behavior.is_required(),
         dependency_id,
         package,
-    )?;
+    ) {
+        // An `--offline` miss of a bundler. It was already reported if required, or skipped if
+        // optional.
+        Err(ForTarballError::Offline) => return Ok(None),
+        other => other?,
+    };
     Ok(Some(ResolvedPackageTask::NetworkTask(
         task.expect("unreachable"),
     )))
+}
+
+/// Returns true if the npm package that this resolve just appended is a bundler: it has a bundled
+/// row, and no other bundler ships it. Bun records what a bundler's tarball ships, so the tarball
+/// is brought into the cache even where the rules below skip the download of any other package.
+fn ships_bundle(
+    this: &PackageManager,
+    package: &Package,
+    version: &Npm::PackageVersion,
+    inside_bundle: bool,
+) -> bool {
+    // The length is `u32::MAX` if the version bundles every dependency.
+    version.bundled_dependencies.len != 0
+        && !inside_bundle
+        && !this.options.runtime_auto_install
+        && (package.dependencies)
+            .get(this.lockfile.buffers.dependencies.as_slice())
+            .iter()
+            .any(|row| row.behavior.is_bundled())
+}
+
+/// `determine_preinstall_state` does not look in the cache for a package that this platform
+/// skips, or for one whose patch has no hash yet. `skips_patch` is true if this resolve does not
+/// download the bundler in order to patch it. The install phase patches what it places.
+fn bundler_preinstall_state(
+    this: &mut PackageManager,
+    package: &Package,
+    behavior: Behavior,
+    state: install::PreinstallState,
+    skips_patch: bool,
+) -> install::PreinstallState {
+    use install::PreinstallState as State;
+    let has_looked = match state {
+        State::Done => !package.meta.is_disabled(
+            this.options.cpu,
+            this.options.os,
+            this.options.libc.for_dependency(behavior),
+        ),
+        State::CalcPatchHash => !skips_patch,
+        _ => true,
+    };
+    if has_looked {
+        return state;
+    }
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let folder = cached_npm_package_folder_name(
+        this,
+        &mut buf,
+        this.lockfile.str(&package.name),
+        package.resolution.npm().version,
+        None,
+    );
+    if is_package_in_cache(this, folder, ResolutionTag::Npm) {
+        return state;
+    }
+    this.set_preinstall_state(package.meta.id, State::Extract);
+    State::Extract
 }
 
 fn get_or_put_resolved_package_with_find_result(
@@ -3309,22 +3373,30 @@ fn get_or_put_resolved_package_with_find_result(
         let mut name_and_version_hash: Option<u64> = None;
         let mut patchfile_hash: Option<u64> = None;
 
-        let task = match this.determine_preinstall_state(
+        let prefetches = this.options.do_.contains(Do::PREFETCH_RESOLVED_TARBALLS);
+        let reads_bundle = ships_bundle(this, &package, find_result.package, inside_bundle);
+        let mut state = this.determine_preinstall_state(
             &package,
             behavior,
             &mut name_and_version_hash,
             &mut patchfile_hash,
-        ) {
+        );
+        if reads_bundle {
+            state =
+                bundler_preinstall_state(this, &package, behavior, state, unplaced || !prefetches);
+        }
+
+        let task = match state {
             // Already in the cache: no download, but its dependencies are enqueued
             install::PreinstallState::Done => None,
+            // Neither `unplaced` nor `--lockfile-only` nor a security scanner skips this download.
+            install::PreinstallState::Extract if reads_bundle => {
+                tarball_task(this, name, &package, behavior, dependency_id)?
+            }
             // If a placed dependency needs it too, the install phase fetches and patches it.
             _ if unplaced => None,
             // e.g., --lockfile-only
-            install::PreinstallState::Extract
-                if !this.options.do_.contains(Do::PREFETCH_RESOLVED_TARBALLS) =>
-            {
-                None
-            }
+            install::PreinstallState::Extract if !prefetches => None,
             // Do we need to download the tarball?
             install::PreinstallState::Extract => {
                 tarball_task(this, name, &package, behavior, dependency_id)?
@@ -4660,6 +4732,16 @@ impl PackageManager {
             missing.unset(package_id as usize);
             reported += 1;
             let name = lockfile.str(&lockfile.packages.items_name()[package_id as usize]);
+            // The resolve needed the tarball of a bundler, and `offline_miss` logged this error.
+            let resolution = &lockfile.packages.items_resolution()[package_id as usize];
+            if resolution.tag == ResolutionTag::Npm
+                && self.network_task_has_failed(Task::Id::for_npm_package(
+                    name,
+                    resolution.npm().version,
+                ))
+            {
+                continue;
+            }
             self.log_mut().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,

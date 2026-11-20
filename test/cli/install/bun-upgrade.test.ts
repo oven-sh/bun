@@ -403,6 +403,58 @@ it.concurrent(
   },
 );
 
+// `bun build --compile` output starts as the `bun` CLI when BUN_BE_BUN=1. `bun upgrade` swaps out
+// the executable it runs as, so there the release that the server offers would replace the app.
+it.concurrent(
+  "refuses to replace an executable that has an embedded program",
+  async () => {
+    using dir = tempDir("bun-upgrade-app", { "app.ts": `console.log("app");`, "install": {} });
+    const installDir = join(String(dir), "install");
+    const appName = isWindows ? "app.exe" : "app";
+    const app = join(installDir, appName);
+    {
+      await using build = spawn({
+        cmd: [bunExe(), "build", "--compile", "app.ts", "--outfile", app],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildErr).not.toContain("error:");
+      expect(buildExit).toBe(0);
+    }
+    const size = statSync(app).size;
+
+    const zipPath = join(String(dir), "release.zip");
+    await writeFakeReleaseZip(zipPath, "9.9.9");
+    using server = startReleaseServer({ tagName: "bun-v9.9.9", zipPath });
+    using stagingRoot = tempDir("bun-upgrade-app-staging", {});
+
+    await using proc = spawn({
+      cmd: [app, "upgrade", "--stable"],
+      cwd: installDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, BUN_BE_BUN: "1", BUN_TMPDIR: String(stagingRoot) },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ out, err, exitCode, installed: readdirSync(installDir), size: statSync(app).size }).toEqual({
+      out: "",
+      err:
+        "error: This executable is an app compiled with `bun build --compile`. `bun upgrade` would replace it with Bun.\n" +
+        "note: Install Bun, and run `bun upgrade` there.\n",
+      exitCode: 1,
+      installed: [appName],
+      size,
+    });
+  },
+  // `bun build --compile` copies the executable, and a debug build is more than 1 GB.
+  isDebug ? 60_000 : undefined,
+);
+
 it.concurrent("recreates the staging directory in the temp dir instead of reusing a pre-existing one", async () => {
   const tagName = "bun-v9.9.9";
   // Simulate a directory that already exists at the predictable staging path

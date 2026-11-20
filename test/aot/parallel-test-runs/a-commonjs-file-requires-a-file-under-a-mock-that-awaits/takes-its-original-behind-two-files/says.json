@@ -1,0 +1,6 @@
+{
+  "why": "the files are read on other threads: `bun test` now and then runs legacy.cjs before the import in s.mjs has asked for the original of store.mjs, and on one thread always: the require() then gets the file itself and test a passes",
+  "printed": ["legacy.cjs runs", "b_test.mjs runs"],
+  "tests": ["(pass) b"],
+  "exitCode": 1
+}

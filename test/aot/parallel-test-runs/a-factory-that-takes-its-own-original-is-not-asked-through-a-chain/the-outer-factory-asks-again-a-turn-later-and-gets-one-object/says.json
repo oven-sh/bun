@@ -1,0 +1,9 @@
+{
+  "why": "the files are read on other threads: on a busy machine `bun test` now and then has them before the next immediate runs, and on one thread always: the factory of warp.mjs is then running when the outer factory asks again, and the second import() gets the original",
+  "printed": [
+    "SAID the outer has one object true | extra,knot,warp | extra,knot,warp",
+    "SAID later is the first | extra,knot,warp"
+  ],
+  "tests": ["(pass) b"],
+  "exitCode": 0
+}

@@ -31,15 +31,16 @@ the porting reference for the AST-boundary files.
 
 ## Sync procedure
 
-1. **Produce the upstream diff.** The script sparse-fetches facebook/react into
+1. **Produce the upstream diff.** The script fetches facebook/react into
    a temp dir (nothing is written to the repo) and prints, per ported file, the
    diff between `src/react_compiler/UPSTREAM_PORTED` and upstream's tip:
    ```sh
    scripts/sync-react-compiler.sh            # or pass an explicit <sha>
    ```
    Output is grouped into three sections: whole-crate ports, AST-boundary
-   ports, and any new upstream file that newly references `react_compiler_ast`
-   (i.e. a new boundary file that needs a fresh Bun port).
+   ports, and every upstream file that uses `react_compiler_ast` and has no
+   entry in the script's `boundary` array, printed in full (i.e. a new boundary
+   file that needs a fresh Bun port).
 
 2. **Apply whole-crate diffs mechanically.** For each hunk under the
    whole-crate section, apply it to the corresponding `src/react_compiler/<dir>/`
@@ -59,10 +60,12 @@ the porting reference for the AST-boundary files.
    For large diffs, fan out one agent per file with the upstream diff + the Bun
    port + DESIGN.md as context, then adversarially review each port.
 
-4. **Handle new boundary files.** If the third section lists any file, write a
-   fresh Bun port of it under `src/react_compiler/`, add it to both arrays in
-   `scripts/sync-react-compiler.sh`, and add a row to the layout table in
-   `DESIGN.md`.
+4. **Handle new boundary files.** If the third section prints any file, write a
+   fresh Bun port of it under `src/react_compiler/`, add it to the `boundary`
+   array in `scripts/sync-react-compiler.sh`, and add a row to the layout table
+   in `DESIGN.md`. If Bun does not port the file, give its entry a
+   `(not ported; ...)` label. A file stays in the third section until it has
+   an entry.
 
 5. **Verify.**
    ```sh

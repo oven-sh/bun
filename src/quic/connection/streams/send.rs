@@ -214,13 +214,14 @@ impl State {
         }
         let is_past = |len| stream.send.sent() >= len && stream.send.unsent_len() > LITTLE;
         let takes_turns = !self.sends_in_order || stream.priority.is_incremental;
+        let is_ending = !stream.priority.is_incremental
+            && stream.flags.contains(Flags::FIN)
+            && stream.send.sent() > 0;
         let is_serial = match takes_turns {
-            true => {
-                !stream.priority.is_incremental && stream.flags.contains(Flags::FIN) && is_past(1)
-            }
+            true => is_ending && is_past(0),
             false => is_past(LONG_LEN),
         };
-        let turn = match takes_turns && !is_serial {
+        let turn = match takes_turns && !is_ending {
             true => self.turns + u64::from(is_past(BULK_LEN)) * BULK_HANDICAP,
             false => stream.first_turn,
         };

@@ -521,6 +521,17 @@ fn streams_take_turns_until_all_is_written() {
 }
 
 #[test]
+fn what_little_is_left_does_not_wait() {
+    let mut raw = Raw::server().connected();
+    for (len, finishes) in [(18_000, true), (20_000, false), (20_000, false)] {
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, &filler(0, len), finishes);
+    }
+    let expected = [(2, 0), (6, 0), (10, 0), (6, 1), (10, 1)];
+    assert_eq!(turns(&mut raw), expected);
+}
+
+#[test]
 fn streams_do_not_write_out_of_turn() {
     let mut raw = Raw::server().connected();
     let ids = [(); 3].map(|()| StreamId(raw.peer.open(Unidirectional)));

@@ -83,8 +83,6 @@ macro_rules! define_statfs_type {
                 let frsize_ = statfs_.f_frsize;
                 #[cfg(not(target_os = "linux"))]
                 let frsize_ = bsize_;
-                #[cfg(target_arch = "wasm32")]
-                compile_error!("Unsupported OS");
 
                 // Platform field types vary (u32/i64/u64); `as i64` is lossless
                 // for the in-range values statfs reports.

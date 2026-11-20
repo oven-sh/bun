@@ -420,12 +420,7 @@ mod errno_name_tests {
         assert_eq!(system_errno_name(0), None);
         assert_eq!(system_errno_name(9999), None);
         // errno 11 is platform-specific: EAGAIN on linux/windows, EDEADLK on darwin/bsd.
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "android",
-            windows,
-            target_family = "wasm"
-        ))]
+        #[cfg(any(target_os = "linux", target_os = "android", windows))]
         {
             assert_eq!(SystemErrno::init(11), Some(SystemErrno::EAGAIN));
             assert_eq!(SystemErrno::init(104), Some(SystemErrno::ECONNRESET));
@@ -458,7 +453,7 @@ mod errno_name_tests {
         assert_eq!(system_errno_name(max as i32), None);
 
         // Spot-check the last entry on each platform.
-        #[cfg(any(target_os = "linux", target_os = "android", target_family = "wasm"))]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             assert_eq!(system_errno_name(133), Some("EHWPOISON"));
             assert_eq!(system_errno_name(134), Some("EUNKNOWN"));
@@ -575,12 +570,7 @@ mod errno_name_tests {
             coreutils_error_map::get(2),
             Some("No such file or directory")
         );
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "android",
-            windows,
-            target_family = "wasm"
-        ))]
+        #[cfg(any(target_os = "linux", target_os = "android", windows))]
         assert_eq!(
             coreutils_error_map::get(11),
             Some("Resource temporarily unavailable")

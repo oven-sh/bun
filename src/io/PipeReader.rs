@@ -1426,5 +1426,3 @@ pub type ReaderFlags = PosixFlags;
 pub type BufferedReader = WindowsBufferedReader;
 #[cfg(windows)]
 pub type ReaderFlags = WindowsFlags;
-#[cfg(not(any(unix, windows)))]
-compile_error!("Unsupported platform");

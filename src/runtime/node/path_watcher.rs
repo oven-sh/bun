@@ -561,9 +561,6 @@ type Platform = Linux;
 #[cfg(target_os = "freebsd")]
 type Platform = Kqueue;
 
-#[cfg(target_arch = "wasm32")]
-compile_error!("path_watcher: unsupported target");
-
 // ────────────────────────────────────────────────────────────────────────────────
 // Linux
 // ────────────────────────────────────────────────────────────────────────────────

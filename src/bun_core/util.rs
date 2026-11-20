@@ -225,11 +225,6 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
     if is_never_read(key.as_bytes()) {
         return None;
     }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = key;
-        return None;
-    }
     #[cfg(unix)]
     unsafe {
         // SAFETY: key is NUL-terminated by ZStr invariant; getenv reads until NUL.
@@ -310,11 +305,6 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
                 return Some(&line[(key_end + 1).min(line.len())..]);
             }
         }
-        None
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = key;
         None
     }
 }
@@ -538,9 +528,7 @@ impl<T: Default> Default for RwLock<T> {
 }
 
 // ─── Path primitives (from bun_paths) ─────────────────────────────────────
-pub const MAX_PATH_BYTES: usize = if cfg!(target_arch = "wasm32") {
-    1024
-} else if cfg!(windows) {
+pub const MAX_PATH_BYTES: usize = if cfg!(windows) {
     // Windows PATH_MAX_WIDE (32767) * 3 + 1 (UTF-8 worst-case from UTF-16).
     32767 * 3 + 1
 } else if cfg!(any(target_os = "linux", target_os = "android")) {
@@ -3881,11 +3869,6 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
         }
         Ok(ZStr::nul_terminate(out, bi))
     }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = buf;
-        Err(crate::CrateError::Unexpected)
-    }
 }
 
 // ── which ─────────────────────────────────────────────────────────────────
@@ -4557,11 +4540,6 @@ fn spawn_sync_inherit_impl(
         })?;
         let code = status.code().unwrap_or(-1);
         Ok(SpawnStatus { code })
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (argv, stdin);
-        Err(crate::CrateError::Unexpected)
     }
 }
 

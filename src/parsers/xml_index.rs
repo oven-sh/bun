@@ -33,7 +33,7 @@ pub struct StructuralIndex<'c, U: crate::xml::Unit = u8> {
 
 impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
     pub fn new(contents: &'c [U]) -> Self {
-        Self::with_producer(contents, !bun_core::env::IS_NATIVE)
+        Self::with_producer(contents, false)
     }
 
     fn with_producer(contents: &'c [U], use_scalar: bool) -> Self {

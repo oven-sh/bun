@@ -879,7 +879,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub(crate) const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
+    pub(crate) const ALLOW_MACROS: bool = true;
 
     /// use this instead of checking p.source.index
     /// because when not bundling, p.source.index is `0`

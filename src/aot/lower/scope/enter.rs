@@ -15,7 +15,7 @@ use crate::ir::{
     BlockId, ClassSlot, LocalVariable, PositionFlags, Type, TypeTable, ValueId, VariableKey,
 };
 use crate::lower::captures::Capture;
-use crate::lower::{FunctionLowering, convert, function};
+use crate::lower::{FunctionLowering, class, convert, function};
 
 struct ScopeEntry<'i> {
     scope: ScopeId,
@@ -595,6 +595,9 @@ fn emit_entry_value(
             ScopeSlot::Callee => lowering.builder.callee(),
             ScopeSlot::HomeObject => lowering.find_captured_value(Capture::Value(binding)),
             ScopeSlot::ModuleInstance => Some(lowering.get_module_instance()),
+            ScopeSlot::Class(slot) if class::is_filled_by_decorators(lowering.file.hir, slot) => {
+                Some(lowering.get_entry_undefined(entry))
+            }
             ScopeSlot::ArgumentsBinding => {
                 entry.find_initial(BindingRef::Slot(scope, ScopeSlot::Arguments))
             }

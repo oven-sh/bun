@@ -216,6 +216,7 @@ declare namespace NodeJS {
     readonly pid: number;
     argv0: string;
     noDeprecation?: boolean;
+    pendingDeprecation?: boolean;
     traceDeprecation?: boolean;
     traceProcessWarnings?: boolean;
   }

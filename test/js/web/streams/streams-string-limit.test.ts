@@ -207,7 +207,10 @@ test("text() rejects string chunks that sum to a 16-bit string of 2,147,483,636 
 // chunk and never touches it, so it stays small.
 test.skipIf(!enoughMemory)("TextDecoderStream rejects a chunk too long to join with the carried bytes", async () => {
   const result = await run(`
-    const writer = new TextDecoderStream().writable.getWriter();
+    const stream = new TextDecoderStream();
+    const writer = stream.writable.getWriter();
+    // A chunk is decoded when a read asks for it.
+    stream.readable.getReader().read().catch(() => {});
     await writer.write(new Uint8Array([0xe2]));
     try {
       await writer.write(new Uint8Array(2 ** 31));

@@ -82,16 +82,14 @@ static JSPromise* performCancelAlgorithm(JSC::VM& vm, JSGlobalObject* globalObje
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
 
-void setUpNativeTransformStream(JSGlobalObject* globalObject, JSTransformStream* stream, TransformerKind kind)
+void setUpNativeTransformStream(JSGlobalObject* globalObject, JSTransformStream* stream, TransformerKind kind, double readableHighWaterMark)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* domGlobalObject = defaultGlobalObject(globalObject);
 
     auto* startPromise = JSPromise::create(vm, globalObject->promiseStructure());
-    // readableHighWaterMark = 1 (not the spec's 0) so the first write completes without a
-    // reader attached, matching Node.js and Chromium.
-    initializeTransformStream(globalObject, stream, startPromise, 1, nullptr, 1, nullptr);
+    initializeTransformStream(globalObject, stream, startPromise, 1, nullptr, readableHighWaterMark, nullptr);
     RETURN_IF_EXCEPTION(scope, void());
 
     auto* controller = JSTransformStreamDefaultController::create(vm, WebCore::getDOMStructure<JSTransformStreamDefaultController>(vm, *domGlobalObject));

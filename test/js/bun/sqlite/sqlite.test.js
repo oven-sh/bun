@@ -3471,6 +3471,41 @@ it("exit-time WAL checkpoint runs even with a never-finalized prepared statement
   expect(exitCode).toBe(0);
 });
 
+// A read-only connection cannot copy WAL frames into the main file, so the exit
+// checkpoint must not run on it: it would take the WAL write lock (blocking
+// writers in other processes) and, on a fully backfilled WAL, truncate the WAL
+// file that another connection still uses. The truncation is the observable.
+it.concurrent.each([
+  ["left open", ""],
+  ["closed with db.close() while a statement is live", "db.close();"],
+])("exit-time WAL checkpoint skips a read-only connection %s", async (_, close) => {
+  using dir = tempDir("bun-sqlite-readonly-exit", {});
+  const file = path.join(String(dir), "ro.db");
+  using held = new Database(file);
+  held.exec("PRAGMA journal_mode = WAL; CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (42)");
+  held.exec("PRAGMA wal_checkpoint(PASSIVE)");
+  const walSize = statSync(file + "-wal").size;
+  expect(walSize).toBeGreaterThan(0);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Database } = require("bun:sqlite");
+         const db = new Database(process.argv[1], { readonly: true });
+         const stmt = db.prepare("SELECT x FROM t");
+         console.log(JSON.stringify(stmt.get()));
+         ${close}`,
+      file,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: '{"x":42}\n', stderr: "", exitCode: 0 });
+  expect(statSync(file + "-wal").size).toBe(walSize);
+});
+
 // sqlite3_prepare_v3 treats an interior NUL byte as end-of-SQL. The exec/run
 // multi-statement loop used to re-prepare the same empty statement forever
 // once the head reached a NUL, pinning the event loop at 100% CPU.

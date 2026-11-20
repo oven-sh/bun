@@ -715,3 +715,97 @@ test.concurrent("subdirectory routes use forward slashes on Windows", async () =
   expect(buttons.status).toBe(200);
   expect(await buttons.text()).toContain("<title>Buttons</title>");
 });
+
+async function runHtmlEntry(args: string[], files: Record<string, string> = {}) {
+  using dir = tempDir("html-entry-flag-error", {
+    "index.html": `<!doctype html><html><body><h1>Home</h1></body></html>`,
+    ...files,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    env: bunEnv,
+    cwd: String(dir),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+}
+
+const badPort = `error: "--port" needs a port from 0 to 65535, not "abc".`;
+const uncaughtExceptionListener = `process.on("uncaughtException", (error, origin) => console.log("uncaughtException", origin));`;
+
+// A flag that the parser rejects is not an uncaught exception: no excerpt of Bun's own code and no stack.
+test.concurrent.each([
+  { flag: "--port=abc", error: badPort },
+  { flag: "--host=", error: `error: "--host" needs a hostname.` },
+  { flag: "--port", error: `error: "--port" needs a value.` },
+])("bun ./index.html $flag prints one line and exits 1", async ({ flag, error }) => {
+  expect(await runHtmlEntry(["index.html", flag])).toEqual({
+    stdout: "",
+    stderr: error + "\n",
+    exitCode: 1,
+    signalCode: null,
+  });
+});
+
+// No change to a file fixes an argument, so the process does not wait for one.
+// Not concurrent: the runner ends the child process of a test that timed out only when the test is not concurrent.
+test.each(["--hot", "--watch"])("bun %s ./index.html --port=abc exits 1", async mode => {
+  expect(await runHtmlEntry([mode, "index.html", "--port=abc"])).toEqual({
+    stdout: "",
+    stderr: badPort + "\n",
+    exitCode: 1,
+    signalCode: null,
+  });
+});
+
+test.concurrent("bun ./index.html --port=abc does not reach an uncaughtException listener", async () => {
+  const result = await runHtmlEntry(["--preload", "./preload.mjs", "index.html", "--port=abc"], {
+    "preload.mjs": uncaughtExceptionListener,
+  });
+  expect(result).toEqual({
+    stdout: "",
+    stderr: badPort + "\n",
+    exitCode: 1,
+    signalCode: null,
+  });
+});
+
+// Only what the flag parser rejects: any other error of the entry point is still an uncaught exception.
+test.concurrent("bun ./index.html ./nope.html reaches an uncaughtException listener", async () => {
+  const result = await runHtmlEntry(["--preload", "./preload.mjs", "index.html", "./nope.html"], {
+    "preload.mjs": uncaughtExceptionListener,
+  });
+  expect(result).toEqual({
+    stdout: "uncaughtException unhandledRejection\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+test.concurrent("bun ./index.html --host= starts no server when process.exit returns", async () => {
+  const result = await runHtmlEntry(["--preload", "./preload.mjs", "index.html", "--host="], {
+    // With an empty hostname, `Bun.serve` listens on every interface.
+    "preload.mjs": `
+      const exit = process.exit;
+      process.exit = code => {
+        process.exitCode = code;
+      };
+      Bun.serve = () => {
+        console.log("Bun.serve() was called");
+        exit(3);
+      };
+    `,
+  });
+  expect(result).toEqual({
+    stdout: "",
+    stderr: `error: "--host" needs a hostname.\n`,
+    exitCode: 1,
+    signalCode: null,
+  });
+});

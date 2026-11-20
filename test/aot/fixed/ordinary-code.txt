@@ -4033,7 +4033,7 @@ import buffer from "node:buffer";
 delete new Error("e", { cause: buffer }).cause.btoa;
 console.log(typeof buffer.btoa);
 console.log(buffer.btoa("a"));
-#### visible-delete-of-btoa.mjs prints, exit code 1
+#### visible-delete-of-btoa.mjs prints, exit code 1: TypeError: buffer.btoa is not a function. (In 'buffer.btoa("a")', 'buffer.btoa' is undefined)
 undefined
 #### loop-keeps-least-value.js
 // A loop that keeps the least or the greatest of what its turns come to, and reads no list and stores into none: there is no element to take several of at once.

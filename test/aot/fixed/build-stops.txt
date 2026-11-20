@@ -291,4 +291,4 @@ console.log(3, JSON.stringify(new Holder3().run([5, 6, 7])));
 #### predicted-callee-takes-a-list/tsconfig.json
 {"compilerOptions":{"target":"esnext","module":"preserve","moduleResolution":"bundler","allowJs":true,"noEmit":true,"strict":true,"types":[]}}
 #### predicted-callee-takes-a-list alone
-#### predicted-callee-takes-a-list prints, exit code 1
+#### predicted-callee-takes-a-list prints, exit code 1: TypeError: programs[process.argv[2]] is not a function. (In 'programs[process.argv[2]]()', 'programs[process.argv[2]]' is undefined)

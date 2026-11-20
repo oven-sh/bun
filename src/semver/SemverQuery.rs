@@ -1,5 +1,6 @@
 use core::fmt;
 use core::ptr::NonNull;
+use std::borrow::Cow;
 
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
@@ -532,7 +533,7 @@ impl Group {
 
     /// True when `parse` passed over a part of the input that is not a comparator (`>=1 && <2`, `1.2.3.4`, `latest`).
     /// npm refuses such a range.
-    pub fn has_skipped(&self) -> bool {
+    pub(crate) fn has_skipped(&self) -> bool {
         self.flags.is_set(Flags::SKIPPED)
     }
 
@@ -582,7 +583,7 @@ impl Token {
     pub(crate) fn to_range(self, parsed: &version::ParseResult<u64>, floor: Tag) -> Range {
         let version = &parsed.version;
         // Only read for `Wildcard::Major`, which is valid only when it is a written `x`, `X` or `*`.
-        let wildcard_is_written = parsed.valid;
+        let wildcard_is_written = parsed.valid_for_range;
         match self.tag {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {
@@ -751,6 +752,40 @@ pub fn parse_including_prerelease(input: &[u8], sliced: SlicedString) -> Result<
     parse_with(input, sliced, Tag::ZERO_PRE)
 }
 
+/// What node-semver's `new Range(text)` reads.
+pub struct NpmRange<'a> {
+    /// `text` with each run of whitespace collapsed to one space: the buffer `group` was parsed from.
+    pub raw: Cow<'a, [u8]>,
+    pub group: Group,
+}
+
+/// `None` where `parse` skipped text it cannot read as a comparator (`latest`, `>=1 && <2`).
+/// Not node-semver's test: that also refuses `01.2.3` and `^16 | ^18`, and accepts `*1.0.0`.
+pub fn parse_npm(text: &[u8]) -> Result<Option<NpmRange<'_>>, AllocError> {
+    let raw = collapse_whitespace(text);
+    let group = parse(&raw, SlicedString::init(&raw, &raw))?;
+    Ok((!group.has_skipped()).then_some(NpmRange { raw, group }))
+}
+
+/// node-semver's `Range.raw`. `parse` reads only `b' '` between comparators.
+fn collapse_whitespace(text: &[u8]) -> Cow<'_, [u8]> {
+    let collapsed = strings::index_of_any(text, b"\t\n\r\x0B\x0C").is_none()
+        && !strings::contains(text, b"  ")
+        && !text.starts_with(b" ")
+        && !text.ends_with(b" ");
+    if collapsed {
+        return Cow::Borrowed(text);
+    }
+    let mut raw = Vec::with_capacity(text.len());
+    for word in strings::split_any(text, &strings::WHITESPACE_CHARS).filter(|it| !it.is_empty()) {
+        if !raw.is_empty() {
+            raw.push(b' ');
+        }
+        raw.extend_from_slice(word);
+    }
+    Cow::Owned(raw)
+}
+
 fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
@@ -869,7 +904,7 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
             if parse_result.overflow {
                 return Ok(Group::null_set());
             }
-            if !parse_result.valid {
+            if !parse_result.valid_for_range {
                 list.flags.set(Flags::SKIPPED);
             }
             let version = parse_result.version.min();
@@ -922,7 +957,7 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
             }
             i += (!hyphenate) as usize;
 
-            let valid = parse_result.valid && !hyphenate;
+            let valid = parse_result.valid_for_range && !hyphenate;
             // Malformed text ("=>16.0.0", "1.2.3.4") starts an alternative so that it cannot narrow the range.
             if no_operator && !(after_comparator && valid) {
                 is_or = true;
@@ -933,7 +968,7 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
                 if second_parsed.overflow {
                     return Ok(Group::null_set());
                 }
-                if !second_parsed.valid {
+                if !second_parsed.valid_for_range {
                     list.flags.set(Flags::SKIPPED);
                 }
                 let second_version = second_parsed.version.min();

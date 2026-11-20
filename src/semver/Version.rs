@@ -542,9 +542,11 @@ impl<T: VersionInt> VersionType<T> {
 
         if input.is_empty() {
             result.valid = false;
+            result.valid_for_range = false;
             return result;
         }
         let mut is_done = false;
+        let mut overflow_after_wildcard = false;
 
         let mut i: usize = input.len();
 
@@ -570,6 +572,7 @@ impl<T: VersionInt> VersionType<T> {
 
         if i == input.len() {
             result.valid = false;
+            result.valid_for_range = false;
             result.wildcard = Wildcard::Major;
             result.len = u32::try_from(i).expect("int cast");
             return result;
@@ -604,13 +607,14 @@ impl<T: VersionInt> VersionType<T> {
                     if part_i < 3 {
                         let number = Self::parse_version_number(&input[part_start_i..last_char_i]);
                         if number.is_none() {
-                            result.valid = false;
                             // A range ignores a number after a wildcard, so keep reading the token.
                             if result.wildcard == Wildcard::None {
+                                result.valid = false;
                                 result.overflow = true;
                                 is_done = true;
                                 break;
                             }
+                            overflow_after_wildcard = true;
                         }
                         match part_i {
                             0 => result.version.major = number,
@@ -729,6 +733,10 @@ impl<T: VersionInt> VersionType<T> {
         }
 
         result.len = u32::try_from(i).expect("int cast");
+        result.valid_for_range = result.valid;
+        if overflow_after_wildcard {
+            result.valid = false;
+        }
 
         result
     }
@@ -1282,6 +1290,8 @@ pub struct ParseResult<T: VersionInt> {
     pub valid: bool,
     /// A number before any wildcard is above `T::MAX`. The range parser reads this, not `valid`.
     pub(crate) overflow: bool,
+    /// `valid`, ignoring a number above `T::MAX` after a wildcard (`1.x.<number>`): a range reads it as `1.x`.
+    pub(crate) valid_for_range: bool,
     pub version: Partial<T>,
     /// Where parsing stopped. It's shorter than the input if trailing bytes aren't part of the
     /// version.
@@ -1294,6 +1304,7 @@ impl<T: VersionInt> Default for ParseResult<T> {
             wildcard: Wildcard::None,
             valid: true,
             overflow: false,
+            valid_for_range: true,
             version: Partial::default(),
             len: 0,
         }

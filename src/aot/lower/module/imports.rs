@@ -94,9 +94,31 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    /// Reads a variable that must hold a value. One that is filled where a built-in module first runs is empty until
+    /// then: the read runs the module, which shows in no way, and reads again. The test that finds the variable filled
+    /// is the one that a read of any variable makes.
     pub(crate) fn emit_variable_read(&mut self, key: VariableKey, name: StringId) -> ValueId {
-        let value = self.get_variable_that_may_be_filled_at_first_use(key);
-        self.builder.check_initialized(value, name)
+        let variable = self.file.ensure_variable(key);
+        let value = self.builder.get_module_variable(variable);
+        let Some(module) = self.find_module_that_fills_at_first_use(key) else {
+            return self.builder.check_initialized(value, name);
+        };
+        let result = self.builder.create_variable(None);
+        let (first_use, join) = (self.create_unlikely_block(), self.create_block());
+        let split = self.split_on_type(value, TypeTable::ABSENT);
+        self.builder.switch_to(split.not_taken);
+        self.builder.write_variable(result, split.not_taken_value);
+        self.jump(join);
+        self.builder.switch_to(split.taken);
+        self.jump(first_use);
+        self.continue_in(first_use);
+        self.emit_load_at_first_use(module);
+        let filled = self.builder.get_module_variable(variable);
+        let filled = self.builder.check_initialized(filled, name);
+        self.builder.write_variable(result, filled);
+        self.jump(join);
+        self.continue_in(join);
+        self.builder.read_variable(result)
     }
 
     /// The built-in module whose exports the variable is filled from, where no import statement runs the module and
@@ -133,35 +155,35 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let Some(module) = self.find_module_that_fills_at_first_use(key) else {
                 continue;
             };
-            self.get_variable_that_may_be_filled_at_first_use(key);
+            self.emit_load_if_variable_is_empty(key, module);
             self.modules_loaded_in_front.push(module);
         }
         loaded_before
     }
 
-    /// Reads the variable. One that is filled where a built-in module first runs is empty until then: the read runs the
-    /// module, which runs nothing that shows, and reads again.
-    fn get_variable_that_may_be_filled_at_first_use(&mut self, key: VariableKey) -> ValueId {
+    /// Runs the module if the variable that it fills is empty.
+    fn emit_load_if_variable_is_empty(&mut self, key: VariableKey, module: ModuleRef) {
         let variable = self.file.ensure_variable(key);
         let value = self.builder.get_module_variable(variable);
-        let Some(module) = self.find_module_that_fills_at_first_use(key) else {
-            return value;
-        };
-        let result = self.builder.create_variable(None);
         let (first_use, join) = (self.create_unlikely_block(), self.create_block());
         let split = self.split_on_type(value, TypeTable::ABSENT);
         self.builder.switch_to(split.not_taken);
-        self.builder.write_variable(result, split.not_taken_value);
         self.jump(join);
         self.builder.switch_to(split.taken);
         self.jump(first_use);
         self.continue_in(first_use);
         self.emit_load_at_first_use(module);
-        let filled = self.builder.get_module_variable(variable);
-        self.builder.write_variable(result, filled);
         self.jump(join);
         self.continue_in(join);
-        self.builder.read_variable(result)
+    }
+
+    /// In the block in which the variable was found empty: runs the built-in module that fills it at its first use, if
+    /// one does, and reads the variable again. It may still be empty: the module need not have the name.
+    fn emit_first_use_of_empty_variable(&mut self, key: VariableKey) -> Option<ValueId> {
+        let module = self.find_module_that_fills_at_first_use(key)?;
+        self.emit_load_at_first_use(module);
+        let variable = self.file.ensure_variable(key);
+        Some(self.builder.get_module_variable(variable))
     }
 
     fn emit_load_at_first_use(&mut self, module: ModuleRef) {
@@ -371,11 +393,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_read_of_copy_that_may_stay_empty(&mut self, key: VariableKey) -> ValueId {
-        let value = self.get_variable_that_may_be_filled_at_first_use(key);
+        let variable = self.file.ensure_variable(key);
+        let value = self.builder.get_module_variable(variable);
         let result = self.builder.create_variable(None);
         let join = self.create_block();
         let split = self.split_on_type(value, TypeTable::ABSENT);
         self.builder.switch_to(split.taken);
+        if let Some(filled) = self.emit_first_use_of_empty_variable(key) {
+            let still_empty = self.split_on_type(filled, TypeTable::ABSENT);
+            self.builder.switch_to(still_empty.not_taken);
+            (self.builder).write_variable(result, still_empty.not_taken_value);
+            self.jump(join);
+            self.builder.switch_to(still_empty.taken);
+        }
         let undefined = self.builder.undefined();
         self.builder.write_variable(result, undefined);
         self.jump(join);
@@ -391,11 +421,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Ok(key) => key,
             Err(value) => return value,
         };
-        let value = self.get_variable_that_may_be_filled_at_first_use(key);
+        let variable = self.file.ensure_variable(key);
+        let value = self.builder.get_module_variable(variable);
         let result = self.builder.create_variable(None);
         let join = self.create_block();
         let split = self.split_on_type(value, TypeTable::ABSENT);
         self.builder.switch_to(split.taken);
+        if let Some(filled) = self.emit_first_use_of_empty_variable(key) {
+            let still_empty = self.split_on_type(filled, TypeTable::ABSENT);
+            self.builder.switch_to(still_empty.not_taken);
+            (self.builder).write_variable(result, still_empty.not_taken_value);
+            self.jump(join);
+            self.builder.switch_to(still_empty.taken);
+        }
         let found = match self.file.hir.member_key(access) {
             Some((object, MemberKey::Name(name))) => {
                 let namespace = self.lower_namespace_receiver(object);

@@ -96,6 +96,8 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
       return new Response(Bun.file(bigFile).stream());
     case "/status/204":
       return new Response(null, { status: 204, headers: { "x-empty": "1" } });
+    case "/null-body":
+      return new Response(null, { headers: { "x-null": "1" } });
     case "/headers": {
       const out: Record<string, string> = {};
       for (const [k, v] of req.headers) out[k] = v;

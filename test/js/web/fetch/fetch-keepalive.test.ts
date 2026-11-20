@@ -1057,6 +1057,8 @@ test.concurrent.each<[string, string, string]>([
   // https://github.com/oven-sh/bun/issues/36940
   ["GET", "200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n0\r\n\r\n", "ok"],
   ["HEAD", "304 Not Modified\r\nTransfer-Encoding: chunked\r\n\r\n", ""],
+  // RFC 9112 6.3 rule 1: a response to HEAD ends at its header section, so it needs no Content-Length to be complete.
+  ["HEAD", "200 OK\r\nContent-Type: text/html\r\n\r\n", ""],
 ])("a connection is reused after a %s answered with %j", async (method, reply, body) => {
   await using origin = await originWithBrokenReuse(session => session.write(`HTTP/1.1 ${reply}`));
   const bodies = [
@@ -1069,6 +1071,27 @@ test.concurrent.each<[string, string, string]>([
     requests: ["connection 1 request 1", "connection 1 request 2", "connection 1 request 3"],
   });
 });
+
+// Bytes after the header section of a HEAD response belong to no response, so the connection cannot be trusted.
+test.concurrent(
+  "a connection is not reused after a HEAD response with no Content-Length that bytes follow",
+  async () => {
+    await using origin = await originWithBrokenReuse(session =>
+      session.write(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nstray",
+      ),
+    );
+    const bodies = [
+      await bodyOrCode(origin.url, {}),
+      await bodyOrCode(origin.url, { method: "HEAD" }),
+      await bodyOrCode(origin.url, {}),
+    ];
+    expect({ bodies, requests: origin.requests }).toEqual({
+      bodies: ["ok", "", "ok"],
+      requests: ["connection 1 request 1", "connection 1 request 2", "connection 2 request 1"],
+    });
+  },
+);
 
 // The session with an https proxy is the one that breaks, under a CONNECT tunnel that fetch reuses.
 test.concurrent(

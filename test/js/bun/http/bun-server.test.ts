@@ -2567,11 +2567,12 @@ describe.concurrent("HEAD requests #15355", () => {
       expect(await response.text()).toBe("");
     }
     {
+      // A null body does not say what GET would send, so HEAD sends no Content-Length (RFC 9110 8.6).
       const response = await fetch(server.url + "/null", {
         method: "HEAD",
       });
       expect(response.status).toBe(200);
-      expect(response.headers.get("content-length")).toBe("0");
+      expect(response.headers.get("content-length")).toBeNull();
       expect(response.headers.get("x-bun-test")).toBe("1");
       expect(await response.text()).toBe("");
     }
@@ -2679,7 +2680,7 @@ describe.concurrent("HEAD requests #15355", () => {
       });
       const response = await fetch(server.url, { method: "HEAD" });
       expect(response.status).toBe(404);
-      expect(response.headers.get("content-length")).toBe("0");
+      expect(response.headers.get("content-length")).toBeNull();
     });
     test("status only with headers", async () => {
       using server = Bun.serve({
@@ -2763,7 +2764,7 @@ describe.concurrent("HEAD requests #15355", () => {
             const cl = await rawHead("/cl");
             console.log(JSON.stringify({
               te: /transfer-encoding:\\s*(.+)\\r\\n/i.exec(te)?.[1],
-              cl: /content-length:\\s*(.+)\\r\\n/i.exec(cl)?.[1],
+              cl: /content-length:\\s*(.+)\\r\\n/i.exec(cl)?.[1] ?? null,
             }));
           `,
         ],
@@ -2790,10 +2791,10 @@ describe.concurrent("HEAD requests #15355", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // "1, 2" is not a valid integer so Content-Length parses as 0; what we
+      // "1, 2" is not a valid Content-Length so it is not forwarded; what we
       // care about is that parsing it does not read freed memory.
       expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
-        stdout: JSON.stringify({ te: "gzip, chunked", cl: "0" }),
+        stdout: JSON.stringify({ te: "gzip, chunked", cl: null }),
         stderr: "",
       });
       expect(exitCode).toBe(0);

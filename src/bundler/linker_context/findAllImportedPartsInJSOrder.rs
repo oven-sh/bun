@@ -678,13 +678,17 @@ impl FileEdges {
 
     #[inline]
     fn for_each(&self, source_index: IndexInt, runs: bool, mut each: impl FnMut(u32, Edge)) {
-        let file = source_index as usize;
-        let (start, end) = (self.edges_start[file], self.edges_start[file + 1]);
-        for file_edge in &self.edges[start as usize..end as usize] {
+        for file_edge in self.edges_of(source_index) {
             if runs || !file_edge.requires_run {
                 each(file_edge.part_index, file_edge.edge);
             }
         }
+    }
+
+    fn edges_of(&self, source_index: IndexInt) -> &[FileEdge] {
+        let file = source_index as usize;
+        let (start, end) = (self.edges_start[file], self.edges_start[file + 1]);
+        &self.edges[start as usize..end as usize]
     }
 
     #[inline]
@@ -720,15 +724,11 @@ fn for_each_edge(
         return;
     }
 
-    let parts = c.graph.ast.items_parts()[source_index as usize].as_slice();
-    let runs = runs && c.graph.files_live.is_set(source_index as usize);
-    let parts_live = &c.graph.parts_live[source_index as usize];
+    let walk = PartsToWalk::new(c, source_index, runs);
     // The namespace export part (index 0) counts last: what it names goes after what the `import` statements import.
     const _: () = assert!(bun_ast::NAMESPACE_EXPORT_PART_INDEX == 0);
-    for part_index in 1..=parts.len() {
-        let index = part_index % parts.len();
-        let part = &parts[index];
-        let is_live = runs && parts_live.is_set(index);
+    for part_index in walk.order() {
+        let (part, is_live) = walk.part_at(part_index);
         let part_index = part_index as u32;
         for &record_id in part.import_record_indices.slice() {
             let record: &ImportRecord = &records[record_id as usize];
@@ -736,17 +736,10 @@ fn for_each_edge(
             if !record.source_index.is_valid() || !(is_statement || is_live) {
                 continue;
             }
-            let other = record.source_index.get();
             each(
                 part_index,
                 !is_statement,
-                if !c.is_external_dynamic_import(record, source_index) {
-                    Edge::Import(other)
-                } else if record.kind == ImportKind::Require && !part_has_no_side_effects(part) {
-                    Edge::LoadNow(other)
-                } else {
-                    Edge::LoadLater(other)
-                },
+                edge_of_record(c, source_index, part, record),
             );
         }
         // A chunk prints its own copy of the CSS class names that it uses, also when the `import` is in another chunk.
@@ -758,6 +751,51 @@ fn for_each_edge(
                 }
             }
         }
+    }
+}
+
+struct PartsToWalk<'a> {
+    parts: &'a [bun_ast::Part],
+    parts_live: &'a AutoBitSet,
+    runs: bool,
+}
+
+impl<'a> PartsToWalk<'a> {
+    fn new(c: &'a LinkerContext, source_index: IndexInt, runs: bool) -> PartsToWalk<'a> {
+        let file = source_index as usize;
+        PartsToWalk {
+            parts: c.graph.ast.items_parts()[file].as_slice(),
+            parts_live: &c.graph.parts_live[file],
+            runs: runs && c.graph.files_live.is_set(file),
+        }
+    }
+
+    fn order(&self) -> core::ops::RangeInclusive<usize> {
+        1..=self.parts.len()
+    }
+
+    fn part_at(&self, place: usize) -> (&'a bun_ast::Part, bool) {
+        let index = place % self.parts.len();
+        (
+            &self.parts[index],
+            self.runs && self.parts_live.is_set(index),
+        )
+    }
+}
+
+fn edge_of_record(
+    c: &LinkerContext,
+    source_index: IndexInt,
+    part: &bun_ast::Part,
+    record: &ImportRecord,
+) -> Edge {
+    let other = record.source_index.get();
+    if !c.is_external_dynamic_import(record, source_index) {
+        Edge::Import(other)
+    } else if record.kind == ImportKind::Require && !part_has_no_side_effects(part) {
+        Edge::LoadNow(other)
+    } else {
+        Edge::LoadLater(other)
     }
 }
 

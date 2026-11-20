@@ -3705,8 +3705,8 @@ declare module "bun" {
     reactFastRefresh?: boolean;
 
     /**
-     * Run the React Compiler over `.jsx`/`.tsx` source files, automatically
-     * memoizing components and hooks.
+     * Run the React Compiler over every JavaScript and TypeScript source file
+     * outside `node_modules`, automatically memoizing components and hooks.
      *
      * @default false
      * @experimental

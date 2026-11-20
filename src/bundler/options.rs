@@ -1318,7 +1318,7 @@ pub struct BundleOptions<'a> {
     pub react_fast_refresh: bool,
     pub react_compiler: bun_ast::runtime::ReactCompilerMode,
     pub react_compiler_parse_test_pragmas: bool,
-    /// Set by `bun test`: returns whether to compile the file at this path. The bundler leaves it `None`.
+    /// Set by `bun test` to narrow `ReactCompilerMode::for_module`. The bundler leaves it `None`.
     pub react_compiler_filter: Option<&'static (dyn Fn(&[u8]) -> bool + Sync)>,
     pub(crate) inject: Option<Box<[Box<[u8]>]>>,
     // `bun_url::URL<'a>` borrows its input string; the owned variant keeps the

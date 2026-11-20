@@ -296,9 +296,4 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
 
 } // extern "C"
 
-#else
-
-// fuzzilli_compile_loop.rs names it in every build and calls it only in one with Fuzzilli.
-extern "C" void Bun__REPRL__resetCoverage() {}
-
 #endif // FUZZILLI_ENABLED

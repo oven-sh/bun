@@ -737,13 +737,11 @@ function stripArg(s: UnitGraphUnit["profile"]["strip"]): string | undefined {
  *  - proc-macros, and what they alone depend on, are host code, compiled into the compiler and not into the program;
  *  - std depends on both panic runtimes, `panic_abort` and `panic_unwind`, and both define `__rust_start_panic`.
  *    rustc links the one the panic strategy names (rustc_metadata `inject_panic_runtime`) and leaves the other out.
- * (The third, the allocator shim, is a function in the root crate: src/runtime/bin_entry/mod.rs.)
+ * (The third, the allocator shim, is a function in src/global_allocator.)
  */
-export function linkedRlibs(graph: RustGraph): RustUnit[] {
-  const otherPanicRuntime = graph.root.profile.panic === "abort" ? "panic_unwind" : "panic_abort";
-  return [graph.root, ...transitiveLinkInputs(graph.root, "same-platform")].filter(
-    unit => unit.crateName !== otherPanicRuntime,
-  );
+export function linkedRlibs(graph: RustGraph, root: RustUnit = graph.root): RustUnit[] {
+  const otherPanicRuntime = root.profile.panic === "abort" ? "panic_unwind" : "panic_abort";
+  return [root, ...transitiveLinkInputs(root, "same-platform")].filter(unit => unit.crateName !== otherPanicRuntime);
 }
 
 /**

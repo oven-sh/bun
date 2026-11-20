@@ -1430,6 +1430,18 @@ describe('errors inherit the name "Error", like Node', () => {
     `;
     expect(await bunRun(["-e", script])).toSpawn("Error: No records found\nError: getaddrinfo ENODATA a.test");
   });
+
+  test("a sealed error keeps its name and still gets Node's code", async () => {
+    const script = `
+      const sealed = () => Object.seal(Object.assign(new Error("mocked"), { name: "DNSException", code: "DNS_ENOTFOUND" }));
+      Bun.dns.lookup = async () => { throw sealed(); };
+      const dns = require("node:dns");
+      const show = e => console.log(String(e), e.code);
+      show(await dns.promises.lookup("a.test").catch(e => e));
+      dns.lookup("a.test", show);
+    `;
+    expect(await bunRun(["-e", script])).toSpawn("DNSException: mocked ENOTFOUND\nDNSException: mocked ENOTFOUND");
+  });
 });
 
 // The socket never answers. The QTYPE that reaches it and the syscall the

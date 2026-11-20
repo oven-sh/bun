@@ -17,7 +17,7 @@ const HIGHWAY_COMMIT = "2607d3b5b0113992fe84d3848859eae13b3b52c1";
 // No SVE: bun's kernels use BitsFromMask, which only fixed-width targets have, and keep vectors in arrays.
 // SVE2_128 is no wider than NEON, and Neoverse V2 compares into predicates at a quarter of the rate.
 // AVX3 is what Skylake-X and Cascade Lake would take, which lower their clock after a 512-bit instruction.
-// highway_{png,jpeg,checksums,brotli,byte_set,zlib}.cpp and highway_webp_*.cpp put another list in the place of this one.
+// highway_{png,jpeg,checksums,brotli,byte_set,zlib,zstd}.cpp and highway_webp_*.cpp put another list in the place of this one.
 const disabledTargets = "HWY_DISABLED_TARGETS=HWY_ALL_SVE+HWY_AVX3";
 
 // Lets CPUs and VMs without AES or PCLMULQDQ have AVX2. highway_checksums.cpp checks for the latter itself.

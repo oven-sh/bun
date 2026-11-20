@@ -6,10 +6,6 @@
 // raw zstd frames; everything else keeps its 0xda27 header and passes through
 // after one u32 compare. Decompressed buffers are cached for the process
 // lifetime, keyed by their .rodata address.
-//
-// The dict symbols are emitted by the repacked libicudata.a; declaring them
-// weak here lets this file link against a prebuilt that predates the repack
-// (the hook is then never called, since no item is compressed).
 
 #include "root.h"
 
@@ -34,15 +30,7 @@
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 
-#define ZSTD_STATIC_LINKING_ONLY
-#include <zstd.h>
-
-static_assert(ZSTD_MAGICNUMBER == 0xFD2FB528);
-// Raw ICU items have bytes[2..3] == {0xda, 0x27} (ucmndata.h MAGIC1/MAGIC2),
-// so their first u32 is 0x27da'hhhh — cannot collide with zstd's magic.
-
-extern "C" __attribute__((weak)) const unsigned char bun_icu_zstd_dict[];
-extern "C" __attribute__((weak)) const unsigned int bun_icu_zstd_dict_size;
+#include "../../icu_data/icu_data.h"
 
 namespace Bun {
 
@@ -60,52 +48,35 @@ public:
     {
         Locker locker { m_lock };
 
+        int32_t size = Bun__ICUItem__size(p, *length);
+        if (size < 0)
+            return p;
+
         if (auto it = m_cache.find(p); it != m_cache.end()) {
-            *length = static_cast<int32_t>(ZSTD_getFrameContentSize(p, frameBound(*length)));
+            *length = size;
             return it->value;
         }
 
-        size_t clen = ZSTD_findFrameCompressedSize(p, frameBound(*length));
-        if (ZSTD_isError(clen))
-            return p;
-        auto dlen = ZSTD_getFrameContentSize(p, clen);
-        if (dlen == ZSTD_CONTENTSIZE_UNKNOWN || dlen == ZSTD_CONTENTSIZE_ERROR)
-            return p;
-
         // tryAlignedMalloc asserts size is a multiple of alignment in debug
         // builds; ICU item sizes are only 4-aligned, so round up.
-        size_t alloc = WTF::roundUpToMultipleOf<16>(static_cast<size_t>(dlen));
+        size_t alloc = WTF::roundUpToMultipleOf<16>(static_cast<size_t>(size));
         std::unique_ptr<void, decltype([](void* block) { MimallocMalloc::free(block); })> buf { MimallocMalloc::tryAlignedMalloc(alloc, 16) };
-        if (!buf)
-            return p;
-        size_t r = m_ddict
-            ? ZSTD_decompress_usingDDict(m_dctx, buf.get(), static_cast<size_t>(dlen), p, clen, m_ddict)
-            : ZSTD_decompressDCtx(m_dctx, buf.get(), static_cast<size_t>(dlen), p, clen);
-        if (ZSTD_isError(r))
+        if (!buf || !decompressICUItem(m_dictionary, p, *length, buf.get(), size))
             return p;
 
         m_cache.add(p, buf.get());
-        *length = static_cast<int32_t>(dlen);
+        *length = size;
         return buf.release();
     }
 
 private:
-    ICUDecompressor()
-        : m_dctx(ZSTD_createDCtx())
-        , m_ddict(&bun_icu_zstd_dict_size && bun_icu_zstd_dict_size
-                  ? ZSTD_createDDict_byReference(bun_icu_zstd_dict, bun_icu_zstd_dict_size)
-                  : nullptr)
-    {
-    }
-
-    static size_t frameBound(int32_t tocLength) { return tocLength > 0 ? static_cast<size_t>(tocLength) : (1u << 20); }
+    ICUDecompressor() = default;
 
     friend class WTF::LazyNeverDestroyed<ICUDecompressor>;
 
     WTF::Lock m_lock;
     WTF::HashMap<const void*, void*> m_cache WTF_GUARDED_BY_LOCK(m_lock);
-    ZSTD_DCtx* const m_dctx;
-    ZSTD_DDict* const m_ddict;
+    ICUDictionary* m_dictionary WTF_GUARDED_BY_LOCK(m_lock) { nullptr };
 };
 
 } // namespace Bun
@@ -119,7 +90,7 @@ extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length)
     // "BUNI": the 16 bytes `--trim` leaves where it removed a language's items.
     if (magic == 0x494E5542u && !std::memcmp(p, "BUNICUREMOVED\0\0\0", 16)) [[unlikely]]
         Bun__abortForRemovedLocaleData();
-    if (magic != ZSTD_MAGICNUMBER) [[likely]]
+    if (!Bun::isCompressedICUItem(p)) [[likely]]
         return p;
     return Bun::ICUDecompressor::get().decompress(p, length);
 }

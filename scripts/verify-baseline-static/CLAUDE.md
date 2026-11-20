@@ -159,8 +159,8 @@ table, an HWCAP test. Known patterns:
 | simdutf                               | `set_best()` — CPUID first call, cached atomic ptr          | `vendor/` or WebKit's bundled copy    |
 | Highway (Bun)                         | `BUN_HWY_DISPATCH` → `hwy::SupportedTargets()`              | `src/jsc/bindings/highway_dispatch.h` |
 | `with_bmi2!` (Bun)                    | `is_x86_feature_detected!("bmi2")`                          | `src/highway/lib.rs`                  |
+| `with_bmi2()` (Bun)                   | `is_x86_feature_detected!()`                                | `src/highway/lib.rs`                  |
 | BoringSSL                             | `OPENSSL_ia32cap_P` global, set at init                     | `vendor/boringssl/crypto/cpu_intel.c` |
-| zstd                                  | `ZSTD_cpuid()`                                              | `vendor/zstd/lib/common/cpu.h`        |
 | Rust `memchr`                         | `is_x86_feature_detected!()`                                | (via lolhtml dep)                     |
 | compiler-rt outline-atomics (aarch64) | `__aarch64_have_lse_atomics` (= `AT_HWCAP & HWCAP_ATOMICS`) | compiler-rt builtin                   |
 
@@ -238,6 +238,9 @@ use `<rust-hash>` in place of the hash:
 
 Either form works (the tool canonicalizes both before comparing), but
 `<rust-hash>` survives toolchain bumps.
+
+**Rust generics — `<generic-args>`.** An entry that ends in it covers every instance of a generic function, for a gate
+that takes a closure.
 
 **Windows `<lib:NAME.lib>` / `<lib:NAME.obj>`.** When PDB has no per-function
 record for a hit (stripped CRT objects, anonymized staticlib helpers, an asm

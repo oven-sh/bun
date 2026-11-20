@@ -225,7 +225,7 @@ void NodeVMSyntheticModule::setExport(JSGlobalObject* globalObject, WTF::String 
 
     ensureModuleRecord(globalObject);
     RETURN_IF_EXCEPTION(scope, );
-    JSModuleNamespaceObject* namespaceObject = m_moduleRecord->getModuleNamespace(globalObject, false);
+    JSModuleNamespaceObject* namespaceObject = m_moduleRecord->getModuleNamespace(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     namespaceObject->overrideExportValue(globalObject, Identifier::fromString(vm, exportName), value);
     RETURN_IF_EXCEPTION(scope, );

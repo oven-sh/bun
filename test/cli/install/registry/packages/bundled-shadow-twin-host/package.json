@@ -1,0 +1,26 @@
+{
+  "_id": "bundled-shadow-twin-host",
+  "name": "bundled-shadow-twin-host",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-shadow-twin-host",
+      "version": "1.0.0",
+      "dependencies": {
+        "bundled-shadow-inner": "1.0.0",
+        "bundled-shadow-shared": "2.0.0"
+      },
+      "bundleDependencies": [
+        "bundled-shadow-inner"
+      ],
+      "_id": "bundled-shadow-twin-host@1.0.0",
+      "dist": {
+        "integrity": "sha512-i4S4nxew0aYUoKmwLdD5tvbJLOIE92GZLu0PRP3p9QDpCO1yqsPTqeibyn5W0YncyqEZSZbbU8GmoILFRb35LQ==",
+        "shasum": "5b8355118de5e8a9edc8f2a2f86f753977a9ee48",
+        "tarball": "http://localhost:4873/bundled-shadow-twin-host/-/bundled-shadow-twin-host-1.0.0.tgz"
+      }
+    }
+  }
+}

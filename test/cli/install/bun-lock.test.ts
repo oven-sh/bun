@@ -1,7 +1,8 @@
 import { file, spawn, write } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, readlinkSync, realpathSync, statSync } from "fs";
-import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
+import { access, appendFile, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -14,7 +15,9 @@ import {
   toBeValidBin,
 } from "harness";
 import { delimiter, dirname, join } from "path";
-import { TestRegistry } from "registry";
+import { installEnv, TestRegistry } from "registry";
+
+const { parseLockfile } = install_test_helpers;
 
 expect.extend({
   toBeValidBin,
@@ -1107,10 +1110,11 @@ it("escapes double quotes in npm registry tarball URLs when saving bun.lock", as
 });
 
 // --frozen-lockfile compares the tree built from bun.lock with the tree a clean install
-// builds, so an entry nothing depends on (the clean drops it) must not change the
-// outcome, wherever it sits in the file. The comparison used to skip the loaded side's
-// highest package ids once the clean had dropped an entry, so the entries listed after
-// the unused one went missing from the comparison.
+// builds, so an entry nothing depends on must not change the outcome, wherever it sits in
+// the file. Loading used to keep such an entry until the clean dropped it, and the
+// comparison then skipped the loaded side's highest package ids, so the entries listed
+// after the unused one went missing from it. The test after this one has a package that
+// the clean still drops.
 it("--frozen-lockfile accepts a bun.lock with an entry nothing depends on, wherever it is listed", async () => {
   const noDeps = { "no-deps": ["no-deps@1.0.0", "", {}, ""] };
   const unused = { "a-dep": ["a-dep@1.0.1", "", {}, ""] };
@@ -1146,6 +1150,1128 @@ it("--frozen-lockfile accepts a bun.lock with an entry nothing depends on, where
     expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBeFalse();
     expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
   }
+});
+
+// The clean drops a package that bun.lock has and that no dependency resolves to: here no-deps@1.0.0, because the
+// peer of peer-deps-fixed takes the highest version in its range, which is the copy below one-dep. The comparison
+// of the two trees has to count the entries listed after it.
+it("--frozen-lockfile accepts a bun.lock with a package that no dependency resolves to", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const dependencies = { "one-dep": "1.0.0", "peer-deps-fixed": "1.0.0" };
+  await write(packageJson, JSON.stringify({ name: "foo", dependencies }));
+  const lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: { "": { name: "foo", dependencies } },
+    packages: {
+      "no-deps": ["no-deps@1.0.0", "", {}, ""],
+      "one-dep": ["one-dep@1.0.0", "", { dependencies: { "no-deps": "1.0.1" } }, ""],
+      "one-dep/no-deps": ["no-deps@1.0.1", "", {}, ""],
+      "peer-deps-fixed": ["peer-deps-fixed@1.0.0", "", { peerDependencies: { "no-deps": "^1.0.0" } }, ""],
+    },
+  });
+  await write(join(packageDir, "bun.lock"), lockfile);
+  const loaded = parseLockfile(packageDir);
+  const unused = loaded.packages.findIndex((pkg: any) => pkg.name === "no-deps" && pkg.resolution.value === "1.0.0");
+  expect({
+    loaded: unused !== -1,
+    dependents: loaded.dependencies.filter((dependency: any) => dependency.package_id === unused),
+  }).toEqual({ loaded: true, dependents: [] });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect({ err, exitCode }).toEqual({ err: expect.not.stringContaining("lockfile had changes"), exitCode: 0 });
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+});
+
+// A dependency of the package at <key> is looked up at "<key>/<name>", then in each enclosing folder, then at
+// "<name>", and the lookup stops at the first entry. bun writes an entry of "packages" only where a lookup stops.
+// An entry at any other key (an old `turbo prune` or a hand merge leaves one) used to be loaded like the rest. A
+// peer is bound by version and not by path, so one such entry for another version of a peer became that peer. A
+// copy of a package's entry with an entry below it rebound a regular dependency, and a copy that is listed first
+// gave the package its dependencies and its tarball. `bun ci` then installed the added entry's tarball, exit 0,
+// bun.lock unchanged. The file now loads as it does without such an entry.
+describe("a bun.lock entry at a key where no lookup of a dependency stops", () => {
+  const entry = (nameAndVersion: string, info: object = {}) => [nameAndVersion, "", info, ""];
+  type Lock = {
+    root: object;
+    workspaces?: Record<string, object>;
+    // A string is the text of the object, for a file that has one key twice.
+    packages: Record<string, unknown[]> | string;
+    lockfileVersion?: number;
+  };
+  const textOf = ({ root, workspaces = {}, packages, lockfileVersion = 1 }: Lock) => {
+    const header = JSON.stringify({ lockfileVersion, configVersion: 1, workspaces: { "": root, ...workspaces } });
+    return `${header.slice(0, -1)},"packages":${typeof packages === "string" ? packages : JSON.stringify(packages)}}`;
+  };
+
+  // What loading decides: the packages, the package that each dependency resolves to and the group of the
+  // dependency, the root's bin, and for each package its tarball, integrity, bin, os, cpu and libc.
+  function load(lock: Lock) {
+    using dir = tempDir("bun-lock-no-lookup", {
+      "package.json": JSON.stringify(lock.root),
+      "bun.lock": textOf(lock),
+    });
+    const lockfile = parseLockfile(String(dir));
+    const label = (id: number | null | undefined) => {
+      const pkg = id == null ? undefined : lockfile.packages[id];
+      if (!pkg) return null;
+      return id === 0 ? "<root>" : `${pkg.name}@${pkg.resolution.value}`;
+    };
+    const resolved: Record<string, string | null> = {};
+    const groups: Record<string, string> = {};
+    const pins: Record<string, unknown[]> = {};
+    lockfile.packages.forEach((pkg: any, id: number) => {
+      for (const dependencyId of pkg.dependencies) {
+        const dependency = lockfile.dependencies[dependencyId];
+        resolved[`${label(id)} > ${dependency.name}`] = label(dependency.package_id);
+        groups[`${label(id)} > ${dependency.name}`] = Object.keys(dependency.behavior).sort().join("+");
+      }
+      pins[label(id)!] = [pkg.resolution.resolved, pkg.integrity, pkg.bin, pkg.os, pkg.arch, pkg.libc];
+    });
+    return {
+      packages: lockfile.packages.map((_: unknown, id: number) => label(id)),
+      resolved,
+      groups,
+      rootBin: lockfile.packages[0].bin,
+      pins,
+    };
+  }
+
+  const app = { name: "app", dependencies: { host: "1.0.0", mid: "1.0.0" } };
+  const host = entry("host@1.0.0", { peerDependencies: { peer: "^1.0.0" } });
+  const midInfo = { dependencies: { peer: "^1.0.0" } };
+  const mid = entry("mid@1.0.0", midInfo);
+  const peer = entry("peer@1.0.0");
+  const other = entry("peer@1.9.9");
+  const pinned = { host, mid, peer };
+  const sha512 = `sha512-${Buffer.alloc(64, 1).toString("base64")}`;
+
+  it("the file without such an entry binds the peer to the pinned version", () => {
+    expect(load({ root: app, packages: pinned })).toMatchObject({
+      packages: ["<root>", "host@1.0.0", "mid@1.0.0", "peer@1.0.0"],
+      resolved: {
+        "<root> > host": "host@1.0.0",
+        "<root> > mid": "mid@1.0.0",
+        "host@1.0.0 > peer": "peer@1.0.0",
+        "mid@1.0.0 > peer": "peer@1.0.0",
+      },
+      rootBin: null,
+    });
+  });
+
+  // lockfileVersion 2 and 3 have stricter checks of each entry, but the same lookups.
+  describe.each([1, 2, 3])("lockfileVersion %d", lockfileVersion => {
+    // The first entry of a package in the file gives the package its dependencies, tarball, integrity, bin, os
+    // and cpu. So a copy that is listed before the entry of `mid` decides them if it is loaded.
+    it.each<[string, Record<string, unknown[]>]>([
+      ["another version of a peer, listed first", { abc: other, ...pinned }],
+      ["another version of a peer, listed last", { ...pinned, zzz: other }],
+      ["another version of a peer below a key that is not there", { ...pinned, "zzz/peer": other }],
+      ["another version of a peer at a key that starts with a slash", { ...pinned, "/peer": other }],
+      ["another version of a peer below a scope with no name", { ...pinned, "@s/@t/peer": other }],
+      ["another version of a peer below such a scope in a package", { ...pinned, "host/@s/@t/peer": other }],
+      ["a remote tarball", { ...pinned, zzz: ["peer@http://other.example/peer-1.9.9.tgz", {}, sha512] }],
+      ["a local tarball", { ...pinned, zzz: ["peer@vendor/peer-1.9.9.tgz", {}] }],
+      ["a folder", { ...pinned, zzz: ["peer@file:vendor/peer", {}] }],
+      ["a git repository", { ...pinned, zzz: ["peer@git+https://other.example/peer.git#abc1234", {}, "abc1234"] }],
+      ["a github tarball", { ...pinned, zzz: ["peer@github:other/peer#abc1234", {}, "other-peer-abc1234"] }],
+      [
+        "an entry that only another such entry leads to",
+        { ...pinned, abc: entry("fake@1.0.0", { dependencies: { zzz: "npm:peer@1.9.9" } }), zzz: other },
+      ],
+      [
+        "two entries that lead to each other",
+        {
+          ...pinned,
+          abc: entry("fake@1.0.0", { dependencies: { zzz: "npm:peer@1.9.9" } }),
+          zzz: entry("peer@1.9.9", { dependencies: { abc: "npm:fake@1.0.0" } }),
+        },
+      ],
+      ["a copy of a dependent's entry with an entry below it", { zzz: mid, "zzz/peer": other, ...pinned }],
+      [
+        "a copy that is listed first and has another tarball",
+        { aaa: ["mid@1.0.0", "http://other.example/mid-1.0.0.tgz", midInfo, sha512], ...pinned },
+      ],
+      ["a copy that is listed first and has an integrity", { aaa: ["mid@1.0.0", "", midInfo, sha512], ...pinned }],
+      [
+        "a copy that is listed last and has another tarball",
+        { ...pinned, zzz: ["mid@1.0.0", "http://other.example/mid-1.0.0.tgz", midInfo, sha512] },
+      ],
+      ["a copy that is listed last and has an integrity", { ...pinned, zzz: ["mid@1.0.0", "", midInfo, sha512] }],
+      [
+        "a copy that is listed first and has a bin",
+        { aaa: entry("mid@1.0.0", { ...midInfo, bin: { mid: "cli.js" } }), ...pinned },
+      ],
+      [
+        "a copy that is listed first and has an os, a cpu and a libc",
+        { aaa: entry("mid@1.0.0", { ...midInfo, os: "darwin", cpu: "arm64", libc: "musl" }), ...pinned },
+      ],
+      [
+        "a copy that is listed first and has the dependency in another group",
+        { aaa: entry("mid@1.0.0", { optionalDependencies: { peer: "^1.0.0" } }), ...pinned },
+      ],
+      [
+        "an entry with a dependency that is not in the file",
+        { ...pinned, abc: entry("fake@1.0.0", { dependencies: { missing: "1.0.0" } }) },
+      ],
+      ["an entry for the root package with a bin", { ...pinned, zzz: ["app@root:", { bin: { app: "cli.js" } }] }],
+    ])("%s is not loaded", (_, packages) => {
+      expect(load({ root: app, packages, lockfileVersion })).toEqual(
+        load({ root: app, packages: pinned, lockfileVersion }),
+      );
+    });
+
+    // Before, the package had the empty integrity of the copy, and the install did not verify its tarball.
+    it("a copy that is listed first and has no integrity does not take the integrity from its package", () => {
+      const hashed = { ...pinned, mid: ["mid@1.0.0", "", midInfo, sha512] };
+      const loaded = load({ root: app, packages: hashed, lockfileVersion });
+      expect(loaded.pins["mid@1.0.0"][1]).toBe(sha512);
+      expect(load({ root: app, packages: { aaa: mid, ...hashed }, lockfileVersion })).toEqual(loaded);
+    });
+  });
+
+  // From lockfileVersion 2 a tarball outside the registry needs an integrity, and that check is made for each entry.
+  it("a copy with a tarball outside the registry and no integrity fails the load from lockfileVersion 2", () => {
+    const packages = { aaa: ["mid@1.0.0", "http://other.example/mid-1.0.0.tgz", midInfo, ""], ...pinned };
+    expect(load({ root: app, packages, lockfileVersion: 1 })).toEqual(load({ root: app, packages: pinned }));
+    expect(() => load({ root: app, packages, lockfileVersion: 2 })).toThrow("InvalidLockfile");
+  });
+
+  // The last element is what the file without the added entries has to load.
+  it.each<[string, Lock, Record<string, unknown[]>, Record<string, string | null>]>([
+    [
+      "the root's own peer",
+      {
+        root: { name: "app", dependencies: { mid: "1.0.0" }, peerDependencies: { peer: "^1.0.0" } },
+        packages: { mid, peer },
+      },
+      { zzz: other },
+      { "<root> > peer": "peer@1.0.0" },
+    ],
+    [
+      "a workspace's peer",
+      {
+        root: { name: "app", dependencies: { mid: "1.0.0" } },
+        workspaces: { "packages/w": { name: "w", version: "1.0.0", peerDependencies: { peer: "^1.0.0" } } },
+        packages: { mid, peer, w: ["w@workspace:packages/w"] },
+      },
+      { zzz: other },
+      { "w@workspace:packages/w > peer": "peer@1.0.0" },
+    ],
+    [
+      "a peer with the range *",
+      { root: app, packages: { host: entry("host@1.0.0", { peerDependencies: { peer: "*" } }), mid, peer } },
+      { zzz: other },
+      { "host@1.0.0 > peer": "peer@1.0.0" },
+    ],
+    [
+      "a peer that is an npm: alias",
+      {
+        root: app,
+        packages: { host: entry("host@1.0.0", { peerDependencies: { p: "npm:peer@^1.0.0" } }), mid, p: peer, peer },
+      },
+      { zzz: other },
+      { "host@1.0.0 > p": "peer@1.0.0" },
+    ],
+    [
+      // The lookup of `peer` from `outer/mid` stops at `outer/mid/peer`, so it does not get to `outer/peer`.
+      "a peer, with the entry above a nearer entry of its name",
+      {
+        root: { name: "app", dependencies: { host: "1.0.0", outer: "1.0.0" } },
+        packages: {
+          host,
+          outer: entry("outer@1.0.0", { dependencies: { mid: "1.0.0" } }),
+          peer,
+          "outer/mid": mid,
+          "outer/mid/peer": peer,
+        },
+      },
+      { "outer/peer": other },
+      { "host@1.0.0 > peer": "peer@1.0.0", "mid@1.0.0 > peer": "peer@1.0.0" },
+    ],
+    [
+      // The file has no entry for the peer where it is looked up, so the peer stays unresolved, as without the entry.
+      "a peer whose only version in range is at such a key",
+      { root: { name: "app", dependencies: { host: "1.0.0" } }, packages: { host } },
+      { "zzz/peer": peer },
+      { "host@1.0.0 > peer": null },
+    ],
+    [
+      // The peer binds by its place, to the version of the root that is not in range. An old `turbo prune` leaves
+      // such an entry for the version in range, and the peer was bound to it before.
+      "a peer whose only version in range is at such a key, with another version at the root",
+      {
+        root: { name: "app", dependencies: { host: "1.0.0" }, devDependencies: { peer: "2.0.0" } },
+        packages: { host, peer: entry("peer@2.0.0") },
+      },
+      { "zzz/peer": peer },
+      { "host@1.0.0 > peer": "peer@2.0.0" },
+    ],
+    [
+      // The root dependency m has the key of the workspace m, so an entry that names the workspace binds its
+      // dependencies from that entry's own key.
+      "a dependency of a workspace whose name a root dependency has",
+      {
+        root: { name: "app", dependencies: { m: "2.0.0" } },
+        workspaces: { "packages/m": { name: "m", version: "1.0.0", dependencies: { peer: "^1.0.0" } } },
+        packages: { m: entry("m@2.0.0"), peer },
+      },
+      { zzz: ["m@workspace:packages/m"], "zzz/peer": other },
+      { "m@workspace:packages/m > peer": "peer@1.0.0" },
+    ],
+    [
+      // lockfileVersion 0 lists a workspace's dependencies in its entry. The loader leaves them unresolved.
+      "a lockfileVersion 0 file",
+      {
+        root: { name: "app" },
+        workspaces: { "packages/w": { name: "w", version: "1.0.0" } },
+        packages: { peer, w: ["w@workspace:packages/w", { dependencies: { peer: "^1.0.0" } }] },
+        lockfileVersion: 0,
+      },
+      { zzz: other },
+      { "w@workspace:packages/w > peer": null },
+    ],
+    [
+      // A `catalog:` dependency without a catalog stays unresolved, so no entry is at its name.
+      "a peer, with the entry at the name of a dependency whose catalog is gone",
+      {
+        root: app,
+        packages: { host, mid: entry("mid@1.0.0", { dependencies: { peer: "^1.0.0", zzz: "catalog:" } }), peer },
+      },
+      { zzz: other },
+      { "host@1.0.0 > peer": "peer@1.0.0", "mid@1.0.0 > zzz": null },
+    ],
+    [
+      // The install that wrote the file did not resolve an "unresolved" dependency, so no entry is at its name.
+      "a peer, with the entry at the name of an unresolved dependency of the root",
+      {
+        root: { ...app, optionalDependencies: { zzz: "npm:peer@1.9.9" }, unresolved: ["zzz"] },
+        packages: pinned,
+      },
+      { zzz: other },
+      { "host@1.0.0 > peer": "peer@1.0.0", "<root> > zzz": null },
+    ],
+    [
+      "a peer, with the entry at the name of an unresolved dependency of a workspace",
+      {
+        root: app,
+        workspaces: {
+          "packages/w": {
+            name: "w",
+            version: "1.0.0",
+            optionalDependencies: { zzz: "npm:peer@1.9.9" },
+            unresolved: ["zzz"],
+          },
+        },
+        packages: { ...pinned, w: ["w@workspace:packages/w"] },
+      },
+      { zzz: other },
+      { "host@1.0.0 > peer": "peer@1.0.0", "w@workspace:packages/w > zzz": null },
+    ],
+    [
+      "a peer, with the entry at the name of an unresolved dependency of a package",
+      {
+        root: app,
+        packages: {
+          host,
+          mid: entry("mid@1.0.0", {
+            ...midInfo,
+            optionalDependencies: { zzz: "npm:peer@1.9.9" },
+            unresolved: ["zzz"],
+          }),
+          peer,
+        },
+      },
+      { zzz: other },
+      { "host@1.0.0 > peer": "peer@1.0.0", "mid@1.0.0 > zzz": null },
+    ],
+    [
+      // The lookup of an optional peer stops one folder above a bundled package, here at `a/optp`.
+      "a peer, with the entry at the name of an optional peer of a bundled package",
+      {
+        root: { name: "app", dependencies: { a: "1.0.0", host: "1.0.0" } },
+        packages: {
+          a: entry("a@1.0.0", { dependencies: { b: "1.0.0" } }),
+          host,
+          peer,
+          "a/b": entry("b@1.0.0", { peerDependencies: { optp: "*" }, optionalPeers: ["optp"], bundled: true }),
+        },
+      },
+      { optp: other },
+      { "host@1.0.0 > peer": "peer@1.0.0", "b@1.0.0 > optp": null },
+    ],
+    [
+      // `turbo prune` leaves such a copy. Its walk ends at the root's `dep`, and that counted for more than
+      // `x/dep`, where the walk of the entry at `x/wrap` ends.
+      "a dependency of a package, with a copy of the package's entry below a key that is not there",
+      {
+        root: { name: "app", dependencies: { dep: "1.0.0", x: "1.0.0" } },
+        packages: {
+          dep: entry("dep@1.0.0"),
+          x: entry("x@1.0.0", { dependencies: { dep: "2.0.0", wrap: "1.0.0" } }),
+          "x/dep": entry("dep@2.0.0"),
+          "x/wrap": entry("wrap@1.0.0", { dependencies: { dep: "2.0.0" } }),
+        },
+      },
+      { "zzz/wrap": entry("wrap@1.0.0", { dependencies: { dep: "2.0.0" } }) },
+      { "wrap@1.0.0 > dep": "dep@2.0.0" },
+    ],
+    [
+      // The lookup of `wrap` from `x` stops at `x/wrap`, so the copy at the root is a leftover too.
+      "a dependency of a package, with a copy of the package's entry above the entry",
+      {
+        root: { name: "app", dependencies: { dep: "1.0.0", x: "1.0.0" } },
+        packages: {
+          dep: entry("dep@1.0.0"),
+          x: entry("x@1.0.0", { dependencies: { dep: "2.0.0", wrap: "1.0.0" } }),
+          "x/dep": entry("dep@2.0.0"),
+          "x/wrap": entry("wrap@1.0.0", { dependencies: { dep: "2.0.0" } }),
+        },
+      },
+      { wrap: entry("wrap@1.0.0", { dependencies: { dep: "2.0.0" } }) },
+      { "wrap@1.0.0 > dep": "dep@2.0.0" },
+    ],
+  ])("%s loads the same when such an entry is added", (_, lock, added, resolved) => {
+    const loaded = load(lock);
+    expect(loaded.resolved).toMatchObject(resolved);
+    expect(load({ ...lock, packages: { ...(lock.packages as object), ...added } })).toEqual(loaded);
+  });
+
+  // Such an entry that only repeats an entry of its package stays where it is, so the packages keep the order of
+  // the file. Only its lookups count no longer.
+  it("a copy that is listed first does not change the order of the packages", () => {
+    const { packages, resolved } = load({ root: app, packages: { aaa: mid, ...pinned } });
+    expect({ packages, resolved }).toEqual({
+      packages: ["<root>", "mid@1.0.0", "host@1.0.0", "peer@1.0.0"],
+      resolved: load({ root: app, packages: pinned }).resolved,
+    });
+  });
+
+  // The first entry of a package gives the package its dependency list. In the list of the copy, `inner` is not
+  // bundled, because no bundled entry is below the copy.
+  it("a copy that is listed first does not make a bundled dependency a regular one", () => {
+    const root = { name: "app", dependencies: { host: "1.0.0" } };
+    const bundler = entry("host@1.0.0", { dependencies: { inner: "1.0.0" } });
+    const honest = { host: bundler, "host/inner": entry("inner@1.0.0", { bundled: true }) };
+    const loaded = load({ root, packages: honest });
+    expect(loaded.groups).toEqual({ "<root> > host": "prod", "host@1.0.0 > inner": "bundled+prod" });
+    expect(load({ root, packages: { "zzz/host": bundler, ...honest } })).toEqual(loaded);
+  });
+
+  // The entry of the workspace repeats the key of the package w, so it is at no key of its own. It has its turn
+  // with the package that has the key, but its lookups are those of that package's entry.
+  it("another version of a peer is not loaded if a key is there twice", () => {
+    const root = { name: "app", dependencies: { host: "1.0.0", w: "1.0.0" } };
+    const workspaces = { "packages/w": { name: "w", version: "1.0.0" } };
+    const rows = (added: string) => `{
+      "host": ${JSON.stringify(host)},
+      "w": ${JSON.stringify(entry("w@1.0.0", { peerDependencies: { peer: "^1.0.0" } }))},
+      "w": ["w@workspace:packages/w"],
+      "peer": ${JSON.stringify(peer)}${added}
+    }`;
+    const loaded = load({ root, workspaces, packages: rows("") });
+    expect(loaded.resolved).toMatchObject({ "host@1.0.0 > peer": "peer@1.0.0", "w@1.0.0 > peer": "peer@1.0.0" });
+    expect(load({ root, workspaces, packages: rows(`, "zzz/peer": ${JSON.stringify(other)}`) })).toEqual(loaded);
+  });
+
+  // An entry at a key where the lookup of a dependency stops is loaded.
+  it.each<[string, Lock, { packages: string[]; resolved: Record<string, string | null> }]>([
+    [
+      // bun writes this for a package that depends on `shared` and bundles a dependent of `shared`: `shared` is
+      // for its own dependency, `host/shared` for the bundled one. aws-cdk-lib is such a package. The lookup of
+      // an entry beside bundled entries goes on above their folder.
+      "above an entry beside bundled entries",
+      {
+        root: { name: "app", dependencies: { host: "1.0.0" } },
+        packages: {
+          host: entry("host@1.0.0", { dependencies: { inner: "1.0.0", shared: "1.0.0" } }),
+          shared: entry("shared@1.0.0"),
+          "host/inner": entry("inner@1.0.0", { dependencies: { shared: "1.0.0" }, bundled: true }),
+          "host/shared": entry("shared@1.0.0"),
+        },
+      },
+      {
+        packages: ["<root>", "host@1.0.0", "shared@1.0.0", "inner@1.0.0"],
+        resolved: {
+          "<root> > host": "host@1.0.0",
+          "host@1.0.0 > inner": "inner@1.0.0",
+          "host@1.0.0 > shared": "shared@1.0.0",
+          "inner@1.0.0 > shared": "shared@1.0.0",
+        },
+      },
+    ],
+    [
+      "above an entry beside bundled entries, with another version",
+      {
+        root: { name: "app", dependencies: { host: "1.0.0" } },
+        packages: {
+          host: entry("host@1.0.0", { dependencies: { inner: "1.0.0", shared: "^1.0.0" } }),
+          shared: entry("shared@1.5.0"),
+          "host/inner": entry("inner@1.0.0", { dependencies: { shared: "1.0.0" }, bundled: true }),
+          "host/shared": entry("shared@1.0.0"),
+        },
+      },
+      {
+        packages: ["<root>", "host@1.0.0", "shared@1.5.0", "inner@1.0.0", "shared@1.0.0"],
+        resolved: {
+          "<root> > host": "host@1.0.0",
+          "host@1.0.0 > inner": "inner@1.0.0",
+          "host@1.0.0 > shared": "shared@1.0.0",
+          "inner@1.0.0 > shared": "shared@1.0.0",
+        },
+      },
+    ],
+    [
+      // The lookup that goes on above the folder of host1 makes `s1` a used entry, and only `s1` leads to
+      // `s1/host2`. Then the lookup of `s2` from there goes on above that folder in the same way.
+      "above an entry beside bundled entries, below an entry that is found that way",
+      {
+        root: { name: "app", dependencies: { host1: "1.0.0" } },
+        packages: {
+          host1: entry("host1@1.0.0", { dependencies: { inner1: "1.0.0", s1: "1.0.0" } }),
+          host2: entry("host2@2.0.0"),
+          s1: entry("s1@1.0.0", { dependencies: { host2: "*" } }),
+          s2: entry("s2@1.0.0"),
+          "host1/inner1": entry("inner1@1.0.0", { dependencies: { s1: "1.0.0" }, bundled: true }),
+          "host1/s1": entry("s1@1.0.0", { dependencies: { host2: "*" } }),
+          "s1/host2": entry("host2@1.0.0", { dependencies: { inner2: "1.0.0", s2: "1.0.0" } }),
+          "s1/host2/inner2": entry("inner2@1.0.0", { dependencies: { s2: "1.0.0" }, bundled: true }),
+          "s1/host2/s2": entry("s2@1.0.0"),
+        },
+      },
+      {
+        packages: [
+          "<root>",
+          "host1@1.0.0",
+          "host2@2.0.0",
+          "s1@1.0.0",
+          "s2@1.0.0",
+          "inner1@1.0.0",
+          "host2@1.0.0",
+          "inner2@1.0.0",
+        ],
+        resolved: {
+          "<root> > host1": "host1@1.0.0",
+          "host1@1.0.0 > inner1": "inner1@1.0.0",
+          "host1@1.0.0 > s1": "s1@1.0.0",
+          "s1@1.0.0 > host2": "host2@1.0.0",
+          "inner1@1.0.0 > s1": "s1@1.0.0",
+          "host2@1.0.0 > inner2": "inner2@1.0.0",
+          "host2@1.0.0 > s2": "s2@1.0.0",
+          "inner2@1.0.0 > s2": "s2@1.0.0",
+        },
+      },
+    ],
+    [
+      // The root's peer links the workspace w, but its lookup stops at the key `w`, which a package of that name
+      // has. So the entries of that package stay loaded, and the workspace's dependencies are below `./w`.
+      "at the name of a workspace that a peer of the root links",
+      {
+        root: { name: "root", dependencies: { dep: "1.0.0" }, peerDependencies: { w: "^1.0.0" } },
+        workspaces: { "packages/w": { name: "w", version: "1.0.0", dependencies: { dep: "^2.0.0" } } },
+        packages: {
+          dep: entry("dep@1.0.0"),
+          w: entry("w@1.5.0", { dependencies: { dep: "2.1.0" } }),
+          "w/dep": entry("dep@2.1.0"),
+          "./w/dep": entry("dep@2.0.0"),
+        },
+      },
+      {
+        packages: ["<root>", "w@workspace:packages/w", "dep@1.0.0", "w@1.5.0", "dep@2.1.0", "dep@2.0.0"],
+        resolved: {
+          "<root> > w": "w@workspace:packages/w",
+          "<root> > dep": "dep@1.0.0",
+          "w@workspace:packages/w > dep": "dep@2.0.0",
+          "w@1.5.0 > dep": "dep@2.1.0",
+        },
+      },
+    ],
+    [
+      // `turbo prune` writes this: a workspace that it removed stays in "workspaces", one of its dependencies has
+      // no entry, and a package of the same name that another workspace depends on has the key.
+      "at the name of a workspace, for a dependency of another workspace",
+      {
+        root: { name: "app" },
+        workspaces: {
+          "apps/ws": { name: "ws", version: "1.0.0", dependencies: { peer: "^1.0.0", missing: "^1.0.0" } },
+          "packages/shared": { name: "shared", version: "1.0.0", dependencies: { ws: "^8.0.0" } },
+        },
+        packages: {
+          shared: ["shared@workspace:packages/shared"],
+          ws: entry("ws@8.1.0", { dependencies: { peer: "^1.0.0" } }),
+          "ws/peer": entry("peer@1.9.9"),
+          "./ws/peer": entry("peer@1.0.0"),
+        },
+      },
+      {
+        packages: [
+          "<root>",
+          "ws@workspace:apps/ws",
+          "shared@workspace:packages/shared",
+          "ws@8.1.0",
+          "peer@1.9.9",
+          "peer@1.0.0",
+        ],
+        resolved: {
+          "<root> > shared": "shared@workspace:packages/shared",
+          "<root> > ws": "ws@workspace:apps/ws",
+          "ws@workspace:apps/ws > missing": null,
+          "ws@workspace:apps/ws > peer": "peer@1.0.0",
+          "shared@workspace:packages/shared > ws": "ws@8.1.0",
+          "ws@8.1.0 > peer": "peer@1.9.9",
+        },
+      },
+    ],
+    [
+      // bun writes the dependencies of a workspace below each key that the workspace has, also below an alias.
+      "below a second key of a workspace",
+      {
+        root: { name: "app", dependencies: { "a-dep": "workspace:packages/w", dep: "1.0.0" } },
+        workspaces: { "packages/w": { name: "w", version: "1.0.0", dependencies: { dep: "2.0.0" } } },
+        packages: {
+          "a-dep": ["w@workspace:packages/w"],
+          dep: entry("dep@1.0.0"),
+          w: ["w@workspace:packages/w"],
+          "a-dep/dep": entry("dep@2.0.0"),
+          "w/dep": entry("dep@2.0.0"),
+        },
+      },
+      {
+        packages: ["<root>", "w@workspace:packages/w", "dep@1.0.0", "dep@2.0.0"],
+        resolved: {
+          "<root> > w": "w@workspace:packages/w",
+          "<root> > a-dep": "w@workspace:packages/w",
+          "<root> > dep": "dep@1.0.0",
+          "w@workspace:packages/w > dep": "dep@2.0.0",
+        },
+      },
+    ],
+    [
+      // lockfileVersion 0 lists the dependencies of a workspace in its entry. The loader leaves them unresolved,
+      // but their entries are at the keys where they are looked up.
+      "for a dependency of a workspace in a lockfileVersion 0 file",
+      {
+        root: { name: "app" },
+        workspaces: { "packages/w": { name: "w", version: "1.0.0" } },
+        packages: {
+          peer,
+          w: ["w@workspace:packages/w", { dependencies: { peer: "^1.0.0", dep: "2.0.0" } }],
+          "w/dep": entry("dep@2.0.0"),
+        },
+        lockfileVersion: 0,
+      },
+      {
+        packages: ["<root>", "peer@1.0.0", "w@workspace:packages/w", "dep@2.0.0"],
+        resolved: {
+          "<root> > w": "w@workspace:packages/w",
+          "w@workspace:packages/w > peer": null,
+          "w@workspace:packages/w > dep": null,
+        },
+      },
+    ],
+  ])("an entry %s is loaded", (_, lock, expected) => {
+    const { packages, resolved } = load(lock);
+    expect({ packages, resolved }).toEqual(expected);
+  });
+
+  // What a command prints for a bun.lock.
+  async function prints(lock: Lock, ...command: string[]) {
+    using dir = tempDir("bun-lock-no-lookup-cli", {
+      "package.json": JSON.stringify(lock.root),
+      "bun.lock": textOf(lock),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), ...command],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  it.concurrent.each<[string, Record<string, unknown[]>, string]>([
+    ["an entry that is left out", { abc: other, ...pinned }, 'warn: skipping 1 unused bun.lock entry: "abc"\n'],
+    ["a copy of an entry", { ...pinned, zzz: mid }, 'warn: skipping 1 unused bun.lock entry: "zzz"\n'],
+    [
+      "more than five entries",
+      Object.fromEntries([...Array.from({ length: 7 }, (_, n) => [`a${n}`, other]), ...Object.entries(pinned)]),
+      'warn: skipping 7 unused bun.lock entries: "a0", "a1", "a2", "a3", "a4" and 2 more\n',
+    ],
+    ["no such entry", pinned, ""],
+  ])("--verbose names %s", async (_, packages, warning) => {
+    const [verbose, quiet] = await Promise.all([
+      prints({ root: app, packages }, "pm", "ls", "--verbose"),
+      prints({ root: app, packages }, "pm", "ls"),
+    ]);
+    expect({
+      verbose: verbose.err.split("\n").filter(line => line.includes("unused bun.lock")),
+      quiet: quiet.err,
+      exitCode: [verbose.exitCode, quiet.exitCode],
+    }).toEqual({ verbose: warning ? [warning.trimEnd()] : [], quiet: "", exitCode: [0, 0] });
+  });
+
+  // These commands read the loaded packages. Before, the hash was another one and `bun why fake` found the package.
+  it.concurrent.each([
+    ["pm", "hash"],
+    ["why", "fake"],
+  ])("bun %s %s prints what it prints for the file without such an entry", async (...command) => {
+    const [honest, added] = await Promise.all([
+      prints({ root: app, packages: pinned }, ...command),
+      prints({ root: app, packages: { abc: entry("fake@1.0.0"), ...pinned } }, ...command),
+    ]);
+    expect(added).toEqual(honest);
+  });
+
+  // The file is loaded a second time without `abc`. A message of the first load is not printed again.
+  it("a warning of the load is printed once", async () => {
+    const dependencies = { "no-deps": "1.0.0" };
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies }));
+    const packages = {
+      abc: entry("no-deps@1.1.0"),
+      "no-deps": ["no-deps@1.0.0", "", {}, "md5-AAAAAAAAAAAAAAAAAAAAAA=="],
+    };
+    await write(
+      join(packageDir, "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "foo", dependencies } },
+        packages,
+      }),
+    );
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile", "--dry-run"],
+      cwd: packageDir,
+      env: installEnv(packageDir, env),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ warnings: err.split("\n").filter(line => line.startsWith("warn:")), exitCode }).toEqual({
+      warnings: ["warn: Unsupported or malformed integrity hash; ignoring"],
+      exitCode: 0,
+    });
+  });
+
+  // `abc` is listed first, but no lookup stops at it. `mid` and `peer` are looked up, in that order.
+  it("the load fails for the first entry that is looked up and that cannot resolve a dependency", async () => {
+    const lockfile = JSON.stringify(
+      {
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": app },
+        packages: {
+          abc: entry("fake@1.0.0", { dependencies: { missing: "1.0.0" } }),
+          host,
+          mid: entry("mid@1.0.0", { dependencies: { peer: "^1.0.0", gone: "1.0.0" } }),
+          peer: entry("peer@1.0.0", { dependencies: { lost: "1.0.0" } }),
+        },
+      },
+      null,
+      2,
+    );
+    using dir = tempDir("bun-lock-no-lookup-error", { "package.json": JSON.stringify(app), "bun.lock": lockfile });
+    const line = lockfile.split("\n").findIndex(text => text.includes('"mid": [')) + 1;
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const failures = err.split("\n").filter(text => text.includes("Failed to resolve"));
+    expect({ failures, at: err.includes(`bun.lock:${line}:`), exitCode }).toEqual({
+      failures: ["error: Failed to resolve prod dependency 'gone' for package 'mid'"],
+      at: true,
+      exitCode: 1,
+    });
+  });
+
+  // The copy gives `mid` a dependency on `extra`. The second load has the list of the real entry, and then no
+  // lookup stops at `extra`. The file is not loaded a third time.
+  it("the load fails if an entry is left over in the load without such entries", async () => {
+    const lockfile = JSON.stringify(
+      {
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": app },
+        packages: {
+          aaa: entry("mid@1.0.0", { dependencies: { extra: "1.0.0", peer: "^1.0.0" } }),
+          extra: entry("extra@1.0.0"),
+          ...pinned,
+        },
+      },
+      null,
+      2,
+    );
+    using dir = tempDir("bun-lock-no-lookup-again", { "package.json": JSON.stringify(app), "bun.lock": lockfile });
+    const line = lockfile.split("\n").findIndex(text => text.includes('"extra": [')) + 1;
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({
+      errors: err.split("\n").filter(text => text.startsWith("error: No dependency")),
+      at: err.includes(`bun.lock:${line}:`),
+      exitCode,
+    }).toEqual({ errors: ["error: No dependency resolves to this package"], at: true, exitCode: 1 });
+  });
+
+  // Lockfiles of this repository, with one entry added. The load is the same, and it is another one on main.
+  it.each(["bun.lock", "test/bun.lock", "packages/bun-lambda/bun.lock", "packages/bun-vscode/bun.lock"])(
+    "%s loads the same when such an entry is added",
+    async path => {
+      const text = await file(join(import.meta.dir, "..", "..", "..", path)).text();
+      const added = text.replace(
+        /\n  "packages": \{\n/,
+        match => `${match}    "zzz/added": ["added@1.0.0", "", {}, ""],\n`,
+      );
+      expect(added).not.toBe(text);
+      const loadText = (lockfile: string) => {
+        using dir = tempDir("bun-lock-no-lookup-repo", { "package.json": "{}", "bun.lock": lockfile });
+        return parseLockfile(String(dir));
+      };
+      expect(loadText(added)).toEqual(loadText(text));
+    },
+  );
+
+  // peer-deps-fixed has the peer no-deps@^1.0.0 and is laid out first, so the version that its peer resolves to
+  // is the one in node_modules/no-deps. provides-peer-deps-1-0-0 depends on no-deps@1.0.0.
+  describe.each(["hoisted", "isolated"] as const)("%s linker", linker => {
+    const dependencies = { "peer-deps-fixed": "1.0.0", "provides-peer-deps-1-0-0": "1.0.0" };
+    const provider = entry("provides-peer-deps-1-0-0@1.0.0", { dependencies: { "no-deps": "1.0.0" } });
+    const locked = {
+      "no-deps": entry("no-deps@1.0.0"),
+      "peer-deps-fixed": entry("peer-deps-fixed@1.0.0", { peerDependencies: { "no-deps": "^1.0.0" } }),
+      "provides-peer-deps-1-0-0": provider,
+    };
+    const shapes: [string, Record<string, unknown[]>][] = [
+      ["another version of a peer", { abc: entry("no-deps@1.1.0"), ...locked }],
+      ["a copy of a dependent's entry", { zzz: provider, "zzz/no-deps": entry("no-deps@1.1.0"), ...locked }],
+    ];
+    const lockfileOf = (packages: Record<string, unknown[]>, lockfileVersion: number) =>
+      JSON.stringify({
+        lockfileVersion,
+        configVersion: 1,
+        workspaces: { "": { name: "foo", dependencies } },
+        packages,
+      });
+    // The version of no-deps that the package in node_modules/<name> loads.
+    const loads = async (packageDir: string, name: string) => {
+      let dir = realpathSync(join(packageDir, "node_modules", name));
+      while (dir !== dirname(dir) && !existsSync(join(dir, "node_modules", "no-deps", "package.json"))) {
+        dir = dirname(dir);
+      }
+      return (await file(join(dir, "node_modules", "no-deps", "package.json")).json()).version;
+    };
+
+    it.concurrent.each(
+      shapes.flatMap(([shape, packages]) =>
+        [
+          [["ci"], 1],
+          [["install"], 1],
+          [["ci"], 2],
+        ].map(([command, version]) => [(command as string[]).join(" "), version, shape, command, packages] as const),
+      ),
+    )("bun %s at lockfileVersion %d installs nothing for %s", async (_, version, __, command, packages) => {
+      const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies }));
+      const lockfile = lockfileOf(packages, version as number);
+      await write(join(packageDir, "bun.lock"), lockfile);
+
+      await using proc = spawn({
+        cmd: [bunExe(), ...(command as string[])],
+        cwd: packageDir,
+        env: installEnv(packageDir, env),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const downloaded = (await readdirSorted(join(packageDir, ".bun-cache")))
+        .map(name => /^no-deps@(\d+\.\d+\.\d+)@@/.exec(name)?.[1])
+        .filter(version => version !== undefined);
+
+      expect({
+        err,
+        "peer-deps-fixed": await loads(packageDir, "peer-deps-fixed"),
+        "provides-peer-deps-1-0-0": await loads(packageDir, "provides-peer-deps-1-0-0"),
+        downloaded,
+        unchanged: (await file(join(packageDir, "bun.lock")).text()) === lockfile,
+        exitCode,
+      }).toEqual({
+        err: expect.not.stringContaining("error:"),
+        "peer-deps-fixed": "1.0.0",
+        "provides-peer-deps-1-0-0": "1.0.0",
+        downloaded: ["1.0.0"],
+        unchanged: true,
+        exitCode: 0,
+      });
+    });
+
+    // The added entry has the tarball of no-deps 1.1.0 on another host, with the integrity of that tarball. That
+    // host served it before, and `bun ci` installed it.
+    it("bun ci asks no other host for the tarball of such an entry", async () => {
+      const tarball = await file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.1.0.tgz")).bytes();
+      const requests: string[] = [];
+      await using elsewhere = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(request) {
+          requests.push(new URL(request.url).pathname);
+          return new Response(tarball);
+        },
+      });
+      const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies }));
+      const integrity = `sha512-${new Bun.CryptoHasher("sha512").update(tarball).digest("base64")}`;
+      const added = ["no-deps@1.1.0", `http://127.0.0.1:${elsewhere.port}/no-deps-1.1.0.tgz`, {}, integrity];
+      await write(join(packageDir, "bun.lock"), lockfileOf({ abc: added, ...locked }, 3));
+
+      await using proc = spawn({
+        cmd: [bunExe(), "ci"],
+        cwd: packageDir,
+        env: installEnv(packageDir, env),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({
+        err: err.includes("error:") ? err : "",
+        requests,
+        "peer-deps-fixed": await loads(packageDir, "peer-deps-fixed"),
+        exitCode,
+      }).toEqual({ err: "", requests: [], "peer-deps-fixed": "1.0.0", exitCode: 0 });
+    });
+
+    // The peer of peer-deps-fixed wants no-deps ^1.0.0, and the root has no-deps 2.0.0 for development. The only
+    // version in range is at `abc`, so the peer binds by its place to 2.0.0, as in the file without that entry.
+    // Before, `bun ci --production` installed 1.1.0 for the peer.
+    it.concurrent.each(["ci", "ci --production"])(
+      "bun %s installs what it installs without the only version in range of a peer",
+      async command => {
+        const root = {
+          name: "foo",
+          dependencies: { "peer-deps-fixed": "1.0.0" },
+          devDependencies: { "no-deps": "2.0.0" },
+        };
+        const honest = { "no-deps": entry("no-deps@2.0.0"), "peer-deps-fixed": locked["peer-deps-fixed"] };
+        const installed = async (packages: Record<string, unknown[]>) => {
+          const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+          await write(packageJson, JSON.stringify(root));
+          const lockfile = { lockfileVersion: 1, configVersion: 1, workspaces: { "": root }, packages };
+          await write(join(packageDir, "bun.lock"), JSON.stringify(lockfile));
+          await using proc = spawn({
+            cmd: [bunExe(), ...command.split(" ")],
+            cwd: packageDir,
+            env: installEnv(packageDir, env),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          return {
+            err: err.includes("error:") ? err : "",
+            downloaded: (await readdirSorted(join(packageDir, ".bun-cache")))
+              .map(name => /^no-deps@(\d+\.\d+\.\d+)@@/.exec(name)?.[1])
+              .filter(version => version !== undefined),
+            exitCode,
+          };
+        };
+        const [without, added] = await Promise.all([
+          installed(honest),
+          installed({ abc: entry("no-deps@1.1.0"), ...honest }),
+        ]);
+        expect(without).toMatchObject({ err: "", exitCode: 0 });
+        expect(added).toEqual(without);
+      },
+    );
+
+    // With `linkWorkspacePackages = false` the root's peer on the name of a workspace is bound by version too.
+    // Before, `bun ci` installed the added version from the registry in the place of the workspace.
+    it("bun ci installs nothing for another version of a workspace that a peer of the root names", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: { "packages/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }) },
+      });
+      await appendFile(join(packageDir, "bunfig.toml"), "linkWorkspacePackages = false\n");
+      const root = { name: "foo", peerDependencies: { "no-deps": "^1.0.0" } };
+      await write(packageJson, JSON.stringify({ ...root, workspaces: ["packages/*"] }));
+      const lockfile = JSON.stringify({
+        lockfileVersion: 2,
+        configVersion: 1,
+        workspaces: { "": root, "packages/no-deps": { name: "no-deps", version: "1.0.0" } },
+        packages: { abc: entry("no-deps@1.1.0"), "no-deps": ["no-deps@workspace:packages/no-deps"] },
+      });
+      await write(join(packageDir, "bun.lock"), lockfile);
+
+      await using proc = spawn({
+        cmd: [bunExe(), "ci"],
+        cwd: packageDir,
+        env: installEnv(packageDir, env),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      // The hoisted linker links the root's peer, the isolated linker does not.
+      const linked = join(packageDir, "node_modules", "no-deps");
+      expect({
+        err: err.includes("error:") ? err : "",
+        linked: existsSync(linked) ? realpathSync(linked) : null,
+        downloaded: existsSync(join(packageDir, ".bun-cache"))
+          ? await readdirSorted(join(packageDir, ".bun-cache"))
+          : [],
+        unchanged: (await file(join(packageDir, "bun.lock")).text()) === lockfile,
+        exitCode,
+      }).toEqual({
+        err: "",
+        linked: linker === "hoisted" ? realpathSync(join(packageDir, "packages", "no-deps")) : null,
+        downloaded: [],
+        unchanged: true,
+        exitCode: 0,
+      });
+    });
+
+    // A command that saves bun.lock writes what it loaded. package.json has a-dep, which the file does not.
+    it.concurrent.each([
+      ["install", ["install"], { ...dependencies, "a-dep": "1.0.1" }],
+      ["install --lockfile-only", ["install", "--lockfile-only"], { ...dependencies, "a-dep": "1.0.1" }],
+      ["add", ["add", "a-dep@1.0.1"], dependencies],
+      ["remove", ["remove", "provides-peer-deps-1-0-0"], dependencies],
+    ] as const)("bun %s saves the bun.lock of the file without such an entry", async (_, command, wanted) => {
+      const saved = async (packages: Record<string, unknown[]>) => {
+        const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+        await write(packageJson, JSON.stringify({ name: "foo", dependencies: wanted }));
+        await write(join(packageDir, "bun.lock"), lockfileOf(packages, 1));
+        await using proc = spawn({
+          cmd: [bunExe(), ...command],
+          cwd: packageDir,
+          env: installEnv(packageDir, env),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return {
+          err: err.includes("error:") ? err : "",
+          lockfile: await file(join(packageDir, "bun.lock")).text(),
+          exitCode,
+        };
+      };
+      const [honest, withEntry] = await Promise.all([saved(locked), saved(shapes[0][1])]);
+      expect(honest).toMatchObject({ err: "", lockfile: expect.not.stringContaining("no-deps@1.1.0"), exitCode: 0 });
+      expect(withEntry).toEqual(honest);
+    });
+  });
+
+  // package.json has the dependency, but its line is missing in "workspaces" of bun.lock, as after a merge that
+  // took only a part of the file. No lookup stops at the entry, so the install resolves the dependency again: the
+  // registry has no-deps 1.1.0. Before, the install took the version of the entry.
+  it("bun install resolves a dependency again that only `packages` has", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "a-dep": "1.0.1", "no-deps": "^1.0.0" } }));
+    await write(
+      join(packageDir, "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "foo", dependencies: { "a-dep": "1.0.1" } } },
+        packages: { "a-dep": entry("a-dep@1.0.1"), "no-deps": entry("no-deps@1.0.0") },
+      }),
+    );
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: installEnv(packageDir, env),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const saved = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as {
+      packages: Record<string, [string, ...unknown[]]>;
+    };
+    expect({
+      err: err.includes("error:") ? err : "",
+      locked: saved.packages["no-deps"][0],
+      installed: (await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version,
+      exitCode,
+    }).toEqual({ err: "", locked: "no-deps@1.1.0", installed: "1.1.0", exitCode: 0 });
+  });
+
+  // bun writes an entry only where a lookup stops, also for what a tarball bundles and for a workspace that is a
+  // dependency under a second name. So `--verbose` names no entry of a file that bun has just written.
+  // The last element is the keys of "packages" that the install has to write, for the two shapes that need a rule of
+  // their own in the loader.
+  it.concurrent.each<[object, Record<string, string>, string[] | null]>([
+    [{ "peer-deps-fixed": "1.0.0", "provides-peer-deps-1-0-0": "1.0.0", "one-dep": "1.0.0" }, {}, null],
+    [{ "bundled-shadow-host": "1.0.0", "bundled-shadow-shared": "1.0.0" }, {}, null],
+    [
+      { "bundled-shadow-deep-host": "1.0.0", "bundled-shadow-consumer": "2.0.0", "bundled-shadow-mid": "2.0.0" },
+      {},
+      null,
+    ],
+    // twin-host depends on the version of shared that its bundle depends on. bun writes shared at the root for
+    // twin-host and once more below twin-host for the bundle, and the lookup from twin-host stops at the second.
+    [
+      { "bundled-shadow-twin-host": "1.0.0" },
+      {},
+      [
+        "bundled-shadow-shared",
+        "bundled-shadow-twin-host",
+        "bundled-shadow-twin-host/bundled-shadow-inner",
+        "bundled-shadow-twin-host/bundled-shadow-shared",
+      ],
+    ],
+    [
+      { "a-dep": "workspace:packages/pkg1", "no-deps": "1.0.0" },
+      { "packages/pkg1/package.json": JSON.stringify({ name: "pkg1", dependencies: { "no-deps": "2.0.0" } }) },
+      ["a-dep", "no-deps", "pkg1", "a-dep/no-deps", "pkg1/no-deps"],
+    ],
+  ])("every entry that a fresh install of %j writes is loaded", async (dependencies, files, keys) => {
+    const { packageDir, packageJson } = await registry.createTestDir({ files });
+    const workspaces = Object.keys(files).length ? { workspaces: ["packages/*"] } : {};
+    await write(packageJson, JSON.stringify({ name: "foo", ...workspaces, dependencies }));
+    const run = async (...command: string[]) => {
+      await using proc = spawn({
+        cmd: [bunExe(), ...command],
+        cwd: packageDir,
+        env: installEnv(packageDir, env),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { err, exitCode };
+    };
+    const install = await run("install");
+    const written = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as {
+      packages: Record<string, [string, ...unknown[]]>;
+    };
+    const loaded = new Set(parseLockfile(packageDir).packages.map((pkg: any) => `${pkg.name}@${pkg.resolution.value}`));
+    const list = await run("pm", "ls", "--verbose");
+    expect({
+      err: install.err.includes("error:") ? install.err : "",
+      keys: keys && Object.keys(written.packages),
+      notLoaded: Object.values(written.packages)
+        .map(([id]) => id)
+        .filter(id => !loaded.has(id) && !id.includes("@workspace:")),
+      unused: list.err.split("\n").filter(line => line.includes("unused bun.lock")),
+      exitCode: [install.exitCode, list.exitCode],
+    }).toEqual({ err: "", keys, notLoaded: [], unused: [], exitCode: [0, 0] });
+  });
 });
 
 // bun.lock stores every package as "<name>@<resolution>" and splits the name back off at the

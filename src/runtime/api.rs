@@ -64,6 +64,8 @@ pub(crate) mod native_promise_context;
 pub(crate) mod output_file_jsc;
 #[path = "api/standalone_graph_jsc.rs"]
 pub(crate) mod standalone_graph_jsc;
+#[path = "api/string_case.rs"]
+pub(crate) mod string_case;
 #[path = "api/TOMLObject.rs"]
 pub(crate) mod toml_object;
 #[path = "api/trim_testing.rs"]

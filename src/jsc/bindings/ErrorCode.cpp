@@ -272,12 +272,6 @@ NEVER_INLINE JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode 
     return createError(globalObject->vm(), globalObject, code, message);
 }
 
-JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JSValue message)
-{
-    auto& vm = JSC::getVM(globalObject);
-    return createError(vm, globalObject, code, message);
-}
-
 WTF::String MessageBuilder::finish(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
 {
     auto message = tryToString();

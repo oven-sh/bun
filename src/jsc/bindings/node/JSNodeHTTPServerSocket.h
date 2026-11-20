@@ -74,7 +74,6 @@ public:
     JSC::Strong<JSNodeHTTPServerSocket> strongThis = {};
 
     static JSNodeHTTPServerSocket* create(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, JSNodeHTTPResponse* response);
-    static JSNodeHTTPServerSocket* create(JSC::VM& vm, Zig::GlobalObject* globalObject, us_socket_t* socket, bool is_ssl, JSNodeHTTPResponse* response);
 
     static void destroy(JSC::JSCell* cell)
     {

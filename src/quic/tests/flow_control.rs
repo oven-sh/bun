@@ -1,10 +1,10 @@
 use bun_quic::Direction::{Bidirectional, Unidirectional};
 use bun_quic::Layer::Transport;
-use bun_quic::Side::Server;
+use bun_quic::Side::{Client, Server};
 use bun_quic::StreamId;
 use bun_quic::transport_code::FLOW_CONTROL_ERROR;
 
-use crate::harness::messages::GET;
+use crate::harness::messages::{GET, OK};
 use crate::harness::raw::{RTT, Raw};
 use crate::harness::wire::{MAX, filler, groups};
 
@@ -119,7 +119,7 @@ fn gives_no_credit_while_paused() {
         (true, "", "max_data 200, max_stream_data 0 200"),
         (false, "max_data 200", "max_stream_data 0 200"),
     ] {
-        let raw = Raw::client().config(|it| it.limits_unread_data = limits_unread_data);
+        let raw = Raw::client().config(|it| it.limits_unread_data |= limits_unread_data);
         let mut raw = with_windows(raw, 100, [0, 100, 0]);
         raw.send("stream 0 0 -");
         raw.connection().set_paused(StreamId(0), true);
@@ -386,6 +386,14 @@ fn says_that_it_is_blocked_as_soon_as_it_finds_out() {
     raw.request(GET);
     raw.send("ack");
     assert_eq!(raw.frames(), "");
+
+    let raw = Raw::http3(Client).with("max_stream_data_bidi_local=4096");
+    let mut raw = raw.exchange();
+    raw.peer.send_headers(0, OK);
+    (raw.connection()).write(StreamId(0), &filler(0, 4096 - 5 - 3));
+    assert!(raw.frames().starts_with("stream 0 0 "));
+    raw.peer.send_headers(0, "a=b");
+    assert_eq!(raw.frames(), "stream_data_blocked 0 4096");
 }
 
 #[test]

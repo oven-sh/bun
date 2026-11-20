@@ -232,4 +232,16 @@ mod tests {
         let distances = [3, 2, 70_000, 1].map(|len| packet.settle(len));
         assert_eq!(distances, [1, 3, 3, 65_535]);
     }
+
+    #[test]
+    fn room_is_given_back_when_nothing_is_in_flight() {
+        for (packets, frames, is_kept) in [(9, 9, true), (999, 9, false), (9, 999, false)] {
+            let mut sent = Sent::default();
+            sent.packets.reserve(packets);
+            sent.frames.list.reserve(frames);
+            sent.remove_settled();
+            let room = [sent.packets.capacity(), sent.frames.list.capacity()];
+            assert_eq!(room.map(|it| it > 0), [is_kept; 2]);
+        }
+    }
 }

@@ -38,7 +38,7 @@ fn frequency_can_be_changed() {
 
 #[test]
 fn delay_can_be_changed() {
-    for (millis, delay) in [(16, 14), (32, 28), (1000, 35)] {
+    for (millis, delay) in [(16, 14), (32, 28), (1000, 35), (16_383, 35)] {
         let mut raw = Raw::client();
         raw.start(&[]);
         raw.advance(140);

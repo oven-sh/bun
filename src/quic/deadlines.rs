@@ -71,3 +71,26 @@ impl Deadlines {
         with(self.positions.get_mut(key as usize), |it| *it = at);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::time::Duration;
+
+    #[test]
+    fn earliest_is_first() {
+        let (mut deadlines, mut expected) = (Deadlines::default(), [Instant::NEVER; 20]);
+        for step in 0..1000 {
+            let (key, time) = (step * step % 101 % 20, step * step % 97);
+            let deadline = match time % 4 {
+                0 => Instant::NEVER,
+                _ => Instant::default() + Duration::from_millis(time.into()),
+            };
+            with(expected.get_mut(key as usize), |it| *it = deadline);
+            deadlines.set(key, deadline);
+            let first = deadlines.first().map_or(Instant::NEVER, |it| it.0);
+            assert_eq!(Some(&first), expected.iter().min());
+            assert!((0..20).map(|it| deadlines.get(it)).eq(expected));
+        }
+    }
+}

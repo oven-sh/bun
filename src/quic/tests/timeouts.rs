@@ -408,16 +408,18 @@ fn silence_is_allowed_from_now_on_and_until_no_stream_is_left() {
 
 #[test]
 fn silence_has_to_be_allowed_again_for_later_streams() {
-    let mut raw = Raw::client().connected();
-    raw.send("fin 0 0 a");
-    let now = raw.now;
-    raw.connection().allow_silence(now, Duration::ZERO);
-    raw.peer.send(0, b"a", true);
-    raw.advance(RTT);
-    raw.send("ack");
-    raw.send("stream 4 0 a");
-    raw.advance(20_000);
-    assert_eq!(raw.frames(), "ping, fin 0 0 a");
+    for (first, last) in [("fin 0 0 a", "stream 4 0 a"), ("stream 0 0 a", "fin 0 1 -")] {
+        let mut raw = Raw::client().connected();
+        raw.send(first);
+        let now = raw.now;
+        raw.connection().allow_silence(now, Duration::ZERO);
+        raw.peer.send(0, b"a", true);
+        raw.advance(RTT);
+        raw.send("ack");
+        raw.send(last);
+        raw.advance(20_000);
+        assert_eq!(raw.frames(), "ping, fin 0 0 a");
+    }
 }
 
 #[test]

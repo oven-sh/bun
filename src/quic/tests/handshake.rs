@@ -4,7 +4,7 @@ use bun_quic::Layer::Transport;
 use bun_quic::crypto::Cipher;
 use bun_quic::tls::{self, Alert, Level, Session, Status};
 use bun_quic::transport_code::*;
-use bun_quic::{Direction, Duration, Side};
+use bun_quic::{Batch, Direction, Duration, Side};
 
 use crate::harness::keys::{V1, V2};
 use crate::harness::raw::Kind::{Handshake, Initial, Short};
@@ -56,6 +56,22 @@ fn datagrams_with_initial_packets_are_expanded() {
         raw.shake_hands();
         assert_eq!(raw.sizes()[0] == 1200, raw.side.is_server());
     }
+}
+
+#[test]
+fn other_datagrams_are_not_expanded() {
+    let mut raw = Raw::client();
+    raw.send_in(Initial, "hello 0 100");
+    assert!(raw.sizes()[0] < 100);
+
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.shake_hands();
+    raw.forget();
+    raw.send_in(Handshake, "ping");
+    raw.send("ping");
+    raw.send("ping");
+    assert!(matches!(raw.sizes()[..], [..100, ..100]));
 }
 
 #[test]
@@ -323,6 +339,16 @@ fn the_end_of_the_handshake_is_repeated() {
     assert_eq!(raw.wait(), 3 * RTT);
     assert!(raw.outline().starts_with("H[crypto]"));
 
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.shake_hands();
+    raw.request_packets("a");
+    raw.wait();
+    assert_eq!(
+        raw.frames(),
+        "crypto 0 #14000000, new_connection_id 1 0, stream 2 0 a, crypto 0 #14000000, ping"
+    );
+
     let mut raw = Raw::client();
     raw.start(&[]);
     raw.shake_hands();
@@ -579,6 +605,32 @@ fn a_client_keeps_probing_while_the_server_may_be_unable_to_send() {
         raw.forget();
     }
     assert_eq!(timeouts, [60, 134, 281]);
+}
+
+/// RFC 9002 §6.2.2.1.
+#[test]
+fn a_server_probes_as_soon_as_it_can_send_again() {
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    raw.advance(2000);
+    raw.waits = false;
+    raw.send_in(Initial, "padding 1");
+    let mut batch = Batch::default();
+    (raw.peer.endpoint).poll_transmit(raw.now, &mut batch, 64, |_| {});
+    assert_eq!(batch.len(), 1);
+}
+
+/// RFC 9002 §6.4.
+#[test]
+fn probe_timeout_starts_over_when_keys_are_discarded() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.forget();
+    let timeout = raw.wait();
+    raw.advance(timeout * 3 / 2);
+    raw.send_all(&[(Initial, "hello"), (Handshake, "ping")]);
+    raw.forget();
+    assert_eq!((raw.wait(), raw.outline()), (timeout, "H[ping]".into()));
 }
 
 #[test]

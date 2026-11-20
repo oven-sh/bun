@@ -84,6 +84,19 @@ fn time_threshold() {
 }
 
 #[test]
+fn time_threshold_while_nothing_can_be_sent() {
+    let mut raw = Raw::client().connected();
+    raw.advance(1000);
+    let lost_at = raw.now + Duration::from_micros(22_500);
+    raw.request_packets("ab");
+    raw.advance(RTT);
+    raw.waits = false;
+    raw.send("ack 2");
+    raw.peer.poll(raw.now);
+    assert_eq!(raw.peer.endpoint.timeout(), Some(lost_at));
+}
+
+#[test]
 fn time_threshold_without_a_round_trip_time() {
     let mut raw = Raw::client();
     raw.start(&[]);
@@ -127,6 +140,42 @@ fn reordering_raises_the_packet_threshold() {
     for (ack, frames) in [("ack 9-12 2-7", ""), ("ack 9-13 2-7", "stream 7 0 g")] {
         raw.send(ack);
         assert_eq!(raw.frames(), frames);
+    }
+}
+
+#[test]
+fn packet_threshold_goes_by_the_oldest_of_the_late_packets() {
+    let mut raw = Raw::client().connected();
+    raw.request_packets("abcdef");
+    raw.advance(RTT);
+    raw.send("ack 3-6");
+    raw.send("ack 1-7");
+    raw.request_packets("ghijklm");
+    raw.advance(RTT);
+    for (ack, frames) in [("ack 9-13", ""), ("ack 9-14", "stream 7 0 g")] {
+        raw.send(ack);
+        assert_eq!(raw.frames(), frames);
+    }
+}
+
+#[test]
+fn packets_out_of_order_count_for_the_window() {
+    for (algorithm, missing) in [(Algorithm::Cubic, 1), (Algorithm::Bbr, 20)] {
+        let mut raw = (Raw::client().config(|it| it.congestion = algorithm)).connected();
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, &filler(0, 200_000), false);
+        raw.advance(RTT);
+        let last = raw.take().pop().unwrap().number;
+        raw.waits = false;
+        let acks = [
+            format!("ack {last} 0-{}", last - missing - 1),
+            format!("ack 0-{last}"),
+        ];
+        let [before, after] = acks.map(|it| {
+            raw.send(&it);
+            raw.connection().stats().congestion_window
+        });
+        assert!(before < after, "{before} {after}");
     }
 }
 
@@ -329,6 +378,19 @@ fn probe_timeout_backs_off() {
             assert_eq!(raw.now - start, Duration::from_micros(expected));
             assert_eq!(raw.frames(), "stream 3 0 a, ping");
         }
+    }
+}
+
+#[test]
+fn probe_timeout_backs_off_up_to_an_eighth_of_the_idle_timeout() {
+    for (idle, expected) in [
+        (4000, [67, 80, 160, 320, 500, 500]),
+        (500, [67, 80, 80, 80, 80, 80]),
+    ] {
+        let raw = Raw::client().config(|it| it.parameters.max_idle_timeout_millis = idle);
+        let mut raw = raw.connected();
+        raw.request_packets("a");
+        assert_eq!(expected.map(|_| (raw.wait(), raw.forget()).0), expected);
     }
 }
 
@@ -677,6 +739,7 @@ fn what_is_in_flight_is_sent_again_on_a_new_path() {
     raw.forget();
     raw.send("respond");
     assert_eq!(raw.frames(), "stream 3 0 a, stream 3 2 cd");
+    assert!(raw.sleeps_for() > RTT);
     assert_eq!(raw.connection().stats().packets_lost, 0);
 }
 
@@ -724,4 +787,21 @@ fn packet_threshold_starts_over_on_another_network() {
         raw.send(&format!("ack {}", raw.received[2].last().unwrap()));
         assert_eq!(raw.frames(), frames);
     }
+}
+
+#[test]
+fn packets_that_are_late_on_the_old_path_do_not_raise_the_packet_threshold() {
+    let mut raw = Raw::client().connected();
+    raw.request_packets("abcdef");
+    raw.advance(RTT);
+    raw.send("ack 3-6");
+    raw.move_to("192.0.2.1:2000");
+    raw.send_expanded("ping");
+    raw.send("respond");
+    raw.advance(RTT);
+    raw.send("ack");
+    raw.request_packets("ghij");
+    raw.advance(RTT);
+    raw.send(&format!("ack {}", raw.received[2].last().unwrap()));
+    assert_eq!(raw.frames(), "stream 7 0 g");
 }

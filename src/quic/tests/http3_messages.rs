@@ -227,6 +227,17 @@ fn frame_headers_count_for_flow_control() {
 }
 
 #[test]
+fn the_body_can_follow_the_head_at_once() {
+    let mut raw = Raw::http3(Client).exchange();
+    for fields in [None, Some(OK)] {
+        fields.inspect(|it| assert!(raw.peer.send_headers(0, it)));
+        raw.connection().want_write(FIRST);
+        raw.peer.poll(raw.now);
+        assert_eq!(raw.peer.events(), "0 writable");
+    }
+}
+
+#[test]
 fn is_blocked_when_there_is_no_room_for_a_frame() {
     let write = |parameter: String| {
         let mut raw = Raw::http3(Client).with(&parameter).exchange();

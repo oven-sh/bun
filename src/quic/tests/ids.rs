@@ -127,6 +127,17 @@ fn frames_wait_for_a_packet_that_has_room() {
         "1[ack 0, handshake_done, new_token, crypto 0 ~1106]; \
          1[crypto 1106 ~214, new_connection_id 1 0, retire_connection_id 0]"
     );
+
+    for gaps in 0..30 {
+        let mut raw = Raw::client();
+        raw.peer.tls.tickets = 24;
+        raw.start(&[]);
+        raw.forget();
+        raw.waits = false;
+        raw.send_all(&[(Initial, "ack"), (Handshake, "ack, flight")]);
+        (0..gaps).for_each(|it| raw.send_as(2 * it, "ping"));
+        assert!(raw.sizes().iter().all(|&it| it <= 1200));
+    }
 }
 
 #[test]

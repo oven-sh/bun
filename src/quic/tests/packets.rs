@@ -174,4 +174,7 @@ fn statistics() {
         assert_eq!(after.rtt_variation, Duration::from_micros(4218));
         assert_eq!(after.congestion_window, 32 * 1460);
     }
+    let mut raw = Raw::client().with_ticket();
+    raw.resume();
+    assert_eq!(raw.connection().stats().bytes_received, 1200);
 }

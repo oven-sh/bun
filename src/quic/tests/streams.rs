@@ -648,14 +648,19 @@ fn urgent_streams_go_first() {
 
 #[test]
 fn older_streams_go_first_whatever_their_ids() {
-    let mut raw = Raw::client()
-        .config(|it| it.sends_in_order = true)
-        .connected();
-    let id = raw.peer.open(Unidirectional);
-    raw.peer.send(id, &filler(0, 40_000), true);
-    raw.send("stream 0 0 -");
-    raw.peer.send(0, b"a", true);
-    assert_eq!(turns(&mut raw), [(3, 0), (0, 0)]);
+    for order in [[7, 0], [0, 7]] {
+        let raw = Raw::client().config(|it| it.sends_in_order = true);
+        let mut raw = raw.connected();
+        raw.request_packets("a");
+        for id in order {
+            match id {
+                0 => raw.send("stream 0 0 -"),
+                _ => _ = raw.peer.open(Unidirectional),
+            }
+            raw.peer.send(id, &filler(0, 40_000), true);
+        }
+        assert_eq!(ids(turns(&mut raw)), order);
+    }
 }
 
 /// With a stream that has sent `len` bytes, and has more.

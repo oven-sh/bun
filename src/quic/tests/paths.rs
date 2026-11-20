@@ -224,7 +224,7 @@ fn stays_if_the_preferred_address_is_of_no_use() {
         (true, SERVER, &without_ipv4),
         (true, "198.51.100.2:444", PREFERRED),
     ] {
-        let raw = Raw::server().config(|it| it.uses_preferred_address = is_wanted);
+        let raw = Raw::server().config(|it| it.uses_preferred_address |= is_wanted);
         let mut raw = raw.with(parameter);
         raw.move_to(server);
         let mut raw = raw.connected();

@@ -206,6 +206,149 @@ console.log("PRELOAD");
     },
   });
 
+  // A module that the executable loads from disk reads NODE_ENV, BUN_ENV and process.browser when
+  // it runs, as it does in an executable that autoloads .env files and under `bun run`.
+  itBundled("compile/AutoloadDotenvDisabledReadsNodeEnvAtRuntime", {
+    compile: {
+      autoloadDotenv: false,
+    },
+    files: {
+      "/entry.js": /* js */ `
+        import { join } from "path";
+
+        // Not in the bundle: the executable transpiles these two files when it runs.
+        const { read, clear } = await import(join(process.cwd(), "reads-from-disk.mjs"));
+        const view = await import(join(process.cwd(), "view-from-disk.jsx"));
+
+        console.log(read());
+        process.env.NODE_ENV = "assigned";
+        process.env.BUN_ENV = "assigned-bun-env";
+        process.browser = "assigned-browser";
+        console.log(read());
+        clear();
+        console.log(read());
+        console.log(view.default);
+      `,
+    },
+    runtimeFiles: {
+      "/reads-from-disk.mjs": /* js */ `
+        export const read = () =>
+          [process.env.NODE_ENV, process.env["NODE_ENV"], process.env.BUN_ENV, process.browser].map(String).join(" | ");
+        export const clear = () => delete process.env.NODE_ENV;
+      `,
+      "/bunfig.toml": `jsx = "react-jsx"`,
+      "/view-from-disk.jsx": `export default <div />;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = () => "jsx";`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = () => "jsxDEV";`,
+    },
+    run: [
+      // `env` takes away the BUN_ENV that the process of the tests may have.
+      {
+        env: { BUN_ENV: undefined },
+        stdout: `
+          undefined | undefined | undefined | false
+          assigned | assigned | assigned-bun-env | assigned-browser
+          undefined | undefined | assigned-bun-env | assigned-browser
+          jsx
+        `,
+        setCwd: true,
+      },
+      // BUN_ENV does not answer for NODE_ENV.
+      {
+        env: { NODE_ENV: "production", BUN_ENV: "staging" },
+        stdout: `
+          production | production | staging | false
+          assigned | assigned | assigned-bun-env | assigned-browser
+          undefined | undefined | assigned-bun-env | assigned-browser
+          jsx
+        `,
+        setCwd: true,
+      },
+      // A Windows path, which is not valid inside a JSON string as it is, does not stop the executable at start.
+      {
+        env: { NODE_ENV: "C:\\Program Files\\nodejs", BUN_ENV: undefined },
+        stdout: `
+          C:\\Program Files\\nodejs | C:\\Program Files\\nodejs | undefined | false
+          assigned | assigned | assigned-bun-env | assigned-browser
+          undefined | undefined | assigned-bun-env | assigned-browser
+          jsx
+        `,
+        setCwd: true,
+      },
+      // With NODE_ENV=development the .jsx file still gets the transform that bunfig.toml asks for.
+      {
+        env: { NODE_ENV: "development", BUN_ENV: undefined },
+        stdout: `
+          development | development | undefined | false
+          assigned | assigned | assigned-bun-env | assigned-browser
+          undefined | undefined | assigned-bun-env | assigned-browser
+          jsx
+        `,
+        setCwd: true,
+      },
+      // A --define given at run time still replaces the read.
+      {
+        env: { BUN_OPTIONS: `--define process.env.NODE_ENV='"from-define"'`, BUN_ENV: undefined },
+        stdout: `
+          from-define | from-define | undefined | false
+          from-define | from-define | assigned-bun-env | assigned-browser
+          from-define | from-define | assigned-bun-env | assigned-browser
+          jsx
+        `,
+        setCwd: true,
+      },
+    ],
+  });
+
+  // The same for a Worker whose file is on disk and not in the executable, without and with an `env`
+  // option. The build has the other autoload options of the example in the docs.
+  itBundled("compile/AutoloadDotenvDisabledReadsNodeEnvAtRuntimeWorkerCLI", {
+    compile: {
+      autoloadDotenv: false,
+      autoloadBunfig: false,
+      autoloadTsconfig: true,
+      autoloadPackageJson: true,
+    },
+    backend: "cli",
+    files: {
+      "/entry.js": /* js */ `
+        async function reply(options) {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          // Not in the bundle: the executable transpiles the file of the Worker when it runs.
+          const worker = new Worker("./worker-from-disk.ts", options);
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = event => reject(new Error(event.message));
+          worker.addEventListener("close", () => reject(new Error("the Worker closed and sent nothing")));
+          try {
+            return await promise;
+          } finally {
+            worker.terminate();
+          }
+        }
+
+        console.log(await reply());
+        console.log(await reply({ env: { NODE_ENV: "from-env-option" } }));
+      `,
+    },
+    runtimeFiles: {
+      "/worker-from-disk.ts": /* ts */ `
+        const atStart: string = String(process.env.NODE_ENV);
+        process.env.NODE_ENV = "assigned-in-worker";
+        postMessage(atStart + " -> " + require("./reads-from-disk.cjs").nodeEnv());
+      `,
+      "/reads-from-disk.cjs": /* js */ `
+        exports.nodeEnv = () => process.env.NODE_ENV;
+      `,
+    },
+    run: {
+      stdout: `
+        undefined -> assigned-in-worker
+        from-env-option -> assigned-in-worker
+      `,
+      setCwd: true,
+    },
+  });
+
   // Test CLI backend with autoloadDotenv: true
   itBundled("compile/AutoloadDotenvEnabledCLI", {
     compile: {

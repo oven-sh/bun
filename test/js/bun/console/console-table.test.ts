@@ -363,3 +363,67 @@ console.log("calls=" + calls);`,
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", stderr: "", exitCode: 0 });
   });
 });
+
+// A cell is one line of text. A JSX element keeps its children in it.
+describe("a JSX element in a cell", () => {
+  const element = (type: string, props: object, children?: unknown) => ({
+    $$typeof: Symbol.for("react.element"),
+    type,
+    key: null,
+    props: children === undefined ? props : { ...props, children },
+  });
+  const bold = element("b", {}, "bold");
+  const nested = element("div", { id: "x" }, [element("span", {}, "a"), element("span", {}, "b")]);
+  const expected = `┌───┬─────────────┬────────────────────────────────────────────────┐
+│   │ text        │ list                                           │
+├───┼─────────────┼────────────────────────────────────────────────┤
+│ 0 │ <b>bold</b> │ <div id="x"><span>a</span><span>b</span></div> │
+└───┴─────────────┴────────────────────────────────────────────────┘
+`;
+
+  test("Bun.inspect.table", () => {
+    expect(Bun.inspect.table([{ text: bold, list: nested }])).toBe(expected);
+  });
+
+  test("in the Values column", () => {
+    expect(Bun.inspect.table(new Map([["k", element("p", {}, ["Hello ", bold, "!"])]]))).toBe(
+      `┌───┬─────┬───────────────────────────┐
+│   │ Key │ Values                    │
+├───┼─────┼───────────────────────────┤
+│ 0 │ k   │ <p>Hello <b>bold</b>!</p> │
+└───┴─────┴───────────────────────────┘
+`,
+    );
+  });
+
+  test("without children", () => {
+    expect(
+      Bun.inspect.table([{ none: element("br", {}), text: element("b", {}, ""), list: element("ul", {}, []) }]),
+    ).toBe(
+      `┌───┬────────┬───────┬────────┐
+│   │ none   │ text  │ list   │
+├───┼────────┼───────┼────────┤
+│ 0 │ <br /> │ <b /> │ <ul /> │
+└───┴────────┴───────┴────────┘
+`,
+    );
+  });
+
+  test("console.table", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const element = (type, props, children) => ({ $$typeof: Symbol.for("react.element"), type, key: null, props: { ...props, children } });
+console.table([{
+  text: element("b", {}, "bold"),
+  list: element("div", { id: "x" }, [element("span", {}, "a"), element("span", {}, "b")]),
+}]);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+  });
+});

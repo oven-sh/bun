@@ -44,6 +44,18 @@ test.each(refused)(
   120_000,
 );
 
+test("bun compile --no-aot --bytecode builds", async () => {
+  using dir = tempDir("aot-flags-answered", files);
+  const root = realpathSync(String(dir));
+  const run = await spawned(
+    [bunExe(), "compile", "--no-aot", "--bytecode", "./entry.js", "--outfile", app],
+    root,
+    bunEnv,
+  );
+  expect({ stderr: run.exitCode ? run.stderr : "", exitCode: run.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect((await spawned([join(root, app)], root, bunEnv)).stdout).toBe("hello second\n");
+}, 120_000);
+
 const noted: [string, string][] = [
   ["--format=cjs", "note: --format has no effect with --aot"],
   ["--format=iife", "note: --format has no effect with --aot"],

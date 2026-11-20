@@ -83,7 +83,9 @@ describe.concurrent("an option that configures bytecode has no effect with --aot
 `,
       });
       const { stdout } = await bun(String(dir), "build.ts");
-      expect(stdout).toContain("compile.aot cannot be used with bytecode");
+      expect(stdout).toBe(
+        "compile.aot cannot be used with bytecode. Choose compile.aot for machine code or bytecode for bytecode\n",
+      );
       expect(existsSync(join(String(dir), isWindows ? "out.exe" : "out"))).toBe(false);
     },
     60_000,

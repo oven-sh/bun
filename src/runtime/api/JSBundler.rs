@@ -1714,9 +1714,7 @@ pub(crate) mod js_bundler {
                     this.target = Target::Bun;
                     if compile.aot.is_some() {
                         if this.bytecode {
-                            return Err(global_this.throw_invalid_arguments(format_args!(
-                                "compile.aot cannot be used with bytecode. Choose compile.aot for machine code or bytecode for bytecode"
-                            )));
+                            return Err(throw_option_error(global_this, OptionError::Bytecode));
                         }
                         ensure_compiler(global_this)?;
                         this.format = options::Format::Esm;

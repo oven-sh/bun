@@ -196,8 +196,15 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
     return JSValue::encode(object);
 }
 
-static inline int32_t getType(JSC::VM& vm, JSValue value, Zig::GlobalObject* globalObject)
+static inline int32_t getType(JSC::ThrowScope& scope, JSC::VM& vm, JSValue thisValue, Zig::GlobalObject* globalObject)
 {
+    JSValue value = thisValue.toThis(globalObject, JSC::ECMAMode::strict());
+    RETURN_IF_EXCEPTION(scope, std::numeric_limits<int32_t>::max());
+    if (value.isUndefinedOrNull()) [[unlikely]] {
+        Bun::throwInvalidThisError(globalObject, scope, value, "Dirent"_s);
+        return std::numeric_limits<int32_t>::max();
+    }
+
     JSObject* object = value.getObject();
     if (!object) [[unlikely]] {
         return std::numeric_limits<int32_t>::max();
@@ -206,9 +213,7 @@ static inline int32_t getType(JSC::VM& vm, JSValue value, Zig::GlobalObject* glo
     JSValue type;
     if (structure->id() != object->structure()->id()) {
         type = object->get(globalObject, Bun::builtinNames(vm).dataPrivateName());
-        if (!type) [[unlikely]] {
-            return std::numeric_limits<int32_t>::max();
-        }
+        RETURN_IF_EXCEPTION(scope, std::numeric_limits<int32_t>::max());
     } else {
         type = object->getDirect(2);
     }
@@ -237,7 +242,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsBlockDevice, (JSC::JSGlobalObject * 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::BlockDevice)));
@@ -248,7 +253,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsCharacterDevice, (JSC::JSGlobalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::CharacterDevice)));
@@ -259,7 +264,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsDirectory, (JSC::JSGlobalObject * gl
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::Directory)));
@@ -270,7 +275,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsFIFO, (JSC::JSGlobalObject * globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::NamedPipe)));
@@ -281,7 +286,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsFile, (JSC::JSGlobalObject * globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::File)));
@@ -292,7 +297,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsSocket, (JSC::JSGlobalObject * globa
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::UnixDomainSocket)));
@@ -303,7 +308,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsSymbolicLink, (JSC::JSGlobalObject *
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::SymLink)));

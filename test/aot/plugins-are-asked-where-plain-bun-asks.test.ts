@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { slot } from "./harness/commands";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -952,20 +953,146 @@ import "./c.js";`,
   },
 };
 
+// What each project prints under plain Bun.
+const said: Record<string, string[]> = {
+  "a callback requires a file above a file that is still to be asked about": [
+    "SAID fake fake | ./trigger.js<one.js ./part.js<two.js",
+  ],
+  "a callback registers the plugin that answers for a later file of the graph": [
+    "SAID fake | ./trigger.js<first.js ./part.js<second.js",
+  ],
+  "what the callback goes by turns right behind the call of import()": ["SAID fake | fake:user.js"],
+  "a callback starts an import() of a file that writes a bare name": [
+    "SAID fake | ./src/one.js<a.test.js dep<helper.js",
+  ],
+  "what only the original of a mocked module imports is asked about when it loads": [
+    "SAID mocked | ",
+    "SAID fake | fake:user.js",
+  ],
+  "a file that only the original of a mocked module imports is not of the graph that runs": [
+    "SAID IS mocked fake 1",
+    "SAID ASKED ./part.js<user.js",
+  ],
+  "the root of the graph that runs was required": ["SAID IS real real 1", "SAID ASKED "],
+  "a graph whose first file threw stays resolved": ["SAID IS stop real 1", "SAID ASKED "],
+  "a callback that answers the first time alone": ["SAID fake | ./part.js<user.js=made"],
+  "a callback that throws the first time alone": ["SAID not yet | ./part.js<user.js"],
+  "a callback that answers the very file that the build linked": ["SAID -918471104 2"],
+  "a callback that answers the file that the build linked under a query": [
+    "SAID IS 1 2 1 2",
+    "SAID ASKED ./counter.js<one.js ./counter.js<two.js",
+  ],
+  "a callback that goes by how often it was asked about the importer above": [
+    "SAID IS fake",
+    "SAID CALLS ./part.js<user.js=1 ./user.js<top.js=1",
+  ],
+  "a file that was answered for and did not leave, and loads again later": [
+    "SAID IS real real late",
+    "SAID MODES late",
+  ],
+  "an import that is written as a require": ["SAID fake | dep<user.ts"],
+  "the name of a shallow file registers the plugin that answers for a deeper file": [
+    "SAID IS fake",
+    "SAID ASKED ./part.js<deep.js ./trigger.js<b.js",
+  ],
+  "what the build linked below a name that a plugin answers for is asked about by nobody": [
+    "SAID IS fake",
+    "SAID ASKED ./part.js<user.js",
+  ],
+  "two statements of one file write one name": [
+    "SAID IS real-a+real-b+fake fake-a+fake-b+fake",
+    "SAID CALLS soon:./twice.js soon:./part.js late:./twice.js late:./part.js",
+  ],
+  "the importer above stands on the second of two ways down": [
+    "SAID IS fake fake",
+    "SAID CALLS ./part.js<left.js=1 ./part.js<user.js=1 ./user.js<right.js=1",
+  ],
+  "a callback for a deeper name clears the plugins": [
+    "SAID IS fake",
+    "SAID ASKED ./last.js<closer.js ./part.js<user.js",
+  ],
+  "four ways to ask where a name leads": [
+    "SAID WHERE fake.cjs fake.cjs fake.cjs fake.cjs",
+    "SAID WHERE fake.cjs fake.cjs fake.cjs fake.cjs",
+    "SAID CALLS 8",
+  ],
+  "a callback that the loader itself calls registers a plugin in the middle of a load": [
+    "SAID IS fake fake",
+    "SAID CALLS ./first.js<x.js=1 ./later.js<x.js=1 ./once.js<g.js=1",
+  ],
+  "two names stand behind an answered name and below a file that leaves, and a deeper name registers a plugin": [
+    "SAID IS real real",
+    "SAID ASKED ./swapped.js<fa.js ./swapped.js<fb.js ./trigger.js<g3.js",
+  ],
+  "a file that stays compiled is fetched behind another compiled file": [
+    "SAID IS two",
+    "SAID CALLS ./swapped.js<u.js=1 ./two.js<h.js=1",
+  ],
+  "one name under two types": ["SAID IS 2", "SAID CALLS 2"],
+  "a load is given up at its first name": ["SAID FAILED", "SAID CALLS ./boom.js<root.js", "SAID IS real fake"],
+  "a root above a file that left earlier": ["SAID IS real", "SAID ASKED ./swapped.js<u.js ./trigger.js<a2.js"],
+  "three files stand in front of the last name, for which the callback throws": [
+    "SAID FAILED RangeError",
+    "SAID IS real real",
+    "SAID ASKED ./boom.js<root.js ./trigger.js<a2.js",
+  ],
+  "two files stand in front of the middle name, for which the callback throws": [
+    "SAID FAILED RangeError",
+    "SAID IS real fake",
+    "SAID ASKED ./boom.js<root.js ./trigger.js<a2.js ./part.js<d.js",
+  ],
+  "the text of a file is imported in front of the throw": [
+    "SAID FAILED RangeError",
+    "SAID IS fake",
+    "SAID ASKED ./quake.js<trunk.js ./leaf.js<twig.js",
+  ],
+  "a file that has left is still to be loaded": [
+    "SAID WAS real",
+    "SAID LOADED",
+    "SAID IS real",
+    "SAID ASKED ./trigger.js<a2.js",
+  ],
+  "a file leaves twice": [
+    "SAID WAS real",
+    "SAID THEN real",
+    "SAID IS fake",
+    "SAID ASKED ./trigger.js<a2.js ./part.js<c.js ./trigger2.js<b2.js",
+  ],
+  "a file that has left stands beside a file that is given up": [
+    "SAID WAS real",
+    "SAID FAILED thrown at ./boom.js",
+    "SAID KIND real",
+    "SAID IS LOADED",
+    "SAID ASKED ./boom.js<b.js ./trigger.js<a2.js",
+  ],
+};
+
 const env = { ...bunEnv, NO_COLOR: "1", BUN_JSC_crashOnDisallowedVMEntry: "1" };
+// One run with --aot takes minutes on a debug build. There the cases run as ./supported has them: one by one
+// without a sanitizer.
+const declare = isDebug ? test : test.concurrent;
 for (const [name, files] of Object.entries(projects)) {
-  test(
+  declare(
     name,
     async () => {
       using dir = tempDir("plugins-are-asked-where-plain-bun-asks", files);
-      const said = async (flags: string[]) => {
-        const { stdout, exitCode } = await run([bunExe(), "test", ...flags, "./a.test.js"], String(dir), env);
+      const ran = async (flags: string[]) => {
+        const cmd = [bunExe(), "test", ...flags, "./a.test.js"];
+        // No more runs at once than the machine has processors, however many cases `bun test` starts.
+        const { stdout, stderr, exitCode } = await slot(() => run(cmd, String(dir), env));
         const lines = stdout.split("\n").filter(line => line.startsWith("SAID"));
-        return { lines: lines.map(line => line.replace(/ ms \d+$/, "")), exitCode };
+        return {
+          lines: lines.map(line => line.replace(/ ms \d+$/, "")),
+          exitCode,
+          // A run that fails says why at the top of stderr, and nowhere else.
+          failure: exitCode === 0 ? [] : stderr.split("\n").slice(0, 24),
+        };
       };
-      const plain = await said([]);
-      expect(plain.lines.length).toBeGreaterThan(0);
-      expect(await said(["--aot"])).toEqual(plain);
+      const plain = await ran([]);
+      // The projects take a path apart at "/". Windows writes "\", so what they print there is in no table.
+      const lines = isWindows ? expect.arrayContaining([expect.stringMatching(/^SAID/)]) : said[name];
+      expect(plain).toEqual({ lines, exitCode: 0, failure: [] });
+      expect(await ran(["--aot"])).toEqual(plain);
     },
     240_000,
   );

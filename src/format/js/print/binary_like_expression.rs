@@ -130,12 +130,6 @@ impl<'a> BinaryLikeExpression<'a> {
     }
 }
 
-impl Spanned for BinaryLikeExpression<'_> {
-    fn span(&self) -> Span {
-        self.expr.span()
-    }
-}
-
 pub(crate) fn write_binary_like_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     if let Some(binary) = BinaryLikeExpression::new(e) {
         binary.fmt(f);

@@ -170,6 +170,12 @@ impl FileLowering<'_, '_, '_, '_> {
             && self.inputs.modules.holds_replaceable_variable(self.file);
         match table::entry(root_path.id).scope {
             Scope::Realm => CalleeKnowledge::Expected(callee_path.id),
+            // The host makes the `resolve` of an import.meta behind an accessor: the engine has no cell to hold against the callee.
+            Scope::Module
+                if may_member_be_replaced && callee_path.id == BuiltinId::ImportMetaResolve =>
+            {
+                CalleeKnowledge::Unresolved
+            }
             Scope::Module if may_member_be_replaced || may_holder_be_replaced => {
                 CalleeKnowledge::Expected(callee_path.id)
             }

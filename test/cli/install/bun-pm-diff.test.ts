@@ -2258,7 +2258,8 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
       stderr: "pipe",
     });
     const [raw, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
-    return { raw, text: raw.replace(/\x1b\[[0-9;]*[mK]/g, ""), stderr, exitCode };
+    const cpuSeconds = Number(p.resourceUsage()!.cpuTime.total) / 1e6;
+    return { raw, text: raw.replace(/\x1b\[[0-9;]*[mK]/g, ""), stderr, exitCode, cpuSeconds };
   }
   const changed = (text: string) =>
     text
@@ -2729,6 +2730,59 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     },
     60_000,
   );
+
+  // Each of these took 7 seconds or more in a release build.
+  const lines = (n: number, line: (i: number) => string) =>
+    Array.from({ length: n }, (_, i) => line(i)).join("\n") + "\n";
+  const withManifest = (text: string) => ({
+    "a/package.json": text,
+    "b/package.json": text,
+    "a/x.txt": "1\n",
+    "b/x.txt": "2\n",
+  });
+  test.skipIf(isDebug || isASAN).each<[string, () => Record<string, string>, string]>([
+    [
+      "changed comment lines",
+      () => ({
+        "a/i.js": lines(80_000, i => "//a" + i) + "f();\n",
+        "b/i.js": lines(80_000, i => "//b" + i) + "f();\n",
+      }),
+      "+80000 -80000",
+    ],
+    [
+      "imports",
+      () => ({ "a/i.js": lines(70_000, i => `import "a${i}";`), "b/i.js": lines(70_000, i => `import "b${i}";`) }),
+      "+70000 -70000",
+    ],
+    ["keys of package.json", () => withManifest("{" + lines(120_000, i => `"k${i}":1,`) + '"name":"p"}'), "+1 -1"],
+    [
+      "dependencies",
+      () => withManifest('{"dependencies":{' + lines(80_000, i => `"k${i}":"1",`) + '"p":"1"}}'),
+      "+1 -1",
+    ],
+    [
+      "globals that take the names for locals",
+      () => {
+        const start =
+          lines(1_000, i => "a1" + Buffer.alloc(i, "_").toString() + "();") + lines(55_000, () => "f(x=>x);");
+        return { "a/i.js": start + "one();\n", "b/i.js": start + "two();\n" };
+      },
+      "+1 -1",
+    ],
+    [
+      "a renamed local in a long statement",
+      () => ({
+        "a/i.js": "var foo = g();\nfoo.k();\nh(\n" + lines(400_000, () => "foo +") + "foo);\n",
+        "b/i.js": "var bar = g();\nbar.k();\n",
+      }),
+      "+0 -400002",
+    ],
+  ])("large inputs finish: %s", async (_, files, totals) => {
+    const { text, exitCode, cpuSeconds } = await pretty(files(), ["--stat"]);
+    expect(text).toContain("\n1 file  " + totals);
+    expect(cpuSeconds).toBeLessThan(5);
+    expect(exitCode).toBe(0);
+  });
 
   test("hostile shapes do not crash: 300-deep nesting, a 20k-term comma chain, an empty file each side", async () => {
     const deep = "export const f = " + Buffer.alloc(300 * 6, "() => ").toString() + "1;\n";

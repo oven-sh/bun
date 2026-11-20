@@ -189,17 +189,17 @@ describe("a function declaration as the body of a label, if or else", () => {
     });
   });
 
-  test("makes the file CommonJS where only bun's parser takes the code for strict", async () => {
-    // Node.js runs these files as sloppy CommonJS: a "use strict" string is a directive only at the start of a
-    // function or of the file, and only as written.
+  test('makes the file CommonJS when a "use strict" string is no directive', async () => {
+    // A "use strict" string is a directive only at the start of a function or of the file, and only as written.
     const files = {
-      "block.js": `{ "use strict"; ${label} }\n` + named("directive in a block"),
-      "try.js": `try { "use strict"; ${ifBody} } catch {}\n` + named("directive in a try block"),
-      "parenthesized.js": `function o() { ("use strict"); ${label} }\n` + named("directive in parentheses"),
+      "block.js": `{ "use strict"; ${label} }\n` + named("string in a block", "g()"),
+      "try.js": `try { "use strict"; ${ifBody} } catch {}\n` + named("string in a try block", "g()"),
+      "parenthesized.js":
+        `function o() { ("use strict"); ${label} return g(); }\n` + named("string in parentheses", "o()"),
     };
     using dir = tempDir("sloppy-fn-decl-directive", { ...files, "main.cjs": requireAll(files) });
     expect(await spawn(String(dir), ["main.cjs"])).toEqual({
-      stdout: "directive in a block: sloppy\ndirective in a try block: sloppy\ndirective in parentheses: sloppy\n",
+      stdout: "string in a block: sloppy g\nstring in a try block: sloppy g\nstring in parentheses: sloppy g\n",
       stderr: "",
       exitCode: 0,
     });

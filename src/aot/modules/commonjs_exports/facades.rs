@@ -590,11 +590,6 @@ impl CommonJsExports {
         }
     }
 
-    #[cfg(test)]
-    pub fn check(&self, root: FileId) -> Option<ModuleRef> {
-        (!self.checked_copies(root).is_empty()).then_some(ModuleRef::Check(root))
-    }
-
     pub fn copies(&self, facade: FileId) -> &[SyntheticExportId] {
         let facade = self.facades.find(facade);
         facade.map_or(&[], |facade| &facade.copies[..])

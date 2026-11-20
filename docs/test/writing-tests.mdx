@@ -76,6 +76,13 @@ test("wat", async () => {
 
 In `bun:test`, a timeout throws an uncatchable exception to force the test to stop running and fail. Bun also kills any child processes spawned in the test, so they don't linger as zombie processes.
 
+A timeout fails a test while the test waits for something: a promise, a timer, a callback. Bun cannot interrupt code that keeps the event loop blocked, such as a loop that never ends or a call of `Bun.sleepSync()`. If a test or hook still blocks the event loop 5 seconds after its timeout, `bun test` reports it as timed out and ends the process with exit code 1:
+
+- The tests and files after it do not run, and neither do `afterEach` and `afterAll` hooks.
+- With [`--parallel`](/test/parallel), only the worker that runs the file ends. The file fails, and the other files still run.
+
+This does not apply to a test with a timeout of `0`, to code at the top level of a test file or in a `describe()` callback, or while `--inspect` is on.
+
 The default timeout for each test is 5000ms (5 seconds) unless you override it with this timeout option or `jest.setTimeout()`.
 
 ## Retries and Repeats

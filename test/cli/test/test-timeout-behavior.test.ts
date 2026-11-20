@@ -173,6 +173,53 @@ test.concurrent(
   20_000,
 );
 
+// While the process is stopped its clock goes on, and the timer of the test is only late, not blocked.
+test.concurrent.skipIf(isWindows)(
+  "a timeout that passes while the process is stopped does not end the run",
+  async () => {
+    using dir = tempDir("test-timeout-stopped", {
+      "a.test.ts": `
+        import { test } from "bun:test";
+        test("waits", async () => {
+          console.log("ran: waits");
+          await new Promise(() => {});
+        }, 500);
+        test("after it", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "a.test.ts"],
+      env: { ...bunEnv, BUN_TEST_TIMEOUT_GRACE_MS: "100" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    let stdout = "";
+    const stderr = proc.stderr.text();
+    for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+      if (!stdout.includes("ran: waits") && (stdout += chunk).includes("ran: waits")) {
+        proc.kill("SIGSTOP");
+        // Nothing tells when the timeout and 100ms more have passed for a process that is stopped.
+        await Bun.sleep(1000);
+        proc.kill("SIGCONT");
+      } else {
+        stdout += chunk;
+      }
+    }
+    const lines = (await stderr)
+      .split("\n")
+      .filter(line => /^\((pass|fail)\) |^  \^ |^error: /.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+    expect({ lines, signalCode: proc.signalCode, exitCode: await proc.exited }).toEqual({
+      lines: ["(fail) waits", "  ^ this test timed out after 500ms.", "(pass) after it"],
+      signalCode: null,
+      exitCode: 1,
+    });
+  },
+  20_000,
+);
+
 // The child inherits stdout, so stdout only ends when the child has ended too.
 test.concurrent.skipIf(isWindows)(
   "a run that a blocked event loop ends takes the child processes of its tests with it",

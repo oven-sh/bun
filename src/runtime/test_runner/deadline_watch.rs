@@ -122,28 +122,42 @@ fn publish(current: u64, next: u64) {
     }
 }
 
-/// Sleeps until the published deadline is `GRACE_MS` in the past. The JavaScript thread never wakes
-/// it, so that a test pays no system call for it: it looks again every `GRACE_MS` at the latest,
-/// which is before any deadline published since the last look can be that late.
+/// Ends the process once it has seen one deadline stay published, and in the past, through
+/// `GRACE_MS` of its own sleeps.
+///
+/// It counts its sleeps and not the clock: while the whole process is stopped (SIGSTOP, a suspended
+/// machine) a deadline can pass by any amount, and the JavaScript thread handles it as soon as the
+/// process runs again. A sleep that took longer than it asked for counts for little.
+///
+/// The JavaScript thread never wakes it, so that a test pays no system call for it: it looks at what
+/// is published a few times per `GRACE_MS`.
 fn watch() {
-    const SHORTEST_IDLE_LOOK_NS: u64 = 10 * NS_PER_MS;
+    const LOOKS_PER_GRACE: u64 = 4;
+    const SLEEPS_PER_GRACE: u64 = 8;
+    let now = || Timespec::now(TimespecMockMode::ForceRealTime).ns();
+
+    let mut overdue: (u64, u64) = (0, 0);
     loop {
         let published = PUBLISHED.load(Ordering::SeqCst);
-        let grace_ns = GRACE_MS.load(Ordering::Relaxed).saturating_mul(NS_PER_MS);
+        let grace_ns = GRACE_MS.load(Ordering::Relaxed).saturating_mul(NS_PER_MS).max(NS_PER_MS);
         let deadline = published >> LABEL_BITS;
-        let mut sleep_ns = grace_ns.max(SHORTEST_IDLE_LOOK_NS);
-        if deadline != 0 {
-            let now = Timespec::now(TimespecMockMode::ForceRealTime).ns();
-            let ends_at = deadline.saturating_add(grace_ns);
-            if now >= ends_at {
-                if PUBLISHED.compare_exchange(published, ENDING, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-                    end_process(published, now);
-                }
-                continue;
-            }
-            sleep_ns = sleep_ns.min(ends_at - now);
+        let before = now();
+        if deadline == 0 || before < deadline {
+            let until_deadline = if deadline == 0 { u64::MAX } else { deadline - before };
+            std::thread::sleep(Duration::from_nanos(until_deadline.min(grace_ns / LOOKS_PER_GRACE)));
+            continue;
         }
+        let seen_overdue_ns = if overdue.0 == published { overdue.1 } else { 0 };
+        if seen_overdue_ns >= grace_ns {
+            if PUBLISHED.compare_exchange(published, ENDING, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                end_process(published, before);
+            }
+            continue;
+        }
+        let sleep_ns = (grace_ns / SLEEPS_PER_GRACE).clamp(1, grace_ns - seen_overdue_ns);
         std::thread::sleep(Duration::from_nanos(sleep_ns));
+        let slept_ns = now().saturating_sub(before).min(sleep_ns * 2);
+        overdue = (published, seen_overdue_ns + slept_ns);
     }
 }
 

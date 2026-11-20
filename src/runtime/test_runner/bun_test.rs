@@ -18,6 +18,7 @@ use crate::cli::test_command::{CommandLineReporter, TestFailure};
 use crate::generated_bindgen::bun_test::{
     Bun__BunTest__hook, Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
 };
+use super::deadline_watch;
 use super::execution::TimespecExt as _;
 use super::test_context::{self, Deferred};
 use super::test_context_fixtures::TestFixtures;
@@ -1080,9 +1081,14 @@ impl BunTest {
         scopeguard::defer! { this.in_run_loop.set(false) }
 
         let mut min_timeout = Timespec::EPOCH;
+        // The timeout of the last step, for a runner that waits with no test running.
+        let mut stepped: Option<Timespec> = None;
 
         while let Some(result) = this.result_queue.with_taken(VecDeque::pop_front) {
             global_this.clear_termination_exception();
+            if stepped.replace(Timespec::EPOCH).is_none() {
+                deadline_watch::in_runner();
+            }
             let step_result: StepResult = match this.phase.get() {
                 Phase::Collection => Collection::step(this, global_this, &result)?,
                 Phase::Execution => Execution::Execution::step(this, global_this, &result)?,
@@ -1091,6 +1097,7 @@ impl BunTest {
             match step_result {
                 StepResult::Waiting { timeout } => {
                     min_timeout = min_timeout.min_ignore_epoch(timeout);
+                    stepped = Some(timeout);
                 }
                 StepResult::Complete => {
                     if this.advance(global_this)? == Advance::Exit {
@@ -1102,7 +1109,62 @@ impl BunTest {
         }
 
         Self::update_min_timeout(this, &min_timeout);
+        // A step that failed left above, and armed no timer that would bring the runner back.
+        if let Some(step_timeout) = stepped {
+            this.publish_wait(&step_timeout);
+        }
         Ok(())
+    }
+
+    /// Tells `deadline_watch` when the runner is due back from the event loop: when every test that runs has timed out.
+    fn publish_wait(&self, due_if_none_runs: &Timespec) {
+        let running = (self.phase.get() == Phase::Execution).then(|| self.execution.active_group()).flatten();
+        let mut running = running.into_iter().flat_map(|group| group.sequences(&self.execution)).filter_map(|sequence| {
+            let entry = sequence.running_entry()?;
+            Some((sequence, entry, self.sequence_entry(entry).timespec.get()))
+        });
+        match (running.next(), running.next()) {
+            (None, _) => deadline_watch::waiting(*due_if_none_runs, None),
+            (Some((sequence, entry, deadline)), None) => {
+                deadline_watch::waiting(deadline, Some(self.watched_entry(sequence, entry, self.entry_of(entry))));
+            }
+            (Some(first), Some(second)) => {
+                // One without a timeout never times out.
+                let latest = [first, second].into_iter().chain(running).map(|(.., deadline)| deadline).reduce(
+                    |latest, deadline| if Timespec::order_ignore_epoch(deadline, latest).is_gt() { deadline } else { latest },
+                );
+                deadline_watch::waiting(latest.unwrap_or(Timespec::EPOCH), None);
+            }
+        }
+    }
+
+    /// `called`, which is `entry` of `sequence`, for `deadline_watch`.
+    pub(crate) fn watched_entry<'a>(
+        &'a self,
+        sequence: &Execution::ExecutionSequence,
+        called: SequenceEntryId,
+        entry: &ExecutionEntry,
+    ) -> deadline_watch::Entry<'a> {
+        let named = sequence.test_entry.or(sequence.first_entry).unwrap_or(called);
+        deadline_watch::Entry {
+            key: u64::from(self.generation) << 32 | u64::from(named.0.get()),
+            timeout_ms: entry.timeout,
+            is_hook: sequence.test_entry != Some(called),
+            buntest: self,
+            named,
+        }
+    }
+
+    /// Names the test `named` and the scopes around it.
+    pub(crate) fn write_label(&self, named: SequenceEntryId, label: &mut deadline_watch::Label) {
+        let named = self.entry_of(named);
+        label.set_test(named.base.name.as_deref().unwrap_or(b"(unnamed)"));
+        for scope in self.scopes_from(named.base.parent) {
+            let name = scope.base.name.as_deref().unwrap_or(b"");
+            if !name.is_empty() && !label.add_scope(name) {
+                break;
+            }
+        }
     }
 
     fn update_min_timeout(this: &BunTestPtr, min_timeout: &Timespec) {
@@ -1212,6 +1274,7 @@ impl BunTest {
     }
 
     /// if sync, the result is returned. if async, None is returned.
+    /// `watched`: the entry whose timeout ends at `timeout`, if it has one.
     #[optimize(size)]
     pub(crate) fn run_test_callback(
         this: &BunTestPtr,
@@ -1221,6 +1284,7 @@ impl BunTest {
         cfg_done_parameter: bool,
         cfg_data: RefDataValue,
         timeout: &Timespec,
+        watched: Option<deadline_watch::Entry<'_>>,
     ) -> Option<RefDataValue> {
         let _g = group_begin!();
         let vm = global_this.bun_vm();
@@ -1249,9 +1313,13 @@ impl BunTest {
         }
 
         Self::update_min_timeout(this, timeout);
+        match watched {
+            Some(entry) => deadline_watch::calling(*timeout, entry),
+            None => deadline_watch::in_runner(),
+        }
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         let on_stack = OnStack::enter(&this.execution.on_stack, &cfg_data);
-        let result: JSValue = match vm
+        let returned = vm
             .event_loop()
             .run_callback_with_result_and_forcefully_drain_microtasks(
                 vm.test_isolation_state.file_context.get(),
@@ -1261,8 +1329,9 @@ impl BunTest {
                 args_slice,
                 move || drop(on_stack),
             )
-            .and_then(|returned| Self::promise_of_thenable(global_this, returned))
-        {
+            .and_then(|returned| Self::promise_of_thenable(global_this, returned));
+        deadline_watch::in_runner();
+        let result: JSValue = match returned {
             Ok(v) => v,
             Err(_) => {
                 global_this.clear_termination_exception();

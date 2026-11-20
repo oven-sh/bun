@@ -824,7 +824,46 @@ pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate:
     Ok(())
 }
 
-fn fmt_status_text_line(
+/// " scope > scope > name", as it follows the status of a test. `scopes`: outermost first.
+pub(crate) fn write_test_name<'a>(
+    writer: &mut impl bun_io::Write,
+    colors: bool,
+    dim: bool,
+    scopes: impl Iterator<Item = &'a [u8]>,
+    name: &[u8],
+) {
+    for scope in scopes.filter(|scope| !scope.is_empty()) {
+        let _ = writer.write_all(b" ");
+        if colors {
+            let prefix = if dim {
+                Output::pretty_fmt::<true>("<r><d>")
+            } else {
+                Output::pretty_fmt::<true>("<r>")
+            };
+            let _ = writer.write_all(&prefix);
+            let _ = writer.write_all(scope);
+            let _ = writer.write_all(&Output::pretty_fmt::<true>("<d>"));
+        } else {
+            let _ = writer.write_all(scope);
+        }
+        let _ = writer.write_all(b" >");
+    }
+    if colors {
+        let prefix = if dim {
+            Output::pretty_fmt::<true>("<r><d> ")
+        } else {
+            Output::pretty_fmt::<true>("<r><b> ")
+        };
+        let _ = writer.write_all(&prefix);
+        let _ = writer.write_all(name);
+        let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
+    } else {
+        let _ = writer.write_all(b" ");
+        let _ = writer.write_all(name);
+    }
+}
+
+pub(crate) fn fmt_status_text_line(
     status: bun_test::Execution::Result,
     emoji_or_color: bool,
 ) -> Output::PrettyBuf {
@@ -1899,51 +1938,15 @@ impl CommandLineReporter {
                 _ => {}
             }
 
-            if Output::enable_ansi_colors_stderr() {
-                for i in 0..scopes.len() {
-                    let index = (scopes.len() - 1) - i;
-                    let name: &[u8] = scopes[index].base.name.as_deref().unwrap_or(b"");
-                    if name.is_empty() {
-                        continue;
-                    }
-                    let _ = writer.write_all(b" ");
-
-                    let prefix = if DIM {
-                        Output::pretty_fmt::<true>("<r><d>")
-                    } else {
-                        Output::pretty_fmt::<true>("<r>")
-                    };
-                    let _ = writer.write_all(&prefix);
-                    let _ = writer.write_all(name);
-                    let _ = writer.write_all(&Output::pretty_fmt::<true>("<d>"));
-                    let _ = writer.write_all(b" >");
-                }
-            } else {
-                for i in 0..scopes.len() {
-                    let index = (scopes.len() - 1) - i;
-                    let name: &[u8] = scopes[index].base.name.as_deref().unwrap_or(b"");
-                    if name.is_empty() {
-                        continue;
-                    }
-                    let _ = writer.write_all(b" ");
-                    let _ = writer.write_all(name);
-                    let _ = writer.write_all(b" >");
-                }
-            }
-
-            if Output::enable_ansi_colors_stderr() {
-                let label_prefix = if DIM {
-                    Output::pretty_fmt::<true>("<r><d> ")
-                } else {
-                    Output::pretty_fmt::<true>("<r><b> ")
-                };
-                let _ = writer.write_all(&label_prefix);
-                let _ = writer.write_all(display_label);
-                let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
-            } else {
-                let _ = writer.write_all(b" ");
-                let _ = writer.write_all(display_label);
-            }
+            let scope_names =
+                (scopes.iter().rev()).map(|scope| scope.base.name.as_deref().unwrap_or(b""));
+            write_test_name(
+                writer,
+                Output::enable_ansi_colors_stderr(),
+                DIM,
+                scope_names,
+                display_label,
+            );
 
             // Print attempt count if test was retried (attempts > 1)
             if attempts > 1 {
@@ -2919,6 +2922,26 @@ impl TestCommand {
                 .set(Some(bun_jsc::virtual_machine::synthetic_allocation_limit()));
         }
 
+        {
+            use crate::test_runner::deadline_watch;
+            let options = &ctx.test_options;
+            // For the tests of Bun, which cannot wait 5 seconds each. Not a setting that Bun supports.
+            let grace_ms = (vm.env_loader().get(b"BUN_TEST_TIMEOUT_GRACE_MS"))
+                .and_then(|ms| bun_core::fmt::parse_int::<u64>(ms, 10).ok());
+            deadline_watch::configure(deadline_watch::Config {
+                grace_ms: grace_ms.unwrap_or(5000),
+                is_worker: options.test_worker,
+                prints_dots: options.reporters.dots && !options.test_worker,
+                suggests_parallel: options.parallel == 0,
+                unwritten_reports: match (options.reporters.junit, options.coverage.enabled) {
+                    (true, true) => ", JUnit report or coverage report",
+                    (true, false) => " or JUnit report",
+                    (false, true) => " or coverage report",
+                    (false, false) => "",
+                },
+            });
+        }
+
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.
@@ -3193,6 +3216,7 @@ impl TestCommand {
                     jsc::hot_reloader::enable_hot_module_reloading(vm, None, None);
                 }
                 jsc::virtual_machine::HotReload::Watch => {
+                    crate::test_runner::deadline_watch::only_report();
                     let trigger_file = (ctx.test_options.changed.as_ref())
                         .and_then(|_| ChangedFilesFilter::init_watch_trigger());
                     jsc::hot_reloader::enable_hot_module_reloading(vm, None, trigger_file);

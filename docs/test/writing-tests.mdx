@@ -74,7 +74,27 @@ test("wat", async () => {
 }, 500); // test must run in <500ms
 ```
 
-In `bun:test`, a timeout throws an uncatchable exception to force the test to stop running and fail. Bun also kills any child processes spawned in the test, so they don't linger as zombie processes.
+When a test times out, it fails, and the run goes on with the next test. Bun also kills any child processes spawned in the test, so they don't linger as zombie processes.
+
+### Code that blocks the event loop
+
+Bun checks the timeout of a test when the test gives control back to the event loop: at an `await` of a timer, of I/O or of another promise that is still pending. It cannot interrupt code that never does that, such as a loop that never ends or a call of `Bun.sleepSync()`.
+
+If a test or hook still blocks the event loop 5 seconds after its timeout, `bun test` prints it as a failed test and ends the process with exit code 1:
+
+- The tests and files after it do not run, and neither do `afterEach` and `afterAll` hooks.
+- Bun prints no summary, and it writes no JUnit report and no coverage report.
+- With [`--parallel`](/test/parallel), only the worker that runs the file ends. That file fails, the other files still run, and Bun writes the summary and the reports. The coverage report lacks the files that this worker ran.
+
+A test that works for more than 5 seconds past its timeout without a return to the event loop also ends the process, even if it would finish later. Give such a test a longer timeout, or a timeout of `0`.
+
+The process does not end for:
+
+- a test or hook with a timeout of `0`
+- code at the top level of a test file or of a `--preload` script, and `describe()` callbacks, which have no timeout
+- a test that a debugger has paused, and any test while a native debugger or tracer such as `gdb`, `lldb` or `strace` is attached to the process
+- a test that waits for the reader of its output, as in `bun test | less`. The time that a test spends in a write to stdout or stderr does not count toward the 5 seconds, so a test that prints in a loop ends later.
+- `bun test --watch`, which prints a warning. A change to a file starts the tests again.
 
 The default timeout for each test is 5000ms (5 seconds) unless you override it with this timeout option or `jest.setTimeout()`.
 

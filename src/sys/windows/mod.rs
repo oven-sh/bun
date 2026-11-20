@@ -737,6 +737,25 @@ pub fn GetTempPathW(buf: &mut [u16]) -> Result<usize, Win32Error> {
     check_len(rc, buf.len())
 }
 
+/// Whether a debugger is attached to this process (`IsDebuggerPresent`, debugapi.h).
+pub fn is_debugger_present() -> bool {
+    unsafe extern "system" {
+        // No preconditions; reads a flag of the process.
+        safe fn IsDebuggerPresent() -> BOOL;
+    }
+    IsDebuggerPresent() != FALSE
+}
+
+/// Lets the calling thread, which mostly sleeps, preempt busy threads: Windows otherwise lets them finish their time slice.
+pub fn raise_priority_of_current_thread() {
+    const THREAD_PRIORITY_HIGHEST: c_int = 2;
+    unsafe extern "system" {
+        fn SetThreadPriority(hThread: HANDLE, nPriority: c_int) -> BOOL;
+    }
+    // SAFETY: the pseudo handle of the calling thread is always valid. A failure leaves the priority as it was.
+    let _ = unsafe { SetThreadPriority(externs::GetCurrentThread(), THREAD_PRIORITY_HIGHEST) };
+}
+
 /// `GetCurrentProcessId` (processthreadsapi.h) — current PID. Safe wrapper:
 /// the underlying call has no preconditions and never fails.
 #[inline]

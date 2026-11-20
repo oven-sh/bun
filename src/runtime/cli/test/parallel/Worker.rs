@@ -41,6 +41,8 @@ pub(crate) struct Worker {
     /// Worker stdout+stderr since the last `test_done`. Flushed atomically
     /// under the right file header so concurrent files don't interleave.
     pub(crate) captured: Vec<u8>,
+    /// What this process printed for the file it runs held `deadline_watch::MESSAGE`. `captured` forgets what was flushed.
+    pub(crate) printed_watch_message: bool,
     pub(crate) alive: bool,
     /// Highest peak RSS among this slot's exited processes.
     pub(crate) peak_rss_mb: u32,
@@ -103,6 +105,7 @@ impl Worker {
     /// On `Err` it has neither a process nor pipes.
     pub(crate) fn start(&mut self, coord: &SpawnContext<'_>) -> crate::Result<()> {
         debug_assert!(!self.alive);
+        self.printed_watch_message = false;
 
         let ptr = (&raw mut *self).cast();
         for (kind, reader) in [(Kind::Stdout, &self.out), (Kind::Stderr, &self.err)] {

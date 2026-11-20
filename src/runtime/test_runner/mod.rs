@@ -18,6 +18,7 @@ cfg_jsc! {
     #[path = "bun_test.rs"]       pub(crate) mod bun_test;
     #[path = "Collection.rs"]     pub(crate) mod collection;
     #[path = "debug.rs"]          pub(crate) mod debug;
+    pub(crate) mod deadline_watch;
     #[path = "diff_format.rs"]    pub(crate) mod diff_format;
     #[path = "dom_format.rs"]     pub(crate) mod dom_format;
     #[path = "DoneCallback.rs"]   pub(crate) mod done_callback;

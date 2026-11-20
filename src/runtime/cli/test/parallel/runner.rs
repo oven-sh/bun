@@ -111,6 +111,7 @@ pub(crate) fn run_as_coordinator(
             process: None,
             ipc: Channel::default(),
             captured: Vec::new(),
+            printed_watch_message: false,
             alive: false,
             peak_rss_mb: 0,
             startup_failures: 0,

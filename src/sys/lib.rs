@@ -8769,8 +8769,44 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
 // OUTPUT_SINK — bun_core's stderr vtable, installed by us at init (B-0 hook).
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Tells `bun test` whether the process is inside [`write_all_to_stdio`]: time that a test waits for the reader of its output.
+pub mod stdio_writes {
+    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+    static IS_COUNTED: AtomicBool = AtomicBool::new(false);
+    static UNDER_WAY: AtomicU32 = AtomicU32::new(0);
+
+    /// The writes from now on are counted.
+    pub fn count() {
+        IS_COUNTED.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_one_under_way() -> bool {
+        UNDER_WAY.load(Ordering::SeqCst) > 0
+    }
+
+    pub(super) struct Write(bool);
+
+    pub(super) fn begin() -> Write {
+        let is_counted = IS_COUNTED.load(Ordering::SeqCst);
+        if is_counted {
+            UNDER_WAY.fetch_add(1, Ordering::SeqCst);
+        }
+        Write(is_counted)
+    }
+
+    impl Drop for Write {
+        fn drop(&mut self) {
+            if self.0 {
+                UNDER_WAY.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+    }
+}
+
 /// Writes all of `bytes` to stdout or stderr, for a caller that has to know whether they got there. `Output` doesn't say.
 pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
+    let _write = stdio_writes::begin();
     while !bytes.is_empty() {
         match write(fd, bytes) {
             Ok(0) => return Err(Error::from_code(E::EIO, Tag::write)),

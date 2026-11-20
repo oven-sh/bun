@@ -20,6 +20,7 @@ use crate::api::bun::process::Status as SpawnStatus;
 use crate::cli::run_compiled::log_first_time_in_test_run;
 use crate::cli::test::timings::Timings;
 use crate::test_command::CommandLineReporter;
+use crate::test_runner::deadline_watch;
 
 pub(crate) struct Coordinator<'a> {
     pub(crate) reporter: &'a CommandLineReporter,
@@ -427,6 +428,8 @@ impl<'a> Coordinator<'a> {
             self.ensure_header(idx);
         }
         let w = &mut self.workers[slot];
+        w.printed_watch_message |=
+            strings::contains(&w.captured, deadline_watch::MESSAGE.as_bytes());
         let _ = Output::error_writer().write_all(&w.captured);
         if !strings::ends_with_char(&w.captured, b'\n') {
             let _ = Output::error_writer().write_all(b"\n");
@@ -531,6 +534,7 @@ impl<'a> Coordinator<'a> {
 
         self.workers[slot].read_output_written_so_far();
         self.flush_captured(slot, Some(idx));
+        self.workers[slot].printed_watch_message = false;
         if self.last_header_idx == Some(idx) {
             self.end_group();
         }
@@ -581,6 +585,9 @@ impl<'a> Coordinator<'a> {
         let phase = self.schedule.vacate(slot);
         self.workers[slot].read_output_written_so_far();
         self.flush_captured(slot, phase.file());
+        // The exit code alone could be a test's own `process.exit(124)`.
+        let blocked_event_loop = self.workers[slot].printed_watch_message
+            && matches!(status, SpawnStatus::Exited(exit) if exit.code == deadline_watch::WORKER_EXIT_CODE);
         let panicked = is_panic_status(status);
         let is_after_panic = self.stop_reason == Some(StopReason::WorkerPanicked);
         match phase {
@@ -597,17 +604,30 @@ impl<'a> Coordinator<'a> {
                     if let Some(timings) = &mut self.timings {
                         timings.keep(self.schedule.path(file));
                     }
+                    let mut test_case = (
+                        "(worker crashed)",
+                        "worker process crashed before reporting results",
+                    );
                     // The status of a worker that was killed for it says nothing the user can act on.
                     if self.workers[slot].ipc.corrupt_frame.get() && !panicked {
                         let cause = "corrupt IPC frame, something wrote to fd 3";
                         self.print_unfinished(file, format_args!("worker killed: {cause}"));
+                    } else if blocked_event_loop {
+                        // What the worker printed names the test.
+                        test_case = (
+                            "(worker timed out)",
+                            "a test did not return to the event loop after its timeout",
+                        );
+                        self.print_unfinished(
+                            file,
+                            format_args!("worker timed out: {}", test_case.1),
+                        );
                     } else {
                         let status = describe_status(status);
                         self.print_unfinished(file, format_args!("worker crashed: {status}"));
                     }
                     let ran_ms = bun_core::time::milli_timestamp() - since_ms;
-                    let message = "worker process crashed before reporting results";
-                    self.count_unfinished(file, ("(worker crashed)", message), Some(ran_ms));
+                    self.count_unfinished(file, test_case, Some(ran_ms));
                     self.bail_out_if_due();
                 }
                 Output::flush();

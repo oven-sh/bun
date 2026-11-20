@@ -191,6 +191,184 @@ test("--parallel marks a file whose worker exits mid-run as failed (no retry)", 
   expect(exitCode).toBe(1);
 });
 
+// https://github.com/oven-sh/bun/issues/49339
+test.concurrent.each([
+  ["runs", `while (true) {}`, {}, []],
+  // The loop of the issue keeps everything it allocates. This one lets go of all but the last few
+  // thousand objects, for a build that never ends it.
+  [
+    "allocates",
+    `const held = []; for (let i = 0; ; i++) held[i % 4096] = { payload: new Array(1024).fill(1) };`,
+    { GITHUB_ACTIONS: "true" },
+    ['::error title=error: Test "loops" timed out after 250ms::'],
+  ],
+])(
+  "--parallel: a test that %s and does not return to the event loop ends its worker after its timeout",
+  async (_, loop, env, annotations) => {
+    using dir = tempDir("parallel-blocked-event-loop", {
+      "a-loop.test.js": `import {test} from "bun:test";
+        test("before the loop", () => {});
+        test("loops", () => { ${loop} });
+        test("after the loop", () => {});`,
+      "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+      "c.test.js": `import {test} from "bun:test"; test("c", () => {});`,
+    });
+    const junit = path.join(String(dir), "junit.xml");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--timeout=250", "--reporter=junit", `--reporter-outfile=${junit}`],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_TEST_TIMEOUT_GRACE_MS: "250", ...env },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = (stdout + stderr)
+      .split("\n")
+      .filter(line => /^\((pass|fail)\) |^  \^ |^✗ |^error: |^::error|^ \d+ (pass|fail)$|^Ran /.test(line))
+      .map(line => line.replace(/ \[[\d.]+m?s\]$/, ""))
+      .sort();
+    expect({ lines, signalCode: proc.signalCode, exitCode }).toEqual({
+      lines: [
+        "  ^ this test timed out after 250ms and still blocked the event loop 250ms later.",
+        // As for a worker that crashed, the file counts as one failure, and its tests that ended are not counted.
+        " 1 fail",
+        " 2 pass",
+        "(fail) loops",
+        "(pass) b",
+        "(pass) before the loop",
+        "(pass) c",
+        ...annotations,
+        "Ran 3 tests across 3 files.",
+        "✗ a-loop.test.js (worker timed out: a test did not return to the event loop after its timeout)",
+      ],
+      signalCode: null,
+      exitCode: 1,
+    });
+    expect(
+      (await Bun.file(junit).text()).match(/<testcase name="\(worker timed out\)"[^>]*>\s*<failure[^>]*>/),
+    ).toEqual([expect.stringContaining(`message="a test did not return to the event loop after its timeout"`)]);
+  },
+);
+
+// The coordinator ends the process group of a worker that has ended, with SIGTERM.
+test.skipIf(isWindows)(
+  "--parallel: a worker that a blocked event loop ends takes the child processes of its tests with it",
+  async () => {
+    const child = `process.on("SIGTERM", () => {}); console.log(process.pid); setTimeout(() => {}, 30_000);`;
+    using dir = tempDir("parallel-blocked-event-loop-children", {
+      "a-loop.test.js": `import {test} from "bun:test";
+        import {spawn} from "child_process";
+        import {appendFileSync} from "fs";
+        test("loops", async () => {
+          for (const detached of [false, true]) {
+            const child = spawn(process.execPath, ["-e", ${JSON.stringify(child)}], { detached, stdio: ["ignore", "pipe", "ignore"] });
+            const pid = await new Promise(resolve => child.stdout.once("data", resolve));
+            appendFileSync("children", pid);
+          }
+          while (true) {}
+        }, 2000);`,
+      "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2"],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_TEST_TIMEOUT_GRACE_MS: "250" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "ignore",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const children = readFileSync(path.join(String(dir), "children"), "utf8")
+      .trim()
+      .split("\n")
+      .map(Number);
+    const isAlive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      expect({
+        ended: stderr.split("\n").filter(line => line.startsWith("✗ ")),
+        children: children.length,
+        // They were killed before the worker ended, which was before the run ended.
+        alive: children.filter(isAlive),
+        exitCode,
+      }).toEqual({
+        ended: ["✗ a-loop.test.js (worker timed out: a test did not return to the event loop after its timeout)"],
+        children: 2,
+        alive: [],
+        exitCode: 1,
+      });
+    } finally {
+      for (const pid of children.filter(isAlive)) process.kill(pid, "SIGKILL");
+    }
+  },
+);
+
+// The coordinator is blocked in a write for 2 seconds, by a reader that reads nothing. Nothing tells the reader when
+// the worker of b.test.js has ended. In that time the worker sends a result, prints that its test blocks, and ends,
+// and the coordinator then reads all three at once. A shell pipeline, because Bun.spawn() reads a pipe at once.
+test.skipIf(isWindows)(
+  "--parallel: a worker that a blocked event loop ends has timed out for a coordinator that was busy too",
+  async () => {
+    using dir = tempDir("parallel-blocked-event-loop-busy-coordinator", {
+      "a.test.js": `import {test} from "bun:test";
+        import {existsSync, writeFileSync} from "fs";
+        test("prints once the other file runs", async () => {
+          while (!existsSync("b-runs")) await Bun.sleep(5);
+          const line = Buffer.alloc(999, "x").toString();
+          for (let i = 0; i < 200; i++) console.log(line);
+        }, 10_000);
+        test("says that it has printed", () => writeFileSync("a-printed", ""));`,
+      "b.test.js": `import {test} from "bun:test";
+        import {existsSync, writeFileSync} from "fs";
+        test("waits until the other file has printed", async () => {
+          writeFileSync("b-runs", "");
+          while (!existsSync("a-printed")) await Bun.sleep(5);
+        }, 10_000);
+        test("loops", () => { while (true) {} });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `("$0" test --parallel=2 --timeout=250; echo "exit: $?") 2>&1 | (sleep 2; cat)`, bunExe()],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_TEST_TIMEOUT_GRACE_MS: "250" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.split("\n").filter(line => /^✗ |^exit: /.test(line))).toEqual([
+      "✗ b.test.js (worker timed out: a test did not return to the event loop after its timeout)",
+      "exit: 1",
+    ]);
+  },
+);
+
+test("--parallel: a test that calls process.exit(124) is a worker that crashed, not one that timed out", async () => {
+  using dir = tempDir("parallel-exit-124", {
+    "a.test.js": `import {test} from "bun:test"; test("exits", () => process.exit(124));`,
+    "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const ended = (stdout + stderr).split("\n").filter(line => line.startsWith("✗ "));
+  expect({ ended, exitCode }).toEqual({ ended: ["✗ a.test.js (worker crashed: exit code 124)"], exitCode: 1 });
+});
+
 // The label must use the OS's name for the number the worker died from. Signal
 // 16 on Linux is SIGSTKFLT (it used to be labeled "SIG16"). SIGUSR2 is 31 on
 // macOS, where 31 used to be read with Linux numbering as SIGSYS, a crash

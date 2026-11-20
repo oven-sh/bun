@@ -87,7 +87,7 @@ test("in production", () => {
 
 ## Test Timeouts
 
-Each test has a default timeout of 5000ms (5 seconds). Tests that exceed it fail.
+Each test has a default timeout of 5000ms (5 seconds). Tests that exceed it fail. A test that [blocks the event loop](/test/writing-tests#code-that-blocks-the-event-loop) for 5 seconds past its timeout ends the run.
 
 ### Global Timeout
 

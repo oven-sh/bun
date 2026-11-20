@@ -12,6 +12,7 @@
 #include <JavaScriptCore/Debugger.h>
 #include <wtf/Condition.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/Scope.h>
 #include "ScriptExecutionContext.h"
 #include "debug-helpers.h"
 #include "BunInjectedScriptHost.h"
@@ -24,6 +25,8 @@
 #include "InspectorHTTPServerAgent.h"
 
 extern "C" void Bun__tickWhilePaused(bool*);
+// A Rust `AtomicU32` (src/jsc/Debugger.rs).
+extern "C" std::atomic<uint32_t> Bun__Debugger__heldThreads;
 
 namespace Bun {
 using namespace JSC;
@@ -238,6 +241,8 @@ public:
 
     static void runWhilePaused(JSGlobalObject& globalObject, bool& isDoneProcessingEvents)
     {
+        Bun__Debugger__heldThreads++;
+        auto released = makeScopeExit([] { Bun__Debugger__heldThreads--; });
         Zig::GlobalObject* global = static_cast<Zig::GlobalObject*>(&globalObject);
         Vector<RefPtr<BunInspectorConnection>, 8> connections;
         {

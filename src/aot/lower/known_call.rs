@@ -911,6 +911,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.builder.throw(thrown);
             self.continue_in(on_object.taken);
             object = self.claim_operand_kind(on_object.taken_value, OperandKind::Object);
+        } else if self.builder.this_value() != Some(object) {
+            // `this` of a derived class is read out of a variable that is empty until `super()` answers, and it always answers with an object.
+            object = self.claim_operand_kind(object, OperandKind::Object);
         }
         let has = self.emit_has(object, key);
         self.builder

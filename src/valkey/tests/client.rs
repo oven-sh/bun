@@ -520,6 +520,41 @@ mod lifecycle {
     }
 
     #[test]
+    fn retries_count_on_within_an_attempt() {
+        let phases: [fn(&mut Driver); 3] = [|_| {}, Driver::start, |it| it.client.dial_failed()];
+        let touches: [fn(&mut Driver); 3] = [
+            |_| {},
+            |it| it.client.connect(),
+            |it| (drop(it.client.close()), it.client.connect()).1,
+        ];
+        for (phase, reach) in phases.into_iter().enumerate() {
+            for (touch, apply) in touches.into_iter().enumerate() {
+                let mut it = Driver::connected(Config::default());
+                it.lost();
+                it.dial();
+                reach(&mut it);
+                apply(&mut it);
+                it.lost();
+                assert_eq!(
+                    it.take().last().unwrap(),
+                    "retry in 100 []",
+                    "{phase}, {touch}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn connect_starts_the_retries_over_between_attempts() {
+        let mut it = Driver::connected(Config::default());
+        it.lost();
+        it.client.connect();
+        it.dial();
+        it.lost();
+        assert_eq!(it.take(), ["retry in 50 []", "retry in 50 []"]);
+    }
+
+    #[test]
     fn no_retry() {
         let mut it = Driver::connected(Config::default());
         assert!(matches!(it.lose(true), Lost::ForGood { .. }));

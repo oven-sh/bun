@@ -259,15 +259,13 @@ const textTables = (function () {
       }
       return n;
     }
-    function pad(s, w, align) {
-      var n = w - width(s);
-      if (n <= 0) return s;
-      if (align === 'right') return ' '.repeat(n) + s;
-      if (align === 'center') {
-        var l = n >> 1;
-        return ' '.repeat(l) + s + ' '.repeat(n - l);
+    function pad(s, w, side) {
+      var front = '', behind = '';
+      for (var room = width(s); room < w; room++) {
+        if (side === 'right' || side === 'center' && front.length < behind.length) front += ' ';
+        else behind += ' ';
       }
-      return s + ' '.repeat(n);
+      return front + s + behind;
     }
     function wrap(text, w, o) {
       o = o || {

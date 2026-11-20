@@ -745,24 +745,32 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     mode: ResolveMode,
 ) -> JsResult<BunString> {
     match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
-        Resolved::Found(value) if mode == ResolveMode::RequireResolve => {
-            Ok(find_source_path_of_compiled_file(specifier, &value).unwrap_or(value))
+        Resolved::Found(value)
+            if matches!(mode, ResolveMode::RequireResolve | ResolveMode::EsmResolve)
+                && bun_standalone_graph::Graph::get_ref()
+                    .is_some_and(|graph| graph.compiled_program.is_some()) =>
+        {
+            Ok(find_source_path_of_compiled_file(specifier, &value, mode).unwrap_or(value))
         }
         Resolved::Found(value) => Ok(value),
         Resolved::NotFound(err) => Err(ctx.throw_value(err)),
     }
 }
 
-/// `require.resolve` in a program compiled ahead of time answers where the file lay when the program was built, under a computed name as under one that the build has read.
 /// A path in the executable is its own answer.
 fn find_source_path_of_compiled_file(
     specifier: &BunString,
     resolved: &BunString,
+    mode: ResolveMode,
 ) -> Option<BunString> {
     let graph = bun_standalone_graph::Graph::get_ref()?;
     let program = graph.compiled_program.as_ref()?;
     program.root_on_build_machine()?;
-    if bun_standalone_graph::is_bun_standalone_file_path(specifier.to_utf8().slice()) {
+    let written = specifier.to_utf8();
+    if mode == ResolveMode::EsmResolve && !bun_paths::is_absolute(written.slice()) {
+        return None;
+    }
+    if bun_standalone_graph::is_bun_standalone_file_path(written.slice()) {
         return None;
     }
     let path = resolved.to_utf8();

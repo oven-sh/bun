@@ -1,22 +1,22 @@
 // A constructor that passes its arguments on is copied however much its caller has copied: no array is made of the arguments.
 // STATISTIC: OperationsSwept <= 620
-var Shapes = {};
-Shapes.create = function () {
+var Shop = {};
+Shop.cast = function () {
   return function () {
-    this.initialize.apply(this, arguments);
+    this.knead.apply(this, arguments);
   };
 };
-Shapes.Vector = Shapes.create();
-Shapes.Vector.prototype = {
-  initialize: function (x, y, z) {
-    this.x = x ? x : 0;
-    this.y = y ? y : 0;
-    this.z = z ? z : 0;
+Shop.Peg = Shop.cast();
+Shop.Peg.prototype = {
+  knead: function (x, y, z) {
+    this.x = x || 0;
+    this.y = y || 0;
+    this.z = z || 0;
   },
 };
-Shapes.Label = Shapes.create();
-Shapes.Label.prototype = {
-  initialize: function (text) {
+Shop.Label = Shop.cast();
+Shop.Label.prototype = {
+  knead: function (text) {
     this.text = text;
   },
 };
@@ -60,12 +60,12 @@ function fifth(v, a) {
   return sixth(v, s);
 }
 function sixth(v, a) {
-  return new Shapes.Vector(a, v.y, v.z);
+  return new Shop.Peg(a, v.y, v.z);
 }
 const kept = [];
 function run(count) {
   let total = 0;
-  const from = new Shapes.Vector(0.125, 0.5, 0.25);
+  const from = new Shop.Peg(0.125, 0.5, 0.25);
   for (let index = 0; index < count; index++) {
     const made = first(from, index);
     kept[index & 1] = made;
@@ -73,4 +73,5 @@ function run(count) {
   }
   return total;
 }
-console.log(run(20).toFixed(6), new Shapes.Label("a").text, kept.map(v => Object.keys(v).join()).join(" "));
+const sum = run(20).toFixed(6), names = kept.map(v => Object.keys(v).join());
+console.log(sum, new Shop.Label("a").text, names.length ? names.join(" ") : "");

@@ -1,0 +1,20 @@
+// A list that only its field names is let go where a store lays another over it, and the next literal or slice takes its cell: who read it in passing is done by then. Lists that somebody keeps stay whole.
+class Round {
+  constructor(n) { this.n = n; this.clear(); }
+  clear() { this.beads = []; this.worn = [0, 0, 0]; this.left = [this.n, this.n + 1, this.n + 2, this.n + 3]; }
+  deal(k) { for (let i = 0; i < k; i++) this.beads.push((this.n * (i + 3) + i) % 13); this.worn = [k, this.beads.length, this.worn[0]]; return this.beads.length; }
+  cut(a, b) { this.left = this.left.slice(a, b); return this.left.length; }
+  turn() { this.worn = [this.worn[2], this.worn[0], this.worn[1]]; let sum = 0; for (let i = 0; i < this.worn.length; i++) sum += this.worn[i] * (i + 1); return sum; }
+  score() { let sum = 0; for (let i = 0; i < this.beads.length; i++) sum += this.beads[i] * (i % 2 ? 3 : 1); return sum + this.left[0]; }
+}
+class Board { constructor() { this.rows = [[]]; this.marks = null; } lay(v) { this.marks = [v, v * 2]; this.rows[0] = [v, ...this.rows[0]].slice(0, 5); return this.marks[0] + this.marks[1]; } swap() { const was = this.marks; this.marks = [9, 9]; return was; } again() { this.marks = this.marks; return this.marks; } }
+function rounds(many) { let all = 0; for (let k = 0; k < many; k++) { const r = new Round(k % 7); r.deal(k % 5 + 2); all += r.turn() + r.score(); r.clear(); all += r.deal(1) + r.cut(1, 3) + r.score(); } return all; }
+console.log(rounds(40), rounds(400));
+const kept = [], r = new Round(5); for (let k = 0; k < 6; k++) { r.deal(k); kept.push(r.beads, r.worn, r.left); r.turn(); r.cut(0, 4 - k); r.clear(); } console.log(JSON.stringify(kept)); console.log(new Set(kept).size, JSON.stringify(r));
+const held = new Round(3), seen = []; held.deal(4); const { beads, worn } = held; const walk = beads[Symbol.iterator](); walk.next(); held.clear(); held.deal(6); held.turn(); for (let k = 0; k < 50; k++) seen.push([k, k, k]); console.log(beads.join(), worn.join(), [...walk].join(), held.beads.join(), seen.length);
+const late = () => held.worn; const before = late(); held.turn(); held.turn(); console.log(before.join(), late().join(), before === late());
+const board = new Board(); let sum = 0; for (let k = 0; k < 300; k++) { sum += board.lay(k / 2); if (k % 7 === 0) { const was = board.swap(); sum += was[1]; } if (k % 11 === 0) sum += board.again()[0]; } console.log(sum, JSON.stringify(board)); const first = board.swap(), second = board.swap(); console.log(first === second, first.join(), second.join(), board.again() === board.marks);
+class Odd extends Round { clear() { super.clear(); this.old = this.beads; } set worn(v) { (this.all ??= []).push(v); } get worn() { return this.all.at(-1); } } const odd = new Odd(2); odd.deal(3); odd.turn(); odd.turn(); odd.clear(); odd.deal(2); console.log(JSON.stringify(odd.all), odd.old === odd.beads, odd.score(), Object.keys(odd).join());
+const loud = []; const spied = new Proxy(new Round(4), { set(o, k, v) { loud.push(k + v.length); o[k] = v; return true; } }); spied.deal(2); spied.turn(); spied.cut(1, 2); spied.clear(); console.log(loud.join(' '), JSON.stringify(spied)); const fixed = Object.freeze(new Round(1)); for (const name of ['clear', 'turn']) { try { fixed[name](); console.log('no'); } catch (error) { console.log(error.constructor.name, JSON.stringify(fixed)); } }
+function* parts(n) { const p = new Round(n); for (let k = 0; k < 4; k++) { p.deal(1); const at = p.beads; yield at; p.clear(); yield at.length + '/' + p.beads.length; } } console.log([...parts(6)].map(x => JSON.stringify(x)).join(' ')); async function waits(n) { const p = new Round(n); p.deal(3); const at = p.worn; await null; p.turn(); p.clear(); await null; return at.join() + '|' + p.worn.join(); } Promise.all([waits(1), waits(2)]).then(all => console.log(all.join(' ')));
+try { const t = new Round(8); t.deal(2); t.beads = { push() { t.clear(); return 1; }, length: 2 }; console.log(t.deal(2), JSON.stringify(t)); t.left = 'text'; console.log(t.cut(1, 3), t.left); t.worn = null; t.turn(); } catch (error) { console.log(error.constructor.name); }

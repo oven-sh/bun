@@ -1,31 +1,31 @@
 "use strict";
 // Non-extensible and sealed objects take stores into the properties they have and reject new ones. Frozen objects reject both.
-class Fiber {
-  constructor(tag) {
-    this.tag = tag;
-    this.lanes = 0;
-    this.child = null;
-    this.duration = -0;
+class Bench {
+  constructor(mark) {
+    this.width = -0;
+    this.cloth = null;
+    this.seats = 0;
+    this.mark = mark;
     Object.preventExtensions(this);
   }
 }
-function Node(tag) {
-  this.tag = tag;
-  this.lanes = 0;
-  this.child = null;
-  this.duration = -0;
+function Stool(mark) {
+  this.width = -0;
+  this.cloth = null;
+  this.seats = 0;
+  this.mark = mark;
   Object.preventExtensions(this);
 }
 class Open {
-  constructor(tag) {
-    this.tag = tag;
-    this.lanes = 0;
-    this.child = null;
-    this.duration = -0;
+  constructor(mark) {
+    this.mark = mark;
+    this.seats = 0;
+    this.cloth = null;
+    this.width = -0;
   }
 }
-function literal(tag) {
-  return { tag, lanes: 0, child: null, duration: -0 };
+function literal(mark) {
+  return { mark, seats: 0, cloth: null, width: -0 };
 }
 const said = [];
 function attempt(name, f) {
@@ -36,44 +36,44 @@ function attempt(name, f) {
     said.push(name + " " + error.constructor.name);
   }
 }
-function overwrite(o, lanes, child) {
-  o.lanes = lanes;
-  o.child = child;
-  o.duration = lanes + 0.5;
-  o.lanes |= 1;
-  return o.lanes + o.duration;
+function overwrite(o, seats, cloth) {
+  o.seats = seats;
+  o.cloth = cloth;
+  o.width = seats + 0.5;
+  o.seats |= 1;
+  return o.seats + o.width;
 }
 function create(o, value) {
-  o.sibling = value;
-  return o.sibling;
+  o.late = value;
+  return o.late;
 }
 function both(o, value) {
-  o.lanes = value;
-  o.sibling = value;
-  o.child = value;
-  return o.lanes;
+  o.seats = value;
+  o.late = value;
+  o.cloth = value;
+  return o.seats;
 }
 function loop(o, count) {
   for (let i = 0; i < count; i++) {
-    o.lanes += i;
-    o.duration = i;
+    o.seats += i;
+    o.width = i;
   }
-  return o.lanes + ":" + o.duration;
+  return o.seats + ":" + o.width;
 }
 function change(o, level) {
-  o.lanes = 1;
+  o.seats = 1;
   level(o);
-  o.lanes = 2;
-  return o.lanes;
+  o.seats = 2;
+  return o.seats;
 }
 class Fields extends (function (o) { return o; }) {
-  lanes = 9;
+  seats = 9;
 }
 class NewField extends (function (o) { return o; }) {
-  sibling = 9;
+  late = 9;
 }
 const levels = { none: o => o, prevent: Object.preventExtensions, seal: Object.seal, freeze: Object.freeze };
-const makers = { Fiber: t => new Fiber(t), Node: t => new Node(t), Open: t => new Open(t), literal };
+const makers = { Bench: t => new Bench(t), Stool: t => new Stool(t), Open: t => new Open(t), literal };
 for (const [m, make] of Object.entries(makers)) {
   for (const [l, level] of Object.entries(levels)) {
     const fresh = () => level(make(3));
@@ -83,20 +83,20 @@ for (const [m, make] of Object.entries(makers)) {
     attempt(name + "both", () => both(fresh(), 4));
     attempt(name + "loop", () => loop(fresh(), 5));
     attempt(name + "change", () => change(make(1), level));
-    attempt(name + "field", () => new Fields(fresh()).lanes);
-    attempt(name + "new field", () => new NewField(fresh()).sibling);
-    attempt(name + "descriptor", () => JSON.stringify(Object.getOwnPropertyDescriptor(new Fields(fresh()), "lanes")));
-    attempt(name + "define", () => Object.defineProperty(fresh(), "lanes", { value: 8 }).lanes);
-    attempt(name + "assign", () => Object.assign(fresh(), { lanes: 6, child: 7 }).lanes);
-    attempt(name + "assign new", () => Object.assign(fresh(), { lanes: 6, other: 7 }).other);
-    attempt(name + "delete", () => delete fresh().lanes);
+    attempt(name + "field", () => new Fields(fresh()).seats);
+    attempt(name + "new field", () => new NewField(fresh()).late);
+    attempt(name + "descriptor", () => JSON.stringify(Object.getOwnPropertyDescriptor(new Fields(fresh()), "seats")));
+    attempt(name + "define", () => Object.defineProperty(fresh(), "seats", { value: 8 }).seats);
+    attempt(name + "assign", () => Object.assign(fresh(), { seats: 6, cloth: 7 }).seats);
+    attempt(name + "assign new", () => Object.assign(fresh(), { seats: 6, other: 7 }).other);
+    attempt(name + "delete", () => delete fresh().seats);
     attempt(name + "again", () => {
       const o = make(2);
-      delete o.child;
+      delete o.cloth;
       level(o);
-      o.lanes = 5;
-      o.child = 1;
-      return o.child;
+      o.seats = 5;
+      o.cloth = 1;
+      return o.cloth;
     });
     attempt(name + "levels", () => [Object.isExtensible(fresh()), Object.isSealed(fresh()), Object.isFrozen(fresh())]);
   }

@@ -16,11 +16,13 @@ const keep = code => {
   codes.push(code);
   return code;
 };
-function isSpace(code) {
-  return code === 32 || code === 9 || code === 160 || (code >= 5760 && [5760, 8192, 8232].indexOf(code) >= 0);
+function isBlank(code) {
+  if (code < 33) return code === 32 || code === 9;
+  return code === 160 || code === 8192;
 }
-function isLineEnd(code) {
-  return code === 10 || code === 13 || code === 8232;
+const turns = new Set([10, 13, 8232]);
+function isTurn(code) {
+  return turns.has(code);
 }
 function kindOf(code) {
   switch (code) {
@@ -35,92 +37,83 @@ function kindOf(code) {
       return code !== code ? "none" : code > 127 ? "wide" : "other";
   }
 }
-class Scanner {
-  source;
-  index;
+class Walker {
+  path;
+  place;
   limit;
-  constructor(source) {
-    this.source = source;
-    this.index = 0;
-    this.limit = source.length;
+  constructor(path) {
+    this.limit = path.length;
+    this.place = 0;
+    this.path = path;
   }
-  restore(state) {
-    this.index = state.index;
-    this.limit = state.limit;
+  back(mark) {
+    this.limit = mark.limit;
+    this.place = mark.place;
     return this;
   }
-  eof() {
-    return this.index >= this.limit;
+  isOver() {
+    return !(this.place < this.limit);
   }
-  skip() {
-    let spaces = 0;
-    let lines = 0;
-    let steps = 0;
-    while (!this.eof()) {
-      if (steps++ > 50) break;
-      const code = this.source.charCodeAt(this.index);
-      if (isSpace(code)) {
-        ++this.index;
-        ++spaces;
-      } else if (isLineEnd(code)) {
-        ++this.index;
-        if (code === 13 && this.source.charCodeAt(this.index) === 10) ++this.index;
-        ++lines;
-      } else if (code === 47) {
-        keep(code);
-        ++this.index;
-      } else break;
+  pass() {
+    let blanks = 0, rows = 0;
+    for (let steps = 0; steps <= 50 && !this.isOver(); steps++) {
+      const code = this.path.charCodeAt(this.place);
+      if (code === 47) keep(code);
+      else if (isTurn(code)) rows += 1;
+      else if (isBlank(code)) blanks += 1;
+      else break;
+      ++this.place;
     }
-    return spaces * 100 + lines;
+    return rows + blanks * 100;
   }
   rest() {
     const list = [];
     for (let k = 0; k < 6; k++) {
-      const code = this.source.charCodeAt(this.index);
+      const code = this.path.charCodeAt(this.place);
       list.push(code, kindOf(code), code < 64, code <= 64, code > 64, code >= 64, code == 40, code != 40, code | 0, -code, code + 1, typeof code, code ? "t" : "f", code & 1, code === code);
       keep(code);
-      this.index++;
+      this.place++;
     }
     return list.join();
   }
-  lex() {
-    const code = this.source.charCodeAt(this.index);
-    if (code === 40 || code === 41) return "paren";
-    if (code >= 48 && code <= 57) return this.index++, "digit";
+  told() {
+    const code = this.path.charCodeAt(this.place);
+    if (code === 40 || code === 41) return "bow";
+    if (code >= 48 && code <= 57) return this.place++, "figure";
     if (code > 0xd7ff && code < 0xe000) return "half";
     if (code !== code) return "end";
-    this.index++;
+    this.place++;
     return "other " + code;
   }
-  tokens(depth) {
+  beads(depth) {
     const list = [];
     for (let k = 0; k < 12; k++) {
-      this.skip();
-      const token = this.lex();
-      list.push(token);
-      if (token === "paren") {
-        this.index++;
-        if (depth) list.push("[" + this.tokens(depth - 1) + "]");
+      this.pass();
+      const bead = this.told();
+      list.push(bead);
+      if (bead === "bow") {
+        this.place++;
+        if (depth) list.push("[" + this.beads(depth - 1) + "]");
       }
-      if (token === "end") break;
+      if (bead === "end") break;
     }
     return list.join();
   }
 }
-const states = JSON.parse('[{"index":0,"limit":6}]');
-function start(source, index, limit) {
-  const state = Object.assign({}, states[0]);
-  state.index = index;
-  state.limit = limit;
-  return new Scanner(source).restore(state);
+const marks = JSON.parse('[{"place":0,"limit":6}]');
+function start(path, place, limit) {
+  const mark = Object.assign({}, marks[0]);
+  mark.place = place;
+  mark.limit = limit;
+  return new Walker(path).back(mark);
 }
-const sources = JSON.parse('["", "a", "(a) 12/", "\\t\\u00a0 /x", "\\r\\n\\n\\r\\u2028 \\u1680\\u2000/9", "\\ud83d\\ude00(\\udc00", 12, null, {"charCodeAt": 5}, ["(", 1]]');
-sources.push("left" + " /(".repeat(process.argv.length), new String(" /a"), { charCodeAt: at => at * 1.5 }, { charCodeAt: at => "40" }, { charCodeAt: () => ({}) }, { charCodeAt: at => (at > 2 ? NaN : 32) }, undefined, Symbol("s"));
-const indexes = [0, 1, 2.5, -1, "1", null, undefined, NaN, 2147483647, 4294967296, { valueOf: () => 1 }, true, 1n, [2], Infinity, -0];
-for (const source of sources) {
-  for (const index of indexes) {
+const paths = JSON.parse('["", "a", "(a) 12/", "\\t\\u00a0 /x", "\\r\\n\\n\\r\\u2028 \\u1680\\u2000/9", "\\ud83d\\ude00(\\udc00", 12, null, {"charCodeAt": 5}, ["(", 1]]');
+paths.push("left" + " /(".repeat(process.argv.length), new String(" /a"), { charCodeAt: at => at * 1.5 }, { charCodeAt: at => "40" }, { charCodeAt: () => ({}) }, { charCodeAt: at => (at > 2 ? NaN : 32) }, undefined, Symbol("s"));
+const places = [0, 1, 2.5, -1, "1", null, undefined, NaN, 2147483647, 4294967296, { valueOf: () => 1 }, true, 1n, [2], Infinity, -0];
+for (const path of paths) {
+  for (const place of places) {
     for (const limit of [6, 3.5, "4", undefined]) {
-      const line = [attempt(() => start(source, index, limit).skip()), attempt(() => start(source, index, limit).rest()), attempt(() => start(source, index, limit).lex()), attempt(() => start(source, index, limit).tokens(2))].join(" | ");
+      const line = [attempt(() => start(path, place, limit).pass()), attempt(() => start(path, place, limit).rest()), attempt(() => start(path, place, limit).told()), attempt(() => start(path, place, limit).beads(2))].join(" | ");
       out.push(line);
     }
   }

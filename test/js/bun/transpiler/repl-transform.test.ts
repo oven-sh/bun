@@ -124,6 +124,21 @@ describe("Bun.Transpiler replMode", () => {
       const result = await vm.runInContext(code2, ctx);
       expect(result).toEqual({ value: 20 });
     });
+
+    test.each(["[__dirname, __filename]", "await 0; [__dirname, __filename]"])(
+      "__dirname and __filename are read from the context and not overwritten: %s",
+      async code => {
+        const ctx = vm.createContext({ __dirname: "/ctx", __filename: "/ctx/session.js" });
+        const result = await vm.runInContext(transpiler.transformSync(code), ctx);
+        expect(result).toEqual({ value: ["/ctx", "/ctx/session.js"] });
+        expect(ctx).toEqual({ __dirname: "/ctx", __filename: "/ctx/session.js" });
+      },
+    );
+
+    test("__dirname and __filename that the context does not define are not declared", async () => {
+      const result = await runRepl("[typeof __dirname, typeof __filename]", {});
+      expect(result).toEqual({ value: ["undefined", "undefined"] });
+    });
   });
 
   describe("variable persistence across lines", () => {

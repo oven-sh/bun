@@ -16,6 +16,11 @@ it("importing empty text file returns empty string", async () => {
   expect(empty_file_text).toEqual("");
 });
 
+it("importing empty md file returns empty string", async () => {
+  const empty_file_md = (await import("./empty-file", { with: { type: "md" } })).default;
+  expect(empty_file_md).toEqual("");
+});
+
 it("importing empty file with type file returns it path", async () => {
   const empty_file_text = (await import("./empty-file", { with: { type: "file" } })).default;
   expect(empty_file_text).toEqual(empty_file_path);

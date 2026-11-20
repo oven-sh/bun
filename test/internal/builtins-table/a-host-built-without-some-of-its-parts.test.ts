@@ -1,7 +1,8 @@
 // b.leftOut(): what the table leaves out of a host.
 import { expect, test } from "bun:test";
-import { parseHashTable } from "../../../src/codegen/builtins/collect-static-tables.ts";
-import type { LeftOutDeclaration, Source } from "../../../src/codegen/builtins/declarations.ts";
+import { tempDir } from "harness";
+import { collectStaticTables, parseHashTable } from "../../../src/codegen/builtins/collect-static-tables.ts";
+import { Problems, type LeftOutDeclaration, type Source } from "../../../src/codegen/builtins/declarations.ts";
 import { leftOut } from "../../../src/codegen/builtins/lib.ts";
 import { ModelBuilder } from "../../../src/codegen/builtins/model-builder.ts";
 
@@ -61,4 +62,50 @@ test("a static table has the rows of the names that are defined", () => {
   expect(keysWith()).toEqual(["always", "first", "second"]);
   expect(keysWith("WITHOUT_OTHER")).toEqual(["always", "first", "second"]);
   expect(keysWith("WITHOUT_FIRST")).toEqual(["always", "instead"]);
+});
+
+test("CustomValue entries retain native symbols and honor ReadOnly", () => {
+  using directory = tempDir("custom-value-table", {
+    "table.cpp": `@begin properties
+value readValue CustomValue
+readonly readReadonly CustomValue|ReadOnly
+bad readBad UnknownValue
+@end
+`,
+  });
+  const problems = new Problems();
+  const members = collectStaticTables(
+    [
+      {
+        declaration: {
+          declares: "StaticTable",
+          holder: "%MadeUp%",
+          table: { file: "table.cpp", table: "properties" },
+        },
+        source,
+      },
+    ],
+    { Engine: String(directory), Host: String(directory) },
+    problems,
+  ).map(({ declaration }) => declaration);
+
+  expect(members).toEqual([
+    expect.objectContaining({
+      path: "%MadeUp%.value",
+      kind: "DataProperty",
+      columns: expect.objectContaining({
+        nativeSymbols: ["readValue", "setReadValue"],
+        hasSetter: true,
+      }),
+    }),
+    expect.objectContaining({
+      path: "%MadeUp%.readonly",
+      kind: "DataProperty",
+      columns: expect.objectContaining({
+        nativeSymbols: ["readReadonly"],
+        hasSetter: false,
+      }),
+    }),
+  ]);
+  expect(problems.lines).toEqual([expect.stringContaining("%MadeUp%.bad: unknown attribute UnknownValue")]);
 });

@@ -105,6 +105,13 @@ describe("Buffer hex decoding — Highway runtime dispatch", () => {
   });
 });
 
+describe("Header names — Highway lowercasing", () => {
+  test("of every length", () => {
+    const names = Array.from({ length: 140 }, (_, length) => Buffer.alloc(length + 1, "AzZa^_`M9|Nb~").toString());
+    expect(names.flatMap(name => [...new Headers([[name, "1"]]).keys()])).toEqual(names.map(it => it.toLowerCase()));
+  });
+});
+
 describe("base64 — simdutf runtime dispatch", () => {
   test("ascii roundtrip", () => {
     const encoded = btoa(ascii1k);

@@ -7,7 +7,7 @@ import path from "node:path";
 test("a file that configures Highway for itself does not compile unless GetIndex() is inlined", () => {
   const bindings = path.resolve(import.meta.dir, "../../../src/jsc/bindings");
   const read = (file: string) => readFileSync(path.join(bindings, file), "utf8");
-  const files = [...new Glob("**/*.cpp").scanSync(bindings)].filter(file =>
+  const files = [...new Glob("**/*.{cpp,h}").scanSync(bindings)].filter(file =>
     /^\s*#\s*(define|undef)\s+HWY_(?!TARGET_INCLUDE\b)/m.test(read(file)),
   );
 

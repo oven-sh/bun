@@ -846,7 +846,7 @@ describe.skipIf(process.arch !== "x64")("highway_zstd.cpp", () => {
 });
 
 describe("targets", () => {
-  it.skipIf(isArm64)("x64 starts at SSE4, with or without AES and PCLMULQDQ", () => {
+  it.skipIf(isArm64)("x64 starts at SSE4", () => {
     expect(cpuDispatch().highway.at(-1)).toBe("SSE4");
   });
 
@@ -865,9 +865,9 @@ describe("targets", () => {
     expect(cpuDispatch()).toEqual({ highway, checksums: highway[0] });
   });
 
-  // Windows reports BF16 from 11 24H2 on.
-  const isCobalt = isWindows && isArm64 && cpus()[0].model.includes("Cobalt") && +release().split(".")[2] >= 26100;
-  it.skipIf(!isCobalt)("the checksums use what Windows reports on arm64", () => {
-    expect(cpuDispatch().checksums).toBe("NEON_BF16");
+  it.skipIf(!isArm64 || !isWindows)("the checksums use what Windows reports on arm64", () => {
+    // Windows reports BF16 from 11 24H2 on.
+    const reportsBf16 = cpus()[0].model.includes("Cobalt") && +release().split(".")[2] >= 26100;
+    expect(cpuDispatch().checksums).toBeOneOf(reportsBf16 ? ["NEON_BF16"] : ["NEON", "NEON_BF16"]);
   });
 });

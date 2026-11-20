@@ -5,6 +5,7 @@
 #define HWY_DISABLED_TARGETS (HWY_ALL_SVE | (HWY_AVX3_DL - 1))
 // Without this, hn::CLMulLower and hn::CLMulUpper are emulated.
 #undef HWY_DISABLE_PCLMUL_AES
+// On these systems ByFeatures() picks the target. BUN_HWY_DISPATCH would stay at the baseline.
 #if defined(__aarch64__) && (defined(_WIN32) || defined(__FreeBSD__))
 #define CHOOSES_BY_ITSELF
 #define HWY_HAVE_RUNTIME_DISPATCH 1
@@ -686,6 +687,7 @@ static Function ByMultiplier(Function chosen, Function without, Function avx2, F
     const bool hasVpclmulqdq = __get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx) && (ecx & bit_VPCLMULQDQ);
     return hasVpclmulqdq && (chosen == avx2 || chosen == avx3) ? wider : chosen;
 }
+// Not HWY_STATIC_DISPATCH, which would still compile if the static target were one that multiplies.
 #define DISPATCH_CRC32(FUNC) BUN_HWY_DISPATCH_TO(ByMultiplier(HWY_DYNAMIC_POINTER(FUNC), &N_SSSE3::FUNC, &N_AVX2::FUNC, &N_AVX3::FUNC, &N_AVX2::FUNC##Vpclmulqdq))
 #else
 #define DISPATCH_CRC32 DISPATCH

@@ -324,6 +324,8 @@ fn same_key(
     let (mut i, mut j) = (0, 0);
     // The line of `b` that `j` is on, and the offset in `b` where that line starts.
     let (mut line, mut line_start) = (0u32, 0);
+    // From `line_start` up to here the line is known to be ASCII.
+    let mut ascii_to = 0;
     loop {
         let same_from = j;
         while i < a.len() && j < b.len() && a[i] == b[j] {
@@ -353,12 +355,13 @@ fn same_key(
             && b_end > j
             && as_written.binary_search_by(|name| name.as_slice().cmp(&b[j..b_end])).is_ok()
             // The map counts columns in UTF-16 units, which only equal bytes after ASCII text.
-            && b[line_start..j].is_ascii()
+            && b[line_start.max(ascii_to)..j].is_ascii()
             && from.peek().is_some()
             && from.all(|m| removed.binary_search(&m.orig_line).is_ok());
         if !let_through {
             return false;
         }
+        ascii_to = j;
         (i, j) = (a_end, b_end);
     }
 }

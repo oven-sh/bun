@@ -206,7 +206,6 @@ struct SecretsJobOptions {
         };
 
         switch (operation) {
-        case DELETE_OP:
         case SET: {
             if (args.size() > 2 && args.at(0).isString() && args.at(1).isString() && args.at(2).isString()) {
                 service = args.at(0).toWTFString(globalObject);
@@ -227,6 +226,7 @@ struct SecretsJobOptions {
             break;
         }
 
+        case DELETE_OP:
         case GET: {
             if (args.size() > 1 && args.at(0).isString() && args.at(1).isString()) {
                 service = args.at(0).toWTFString(globalObject);

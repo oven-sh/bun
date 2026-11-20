@@ -126,7 +126,7 @@ describe("heapStats() mimalloc integration", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The allocator's purge thread takes back what was freed 100 ms after the free. What a thread freed while the purge thread
+  // The allocator's purge thread takes back what was freed 100 ms after the free, the purge delay this test sets. What a thread freed while the purge thread
   // was in the middle of a pass was left out for good: it stayed resident until the event loop went idle or something forced
   // a collection. A script that keeps its thread busy does neither. It took a pass in which each of the allocator's arenas
   // had something to hand back. JSC's structure heap is an arena of its own that rarely has, so Malloc=1 here: JSC then
@@ -164,7 +164,7 @@ describe("heapStats() mimalloc integration", () => {
           console.log(JSON.stringify({ released, purged: purged() - purgedBefore }));
         `,
         ],
-        env: { ...bunEnv, Malloc: "1" },
+        env: { ...bunEnv, Malloc: "1", MIMALLOC_PURGE_DELAY: "100" },
         stdout: "pipe",
         stderr: "inherit",
       });

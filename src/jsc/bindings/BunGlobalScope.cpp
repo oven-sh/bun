@@ -9,6 +9,7 @@
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "JavaScriptCore/TypeError.h"
 #include "BunClientData.h"
+#include "ErrorCode.h"
 
 namespace Bun {
 
@@ -31,6 +32,11 @@ void GlobalScope::finishCreation(JSC::VM& vm)
             structure = Structure::addPropertyTransition(vm, structure, clientData->builtinNames().writtenPublicName(), 0, offset);
             RELEASE_ASSERT(offset == 1);
             init.set(structure);
+        });
+
+    m_nodeErrorCache.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            init.set(ErrorCodeCache::create(init.vm, ErrorCodeCache::createStructure(init.vm, init.owner)));
         });
 }
 
@@ -67,6 +73,7 @@ void GlobalScope::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 
     thisObject->m_encodeIntoObjectStructure.visit(visitor);
+    thisObject->m_nodeErrorCache.visit(visitor);
 }
 
 const JSC::ClassInfo GlobalScope::s_info = { "GlobalScope"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(GlobalScope) };

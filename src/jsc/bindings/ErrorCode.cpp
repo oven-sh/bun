@@ -189,7 +189,7 @@ void ErrorCodeCache::finishCreation(VM& vm)
     }
 }
 
-static ErrorCodeCache* errorCache(Zig::GlobalObject* globalObject)
+static ErrorCodeCache* errorCache(GlobalScope* globalObject)
 {
     return static_cast<ErrorCodeCache*>(globalObject->nodeErrorCache());
 }
@@ -201,7 +201,7 @@ static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject
     return ErrorInstance::createStructure(vm, globalObject, prototype);
 }
 
-JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
+JSObject* ErrorCodeCache::createError(VM& vm, GlobalScope* globalObject, ErrorCode code, JSValue message, JSValue options)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* cache = errorCache(globalObject);
@@ -249,17 +249,17 @@ NEVER_INLINE JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, Er
     return createError(vm, defaultGlobalObject(globalObject), code, message);
 }
 
+JSObject* createErrorInRealm(GlobalScope* realm, ErrorCode code, const String& message)
+{
+    VM& vm = realm->vm();
+    return errorCache(realm)->createError(vm, realm, code, jsString(vm, message), jsUndefined());
+}
+
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message)
 {
-    if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
-        return createError(vm, zigGlobalObject, code, message, jsUndefined());
-
-    auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    String messageString = message.isUndefined() ? String() : message.toWTFString(globalObject);
-    if (scope.exception() && !vm.hasPendingTerminationException())
-        (void)scope.tryClearException();
-    return JSC::ErrorInstance::create(vm, structure, messageString, JSValue(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);
+    // Every global object is a GlobalScope.
+    auto* realm = uncheckedDowncast<GlobalScope>(globalObject);
+    return errorCache(realm)->createError(vm, realm, code, message, jsUndefined());
 }
 
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)

@@ -22,8 +22,19 @@ class NodeVMRunTermination final {
     WTF_FORBID_HEAP_ALLOCATION;
 
 public:
-    // `realm`: the realm being run; its VM is what the timeout / a SIGINT terminates.
-    NodeVMRunTermination(JSC::JSGlobalObject* realm, std::optional<Seconds> timeout, bool breakOnSigint);
+    // Which realm makes the ERR_SCRIPT_EXECUTION_* error of a cut-short run. Node makes it in the context
+    // that is entered where it throws.
+    enum class ErrorRealm : bool {
+        // The main realm of the thread. A module evaluation never enters the module's context:
+        // https://github.com/nodejs/node/blob/v26.3.0/src/module_wrap.cc#L858-L860
+        Main,
+        // The realm being run. A Script run enters its context first:
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_contextify.cc#L1244
+        OfRun,
+    };
+
+    // `realm`: the realm being run (ErrorRealm::OfRun); its VM is what the timeout / a SIGINT terminates.
+    NodeVMRunTermination(JSC::JSGlobalObject* realm, ErrorRealm, std::optional<Seconds> timeout, bool breakOnSigint);
     ~NodeVMRunTermination();
 
     // Call once, right after the run (and any microtask checkpoint it bounds). If the run was cut short
@@ -47,6 +58,8 @@ private:
     bool timedOut() const { return m_deadline && m_deadline->didFire(); }
     bool wasCutShort() const { return timedOut() || m_sigintReceived; }
     const NodeVMRunTermination* enclosingRunCutShort() const;
+    // The ERR_SCRIPT_EXECUTION_* error that says this run was cut short, made in the error realm of `forRun`.
+    JSC::JSObject* createCutShortError(const NodeVMRunTermination& forRun) const;
 
     JSC::VM& m_vm;
     JSC::JSGlobalObject* const m_realm;
@@ -54,6 +67,7 @@ private:
     std::atomic<bool> m_sigintReceived { false }; // read on this thread only once disarm()ed
     RefPtr<JSC::TerminationDeadline> m_deadline;
     bool m_listeningForSigint { false };
+    const ErrorRealm m_errorRealm;
     // The run this one is nested in, if any: runs nest on the stack, so the innermost is tracked per thread.
     NodeVMRunTermination* const m_enclosing;
     bool m_finished { false };

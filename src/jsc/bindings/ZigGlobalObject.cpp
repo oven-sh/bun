@@ -3087,13 +3087,6 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(Bun::createLintHost(init.vm, init.owner));
              BUN_END_REMOVABLE_ENTRY_POINT
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_nodeErrorCache), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             auto* structure = ErrorCodeCache::createStructure(
-                 init.vm,
-                 init.owner);
-
-             init.set(ErrorCodeCache::create(init.vm, structure));
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_navigatorObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              JSC::JSGlobalObject* globalObject = init.owner;
              unsigned accessorAttributes = PropertyAttribute::Accessor | 0;

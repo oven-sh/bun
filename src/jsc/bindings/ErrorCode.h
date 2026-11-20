@@ -75,7 +75,7 @@ public:
     static ErrorCodeCache* create(VM& vm, Structure* structure);
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject);
 
-    JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options);
+    JSObject* createError(VM& vm, GlobalScope* globalObject, ErrorCode code, JSValue message, JSValue options);
 
 private:
     JS_EXPORT_PRIVATE ErrorCodeCache(VM&, Structure*);
@@ -86,7 +86,10 @@ private:
 JSC::EncodedJSValue throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ErrorCode code, const WTF::String& message);
 JSC::EncodedJSValue throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ErrorCode code, MessageBuilder& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const WTF::String& message);
+// For a node:vm context this makes the error in the main realm of the thread, not in the context.
 JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message);
+// Makes the error in `realm` itself: for a node:vm context, an instance of the context's own Error.
+JSC::JSObject* createErrorInRealm(GlobalScope* realm, ErrorCode code, const WTF::String& message);
 // A message that overflowed becomes `RangeError: Out of memory`. `throwError(..., MessageBuilder&)` throws the same.
 JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, MessageBuilder& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC::JSValue message);

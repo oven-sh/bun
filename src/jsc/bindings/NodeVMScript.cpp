@@ -323,7 +323,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     NakedPtr<JSC::Exception> exception;
     JSValue result {};
     {
-        NodeVMRunTermination termination(globalObject, timeoutOf(options), options.breakOnSigint);
+        NodeVMRunTermination termination(globalObject, NodeVMRunTermination::ErrorRealm::OfRun, timeoutOf(options), options.breakOnSigint);
         result = script->evaluate(globalObject, exception);
         // Node performs the afterEvaluate microtask checkpoint inside the timeout/SIGINT scope, so a
         // `timeout` also bounds microtasks the script scheduled on the context's own queue. A script cut
@@ -376,7 +376,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     NakedPtr<JSC::Exception> exception;
     JSValue result {};
     {
-        NodeVMRunTermination termination(globalObject, timeoutOf(options), options.breakOnSigint);
+        NodeVMRunTermination termination(globalObject, NodeVMRunTermination::ErrorRealm::Main, timeoutOf(options), options.breakOnSigint);
         result = script->evaluate(globalObject, exception);
         termination.finish(scope);
     }

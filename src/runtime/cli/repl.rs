@@ -2341,6 +2341,12 @@ impl<'a> Repl<'a> {
                     InputMode::Editor => {
                         // Finish editor mode
                         self.leave_input(b"");
+                        if !self.line_editor.buffer.is_empty() {
+                            self.editor_buffer
+                                .extend_from_slice(&self.line_editor.buffer);
+                            self.editor_buffer.push(b'\n');
+                            self.line_editor.clear();
+                        }
                         // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
                         if !self.editor_buffer.is_empty() {
                             let code = core::mem::take(&mut self.editor_buffer);
@@ -2349,6 +2355,7 @@ impl<'a> Repl<'a> {
                         }
                         self.input_mode = InputMode::Normal;
                         self.editor_buffer.clear();
+                        self.history.reset_position();
                         self.refresh_line();
                     }
                     InputMode::Normal if self.line_editor.buffer.is_empty() => {
@@ -2601,6 +2608,7 @@ impl<'a> Repl<'a> {
         let cancels_line =
             self.input_mode == InputMode::Normal && !self.line_editor.buffer.is_empty();
         self.leave_input(if cancels_line { b"^C" } else { b"" });
+        self.line_editor.clear();
         match self.input_mode {
             InputMode::Editor => {
                 self.print(format_args!(
@@ -2615,9 +2623,7 @@ impl<'a> Repl<'a> {
                 self.input_mode = InputMode::Normal;
                 self.multiline_buffer.clear();
             }
-            InputMode::Normal if cancels_line => {
-                self.line_editor.clear();
-            }
+            InputMode::Normal if cancels_line => {}
             InputMode::Normal if self.ctrl_c_pressed => {
                 // Second Ctrl+C on empty line - exit
                 self.running = false;

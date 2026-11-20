@@ -1,6 +1,7 @@
 //! HTTP client.
 
 #![warn(unused_must_use)]
+#![feature(core_io_borrowed_buf)]
 pub mod error;
 pub use error::{CertError, Error, Result};
 #[path = "AsyncHTTP.rs"]
@@ -33,8 +34,6 @@ pub mod http_thread;
 pub mod init_error;
 #[path = "InternalState.rs"]
 pub mod internal_state;
-#[path = "lshpack.rs"]
-pub mod lshpack;
 #[path = "ProxyTunnel.rs"]
 pub mod proxy_tunnel;
 #[path = "SendFile.rs"]

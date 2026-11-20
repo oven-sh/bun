@@ -52,7 +52,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::JoinHandle;
 
 use bun_core::{EncodedSlice, String as BunString, Timespec, TimespecMockMode, WTFStringImpl};
-use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
+use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as TimerTag};
 use bun_io::KeepAlive;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
@@ -237,7 +237,6 @@ unsafe extern "C" {
     safe fn Bun__AOT__adoptPagesForNewThread(pages: *mut c_void);
     safe fn Bun__AOT__releaseUnusedPagesOfThread();
     safe fn Bun__AOT__didStartThread();
-    safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `run` can take the API lock and abandon
     // it with the VM — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
@@ -723,7 +722,6 @@ impl WebWorker {
     /// # Safety
     /// `self` waits for room, and `parent` is its parent.
     pub unsafe fn on_room_timer(&self, parent: &VirtualMachine) {
-        self.room_timer.state.set(TimerState::FIRED);
         if parent.is_shutting_down() || !parent.script_allowed() {
             return;
         }
@@ -1237,14 +1235,6 @@ impl WebWorker {
         }
         log!(
             "[{}] shutdown: VirtualMachine destroyed",
-            self.execution_context_id
-        );
-        // This thread's C++ thread_local destructors are not guaranteed to run
-        // before the process exits, so free the HPACK scratch buffer that any
-        // http2 session on this thread allocated.
-        Bun__freeSharedHeaderBufferForThreadExit();
-        log!(
-            "[{}] shutdown: thread state freed",
             self.execution_context_id
         );
         exit_code

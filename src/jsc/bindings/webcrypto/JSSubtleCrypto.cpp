@@ -25,8 +25,6 @@
 
 #include "JSSubtleCrypto.h"
 
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "JSCryptoKey.h"
 #include "JSCryptoKeyUsage.h"
 #include "JSDOMBinding.h"
@@ -50,23 +48,13 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
 #include "JSDOMOperationReturningPromise.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSJsonWebKey.h"
-#include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/JSString.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
 #include <variant>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
 #include <wtf/SortedArrayMap.h>
-#include <wtf/URL.h>
 #include "ErrorCode.h"
 
 namespace WebCore {
@@ -118,51 +106,10 @@ static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_decapsulateBits
 static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_decapsulateKey);
 static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoConstructorFunction_supports);
 
-// Attributes
-
-static JSC_DECLARE_CUSTOM_GETTER(jsSubtleCryptoConstructor);
-
-class JSSubtleCryptoPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSSubtleCryptoPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSSubtleCryptoPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSSubtleCryptoPrototype))) JSSubtleCryptoPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSubtleCryptoPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSSubtleCryptoPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSubtleCryptoPrototype, JSSubtleCryptoPrototype::Base);
-
+using JSSubtleCryptoPrototype = JSDOMPrototype<JSSubtleCrypto>;
 using JSSubtleCryptoDOMConstructor = JSDOMConstructorNotConstructable<JSSubtleCrypto>;
 
 template<> const ClassInfo JSSubtleCryptoDOMConstructor::s_info = { "SubtleCrypto"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSubtleCryptoDOMConstructor) };
-
-template<> JSValue JSSubtleCryptoDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    UNUSED_PARAM(vm);
-    return globalObject.functionPrototype();
-}
 
 template<> void JSSubtleCryptoDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -173,7 +120,7 @@ template<> void JSSubtleCryptoDOMConstructor::initializeProperties(VM& vm, JSDOM
 /* Hash table for prototype */
 
 static const HashTableValue JSSubtleCryptoPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsSubtleCryptoConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSSubtleCryptoPrototype::constructorGetter, 0 } },
     { "encrypt"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_encrypt, 3 } },
     { "decrypt"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_decrypt, 3 } },
     { "sign"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_sign, 3 } },
@@ -193,9 +140,9 @@ static const HashTableValue JSSubtleCryptoPrototypeTableValues[] = {
     { "decapsulateKey"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_decapsulateKey, 6 } },
 };
 
-const ClassInfo JSSubtleCryptoPrototype::s_info = { "SubtleCrypto"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSubtleCryptoPrototype) };
+template<> const ClassInfo JSSubtleCryptoPrototype::s_info = { "SubtleCrypto"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSubtleCryptoPrototype) };
 
-void JSSubtleCryptoPrototype::finishCreation(VM& vm)
+template<> void JSSubtleCryptoPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSSubtleCrypto::info(), JSSubtleCryptoPrototypeTableValues, *this);
@@ -204,50 +151,14 @@ void JSSubtleCryptoPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSSubtleCrypto::s_info = { "SubtleCrypto"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSubtleCrypto) };
 
-JSSubtleCrypto::JSSubtleCrypto(Structure* structure, JSDOMGlobalObject& globalObject, Ref<SubtleCrypto>&& impl)
-    : JSDOMWrapper<SubtleCrypto>(structure, globalObject, WTF::move(impl))
-{
-}
-
-void JSSubtleCrypto::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, SubtleCrypto>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-}
-
 JSObject* JSSubtleCrypto::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSSubtleCryptoPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSSubtleCryptoPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSSubtleCrypto::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSSubtleCrypto>(vm, globalObject);
+    return JSSubtleCryptoPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSValue JSSubtleCrypto::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSSubtleCryptoDOMConstructor, DOMConstructorID::SubtleCrypto>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-void JSSubtleCrypto::destroy(JSC::JSCell* cell)
-{
-    JSSubtleCrypto* thisObject = static_cast<JSSubtleCrypto*>(cell);
-    thisObject->JSSubtleCrypto::~JSSubtleCrypto();
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsSubtleCryptoConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSSubtleCryptoPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSSubtleCrypto::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_encryptBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperationReturningPromise<JSSubtleCrypto>::ClassParameter castedThis, Ref<DeferredPromise>&& promise)
@@ -812,25 +723,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoConstructorFunction_supports, (JSGlobalOb
     bool result = SubtleCrypto::supports(*lexicalGlobalObject, operation, WTF::move(algorithm), lengthOrAdditionalAlgorithm);
     RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsBoolean(result));
-}
-
-JSC::GCClient::IsoSubspace* JSSubtleCrypto::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSSubtleCrypto, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForSubtleCrypto, m_subspaceForSubtleCrypto));
-}
-
-void JSSubtleCrypto::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSSubtleCrypto>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<SubtleCrypto>&& impl)
-{
-    return createWrapper<SubtleCrypto>(globalObject, WTF::move(impl));
 }
 
 }

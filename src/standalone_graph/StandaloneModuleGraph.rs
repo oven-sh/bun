@@ -352,7 +352,9 @@ impl StandaloneModuleGraph {
                 compiled_program::is_removed_by_program(key)
                     && compiled_program::find_written_file(key).is_none()
             };
-            if !is_compiled_entry_point(index) && !is_removed() && !self.has_file_vanished(key) {
+            let is_listed_below =
+                || is_compiled_entry_point(index) && self.find_file_record(key).is_none();
+            if !is_listed_below() && !is_removed() && !self.has_file_vanished(key) {
                 push(key, false);
             }
         }
@@ -3044,20 +3046,17 @@ pub(crate) fn download_to_path(
             }
 
             {
+                use bun_zlib::{Inflater, inflate};
                 refresher.start(b"Decompressing", 0);
-                let gunzip_result = (|| -> crate::Result<()> {
-                    let mut gunzip = bun_zlib::ZlibReaderArrayList::init(
-                        compressed_archive_bytes.list.as_slice(),
-                        &mut tarball_bytes,
-                    )
-                    .map_err(|_| crate::Error::InvalidResponse)?;
-                    gunzip
-                        .read_all(true)
-                        .map_err(|_| crate::Error::InvalidResponse)?;
-                    Ok(())
-                })();
+                let status = Inflater::new(inflate::Container::ZlibOrGzip).inflate_to_vec(
+                    &mut compressed_archive_bytes.list.as_slice(),
+                    &mut tarball_bytes,
+                    usize::MAX,
+                );
                 refresher.end();
-                gunzip_result?;
+                if status != Ok(inflate::Status::StreamEnd) {
+                    return Err(crate::Error::InvalidResponse);
+                }
             }
             refresher.refresh();
 
@@ -3373,33 +3372,21 @@ pub fn to_executable(
         // Convert paths to Windows UTF-16
         let mut temp_buf_w = bun_paths::os_path_buffer_pool::get();
         let mut dest_buf_w = bun_paths::os_path_buffer_pool::get();
-        let temp_w_len = strings::paths::to_w_path_normalized(&mut temp_buf_w, temp_path).len();
-        let dest_w_len = strings::paths::to_w_path_normalized(&mut dest_buf_w, dest_path).len();
-
-        // `to_w_path_normalized` already NUL-terminates (`buf[len] = 0`); the
-        // explicit re-slice below is just to derive the wide-string pointers.
-        let temp_buf_u16: &mut [u16] = &mut temp_buf_w;
-        let dest_buf_u16: &mut [u16] = &mut dest_buf_w;
-        temp_buf_u16[temp_w_len] = 0;
-        dest_buf_u16[dest_w_len] = 0;
+        let temp_w = strings::paths::to_w_path_normalized(&mut temp_buf_w, temp_path);
+        let dest_w = strings::paths::to_w_path_normalized(&mut dest_buf_w, dest_path);
 
         // Close the file handle before moving (Windows requires this)
         drop(injected.file);
 
-        use bun_sys::windows;
-        // Move the file using MoveFileExW
-        // SAFETY: NUL-terminated wide strings constructed above.
-        if unsafe {
-            windows::kernel32::MoveFileExW(
-                temp_buf_u16.as_ptr(),
-                dest_buf_u16.as_ptr(),
-                windows::MOVEFILE_COPY_ALLOWED
-                    | windows::MOVEFILE_REPLACE_EXISTING
-                    | windows::MOVEFILE_WRITE_THROUGH,
-            )
-        } == windows::FALSE
-        {
-            let err = windows::last_system_errno();
+        use bun_sys::windows::{self, Win32ErrorExt as _};
+        if let Err(err) = windows::MoveFileExW(
+            temp_w,
+            dest_w,
+            windows::MOVEFILE_COPY_ALLOWED
+                | windows::MOVEFILE_REPLACE_EXISTING
+                | windows::MOVEFILE_WRITE_THROUGH,
+        ) {
+            let err = err.to_system_errno();
             let _ = Syscall::unlink(injected.temp_path);
             if err == bun_sys::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
@@ -3424,7 +3411,7 @@ pub fn to_executable(
         {
             // The file has been moved to dest_path
             if let Err(e) = windows::rescle::set_windows_metadata(
-                bun_core::WStr::from_buf(dest_buf_u16, dest_w_len),
+                dest_w,
                 windows_options.icon.as_deref(),
                 windows_options.title.as_deref(),
                 windows_options.publisher.as_deref(),
@@ -3918,21 +3905,12 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 
         let offset = string_payload.len();
 
-        let bound = bun_zstd::compress_bound(utf8.len());
-        // `ZSTD_compressBound` returns an *error code* (a value near
-        // `usize::MAX`) when the input size exceeds `ZSTD_MAX_INPUT_SIZE`;
-        // feeding that to `Vec::reserve` below would abort with a capacity
-        // overflow instead of failing the build.
-        if bun_zstd::is_error(bound) {
-            return Err(crate::Error::SourceMapTooLarge);
-        }
-        string_payload.reserve(bound);
-        if let bun_zstd::Result::Err(err_msg) =
-            bun_zstd::compress_append(string_payload, utf8, Some(1))
-        {
+        // Not just what this one needs, as more follow.
+        string_payload
+            .reserve(bun_zstd::compress_bound(utf8.len()).ok_or(crate::Error::SourceMapTooLarge)?);
+        if let Err(err) = bun_zstd::compress_append(string_payload, utf8, 1) {
             Output::panic(format_args!(
-                "Unexpected error compressing sourcemap: {}",
-                bstr::BStr::new(err_msg.as_bytes())
+                "Unexpected error compressing sourcemap: {err}"
             ));
         }
 

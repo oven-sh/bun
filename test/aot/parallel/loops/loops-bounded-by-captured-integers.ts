@@ -1,146 +1,93 @@
-// Loops whose bound is a captured variable: undefined until it is assigned, then an integer. Before the loop it is checked for an integer; undefined ends the loop at once.
-function makeGrid(list: any) {
-  var width: any;
-  var height: any;
-  var size: any;
-  var rowSize: any;
-  function resize(w: number, h: number): boolean {
-    var cells = w * h;
-    if (cells > 0 && cells < 1000000) {
-      width = w;
-      height = h;
-      rowSize = width + 2;
-      size = (width + 2) * (height + 2);
-      return true;
-    }
-    return false;
-  }
-  function sumRow(x: any, row: number): number {
-    var sum = 0;
-    var at = row * rowSize;
-    for (var i = 1; i <= width; i++) sum += x[++at];
-    return sum;
-  }
-  function sumBelow(x: any): number {
-    var sum = 0;
-    for (var i = 0; i < size; i++) sum += x[i];
-    return sum;
-  }
-  function sumAbove(x: any): number {
-    var sum = 0;
-    for (var i = 0; size > i; i += 2) sum = sum * 0.5 + x[i];
-    return sum;
-  }
-  function sumDown(x: any): number {
-    var sum = 0;
-    for (var i = 20; i >= height; i--) sum += x[i];
-    return sum;
-  }
-  function relax(x: any, y: any): void {
-    for (var j = 1; j <= height; j++) {
-      var last = (j - 1) * rowSize;
-      var current = j * rowSize;
-      var next = (j + 1) * rowSize;
-      var carried = x[current];
-      ++current;
-      for (var i = 1; i <= width; i++) carried = x[current] = (y[current] + 0.25 * (carried + x[++current] + x[++last] + x[++next])) * 0.5;
-    }
-  }
-  // The loop changes its own bound.
-  function shrink(x: any): number {
-    var sum = 0;
-    for (var i = 0; i < width; i++) {
-      sum += x[i];
-      if (i & 1) width--;
-    }
-    return sum;
-  }
-  function clear(): void {
-    width = undefined;
-  }
-  return { resize, sumRow, sumBelow, sumAbove, sumDown, relax, shrink, clear, list };
+// Loops whose bound is a captured variable that is a whole number, undefined, a fraction, a text or nothing, and which steps indexes beside the counter.
+function meadow(columns?: any, rows?: any) {
+  let across = columns;
+  let down = rows;
+  const cells: number[] = [];
+  return {
+    resize(newColumns: any, newRows: any) {
+      across = newColumns;
+      down = newRows;
+    },
+    fill(seed: number) {
+      cells.length = 0;
+      let cell = 0;
+      for (let row = 0; row <= down; row++) {
+        for (let column = 0; column <= across; column++)
+          cells[cell++] = (seed + row * 3 + column) % 11;
+      }
+      return cell;
+    },
+    sumInside() {
+      const stride = across + 1;
+      let sum = 0;
+      for (let row = 1; row < down; row++) {
+        let above = (row - 1) * stride, here = row * stride;
+        for (let column = 1; column < across; column++) {
+          ++here;
+          ++above;
+          sum += cells[here] * 2 - cells[above];
+        }
+      }
+      return sum;
+    },
+    countBelow(limit: any) {
+      let count = 0;
+      for (let cell = 0; cell < limit; cell += 2) {
+        if (cells[cell] === undefined || ++count > 500)
+          break;
+      }
+      return count;
+    },
+  };
 }
-// Only integers are assigned.
-function makeField() {
-  var width: any;
-  var height: any;
-  var rowSize: any;
-  function resize(w: number, h: number): void {
-    if (w > 0 && h > 0 && w < 1000) {
-      width = w;
-      height = h;
-      rowSize = width + 2;
-    }
-  }
-  function sum(x: any): number {
-    var sum = 0.5;
-    for (var i = 1; i <= width; i++) sum += x[i];
-    return sum;
-  }
-  function alternate(x: any): number {
-    var sum = 0.5;
-    for (var i = 0; width > i; i++) sum = x[i] - sum;
-    return sum;
-  }
-  function fill(x: any, y: any): void {
-    var at = 3;
-    for (var i = 0; i < height; i++) x[i] = y[++at] * 0.5;
-  }
-  function smooth(x: any, y: any): void {
-    for (var j = 1; j <= height; j++) {
-      var last = (j - 1) * rowSize;
-      var current = j * rowSize;
-      var next = (j + 1) * rowSize;
-      var carried = x[current];
-      ++current;
-      for (var i = 1; i <= width; i++) carried = x[current] = (y[current] + 0.25 * (carried + x[++current] + x[++last] + x[++next])) * 0.5;
-    }
-  }
-  return { resize, sum, alternate, fill, smooth };
+function plot() {
+  let wide: number | undefined, deep: number | undefined;
+  const beds: number[] = [];
+  return {
+    plan(newWide: number, newDeep: number) {
+      wide = newWide | 0;
+      deep = newDeep | 0;
+    },
+    plant(seed: number) {
+      let bed = 0;
+      for (let row = 0; row <= deep!; row++) {
+        for (let place = 0; place <= wide!; place++)
+          beds[bed++] = (seed * 5 + row + place) % 9;
+      }
+      beds.length = bed;
+      return bed;
+    },
+    weigh() {
+      let weight = 0;
+      for (let row = 1; row <= deep!; row++) {
+        let here = row * (wide! + 1), before = here - wide! - 1;
+        for (let place = 1; place <= wide!; place++) {
+          ++here;
+          weight += beds[here] - beds[++before] * 3;
+        }
+      }
+      return weight;
+    },
+  };
 }
-const doubles: number[] = [];
-const ints: number[] = [];
-for (let i = 0; i < 64; i++) {
-  doubles.push(((i * 7) % 13) / 4);
-  ints.push((i * 5) % 17);
+const plots = [plot(), plot()];
+(globalThis as any).plots = plots;
+const planted: any[] = [plots[0].plant(1), plots[0].weigh()];
+for (let turn = 0; turn < 120; turn++) {
+  (globalThis as any).plots[turn & 1].plan(turn % 13, turn % 6 - 1);
+  planted.push(plots[turn & 1].plant(turn), plots[turn & 1].weigh(), (globalThis as any).plots[1 - (turn & 1)].weigh());
 }
-const holes: any[] = doubles.slice();
-delete holes[9];
-const mixed: any[] = [1, "2", null, undefined, 4.5, true, { valueOf: () => 3 }, 8, 9, 10, 11, 12];
-const lines: string[] = [];
-const grid = makeGrid(doubles);
-for (const list of [doubles, ints, holes, mixed]) lines.push([grid.sumRow(list, 0), grid.sumBelow(list), grid.sumAbove(list), grid.sumDown(list), grid.shrink(list)].join(" "));
-for (const [w, h] of [[4, 4], [6, 6], [1, 1], [0, 3], [5, 2], [30, 1]]) {
-  lines.push(String(grid.resize(w, h)));
-  for (const list of [doubles, ints, holes, mixed]) {
-    lines.push([grid.sumRow(list, 0), grid.sumRow(list, 1), grid.sumRow(list, 9), grid.sumBelow(list), grid.sumAbove(list), grid.sumDown(list)].join(" "));
-    const x = list.slice();
-    grid.relax(x, list);
-    grid.relax(x, ints);
-    lines.push(x.map(String).join());
-    grid.relax(ints.slice(), x);
-    lines.push(String(grid.shrink(list)));
-    grid.resize(w, h);
+console.log(planted.map(answer => Object.is(answer, -0) ? "-0" : String(answer)).join(" "));
+const sizes: any[] = [[8, 5], [1, 1], [0, 0], [undefined, 4], [4, undefined], [6.5, 3], ["7", 3], [null, 2], [3, -1], [NaN, 2], [true, true], [5, { valueOf: () => 3 }]];
+const asked = meadow(3, 3);
+(globalThis as any).meadows = { asked };
+for (const [columns, rows] of sizes) {
+  const own = meadow(columns, rows);
+  asked.resize(columns, rows);
+  const answers: any[] = [];
+  for (let turn = 0; turn < 30; turn++) {
+    answers.length = 0;
+    answers.push(own.fill(turn), own.sumInside(), own.countBelow(columns), asked.fill(turn + 1), asked.sumInside(), (globalThis as any).meadows.asked.countBelow(rows));
   }
+  console.log(String(columns), typeof rows, answers.map(answer => Object.is(answer, -0) ? "-0" : String(answer)).join(" "));
 }
-grid.clear();
-lines.push(String(grid.sumRow(doubles, 1)), String(grid.sumBelow(doubles)));
-const field = makeField();
-const sayField = () => {
-  for (const list of [doubles, ints, holes]) {
-    const x = list.slice();
-    field.fill(x, doubles);
-    field.smooth(x, list);
-    field.smooth(x, ints);
-    lines.push([field.sum(list), field.alternate(list), x.map(String).join()].join(" "));
-  }
-};
-sayField();
-field.resize(4, 6);
-sayField();
-field.resize(9, 3);
-sayField();
-field.resize(0, 3);
-field.resize(20, 60);
-sayField();
-console.log(lines.join("\n"));

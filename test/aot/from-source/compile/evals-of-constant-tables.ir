@@ -1,25 +1,18 @@
 # The strings of each eval follow from the tables, so no eval is left and the class sees the built-in Array.
 # -- source: main.cjs
 # function make(Base) {
-#   class Matrix extends Base { static at(i) { return new Array(i); } }
-#   var template = `(function %name%(a, b) { return check(a, b) %op% b; })`;
-#   var rows = [["+", "add"], ["-", "sub", "subtract"]];
-#   var names = [];
-#   ["abs", "sign"].forEach(function (name) { names.push(["Math." + name, name]); });
-#   for (var row of rows) {
-#     var made = eval(fill(template, { name: row[1], op: row[0] }));
-#     for (var i = 1; i < row.length; i++) Matrix.prototype[row[i]] = made;
+#   class Scale extends Base { static steps(count) { return new Array(count).fill(1); } }
+#   var signs = { adds: "+", takes: "-" };
+#   for (var key in signs) Scale.prototype[key] = eval("(function (first, second, third) { return first " + signs[key] + " second " + signs[key] + " third; })");
+#   var parts = [[2, "half"], [4, "quarter"], [8, "eighth"]];
+#   for (var at = parts.length - 1; at >= 0; at--) {
+#     var written = "(" + parts[at][1] + " => Math.floor(" + parts[at][1] + " / " + parts[at][0] + "))";
+#     Scale[parts[at][1]] = eval(written);
 #   }
-#   for (var name of names) {
-#     if (name.length === 2) Matrix[name[1]] = eval("(function " + name[1] + "(x) { return " + name[0] + "(x); })");
-#     else Matrix[name[1]] = eval(name[2]);
-#   }
-#   function check(a) { return a; }
-#   function fill(text, values) { for (var key in values) text = text.replace(new RegExp("%" + key + "%", "g"), values[key]); return text; }
-#   return Matrix;
+#   return Scale;
 # }
-# const M = make(Object);
-# console.log(new M().add(1, 2), new M().subtract(5, 3), M.abs(-4), M.sign(-9), M.at(2).length);
+# const S = make(Object);
+# console.log(new S().adds(1, 2, 3), new S().takes(9, 2, 3), S.half(9), S.quarter(9), S.eighth(9), S.steps(3).join());
 # -- end of source
 # RUN: print
 # CHECK-NOT: DirectEval

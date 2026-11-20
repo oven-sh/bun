@@ -9115,7 +9115,7 @@ declare module "bun" {
      * - **Windows headless/CI:** registration fails if the current user's SID can't be
      *   resolved (typical under service accounts). Run as a regular user or create the
      *   task manually with `schtasks /create /ru SYSTEM`.
-     * - **macOS:** stdout/stderr are written to `/tmp/bun.cron.<title>.{stdout,stderr}.log`.
+     * - **macOS:** stdout/stderr are written to `$(getconf DARWIN_USER_TEMP_DIR)bun.cron.<title>.{stdout,stderr}.log`.
      *
      * ### Idempotency & removal
      *
@@ -9123,7 +9123,8 @@ declare module "bun" {
      * {@link Bun.cron.remove} to unregister. The title is namespaced per user, so
      * different users can register jobs with the same title independently.
      *
-     * @param path Path to the module to run. Resolved relative to the calling file.
+     * @param path Path to the module to run, resolved relative to the calling file. It can also be a
+     *   `file://` URL, as a string (what `import.meta.resolve()` returns) or a `URL`.
      * @param schedule Cron expression or nickname (e.g. `"30 2 * * MON"`, `"@daily"`).
      * @param title Unique identifier for this job. Alphanumeric, hyphens, and underscores only —
      *   used directly in crontab markers, launchd service labels, and schtasks task names.
@@ -9145,7 +9146,7 @@ declare module "bun" {
      * @see {@link Bun.cron.remove} to unregister.
      * @see {@link Bun.cron.parse} to preview the next fire time.
      */
-    (path: string, schedule: CronWithAutocomplete, title: string): Promise<void>;
+    (path: string | URL, schedule: CronWithAutocomplete, title: string): Promise<void>;
     /**
      * Remove a previously registered cron job by its title.
      *

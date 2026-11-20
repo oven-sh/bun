@@ -1,4 +1,4 @@
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_void;
 use core::ptr;
 
 use crate::{
@@ -221,7 +221,7 @@ impl ArrayBuffer {
 
     // require('buffer').kMaxLength.
     // keep in sync with Bun::Buffer::kMaxLength
-    pub const MAX_SIZE: c_uint = c_uint::MAX;
+    pub const MAX_SIZE: usize = 1 << 32;
 
     pub fn bytes_per_element(&self) -> Option<u8> {
         match self.typed_array_type {
@@ -854,10 +854,13 @@ impl Drop for MarkedArrayBuffer {
             return;
         }
         if self.is_private_copy {
-            bun_sys::private_copy::unmap(
-                self.buffer.ptr.cast(),
-                core::ptr::without_provenance_mut(self.buffer.byte_len),
-            );
+            // SAFETY: `from_private_copy` took the pages, and JSC did not get them.
+            unsafe {
+                bun_sys::Mmap::unmap_raw(
+                    self.buffer.ptr.cast(),
+                    core::ptr::without_provenance_mut(self.buffer.byte_len),
+                )
+            };
             return;
         }
         // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
@@ -891,16 +894,16 @@ impl MarkedArrayBuffer {
         }
     }
 
-    /// `copy` is what [`bun_sys::private_copy::map`] returned for `len` bytes.
-    pub fn from_private_copy(copy: core::ptr::NonNull<u8>, len: usize) -> MarkedArrayBuffer {
+    pub fn from_private_copy(copy: bun_sys::private_copy::PrivateCopy) -> MarkedArrayBuffer {
+        let copy = copy.into_raw();
         MarkedArrayBuffer {
             owns_buffer: true,
             is_private_copy: true,
             buffer: ArrayBuffer {
-                len,
-                byte_len: len,
+                len: copy.len(),
+                byte_len: copy.len(),
                 typed_array_type: JSType::Uint8Array,
-                ptr: copy.as_ptr(),
+                ptr: copy.as_ptr().cast(),
                 ..Default::default()
             },
         }
@@ -929,7 +932,7 @@ impl MarkedArrayBuffer {
                     global,
                     core::ptr::NonNull::from(buf.byte_slice_mut()),
                     core::ptr::without_provenance_mut(len),
-                    bun_sys::private_copy::unmap,
+                    bun_sys::Mmap::unmap_raw,
                 )
             };
         }

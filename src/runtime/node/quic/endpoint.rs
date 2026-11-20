@@ -15,7 +15,7 @@ use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
 use crate::jsc_hooks::timer_all;
-use crate::timer::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
+use crate::timer::{EventLoopTimerTag, OwnedTimer};
 
 use super::callbacks;
 use super::ffi::lsquic_callback;
@@ -1052,10 +1052,9 @@ fn apply_transport_params(
     };
     if let Some(cc) = options.get(global, "cc")?.filter(|v| v.is_string()) {
         let name = bun_core::String::from_js(cc, global)?.to_owned_slice();
-        // lsquic.h es_cc_algo: 0=default(→3 Adaptive), 1=Cubic, 2=BBRv1,
-        // 3=Adaptive. lsquic ships no Reno (NGTCP2_CC_ALGO_RENO in node's
-        // backend), so map 'reno' to Cubic, the closest loss-based option,
-        // rather than silently falling through to Adaptive which may pick BBR.
+        // lsquic.h es_cc_algo: 0=default (BBRv1), 1=Cubic, 2=BBRv1. lsquic ships
+        // no Reno (NGTCP2_CC_ALGO_RENO in node's backend), so map 'reno' to
+        // Cubic, the closest loss-based option.
         let algo = match name.as_slice() {
             b"cubic" | b"reno" => 1,
             b"bbr" => 2,
@@ -1598,10 +1597,6 @@ impl QuicEndpoint {
     pub(crate) fn on_timer_fire(this: *mut Self) {
         // SAFETY: the timer heap only holds timers of live endpoints.
         let this_ref = unsafe { &*this };
-        this_ref
-            .event_loop_timer
-            .state
-            .set(EventLoopTimerState::FIRED);
         let global_ptr = this_ref.global.get();
         if global_ptr.is_null() {
             return;

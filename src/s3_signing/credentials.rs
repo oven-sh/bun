@@ -59,7 +59,7 @@ impl MultiPartUploadOptions {
     pub const MIN_SINGLE_UPLOAD_SIZE: usize = 5 * Self::ONE_MIB;
     pub const DEFAULT_PART_SIZE: usize = Self::MIN_SINGLE_UPLOAD_SIZE;
     /// dont make sense more than this because we use fetch; anything greater will be 64
-    pub const MAX_QUEUE_SIZE: u8 = 64;
+    pub(crate) const MAX_QUEUE_SIZE: u8 = 64;
 }
 
 impl Default for MultiPartUploadOptions {

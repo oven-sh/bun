@@ -66,9 +66,10 @@
     "thread spawn": 1
   },
   "src/runtime/cli/lint_js.rs": {
-    "thread spawn": 1,
+    "thread spawn": 2,
     "unsafe impl Send": [
       "Posted",
+      "RemoteCall",
       "Shared"
     ]
   },
@@ -170,6 +171,15 @@
     "thread spawn": 2,
     "unsafe impl Send": [
       "PathWatcher"
+    ]
+  },
+  "src/runtime/read_ahead.rs": {
+    "thread spawn": 1,
+    "unsafe impl Send": [
+      "Template"
+    ],
+    "unsafe impl Sync": [
+      "Template"
     ]
   },
   "src/runtime/shell/builtin/cp.rs": {

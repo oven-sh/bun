@@ -1661,8 +1661,7 @@ const fileGeneration: () => number = $bindgen("jest.bind.ts", "fileGeneration");
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult: (todo: boolean, done: Done) => void = $bindgen("jest.bind.ts", "nodeTestMarkResult");
-// Moves the deadline of the running bun:test hook to `ms` from now if that is
-// later, and removes it for Infinity. `done` names the hook.
+// Moves the bun:test deadline of the hook that `done` names to `ms` from now, never earlier. Infinity removes it.
 const raiseHookDeadline: (done: Done, ms: number) => void = $bindgen("jest.bind.ts", "nodeTestRaiseDeadline");
 
 let rootNode: TestNode | undefined;
@@ -2555,8 +2554,7 @@ function bunTestOptions(options: TestOptions) {
 
 function registerOwnerHook(kind: "beforeAll" | "afterAll", hook: Hook, owner: TestNode, fallbackMessage: string) {
   bunTest()[kind]((done: Done) => {
-    // runHook's timer ends the hook at its own timeout. bun:test's deadline stays
-    // 5s behind that, for a hook that blocks the event loop.
+    // 5s behind runHook's timer: bun:test only ends a hook that blocks the event loop.
     const { timeout } = hook;
     if (typeof timeout === "number") raiseHookDeadline(done, timeout + kBunTestDefaultTimeoutMs);
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(

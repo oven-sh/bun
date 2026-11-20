@@ -592,9 +592,7 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     }
 }
 
-/// Reached only from `node:test`, when a `before()` or `after()` hook that has its own `timeout` starts. A timer of
-/// `node:test` ends that hook, so the deadline of its entry moves to `ms` from now if that is later, and goes away for
-/// `Infinity`. An entry without a deadline keeps none. `done` names the entry, as in `node_test_mark_result`.
+/// Reached only from `node:test`: moves the deadline of the entry that `done` names to `ms` from now, never earlier. `Infinity` removes it.
 pub(crate) fn node_test_raise_deadline(done: JsLocal<'_>, ms: f64) {
     use bun_core::{Timespec, TimespecMockMode};
     let Some(buntest) = bun_test::clone_active_strong() else {

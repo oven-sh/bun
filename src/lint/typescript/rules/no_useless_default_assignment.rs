@@ -27,7 +27,7 @@ const USELESS_DEFAULT_ASSIGNMENT: &Message = &Message::new(
 );
 const USELESS_UNDEFINED: &Message = &Message::new(
     "uselessUndefined",
-    "Default value is useless because it is undefined. Optional {{ type }}s are already undefined by default.",
+    "Default value is useless because it is undefined. Optional {{ types }} are already undefined by default.",
 );
 const USE_OPTIONAL_SYNTAX: &Message = &Message::new("useOptionalSyntax", "Use the `?` optional syntax instead.");
 
@@ -205,10 +205,9 @@ fn report_default<'a>(right: Expr<'a>, message: &'static Message, cx: &Context<'
 
 /// `removal` runs from the end of the thing that has the default `right` to the end of the default.
 fn report_useless<'a>(message: &'static Message, right: Expr<'a>, removal: Span, ty: &'static str, cx: &Context<'a>) {
-    let mut report = report_default(right, message, cx).data("type", ty);
-    if cx.language().is_oxlint {
-        report = report.data("types", if ty == "property" { "properties" } else { "parameters" });
-    }
+    let mut report = report_default(right, message, cx)
+            .data("type", ty)
+            .data("types", if ty == "property" { "properties" } else { "parameters" });
     report.suggest(REMOVE_DEFAULT_ASSIGNMENT, |fixer| fixer.remove(removal));
 }
 

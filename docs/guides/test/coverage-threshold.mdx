@@ -42,6 +42,8 @@ coverageThreshold = 0.9
 
 If your test suite does not meet this threshold, `bun test` exits with a non-zero exit code to signal a failure.
 
+The value is a fraction from 0 to 1, not a percentage. With coverage enabled, `coverageThreshold = 90` is a configuration error: write `0.9`.
+
 ```sh terminal icon="terminal"
 bun test --coverage
 ```

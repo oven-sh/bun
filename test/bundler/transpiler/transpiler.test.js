@@ -6101,6 +6101,64 @@ it("does not duplicate the branch when simplifying an unused ternary with a comm
   expect(transpiler.transformSync("(f(), g()) ? h() : 1;").trim()).toBe("f(), g() && h();");
 });
 
+// https://github.com/oven-sh/bun/issues/49245
+describe("computed keys of an unused object literal", () => {
+  const transpiler = new Bun.Transpiler({ loader: "tsx" });
+  const minifier = new Bun.Transpiler({ loader: "tsx", minify: { syntax: true, whitespace: true } });
+  const print = code => transpiler.transformSync(code).trim();
+  const minify = code => minifier.transformSync(code);
+
+  it("a key is converted in an object literal", () => {
+    expect(print("({ [k]: 1 });")).toBe("({ [k]: 0 });");
+    expect(print("[{ [k]: 1 }];")).toBe("({ [k]: 0 });");
+    expect(print("void { [k]: 1 };")).toBe("({ [k]: 0 });");
+    expect(print("({ [k]: 1 }) ? a() : b();")).toBe("({ [k]: 0 }, a());");
+    expect(print("/* @__PURE__ */ f({ [Symbol.toStringTag]: 1 });")).toBe("({ [Symbol.toStringTag]: 0 });");
+    expect(print("/* @__PURE__ */ new F({ [k]: 1 });")).toBe("({ [k]: 0 });");
+    expect(print("({ get [k]() { return 1; } });")).toBe("({ [k]: 0 });");
+    expect(print("({ set [k](v) {} });")).toBe("({ [k]: 0 });");
+    expect(print("({ [k]() {} });")).toBe("({ [k]: 0 });");
+    expect(print("({ async *[k]() {} });")).toBe("({ [k]: 0 });");
+    expect(print("({ [`a${b}`]: 1 });")).toBe("({ [`a${b}`]: 0 });");
+    expect(print("({ x: { [k]: 1 }, y: [{ [a]: 1 }] });")).toBe("({ [k]: 0 }, { [a]: 0 });");
+    expect(print("<div a={{ [k]: 1 }} />;")).toBe("({ [k]: 0 });");
+    expect(minify("if ({ [k]: 1 }) x();")).toBe("({[k]:0});x();");
+    expect(minify("x = (({ [k]: 1 }), y);")).toBe("x=({[k]:0},y);");
+    expect(minify("for (var x = () => { ({ [k]: 1 }); }; ; ) break;")).toBe("for(x=()=>{({[k]:0})};;)break;var x;");
+  });
+
+  it("a key is converted before the value after it runs", () => {
+    expect(print("({ [a]: f(), [b]: g() });")).toBe("({ [a]: 0 }, f()), { [b]: 0 }, g();");
+    expect(print("({ [a]: 1, [b]: g(), [c]: 2, d: f(), [e]: 3 });")).toBe(
+      "({ [a]: 0, [b]: 0 }, g()), { [c]: 0 }, f(), { [e]: 0 };",
+    );
+    expect(print("({ [k]: { [a]: f() } });")).toBe("({ [k]: 0 }, { [a]: 0 }, f());");
+  });
+
+  it("a key that is a literal stays too", () => {
+    expect(print("({ ['a']: 1, [1]: f() });")).toBe('({ ["a"]: 0, [1]: 0 }, f());');
+    expect(print("const enum E { A } ({ [E.A]: 1 });")).toEndWith("\n({ [0 /* A */]: 0 });");
+  });
+
+  it("what stands behind the object keeps its place", () => {
+    expect(print("({ [k]: 1 } ? obj.fn : 2)();")).toBe("({ [k]: 0 }, obj.fn)();");
+    expect(print("({ ['a']: 1 } ? obj.fn : 2)`x`;")).toBe('({ ["a"]: 0 }, obj.fn)`x`;');
+    expect(minify("(({ ['a']: 1 }), obj.fn)`x`;")).toBe('({["a"]:0},obj.fn)`x`;');
+    expect(print("new ({ ['a']: 1 } ? a?.b : 2)();")).toBe('new ({ ["a"]: 0 }, a?.b);');
+    expect(print("x = ({ ['a']: 1 } ? function () {} : 2);")).toBe('x = ({ ["a"]: 0 }, function() {});');
+  });
+
+  it("an accessor beside a spread becomes a plain property", () => {
+    expect(print("({ get [k]() { return 1; }, ...z });")).toBe("({ [k]: 0, ...z });");
+    expect(print("({ set [k](v) {}, ...z });")).toBe("({ [k]: 0, ...z });");
+    expect(print("({ [k]() {}, ...z });")).toBe("({ [k]: 0, ...z });");
+    expect(print("({ async *[k]() {}, ...z });")).toBe("({ [k]: 0, ...z });");
+    expect(print("({ [k]: f(), ...z });")).toBe("({ [k]: f(), ...z });");
+    expect(print("({ a: { [k]: 1 }, ...z });")).toBe("({ a: { [k]: 0 }, ...z });");
+    expect(print("({ a: { get [k]() { return 1; }, ...y }, ...z });")).toBe("({ a: { [k]: 0, ...y }, ...z });");
+  });
+});
+
 describe("arrow function parsing after const declaration (scope mismatch bug)", () => {
   const transpiler = new Bun.Transpiler({ loader: "tsx" });
 

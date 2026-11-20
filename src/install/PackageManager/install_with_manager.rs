@@ -944,7 +944,11 @@ pub fn install_with_manager(
                 None,
             )?
         };
-        summary.fail += manager.report_offline_misses(&summary.offline_misses, &[0], isolated)?;
+        summary.fail += manager.report_offline_misses(
+            &summary.offline_misses,
+            reachable::Start::Project,
+            isolated,
+        )?;
         if !isolated && warn_incorrect_peers {
             let served = lockfile::tree::served_peers(&manager.lockfile);
             manager.warn_incorrect_peers(&served);
@@ -1687,7 +1691,7 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
                     && !root_edges.contains(&target)
                     && reached
                         .get_or_insert_with(|| {
-                            reachable::packages(lockfile, resolutions, reachable::Options::all(0))
+                            reachable::packages(lockfile, resolutions, reachable::Options::all())
                         })
                         .is_set(owner)
                 {
@@ -1924,9 +1928,8 @@ fn workspaces_reaching_request<'a>(
         let reached = reachable::packages_from(
             lockfile,
             all_resolutions,
-            &[importer as PackageID],
-            false,
-            reachable::Options::all(0),
+            reachable::Start::Packages(&[importer as PackageID]),
+            reachable::Options::all(),
         );
         if (0..packages.len()).any(|pkg_id| owners.is_set(pkg_id) && reached.is_set(pkg_id)) {
             workspaces.push(name);

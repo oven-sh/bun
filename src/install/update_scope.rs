@@ -115,9 +115,8 @@ impl UpdateScope<'_> {
         reachable::packages_from(
             lockfile,
             lockfile.buffers.resolutions.as_slice(),
-            &roots,
-            false,
-            reachable::Options::all(0),
+            reachable::Start::Packages(&roots),
+            reachable::Options::all(),
         )
     }
 

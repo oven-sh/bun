@@ -262,6 +262,44 @@ describe.concurrent("security scanner workspaces", () => {
     expect(packagesScanned).toBe(3);
   });
 
+  // The root's `workspaces` list names its members. It is not a dependency of the root, but `kept` is one.
+  test("bun add of a workspace that depends on the root does not scan the other workspaces' packages", async () => {
+    await using dir = tempDir("scanner-workspaces-add", {
+      "package.json": JSON.stringify({
+        name: "workspace-root",
+        private: true,
+        workspaces: ["packages/*"],
+        dependencies: { kept: "workspace:*" },
+      }),
+      "packages/app/package.json": JSON.stringify({ name: "app" }),
+      "packages/kept/package.json": JSON.stringify({ name: "kept", dependencies: { "is-even": "1.0.0" } }),
+      "packages/lib/package.json": JSON.stringify({ name: "lib", dependencies: { "workspace-root": "workspace:*" } }),
+      "packages/other/package.json": JSON.stringify({ name: "other", dependencies: { "left-pad": "1.3.0" } }),
+      "scanner.js": `export const scanner = {
+  version: "1",
+  scan: async function(payload) {
+    console.error("SCANNER_RAN: " + payload.packages.map(p => p.name).sort().join(" ") + ".");
+    return [];
+  }
+}`,
+      "bunfig.toml": Bun.TOML.stringify({
+        install: { cache: { disable: true }, registry: `${registryUrl}/`, security: { scanner: "./scanner.js" } },
+      }),
+    });
+    const run = async (cwd: string, ...args: string[]) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, stdout: "pipe", stderr: "pipe", env: bunEnv });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { scanned: (stdout + stderr).match(/SCANNER_RAN: (.*)\./)?.[1], exitCode };
+    };
+
+    // `bun add` scans only what it adds once an install has written bun.lock and node_modules.
+    expect(await run(String(dir), "install")).toEqual({ scanned: "is-even is-odd left-pad", exitCode: 0 });
+    expect(await run(join(String(dir), "packages", "app"), "add", "lib@workspace:*")).toEqual({
+      scanned: "is-even is-odd",
+      exitCode: 0,
+    });
+  });
+
   const filteredScannerLayouts = [
     { linker: "hoisted", leftPad: ["node_modules", "left-pad"] },
     { linker: "isolated", leftPad: ["packages", "app1", "node_modules", "left-pad"] },

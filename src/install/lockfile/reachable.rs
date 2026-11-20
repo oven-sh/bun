@@ -9,9 +9,35 @@ use crate::{DependencyID, PackageID, PackageManager, PackageNameHash};
 use bun_collections::DynamicBitSet;
 use bun_core::UnwrapOrOom;
 
+/// Where a walk starts.
+#[derive(Clone, Copy)]
+pub enum Start<'a> {
+    /// The root package and every workspace in its `workspaces` list.
+    Project,
+    /// These packages. A dependency on the root leads to the root's own dependencies, not to its `workspaces` list.
+    Packages(&'a [PackageID]),
+}
+
+impl<'a> Start<'a> {
+    /// What a command that runs in the folder of `importer` covers: the project at the root, else that workspace.
+    pub fn cwd(importer: &'a PackageID) -> Start<'a> {
+        if *importer == 0 {
+            Start::Project
+        } else {
+            Start::Packages(core::slice::from_ref(importer))
+        }
+    }
+
+    fn roots(self) -> &'a [PackageID] {
+        match self {
+            Start::Project => &[0],
+            Start::Packages(roots) => roots,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Options {
-    pub root: PackageID,
     pub dev: bool,
     pub optional: bool,
     pub peer: bool,
@@ -21,9 +47,8 @@ pub struct Options {
 }
 
 impl Options {
-    pub fn all(root: PackageID) -> Options {
+    pub fn all() -> Options {
         Options {
-            root,
             dev: true,
             optional: true,
             peer: true,
@@ -37,7 +62,6 @@ impl Options {
     pub(crate) fn install(manager: &PackageManager) -> Options {
         let features = manager.options.local_package_features;
         Options {
-            root: 0,
             dev: features.dev_dependencies,
             optional: features.optional_dependencies,
             peer: features.peer_dependencies,
@@ -131,45 +155,39 @@ impl Linked {
                     roots.push(workspace);
                 }
             }
-            packages_from(lockfile, resolutions, &roots, false, options)
+            packages_from(lockfile, resolutions, Start::Packages(&roots), options)
         });
         !linked.is_set(resolutions[dep_id as usize] as usize)
     }
 }
 
-// `resolutions` is passed separately so callers can walk a candidate resolution buffer (dedupe).
+// The whole project. `resolutions` is passed separately so callers can walk a candidate resolution buffer (dedupe).
 pub fn packages(lockfile: &Lockfile, resolutions: &[PackageID], options: Options) -> DynamicBitSet {
-    packages_from(
-        lockfile,
-        resolutions,
-        core::slice::from_ref(&options.root),
-        true,
-        options,
-    )
+    packages_from(lockfile, resolutions, Start::Project, options)
 }
 
-// `options.root` is ignored; `follow_workspace_edges: false` keeps a root's workspace edges out of the walk (`--filter`).
 pub fn packages_from(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
-    roots: &[PackageID],
-    follow_workspace_edges: bool,
+    start: Start<'_>,
     options: Options,
 ) -> DynamicBitSet {
-    Walk::new(lockfile, resolutions, follow_workspace_edges, options).reach(roots)
+    Walk::new(lockfile, resolutions, start, options).reach(start.roots().iter())
 }
 
-// `roots`, plus every package a non-optional edge leads to. Skips optional edges to `left_out`.
+// `start` and `more_roots`, plus every package a non-optional edge leads to. Skips optional edges to `left_out`.
 pub(crate) fn required_without(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
-    roots: &[PackageID],
+    start: Start<'_>,
+    more_roots: &[PackageID],
     options: Options,
     left_out: &DynamicBitSet,
 ) -> DynamicBitSet {
-    let mut walk = Walk::new(lockfile, resolutions, true, options);
+    let mut walk = Walk::new(lockfile, resolutions, start, options);
     walk.left_out = Some(left_out);
-    let reached = walk.reach(roots);
+    let roots = start.roots().iter().chain(more_roots);
+    let reached = walk.reach(roots.clone());
     let mut required = walk.empty_seen();
     for &root in roots {
         mark(&mut required, root);
@@ -292,18 +310,17 @@ fn mark(seen: &mut DynamicBitSet, id: PackageID) -> bool {
     true
 }
 
-// What the devDependencies of `roots` (and of the workspaces they own) pull in — `bun pm licenses --dev`.
+// What the devDependencies of `start` pull in, for `bun pm licenses --dev`.
 pub fn dev_packages_from(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
-    roots: &[PackageID],
-    follow_workspace_edges: bool,
+    start: Start<'_>,
     options: Options,
 ) -> DynamicBitSet {
-    let walk = Walk::new(lockfile, resolutions, follow_workspace_edges, options);
+    let walk = Walk::new(lockfile, resolutions, start, options);
     let mut seen = walk.empty_seen();
     let mut importers: Vec<PackageID> = Vec::new();
-    for &root in roots {
+    for &root in start.roots() {
         if mark(&mut seen, root) {
             importers.push(root);
         }
@@ -314,8 +331,8 @@ pub fn dev_packages_from(
         for dep_id in slice.begin() as usize..slice.end() as usize {
             let behavior = walk.deps[dep_id].behavior;
             let target = walk.resolutions[dep_id];
-            if behavior.is_workspace() {
-                if follow_workspace_edges && mark(&mut seen, target) {
+            if behavior.is_workspace_only() {
+                if walk.from_project && mark(&mut seen, target) {
                     importers.push(target);
                 }
                 continue;
@@ -334,8 +351,8 @@ struct Walk<'a> {
     metas: &'a [Meta],
     deps: &'a [Dependency],
     resolutions: &'a [PackageID],
-    follow_workspace_edges: bool,
-    follow_all: bool,
+    from_project: bool,
+    all_groups: bool,
     options: Options,
     left_out: Option<&'a DynamicBitSet>,
 }
@@ -344,7 +361,7 @@ impl<'a> Walk<'a> {
     fn new(
         lockfile: &'a Lockfile,
         resolutions: &'a [PackageID],
-        follow_workspace_edges: bool,
+        start: Start<'_>,
         options: Options,
     ) -> Walk<'a> {
         Walk {
@@ -352,9 +369,8 @@ impl<'a> Walk<'a> {
             metas: lockfile.packages.items_meta(),
             deps: lockfile.buffers.dependencies.as_slice(),
             resolutions,
-            follow_workspace_edges,
-            follow_all: follow_workspace_edges
-                && options.dev
+            from_project: matches!(start, Start::Project),
+            all_groups: options.dev
                 && options.optional
                 && options.peer
                 && options.optional_peer
@@ -368,7 +384,7 @@ impl<'a> Walk<'a> {
         DynamicBitSet::init_empty(self.dep_slices.len()).unwrap_or_oom()
     }
 
-    fn reach(&self, roots: &[PackageID]) -> DynamicBitSet {
+    fn reach<'r>(&self, roots: impl Iterator<Item = &'r PackageID>) -> DynamicBitSet {
         let mut seen = self.empty_seen();
         let mut worklist: Vec<PackageID> = Vec::new();
         for &root in roots {
@@ -381,7 +397,7 @@ impl<'a> Walk<'a> {
     }
 
     fn follows(&self, behavior: Behavior) -> bool {
-        !(!self.follow_workspace_edges && behavior.is_workspace())
+        !(!self.from_project && behavior.is_workspace_only())
             && !(behavior.is_bundled() && !self.options.bundled)
             && self.options.group_enabled(behavior)
     }
@@ -419,13 +435,26 @@ impl<'a> Walk<'a> {
         let siblings = slice.get(self.deps);
         (slice.begin() as usize..slice.end() as usize).filter_map(move |dep_id| {
             let dep = &self.deps[dep_id];
-            let followed = self.follow_all
-                || (self.follows(dep.behavior) && !self.options.omits_optional_peer(dep, siblings));
+            let followed =
+                self.follows(dep.behavior) && !self.options.omits_optional_peer(dep, siblings);
             followed.then(|| (self.resolutions[dep_id], dep.behavior))
         })
     }
 
     fn drain(&self, seen: &mut DynamicBitSet, worklist: &mut Vec<PackageID>) {
+        if self.all_groups {
+            // `edges` without its checks: with every group enabled, it leaves out only the root's `workspaces` rows.
+            while let Some(parent) = worklist.pop() {
+                let slice = self.dep_slices[parent as usize];
+                for dep_id in slice.begin() as usize..slice.end() as usize {
+                    let behavior = self.deps[dep_id].behavior;
+                    if self.from_project || !behavior.is_workspace_only() {
+                        self.admit(self.resolutions[dep_id], behavior, seen, worklist);
+                    }
+                }
+            }
+            return;
+        }
         while let Some(parent) = worklist.pop() {
             for (target, behavior) in self.edges(parent) {
                 self.admit(target, behavior, seen, worklist);

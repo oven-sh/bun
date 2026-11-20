@@ -120,7 +120,7 @@ fn do_partial_install_of_security_scanner(
     };
     summary.fail += manager.report_offline_misses(
         &summary.offline_misses,
-        &[security_scanner_pkg_id],
+        crate::lockfile::reachable::Start::Packages(&[security_scanner_pkg_id]),
         isolated,
     )?;
 
@@ -523,11 +523,14 @@ impl<'a> PackageCollector<'a> {
 
     fn process_queue(&mut self) -> Result<(), Error> {
         let pkgs = &self.manager.lockfile.packages;
+        let dependencies = self.manager.lockfile.buffers.dependencies.as_slice();
 
         while let Some(item) = self.queue.pop_front() {
             let pkg_deps = pkgs.items_dependencies()[item.pkg_id as usize];
             for dep_id in pkg_deps.begin()..pkg_deps.end() {
-                self.enqueue(&item.pkg_path, &item.dep_path, dep_id)?;
+                if !dependencies[dep_id as usize].behavior.is_workspace_only() {
+                    self.enqueue(&item.pkg_path, &item.dep_path, dep_id)?;
+                }
             }
 
             if is_scannable_resolution(pkgs.items_resolution()[item.pkg_id as usize].tag) {

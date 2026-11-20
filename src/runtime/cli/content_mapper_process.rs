@@ -537,8 +537,12 @@ impl WriteHandler for Child {
     fn set_has_inflight_write(&self, _: bool) {}
 }
 
+// The exit of a process that only the type checker starts. Without the mark every executable keeps what reads a
+// mapper's reply.
 bun_spawn::link_impl_ProcessExit! {
     ContentMapper for Child => |this| {
-        on_process_exit(status, _rusage) => (*this).on_process_exit(&status),
+        on_process_exit(status, _rusage) => bun_removable_features::removable_body_behind_value!(Check, {
+            (*this).on_process_exit(&status)
+        }),
     }
 }

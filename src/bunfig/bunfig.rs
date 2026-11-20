@@ -240,6 +240,8 @@ impl<'a> Parser<'a, '_> {
             self.ctx.test_options.coverage.reporters.text = true;
         } else if item_str == b"lcov" {
             self.ctx.test_options.coverage.reporters.lcov = true;
+        } else if item_str == b"json-summary" {
+            self.ctx.test_options.coverage.reporters.json_summary = true;
         } else {
             self.add_error_format(
                 item.loc,
@@ -612,12 +614,11 @@ impl<'a> Parser<'a, '_> {
                     }
                 }
 
-                if let Some(expr) = test.get(b"coverageReporter") {
+                if let Some(expr) = test.get(b"coverageReporter")
+                    && !self.ctx.test_options.coverage.reporters_from_cli
+                {
                     'brk: {
-                        self.ctx.test_options.coverage.reporters = CoverageReporters {
-                            text: false,
-                            lcov: false,
-                        };
+                        self.ctx.test_options.coverage.reporters = CoverageReporters::NONE;
                         if let ExprData::EString(_) = &expr.data {
                             self.apply_coverage_reporter_item(&expr)?;
                             break 'brk;

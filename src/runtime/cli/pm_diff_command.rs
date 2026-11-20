@@ -1,6 +1,6 @@
 //! `bun pm diff` — show what changed between two versions of a package (or a package and a folder/tarball).
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -1647,9 +1647,9 @@ fn compare(change: &mut FileChange<'_>, flags: DiffFlags, style: Style, threads:
         }
     }
     if let Some(n) = &norm_new {
-        let old_imports: &[Vec<u8>] = norm_old.as_ref().map_or(&[], |o| o.imports.as_slice());
+        let mut seen: BTreeSet<&Vec<u8>> = norm_old.iter().flat_map(|o| &o.imports).collect();
         for imp in &n.imports {
-            if !old_imports.contains(imp) && !change.new_imports.contains(imp) {
+            if seen.insert(imp) {
                 change.new_imports.push(imp.clone());
             }
         }
@@ -2461,13 +2461,12 @@ fn print_json(left: &Tree, right: &Tree, changes: &[FileChange<'_>], flags: Diff
 fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>, colors: bool) {
     let mut builtins: Vec<(Vec<u8>, &[u8])> = Vec::new();
     let mut packages: Vec<Vec<u8>> = Vec::new();
+    let mut seen = BTreeSet::new();
     for c in changes {
-        for imp in &c.new_imports {
+        for imp in c.new_imports.iter().filter(|&imp| seen.insert(imp)) {
             if normalize::notable_builtin(imp) {
-                if !builtins.iter().any(|(b, _)| b == imp) {
-                    builtins.push((imp.clone(), c.path));
-                }
-            } else if !imp.starts_with(b".") && !imp.starts_with(b"/") && !packages.contains(imp) {
+                builtins.push((imp.clone(), c.path));
+            } else if !imp.starts_with(b".") && !imp.starts_with(b"/") {
                 packages.push(imp.clone());
             }
         }

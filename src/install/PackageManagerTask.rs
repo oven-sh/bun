@@ -11,11 +11,13 @@ use bun_sys::{Fd, File};
 use bun_threading::thread_pool;
 use bun_wyhash::Wyhash11;
 
+use crate::bundle::{self, BundleContents};
 use crate::npm;
 use crate::package_manager::INBOX;
-use crate::package_manager::directories::TemporaryDirectory;
+use crate::package_manager::directories::{CacheDirectory, TemporaryDirectory};
 use crate::{
-    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Resolution,
+    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageID, PackageManager, PatchTask,
+    Resolution,
 };
 
 /// TODO: lifetime — Task lives in an intrusive cross-thread queue
@@ -322,6 +324,25 @@ impl Task {
                     *data = Some(result);
                     this.status = Status::Success;
                 }
+                Job::ReadBundle { request, contents } => {
+                    // Another process can remove the folder after the install thread has seen it.
+                    let Some(folder) =
+                        crate::prune::descend(&request.cache.handle, &request.folder)
+                    else {
+                        this.err = Some(crate::Error::FileNotFound);
+                        this.status = Status::Fail;
+                        break 'body;
+                    };
+                    crate::initialize_mini_store();
+                    let mut read = bundle::read_bundle(&folder, None);
+                    if let Some(err) = read.error.take() {
+                        this.err = Some(err.into());
+                        this.status = Status::Fail;
+                        break 'body;
+                    }
+                    *contents = Some(Box::new(read));
+                    this.status = Status::Success;
+                }
             }
         }
 
@@ -400,6 +421,13 @@ pub(crate) enum Job {
         request: GitCheckoutRequest,
         data: Option<ExtractData>,
     },
+    /// Reads what an npm package that is in the cache already ships in its own `node_modules`. A
+    /// package that is downloaded has it read by its `Extract` task instead, and the two have the
+    /// same `Id`.
+    ReadBundle {
+        request: ReadBundleRequest,
+        contents: Option<Box<BundleContents>>,
+    },
 }
 
 pub(crate) enum TarballSource {
@@ -410,6 +438,16 @@ pub(crate) enum TarballSource {
         /// `path` is as the user wrote it, relative to the project's root. Otherwise it is absolute.
         normalize: bool,
     },
+}
+
+pub(crate) struct ReadBundleRequest {
+    pub(crate) package_id: PackageID,
+    pub(crate) name: StringOrTinyString,
+    /// A read that fails is an error rather than a warning.
+    pub(crate) is_required: bool,
+    pub(crate) cache: &'static CacheDirectory,
+    /// The package's folder in `cache`, as `cached_npm_package_folder_name` names it.
+    pub(crate) folder: Box<[u8]>,
 }
 
 pub(crate) struct GitCloneRequest {

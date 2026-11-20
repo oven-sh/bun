@@ -1679,6 +1679,9 @@ fn on_first_resolution(
             // SAFETY: `generate_network_task_for_tarball` initialized the task, and nothing else
             // holds it until `enqueue_resolved_task` queues it.
             Some(ResolvedPackageTask::NetworkTask(task)) => Some(unsafe { (**task).task_id }),
+            // SAFETY: `read_bundle_task` initialized the task, and nothing else holds it until
+            // `enqueue_resolved_task` queues it.
+            Some(ResolvedPackageTask::ReadBundle(task)) => Some(unsafe { (*task.as_ptr()).id }),
             _ => None,
         };
         this.wait_for_bundle(package.meta.id, extracts);
@@ -1715,6 +1718,13 @@ fn enqueue_resolved_task(
                 this.set_preinstall_state(package_id, started);
                 enqueue_patch_task(this, patch_task);
             }
+        }
+        // `schedule_tasks` counts the batch as pending, so the resolve does not end before the
+        // read does.
+        ResolvedPackageTask::ReadBundle(task) => {
+            // SAFETY: a valid, initialized pool slot
+            let task = unsafe { &raw mut (*task.as_ptr()).threadpool_task };
+            this.task_batch.push(ThreadPool::Batch::from(task));
         }
     }
 }
@@ -3056,6 +3066,9 @@ pub(crate) enum ResolvedPackageTask {
 
     /// Apply patch task or calc patch hash task
     PatchTask(Box<PatchTask>),
+
+    /// A `Task::Job::ReadBundle` for the thread pool
+    ReadBundle(NonNull<Task::Task>),
 }
 
 #[derive(Default)]
@@ -3263,6 +3276,34 @@ fn bundler_preinstall_state(
     State::Extract
 }
 
+/// The task that reads what a bundler in the cache ships in its own `node_modules`, so that the
+/// install thread does not. `patch_hash` is the one in the name of the folder that
+/// `determine_preinstall_state` found there.
+fn read_bundle_task(
+    this: &mut PackageManager,
+    package: &Package,
+    is_required: bool,
+    patch_hash: Option<u64>,
+) -> NonNull<Task::Task> {
+    let cache = this.get_cache_directory();
+    let version = package.resolution.npm().version;
+    let name = this.lockfile.str(&package.name);
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let folder = cached_npm_package_folder_name(this, &mut buf, name, version, patch_hash);
+    let job = Task::Job::ReadBundle {
+        request: Task::ReadBundleRequest {
+            package_id: package.meta.id,
+            name: stored_string(name),
+            is_required,
+            cache,
+            folder: folder.as_bytes().into(),
+        },
+        contents: None,
+    };
+    let task_id = Task::Id::for_npm_package(name, version);
+    Task::Task::create(this, task_id, job)
+}
+
 fn get_or_put_resolved_package_with_find_result(
     this: &mut PackageManager,
     name_hash: PackageNameHash,
@@ -3406,6 +3447,15 @@ fn get_or_put_resolved_package_with_find_result(
         }
 
         let task = match state {
+            // Already in the cache: no download, but a worker reads what a bundler ships there.
+            install::PreinstallState::Done if reads_bundle => {
+                Some(ResolvedPackageTask::ReadBundle(read_bundle_task(
+                    this,
+                    &package,
+                    behavior.is_required(),
+                    patchfile_hash,
+                )))
+            }
             // Already in the cache: no download, but its dependencies are enqueued
             install::PreinstallState::Done => None,
             // Neither `unplaced` nor `--lockfile-only` nor a security scanner skips this download.

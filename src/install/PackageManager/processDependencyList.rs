@@ -5,6 +5,7 @@ use bun_core::{Output, strings};
 use bun_semver::{ExternalString, String as SemverString};
 
 use crate::bun_json::Expr;
+use crate::bundle::BundleContents;
 use crate::dependency::{TagExt as _, VersionTag};
 use crate::lockfile_real::package::{Diff, Package, PackageColumns, ResolverContext};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
@@ -653,7 +654,18 @@ impl PackageManager {
         self.waiting_bundlers.push(WaitingBundler {
             package_id,
             extracts,
+            contents: None,
         });
+    }
+
+    /// Keeps what a task read of the bundler `package_id` until the bundler's turn.
+    #[cold]
+    pub(crate) fn keep_bundle(&mut self, package_id: PackageID, contents: Box<BundleContents>) {
+        let mut waiting = self.waiting_bundlers.iter_mut();
+        if let Some(bundler) = waiting.find(|bundler| bundler.package_id == package_id) {
+            debug_assert!(bundler.contents.is_none(), "one task reads a bundler");
+            bundler.contents = Some(contents);
+        }
     }
 
     /// The task that extracts a bundler's tarball has ended. A failed one leaves nothing to read,

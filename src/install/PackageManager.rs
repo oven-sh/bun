@@ -442,9 +442,12 @@ pub(crate) enum RemoteTurn {
 /// of the dependencies that are bound to the waiting packages: `take_next_turn`.
 pub(crate) struct WaitingBundler {
     pub(crate) package_id: PackageID,
-    /// The task of this resolve that extracts the package's tarball. `None` once the task has
-    /// ended, or if there is none.
+    /// The task of this resolve that extracts the package's tarball, or that reads the package in
+    /// the cache. `None` once the task has ended, or if there is none.
     pub(crate) extracts: Option<Task::Id>,
+    /// What the package ships in its own `node_modules`, once a `Task::Job::ReadBundle` has read
+    /// it.
+    pub(crate) contents: Option<Box<crate::bundle::BundleContents>>,
 }
 
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified

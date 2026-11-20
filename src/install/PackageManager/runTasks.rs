@@ -1231,6 +1231,26 @@ pub(crate) fn run_tasks(
 
                 name_progress(manager, alias.slice(), DOWNLOAD);
             }
+            Task::Job::ReadBundle { request, contents } => {
+                // Pending while it ran, but not one of the N downloads the summary prints.
+                manager.total_tasks.update(|total| total - 1);
+
+                match contents.take() {
+                    Some(contents) => manager.keep_bundle(request.package_id, contents),
+                    None => {
+                        let err = task.err.unwrap_or(crate::Error::Failed);
+                        add_error_or_warning_pretty!(
+                            manager.log_mut(),
+                            request.is_required,
+                            "{} reading the bundled dependencies of <b>{}<r>",
+                            err.name(),
+                            bun_core::fmt::for_terminal(bstr::BStr::new(request.name.slice())),
+                        );
+                    }
+                }
+                // The bundler's turn comes whether or not the read worked.
+                manager.bundle_arrived(task.id);
+            }
         }
     }
 

@@ -288,6 +288,61 @@ test.concurrent(
   20_000,
 );
 
+// A callback that a debugger pauses must not be stopped when it resumes after its timeout.
+test.concurrent(
+  "the timeout does not interrupt a callback while a debugger is attached",
+  async () => {
+    using dir = tempDir("timeout-debugger", {
+      "spin.test.ts": `
+        import { test } from "bun:test";
+        test("overruns", () => {
+          const end = performance.now() + 750;
+          while (performance.now() < end) {}
+          console.log("ran: to the end");
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--inspect-wait=127.0.0.1:0", "--timeout=250", "spin.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    let stderr = "";
+    const { promise: listening, resolve: onListening, reject: onExit } = Promise.withResolvers<string>();
+    const stderrDone = (async () => {
+      for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
+        stderr += chunk;
+        const url = stderr.match(/ws:\/\/\S+/);
+        if (url) onListening(url[0]);
+      }
+      onExit(new Error("exited before it listened: " + stderr));
+    })();
+    const ws = new WebSocket(await listening);
+    const { promise: opened, resolve: onOpen, reject: onError } = Promise.withResolvers<void>();
+    ws.onopen = () => onOpen();
+    ws.onerror = () => onError(new Error("the inspector refused the connection"));
+    await opened;
+    ws.send(JSON.stringify({ id: 1, method: "Debugger.enable" }));
+    ws.send(JSON.stringify({ id: 2, method: "Inspector.initialized" }));
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, stderrDone]);
+    ws.close();
+    const results = (stdout + stderr)
+      .split("\n")
+      .filter(line => /^\((pass|fail)\) |^  \^ |^ran: /.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+    expect({ results, signalCode: proc.signalCode, exitCode }).toEqual({
+      results: ["ran: to the end", "(fail) overruns", "  ^ this test timed out after 250ms."],
+      signalCode: null,
+      exitCode: 1,
+    });
+  },
+  20_000,
+);
+
 if (isFlaky && isLinux) {
   test.todo("processes get killed");
 } else {

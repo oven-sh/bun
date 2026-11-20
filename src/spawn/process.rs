@@ -1350,11 +1350,15 @@ mod spawn_process_body {
         .map_err(refused)?;
 
         let error = |err| Error::from_win32(err, Tag::uv_spawn);
-        let inherit = |fd: Fd| match Descriptor::duplicate(fd.native()) {
-            Err(w::Win32Error::INVALID_HANDLE) if !fd.is_valid() || fd.stdio_tag().is_some() => {
-                Ok(None)
+        let inherit = |fd: Fd| {
+            let tag = fd.stdio_tag();
+            if tag == Some(bun_core::Stdio::StdIn) {
+                w::named_pipe::expect_rival();
             }
-            result => result.map(Some).map_err(error),
+            match Descriptor::duplicate(fd.native()) {
+                Err(w::Win32Error::INVALID_HANDLE) if !fd.is_valid() || tag.is_some() => Ok(None),
+                result => result.map(Some).map_err(error),
+            }
         };
         let (mut descriptors, mut pipes) = (Vec::with_capacity(count), Vec::with_capacity(count));
         let mut inherits_any = false;

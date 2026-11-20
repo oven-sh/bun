@@ -6,6 +6,7 @@
 )]
 
 use core::ptr;
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
 
 use bun_core::WStr;
@@ -28,6 +29,21 @@ unsafe extern "system" {
 /// Returns at once. Whether no call was under way a moment ago.
 pub fn is_idle(handle: HANDLE) -> bool {
     kernel32::WaitForSingleObject(handle, 0) == WAIT_OBJECT_0
+}
+
+static HAS_RIVAL: AtomicBool = AtomicBool::new(false);
+
+/// From now on another process may be reading an end that this one reads.
+pub fn expect_rival() {
+    HAS_RIVAL.store(true, Ordering::Relaxed);
+}
+
+/// For an end that the caller is not using. Whether a call is unlikely to have to wait for that of somebody else.
+pub fn is_left_alone(handle: HANDLE) -> bool {
+    if !HAS_RIVAL.load(Ordering::Relaxed) && !is_idle(handle) {
+        expect_rival();
+    }
+    !HAS_RIVAL.load(Ordering::Relaxed)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -70,10 +86,10 @@ pub fn after_empty_write(handle: HANDLE, len: usize) -> usize {
     set_blocking(handle).map_or_else(|_| len.div_ceil(2), |()| usize::MAX)
 }
 
-/// Whether a read would return at once with data or an empty message.
-pub fn has_input(handle: HANDLE) -> Result<bool, NTSTATUS> {
+/// How many bytes there are, if a read would return at once with data or an empty message.
+pub fn input(handle: HANDLE) -> Result<Option<usize>, NTSTATUS> {
     let [_state, bytes, messages, _message_len] = nt::peek_pipe(handle)?;
-    Ok(bytes > 0 || messages > 0)
+    Ok((bytes > 0 || messages > 0).then_some(bytes as usize))
 }
 
 /// Appends at most `max_len` bytes to `buffer`, within its capacity. With 0 it waits for data, and leaves it there.

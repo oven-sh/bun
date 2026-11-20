@@ -10,8 +10,7 @@ use crate::pipe_writer::WriteEvent;
 
 const IDLE_SIZE: usize = 8 * 1024;
 pub(super) const BUSY_SIZE: usize = 64 * 1024;
-/// For a read that has the way to a thread and back to make up for.
-pub(super) const THREAD_SIZE: usize = 1024 * 1024;
+pub(super) const MAX_SIZE: usize = 256 * 1024;
 
 /// What every kind of source keeps about its reader and its writer.
 pub(super) struct Endpoint {
@@ -68,7 +67,7 @@ impl Endpoint {
     }
 
     pub(super) fn recycle(&self, mut buffer: Vec<u8>) {
-        if (1..=THREAD_SIZE).contains(&buffer.capacity()) {
+        if (1..=4 * MAX_SIZE).contains(&buffer.capacity()) {
             buffer.clear();
             self.spare.set(buffer);
         }
@@ -76,6 +75,10 @@ impl Endpoint {
 
     /// An empty one to read into. It is small until much comes, because it is there for as long as nothing comes.
     pub(super) fn buffer(&self, max_len: usize) -> Vec<u8> {
+        self.buffer_for(0, max_len)
+    }
+
+    pub(super) fn buffer_for(&self, available: usize, max_len: usize) -> Vec<u8> {
         let mut buffer = self.spare.take();
         let size = if self.is_busy.get() {
             BUSY_SIZE
@@ -83,7 +86,10 @@ impl Endpoint {
             buffer.shrink_to(BUSY_SIZE);
             IDLE_SIZE
         };
-        buffer.reserve(size.min(max_len));
+        buffer.reserve(
+            size.max(available.min(bun_threading::spin::tune(12, MAX_SIZE as u64) as usize))
+                .min(max_len),
+        );
         buffer
     }
 

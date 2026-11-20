@@ -9,9 +9,10 @@ use bun_ptr::{CellExt as _, OptionCellExt as _};
 use bun_sys::windows::named_pipe::{self, Kind};
 use bun_sys::windows::{self as w, NT_ERROR, NTSTATUS, Win32Error, Win32ErrorExt as _};
 use bun_sys::{self as sys, E, Fd, Tag};
+use bun_threading::spin::tune;
 
 use super::Payload;
-use super::endpoint::{BUSY_SIZE, Endpoint, HasEndpoint, THREAD_SIZE};
+use super::endpoint::{BUSY_SIZE, Endpoint, HasEndpoint, MAX_SIZE};
 use crate::pipe_reader::ReadEvent;
 use crate::pipe_writer::WriteEvent;
 
@@ -71,8 +72,6 @@ struct Inner {
     /// Others may read it too, so data is only taken out at a moment when the reader is known to want it.
     is_input_shared: Cell<bool>,
     read: Cell<Option<InFlight>>,
-    /// The last read on a thread has found much.
-    has_more: Cell<bool>,
     write: Cell<Option<InFlight>>,
 }
 
@@ -91,7 +90,6 @@ impl Pipe {
             io: OnceCell::new(),
             is_input_shared: Cell::new(is_input_shared),
             read: Cell::new(None),
-            has_more: Cell::new(false),
             write: Cell::new(None),
         }))
     }
@@ -304,8 +302,9 @@ impl Inner {
                 .read
                 .set(Some(Request::defer(&self.endpoint.port, report).into()));
         }
+        let handle = self.handle.raw();
         match self.io.get() {
-            Some(Io::Overlapped(file)) if self.is_input_shared.get() => {
+            Some(Io::Overlapped(file)) if self.is_input_shared.get() || tune(14, 0) == 1 => {
                 let done = self.on_read(Inner::on_readable);
                 self.started_read(file.read(Vec::new(), 0, done));
             }
@@ -319,12 +318,11 @@ impl Inner {
             Some(Io::Synchronous) | None if self.write.is_some() => {}
             Some(Io::Synchronous)
                 if take == Take::Now
-                    && bun_threading::spin::tune(12, 0) > 0
-                    && (named_pipe::is_idle(self.handle.raw())
-                        || bun_threading::spin::tune(13, 0) == 1) =>
+                    && (tune(13, 0) == 1 || named_pipe::is_left_alone(handle))
+                    && tune(12, 1) > 0 =>
             {
-                match named_pipe::has_input(self.handle.raw()) {
-                    Ok(true) => self.read_here(max_len),
+                match named_pipe::input(handle) {
+                    Ok(Some(available)) => self.read_here(available, max_len),
                     _ => self.read_on_thread(max_len, Take::OnceThereIsSome),
                 }
             }
@@ -332,16 +330,11 @@ impl Inner {
         }
     }
 
-    fn read_here(self: &Rc<Self>, max_len: usize) {
-        let max_len = max_len.min(bun_threading::spin::tune(12, 0) as usize);
-        let mut buffer = self.endpoint.buffer(max_len);
-        if buffer.capacity() >= BUSY_SIZE {
-            buffer.reserve(max_len);
-        }
-        let status =
-            named_pipe::read(self.handle.raw(), &mut buffer, max_len).unwrap_or_else(|it| it);
+    fn read_here(self: &Rc<Self>, available: usize, max_len: usize) {
+        let mut buffer = self.endpoint.buffer_for(available, max_len);
+        let status = named_pipe::read(self.handle.raw(), &mut buffer, max_len);
         self.started_read(Err(Completion {
-            status,
+            status: status.unwrap_or_else(|status| status),
             transferred: buffer.len(),
             buffer,
         }));
@@ -415,7 +408,9 @@ impl Inner {
             } else {
                 self.endpoint.port.did_receive();
             }
-            self.add_what_followed(&mut buffer, BUSY_SIZE);
+            if tune(14, 0) == 0 && (tune(15, 0) == 0 || buffer.len() < BUSY_SIZE) {
+                self.add_what_followed(&mut buffer, BUSY_SIZE);
+            }
             self.endpoint.hold(ReadEvent::Data(buffer));
             return self.report_read();
         }
@@ -441,10 +436,7 @@ impl Inner {
         let done = self.on_read(|this, (kind, read): (Kind, ThreadRead)| {
             this.set_kind(kind);
             match read {
-                ThreadRead::Ended(completion) => {
-                    this.has_more.set(completion.buffer.len() >= BUSY_SIZE);
-                    this.on_data(completion);
-                }
+                ThreadRead::Ended(completion) => this.on_data(completion),
                 ThreadRead::Readable(buffer) => {
                     this.endpoint.recycle(buffer);
                     this.continue_reading(Take::Now);
@@ -453,13 +445,7 @@ impl Inner {
         });
         let (request, remote) = Request::remote(&self.endpoint.port, done);
         let (handle, cancel) = (Arc::clone(&self.handle), Cancel::default());
-        let has_more = self.has_more.take();
-        let thread_size = bun_threading::spin::tune(8, THREAD_SIZE as u64) as usize;
-        let max_len = max_len.min(if has_more { thread_size } else { BUSY_SIZE });
-        let (mut buffer, thread) = (self.endpoint.buffer(max_len), cancel.clone());
-        if has_more {
-            buffer.reserve(max_len);
-        }
+        let (buffer, thread) = (self.endpoint.buffer(max_len), cancel.clone());
         let is_kind_known = self.io.get().is_some();
         let take = self.is_input_shared.get().then_some(take);
         blocking::spawn(move || {
@@ -634,7 +620,17 @@ fn read_synchronous<T: Send + 'static>(
     let read = cancel.run(|| {
         // Over the network the wait for data returns at once.
         for _ in 0..3 {
-            if take.is_none() || (take == Some(Take::Now) && named_pipe::has_input(handle)?) {
+            if take == Some(Take::Now)
+                && let Some(available) = named_pipe::input(handle)?
+            {
+                buffer.reserve(
+                    available
+                        .min(max_len)
+                        .min(tune(8, MAX_SIZE as u64) as usize),
+                );
+                break;
+            }
+            if take.is_none() {
                 break;
             }
             read_blocking(&mut buffer, 0)?;

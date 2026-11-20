@@ -869,6 +869,30 @@ describe.concurrent.each(pipeKinds)("stdin is a pipe from %s", kind => {
     expect(await child.result()).toEqual(printed("paused\ntwo\n"));
   });
 
+  test.skipIf(!isWindows)("does not stop the event loop while a child reads it too", async () => {
+    await using child = start({
+      "inner.js": `
+        console.log("inner ready");
+        while (require("fs").readSync(0, Buffer.alloc(8)));
+      `,
+      "main.js": `
+        process.stdin.on("data", () => {});
+        Bun.spawn([process.execPath, "inner.js"], { stdio: ["inherit", "inherit", "inherit"], onExit: () => process.exit(0) });
+        const fs = require("fs");
+        let turn = 0;
+        setInterval(() => fs.existsSync("turn" + turn) && console.log("turn " + turn++), 1);
+      `,
+    });
+    await child.sees("inner ready\n");
+    for (let turn = 0; turn < 40; turn++) {
+      await new Promise(resolve => child.input.write("x", resolve));
+      await Bun.write(`${child.dir}/turn${turn}`, "");
+      await child.sees(`turn ${turn}\n`);
+    }
+    child.input.end();
+    expect(await child.result()).toMatchObject({ stderr: "", exitCode: 0 });
+  });
+
   test.each([
     ["pause()", "process.stdin.pause()"],
     ["unref()", "process.stdin.unref()"],

@@ -1,6 +1,6 @@
 use super::helpers;
 use super::parser::{Error as ParserError, Parser};
-use super::types::{self, BlockType, JsResult, TextType, VerbatimLine};
+use super::types::{self, BlockType, FencedCode, JsResult, OFF, TextType, VerbatimLine};
 
 impl Parser<'_> {
     pub(crate) fn enter_block(
@@ -20,6 +20,24 @@ impl Parser<'_> {
             return Ok(());
         }
         self.renderer.leave_block(block_type, data)
+    }
+
+    /// A fenced code block, for a consumer that does not want source.
+    pub(crate) fn process_fenced_code(
+        &mut self,
+        block_lines: &[VerbatimLine],
+        info_beg: OFF,
+        flags: u32,
+    ) -> JsResult<()> {
+        let code = FencedCode::new(&self.text[info_beg as usize..]);
+        if self.image_nesting_level == 0 {
+            self.renderer.ptr.enter_fenced_code(code)?;
+        }
+        self.process_code_block(block_lines, info_beg, flags)?;
+        if self.image_nesting_level == 0 {
+            self.renderer.ptr.leave_fenced_code(code)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn process_code_block(

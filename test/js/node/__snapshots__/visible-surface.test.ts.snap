@@ -3033,7 +3033,7 @@ url[URLSearchParams][prototype][toJSON] cew function
 url[URLSearchParams][prototype][toJSON]: function native name="toJSON" length=0 above=Function extensible=true
 url[URLSearchParams][prototype][toJSON][length] c-- number
 url[URLSearchParams][prototype][toJSON][name] c-- string
-url[URLSearchParams][prototype][length] --a accessor get=function set=undefined
+url[URLSearchParams][prototype][length] c-a accessor get=function set=undefined
 url[URLSearchParams][prototype][size] cea accessor get=function set=undefined
 url[URLSearchParams][prototype][Symbol(Symbol.iterator)] c-w function
 url[URLSearchParams][prototype][Symbol(Symbol.iterator)] = url[URLSearchParams][prototype][entries]
@@ -3405,13 +3405,13 @@ util[TextDecoder][length] c-- number
 util[TextDecoder][name] c-- string
 util[TextDecoder][prototype] --- object
 util[TextDecoder][prototype]: object above=Object extensible=true
-util[TextDecoder][prototype][decode] -ew function
+util[TextDecoder][prototype][decode] cew function
 util[TextDecoder][prototype][decode]: function native name="decode" length=0 above=Function extensible=true
 util[TextDecoder][prototype][decode][length] c-- number
 util[TextDecoder][prototype][decode][name] c-- string
-util[TextDecoder][prototype][encoding] -ea accessor get=function set=undefined
-util[TextDecoder][prototype][fatal] -ea accessor get=function set=undefined
-util[TextDecoder][prototype][ignoreBOM] -ea accessor get=function set=undefined
+util[TextDecoder][prototype][encoding] cea accessor get=function set=undefined
+util[TextDecoder][prototype][fatal] cea accessor get=function set=undefined
+util[TextDecoder][prototype][ignoreBOM] cea accessor get=function set=undefined
 util[TextDecoder][prototype][constructor] c-w function
 util[TextDecoder][prototype][constructor] = util[TextDecoder]
 util[TextDecoder][prototype][Symbol(Symbol.toStringTag)] c-- string

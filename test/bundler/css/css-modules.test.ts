@@ -184,6 +184,87 @@ describe("css", () => {
     },
   });
 
+  // The exports object has one property for each local name, in the order the
+  // names first appear. A class with `composes` lists the names it composes
+  // first, each name once, then its own name.
+  {
+    const plainNames = Array.from({ length: 100 }, (_, i) => `name${i}`);
+    const plainRule = (name: string) => `.${name} { color: red }`;
+
+    itBundled("css-module/ExportsObjectKeysAndComposedValues", {
+      files: {
+        "/entry.js": `
+          import styles from './styles.module.css';
+          console.log(JSON.stringify(styles));
+        `,
+        "/styles.module.css": [
+          // `.first` composes the class that the file declares last.
+          `.first { composes: last; color: blue }`,
+          ...plainNames.slice(0, 50).map(plainRule),
+          `.base { color: red }`,
+          `.a { composes: base; color: blue }`,
+          `.b { composes: base; color: blue }`,
+          `.c { composes: b; color: blue }`,
+          `.left { composes: base; color: blue }`,
+          `.right { composes: base; color: blue }`,
+          `.diamond { composes: left right; color: blue }`,
+          `.ping { composes: pong; color: blue }`,
+          `.pong { composes: ping; color: blue }`,
+          `.fromGlobal { composes: g1 g2 from global; color: blue }`,
+          `.crossFile { composes: far from "./other.module.css"; color: blue }`,
+          `.crossFileAgain { composes: far from "./other.module.css"; color: blue }`,
+          ...plainNames.slice(50).map(plainRule),
+          // A name that appears again, as a class or as an id, adds no property.
+          `.name0 { color: blue }`,
+          `#name1 { color: blue }`,
+          `#onlyId { color: blue }`,
+          `.last { color: red }`,
+        ].join("\n"),
+        "/other.module.css": `
+          .farBase { z-index: 1 }
+          .far { composes: farBase; z-index: 2 }
+        `,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      run: {
+        validate({ stdout }) {
+          const exported: Record<string, string> = JSON.parse(stdout);
+
+          // A local name gets the hash of its file as a suffix.
+          const here = String(exported.name0).slice("name0".length);
+          const there = String(exported.crossFile).split(" ")[0].slice("farBase".length);
+          expect({ here, there }).toEqual({
+            here: expect.stringMatching(/^_[A-Za-z0-9_-]+$/),
+            there: expect.stringMatching(/^_[A-Za-z0-9_-]+$/),
+          });
+          expect(there).not.toBe(here);
+
+          const local = (...names: string[]) => names.map(name => name + here).join(" ");
+          expect(Object.entries(exported)).toEqual([
+            ["first", local("last", "first")],
+            ...plainNames.slice(0, 50).map(name => [name, local(name)]),
+            ["base", local("base")],
+            ["a", local("base", "a")],
+            ["b", local("base", "b")],
+            ["c", local("base", "b", "c")],
+            ["left", local("base", "left")],
+            ["right", local("base", "right")],
+            ["diamond", local("base", "left", "right", "diamond")],
+            ["ping", local("pong", "ping")],
+            ["pong", local("ping", "pong")],
+            ["fromGlobal", `g1 g2 ${local("fromGlobal")}`],
+            ["crossFile", `farBase${there} far${there} ${local("crossFile")}`],
+            ["crossFileAgain", `farBase${there} far${there} ${local("crossFileAgain")}`],
+            ...plainNames.slice(50).map(name => [name, local(name)]),
+            ["onlyId", local("onlyId")],
+            ["last", local("last")],
+          ]);
+        },
+      },
+    });
+  }
+
   // The name inside `::view-transition-group(name)` (and `-old`, `-new`,
   // `-image-pair`) is a custom ident. It must get the same module hash as the
   // `view-transition-name` / `view-transition-class` / `view-transition-group`

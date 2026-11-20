@@ -1,4 +1,5 @@
 // The `type: "direct"` lifecycle contract: every consumer sees the bytes written before the end signal, the same error, and cancel() only on abort. One-shot consumers call pull() once; a reader calls it again on demand.
+import { AsyncLocalStorage } from "node:async_hooks";
 
 export type Tally = { pulls: number; cancels: unknown[] };
 
@@ -331,3 +332,82 @@ export async function observe(shape: Shape, consume: (s: ReadableStream) => Prom
 }
 
 export const expected = (shape: Shape) => ({ pulls: 1, cancels: 0, ...shape.expect });
+
+// The AsyncLocalStorage contract: a direct source runs in the store its stream was built in, whichever consumer takes the stream and wherever that consumer runs. An async-iterable body is a direct source: its pull() calls the iterator's next().
+
+export const store = new AsyncLocalStorage<string>();
+
+export type StoreShape = {
+  /** The steps of the source that a whole-body consumer runs, in order. */
+  steps: string[];
+  /** `seen` gets "<step>:<store>" at each step. */
+  make(seen: string[]): ReadableStream;
+};
+
+const encoder = new TextEncoder();
+const at = (seen: string[], step: string) => void seen.push(`${step}:${store.getStore()}`);
+
+async function* helloWorld(seen: string[]) {
+  try {
+    at(seen, "first next()");
+    yield encoder.encode("hello ");
+    at(seen, "second next()");
+    await later();
+    at(seen, "after an await");
+    yield encoder.encode("world");
+  } finally {
+    at(seen, "finally");
+  }
+}
+
+export const storeShapes: Record<string, StoreShape> = {
+  "direct stream with a sync pull()": {
+    steps: ["pull()"],
+    make: seen =>
+      new ReadableStream({
+        type: "direct",
+        pull(c: ReadableStreamDirectController) {
+          at(seen, "pull()");
+          c.write("hello world");
+          c.close();
+        },
+      } as any),
+  },
+  "direct stream with an async pull()": {
+    steps: ["pull()", "after an await"],
+    make: seen =>
+      new ReadableStream({
+        type: "direct",
+        async pull(c: ReadableStreamDirectController) {
+          at(seen, "pull()");
+          c.write("hello ");
+          await later();
+          at(seen, "after an await");
+          c.write("world");
+          c.close();
+        },
+      } as any),
+  },
+  "new Response(asyncGenerator).body": {
+    steps: ["first next()", "second next()", "after an await", "finally"],
+    make: seen => new Response(helloWorld(seen) as any).body!,
+  },
+};
+
+/** Builds the stream in the store "built" and consumes it, a macrotask later, in the store "consumer". Compare with `expectedStore(shape)`. */
+export async function observeStore(shape: StoreShape, consume: (s: ReadableStream) => Promise<string>) {
+  const seen: string[] = [];
+  const stream = store.run("built", () => shape.make(seen));
+  // No promise job of the construction is left to carry its store to the consumer. From here on Node.js runs a source in the store of the call that reached it.
+  await later();
+  const body = await store.run("consumer", () => consume(stream));
+  return { body, seen };
+}
+
+/** The whole body, and every step in the store `name`. */
+export const expectedIn = (shape: StoreShape, name: string | undefined) => ({
+  body: "hello world",
+  seen: shape.steps.map(step => `${step}:${name}`),
+});
+
+export const expectedStore = (shape: StoreShape) => expectedIn(shape, "built");

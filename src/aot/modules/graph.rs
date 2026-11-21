@@ -813,17 +813,7 @@ impl ModuleGraph {
             |file: FileId| self.find_row(file).is_some_and(|row| row.is_left_to_loader);
         self.may_be_evicted(module)
             || self.is_named_by_copies(module)
-            || matches!(module, ModuleRef::File(file) if is_left_to_loader(file) || self.answers_for_typed_form(file))
-    }
-
-    /// Whether require() of data of the file under a type may answer with the exports of this code.
-    fn answers_for_typed_form(&self, file: FileId) -> bool {
-        let is_data = |file: FileId| {
-            self.find_row(file)
-                .is_some_and(|row| row.interop.kind == ModuleKind::Data)
-        };
-        let mut forms = self.forms_require_checks_first.iter();
-        forms.any(|&(form, code)| code == file && is_data(form) && !is_data(code))
+            || matches!(module, ModuleRef::File(file) if is_left_to_loader(file))
     }
 
     pub fn synthetic_export(&self, id: SyntheticExportId) -> &SyntheticExport {

@@ -253,6 +253,7 @@ fn setup(
             JSValue::from(!vm.test_isolation_enabled.get()),
             JSValue::from(is_from_comment),
             JSValue::from(vm.test_isolation_state.shares_global.get()),
+            JSValue::from(crate::cli::run_compiled::runs_compiled_code()),
         ],
     )?;
     if teardown.is_string() {

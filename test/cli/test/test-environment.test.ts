@@ -993,6 +993,40 @@ describe.concurrent("test environment", () => {
     expect(exitCode).toBe(0);
   });
 
+  // As happy-dom does for the body of a Response. With --isolate the package has the ReadableStream of another global than the file.
+  test.each([[], ["--isolate"], ["--isolate=modules"]])(
+    "happy-dom: a ReadableStream of the test file is an instance of the package's class: %s",
+    async (...args) => {
+      const file = `
+        import { test } from "bun:test";
+        test("streams", () => {
+          const streams = [new ReadableStream(), Bun.file(import.meta.path).stream(), new TransformStream().readable];
+          const others = [{ [Symbol.toStringTag]: "ReadableStream" }, new WritableStream(), null];
+          console.log(streams.map(isStream).join(), others.map(isStream).join(), streams.map(isSubclassInstance).join());
+        });`;
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "node_modules/happy-dom/index.js": `
+          ${fakePackages["node_modules/happy-dom/index.js"]}
+          const { ReadableStream } = require("stream/web");
+          class Subclass extends ReadableStream {}
+          const { Window } = exports;
+          exports.Window = class extends Window {
+            isStream = value => value instanceof ReadableStream;
+            isSubclassInstance = value => value instanceof Subclass;
+          };`,
+        "bunfig.toml": `[test]\nenvironment = "happy-dom"\n`,
+        "1.test.js": file,
+        "2.test.js": file,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir), ...args);
+      const expected = "true,true,true false,false,false false,false,false";
+      expect(stdout.filter(line => !/^(?:open|close|abort) /.test(line))).toEqual([expected, expected]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("--isolate: the window that jsdom keeps is not a test file's", async () => {
     using dir = tempDir("test-environment", {
       ...fakePackages,
@@ -1881,6 +1915,63 @@ describe.concurrent("test environment with the real", () => {
       using dir = project({ "1.test.js": file, "2.test.js": file });
       const { stderr, exitCode } = await bunTest(String(dir), ...args);
       expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // happy-dom reads a body only if it is `instanceof ReadableStream`, and otherwise sends String(body).
+  test.each([[], ["--isolate"], ["--isolate=modules"]])(
+    "happy-dom: a Response or Request reads a ReadableStream of the test file: %s",
+    async (...args) => {
+      const file = `// ${VITEST} happy-dom
+        import { test, expect } from "bun:test";
+
+        const text = '{"a":1}';
+        const source = {
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(text));
+            controller.close();
+          },
+        };
+
+        test("a Response", async () => {
+          const body = new ReadableStream(source);
+          const response = new Response(body);
+          expect(response.body).toBe(body);
+          expect(response.headers.get("content-type")).toBeNull();
+          expect(await response.json()).toEqual({ a: 1 });
+          expect(await new Response(new ReadableStream(source)).clone().text()).toBe(text);
+          expect(Buffer.from(await new Response(new ReadableStream(source)).arrayBuffer()).toString()).toBe(text);
+        });
+
+        test("a Request", async () => {
+          const request = new Request("http://localhost:3000/", { method: "POST", body: new ReadableStream(source) });
+          expect(await request.text()).toBe(text);
+        });
+
+        test("a stream that Bun makes", async () => {
+          const { readable, writable } = new TransformStream();
+          const writer = writable.getWriter();
+          writer.write(new TextEncoder().encode(text));
+          writer.close();
+          expect(await new Response(readable).text()).toBe(text);
+          expect(await new Response(new Blob([text]).stream()).text()).toBe(text);
+        });
+
+        test("a subclass", async () => {
+          class Stream extends ReadableStream {}
+          expect(await new Response(new Stream(source)).text()).toBe(text);
+        });
+
+        test("nothing else", async () => {
+          const imitation = { [Symbol.toStringTag]: "ReadableStream", getReader() {} };
+          expect(await new Response(imitation).text()).toBe("[object ReadableStream]");
+          expect(Object.getOwnPropertySymbols(ReadableStream)).toEqual([]);
+        });
+      `;
+      using dir = project({ "1.test.js": file, "2.test.js": file });
+      const { stderr, exitCode } = await bunTest(String(dir), ...args);
+      expect(summary(stderr)).toEqual(["10 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     },
   );

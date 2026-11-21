@@ -244,21 +244,24 @@ const BINARY_CLASSES = [
   "Int32Array", "Float32Array", "Float64Array",
 ] as const;
 
+function acceptInstancesOfOtherRealms(constructor: Function, isInstance: (value: unknown) => boolean) {
+  $Object.$defineProperty(constructor, Symbol.hasInstance, {
+    __proto__: null,
+    // A subclass inherits this function, and only has its own instances.
+    value(this: unknown, value: unknown) {
+      return ordinaryHasInstance.$call(this, value) || (this === constructor && isInstance(value));
+    },
+    configurable: true,
+  } as PropertyDescriptor);
+}
+
 // These globals are the window's, from another realm than what Bun makes: a Buffer, what TextEncoder, fetch or fs return.
 function acceptBinaryDataOfOtherRealms(win: any) {
   for (let i = 0; i < BINARY_CLASSES.length; i++) {
     const name = BINARY_CLASSES[i];
     const constructor = win[name];
     if (typeof constructor !== "function" || (win !== globalThis && constructor === globalThis[name])) continue;
-    const isInstance: (value: unknown) => boolean = types[`is${name}`];
-    $Object.$defineProperty(constructor, Symbol.hasInstance, {
-      __proto__: null,
-      // A subclass inherits this function, and only has its own instances.
-      value(this: unknown, value: unknown) {
-        return ordinaryHasInstance.$call(this, value) || (this === constructor && isInstance(value));
-      },
-      configurable: true,
-    } as PropertyDescriptor);
+    acceptInstancesOfOtherRealms(constructor, types[`is${name}`]);
   }
 }
 
@@ -428,14 +431,15 @@ function open(
   file: string,
   keep: boolean,
   beforeCreating: () => void,
-  sharesGlobal = false,
+  sharesGlobal: boolean,
+  isCompiled: boolean,
 ) {
   // With --isolate every file has a new global. Loaded into that, the package would be evaluated and compiled again for each file.
   const lasting = keep || sharesGlobal ? undefined : lastingCopyOfThisModule();
   const found = (lasting ? lasting.find : find)(name, file, !keep);
   if (typeof found === "string") return found;
   // happy-dom's window has the classes of the global that the package is loaded into.
-  if (name === "happy-dom") lasting?.acceptBinaryDataOfTestFiles();
+  if (name === "happy-dom") lasting?.acceptDataOfTestFiles(isCompiled);
   const { packagePath, requireFromTest } = found;
 
   const id = `${packagePath}\n${optionsText ?? ""}`;
@@ -592,11 +596,12 @@ function setupSharedGlobal(
   optionsText: string | undefined,
   file: string,
   isFromComment: boolean,
+  isCompiled: boolean,
 ) {
   if (name === "node") return uninstallFromSharedGlobal();
   let result;
   try {
-    result = open(name, optionsText, file, false, () => {}, true);
+    result = open(name, optionsText, file, false, () => {}, true, isCompiled);
   } catch (error) {
     if (!isFromComment) throw error;
     result = String((error as Error)?.message ?? error);
@@ -627,8 +632,9 @@ function setup(
   keep: boolean,
   isFromComment: boolean,
   sharesGlobal: boolean,
+  isCompiled: boolean,
 ) {
-  if (sharesGlobal) return setupSharedGlobal(name, optionsText, file, isFromComment);
+  if (sharesGlobal) return setupSharedGlobal(name, optionsText, file, isFromComment, isCompiled);
   let last = left;
   left = undefined;
   function leaveLast() {
@@ -641,7 +647,7 @@ function setup(
 
   let result;
   try {
-    result = open(name, optionsText, file, keep, () => last && leaveLast());
+    result = open(name, optionsText, file, keep, () => last && leaveLast(), false, isCompiled);
   } catch (error) {
     if (last) leaveLast();
     if (!isFromComment) throw error;
@@ -667,11 +673,14 @@ function setup(
 }
 
 setup.find = find;
-let acceptsBinaryDataOfTestFiles = false;
-setup.acceptBinaryDataOfTestFiles = () => {
-  if (acceptsBinaryDataOfTestFiles) return;
-  acceptsBinaryDataOfTestFiles = true;
+let acceptsDataOfTestFiles = false;
+setup.acceptDataOfTestFiles = (isCompiled: boolean) => {
+  if (acceptsDataOfTestFiles) return;
+  acceptsDataOfTestFiles = true;
   acceptBinaryDataOfOtherRealms(globalThis);
+  // happy-dom asks `body instanceof ReadableStream` of a Response or Request body.
+  // `bun test --aot` lets nothing define this property on a built-in class but for binary data.
+  if (!isCompiled) acceptInstancesOfOtherRealms(ReadableStream, value => $inheritsReadableStream(value));
 };
 // For internal/test/globals.ts.
 setup.isEnvironmentGlobal = (key: PropertyKey) => originalDescriptors.$has(key as string);

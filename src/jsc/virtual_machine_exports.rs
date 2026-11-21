@@ -108,6 +108,12 @@ pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_ta
     this.event_loop().enqueue_task_after_yield(Task::init(task));
 }
 
+/// The queue of rejected promises has a new entry.
+// HOST_EXPORT(Bun__VirtualMachine__noteRejectedPromise, c)
+pub fn note_rejected_promise(this: &VirtualMachine) {
+    this.has_rejected_promises.set(true);
+}
+
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
 /// `rejection_owner`: the `Bun.ModuleGraph` whose code rejected the promise
 /// (decided by promiseRejectionTracker when it happened), or null.

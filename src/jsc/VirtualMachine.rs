@@ -13,7 +13,7 @@ use bun_uws as uws;
 
 use crate::bun_string_jsc;
 use crate::counters::Counters;
-use crate::event_loop::EventLoop;
+use crate::event_loop::{EventLoop, Turn, TurnKind, WaitFor};
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
 use crate::runtime_transpiler_cache::RuntimeTranspilerCache;
@@ -378,6 +378,8 @@ pub struct VirtualMachine {
     pub(crate) suppress_microtask_drain: core::cell::Cell<bool>,
     /// Set when a `bun test` test or hook finishes. The next microtask drain with no JS on the stack runs the next one.
     pub has_pending_test_step: core::cell::Cell<bool>,
+    /// Set when a promise is rejected with no handler: [`EventLoop::report_rejected_promises`] has one to look at.
+    pub(crate) has_rejected_promises: core::cell::Cell<bool>,
 
     pub channel_ref: Async::KeepAlive,
     pub channel_ref_overridden: Cell<bool>,
@@ -1616,6 +1618,11 @@ impl VirtualMachine {
         self.is_event_loop_alive_excluding_immediates() || self.has_immediates()
     }
 
+    /// An unhandled error has ended `while self.is_event_loop_alive()`, whatever the loop still holds.
+    pub fn is_run_over(&self) -> bool {
+        self.unhandled_error_counter.get() > 0 && !self.is_event_loop_alive()
+    }
+
     /// `is_event_loop_alive` for `bun test`, which keeps running after an unhandled error.
     pub(crate) fn is_event_loop_alive_despite_errors(&self) -> bool {
         self.is_platform_loop_active()
@@ -2070,7 +2077,7 @@ impl VirtualMachine {
                 if !self.script_allowed() {
                     return;
                 }
-                self.auto_tick_active();
+                self.auto_tick_active(WaitFor::LoopAlive);
                 dispatch = true;
             }
 
@@ -2679,15 +2686,9 @@ pub struct RuntimeHooks {
     pub load_preloads: fn(vm: &VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: fn(vm: &VirtualMachine, block_until_connected: bool),
-    /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
-    /// Hoisted here so `event_loop.rs` doesn't need its own hook table.
-    pub auto_tick: fn(vm: &VirtualMachine),
-    /// `eventLoop().autoTickActive()` — like `auto_tick` but only sleeps in
-    /// the uSockets loop while it has active handles.
-    /// Separate slot because the body skips `runImminentGCTimer` /
-    /// `handleRejectedPromises` and falls through to `tickWithoutIdle` when
-    /// idle — folding it into `auto_tick` would change shutdown semantics.
-    pub auto_tick_active: fn(vm: &VirtualMachine),
+    /// `eventLoop().autoTick()` and `eventLoop().autoTickActive()` — needs `Timer::All`
+    /// for the timeout calc. Hoisted here so `event_loop.rs` doesn't need its own hook table.
+    pub loop_turn: fn(vm: &VirtualMachine, wait: WaitFor, kind: TurnKind) -> Turn,
     /// Runs the next `bun test` test or hook. See [`VirtualMachine::has_pending_test_step`].
     pub run_pending_test_step: fn(global: &JSGlobalObject),
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
@@ -3132,6 +3133,7 @@ impl VirtualMachine {
             is_inside_deferred_task_queue: Cell::new(false),
             suppress_microtask_drain: Cell::new(false),
             has_pending_test_step: Cell::new(false),
+            has_rejected_promises: Cell::new(false),
             channel_ref: Default::default(),
             channel_ref_overridden: Cell::new(false),
             channel_ref_should_ignore_one_disconnect_event_listener: Cell::new(false),
@@ -3264,29 +3266,26 @@ impl VirtualMachine {
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
     /// (needs `Timer::All` for the poll timeout).
     #[inline]
-    pub fn auto_tick(&self) {
-        if let Some(hooks) = runtime_hooks() {
-            (hooks.auto_tick)(self);
-        } else {
-            // No high tier (unit tests) — fall back to a non-blocking tick.
-            self.event_loop().tick();
-        }
+    pub fn auto_tick(&self, wait: WaitFor) -> Turn {
+        self.loop_turn(wait, TurnKind::AutoTick)
     }
 
-    /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick)
-    /// but only sleeps in the uSockets loop while it has active handles.
-    /// The real body lives in `event_loop.rs`
-    /// behind `` until the b2-cycle (`Timer::All`) breaks; until
-    /// then route through the same `auto_tick` hook so drain loops in
-    /// `on_before_exit` / `bun_main` still make forward progress.
+    /// `eventLoop().autoTickActive()` — [`auto_tick`](Self::auto_tick) without the imminent
+    /// GC timer and without the report of rejected promises at its end.
     #[inline]
-    pub fn auto_tick_active(&self) {
+    pub fn auto_tick_active(&self, wait: WaitFor) -> Turn {
+        self.loop_turn(wait, TurnKind::AutoTickActive)
+    }
+
+    #[inline]
+    fn loop_turn(&self, wait: WaitFor, kind: TurnKind) -> Turn {
         if let Some(hooks) = runtime_hooks() {
-            (hooks.auto_tick_active)(self);
+            (hooks.loop_turn)(self, wait, kind)
         } else {
-            // No high-tier hook (unit tests) — drain JS tasks only so callers
+            // No high tier (unit tests) — drain JS tasks only so callers
             // observe forward progress without blocking on the I/O loop.
             self.event_loop().tick();
+            Turn::Skipped
         }
     }
 
@@ -3523,7 +3522,7 @@ impl VirtualMachine {
                 };
                 // SAFETY: see above.
                 if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
-                    self.auto_tick();
+                    self.auto_tick(WaitFor::Promise(jsc::AnyPromise::Internal(p)));
                 }
             }
         } else {
@@ -3531,7 +3530,9 @@ impl VirtualMachine {
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            let _ = self
+                .event_loop()
+                .wait_for_entry_point(jsc::AnyPromise::Internal(promise));
         }
 
         Ok(self.pending_internal_promise().unwrap_or(promise))
@@ -4467,7 +4468,7 @@ impl VirtualMachine {
         while self.is_event_loop_alive() {
             self.event_loop().tick();
             if self.is_event_loop_alive() {
-                self.auto_tick();
+                self.auto_tick(WaitFor::LoopAlive);
             }
         }
     }
@@ -5516,7 +5517,7 @@ impl VirtualMachine {
 
         // Pre-arm the waker so this settled-promise tick cannot park (#36450).
         self.wakeup();
-        self.auto_tick();
+        self.auto_tick(WaitFor::Event);
         Ok(self.pending_internal_promise().unwrap())
     }
 

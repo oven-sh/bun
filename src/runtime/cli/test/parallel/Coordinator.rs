@@ -11,6 +11,7 @@ use std::io::Write as _;
 
 use bun_core::strings;
 use bun_core::{Global, Output};
+use bun_jsc::event_loop::WaitFor;
 use bun_ptr::CellExt as _;
 use bun_test_schedule::{Free, Next, Phase, Schedule};
 
@@ -227,7 +228,7 @@ impl<'a> Coordinator<'a> {
                 let loop_ = self.spawn.vm.event_loop().usockets_loop();
                 loop_.tick_with_timeout(Some(&ts), bun_uws::NOW_NS_UNKNOWN);
             } else {
-                self.spawn.vm.event_loop().auto_tick();
+                self.spawn.vm.event_loop().auto_tick(WaitFor::Event);
             }
             self.handle_worker_events();
         }

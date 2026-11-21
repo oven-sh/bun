@@ -1172,7 +1172,7 @@ impl WebWorker {
                 stopped_by_entry = true;
                 break;
             }
-            vm.auto_tick_active();
+            vm.auto_tick_active(crate::event_loop::WaitFor::LoopAlive);
             if self.has_requested_terminate() {
                 break;
             }

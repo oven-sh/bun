@@ -113,7 +113,11 @@ impl ImmediateObject {
         let threw = queued.call(vm, this, None);
         drop(queued);
         let stopped = vm.event_loop().exit_maybe_drain_microtasks(!threw).is_err();
-        stopped || threw
+        if stopped || threw {
+            return true;
+        }
+        vm.event_loop().report_rejected_promises_after_checkpoint();
+        false
     }
 
     pub(crate) fn release_unrun(&self) {

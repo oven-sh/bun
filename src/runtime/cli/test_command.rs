@@ -13,7 +13,7 @@ use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{EncodedSlice, strings};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
-use bun_jsc::event_loop::TopLevelWaitError;
+use bun_jsc::event_loop::{TopLevelWaitError, WaitFor};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 use bun_options_types::aot_options::ReplacedByTests;
@@ -3719,7 +3719,7 @@ impl TestCommand {
         loop {
             while vm.is_event_loop_alive() {
                 vm.tick();
-                vm.event_loop().auto_tick_active();
+                vm.event_loop().auto_tick_active(WaitFor::LoopAlive);
             }
 
             vm.event_loop().tick_possibly_forever();

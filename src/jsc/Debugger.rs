@@ -279,7 +279,8 @@ impl Debugger {
             // Re-read after `tick()` — `Debugger__didConnect` may have flipped it.
             match dbg.wait_for_connection.get() {
                 Wait::Forever => {
-                    this.event_loop().auto_tick_active();
+                    this.event_loop()
+                        .auto_tick_active(crate::event_loop::WaitFor::Event);
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(
@@ -481,7 +482,8 @@ impl Debugger {
         loop {
             while this.is_event_loop_alive() {
                 this.tick();
-                this.event_loop().auto_tick_active();
+                this.event_loop()
+                    .auto_tick_active(crate::event_loop::WaitFor::LoopAlive);
             }
             this.event_loop().tick_possibly_forever();
         }

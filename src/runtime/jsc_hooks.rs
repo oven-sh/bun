@@ -20,6 +20,7 @@ use core::ffi::c_void;
 use core::ptr;
 
 use bun_jsc::bun_string_jsc;
+use bun_jsc::event_loop::{Turn, TurnKind, WaitFor};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
 use bun_jsc::resolved_source::Bytecode;
@@ -733,19 +734,22 @@ fn ensure_debugger(vm: &VirtualMachine, block_until_connected: bool) {
     }
 }
 
-/// `eventLoop().autoTick()`. Needs
+/// `eventLoop().autoTick()` and `eventLoop().autoTickActive()`: one turn of the loop after
+/// `tick()`. It runs the immediates, polls, then runs the timers that are due. Needs
 /// `timer::All` for the poll-timeout calculation, hence dispatched here.
+///
+/// The poll sleeps only while the loop is active, nothing is queued, and `wait` is not over.
 ///
 /// PERF: the one fn-ptr indirection is dwarfed by the kqueue/epoll syscall it
 /// gates.
-fn auto_tick(vm: &VirtualMachine) {
+fn loop_turn(vm: &VirtualMachine, wait: WaitFor, kind: TurnKind) -> Turn {
     let el = vm.event_loop();
     let loop_ = el.usockets_loop();
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
     // After this call `immediate_tasks` reflects next-tick immediates, so
     // the `has_pending_immediate` read below is correct.
-    el.tick_immediate_tasks();
+    let immediates = el.tick_immediate_tasks();
     let has_yielded_tasks = el.promote_yield_tasks();
     #[cfg(windows)]
     if has_yielded_tasks || el.immediate_task_count() > 0 || el.has_pending_tasks() {
@@ -772,7 +776,9 @@ fn auto_tick(vm: &VirtualMachine) {
     if let Some(state) = state {
         state.timer.update_date_header_timer_if_necessary(loop_, vm);
     }
-    el.run_imminent_gc_timer();
+    if kind == TurnKind::AutoTick {
+        el.run_imminent_gc_timer();
+    }
 
     // ── poll the I/O loop with the next-timer deadline ──────────────────
     let Some(state) = state else {
@@ -781,11 +787,7 @@ fn auto_tick(vm: &VirtualMachine) {
         // (`tick_with_timeout`/`tick_without_idle`); `EventLoop::tick()` would only
         // drain JS tasks and never touch kqueue/epoll.
         loop_.tick_without_idle();
-        // Still run the post-poll hooks.
-        vm.on_after_event_loop();
-        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-        let _ = unsafe { (*vm.global.get()).handle_rejected_promises() };
-        return;
+        return end_turn(vm, kind, Turn::Polled);
     };
 
     // ── addons' uv_idle_t / uv_prepare_t ────────────────────────────────
@@ -799,7 +801,7 @@ fn auto_tick(vm: &VirtualMachine) {
     // `if (loop.isActive())` — `get_timeout` has side effects (pops + fires
     // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
     // rather than running unconditionally.
-    {
+    let turn = 'poll: {
         // Read `immediate_tasks` AFTER
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
@@ -812,6 +814,10 @@ fn auto_tick(vm: &VirtualMachine) {
         let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
         if loop_.is_active() {
+            // This poll sleeps. No script runs between here and it.
+            if !has_pending_immediate && wait.is_over(vm, immediates) {
+                break 'poll Turn::Skipped;
+            }
             // Before `get_timeout`: the first call arms the idle GC timer, and a
             // timer armed after the poll deadline is computed is not in that deadline.
             el.process_gc_timer();
@@ -831,18 +837,28 @@ fn auto_tick(vm: &VirtualMachine) {
         } else {
             loop_.tick_without_idle();
         }
-    }
+        Turn::Polled
+    };
 
     #[cfg(unix)]
     {
         // ── addons' uv_check_t (libuv runs them right after its poll) ────
+        // Also without a poll: a check handle is the other half of a prepare handle.
         state.uv_loop.after_poll(vm);
-        state.timer.drain_timers(vm);
+        if turn == Turn::Polled {
+            state.timer.drain_timers(vm);
+        }
     }
 
+    end_turn(vm, kind, turn)
+}
+
+fn end_turn(vm: &VirtualMachine, kind: TurnKind, turn: Turn) -> Turn {
     vm.on_after_event_loop();
-    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-    let _ = unsafe { (*vm.global.get()).handle_rejected_promises() };
+    if kind == TurnKind::AutoTick {
+        vm.event_loop().report_rejected_promises_after_checkpoint();
+    }
+    turn
 }
 
 fn run_pending_test_step(global: &JSGlobalObject) {
@@ -852,85 +868,6 @@ fn run_pending_test_step(global: &JSGlobalObject) {
         crate::test_runner::bun_test::BunTest::run_pending_step,
         global
     );
-}
-
-/// `eventLoop().autoTickActive()`. Same shape as
-/// [`auto_tick`] but: no `runImminentGCTimer`, no `handleRejectedPromises` at
-/// the tail, and no debug sleep-timer logging. Used by `bun_main` /
-/// `on_before_exit` drain loops where blocking when the loop is idle would
-/// hang shutdown.
-fn auto_tick_active(vm: &VirtualMachine) {
-    let el = vm.event_loop();
-    let loop_ = el.usockets_loop();
-
-    el.tick_immediate_tasks();
-    let has_yielded_tasks = el.promote_yield_tasks();
-    #[cfg(windows)]
-    if has_yielded_tasks || el.immediate_task_count() > 0 || el.has_pending_tasks() {
-        el.wakeup();
-    }
-
-    #[cfg(unix)]
-    {
-        // `swap(0)` so a concurrent
-        // `increment_pending_unref_counter()` (cross-thread, see
-        // `KeepAlive::unref_on_next_tick`) can't be lost between
-        // the read and the reset.
-        let pending_unref = vm
-            .pending_unref_counter
-            .swap(0, core::sync::atomic::Ordering::Relaxed);
-        if pending_unref > 0 {
-            loop_.unref_count(pending_unref);
-        }
-    }
-
-    let Some(state) = try_runtime_state() else {
-        loop_.tick_without_idle();
-        vm.on_after_event_loop();
-        return;
-    };
-    state.timer.update_date_header_timer_if_necessary(loop_, vm);
-
-    #[cfg(unix)]
-    let uv_idle_started = state.uv_loop.before_poll(vm);
-    #[cfg(not(unix))]
-    let uv_idle_started = false;
-
-    {
-        let has_pending_immediate = has_yielded_tasks
-            || uv_idle_started
-            || el.immediate_task_count() > 0
-            || el.has_pending_tasks();
-        let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
-        let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
-        if loop_.is_active() {
-            // Before `get_timeout` — see the matching call in `auto_tick`.
-            el.process_gc_timer();
-            // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
-            // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
-            // and so is the hook: NOW_NS_UNKNOWN means it took none.
-            let mut now: Option<bun_core::Timespec> = None;
-            let have_timeout = state.timer.get_timeout(
-                &mut timespec,
-                has_pending_immediate,
-                quic_next_tick_us,
-                vm,
-                &mut now,
-            );
-            let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
-            loop_.tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns);
-        } else {
-            loop_.tick_without_idle();
-        }
-    }
-
-    #[cfg(unix)]
-    {
-        state.uv_loop.after_poll(vm);
-        state.timer.drain_timers(vm);
-    }
-
-    vm.on_after_event_loop();
 }
 
 /// `printException` / `printErrorlikeObject` — formats `value` to stderr via
@@ -1177,8 +1114,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     deinit_runtime_state,
     load_preloads,
     ensure_debugger,
-    auto_tick,
-    auto_tick_active,
+    loop_turn,
     run_pending_test_step,
     print_exception,
     timer_insert,

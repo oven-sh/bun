@@ -7,6 +7,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 use bun_core::{CStrList, CStrRef, Global, Output};
+use bun_jsc::event_loop::WaitFor;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::context::MacroOptions;
@@ -483,7 +484,7 @@ fn tick_until(vm: &VirtualMachine, mut is_over: impl FnMut() -> bool) {
         if is_over() {
             break;
         }
-        vm.event_loop().auto_tick();
+        vm.event_loop().auto_tick(WaitFor::Event);
     }
 }
 

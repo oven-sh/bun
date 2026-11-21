@@ -1076,6 +1076,97 @@ describe.concurrent(() => {
         ),
       ).toEqual({ stdout: "listener\n", stderr: "", exitCode: 0 });
     });
+
+    it.each(["throw", "reject"])("a %s in an immediate that is fatal, while the entry awaits", async how => {
+      const { stdout, stderr, exitCode } = await run(
+        `process.on("exit", () => console.log("exit")); setImmediate(fail, "${how}");`,
+        `await new Promise(() => {});`,
+      );
+      expect(stderr).toContain("error: boom");
+      expect({ stdout, exitCode }).toEqual({ stdout: "exit\n", exitCode: 1 });
+    });
+
+    it("the throw of an entry that awaited an immediate", async () => {
+      const { stdout, stderr, exitCode } = await run(
+        `process.on("exit", () => console.log("exit"));`,
+        `await new Promise(resolve => setImmediate(resolve));
+         throw new Error("boom");`,
+      );
+      expect(stderr).toContain("error: boom");
+      expect({ stdout, exitCode }).toEqual({ stdout: "exit\n", exitCode: 1 });
+    });
+
+    // An immediate that throws leaves its ticks to the end of the batch. A cleared immediate behind it runs nothing.
+    it("the ticks of an immediate that throws in front of a cleared immediate", async () => {
+      expect(
+        await run(
+          `process.on("uncaughtException", () => console.log("caught"));
+           setImmediate(() => {
+             process.nextTick(() => { console.log("tick"); clearTimeout(keepAlive); });
+             throw new Error("boom");
+           });
+           clearImmediate(setImmediate(() => {}));`,
+        ),
+      ).toEqual({ stdout: "caught\ntick\n", stderr: "", exitCode: 0 });
+    });
+
+    // Node runs nothing after a fatal error. The timer is due when the immediate returns.
+    it("a throw in an immediate that is fatal, with a timer that is due", async () => {
+      const { stdout, stderr, exitCode } = await run(
+        `process.on("exit", () => console.log("exit"));
+         setImmediate(() => {
+           setTimeout(() => console.log("timer"), 1);
+           const due = performance.now() + 5;
+           while (performance.now() < due);
+           fail("throw");
+         });`,
+      );
+      expect(stderr).toContain("error: boom");
+      expect({ stdout, exitCode }).toEqual({ stdout: "exit\n", exitCode: 1 });
+    });
+
+    // A rejection is reported when the immediate that made it returns, as in Node.
+    // A handler that a later callback attaches comes after the report.
+    describe("a rejection in an immediate that gets its handler", () => {
+      const rejectThen = (handle, after = "") =>
+        `setImmediate(() => { const promise = globalThis.promise = Promise.reject(new Error("boom")); ${handle} });
+         ${after}`;
+      const late = [
+        ["in the next immediate of the batch", rejectThen("", `setImmediate(() => promise.catch(() => {}));`)],
+        ["in a timer", rejectThen(`setTimeout(() => promise.catch(() => {}), 1);`)],
+        ["in an fs callback", rejectThen(`fs.stat(".", () => promise.catch(() => {}));`)],
+        ["after an fs promise", rejectThen(`fs.promises.stat(".").then(() => promise.catch(() => {}));`)],
+      ];
+
+      it.each(late)("%s, and is fatal", async (_, script) => {
+        const { stdout, stderr, exitCode } = await run(`process.on("exit", () => console.log("exit")); ${script}`);
+        expect(stderr).toContain("error: boom");
+        expect({ stdout, exitCode }).toEqual({ stdout: "exit\n", exitCode: 1 });
+      });
+
+      it.each(late)("%s, and has listeners", async (_, script) => {
+        expect(
+          await run(
+            `process.on("unhandledRejection", () => console.log("unhandledRejection"));
+             process.on("rejectionHandled", () => { console.log("rejectionHandled"); clearTimeout(keepAlive); });
+             ${script}`,
+          ),
+        ).toEqual({ stdout: "unhandledRejection\nrejectionHandled\n", stderr: "", exitCode: 0 });
+      });
+
+      it.each([
+        ["in a microtask of the immediate", `queueMicrotask(() => promise.catch(handled));`],
+        ["in a tick of the immediate", `process.nextTick(() => promise.catch(handled));`],
+      ])("%s, and is not reported", async (_, handle) => {
+        expect(
+          await run(
+            `const handled = () => { console.log("handled"); clearTimeout(keepAlive); };
+             process.on("unhandledRejection", () => console.log("unhandledRejection"));
+             ${rejectThen(handle)}`,
+          ),
+        ).toEqual({ stdout: "handled\n", stderr: "", exitCode: 0 });
+      });
+    });
   });
 
   describe("process.onBeforeExit", () => {

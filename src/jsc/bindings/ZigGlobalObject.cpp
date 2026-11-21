@@ -1661,6 +1661,7 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
         // Whose rejection this is (a Bun.ModuleGraph's or the global object's) is
         // decided now, in the context it is rejected in, and travels with it.
         globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise, Bun::moduleGraphRejecting(globalObj));
+        Bun__VirtualMachine__noteRejectedPromise(globalObj->bunVM());
         break;
     case JSPromiseRejectionOperation::Handle:
         // Reported as unhandled before it got this handler: queue the rejectionHandled event.

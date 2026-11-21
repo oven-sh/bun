@@ -345,7 +345,7 @@ impl Vm for ThreadVm {
                             b"A promise never settled, and nothing is left to wait for.".to_vec()
                         );
                     }
-                    vm.auto_tick();
+                    vm.auto_tick(jsc::event_loop::WaitFor::Event);
                 }
                 returned = promise.result(global.vm());
                 if promise.status() == jsc::js_promise::Status::Rejected {

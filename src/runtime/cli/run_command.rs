@@ -13,6 +13,7 @@ use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::{self as core, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
+use bun_jsc::event_loop::{Turn, WaitFor};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, MainEntryPoint, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
@@ -1596,11 +1597,12 @@ impl Run<'_> {
             loop {
                 while vm.is_event_loop_alive() {
                     // After an unhandled error, only immediates keep the loop alive.
-                    vm.timers_ran_after_error
-                        .update(|ran| ran | (vm.unhandled_error_counter.get() > 0));
+                    let after_error = vm.unhandled_error_counter.get() > 0;
                     vm.tick();
                     vm.report_exception_in_hot_reloaded_module_if_needed();
-                    vm.auto_tick_active();
+                    let turn = vm.auto_tick_active(WaitFor::LoopAlive);
+                    vm.timers_ran_after_error
+                        .update(|ran| ran | (after_error && turn == Turn::Polled));
                 }
                 vm.on_before_exit();
                 vm.report_exception_in_hot_reloaded_module_if_needed();
@@ -1610,7 +1612,7 @@ impl Run<'_> {
         } else {
             while vm.is_event_loop_alive() {
                 vm.tick();
-                vm.auto_tick_active();
+                vm.auto_tick_active(WaitFor::LoopAlive);
             }
 
             if ctx.runtime_options.eval.eval_and_print {
@@ -1631,10 +1633,10 @@ impl Run<'_> {
                                     crate::generated_bindgen::hw_exports::Bun__onRejectEntryPointResult,
                                 );
                                 vm.tick();
-                                vm.auto_tick_active();
+                                vm.auto_tick_active(WaitFor::LoopAlive);
                                 while vm.is_event_loop_alive() {
                                     vm.tick();
-                                    vm.auto_tick_active();
+                                    vm.auto_tick_active(WaitFor::LoopAlive);
                                 }
                                 break 'brk result;
                             }
@@ -1661,7 +1663,7 @@ impl Run<'_> {
 
         vm.on_unhandled_rejection
             .set(Run::on_unhandled_rejection_before_close);
-        let _ = global.handle_rejected_promises();
+        let _ = vm.event_loop().report_rejected_promises();
         // The loop stopped on an uncaught error: Node's fatal-exception exit, not a drain.
         if vm.unhandled_error_counter.get() > 0 {
             vm.exit_handler.requested.set(true);

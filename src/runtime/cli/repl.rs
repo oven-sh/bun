@@ -23,6 +23,7 @@ use bun_core::strings;
 #[cfg(unix)]
 use bun_core::tty;
 use bun_core::{Environment, Output, env_var, fmt, identifier};
+use bun_jsc::event_loop::WaitFor;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
@@ -1106,7 +1107,8 @@ impl<'a> Repl<'a> {
             if jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending
                 && !SIGINT_DURING_WAIT.load(Ordering::Acquire)
             {
-                vm.event_loop().auto_tick();
+                vm.event_loop()
+                    .auto_tick(WaitFor::Promise(jsc::AnyPromise::Normal(promise)));
             }
         }
         false
@@ -1843,7 +1845,7 @@ impl<'a> Repl<'a> {
         vm.tick();
         while vm.is_event_loop_alive() {
             vm.tick();
-            vm.auto_tick_active();
+            vm.auto_tick_active(WaitFor::LoopAlive);
         }
 
         if print_result {

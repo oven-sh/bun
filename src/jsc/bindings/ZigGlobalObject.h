@@ -89,6 +89,7 @@ extern "C" void Bun__reportError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 extern "C" void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
+extern "C" void Bun__VirtualMachine__noteRejectedPromise(void* /* BunVM */);
 
 #if OS(WINDOWS)
 #include <uv.h>
@@ -321,7 +322,11 @@ public:
 
     void handleRejectedPromises();
     size_t holdRejectedPromises() { return m_aboutToBeNotifiedRejectedPromises.hold(this); }
-    void releaseRejectedPromises(size_t mark) { m_aboutToBeNotifiedRejectedPromises.release(this, mark); }
+    void releaseRejectedPromises(size_t mark)
+    {
+        m_aboutToBeNotifiedRejectedPromises.release(this, mark);
+        Bun__VirtualMachine__noteRejectedPromise(m_bunVM);
+    }
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const

@@ -6,7 +6,7 @@
 //! `bun_runtime` types and are hoisted to that tier via link-time
 //! `extern "Rust"` (`__bun_tick_queue_with_count` / `__bun_run_immediate_task`);
 //! `auto_tick`/`auto_tick_active` likewise
-//! dispatch through `virtual_machine::RuntimeHooks` (need `Timer::All` for the
+//! dispatch through `virtual_machine::RuntimeHooks::loop_turn` (needs `Timer::All` for the
 //! poll deadline). See PORTING.md §Dispatch.
 
 use core::cell::{Cell, OnceCell, UnsafeCell};
@@ -239,6 +239,67 @@ pub enum TopLevelWaitError {
     Stopped,
     #[error("the event loop is empty, so nothing can settle it anymore")]
     NothingLeft,
+}
+
+/// What the caller of one turn of the loop ([`EventLoop::auto_tick`], [`EventLoop::auto_tick_active`])
+/// waits for. The turn runs the immediates, which are script, and then polls. A poll that sleeps once
+/// the wait is over keeps the caller from seeing that it is, so the turn returns in its place.
+#[derive(Clone, Copy)]
+pub enum WaitFor {
+    /// Something that only the loop delivers. The turn sleeps until the loop has an event.
+    Event,
+    /// `while vm.is_event_loop_alive()`. Over once an unhandled error has ended the run.
+    LoopAlive,
+    /// Over once the promise has settled.
+    Promise(jsc::AnyPromise),
+    /// [`Self::Promise`] for the entry point's top-level await, which also ends with the run.
+    PromiseOrRunEnd(jsc::AnyPromise),
+    /// A condition that any script can change. Over after every batch of immediates, for the caller to look.
+    Recheck,
+}
+
+impl WaitFor {
+    /// Runs no script. The turn has read what is queued, and sleeps on anything that script queues here.
+    pub fn is_over(self, vm: &VirtualMachine, immediates: ImmediatesRan) -> bool {
+        match self {
+            Self::Event => false,
+            // The caller's `tick()` is that checkpoint.
+            _ if immediates.owes_checkpoint => true,
+            Self::LoopAlive => vm.is_run_over(),
+            Self::Promise(promise) => promise.status() != PromiseStatus::Pending,
+            Self::PromiseOrRunEnd(promise) => {
+                promise.status() != PromiseStatus::Pending || vm.is_run_over()
+            }
+            Self::Recheck => immediates.any,
+        }
+    }
+}
+
+/// What [`EventLoop::tick_immediate_tasks`] ran.
+#[derive(Clone, Copy, Default)]
+pub struct ImmediatesRan {
+    /// The batch had an immediate.
+    pub any: bool,
+    /// The batch ran beneath script, where the exit of a callback is no microtask checkpoint.
+    pub owes_checkpoint: bool,
+}
+
+/// What one turn of the loop did after the immediates.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Turn {
+    /// It polled and ran the timers that were due.
+    Polled,
+    /// Its caller's wait was over.
+    Skipped,
+}
+
+/// The entry point of a turn. `RuntimeHooks::loop_turn` has one body for both.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TurnKind {
+    /// [`EventLoop::auto_tick`]
+    AutoTick,
+    /// [`EventLoop::auto_tick_active`]
+    AutoTickActive,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -496,14 +557,50 @@ impl EventLoop {
         self.drain_microtasks_with_global(global, jsc_vm)
     }
 
+    /// Whether the exit of a callback that the loop runs now is a microtask checkpoint: not
+    /// beneath script, not in the deferred task queue, and not on a loop that leaves script alone.
+    #[inline]
+    pub fn checkpoints_here(&self) -> bool {
+        let vm = self.vm_ref();
+        self.entered_event_loop_count.get() == 0
+            && !vm.is_inside_deferred_task_queue.get()
+            && !vm.suppress_microtask_drain.get()
+    }
+
     // should be called after exit()
     pub fn maybe_drain_microtasks(&self) -> Result<(), Stopped> {
-        if self.entered_event_loop_count.get() == 0
-            && !self.vm_ref().is_inside_deferred_task_queue.get()
-        {
+        if self.checkpoints_here() {
             return self.drain_microtasks();
         }
         Ok(())
+    }
+
+    /// Reports the promises that were rejected and still have no handler. One load when none was rejected.
+    #[inline]
+    pub fn report_rejected_promises(&self) -> JsResult<()> {
+        if self.vm_ref().has_rejected_promises.get() {
+            return self.report_rejected_promises_slow();
+        }
+        Ok(())
+    }
+
+    /// [`report_rejected_promises`](Self::report_rejected_promises) behind a callback of the loop
+    /// that has had its checkpoint, as node's `processTicksAndRejections`. Beneath script the
+    /// handler can still be in a microtask that did not run.
+    #[inline]
+    pub fn report_rejected_promises_after_checkpoint(&self) {
+        if self.vm_ref().has_rejected_promises.get() && self.checkpoints_here() {
+            let _ = self.report_rejected_promises_slow();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn report_rejected_promises_slow(&self) -> JsResult<()> {
+        self.vm_ref().has_rejected_promises.set(false);
+        // The listeners are script: a callback that one of them makes does not run their ticks in the middle of them.
+        let _entered = self.enter_scope_without_checkpoint();
+        self.global_ref().handle_rejected_promises()
     }
 
     /// `run_callback*`'s way in: whether a callback may be called at all, and if so the scope it
@@ -817,9 +914,7 @@ impl EventLoop {
                 }
                 refills += 1;
                 self.tick_concurrent();
-                self.global_ref()
-                    .handle_rejected_promises()
-                    .map_err(|_| Stopped)?;
+                self.report_rejected_promises().map_err(|_| Stopped)?;
             }
             self.drain_microtasks_with_global(global, global_vm)?;
             if scope.has_exception() {
@@ -847,9 +942,7 @@ impl EventLoop {
             self.tick_concurrent();
         }
 
-        self.global_ref()
-            .handle_rejected_promises()
-            .map_err(|_| Stopped)
+        self.report_rejected_promises().map_err(|_| Stopped)
     }
 
     /// Tick the task queue without draining microtasks afterward.
@@ -1034,24 +1127,27 @@ impl EventLoop {
     /// Note: the real `ImmediateObject` lives in `bun_runtime` (cycle), so
     /// the per-task body dispatches through `__bun_run_immediate_task` (link-
     /// time, definer in `bun_runtime`). The swap always happens — this is
-    /// load-bearing for `auto_tick`'s `has_pending_immediate` read, which must
+    /// load-bearing for the turn's `has_pending_immediate` read, which must
     /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
     /// un-drained current batch (busy-spin hazard).
-    pub fn tick_immediate_tasks(&self) {
+    pub fn tick_immediate_tasks(&self) -> ImmediatesRan {
         let virtual_machine = self.vm_ref();
         let mut to_run_now = self
             .immediate_tasks
             .replace(self.next_immediate_tasks.take());
+        let any = !to_run_now.is_empty();
 
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
             // SAFETY: the queue holds a ref on each, which `__bun_run_immediate_task` consumes.
-            exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+            exception_thrown |= unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
 
-        // make sure microtasks are drained if the last task had an exception
-        if exception_thrown {
-            let _ = self.maybe_drain_microtasks();
+        // An immediate that throws leaves its checkpoint to the end of the batch.
+        let checkpoints_here = self.checkpoints_here();
+        if exception_thrown && checkpoints_here {
+            let _ = self.drain_microtasks();
+            self.report_rejected_promises_after_checkpoint();
         }
 
         if to_run_now.capacity() > 1024 * 128 {
@@ -1063,6 +1159,13 @@ impl EventLoop {
 
         // Frees the buffer that a nested call left here.
         self.next_immediate_tasks.set(to_run_now);
+
+        ImmediatesRan {
+            any,
+            owes_checkpoint: any
+                && !checkpoints_here
+                && !virtual_machine.suppress_microtask_drain.get(),
+        }
     }
 
     pub fn ensure_waker(&self) {
@@ -1087,22 +1190,19 @@ impl EventLoop {
         self.vm_ref().gc_controller.perform_gc(false);
     }
 
-    /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,
-    /// which dispatches to the `bun_runtime` hook (needs `Timer::All` for the
-    /// poll timeout). The body lives in `bun_runtime::jsc_hooks::auto_tick`.
+    /// `eventLoop().autoTick()`: one turn of the loop after `tick()`. Bounces through
+    /// `VirtualMachine::auto_tick` to the `bun_runtime` hook (needs `Timer::All` for the
+    /// poll timeout). The body is `bun_runtime::jsc_hooks::loop_turn`.
     #[inline]
-    pub fn auto_tick(&self) {
-        self.vm_ref().auto_tick();
+    pub fn auto_tick(&self, wait: WaitFor) -> Turn {
+        self.vm_ref().auto_tick(wait)
     }
 
-    /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick) but
-    /// only sleeps in the uSockets loop while it has active handles.
-    /// Dispatches through
-    /// `VirtualMachine::auto_tick_active` → `RuntimeHooks::auto_tick_active`
-    /// (body lives in `bun_runtime::jsc_hooks` — needs `Timer::All`).
+    /// `eventLoop().autoTickActive()`: [`auto_tick`](Self::auto_tick) without the imminent GC
+    /// timer and without the report of rejected promises at its end.
     #[inline]
-    pub fn auto_tick_active(&self) {
-        self.vm_ref().auto_tick_active();
+    pub fn auto_tick_active(&self, wait: WaitFor) -> Turn {
+        self.vm_ref().auto_tick_active(wait)
     }
 
     /// Ticks until `promise` settles. `Err` when it returns with the promise
@@ -1127,7 +1227,27 @@ impl EventLoop {
             }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
-                self.auto_tick();
+                self.auto_tick(WaitFor::Promise(promise));
+            }
+        }
+        Ok(())
+    }
+
+    /// [`wait_for_promise`](Self::wait_for_promise) for the entry point, with no script beneath it.
+    /// An unhandled error that ends the run ends this wait too: the run loop follows it, and exits.
+    pub fn wait_for_entry_point(&self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+        let vm = self.vm_ref();
+        let jsc_vm = vm.jsc_vm();
+        while promise.status() == PromiseStatus::Pending && !vm.is_run_over() {
+            if jsc_vm.execution_forbidden()
+                || !vm.script_allowed()
+                || self.global_ref().has_pending_termination_exception()
+            {
+                return Err(jsc::Stopped);
+            }
+            self.tick();
+            if promise.status() == PromiseStatus::Pending {
+                self.auto_tick(WaitFor::PromiseOrRunEnd(promise));
             }
         }
         Ok(())
@@ -1136,10 +1256,11 @@ impl EventLoop {
     /// With nothing keeping the loop alive, `auto_tick` only polls, so a caller that keeps waiting would spin. This sleeps.
     pub fn auto_tick_asleep(&self) {
         if self.vm_ref().is_event_loop_alive_despite_errors() {
-            return self.auto_tick();
+            self.auto_tick(WaitFor::Recheck);
+            return;
         }
         self.ref_keep_alive();
-        self.auto_tick();
+        self.auto_tick(WaitFor::Recheck);
         self.unref_keep_alive();
     }
 
@@ -1371,7 +1492,7 @@ impl EventLoop {
                 // Nothing in flight can settle the load; let spin() decide.
                 break;
             }
-            self.auto_tick();
+            self.auto_tick(WaitFor::Promise(promise));
         }
     }
 }
@@ -1457,8 +1578,8 @@ bun_event_loop::link_impl_JsEventLoop! {
         uws_loop() => (*this).usockets_loop(),
         event_loop_ctx() => (*this).event_loop_ctx(),
         tick() => (*this).tick(),
-        auto_tick() => (*this).auto_tick(),
-        auto_tick_active() => (*this).auto_tick_active(),
+        auto_tick() => { (*this).auto_tick(WaitFor::Event); },
+        auto_tick_active() => { (*this).auto_tick_active(WaitFor::Event); },
         global_object() => (*this).global.get().map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
         bun_vm() => (*this).virtual_machine.as_ptr().cast(),
         enter() => (*this).enter(),

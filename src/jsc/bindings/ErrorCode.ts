@@ -13,6 +13,10 @@ type ErrorCodeMapping = Array<
 >;
 
 const errors: ErrorCodeMapping = [
+  ["ERR_INVALID_PACKAGE_CONFIG", Error],
+  ["ERR_PACKAGE_PATH_NOT_EXPORTED", Error],
+  ["ERR_PACKAGE_IMPORT_NOT_DEFINED", TypeError],
+  ["ERR_INVALID_PACKAGE_TARGET", Error],
   ["ABORT_ERR", Error, "AbortError"],
   ["ERR_ACCESS_DENIED", Error],
   ["ERR_AMBIGUOUS_ARGUMENT", TypeError],

@@ -3,6 +3,87 @@ import { join } from "path";
 import { bunEnv, bunExe, fakeNodeRun, isMacOS, isWindows, tempDir } from "../../harness";
 
 describe("fake node cli", () => {
+  test("passes arguments after an eval script to the script", () => {
+    const print = "JSON.stringify(process.argv.slice(1))";
+    const log = `console.log(${print})`;
+    const forms = [
+      ["-e", log],
+      [`--eval=${log}`],
+      ["--eval", log],
+      ["-p", print],
+      [`--print=${print}`],
+      ["--print", print],
+    ];
+    for (const args of forms) {
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "--bun", "node", ...args, "foo", "bar"],
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString().trim()).toBe('[\"foo\",\"bar\"]');
+      expect(exitCode).toBe(0);
+    }
+  });
+  test("finds node after bun's own flags", () => {
+    using dir = tempDir("fake-node", { "index.js": `console.log("ran")` });
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--bun", "--cwd", String(dir), "node", "index.js"],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("ran");
+    expect(exitCode).toBe(0);
+  });
+  test("skips a node option instead of using it as the file", () => {
+    using dir = tempDir("fake-node", { "index.js": `console.log("ran")` });
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--bun", "node", "--inspect", "index.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("ran");
+    expect(exitCode).toBe(0);
+  });
+  test("runs an explicitly empty eval script", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--bun", "node", "-e", ""],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("");
+    expect(exitCode).toBe(0);
+  });
+  test("rejects an eval option with no value", () => {
+    const { stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--bun", "node", "-e"],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString()).toContain("--eval");
+    expect(exitCode).not.toBe(0);
+  });
+  test("reads a script from stdin with -", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--bun", "node", "-"],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdin: Buffer.from(`console.log("stdin")`),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("stdin");
+    expect(exitCode).toBe(0);
+  });
   test("the node cli actually works", () => {
     using temp = tempDir("fake-node", {
       "index.ts": "console.log(Bun.version)",

@@ -132,17 +132,11 @@ pub(crate) fn arguments_before(command: &[u8]) -> Vec<&'static [u8]> {
     args
 }
 
-/// `bun --cwd <dir> lint`: the command, which comes after the flags of `bun` and their values.
-#[cold]
-#[inline(never)]
-pub(crate) fn command_after_flags() -> Option<&'static [u8]> {
+/// The first argument that is neither a flag of `bun` nor the value of one:
+/// the command, `node`, or what to run.
+pub(crate) fn first_word() -> Option<&'static [u8]> {
     let args: Vec<&'static [u8]> = bun_core::argv().into_iter().collect();
-    let is_command = |arg: &&[u8]| matches!(*arg, b"check" | b"lint" | b"fmt" | b"compile");
-    if !args.iter().any(is_command) {
-        return None;
-    }
-    let word = args.get(place_of_first_word(&args)?)?;
-    is_command(word).then_some(*word)
+    place_of_first_word(&args).map(|at| args[at])
 }
 
 /// Whether `arg` asks `bun <command>` about itself, so it isn't passed to the project's own `command`.

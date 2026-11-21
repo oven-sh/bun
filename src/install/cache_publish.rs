@@ -50,12 +50,14 @@ impl<'a> StagedEntry<'a> {
         let mut attempts = 0;
         let mut emptying_err: Option<sys::Error> = None;
         loop {
+            crate::error::check_memory()?;
             // `rename` only replaces an empty directory, so it never replaces a published folder.
             let Err(err) = retry.rename(self.parent, self.name, cache_dir, to) else {
                 self.renamed = true;
                 return Ok(None);
             };
             attempts += 1;
+            let _ = sys::check_memory_of_thread();
             // Nothing below can remove a published folder, even one that appears in the meantime.
             match cache.open_at_with(to.as_bytes(), O::RDONLY | O::CLOEXEC | O::NOFOLLOW) {
                 Ok(published) if is_complete(&published) => return Ok(Some(published)),
@@ -66,6 +68,7 @@ impl<'a> StagedEntry<'a> {
                 }
                 // Emptied through its own handle. `rmdir` only removes an empty folder.
                 Ok(incomplete) => {
+                    sys::check_memory_of_thread()?;
                     emptying_err = incomplete.delete_children().err();
                     drop(incomplete);
                     let _ = sys::rmdirat(cache_dir, to);

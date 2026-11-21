@@ -132,6 +132,31 @@ describe.skipIf(skip)("fetch() under injected syscall faults (http)", () => {
     expect(["ECONNREFUSED", "FailedToOpenSocket", "ConnectionRefused"]).toContain(r.code);
   });
 
+  test.each([
+    ["recv", "ENOBUFS"],
+    ["recv", "ENOMEM"],
+    ["connect", "ENOBUFS"],
+    ["connect", "ENOMEM"],
+  ] as const)("%s → %s rejects with that code", async (syscall, errno) => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    const r = await runClientFetch(`http://localhost:${server.port}/`, { syscall, action: "errno", errno, repeat: -1 });
+    expect(r).toMatchObject({ ok: false, code: errno, signal: null, exitCode: 0 });
+  });
+
+  test.each([
+    ["Connection: close\r\n\r\nx", { ok: false, code: "ENOMEM" }],
+    ["Transfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n", { ok: true, length: 1 }],
+  ])("recv → ENOMEM behind %j", async (response, expected) => {
+    using server = Bun.listen({
+      port: 0,
+      hostname: "127.0.0.1",
+      socket: { data: socket => void socket.end("HTTP/1.1 200 OK\r\n" + response) },
+    });
+    const rule = { syscall: "recv", action: "errno", errno: "ENOMEM", after: 1, repeat: -1 } as const;
+    const r = await runClientFetch(`http://127.0.0.1:${server.port}/`, rule);
+    expect(r).toMatchObject({ ...expected, signal: null, exitCode: 0 });
+  });
+
   test("recv → 0 (peer closed) before any byte rejects cleanly (no hang)", async () => {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(Buffer.alloc(1024)) });
     const r = await runClientFetch(server.url.href, { syscall: "recv", action: "zero", repeat: -1 });
@@ -324,4 +349,37 @@ describe.skipIf(skip)("fetch() seeded short-I/O fuzz", () => {
       expect(r).toMatchObject({ ok: true, status: 200, length: body.length, signal: null, exitCode: 0 });
     }
   });
+});
+
+test.skipIf(skip)("a native stream without memory for a part of the body", async () => {
+  using dir = tempDir("byte-stream-buffer-fault", {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "byte-stream-buffer-fault-fixture.ts")],
+    env: { ...bunEnv, OUT: join(String(dir), "out") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout + stderr).toMatchInlineSnapshot(`
+    "a read() with less room than the part needs: OutOfMemory
+    a read() with less room than the last part needs: OutOfMemory
+    a read() with less room than the part of a download needs: OutOfMemory
+    a read() with less room than the last part of a download needs: OutOfMemory
+    a sink that is not ready: OutOfMemory
+    a later text(): OutOfMemory
+    a later read(): OutOfMemory
+    a later clone(): OutOfMemory
+    a later Bun.write(): OutOfMemory
+    a later HTMLRewriter: OutOfMemory
+    a second upload: OutOfMemory
+    a later Bun.spawn(): OutOfMemory
+    a later text() of an upload that went on: OutOfMemory
+    a later text() of a download: OutOfMemory
+    a later text() of a rewrite: The memory limit has been exceeded.
+    a later text() of a rewrite whose handler waits, and still has its element: The memory limit has been exceeded.
+    a later text() of a rewrite whose handler throws: thrown
+    a worker that exits when its rewrite cancels the input: 3
+    "
+  `);
+  expect(exitCode).toBe(0);
 });

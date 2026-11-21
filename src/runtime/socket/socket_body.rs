@@ -1897,24 +1897,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// without injection.
     fn create_dispatch_buffer(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
         #[cfg(socket_fault_injection)]
-        {
-            let mut out: isize = 0;
-            let mut clamp: c_int = 0;
-            // Deliberately skips `US_FAULT_CHECK`'s `us_fault_armed` fast-path
-            // load: session/keylog dispatch is a few calls per connection, not
-            // a per-packet hot path, so the unarmed-case lock is fine.
-            // SAFETY: `out`/`clamp` are valid for the duration of the call.
-            if unsafe {
-                bun_uws_sys::fault_inject::us_fault_hit(
-                    bun_uws_sys::fault_inject::SESSION_BUFFER,
-                    -1,
-                    &mut out,
-                    &mut clamp,
-                )
-            } != 0
-            {
-                return Err(global.throw_out_of_memory());
-            }
+        if bun_uws_sys::fault_inject::fails(bun_uws_sys::fault_inject::SESSION_BUFFER) {
+            return Err(global.throw_out_of_memory());
         }
         JSValue::create_buffer_from_length(global, len)
     }
@@ -4609,6 +4593,7 @@ pub(crate) mod testing_apis {
                 Syscall::PollStart => fi::POLL_START,
                 Syscall::SessionBuffer => fi::SESSION_BUFFER,
                 Syscall::SslWrite => fi::SSL_WRITE,
+                Syscall::ByteStreamBuffer => fi::BYTE_STREAM_BUFFER,
             };
 
             let action: c_int = match rule.action {
@@ -4670,19 +4655,21 @@ pub(crate) mod testing_apis {
                 )));
             }
 
-            // ssl_loop_buffer/session_buffer are allocations, not socket
+            // The buffers are allocations, not socket
             // operations: their hooks pass fd = -1, so a rule pinned to a
             // descriptor would arm and then silently never fire.
             let target_fd = rule.fd.unwrap_or(-1);
-            if (syscall == fi::SSL_LOOP_BUFFER || syscall == fi::SESSION_BUFFER) && target_fd != -1
+            let buffer = match syscall {
+                fi::SSL_LOOP_BUFFER => Some("ssl_loop_buffer"),
+                fi::SESSION_BUFFER => Some("session_buffer"),
+                fi::BYTE_STREAM_BUFFER => Some("byte_stream_buffer"),
+                _ => None,
+            };
+            if let Some(buffer) = buffer
+                && target_fd != -1
             {
                 return Err(global.throw(format_args!(
-                    "rule.fd is not supported for syscall \"{}\"",
-                    if syscall == fi::SSL_LOOP_BUFFER {
-                        "ssl_loop_buffer"
-                    } else {
-                        "session_buffer"
-                    }
+                    "rule.fd is not supported for syscall \"{buffer}\""
                 )));
             }
 

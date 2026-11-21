@@ -1,11 +1,30 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { once } from "events";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
+import {
+  appendFileSync,
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { access, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
+  isASAN,
+  isGlibcVersionAtLeast,
+  isLinux,
+  isMacOS,
+  isWindows,
   readdirSorted,
   tempDir,
   tls,
@@ -15,8 +34,10 @@ import {
   toHaveBins,
 } from "harness";
 import { connect, createServer, type AddressInfo } from "net";
+import { constants } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
+import { brotliCompressSync, constants as zlib } from "zlib";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -1210,6 +1231,881 @@ describe.concurrent("a tarball that cannot be installed", () => {
       }
     }
   }
+});
+
+describe.concurrent("an optional dependency for which there is no memory", () => {
+  const CAP = 8;
+  const long = () => Buffer.alloc(1.5 * CAP * 1024 * 1024, "a").toString();
+  const manifestOf = (name: string, more?: object) => JSON.stringify({ name, version: "1.0.0", ...more });
+  const tarball = async (files: Record<string, string>, level: 0 | 1) =>
+    Bun.gzipSync(await new Bun.Archive(files).bytes(), { level });
+  const shortTarball = (more?: object) =>
+    tarball(
+      {
+        "package/package.json": manifestOf("bar", { bin: "cli.js", ...more }),
+        "package/cli.js": "",
+        // More than one read from a socket takes.
+        "package/lib/a": Buffer.alloc(600_000, "a").toString(),
+      },
+      0,
+    );
+  const longTarball = () => tarball({ "package/package.json": manifestOf("bar"), "package/long": long() }, 0);
+  const scannerTarball = () =>
+    tarball(
+      {
+        "package/package.json": manifestOf("scanner"),
+        "package/index.js": `exports.scanner = { version: "1", scan: async () => [] }`,
+      },
+      1,
+    );
+  const encoders = {
+    identity: (bytes: Buffer) => bytes,
+    gzip: (bytes: Buffer) => Bun.gzipSync(bytes, { level: 1 }),
+    br: (bytes: Buffer) => brotliCompressSync(bytes, { params: { [zlib.BROTLI_PARAM_QUALITY]: 1 } }),
+    zstd: (bytes: Buffer) => Bun.zstdCompressSync(bytes),
+  };
+
+  function project(files: Record<string, string | Uint8Array> = {}, spec = "^1.0.0", linker = "hoisted") {
+    const served = {
+      long: undefined as "manifest" | "manifest once" | "full manifest" | "old version" | "tarball" | undefined,
+      encoding: "identity" as keyof typeof encoders,
+    };
+    const registry = Bun.serve({
+      port: 0,
+      // One of the two addresses of localhost.
+      hostname: "127.0.0.1",
+      async fetch({ url, headers }) {
+        if (url.endsWith("/never")) return new Promise<Response>(() => {});
+        if (url.endsWith("/scanner-1.0.0.tgz")) return new Response(await scannerTarball());
+        if (url.endsWith(".tgz")) return new Response(await (served.long === "tarball" ? longTarball : shortTarball)());
+        const name = decodeURIComponent(new URL(url).pathname.slice(1));
+        const version = (version: string, tarball: string) => ({
+          name,
+          version,
+          ...(name === "scanner" ? { optionalDependencies: { bar: "1.0.0" } } : { bin: { bar: "cli.js" } }),
+          dist: { tarball },
+        });
+        const isFull = !headers.get("Accept")!.includes("install-v1");
+        const manifest = JSON.stringify({
+          name,
+          readme: served.long?.startsWith("manifest") || (served.long === "full manifest" && isFull) ? long() : "",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "0.0.1": version("0.0.1", url + (served.long === "old version" ? long() : "")),
+            "1.0.0": version("1.0.0", url + "-1.0.0.tgz"),
+          },
+        });
+        if (served.long === "manifest once") served.long = undefined;
+        return new Response(encoders[served.encoding](Buffer.from(manifest)), {
+          headers: { "Content-Encoding": served.encoding },
+        });
+      },
+    });
+    const port = String(registry.port);
+    const url = `http://localhost:${port}/`;
+    const dir = tempDir("no-memory", {
+      "package.json": JSON.stringify({ name: "foo", optionalDependencies: { bar: spec.replace("PORT", port) } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { cache: "./.bun-cache", registry: url, linker } }),
+      ...files,
+    });
+    const saved = () =>
+      ["bun.lock", "package.json"]
+        .map(name => join(String(dir), name))
+        .map(path => existsSync(path) && readFileSync(path, "utf8"))
+        .join();
+    async function run(args: string[], more?: Record<string, string>, launcher: string[] = []) {
+      await using proc = spawn({
+        cmd: [...launcher, bunExe(), ...args.map(arg => arg.replace("PORT", port))],
+        cwd: String(dir),
+        env: {
+          ...env,
+          BUN_INSTALL_CACHE_DIR: undefined,
+          BUN_CONFIG_HTTP_RETRY_COUNT: "1",
+          BUN_CONFIG_HTTP_RETRY_BACKOFF: "0",
+          BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1",
+          ...gitEnv,
+          ...more,
+        },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const lines = err.replaceAll(":" + port, ":PORT").split("\n");
+      return { said: lines.filter(line => /^(error|warn|E[A-Z]+):/.test(line)), exitCode };
+    }
+    return {
+      served,
+      url,
+      path: (...parts: string[]) => join(String(dir), ...parts),
+      run,
+      async prepare(...args: string[]) {
+        expect(await run(args)).toEqual({ said: [], exitCode: 0 });
+      },
+      async withoutMemory(
+        args = ["install"],
+        more: Record<string, string> = {
+          ASAN_OPTIONS: [env.ASAN_OPTIONS, "allocator_may_return_null=1", `max_allocation_size_mb=${CAP}`]
+            .filter(Boolean)
+            .join(":"),
+        },
+        launcher?: string[],
+      ) {
+        const before = saved();
+        const result = await run(args, more, launcher);
+        return { ...result, saved: saved() === before ? "nothing" : "something" };
+      },
+      [Symbol.dispose]() {
+        registry.stop(true);
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+  const writeYarnLock = (app: ReturnType<typeof project>) =>
+    writeFileSync(
+      app.path("yarn.lock"),
+      `# yarn lockfile v1\n\nbar@^1.0.0:\n  version "1.0.0"\n  resolved "${app.url}bar-1.0.0.tgz"\n`,
+    );
+  const gitEnv = { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
+  async function fromGit(paths: string[], manifest = manifestOf("bar"), linker?: string) {
+    const app = project({}, undefined, linker);
+    const commit = `blob\nmark :1\ndata ${manifest.length}\n${manifest}\ncommit refs/heads/main\ncommitter a <a@a> 0 +0000\ndata 0\n`;
+    const input = new Response(commit + paths.map(path => `M 100644 :1 ${path}\n`).join(""));
+    const repo = app.path("repo");
+    await Bun.$`git init -q --bare -b main ${repo} && git -C ${repo} fast-import --quiet < ${input}`.env({
+      ...env,
+      ...gitEnv,
+    });
+    const bar = "git+" + pathToFileURL(repo);
+    writeFileSync(app.path("package.json"), JSON.stringify({ name: "foo", optionalDependencies: { bar } }));
+    return app;
+  }
+  const root = (more: object) => JSON.stringify({ name: "foo", ...more });
+  const fromFile = async (more?: object, files?: Record<string, string>) =>
+    project({
+      "package.json": root({ optionalDependencies: { bar: "file:./bar.tgz" }, trustedDependencies: ["bar"] }),
+      "bar.tgz": await shortTarball(more),
+      ...files,
+    });
+  const ENOMEM = `ENOMEM: ${isMacOS ? "Out of memory" : "Cannot allocate memory"}`;
+  const fails = (call: string, ...said: string[]) => ({
+    said: [...said, `${ENOMEM}: could not finish (${call})`],
+    exitCode: 1,
+    saved: "nothing",
+  });
+
+  describe.skipIf(!isASAN)("fails the install", () => {
+    const withoutManifest = fails("recv", "error: OutOfMemory downloading package manifest bar");
+
+    it.each(Object.keys(encoders) as (keyof typeof encoders)[])("manifest, %s", async encoding => {
+      using app = project();
+      Object.assign(app.served, { long: "manifest", encoding });
+      expect(await app.withoutMemory()).toEqual(withoutManifest);
+    });
+
+    it("manifest, for `bun update`", async () => {
+      using app = project();
+      await app.prepare("install");
+      app.served.long = "manifest";
+      expect(await app.withoutMemory(["update"])).toEqual(withoutManifest);
+      expect(existsSync(app.path("node_modules", "bar", "package.json"))).toBeTrue();
+    });
+
+    it.each([
+      [["install"], withoutManifest],
+      [["install", "--silent"], fails("recv")],
+      [["pm", "migrate"], withoutManifest],
+    ])("manifest that completes a migrated lockfile, %j", async (args, expected) => {
+      using app = project();
+      writeYarnLock(app);
+      app.served.long = "manifest";
+      expect(await app.withoutMemory(args)).toEqual(expected);
+    });
+
+    it("manifest that says which libc it is for", async () => {
+      using app = project({ "package.json": root({ optionalDependencies: { "bar-linux-musl": "1.0.0" } }) });
+      app.served.long = "full manifest";
+      expect(await app.withoutMemory()).toEqual(
+        fails("recv", "error: OutOfMemory downloading package manifest bar-linux-musl"),
+      );
+    });
+
+    it("manifest in the cache, with --offline", async () => {
+      using app = project();
+      app.served.long = "old version";
+      await app.prepare("install", "--no-save");
+      expect(await app.withoutMemory(["install", "--offline"])).toEqual(fails("read"));
+    });
+
+    it.each([
+      ["hoisted", "without", "error: OutOfMemory downloading tarball bar@1.0.0"],
+      ["hoisted", "with", "error: OutOfMemory downloading tarball bar@1.0.0"],
+      ["isolated", "without", "error: OutOfMemory downloading tarball bar@1.0.0"],
+      ["isolated", "with", "error: failed to download bar@1.0.0: OutOfMemory"],
+    ])("tarball, %s, %s a lockfile", async (linker, lockfile, error) => {
+      using app = project({}, "^1.0.0", linker);
+      if (lockfile === "with") await app.prepare("install", "--lockfile-only");
+      rmSync(app.path(".bun-cache"), { recursive: true, force: true });
+      app.served.long = "tarball";
+      expect(await app.withoutMemory()).toEqual(fails("recv", error));
+    });
+
+    it.each([
+      ["1.0.0", fails("recv", "error: OutOfMemory downloading tarball bar@1.0.0")],
+      ["file:./bar.tgz", fails("read", "error: ENOMEM extracting tarball from bar")],
+    ])("tarball, without waiting for the other downloads: %s", async (bar, expected) => {
+      using app = project({
+        "package.json": root({ optionalDependencies: { bar, never: "1.0.0" } }),
+        "bar.tgz": await longTarball(),
+      });
+      app.served.long = "tarball";
+      expect(await app.withoutMemory()).toEqual(expected);
+    });
+
+    it.skipIf(!isLinux)("list of the files of a commit", async () => {
+      const folder = Buffer.alloc(201 * 15, Buffer.alloc(200, "a") + "/").toString();
+      using app = await fromGit(["package.json", ...Array.from({ length: CAP * 400 }, (_, i) => folder + i)]);
+      const { said, ...result } = await app.withoutMemory();
+      // Debug builds have a warning in front.
+      expect({ ...result, said: said.slice(-2) }).toEqual(
+        fails("read", "error: ENOMEM checking out repository for bar"),
+      );
+    });
+
+    it("packages of a migrated lockfile", async () => {
+      const packages = Object.fromEntries(Array.from({ length: CAP * 5000 }, (_, i) => ["node_modules/" + i, {}]));
+      using app = project({
+        "package-lock.json": JSON.stringify({ lockfileVersion: 3, packages: { "": {}, ...packages } }),
+      });
+      expect(await app.withoutMemory()).toEqual(fails("mmap"));
+    });
+
+    it.each(["bun.lock", "yarn.lock", ".env"])("%s", async name => {
+      using app = project({ [name]: long() });
+      expect(await app.withoutMemory()).toEqual(fails("read"));
+    });
+  });
+
+  it.skipIf(!isASAN)("is installed if there is at the next attempt", async () => {
+    using app = project();
+    app.served.long = "manifest once";
+    expect(await app.withoutMemory()).toEqual({ said: [], exitCode: 0, saved: "something" });
+    expect(existsSync(app.path("node_modules", "bar", "package.json"))).toBeTrue();
+  });
+
+  it.skipIf(!isASAN)("is installed if it is bun.lockb that asks for too much", async () => {
+    const lockfile = readFileSync(join(import.meta.dir, "fixtures", "invalid-optional-peer.lockb"));
+    // The number of packages.
+    lockfile.writeUInt32LE(0xffffff, lockfile.indexOf("-v0\n") + 4 + 4 + 32 + 8);
+    using app = project({ "bun.lockb": lockfile });
+    expect(await app.withoutMemory()).toMatchObject({ exitCode: 0 });
+    expect(existsSync(app.path("node_modules", "bar", "package.json"))).toBeTrue();
+  });
+
+  describe.skipIf(isWindows)("in another program", () => {
+    const withGit = (protocol: string, script: string, command = "clone") => {
+      const git = `#!/bin/sh\ncase " $* " in *" ${command} "*) ${script};; esac\nexec ${Bun.which("git")} "$@"\n`;
+      const app = project({ "bin/git": git }, `git+${protocol}://bar.invalid/bar`);
+      chmodSync(app.path("bin", "git"), 0o755);
+      return { ...app, install: () => app.withoutMemory(["install"], { PATH: app.path("bin") }) };
+    };
+    const byServer = [
+      "remote: fatal: Out of memory, malloc failed",
+      "fatal: remote error: out of memory",
+      "error: pack-objects died of signal 9",
+      "error: git-pack-objects died of signal 9",
+    ];
+    const withoutClone = (how: string) =>
+      fails(
+        "waitpid",
+        "warn: git failed with " + how,
+        'warn: "git clone" for "bar" failed',
+        "warn: InstallFailed cloning repository for bar",
+      );
+
+    it.skipIf(!isLinux).each([
+      ["clone", withoutClone("signal 9")],
+      ["config", fails("waitpid", "warn: git failed with signal 9", "warn: ENOMEM cloning repository for bar")],
+    ])("fails the install: git %s, killed", async (command, expected) => {
+      using app = withGit("ssh", "kill -9 $$", command);
+      expect(await app.install()).toEqual(expected);
+    });
+
+    const byGit = [
+      ["ssh", "error: index-pack died of signal 9"],
+      ["ssh", "error: unpack-objects died of signal 9"],
+      ["ssh", "fatal: fetch-pack: invalid index-pack output"],
+      ["ssh", "fatal: Out of memory, malloc failed"],
+      ["ssh", "fatal: mmap failed: Cannot allocate memory"],
+      ["ssh", "fatal: mmap failed: Not enough space"],
+      ...byServer.map(message => ["file", message]),
+    ].filter(([, message]) => isLinux || /memory|space/.test(message));
+    it.each(byGit)("fails the install: git over %s, %s", async (protocol, message) => {
+      using app = withGit(protocol, `[ "$LANGUAGE" = C ] && echo ${message} >&2; exit 128`);
+      const { said, ...result } = await app.install();
+      expect({ ...result, said: said.filter(line => line !== message) }).toEqual(withoutClone("exit code 128"));
+    });
+
+    it.each(byServer)("is left out if that is the server: %s", async message => {
+      using app = withGit("ssh", `echo ${message} >&2; exit 128`);
+      expect(await app.install()).toMatchObject({ exitCode: 0 });
+    });
+
+    it.each(["fatal: early EOF", "error: inflate: data stream error", "remote: fatal: bad object"])(
+      "is left out if there is a reason for what index-pack leaves: %s",
+      async reason => {
+        using app = withGit("ssh", `(echo ${reason}; echo fatal: fetch-pack: invalid index-pack output) >&2; exit 128`);
+        expect(await app.install()).toMatchObject({ exitCode: 0 });
+      },
+    );
+
+    it("is installed if there is for another protocol", async () => {
+      using from = await fromGit(["package.json"]);
+      using app = withGit("ssh", `case "$*" in *https:*) kill -9 $$;; esac`);
+      const result = await app.withoutMemory(["install"], {
+        PATH: app.path("bin"),
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: `url.${pathToFileURL(from.path("repo"))}.insteadOf`,
+        GIT_CONFIG_VALUE_0: "ssh://bar.invalid/bar",
+      });
+      expect(result).toEqual({ said: [], exitCode: 0, saved: "something" });
+      expect(existsSync(app.path("node_modules", "bar", "package.json"))).toBeTrue();
+    });
+
+    /** `parent` waits for the script of `bar`. */
+    async function withScript(script: string, linker: string, group = "optionalDependencies") {
+      const peer = { peerDependencies: { bar: "*" }, peerDependenciesMeta: { bar: { optional: true } } };
+      const files = {
+        "package.json": root({
+          devDependencies: { parent: "file:./parent.tgz" },
+          [group]: { bar: "file:./bar.tgz" },
+          trustedDependencies: ["bar"],
+        }),
+        "bar.tgz": await shortTarball({ scripts: { postinstall: `[ -n "$AGAIN" ] || ${script}` } }),
+        "parent.tgz": await tarball({ "package/package.json": manifestOf("parent", peer) }, 1),
+      };
+      return project(files, undefined, linker);
+    }
+
+    it.skipIf(!isLinux).each([
+      ["hoisted", "sh -c 'kill -9 $$' || exit $?", "exited with 137"],
+      ["isolated", "sh -c 'kill -9 $$' || exit $?", "exited with 137"],
+      ["isolated", "kill -9 $$", "terminated by SIGKILL (Forced quit)"],
+    ])("fails the install: a script, %s, %s", async (linker, script, how) => {
+      using app = await withScript(script, linker);
+      expect(await app.withoutMemory(["install"], {})).toEqual({
+        said: ['error: postinstall script from "bar" ' + how],
+        exitCode: 137,
+        saved: "nothing",
+      });
+      expect(await app.run(["install"], { AGAIN: "1" })).toEqual({ said: [], exitCode: 0 });
+      expect(existsSync(app.path("node_modules") + "/parent/../.bin/bar")).toBeTrue();
+    });
+
+    it("leaves the others in place if a script has another reason", async () => {
+      using app = await withScript("exit 3", "isolated", "dependencies");
+      expect(await app.withoutMemory(["install"], {})).toMatchObject({ exitCode: 3 });
+      expect(existsSync(app.path("node_modules", "parent", "package.json"))).toBeTrue();
+    });
+  });
+
+  function launcher() {
+    const dir = tempDir("fail-syscall", {});
+    afterAll(() => dir[Symbol.dispose]());
+    const path = join(String(dir), "fail-syscall");
+    const source = join(import.meta.dir, "fail-syscall-fixture.c");
+    const { exitCode, stderr } = Bun.spawnSync({ cmd: ["cc", "-o", path, source], env });
+    if (exitCode !== 0) {
+      if (/linux\/\w+\.h|SECCOMP_/.test(stderr.toString())) return;
+      throw new Error(stderr.toString());
+    }
+    const args = [String(constants.errno.ENOMEM), "open", import.meta.path, "0", "cat", import.meta.path];
+    if (Bun.spawnSync({ cmd: [path, ...args], env }).exitCode === 1) return path;
+  }
+  const failSyscall = isLinux && Bun.which("cc") ? launcher() : undefined;
+
+  type App = ReturnType<typeof project> & {
+    args?: string[];
+    env?: Record<string, string>;
+    /** What is there after the failure, and what is not. */
+    keeps?: string[];
+    lacks?: string[];
+    /** What is there once the command has run again. */
+    next?: string[];
+  };
+  const withoutCall = (app: App, failure: string) => {
+    const [errno, call, pattern, spared = "0"] = failure.split(" ");
+    return app.withoutMemory(app.args ?? ["install"], app.env ?? {}, [
+      failSyscall!,
+      String(constants.errno[errno]),
+      call,
+      pattern.replace("ROOT", app.path()),
+      spared,
+    ]);
+  };
+  async function after<T extends App>(app: T, args: string[], ...removed: string[]) {
+    await app.prepare(...args);
+    for (const path of removed) rmSync(app.path(path), { recursive: true });
+    return app;
+  }
+  const offline = async (app: App) => ({
+    ...(await after(app, ["install", "--no-save"], "node_modules")),
+    args: ["install", "--offline"],
+  });
+  const member = (at: string) => ({
+    [at + "/package.json"]: manifestOf("a", { optionalDependencies: { bar: "^1.0.0" } }),
+  });
+  /** The lockfile has `built`, which has a script, `patched`, which has a patch, and `bar`. */
+  async function several(linker: string, ...args: string[]) {
+    const manifest = manifestOf("built", { dependencies: { bar: "1.0.0", patched: "1.0.0" } });
+    const files = {
+      "package.json": root({
+        dependencies: { built: "file:./built.tgz", patched: "1.0.0" },
+        optionalDependencies: { bar: "1.0.0" },
+        trustedDependencies: ["built"],
+        patchedDependencies: { "patched@1.0.0": "patch" },
+      }),
+      "built.tgz": await tarball({ "package/package.json": manifest, "package/binding.gyp": "{}" }, 1),
+      "patch": "diff --git a/b b/b\nnew file mode 100644\n--- /dev/null\n+++ b/b\n@@ -0,0 +1 @@\n+b\n",
+    };
+    return {
+      ...(await after(project(files, undefined, linker), ["install", "--lockfile-only"])),
+      args: ["install", ...args],
+      // `touch rebuild`
+      env: { npm_config_node_gyp: "touch", PATH: "/usr/bin:/bin" },
+      next: ["node_modules/built/rebuild", "node_modules/patched/b", "node_modules/.bin/bar"],
+    };
+  }
+  async function withoutLinks(...names: string[]) {
+    const app = await after(await several("isolated"), ["install", "--ignore-scripts"]);
+    const beside = join(realpathSync(app.path("node_modules", "built")), "..");
+    for (const removed of [...names, ".bin"]) rmSync(join(beside, removed), { recursive: true });
+    writeFileSync(join(beside, "built", "edited"), "");
+    const kept = ["built/edited", "bar", "patched"].filter(name => !names.includes(name));
+    return {
+      ...app,
+      keeps: kept.map(name => "node_modules/built/../" + name),
+      next: ["node_modules/built/../.bin/bar"],
+    };
+  }
+  async function behindWorkspace(bar: string, ...removed: string[]) {
+    const files = {
+      "package.json": root({ workspaces: ["a"], optionalDependencies: { bar } }),
+      "a/package.json": manifestOf("a", { scripts: { postinstall: "touch built" } }),
+      "bar.tgz": await shortTarball(),
+    };
+    return { ...(await after(project(files), ["install", "--lockfile-only"], ...removed)), next: ["a/built"] };
+  }
+  /** By a name that is looked for before the first script runs. */
+  async function besideLink() {
+    const files = {
+      "package.json": root({
+        dependencies: { bash: "link:./a" },
+        optionalDependencies: { bar: "1.0.0" },
+        trustedDependencies: ["a", "bash"],
+      }),
+      "a/package.json": manifestOf("a", { scripts: { preinstall: "exit 0", postinstall: "touch built" } }),
+    };
+    const app = await after(project(files, undefined, "isolated"), ["install", "--ignore-scripts"], "node_modules");
+    return { ...app, next: ["a/built"] };
+  }
+  const globally = (app: App) => ({ BUN_INSTALL: app.path("global") });
+  const bundling = manifestOf("bar", { bundleDependencies: true });
+  const from = {
+    "a registry": () => project(),
+    "a registry, for `bun info`": () => ({ ...project(), args: ["info", "bar"] }),
+    "a registry, installed": async () => ({
+      ...(await after(project(), ["install"])),
+      keeps: ["node_modules/bar/cli.js"],
+    }),
+    "a registry, installed, isolated": async () => ({
+      ...(await after(project({}, undefined, "isolated"), ["install"])),
+      keeps: ["node_modules/bar/cli.js"],
+    }),
+    "a registry, into a folder that has to stay": () => ({
+      ...project({ "node_modules/bar/mine": "" }),
+      keeps: ["node_modules/bar/mine"],
+      next: ["node_modules/bar/package.json"],
+    }),
+    "a registry, installed and copied, isolated": async () => {
+      const app = await after(project({}, undefined, "isolated"), ["install"], "node_modules/bar");
+      mkdirSync(app.path("node_modules", "bar"));
+      for (const name of ["package.json", "edited"]) writeFileSync(app.path("node_modules", "bar", name), "");
+      return { ...app, keeps: ["node_modules/bar/edited"] };
+    },
+    "a registry, for `bun pm scan`": async () => {
+      const files = { "package.json": root({ devDependencies: { scanner: "1.0.0" } }) };
+      const app = await after(project(files), ["install", "--lockfile-only"]);
+      appendFileSync(app.path("bunfig.toml"), `\n[install.security]\nscanner = "scanner"\n`);
+      return { ...app, args: ["pm", "scan"] };
+    },
+    "a registry, for `bun prune`": async () => {
+      const files = { "package.json": root({ dependencies: { b: "1.0.0" }, devDependencies: { a: "1.0.0" } }) };
+      const app = await after(project(files), ["install"], "node_modules/.bin/bar");
+      symlinkSync("../a/cli.js", app.path("node_modules", ".bin", "bar"));
+      return { ...app, args: ["prune", "--production"] };
+    },
+    "files, for `bun remove --global`": async () => {
+      const withBin = (name: string) => shortTarball({ name, bin: { bar: "cli.js" } });
+      const app = project({ "a.tgz": await withBin("a"), "b.tgz": await withBin("b") });
+      await app.run(["add", "--global", "a@" + app.path("a.tgz"), "b@" + app.path("b.tgz")], globally(app));
+      return { ...app, args: ["remove", "--global", "a"], env: globally(app) };
+    },
+    "a registry, into the global store": () => ({
+      ...project({}, undefined, "isolated"),
+      env: { BUN_INSTALL_GLOBAL_STORE: "1" },
+      next: ["node_modules/.bun/bar@1.0.0/node_modules/.bin/bar"],
+    }),
+    "a registry, over what another linker installed": async () => {
+      const app = await after(project({}, undefined, "isolated"), ["install"], "node_modules");
+      mkdirSync(app.path("node_modules", "bar"), { recursive: true });
+      writeFileSync(app.path("node_modules", "bar", "package.json"), "");
+      return { ...app, next: ["node_modules/bar/cli.js"] };
+    },
+    "a registry, out of the global store": async () => {
+      const app = project({}, undefined, "isolated");
+      await app.run(["install"], { BUN_INSTALL_GLOBAL_STORE: "1" });
+      rmSync(app.path("node_modules", "bar", "lib", "a"));
+      return { ...app, keeps: ["node_modules/bar/package.json"], lacks: ["node_modules/bar/lib/a"] };
+    },
+    "a registry, as a copy, isolated": () => ({
+      ...project({}, undefined, "isolated"),
+      args: ["install", "--backend=copyfile"],
+    }),
+    "the cache": () => offline(project()),
+    "the cache, in place": async () => ({ ...(await offline(project())), next: ["node_modules/bar/lib/a"] }),
+    "several": () => several("hoisted"),
+    "several, isolated": () => several("isolated"),
+    "several, for `bun add`": async () => {
+      const app = await several("hoisted");
+      return { ...app, args: ["add", "patched@1.0.0"] };
+    },
+    "several, with --production": () => several("hoisted", "--production"),
+    "several, with --production, isolated": () => several("isolated", "--production"),
+    "several, without a cache, isolated": async () => {
+      const app = await several("isolated");
+      rmSync(app.path(".bun-cache"), { recursive: true });
+      return app;
+    },
+    "several, into a store, isolated": async () => {
+      const app = await several("isolated");
+      mkdirSync(app.path("node_modules", ".bun"), { recursive: true });
+      return app;
+    },
+    "several, without a link, isolated": () => withoutLinks("patched"),
+    "several, without an optional link, isolated": () => withoutLinks("bar"),
+    "several, without an optional link and what follows, isolated": async () => {
+      const app = await withoutLinks("bar");
+      rmSync(app.path("node_modules", ".bun", "patched@1.0.0", "node_modules", "patched", "package.json"));
+      return { ...app, keeps: [] };
+    },
+    "pnpm": () =>
+      project({
+        "package.json": root({}),
+        "pnpm-workspace.yaml": "packages: [members/*]\n",
+        "pnpm-lock.yaml": "lockfileVersion: '9.0'\nimporters:\n  .: {}\n  members/a: {}\n",
+        "members/a/package.json": manifestOf("a"),
+      }),
+    "a folder, with --force, isolated": async () => ({
+      ...(await after(project({ "bar/package.json": manifestOf("bar") }, "file:./bar", "isolated"), ["install"])),
+      args: ["install", "--force"],
+      keeps: ["node_modules/bar/package.json"],
+    }),
+    "a folder, into a store, isolated": () => {
+      const files = {
+        "bar/package.json": manifestOf("bar", { bin: "cli.js" }),
+        "bar/cli.js": "",
+        "node_modules/.bun/a": "",
+      };
+      return { ...project(files, "file:./bar", "isolated"), next: ["node_modules/bar/../.bin/bar"] };
+    },
+    "a folder below the project": () => {
+      const app = project({ "below/a": "" });
+      return { ...app, args: ["add", "--cwd", app.path("below"), "baz"], next: ["node_modules/baz"] };
+    },
+    "a workspace that is a link": async () => {
+      const app = project({ "package.json": root({ workspaces: ["members/*"] }), "members/b": "", ...member("a") });
+      symlinkSync("../a", app.path("members", "a"));
+      return { ...(await after(app, ["install", "--lockfile-only"])), args: ["install", "--frozen-lockfile"] };
+    },
+    "a registry, behind a workspace": () => behindWorkspace("1.0.0", ".bun-cache"),
+    "a file, behind a workspace": () => behindWorkspace("file:./bar.tgz", ".bun-cache"),
+    "the cache, behind a workspace": () => behindWorkspace("file:./bar.tgz"),
+    "a file, below a workspace": async () => {
+      const scripts = { postinstall: "touch built" };
+      const files = {
+        "package.json": root({
+          workspaces: ["a"],
+          dependencies: { bar: "1.0.0", baz: "1.0.0" },
+          trustedDependencies: ["bar"],
+        }),
+        "a/package.json": manifestOf("a", {
+          scripts,
+          dependencies: { bar: "file:../bar.tgz" },
+          optionalDependencies: { baz: "file:../baz.tgz" },
+        }),
+        "bar.tgz": await shortTarball({ scripts }),
+        "baz.tgz": await tarball({ "package/package.json": manifestOf("baz"), "package/baz": "" }, 1),
+      };
+      const app = await after(project(files), ["install", "--ignore-scripts"], "node_modules", "a/node_modules");
+      const [inCache] = new Bun.Glob("@T@*/baz").scanSync(app.path(".bun-cache"));
+      rmSync(app.path(".bun-cache", inCache, ".."), { recursive: true });
+      return { ...app, next: ["a/built", "a/node_modules/bar/built"] };
+    },
+    "a link, behind a workspace": async () => {
+      const app = project({
+        "package.json": root({ workspaces: ["a"], dependencies: { bar: "link:bar" } }),
+        "a/package.json": manifestOf("a", { scripts: { postinstall: "touch built" } }),
+        "global/install/global/node_modules/bar/package.json": manifestOf("bar"),
+      });
+      await app.run(["install", "--lockfile-only"], globally(app));
+      return { ...app, env: globally(app), next: ["a/built"] };
+    },
+    "the cache, beside a link, isolated": besideLink,
+    "an address": () => project({}, "http://127.0.0.1:PORT/bar.tgz"),
+    "two addresses": () => ({
+      ...project({}, "http://localhost:PORT/bar.tgz"),
+      env: { BUN_CONFIG_HTTP_RETRY_COUNT: "0" },
+    }),
+    "a name": () => project({}, "http://bar.invalid/bar.tgz"),
+    "a file that is in the cache": async () => {
+      const app = await after(await fromFile(), ["install", "--no-save"], "node_modules");
+      const entry = readdirSync(app.path(".bun-cache")).find(name => name.startsWith("@T@"));
+      return { ...app, keeps: [`.bun-cache/${entry}/package.json`] };
+    },
+    "a file, with a script that needs a bin whose name is taken": async () => ({
+      ...(await fromFile(
+        { bin: undefined, scripts: { postinstall: "touch built" }, dependencies: { b: "1.0.0" } },
+        {
+          "package.json": root({
+            dependencies: { a: "1.0.0" },
+            optionalDependencies: { bar: "file:./bar.tgz" },
+            trustedDependencies: ["bar"],
+          }),
+        },
+      )),
+      next: ["node_modules/bar/node_modules/.bin/bar"],
+    }),
+    "a file, with a script, into a folder that has to stay": async () => ({
+      ...(await fromFile({ scripts: { postinstall: "touch built" } }, { "node_modules/bar/mine": "" })),
+      keeps: ["node_modules/bar/mine"],
+      next: ["node_modules/bar/built"],
+    }),
+    "a file, for `bun pm trust`": async () => {
+      const files = { "bar.tgz": await shortTarball({ scripts: { postinstall: "exit 0" } }) };
+      return { ...(await after(project(files, "file:./bar.tgz"), ["install"])), args: ["pm", "trust", "bar"] };
+    },
+    "git": () => fromGit(["package.json"]),
+    "git, isolated": () => fromGit(["package.json"], undefined, "isolated"),
+    "git, with what it bundles": async () => ({
+      ...(await fromGit(["package.json", "node_modules/a/package.json"], bundling)),
+      next: ["node_modules/bar/node_modules/a"],
+    }),
+    "git, with what it bundles, for `bun prune`": async () => ({
+      ...(await after(await fromGit(["package.json", "node_modules/a/package.json"], bundling), ["install"])),
+      args: ["prune"],
+      keeps: ["node_modules/bar/node_modules/a"],
+    }),
+  };
+  const failures: [from: keyof typeof from, failure: string, call: string, saidBefore?: string[]][] = [
+    ["a registry", "ENOMEM getcwd * 2", "getcwd"],
+    ["a registry", "ENOMEM socket *", "recv", ["error: ENOMEM downloading package manifest bar"]],
+    ["a registry", "ENOBUFS socket *", "recv", ["error: ENOBUFS downloading package manifest bar"]],
+    ["a registry", "ENOMEM watch socket:*", "recv", ["error: ENOMEM downloading package manifest bar"]],
+    ["a registry", "ENOBUFS recv *", "recv", ["error: ENOBUFS downloading package manifest bar"]],
+    ["a registry", "ENOMEM write */lib/a", "pwrite"],
+    ["a registry", "ENOMEM stat ROOT/node_modules/bar/cli.js", "stat"],
+    ["a registry, for `bun info`", "ENOMEM open ROOT/.npmrc", "open"],
+    ["a registry, installed", "ENOMEM open bar/package.json", "open"],
+    ["a registry, installed, isolated", "ENOMEM stat node_modules/.bun 1", "fstatat"],
+    ["a registry, installed, isolated", "ENOMEM access */bar/package.json", "access"],
+    ["a registry, installed, isolated", "ENOMEM readlink */.bun/node_modules/bar", "readlink"],
+    ["a registry, into a folder that has to stay", "ENOMEM rename bar", "rename"],
+    ["a file, with a script, into a folder that has to stay", "ENOMEM rename,stat bar", "rename"],
+    ["a registry, installed and copied, isolated", "ENOMEM access ROOT/node_modules/bar/package.json", "access"],
+    ["a registry, for `bun pm scan`", "ENOMEM write */lib/a", "pwrite"],
+    ["a registry, for `bun prune`", "ENOMEM symlink */.bin/bar", "symlink"],
+    ["files, for `bun remove --global`", "ENOMEM symlink */global/bin/bar", "symlink"],
+    ["a registry, into the global store", "ENOMEM stat */bar/cli.js", "stat"],
+    ["a registry, over what another linker installed", "ENOMEM rename *bar", "rename"],
+    ["a registry, out of the global store", "ENOMEM stat */.bun/bar@1.0.0", "lstat"],
+    ["a registry, as a copy, isolated", "ENOMEM chmod */cli.js", "fchmod"],
+    ["the cache", "ENOMEM access *@@@1/package.json", "access"],
+    ["the cache, in place", "ENOMEM mkdir [.l]*", "mkdir"],
+    ["several", "ENOMEM socket *", "recv"],
+    ["several", "ENOMEM access */built/binding.gyp", "access"],
+    ["several", "ENOMEM stat */bar/cli.js", "stat"],
+    ["several", "ENOMEM stat *_patch_hash=* 1", "fstatat"],
+    ["several", "ENOMEM open b", "open"],
+    ["several", "ENOMEM mkdir *.node-gyp", "mkdir"],
+    ["several", "ENOMEM open node-gyp", "open"],
+    ["several", "ENOMEM write */node-gyp", "write"],
+    ["several, for `bun add`", "ENOMEM recv * 1", "recv"],
+    ["several, isolated", "ENOMEM socket *", "recv"],
+    ["several, isolated", "ENOMEM access */built/binding.gyp", "access"],
+    ["several, isolated", "ENOMEM stat */bar/cli.js", "stat"],
+    ["several, isolated", "ENOMEM open b", "open"],
+    ["several, with --production", "ENOMEM symlink */.bin/bar", "symlink"],
+    ["several, with --production, isolated", "ENOMEM symlink */.bin/bar", "symlink"],
+    ["several, without a cache, isolated", "ENOMEM symlink built/*", "symlinkat"],
+    ["several, into a store, isolated", "ENOMEM stat */.bun/b*[0-9a-f] 1", "lstat"],
+    ["several, without a link, isolated", "ENOMEM stat */built@*/cli.js", "stat"],
+    ["several, without an optional link, isolated", "ENOMEM stat */built@*/cli.js", "stat"],
+    ["several, without an optional link and what follows, isolated", "ENOMEM readlink */built@*/patched", "readlink"],
+    ["pnpm", "ENOMEM symlink a", "symlinkat"],
+    ["a folder, with --force, isolated", "ENOMEM stat node_modules/.bun 2", "stat"],
+    ["a folder, into a store, isolated", "ENOMEM stat */.bun/bar@* 4", "stat"],
+    ["a folder below the project", "ENOMEM stat ROOT", "stat"],
+    ["a workspace that is a link", "ENOMEM open members/a", "open", []],
+    ["a registry, behind a workspace", "ENOMEM open *.hm", "open"],
+    ["a file, behind a workspace", "ENOMEM open *.hm", "open"],
+    ["the cache, behind a workspace", "ENOMEM open *.hm", "open"],
+    ["the cache, behind a workspace", "ENOMEM open *cache", "open"],
+    ["the cache, behind a workspace", "ENOMEM open ROOT/node_modules* 1", "open"],
+    ["the cache, behind a workspace", "ENOMEM rename [a.]*", "rename"],
+    ["a file, below a workspace", "ENOMEM open */baz.tgz", "open"],
+    ["a link, behind a workspace", "ENOMEM open */install/global", "open"],
+    ["the cache, beside a link, isolated", "ENOMEM open *cache", "open"],
+    ["the cache, beside a link, isolated", "ENOMEM stat */bash 1", "access"],
+    ["an address", "ENOMEM socket *", "recv", ["error: ENOMEM downloading tarball bar@http://127.0.0.1:PORT/bar.tgz"]],
+    [
+      "two addresses",
+      "ENOMEM socket * 1",
+      "recv",
+      ["error: ENOMEM downloading tarball bar@http://localhost:PORT/bar.tgz"],
+    ],
+    [
+      "a name",
+      "ENOMEM open /etc/resolv.conf",
+      "recv",
+      ["error: OutOfMemory downloading tarball bar@http://bar.invalid/bar.tgz"],
+    ],
+    ["a file that is in the cache", "ENOMEM access @T@*/package.json", "access"],
+    ["a file, with a script that needs a bin whose name is taken", "ENOMEM stat */b/cli.js 1", "stat"],
+    ["a file, for `bun pm trust`", "ENOMEM memfd *", "memfd_create"],
+    ["git", "ENOMEM stat */git", "access", ["warn: ENOMEM cloning repository for bar"]],
+    ["git", "ENOMEM vfork * 1", "posix_spawn"],
+    ["git", "ENOMEM vfork * 2", "posix_spawn", []],
+    ["git", "ENOMEM wait *", "waitpid", ["warn: ENOMEM cloning repository for bar"]],
+    ["git, isolated", "ENOMEM access @G@*/.bun-tag", "access"],
+    ["git, with what it bundles", "ENOMEM open package.json", "open"],
+    ["git, with what it bundles, for `bun prune`", "ENOMEM open package.json", "open"],
+  ];
+
+  it.skipIf(!failSyscall).each(
+    // What `getaddrinfo` makes of it is up to the library.
+    failures.filter(([source]) => source !== "a name" || isGlibcVersionAtLeast("2.39")),
+  )("from %s fails the install: %s", async (...[source, failure, call, saidBefore]) => {
+    using app: App = await from[source]();
+    const missing = (paths: string[] = []) => paths.filter(path => !existsSync(app.path() + "/" + path));
+    const result = await withoutCall(app, failure);
+    expect(result).toEqual(fails(call, ...(saidBefore ?? result.said.slice(0, -1))));
+    expect(missing(app.keeps)).toEqual([]);
+    expect(missing(app.lacks)).toEqual(app.lacks ?? []);
+    if (!app.next) return;
+    expect(await app.run(app.args ?? ["install"], app.env)).toEqual({ said: [], exitCode: 0 });
+    expect(missing(app.next)).toEqual([]);
+  });
+
+  it.skipIf(!failSyscall)("fails `bun pm migrate`", async () => {
+    using app = from.pnpm();
+    expect(await withoutCall({ ...app, args: ["pm", "migrate"] }, "ENOMEM open pnpm-workspace.yaml")).toEqual({
+      ...fails("open"),
+      said: ["error: failed to migrate lockfile: ENOMEM"],
+    });
+  });
+
+  it.skipIf(!failSyscall)("fails `bun link`", async () => {
+    using app = project({ "package.json": root({ bin: "cli.js" }), "cli.js": "" });
+    expect(await withoutCall({ ...app, args: ["link"], env: globally(app) }, "ENOMEM stat */cli.js")).toEqual({
+      ...fails("stat"),
+      said: ["error: failed to link bin due to error ENOMEM"],
+    });
+  });
+
+  it.skipIf(!failSyscall).each(["bar", "bar@http://127.0.0.1:PORT/bar.tgz"])(
+    "tells bunx that the copy that it has is untouched: %s",
+    async request => {
+      using app = project({ "package.json": "{}" });
+      const env = { BUN_INTERNAL_BUNX_INSTALL: app.path(), BUN_INTERNAL_BUNX_HAS_COPY: "true" };
+      expect(await withoutCall({ ...app, args: ["add", request], env }, "ENOBUFS socket *")).toMatchObject({
+        exitCode: 75,
+      });
+    },
+  );
+
+  it.skipIf(!failSyscall).each([{}, { postinstall: "exit 0" }])(
+    "fails the install after the lockfile is saved, with the scripts %j",
+    async scripts => {
+      using app = await after(project({ "package.json": root({ scripts }) }), ["add", "bar", "baz"]);
+      expect(await withoutCall({ ...app, args: ["remove", "baz"] }, "ENOMEM open .bin")).toEqual({
+        ...fails("open"),
+        saved: "something",
+      });
+    },
+  );
+
+  describe.skipIf(!failSyscall)("in a script", () => {
+    const script = (first = "") => ({
+      ...project({
+        "index.js": `${first}; try { require("bar/cli.js") } catch { console.error("error: caught") }`,
+      }),
+      args: ["--install=force", "index.js"],
+    });
+    const goesOn = (...said: string[]) => ({ said, exitCode: 0, saved: "nothing" });
+
+    it("keeps it from starting without its configuration", async () => {
+      using app = script();
+      expect(await withoutCall(app, "ENOMEM open ROOT/bunfig.toml")).toMatchObject({ exitCode: 1 });
+    });
+
+    it.each(["open ROOT/.npmrc", "open ROOT/bunfig.toml 1", "open bun.lock", "socket *"])(
+      "can be caught: %s",
+      async failure => {
+        using app = await after(script(), ["install", "--lockfile-only"]);
+        expect(await withoutCall(app, "ENOMEM " + failure)).toEqual(goesOn("error: caught"));
+      },
+    );
+
+    it("is installed if there is at the next import", async () => {
+      const importer = `require("bar/cli.js")`;
+      const files = {
+        "index.js": `try { require("./a") } catch { console.error("error: caught") } require("./b")`,
+        "a/index.js": importer,
+        "b/index.js": importer,
+      };
+      using app = { ...project(files), args: ["--install=force", "index.js"] };
+      expect(await withoutCall(app, "ENOMEM open ROOT/a/.npmrc")).toEqual(goesOn("error: caught"));
+    });
+
+    it("is installed after an error of the script's own", async () => {
+      using app = script(`try { require("fs").readFileSync("a") } catch {}`);
+      expect(await withoutCall(app, "ENOMEM open a")).toEqual(goesOn());
+    });
+
+    it("is installed during errors of another thread", async () => {
+      const worker = `for (let i = 0; ; i++) try { require("fs").readFileSync("a") } catch { i || postMessage("") }`;
+      const first = `
+        const worker = new Worker("data:text/javascript," + ${JSON.stringify(worker)});
+        await new Promise(resolve => (worker.onmessage = resolve));
+        setImmediate(() => process.exit());
+      `;
+      using app = await after(script(first), ["install", "--lockfile-only"]);
+      expect(await withoutCall(app, "ENOMEM open a")).toEqual(goesOn());
+    });
+
+    it("leaves what is in the cache alone", async () => {
+      using app = await after(script(), ["install", "--no-save"], "node_modules");
+      const entry = readdirSync(app.path(".bun-cache")).find(name => name.startsWith("bar@"))!;
+      writeFileSync(app.path(".bun-cache", entry, "kept"), "");
+      expect(await withoutCall(app, "ENOMEM access *package.json")).toMatchObject({ exitCode: 0 });
+      expect(existsSync(app.path(".bun-cache", entry, "kept"))).toBeTrue();
+    });
+
+    it("is installed if the cache can be done without", async () => {
+      using app = script();
+      expect(await withoutCall(app, "ENOMEM open *.npm")).toEqual(goesOn());
+    });
+  });
 });
 
 describe.concurrent("an optional dependency whose tarball is gone", () => {

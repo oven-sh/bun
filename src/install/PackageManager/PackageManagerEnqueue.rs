@@ -344,6 +344,10 @@ fn enqueue_tarball_for_reading(
     if has_already_failed(this, task_id, dependency_id, package_id, &task_context) {
         return Err(ForTarballError::AlreadyFailed);
     }
+    if let Err(why) = try_get_temporary_directory(this) {
+        this.exit_or_log(&why);
+        return Err(ForTarballError::AlreadyFailed);
+    }
     if !push_task_callback(this, task_id, task_context) {
         return Ok(());
     }

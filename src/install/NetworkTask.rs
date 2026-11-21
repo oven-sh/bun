@@ -387,7 +387,7 @@ bun_core::oom_from_alloc!(ForManifestError);
 impl From<ForManifestError> for crate::Error {
     fn from(e: ForManifestError) -> Self {
         match e {
-            ForManifestError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ForManifestError::OutOfMemory => bun_alloc::AllocError.into(),
             ForManifestError::InvalidURL => crate::Error::InvalidURL,
         }
     }
@@ -733,7 +733,7 @@ bun_core::oom_from_alloc!(ForTarballError);
 impl From<ForTarballError> for crate::Error {
     fn from(e: ForTarballError) -> Self {
         match e {
-            ForTarballError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ForTarballError::OutOfMemory => bun_alloc::AllocError.into(),
             ForTarballError::InvalidURL => crate::Error::InvalidURL,
             ForTarballError::AlreadyFailed | ForTarballError::Offline => {
                 crate::Error::TarballFailedToDownload

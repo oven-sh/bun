@@ -780,6 +780,8 @@ pub fn install_with_manager(
 
     let packages_len_before_install = manager.lockfile.packages.len();
 
+    manager.exit_if_out_of_memory();
+
     if manager.options.enable.frozen_lockfile()
         && !matches!(load_result, lockfile::LoadResult::NotFound)
     {
@@ -971,6 +973,7 @@ pub fn install_with_manager(
     if log_level != Options::LogLevel::Silent {
         manager.log_mut().print(Output::error_writer())?;
     }
+    crate::error::exit_if_out_of_memory();
     if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
         Global::crash();
     }
@@ -1067,9 +1070,10 @@ pub fn install_with_manager(
         write_yarn_lock_with_progress(manager, log_level)?;
     }
 
-    if runs_root_scripts {
-        run_root_lifecycle_scripts(manager, log_level)?;
-    }
+    let ran_root_scripts =
+        runs_root_scripts.then(|| run_root_lifecycle_scripts(manager, log_level));
+    crate::error::exit_if_out_of_memory();
+    ran_root_scripts.transpose()?;
 
     if log_level != Options::LogLevel::Silent {
         print_install_summary(

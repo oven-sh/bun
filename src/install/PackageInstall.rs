@@ -1974,6 +1974,11 @@ impl PackageFiles<'_> {
 /// `bun prune`.
 pub(crate) const MOVED_ASIDE_PREFIX: &str = ".old-";
 
+pub(crate) fn moved_aside_name(random: u64) -> String {
+    let random = random.to_ne_bytes();
+    format!("{MOVED_ASIDE_PREFIX}{}", bun_core::fmt::hex_upper(&random))
+}
+
 /// Renames `subpath`, if it exists, to a name in `destination_dir` that's derived from `random`.
 /// Can run on any thread.
 pub(crate) fn move_aside(
@@ -1981,13 +1986,7 @@ pub(crate) fn move_aside(
     subpath: &ZStr,
     random: u64,
 ) -> Option<bun_core::ZBox> {
-    let old = bun_core::ZBox::from_vec(
-        format!(
-            "{MOVED_ASIDE_PREFIX}{}",
-            bun_core::fmt::hex_upper(&random.to_ne_bytes())
-        )
-        .into_bytes(),
-    );
+    let old = bun_core::ZBox::from_vec(moved_aside_name(random).into_bytes());
     match sys::renameat(destination_dir.fd(), subpath, destination_dir.fd(), &old) {
         Ok(()) => Some(old),
         // overlayfs can't rename a directory from a lower layer. Delete it instead, so the new

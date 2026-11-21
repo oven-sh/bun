@@ -29,7 +29,7 @@ import {
   tempDir,
   toMatchNodeModulesAt,
 } from "harness";
-import { dirname, join, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 import { TestRegistry } from "registry";
 
 const { parseLockfile } = install_test_helpers;
@@ -357,6 +357,104 @@ test.concurrent.each(["packages\\a", ".\\packages\\a\\", ...(isWindows ? [] : ["
     ]);
   },
 );
+
+/** The packages whose `hi` script, `echo <name>-ran`, `bun run --filter '*' hi` runs. */
+async function ranWithFilter(env: Record<string, string>, cwd: string) {
+  await using proc = spawn({
+    cmd: [bunExe(), "run", "--filter", "*", "hi"],
+    cwd,
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const ran = [...new Set(stdout.match(/\w+(?=-ran)/g))].sort();
+  expect({ ran, exitCode }).toMatchObject({ exitCode: 0 });
+  return ran;
+}
+
+test.concurrent.each([
+  [["packages\\*"], ["a", "b"]],
+  [["./packages\\*"], ["a", "b"]],
+  [["packages\\**"], ["a", "a/src", "b"]],
+  [["packages\\*\\src"], ["a/src"]],
+  [["packages\\a*"], ["a"]],
+  [["packages\\a"], ["a"]],
+  [["packages\\*", "!packages\\b"], ["a"]],
+  [
+    ["packages/**", "!**\\src"],
+    ["a", "b"],
+  ],
+])('every command reads a backslash in "workspaces" as a separator: %j', async (workspaces, members) => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces })),
+    ...["a", "a/src", "b"].map(dir =>
+      write(
+        join(packageDir, "packages", dir, "package.json"),
+        JSON.stringify({ name: basename(dir), scripts: { hi: `echo ${basename(dir)}-ran` } }),
+      ),
+    ),
+  ]);
+
+  // From a member, so that the root has to be found first.
+  await runBunInstall(env, join(packageDir, "packages", members[0]));
+  expect(Object.keys(Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()).workspaces)).toEqual([
+    "",
+    ...members.map(dir => `packages/${dir}`),
+  ]);
+
+  expect(await ranWithFilter(env, packageDir)).toEqual(members.map(dir => basename(dir)).sort());
+});
+
+test.concurrent.skipIf(isWindows).each([".\\", "\\"])("--filter does not select the root through %s", async entry => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: [entry, "a"], scripts: { hi: "echo root-ran" } }),
+    ),
+    write(join(packageDir, "a", "package.json"), JSON.stringify({ name: "a", scripts: { hi: "echo a-ran" } })),
+  ]);
+
+  expect(await ranWithFilter(env, packageDir)).toEqual(["a"]);
+});
+
+test.concurrent.skipIf(isWindows).each([
+  [["\\[x\\]*"], ["[x]"]],
+  [
+    ["*", "!\\[x\\]"],
+    ["!a", "v1.0", "x"],
+  ],
+  [
+    ["*", "!\\!a"],
+    ["[x]", "v1.0", "x"],
+  ],
+  [
+    ["*", "!v1\\.0"],
+    ["!a", "[x]", "x"],
+  ],
+])('a backslash still escapes in a "workspaces" entry without a slash: %j', async (workspaces, members) => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces, dependencies: { "no-deps": "1.0.0" } }),
+    ),
+    ...["!a", "[x]", "v1.0", "x"].map((dir, i) =>
+      write(join(packageDir, dir, "package.json"), JSON.stringify({ name: `member-${i}` })),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+  expect(Object.keys(Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()).workspaces)).toEqual([
+    "",
+    ...members,
+  ]);
+});
 
 test.concurrent.skipIf(isWindows).each([
   [["apps/\\[x\\]/*"], ["apps/[x]/p"]],

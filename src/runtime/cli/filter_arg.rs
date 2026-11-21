@@ -4,7 +4,7 @@ use bun_core::Global;
 use bun_core::Output;
 use bun_glob as glob;
 use bun_install::package_manager::workspace_selection::{
-    self, Candidate, NegatedWorkspaces, RootSelection, WorkspaceGraph,
+    self, Candidate, NegatedWorkspaces, RootSelection, WorkspaceGraph, workspaces_entry,
 };
 use bun_parsers::json;
 use bun_paths::{Path, PathBuffer, dirname_or_root, without_trailing_sep};
@@ -101,7 +101,8 @@ fn get_candidate_package_patterns<'a>(
                         if negated.take(pattern_bytes) {
                             continue;
                         }
-                        out_patterns.push([pattern_bytes, b"/package.json"].concat().into());
+                        let entry = workspaces_entry(pattern_bytes);
+                        out_patterns.push([&entry[..], b"/package.json"].concat().into());
                     }
                     _ => {
                         bun_core::pretty_errorln!(

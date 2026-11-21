@@ -1,10 +1,11 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
 
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_glob::Prepared;
-use bun_paths::{MAX_PATH_BYTES, Path, to_portable};
+use bun_paths::{MAX_PATH_BYTES, Path, from_portable, to_portable};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::Behavior;
@@ -73,6 +74,32 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
     (remain, negated)
 }
 
+/// `packages\*` is `packages/*`, as in npm. In an entry that separates with `/` or escapes a bracket, `\` is an escape.
+pub fn workspaces_entry(written: &[u8]) -> Cow<'_, [u8]> {
+    let (path, _) = strip_negations(written);
+    let mut rest = path.strip_prefix(b"./").unwrap_or(path);
+    if strings::contains_char(rest, b'/')
+        || !strings::contains_char(rest, b'\\')
+        || matches!(rest, b"\\" | b".\\")
+    {
+        return written.into();
+    }
+    while let Some((_, after)) = strings::split_once_char(rest, b'\\') {
+        if let [
+            b'[' | b']' | b'{' | b'}' | b')' | b'!' | b'?' | b',' | b'|' | b' ' | b'\\',
+            ..,
+        ] = after
+        {
+            return written.into();
+        }
+        rest = after;
+    }
+    let negations = &written[..written.len() - path.len()];
+    [negations, &to_portable(&from_portable(path))]
+        .concat()
+        .into()
+}
+
 /// The `!` entries of a `workspaces` array. `bun install` and `bun run --filter` apply the same
 /// rule.
 #[derive(Default)]
@@ -84,13 +111,20 @@ impl NegatedWorkspaces {
     pub fn take(&mut self, entry: &[u8]) -> bool {
         let (glob, negated) = strip_negations(entry);
         if negated {
-            let mut remain: &[u8] = &to_portable(glob);
-            while let Some(rest) = remain.strip_prefix(b"./") {
-                remain = rest;
+            // `!a\.b` can mean `a/.b` or `a.b`, so it excludes both.
+            if let Cow::Owned(converted) = workspaces_entry(glob) {
+                self.push(&converted);
             }
-            self.0.push(strings::without_trailing_slash(remain).into());
+            self.push(&to_portable(glob));
         }
         negated
+    }
+
+    fn push(&mut self, mut glob: &[u8]) {
+        while let Some(rest) = glob.strip_prefix(b"./") {
+            glob = rest;
+        }
+        self.0.push(strings::without_trailing_slash(glob).into());
     }
 
     /// Only call this for a `dir` that a glob entry matched. A workspace that's listed by its exact
@@ -161,7 +195,7 @@ fn parse(raw: &[u8], original_cwd: &[u8]) -> Selector {
         // A glob reads `\` as an escape.
         let escape = |path: &[u8]| strings::replace_owned(&to_portable(path), b"\\", b"\\\\");
         let base = escape(original_cwd);
-        let converted = escape(&bun_sys::converted_spelling(part, bun_paths::from_portable));
+        let converted = escape(&bun_sys::converted_spelling(part, from_portable));
         let escaped = if only_escapes(part) { part } else { &converted };
         [&converted, escaped].map(|part| {
             let joined = abs_posix_dir(&base, part);

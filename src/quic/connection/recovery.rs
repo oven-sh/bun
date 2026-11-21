@@ -19,6 +19,8 @@ const MAX_LATENESS: u64 = 4;
 const MAX_LOSSES_IN_ORDER: u8 = 16;
 const PERSISTENT_CONGESTION_THRESHOLD: u64 = 3;
 const MIN_PROBE_TIMEOUT: Duration = Duration::from_millis(10);
+/// After how many in a row the next one is counted on.
+const PROMPT_ACKS: u8 = 4;
 const MAX_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 /// So that it does not take as long to notice that a path is back as it was gone.
 const PROBES_PER_IDLE_TIMEOUT: u64 = 8;
@@ -94,6 +96,7 @@ impl Connection {
                 }
                 self.congestion.on_acked(&packet.flight);
                 self.path.mtu.on_acked(&packet.flight);
+                self.runs.on_acked(packet);
                 for frame in frames.of(packet) {
                     match frame {
                         SentFrame::Stream {
@@ -153,6 +156,12 @@ impl Connection {
             if gap_at > sent_at && reported > timeout && reported < sample + delay {
                 // Most likely, the acknowledgment that was in time is lost.
                 sample = sample.min(timeout.max(sample + delay - reported));
+            }
+            if id == SpaceId::Data && self.congestion.in_flight() == 0 {
+                self.prompt_acks = match delay < MIN_PROBE_TIMEOUT / 2 && self.pto_count == 0 {
+                    true => self.prompt_acks.saturating_add(1),
+                    false => 0,
+                };
             }
             let is_first = !self.rtt.has_sample();
             self.rtt.update(sample, delay);
@@ -224,9 +233,8 @@ impl Connection {
                 break;
             }
             packet.fate = Fate::Lost;
-            let ends_burst =
-                (space.sent.packets.get(at)).is_some_and(|it| it.flight.starts_burst());
-            if self.on_lost(id, &before, ends_burst) && sent_at > self.first_sample_at {
+            let next = space.sent.packets.get(at).copied();
+            if self.on_lost(id, &before, next.as_ref()) && sent_at > self.first_sample_at {
                 lost_since = lost_since.min(sent_at);
                 if sent_at - lost_since > self.probe_timeout() * PERSISTENT_CONGESTION_THRESHOLD {
                     self.congestion.on_persistent_congestion();
@@ -245,17 +253,21 @@ impl Connection {
         if self.path.mtu.end_ack() {
             self.congestion.set_datagram_len(self.path.mtu.current);
         }
+        self.runs.try_longer(self.spaces.data.next_number);
         self.congestion.end_ack(now, &self.rtt);
     }
 
     /// Returns whether that is a sign of congestion (RFC 9000 §14.4).
-    fn on_lost(&mut self, id: SpaceId, packet: &SentPacket, ends_burst: bool) -> bool {
+    fn on_lost(&mut self, id: SpaceId, packet: &SentPacket, next: Option<&SentPacket>) -> bool {
         if self.requeue(id, packet, Fate::Lost) {
             self.congestion.discard(&packet.flight);
             return false;
         }
         self.stats.packets_lost += 1;
+        let ends_burst = next.is_some_and(|it| it.flight.starts_burst());
         self.congestion.on_lost(&packet.flight, ends_burst);
+        let ends_run = next.is_some_and(|it| it.position.index == 0);
+        (self.runs).on_lost(packet, ends_run, self.spaces.data.next_number);
         self.path.mtu.on_lost(&packet.flight);
         self.spaces.open(id).sent.remember_lost(packet);
         true
@@ -366,10 +378,11 @@ impl Connection {
         (timeout * (1 << self.pto_count.min(16))).min(max.min(MAX_PROBE_TIMEOUT))
     }
 
-    /// Acknowledgments are not usually delayed for more than a packet.
+    /// Acknowledgments are not usually delayed for more than a packet, nor by a peer that has an answer.
     #[inline]
     fn expects_prompt_ack(&self) -> bool {
-        self.spaces.data.sent.packets.len() > 1 && self.rtt.has_sample()
+        (self.spaces.data.sent.packets.len() > 1 || self.prompt_acks >= PROMPT_ACKS)
+            && self.rtt.has_sample()
     }
 
     fn probe_time(&self, id: SpaceId, space: &Space) -> Instant {

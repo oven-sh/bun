@@ -2,6 +2,7 @@ use core::ops::Range;
 use std::collections::VecDeque;
 
 use super::streams::Flags;
+use crate::batch::Position;
 use crate::congestion::Flight;
 use crate::stream_id::StreamId;
 use crate::time::Instant;
@@ -89,6 +90,7 @@ pub(super) struct SentPacket {
     pub(super) fate: Fate,
     /// How many packets from this one on are known not to be in flight.
     pub(super) settled: u16,
+    pub(super) position: Position,
 }
 
 impl SentPacket {
@@ -228,6 +230,7 @@ mod tests {
             control: Control::empty(),
             fate: Fate::Acked,
             settled: 0,
+            position: Position::default(),
         };
         let distances = [3, 2, 70_000, 1].map(|len| packet.settle(len));
         assert_eq!(distances, [1, 3, 3, 65_535]);

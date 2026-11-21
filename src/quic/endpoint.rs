@@ -6,7 +6,7 @@ use core::ops::Range;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use crate::batch::Batch;
+use crate::batch::{Batch, MAX_SEGMENTS};
 use crate::cid::{ConnectionId, LocalId, ResetToken};
 use crate::config::Config;
 use crate::connection::handshake::Awaited;
@@ -689,7 +689,7 @@ impl Endpoint {
         {
             let start = batch.bytes.len();
             batch.bytes.extend_from_slice(&datagram);
-            batch.commit(&addresses, start);
+            batch.commit(&addresses, start, MAX_SEGMENTS);
         }
         let max_turn = match self.is_backed_up {
             true => DATAGRAMS_PER_SHORT_TURN,
@@ -733,7 +733,7 @@ impl Endpoint {
 
     /// For [`Self::handle_timeouts`] to answer.
     #[inline]
-    pub fn has_waiting_clients(&self) -> bool {
+    fn has_waiting_clients(&self) -> bool {
         self.awaiting_turn.len > 0
     }
 

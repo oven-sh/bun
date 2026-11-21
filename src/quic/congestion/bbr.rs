@@ -12,6 +12,8 @@ const DEFAULT_RTT: Duration = Duration::from_millis(25);
 const MIN_RTT_EXPIRY: Duration = Duration::from_secs(10);
 const PROBE_RTT_TIME: Duration = Duration::from_millis(200);
 const ROUNDS_WITHOUT_GROWTH: u8 = 3;
+/// They only add up if they are no further apart.
+const MAX_ROUNDS_APART: u64 = 8;
 /// To lose this many in a round, and more than one in `HIGH_LOSS_RATIO`, is no accident.
 const HIGH_LOSS_SEGMENTS: u64 = 6;
 const HIGH_LOSS_RATIO: u64 = 50;
@@ -92,6 +94,7 @@ pub(super) struct Bbr {
     is_restarting: bool,
     has_lost_packets: bool,
     rounds_without_growth: u8,
+    last_without_growth: u64,
     bandwidth_to_beat: u64,
     /// What is acknowledged in excess of the bandwidth, as paths and peers bunch acknowledgments.
     excess_acked: WindowedMax,
@@ -129,6 +132,7 @@ impl Bbr {
             is_restarting: false,
             has_lost_packets: false,
             rounds_without_growth: 0,
+            last_without_growth: 0,
             bandwidth_to_beat: 0,
             excess_acked: WindowedMax::default(),
             bunch_start: Instant::default(),
@@ -385,6 +389,10 @@ impl Bbr {
             self.bandwidth_to_beat = Gain::PROBE_UP.of(bandwidth);
             self.rounds_without_growth = 0;
         } else if !is_catching_up {
+            if self.round > self.last_without_growth + MAX_ROUNDS_APART {
+                self.rounds_without_growth = 0;
+            }
+            self.last_without_growth = self.round;
             self.rounds_without_growth += 1;
             self.is_pipe_filled = self.rounds_without_growth >= ROUNDS_WITHOUT_GROWTH;
         }

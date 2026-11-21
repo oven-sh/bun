@@ -11,6 +11,7 @@ mod paths;
 mod receive;
 mod received;
 mod recovery;
+mod runs;
 mod sent;
 mod space;
 pub(crate) mod streams;
@@ -28,6 +29,7 @@ use handshake::{Setup, Ticket};
 use ids::{LocalIds, RemoteId, RemoteIds};
 use key_update::KeyUpdate;
 use paths::Path;
+use runs::Runs;
 use sent::Control;
 use space::{Space, Spaces};
 use streams::Streams;
@@ -139,7 +141,10 @@ pub struct Connection {
     rtt: Rtt,
     first_sample_at: Instant,
     congestion: Controller,
+    runs: Runs,
     pto_count: u32,
+    /// How many times in a row the peer was quick to acknowledge all that was in flight, without a probe.
+    prompt_acks: u8,
     /// Once between two timeouts.
     may_probe_early: bool,
     delivery: recovery::Delivery,
@@ -257,7 +262,9 @@ impl Connection {
             remote_ids: RemoteIds::default(),
             rtt: Rtt::default(),
             first_sample_at: Instant::NEVER,
+            runs: Runs::default(),
             pto_count: 0,
+            prompt_acks: 0,
             may_probe_early: true,
             delivery: Default::default(),
             packet_threshold: recovery::INITIAL_PACKET_THRESHOLD,

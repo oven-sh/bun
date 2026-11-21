@@ -2,7 +2,7 @@ use bun_quic::Direction::{Bidirectional, Unidirectional};
 use bun_quic::{Algorithm, Duration, KeepAlive, StreamId};
 
 use crate::harness::paths::NEW;
-use crate::harness::raw::Kind::{Handshake, Initial};
+use crate::harness::raw::Kind::{Handshake, Initial, Short};
 use crate::harness::raw::{RTT, Raw};
 use crate::harness::wire::filler;
 
@@ -510,6 +510,47 @@ fn several_packets_are_probed_sooner() {
             raw.forget();
             assert_eq!(raw.now - start, Duration::from_micros(timeout));
         }
+    }
+}
+
+#[test]
+fn single_packet_is_probed_sooner_if_the_peer_keeps_being_quick() {
+    for (delays, timeout) in [
+        (&[625, 624, 624, 624][..], 52),
+        (&[625, 624, 624, 624, 624], 40),
+        (&[0, 0, 0, 0, 625], 50),
+    ] {
+        let mut raw = Raw::client().connected_over(20);
+        for delay in delays {
+            raw.request_packets("a");
+            raw.advance(20);
+            raw.send(&format!("{} +{delay}", raw.ack(Short)));
+        }
+        raw.request_packets("a");
+        assert_eq!(raw.wait(), timeout);
+    }
+}
+
+#[test]
+fn single_packet_is_given_time_again_after_a_needless_probe() {
+    for (is_lost, timeout) in [(true, 40), (false, 50)] {
+        let mut raw = Raw::client().connected_over(20);
+        for _ in 0..4 {
+            raw.request_packets("a");
+            raw.advance(20);
+            raw.send("ack");
+        }
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, b"b", false);
+        match is_lost {
+            true => _ = raw.lose(),
+            false => raw.forget(),
+        }
+        assert_eq!(raw.wait(), 40);
+        raw.advance(20);
+        raw.send("ack");
+        raw.request_packets("c");
+        assert_eq!(raw.wait(), timeout);
     }
 }
 

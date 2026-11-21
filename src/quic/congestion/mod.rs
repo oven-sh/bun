@@ -38,7 +38,7 @@ pub(crate) struct Flight {
     pub(crate) len: u16,
     place: Place,
     /// Counts from 1, across the packet number spaces.
-    sequence: u64,
+    pub(crate) sequence: u64,
     /// The low bits of the number of bytes delivered before.
     delivered: u32,
     /// In microseconds, since the last delivery.

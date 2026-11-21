@@ -173,17 +173,70 @@ fn runs_of_datagrams() {
 }
 
 #[test]
-fn a_run_fits_in_a_udp_packet() {
-    for excess in [0, 1] {
-        let raw = Raw::server().with("max_datagram_frame_size=1200");
-        let (mut raw, mut batch) = (raw.connected(), Batch::default());
-        let first = raw.peer.handle;
-        (0..54).for_each(|_| raw.connect_to(443));
-        assert_eq!(raw.runs(&mut batch, 100), [(443, 54 * 1200, 1200)]);
-        let rest = 65507 - 54 * 1200 + excess;
-        raw.peer.handle = first;
-        (raw.connection()).send_datagram(0, vec![0; rest - (1 + 8 + 2) - 3 - 16]);
-        assert_eq!(raw.runs(&mut batch, 100).len(), 1 + excess);
+fn probes_go_one_by_one() {
+    let mut raw = Raw::server().connected();
+    let id = raw.peer.open(Unidirectional);
+    raw.peer.send(id, &[0; 3000], false);
+    for runs in [1, 3] {
+        let mut batch = Batch::default();
+        assert_eq!(raw.runs(&mut batch, 100).len(), runs);
+        assert_eq!(batch.len(), 3);
+        raw.now = raw.peer.endpoint.timeout().unwrap();
+        raw.peer.endpoint.handle_timeouts(raw.now);
+    }
+}
+
+#[test]
+fn nothing_goes_with_a_probe_of_the_mtu() {
+    let mut raw = Raw::client().with("max_udp_payload_size=").connected();
+    raw.request_packets(&"a".repeat(9));
+    let id = raw.peer.open(Unidirectional);
+    raw.peer.send(id, &[0; 2000], false);
+    let runs = [(1000, 1472, 1472), (1000, 2062, 1200)];
+    assert_eq!(raw.runs(&mut Batch::default(), 100), runs);
+}
+
+#[test]
+fn nothing_goes_with_a_probe_of_the_path() {
+    let mut raw = Raw::server().connected();
+    let id = raw.peer.open(Unidirectional);
+    raw.peer.send(id, &[0; 2000], false);
+    raw.waits = false;
+    raw.send("path_challenge 12345678");
+    let runs = raw.runs(&mut Batch::default(), 100);
+    assert!(runs.iter().map(|it| it.1.div_ceil(it.2)).eq([1, 2]));
+}
+
+#[test]
+fn runs_are_short_for_a_while_after_one_was_lost() {
+    for (arrived, rounds, runs) in [
+        (0, 4, &[5, 3][..]),
+        (10_100, 4, &[8]),
+        (0, 240, &[5, 3]),
+        (0, 260, &[8]),
+    ] {
+        let mut raw = Raw::server().connected();
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, &vec![0; arrived], false);
+        raw.advance(RTT);
+        raw.send("ack");
+        raw.request_packets("a");
+        raw.peer.send(id, &[0; 10_000], false);
+        raw.lose();
+        raw.send("ping");
+        raw.send("ping");
+        for _ in 0..rounds {
+            for _ in 0..10 {
+                raw.peer.send(id, b"b", false);
+                raw.forget();
+            }
+            raw.advance(RTT);
+            raw.send("ack");
+        }
+        raw.peer.send(id, &[0; 9000], false);
+        let lens = raw.runs(&mut Batch::default(), 100);
+        let lens = lens.iter().map(|it| it.1.div_ceil(it.2));
+        assert_eq!(lens.collect::<Vec<_>>(), runs);
     }
 }
 
@@ -228,8 +281,30 @@ fn turns_are_short_while_the_socket_is_backed_up() {
     ] {
         raw.peer.endpoint.set_backed_up(is_backed_up);
         let runs = raw.runs(&mut Batch::default(), max_len);
-        let turns = runs.iter().map(|it| (it.0, it.1 / it.2));
+        let turns = (runs.chunk_by(|a, b| a.0 == b.0)).map(|it| (it[0].0, it.len()));
         assert_eq!(turns.collect::<Vec<_>>(), expected);
+    }
+}
+
+#[test]
+fn turns_are_short_after_a_burst_has_lost_its_end() {
+    for (lost, turns) in [(2..5, 1), (5..8, 2)] {
+        let mut raw = Raw::server().connected();
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, &[0; 9000], false);
+        for packet in raw.take().drain(lost) {
+            raw.received[2].remove(&packet.number);
+        }
+        raw.advance(1);
+        raw.request_packets("a");
+        for _ in 0..4 {
+            raw.advance(2 * RTT);
+            raw.send("ack");
+        }
+        raw.peer.send(id, &[0; 10_000], false);
+        let mut visits = 0;
+        (raw.peer.endpoint).poll_transmit(raw.now, &mut Batch::default(), 100, |_| visits += 1);
+        assert_eq!(visits, turns);
     }
 }
 

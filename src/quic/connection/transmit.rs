@@ -10,7 +10,7 @@ use super::space::{Space, SpaceId};
 use super::streams::WRITE_CHUNK;
 use super::timers::Timer;
 use super::{Connection, Ending, Phase, ack_frequency};
-use crate::batch::Batch;
+use crate::batch::{Batch, Position};
 use crate::coding::{Write, two_byte_varint, varint_len};
 use crate::congestion::Permit;
 use crate::crypto::TAG_LEN;
@@ -153,15 +153,23 @@ impl Connection {
         let out = &mut batch.bytes;
         let start = out.len();
         let end = start + self.path.allowance();
+        let (mut max_run, mut is_eliciting) = (1, false);
         if self.phase != Phase::Confirmed || content != Content::Anything {
             self.write_coalesced(now, content, out, end, shared);
         } else if let Some(draft) = self.draft_data(now, out, end, shared) {
             self.send(now, &draft, out);
+            is_eliciting = draft.is_eliciting;
+            if self.pto_count == 0 {
+                max_run = self.runs.max_len;
+            }
         }
         let len = out.len() - start;
         if len > 0 {
             self.path.on_sent(len);
-            batch.commit(&self.path.addresses, start);
+            let position = batch.commit(&self.path.addresses, start, max_run);
+            if is_eliciting && let Some(packet) = self.spaces.data.sent.packets.back_mut() {
+                packet.position = position;
+            }
         }
         len > 0
     }
@@ -277,6 +285,7 @@ impl Connection {
             control: draft.control,
             fate: Fate::Unknown,
             settled: 0,
+            position: Position::default(),
         });
         space.sent.last_at = now;
         space.probes = space.probes.saturating_sub(1);
@@ -551,7 +560,7 @@ impl Connection {
             self.path.mtu.on_probe_sent(len);
             draft.is_eliciting = true;
             self.send(now, &draft.end(out), out);
-            batch.commit(&self.path.addresses, start);
+            batch.commit(&self.path.addresses, start, 1);
         }
     }
 
@@ -587,7 +596,7 @@ impl Connection {
             }
             self.send(now, &draft.end(out), out);
             self.path.on_sent(out.len() - start);
-            batch.commit(&self.path.addresses, start);
+            batch.commit(&self.path.addresses, start, 1);
         }
     }
 

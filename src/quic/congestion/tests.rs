@@ -1401,6 +1401,19 @@ fn bbr_starts_up_until_the_bandwidth_stops_growing() {
 }
 
 #[test]
+fn bbr_forgets_rounds_without_growth_that_are_long_ago() {
+    for (limited, is_over) in [(7, true), (8, false)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(60, 3, millis(10));
+        for _ in 0..limited {
+            sender.run_dry().rounds_of(60, 1, millis(10));
+        }
+        sender.rounds_of(60, 2, millis(10));
+        assert_eq!(sender.pacing_rate() < 100 * 100 * SEGMENT, is_over);
+    }
+}
+
+#[test]
 fn bbr_starts_up_for_longer_if_recovery_holds_it_back() {
     for (rounds, is_over) in [
         (&[8, 8, 8][..], false),

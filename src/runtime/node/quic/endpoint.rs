@@ -355,7 +355,7 @@ extern "C" fn on_data(
     let read = unsafe { binding.for_each_datagram(buf, packets, receive) };
     let reads_on = this.outbox.borrow_mut().reads_on(&read, &this.quic());
     // The more is acknowledged, the more can be sent together.
-    if reads_on && !this.quic().has_waiting_clients() {
+    if reads_on {
         this.mark_driver_pending();
     } else {
         this.process();

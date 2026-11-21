@@ -429,7 +429,7 @@ mod windows_impl {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Reports a finished write to its promise.
-fn settle(
+pub(super) fn settle(
     promise: &mut JSPromise,
     global_this: &JSGlobalObject,
     count: Result<SizeType, Box<SystemError>>,
@@ -450,7 +450,7 @@ fn settle(
 
 // ──────────────────────────────────────────────────────────────────────────
 
-fn note_written(destination: &blob::Store) {
+pub(super) fn note_written(destination: &blob::Store) {
     if let blob::store::Data::File(file) = &destination.data
         && let PathOrFileDescriptor::Path(path) = &file.pathlike
     {

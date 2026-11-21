@@ -26,9 +26,8 @@ async function outcomeOf(files: Record<string, string>, words: string, ...flags:
   };
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, "./everyday.test.js"], String(dir), env);
   return {
-    // Every line but the one that names the version of Bun.
     stdout: linesOf(stdout).filter(line => !line.startsWith("bun test v")),
-    // Every line, without the times, which differ from run to run. A word that begins with TestRun makes the runner say what the build handed over.
+    // The times differ from run to run. A word that begins with TestRun makes the runner say what the build handed over.
     stderr: linesOf(stderr)
       .map(line => line.replace(/ \[[\d.]+m?s\]$/, ""))
       .filter(line => !(words && line.startsWith("AOT test run | "))),
@@ -36,8 +35,7 @@ async function outcomeOf(files: Record<string, string>, words: string, ...flags:
   };
 }
 
-// What a test notes: what the kitchen serves, what the kettle boils, its brand, how often the mock was called and how often the body of the real file has run.
-// Where the load or one of the calls throws, the test notes that in their place.
+// The five things that a test notes, as the head of everyday-mock-cases.ts names them. A load or a call that threw notes other words.
 const reading = "(mock|real|undefined)/(mock|real) brand,(mock|real|undefined),(mock|real) brand,(\\d+|-),\\d+";
 
 /** All that `bun test` writes to stderr for a file whose tests pass, without the times. */
@@ -51,7 +49,7 @@ const reportOf = (tests: string[]) => [
   `Ran ${tests.length} ${tests.length === 1 ? "test" : "tests"} across 1 file.`,
 ];
 
-/** What a compiled run wrote to stderr: the report of the runner, what the build said in front of it and what the run lists behind it. A run that came to no report has all that it wrote in the place of one. */
+/** A run that came to no report has all that it wrote in the place of one: the comparison then shows all of it. */
 function partsOf(stderr: string[]) {
   const begins = stderr.indexOf("everyday.test.js:") - 1;
   const ends = stderr.findIndex(line => /^Ran \d+ tests? across 1 file\.$/.test(line));
@@ -59,7 +57,7 @@ function partsOf(stderr: string[]) {
   return { build: stderr.slice(0, from), report: stderr.slice(from, to), lists: stderr.slice(to) };
 }
 
-/** TS100078, as the build writes it: the line of the call, a mark under it, the warning that what loads again after resetModules() runs from source, and where the call is. */
+/** TS100078 warns that what loads again after resetModules() runs from source. */
 const warningOfAReset = (line: number, column: number) => [
   expect.stringMatching(new RegExp(`^${line} \\| +jest\\.resetModules\\(\\);$`)),
   expect.stringMatching(/^ +\^$/),
@@ -67,10 +65,7 @@ const warningOfAReset = (line: number, column: number) => [
   expect.stringMatching(new RegExp(`^ +at .*everyday\\.test\\.js:${line}:${column}$`)),
 ];
 
-/**
- * The lists behind the report of a compiled run, on one line: `ran from source: kettle.mjs?actual, kitchen.mjs; didn't run again: kitchen.mjs`.
- * A list is a heading that counts compiled files, and below it as many lines as it counts, each with the name of a file in front. Whatever is no such list stays as it was written.
- */
+/** The lists on one line, as in `ran from source: kettle.mjs?actual, kitchen.mjs; didn't run again: kitchen.mjs`. Lines that are no whole list stay as they were written. */
 function listsOf(lines: string[]) {
   const lists: string[] = [];
   for (let at = 0; at < lines.length;) {
@@ -96,8 +91,7 @@ export function everydayMocks(part: number, parts: number) {
     const loadsAgain = reset >= 0 && tests.length > 1 && kind !== undefined;
     test(name, async () => {
       const [plain, compiled] = await Promise.all([outcomeOf(files, ""), outcomeOf(files, wordsOfAll, "--aot")]);
-      // A specification is a whole answer: every test of the file passes, each has noted what it was served, and the run says nothing else. A run that stopped on its way,
-      // or one in which every load threw, would be equal to a compiled run that did the same.
+      // Two runs that stop on their way, or in which every load throws, are equal too. So the specification has to be a whole answer.
       expect(plain).toEqual({
         stdout: [
           expect.stringMatching(new RegExp(`^SAID ${tests.map((_, at) => `${at + 1},${reading}`).join(" \\. ")}$`)),
@@ -112,9 +106,7 @@ export function everydayMocks(part: number, parts: number) {
           ? plain
           : { ...plain, stdout: [plain.stdout[0].replace(/ \. 2[ ,].*$/, " . " + secondTest)] },
       );
-      // What a compiled run alone says. The build warns where the test file resets the modules, and of nothing else. A file that loads again behind a reset runs from
-      // source, and the run lists it: the kitchen, and with it the kettle where the kitchen or a mock takes the real one. Some such runs also say that they did not run the
-      // kitchen again. Every other case lists nothing: all of its files ran compiled, so it tested compiled code.
+      // A case that lists nothing ran all of its files compiled, so it tested compiled code. What is optional hangs on how the mock takes the real file.
       expect({ build, lists: listsOf(lists) }).toEqual({
         build: reset < 0 ? [] : warningOfAReset(reset + 1, text[reset].indexOf("jest") + 1),
         lists: loadsAgain

@@ -1103,7 +1103,7 @@ pub use mmap::Mmap;
 #[cfg(test)]
 mod native_test_shims;
 pub mod private_copy;
-pub use file::{File, ReadToEndResult};
+pub use file::{File, MaybeOwnedFile, ReadToEndResult};
 pub mod dir;
 pub use dir::*;
 

@@ -1226,17 +1226,17 @@ impl GitSubprocess {
             (&this.stdout, spawned.stdout.take(), spawned.memfds[1]),
             (&this.stderr, spawned.stderr.take(), spawned.memfds[2]),
         ] {
-            let Some(fd) = file.map(bun_sys::File::into_raw) else {
+            let Some(file) = file else {
                 continue;
             };
             if is_memfd {
-                reader.start_memfd(fd);
+                reader.start_memfd(file);
                 continue;
             }
-            let _ = bun_sys::set_nonblocking(fd);
+            let _ = bun_sys::set_nonblocking(file.fd());
             this.remaining_fds.set(this.remaining_fds.get() + 1);
             reader.update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
-            let result = reader.start(this.event_loop.as_event_loop_ctx(), fd, true)?;
+            let result = reader.start(this.event_loop.as_event_loop_ctx(), file.into(), true)?;
             this.note_read_result(result);
         }
         #[cfg(windows)]

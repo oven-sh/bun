@@ -43,7 +43,7 @@ import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
-const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
+const { isIPv4, isIPv6, isIP, withoutZone } = require("internal/net/isIP");
 const {
   kAcceptedTLS,
   kArmHandshakeTimeout,
@@ -293,6 +293,9 @@ const releaseHeldFlight = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
 const isNamedPipeSocket = $bindgen("socket_body.bind.ts", "isNamedPipeSocket");
 const httpConnectionOf = $bindgen("node_http_binding.bind.ts", "httpConnectionOf");
 const getBytesRead = $bindgen("socket_body.bind.ts", "getBytesRead");
+// Node's handle.getsockname(out) and handle.getpeername(out). False for a handle with no IP address.
+const getSockName = $bindgen("socket_body.bind.ts", "getSockName");
+const getPeerName = $bindgen("socket_body.bind.ts", "getPeerName");
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -1354,6 +1357,14 @@ function initAcceptedTLSSocket(server, socket) {
   socket[khandshakeTimer] = timer;
   socket.once("close", clearHandshakeTimeout);
 }
+// A rule matches an address, not its zone, and isIP() rejects a zone such as `%docker_gwbridge`.
+function isPeerBlocked(blockList, remoteAddress) {
+  if (typeof remoteAddress !== "string") return false;
+  const address = withoutZone(remoteAddress);
+  const addressType = isIP(address);
+  return addressType !== 0 && blockList.check(address, `ipv${addressType}`);
+}
+
 // Node.js-compatible onconnection: assigned to server._handle.onconnection in
 // kRealListen and invoked from SocketHandlers.open with `this` bound to the
 // listener handle. Kept as a standalone function so tests/cluster can wrap it.
@@ -1393,13 +1404,10 @@ function onconnection(err, clientHandle) {
 
   try {
     const blockList = self.blockList;
-    if (blockList) {
-      const addressType = isIP(clientHandle.remoteAddress);
-      // No 'drop': https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2512-L2520
-      if (addressType && blockList.check(clientHandle.remoteAddress, `ipv${addressType}`)) {
-        clientHandle.end();
-        return;
-      }
+    // No 'drop': https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2512-L2520
+    if (blockList && isPeerBlocked(blockList, clientHandle.remoteAddress)) {
+      clientHandle.end();
+      return;
     }
     if (self.maxConnections != null && self._connections >= self.maxConnections) {
       const data = {
@@ -2360,13 +2368,9 @@ Socket.prototype._getpeername = function () {
   if (!this._handle || this.connecting) {
     return this._peername || {};
   } else if (!this._peername) {
-    const family = this._handle.remoteFamily;
-    if (!family) return {};
-    this._peername = {
-      family,
-      address: this._handle.remoteAddress,
-      port: this._handle.remotePort,
-    };
+    const out = {};
+    if (!getPeerName(this._handle, out)) return out;
+    this._peername = out;
   }
   return this._peername;
 };
@@ -2375,13 +2379,9 @@ Socket.prototype._getsockname = function () {
   if (!this._handle || this.connecting) {
     return this._sockname || {};
   } else if (!this._sockname) {
-    const family = this._handle.localFamily;
-    if (!family) return {};
-    this._sockname = {
-      family,
-      address: this._handle.localAddress,
-      port: this._handle.localPort,
-    };
+    const out = {};
+    if (!getSockName(this._handle, out)) return out;
+    this._sockname = out;
   }
   return this._sockname;
 };
@@ -3935,14 +3935,10 @@ function onClusterConnection(err, clientHandle) {
     return;
   }
   const blockList = self.blockList;
-  if (blockList) {
-    const remote = socket.remoteAddress;
-    const t = isIP(remote);
-    if (t && blockList.check(remote, `ipv${t}`)) {
-      // node's onconnection closes a blocked peer silently; 'drop' is for maxConnections only.
-      socket.destroy();
-      return;
-    }
+  // node's onconnection closes a blocked peer silently; 'drop' is for maxConnections only.
+  if (blockList && isPeerBlocked(blockList, socket.remoteAddress)) {
+    socket.destroy();
+    return;
   }
   socket.server = self;
   socket._server = self;

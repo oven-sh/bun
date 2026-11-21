@@ -24,7 +24,6 @@ use libc::sockaddr_storage;
 
 use crate::api::SocketAddress;
 use crate::generated_bindgen::udp_socket::js_UDPSocket as js;
-use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 
 bun_output::declare_scope!(UdpSocket, visible);
 
@@ -139,22 +138,6 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     }
 }
 
-/// `address%scope`. The scope is the interface's name where the platform has one for the index.
-fn scoped_address(address: &[u8], scope_id: u32) -> BunString {
-    #[cfg(not(windows))]
-    {
-        let mut buffer = [0u8; libc::IF_NAMESIZE];
-        if let Some(name) = bun_sys::net::if_indextoname(scope_id, &mut buffer) {
-            return BunString::create_format(format_args!(
-                "{}%{}",
-                bstr::BStr::new(address),
-                bstr::BStr::new(name)
-            ));
-        }
-    }
-    BunString::create_format(format_args!("{}%{}", bstr::BStr::new(address), scope_id))
-}
-
 extern "C" fn on_data(
     socket: *mut uws::udp::Socket,
     buf: *mut uws::udp::PacketBuffer,
@@ -188,31 +171,10 @@ extern "C" fn on_data(
         // SAFETY: `buf` is valid for the duration of this callback per uws
         // contract; each access reborrows it per-statement so no reference
         // spans the JS calls below.
-        let peer = Address::from_ref(unsafe { (*buf).get_peer(i) });
+        let peer = bun_uws_sys::SocketAddress::from_sockaddr(unsafe { (*buf).get_peer(i) });
 
-        let mut addr_buf = [0u8; INET6_ADDRSTRLEN + 1];
-        let hostname: Option<&[u8]>;
-        let port: u16;
-        let mut scope_id: Option<u32> = None;
-        let is_ipv6: bool;
-
-        if let Some(peer4) = peer.as_in4() {
-            is_ipv6 = false;
-            hostname = bun_cares_sys::ntop(bun_core::bytes_of(&peer4.addr), &mut addr_buf);
-            port = u16::from_be(peer4.port);
-        } else if let Some(peer6) = peer.as_in6() {
-            is_ipv6 = true;
-            hostname = bun_cares_sys::ntop(&peer6.addr, &mut addr_buf);
-            port = u16::from_be(peer6.port);
-            if peer6.scope_id != 0 {
-                scope_id = Some(peer6.scope_id);
-            }
-        } else {
-            i += 1;
-            continue;
-        }
-
-        if hostname.is_none() || port == 0 {
+        // An empty address is a sender that is neither `AF_INET` nor `AF_INET6`.
+        if peer.ip().is_empty() || peer.port == 0 {
             i += 1;
             continue;
         }
@@ -223,19 +185,13 @@ extern "C" fn on_data(
         // `binary_type.to_js` copy below, before user JS runs.
         let slice = unsafe { (*buf).get_payload(i) };
 
-        let span = hostname.unwrap();
-        let hostname_string = match scope_id {
-            Some(id) => scoped_address(span, id),
-            None => BunString::clone_utf8(span),
-        };
-
         let _entered = VirtualMachine::get().enter_event_loop_scope();
 
         let flags = JSValue::create_empty_object(global_this, 2);
         flags.put(global_this, b"truncated", JSValue::from(truncated));
         // Per-packet: rinfo.family must reflect the packet's sockaddr, not the
         // socket's constructor `type` (bind({fd}) can adopt the other family).
-        flags.put(global_this, b"ipv6", JSValue::from(is_ipv6));
+        flags.put(global_this, b"ipv6", JSValue::from(peer.is_ipv6));
 
         let payload_js = match udp_socket
             .config
@@ -249,7 +205,7 @@ extern "C" fn on_data(
                 return;
             }
         };
-        let hostname_js = match hostname_string.into_js(global_this) {
+        let hostname_js = match SocketAddress::text_to_js(global_this, &peer) {
             Ok(v) => v,
             Err(_) => {
                 this_value.ensure_still_alive();
@@ -263,7 +219,7 @@ extern "C" fn on_data(
             &[
                 this_value,
                 payload_js,
-                JSValue::js_number(port as f64),
+                JSValue::js_number(peer.port as f64),
                 hostname_js,
                 flags,
             ],
@@ -468,11 +424,6 @@ impl UDPSocketConfig {
     }
 }
 
-#[derive(Clone, Copy)]
-struct ConnectInfo {
-    port: u16,
-}
-
 pub(crate) struct UDPSocket {
     pub(crate) config: JsCell<UDPSocketConfig>,
 
@@ -486,7 +437,7 @@ pub(crate) struct UDPSocket {
     pub poll_ref: JsKeepAlive,
     /// if marked as closed the socket pointer may be stale
     pub closed: Cell<bool>,
-    connect_info: Cell<Option<ConnectInfo>>,
+    connected: Cell<bool>,
     /// This socket's descriptor in the raw-fd registry (adopted or created),
     /// tracked on the socket so close can prune the entry even if `reload()`
     /// replaces the config. POSIX-only, like the registry itself.
@@ -545,7 +496,7 @@ impl UDPSocket {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsKeepAlive::default(),
             closed: Cell::new(false),
-            connect_info: Cell::new(None),
+            connected: Cell::new(false),
             #[cfg(not(windows))]
             registered_fd: Cell::new(None),
             abort_handle: bun_jsc::AbortHandle::for_owner::<UDPSocket>(),
@@ -738,8 +689,7 @@ impl UDPSocket {
                     ));
                 }
             }
-            this.connect_info
-                .set(Some(ConnectInfo { port: connect.port }));
+            this.connected.set(true);
         }
 
         // Disarm the error-path guard.
@@ -1144,11 +1094,11 @@ impl UDPSocket {
         // Cache the connection state before doing anything that can run user JS.
         // Array index getters, `port.valueOf()`, and `address.toString()` can all
         // call back into JS and connect/disconnect/close this socket. If we re-read
-        // `self.connect_info` on every iteration, a mid-loop flip changes how
+        // `self.connected` on every iteration, a mid-loop flip changes how
         // `slice_idx` is computed and which branch writes into `payloads`/`lens`/
         // `addr_ptrs`, producing out-of-bounds writes (unconnected -> connected) or
         // uninitialized slots (connected -> disconnected) in the arena buffers.
-        let connected = self.connect_info.get().is_some();
+        let connected = self.connected.get();
 
         let array_len = packets.get_length(global_this)? as usize;
         if !connected && !array_len.is_multiple_of(3) {
@@ -1295,7 +1245,7 @@ impl UDPSocket {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
         let (port, address) = (port.to_js(), address.to_js());
-        let dst = if self.connect_info.get().is_some() {
+        let dst = if self.connected.get() {
             if !port.is_undefined() || !address.is_undefined() {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Cannot specify destination on connected socket"
@@ -1537,17 +1487,6 @@ impl UDPSocket {
         Some(uws::udp::Socket::opaque_mut(self.socket.get()?).bound_port())
     }
 
-    fn create_sock_addr(
-        global_this: &JSGlobalObject,
-        address_bytes: &[u8],
-        port: u16,
-    ) -> JsResult<JSValue> {
-        let Ok(sockaddr) = SocketAddress::init(address_bytes, port) else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        sockaddr.into_dto(global_this)
-    }
-
     pub(crate) fn get_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         if self.closed.get() {
             return Ok(JSValue::UNDEFINED);
@@ -1555,38 +1494,25 @@ impl UDPSocket {
         let Some(socket) = self.socket.get() else {
             return Ok(JSValue::UNDEFINED);
         };
-        let mut buf = [0u8; 64];
-        let mut length: i32 = 64;
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let socket = uws::udp::Socket::opaque_mut(socket);
-        socket.bound_ip(buf.as_mut_ptr(), &mut length);
-
-        let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
-        let port = socket.bound_port();
-        Self::create_sock_addr(
-            cx.global(),
-            address_bytes,
-            u16::try_from(port).expect("int cast"),
-        )
+        match uws::udp::Socket::opaque_mut(socket).local_sockaddr() {
+            Some(addr) => SocketAddress::dto_from_sockaddr(cx.global(), &addr),
+            None => Ok(JSValue::UNDEFINED),
+        }
     }
 
     pub(crate) fn get_remote_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        if self.closed.get() {
+        if self.closed.get() || !self.connected.get() {
             return Ok(JSValue::UNDEFINED);
         }
-        let Some(connect_info) = self.connect_info.get() else {
-            return Ok(JSValue::UNDEFINED);
-        };
         let Some(socket) = self.socket.get() else {
             return Ok(JSValue::UNDEFINED);
         };
-        let mut buf = [0u8; 64];
-        let mut length: i32 = 64;
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        uws::udp::Socket::opaque_mut(socket).remote_ip(buf.as_mut_ptr(), &mut length);
-
-        let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
-        Self::create_sock_addr(cx.global(), address_bytes, connect_info.port)
+        match uws::udp::Socket::opaque_mut(socket).remote_sockaddr() {
+            Some(addr) => SocketAddress::dto_from_sockaddr(cx.global(), &addr),
+            None => Ok(JSValue::UNDEFINED),
+        }
     }
 
     pub(crate) fn get_binary_type(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -1644,7 +1570,7 @@ pub(crate) fn connect(
     port: i32,
 ) -> JsResult<()> {
     let global_this = cx.global();
-    if this.connect_info.get().is_some() {
+    if this.connected.get() {
         return Err(global_this.throw(format_args!("Socket is already connected")));
     }
 
@@ -1671,18 +1597,13 @@ pub(crate) fn connect(
     if uws::udp::Socket::opaque_mut(socket).connect(&connect_host, port as u32) == -1 {
         return Err(global_this.throw(format_args!("Failed to connect socket")));
     }
-    this.connect_info.set(Some(ConnectInfo { port }));
-
-    if let Some(this_value) = this.this_value.get().try_get() {
-        js::address_set_cached(this_value, global_this, JSValue::ZERO);
-        js::remote_address_set_cached(this_value, global_this, JSValue::ZERO);
-    }
+    this.connected.set(true);
 
     Ok(())
 }
 
 pub(crate) fn disconnect<'a>(heap: &JsHeap<'a>, this: &UDPSocket) -> bindgen::Result<'a, ()> {
-    if this.connect_info.get().is_none() {
+    if !this.connected.get() {
         return Err(heap.error(format_args!("Socket is not connected")));
     }
 
@@ -1694,9 +1615,19 @@ pub(crate) fn disconnect<'a>(heap: &JsHeap<'a>, this: &UDPSocket) -> bindgen::Re
     if uws::udp::Socket::opaque_mut(this.socket.get().unwrap()).disconnect() == -1 {
         return Err(heap.error(format_args!("Failed to disconnect socket")));
     }
-    this.connect_info.set(None);
+    this.connected.set(false);
 
     Ok(())
+}
+
+/// Node's `handle.getsockname(out)`: one `getsockname()` and a new object per call. `undefined` when closed.
+pub(crate) fn get_sock_name(cx: &mut JsScope<'_>, this: &UDPSocket) -> JsResult<JSValue> {
+    this.get_address(cx)
+}
+
+/// Node's `handle.getpeername(out)`, as [`get_sock_name`]. `undefined` when the socket is not connected.
+pub(crate) fn get_peer_name(cx: &mut JsScope<'_>, this: &UDPSocket) -> JsResult<JSValue> {
+    this.get_remote_address(cx)
 }
 
 /// The resulting SO_RCVBUF/SO_SNDBUF value. `size == 0`
@@ -2003,18 +1934,17 @@ pub(crate) fn dgram_get_sock_name_fd<'a>(
         let addr = bun_sys::net::getsockname(bun_sys::Fd::from_native(fd)).map_err(|err| {
             bun_sys::Error::from_code_int(err.errno.into(), bun_sys::Tag::open).into_error(&cx.heap)
         })?;
-        let (bytes, port): (&[u8], u16) = if let Some(addr4) = addr.as_in4() {
-            (bun_core::bytes_of(&addr4.addr), u16::from_be(addr4.port))
-        } else if let Some(addr6) = addr.as_in6() {
-            (&addr6.addr, u16::from_be(addr6.port))
-        } else {
+        if addr.as_in4().is_none() && addr.as_in6().is_none() {
             return Err(bun_sys::Error::from_code_int(
                 SystemErrno::EINVAL as c_int,
                 bun_sys::Tag::open,
             )
             .into_error(&cx.heap));
-        };
-        Ok(UDPSocket::create_sock_addr(cx.global(), bytes, port)?)
+        }
+        Ok(SocketAddress::dto_from_sockaddr(
+            cx.global(),
+            &addr.into_storage(),
+        )?)
     }
     #[cfg(windows)]
     {

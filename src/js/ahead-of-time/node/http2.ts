@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 cd00d2bda6d97e7fcb94cfd38b6706ed1322b67c9f0c7a784c1028cfe129eba7.
+// Written against that file with the SHA-256 9e994913da5aec95c9e6ebb3a892d128dc408b7bb2bb056ead25cb6f4ee0c28a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -45,6 +45,7 @@ const netSymbols = require("internal/net/symbols");
 const bunSocketServerOptions: typeof netSymbols.bunSocketServerOptions = CAN_REPLACE_BUILT_IN_FUNCTIONS
   ? (Symbol.for("::bunnetserveroptions::") as typeof netSymbols.bunSocketServerOptions)
   : netSymbols.bunSocketServerOptions;
+const { withoutZone } = require("internal/net/isIP");
 const kInfoHeaders = Symbol("sent-info-headers");
 const kDeferWriteCallback = Symbol("deferWriteCallback");
 const kTransportClosed = Symbol("transportClosed");
@@ -4271,7 +4272,8 @@ function initOriginSet(session: Http2Session, socket: SessionSocket) {
     let hostName = socket.servername;
     if (!hostName) {
       if (socket.remoteFamily === "IPv6") {
-        hostName = `[${socket.remoteAddress}]`;
+        // An origin cannot hold the zone of a link-local address.
+        hostName = `[${withoutZone(socket.remoteAddress!)}]`;
       } else {
         hostName = socket.remoteAddress;
       }

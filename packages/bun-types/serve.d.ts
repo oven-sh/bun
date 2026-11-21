@@ -265,6 +265,10 @@ declare module "bun" {
     /**
      * The IP address of the client.
      *
+     * A link-local IPv6 address (`fe80::/10`) has its zone: the name of the
+     * interface, or the index of the interface on Windows. For example
+     * `"fe80::1%eth0"`.
+     *
      * @example
      * ```ts
      * console.log(socket.remoteAddress); // "127.0.0.1"

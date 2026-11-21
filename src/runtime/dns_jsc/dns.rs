@@ -38,6 +38,7 @@ use super::cares_jsc;
 use crate::generated_bindgen::dns::LookupOptions;
 use crate::generated_bindgen::dns_internals::{ResolverOptions, js_DNSResolver};
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
+use crate::socket::socket_address::parse_ip_address;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_cares_sys::parse_ip;
@@ -1306,8 +1307,9 @@ pub(crate) mod internal {
         (0..len)
             .map(|i| {
                 let address = addresses.get_index(global, i as u32)?.to_utf8(global)?;
-                match bun_core::ip_address::to_ip_address(address.slice()) {
-                    Some(ip) => Ok(Address::from_ip(ip, 0)),
+                // The parse of the connect paths: a `%zone` becomes the scope id.
+                match parse_ip_address(address.slice(), 0) {
+                    Some(addr) => Ok(addr),
                     None => Err(global.throw_invalid_arguments(format_args!(
                         "addresses[{i}] is not an IPv4 or IPv6 literal"
                     ))),
@@ -1792,6 +1794,14 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// `ip` without the `%zone` that a socket prints after a link-local address: c-ares reads none.
+fn without_zone(ip: &[u8]) -> &[u8] {
+    match strings::index_of_char_usize(ip, b'%') {
+        Some(zone) => &ip[..zone],
+        None => ip,
+    }
+}
+
 /// Non-NaN, integer-truncated `0..=65535`, else `ERR_SOCKET_BAD_PORT`.
 fn to_port_number(double: f64, global: &JSGlobalObject) -> JsResult<u16> {
     if double.is_nan() {
@@ -2243,7 +2253,7 @@ impl Resolver {
             }
         };
 
-        let send = |query| channel.get_host_by_addr(ip, query);
+        let send = |query| channel.get_host_by_addr(without_zone(ip), query);
         Ok(self.ask(kind, wyhash(ip), ip, global_this, context, send))
     }
 
@@ -2582,7 +2592,7 @@ impl Resolver {
         let port: u16 = to_port_number(port_value, global_this)?;
 
         let mut buf = [0u8; 128];
-        let Some(ip) = strings::copy_z(&mut buf, addr_s).and_then(parse_ip) else {
+        let Some(ip) = strings::copy_z(&mut buf, without_zone(addr_s)).and_then(parse_ip) else {
             return Err(global_this.throw_invalid_argument_value(
                 b"address",
                 bun_string_jsc::create_utf8_for_js(global_this, addr_s)?,

@@ -226,14 +226,10 @@ impl AnyWebSocket {
         c::uws_ws_is_paused(ssl, ws)
     }
 
-    pub fn get_remote_address<'a>(self, buf: &'a mut [u8]) -> &'a mut [u8] {
-        let (ssl_flag, ws) = self.split();
-        let mut ptr: *mut u8 = core::ptr::null_mut();
-        let len = c::uws_ws_get_remote_address(ssl_flag, ws, &mut ptr);
-        // SAFETY: uWS returns a pointer+len into its internal buffer.
-        let src = unsafe { bun_core::ffi::slice(ptr, len) };
-        buf[..len].copy_from_slice(src);
-        &mut buf[..len]
+    /// `getpeername()` of the connection. `None` for a unix socket, and when the call fails.
+    pub fn remote_sockaddr(self) -> Option<uws::sockaddr_storage> {
+        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+        uws::us_socket_t::opaque_ref(self.us_socket()).remote_sockaddr()
     }
 }
 
@@ -655,13 +651,5 @@ pub mod c {
         pub(crate) safe fn uws_ws_pause(ssl: i32, ws: &mut RawWebSocket);
         pub(crate) safe fn uws_ws_resume(ssl: i32, ws: &mut RawWebSocket);
         pub(crate) safe fn uws_ws_is_paused(ssl: i32, ws: &mut RawWebSocket) -> bool;
-        // Out-param `dest` is `&mut *mut u8` (non-null, valid for write); the C
-        // shim only stores a pointer into socket-owned storage and returns its
-        // length — no read-through precondition, so `safe fn`.
-        pub(crate) safe fn uws_ws_get_remote_address(
-            ssl: i32,
-            ws: &mut RawWebSocket,
-            dest: &mut *mut u8,
-        ) -> usize;
     }
 }

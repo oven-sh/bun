@@ -8,6 +8,7 @@ use crate::bun_json::Expr;
 use crate::dependency::{TagExt as _, VersionTag};
 use crate::lockfile_real::package::{Diff, Package, PackageColumns, ResolverContext};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
+use crate::package_manager_real::fetch_table::WaitingRow;
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{ArrivedPackage, PackageManager, RemoteTurn, enqueue, run_tasks};
 use crate::package_manager_task as Task;
@@ -15,7 +16,7 @@ use crate::repository_real::{RepositoryExt as _, locked_scp_like};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
     Dependency, DependencyID, ExtractData, ExtractDataJson, Features, INVALID_PACKAGE_ID,
-    PackageID, Resolution, TaskCallbackContext, dependency,
+    PackageID, Resolution, dependency,
 };
 
 /// The dependencies of a package.json, parsed into a separate lockfile. `LookAhead` reads it to
@@ -488,7 +489,7 @@ impl PackageManager {
     }
 
     /// Returns true if the package that `task_id` downloaded has to wait for its turn. See
-    /// `RemotePackages`. The runtime's auto-install writes no lockfile, and an import only waits
+    /// `ArrivedPackage`. The runtime's auto-install writes no lockfile, and an import only waits
     /// for its own package.
     pub(crate) fn defers_remote_package(&self, task_id: Task::Id, resolution: &Resolution) -> bool {
         !self.options.runtime_auto_install
@@ -500,9 +501,7 @@ impl PackageManager {
                     | ResolutionTag::RemoteTarball
             )
             // `bun pm fetch` downloads what's in bun.lock and doesn't resolve any dependency.
-            && self.task_queue.get(&task_id).is_some_and(|waiting| {
-                (waiting.iter()).any(|waiter| matches!(waiter, TaskCallbackContext::Dependency(_)))
-            })
+            && self.fetches.has_rows(task_id)
     }
 
     /// Keeps a downloaded package until `append_next_remote_package` adds it to the lockfile.
@@ -512,7 +511,7 @@ impl PackageManager {
         &mut self,
         task_id: Task::Id,
         resolution: &Resolution,
-        data: &ExtractData,
+        data: ExtractData,
     ) {
         if let Some(json) = &data.json {
             let source = bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
@@ -530,48 +529,15 @@ impl PackageManager {
                 enqueue::look_ahead_from(self, &listed, &[]);
             }
         }
-        let data = ExtractData {
-            url: data.url.clone(),
-            resolved: data.resolved.clone(),
-            json: data.json.as_ref().map(|json| ExtractDataJson {
-                path: json.path.clone(),
-                buf: json.buf.clone(),
-            }),
-            integrity: data.integrity,
-        };
-        let arrived = ArrivedPackage {
-            resolution: *resolution,
-            data,
-        };
-        let _ = self.remote_packages.arrived.insert(task_id, arrived);
-    }
-
-    /// Returns, for each task that fetches a git, GitHub or tarball package, the lowest dependency
-    /// that's waiting for it. Skips a task that failed, and a task that was never started, which is
-    /// what a deferred peer waits for.
-    fn remote_rows_waiting(&self) -> impl core::iter::Iterator<Item = (DependencyID, Task::Id)> {
-        self.remote_packages.tasks.iter().filter_map(|&task_id| {
-            if !self.network_dedupe_map.contains_key(&task_id)
-                || self.network_task_has_failed(task_id)
-            {
-                return None;
-            }
-            let lowest = (self.task_queue.get(&task_id)?.iter())
-                .filter_map(|waiter| match *waiter {
-                    TaskCallbackContext::Dependency(id) => Some(id),
-                    _ => None,
-                })
-                .min()?;
-            Some((lowest, task_id))
-        })
+        let resolution = *resolution;
+        (self.fetches).arrive(task_id, ArrivedPackage { resolution, data });
     }
 
     /// Returns true if a git, GitHub or tarball package still has to be added to the lockfile.
     pub(crate) fn waits_for_remote_package(&self) -> bool {
-        !self.remote_packages.tasks.is_empty()
-            // With nothing running and nothing downloaded, none of them can be added any more.
-            && (self.pending_task_count() > 0 || !self.remote_packages.arrived.is_empty())
-            && self.remote_rows_waiting().next().is_some()
+        // With nothing running and nothing downloaded, none of them can be added any more.
+        (self.pending_task_count() > 0 || self.fetches.has_arrived())
+            && (self.fetches.lowest_rows(RemoteTurn::InOrder).next()).is_some()
     }
 
     /// Adds the next git, GitHub or tarball package to the lockfile and resolves the dependencies
@@ -579,20 +545,10 @@ impl PackageManager {
     /// package's own dependencies. Returns false if no package was added.
     #[cold]
     pub(crate) fn append_next_remote_package(&mut self, turn: RemoteTurn) -> bool {
-        if self.remote_packages.arrived.is_empty() {
-            return false;
-        }
-        let has_arrived = |task_id: &Task::Id| self.remote_packages.arrived.contains_key(task_id);
-        let next = self
-            .remote_rows_waiting()
-            .filter(|(_, task_id)| turn == RemoteTurn::InOrder || has_arrived(task_id))
-            .min_by_key(|&(row, _)| row);
-        let Some((row, task_id)) = next else {
+        let Some((row, task_id, arrived)) = self.fetches.take_next(turn) else {
             return false;
         };
-        let Some(arrived) = self.remote_packages.arrived.remove(&task_id) else {
-            return false;
-        };
+        let (waiters, arrived) = (&arrived.waiters, &arrived.package);
 
         let mut package_id = INVALID_PACKAGE_ID;
         let log_level = self.options.log_level;
@@ -605,9 +561,13 @@ impl PackageManager {
             return true;
         };
         let install_peer = self.look_ahead.in_peer_pass;
-        if let Err(err) =
-            run_tasks::resolve_waiters_of_appended_package(self, task_id, &package, install_peer)
-        {
+        if let Err(err) = run_tasks::resolve_waiters_of_appended_package(
+            self,
+            task_id,
+            waiters,
+            &package,
+            install_peer,
+        ) {
             let dependency = self.lockfile.buffers.dependencies[row as usize].clone();
             enqueue::add_dependency_error(self, &dependency, err);
         }
@@ -618,46 +578,22 @@ impl PackageManager {
         true
     }
 
-    pub(crate) fn process_dependency_list_item(
+    pub(crate) fn resolve_waiting_row(
         &mut self,
-        item: &TaskCallbackContext,
+        WaitingRow { id, is_import }: WaitingRow,
         install_peer: bool,
     ) -> Result<(), crate::Error> {
-        match *item {
-            TaskCallbackContext::Dependency(dependency_id)
-            | TaskCallbackContext::RootDependency(dependency_id) => {
-                let is_root = matches!(item, TaskCallbackContext::RootDependency(_));
-                // Cloned out of the buffer, which the enqueue can grow.
-                let dependency = self.lockfile.buffers.dependencies[dependency_id as usize].clone();
-                let resolution = self.lockfile.buffers.resolutions[dependency_id as usize];
-
-                let row = enqueue::bind_row(
-                    self,
-                    dependency_id,
-                    &dependency,
-                    resolution,
-                    install_peer,
-                    if is_root {
-                        PackageManager::assign_root_resolution
-                    } else {
-                        PackageManager::assign_resolution
-                    },
-                    is_root,
-                )?;
-                // An import of the runtime has put itself on the list of the task it waits for.
-                if row != enqueue::Row::Done && !is_root {
-                    (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
-                        rows: DependencySlice::new(dependency_id, 1),
-                        install_peer,
-                        from_command: false,
-                    })?;
-                }
-            }
-            // A linker's `run_tasks` starts this checkout. Here it would be dropped.
-            TaskCallbackContext::GitCheckout { .. } => {
-                debug_assert!(false, "git checkout waiter outside the install phase");
-            }
-            _ => {}
+        // Cloned out of the buffer, which the enqueue can grow.
+        let dependency = self.lockfile.buffers.dependencies[id as usize].clone();
+        let resolution = self.lockfile.buffers.resolutions[id as usize];
+        let row = enqueue::bind_row(self, id, &dependency, resolution, install_peer, is_import)?;
+        // An import of the runtime has put itself on the list of the task it waits for.
+        if row != enqueue::Row::Done && !is_import {
+            (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
+                rows: DependencySlice::new(id, 1),
+                install_peer,
+                from_command: false,
+            })?;
         }
         Ok(())
     }

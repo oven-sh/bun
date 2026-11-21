@@ -419,8 +419,4 @@ pub mod hash_map {
         pub found_existing: bool,
         pub value_ptr: &'a mut V,
     }
-
-    /// Owned `{key, value}` pair returned from `fetchRemove` / `fetchPut`;
-    /// re-exported from `array_hash_map` rather than duplicated.
-    pub use crate::array_hash_map::KV;
 }

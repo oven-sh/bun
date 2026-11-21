@@ -32,12 +32,13 @@ use crate::{Error, PackageManager};
 
 impl PackageManager {
     /// Queues a git task; it counts as pending from now on.
-    pub(crate) fn enqueue_git_task(&mut self, task: NonNull<Task::Task>) {
+    pub(crate) fn enqueue_git_task(&mut self, id: Task::Id, job: Job) {
         debug_assert!(
             !self.options.runtime_auto_install,
             "a git child exits through this thread's event loop"
         );
         self.increment_pending_tasks(1);
+        let task = Task::Task::create(self, id, job);
         self.git_tasks.push_back(task);
     }
 
@@ -115,32 +116,28 @@ impl Finalize {
             .take()
             .expect("a clone or checkout task carries its finalize step");
         let log = &mut task.log;
-        let result = match (finalize, &mut task.job) {
-            (Finalize::Repo(fd), Job::GitClone { repo, .. }) => {
-                *repo = fd;
-                Ok(())
-            }
+        match (finalize, &mut task.job) {
+            (Finalize::Repo(fd), Job::GitClone { repo, .. }) => *repo = Ok(fd),
             (Finalize::PublishRepo(staging, url, replaces), Job::GitClone { request, repo }) => {
-                finish_clone(task.id, request, log, staging, &url, replaces)
-                    .map(|dir| *repo = dir.into_raw())
+                *repo = finish_clone(task.id, request, log, staging, &url, replaces)
+                    .map(|dir| dir.into_raw());
             }
             (Finalize::CachedCheckout(dir, json), Job::GitCheckout { request, data }) => {
-                read_package_json(request, log, &dir, json).map(|read| *data = Some(read))
+                *data = read_package_json(request, log, &dir, json);
             }
             (Finalize::PublishCheckout(staging, tree), Job::GitCheckout { request, data }) => {
-                finish_checkout(request, log, staging, &tree).map(|read| *data = Some(read))
+                *data = finish_checkout(request, log, staging, &tree);
             }
-            (Finalize::Failed { staging, err }, _) => {
+            (Finalize::Failed { staging, err }, Job::GitClone { repo, .. }) => {
                 drop(staging);
-                Err(err)
+                *repo = Err(err);
+            }
+            (Finalize::Failed { staging, err }, Job::GitCheckout { data, .. }) => {
+                drop(staging);
+                *data = Err(err);
             }
             _ => unreachable!("the finalize step is for another kind of task"),
-        };
-        task.status = match result {
-            Ok(()) => Task::Status::Success,
-            Err(_) => Task::Status::Fail,
-        };
-        task.err = result.err();
+        }
     }
 }
 
@@ -865,7 +862,7 @@ impl GitSubprocess {
     fn is_required(&self) -> bool {
         let task = self.task();
         matches!(task.job, Job::GitCheckout { .. })
-            || self.manager().is_network_task_required(task.id)
+            || !self.manager().fetches.is_optional_so_far(task.id)
     }
 
     fn log_failure(&self, args: core::fmt::Arguments<'_>) {
@@ -1523,13 +1520,7 @@ impl GitSubprocess {
             let Job::GitCommit { sha, .. } = &mut task.job else {
                 unreachable!("not a commit task");
             };
-            match found {
-                Some(found) => {
-                    *sha = found;
-                    task.status = Task::Status::Success;
-                }
-                None => task.status = Task::Status::Fail,
-            }
+            *sha = found;
         }
         Self::release(this);
         INBOX.resolve_tasks.push(task_ptr);

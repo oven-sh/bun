@@ -8,9 +8,7 @@ use crate::dependency;
 use crate::lockfile::{DependencyIDSlice, DependencySlice};
 use crate::npm;
 use crate::resolution::Tag as ResolutionTag;
-use crate::{
-    DependencyID, GetJsonResult, PackageID, PackageNameHash, Resolution, invalid_package_id,
-};
+use crate::{DependencyID, GetJsonResult, PackageID, PackageNameHash, Resolution};
 
 use super::PackageManager;
 use super::add_remove_with_filter::root_package_json_path;
@@ -77,30 +75,6 @@ impl PackageManager {
         debug_assert!((package_id as usize) < self.lockfile.packages.len());
         // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
         self.lockfile.take_refreshing(dependency_id);
-        let buffers = &mut self.lockfile.buffers;
-        buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
-        let string_buf = buffers.string_bytes.as_slice();
-        let dep = &mut buffers.dependencies.as_mut_slice()[dependency_id as usize];
-        if dep.name.is_empty()
-            || dep.name.slice(string_buf) == dep.version.literal.slice(string_buf)
-        {
-            dep.name = self.lockfile.packages.items_name()[package_id as usize];
-            dep.name_hash = self.lockfile.packages.items_name_hash()[package_id as usize];
-        }
-    }
-
-    pub(crate) fn assign_root_resolution(
-        &mut self,
-        dependency_id: DependencyID,
-        package_id: PackageID,
-    ) {
-        // reshaped for borrowck — capture lengths before mutable borrows.
-        debug_assert!((dependency_id as usize) < self.lockfile.buffers.resolutions.len());
-        debug_assert!((package_id as usize) < self.lockfile.packages.len());
-        debug_assert!(
-            self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]
-                == invalid_package_id
-        );
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
         let string_buf = buffers.string_bytes.as_slice();

@@ -955,29 +955,11 @@ pub struct ExtractData {
 /// borrowed `*const [u8]` raw slice with `Copy` semantics, which broke
 /// ownership: callers push into this buffer; the raw-ptr version cannot grow
 /// and aliases caller memory with no lifetime. Own the buffer.
-#[derive(Clone, Default)]
-pub struct DependencyInstallContext {
+pub(crate) struct DependencyInstallContext {
     pub(crate) tree_id: lockfile::tree::Id,
     pub(crate) path: Vec<u8>,
     pub(crate) dependency_id: DependencyID,
 }
-
-#[derive(Clone)]
-pub enum TaskCallbackContext {
-    Dependency(DependencyID),
-    DependencyInstallContext(DependencyInstallContext),
-    IsolatedPackageInstallContext(isolated_install::EntryId),
-    RootDependency(DependencyID),
-    RootRequestId(PackageID),
-    /// Install phase, parked on a git clone. `dependency_id` may resolve to another package.
-    GitCheckout {
-        dependency_id: DependencyID,
-        package_id: PackageID,
-    },
-}
-
-// One per waiter in `task_queue`.
-const _: () = assert!(core::mem::size_of::<TaskCallbackContext>() == 32);
 
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:

@@ -492,12 +492,6 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         self.get_index(key).and_then(|i| self.remove_by_index(i))
     }
 
-    /// Remove and return the owned `{key, value}` pair.
-    pub fn fetch_remove(&mut self, key: &K) -> Option<crate::hash_map::KV<K, V>> {
-        self.remove_entry(key)
-            .map(|(k, v)| crate::hash_map::KV { key: k, value: v })
-    }
-
     /// std `retain`. Calls `keep` exactly once per entry.
     pub fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool) {
         for idx in 0..self.slots.len() {

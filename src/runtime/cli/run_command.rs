@@ -1956,9 +1956,26 @@ impl RunCommand {
 
         // A prior --filter package may have cached our shim as NODE.
         let found_real_node = found_node
-            && env_loader
-                .get(b"NODE")
-                .is_some_and(|node| node != bun_node_exe.as_bytes());
+            && env_loader.get(b"NODE").is_some_and(|node| {
+                if node == bun_node_exe.as_bytes() {
+                    return false;
+                }
+                #[cfg(windows)]
+                {
+                    // NODE may spell our existing shim with different separators or casing.
+                    let node = core::ZBox::from_bytes(node);
+                    if let (Ok(node), Ok(shim)) = (sys::stat(&node), sys::stat(bun_node_exe)) {
+                        if node.st_dev != 0
+                            && node.st_ino != 0
+                            && node.st_dev == shim.st_dev
+                            && node.st_ino == shim.st_ino
+                        {
+                            return false;
+                        }
+                    }
+                }
+                true
+            });
 
         let mut needs_to_force_bun = force_using_bun || !found_real_node;
         let mut optional_bun_self_path: &[u8] = b"";

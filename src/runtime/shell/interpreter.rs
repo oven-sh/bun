@@ -487,9 +487,9 @@ impl Interpreter {
         // ── stdin ──────────────────────────────────────────────────────────
         log!("Duping stdin");
         let stdin_fd_res = if bun_core::output::stdio::is_stdin_null() {
-            bun_sys::open(NULL_DEVICE, bun_sys::O::RDONLY, 0)
+            File::open(NULL_DEVICE, bun_sys::O::RDONLY, 0)
         } else {
-            bun_sys::dup(Fd::stdin())
+            bun_sys::dup(Fd::stdin()).map(File::from_fd)
         };
         let stdin_fd = match stdin_fd_res {
             Ok(fd) => fd,
@@ -1090,39 +1090,29 @@ impl Interpreter {
 
         // ── dup stdout ─────────────────────────────────────────────────────
         log!("Duping stdout");
-        let stdout = File::from_fd(if bun_core::output::stdio::is_stdout_null() {
+        let stdout = if bun_core::output::stdio::is_stdout_null() {
             open_null_device()?
         } else {
-            bun_sys::dup(Fd::stdout())?
-        });
+            File::from_fd(bun_sys::dup(Fd::stdout())?)
+        };
 
         // ── dup stderr ─────────────────────────────────────────────────────
         log!("Duping stderr");
-        let stderr_fd = if bun_core::output::stdio::is_stderr_null() {
+        let stderr = if bun_core::output::stdio::is_stderr_null() {
             open_null_device()?
         } else {
-            bun_sys::dup(Fd::stderr())?
+            File::from_fd(bun_sys::dup(Fd::stderr())?)
         };
 
-        let stdout_fd = stdout.into_raw();
-        let stdout_writer = IOWriter::init(
-            stdout_fd,
-            crate::shell::io_writer::Flags {
-                pollable: is_pollable(stdout_fd),
+        let [stdout_writer, stderr_writer] = [stdout, stderr].map(|file| {
+            let flags = crate::shell::io_writer::Flags {
+                pollable: is_pollable(file.fd()),
                 ..Default::default()
-            },
-            event_loop,
-        );
-        stdout_writer.set_interp(self);
-        let stderr_writer = IOWriter::init(
-            stderr_fd,
-            crate::shell::io_writer::Flags {
-                pollable: is_pollable(stderr_fd),
-                ..Default::default()
-            },
-            event_loop,
-        );
-        stderr_writer.set_interp(self);
+            };
+            let writer = IOWriter::init(file, flags, event_loop);
+            writer.set_interp(self);
+            writer
+        });
 
         // On the JS event loop, hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path
@@ -1913,8 +1903,8 @@ const NULL_DEVICE: &bun_core::ZStr =
 /// start so we have *something* to dup into the shell's root IO. Must be
 /// writable: `setup_io_before_run` installs the result as the stdout/stderr
 /// `IOWriter` target (and `init` uses it for stdin), so `RDWR` covers both.
-fn open_null_device() -> bun_sys::Result<Fd> {
-    bun_sys::open(NULL_DEVICE, bun_sys::O::RDWR, 0)
+fn open_null_device() -> bun_sys::Result<File> {
+    File::open(NULL_DEVICE, bun_sys::O::RDWR, 0)
 }
 
 /// `false` (synchronous writes) if `fstat` fails, as on Windows.

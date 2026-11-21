@@ -499,17 +499,14 @@ impl FileSink {
         Ok(this)
     }
 
-    /// Starts the writer on `self.fd`.
     #[cfg(windows)]
-    pub(crate) fn start_writer(&self, owns_fd: bool) -> sys::Result<()> {
+    pub(crate) fn start_writer(&self, file: sys::MaybeOwnedFile) -> sys::Result<()> {
         use sys::Stdio::{StdErr, StdOut};
-        let fd = self.fd.get();
-        self.writer.set_owns_fd(owns_fd);
-        if !owns_fd && matches!(fd.stdio_tag(), Some(StdOut | StdErr)) {
-            self.writer.start_sync(self, fd)
+        if !file.is_owned() && matches!(file.fd().stdio_tag(), Some(StdOut | StdErr)) {
+            self.writer.start_sync(self, file)
         } else {
             let event_loop = self.event_loop_handle.as_event_loop_ctx();
-            self.writer.start(self, event_loop, fd, true)
+            self.writer.start(self, event_loop, file, true)
         }
     }
 
@@ -611,9 +608,7 @@ impl FileSink {
         #[cfg(windows)]
         {
             if self.force_sync.get() {
-                self.writer.start_sync(self, file.fd())?;
-                file.into_raw();
-                self.writer.set_owns_fd(true);
+                self.writer.start_sync(self, file.into())?;
                 self.writer.update_ref(false);
                 return sys::Result::Ok(());
             }
@@ -621,21 +616,10 @@ impl FileSink {
 
         match self
             .writer
-            .start(self, event_loop, file.fd(), self.pollable.get())
+            .start(self, event_loop, file, self.pollable.get())
         {
             sys::Result::Err(err) => return sys::Result::Err(err),
             sys::Result::Ok(()) => {
-                // The writer closes it from now on.
-                #[cfg(not(windows))]
-                file.into_raw();
-                #[cfg(windows)]
-                {
-                    // Otherwise it has made a duplicate.
-                    if self.writer.owns_fd() {
-                        file.into_raw();
-                    }
-                    self.writer.set_owns_fd(true);
-                }
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
                 self.writer.update_ref(false);

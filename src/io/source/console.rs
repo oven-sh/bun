@@ -359,7 +359,7 @@ impl Console {
         }
     }
 
-    pub(super) fn fd(&self) -> Fd {
+    fn fd(&self) -> Fd {
         self.0.file.fd()
     }
 

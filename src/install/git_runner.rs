@@ -1221,7 +1221,7 @@ impl GitSubprocess {
             let Some(pipe) = pipe else { continue };
             #[cfg(unix)]
             if _is_memfd {
-                reader.start_memfd(pipe.into_raw());
+                reader.start_memfd(pipe);
                 continue;
             }
             let _ = bun_sys::set_nonblocking(pipe.fd());

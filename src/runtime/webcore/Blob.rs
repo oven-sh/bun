@@ -3170,7 +3170,7 @@ fn start_file_sink(
         PathOrFileDescriptor::Path(path) => path,
         PathOrFileDescriptor::Fd(fd) => {
             let sink = webcore::FileSink::init(*fd, event_loop);
-            sink.start_writer(false)?;
+            sink.start_writer(bun_sys::MaybeOwnedFile::Borrowed(*fd))?;
             return Ok(sink);
         }
     };
@@ -3197,9 +3197,7 @@ fn start_file_sink(
     };
     node::fs::note_opened_for_write(path.slice(), truncate);
     let sink = webcore::FileSink::init(file.fd(), event_loop);
-    sink.start_writer(true)?;
-    // The writer closes it from now on.
-    file.into_raw();
+    sink.start_writer(file.into())?;
     sink.close_with_graph(cx.context());
     Ok(sink)
 }

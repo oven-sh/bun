@@ -25,7 +25,7 @@ struct OwnedFd {
 impl Drop for OwnedFd {
     fn drop(&mut self) {
         match self.is_only_handle {
-            true => Closer::close(self.fd),
+            true => Closer::close(sys::File::from_fd(self.fd)),
             false => self.fd.close(),
         }
     }
@@ -74,9 +74,8 @@ struct Inner {
 }
 
 impl File {
-    /// Takes ownership of `fd`.
-    pub(super) fn new(port: &Rc<Port>, fd: Fd, is_only_handle: bool) -> File {
-        let endpoint = Endpoint::new(port);
+    pub(super) fn new(port: &Rc<Port>, file: sys::File, is_only_handle: bool) -> File {
+        let (fd, endpoint) = (file.into_raw(), Endpoint::new(port));
         endpoint.expect_much();
         File(Rc::new(Inner {
             endpoint,
@@ -86,10 +85,6 @@ impl File {
             read: Cell::new(None),
             write: Cell::new(None),
         }))
-    }
-
-    pub(super) fn fd(&self) -> Fd {
-        self.0.fd.fd
     }
 
     pub(super) fn endpoint(&self) -> &Endpoint {

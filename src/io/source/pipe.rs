@@ -106,14 +106,16 @@ impl Pipe {
         pipe
     }
 
-    /// For an end of unknown origin. It owns `fd`, unless that turns out to be something else.
-    pub(super) fn open(port: &Rc<Port>, fd: Fd) -> Option<Pipe> {
-        let handle = fd.native();
-        let kind = named_pipe::is_idle(handle).then(|| named_pipe::kind(handle));
-        (kind != Some(Kind::NotAPipe)).then(|| Pipe::foreign(port, fd, kind))
+    /// For an end of unknown origin, which comes back if it turns out to be something else.
+    pub(super) fn open(port: &Rc<Port>, end: sys::File) -> Result<Pipe, sys::File> {
+        let handle = end.fd().native();
+        match named_pipe::is_idle(handle).then(|| named_pipe::kind(handle)) {
+            Some(Kind::NotAPipe) => Err(end),
+            kind => Ok(Pipe::foreign(port, end.into_raw(), kind)),
+        }
     }
 
-    /// The same for one whose first write has to start at once. It leaves `fd` alone if that is stdio.
+    /// For an end of unknown origin whose first write has to start at once. It owns `fd` on `Ok`, unless that is stdio.
     pub fn open_duplex(port: &Rc<Port>, fd: Fd) -> sys::Result<Pipe> {
         let handle = fd.native();
         let kind = match w::GetFileType(handle) {
@@ -141,10 +143,6 @@ impl Pipe {
     /// For an end that nobody else reads.
     pub fn read_ahead(&self) {
         self.0.is_input_shared.set(false);
-    }
-
-    pub fn fd(&self) -> Fd {
-        Fd::from_system(self.0.handle.raw())
     }
 
     pub fn peer_process_id(&self) -> Option<u32> {

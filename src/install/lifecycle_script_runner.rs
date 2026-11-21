@@ -682,7 +682,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let Some(pipe) = stdio else { continue };
             #[cfg(unix)]
             if spawned.memfds[kind as usize + 1] {
-                self.reader(kind).start_memfd(pipe.into_raw());
+                self.reader(kind).start_memfd(pipe);
                 continue;
             }
             let _ = bun_sys::set_nonblocking(pipe.fd());

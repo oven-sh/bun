@@ -37,7 +37,11 @@ type Readers = Vec<ChildPtr>;
 // ──────────────────────────────────────────────────────────────────────────
 
 struct State {
-    fd: Fd,
+    #[cfg(not(windows))]
+    file: sys::CloseOnDrop,
+    /// `None` once `closes_at_eof` has closed it.
+    #[cfg(windows)]
+    file: Option<sys::CloseOnDrop>,
     buf: Vec<u8>,
     /// Listeners for the in-flight read (see `take_readers`).
     readers: Readers,
@@ -49,7 +53,7 @@ struct State {
     /// True after EOF, at which the Windows reader closes its source.
     #[cfg(windows)]
     reached_eof: bool,
-    /// No other command gets `fd`.
+    /// No other command gets `file`.
     #[cfg(windows)]
     closes_at_eof: bool,
     /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
@@ -63,6 +67,7 @@ struct State {
 
 pub(crate) struct IOReader {
     reader: BufferedReader,
+    /// After `reader`, whose poll goes before the file.
     state: UnsafeCell<State>,
 }
 
@@ -86,11 +91,15 @@ impl IOReader {
             .expect("IOReader::keepalive after last Rc dropped")
     }
 
-    pub(crate) fn init(fd: Fd, evtloop: EventLoopHandle) -> std::rc::Rc<IOReader> {
+    pub(crate) fn init(file: sys::File, evtloop: EventLoopHandle) -> std::rc::Rc<IOReader> {
+        let fd = file.fd();
         let this = std::rc::Rc::new_cyclic(|w| IOReader {
             reader: BufferedReader::init(),
             state: UnsafeCell::new(State {
-                fd,
+                #[cfg(not(windows))]
+                file: file.into(),
+                #[cfg(windows)]
+                file: Some(file.into()),
                 buf: Vec::new(),
                 readers: Readers::new(),
                 paused: false,
@@ -109,15 +118,16 @@ impl IOReader {
         let owner = Owner::new(PollTag::ShellIoReader, ptr.cast_mut().cast());
         // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { this.reader.set_owner(owner) };
-        this.reader
-            .update_flags(|f| f.remove(bun_io::pipe_reader::ReaderFlags::CLOSE_HANDLE));
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", ptr as usize, fd);
         this
     }
 
     /// For a file that one builtin has opened. What runs next may rename the directory that it is in.
-    pub(crate) fn init_for_one_command(fd: Fd, evtloop: EventLoopHandle) -> std::rc::Rc<IOReader> {
-        let this = Self::init(fd, evtloop);
+    pub(crate) fn init_for_one_command(
+        file: sys::File,
+        evtloop: EventLoopHandle,
+    ) -> std::rc::Rc<IOReader> {
+        let this = Self::init(file, evtloop);
         #[cfg(windows)]
         {
             this.state().closes_at_eof = true;
@@ -133,7 +143,10 @@ impl IOReader {
 
     #[inline]
     pub(crate) fn fd(&self) -> Fd {
-        self.state().fd
+        #[cfg(not(windows))]
+        return self.state().file.fd();
+        #[cfg(windows)]
+        return (self.state().file.as_ref()).map_or(Fd::INVALID, |file| file.fd());
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -184,7 +197,8 @@ impl IOReader {
         if r.has_pending_read() {
             return Ok(());
         }
-        match r.start(self.io_evtloop(), self.state().fd, true)? {
+        let file = sys::MaybeOwnedFile::Borrowed(self.fd());
+        match r.start(self.io_evtloop(), file, true)? {
             ReadResult::Err(err) => Err(err),
             ReadResult::Pending | ReadResult::Done => Ok(()),
         }
@@ -200,7 +214,8 @@ impl IOReader {
         if self.reader.has_source() {
             return self.reader.start_with_current_source();
         }
-        self.reader.start(self.io_evtloop(), s.fd, true).map(drop)
+        let file = sys::MaybeOwnedFile::Borrowed(self.fd());
+        self.reader.start(self.io_evtloop(), file, true).map(drop)
     }
 
     /// A listener has written the chunks it got. Reads on if the reader was paused for that.
@@ -299,7 +314,7 @@ impl IOReader {
             let s = self.state();
             s.reached_eof = true;
             if s.closes_at_eof {
-                let _ = sys::close(core::mem::replace(&mut s.fd, Fd::INVALID));
+                s.file = None;
             }
         }
         let interp = self.state().interp;
@@ -342,21 +357,6 @@ impl IOReader {
         // `ParentRef: Deref<Target=Interpreter>` — the interpreter owns the IO
         // struct holding this Rc and outlives every IOReader. Single-threaded.
         y.run(&interp);
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Drop
-// ──────────────────────────────────────────────────────────────────────────
-
-impl Drop for IOReader {
-    fn drop(&mut self) {
-        // The poll goes before its fd.
-        self.reader.release_handle();
-        let fd = self.state.get_mut().fd;
-        if fd != Fd::INVALID {
-            let _ = sys::close(fd);
-        }
     }
 }
 

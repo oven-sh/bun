@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use bun_iocp::Port;
 use bun_sys::windows::{self as w, HandleKind};
-use bun_sys::{self as sys, E, Fd, Tag};
+use bun_sys::{self as sys, E, MaybeOwnedFile, Tag};
 
 use crate::Owner;
 use crate::pipe_reader::ReadEvent;
@@ -51,13 +51,6 @@ impl Payload {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum Ownership {
-    /// On `Ok`.
-    Taken,
-    Borrowed,
-}
-
 enum Source {
     Pipe(Pipe),
     Console(Console),
@@ -65,26 +58,23 @@ enum Source {
 }
 
 impl Source {
-    fn open(port: &Rc<Port>, fd: Fd, ownership: Ownership) -> sys::Result<Source> {
-        if w::is_missing(fd.native()) {
+    fn open(port: &Rc<Port>, file: MaybeOwnedFile) -> sys::Result<Source> {
+        if w::is_missing(file.fd().native()) {
             return Err(sys::Error::from_code(E::EBADF, Tag::open));
         }
-        // Other threads use it, and what they use must not be closed under them.
-        let is_kept_by_caller = ownership == Ownership::Borrowed || fd.stdio_tag().is_some();
-        let owned = if is_kept_by_caller { sys::dup(fd)? } else { fd };
-        Ok(match w::guess_handle(owned) {
-            HandleKind::Pipe if let Some(pipe) = Pipe::open(port, owned) => Source::Pipe(pipe),
-            HandleKind::Tty => Source::Console(Console::new(port, sys::File::from_fd(owned))),
-            _ => Source::File(File::new(port, owned, !is_kept_by_caller)),
+        let (file, is_only_handle) = match file {
+            MaybeOwnedFile::Owned(file) if file.fd().stdio_tag().is_none() => (file, true),
+            // Other threads use it, and what they use must not be closed under them.
+            kept => (sys::File::from_fd(sys::dup(kept.fd())?), false),
+        };
+        Ok(match w::guess_handle(file.fd()) {
+            HandleKind::Pipe => match Pipe::open(port, file) {
+                Ok(pipe) => Source::Pipe(pipe),
+                Err(file) => Source::File(File::new(port, file, is_only_handle)),
+            },
+            HandleKind::Tty => Source::Console(Console::new(port, file)),
+            _ => Source::File(File::new(port, file, is_only_handle)),
         })
-    }
-
-    fn fd(&self) -> Fd {
-        match self {
-            Source::Pipe(pipe) => pipe.fd(),
-            Source::Console(console) => console.fd(),
-            Source::File(file) => file.fd(),
-        }
     }
 
     fn endpoint(&self) -> &Endpoint {
@@ -114,19 +104,14 @@ impl ReadSource {
     /// `offset` is for a file on a disk, whose position is used without it.
     pub(crate) fn open(
         port: &Rc<Port>,
-        fd: Fd,
-        ownership: Ownership,
+        file: MaybeOwnedFile,
         offset: Option<u64>,
     ) -> sys::Result<ReadSource> {
-        let source = Source::open(port, fd, ownership)?;
+        let source = Source::open(port, file)?;
         if let (Source::File(file), Some(offset)) = (&source, offset) {
             file.set_offset(offset);
         }
         Ok(ReadSource(source))
-    }
-
-    pub(crate) fn fd(&self) -> Fd {
-        self.0.fd()
     }
 
     /// SAFETY: `owner` can be passed to `__bun_run_io` until it is replaced, or `self` is dropped.
@@ -197,8 +182,8 @@ impl From<Pipe> for WriteSource {
 }
 
 impl WriteSource {
-    pub(crate) fn open(port: &Rc<Port>, fd: Fd, ownership: Ownership) -> sys::Result<WriteSource> {
-        let source = Source::open(port, fd, ownership)?;
+    pub(crate) fn open(port: &Rc<Port>, file: MaybeOwnedFile) -> sys::Result<WriteSource> {
+        let source = Source::open(port, file)?;
         if let Source::Console(console) = &source {
             console.enable_escape_sequences();
         }

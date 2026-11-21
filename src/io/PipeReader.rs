@@ -5,14 +5,16 @@ use core::ops::ControlFlow;
 
 #[cfg(unix)]
 use bun_core::vec::{BorrowedBuf, BorrowedCursor};
-use bun_sys::{self as sys, Fd};
+#[cfg(unix)]
+use bun_sys::Fd;
+use bun_sys::{self as sys, MaybeOwnedFile};
 
 use crate::max_buf::MaxBuf;
 use crate::pipes::{Chunk, ReadState};
 #[cfg(unix)]
 use crate::pipes::{FileType, PipeHandle};
 #[cfg(windows)]
-use crate::source::{Ownership, Pipe, ReadSource};
+use crate::source::{Pipe, ReadSource};
 use crate::{EventLoopHandle, IoEvent, Owner};
 #[cfg(unix)]
 use crate::{FilePoll, FilePollFlag, PipeReadScratchGuard};
@@ -65,8 +67,6 @@ bitflags::bitflags! {
         const SOCKET                   = 1 << 3;
         const RECEIVED_EOF             = 1 << 4;
         const CLOSED_WITHOUT_REPORTING = 1 << 5;
-        /// Cleared before `start()`, it leaves the file descriptor to the caller.
-        const CLOSE_HANDLE             = 1 << 6; // default true
         const MEMFD                    = 1 << 7;
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9; // default true on Windows
@@ -78,11 +78,10 @@ bitflags::bitflags! {
 
 impl ReaderFlags {
     const fn new() -> Self {
-        let this = Self::CLOSE_HANDLE.union(Self::KEEP_ALIVE);
         if cfg!(windows) {
-            this.union(Self::IS_PAUSED)
+            Self::KEEP_ALIVE.union(Self::IS_PAUSED)
         } else {
-            this
+            Self::KEEP_ALIVE
         }
     }
 }
@@ -123,13 +122,13 @@ impl BufferedReader {
     pub fn start_file_offset(
         &self,
         ev: EventLoopHandle,
-        fd: Fd,
+        file: MaybeOwnedFile,
         poll: bool,
         offset: usize,
     ) -> sys::Result<ReadResult> {
         self.offset.set(offset);
         self.update_flags(|f| f.insert(ReaderFlags::USE_PREAD));
-        self.start(ev, fd, poll)
+        self.start(ev, file, poll)
     }
 
     pub fn buffer(&mut self) -> &mut Vec<u8> {
@@ -252,15 +251,14 @@ impl PosixBufferedReader {
 
     /// Both keep their owner. The caller drains the buffer.
     pub fn from(&self, other: &PosixBufferedReader) {
-        self.release_handle();
         self.handle.take_from(&other.handle);
         self.rwf_unsupported.set(other.rwf_unsupported.get());
         self.take_state_from(other);
     }
 
-    pub fn start_memfd(&self, fd: Fd) {
+    pub fn start_memfd(&self, memfd: sys::File) {
         self.update_flags(|f| f.insert(ReaderFlags::MEMFD));
-        self.handle.set_fd(fd);
+        self.handle.set_file(memfd.into());
     }
 
     fn get_file_type(&self) -> FileType {
@@ -281,9 +279,7 @@ impl PosixBufferedReader {
     }
 
     pub fn close(&self) -> ReadResult {
-        if self.has_flag(ReaderFlags::CLOSED_WITHOUT_REPORTING)
-            || (self.has_flag(ReaderFlags::CLOSE_HANDLE) && !self.handle.is_closed())
-        {
+        if self.has_flag(ReaderFlags::CLOSED_WITHOUT_REPORTING) || self.handle.owns_file() {
             return self.done();
         }
         ReadResult::Pending
@@ -302,16 +298,12 @@ impl PosixBufferedReader {
         if !self.handle.is_closed() {
             debug_assert!(!self.has_flag(ReaderFlags::CLOSED_WITHOUT_REPORTING));
             self.update_flags(|f| f.insert(ReaderFlags::CLOSED_WITHOUT_REPORTING));
-            if self.has_flag(ReaderFlags::CLOSE_HANDLE) {
-                self.handle.close();
-            }
+            self.handle.close_if_owned();
         }
     }
 
-    /// The fd stays open without `CLOSE_HANDLE`.
     pub fn release_handle(&self) {
-        self.handle
-            .close_impl(self.has_flag(ReaderFlags::CLOSE_HANDLE));
+        self.handle.close();
     }
 
     pub fn get_fd(&self) -> Fd {
@@ -354,9 +346,7 @@ impl PosixBufferedReader {
     }
 
     fn done(&self) -> ReadResult {
-        if self.has_flag(ReaderFlags::CLOSE_HANDLE) {
-            self.handle.close();
-        }
+        self.handle.close_if_owned();
         self.update_flags(|f| f.remove(ReaderFlags::CLOSED_WITHOUT_REPORTING));
         if self.handle.is_closed() {
             debug_assert!(!self.has_flag(ReaderFlags::IS_DONE));
@@ -381,11 +371,10 @@ impl PosixBufferedReader {
             return ReadResult::Pending;
         }
         if !self.handle.has_poll() {
-            let fd = self.get_fd();
-            if fd == Fd::INVALID || !self.has_flag(ReaderFlags::POLLABLE) {
+            if self.handle.is_closed() || !self.has_flag(ReaderFlags::POLLABLE) {
                 return ReadResult::Pending;
             }
-            self.handle.set_poll(ev, fd);
+            self.handle.add_poll(ev);
         }
 
         // Re-applied on every arm: `pause()` unregisters, which drops it.
@@ -402,7 +391,7 @@ impl PosixBufferedReader {
 
     /// For our end of a pipe that this process has made.
     pub fn start_own_pipe(&self, ev: EventLoopHandle, pipe: sys::File) -> sys::Result<ReadResult> {
-        self.start(ev, pipe.into_raw(), true)
+        self.start(ev, pipe.into(), true)
     }
 
     /// The same, but nothing is read until `unpause`.
@@ -411,18 +400,22 @@ impl PosixBufferedReader {
         let _ = self.start_own_pipe(ev, pipe);
     }
 
-    /// Always takes `fd`: a poll that cannot be armed is a read that failed. `Err` is for Windows.
-    pub fn start(&self, ev: EventLoopHandle, fd: Fd, is_pollable: bool) -> sys::Result<ReadResult> {
+    /// A poll that cannot be armed is a read that failed. `Err` is for Windows.
+    pub fn start(
+        &self,
+        ev: EventLoopHandle,
+        file: MaybeOwnedFile,
+        is_pollable: bool,
+    ) -> sys::Result<ReadResult> {
         if !is_pollable {
             self.buffer.with_taken(Vec::clear);
             self.update_flags(|f| f.remove(ReaderFlags::IS_DONE));
-            self.handle.close();
-            self.handle.set_fd(fd);
+            self.handle.set_file(file);
             return sys::Result::Ok(ReadResult::Pending);
         }
         self.update_flags(|f| f.insert(ReaderFlags::POLLABLE));
-        if self.get_fd() != fd {
-            self.handle.set_fd(fd);
+        if file.is_owned() || self.get_fd() != file.fd() {
+            self.handle.set_file(file);
         }
         // With nothing left to read the fd is never waited on: like a non-pollable source, the owner's first read request ends the reader.
         if self.limit.reached() {
@@ -795,13 +788,6 @@ enum ReadOnce {
     Stop(Stop),
 }
 
-#[cfg(unix)]
-impl Drop for PosixBufferedReader {
-    fn drop(&mut self) {
-        self.release_handle();
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // WindowsBufferedReader
 // ──────────────────────────────────────────────────────────────────────────
@@ -864,10 +850,6 @@ impl WindowsBufferedReader {
         self.take_state_from(other);
         self.source.set(other.source.take());
         self.set_source_owner();
-    }
-
-    pub fn get_fd(&self) -> Fd {
-        self.with_source(ReadSource::fd).unwrap_or(Fd::INVALID)
     }
 
     pub fn watch(&self, _: EventLoopHandle) -> ReadResult {
@@ -947,13 +929,14 @@ impl WindowsBufferedReader {
         self.set_source_owner();
     }
 
-    pub fn start(&self, ev: EventLoopHandle, fd: Fd, _: bool) -> sys::Result<ReadResult> {
-        let ownership = match self.has_flag(ReaderFlags::CLOSE_HANDLE) {
-            true => Ownership::Taken,
-            false => Ownership::Borrowed,
-        };
+    pub fn start(
+        &self,
+        ev: EventLoopHandle,
+        file: MaybeOwnedFile,
+        _: bool,
+    ) -> sys::Result<ReadResult> {
         let offset = (self.has_flag(ReaderFlags::USE_PREAD)).then(|| self.offset.get() as u64);
-        self.set_source(ReadSource::open(ev.loop_().port(), fd, ownership, offset)?);
+        self.set_source(ReadSource::open(ev.loop_().port(), file, offset)?);
         self.start_with_current_source()?;
         sys::Result::Ok(ReadResult::Pending)
     }

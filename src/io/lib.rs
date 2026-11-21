@@ -1489,15 +1489,14 @@ pub mod waker {
 // `pipes::PipeHandle::close` has no upward dep on bun_io (T3).
 
 pub mod closer {
-    use bun_sys::{Fd, FdExt as _};
+    use bun_sys::File;
     use bun_threading::work_pool::FilePool;
 
     pub struct Closer;
 
     impl Closer {
-        pub fn close(fd: Fd) {
-            debug_assert!(fd.is_valid());
-            FilePool::go(move || fd.close());
+        pub fn close(file: File) {
+            FilePool::go(move || drop(file));
         }
     }
 }

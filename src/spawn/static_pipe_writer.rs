@@ -70,7 +70,7 @@ impl<S: Source> StaticPipeWriter<S> {
     /// writer is dropped.
     pub unsafe fn create(owner: Owner, result: StdioResult, source: S) -> Self {
         let state = AliasableBox::new(State {
-            writer: BufferedWriter::owning_fd(),
+            writer: BufferedWriter::default(),
             file: Cell::new(result),
             #[cfg(not(windows))]
             source,
@@ -108,9 +108,7 @@ impl<S: Source> StaticPipeWriter<S> {
         {
             state
                 .writer
-                .start(state, event_loop.as_event_loop_ctx(), file.fd(), true)?;
-            // The writer closes it from now on.
-            file.into_raw();
+                .start(state, event_loop.as_event_loop_ctx(), file.into(), true)?;
             state.writer.set_poll_flag(bun_io::FilePollFlag::Socket);
         }
         Ok(self.pipe_state())

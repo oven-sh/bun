@@ -1558,7 +1558,7 @@ process.exit(0);
 }, 30_000);
 
 // FileResponseStream closes its fd via Closer::close in Drop, so its reader,
-// on which CLOSE_HANDLE is cleared, must leave it alone.
+// which only borrows it, must leave it alone.
 test.skipIf(!isWindows)(
   "Response(Bun.file) does not double-close the fd on Windows",
   async () => {

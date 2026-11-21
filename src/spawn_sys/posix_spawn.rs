@@ -466,13 +466,8 @@ pub mod posix_spawn {
             return sys::Result::Err(sys::Error::from_code_int((-rc) as _, sys::Tag::clone3));
         }
 
-        sys::Result::Err(sys::Error {
-            // posix_spawn* returns the errno value directly.
-            errno: rc as sys::ErrorInt,
-            syscall: SYSCALL_POSIX_SPAWN,
-            path: arg0().into(),
-            ..Default::default()
-        })
+        // posix_spawn* returns the errno value directly.
+        sys::Result::Err(sys::Error::from_code_int(rc as _, SYSCALL_POSIX_SPAWN).with_path(arg0()))
     }
 
     /// Convert portable `bun_spawn` actions/attrs into libc `posix_spawn`
@@ -636,12 +631,9 @@ pub mod posix_spawn {
                 return sys::Result::Ok(pid);
             }
 
-            return sys::Result::Err(sys::Error {
-                errno: rc as sys::ErrorInt,
-                syscall: SYSCALL_POSIX_SPAWN,
-                path: path.to_bytes().into(),
-                ..Default::default()
-            });
+            return sys::Result::Err(
+                sys::Error::from_code_int(rc, SYSCALL_POSIX_SPAWN).with_path(path.to_bytes()),
+            );
         }
 
         // Linux/FreeBSD: `use_bun_spawn` is statically true above, so the

@@ -1373,13 +1373,19 @@ impl<const SSL: bool> Handler<SSL> {
         HTTPContext::<SSL>::terminate_socket(socket);
     }
 
-    pub fn on_close(socket: HTTPSocket<SSL>, _: c_int, _: Option<*mut c_void>) {
-        let tagged = HTTPContext::<SSL>::enter_client(socket, |c| c.on_close::<SSL>(socket));
+    pub fn on_close(socket: HTTPSocket<SSL>, code: c_int, _: Option<*mut c_void>) {
+        use bun_errno::SystemErrno::{self, ENOBUFS, ENOMEM};
+        // A read that failed closes the socket with its errno.
+        let err = match SystemErrno::init(i64::from(code)) {
+            Some(errno @ (ENOMEM | ENOBUFS)) => errno.into(),
+            _ => crate::Error::ConnectionClosed,
+        };
+        let tagged = HTTPContext::<SSL>::enter_client(socket, |c| c.on_close::<SSL>(socket, err));
         let Some(tagged) = tagged else { return };
         HTTPContext::<SSL>::mark_socket_as_dead(socket);
 
         if let Some(session) = tagged.session() {
-            return h2::ClientSession::on_close(session, crate::Error::ConnectionClosed);
+            return h2::ClientSession::on_close(session, err);
         }
         // Removes the entry of a request that is closing this socket, and any stale one.
         crate::unregister_abort_tracker_for_socket(socket.socket);
@@ -1518,7 +1524,7 @@ impl<const SSL: bool> Handler<SSL> {
             } else {
                 socket.close(uws::CloseKind::Normal);
             }
-            client.on_close::<SSL>(socket)
+            client.on_close::<SSL>(socket, crate::Error::ConnectionClosed)
         });
         let Some(tagged) = tagged else { return };
         HTTPContext::<SSL>::mark_tagged_socket_as_dead(socket, tagged);

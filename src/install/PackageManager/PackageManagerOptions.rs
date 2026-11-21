@@ -1427,9 +1427,10 @@ impl Enable {
     pub(crate) fn manifest_cache_control(self) -> bool {
         self.contains(Enable::MANIFEST_CACHE_CONTROL)
     }
+    /// Not without memory: see [`crate::error::exit_if_out_of_memory`].
     #[inline]
     pub(crate) fn fail_early(self) -> bool {
-        self.contains(Enable::FAIL_EARLY)
+        self.contains(Enable::FAIL_EARLY) && crate::error::check_memory().is_ok()
     }
     #[inline]
     pub fn frozen_lockfile(self) -> bool {

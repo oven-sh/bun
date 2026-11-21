@@ -13,6 +13,8 @@ use crate::bin_real as bin;
 use crate::bin_real::Bin;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::NodeId;
+use crate::error::check_memory;
+use crate::package_manager::directories::{try_get_cache_directory, try_global_link_dir};
 
 use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
@@ -524,16 +526,46 @@ pub(crate) fn abs_node_modules_path(
     Some(abs)
 }
 
+/// `abs_node_modules_path`, but not through the link to a workspace, which may be gone.
+fn real_node_modules_path(lockfile: &Lockfile, tree_id: lockfile::tree::Id) -> Option<AbsPath> {
+    let buffers = &lockfile.buffers;
+    let mut path = AbsPath::init_top_level_dir();
+    if tree_id != 0 {
+        let tree = &buffers.trees.as_slice()[tree_id as usize];
+        let owner = buffers.resolutions[tree.dependency_id as usize];
+        let member = (lockfile.packages.items_resolution().get(owner as usize))
+            .filter(|owner| owner.tag == resolution::Tag::Workspace)
+            .map(|owner| lockfile.str(owner.workspace()))
+            .filter(|folder| !bun_paths::is_absolute(folder));
+        let folder = match member {
+            Some(folder) => folder,
+            None => {
+                path = real_node_modules_path(lockfile, tree.parent)?;
+                tree.folder_name(&buffers.dependencies, &buffers.string_bytes)
+            }
+        };
+        path.try_append(folder).ok()?;
+    }
+    path.try_append(b"node_modules").ok()?;
+    Some(path)
+}
+
 /// For a workspace or a `link:` package, this only removes the link.
 pub(crate) fn remove_placed_package(
     lockfile: &Lockfile,
     tree_id: lockfile::tree::Id,
     alias: &[u8],
 ) {
-    let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let Some(Ok(node_modules)) =
-        abs_node_modules_path(lockfile, string_buf, tree_id).map(|path| Dir::open(path.slice()))
-    else {
+    let Some(path) = real_node_modules_path(lockfile, tree_id) else {
+        return;
+    };
+    let Ok(node_modules) = Dir::open(path.slice()) else {
+        if check_memory().is_err() {
+            let old = package_install::moved_aside_name(bun_core::fast_random());
+            let [from, to] = [alias, old.as_bytes()]
+                .map(|name| bun_core::ZBox::from_vec([path.slice(), b"/", name].concat()));
+            let _ = bun_sys::renameat(Fd::cwd(), &from, Fd::cwd(), &to);
+        }
         return;
     };
     // Rename first: a delete can stop midway, and a half-deleted package must not pass `verify`.
@@ -546,11 +578,21 @@ pub(crate) fn remove_placed_package(
         let _ = node_modules.delete_tree(old.as_bytes());
     } else {
         // If the rename fails, delete the files `verify` reads first.
-        if let Some(package) = crate::prune::descend(&node_modules, alias) {
+        let package = crate::prune::descend(&node_modules, alias).or_else(|| {
+            let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
+            (cfg!(unix) && check_memory().is_err())
+                .then(|| node_modules.open_at_with(alias, flags).ok())?
+        });
+        if let Some(package) = package {
             let _ = package.delete_tree(b"package.json");
             let _ = package.delete_tree(package_install::BUN_TAG);
         }
-        let _ = node_modules.delete_tree(alias);
+        let _ = if check_memory().is_ok() {
+            node_modules.delete_tree(alias)
+        } else {
+            // Nothing is wrong with the package, which may be a mount point.
+            crate::prune::remove_link(&node_modules, alias)
+        };
     }
     crate::prune::prune_bins(&node_modules);
 }
@@ -1868,7 +1910,13 @@ impl<'a> PackageInstaller<'a> {
                 if len > 0 {
                     installer.cache_dir_subpath = ZStr::from_buf(&self.folder_path_buf, len);
                 }
-                installer.cache_dir = self.manager_mut().get_cache_directory().handle.fd();
+                installer.cache_dir = match try_get_cache_directory(self.manager_mut()) {
+                    Ok(cache) => cache.handle.fd(),
+                    Err(why) => {
+                        self.manager_mut().exit_or_log(&why);
+                        return self.fail(is_pending_package_install, log_level);
+                    }
+                };
             }
             resolution::Tag::Folder | resolution::Tag::Workspace => {
                 let is_workspace = resolution.tag == resolution::Tag::Workspace;
@@ -1948,6 +1996,9 @@ impl<'a> PackageInstaller<'a> {
                     // directory.
                     let (directory, global_link_dir): (Fd, &[u8]) = if is_path {
                         (Fd::cwd(), b"".as_slice())
+                    } else if let Err(why) = try_global_link_dir(self.manager_mut()) {
+                        self.manager_mut().exit_or_log(&why);
+                        return self.fail(is_pending_package_install, log_level);
                     } else {
                         (
                             package_manager::global_link_dir(self.manager_mut()),
@@ -2020,6 +2071,9 @@ impl<'a> PackageInstaller<'a> {
         }
 
         if needs_install {
+            if check_memory().is_err() {
+                return self.fail(is_pending_package_install, log_level);
+            }
             if resolution.tag.can_enqueue_install_task()
                 && installer.package_missing_from_cache(
                     self.manager_mut(),
@@ -2491,6 +2545,7 @@ impl<'a> PackageInstaller<'a> {
                     }
                 }
 
+                self.remove_if_out_of_memory(alias.slice(string_buf!()));
                 self.increment_tree_install_count(is_pending_package_install, log_level);
             }
             package_install::InstallResult::Failure(cause) => {
@@ -2577,10 +2632,18 @@ impl<'a> PackageInstaller<'a> {
                     );
                 }
 
+                self.remove_if_out_of_memory(alias.slice(string_buf!()));
                 // A failed package still counts toward its tree. This comes last, because the work
                 // it unblocks closes `destination_fd`.
                 self.fail(is_pending_package_install, log_level);
             }
+        }
+    }
+
+    /// The next install would take the package for complete.
+    fn remove_if_out_of_memory(&self, alias: &[u8]) {
+        if check_memory().is_err() {
+            remove_placed_package(self.lockfile(), self.current_tree_id, alias);
         }
     }
 

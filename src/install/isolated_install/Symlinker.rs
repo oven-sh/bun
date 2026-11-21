@@ -138,6 +138,7 @@ impl Symlinker {
                                     if has_package_json {
                                         return Ok(false);
                                     }
+                                    crate::error::check_memory()?;
                                     if !self.is_behind_link {
                                         if bun_sys::rmdir(self.dest.slice_z())
                                             .is_err_and(|err| err.get_errno() == Errno::EBUSY)

@@ -118,6 +118,7 @@ fn do_partial_install_of_security_scanner(
             packages_to_install,
         )?
     };
+    manager.exit_if_out_of_memory();
     summary.fail += manager.report_offline_misses(
         &summary.offline_misses,
         &[security_scanner_pkg_id],

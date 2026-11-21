@@ -2043,6 +2043,7 @@ impl<'a> HTTPClient<'a> {
     pub(crate) fn on_close<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
+        err: crate::Error,
     ) -> ControlFlow<NextStep> {
         bun_core::scoped_log!(fetch, "Closed  {}\n", BStr::new(self.url.href));
 
@@ -2055,7 +2056,7 @@ impl<'a> HTTPClient<'a> {
             // in this case we will re-connect or go to a different socket if needed
             return self.do_redirect::<IS_SSL>(socket);
         }
-        if self.state.is_body_complete_on_close() {
+        if self.state.is_body_complete_on_close(err) {
             if let Err(err) = self.finalize_body_on_eof() {
                 return self.fail(err);
             }
@@ -2072,7 +2073,7 @@ impl<'a> HTTPClient<'a> {
             return Break(NextStep::Connect);
         }
 
-        self.fail(crate::Error::ConnectionClosed)
+        self.fail(err)
     }
 
     pub(crate) fn on_timeout<const IS_SSL: bool>(

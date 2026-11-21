@@ -441,7 +441,7 @@ impl TarballStream {
                 };
                 (*this).decoder = Some(
                     tar::Decoder::new(tar::Options::for_host(dialect), gzip)
-                        .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
+                        .map_err(|_| bun_alloc::AllocError)?,
                 );
             }
             // References to single drain-local fields, never to the whole struct.

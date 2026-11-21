@@ -606,6 +606,7 @@ impl Lockfile {
         log: &mut bun_ast::Log,
     ) -> LoadResult {
         let result = self.read_from_dir(ATTEMPT_LOADING_FROM_OTHER_LOCKFILE, dir, manager, log);
+        crate::error::exit_if_out_of_memory();
         if matches!(result, LoadResult::Ok(_)) {
             self.rebase_folder_dependencies().unwrap_or_oom();
         }
@@ -2007,6 +2008,7 @@ impl Lockfile {
         load_result: &LoadResult,
         options: &PackageManagerOptions,
     ) -> bool {
+        crate::error::exit_if_out_of_memory();
         let save_format = load_result.save_format(options);
         // Only `bun install` sets the option.
         let config_version = options

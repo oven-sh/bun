@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 34b28730976f3729b1f08385ac19a7f622a31d5c76459e81ae77e00f2e40eba8.
+// Written against that file with the SHA-256 fd5da453605ba60ed54a49f8f7824994128490ef678ad407a9642f54fe52f188.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -84,6 +84,45 @@ export function getStdioWriteStream(
     // to match Node.js behavior where they become Duplex streams (Socket)
     // But when redirected to a file, they shouldn't have it
     if (fdType === BunProcessStdinFdType.pipe || fdType === BunProcessStdinFdType.socket) {
+      if (process.platform !== "win32") {
+        const shutdownStdio = $newCppFunction("BunProcess.cpp", "jsFunctionShutdownStdio", 2);
+        const { ErrnoException } = require("internal/shared");
+        const epipe = -$processBindingConstants.os.errno.EPIPE;
+        const write = stream._write;
+        const writev = stream._writev;
+        const fastWrite = stream.write;
+        const writableWrite = require("internal/streams/writable").prototype.write;
+        const final = stream._final;
+        let shutdown = false;
+        stream._writableState.autoDestroy = true;
+        stream.write = function (
+          this: StdioWriteStream,
+          ...args: [unknown, (string | null | $Node.ErrorCallback)?, $Node.ErrorCallback?]
+        ) {
+          return (shutdown ? writableWrite : fastWrite).$apply(this, args);
+        };
+        stream._write = function (this: StdioWriteStream, chunk: unknown, encoding: string, cb: $Node.ErrorCallback) {
+          if (shutdown) return cb(new ErrnoException(epipe, "write"));
+          return write.$call(this, chunk, encoding, cb);
+        };
+        if (writev) {
+          stream._writev = function (this: StdioWriteStream, chunks: $Node.ChunkToWrite[], cb: $Node.ErrorCallback) {
+            if (shutdown) return cb(new ErrnoException(epipe, "write"));
+            return writev.$call(this, chunks, cb);
+          };
+        }
+        stream._final = function (this: StdioWriteStream, cb: $Node.ErrorCallback) {
+          const onFinal = (err?: Error | null) => {
+            if (err) return cb(err);
+            // uv_shutdown clears UV_HANDLE_WRITABLE even for a non-socket pipe.
+            // https://github.com/nodejs/node/blob/v24.21.0/deps/uv/src/unix/stream.c
+            shutdown = true;
+            shutdownStdio(fd, cb);
+          };
+          if (final) final.$call(this, onFinal);
+          else onFinal();
+        };
+      }
       stream[Symbol.asyncIterator] = function () {
         return (async function* () {
           // stdout/stderr don't produce readable data, so yield nothing

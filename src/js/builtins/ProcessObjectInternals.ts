@@ -60,6 +60,42 @@ export function getStdioWriteStream(
     // to match Node.js behavior where they become Duplex streams (Socket)
     // But when redirected to a file, they shouldn't have it
     if (fdType === BunProcessStdinFdType.pipe || fdType === BunProcessStdinFdType.socket) {
+      if (process.platform !== "win32") {
+        const shutdownStdio = $newCppFunction("BunProcess.cpp", "jsFunctionShutdownStdio", 2);
+        const { ErrnoException } = require("internal/shared");
+        const epipe = -$processBindingConstants.os.errno.EPIPE;
+        const write = stream._write;
+        const writev = stream._writev;
+        const fastWrite = stream.write;
+        const writableWrite = require("internal/streams/writable").prototype.write;
+        const final = stream._final;
+        let shutdown = false;
+        stream._writableState.autoDestroy = true;
+        stream.write = function (...args) {
+          return (shutdown ? writableWrite : fastWrite).$apply(this, args);
+        };
+        stream._write = function (chunk, encoding, cb) {
+          if (shutdown) return cb(new ErrnoException(epipe, "write"));
+          return write.$call(this, chunk, encoding, cb);
+        };
+        if (writev) {
+          stream._writev = function (chunks, cb) {
+            if (shutdown) return cb(new ErrnoException(epipe, "write"));
+            return writev.$call(this, chunks, cb);
+          };
+        }
+        stream._final = function (cb) {
+          const onFinal = err => {
+            if (err) return cb(err);
+            // uv_shutdown clears UV_HANDLE_WRITABLE even for a non-socket pipe.
+            // https://github.com/nodejs/node/blob/v24.21.0/deps/uv/src/unix/stream.c
+            shutdown = true;
+            shutdownStdio(fd, cb);
+          };
+          if (final) final.$call(this, onFinal);
+          else onFinal();
+        };
+      }
       stream[Symbol.asyncIterator] = function () {
         return (async function* () {
           // stdout/stderr don't produce readable data, so yield nothing

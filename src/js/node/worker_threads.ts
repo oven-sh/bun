@@ -811,7 +811,6 @@ function moveMessagePortToContext(port, _context) {
 }
 
 class Worker extends EventEmitter {
-  declare _events: Record<string | symbol, unknown>;
   declare _eventsCount: number;
   #worker: WebWorker;
   #performance;

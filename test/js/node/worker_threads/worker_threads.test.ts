@@ -3395,22 +3395,21 @@ test("Worker exit listener cleanup settles termination when removeListener throw
       `
         const assert = require("node:assert/strict");
         const { Worker } = require("node:worker_threads");
-        let caught = false;
         let exited = false;
-        process.on("uncaughtException", error => {
-          assert.equal(error.message, "expected removeListener failure");
-          caught = true;
-        });
+        const reported = new Promise(resolve => process.once("uncaughtException", resolve));
         const worker = new Worker("setInterval(() => {}, 1000)", { eval: true });
-        await new Promise(resolve => worker.once("online", resolve));
+        await new Promise((resolve, reject) => {
+          worker.once("online", resolve);
+          worker.once("error", reject);
+          worker.once("exit", code => reject(new Error("Worker exited before online: " + code)));
+        });
         worker.on("message", () => {});
         worker.on("removeListener", name => {
           if (name === "message") throw new Error("expected removeListener failure");
         });
         worker.on("exit", () => { exited = true; });
-        const code = await worker.terminate();
-        await new Promise(resolve => setImmediate(resolve));
-        assert.equal(caught, true);
+        const [code, error] = await Promise.all([worker.terminate(), reported]);
+        assert.equal(error.message, "expected removeListener failure");
         assert.equal(exited, true);
         assert.equal(code, 1);
         console.log("settled");

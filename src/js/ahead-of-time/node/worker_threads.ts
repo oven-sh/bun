@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/worker_threads.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 23dee88a4169821dff1a9e31cd4c88ce1ee8d2d857b409b2b3ce8306909a00b4.
+// Written against that file with the SHA-256 ca7f162e4565ad21eab06d112e80ab24be2a48104f214d2bbe8bb4075a500618.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 declare const self: EventTarget & {
@@ -848,7 +848,6 @@ function moveMessagePortToContext(port, _context) {
 }
 
 class Worker extends EventEmitter {
-  declare _events: Record<string | symbol, unknown>;
   declare _eventsCount: number;
   #worker: WebWorker;
   #performance;

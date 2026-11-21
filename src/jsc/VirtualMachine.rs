@@ -3055,6 +3055,13 @@ impl VirtualMachine {
             event_loop_handle: Cell::new(None),
             pending_unref_counter: Default::default(),
             preload: JsCell::default(),
+            preload_require_start: Cell::new(0),
+            preload_require_count: Cell::new(0),
+            worker_preloads: JsCell::default(),
+            worker_eval_preloads: JsCell::default(),
+            worker_preload_require_start: Cell::new(0),
+            worker_preload_require_count: Cell::new(0),
+            worker_eval_mode: Default::default(),
             unhandled_pending_rejection_to_capture: None,
             standalone_module_graph: opts.graph,
             finds_entry_points_by_path: opts.graph.is_some_and(|graph| {

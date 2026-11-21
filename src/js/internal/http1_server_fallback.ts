@@ -1,7 +1,7 @@
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES, kPendingCallbacks } = require("internal/http");
+const { STATUS_CODES, kPendingCallbacks, nativeStatusTexts } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
 
@@ -63,7 +63,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     const statusCode = head?.statusCode ?? 200;
     let statusMessage = head?.statusMessage;
     if (typeof statusMessage !== "string" || statusMessage === "") {
-      statusMessage = STATUS_CODES[statusCode] || "unknown";
+      // The response gives none where its statusMessage is the text that the native handle writes by itself.
+      statusMessage = nativeStatusTexts[statusCode] ?? (STATUS_CODES[statusCode] || "unknown");
     }
     let out = `HTTP/1.1 ${statusCode} ${statusMessage}\r\n`;
     let hasContentLength = false;

@@ -7,13 +7,12 @@ export async function responseCorkOracle(mode: string) {
   const { pipeline } = require("node:stream/promises");
   if (mode === "pipeline-pull-count") {
     const controller = new AbortController();
-    let response;
+    const pending: { response?: import("node:http").ServerResponse; completed?: Promise<void> } = {};
     let reads = 0;
-    let completed;
     const server = http.createServer((_req, res) => {
-      response = res;
+      pending.response = res;
       res.cork();
-      completed = pipeline(
+      pending.completed = pipeline(
         async function* () {
           for (let i = 0; i < 128; i++) {
             reads++;
@@ -32,14 +31,14 @@ export async function responseCorkOracle(mode: string) {
       await once(server, "request");
       await immediate();
       await immediate();
-      assert.equal(response.writableNeedDrain, true);
-      assert.equal(response.writableCorked, 1);
+      assert.equal(pending.response!.writableNeedDrain, true);
+      assert.equal(pending.response!.writableCorked, 1);
       assert.ok(reads <= 2, `corked pipeline pulled ${reads} half-megabyte chunks`);
     } finally {
       controller.abort();
-      response?.destroy();
+      pending.response?.destroy();
       request.destroy();
-      await completed;
+      await pending.completed;
       server.closeAllConnections();
       await new Promise<void>(resolve => server.close(resolve));
     }
@@ -71,10 +70,10 @@ export async function responseCorkOracle(mode: string) {
     });
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
-    let request;
+    const pending: { request?: import("node:http").ClientRequest } = {};
     try {
       const received = new Promise<string>((resolve, reject) => {
-        request = http.request(
+        pending.request = http.request(
           {
             host: "127.0.0.1",
             port: server.address().port,
@@ -88,13 +87,13 @@ export async function responseCorkOracle(mode: string) {
             res.on("error", reject);
           },
         );
-        request.on("error", reject);
-        request.end();
+        pending.request!.on("error", reject);
+        pending.request!.end();
       });
       const [body] = await Promise.all([received, handled.promise]);
       assert.equal(body, mode === "negative-cork" || mode === "bytes-written" ? "AB" : "");
     } finally {
-      request?.destroy();
+      pending.request?.destroy();
       server.closeAllConnections();
       await new Promise<void>(resolve => server.close(resolve));
     }

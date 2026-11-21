@@ -1322,7 +1322,8 @@ pub(crate) mod command {
 
         if tag == Tag::AutoCommand
             && ctx.positionals.is_empty()
-            && (ctx.runtime_options.input_type != bun_options_types::context::RuntimeInputType::Auto
+            && (ctx.runtime_options.input_type
+                != bun_options_types::context::RuntimeInputType::Auto
                 || ctx.runtime_options.eval.eval_and_print)
         {
             if !run_command::RunCommand::exec_stdin(ctx, false)? {

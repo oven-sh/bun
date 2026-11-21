@@ -3,6 +3,14 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { ESBUILD, itBundled } from "./expectBundled";
 
+/** The `.js` files under `outdir`: sorted paths relative to it, with `/`. */
+function outputFiles(outdir: string): string[] {
+  return (readdirSync(outdir, { recursive: true }) as string[])
+    .filter(file => file.endsWith(".js"))
+    .map(file => file.replaceAll("\\", "/"))
+    .sort();
+}
+
 describe("bundler", () => {
   itBundled("naming/EntryNamingCollission", {
     files: {
@@ -73,6 +81,86 @@ describe("bundler", () => {
       },
     ],
   });
+  // The default root is the directory that the entry points share, for any number of them.
+  for (const backend of ["api", "cli"] as const) {
+    for (const count of [8, 9]) {
+      const names = Array.from({ length: count }, (_, i) => `page${i}.js`);
+      itBundled(`naming/ImplicitOutbaseManyEntryPoints/${backend}/${count}`, {
+        backend,
+        files: Object.fromEntries(names.map((name, i) => [`/pages/${name}`, `console.log(${i});`])),
+        entryPoints: names.map(name => `/pages/${name}`),
+        onAfterBundle(api) {
+          expect(outputFiles(api.outdir)).toEqual(names);
+        },
+      });
+    }
+  }
+  // The default root comes from the entry points as they are typed. An entry point typed as
+  // `./pub` reads as the directory `pub/`, also when it is the file `pub.js`. An entry point
+  // beside `pub/` (in `pubx/`, or the file `pub.js`) keeps more than 8 entry points at the
+  // working directory. Up to 8 still take `pub/` as the root, as in every release.
+  const fromPub = (names: string[]) => names.map(name => name.slice("pub/".length));
+  const rootShapes: { id: string; file: string; typed: string; written: (inPub: string[]) => string[] }[] = [
+    {
+      id: "SiblingDirectory",
+      file: "pubx/b.js",
+      typed: "./pubx/b.js",
+      written: inPub => (inPub.length < 8 ? [...fromPub(inPub), "_.._/pubx/b.js"] : [...inPub, "pubx/b.js"]),
+    },
+    {
+      id: "SiblingFile",
+      file: "pub.js",
+      typed: "./pub.js",
+      written: inPub => (inPub.length < 8 ? [...fromPub(inPub), "_.._/pub.js"] : [...inPub, "pub.js"]),
+    },
+    {
+      id: "DirectoryEntryPoint",
+      file: "pub/index.js",
+      typed: "./pub",
+      written: inPub => fromPub([...inPub, "pub/index.js"]),
+    },
+    {
+      id: "FileEntryPointWithoutExtension",
+      file: "pub.js",
+      typed: "./pub",
+      written: inPub => [...fromPub(inPub), "_.._/pub.js"],
+    },
+  ];
+  for (const { id, file, typed, written } of rootShapes) {
+    for (const backend of ["api", "cli"] as const) {
+      for (const count of [1, 8]) {
+        const inPub = Array.from({ length: count }, (_, i) => `pub/a${i}.js`);
+        itBundled(`naming/ImplicitOutbaseOfTypedEntryPoints/${id}/${backend}/${count + 1}`, {
+          backend,
+          files: Object.fromEntries([...inPub, file].map((name, i) => [`/${name}`, `console.log(${i});`])),
+          entryPointsRaw: [...inPub.map(name => `./${name}`), typed],
+          onAfterBundle(api) {
+            expect(outputFiles(api.outdir)).toEqual(written(inPub).sort());
+          },
+        });
+      }
+    }
+  }
+  // `[dir]` of an asset is its directory from the default root, for any number of entry points.
+  for (const count of [8, 9]) {
+    const pages = Array.from({ length: count }, (_, i) => `src/pages/page${i}.js`);
+    itBundled(`naming/ImplicitOutbaseAssetDir/${count}`, {
+      backend: "api",
+      files: {
+        ...Object.fromEntries(
+          pages.map(name => [`/${name}`, `import logo from "../assets/logo.png";\nconsole.log(logo);`]),
+        ),
+        "/src/assets/logo.png": "logo",
+      },
+      entryPointsRaw: pages.map(name => `./${name}`),
+      assetNaming: "[dir]/[name].[ext]",
+      loader: { ".png": "file" },
+      onAfterBundle(api) {
+        const assets = (readdirSync(api.outdir, { recursive: true }) as string[]).filter(file => file.endsWith(".png"));
+        expect(assets.map(file => file.replaceAll("\\", "/"))).toEqual(["_.._/assets/logo.png"]);
+      },
+    });
+  }
   itBundled("naming/EntryNamingTemplate1", {
     files: {
       "/a/hello/entry.js": /* js */ `

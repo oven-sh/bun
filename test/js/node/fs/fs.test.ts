@@ -9364,6 +9364,31 @@ describe.skipIf(!isWindows)("on Windows", () => {
       }
     });
 
+    // The server refuses a second open, which is where Node.js gives up.
+    it("fchmod of what was deleted on a share", async () => {
+      await using dir = tempDir("fs-windows", { "r+": "abc", "a": "abc", "r": "abc", "directory": {} });
+      const real = fs.realpathSync(String(dir));
+      const chmodDeleted = (name: string, flags: string, remove: (path: string) => void) => {
+        const path = `\\\\localhost\\${real[0]}$${real.slice(2)}\\${name}`;
+        return withFd(path, flags, fd => {
+          remove(path);
+          return [0o444, 0o666].map(to => attempt(() => (fs.fchmodSync(fd, to), mode(fs.fstatSync(fd)))));
+        });
+      };
+      const refused = "EPERM -4048 fchmod";
+      expect([
+        chmodDeleted("r+", "r+", fs.unlinkSync),
+        chmodDeleted("a", "a", fs.unlinkSync),
+        chmodDeleted("r", "r", fs.unlinkSync),
+        chmodDeleted("directory", "r+", fs.rmdirSync),
+      ]).toEqual([
+        ["100444", "100666"],
+        ["100444", "100666"],
+        [refused, refused],
+        [refused, refused],
+      ]);
+    });
+
     it("fchmod leaves a file alone whose access list says so", () => {
       using dir = tempDir("fs-windows", { f: "abc" });
       const file = join(String(dir), "f");

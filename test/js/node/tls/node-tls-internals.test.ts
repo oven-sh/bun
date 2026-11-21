@@ -404,7 +404,7 @@ describe("bundled roots in a ca option", () => {
     return pem(changed);
   })();
 
-  test("only the certificates that are not bundled roots are parsed", async () => {
+  test.concurrent("only the certificates that are not bundled roots are parsed", async () => {
     const lists = {
       "every bundled root": [...rootCertificates],
       "every bundled root in one string": rootCertificates.join("\n"),
@@ -468,7 +468,7 @@ describe("bundled roots in a ca option", () => {
   });
 
   // A context held a copy of the DER of each certificate of its `ca`: 127 KB for the bundled roots.
-  test("a context holds no copy of the DER of a bundled root", async () => {
+  test.concurrent("a context holds no copy of the DER of a bundled root", async () => {
     await expectRssDeltaBelow(
       [
         "-e",

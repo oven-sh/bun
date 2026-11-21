@@ -768,6 +768,7 @@ fn write_less_common_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     use print::{expressions, literals};
     match e.kind() {
         ExprKind::BigInt(_) => literals::write_big_int_literal(e, f),
+        ExprKind::Decimal(_) => literals::write_decimal_literal(e, f),
         ExprKind::Regex(regex) => literals::write_reg_exp_literal(e, regex, f),
         ExprKind::Template(template) => print::template::write_template_literal(e, template, f),
         ExprKind::TaggedTemplate(call) => {

@@ -58,6 +58,10 @@ new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL
 new!(pub BUN_JSC_logAOTPhaseTimes: boolean, "BUN_JSC_logAOTPhaseTimes", { default: false });
 // JavaScriptCore's options of these names: see `decimal_options`.
 new!(pub BUN_JSC_useDecimal: boolean, "BUN_JSC_useDecimal", {});
+new!(pub BUN_JSC_useDecimalStructuredClone: boolean, "BUN_JSC_useDecimalStructuredClone", {});
+new!(pub BUN_JSC_useDecimalToJSON: boolean, "BUN_JSC_useDecimalToJSON", {});
+new!(pub BUN_JSC_useDecimalOperators: boolean, "BUN_JSC_useDecimalOperators", {});
+new!(pub BUN_JSC_useDecimalLiterals: boolean, "BUN_JSC_useDecimalLiterals", {});
 new!(pub BUN_CONFIG_DISABLE_COPY_FILE_RANGE: boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", { default: false });
 new!(pub BUN_CONFIG_DISABLE_ioctl_ficlonerange: boolean, "BUN_CONFIG_DISABLE_ioctl_ficlonerange", { default: false });
 // TODO(markovejnovic): Legacy usage had the default at 30, even though a the attached comment

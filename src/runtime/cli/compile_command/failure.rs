@@ -35,6 +35,10 @@ impl CompileFailure {
                     out.extend_from_slice(b"\nnote: run this on the target platform, or pass --no-aot to bundle your code with the Bun runtime instead, like bun build --compile");
                 }
             }
+            CompileFailure::DecimalOperators => {
+                out.extend_from_slice(request_origin.subject().as_bytes());
+                out.extend_from_slice(b" doesn't support BUN_JSC_useDecimalOperators");
+            }
             CompileFailure::TemplateUnreadable { error } => {
                 let _ = write!(out, "failed to read executable for '{target}': {error}");
             }

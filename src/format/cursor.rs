@@ -670,6 +670,7 @@ impl<'a> Walk<'a> {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
+            | ExprKind::Decimal(_)
             | ExprKind::Regex(_) => {}
             ExprKind::PrivateIdentifier(_) => {
                 if let Kind::LeafIn(span) = self.private_name(e.span()).kind {

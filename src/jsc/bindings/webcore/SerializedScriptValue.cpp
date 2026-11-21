@@ -51,6 +51,7 @@
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/BooleanObject.h>
 #include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/DecimalObject.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/Exception.h>
@@ -203,6 +204,7 @@ enum SerializationTag {
     Bun__KeyObjectTag = 252,
     Bun__nodenet_BlockList = 251,
     Bun__NodePerformanceHooksHistogramTag = 250,
+    Bun__DecimalTag = 249,
 
     ErrorTag = 255
 };
@@ -1183,6 +1185,13 @@ private:
                 ASSERT(bigIntValue.isBigInt());
                 write(BigIntObjectTag);
                 dumpBigIntData(bigIntValue);
+                return true;
+            }
+            if (auto* decimal = dynamicDowncast<DecimalObject>(obj); decimal && DecimalObject::canBeCloned()) [[unlikely]] {
+                if (!startObjectInternal(obj)) // handle duplicates
+                    return true;
+                write(Bun__DecimalTag);
+                write(decimal->textForClone());
                 return true;
             }
             if (auto* regExp = dynamicDowncast<RegExpObject>(obj)) {
@@ -3713,6 +3722,18 @@ private:
                 return JSValue();
             ASSERT(bigInt.isBigInt());
             BigIntObject* obj = BigIntObject::create(m_lexicalGlobalObject->vm(), m_globalObject, bigInt);
+            addToObjectPool(obj);
+            return obj;
+        }
+        case Bun__DecimalTag: {
+            CachedStringRef text;
+            if (!readStringData(text))
+                return JSValue();
+            JSObject* obj = DecimalObject::tryCreateFromCloneText(m_globalObject, text->string());
+            if (!obj) {
+                fail();
+                return JSValue();
+            }
             addToObjectPool(obj);
             return obj;
         }

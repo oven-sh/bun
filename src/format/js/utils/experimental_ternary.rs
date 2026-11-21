@@ -472,6 +472,7 @@ fn inner_node_count(e: Expr<'_>, max: u32, is_javascript: bool) -> u32 {
         | ExprKind::Number(_)
         | ExprKind::String(_)
         | ExprKind::BigInt(_)
+        | ExprKind::Decimal(_)
         | ExprKind::Regex(_)
         | ExprKind::Template(_)
         | ExprKind::Array(_)

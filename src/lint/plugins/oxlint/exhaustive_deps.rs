@@ -875,6 +875,7 @@ fn is_expression_referentially_unique(e: Expr) -> bool {
             | ExprKind::Fn(_)
             | ExprKind::Class(_)
             | ExprKind::New(_)
+            | ExprKind::Decimal(_)
             | ExprKind::Regex(_)
             | ExprKind::Jsx(_) => {
                 return true;
@@ -1217,6 +1218,7 @@ pub(crate) fn run<'a, R: Rule>(
                         | ExprTag::Null
                         | ExprTag::Number
                         | ExprTag::BigInt
+                        | ExprTag::Decimal
                         | ExprTag::Regex
                         | ExprTag::String
                 );

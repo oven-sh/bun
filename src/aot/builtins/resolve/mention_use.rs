@@ -180,7 +180,7 @@ impl Resolver<'_, '_> {
             ExprKind::Missing | ExprKind::Ident(_) | ExprKind::PrivateIdentifier(_)
             | ExprKind::This | ExprKind::Super | ExprKind::Null | ExprKind::True | ExprKind::False
             | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_)
-            | ExprKind::Regex { .. } | ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Fn(_)
+            | ExprKind::Regex { .. } | ExprKind::Decimal(_) | ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Fn(_)
             | ExprKind::Class(_) | ExprKind::Await(_)
             | ExprKind::Yield { .. } | ExprKind::Jsx(_) | ExprKind::ImportCall { .. }
             | ExprKind::ImportMeta | ExprKind::NewTarget(_)

@@ -125,6 +125,7 @@ impl<'a, 's> FunctionUses<'a, 's> {
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::Template { .. }
             | ExprKind::TaggedTemplate(_)
             | ExprKind::Array(_)

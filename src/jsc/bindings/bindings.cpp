@@ -3183,6 +3183,8 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject
 
     // The formats would all write an empty object. They call no toJSON() of the program, as they call none of other objects.
     if (Bun::isDecimal(object)) [[unlikely]] {
+        if (JSC::Options::useDecimalToJSON())
+            return JSValue::encode(jsString(globalObject->vm(), Bun::textOfDecimal(object)));
         throwTypeError(globalObject, scope, "Decimal cannot be serialized. Use its toString()"_s);
         return {};
     }

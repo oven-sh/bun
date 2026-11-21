@@ -229,6 +229,7 @@ impl Checker<'_, '_> {
             | ExprKind::Missing
             | ExprKind::String(_)
             | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::TaggedTemplate(_)
             | ExprKind::Template { .. }
             | ExprKind::Number(_)

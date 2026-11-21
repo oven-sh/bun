@@ -4673,6 +4673,7 @@ impl Follower<'_, '_, '_> {
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::Template { .. }
             | ExprKind::Unary { .. } => true,
             ExprKind::Assign { value, .. } => self.is_written_here_or_no_function(value),

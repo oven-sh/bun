@@ -217,6 +217,17 @@ pub struct VirtualMachine {
     /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: JsCell<Vec<Box<[u8]>>>,
+    pub preload_require_start: Cell<usize>,
+    pub preload_require_count: Cell<usize>,
+    /// Effective execArgv preloads retained after this VM runs them, so child
+    /// workers can inherit the same startup contract.
+    pub worker_preloads: JsCell<Vec<Box<[u8]>>>,
+    /// The require-style subset of `worker_preloads` that Node also applies
+    /// before eval Worker source.
+    pub worker_eval_preloads: JsCell<Vec<Box<[u8]>>>,
+    pub worker_preload_require_start: Cell<usize>,
+    pub worker_preload_require_count: Cell<usize>,
+    pub worker_eval_mode: Cell<bun_options_types::context::WorkerEvalMode>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the
@@ -2638,15 +2649,14 @@ impl SweepResult {
 pub type RuntimeState = *mut c_void;
 
 /// Runtime flags a Worker's `execArgv` can set. `true` means allowed.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone)]
 pub struct WorkerExecArgvFlags {
     /// `!--no-addons`
     pub allow_addons: bool,
     /// `!--no-ffi-cc`
     pub allow_ffi_cc: bool,
-    /// Where a flag is that is the process's, which a Worker cannot be given
-    /// (`ERR_WORKER_INVALID_EXEC_ARGV`): `--disallow-code-generation-from-strings`.
-    pub invalid: Option<usize>,
+    /// First process-only flag a Worker cannot accept (`ERR_WORKER_INVALID_EXEC_ARGV`).
+    pub invalid: Option<bun_core::ZBox>,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -3045,6 +3055,13 @@ impl VirtualMachine {
             event_loop_handle: Cell::new(None),
             pending_unref_counter: Default::default(),
             preload: JsCell::default(),
+            preload_require_start: Cell::new(0),
+            preload_require_count: Cell::new(0),
+            worker_preloads: JsCell::default(),
+            worker_eval_preloads: JsCell::default(),
+            worker_preload_require_start: Cell::new(0),
+            worker_preload_require_count: Cell::new(0),
+            worker_eval_mode: Default::default(),
             unhandled_pending_rejection_to_capture: None,
             standalone_module_graph: opts.graph,
             finds_entry_points_by_path: opts.graph.is_some_and(|graph| {

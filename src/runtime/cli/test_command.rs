@@ -2834,6 +2834,18 @@ impl TestCommand {
             vm.on_print_error_zig_exception
                 .set(Some(bun_test::BunTest::record_printed_error));
         }
+        vm.worker_preloads.set(ctx.preloads.clone());
+        vm.worker_eval_preloads
+            .set(ctx.worker_eval_preloads.clone());
+        vm.worker_preload_require_start
+            .set(ctx.worker_preload_require_start);
+        vm.worker_preload_require_count
+            .set(ctx.worker_preload_require_count);
+        vm.worker_eval_mode.set(ctx.worker_eval_mode);
+        vm.preload_require_start
+            .set(ctx.worker_preload_require_start);
+        vm.preload_require_count
+            .set(ctx.worker_preload_require_count);
         vm.transpiler.with_mut(|t| {
             t.options.rewrite_jest_for_tests = true;
             t.options.vitest_globals = ctx.test_options.globals == Some(TestGlobals::Vitest);

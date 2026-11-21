@@ -72,6 +72,10 @@ export interface Flag {
 //   -march/-mcpu/-mtune. Split out for computeCpuTargetFlags().
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * The same as `MARCH_FLAG` in oven-sh/WebKit's .github/scripts/lanes.mjs. They change together: on arm64 LLVM inlines
+ * no function into one with another tune CPU, so LTO would inline nothing between bun and the prebuilt.
+ */
 export const cpuTargetFlags: Flag[] = [
   {
     flag: "-mcpu=apple-m1",
@@ -79,14 +83,9 @@ export const cpuTargetFlags: Flag[] = [
     desc: "Target Apple M1 (works on all Apple Silicon)",
   },
   {
-    flag: ["-march=armv8-a+crc", "-mtune=ampere1"],
-    when: c => (c.linux || c.freebsd) && c.arm64 && c.abi !== "android" && !c.hardened,
-    desc: "ARM64 Linux/FreeBSD: ARMv8-A base + CRC, tuned for Ampere (Graviton-like)",
-  },
-  {
     flag: "-march=armv8-a+crc",
-    when: c => c.linux && c.arm64 && c.abi !== "android" && c.hardened,
-    desc: "ARM64 Linux, hardened: ARMv8-A base + CRC. No -mtune: it keeps the fortified wrappers out of line",
+    when: c => (c.linux || c.freebsd) && c.arm64 && c.abi !== "android",
+    desc: "ARM64 Linux/FreeBSD: ARMv8-A base + CRC. No -mtune: it keeps the fortified wrappers out of line",
   },
   {
     flag: ["-march=armv8-a+crc", "-mtune=cortex-a78"],
@@ -95,8 +94,7 @@ export const cpuTargetFlags: Flag[] = [
   },
   {
     // No -mtune: Windows-on-ARM hardware is Snapdragon (Oryon / Cortex-X), and
-    // generic tuning is what MSVC, Chromium and Rust ship there. (ampere1's
-    // tuning pads every function and loop to 64 bytes.)
+    // generic tuning is what MSVC, Chromium and Rust ship there.
     flag: "/clang:-march=armv8-a+crc",
     when: c => c.windows && c.arm64,
     desc: "ARM64 Windows: ARMv8-A base + CRC, generic tuning (clang-cl prefix required)",
@@ -362,7 +360,7 @@ export const globalFlags: Flag[] = [
   {
     flag: ["-g", "-gz=zstd"],
     when: c => c.unix && c.release && c.debugInfo === "full",
-    desc: "Full debug info (types and variables) where no LTO link has to carry it: local release, asan, the non-LTO CI lanes",
+    desc: "Full debug info (types and variables) where no LTO link has to carry it: asan, assertions, --lto=off",
   },
   {
     // -glldb implies -fstandalone-debug: every TU emits the definition of
@@ -621,7 +619,7 @@ export const globalFlags: Flag[] = [
   },
   {
     // Windows (cross) uses ThinLTO like darwin: clang-cl accepts -flto=thin
-    // directly (core option), the WebKit windows-amd64-lto prebuilt is
+    // directly (core option), the WebKit windows -lto prebuilts are
     // ThinLTO-summaried bitcode, and rustc's -Clinker-plugin-lto bitcode is
     // too, so lld-link runs one uniform ThinLTO graph with cross-language
     // importing. lld-link does LTO automatically when it sees bitcode
@@ -643,7 +641,7 @@ export const globalFlags: Flag[] = [
     // Unix only (not windows): on COFF, whole-program vtable opt drops
     // vtable symbols that associative COMDAT sections still name as their
     // parent and the LTO codegen aborts ("Associative COMDAT symbol
-    // '??_7...' does not exist"). The WebKit windows-amd64-lto prebuilt is
+    // '??_7...' does not exist"). The WebKit windows -lto prebuilts are
     // built without it for the same reason.
     flag: ["-fforce-emit-vtables", "-fwhole-program-vtables"],
     when: c => c.unix && c.lto,

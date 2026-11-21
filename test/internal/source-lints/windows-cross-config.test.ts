@@ -1,7 +1,7 @@
 /**
  * Build-config regression tests for cross-compiling Windows binaries from a
  * non-Windows host (scripts/build/config.ts + flags.ts), with a focus on the
- * LTO configuration: Windows x64 cross builds use ThinLTO with cross-language
+ * LTO configuration: Windows cross builds use ThinLTO with cross-language
  * (Rust↔C++) LTO through lld-link.
  *
  * These exercise the configure-time logic only — no compiler, sysroot, or
@@ -84,14 +84,9 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(cfg.lto).toBe(true);
   });
 
-  test("no -lto WebKit prebuilt exists for arm64 — LTO is forced off there", () => {
-    // arm64: LLVM's CodeView emitter aborts on ARM64 NEON tuple registers
-    // during LTO codegen, so oven-sh/WebKit ships no windows-arm64-lto.
-    const arm64 = resolveWindowsCross({ arch: "aarch64" });
-    expect(arm64.lto).toBe(false);
-    // Forced off even when explicitly requested, so the WebKit fetch never
-    // 404s on a tarball that doesn't exist.
-    expect(resolveWindowsCross({ arch: "aarch64", lto: true }).lto).toBe(false);
+  test("ci release arm64 cross builds are LTO too, unless turned off", () => {
+    expect(resolveWindowsCross({ arch: "aarch64" }).lto).toBe(true);
+    expect(resolveWindowsCross({ arch: "aarch64", lto: false }).lto).toBe(false);
   });
 
   test("local (non-ci) release builds are LTO too, unless turned off", () => {
@@ -146,7 +141,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
 
     const arm64 = webkit.source(resolveWindowsCross({ arch: "aarch64", aot: false }));
     if (arm64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${arm64.kind}`);
-    expect(arm64.url).toContain("bun-webkit-windows-arm64.tar.gz");
+    expect(arm64.url).toContain("bun-webkit-windows-arm64-lto.tar.gz");
   });
 
   test("rust side targets pc-windows-msvc triples", () => {

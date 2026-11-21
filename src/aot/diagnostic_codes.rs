@@ -105,6 +105,7 @@ diagnostic_codes! {
         SearchMissesPackageJson = 100174, Warning, "This hands on \"{0}\", and the executable doesn't hold the package.json that a search from there finds first. Once it's moved, the search finds another one or none";
         FolderListedInPart = 100175, Warning, "This hands on \"{0}\" to code that may list it, and the executable holds some of its files alone. Once it's moved, the list is shorter. Embed the folder with --asset {0}";
         NamedFilesEmbedded = 100176, Note, "The executable embeds what this path leads to: {0}";
+        RequiredTypeIsNotRead = 100177, Warning, "The build can't work out the type that these options name, so this require() gives the file as its extension says. Write the type out, as in require(\"./a.json\", { type: \"file\" })";
         FileBehindAssetSymlink = 100165, Warning, "This reads \"{0}\", but the executable has no file at that path: --asset follows no links inside a folder. Embed it with --asset {1}";
     }
     Link 100200..=100299 {

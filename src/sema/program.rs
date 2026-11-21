@@ -20,6 +20,7 @@ mod retire;
 
 pub use self::code_file::byte_range_of_node;
 pub use self::code_graph::*;
+pub use self::code_imports::may_name_type_at_run_time;
 pub use self::code_load::CompileInputs;
 pub use self::retire::{ModuleCell, ReadingTask, ReadingWithoutKeeping};
 pub(crate) use self::retire::{forget_blocks_of, free_after_tasks};

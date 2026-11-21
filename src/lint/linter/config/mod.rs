@@ -685,8 +685,7 @@ pub struct Config {
     lints_all_named_files: bool,
     /// The index of the object with the patterns that make ESLint 8 ignore dotfiles.
     dot_patterns: Option<usize>,
-    /// The working directory as [`Config::relative`] returns it, if that isn't the base path. See
-    /// [`Config::start_in`].
+    /// The working directory as [`Config::relative`] returns it, if that isn't the base path.
     started: Option<Vec<u8>>,
     /// An ESLint rule that typescript-eslint extends means the extension rule, as in oxlint.
     prefers_typescript_rules: bool,
@@ -1099,11 +1098,12 @@ impl Config {
             let ignores = object.ignores.as_deref().unwrap_or_default();
             let Some(base_path) = &object.base_path else {
                 let is_elsewhere = is_outside || self.started.is_some();
-                let below = (is_elsewhere && object.ignore_lines.is_none())
-                    .then(|| Candidate::new(self.below_start(relative)));
                 is_ignored = match &object.ignore_lines {
                     Some(lines) => lines.is_ignored(relative, is_ignored, reads_for_exceptions),
-                    None => is_ignored_by(ignores, below.as_ref().unwrap_or(parts), is_ignored),
+                    // These reach outside the base path, like oxlint's `node_modules`. A project can itself be in a
+                    // `node_modules`, with its config file elsewhere.
+                    None if is_elsewhere && self.contains_start(relative) => is_ignored,
+                    None => is_ignored_by(ignores, parts, is_ignored),
                 };
                 continue;
             };
@@ -1126,31 +1126,32 @@ impl Config {
         is_ignored
     }
 
-    /// Sets the run's working directory. The ignores that aren't the config file's own, like oxlint's `node_modules`,
-    /// then don't count the directories that contain it: a project can itself be in a `node_modules`, with its config
-    /// file elsewhere.
+    /// Sets the run's working directory, for [`Config::contains_start`].
     pub fn start_in(&mut self, working_directory: &[u8]) {
         self.started = Some(self.relative(working_directory)).filter(|it| !it.is_empty());
     }
 
-    /// The part of `relative`, which [`Config::relative`] returned, below the directories that also contain the
-    /// working directory, or the base path if that's where the run started. It's what the ignores that reach outside
-    /// the base path match.
-    fn below_start<'p>(&self, relative: &'p [u8]) -> &'p [u8] {
+    /// True if `relative`, which [`Config::relative`] returned, is a directory that is or contains the working
+    /// directory, or the base path if that's where the run started.
+    fn contains_start(&self, relative: &[u8]) -> bool {
+        let Some(directory) = relative.strip_suffix(b"/") else {
+            return false;
+        };
         // See `Config::relative`. An absolute path has a `/` even before a drive name.
         let is_outside = |it: &[u8]| it.starts_with(b"/");
         let drive_at = usize::from(!self.base_path.starts_with(b"/"));
         match self.started.as_deref() {
-            Some(start) if is_outside(start) && is_outside(relative) => {
-                paths::below_shared(&start[drive_at..], &relative[drive_at..])
+            Some(start) if is_outside(start) && is_outside(directory) => {
+                paths::is_at_or_inside(&directory[drive_at..], &start[drive_at..])
             }
-            Some(start) if !is_outside(start) && !is_outside(relative) => {
-                paths::below_shared(start, relative)
+            Some(start) if !is_outside(directory) => {
+                !is_outside(start) && paths::is_at_or_inside(directory, start)
             }
-            // The base path is between the working directory and the path, and patterns don't match the base path.
-            Some(_) if !is_outside(relative) => relative,
-            // The path leaves the base path, so it leaves the working directory at the same place.
-            _ => paths::below_shared(&self.base_path, &relative[drive_at..]),
+            // A directory outside the base path that contains the working directory also contains the base path.
+            _ => {
+                is_outside(directory)
+                    && paths::is_at_or_inside(&directory[drive_at..], &self.base_path)
+            }
         }
     }
 

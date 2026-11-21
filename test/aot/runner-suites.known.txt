@@ -30,6 +30,7 @@ test/cli/test/bun-test.test.ts: a test file that can never finish loading > --wa
 test/cli/test/bun-test.test.ts: a test file that can never finish loading > the next file re-evaluates the modules it left unfinished
 test/cli/test/coverage.test.ts: a file loaded more than once counts every load > (unnamed)
 test/cli/test/coverage.test.ts: a file with ? in its name is not left out of coverage: it cannot be loaded
+test/cli/test/coverage.test.ts: a function in generated code that has no source is not a function of the file
 test/cli/test/coverage.test.ts: both braces of an object are listed and no brace of a block is: // @bun with a source map
 # The next one imports a macro. A macro stops the build of a compiled run with TS100053, as docs/compiler/compatibility.mdx says.
 test/cli/test/coverage.test.ts: objects that are not in the file do not move the lines that are listed

@@ -249,8 +249,7 @@ pub struct LanguageOptions {
     pub settings: Arc<Json>,
     /// The module that the config loads its `react-hooks` plugin from.
     pub react_hooks_module: Option<Arc<[u8]>>,
-    /// Whether `require.resolve("react-native-reanimated")` succeeds in [`react_hooks_module`](Self::react_hooks_module).
-    /// The React Compiler rules set it for the first file that imports the package.
+    /// Set on first use: whether that module can `require.resolve("react-native-reanimated")`.
     #[doc(hidden)]
     pub has_reanimated: OnceLock<bool>,
     /// Computed lazily from the fields above, which must not change afterwards.

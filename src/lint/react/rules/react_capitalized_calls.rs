@@ -6,8 +6,7 @@ use bun_lint_react_compiler::{ErrorCategory, Flavor, Reanimated, rule};
 /// `react/..` rule for that entry of [`RULES`]. From `RULES.len()` on it's eslint-plugin-react-hooks' `react-hooks/..`
 /// rule for the same entries.
 ///
-/// The plugin's rule has one option, an object that's merged into the compiler's options. Only what it says about
-/// [`Reanimated`] is read here.
+/// The plugin's rule has one option, an object of compiler options. Only its [`Reanimated`] keys are read here.
 pub struct CompilerRule<const RULE: usize = 0> {
     reanimated: Reanimated,
 }

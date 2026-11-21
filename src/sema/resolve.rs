@@ -1488,8 +1488,7 @@ pub struct AsRequire<'a> {
     /// nothing. If a package has `exports`, nothing else is tried, in that package or in one further up. `imports` and
     /// the name of the file's own package are honored.
     pub as_import: bool,
-    /// Like Node's own `require.resolve`, which doesn't read a package's `module` and `jsnext:main`: the entry is
-    /// its `main`, or else its `index`.
+    /// Like Node's own `require.resolve`: a package's `module` and `jsnext:main` aren't read.
     pub as_node: bool,
     /// `baseUrl`, absolute: where oxc-resolver looks after `paths`, before any package.
     pub base_url: Option<&'a [u8]>,

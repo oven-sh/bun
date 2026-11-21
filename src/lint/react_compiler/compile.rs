@@ -84,8 +84,7 @@ fn config_of(
 
 const REANIMATED: &str = "react-native-reanimated";
 
-/// What a rule's options say about the compiler's types for `react-native-reanimated`, with which a shared value can be
-/// written to like a ref.
+/// What a rule's options say about the compiler's types for `react-native-reanimated`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum Reanimated {
     /// The plugin's default: they're known if its module can `require.resolve` the package.
@@ -115,15 +114,14 @@ impl Reanimated {
     }
 }
 
-/// The plugin's `pipelineUsesReanimatedPlugin` and `injectReanimatedFlag`. Only a file that imports the package can
-/// tell the difference, so it's false for any other file. Without a module to resolve from, the import decides. oxlint
-/// 1.87 doesn't have these types.
+/// The plugin's `pipelineUsesReanimatedPlugin` and `injectReanimatedFlag`. Without a plugin module, the import decides.
 pub(crate) fn knows_reanimated<'a>(file: &'a File<'a>, option: Reanimated) -> bool {
     let imports_it = |it: Stmt<'a>| match it.kind() {
         StmtKind::Import(import) => import.spec().is(REANIMATED),
         _ => false,
     };
     let language = file.language();
+    // oxlint 1.87 doesn't have these types.
     if language.is_oxlint
         || option == Reanimated::Never
         || !file.mentions(REANIMATED)

@@ -96,8 +96,7 @@ fn report_as_eslint_with<'a>(
     }
 }
 
-/// `None` if the rule for `category` has nothing to do in the file. Otherwise, whether the compiler knows Reanimated's
-/// types for a rule with these options. Call it from [`Rule::start`].
+/// For [`Rule::start`]. `None` if the rule has nothing to do in the file, or else whether Reanimated's types are known.
 pub fn starts<'a>(
     file: &'a File<'a>,
     flavor: Flavor,

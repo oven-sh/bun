@@ -37,8 +37,7 @@ struct PerFlavor {
     findings: OnceCell<(Vec<Finding>, Categories)>,
 }
 
-/// One compilation for each flavor, and for each answer to whether the compiler
-/// [knows Reanimated's types](Reanimated), which a rule's options can decide.
+/// For each flavor: a compilation without [Reanimated's types](Reanimated), and one with them.
 #[derive(Default)]
 struct PerFile {
     oxlint: [PerFlavor; 2],

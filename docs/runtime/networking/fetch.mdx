@@ -289,6 +289,22 @@ await fetch("https://example.com", {
 
 This avoids SSL errors with self-signed certificates, but it disables TLS validation, so use it with caution.
 
+#### Key exchange groups
+
+By default, `fetch` offers the `X25519MLKEM768`, `X25519`, `P-256` and `P-384` groups for the TLS key exchange. `X25519MLKEM768` is a post-quantum hybrid group. Its key share makes the ClientHello about 1500 bytes. The ClientHello is the first message of the TLS handshake. On most networks, a message of that size needs two TCP segments.
+
+Some servers and network devices reset a connection whose ClientHello arrives in two segments. `fetch` then rejects with `ECONNRESET`. To leave the post-quantum group out for such a host, set `ecdhCurve`:
+
+```ts
+await fetch("https://example.com", {
+  tls: {
+    ecdhCurve: "X25519:P-256:P-384",
+  },
+});
+```
+
+`ecdhCurve` is one group name or a colon-separated list in order of preference. `"auto"` is the same as not setting `ecdhCurve`. Bun keeps a separate connection pool for each list.
+
 ### Request options
 
 In addition to the standard fetch options, Bun provides several extensions:

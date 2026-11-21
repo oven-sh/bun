@@ -757,6 +757,9 @@ interface TLSOptions {
   /** Path to DH parameters file */
   dhParamsFile?: string;
 
+  /** Key agreement groups, colon-separated, in order of preference (e.g. "X25519:P-256") */
+  ecdhCurve?: string;
+
   /** Private key */
   key?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
 

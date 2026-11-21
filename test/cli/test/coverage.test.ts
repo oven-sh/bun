@@ -58,11 +58,14 @@ export class Y {
 });
 
 // https://github.com/oven-sh/bun/issues/17501
-test("the lcov report takes the place of an older one", async () => {
+test.each([
+  ["an older one", "an older report"],
+  ["an empty directory", {}],
+])("the lcov report takes the place of %s", async (_, older) => {
   using dir = tempDir("cov-replace", {
     "demo.ts": `export function demo() {}\n`,
     "demo.test.ts": `import { test } from "bun:test";\nimport { demo } from "./demo";\ntest("demo", demo);\n`,
-    "coverage/lcov.info": "an older report",
+    "coverage/lcov.info": older,
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],

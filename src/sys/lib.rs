@@ -7108,8 +7108,7 @@ pub unsafe fn environ<'a>() -> &'a [bun_core::CStrRef<'a>] {
 
 // ── moveFileZWithHandle ──
 
-/// `renameat`; on EISDIR removes the dest dir and retries; on EXDEV falls back
-/// to copy-then-unlink. Port of `bun.sys.moveFileZWithHandle`.
+/// `renameat`, or copy-then-unlink on EXDEV. Replaces an empty directory.
 pub fn move_file_z_with_handle(
     from_handle: Fd,
     from_dir: Fd,
@@ -7117,22 +7116,21 @@ pub fn move_file_z_with_handle(
     to_dir: Fd,
     destination: &ZStr,
 ) -> Maybe<()> {
-    match renameat(from_dir, filename, to_dir, destination) {
-        Ok(()) => Ok(()),
-        Err(e) if e.get_errno() == E::EISDIR => {
-            #[cfg(unix)]
-            // SAFETY: destination is NUL-terminated.
-            let _ = unsafe {
-                libc::unlinkat(to_dir.native(), destination.as_ptr(), libc::AT_REMOVEDIR)
-            };
-            renameat(from_dir, filename, to_dir, destination)
-        }
+    let attempt = || match renameat(from_dir, filename, to_dir, destination) {
         Err(e) if e.get_errno() == E::EXDEV => {
             copy_file_z_slow_with_handle(from_handle, to_dir, destination)?;
             let _ = unlinkat(from_dir, filename);
             Ok(())
         }
-        Err(e) => Err(e),
+        renamed => renamed,
+    };
+    match attempt() {
+        // Windows also reports a directory as `EPERM`.
+        Err(e) if e.get_errno() == E::EISDIR || (cfg!(windows) && e.get_errno() == E::EPERM) => {
+            let _ = rmdirat(to_dir, destination);
+            attempt()
+        }
+        moved => moved,
     }
 }
 

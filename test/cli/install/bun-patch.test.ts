@@ -5,6 +5,7 @@ import {
   cpSync,
   existsSync,
   lstatSync,
+  mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
@@ -745,19 +746,21 @@ index 34b9978faf31873baf7154ea8db59a1e2a13c3a2..a781bb1f3d3a10022110fa5fe12ffec3
     expect(await bunOk(String(dir), env, "run", "index.ts")).toBe("hi\nhello\ntrue\n");
   });
 
-  test.concurrent("a patch over an older one leaves nothing in the temporary directory", async () => {
+  test.concurrent("a patch takes the place of an empty directory or an older patch", async () => {
     await using project = await installedProject({ dependencies: { "no-deps": "1.0.0" } });
     using tmp = tempDir("bun-patch-tmp", {});
     const { dir } = project;
     const env = { ...project.env, BUN_TMPDIR: String(tmp) };
+    const patch = join(dir, "patches", "no-deps@1.0.0.patch");
+    mkdirSync(patch, { recursive: true });
 
     for (const edit of ["first", "second"]) {
       await bunOk(dir, env, "patch", "no-deps");
       await Bun.write(join(dir, "node_modules", "no-deps", "index.js"), `module.exports = "${edit}";\n`);
       await bunOk(dir, env, "patch", "--commit", "no-deps");
+      expect(await Bun.file(patch).text()).toContain(`+module.exports = "${edit}";`);
+      expect(readdirSync(String(tmp))).toEqual([]);
     }
-    expect(await Bun.file(join(dir, "patches", "no-deps@1.0.0.patch")).text()).toContain(`+module.exports = "second";`);
-    expect(readdirSync(String(tmp))).toEqual([]);
   });
 
   // `file-bin` is `#!/usr/bin/env bun\nconsole.log("file-bin");`, with no newline at the end.

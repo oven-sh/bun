@@ -386,4 +386,9 @@ if (typeof process !== "undefined") {
   fetch("https://example.com", { tls: { ca: "ca", crl: Buffer.from("crl") } });
   // @ts-expect-error crl takes PEM contents
   fetch("https://example.com", { tls: { crl: 1 } });
+  fetch("https://example.com", { tls: { ecdhCurve: "X25519:P-256:P-384" } });
+  new Bun.FetchSession({ tls: { ecdhCurve: "auto" } });
+  ({ ecdhCurve: undefined }) satisfies Bun.TLSOptions;
+  // @ts-expect-error ecdhCurve is a colon-separated string, not an array
+  fetch("https://example.com", { tls: { ecdhCurve: ["X25519", "P-256"] } });
 }

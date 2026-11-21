@@ -506,6 +506,16 @@ describe("parsePatch", () => {
     ]],
     ["only ---", `--- 世\n${body}`, 'Missing "+++ ..." file header for 世'],
     ["only +++", `+++ b\n${body}`, 'Missing "--- ..." file header for b'],
+    ["cut after ---", "Index: f\n--- f\n", 'Missing "+++ ..." file header for f'],
+    ["cut inside +++", "--- f\n++", 'Missing "+++ ..." file header for f'],
+    ["only ---, then a section", "Index: f\n--- f\nIndex: g\n", 'Missing "+++ ..." file header for f'],
+    ["a line between --- and +++", `${body}--- f\n\n+++ f\n${body}diff --git a/g b/g\n`, 'Missing "+++ ..." file header for f'],
+    ["diff -c", "*** o\n--- n\n***************\n*** 1 ****\n! a\n--- 1 ----\n! b\n", 'Missing "+++ ..." file header for n'],
+    ["only ---, then a combined hunk", "--- f\n@@@ -1 -1 +1 @@@\ndiff --git a/g b/g\n", 'Missing "+++ ..." file header for f'],
+    ["--- and +++ without hunks, then a git section", "diff --cc f\n--- a/f\n+++ b/f\ndiff --git a/g b/g\n", [
+      { oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [] },
+      { isGit: true, oldFileName: "a/g", newFileName: "b/g", hunks: [] },
+    ]],
     ["an invalid line", "\n@@ -1 +1 @@\n-a\né\n", "Hunk at line 2 contained invalid line é"],
     ["cut after a newline", "@@ -1 +1,2 @@\n-a\n+b\n", "Hunk at line 1 contained invalid line "],
     ["too few added lines", "@@ -1 +1,2 @@\n-a\n+b", "Added line count did not match for hunk at line 1"],
@@ -520,6 +530,13 @@ describe("parsePatch", () => {
     // diff takes the signature for a removed line.
     ["git format-patch", `Subject: x\n\n---\n f | 2 +-\n\ndiff --git a/f b/f\n${body}-- \n2.43.0\n`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
     ["more than a signature", `${body}-- a\n`, "Hunk at line 1 has more lines than expected (expected 1 old lines and 1 new lines)"],
+    // diff takes them for file headers.
+    ["--- and +++ in commit messages", `--- Original Message ---\n> x\n+++ y\n--- z\ndiff --git a/x b/y\nrename from x\nrename to y\n-- \n\n--- x\n\ndiff --git a/f b/f\n--- a/f\n+++ b/f\n${body}-- \n\n+++ x\n\ndiff --git a/g b/g\n`, [
+      { isGit: true, isRename: true, oldFileName: "a/x", newFileName: "b/y", hunks: [] },
+      { isGit: true, oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [hunk] },
+      { isGit: true, oldFileName: "a/g", newFileName: "b/g", hunks: [] },
+    ]],
+    ["a removed line too many that starts with --", `${body}--- x\ndiff --git a/f b/f\n`, "Hunk at line 1 has more lines than expected (expected 1 old lines and 1 new lines)"],
     // diff makes two entries of each file.
     ["svn diff --git", `Index: e\n${"=".repeat(67)}\ndiff --git a/e b/e\nnew file mode 100644\nIndex: f\n${"=".repeat(67)}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n${body}`, [
       { index: "e", isGit: true, isCreate: true, newMode: "100644", oldFileName: "a/e", newFileName: "b/e", hunks: [] },
@@ -530,6 +547,11 @@ describe("parsePatch", () => {
   ])("%s", (_, patch, expected) => {
     if (typeof expected === "string") expect(() => diff.parsePatch(patch)).toThrow(new SyntaxError(expected));
     else expect(diff.parsePatch(patch)).toStrictEqual(expected);
+  });
+
+  test("many lines of a commit message start with ---", () => {
+    const message = Buffer.alloc(6 * 8000, "--- a\n").toString();
+    expect(diff.parsePatch(`${message}diff --git a/f b/f\n`)).toHaveLength(1);
   });
 
   // diff throws, or leaves the \r in a name.
@@ -572,6 +594,11 @@ describe("applyPatch", () => {
     ["a kept line does not match", "x\na\n", [{ oldStart: 1, lines: [" y", "-a"] }], undefined],
     ["longer than the source", "a", [{ oldStart: 1, lines: ["-a", "-a"] }], undefined],
     ["an insertion without context", "a\nc\n", [{ oldStart: 2, lines: ["+b"] }], "a\nb\nc\n"],
+    ["an insertion at the end", "a\n", [{ oldStart: 2, lines: ["+b"] }], "a\nb\n"],
+    ["an empty last line", "a\n\n", [{ oldStart: 2, lines: ["-", "+b"] }], "a\nb\n"],
+    ["an empty last line, and its newline", "a\n\n", [{ oldStart: 2, lines: ["-", "+b", marker] }], "a\nb"],
+    ["keeps an empty line after the last newline", "a\n\na\n", [{ oldStart: 3, lines: ["-a", "+b", " "] }], "a\n\nb\n"],
+    ["keeps a line without newline, before the end", "c\na\nx", [{ oldStart: 1, lines: ["-c", " a", marker] }], "a\nx"],
     ["into an empty source", "", [{ oldStart: 1, lines: ["+a"] }], "a\n"],
     ["a kept line without its space", "\na\n", [{ oldStart: 1, lines: ["", "-a", "+b"] }], "\nb\n"],
     ["adds the last newline", "a", [{ oldStart: 1, lines: ["-a", marker, "+a"] }], "a\n"],
@@ -594,6 +621,14 @@ describe("applyPatch", () => {
     ["oldStart before the previous hunk", "a\nc\na\n", [{ oldStart: 2, lines: ["-c"] }, replace(1)], "a\nb\n"],
     ["an insertion before the previous hunk", "a\nc\n", [{ oldStart: 2, lines: ["-c"] }, { oldStart: 1, lines: ["+b"] }], undefined],
     ["an insertion past the end", "a\n", [{ oldStart: 4, lines: ["+b"] }], undefined],
+    ["an insertion one line past the end", "a\n", [{ oldStart: 3, lines: ["+b"] }], undefined],
+    ["removes an empty line after the last newline", "\na\n", [{ oldStart: 3, lines: ["-", "+b"] }], undefined],
+    ["adds after an empty line after the last newline", "a\n", [{ oldStart: 1, lines: [" a", " ", "+b"] }], undefined],
+    ["removes an empty line of an empty source", "", [{ oldStart: 1, lines: ["-", "+b"] }], undefined],
+    // diff changes the last newline wherever the hunk fits.
+    ["removes the last newline, before the end", "a\nx\n", [{ oldStart: 1, lines: ["-a", "+b", marker] }], undefined],
+    ["adds the last newline, before the end", "a\nx", [{ oldStart: 1, lines: ["-a", marker, "+b"] }], undefined],
+    ["removes the last newline, fits at the end too", "a\na\n", [{ oldStart: 1, lines: ["-a", "+b", marker] }], undefined],
   ])("%s", (_, source, hunks, expected) => {
     expect(diff.applyPatch(source, hunks)).toBe(expected);
   });

@@ -480,6 +480,14 @@ struct Parser<'a, T> {
     line: Option<Range<usize>>,
     /// From 1.
     number: usize,
+    next_header: NextHeader,
+}
+
+/// The line that starts a hunk or a section, seen from the last `---` or `+++` that looked for it.
+#[derive(Clone, Copy, Default)]
+struct NextHeader {
+    number: usize,
+    is_git: bool,
 }
 
 impl<'a, T: Unit> Parser<'a, T> {
@@ -499,11 +507,45 @@ impl<'a, T: Unit> Parser<'a, T> {
         self.number += 1;
     }
 
+    /// A commit message can have a line like `--- Original Message ---`. It is alone, and `diff --git` follows it.
+    fn is_at_file_header(&mut self) -> bool {
+        let Some(line) = self.peek().filter(|line| is_file_header(line)) else {
+            return false;
+        };
+        let mut ahead = Parser {
+            line: self.line.clone(),
+            ..*self
+        };
+        ahead.advance();
+        let is_before_new = ahead
+            .peek()
+            .and_then(|it| after_marker(it, b"+++"))
+            .is_some();
+        if is(line.first(), b'-') && is_before_new {
+            return true;
+        }
+        if self.number >= self.next_header.number {
+            while let Some(line) = ahead.peek()
+                && !is_diff_header(line)
+                && strip(line, b"@@").is_none()
+            {
+                ahead.advance();
+            }
+            self.next_header = NextHeader {
+                number: ahead.number,
+                is_git: ahead
+                    .peek()
+                    .is_some_and(|it| strip(it, GIT_HEADER).is_some()),
+            };
+        }
+        !self.next_header.is_git
+    }
+
     fn file(&mut self) -> Result<FilePatch, ParseError> {
         let mut file = FilePatch::default();
         let (mut has_diff_header, mut is_after_rule) = (false, false);
         while let Some(line) = self.peek()
-            && !is_file_header(line)
+            && !self.is_at_file_header()
             && !is_hunk_header(line)
         {
             // `svn diff --git` writes `Index:`, the rule and `diff --git`.
@@ -544,7 +586,7 @@ impl<'a, T: Unit> Parser<'a, T> {
 
         while let Some(line) = self.peek()
             && !is_diff_header(line)
-            && !is_file_header(line)
+            && !self.is_at_file_header()
             && !is_rule(line)
         {
             if is_hunk_header(line) {
@@ -599,7 +641,7 @@ impl<'a, T: Unit> Parser<'a, T> {
             && next
                 .first()
                 .is_some_and(|&it| matches!(it.into(), 0x20 | 0x2B | 0x2D))
-            && !is_file_header(next)
+            && !self.is_at_file_header()
             // The signature that `git format-patch` ends a message with.
             && strip(trim(next), b"--") != Some(&[])
         {
@@ -619,6 +661,7 @@ pub fn parse<T: Unit>(text: &[T]) -> Result<Vec<FilePatch>, ParseError> {
         text,
         line: Some(Parser::line_from(text, 0)),
         number: 1,
+        next_header: NextHeader::default(),
     };
     let mut files = Vec::new();
     while parser.line.is_some() {
@@ -809,6 +852,8 @@ pub fn apply<T: Unit>(
         rest = &rest[length + 1..];
     }
     convert_line_endings(&lines, &mut steps);
+    // Without the empty one after the last newline.
+    let line_count = lines.len() + usize::from(!rest.is_empty());
     lines.push(rest);
     if let Some(last_hunk) = steps.last()
         && !change_last_newline(&mut lines, last_hunk)
@@ -836,7 +881,10 @@ pub fn apply<T: Unit>(
         offset = at as isize - declared;
         copy(&mut out, copied..at);
         copied = at;
+        let mut has_last_line = false;
         for step in steps {
+            has_last_line |= !step.has_line_ending
+                && matches!(step.operation, Operation::Add | Operation::Remove);
             match step.operation {
                 Operation::Keep => at += 1,
                 Operation::Remove => {
@@ -852,6 +900,9 @@ pub fn apply<T: Unit>(
                 }
                 Operation::NoNewline => {}
             }
+        }
+        if copied > line_count || (has_last_line && at < line_count) {
+            return Ok(None);
         }
     }
     copy(&mut out, copied..source.lines.len());

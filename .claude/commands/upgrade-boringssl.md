@@ -19,7 +19,7 @@ git log --oneline $(git merge-base HEAD upstream/main)..HEAD   # our patches
 git merge upstream/main
 ```
 
-Before the merge, commit Bun's `patches/boringssl/*.patch` to the fork. The build applies them on top of the pin. With `prefer-usable-trusted-issuer.patch`, the two rows of the `IgnoreExpiredTrustAnchors` test that trust an expired certificate before a valid one verify without the flag too.
+Before the merge, commit Bun's `patches/boringssl/*.patch` to the fork. The build applies them on top of the pin. `openssl-issuer-selection.patch` changes four expectations in `x509_test.cc`. In `IgnoreExpiredTrustAnchors`, the two rows that trust an expired certificate before a valid one verify without the flag too. In `SignatureVerification`, the two `bad_key_type` issuers give `X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY`.
 
 Resolve conflicts **preserving the fork's additions**. Most conflicts are upstream's periodic `|...|` → `` `...` `` doc-comment restyle landing adjacent to a line we added — keep our line + upstream's comment style. For `include/openssl/nid.h`, keep upstream's new NIDs **and** ours (our NID numbers are from OpenSSL's range and don't collide with BoringSSL's sequential allocation).
 

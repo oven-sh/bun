@@ -37,8 +37,8 @@ export const boringssl: Dependency = {
   }),
 
   patches: [
-    // X509_verify_cert never backtracks, so an unusable copy of a trusted CA hid a valid one.
-    "patches/boringssl/prefer-usable-trusted-issuer.patch",
+    // Among certificates with one subject, choose the issuer that OpenSSL, and so Node.js, chooses.
+    "patches/boringssl/openssl-issuer-selection.patch",
   ],
 
   build: cfg => {

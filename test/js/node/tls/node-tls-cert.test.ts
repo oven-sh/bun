@@ -3,7 +3,9 @@ import { once } from "events";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tls as harnessCert, invalidTls, isLinux, tempDir, tmpdirSync } from "harness";
 import { generateKeyPairSync, sign, X509Certificate, type KeyObject } from "node:crypto";
-import type { AddressInfo } from "node:net";
+import https from "node:https";
+import net, { type AddressInfo } from "node:net";
+import { Duplex } from "node:stream";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
 import tls from "tls";
@@ -1077,8 +1079,8 @@ describe("trust anchors", () => {
   });
 });
 
-// Bun sorts `ca` by length, hence the "shorter" and "longer" sizes.
-describe("several trusted certificates match one issuer", () => {
+// The outcomes are those of Node.js v26.12.1 on glibc, whose qsort keeps the order of a list, unless a test says otherwise.
+describe("several certificates match one issuer", () => {
   const tlv = (tag: number, ...body: Buffer[]) => {
     const { length } = Buffer.concat(body);
     const header = length < 0x80 ? [length] : length < 0x100 ? [0x81, length] : [0x82, length >> 8, length & 0xff];
@@ -1088,17 +1090,20 @@ describe("several trusted certificates match one issuer", () => {
   const seq = (...body: Buffer[]) => tlv(0x30, ...body);
   const oid = (text: string) => tlv(0x06, hex(text));
   const time = (text: string) => tlv(0x18, Buffer.from(text));
-  const dn = (cn: string) => seq(tlv(0x31, seq(oid("550403"), tlv(0x0c, Buffer.from(cn)))));
+  const rdn = (type: string, value: string) => tlv(0x31, seq(oid(type), tlv(0x0c, Buffer.from(value))));
+  type Name = string | Buffer;
+  const dn = (name: Name) => (typeof name === "string" ? seq(rdn("550403", name)) : name);
   const extension = (id: string, value: Buffer, critical = false) =>
     seq(oid(id), hex(critical ? "0101ff" : ""), tlv(0x04, value));
   const armor = (label: string, der: Buffer) =>
     `-----BEGIN ${label}-----\n${der.toString("base64").replace(/.{64}(?!$)/g, "$&\n")}\n-----END ${label}-----\n`;
-  const ecdsaWithSha256 = seq(oid("2a8648ce3d040302"));
   type KeyPair = { publicKey: KeyObject; privateKey: KeyObject };
-  const signed = (tbs: Buffer, { privateKey }: KeyPair) =>
-    seq(tbs, ecdsaWithSha256, tlv(0x03, hex("00"), sign("sha256", tbs, privateKey)));
+  const isEC = ({ privateKey }: KeyPair) => privateKey.asymmetricKeyType === "ec";
+  const algorithm = (signer: KeyPair) => seq(oid(isEC(signer) ? "2a8648ce3d040302" : "2b6570"));
+  const signed = (tbs: Buffer, signer: KeyPair) =>
+    seq(tbs, algorithm(signer), tlv(0x03, hex("00"), sign(isEC(signer) ? "sha256" : null, tbs, signer.privateKey)));
 
-  const [serverAuth, clientAuth, emailProtection] = ["01", "02", "04"].map(n => oid(`2b060105050703${n}`));
+  const [serverAuth, clientAuth] = ["01", "02"].map(n => oid(`2b060105050703${n}`));
   const isCA = extension("551d13", seq(hex("0101ff")), true);
   const notCA = extension("551d13", seq(), true);
   const pathLen0 = extension("551d13", seq(hex("0101ff020100")), true);
@@ -1106,35 +1111,35 @@ describe("several trusted certificates match one issuer", () => {
   const digitalSignature = extension("551d0f", hex("03020780"), true);
   const eku = (purpose: Buffer) => extension("551d25", seq(purpose));
   const unknownCritical = extension("2a0304", hex("0500"), true);
-  const requireExplicitPolicy = extension("551d24", seq(hex("800100")));
   const permitOnlyExampleCom = extension("551d1e", seq(tlv(0xa0, seq(tlv(0x82, Buffer.from("example.com"))))), true);
   const subjectKeyId = (id: string) => extension("551d0e", tlv(0x04, hex(id)));
   const authorityKeyId = (id: string) => extension("551d23", seq(tlv(0x80, hex(id))));
-  const localhost = extension("551d11", seq(tlv(0x82, Buffer.from("localhost"))));
+  const localhost = extension("551d11", seq(tlv(0x82, Buffer.from("localhost")), tlv(0x87, hex("7f000001"))));
   const ca = [isCA, keyCertSign];
 
   const [caKey, otherKey, leafKey] = [0, 1, 2].map(() => generateKeyPairSync("ec", { namedCurve: "prime256v1" }));
+  const ed25519Key = generateKeyPairSync("ed25519");
   const key = leafKey.privateKey.export({ type: "pkcs8", format: "pem" }) as string;
   const padding = { shorter: 1, usual: 100, longer: 200 };
   type Size = keyof typeof padding;
-  type Options = { size?: Size; subjectKey?: KeyPair; signer?: KeyPair; issuer?: string; notAfter?: string };
+  type Options = { size?: Size; subjectKey?: KeyPair; signer?: KeyPair; issuer?: string; from?: string; to?: string };
 
   let serial = 0x100;
-  function mint(subject: string, issuedBy: string, extensions: Buffer[], options: Options = {}) {
+  function mint(subject: Name, issuedBy: Name, extensions: Buffer[], options: Options = {}) {
     const { size = "usual", subjectKey = caKey, signer = caKey, issuer = issuedBy } = options;
     const tbs = seq(
       hex("a003020102"),
       tlv(0x02, hex((serial++).toString(16).padStart(4, "0"))),
-      ecdsaWithSha256,
+      algorithm(signer),
       dn(issuer),
-      seq(time("20200101000000Z"), time(options.notAfter ?? "21200101000000Z")),
+      seq(time(`${options.from ?? "2020"}0101000000Z`), time(`${options.to ?? "2120"}0101000000Z`)),
       dn(subject),
       subjectKey.publicKey.export({ type: "spki", format: "der" }),
       tlv(0xa3, seq(...extensions, extension("2a0305", tlv(0x04, Buffer.alloc(padding[size]))))),
     );
     return armor("CERTIFICATE", signed(tbs, signer));
   }
-  const leafOf = (issuer: string, purpose = serverAuth) =>
+  const leafOf = (issuer: Name, purpose = serverAuth) =>
     mint("leaf", issuer, [notCA, eku(purpose), localhost], { subjectKey: leafKey });
   function crlOf(issuer: string, ...revoked: string[]) {
     const entries = revoked.map(pem =>
@@ -1142,7 +1147,7 @@ describe("several trusted certificates match one issuer", () => {
     );
     const tbs = seq(
       hex("020101"),
-      ecdsaWithSha256,
+      algorithm(caKey),
       dn(issuer),
       time("20200101000000Z"),
       time("21200101000000Z"),
@@ -1156,26 +1161,36 @@ describe("several trusted certificates match one issuer", () => {
   const leaf = leafOf("intermediate");
   const chain = leaf + intermediate;
   const clientChain = leafOf("intermediate", clientAuth) + intermediate;
+  const unrelated = Array.from({ length: 40 }, (_, i) => mint(`unrelated ${i}`, `unrelated ${i}`, ca));
 
-  // [what is wrong with it, extensions, options, the error when nothing better is trusted]
-  const unusable: [string, Buffer[], Options, string][] = [
+  // [what is wrong with it, extensions, options, the error it gives]
+  type Defect = [string, Buffer[], Options, string];
+  const taken: Defect[] = [
     ["CA:FALSE", [notCA, keyCertSign], {}, "INVALID_PURPOSE"],
     ["no basicConstraints and no keyUsage", [], {}, "INVALID_PURPOSE"],
     ["extendedKeyUsage=clientAuth", [...ca, eku(clientAuth)], {}, "INVALID_PURPOSE"],
     ["an unknown critical extension", [...ca, unknownCritical], {}, "UNSPECIFIED"],
     ["pathlen:0", [pathLen0, keyCertSign], {}, "PATH_LENGTH_EXCEEDED"],
-    ["requireExplicitPolicy:0", [...ca, requireExplicitPolicy], {}, "UNSPECIFIED"],
+    ["name constraints", [...ca, permitOnlyExampleCom], {}, "UNSPECIFIED"],
     ["another key", ca, { subjectKey: otherKey, signer: otherKey }, "CERT_SIGNATURE_FAILURE"],
     ["an unknown issuer", ca, { issuer: "unknown" }, "UNABLE_TO_GET_ISSUER_CERT"],
-    ["an expired validity", ca, { notAfter: "20210101000000Z" }, "CERT_HAS_EXPIRED"],
   ];
-  const twin = (defect: string, size: Size, subject = "root", issuer = "root") => {
-    const [, extensions, options] = unusable.find(([name]) => name === defect)!;
+  const passedOver: Defect[] = [
+    ["a validity that ended", ca, { to: "2021" }, "CERT_HAS_EXPIRED"],
+    ["a validity that has not begun", ca, { from: "2100" }, "CERT_NOT_YET_VALID"],
+    ["another type of key", ca, { subjectKey: ed25519Key, signer: ed25519Key }, "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"],
+  ];
+  const copy = (defect: string, size: Size = "usual", subject = "root", issuer = "root") => {
+    const [, extensions, options] = [...taken, ...passedOver].find(([name]) => name === defect)!;
     return mint(subject, issuer, extensions, { ...options, size });
   };
 
-  const serve = (cert: string) => Bun.serve({ port: 0, tls: { key, cert }, fetch: () => new Response("authorized") });
-  async function connect(port: number | undefined, options: tls.ConnectionOptions) {
+  async function serve(cert: string, options?: tls.TlsOptions) {
+    const server = https.createServer({ key, cert, ...options }, (_, response) => response.end("authorized"));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return Object.assign(server, { port: (server.address() as AddressInfo).port });
+  }
+  async function connect(port: number, options: tls.ConnectionOptions) {
     const socket = tls.connect({ host: "127.0.0.1", port, servername: "localhost", ...options });
     try {
       await once(socket, "secureConnect");
@@ -1187,356 +1202,390 @@ describe("several trusted certificates match one issuer", () => {
     }
   }
   async function verify(cert: string, ca: string[], options?: tls.ConnectionOptions) {
-    await using server = serve(cert);
+    await using server = await serve(cert);
     return await connect(server.port, { ca, ...options });
   }
-  /** What the server makes of the client's certificate, and the last certificate each side reports for the other. */
-  async function mutual(serverOptions: tls.TlsOptions, clientOptions: tls.ConnectionOptions) {
-    const rootOf = (socket: TLSSocket) => {
-      let cert = socket.getPeerCertificate(true);
-      while (cert.issuerCertificate && cert.issuerCertificate !== cert) cert = cert.issuerCertificate;
-      return armor("CERTIFICATE", cert.raw);
-    };
-    await using server = tls.createServer({ key, requestCert: true, rejectUnauthorized: false, ...serverOptions });
-    const accepted = Promise.withResolvers<TLSSocket>();
-    server.on("secureConnection", accepted.resolve).on("tlsClientError", accepted.reject);
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    const { port } = server.address() as AddressInfo;
-    const client = tls.connect({
-      host: "127.0.0.1",
-      port,
-      servername: "localhost",
-      key,
-      cert: clientChain,
-      ...clientOptions,
-    });
+  /** The last certificate that getPeerCertificate(true) links to. */
+  async function rootOf(cert: string, ca: string[]) {
+    await using server = await serve(cert);
+    const socket = tls.connect({ host: "127.0.0.1", port: server.port, ca, rejectUnauthorized: false });
     try {
-      const [peer] = await Promise.all([accepted.promise, once(client, "secureConnect")]);
-      return {
-        client: peer.authorized ? "authorized" : peer.authorizationError,
-        rootOfClient: rootOf(peer),
-        rootOfServer: rootOf(client),
-      };
+      await once(socket, "secureConnect");
+      let last = socket.getPeerCertificate(true);
+      while (last.issuerCertificate && last.issuerCertificate !== last) last = last.issuerCertificate;
+      return armor("CERTIFICATE", last.raw);
     } finally {
-      client.destroy();
+      socket.destroy();
     }
   }
 
-  it("the sizes order the certificates", () => {
-    const lengths = (size: Size) => unusable.map(([defect]) => new X509Certificate(twin(defect, size)).raw.length);
-    const { length } = new X509Certificate(root).raw;
-    expect(Math.max(...lengths("shorter"))).toBeLessThan(length);
-    expect(Math.min(...lengths("longer"))).toBeGreaterThan(length);
-  });
-
   describe.each(["shorter", "longer"] as const)("a %s copy", size => {
-    it.each(unusable)("of the root with %s", async (defect, _extensions, _options, code) => {
-      const bad = twin(defect, size);
-      const keyUsageOnly = mint("root", "root", [keyCertSign]);
-      await using server = serve(chain);
-      const get = (ca: string[]) =>
-        fetch(`https://localhost:${server.port}`, { tls: { ca }, keepalive: false }).then(
-          response => response.text(),
-          error => error.code,
-        );
-      expect({
-        alone: await connect(server.port, { ca: [bad] }),
-        after: await connect(server.port, { ca: [root, bad] }),
-        before: await connect(server.port, { ca: [bad, root] }),
-        beforeKeyUsageOnly: await connect(server.port, { ca: [bad, keyUsageOnly] }),
-        fetchAfter: await get([root, bad]),
-        fetchBefore: await get([bad, root]),
-      }).toEqual({
-        alone: code,
-        after: "authorized",
-        before: "authorized",
-        beforeKeyUsageOnly: "authorized",
-        fetchAfter: "authorized",
-        fetchBefore: "authorized",
+    describe.each([
+      ["is taken when it comes first", taken, undefined],
+      ["is passed over", passedOver, "authorized"],
+    ] as const)("%s", (_, defects, whenFirst) => {
+      it.each(defects)("of the root with %s", async (defect, _extensions, _options, code) => {
+        const bad = copy(defect, size);
+        await using server = await serve(chain);
+        expect({
+          alone: await connect(server.port, { ca: [bad] }),
+          last: await connect(server.port, { ca: [root, bad] }),
+          first: await connect(server.port, { ca: [bad, root] }),
+          lastInOneString: await connect(server.port, { ca: root + bad }),
+          firstInOneString: await connect(server.port, { ca: bad + root }),
+        }).toEqual({
+          alone: code,
+          last: "authorized",
+          first: whenFirst ?? code,
+          lastInOneString: "authorized",
+          firstInOneString: whenFirst ?? code,
+        });
       });
     });
 
     it.each([
       ["CA:FALSE", "INVALID_PURPOSE"],
-      ["extendedKeyUsage=clientAuth", "INVALID_PURPOSE"],
+      ["name constraints", "UNSPECIFIED"],
       ["an unknown issuer", "UNABLE_TO_GET_ISSUER_CERT"],
-    ])("of an intermediate with %s", async (defect, code) => {
-      const bad = twin(defect, size, "intermediate");
-      await using server = serve(leaf);
+      ["a validity that ended", "authorized"],
+    ])("of an intermediate with %s", async (defect, whenFirst) => {
+      const bad = copy(defect, size, "intermediate");
+      await using server = await serve(leaf);
       expect({
-        alone: await connect(server.port, { ca: [root, bad] }),
-        after: await connect(server.port, { ca: [root, intermediate, bad] }),
-        before: await connect(server.port, { ca: [root, bad, intermediate] }),
-        withBadRoot: await connect(server.port, { ca: [twin("CA:FALSE", size), bad, intermediate, root] }),
-        asAnchor: await connect(server.port, { ca: [bad, intermediate], allowPartialTrustChain: true }),
+        last: await connect(server.port, { ca: [root, intermediate, bad] }),
+        first: await connect(server.port, { ca: [root, bad, intermediate] }),
+        lastAsAnchor: await connect(server.port, { ca: [intermediate, bad], allowPartialTrustChain: true }),
+      }).toEqual({ last: "authorized", first: whenFirst, lastAsAnchor: "authorized" });
+    });
+
+    it("among other roots, for every connection of a context", async () => {
+      const bad = copy("CA:FALSE", size);
+      await using server = await serve(chain);
+      const outcomes = { last: new Set<string>(), first: new Set<string>() };
+      for (const at of [0, 7, 20, 33, 40]) {
+        for (const [order, [a, b]] of [
+          ["last", [root, bad]],
+          ["first", [bad, root]],
+        ] as const) {
+          const secureContext = tls.createSecureContext({ ca: [...unrelated.toSpliced(at, 0, a), b] });
+          for (let i = 0; i < 2; i++) outcomes[order].add(await connect(server.port, { secureContext }));
+        }
+      }
+      expect(outcomes).toEqual({ last: new Set(["authorized"]), first: new Set(["INVALID_PURPOSE"]) });
+    });
+
+    it("with fetch", async () => {
+      const bad = copy("extendedKeyUsage=clientAuth", size);
+      await using server = await serve(chain);
+      const get = (ca: string[]) =>
+        fetch(`https://127.0.0.1:${server.port}`, { tls: { ca }, keepalive: false }).then(
+          response => response.text(),
+          error => error.code,
+        );
+      expect([await get([root, bad]), await get([bad, root])]).toEqual(["authorized", "INVALID_PURPOSE"]);
+    });
+
+    it("for the certificate of a client", async () => {
+      const forServers = mint("root", "root", [...ca, eku(serverAuth)], { size });
+      async function verdict(ca: string[]) {
+        await using server = await serve(chain, { ca, requestCert: true, rejectUnauthorized: false });
+        const accepted = once(server, "secureConnection");
+        expect(await connect(server.port, { key, cert: clientChain, ca: root, maxVersion: "TLSv1.2" })).toBe(
+          "authorized",
+        );
+        const [peer] = (await accepted) as [TLSSocket];
+        return peer.authorized ? "authorized" : String(peer.authorizationError);
+      }
+      expect([await verdict([root, forServers]), await verdict([forServers, root])]).toEqual([
+        "authorized",
+        "INVALID_PURPOSE",
+      ]);
+    });
+
+    it("that is revoked", async () => {
+      const revoked = mint("root", "root", ca, { size });
+      const crl = [crlOf("root", revoked), crlOf("intermediate")];
+      expect([await verify(chain, [root, revoked], { crl }), await verify(chain, [revoked, root], { crl })]).toEqual([
+        "authorized",
+        "CERT_REVOKED",
+      ]);
+    });
+
+    it("given to addCACert() comes after `ca`", async () => {
+      const bad = copy("CA:FALSE", size);
+      await using server = await serve(chain);
+      const connectWith = (ca: string, added: string) => {
+        const secureContext = tls.createSecureContext({ ca });
+        secureContext.context.addCACert(added);
+        return connect(server.port, { secureContext });
+      };
+      expect({
+        bad: await connectWith(root, bad),
+        root: await connectWith(bad, root),
+        badAgain: await connectWith(root + bad, bad),
+        rootAgain: await connectWith(bad + root, root),
+        firstAgain: await connectWith(root + bad, root),
       }).toEqual({
-        alone: code,
-        after: "authorized",
-        before: "authorized",
-        withBadRoot: "authorized",
-        asAnchor: "authorized",
+        bad: "authorized",
+        root: "INVALID_PURPOSE",
+        badAgain: "authorized",
+        rootAgain: "INVALID_PURPOSE",
+        firstAgain: "authorized",
       });
     });
 
-    it("among the bundled roots, for every connection of a context", async () => {
-      const bad = twin("CA:FALSE", size);
-      await using server = serve(chain);
-      const outcomes: string[] = [];
-      for (const ends of [
-        [root, bad],
-        [bad, root],
-      ]) {
-        const secureContext = tls.createSecureContext({ ca: [ends[0], ...tls.rootCertificates.slice(0, 40), ends[1]] });
-        for (let i = 0; i < 3; i++) outcomes.push(await connect(server.port, { secureContext }));
-      }
-      expect(outcomes).toEqual(Array(6).fill("authorized"));
+    it("hides the error of the one after it", async () => {
+      const [a, b] = [copy("pathlen:0", size), copy("another key")];
+      expect([await verify(chain, [a, b]), await verify(chain, [b, a])]).toEqual([
+        "PATH_LENGTH_EXCEEDED",
+        "CERT_SIGNATURE_FAILURE",
+      ]);
+    });
+
+    it("in getPeerCertificate(true)", async () => {
+      const valid = mint("root", "root", ca, { size });
+      const [older, newer] = [mint("root", "root", ca, { size, to: "2021" }), mint("root", "root", ca, { to: "2022" })];
+      expect({
+        last: await rootOf(chain, [root, valid]),
+        first: await rootOf(chain, [valid, root]),
+        expired: await rootOf(chain, [older, root]),
+        otherType: await rootOf(chain, [copy("another type of key", size), root]),
+        olderFirst: await rootOf(chain, [older, newer]),
+        newerFirst: await rootOf(chain, [newer, older]),
+      }).toEqual({ last: root, first: valid, expired: root, otherType: root, olderFirst: newer, newerFirst: newer });
+    });
+
+    it.each([
+      ["CA:FALSE", "INVALID_PURPOSE"],
+      ["a validity that ended", "authorized"],
+    ])("of an intermediate with %s, when a server completes its chain", async (defect, whenFirst) => {
+      const bad = copy(defect, size, "intermediate");
+      await using last = await serve(leaf, { ca: [intermediate, bad] });
+      await using first = await serve(leaf, { ca: [bad, intermediate] });
+      expect([await connect(last.port, { ca: root }), await connect(first.port, { ca: root })]).toEqual([
+        "authorized",
+        whenFirst,
+      ]);
     });
   });
 
-  it.each(unusable.slice(0, -1))(
-    "with nothing usable, %s is reported when it is the shorter",
-    async (defect, _, __, code) => {
-      const first = twin(defect, "shorter");
-      await using server = serve(chain);
-      const outcomes = new Set<string>();
-      for (const [other] of unusable) {
-        outcomes.add(await connect(server.port, { ca: [first, twin(other, "longer")] }));
-      }
-      outcomes.add(await connect(server.port, { ca: [twin("CA:FALSE", "longer"), first] }));
-      expect([...outcomes]).toEqual([code]);
-    },
-  );
-
-  it("all of them do not hide the root", async () => {
-    expect(await verify(chain, [...unusable.map(([defect]) => twin(defect, "shorter")), root])).toBe("authorized");
+  it("with none in date, the error is of the one that expires last", async () => {
+    const [ended, notBegun] = [copy("a validity that ended"), copy("a validity that has not begun")];
+    expect([await verify(chain, [ended, notBegun]), await verify(chain, [notBegun, ended])]).toEqual([
+      "CERT_NOT_YET_VALID",
+      "CERT_NOT_YET_VALID",
+    ]);
   });
 
-  it("the copy a server sends makes no difference", async () => {
-    const bad = twin("CA:FALSE", "shorter");
+  it("the same goes for the certificates a server sends", async () => {
+    const otherType = mint("intermediate", "root", ca, { subjectKey: ed25519Key });
     expect({
-      sendsBad: await verify(chain + bad, [bad, root]),
-      sendsRoot: await verify(chain + root, [bad, root]),
-      onlyBadTrusted: await verify(chain + root, [bad]),
-      onlyBadIntermediateTrusted: await verify(chain, [root, twin("CA:FALSE", "usual", "intermediate")]),
-    }).toEqual({
-      sendsBad: "authorized",
-      sendsRoot: "authorized",
-      onlyBadTrusted: "INVALID_PURPOSE",
-      onlyBadIntermediateTrusted: "INVALID_PURPOSE",
-    });
+      expired: await verify(leaf + copy("a validity that ended", "usual", "intermediate") + intermediate, [root]),
+      otherType: await verify(leaf + otherType + intermediate, [root]),
+      notCA: await verify(leaf + copy("CA:FALSE", "usual", "intermediate") + intermediate, [root]),
+    }).toEqual({ expired: "authorized", otherType: "authorized", notCA: "INVALID_PURPOSE" });
   });
 
-  it("an intermediate is passed over for the roots above it", async () => {
-    const underBadRoot = mint("intermediate", "bad root", ca, { size: "shorter" });
-    const badRoot = twin("CA:FALSE", "usual", "bad root", "bad root");
-    expect(await verify(leaf, [underBadRoot, badRoot, intermediate, root])).toBe("authorized");
-  });
-
-  it("two CAs that certified each other", async () => {
-    const loop = [mint("root", "partner", ca, { size: "shorter" }), mint("partner", "root", ca)];
-    expect({ alone: await verify(chain, loop), withRoot: await verify(chain, [...loop, root]) }).toEqual({
-      alone: "CERT_CHAIN_TOO_LONG",
-      withRoot: "authorized",
-    });
-  });
-
-  it("a path that is too long is passed over", async () => {
-    // With the leaf and one more certificate, this many reach the limit of 102.
-    const sent = Array.from({ length: 100 }, (_, i) => mint(`ca ${i}`, i === 99 ? "root" : `ca ${i + 1}`, ca));
-    const crossed = [mint("root", "older root", ca, { size: "shorter" }), mint("older root", "older root", ca)];
-    await using server = serve(leafOf("ca 0") + sent.join(""));
-    expect({
-      alone: await connect(server.port, { ca: crossed }),
-      withRoot: await connect(server.port, { ca: [...crossed, root] }),
-    }).toEqual({ alone: "CERT_CHAIN_TOO_LONG", withRoot: "authorized" });
-  });
-
-  it("the error is the certificate's own when there is a usable root", async () => {
-    expect(await verify(clientChain, [twin("pathlen:0", "shorter"), root])).toBe("INVALID_PURPOSE");
-    expect(await verify(chain, [twin("CA:FALSE", "shorter"), root], { servername: "example.com" })).toBe(
-      "ERR_TLS_CERT_ALTNAME_INVALID",
+  it("a bundled root comes before one given to addCACert()", async () => {
+    const name = seq(
+      rdn("550406", "US"),
+      rdn("55040a", "Internet Security Research Group"),
+      rdn("550403", "ISRG Root X2"),
     );
+    const sameName = mint(name, name, ca);
+    await using server = await serve(leafOf(name));
+    const secureContext = tls.createSecureContext();
+    secureContext.context.addCACert(sameName);
+    expect([await connect(server.port, { ca: sameName }), await connect(server.port, { secureContext })]).toEqual([
+      "authorized",
+      "CERT_SIGNATURE_FAILURE",
+    ]);
   });
 
   it("key identifiers have to match", async () => {
     const issued = leaf + mint("intermediate", "root", [...ca, authorityKeyId("01")]);
     const current = mint("root", "root", [...ca, subjectKeyId("01")]);
-    const options = { subjectKey: otherKey, signer: otherKey, size: "shorter" } as const;
-    const other = mint("root", "root", [...ca, subjectKeyId("02")], options);
-    const mislabelled = mint("root", "root", [...ca, subjectKeyId("02")]);
-    expect([
-      await verify(issued, [other]),
-      await verify(issued, [other, current]),
-      await verify(issued, [twin("CA:FALSE", "shorter"), twin("CA:FALSE", "longer"), mislabelled]),
-    ]).toEqual(["UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "authorized", "INVALID_PURPOSE"]);
+    const other = mint("root", "root", [...ca, subjectKeyId("02")], { subjectKey: otherKey, signer: otherKey });
+    expect([await verify(issued, [other]), await verify(issued, [other, current])]).toEqual([
+      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+      "authorized",
+    ]);
   });
 
-  it("name constraints and revocation are not lifted by another copy", async () => {
-    const constrained = mint("root", "root", [...ca, permitOnlyExampleCom], { size: "shorter" });
-    const revoked = mint("root", "root", ca, { size: "shorter" });
-    const crl = [crlOf("root", revoked), crlOf("intermediate")];
-    const bad = twin("no basicConstraints and no keyUsage", "shorter");
+  it("a root that a key of another type certified is not self-signed", async () => {
+    const link = mint("root", "root", ca, { signer: ed25519Key });
+    const previous = copy("another type of key");
     expect({
-      constrained: await verify(chain, [constrained, root]),
-      constrainedAfterBad: await verify(chain, [bad, constrained, root]),
-      revoked: await verify(chain, [revoked, root], { crl }),
-      notRevoked: await verify(chain, [bad, root], { crl }),
-      leafRevoked: await verify(chain, [bad, root], { crl: [crlOf("root"), crlOf("intermediate", leaf)] }),
+      sent: await verify(chain + link, [previous]),
+      trusted: await verify(chain, [link, previous]),
+      trustedAlone: await verify(chain, [link]),
+      checkIssued: [link, previous].map(issuer => new X509Certificate(link).checkIssued(new X509Certificate(issuer))),
     }).toEqual({
-      constrained: "UNSPECIFIED",
-      constrainedAfterBad: "UNSPECIFIED",
-      revoked: "CERT_REVOKED",
-      notRevoked: "authorized",
-      leafRevoked: "CERT_REVOKED",
+      sent: "authorized",
+      trusted: "authorized",
+      trustedAlone: "UNABLE_TO_GET_ISSUER_CERT",
+      checkIssued: [false, true],
     });
   });
 
-  describe.each(["shorter", "longer"] as const)("a %s root for clients and one for servers", size => {
-    const forClients = mint("root", "root", [...ca, eku(clientAuth)], { size });
-    const forServers = mint("root", "root", [...ca, eku(serverAuth)]);
-
-    it.each([
-      ["first", [forClients, forServers]],
-      ["last", [forServers, forClients]],
-    ])("each side takes its own, the one for clients listed %s", async (_, ca) => {
-      expect(await mutual({ cert: chain, ca }, { ca })).toEqual({
-        client: "authorized",
-        rootOfClient: forClients,
-        rootOfServer: forServers,
-      });
-    });
-
-    it("the one for servers does not vouch for a client", async () => {
-      const ca = [forServers, twin("CA:FALSE", size)];
-      expect((await mutual({ cert: chain, ca }, { ca })).client).toBe<string>("INVALID_PURPOSE");
-    });
+  it("an RSA-PSS key can have made an RSA-PSS signature", () => {
+    const pem = readFileSync(join(import.meta.dir, "../test/fixtures/keys/rsa_pss_public_2048.pem"), "utf8");
+    const spki = Buffer.from(pem.replace(/-----.*-----/g, ""), "base64");
+    const pss = seq(oid("2a864886f70d01010a"), seq());
+    const validity = seq(time("20200101000000Z"), time("21200101000000Z"));
+    const tbs = seq(hex("a003020102020101"), pss, dn("pss"), validity, dn("pss"), spki);
+    const cert = new X509Certificate(seq(tbs, pss, tlv(0x03, hex("0000"))));
+    expect(cert.checkIssued(cert)).toBe(true);
   });
 
-  it.each(["CA:FALSE", "an unknown critical extension", "another key", "an unknown issuer", "an expired validity"])(
-    "getPeerCertificate(true) passes over a root with %s",
-    async defect => {
-      const ca = [twin(defect, "shorter"), root];
-      expect(await mutual({ cert: chain, ca }, { ca })).toEqual({
-        client: "authorized",
-        rootOfClient: root,
-        rootOfServer: root,
-      });
-    },
-  );
-
-  it("two valid roots", async () => {
-    const shorter = mint("root", "root", ca, { size: "shorter" });
-    expect((await mutual({ cert: chain }, { ca: [shorter, root] })).rootOfServer).toBe(shorter);
-    expect(await verify(chain, [root, shorter])).toBe("authorized");
+  it("a server names the CAs it accepts in the order of `ca`", async () => {
+    const names = ["a long name for a CA", "short", "a medium name", "short"];
+    const cas = names.map(name => mint(name, name, ca));
+    await using server = await serve(chain, { ca: [...cas, cas[0]], requestCert: true, rejectUnauthorized: false });
+    const received: Buffer[] = [];
+    const transport = net.connect(server.port, "127.0.0.1").on("data", chunk => received.push(chunk as Buffer));
+    const socket = new Duplex({
+      read() {},
+      write: (chunk, encoding, callback) => void transport.write(chunk, encoding, callback),
+    });
+    transport
+      .on("data", chunk => socket.push(chunk))
+      .on("error", error => socket.destroy(error))
+      .on("close", () => socket.push(null));
+    try {
+      expect(await connect(server.port, { socket, ca: root, maxVersion: "TLSv1.2" })).toBe("authorized");
+    } finally {
+      transport.destroy();
+    }
+    const text = Buffer.concat(received).toString("latin1");
+    expect(text.match(new RegExp(names.join("|"), "g"))).toEqual([...names, names[0]] as RegExpMatchArray);
   });
 
-  it.each(["CA:FALSE", "another key", "an expired validity"])(
-    "a server completes its chain past an intermediate with %s",
-    async defect => {
-      const bad = twin(defect, "shorter", "intermediate");
-      expect((await mutual({ cert: leaf, ca: [bad, intermediate, root] }, { ca: [root] })).rootOfServer).toBe(root);
-    },
-  );
+  // OpenSSL takes it, though its manual asks for "a certificate with suitable key usage".
+  it("a copy that may not sign certificates is passed over, unlike in Node.js", async () => {
+    expect(await verify(chain, [mint("root", "root", [isCA, digitalSignature]), root])).toBe("authorized");
+  });
 
-  describe("a certificate that is trusted itself", () => {
+  describe("a self-issued certificate", () => {
     const selfSigned = (extensions: Buffer[], options?: Options) =>
       mint("self", "self", [...extensions, localhost], { subjectKey: leafKey, signer: leafKey, ...options });
 
-    it.each([
+    describe.each([
       ["CA:FALSE", [notCA]],
       ["keyUsage=digitalSignature", [notCA, digitalSignature]],
       ["CA:TRUE", [isCA]],
-    ])("self-signed with %s", async (_, extensions) => {
-      const pinned = selfSigned(extensions);
-      await using server = serve(pinned);
-      const outcomes = new Set<string>();
-      for (const size of ["shorter", "longer"] as const) {
-        for (const other of [
-          selfSigned([isCA], { size }),
-          selfSigned([notCA], { size }),
-          selfSigned([notCA, digitalSignature], { size }),
-          selfSigned([isCA], { size, subjectKey: otherKey, signer: otherKey }),
-        ]) {
-          outcomes.add(await connect(server.port, { ca: [other, pinned] }));
-        }
-      }
-      expect([...outcomes]).toEqual(["authorized"]);
+    ])("with %s is trusted when `ca` holds it", (_, extensions) => {
+      it.each(["before another of that subject", "after another of that subject, unlike in Node.js"])(
+        "%s",
+        async order => {
+          const pinned = selfSigned(extensions);
+          await using server = await serve(pinned);
+          const outcomes = new Set<string>();
+          for (const other of [
+            selfSigned([isCA]),
+            selfSigned([notCA]),
+            selfSigned([isCA], { subjectKey: otherKey, signer: otherKey }),
+          ]) {
+            const ca = order.startsWith("before") ? [pinned, other] : [other, pinned];
+            outcomes.add(await connect(server.port, { ca }));
+          }
+          expect([...outcomes]).toEqual(["authorized"]);
+        },
+      );
     });
 
-    it("is not replaced by a copy that is not a CA", async () => {
-      expect(await verify(selfSigned([notCA, digitalSignature]), [selfSigned([notCA])])).toBe("INVALID_PURPOSE");
+    it("that another key signed needs its issuer", async () => {
+      const issuer = mint("self", "self", [...ca, subjectKeyId("01")]);
+      const extensions = [notCA, digitalSignature, subjectKeyId("02"), authorityKeyId("01")];
+      const issued = selfSigned(extensions, { signer: caKey });
+      expect([await verify(issued, [issued]), await verify(issued, [issued, issuer])]).toEqual([
+        "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        "authorized",
+      ]);
     });
 
-    it("with allowPartialTrustChain", async () => {
-      const bad = twin("CA:FALSE", "usual", "intermediate");
-      const constrained = mint("intermediate", "root", [...ca, permitOnlyExampleCom], { size: "longer" });
-      const manyBad = Array.from({ length: 100 }, () => twin("CA:FALSE", "usual", "intermediate"));
-      await using server = serve(leaf);
-      expect({
-        badIssuer: await connect(server.port, { ca: [leaf, bad], allowPartialTrustChain: true }),
-        notAllowed: await connect(server.port, { ca: [leaf, bad, root] }),
-        notTrusted: await connect(server.port, { ca: [bad], allowPartialTrustChain: true }),
-        constrained: await connect(server.port, { ca: [leaf, constrained], allowPartialTrustChain: true }),
-        manyToTry: await connect(server.port, { ca: [leaf, ...manyBad.slice(1)], allowPartialTrustChain: true }),
-        tooManyToTry: await connect(server.port, { ca: [leaf, ...manyBad], allowPartialTrustChain: true }),
-      }).toEqual({
-        badIssuer: "authorized",
-        notAllowed: "INVALID_PURPOSE",
-        notTrusted: "INVALID_PURPOSE",
-        constrained: "UNSPECIFIED",
-        manyToTry: "authorized",
-        tooManyToTry: "INVALID_PURPOSE",
-      });
+    it("that `ca` holds is checked without the CA of the same name that issued it", async () => {
+      const issued = selfSigned([notCA, digitalSignature], { signer: caKey });
+      const constrained = mint("self", "self", [...ca, permitOnlyExampleCom]);
+      expect([
+        await verify(issued, [issued, constrained]),
+        await verify(issued, [issued, mint("self", "self", ca)], { crl: crlOf("self") }),
+      ]).toEqual(["authorized", "CRL_SIGNATURE_FAILURE"]);
+    });
+
+    // OpenSSL calls it self-signed without looking at the signature.
+    it("that a CA of the same name issued is valid, unlike in Node.js", async () => {
+      const issued = selfSigned([notCA, digitalSignature], { signer: caKey });
+      expect(await verify(issued, [mint("self", "self", ca)])).toBe("authorized");
     });
   });
 
   describe.concurrent("in the default store", () => {
-    type Plan = { trusted: string[]; chains: Record<string, string>; clients: string[] };
-    /** Each case has a root name of its own, so that one file, and one process, holds them all. */
-    const plan = (cases: Record<string, (name: string) => string[]>): Plan => ({
-      trusted: Object.keys(cases).flatMap(name => cases[name](name)),
-      chains: Object.fromEntries(Object.keys(cases).map(name => [name, leaf + mint("intermediate", name, ca)])),
-      clients: ["tls", "fetch", "http3"],
-    });
+    type Source = "NODE_EXTRA_CA_CERTS" | "SSL_CERT_FILE";
+    const good = (name: string) => mint(name, name, ca);
+    const bad = (name: string) => copy("CA:FALSE", "usual", name, name);
 
-    async function run(variable: string, args: string[], { trusted, chains, clients }: Plan) {
-      using dir = tempDir("trusted-twins", {
-        "certs/bundle.pem": trusted.join(""),
-        "plan.json": JSON.stringify({ key, chains, clients }),
+    /** Each case has a root name of its own, so that one process holds them all. */
+    async function run(
+      args: string[],
+      cases: Record<string, (name: string) => Partial<Record<Source, string[]>>>,
+      main = "main.mjs",
+    ) {
+      const files = { NODE_EXTRA_CA_CERTS: unrelated.slice(0, 20), SSL_CERT_FILE: unrelated.slice(20) };
+      const chains: Record<string, string> = {};
+      for (const [name, sources] of Object.entries(cases)) {
+        chains[name] = leaf + mint("intermediate", name, ca);
+        for (const [source, [first, ...rest]] of Object.entries(sources(name)) as [Source, string[]][]) {
+          files[source] = [first, ...files[source], ...rest];
+        }
+      }
+      using dir = tempDir("same-subject", {
+        "extra.pem": files.NODE_EXTRA_CA_CERTS.join(""),
+        "file.pem": files.SSL_CERT_FILE.join(""),
+        "plan.json": JSON.stringify({ key, chains }),
         "main.mjs": `
           import { once } from "node:events";
+          import { readFileSync } from "node:fs";
+          import https from "node:https";
           import tls from "node:tls";
-          import { key, chains, clients } from "./plan.json";
-          const get = (port, init) => fetch("https://localhost:" + port, init).then(res => res.text(), err => err.code);
-          const connect = {
-            tls(port) {
-              const socket = tls.connect({ host: "127.0.0.1", port, servername: "localhost" });
-              return once(socket, "secureConnect").then(() => "authorized", err => err.code).finally(() => socket.destroy());
-            },
-            fetch: get,
-            http3: port => get(port, { protocol: "http3" }),
-          };
+          const { key, chains } = JSON.parse(readFileSync("plan.json", "utf8"));
           const outcomes = {};
           for (const [name, cert] of Object.entries(chains)) {
-            const server = Bun.serve({ port: 0, tls: { key, cert }, http3: true, fetch: () => new Response("authorized") });
-            outcomes[name] = {};
-            for (const client of clients) outcomes[name][client] = await connect[client](server.port);
-            server.stop(true);
+            const server = https.createServer({ key, cert }, (_, response) => response.end("authorized"));
+            await once(server.listen(0, "127.0.0.1"), "listening");
+            const { port } = server.address();
+            const socket = tls.connect({ host: "127.0.0.1", port, servername: "localhost" });
+            outcomes[name] = [
+              await once(socket, "secureConnect").then(() => "authorized", error => error.code),
+              await fetch("https://127.0.0.1:" + port).then(res => res.text(), error => error.code ?? error.cause.code),
+            ];
+          }
+          console.log(JSON.stringify(outcomes));
+          process.exit(0);
+        `,
+        "http3.mjs": `
+          const { key, chains } = await Bun.file("plan.json").json();
+          const outcomes = {};
+          for (const [name, cert] of Object.entries(chains)) {
+            const fetch = () => new Response("authorized");
+            using server = Bun.serve({ hostname: "127.0.0.1", port: 0, tls: { key, cert }, http3: true, fetch });
+            outcomes[name] = await globalThis
+              .fetch(server.url, { protocol: "http3" })
+              .then(res => res.text(), error => error.code);
           }
           console.log(JSON.stringify(outcomes));
           process.exit(0);
         `,
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), ...args, "main.mjs"],
+        cmd: [bunExe(), ...args, main],
         cwd: String(dir),
         env: {
           ...bunEnv,
-          NODE_EXTRA_CA_CERTS: undefined,
           NODE_USE_SYSTEM_CA: undefined,
-          SSL_CERT_FILE: "",
+          NODE_EXTRA_CA_CERTS: join(String(dir), "extra.pem"),
+          SSL_CERT_FILE: join(String(dir), "file.pem"),
           SSL_CERT_DIR: "",
-          [variable]: join(String(dir), "certs", variable === "SSL_CERT_DIR" ? "" : "bundle.pem"),
         },
         stdout: "pipe",
         stderr: "pipe",
@@ -1545,93 +1594,68 @@ describe("several trusted certificates match one issuer", () => {
       expect(stderr).toBe("");
       return { outcomes: JSON.parse(stdout), exitCode };
     }
-    const authorized = { tls: "authorized", fetch: "authorized", http3: "authorized" };
-    const refused = (code: string) => ({ tls: code, fetch: code, http3: "HTTP3HandshakeFailed" });
-    const good = (name: string) => mint(name, name, ca);
-
-    const bothOrders = Object.fromEntries(
-      unusable.flatMap(([defect]) => [
-        [`${defect}, before`, (name: string) => [twin(defect, "usual", name, name), good(name)]],
-        [`${defect}, after`, (name: string) => [good(name), twin(defect, "usual", name, name)]],
-      ]),
-    );
-    const everyOneAuthorized = {
-      outcomes: Object.fromEntries(Object.keys(bothOrders).map(name => [name, authorized])),
-      exitCode: 0,
+    const authorized = ["authorized", "authorized"];
+    const notACA = ["INVALID_PURPOSE", "INVALID_PURPOSE"];
+    const repeat = <T>(label: string, value: T) =>
+      Object.fromEntries(Array.from({ length: 5 }, (_, i) => [`${label} ${i}`, value]));
+    const across = {
+      "good in extra": (name: string) => ({ NODE_EXTRA_CA_CERTS: [good(name)], SSL_CERT_FILE: [bad(name)] }),
+      "good in file": (name: string) => ({ NODE_EXTRA_CA_CERTS: [bad(name)], SSL_CERT_FILE: [good(name)] }),
     };
 
-    it("NODE_EXTRA_CA_CERTS", async () => {
-      expect(await run("NODE_EXTRA_CA_CERTS", [], plan(bothOrders))).toEqual(everyOneAuthorized);
+    it.each([
+      ["NODE_EXTRA_CA_CERTS", []],
+      ["SSL_CERT_FILE", ["--use-openssl-ca"]],
+    ] as const)("the order of %s is kept", async (source, args) => {
+      expect(
+        await run([...args], {
+          ...repeat("last", (name: string) => ({ [source]: [good(name), bad(name)] })),
+          ...repeat("first", (name: string) => ({ [source]: [bad(name), good(name)] })),
+        }),
+      ).toEqual({ outcomes: { ...repeat("last", authorized), ...repeat("first", notACA) }, exitCode: 0 });
     });
 
-    // On Linux the system store has every file of $SSL_CERT_DIR.
-    it.skipIf(!isLinux)("--use-system-ca", async () => {
-      expect(await run("SSL_CERT_DIR", ["--use-system-ca"], plan(bothOrders))).toEqual(everyOneAuthorized);
-    });
-
-    it("the search for a path is bounded", async () => {
-      // 2^40 paths, none of which ends in a root.
-      const maze = (name: string) =>
-        Array.from({ length: 80 }, (_, i) => mint(i < 2 ? name : `level ${i >> 1}`, `level ${(i >> 1) + 1}`, ca));
-      expect(await run("NODE_EXTRA_CA_CERTS", [], plan({ maze }))).toEqual({
-        outcomes: { maze: refused("UNABLE_TO_GET_ISSUER_CERT") },
+    it("NODE_EXTRA_CA_CERTS comes before SSL_CERT_FILE", async () => {
+      expect(await run([], across)).toEqual({
+        outcomes: { "good in extra": authorized, "good in file": notACA },
         exitCode: 0,
       });
     });
 
-    // At one of these sizes a packet ends before the server's Finished, and the client asks BoringSSL why it has to wait.
-    it("passing over a certificate leaves no error behind", async () => {
-      const sizes = Array.from({ length: 56 }, (_, i) => i * 24);
-      const leafWith = (size: number) =>
-        mint("leaf", "root", [localhost, extension("2a0306", Buffer.alloc(size))], { subjectKey: leafKey });
-      expect(
-        await run("NODE_EXTRA_CA_CERTS", [], {
-          trusted: [twin("another key", "usual"), root],
-          chains: Object.fromEntries(sizes.map(size => [size, leafWith(size)])),
-          clients: ["http3"],
-        }),
-      ).toEqual({ outcomes: Object.fromEntries(sizes.map(size => [size, { http3: "authorized" }])), exitCode: 0 });
+    it("HTTP/3 has the same order", async () => {
+      expect(await run(["--use-openssl-ca"], across, "http3.mjs")).toEqual({
+        outcomes: { "good in extra": "HTTP3HandshakeFailed", "good in file": "authorized" },
+        exitCode: 0,
+      });
     });
 
-    // The store keeps up to 16 certificates in order, those with trust settings first.
-    it("SSL_CERT_FILE", async () => {
-      const der = (pem: string) => new X509Certificate(pem).raw;
-      const withSettings = (pem: string, settings: Buffer) =>
-        armor("TRUSTED CERTIFICATE", Buffer.concat([der(pem), seq(settings)]));
-      const trust = (purpose: Buffer) => seq(purpose);
-      const reject = (purpose: Buffer) => tlv(0xa0, purpose);
-      const cases = plan({
-        "CA:FALSE": name => [twin("CA:FALSE", "usual", name, name), good(name)],
-        "does not parse": name => [mint(name, name, ca, { notAfter: "2120XXXX000000Z" }), good(name)],
-        "rejected": name => [withSettings(good(name), reject(serverAuth)), good(name)],
-        "rejected, unknown issuer": name => [
-          withSettings(twin("an unknown issuer", "usual", name), reject(serverAuth)),
-          good(name),
-        ],
-        "for email": name => [
-          withSettings(twin("CA:FALSE", "usual", name, name), trust(serverAuth)),
-          withSettings(good(name), trust(emailProtection)),
-          good(name),
-        ],
-        "for email, CA:FALSE": name => [
-          withSettings(twin("CA:FALSE", "usual", name, name), trust(emailProtection)),
-          good(name),
-        ],
-        "another key rejected": name => [
-          withSettings(twin("another key", "usual", name, name), reject(serverAuth)),
-          good(name),
-        ],
-      });
-      expect(await run("SSL_CERT_FILE", [], cases)).toEqual({
-        outcomes: {
-          "CA:FALSE": authorized,
-          "does not parse": authorized,
-          "rejected": refused("UNABLE_TO_GET_ISSUER_CERT"),
-          "rejected, unknown issuer": refused("UNABLE_TO_GET_ISSUER_CERT"),
-          "for email": refused("UNABLE_TO_GET_ISSUER_CERT"),
-          "for email, CA:FALSE": refused("INVALID_PURPOSE"),
-          "another key rejected": authorized,
-        },
+    // Elsewhere the system store is not made of files.
+    it.each(isLinux ? ["--use-openssl-ca", "--use-system-ca"] : ["--use-openssl-ca"])(
+      "NODE_EXTRA_CA_CERTS comes last with %s",
+      async flag => {
+        expect(await run([flag], across)).toEqual({
+          outcomes: { "good in extra": notACA, "good in file": authorized },
+          exitCode: 0,
+        });
+      },
+    );
+
+    it("a copy that does not parse is passed over", async () => {
+      const cases = {
+        broken: (name: string) => ({ SSL_CERT_FILE: [mint(name, name, ca, { to: "21XX" }), good(name)] }),
+      };
+      expect(await run(["--use-openssl-ca"], cases)).toEqual({ outcomes: { broken: authorized }, exitCode: 0 });
+    });
+
+    it("a plain copy does not lift the trust settings of a certificate, unlike in Node.js", async () => {
+      const rejected = (pem: string) =>
+        armor("TRUSTED CERTIFICATE", Buffer.concat([new X509Certificate(pem).raw, seq(tlv(0xa0, serverAuth))]));
+      const plainAndRejected = (name: string) => {
+        const pem = good(name);
+        return { SSL_CERT_FILE: [pem, rejected(pem)] };
+      };
+      expect(await run(["--use-openssl-ca"], { plainAndRejected })).toEqual({
+        outcomes: { plainAndRejected: ["UNABLE_TO_GET_ISSUER_CERT", "UNABLE_TO_GET_ISSUER_CERT"] },
         exitCode: 0,
       });
     });

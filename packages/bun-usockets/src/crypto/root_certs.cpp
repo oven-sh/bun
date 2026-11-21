@@ -303,20 +303,10 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   X509_STORE_set_flags(store.get(), X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
   us_ca_store_t ca_store = us_ca_store();
 
-  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1099
-  if (ca_store != us_ca_store_t::openssl) {
-    X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
-    if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store.get(), bundled)) {
-      return NULL;
-    }
-  }
-
   // What X509_STORE_set_default_paths(store) trusts: the default certificate file (above) and the default hashed
   // certificate directory, which BoringSSL already consults lazily per lookup.
   const us_openssl_default_cert_file &file = us_get_openssl_default_cert_file();
-  if (file.certs != nullptr && !X509_STORE_add_lazy_cert_set(store.get(), file.certs)) {
-    return NULL;
-  }
+  // First, so that trust settings are not dropped for a plain copy of the same certificate.
   for (size_t i = 0; file.trusted != nullptr && i < sk_X509_num(file.trusted); i++) {
     X509_STORE_add_cert(store.get(), sk_X509_value(file.trusted, i));
   }
@@ -330,11 +320,13 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   X509_LOOKUP_add_dir(hash_dir, NULL, X509_FILETYPE_DEFAULT);
   ERR_clear_error();
 
-  STACK_OF(X509) *root_extra_cert_instances = us_get_root_extra_cert_instances();
-  if (root_extra_cert_instances) {
-    for (int i = 0; i < sk_X509_num(root_extra_cert_instances); i++) {
-      X509_STORE_add_cert(store.get(), sk_X509_value(root_extra_cert_instances, i));
-    }
+  // In this order: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_context.cc#L1090
+  X509_LAZY_CERT_SET *first = file.certs;
+  if (ca_store != us_ca_store_t::openssl && (first = us_get_bundled_root_cert_set()) == NULL) {
+    return NULL;
+  }
+  if (first != nullptr && !X509_STORE_add_lazy_cert_set(store.get(), first)) {
+    return NULL;
   }
 
   if (ca_store == us_ca_store_t::system) {
@@ -345,6 +337,18 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     for (size_t i = 0; system.parsed != nullptr && i < sk_X509_num(system.parsed); i++) {
       X509_STORE_add_cert(store.get(), sk_X509_value(system.parsed, i));
     }
+  }
+
+  STACK_OF(X509) *root_extra_cert_instances = us_get_root_extra_cert_instances();
+  if (root_extra_cert_instances) {
+    for (int i = 0; i < sk_X509_num(root_extra_cert_instances); i++) {
+      X509_STORE_add_cert(store.get(), sk_X509_value(root_extra_cert_instances, i));
+    }
+  }
+
+  // Node reads the file only with --use-openssl-ca, where it is in the store by now.
+  if (file.certs != nullptr && !X509_STORE_add_lazy_cert_set(store.get(), file.certs)) {
+    return NULL;
   }
 
   return store.release();

@@ -5,6 +5,7 @@ import { createHash, createPrivateKey, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
+import { rootCertificates } from "node:tls";
 
 // The vendored Node suite exercises `sni` / `setSNIContexts()` but cannot
 // observe which certificate was served (both fixtures are self-signed and the
@@ -231,29 +232,29 @@ test("an expired intermediate in `ca` does not shadow the valid one the server s
   expect(info.validationErrorCode).toBeUndefined();
 });
 
-test("a copy of the root that is not a CA does not shadow the valid one in `ca`", async () => {
+test("the first of two copies of a root in `ca` is the one that counts", async () => {
   const read = (name: string) => readFileSync(join(import.meta.dir, "..", "tls", "fixtures", "trust-anchor", name));
   const identity = {
     keys: [createPrivateKey(read("leaf.key"))],
     certs: [Buffer.concat([read("leaf.pem"), read("intermediate.pem")])],
   };
   await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });
-  async function validationErrorCode(...ca: string[]) {
-    const session = await connect(server.address!, {
-      alpn: "quic-test",
-      servername: "localhost",
-      verifyPeer: "manual",
-      ca: ca.map(read),
-    } as SessionOptions);
-    const info = await session.opened;
-    await session.close();
-    return info.validationErrorCode;
+  async function validationErrorCodes(first: string, last: string) {
+    const codes = new Set();
+    for (const others of [0, 20, 30, 40]) {
+      const session = await connect(server.address!, {
+        alpn: "quic-test",
+        servername: "localhost",
+        verifyPeer: "manual",
+        ca: [read(first), ...rootCertificates.slice(0, others).map(pem => Buffer.from(pem)), read(last)],
+      } as SessionOptions);
+      codes.add((await session.opened).validationErrorCode);
+      await session.close();
+    }
+    return [...codes];
   }
-  expect([
-    await validationErrorCode("root-not-a-ca.pem"),
-    await validationErrorCode("root-not-a-ca.pem", "root.pem"),
-    await validationErrorCode("root.pem", "root-not-a-ca.pem"),
-  ] as unknown[]).toEqual(["INVALID_CA", undefined, undefined]);
+  expect(await validationErrorCodes("root.pem", "root-not-a-ca.pem")).toEqual([undefined]);
+  expect(await validationErrorCodes("root-not-a-ca.pem", "root.pem")).toEqual(["INVALID_CA"]);
 });
 
 test("verifyPeer 'strict' and 'auto' refuse a certificate with a blocked public key", async () => {

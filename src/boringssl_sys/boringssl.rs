@@ -411,12 +411,6 @@ impl core::ops::DerefMut for OwnedX509 {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum TlsPeer {
-    Client,
-    Server,
-}
-
 /// Finds the issuer of a certificate in a trust store.
 pub struct IssuerLookup<'a>(
     core::ptr::NonNull<X509_STORE_CTX>,
@@ -424,25 +418,19 @@ pub struct IssuerLookup<'a>(
 );
 
 impl<'a> IssuerLookup<'a> {
-    /// Among several issuers, one that may vouch for `peer` is preferred.
-    pub fn new(store: &'a X509_STORE, peer: TlsPeer) -> Option<Self> {
-        let params = match peer {
-            TlsPeer::Client => c"ssl_client",
-            TlsPeer::Server => c"ssl_server",
-        };
+    pub fn new(store: &'a X509_STORE) -> Option<Self> {
         let ctx = core::ptr::NonNull::new(X509_STORE_CTX_new())?;
         let lookup = Self(ctx, core::marker::PhantomData);
-        // SAFETY: the context keeps a pointer to `store`, which outlives it, and none to `params`.
+        // SAFETY: the context keeps a pointer to `store`, which outlives it.
         let ready = unsafe {
             X509_STORE_CTX_init(
                 ctx.as_ptr(),
                 store,
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
-            ) == 1
-                && X509_STORE_CTX_set_default(ctx.as_ptr(), params.as_ptr()) == 1
+            )
         };
-        ready.then_some(lookup)
+        (ready == 1).then_some(lookup)
     }
 
     pub fn issuer_of(&self, cert: &X509) -> Option<OwnedX509> {
@@ -1431,7 +1419,6 @@ unsafe extern "C" {
         x509: *mut X509,
         chain: *mut struct_stack_st_X509,
     ) -> c_int;
-    fn X509_STORE_CTX_set_default(ctx: *mut X509_STORE_CTX, name: *const c_char) -> c_int;
     fn X509_STORE_CTX_free(ctx: *mut X509_STORE_CTX);
     /// Leaves `issuer` as it is when there is none.
     fn X509_STORE_CTX_get1_issuer(

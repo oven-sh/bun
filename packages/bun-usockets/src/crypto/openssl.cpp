@@ -876,17 +876,9 @@ static void us_crypto_buffer_stack_free(STACK_OF(CRYPTO_BUFFER) *buffers) {
 }
 using us_crypto_buffer_stack_ptr = us_unique_ptr<STACK_OF(CRYPTO_BUFFER), us_crypto_buffer_stack_free>;
 
-static int us_crypto_buffer_cmp(const CRYPTO_BUFFER *const *a, const CRYPTO_BUFFER *const *b) {
-  size_t al = CRYPTO_BUFFER_len(*a), bl = CRYPTO_BUFFER_len(*b);
-  if (al != bl) return al < bl ? -1 : 1;
-  return memcmp(CRYPTO_BUFFER_data(*a), CRYPTO_BUFFER_data(*b), al);
-}
-
-/* Trusts the DER certificates in `certs` (duplicates dropped) through one lazily-parsed set on `store`, and makes their
- * subjects the context's client-CA list, as X509_STORE_add_cert + SSL_CTX_add_client_CA per parsed certificate did. */
+/* Trusts the DER certificates in `certs` through one lazily-parsed set on `store`, and makes their subjects the
+ * context's client-CA list, as X509_STORE_add_cert + SSL_CTX_add_client_CA per parsed certificate did. */
 static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPTO_BUFFER) *certs) {
-  sk_CRYPTO_BUFFER_set_cmp_func(certs, us_crypto_buffer_cmp);
-  sk_CRYPTO_BUFFER_sort_and_dedup(certs, CRYPTO_BUFFER_free);
   size_t n = sk_CRYPTO_BUFFER_num(certs);
   if (n == 0) return 1;
   us_unique_ptr<CRYPTO_BUFFER *[], free> bufs{(CRYPTO_BUFFER **)malloc(n * sizeof(CRYPTO_BUFFER *))};
@@ -1204,20 +1196,22 @@ void us_ssl_ctx_reject_blocked_keys(SSL_CTX *ctx) {
   SSL_CTX_set_cert_verify_callback(ctx, us_x509_verify_chain_cb, NULL);
 }
 
-/* A self-issued leaf that may not sign certificates is its own anchor when the store holds that very certificate (#44365). */
+/* A leaf that OpenSSL calls self-signed though it may not sign certificates is its only anchor when the store holds it (#44365). */
 int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
   X509 *leaf = X509_STORE_CTX_get0_cert(ctx);
-  uint32_t flags = X509_get_extension_flags(leaf);
-  if ((flags & EXFLAG_SI) && !(flags & EXFLAG_SS) && X509_check_purpose(leaf, purpose, 0) == 1) {
-    us_x509_stack_ptr same_subject{X509_STORE_CTX_get1_certs(ctx, X509_get_subject_name(leaf))};
-    for (size_t i = 0; i < sk_X509_num(same_subject.get()); i++) {
-      if (X509_cmp(sk_X509_value(same_subject.get(), i), leaf) == 0) {
-        X509_VERIFY_PARAM_set_flags(X509_STORE_CTX_get0_param(ctx), X509_V_FLAG_PARTIAL_CHAIN);
-        break;
-      }
+  us_x509_stack_ptr pinned;
+  if (X509_check_issued(leaf, leaf) == X509_V_ERR_KEYUSAGE_NO_CERTSIGN && X509_check_purpose(leaf, purpose, 0) == 1) {
+    pinned.reset(X509_STORE_CTX_get1_certs(ctx, X509_get_subject_name(leaf)));
+    for (size_t i = sk_X509_num(pinned.get()); i-- > 0;) {
+      if (X509_cmp(sk_X509_value(pinned.get(), i), leaf) != 0) X509_free(sk_X509_delete(pinned.get(), i));
     }
   }
-  return us_x509_verify_chain(ctx);
+  if (sk_X509_num(pinned.get()) == 0) return us_x509_verify_chain(ctx);
+  X509_VERIFY_PARAM_set_flags(X509_STORE_CTX_get0_param(ctx), X509_V_FLAG_PARTIAL_CHAIN);
+  X509_STORE_CTX_set0_trusted_stack(ctx, pinned.get());
+  int ok = us_x509_verify_chain(ctx);
+  X509_STORE_CTX_set0_trusted_stack(ctx, NULL);
+  return ok;
 }
 
 /* Verifies the chain, then asks the owner of a client for the name: a wrong name is a verify error like any other. */

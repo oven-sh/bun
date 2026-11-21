@@ -122,6 +122,22 @@ function Profile() {
 }
 ```
 
+A shared value from `react-native-reanimated` is made to be written to, like a ref. With an ESLint config, this is only known if eslint-plugin-react-hooks can `require("react-native-reanimated")`, which is how the plugin decides. With an oxlint config it's reported, as in oxlint 1.87.
+
+{/* good */}
+```jsx
+import { useEffect } from "react";
+import { useSharedValue } from "react-native-reanimated";
+
+function Fade() {
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    opacity.value = 1;
+  }, [opacity]);
+  return null;
+}
+```
+
 The rule doesn't know what a method call does. This modifies the parent's array but isn't reported:
 
 {/* good */}

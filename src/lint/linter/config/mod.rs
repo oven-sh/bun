@@ -1791,6 +1791,17 @@ impl Config {
                 }
                 None => None,
             };
+            // The React Compiler rules ask that module whether a package is installed.
+            if entry.meta.plugin == Plugin::ReactHooks
+                && setting.severity != Severity::Off
+                && !self.prefers_typescript_rules
+                && !self.has_every_rule
+                && config.language.react_hooks_module.is_none()
+            {
+                let location = js_locations.iter().find(|it| *it.0 == *prefix);
+                let module = location.and_then(|it| it.1.get(b"module")?.as_str());
+                config.language.react_hooks_module = module.map(Arc::from);
+            }
             let reported_as = self.reported_as(registry, entry, setting.builtin_plugin);
             config.has_named_rules |= name.is_some();
             config.may_hand_back |= or_else.is_some() && setting.severity != Severity::Off;

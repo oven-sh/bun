@@ -5,7 +5,8 @@ use crate::finding::{Detail, Finding, Suggestion};
 use crate::host::LintHost;
 use bun_ast::ASTMemoryAllocator;
 use bun_core::strings;
-use bun_lint::ast::{BinOp, File, Func};
+use bun_lint::ast::{BinOp, File, Func, Stmt, StmtKind, StmtTag};
+use bun_lint::modules::Lookup;
 use bun_lint::span::Span;
 use bun_react_compiler::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, CompilerErrorOrDiagnostic,
@@ -38,9 +39,14 @@ pub(crate) struct Compiler<'a> {
 
 /// oxlint's `react_compiler_plugin_options`, or the plugin's `COMPILER_OPTIONS`. With `has_no_foreign_config` we don't
 /// follow the plugin where that would make a rule useless.
-fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
+fn config_of(
+    flavor: Flavor,
+    has_no_foreign_config: bool,
+    knows_reanimated: bool,
+) -> EnvironmentConfig {
     let is_oxlint = flavor == Flavor::Oxlint;
     EnvironmentConfig {
+        enable_custom_type_definition_for_reanimated: knows_reanimated,
         validate_ref_access_during_render: true,
         joined_ref_values_keep_their_place: is_oxlint,
         effects_keep_their_place: is_oxlint,
@@ -75,13 +81,54 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
     }
 }
 
+const REANIMATED: &str = "react-native-reanimated";
+
+/// The plugin's `pipelineUsesReanimatedPlugin` and `injectReanimatedFlag`: the compiler knows the types of
+/// `react-native-reanimated` if the plugin's module can `require.resolve` it. Only a file that imports the package can
+/// tell the difference, so no other file asks. Without a module to resolve from, the import decides. oxlint 1.87
+/// doesn't have these types.
+fn knows_reanimated<'a>(file: &'a File<'a>) -> bool {
+    let imports_it = |it: Stmt<'a>| match it.kind() {
+        StmtKind::Import(import) => import.spec().is(REANIMATED),
+        _ => false,
+    };
+    let language = file.language();
+    if language.is_oxlint
+        || !file.mentions(REANIMATED)
+        || !file.stmts_of_kind(StmtTag::Import).any(imports_it)
+    {
+        return false;
+    }
+    let Some(plugin) = language.react_hooks_module.as_deref() else {
+        return true;
+    };
+    if let Some(known) = language.has_reanimated.get() {
+        return *known;
+    }
+    let Some(modules) = file.modules() else {
+        return true;
+    };
+    // `Object.keys(Module._extensions)`
+    let extensions = [&b".js"[..], b".json", b".node"];
+    let lookup = Lookup::Node(extensions.into_iter().collect());
+    let resolve = |specifier: &[u8]| modules.resolve_file(plugin, specifier, true, &lookup);
+    // That lookup doesn't read `exports`, which can name an entry point that it can't find.
+    let has_exports = || {
+        let package_json = resolve(b"react-native-reanimated/package.json")?;
+        modules.package_json(&package_json)?.get(b"exports")
+    };
+    let resolves = || resolve(REANIMATED.as_bytes()).is_some() || has_exports().is_some();
+    *language.has_reanimated.get_or_init(resolves)
+}
+
 impl<'a> Compiler<'a> {
     pub(crate) fn new(file: &'a File<'a>, flavor: Flavor, wanted: Categories) -> Compiler<'a> {
+        let has_no_foreign_config = file.language().has_no_foreign_config;
         Compiler {
             file,
             flavor,
             wanted,
-            config: config_of(flavor, file.language().has_no_foreign_config),
+            config: config_of(flavor, has_no_foreign_config, knows_reanimated(file)),
             arena: bun_alloc::Arena::new(),
         }
     }

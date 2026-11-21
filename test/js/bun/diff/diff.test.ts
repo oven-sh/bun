@@ -511,8 +511,9 @@ describe("parsePatch", () => {
     ["too few added lines", "@@ -1 +1,2 @@\n-a\n+b", "Added line count did not match for hunk at line 1"],
     ["too few removed lines", "@@ -1,2 +1 @@\n-a\n+b", "Removed line count did not match for hunk at line 1"],
     ["too many lines", `${body} c\n`, "Hunk at line 1 has more lines than expected (expected 1 old lines and 1 new lines)"],
-    // diff returns NaN, or a number that has lost digits.
+    // diff skips the hunk, returns NaN, or a number that has lost digits.
     ["a header without ranges", "@@ a @@\n", 'Hunk at line 1 does not start with "@@ -start,lines +start,lines @@"'],
+    ["only @@", "@@\n-a\n+b\n", 'Hunk at line 1 does not start with "@@ -start,lines +start,lines @@"'],
     ["a header that is not closed", "@@ -1 +1\n", 'Hunk at line 1 does not start with "@@ -start,lines +start,lines @@"'],
     ["a number past 2 ** 31 - 1", "@@ -2147483648 +1 @@\n-a\n+b\n", 'Hunk at line 1 does not start with "@@ -start,lines +start,lines @@"'],
     ["2 ** 31 - 1", "@@ -2147483647 +1 @@\n-a\n+b\n", [{ hunks: [{ ...hunk, oldStart: 2 ** 31 - 1 }] }]],
@@ -529,6 +530,26 @@ describe("parsePatch", () => {
   ])("%s", (_, patch, expected) => {
     if (typeof expected === "string") expect(() => diff.parsePatch(patch)).toThrow(new SyntaxError(expected));
     else expect(diff.parsePatch(patch)).toStrictEqual(expected);
+  });
+
+  // diff throws, or leaves the \r in a name.
+  const withCR = { ...hunk, lines: ["-a\r", "+b\r"] };
+  // prettier-ignore
+  test.each([
+    ["git format-patch", `Subject: x\n\n---\n f | 2 +-\n\ndiff --git a/f b/f\n--- a/f\n+++ b/f\n${body}-- \n2.43.0\n`, [{ isGit: true, oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [withCR] }]],
+    ["markers alone in the text around the hunks", `+++\nIndex:\ndiff -r abc\n${body}\n---\n+++\n`, [{ hunks: [withCR] }]],
+    ["names from diff --git", 'diff --git a/f b/f\ndiff --git "a/\\t" b/世\n', [
+      { isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [] },
+      { isGit: true, oldFileName: "a/\t", newFileName: "b/世", hunks: [] },
+    ]],
+    ["a kept line without its space", "@@ -1,2 +1,2 @@\n\n-a\n+b\n", [{ hunks: [{ ...hunk, oldLines: 2, newLines: 2, lines: ["\r", "-a\r", "+b\r"] }] }]],
+    ["an invalid line", "@@ -1 +1 @@\nx\n", "Hunk at line 1 contained invalid line x"],
+    ["cut after a newline", "@@ -1,2 +1,2 @@\n-a\n+b\n\r", "Hunk at line 1 contained invalid line "],
+    ["only @@", "@@\n-a\n+b\n", 'Hunk at line 1 does not start with "@@ -start,lines +start,lines @@"'],
+  ])("converted to CRLF: %s", (_, patch, expected) => {
+    const converted = patch.replaceAll("\n", "\r\n");
+    if (typeof expected === "string") expect(() => diff.parsePatch(converted)).toThrow(new SyntaxError(expected));
+    else expect(diff.parsePatch(converted)).toStrictEqual(expected);
   });
 });
 
@@ -596,6 +617,21 @@ describe("applyPatch", () => {
   test("svn diff --git", () => {
     const headers = `Index: f\n${"=".repeat(67)}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n`;
     expect(diff.applyPatch("a\n", `${headers}@@ -1 +1 @@\n-a\n+b\n`)).toBe("b\n");
+  });
+
+  // diff throws.
+  test.each([
+    ["\na\n", "\nb\n"],
+    ["\na\n", "\nb"],
+    ["\na", "\nb\n"],
+    ["\na", "\nb"],
+    ["a\nx", "b\nx"],
+    ["a", "b"],
+    ["", "b"],
+  ])("git format-patch converted to CRLF: %j to %j", (a, b) => {
+    const crlf = (text: string) => text.replaceAll("\n", "\r\n");
+    const patch = crlf(`Subject: x\n\n---\n f | 2 +-\n\ndiff --git a/f b/f\n${diff.createPatch(a, b)}-- \n2.43.0\n`);
+    expect([diff.applyPatch(a, patch), diff.applyPatch(crlf(a), patch)]).toEqual([b, crlf(b)]);
   });
 
   test("a binary patch", () => {

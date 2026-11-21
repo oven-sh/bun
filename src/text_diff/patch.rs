@@ -268,6 +268,10 @@ fn trim<T: Unit>(text: &[T]) -> &[T] {
             .count()]
 }
 
+fn without_cr<T: Unit>(line: &[T]) -> &[T] {
+    line.strip_suffix(&[T::from_u8(b'\r')]).unwrap_or(line)
+}
+
 fn is_digit(unit: u32) -> bool {
     matches!(unit, 0x30..=0x39)
 }
@@ -287,7 +291,7 @@ fn is_file_header<T: Unit>(line: &[T]) -> bool {
 }
 
 fn is_hunk_header<T: Unit>(line: &[T]) -> bool {
-    after_marker(line, b"@@").is_some()
+    strip(line, b"@@").is_some_and(|rest| rest.is_empty() || starts_with_space(rest))
 }
 
 /// `Index: name`, or Mercurial's `diff -r 9117c6561b0b -r 273ce12ad8f1 name`.
@@ -484,8 +488,9 @@ impl<'a, T: Unit> Parser<'a, T> {
         start..length.map_or(text.len(), |length| start + length)
     }
 
+    /// Without its `\r`, which only the lines of a hunk keep.
     fn peek(&self) -> Option<&'a [T]> {
-        Some(&self.text[self.line.clone()?])
+        Some(without_cr(&self.text[self.line.clone()?]))
     }
 
     fn advance(&mut self) {
@@ -559,11 +564,11 @@ impl<'a, T: Unit> Parser<'a, T> {
 
         let (mut added, mut removed) = (0, 0);
         while let Some(place) = self.line.clone() {
-            let line = &self.text[place.clone()];
+            let line = without_cr(&self.text[place.clone()]);
             if removed >= hunk.old_lines && added >= hunk.new_lines && !is(line.first(), b'\\') {
                 break;
             }
-            let is_after_last_newline = place.start == self.text.len();
+            let is_after_last_newline = line.is_empty() && place.end == self.text.len();
             match Operation::of(line).filter(|_| !is_after_last_newline) {
                 Some(Operation::Add) => added += 1,
                 Some(Operation::Remove) => removed += 1,
@@ -670,10 +675,12 @@ fn steps_of<'a, T: Unit>(lines: &[&'a [T]]) -> Result<Vec<Step<'a, T>>, usize> {
     let step = |(at, &line): (usize, &&'a [T])| {
         let cr = line.last().copied().filter(|unit| is(Some(unit), b'\r'));
         let line = &line[..line.len() - cr.as_slice().len()];
+        // No tool writes `\r` after the marker, so the patch was converted, and this line got one too.
+        let is_converted = is_marker(at + 1) && is(lines[at + 1].last(), b'\r');
         Ok(Step {
             operation: Operation::of(line).ok_or(at)?,
             text: line.get(1..).unwrap_or_default(),
-            cr,
+            cr: cr.filter(|_| !is_converted),
             has_line_ending: !is_marker(at) && !is_marker(at + 1),
         })
     };

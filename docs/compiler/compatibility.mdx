@@ -329,6 +329,7 @@ If you import such a package for what it does when it loads, like a polyfill or 
 | `undefined[key] = 1`, where `key` has a `toString()`                           | Calls `toString()`, then throws             | Throws                                  |
 | `(Color as any).Red = 2`, then `Color.Red`, for an `enum` imported from a file | `2`                                         | `1`. The member is a constant           |
 | `"useDefineForClassFields"` in `tsconfig.json`                                 | Taken from the one in the working directory | Taken from the one nearest to each file |
+| `export { x } from "./a.txt" with { type: "json" }`                            | The type is ignored: `a.txt` is text        | JSON, as with an `import`               |
 | `fn.caller` and `fn.arguments`, outside strict mode                            | The calling function and the arguments      | `null`. The build warns (`TS100302`)    |
 
 `process.env.NODE_ENV`, `process.platform` and `process.arch`, written out like that, are replaced by their values when you build, as in `bun build --compile`. `NODE_ENV=production ./app` still reads `"development"` unless you built with `NODE_ENV=production` or `--production`.

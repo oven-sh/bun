@@ -604,12 +604,6 @@ impl Resolver<'_, '_> {
                 if let Some(global) = self.find_global_out_of_sight_through(expr) {
                     self.mention(global);
                     self.expose(global);
-                } else if self.may_be_global_object(expr)
-                    && self.is_handed_to_hook_of_instanceof_alone(expr)
-                {
-                    self.output
-                        .handed_to_hooks_of_instanceof
-                        .push(BuiltinId::GlobalThis);
                 }
                 return;
             }

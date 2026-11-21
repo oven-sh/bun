@@ -266,22 +266,23 @@ cwd, `without_trailing_sep`): two directories are equal if `strip_prefix(a, b) =
 On POSIX `\` is part of a name. Only text that moves between platforms (package.json, tsconfig.json,
 lockfiles, bundles, hashes, URLs) needs a conversion, once, where it is read or written:
 
-| Text                                        | Call                                                |
-| ------------------------------------------- | --------------------------------------------------- |
-| JS APIs, syscall results, entry points      | nothing, unless it is written to such a file        |
-| read from a file                            | `from_portable(text)`: `\a` is `./a`                |
-| the same, where `\a` starts at the root     | `portable::from_portable_rooted(text)`: it is `/a`  |
-| a glob                                      | nothing: `\` escapes                                |
-| written to a file, hashed, used as a URL    | `path.into_portable()`, `to_portable(slice)`        |
-| portable, and shown or compared with a path | `to_native(slice)`                                  |
-| untrusted, has to stay inside a directory   | reject `portable::climbs_out(text)`                 |
-| an import specifier                         | `bun_resolver::path_of_specifier(specifier, kind)`  |
-| an import specifier, read from a file       | `portable::from_portable_specifier(text)`           |
-| either a real name or portable text         | `bun_sys::existing_spelling(dir, path)`             |
-| a flag or variable that names an input      | `bun_sys::typed_spelling(cwd, path, from_portable)` |
-| the same, for an output                     | `bun_sys::converted_spelling(path, from_portable)`  |
-| the same, for a cache or install directory  | `from_portable(text)`: what exists must not decide  |
+| Text                                        | Call                                               |
+| ------------------------------------------- | -------------------------------------------------- |
+| JS APIs, syscall results, entry points      | nothing, unless it is written to such a file       |
+| read from a file                            | `from_portable(text)`: `\a` is `./a`               |
+| the same, where `\a` starts at the root     | `portable::from_portable_rooted(text)`: it is `/a` |
+| a glob                                      | nothing: `\` escapes                               |
+| written to a file, hashed, used as a URL    | `path.into_portable()`, `to_portable(slice)`       |
+| portable, and shown or compared with a path | `to_native(slice)`                                 |
+| untrusted, has to stay inside a directory   | reject `portable::climbs_out(text)`                |
+| an import specifier                         | `bun_resolver::path_of_specifier(specifier, kind)` |
+| an import specifier, read from a file       | `portable::from_portable_specifier(text)`          |
+| either a real name or portable text         | `bun_sys::existing_spelling(dir, path)`            |
+| a flag or variable that names an input      | `bun_sys::typed_spelling(base, path, convert)`     |
+| the same, for an output                     | `bun_sys::converted_spelling(path, convert)`       |
+| the same, for a cache or install directory  | `from_portable(text)`: what exists must not decide |
 
+`convert` is `from_portable` or `from_portable_rooted`, and `base` is where the text was typed.
 `portable::climbs_out` goes with `from_portable`, not with `from_portable_rooted`. On Windows reject `:` too.
 
 For a buffer that the OS fills, use `path_buffer_pool::get()` or `w_path_buffer_pool::get()`, not the

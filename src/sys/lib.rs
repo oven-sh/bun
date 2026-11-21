@@ -8226,9 +8226,9 @@ pub fn existing_spelling(dir: Fd, path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
         };
     }
     // Anyone who can add a name could put `..\a` in the way of `../a`.
-    let is_name = |path: &[u8]| {
-        !bun_paths::portable::has_dot_dot(bun_paths::basename(path))
-            || getcwd_alloc().is_ok_and(|cwd| bun_paths::strip_prefix(&cwd, path).is_some())
+    let is_name = |prefix: &[u8]| {
+        !bun_paths::portable::has_dot_dot(bun_paths::basename(prefix))
+            || getcwd_alloc().is_ok_and(|cwd| bun_paths::strip_prefix(&cwd, prefix).is_some())
     };
     let mut kept = 0;
     while let Some(at) = strings::index_of_char_usize(&path[kept..], b'\\') {
@@ -8255,9 +8255,9 @@ pub fn converted_spelling(
         false => convert(path),
     }
 }
-/// [`converted_spelling`] for what was typed in `cwd`, or `path` if only that is there.
+/// [`converted_spelling`] for what was typed in `base`, or `path` if only that is there.
 pub fn typed_spelling<'a>(
-    cwd: &[u8],
+    base: &[u8],
     path: &'a [u8],
     convert: fn(&[u8]) -> std::borrow::Cow<'_, [u8]>,
 ) -> std::borrow::Cow<'a, [u8]> {
@@ -8266,9 +8266,9 @@ pub fn typed_spelling<'a>(
     match converted_spelling(path, convert) {
         Owned(converted)
             if !bun_paths::is_absolute(&converted)
-                && !exists_z(&Path::resolve(&[cwd, &converted]))
+                && !exists_z(&Path::resolve(&[base, &converted]))
                 && let Borrowed(_) =
-                    existing_spelling(Fd::cwd(), &Path::from_parts(&[cwd, path])) =>
+                    existing_spelling(Fd::cwd(), &Path::from_parts(&[base, path])) =>
         {
             Borrowed(path)
         }

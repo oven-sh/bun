@@ -1241,6 +1241,52 @@ fn streams_are_not_silent_for_long() {
     }
 }
 
+/// The peer reads 3,000 bytes of every stream in a step, and returns credit in quarters of its windows. Returns after how
+/// many steps it has read everything.
+fn steps_to_read(count: usize, len: usize, window: usize, stream_window: usize) -> usize {
+    let parameters = format!("max_data={window} max_stream_data_uni={stream_window}");
+    let mut raw = Raw::server().with(&parameters).connected();
+    let mut streams = Vec::from_iter((0..count).map(|_| {
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, &filler(0, len), true);
+        (id, 0, stream_window)
+    }));
+    let mut limit = window;
+    let is_done = |_: &usize| {
+        raw.forget();
+        raw.advance(RTT / 2);
+        let mut frames = String::from("ack");
+        for (id, read, limit) in &mut streams {
+            *read = (*read + 3000).min(raw.streams.get(id).map_or(0, Vec::len));
+            if *limit - *read < stream_window / 4 * 3 {
+                *limit = *read + stream_window;
+                frames += &format!(", max_stream_data {id} {limit}");
+            }
+        }
+        let read = streams.iter().map(|it| it.1).sum::<usize>();
+        if limit - read < window / 4 * 3 {
+            limit = read + window;
+            frames += &format!(", max_data {limit}");
+        }
+        raw.send(&frames);
+        read == count * len
+    };
+    (1..2000).find(is_done).unwrap()
+}
+
+#[test]
+fn streams_that_are_read_slowly_share_the_window() {
+    for (count, len, window, stream_window, expected) in [
+        (8, 600_000, 768_000, 512_000, 200..260),
+        (4, 900_000, 768_000, 512_000, 300..320),
+        (3, 1_500_000, 1_000_000, 1_000_000, 500..520),
+        (4, 1_500_000, 1_500_000, 1_000_000, 500..520),
+    ] {
+        let steps = steps_to_read(count, len, window, stream_window);
+        assert!(expected.contains(&steps), "{count} x {len}: {steps}");
+    }
+}
+
 #[test]
 fn streams_that_only_write_when_asked_are_long_all_the_same() {
     for (seconds, pauses) in [(0, false), (3, false), (3, true)] {

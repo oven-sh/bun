@@ -266,6 +266,8 @@ impl State {
 
     pub(crate) fn raise_send_limit(&mut self, id: StreamId, stream: &mut Stream, limit: u64) {
         if limit > stream.send_limit {
+            let room = limit.saturating_sub(stream.send.reached());
+            stream.send_window = stream.send_window.max(room);
             stream.send_limit = limit;
             stream.flags.remove(Flags::OWES_STREAM_DATA_BLOCKED);
             if stream.send.unsent_len() > 0 {
@@ -433,6 +435,7 @@ impl Streams {
         if limit > state.send_limit {
             state.send_limit = limit;
             state.send_window = state.send_window.max(limit - state.reached);
+            state.is_peer_behind = limit - state.reached < state.send_window / 4 * 3;
             let leader = state.leader.and_then(|it| table.get(it.1));
             let unread = state.unread(leader.map_or(0, |it| it.send.end() - it.send.reached()));
             let part = state.send_window / 32;

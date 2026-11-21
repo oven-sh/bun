@@ -71,6 +71,8 @@ pub(crate) struct Stream {
 
     pub(crate) send: SendBuffer,
     pub(super) send_limit: u64,
+    /// The most that the peer has allowed beyond what has reached it.
+    pub(super) send_window: u64,
     /// The limit that STREAM_DATA_BLOCKED has been sent for.
     pub(super) blocked_at: Option<u64>,
     /// The turn in which it was opened, or else in which its end is due.
@@ -120,6 +122,7 @@ impl Stream {
             role,
             send: SendBuffer::default(),
             send_limit,
+            send_window: send_limit,
             blocked_at: None,
             first_turn: 0,
             share: 0,

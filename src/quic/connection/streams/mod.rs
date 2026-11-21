@@ -110,6 +110,8 @@ pub(crate) struct State {
     reached: u64,
     /// The most that the peer has allowed beyond that.
     send_window: u64,
+    /// With reading what it has got, as of the last MAX_DATA.
+    is_peer_behind: bool,
     /// How much of what was written ahead of an older stream may be unread.
     ahead: u64,
     credit_ahead: u64,

@@ -15,6 +15,7 @@ const DUE_UNIT: u64 = 1024;
 const LEFT_UNIT: u64 = 4096;
 const LEFT_BITS: u32 = 8;
 const MAX_LEFT: u64 = (1 << LEFT_BITS) - 1;
+const MAX_SHORT: u64 = BULK_LEN / LEFT_UNIT;
 /// A stream that has waited for a whole period may write a few bytes, so that the peer does not give up on it.
 const PERIOD: Duration = Duration::from_secs(1);
 const CRUMB: u64 = 1024;
@@ -85,6 +86,19 @@ impl State {
         }
     }
 
+    /// What the peer has not read takes up room that other streams could use. If there is much of it, long streams go by
+    /// how full their own windows are.
+    #[inline]
+    fn left(&self, stream: &Stream, len: u64) -> u64 {
+        match stream.left(len) {
+            left if left > MAX_SHORT && self.is_peer_behind => {
+                let used = stream.send_window.saturating_sub(stream.send_credit());
+                MAX_SHORT + 1 + used / (stream.send_window / (MAX_LEFT - MAX_SHORT - 1) + 1)
+            }
+            left => left,
+        }
+    }
+
     /// What shares are due by.
     #[inline]
     fn written(&self) -> u64 {
@@ -94,7 +108,7 @@ impl State {
     /// Whether it goes before a stream that has `rival` left.
     #[inline]
     fn is_overdue(&self, rank: u64, rival: u64) -> bool {
-        let makes_way = rival < left(rank) && rival <= BULK_LEN / LEFT_UNIT;
+        let makes_way = rival < left(rank) && rival <= MAX_SHORT;
         due(rank) + u64::from(makes_way) * (GRACE / DUE_UNIT) <= self.written()
     }
 
@@ -145,7 +159,7 @@ impl State {
     /// How many bytes are welcome if the application has `len`.
     #[inline]
     pub(super) fn wanted_from(&self, id: StreamId, stream: &Stream, len: u64) -> u64 {
-        let (own, unsent) = (stream.left(len), stream.send.unsent_len());
+        let (own, unsent) = (self.left(stream, len), stream.send.unsent_len());
         let allowed = self.allowance.end.saturating_sub(stream.send.end());
         let max = match self.is_invited(id) {
             _ if self.writable.is_empty() => u64::MAX,
@@ -165,7 +179,7 @@ impl State {
     /// A share is due when all streams could have had one, and streams that are about as long get half of the path.
     pub(super) fn start_waiting(&self, stream: &mut Stream) -> u64 {
         stream.waits_since = self.crumbs.period;
-        let own = stream.left(stream.unwritten);
+        let own = self.left(stream, stream.unwritten);
         if stream.share < MIN_UNSENT {
             let len = own * LEFT_UNIT;
             let (mut round, mut alike) = (len.min(SHARE), 1);
@@ -187,7 +201,8 @@ impl State {
         let at = crumb.or_else(|| self.next_share(table));
         let entry = at.and_then(|at| self.writable.get(at));
         let (rank, stream) = entry.and_then(|it| Some(it.0).zip(table.get(it.1)))?;
-        let is_due = due(rank) <= self.written() && left(rank) > 0;
+        let is_due = due(rank) <= self.written() && left(rank) > 0
+            || self.is_peer_behind && left(rank) > MAX_SHORT;
         let (len, free_below) = match (crumb, is_due) {
             (Some(_), _) => (CRUMB, 0),
             (None, true) => (stream.share, 0),
@@ -350,6 +365,27 @@ mod tests {
                 holds_up
             );
             assert_eq!(state.may_starve_any(), may_starve);
+        }
+    }
+
+    #[test]
+    fn long_streams_go_by_their_windows_while_the_peer_is_behind() {
+        for (is_peer_behind, unwritten, limit, left) in [
+            (false, 900, 100, 225),
+            (true, 900, 100, 143),
+            (true, 900, 200, 88),
+            (true, 900, 50, 254),
+            (true, 128, 100, 32),
+            (true, 132, 100, 143),
+        ] {
+            let mut state = State {
+                is_peer_behind,
+                ..State::default()
+            };
+            let mut stream = stream(0, 50 * K, unwritten * K);
+            (stream.send_limit, stream.send_window) = (50 * K, 50 * K);
+            state.raise_send_limit(StreamId(1), &mut stream, limit * K);
+            assert_eq!(state.left(&stream, unwritten * K), left);
         }
     }
 

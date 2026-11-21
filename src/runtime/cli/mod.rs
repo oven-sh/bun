@@ -625,26 +625,26 @@ pub(crate) mod command {
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
-    fn is_bun_x(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
+    /// The file name of argv[0] is `name`, ignoring ASCII case and a trailing `.exe` on Windows.
+    #[inline(always)]
+    fn invoked_as(argv0: &[u8], name: &[u8]) -> bool {
+        let mut stem = argv0;
+        if cfg!(windows) && strings::ends_with_case_insensitive_ascii(stem, b".exe") {
+            stem = &stem[..stem.len() - b".exe".len()];
         }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"bunx")
-        }
+        // A start as `bun` stops at the suffix compare and never scans the path.
+        strings::ends_with_case_insensitive_ascii(stem, name)
+            && strings::basename(stem).eq_ignore_ascii_case(name)
     }
 
+    #[inline]
+    fn is_bun_x(argv0: &[u8]) -> bool {
+        invoked_as(argv0, b"bunx")
+    }
+
+    #[inline]
     fn is_node(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"node.exe") || strings::ends_with(argv0, b"node");
-        }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"node")
-        }
+        invoked_as(argv0, b"node")
     }
 
     /// Cheap argv prescan for the dominant `bun <path>` / `bun .` shape.

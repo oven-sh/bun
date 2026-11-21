@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { copyFileSync, symlinkSync } from "node:fs";
 import { join } from "path";
 import { bunEnv, bunExe, fakeNodeRun, isMacOS, isWindows, tempDir } from "../../harness";
 
@@ -130,5 +131,120 @@ describe("fake node cli", () => {
     });
     expect(result.stderr.toString()).toContain("Missing script");
     expect(result.success).toBe(false);
+  });
+
+  // https://github.com/oven-sh/bun/issues/36826
+  // Windows resolves executables case-insensitively (PATHEXT commonly lists
+  // `.EXE`), so argv[0] can be `node.EXE`; the invocation-name match must
+  // ignore ASCII case. Misclassified as plain `bun`, the bare invocation
+  // below would run the empty piped stdin and exit 0 instead of printing
+  // "Missing script".
+  test.concurrent.each(isWindows ? ["node.EXE", "NODE.EXE"] : ["NODE", "nodE"])(
+    "detects node mode when invoked as %s",
+    async name => {
+      using temp = tempDir("fake-node-case", {});
+      const dir = String(temp);
+      if (isWindows) {
+        // On disk the file is lowercase; only the invocation casing differs.
+        copyFileSync(bunExe(), join(dir, "node.exe"));
+      } else {
+        symlinkSync(bunExe(), join(dir, name));
+      }
+      await using proc = Bun.spawn({
+        cmd: [join(dir, name)],
+        cwd: dir,
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdin: Buffer.alloc(0),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("Missing script");
+      expect(stdout).toBe("");
+      expect(exitCode).not.toBe(0);
+    },
+  );
+
+  // Only the whole file name selects node mode. A compiled executable named
+  // `MyNode` run with `BUN_BE_BUN=1` (or any name that merely ends in "node")
+  // is plain `bun`, so `--version` prints Bun's version.
+  test.concurrent.each(isWindows ? ["mynode.exe", "MyNode.EXE"] : ["mynode", "MyNode"])(
+    "stays in bun mode when invoked as %s",
+    async name => {
+      using temp = tempDir("fake-node-suffix", {});
+      const dir = String(temp);
+      if (isWindows) {
+        copyFileSync(bunExe(), join(dir, name));
+      } else {
+        symlinkSync(bunExe(), join(dir, name));
+      }
+      await using proc = Bun.spawn({
+        cmd: [join(dir, name), "--version"],
+        cwd: dir,
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdin: Buffer.alloc(0),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(Bun.version);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The file name of argv[0] selects the role. A name that only ends in `node` is not `node`.
+  describe("argv[0]", () => {
+    // `--help` prints a different usage line in each role.
+    async function usage(argv0: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--help"],
+        argv0,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return (stdout + stderr).split(/\r?\n/).find(line => line.startsWith("Usage:"));
+    }
+
+    test.concurrent.each([
+      "node",
+      "./node",
+      "/tmp/x/node",
+      ...(isWindows ? ["node.exe", "C:\\x\\node.exe", "C:/x/node", "C:node"] : []),
+    ])("%s is node", async argv0 => {
+      expect(await usage(argv0)).toStartWith("Usage: bun run ");
+    });
+
+    test.concurrent.each([
+      "fullnode",
+      "/opt/tools/anode",
+      "ts-node",
+      "x.node",
+      // Only Windows has `\` as a path separator and `.exe` as an optional extension.
+      ...(isWindows ? ["fullnode.exe", "C:\\x\\ts-node.exe"] : ["a\\node"]),
+    ])("%s is bun", async argv0 => {
+      expect(await usage(argv0)).toStartWith("Usage: bun <command> ");
+    });
+
+    // In the node role the first word is a script, so `build` runs `./build.ts`.
+    test.concurrent("fullnode runs a subcommand, not the script with that name", async () => {
+      using dir = tempDir("fake-node-subcommand", {
+        "build.ts": "console.log('ran build.ts')",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--help"],
+        argv0: "fullnode",
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("bun build [flags] <entrypoint>");
+      expect(exitCode).toBe(0);
+    });
   });
 });

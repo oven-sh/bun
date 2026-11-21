@@ -124,6 +124,92 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 
+  test("server.setTimeout() fires close to the configured time for a client that never sends", async () => {
+    // A client that connects and never writes: 'connection' must fire on TCP accept
+    // and the inactivity timer must start then, not after a kernel-side deferred
+    // accept (TCP_DEFER_ACCEPT on Linux) window.
+    const server = http.createServer((req, res) => res.end("ok"));
+    let t0 = Date.now();
+    let connectionAt: number | undefined;
+    let timeoutAt: number | undefined;
+    server.on("connection", () => {
+      connectionAt ??= Date.now() - t0;
+    });
+    server.setTimeout(500, socket => {
+      timeoutAt ??= Date.now() - t0;
+      socket.destroy();
+    });
+    const port = await listen(server);
+    try {
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<number>();
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.resume();
+      socket.on("connect", () => {
+        t0 = Date.now();
+      });
+      socket.on("close", () => onClosed(Date.now() - t0));
+      const closedAt = await closed;
+      // A deferred accept waits a full second at minimum, so these bounds tell
+      // "accepted immediately" from "accepted after the defer" without being tight
+      // enough to flake under ASAN.
+      expect({
+        connectionSeenPromptly: connectionAt !== undefined && connectionAt < 900,
+        timeoutNearConfigured: timeoutAt !== undefined && timeoutAt < 1250,
+        closedNearConfigured: closedAt < 1250,
+      }).toEqual({
+        connectionSeenPromptly: true,
+        timeoutNearConfigured: true,
+        closedNearConfigured: true,
+      });
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("a connected client that has sent nothing is seen, counted and closed by closeAllConnections()", async () => {
+    // Node emits 'connection' at TCP accept. A client that connects and stays silent
+    // must be visible to the server at once, so getConnections() counts it and
+    // closeAllConnections() + close() close it right away. With a kernel-side
+    // deferred accept the server only sees it after the defer window (a second or
+    // more), and a shutdown inside that window leaves the client connected until it
+    // writes and gets ECONNRESET.
+    const server = http.createServer((req, res) => res.end("ok"));
+    let connections = 0;
+    server.on("connection", () => connections++);
+    const port = await listen(server);
+    const socket = net.connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+    socket.on("close", () => onClosed());
+    try {
+      await once(socket, "connect");
+      // Well inside a one-second deferred-accept window.
+      await Bun.sleep(200);
+      const { promise: counted, resolve: onCount } = Promise.withResolvers<number>();
+      server.getConnections((err, count) => onCount(err ? -1 : count));
+      const count = await counted;
+      const shutdownAt = Date.now();
+      server.closeAllConnections();
+      server.close();
+      // The client is closed without writing anything.
+      const closedAfter = await Promise.race([
+        closed.then(() => Date.now() - shutdownAt),
+        Bun.sleep(1500).then(() => Infinity),
+      ]);
+      expect({ connections, count, closedPromptly: closedAfter < 500 }).toEqual({
+        connections: 1,
+        count: 1,
+        closedPromptly: true,
+      });
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
   test("keepAliveTimeout closes an idle keep-alive connection after the response", async () => {
     const server = http.createServer((req, res) => {
       req.resume();

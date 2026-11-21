@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("hotboth.js");
+bench("hotboth.js", "90");

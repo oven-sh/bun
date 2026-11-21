@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 const LIMIT = 270_000;
 export function bench(script: string, ...args: string[]) {
-  test.skipIf(!isWindows || (process.arch === "x64" && (args[0] === "busy" || script === "stall.js")))(
+  test.skipIf(!isWindows || (process.arch === "x64" && args[0] === "busy"))(
     script,
     async () => {
       using dir = tempDir("tmp-bench", {});

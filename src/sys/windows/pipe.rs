@@ -37,6 +37,12 @@ pub struct PipePair {
 }
 
 const QUOTA: u32 = 64 * 1024;
+/// Temporary: to measure other sizes.
+fn quota() -> u32 {
+    (bun_core::getenv_z(bun_core::zstr!("BUN_TMP_QUOTA")))
+        .and_then(|text| bun_core::fmt::parse_int(text, 10).ok())
+        .unwrap_or(QUOTA)
+}
 const READ: u32 = w::GENERIC_READ | w::FILE_WRITE_ATTRIBUTES | w::SYNCHRONIZE;
 const WRITE: u32 = w::GENERIC_WRITE | w::FILE_READ_ATTRIBUTES | w::SYNCHRONIZE;
 
@@ -118,8 +124,8 @@ pub fn pipe_pair(
                 w::FILE_PIPE_BYTE_STREAM_MODE,
                 w::FILE_PIPE_QUEUE_OPERATION,
                 1,
-                QUOTA,
-                QUOTA,
+                quota(),
+                quota(),
                 &raw const default_timeout,
             )
         }

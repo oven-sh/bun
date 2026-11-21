@@ -182,6 +182,8 @@ let global = unsafe { heap.global() };
 type that implements `bindgen::IntoError` (`bun_sys::Error`,
 `SystemError`, `JsError` and a `Box` of one do), which lets a `capability: "none"` function fail too.
 
+A loop that can take long calls `heap.check_termination()?`: a `node:vm` timeout or `worker.terminate()` ends it there.
+
 `cx.global()` is the `&JSGlobalObject`, for code that takes one. It borrows all of
 `cx`. Such a function can return `JsResult<T>`, and a plain `JSValue` under
 `returns: b.any`.
@@ -232,7 +234,7 @@ arguments from left to right:
    whatever is wrong.
 
 Choosing converts nothing and runs no JavaScript. A signature that no call can reach is
-an error when the schema is loaded.
+an error when the schema is loaded. The constructors of a [`webIDL`](#webidl) class are chosen differently.
 
 ## Types
 
@@ -321,7 +323,9 @@ These are results only:
 
 A body that returns `b.any` makes the value with what the generated code calls:
 `bindgen::to_js::record`, `to_js::array`, `to_js::utf8` and the others of that module. An empty
-object is `heap.create_empty_object()`.
+object is `heap.create_empty_object()`, and `heap.create_object(properties)` is one whose values are JS values.
+`heap.create_string(string)` shares the characters of a `bun_core::String`, and `heap.try_create_string(slice)` copies
+those of an `EncodedSlice`.
 
 ### Numbers
 
@@ -353,7 +357,8 @@ and ASCII and is a transcoded copy otherwise.
 body that keeps it takes `b.string.owned`, which comes after `.loose` or `.allowStringObject`. Inside `.optional`, a union or an array, and as the value of a setter,
 it is held by value. The string belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
-one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
+one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does. `b.string.usv` is
+WebIDL's `USVString`: `.loose`, and each unpaired surrogate becomes U+FFFD.
 
 `b.string.view`, which comes after `.allowStringObject`, is for a body that only reads the
 characters, in Latin-1 or UTF-16: a `bun_core::StringView<'a>`, and a `&bun_core::StringView<'_>` as an argument of this type alone. It takes no reference to the
@@ -422,6 +427,8 @@ The second argument of `b.dictionary` takes:
 | `allowArray`       | an array is read like any other object, not refused                                                                                                                                                                                  |
 | `nonObjectAsEmpty` | a value that is not an object gives every member its default; with `"typeof"` so does a function, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default                    |
 | `fromJS`           | also generates `Name::from_js(global, value)`, for a body that has a `JSValue`; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                                      |
+| `toJS`             | also generates `value.into_js(heap)`, which a dictionary that is a result has anyway, for a body that puts the object in a JS value it makes itself                                                                                  |
+| `webIDL`           | it is read as WebIDL reads one: a member can come from `Object.prototype`, an array is read like any other object, and what is not an object throws `TypeError: Type error`; every member must be optional or have a default         |
 | `reportedAs`       | what an error calls the dictionary, which defaults to the name of the type: `"options"` makes a member `options.level`, and `""` makes it `level`, for a Node function that validates under the bare name (`validateUint32(N, "N")`) |
 | `nullPrototype`    | as a result, the object has no prototype, and the inline room of `Object.create(null)`                                                                                                                                               |
 
@@ -444,12 +451,12 @@ Where there is a choice, between the alternatives of a union or between overload
 it is made on the _kind_ of the value, with the cheapest test that tells the kinds
 in play apart:
 
-| Looking at                         | Kinds                                                                            |
-| ---------------------------------- | -------------------------------------------------------------------------------- |
-| the bits of the value              | `undefined`, `null`, boolean, number                                             |
-| the type byte in the cell's header | string, BigInt, array, `ArrayBuffer`, typed array or `DataView`, `String` object |
-| `JSCell::isCallable`               | a function, or a proxy of one                                                    |
-| the cell's `ClassInfo`             | an instance of a class, a `Date`                                                 |
+| Looking at                         | Kinds                                                                                    |
+| ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| the bits of the value              | `undefined`, `null`, boolean, number                                                     |
+| the type byte in the cell's header | string, BigInt, symbol, array, `ArrayBuffer`, typed array or `DataView`, `String` object |
+| `JSCell::isCallable`               | a function, or a proxy of one                                                            |
+| the cell's `ClassInfo`             | an instance of a class, a `Date`                                                         |
 
 A strict type takes the kinds its row under [Types](#types) says. A type that coerces or
 reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
@@ -658,6 +665,7 @@ is collected, make the class [`refCounted`](#refcounted).
 | `protoCaller`    | the method that [calls every native function of `proto`](#protocaller)                         |
 | `rustTraits`     | traits to bring into scope, for members that are trait methods                                 |
 | `prototypeBase`  | `"Error"`: the prototype inherits from `Error.prototype`, and its `name` is the class's        |
+| `webIDL`         | the class is [what WebCore's bindings make of an interface](#webidl)                           |
 | `configurable`   | `true` makes the native properties configurable                                                |
 | `enumerable`     | `false` makes the native properties non-enumerable                                             |
 | `writable`       | `false` makes the native functions read-only. It is not the `writable` of a cached getter      |
@@ -693,6 +701,9 @@ pub(crate) fn constructor<'a>(
     this_value
 }
 ```
+
+With `fresh: true` next to `passStructure`, somebody has read the constructor: it returns the object it created, gives
+it no property and keeps it nowhere. `bun build --compile --aot` relies on that.
 
 A property of `proto` is one of these.
 
@@ -779,6 +790,29 @@ collected, its internal fields, which no member of the subclass names, and the m
 An instance of the subclass is of both [kinds](#unions-and-kinds), so a union or the overloads of a function take the
 base and not both.
 
+### `webIDL`
+
+For a Web API whose binding came from WebCore's generator, like `URLPattern`. With `webIDL: true` JavaScript finds what
+that binding had:
+
+- The constructor and the prototype are a `WebCore::JSDOMConstructor` and a `WebCore::JSDOMPrototype`, so
+  `DOMConstructors.h` lists the name of the class. `constructor` is the first property of the prototype, and is made
+  when it is first read. C++ gets it with `JSName::getConstructor`, not `constructorForClass`, and Rust has no
+  `get_constructor`.
+- `configurable` defaults to `true`.
+- A function throws `Can only call Name.method on instances of Name` when `this` is not an instance.
+- `new.target.prototype` is read after the arguments are converted.
+- A dictionary that is a result is made in the realm of `this`. A body gets that realm with `this_value.realm(heap)`.
+- `construct` can be a list of overloads, shortest first, each with the `rustName` of its function. How many arguments
+  the call has chooses first: a signature is a candidate if it takes that many, and those past the longest are not
+  counted. So `new A(x)` and `new A(x, undefined)` can differ. The kind of the last argument chooses among the rest as
+  in [Overloads](#overloads), except that a `webIDL` dictionary does not take a primitive.
+
+The types of the arguments are up to the schema: `b.string.usv`, `.loose`, `.wrap` and a dictionary's own `webIDL` are
+WebIDL's conversions, and `.nullable.default({})` is what it makes of a dictionary that is `undefined` or `null`.
+`extends`, `final`, `refCounted`, `forBind`, `protoCaller`, `prototypeBase`, `call`, `callInstance` and `static` do not
+go with it.
+
 ### The receiver
 
 Every member takes `&self`, a setter too, and mutable state is in `Cell` and `JsCell`. The struct implements
@@ -808,8 +842,7 @@ is not an argument type, has no `estimatedSize`, and does not implement `JsClass
 Every field starts empty. A heap snapshot shows what it holds as a property of its name.
 
 In C++ the field is `m_callback`, a `JSC::WriteBarrier<JSC::Unknown>`. In a record each field names its type: `b.any`
-is what a list declares, and `b.cell(class, header)` is a `JSC::WriteBarrier` of that `JSCell` subclass, which only
-hand-written C++ uses.
+is what a list declares, and `b.cell(class, header)` is a `JSC::WriteBarrier` of that `JSCell` subclass.
 
 ```ts
 internalFields: { failReason: b.any, pipeDone: b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h") },
@@ -819,8 +852,10 @@ internalFields: { failReason: b.any, pipeDone: b.cell("JSC::JSPromise", "JavaScr
 JSC::JSPromise* done = sinkController->m_pipeDone.get(); // null if it is empty
 ```
 
-`js_Name` has no functions for a `b.cell` field, and no getter or `internalField` property uses one. Rust reaches it
-through a [`calledFromRust`](#calls-between-c-and-rust) member function.
+No getter or `internalField` property uses a `b.cell` field. `js_Name` has functions for one that names a Rust type
+too: with `x: b.cell("JSC::RegExp", header, "bindgen::JsRegExp<'a>")`, `js_Name::x(this_value, heap)` is an
+`Option<JsRegExp<'a>>` and `js_Name::set_x(this_value, heap, value)` sets it to what `heap.create_reg_exp(..)` made.
+Otherwise Rust reaches it through a [`calledFromRust`](#calls-between-c-and-rust) member function.
 
 A getter with `cache: true` declares a field of its own name, with the same functions, and
 returns it. While the field is empty the getter calls Rust and stores the result, so emptying

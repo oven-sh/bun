@@ -512,7 +512,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
       internalFields: { x: b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h") },
       proto: { x: { internalField: "x" } },
     }),
-  ).toThrow("x: x is a b.cell field, which only C++ reads and writes");
+  ).toThrow("x: x is a b.cell field, which only native code reads and writes");
   for (const refCounted of [false, true]) {
     expect(() =>
       b.class({
@@ -535,12 +535,102 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize is only for a refCounted class");
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
   expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
+  expect(() => b.string.loose.usv).toThrow(".usv follows b.string");
+  expect(() => b.string.usv.loose).toThrow(".usv is already loose");
+  expect(() => b.string.owned.usv).toThrow("write b.string.usv.owned");
+  expect(() => b.dictionary({ x: b.i32 }, { webIDL: true })).toThrow(
+    "webIDL: every member must be optional or have a default",
+  );
+  expect(() => b.dictionary({ x: b.i32.optional }, { webIDL: true, nonObjectAsEmpty: true })).toThrow(
+    "webIDL refuses what nonObjectAsEmpty takes",
+  );
+  expect(() => b.class({ rustPath: "T", construct: { fresh: true } })).toThrow(
+    "fresh: without passStructure the object always is",
+  );
+  expect(() => b.class({ rustPath: "T", construct: [{}, { rustName: "other", args: { x: b.i32 } }] })).toThrow(
+    "construct: overloads are for a webIDL class",
+  );
+  for (const construct of [undefined, "illegal"] as const)
+    expect(() => b.class({ rustPath: "T", webIDL: true, construct })).toThrow(
+      "construct: a webIDL class is constructed by JavaScript",
+    );
+  expect(() => b.class({ rustPath: "T", webIDL: true, construct: {}, refCounted: true })).toThrow(
+    "refCounted: a webIDL class does not have it yet",
+  );
+  for (const [construct, message] of [
+    [[{}, { args: { x: b.i32 } }], "two members' Rust functions are both constructor"],
+    [[{}, { rustName: "other", args: { x: b.i32, y: b.i32 } }], "webIDL: no overload takes 1 arguments"],
+    [[{}, { rustName: "other", args: { x: b.any.variadic } }], "webIDL: an overload takes a known number of arguments"],
+    [
+      [{}, { rustName: "other", args: { x: b.i32 }, passStructure: true, capability: "heap" }],
+      "construct: every overload has the same passStructure",
+    ],
+    [
+      [{}, { rustName: "other", args: { x: b.i32 }, capability: "js" }],
+      "construct: every overload has the same capability",
+    ],
+    [
+      [{ args: { x: b.i32 } }, { rustName: "other" }],
+      "construct: an overload follows those that take or require fewer arguments",
+    ],
+    [
+      [{ args: { x: b.bool, y: b.bool } }, { rustName: "other", args: { x: b.bool.optional, y: b.string.optional } }],
+      "webIDL: the overloads that take 2 arguments share the types of all but the last",
+    ],
+  ] as const)
+    expect(() => b.class({ rustPath: "T", webIDL: true, construct })).toThrow(message);
+  expect(() =>
+    b.class({
+      rustPath: "T",
+      webIDL: true,
+      construct: {},
+      proto: { f: [{ args: { x: b.string } }, { rustName: "g", args: { x: b.f64 } }] },
+    }),
+  ).toThrow("f: a method of a webIDL class has no overloads yet");
   // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.
   const textOrBytes = b.overloads({ args: { text: b.string } }, { args: { bytes: stringOrBuffer } });
   const { dispatch } = textOrBytes;
   expect("byKind" in dispatch && dispatch.byKind.get("undefined")).toBe(textOrBytes.signatures[1]);
   // What takes undefined can come before what does not.
   b.fn({ args: { encoding: b.string.nullable, callback: b.any, length: b.f64 } });
+});
+
+itAlways("the constructor of a webIDL class is chosen by the number of arguments, then by the kind of the last", () => {
+  const input = b.string.usv.optional;
+  const options = b.dictionary({ x: b.i32.optional }, { webIDL: true }).nullable.default({});
+  const { construct } = b.class({
+    rustPath: "T",
+    webIDL: true,
+    construct: [
+      { rustName: "short", args: { input, options } },
+      { rustName: "long", args: { input, base: b.string.usv, options } },
+    ],
+  });
+  const choose = (...kinds: string[]) => {
+    let node: any = construct!.dispatch;
+    while (!node.rustName) {
+      if (node.byKind) node = node.byKind.get(kinds[node.argument]) ?? node.byKind.get("other");
+      else node = node.argument < kinds.length ? node.passed : node.notPassed;
+    }
+    return node.rustName;
+  };
+  expect({
+    none: choose(),
+    one: choose("string"),
+    two: ["undefined", "null", "other", "string", "number", "boolean", "bigint", "symbol"].map(kind =>
+      choose("string", kind),
+    ),
+    three: choose("string", "undefined", "undefined"),
+    four: choose("string", "other", "undefined", "undefined"),
+    length: construct!.length,
+  }).toEqual({
+    none: "short",
+    one: "short",
+    two: ["short", "short", "short", "long", "long", "long", "long", "long"],
+    three: "long",
+    four: "long",
+    length: 0,
+  });
 });
 
 it("custom enforceRange boundaries", () => {

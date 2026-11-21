@@ -150,6 +150,7 @@ impl BufferedReader {
     }
 
     /// Takes back the buffer a consumer was lent, unless a read from inside that delivery left bytes.
+    #[cfg(unix)]
     fn reuse_buffer(&self, mut lent: Vec<u8>) {
         lent.clear();
         self.buffer.with_taken(|buffer| {
@@ -1079,7 +1080,7 @@ impl WindowsBufferedReader {
             on_chunk(Chunk::Owned(buffer), state);
         } else if !buffer.is_empty() {
             on_chunk(Chunk::Buffer(&mut buffer), state);
-            self.reuse_buffer(buffer);
+            self.with_source(|source| source.recycle(buffer));
         }
         self.advance(state)
     }

@@ -151,7 +151,7 @@ impl FifoPool {
                     state.tasks.push_back(Queued(after));
                 }
             }
-            let (start, limit) = (now_ns(), state.spin.limit_ns() * crate::spin::tune(1, 1));
+            let (start, limit) = (now_ns(), state.spin.limit_ns());
             state.idle_since = Some(start);
             if limit > 0 && !state.is_spinning {
                 state.is_spinning = true;

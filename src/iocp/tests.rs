@@ -1048,12 +1048,21 @@ fn timers_that_keep_overrunning_yield() {
     let _ready = Request::defer(&port, || {});
     assert_eq!([0; 2].map(yields), [0, 1]);
 
-    lost_ms.set(100);
-    assert_eq!([50; 7].map(yields), [1, 0, 0, 0, 0, 1, 0]);
-
-    port.waker().wake();
-    assert_eq!(turn(&port, Duration::from_secs(10)), 1);
+    let waits = || {
+        port.waker().wake();
+        assert_eq!(turn(&port, Duration::from_secs(10)), 1);
+    };
+    waits();
     assert_eq!([500; 2].map(yields), [0, 1]);
+
+    lost_ms.set(10);
+    assert_eq!([20, 20, 5].map(yields), [1, 0, 1]);
+    lost_ms.set(50);
+    assert_eq!([50; 6].map(yields), [1, 0, 0, 0, 1, 0]);
+    waits();
+    assert_eq!([20, 20, 100].map(yields), [0, 0, 1]);
+    lost_ms.set(3_600_000);
+    assert_eq!([200, 2200, 100].map(yields), [1, 0, 1]);
 }
 
 #[test]

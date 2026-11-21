@@ -10,7 +10,12 @@ use crate::pipe_writer::WriteEvent;
 
 const IDLE_SIZE: usize = 8 * 1024;
 pub(super) const BUSY_SIZE: usize = 64 * 1024;
-pub(super) const MAX_SIZE: usize = 256 * 1024;
+const MAX_SIZE: usize = 256 * 1024;
+
+/// Few sizes, so that what is freed fits the next one.
+pub(super) fn room_for(available: usize) -> usize {
+    available.min(MAX_SIZE).next_power_of_two()
+}
 
 /// What every kind of source keeps about its reader and its writer.
 pub(super) struct Endpoint {
@@ -67,7 +72,7 @@ impl Endpoint {
     }
 
     pub(super) fn recycle(&self, mut buffer: Vec<u8>) {
-        if (1..=4 * MAX_SIZE).contains(&buffer.capacity()) {
+        if (1..=BUSY_SIZE).contains(&buffer.capacity()) {
             buffer.clear();
             self.spare.set(buffer);
         }
@@ -79,18 +84,17 @@ impl Endpoint {
     }
 
     pub(super) fn buffer_for(&self, available: usize, max_len: usize) -> Vec<u8> {
-        let mut buffer = self.spare.take();
-        let size = if self.is_busy.get() {
+        let usual = if self.is_busy.get() {
             BUSY_SIZE
         } else {
-            buffer.shrink_to(BUSY_SIZE);
             IDLE_SIZE
         };
-        buffer.reserve(
-            size.max(available.min(bun_threading::spin::tune(12, MAX_SIZE as u64) as usize))
-                .min(max_len),
-        );
-        buffer
+        let size = usual.max(room_for(available)).min(max_len);
+        let spare = self.spare.take();
+        match spare.capacity() >= size {
+            true => spare,
+            false => Vec::with_capacity(size),
+        }
     }
 
     pub(super) fn expect_much(&self) {

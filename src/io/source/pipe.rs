@@ -9,10 +9,9 @@ use bun_ptr::{CellExt as _, OptionCellExt as _};
 use bun_sys::windows::named_pipe::{self, Kind};
 use bun_sys::windows::{self as w, NT_ERROR, NTSTATUS, Win32Error, Win32ErrorExt as _};
 use bun_sys::{self as sys, E, Fd, Tag};
-use bun_threading::spin::tune;
 
 use super::Payload;
-use super::endpoint::{BUSY_SIZE, Endpoint, HasEndpoint, MAX_SIZE};
+use super::endpoint::{BUSY_SIZE, Endpoint, HasEndpoint, room_for};
 use crate::pipe_reader::ReadEvent;
 use crate::pipe_writer::WriteEvent;
 
@@ -21,6 +20,9 @@ const RETRY_AFTER: Duration = Duration::from_millis(5);
 
 /// More than a pipe holds.
 const MAX_AVAILABLE: usize = 256 * 1024;
+
+/// What a pipe holds, and a write that waits for room. Half as many reads run into the writer half as often.
+const STREAM_SIZE: usize = 2 * BUSY_SIZE;
 
 /// For one event.
 const MAX_READS: usize = 32;
@@ -188,6 +190,10 @@ impl Pipe {
             Some(Err(_)) | None => Vec::new(),
         };
         if !this.endpoint.is_holding() {
+            this.size_next_read(&data);
+            if data.is_empty() {
+                this.endpoint.recycle(core::mem::take(&mut data));
+            }
             let enough = data.len() + MAX_AVAILABLE;
             this.add_what_followed(&mut data, enough);
             if data.is_empty() {
@@ -304,7 +310,7 @@ impl Inner {
         }
         let handle = self.handle.raw();
         match self.io.get() {
-            Some(Io::Overlapped(file)) if self.is_input_shared.get() || tune(14, 0) == 1 => {
+            Some(Io::Overlapped(file)) if self.is_input_shared.get() => {
                 let done = self.on_read(Inner::on_readable);
                 self.started_read(file.read(Vec::new(), 0, done));
             }
@@ -316,11 +322,7 @@ impl Inner {
             }
             // It would wait for the write, which starts it when it has ended.
             Some(Io::Synchronous) | None if self.write.is_some() => {}
-            Some(Io::Synchronous)
-                if take == Take::Now
-                    && (tune(13, 0) == 1 || named_pipe::is_left_alone(handle))
-                    && tune(12, 1) > 0 =>
-            {
+            Some(Io::Synchronous) if take == Take::Now && named_pipe::is_left_alone(handle) => {
                 match named_pipe::input(handle) {
                     Ok(Some(available)) => self.read_here(available, max_len),
                     _ => self.read_on_thread(max_len, Take::OnceThereIsSome),
@@ -345,13 +347,10 @@ impl Inner {
         file: &AsyncFile,
         max_len: usize,
     ) -> Result<Request, Completion> {
-        let size = match self.was_full.get() {
-            true => (tune(18, 0) as usize).max(BUSY_SIZE),
-            false => 0,
-        };
-        let max_len = max_len.min(size.max(BUSY_SIZE));
+        let expected = if self.was_full.get() { STREAM_SIZE } else { 0 };
+        let max_len = max_len.min(expected.max(BUSY_SIZE));
         let done = self.on_read(Inner::on_data);
-        file.read(self.endpoint.buffer_for(size, max_len), max_len, done)
+        file.read(self.endpoint.buffer_for(expected, max_len), max_len, done)
     }
 
     fn started_read(self: &Rc<Self>, started: Result<Request, Completion>) {
@@ -394,6 +393,7 @@ impl Inner {
             match started.map(Request::take_immediate) {
                 Ok(Ok(more)) if more.buffer.is_empty() => return,
                 Ok(Ok(more)) => {
+                    self.size_next_read(&more.buffer);
                     data.extend_from_slice(&more.buffer);
                     self.endpoint.recycle(more.buffer);
                 }
@@ -403,20 +403,26 @@ impl Inner {
         }
     }
 
+    /// `true` if more is to be expected.
+    fn size_next_read(&self, read: &Vec<u8>) -> bool {
+        self.was_full.set(read.len() >= BUSY_SIZE);
+        let is_much = !read.is_empty() && read.len() >= read.capacity().min(BUSY_SIZE);
+        if is_much {
+            self.endpoint.expect_much();
+        }
+        is_much
+    }
+
     fn on_data(self: Rc<Self>, completion: Completion) {
         let (status, mut buffer) = (completion.status, completion.buffer);
-        self.was_full
-            .set(buffer.len() >= BUSY_SIZE && tune(18, 0) > 0);
+        let is_much = self.size_next_read(&buffer);
         if !buffer.is_empty() {
-            if buffer.len() >= buffer.capacity().min(BUSY_SIZE) {
-                self.endpoint.expect_much();
+            if is_much {
                 self.endpoint.port.expect_more();
             } else {
                 self.endpoint.port.did_receive();
             }
-            if tune(14, 0) == 0 && (tune(15, 0) == 0 || buffer.len() < BUSY_SIZE) {
-                self.add_what_followed(&mut buffer, tune(19, BUSY_SIZE as u64) as usize);
-            }
+            self.add_what_followed(&mut buffer, BUSY_SIZE);
             self.endpoint.hold(ReadEvent::Data(buffer));
             return self.report_read();
         }
@@ -629,11 +635,10 @@ fn read_synchronous<T: Send + 'static>(
             if take == Some(Take::Now)
                 && let Some(available) = named_pipe::input(handle)?
             {
-                buffer.reserve(
-                    available
-                        .min(max_len)
-                        .min(tune(8, MAX_SIZE as u64) as usize),
-                );
+                let size = room_for(available).min(max_len);
+                if buffer.capacity() < size {
+                    buffer = Vec::with_capacity(size);
+                }
                 break;
             }
             if take.is_none() {

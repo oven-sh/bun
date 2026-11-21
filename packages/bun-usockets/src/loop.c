@@ -523,12 +523,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * Only on a tick that really parks: there is no time to sweep in a poll that returns at once.
      * With no scavenger to hand off to, fall back to sweeping inline, rate-limited, because doing
      * it between ticks is what we are avoiding. */
-#ifdef _WIN32
-    extern int us_tmp_hands_off(void);
-    const int handed_off = will_idle_inside_event_loop && us_tmp_hands_off() && mi_on_thread_idle_start();
-#else
     const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
-#endif
     if (!handed_off && will_idle_inside_event_loop) {
         static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
         static _Thread_local uint64_t last_idle_sweep_ns = 0;

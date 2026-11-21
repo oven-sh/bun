@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_threading::spin::{Spin, has_other_cpu, tune};
+use bun_threading::spin::{Spin, has_other_cpu};
 use bun_threading::{Condition, Guarded};
 use bun_windows_sys::Win32Error;
 
@@ -116,9 +116,9 @@ pub struct Port {
     busy_since_ns: Cell<u64>,
     expects_more: Cell<bool>,
     has_overdue_timer: Cell<bool>,
-    /// `None` after a `wait` that had time.
-    yields_at_ns: Cell<Option<u64>>,
-    is_stream: Cell<bool>,
+    /// A timer has been overdue since the last `park`.
+    is_overrun: Cell<bool>,
+    next_yield_ns: Cell<u64>,
     /// How many turns in a row have only received what was there at once, and when the last one began.
     flood: Cell<(u32, u64)>,
     /// The time when it is deferred, and the key and context of the packet.
@@ -158,8 +158,8 @@ impl Port {
             busy_since_ns: Cell::new(now_ns()),
             expects_more: Cell::new(false),
             has_overdue_timer: Cell::new(false),
-            yields_at_ns: Cell::new(None),
-            is_stream: Cell::new(false),
+            is_overrun: Cell::new(false),
+            next_yield_ns: Cell::new(0),
             flood: Cell::new((0, 0)),
             delayed: RefCell::default(),
             holds: Cell::new(0),
@@ -196,7 +196,6 @@ impl Port {
     /// A writer has been waiting for room, and is about to go on.
     pub fn expect_more(&self) {
         self.expects_more.set(true);
-        self.is_stream.set(tune(10, 0) == 1);
     }
 
     pub fn did_send(&self) {
@@ -291,25 +290,21 @@ impl Port {
         let may_be_flood = only_receives && timeout_ns != Some(0);
         if may_be_flood && turns >= TURNS_TO_FLOOD && has_other_cpu() {
             // A sender pays for every time that it has to tell us.
-            while now_ns() < began_at + tune(2, FLOOD_TURN_NS) {
+            while now_ns() < began_at + FLOOD_TURN_NS {
                 core::hint::spin_loop();
             }
         }
         let mut is_at_once = true;
-        let start = if tune(6, 0) == 1 { now_ns() } else { 0 };
         if timeout_ns == Some(0) || self.has_work() {
             self.fill_batch(Timeout::Now);
-            if has_overdue_timer && tune(17, 1) > 0 {
+            if has_overdue_timer {
                 self.yield_now_and_then();
             }
         } else {
-            self.yields_at_ns.set(None);
+            self.is_overrun.set(false);
             self.shared.is_parked.store(true, Ordering::SeqCst);
             is_at_once = self.park(timeout_ns, only_receives);
             self.shared.is_parked.store(false, Ordering::SeqCst);
-        }
-        if tune(6, 0) == 1 {
-            is_at_once = now_ns() - start < 10_000;
         }
         if may_be_flood && is_at_once {
             // After a pause there is always something, so it has to show itself again.
@@ -321,24 +316,21 @@ impl Port {
     /// The system leaves the CPU to a thread that never waits for up to 190 ms at a time.
     fn yield_now_and_then(&self) {
         const CLOCK_TICK_NS: u64 = 15_625_000;
+        const MAX_QUANTUM_NS: u64 = 12 * CLOCK_TICK_NS;
         let now = now_ns();
-        let mut due = self.yields_at_ns.get().unwrap_or(now + CLOCK_TICK_NS);
-        if now >= due && !self.has_work() && !self.was_full.get() {
-            let busy_since = self.busy_since_ns.get();
-            if tune(21, 0) > 0 {
-                self.park(Some(tune(21, 0)), true);
-            } else {
-                std::thread::yield_now();
-            }
-            let lost = now_ns().saturating_sub(now);
-            self.busy_since_ns.set(busy_since + lost);
-            // Whoever keeps the CPU for long does not wait either.
-            due = now + lost + tune(20, 2) * lost + CLOCK_TICK_NS;
-            if tune(21, 0) == 0 {
-                self.fill_batch(Timeout::Now);
-            }
+        if !self.is_overrun.replace(true) {
+            (self.next_yield_ns).update(|next| next.max(now + CLOCK_TICK_NS));
         }
-        self.yields_at_ns.set(Some(due));
+        if now < self.next_yield_ns.get() || self.has_work() || self.was_full.get() {
+            return;
+        }
+        std::thread::yield_now();
+        let lost = now_ns().saturating_sub(now);
+        self.busy_since_ns.update(|since| since + lost);
+        // Whoever keeps the CPU for long does not wait either.
+        let pause = lost.min(MAX_QUANTUM_NS).pow(2) / CLOCK_TICK_NS;
+        (self.next_yield_ns).set(now + lost + pause + CLOCK_TICK_NS);
+        self.fill_batch(Timeout::Now);
     }
 
     /// `true` if the first look was enough. With `only_receives`, that look does not wait.
@@ -348,12 +340,7 @@ impl Port {
         let next_due = self.delayed.borrow().peek().map(|entry| entry.0.0);
         let deadline = (timeout_ns.map_or(u64::MAX, |timeout| start.saturating_add(timeout)))
             .min(next_due.unwrap_or(u64::MAX));
-        let awake_ns = if only_receives || self.is_stream.take() {
-            0
-        } else {
-            spin.limit_ns() * tune(0, 1)
-        };
-        let only_receives = only_receives && tune(6, 0) == 0;
+        let awake_ns = if only_receives { 0 } else { spin.limit_ns() };
         let (mut now, awake_until, mut is_first) = (start, start + awake_ns, true);
         loop {
             let timeout = match deadline {
@@ -408,7 +395,7 @@ impl Port {
 
     /// Takes packets from the system, which writes the results of requests then, and dispatches them later.
     pub(crate) fn fetch(&self, timeout: Timeout) {
-        let packets = [const { Cell::new(Packet::EMPTY) }; 16];
+        let packets = [const { Cell::new(Packet::EMPTY) }; BATCH];
         let removed = sys::remove_packets(&self.shared.handle, &packets, timeout);
         for packet in packets[..removed].iter().map(Cell::get) {
             if self.receive(packet) {
@@ -465,17 +452,8 @@ impl Port {
     /// `false` if nothing has come, or something else is first.
     fn dispatch_soon(&self, on_event: &impl Fn(Event)) -> bool {
         const SOON_NS: u64 = 50_000;
-        if self.has_work() || !has_other_cpu() || tune(3, 1) == 0 {
+        if self.has_work() || !has_other_cpu() {
             return false;
-        }
-        if tune(3, 1) > 1 {
-            self.park(Some(tune(3, 1)), false);
-            if self.end.get() == 0 {
-                return false;
-            }
-            self.dispatch_batch(on_event);
-            self.prepare();
-            return true;
         }
         let deadline = now_ns() + SOON_NS;
         while !self.fill_batch(Timeout::Now) {
@@ -588,9 +566,4 @@ impl Drop for Hold {
     fn drop(&mut self) {
         self.set(false);
     }
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn us_tmp_hands_off() -> i32 {
-    tune(9, 1) as i32
 }

@@ -2871,3 +2871,16 @@ it.skipIf(!isWindows)("resourceUsage() answers for a process that is running", a
   await proc.stdout.getReader().read();
   expect(proc.resourceUsage()!.maxRSS).toBeGreaterThan(0);
 });
+
+it.concurrent.skipIf(!isWindows)("much output arrives in chunks of twice what the pipe holds", async () => {
+  const count = () => Uint32Array.from({ length: 1 << 18 }, (_, i) => i);
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", `require("fs").writeSync(1, (${count})())`],
+    env: bunEnv,
+    stdout: "pipe",
+  });
+  const chunks = await Array.fromAsync(proc.stdout);
+  expect(Buffer.concat(chunks).equals(new Uint8Array(count().buffer))).toBe(true);
+  expect(chunks.map(chunk => chunk.length)).toContain(128 * 1024);
+  expect(await proc.exited).toBe(0);
+});

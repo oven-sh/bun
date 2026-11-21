@@ -147,10 +147,12 @@ impl ReadFile {
 
 fn read_stream(file: &JobFile, max_length: usize, blocking: &Blocking) -> sys::Result<Vec<u8>> {
     const MIN_READ: usize = 64 * 1024;
+    /// As it doubles, there is room to find the end of an input whose size is a power of two.
+    const FIRST_CAPACITY: usize = MIN_READ + 4 * 1024;
     /// The system touches every page of the buffer in front of each read.
     const MAX_READ: usize = 1024 * 1024;
 
-    let mut bytes = Vec::new();
+    let mut bytes = Vec::with_capacity(max_length.min(FIRST_CAPACITY));
     while bytes.len() < max_length {
         let left = max_length - bytes.len();
         if bytes.len() > MAX_BUFFER || bytes.try_reserve(left.min(MIN_READ)).is_err() {

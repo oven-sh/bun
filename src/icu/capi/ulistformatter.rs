@@ -1,7 +1,7 @@
 //! `unicode/ulistformatter.h`
 
 use crate::capi::ffi::raw::ulistformatter::{Lengths, StringPtrs};
-use crate::capi::ffi::{CallerMem, Dest, ErrorCode, MayAlias, Mut, NulStr, Owned, Ref, UChar};
+use crate::capi::ffi::{CallerMem, Dest, ErrorCode, NonNullHandle, NulStr, UChar};
 use crate::capi::uformattedvalue::UFormattedValue;
 use crate::common::locid::Locale;
 use crate::common::memory::{self, Appendable};
@@ -9,14 +9,11 @@ use crate::common::utypes::*;
 use crate::i18n::listformatter::ListFormatter;
 use bun_icu_macros::capi;
 use std::ffi::c_int;
-use std::ptr::null;
+use std::ptr::{from_ref, null};
 
 pub(crate) type UListFormatter = ListFormatter;
 
 pub(crate) type UFormattedList = UFormattedValue;
-
-/// "FLST" in ASCII.
-pub(crate) const MAGIC: i32 = 0x464C_5354;
 
 /// Indexed by `UListFormatterType` and then by `UListFormatterWidth`.
 const STYLES: [[&[u8]; 3]; 3] = [
@@ -47,7 +44,7 @@ fn ulistfmt_openForType(
     type_: c_int,
     width: c_int,
     status: ErrorCode,
-) -> *mut UListFormatter {
+) -> Option<Box<UListFormatter>> {
     status.open(|cx, _| {
         let style = STYLES
             .get(type_ as usize)
@@ -58,30 +55,31 @@ fn ulistfmt_openForType(
 }
 
 #[capi]
-fn ulistfmt_close(listfmt: Owned<UListFormatter>) {
-    listfmt.close()
+fn ulistfmt_close(listfmt: Option<Box<UListFormatter>>) {
+    drop(listfmt);
 }
 
 #[capi]
-fn ulistfmt_openResult(ec: ErrorCode) -> *mut UFormattedList {
-    ec.open(|_, _| Ok(UFormattedValue::new_unset(MAGIC)))
+fn ulistfmt_openResult(ec: ErrorCode) -> Option<Box<UFormattedList>> {
+    ec.open(|_, _| Ok(UFormattedValue::new_unset()))
 }
 
 #[capi]
-fn ulistfmt_resultAsValue(uresult: Ref<UFormattedList>, ec: ErrorCode) -> *const UFormattedValue {
-    ec.run_no_alloc(null(), |_, _| {
-        UFormattedValue::validate(uresult, MAGIC).map(|_| uresult.as_ptr())
-    })
+fn ulistfmt_resultAsValue(
+    uresult: Option<&UFormattedList>,
+    ec: ErrorCode,
+) -> *const UFormattedValue {
+    ec.run_no_alloc(null(), |_, _| uresult.non_null().map(from_ref))
 }
 
 #[capi]
-fn ulistfmt_closeResult(uresult: Owned<UFormattedList>) {
-    UFormattedValue::close(uresult, MAGIC)
+fn ulistfmt_closeResult(uresult: Option<Box<UFormattedList>>) {
+    drop(uresult);
 }
 
 #[capi]
 fn ulistfmt_format(
-    listfmt: Ref<UListFormatter>,
+    listfmt: Option<&UListFormatter>,
     #[len(_count)] strings: StringPtrs,
     #[len(_count)] lengths: Lengths,
     _count: i32,
@@ -91,7 +89,7 @@ fn ulistfmt_format(
     status.run(-1, |cx, status| {
         result.check()?;
         match listfmt
-            .get()?
+            .non_null()?
             .format(&get_unicode_strings(cx, strings, lengths)?)
         {
             Ok(list) => Ok(cx.extract_to(list.text(), result, status)),
@@ -105,20 +103,18 @@ fn ulistfmt_format(
 
 #[capi]
 fn ulistfmt_formatStringsToResult(
-    listfmt: Ref<UListFormatter>,
-    #[len(_count)] strings: MayAlias<StringPtrs, UFormattedList>,
+    listfmt: Option<&UListFormatter>,
+    #[len(_count)] strings: StringPtrs,
     #[len(_count)] lengths: Lengths,
     _count: i32,
-    uresult: Mut<UFormattedList>,
+    uresult: Option<&mut UFormattedList>,
     status: ErrorCode,
 ) {
     status.run((), |cx, _| {
-        UFormattedValue::validate(uresult.cast_const(), MAGIC)?;
-        let list = listfmt.get()?.format(&get_unicode_strings(
-            cx,
-            strings.tied_to(&uresult),
-            lengths,
-        )?);
-        uresult.get_mut().and_then(|result| result.set(list))
+        let result = uresult.non_null()?;
+        let list = listfmt
+            .non_null()?
+            .format(&get_unicode_strings(cx, strings, lengths)?);
+        result.set(list)
     })
 }

@@ -1,12 +1,11 @@
 //! `unicode/ucal.h`: calendars and time zones.
 
 use crate::capi::ffi::{
-    self, CallerMem, Dest, ErrorCode, LocalHandle, Mut, NulStr, Null, Out, Owned, Ref, Text, UBool,
-    UChar,
+    self, CallerMem, Dest, ErrorCode, NonNullHandle, NulStr, Null, Out, Text, UBool, UChar,
 };
 use crate::capi::uenum::{self, UEnumeration};
 use crate::common::locid::Locale;
-use crate::common::memory::{try_box_result, try_to_vec};
+use crate::common::memory::try_to_vec;
 use crate::common::uloc::ulocimp_set_keyword_value;
 use crate::common::utypes::*;
 use crate::i18n::calendar::{Calendar, CalendarType, Field, SharedCalendar};
@@ -18,11 +17,6 @@ use bun_icu_macros::capi;
 use std::ffi::c_char;
 
 pub(crate) type UCalendar = SharedCalendar;
-
-/// Perf: builds the `UCalendar`, which is three times as large, in its box.
-fn boxed(mut cal: Result<Calendar, UErrorCode>) -> Result<LocalHandle<UCalendar>, UErrorCode> {
-    try_box_result(&mut cal).map(LocalHandle::new)
-}
 
 /// Null, for the default zone, is not accepted.
 pub(crate) fn zone_for_id(cx: &CallerMem, id: Text<'_, UChar>) -> Result<TimeZone, UErrorCode> {
@@ -64,7 +58,7 @@ fn ucal_open(
     locale: NulStr<u8>,
     cal_type: UCalendarType,
     status: ErrorCode,
-) -> *mut UCalendar {
+) -> Option<Box<UCalendar>> {
     status.open(|cx, _| {
         let zone = (!zone_id.is_null()).then(|| zone_for_id(cx, zone_id));
         let locale = locale_id(cx, locale)?;
@@ -75,72 +69,76 @@ fn ucal_open(
         } else {
             Locale::from_name(locale)
         };
-        boxed(Calendar::for_locale(zone.transpose()?, &locale))
+        Calendar::for_locale(zone.transpose()?, &locale)
     })
 }
 
 #[capi]
-fn ucal_close(cal: Owned<UCalendar>) {
-    cal.close()
+fn ucal_close(cal: Option<Box<UCalendar>>) {
+    drop(cal);
 }
 
 #[capi]
-fn ucal_clone(cal: Ref<UCalendar>, status: ErrorCode) -> *mut UCalendar {
-    status.open(|_, _| boxed(cal.get().map(|cal| Calendar::clone(cal))))
+fn ucal_clone(cal: Option<&UCalendar>, status: ErrorCode) -> Option<Box<UCalendar>> {
+    status.open(|_, _| cal.non_null().map(|cal| Calendar::clone(cal)))
 }
 
 #[capi]
-fn ucal_setTimeZone(cal: Mut<UCalendar>, (zone_id, _): Text<UChar>, status: ErrorCode) {
+fn ucal_setTimeZone(cal: Option<&mut UCalendar>, (zone_id, _): Text<UChar>, status: ErrorCode) {
     status.run((), |cx, _| {
-        cal.get_mut()?.set_time_zone(zone_for_id(cx, zone_id)?)
+        cal.non_null()?.set_time_zone(zone_for_id(cx, zone_id)?)
     })
 }
 
 #[capi]
-fn ucal_setGregorianChange(cal: Mut<UCalendar>, date: UDate, status: ErrorCode) {
-    status.run((), |_, _| cal.get_mut()?.set_gregorian_change(date))
+fn ucal_setGregorianChange(cal: Option<&mut UCalendar>, date: UDate, status: ErrorCode) {
+    status.run((), |_, _| cal.non_null()?.set_gregorian_change(date))
 }
 
 /// Accepts `UCAL_FIRST_DAY_OF_WEEK`.
 #[capi]
-fn ucal_getAttribute(cal: Ref<UCalendar>, attr: UCalendarAttribute) -> i32 {
+fn ucal_getAttribute(cal: Option<&UCalendar>, attr: UCalendarAttribute) -> i32 {
     debug_assert!(attr == UCAL_FIRST_DAY_OF_WEEK);
-    cal.get().map_or(-1, |cal| cal.first_day_of_week())
+    cal.map_or(-1, |cal| cal.first_day_of_week())
 }
 
 #[capi]
-fn ucal_getMillis(cal: Ref<UCalendar>, status: ErrorCode) -> UDate {
-    status.run(0.0, |_, _| Ok(cal.get()?.timed()?.internal_get_time()))
+fn ucal_getMillis(cal: Option<&UCalendar>, status: ErrorCode) -> UDate {
+    status.run(0.0, |_, _| Ok(cal.non_null()?.timed()?.internal_get_time()))
 }
 
 /// Panics if `cal` is null: `DateCache` keeps the result of a failed `ucal_open`, and takes each error for UTC.
 #[capi]
-fn ucal_setMillis(cal: Mut<UCalendar>, date_time: UDate, status: ErrorCode) {
+fn ucal_setMillis(cal: Option<&mut UCalendar>, date_time: UDate, status: ErrorCode) {
     status.run_no_alloc((), |_, _| {
-        let cal = cal.get_mut();
-        assert!(cal.is_ok(), "ucal_open has failed");
-        cal?.set_time(date_time)
+        assert!(cal.is_some(), "ucal_open has failed");
+        cal.non_null()?.set_time(date_time)
     })
 }
 
 /// Accepts the extended year, the month and the date of a calendar that is not Gregorian, while the offset stays.
 #[capi]
-fn ucal_add(cal: Mut<UCalendar>, field: UCalendarDateFields, amount: i32, status: ErrorCode) {
-    status.run((), |_, _| cal.get_mut()?.add(to_field(field)?, amount))
+fn ucal_add(
+    cal: Option<&mut UCalendar>,
+    field: UCalendarDateFields,
+    amount: i32,
+    status: ErrorCode,
+) {
+    status.run((), |_, _| cal.non_null()?.add(to_field(field)?, amount))
 }
 
 #[capi]
-fn ucal_get(cal: Ref<UCalendar>, field: UCalendarDateFields, status: ErrorCode) -> i32 {
+fn ucal_get(cal: Option<&UCalendar>, field: UCalendarDateFields, status: ErrorCode) -> i32 {
     status.run(-1, |_, status| {
         let field = to_field(field)?;
-        Ok(ffi::unwrap_or_set(cal.get()?.get(field), 0, status))
+        Ok(ffi::unwrap_or_set(cal.non_null()?.get(field), 0, status))
     })
 }
 
 /// Accepts the extended year, a month in range, the leap month, the date, the hour, and the era and year of "ethioaa".
 #[capi]
-fn ucal_set(cal: Mut<UCalendar>, field: UCalendarDateFields, value: i32) {
-    let Ok(cal) = cal.get_mut() else {
+fn ucal_set(cal: Option<&mut UCalendar>, field: UCalendarDateFields, value: i32) {
+    let Some(cal) = cal else {
         return;
     };
     debug_assert!(match field {
@@ -154,8 +152,8 @@ fn ucal_set(cal: Mut<UCalendar>, field: UCalendarDateFields, value: i32) {
 }
 
 #[capi]
-fn ucal_clear(calendar: Mut<UCalendar>) {
-    if let Ok(cal) = calendar.get_mut() {
+fn ucal_clear(calendar: Option<&mut UCalendar>) {
+    if let Some(cal) = calendar {
         cal.clear();
     }
 }
@@ -163,13 +161,13 @@ fn ucal_clear(calendar: Mut<UCalendar>) {
 /// Accepts the actual maximum of the month, the date and the day of the year, and the least maximum of the latter.
 #[capi]
 fn ucal_getLimit(
-    cal: Ref<UCalendar>,
+    cal: Option<&UCalendar>,
     field: UCalendarDateFields,
     limit_type: UCalendarLimitType,
     status: ErrorCode,
 ) -> i32 {
     status.run(-1, |_, _| {
-        let cal = cal.get()?;
+        let cal = cal.non_null()?;
         match (field, limit_type) {
             (UCAL_MONTH, UCAL_ACTUAL_MAXIMUM) => Ok(cal.last_month()),
             (UCAL_DATE, UCAL_ACTUAL_MAXIMUM) => cal.days_in_month(),
@@ -186,7 +184,7 @@ fn ucal_getKeywordValuesForLocale(
     locale: NulStr<u8>,
     commonly_used: UBool,
     status: ErrorCode,
-) -> *mut UEnumeration {
+) -> Option<Box<UEnumeration>> {
     status.open(|cx, _| {
         uenum::open_boxed(CalendarType::keyword_values_for_locale(
             locale_id(cx, locale)?,
@@ -197,7 +195,7 @@ fn ucal_getKeywordValuesForLocale(
 
 #[capi]
 fn ucal_getDayOfWeekType(
-    cal: Ref<UCalendar>,
+    cal: Option<&UCalendar>,
     day_of_week: UCalendarDaysOfWeek,
     status: ErrorCode,
 ) -> UCalendarWeekdayType {
@@ -205,7 +203,7 @@ fn ucal_getDayOfWeekType(
         if !(UCAL_SUNDAY..=UCAL_SATURDAY).contains(&day_of_week) {
             return Err(U_ILLEGAL_ARGUMENT_ERROR);
         }
-        Ok(if cal.get()?.is_weekend(day_of_week) {
+        Ok(if cal.non_null()?.is_weekend(day_of_week) {
             UCAL_WEEKEND
         } else {
             UCAL_WEEKDAY
@@ -216,13 +214,13 @@ fn ucal_getDayOfWeekType(
 /// Accepts all types but `UCAL_TZ_TRANSITION_NEXT_INCLUSIVE`.
 #[capi]
 fn ucal_getTimeZoneTransitionDate(
-    cal: Ref<UCalendar>,
+    cal: Option<&UCalendar>,
     transition_type: UTimeZoneTransitionType,
     transition: Out<UDate>,
     status: ErrorCode,
 ) -> UBool {
     status.run(0, |cx, _| {
-        let cal = cal.get()?.timed()?;
+        let cal = cal.non_null()?.timed()?;
         let (zone, base) = (cal.time_zone()?, cal.internal_get_time());
         let found = match transition_type {
             UCAL_TZ_TRANSITION_NEXT => zone.get_next_transition(base),
@@ -244,7 +242,7 @@ fn ucal_getTimeZoneTransitionDate(
 /// Accepts `UCAL_TZ_LOCAL_FORMER` and `UCAL_TZ_LOCAL_LATTER`.
 #[capi]
 fn ucal_getTimeZoneOffsetFromLocal(
-    cal: Ref<UCalendar>,
+    cal: Option<&UCalendar>,
     non_existing_time_opt: UTimeZoneLocalOption,
     duplicated_time_opt: UTimeZoneLocalOption,
     raw_offset: Out<i32>,
@@ -257,7 +255,7 @@ fn ucal_getTimeZoneOffsetFromLocal(
         _ => Err(U_UNSUPPORTED_ERROR),
     };
     status.run((), |cx, _| {
-        let cal = cal.get()?.timed()?;
+        let cal = cal.non_null()?.timed()?;
         if raw_offset.is_null() || dst_offset.is_null() {
             return Err(U_ILLEGAL_ARGUMENT_ERROR);
         }
@@ -281,7 +279,7 @@ fn ucal_openTimeZoneIDEnumeration(
     region: NulStr<u8>,
     raw_offset: Null,
     ec: ErrorCode,
-) -> *mut UEnumeration {
+) -> Option<Box<UEnumeration>> {
     ec.open(|cx, _| {
         if zone_type != UCAL_ZONE_TYPE_CANONICAL || !raw_offset.is_null() {
             return Err(U_UNSUPPORTED_ERROR);
@@ -295,7 +293,7 @@ fn ucal_openTimeZoneIDEnumeration(
 }
 
 #[capi]
-fn ucal_openTimeZones(ec: ErrorCode) -> *mut UEnumeration {
+fn ucal_openTimeZones(ec: ErrorCode) -> Option<Box<UEnumeration>> {
     ec.open(|_, _| uenum::open_boxed(TZEnumeration::all()?))
 }
 
@@ -348,7 +346,7 @@ fn ucal_getIanaTimeZoneID(
 /// Accepts `UCAL_STANDARD` and `UCAL_DST`.
 #[capi]
 fn ucal_getTimeZoneDisplayName(
-    cal: Ref<UCalendar>,
+    cal: Option<&UCalendar>,
     display_type: UCalendarDisplayNameType,
     locale: NulStr<u8>,
     (result, _): Dest<UChar>,
@@ -361,7 +359,7 @@ fn ucal_getTimeZoneDisplayName(
             _ => return Err(U_UNSUPPORTED_ERROR),
         };
         let locale = Locale::from_name(locale_id(cx, locale)?);
-        let name = tzfmt::display_name(cal.get()?.time_zone()?, is_daylight, &locale);
+        let name = tzfmt::display_name(cal.non_null()?.time_zone()?, is_daylight, &locale);
         Ok(cx.extract_to(&name, result, status))
     })
 }

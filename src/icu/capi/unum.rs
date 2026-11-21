@@ -1,6 +1,6 @@
 //! `unicode/unum.h`
 
-use crate::capi::ffi::{ErrorCode, Mut, NulStr, Null, Owned, Text, UChar};
+use crate::capi::ffi::{ErrorCode, NulStr, Null, Text, UChar};
 use crate::common::locid::Locale;
 use crate::common::utypes::*;
 use crate::i18n::numfmt::NumberFormat;
@@ -55,7 +55,7 @@ fn unum_open(
     locale: NulStr<u8>,
     parse_err: Null,
     status: ErrorCode,
-) -> *mut UNumberFormat {
+) -> Option<Box<UNumberFormat>> {
     status.open(|cx, _| {
         if style != UNUM_DECIMAL || !parse_err.is_null() {
             return Err(U_UNSUPPORTED_ERROR);
@@ -68,16 +68,20 @@ fn unum_open(
 }
 
 #[capi]
-fn unum_close(fmt: Owned<UNumberFormat>) {
-    fmt.close()
+fn unum_close(fmt: Option<Box<UNumberFormat>>) {
+    drop(fmt);
 }
 
 /// Accepts only the pairs in `ATTRIBUTES`.
 #[capi]
-fn unum_setAttribute(fmt: Mut<UNumberFormat>, attr: UNumberFormatAttribute, new_value: i32) {
+fn unum_setAttribute(
+    fmt: Option<&mut UNumberFormat>,
+    attr: UNumberFormatAttribute,
+    new_value: i32,
+) {
     let index = ATTRIBUTES.iter().position(|&it| it == (attr, new_value));
     debug_assert!(index.is_some());
-    if let Ok(fmt) = fmt.get_mut() {
+    if let Some(fmt) = fmt {
         fmt.attributes_set |= 1 << index.unwrap_or(ATTRIBUTES.len());
     }
 }

@@ -15,8 +15,9 @@ WebKit without `BUN_ICU_ROOT`.
 ## When a caller changes
 
 - A function that is missing fails the link (`undefined symbol: ucal_roll_79`).
-- An argument that is not supported gives `U_UNSUPPORTED_ERROR`, or fails a debug assertion if there is no status. The
+- An argument that is not supported gives `U_UNSUPPORTED_ERROR`, or fails a debug assertion. The
   comment at the function in `capi/` says which values it takes. Compare the calls of ICU when you upgrade WebKit.
+- Nothing checks the rules for pointers under "Exported functions".
 - JavaScriptCore passes its default locale on with all its keywords, so any keyword can arrive.
 - Of the `U_USING_*` warnings only `U_USING_DEFAULT_WARNING` is set, by `ucurr_getName`, whose caller reads it.
 
@@ -43,21 +44,21 @@ fn u_strToLower((dest, _): Dest<UChar>, (src, _): Text<UChar>, locale: NulStr<u8
 The body is safe code. The signature is trusted: each type states what the header guarantees. `(s, length): T` stands for
 two C parameters, `#[len(n)] s: T` takes the second from a later parameter, and `cx` in first place is no C parameter.
 
-| C                                  | Rust               |
-| ---------------------------------- | ------------------ |
-| `const char *s`                    | `NulStr<u8>`       |
-| `const UChar *s, int32_t length`   | `Text<UChar>`      |
-| `const T *array, int32_t length`   | `Array<T>`         |
-| `T *dest, int32_t capacity`        | `Dest<T>`          |
-| `T *result`                        | `Out<T>`           |
-| `T *` that all callers leave null  | `Null`             |
-| `const UObject *`, `UObject *`     | `Ref<H>`, `Mut<H>` |
-| `UObject *` to close or adopt      | `Owned<H>`         |
-| `UErrorCode *`                     | `ErrorCode`        |
-| `P` that may point into a `Mut<H>` | `MayAlias<P, H>`   |
-| `P` that the object keeps          | `Retained<P>`      |
+| C                                   | Rust                           |
+| ----------------------------------- | ------------------------------ |
+| `const char *s`                     | `NulStr<u8>`                   |
+| `const UChar *s, int32_t length`    | `Text<UChar>`                  |
+| `const T *array, int32_t length`    | `Array<T>`                     |
+| `T *dest, int32_t capacity`         | `Dest<T>`                      |
+| `T *result`                         | `Out<T>`                       |
+| `T *` that all callers leave null   | `Null`                         |
+| `const UObject *`, `UObject *`      | `Option<&H>`, `Option<&mut H>` |
+| `UObject *` to open, close or adopt | `Option<Box<H>>`               |
+| `UErrorCode *`                      | `ErrorCode`                    |
+| `P` that the object keeps           | `Retained<P>`                  |
 
 - A `Dest`, `Out` or status is disjoint from the others, from handles, and from memory that an object keeps.
+- A handle is null or open, even if the status is a failure. No other argument points to or into one that the call modifies.
 - A source may overlap a `Dest`. Read it before the first write, which can overwrite its NUL: the types do not check that.
 - The pointer to a returned string comes from a slice that includes the NUL, or from `Vec::as_ptr`. Moving a `Box`
   invalidates pointers to its contents. Moving a `Vec` does not.

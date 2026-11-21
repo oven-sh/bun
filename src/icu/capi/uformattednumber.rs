@@ -1,8 +1,8 @@
 //! `unicode/uformattednumber.h`
 
-use crate::capi::ffi::{Dest, ErrorCode, Mut, Owned, Ref, UChar};
+use crate::capi::ffi::{Dest, ErrorCode, NonNullHandle, UChar};
 use crate::capi::ufieldpositer::UFieldPositionIterator;
-use crate::capi::uformattedvalue::{UFormattedValue, Value};
+use crate::capi::uformattedvalue::UFormattedValue;
 use crate::common::utypes::*;
 use crate::i18n::fphdlimp::FieldPositionIteratorHandler;
 use crate::i18n::number_fluent::UFormattedNumberData;
@@ -10,40 +10,37 @@ use bun_icu_macros::capi;
 
 pub(crate) type UFormattedNumber = UFormattedValue;
 
-/// "FDN" in ASCII, for numbers and ranges.
-pub(crate) const MAGIC: i32 = 0x4644_4E00;
-
 pub(crate) fn data(
-    uresult: Ref<'_, UFormattedNumber>,
+    uresult: Option<&UFormattedNumber>,
 ) -> Result<&UFormattedNumberData, UErrorCode> {
-    match &UFormattedValue::validate(uresult, MAGIC)?.value {
-        Value::Number(number) => Ok(number),
+    match uresult.non_null()? {
+        UFormattedValue::Number(number) => Ok(number),
         _ => Err(U_INVALID_FORMAT_ERROR),
     }
 }
 
 pub(crate) fn data_mut(
-    uresult: Mut<'_, UFormattedNumber>,
+    uresult: Option<&mut UFormattedNumber>,
 ) -> Result<&mut UFormattedNumberData, UErrorCode> {
-    match &mut UFormattedValue::validate_mut(uresult, MAGIC)?.value {
-        Value::Number(number) => Ok(number),
+    match uresult.non_null()? {
+        UFormattedValue::Number(number) => Ok(number),
         _ => Err(U_INVALID_FORMAT_ERROR),
     }
 }
 
 #[capi]
-fn unumf_openResult(ec: ErrorCode) -> *mut UFormattedNumber {
-    UFormattedValue::open(MAGIC, || Value::Number(UFormattedNumberData::new()), ec)
+fn unumf_openResult(ec: ErrorCode) -> Option<Box<UFormattedNumber>> {
+    UFormattedValue::open(|| UFormattedValue::Number(UFormattedNumberData::new()), ec)
 }
 
 #[capi]
-fn unumf_closeResult(uresult: Owned<UFormattedNumber>) {
-    UFormattedValue::close(uresult, MAGIC)
+fn unumf_closeResult(uresult: Option<Box<UFormattedNumber>>) {
+    drop(uresult);
 }
 
 #[capi]
 fn unumf_resultToString(
-    uresult: Ref<UFormattedNumber>,
+    uresult: Option<&UFormattedNumber>,
     (buffer, _): Dest<UChar>,
     ec: ErrorCode,
 ) -> i32 {
@@ -56,13 +53,13 @@ fn unumf_resultToString(
 
 #[capi]
 fn unumf_resultGetAllFieldPositions(
-    uresult: Ref<UFormattedNumber>,
-    ufpositer: Mut<UFieldPositionIterator>,
+    uresult: Option<&UFormattedNumber>,
+    ufpositer: Option<&mut UFieldPositionIterator>,
     ec: ErrorCode,
 ) {
     ec.run((), |_, _| {
         let result = data(uresult)?;
-        let fpi = ufpositer.get_mut()?;
+        let fpi = ufpositer.non_null()?;
         let mut fpih = FieldPositionIteratorHandler::new();
         result
             .base

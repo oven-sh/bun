@@ -1,6 +1,7 @@
 //! `unicode/uset.h`
 
-use crate::capi::ffi::{self, Dest, ErrorCode, Out, Owned, Ref, UChar, UChar32, to_int32};
+use crate::capi::ffi::{self, Dest, ErrorCode, Out, UChar, UChar32, to_int32};
+use crate::common::memory::try_box;
 use crate::common::uniset::UnicodeSet;
 use crate::common::utypes::*;
 use bun_icu_macros::capi;
@@ -8,24 +9,23 @@ use bun_icu_macros::capi;
 pub(crate) type USet = UnicodeSet;
 
 #[capi]
-fn uset_openEmpty() -> *mut USet {
-    ffi::open_or_null(|| Ok(UnicodeSet::new()))
+fn uset_openEmpty() -> Option<Box<USet>> {
+    ffi::on_oom(None, || try_box(UnicodeSet::new()).ok())
 }
 
 #[capi]
-fn uset_close(set: Owned<USet>) {
-    set.close()
+fn uset_close(set: Option<Box<USet>>) {
+    drop(set);
 }
 
 #[capi]
-fn uset_getItemCount(set: Ref<USet>) -> i32 {
-    set.get()
-        .map_or(0, |set| to_int32(set.ranges().len() + set.strings().len()))
+fn uset_getItemCount(set: Option<&USet>) -> i32 {
+    set.map_or(0, |set| to_int32(set.ranges().len() + set.strings().len()))
 }
 
 #[capi]
 fn uset_getItem(
-    set: Ref<USet>,
+    set: Option<&USet>,
     item_index: i32,
     start: Out<UChar32>,
     end: Out<UChar32>,
@@ -33,7 +33,7 @@ fn uset_getItem(
     ec: ErrorCode,
 ) -> i32 {
     ec.run_no_alloc(0, |cx, ec| {
-        let (Ok(index), Ok(set)) = (usize::try_from(item_index), set.get()) else {
+        let (Ok(index), Some(set)) = (usize::try_from(item_index), set) else {
             *ec = U_ILLEGAL_ARGUMENT_ERROR;
             return Ok(-1);
         };

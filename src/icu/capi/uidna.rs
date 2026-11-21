@@ -1,6 +1,6 @@
 //! `unicode/uidna.h`
 
-use crate::capi::ffi::{Dest, ErrorCode, Out, Ref, Text, UBool, UChar};
+use crate::capi::ffi::{Dest, ErrorCode, NonNullHandle, Out, Text, UBool, UChar};
 use crate::common::sink::{TextBuf as _, WritableAlias, stack_or_heap};
 use crate::common::slice_ext::{SliceExt, to_int32, to_length};
 use crate::common::uts46::{IdnaInfo, OutputForm, Uts46};
@@ -40,7 +40,7 @@ const UIDNA_NONTRANSITIONAL_TO_UNICODE: u32 = 0x20;
 const TO_ASCII: u32 = UIDNA_CHECK_BIDI | UIDNA_CHECK_CONTEXTJ | UIDNA_NONTRANSITIONAL_TO_ASCII;
 
 fn convert(
-    idna: Ref<'_, UIDNA>,
+    idna: Option<&UIDNA>,
     form: OutputForm,
     name: Text<'_, UChar>,
     dest: Dest<'_, UChar>,
@@ -48,7 +48,7 @@ fn convert(
     status: ErrorCode<'_>,
 ) -> i32 {
     status.run(0, |cx, status| {
-        let idna = idna.get()?;
+        let idna = idna.non_null()?;
         if idna.form != form {
             return Err(U_UNSUPPORTED_ERROR);
         }
@@ -83,7 +83,7 @@ fn convert(
 
 /// Accepts `TO_ASCII`, with or without `UIDNA_NONTRANSITIONAL_TO_UNICODE`, and that option alone.
 #[capi]
-fn uidna_openUTS46(options: u32, status: ErrorCode) -> *mut UIDNA {
+fn uidna_openUTS46(options: u32, status: ErrorCode) -> Option<Box<UIDNA>> {
     status.open(|_, _| {
         if options == UIDNA_NONTRANSITIONAL_TO_UNICODE {
             Uts46::new(OutputForm::Unicode)
@@ -98,7 +98,7 @@ fn uidna_openUTS46(options: u32, status: ErrorCode) -> *mut UIDNA {
 /// `idna` has the options `TO_ASCII`.
 #[capi]
 fn uidna_nameToASCII(
-    idna: Ref<UIDNA>,
+    idna: Option<&UIDNA>,
     (name, _): Text<UChar>,
     (dest, _): Dest<UChar>,
     info: Out<UIDNAInfo>,
@@ -110,7 +110,7 @@ fn uidna_nameToASCII(
 /// `idna` has only the option `UIDNA_NONTRANSITIONAL_TO_UNICODE`.
 #[capi]
 fn uidna_nameToUnicode(
-    idna: Ref<UIDNA>,
+    idna: Option<&UIDNA>,
     (name, _): Text<UChar>,
     (dest, _): Dest<UChar>,
     info: Out<UIDNAInfo>,

@@ -1,7 +1,7 @@
 //! `unicode/ucol.h`
 
 use crate::capi::ffi::{
-    self, CallerMem, Dest, ErrorCode, MayAlias, Mut, NulStr, Out, Owned, Ref, Text, UBool, UChar,
+    self, CallerMem, Dest, ErrorCode, NonNullHandle, NulStr, Out, Text, UBool, UChar,
 };
 use crate::capi::uenum::{self, UEnumeration};
 use crate::capi::uset::USet;
@@ -19,25 +19,25 @@ pub(crate) type UCollator = RuleBasedCollator;
 
 /// `loc` is not null.
 #[capi]
-fn ucol_open(loc: NulStr<u8>, status: ErrorCode) -> *mut UCollator {
+fn ucol_open(loc: NulStr<u8>, status: ErrorCode) -> Option<Box<UCollator>> {
     status.open(|cx, _| coll::open(cx.c_str(loc).ok_or(U_UNSUPPORTED_ERROR)?))
 }
 
 #[capi]
-fn ucol_close(coll: Owned<UCollator>) {
-    coll.close()
+fn ucol_close(coll: Option<Box<UCollator>>) {
+    drop(coll);
 }
 
 /// Accepts a strength up to tertiary, a case level only at primary strength, and normalization only on.
 #[capi]
 fn ucol_setAttribute(
-    coll: Mut<UCollator>,
+    coll: Option<&mut UCollator>,
     attr: UColAttribute,
     value: UColAttributeValue,
     status: ErrorCode,
 ) {
     status.run((), |_, _| {
-        let coll = coll.get_mut()?;
+        let coll = coll.non_null()?;
         match (attr, value) {
             (UCOL_STRENGTH, UCOL_QUATERNARY | UCOL_IDENTICAL)
             | (UCOL_NORMALIZATION_MODE, UCOL_OFF | UCOL_DEFAULT) => Err(U_UNSUPPORTED_ERROR),
@@ -52,21 +52,21 @@ fn ucol_setAttribute(
 /// Accepts all attributes but `UCOL_HIRAGANA_QUATERNARY_MODE`.
 #[capi]
 fn ucol_getAttribute(
-    coll: Ref<UCollator>,
+    coll: Option<&UCollator>,
     attr: UColAttribute,
     status: ErrorCode,
 ) -> UColAttributeValue {
-    status.run_no_alloc(UCOL_DEFAULT, |_, _| coll.get()?.attribute(attr))
+    status.run_no_alloc(UCOL_DEFAULT, |_, _| coll.non_null()?.attribute(attr))
 }
 
 /// The capacity is 0.
 #[capi]
-fn ucol_getReorderCodes(coll: Ref<UCollator>, (dest, _): Dest<i32>, status: ErrorCode) -> i32 {
+fn ucol_getReorderCodes(coll: Option<&UCollator>, (dest, _): Dest<i32>, status: ErrorCode) -> i32 {
     status.run_no_alloc(0, |_, status| {
         if dest.capacity() != 0 {
             return Err(U_UNSUPPORTED_ERROR);
         }
-        let count = coll.get()?.reorder_code_count();
+        let count = coll.non_null()?.reorder_code_count();
         if count != 0 {
             *status = U_BUFFER_OVERFLOW_ERROR;
         }
@@ -78,11 +78,11 @@ fn ucol_getReorderCodes(coll: Ref<UCollator>, (dest, _): Dest<i32>, status: Erro
 #[capi]
 fn ucol_strcoll(
     cx: &CallerMem,
-    coll: Ref<UCollator>,
+    coll: Option<&UCollator>,
     (source, _): Text<UChar>,
     (target, _): Text<UChar>,
 ) -> UCollationResult {
-    let (Ok(coll), Ok([source, target])) = (coll.get(), cx.texts(source, target)) else {
+    let (Some(coll), Ok([source, target])) = (coll, cx.texts(source, target)) else {
         return UCOL_EQUAL;
     };
     let order = ffi::ignore_oom(|| coll.compare(source, target));
@@ -94,20 +94,20 @@ fn ucol_strcoll(
 /// `coll` has a strength and a case level that `ucol_setAttribute` accepts.
 #[capi]
 fn ucol_strcollUTF8(
-    coll: Ref<UCollator>,
+    coll: Option<&UCollator>,
     (source, _): Text<u8>,
     (target, _): Text<u8>,
     status: ErrorCode,
 ) -> UCollationResult {
     status.run(UCOL_EQUAL, |cx, _| {
         let [source, target] = cx.texts(source, target)?;
-        Ok(coll.get()?.compare(source, target)? as UCollationResult)
+        Ok(coll.non_null()?.compare(source, target)? as UCollationResult)
     })
 }
 
 #[capi]
-fn ucol_getRules(cx: &mut CallerMem, coll: Ref<UCollator>, length: Out<i32>) -> *const UChar {
-    coll.get().map_or(null(), |coll| {
+fn ucol_getRules(cx: &mut CallerMem, coll: Option<&UCollator>, length: Out<i32>) -> *const UChar {
+    coll.map_or(null(), |coll| {
         cx.store(length, ffi::to_int32(coll.rules().units().len()));
         coll.rules().as_ptr()
     })
@@ -115,26 +115,25 @@ fn ucol_getRules(cx: &mut CallerMem, coll: Ref<UCollator>, length: Out<i32>) -> 
 
 /// `coll` has the root mappings.
 #[capi]
-fn ucol_getTailoredSet(coll: Ref<UCollator>, status: ErrorCode) -> *mut USet {
-    status.open(|_, _| coll.get()?.root_data().map(|_| UnicodeSet::new()))
+fn ucol_getTailoredSet(coll: Option<&UCollator>, status: ErrorCode) -> Option<Box<USet>> {
+    status.open(|_, _| coll.non_null()?.root_data().map(|_| UnicodeSet::new()))
 }
 
 /// `coll` has the root mappings, the sets are distinct, and `add_prefixes` is true.
 #[capi]
 fn ucol_getContractionsAndExpansions(
-    coll: Ref<UCollator>,
-    contractions: Mut<USet>,
-    expansions: MayAlias<Mut<USet>, USet>,
+    coll: Option<&UCollator>,
+    contractions: Option<&mut USet>,
+    expansions: Option<&mut USet>,
     add_prefixes: UBool,
     status: ErrorCode,
 ) {
     status.run((), |_, _| {
-        let expansions = expansions.if_distinct(&contractions);
-        let Some(expansions) = expansions.filter(|_| add_prefixes != 0) else {
+        if add_prefixes == 0 {
             return Err(U_UNSUPPORTED_ERROR);
-        };
-        let (contractions, expansions) = (contractions.get_mut()?, expansions.get_mut()?);
-        let data = coll.get()?.root_data()?;
+        }
+        let (contractions, expansions) = (contractions.non_null()?, expansions.non_null()?);
+        let data = coll.non_null()?.root_data()?;
         contractions.clear();
         expansions.clear();
         add_contractions_and_expansions(data, contractions, expansions)
@@ -153,7 +152,7 @@ fn ucol_countAvailable() -> i32 {
 }
 
 #[capi]
-fn ucol_getKeywordValues(keyword: NulStr<u8>, status: ErrorCode) -> *mut UEnumeration {
+fn ucol_getKeywordValues(keyword: NulStr<u8>, status: ErrorCode) -> Option<Box<UEnumeration>> {
     status.open(|cx, _| match cx.c_str(keyword) {
         Some(b"collation") => uenum::open_boxed(ucol_res::keyword_values()?),
         _ => Err(U_ILLEGAL_ARGUMENT_ERROR),
@@ -167,7 +166,7 @@ fn ucol_getKeywordValuesForLocale(
     locale: NulStr<u8>,
     _commonly_used: UBool,
     status: ErrorCode,
-) -> *mut UEnumeration {
+) -> Option<Box<UEnumeration>> {
     status.open(|cx, _| {
         let locale = cx.c_str(locale).ok_or(U_UNSUPPORTED_ERROR)?;
         uenum::open_boxed(ucol_res::keyword_values_for_locale(locale)?)

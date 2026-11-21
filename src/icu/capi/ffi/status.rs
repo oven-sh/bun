@@ -1,10 +1,9 @@
 //! Scopes that report the status and failed allocations. They take the OOM flag when they end, so they must not be nested.
 
-use super::{CallerMem, Handle, IntoHandle, LocalHandle};
+use super::CallerMem;
 use crate::common::memory;
 use crate::common::utypes::*;
 use std::marker::PhantomData;
-use std::ptr::null_mut;
 
 /// `UErrorCode *`: null, or a status. It also provides the `CallerMem` of the call.
 #[repr(transparent)]
@@ -110,27 +109,14 @@ impl ErrorCode<'_> {
         });
     }
 
-    /// Returns null if `f` returns `Err`. If `f` stores a failure and returns `Ok`, the handle is returned.
-    pub(crate) fn open<H: Handle, T: IntoHandle<H>>(
+    /// Returns null if `f` returns `Err`, but not if it only stores a failure. Perf: an `H` larger than `T` is built in its box.
+    pub(crate) fn open<T, H: From<T>>(
         self,
         f: impl FnOnce(&mut CallerMem, &mut UErrorCode) -> Result<T, UErrorCode>,
-    ) -> *mut H {
-        self.run(LocalHandle::null(), |cx, status| {
-            T::into_handle(&mut f(cx, status))
+    ) -> Option<Box<H>> {
+        self.run(None, |cx, status| {
+            memory::try_box_result(&mut f(cx, status)).map(Some)
         })
-        .into_raw()
-    }
-
-    /// Returns a handle regardless of the status, which is written only if the result is null.
-    pub(crate) fn open_always<H: Handle, T: IntoHandle<H>>(
-        mut self,
-        f: impl FnOnce(&mut CallerMem) -> Result<T, UErrorCode>,
-    ) -> *mut H {
-        let made = open_or_null(|| f(self.mem()));
-        if made.is_null() {
-            self.set(U_MEMORY_ALLOCATION_ERROR);
-        }
-        made
     }
 }
 
@@ -157,12 +143,4 @@ pub(crate) fn on_oom<T>(on_failure: T, work: impl FnOnce() -> T) -> T {
 /// Discards allocation failures in `work`, whose result allows for them.
 pub(crate) fn ignore_oom<T>(work: impl FnOnce() -> T) -> T {
     memory::catch_oom_at_entry(work).0
-}
-
-/// `ErrorCode::open` without a status.
-pub(crate) fn open_or_null<H: Handle, T: IntoHandle<H>>(
-    f: impl FnOnce() -> Result<T, UErrorCode>,
-) -> *mut H {
-    on_oom(Err(U_MEMORY_ALLOCATION_ERROR), || T::into_handle(&mut f()))
-        .map_or(null_mut(), LocalHandle::into_raw)
 }

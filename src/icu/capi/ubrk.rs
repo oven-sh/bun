@@ -1,8 +1,6 @@
 //! `unicode/ubrk.h`
 
-use crate::capi::ffi::{
-    self, CallerMem, ErrorCode, Mut, NulStr, Owned, Ref, Retained, Text, UChar,
-};
+use crate::capi::ffi::{self, CallerMem, ErrorCode, NonNullHandle, NulStr, Retained, Text, UChar};
 use crate::common::brkiter::BreakIterator;
 use crate::common::locid::Locale;
 use crate::common::memory::TryClone;
@@ -24,10 +22,10 @@ pub(crate) struct UBreakIterator {
 
 fn step(
     cx: &CallerMem,
-    bi: Mut<'_, UBreakIterator>,
+    bi: Option<&mut UBreakIterator>,
     step: impl FnOnce(&mut BreakIterator, &[u16]) -> i32,
 ) -> i32 {
-    let Ok(bi) = bi.get_mut() else {
+    let Some(bi) = bi else {
         return UBRK_DONE;
     };
     let text = cx.text_or_empty(bi.text.get());
@@ -42,7 +40,7 @@ fn ubrk_open(
     locale: NulStr<u8>,
     (text, _): Retained<Text<'static, UChar>>,
     status: ErrorCode,
-) -> *mut UBreakIterator {
+) -> Option<Box<UBreakIterator>> {
     status.open(|cx, _| {
         let create = match type_ {
             UBRK_CHARACTER => BreakIterator::create_character_instance,
@@ -58,9 +56,9 @@ fn ubrk_open(
 }
 
 #[capi]
-fn ubrk_clone(bi: Ref<UBreakIterator>, status: ErrorCode) -> *mut UBreakIterator {
+fn ubrk_clone(bi: Option<&UBreakIterator>, status: ErrorCode) -> Option<Box<UBreakIterator>> {
     status.open(|_, _| {
-        let bi = bi.get()?;
+        let bi = bi.non_null()?;
         Ok(UBreakIterator {
             iter: bi.iter.try_clone()?,
             text: bi.text,
@@ -69,18 +67,18 @@ fn ubrk_clone(bi: Ref<UBreakIterator>, status: ErrorCode) -> *mut UBreakIterator
 }
 
 #[capi]
-fn ubrk_close(bi: Owned<UBreakIterator>) {
-    bi.close();
+fn ubrk_close(bi: Option<Box<UBreakIterator>>) {
+    drop(bi);
 }
 
 #[capi]
 fn ubrk_setText(
-    bi: Mut<UBreakIterator>,
+    bi: Option<&mut UBreakIterator>,
     (text, _): Retained<Text<'static, UChar>>,
     status: ErrorCode,
 ) {
     status.run((), |cx, _| {
-        let bi = bi.get_mut()?;
+        let bi = bi.non_null()?;
         bi.text = text.measured(cx)?;
         bi.iter.reset();
         Ok(())
@@ -88,27 +86,27 @@ fn ubrk_setText(
 }
 
 #[capi]
-fn ubrk_current(bi: Ref<UBreakIterator>) -> i32 {
-    bi.get().map_or(0, |bi| bi.iter.current())
+fn ubrk_current(bi: Option<&UBreakIterator>) -> i32 {
+    bi.map_or(0, |bi| bi.iter.current())
 }
 
 #[capi]
-fn ubrk_next(cx: &CallerMem, bi: Mut<UBreakIterator>) -> i32 {
+fn ubrk_next(cx: &CallerMem, bi: Option<&mut UBreakIterator>) -> i32 {
     step(cx, bi, BreakIterator::next)
 }
 
 #[capi]
-fn ubrk_previous(cx: &CallerMem, bi: Mut<UBreakIterator>) -> i32 {
+fn ubrk_previous(cx: &CallerMem, bi: Option<&mut UBreakIterator>) -> i32 {
     step(cx, bi, BreakIterator::previous)
 }
 
 #[capi]
-fn ubrk_first(cx: &CallerMem, bi: Mut<UBreakIterator>) -> i32 {
+fn ubrk_first(cx: &CallerMem, bi: Option<&mut UBreakIterator>) -> i32 {
     step(cx, bi, BreakIterator::first)
 }
 
 #[capi]
-fn ubrk_following(cx: &CallerMem, bi: Mut<UBreakIterator>, offset: i32) -> i32 {
+fn ubrk_following(cx: &CallerMem, bi: Option<&mut UBreakIterator>, offset: i32) -> i32 {
     step(cx, bi, |bi, text| bi.following(text, offset))
 }
 
@@ -123,6 +121,6 @@ fn ubrk_countAvailable() -> i32 {
 }
 
 #[capi]
-fn ubrk_getRuleStatus(bi: Ref<UBreakIterator>) -> i32 {
-    bi.get().map_or(0, |bi| bi.iter.get_rule_status())
+fn ubrk_getRuleStatus(bi: Option<&UBreakIterator>) -> i32 {
+    bi.map_or(0, |bi| bi.iter.get_rule_status())
 }

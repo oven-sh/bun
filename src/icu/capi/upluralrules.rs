@@ -1,6 +1,6 @@
 //! `unicode/upluralrules.h`
 
-use crate::capi::ffi::{Dest, ErrorCode, NulStr, Owned, Ref, UChar};
+use crate::capi::ffi::{Dest, ErrorCode, NonNullHandle, NulStr, UChar};
 use crate::capi::uenum::{self, UEnumeration};
 use crate::capi::uformattednumber::{self, UFormattedNumber};
 use crate::capi::unumberrangeformatter::{self, UFormattedNumberRange};
@@ -32,44 +32,47 @@ fn uplrules_openForType(
     locale: NulStr<u8>,
     type_: UPluralType,
     status: ErrorCode,
-) -> *mut UPluralRules {
+) -> Option<Box<UPluralRules>> {
     status.open(|cx, _| PluralRules::for_locale(&Locale::new(cx.c_str(locale)), type_))
 }
 
 #[capi]
-fn uplrules_close(uplrules: Owned<UPluralRules>) {
-    uplrules.close()
+fn uplrules_close(uplrules: Option<Box<UPluralRules>>) {
+    drop(uplrules);
 }
 
 #[capi]
 fn uplrules_selectFormatted(
-    uplrules: Ref<UPluralRules>,
-    number: Ref<UFormattedNumber>,
+    uplrules: Option<&UPluralRules>,
+    number: Option<&UFormattedNumber>,
     (keyword, _): Dest<UChar>,
     status: ErrorCode,
 ) -> i32 {
     select_into(keyword, status, || {
         let number = uformattednumber::data(number)?;
-        Ok(uplrules.get()?.select(&number.quantity))
+        Ok(uplrules.non_null()?.select(&number.quantity))
     })
 }
 
 #[capi]
 fn uplrules_selectForRange(
-    uplrules: Ref<UPluralRules>,
-    urange: Ref<UFormattedNumberRange>,
+    uplrules: Option<&UPluralRules>,
+    urange: Option<&UFormattedNumberRange>,
     (keyword, _): Dest<UChar>,
     status: ErrorCode,
 ) -> i32 {
     select_into(keyword, status, || {
         let range = unumberrangeformatter::data(urange)?;
         Ok(uplrules
-            .get()?
+            .non_null()?
             .select_range(&range.quantity1, &range.quantity2))
     })
 }
 
 #[capi]
-fn uplrules_getKeywords(uplrules: Ref<UPluralRules>, status: ErrorCode) -> *mut UEnumeration {
-    status.open(|_, _| uenum::open_boxed(uplrules.get()?.get_keywords()))
+fn uplrules_getKeywords(
+    uplrules: Option<&UPluralRules>,
+    status: ErrorCode,
+) -> Option<Box<UEnumeration>> {
+    status.open(|_, _| uenum::open_boxed(uplrules.non_null()?.get_keywords()))
 }

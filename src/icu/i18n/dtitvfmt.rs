@@ -656,21 +656,22 @@ impl DateIntervalFormat {
         let (mut from_calendar, mut to_calendar) = (calendar.clone(), calendar.clone());
         from_calendar.set_time(from)?;
         to_calendar.set_time(to)?;
-        self.format_calendars_to_value(&mut from_calendar, &mut to_calendar)
+        from_calendar.complete()?;
+        to_calendar.complete()?;
+        self.format_calendars_to_value(&from_calendar, &to_calendar)
     }
 
+    /// The calendars are complete.
     pub(crate) fn format_calendars_to_value(
         &self,
-        from: &mut Calendar,
-        to: &mut Calendar,
+        from: &Calendar,
+        to: &Calendar,
     ) -> Result<FormattedDateInterval, UErrorCode> {
         if !from.has_settings_of(to)
             || from.calendar_type() != self.0.date_format.calendar.calendar_type()
         {
             return Err(U_UNSUPPORTED_ERROR);
         }
-        from.complete()?;
-        to.complete()?;
         let mut writer = IntervalWriter {
             formatter: &self.0,
             from,

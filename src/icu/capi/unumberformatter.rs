@@ -1,6 +1,6 @@
 //! `unicode/unumberformatter.h`
 
-use crate::capi::ffi::{CallerMem, ErrorCode, MayAlias, Mut, NulStr, Owned, Ref, Text, UChar};
+use crate::capi::ffi::{CallerMem, ErrorCode, NonNullHandle, NulStr, Text, UChar};
 use crate::capi::uformattednumber::{UFormattedNumber, data_mut};
 use crate::common::locid::Locale;
 use crate::common::utypes::*;
@@ -10,14 +10,7 @@ use crate::i18n::number_fluent::{LocalizedNumberFormatter, MacroProps};
 use crate::i18n::number_skeletons;
 use bun_icu_macros::capi;
 
-/// "NFR" in ASCII.
-pub(crate) const MAGIC: i32 = 0x4E46_5200;
-
-#[repr(C)]
-pub(crate) struct UNumberFormatter {
-    magic: i32,
-    formatter: LocalizedNumberFormatter,
-}
+pub(crate) type UNumberFormatter = LocalizedNumberFormatter;
 
 pub(crate) fn read_skeleton(
     cx: &CallerMem,
@@ -29,11 +22,11 @@ pub(crate) fn read_skeleton(
 
 /// An error of `set` still resets `uresult`.
 fn format(
-    uformatter: Ref<'_, UNumberFormatter>,
-    uresult: Mut<'_, UFormattedNumber>,
+    uformatter: Option<&UNumberFormatter>,
+    uresult: Option<&mut UFormattedNumber>,
     set: impl FnOnce(&mut DecimalQuantity) -> Result<(), UErrorCode>,
 ) -> Result<(), UErrorCode> {
-    let formatter = &uformatter.get()?.formatter;
+    let formatter = uformatter.non_null()?;
     let result = data_mut(uresult)?;
     result.base.reset_string();
     result.quantity.clear();
@@ -53,20 +46,15 @@ fn unumf_openForSkeletonAndLocale(
     (skeleton, _): Text<UChar>,
     locale: NulStr<u8>,
     ec: ErrorCode,
-) -> *mut UNumberFormatter {
-    ec.open(|cx, _| {
-        Ok(UNumberFormatter {
-            magic: MAGIC,
-            formatter: LocalizedNumberFormatter::new(read_skeleton(cx, skeleton, locale)?),
-        })
-    })
+) -> Option<Box<UNumberFormatter>> {
+    ec.open(|cx, _| read_skeleton(cx, skeleton, locale).map(LocalizedNumberFormatter::new))
 }
 
 #[capi]
 fn unumf_formatDouble(
-    uformatter: Ref<UNumberFormatter>,
+    uformatter: Option<&UNumberFormatter>,
     value: f64,
-    uresult: Mut<UFormattedNumber>,
+    uresult: Option<&mut UFormattedNumber>,
     ec: ErrorCode,
 ) {
     ec.run((), |_, _| {
@@ -80,13 +68,13 @@ fn unumf_formatDouble(
 /// Accepts "infinity" as the only value that is not a number.
 #[capi]
 fn unumf_formatDecimal(
-    uformatter: Ref<UNumberFormatter>,
-    (value, _): MayAlias<Text<u8>, UFormattedNumber>,
-    uresult: Mut<UFormattedNumber>,
+    uformatter: Option<&UNumberFormatter>,
+    (value, _): Text<u8>,
+    uresult: Option<&mut UFormattedNumber>,
     ec: ErrorCode,
 ) {
     ec.run((), |cx, _| {
-        let number = read_dec_number(cx, value.tied_to(&uresult));
+        let number = read_dec_number(cx, value);
         format(uformatter, uresult, |quantity| {
             quantity.set_to_dec_num(&number?)
         })
@@ -94,6 +82,6 @@ fn unumf_formatDecimal(
 }
 
 #[capi]
-fn unumf_close(uformatter: Owned<UNumberFormatter>) {
-    uformatter.close()
+fn unumf_close(uformatter: Option<Box<UNumberFormatter>>) {
+    drop(uformatter);
 }

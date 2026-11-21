@@ -1,6 +1,6 @@
 //! `unicode/ureldatefmt.h`
 
-use crate::capi::ffi::{Dest, ErrorCode, Mut, NulStr, Owned, Ref, UChar};
+use crate::capi::ffi::{Dest, ErrorCode, NonNullHandle, NulStr, UChar};
 use crate::capi::uformattedvalue::UFormattedValue;
 use crate::capi::unum::UNumberFormat;
 use crate::common::locid::Locale;
@@ -10,7 +10,7 @@ use crate::i18n::number_fluent::UFormattedNumberData;
 use crate::i18n::reldatefmt::{Numeric, RelativeDateTimeFormatter, Style};
 use bun_icu_macros::capi;
 use std::ffi::c_int;
-use std::ptr::null;
+use std::ptr::{from_ref, null};
 
 pub(crate) type URelativeDateTimeFormatter = RelativeDateTimeFormatter;
 
@@ -20,12 +20,9 @@ const UDAT_STYLE_LONG: c_int = 0;
 const UDAT_STYLE_SHORT: c_int = 1;
 const UDAT_STYLE_NARROW: c_int = 2;
 
-/// "FRDT" in ASCII.
-const MAGIC: i32 = 0x4652_4454;
-
 /// Both kinds of output accept only the units from `UDAT_REL_UNIT_YEAR` to `UDAT_REL_UNIT_SECOND`.
 fn format_to_buffer(
-    reldatefmt: Ref<'_, URelativeDateTimeFormatter>,
+    reldatefmt: Option<&URelativeDateTimeFormatter>,
     offset: f64,
     unit: c_int,
     numeric: Numeric,
@@ -35,22 +32,26 @@ fn format_to_buffer(
     status.run(0, |cx, status| {
         result.check()?;
         let mut output = UFormattedNumberData::new();
-        (reldatefmt.get()?).format(offset, unit, numeric, &mut output)?;
+        (reldatefmt.non_null()?).format(offset, unit, numeric, &mut output)?;
         Ok(cx.extract_to(output.text(), result, status))
     })
 }
 
 fn format_to_result(
-    reldatefmt: Ref<'_, URelativeDateTimeFormatter>,
+    reldatefmt: Option<&URelativeDateTimeFormatter>,
     offset: f64,
     unit: c_int,
     numeric: Numeric,
-    result: Mut<'_, UFormattedRelativeDateTime>,
+    result: Option<&mut UFormattedRelativeDateTime>,
     status: ErrorCode<'_>,
 ) {
     status.run((), |_, _| {
-        let result = UFormattedValue::validate_mut(result, MAGIC)?;
-        result.set(reldatefmt.get()?.format_to_value(offset, unit, numeric))
+        let result = result.non_null()?;
+        result.set(
+            reldatefmt
+                .non_null()?
+                .format_to_value(offset, unit, numeric),
+        )
     })
 }
 
@@ -58,13 +59,13 @@ fn format_to_result(
 #[capi]
 fn ureldatefmt_open(
     locale: NulStr<u8>,
-    nf_to_adopt: Owned<UNumberFormat>,
+    nf_to_adopt: Option<Box<UNumberFormat>>,
     width: c_int,
     capitalization_context: c_int,
     status: ErrorCode,
-) -> *mut URelativeDateTimeFormatter {
+) -> Option<Box<URelativeDateTimeFormatter>> {
     status.open(|cx, _| {
-        let number_format = nf_to_adopt.adopt().ok_or(U_UNSUPPORTED_ERROR)?.format()?;
+        let number_format = nf_to_adopt.ok_or(U_UNSUPPORTED_ERROR)?.format()?;
         if capitalization_context != UDISPCTX_CAPITALIZATION_FOR_STANDALONE {
             return Err(U_UNSUPPORTED_ERROR);
         }
@@ -79,33 +80,31 @@ fn ureldatefmt_open(
 }
 
 #[capi]
-fn ureldatefmt_close(reldatefmt: Owned<URelativeDateTimeFormatter>) {
-    reldatefmt.close()
+fn ureldatefmt_close(reldatefmt: Option<Box<URelativeDateTimeFormatter>>) {
+    drop(reldatefmt);
 }
 
 #[capi]
-fn ureldatefmt_openResult(ec: ErrorCode) -> *mut UFormattedRelativeDateTime {
-    ec.open(|_, _| Ok(UFormattedValue::new_unset(MAGIC)))
+fn ureldatefmt_openResult(ec: ErrorCode) -> Option<Box<UFormattedRelativeDateTime>> {
+    ec.open(|_, _| Ok(UFormattedValue::new_unset()))
 }
 
 #[capi]
 fn ureldatefmt_resultAsValue(
-    ufrdt: Ref<UFormattedRelativeDateTime>,
+    ufrdt: Option<&UFormattedRelativeDateTime>,
     ec: ErrorCode,
 ) -> *const UFormattedValue {
-    ec.run_no_alloc(null(), |_, _| {
-        UFormattedValue::validate(ufrdt, MAGIC).map(|_| ufrdt.as_ptr())
-    })
+    ec.run_no_alloc(null(), |_, _| ufrdt.non_null().map(from_ref))
 }
 
 #[capi]
-fn ureldatefmt_closeResult(ufrdt: Owned<UFormattedRelativeDateTime>) {
-    UFormattedValue::close(ufrdt, MAGIC)
+fn ureldatefmt_closeResult(ufrdt: Option<Box<UFormattedRelativeDateTime>>) {
+    drop(ufrdt);
 }
 
 #[capi]
 fn ureldatefmt_formatNumeric(
-    reldatefmt: Ref<URelativeDateTimeFormatter>,
+    reldatefmt: Option<&URelativeDateTimeFormatter>,
     offset: f64,
     unit: c_int,
     (result, _): Dest<UChar>,
@@ -116,10 +115,10 @@ fn ureldatefmt_formatNumeric(
 
 #[capi]
 fn ureldatefmt_formatNumericToResult(
-    reldatefmt: Ref<URelativeDateTimeFormatter>,
+    reldatefmt: Option<&URelativeDateTimeFormatter>,
     offset: f64,
     unit: c_int,
-    result: Mut<UFormattedRelativeDateTime>,
+    result: Option<&mut UFormattedRelativeDateTime>,
     status: ErrorCode,
 ) {
     format_to_result(reldatefmt, offset, unit, Numeric::Always, result, status)
@@ -127,7 +126,7 @@ fn ureldatefmt_formatNumericToResult(
 
 #[capi]
 fn ureldatefmt_format(
-    reldatefmt: Ref<URelativeDateTimeFormatter>,
+    reldatefmt: Option<&URelativeDateTimeFormatter>,
     offset: f64,
     unit: c_int,
     (result, _): Dest<UChar>,
@@ -138,10 +137,10 @@ fn ureldatefmt_format(
 
 #[capi]
 fn ureldatefmt_formatToResult(
-    reldatefmt: Ref<URelativeDateTimeFormatter>,
+    reldatefmt: Option<&URelativeDateTimeFormatter>,
     offset: f64,
     unit: c_int,
-    result: Mut<UFormattedRelativeDateTime>,
+    result: Option<&mut UFormattedRelativeDateTime>,
     status: ErrorCode,
 ) {
     format_to_result(reldatefmt, offset, unit, Numeric::Auto, result, status)

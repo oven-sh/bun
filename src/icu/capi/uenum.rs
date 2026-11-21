@@ -1,6 +1,6 @@
 //! `unicode/uenum.h`
 
-use crate::capi::ffi::{ErrorCode, LocalHandle, Mut, Out, Owned, Ref, UChar};
+use crate::capi::ffi::{ErrorCode, Out, UChar};
 use crate::common::memory::{self, Appendable};
 use crate::common::uenum::{self, Item, StringEnumeration};
 use crate::common::uinvchar::uchar_to_char;
@@ -15,15 +15,15 @@ pub(crate) struct UEnumeration {
     chars: Vec<u8>,
 }
 
-pub(crate) fn open(source: uenum::UEnumeration) -> Result<LocalHandle<UEnumeration>, UErrorCode> {
+pub(crate) fn open(source: uenum::UEnumeration) -> UEnumeration {
     let chars = Vec::new();
-    LocalHandle::boxed(UEnumeration { source, chars })
+    UEnumeration { source, chars }
 }
 
 pub(crate) fn open_boxed(
     enumeration: impl StringEnumeration + 'static,
-) -> Result<LocalHandle<UEnumeration>, UErrorCode> {
-    open(memory::try_box(enumeration)?)
+) -> Result<UEnumeration, UErrorCode> {
+    Ok(open(memory::try_box(enumeration)?))
 }
 
 /// Returns the NUL-terminated copy and its length.
@@ -41,23 +41,27 @@ fn copy_as_chars(
 }
 
 #[capi]
-fn uenum_close(en: Owned<UEnumeration>) {
-    en.close()
+fn uenum_close(en: Option<Box<UEnumeration>>) {
+    drop(en);
 }
 
 /// Counts collation types, currencies, numbering systems and time zones.
 #[capi]
-fn uenum_count(en: Ref<UEnumeration>, status: ErrorCode) -> i32 {
+fn uenum_count(en: Option<&UEnumeration>, status: ErrorCode) -> i32 {
     status.run(-1, |_, _| {
-        en.get().map_or(Ok(-1), |en| Ok(en.source.count()? as i32))
+        en.map_or(Ok(-1), |en| Ok(en.source.count()? as i32))
     })
 }
 
 /// Takes only an enumeration of time zones.
 #[capi]
-fn uenum_unext(en: Mut<UEnumeration>, result_length: Out<i32>, status: ErrorCode) -> *const UChar {
+fn uenum_unext(
+    en: Option<&mut UEnumeration>,
+    result_length: Out<i32>,
+    status: ErrorCode,
+) -> *const UChar {
     status.run(null(), |cx, _| {
-        match en.get_mut().map_or(Ok(None), |en| en.source.next())? {
+        match en.map_or(Ok(None), |en| en.source.next())? {
             Some(Item::Resource(s)) => {
                 cx.store(result_length, s.units().len() as i32);
                 Ok(s.as_ptr())
@@ -69,9 +73,13 @@ fn uenum_unext(en: Mut<UEnumeration>, result_length: Out<i32>, status: ErrorCode
 }
 
 #[capi]
-fn uenum_next(en: Mut<UEnumeration>, result_length: Out<i32>, status: ErrorCode) -> *const c_char {
+fn uenum_next(
+    en: Option<&mut UEnumeration>,
+    result_length: Out<i32>,
+    status: ErrorCode,
+) -> *const c_char {
     status.run(null(), |cx, _| {
-        let Ok(UEnumeration { source, chars }) = en.get_mut() else {
+        let Some(UEnumeration { source, chars }) = en else {
             return Ok(null());
         };
         cx.store(result_length, 0);

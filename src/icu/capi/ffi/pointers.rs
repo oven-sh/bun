@@ -54,41 +54,21 @@ pub(crate) struct Out<'c, T> {
 #[repr(transparent)]
 pub(crate) struct Null(*const c_void);
 
-/// Null, or a handle that the call does not modify.
-#[repr(transparent)]
-pub(crate) struct Ref<'c, T> {
-    pub(super) ptr: *const T,
-    pub(super) call: Call<'c>,
-}
-
-/// Null, or a handle that the call modifies. Only `MayAlias` parameters alias it.
-#[repr(transparent)]
-pub(crate) struct Mut<'c, T> {
-    pub(super) ptr: *mut T,
-    pub(super) call: Call<'c>,
-}
-
-/// Null, or a handle whose ownership passes to the call.
-#[repr(transparent)]
-pub(crate) struct Owned<'c, T> {
-    pub(super) ptr: *mut T,
-    pub(super) call: Call<'c>,
-}
-
-/// A source or handle `P` that may equal, point into, or contain the `H` that the call modifies.
-#[repr(transparent)]
-pub(crate) struct MayAlias<P, H>(pub(super) P, PhantomData<fn() -> H>);
-
 /// A pointer that an object stores. It is valid until the object gets another or is closed.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub(crate) struct Retained<P>(pub(super) P);
 
-/// The only value through which an `H` is modified.
-/// SAFETY: A shared reference to the value cannot overwrite or free memory of the `H` to which C may point.
-pub(crate) unsafe trait Mutates<H> {}
-// SAFETY: the methods that overwrite or free such memory take `self`.
-unsafe impl<H> Mutates<H> for Mut<'_, H> {}
+/// For handles, which are `Option<&H>`, `Option<&mut H>` or `Option<Box<H>>`.
+pub(crate) trait NonNullHandle<T> {
+    fn non_null(self) -> Result<T, UErrorCode>;
+}
+
+impl<T> NonNullHandle<T> for Option<T> {
+    fn non_null(self) -> Result<T, UErrorCode> {
+        self.ok_or(U_ILLEGAL_ARGUMENT_ERROR)
+    }
+}
 
 macro_rules! impl_accessors {
     ($($method:ident: $type:ty = $field:ident for $($name:ident)+;)+) => {$($(
@@ -100,7 +80,7 @@ macro_rules! impl_accessors {
     )+)+};
 }
 impl_accessors! {
-    as_ptr: *const T = ptr for NulStr Ref;
+    as_ptr: *const T = ptr for NulStr;
     length: i32 = length for Text Array;
     capacity: i32 = capacity for Dest;
 }
@@ -114,7 +94,7 @@ macro_rules! impl_is_null {
         }
     )+};
 }
-impl_is_null!(NulStr Text Dest Out Mut);
+impl_is_null!(NulStr Text Dest Out);
 
 impl Null {
     pub(crate) fn is_null(&self) -> bool {
@@ -147,19 +127,7 @@ macro_rules! impl_copy {
         impl<T> Copy for $name<'_, T> {}
     )+};
 }
-impl_copy!(NulStr Text Array Dest Out Ref);
-
-macro_rules! impl_tied_to {
-    ($($name:ident)+) => {$(
-        impl<'c, T, H> MayAlias<$name<'c, T>, H> {
-            /// Ties the pointer to the borrow of `object`. `T: 'static` rejects arrays of strings, whose elements would outlive it.
-            pub(crate) fn tied_to<'a>(self, _object: &'a impl Mutates<H>) -> $name<'a, T> where 'c: 'a, T: 'static {
-                self.0
-            }
-        }
-    )+};
-}
-impl_tied_to!(Text Array);
+impl_copy!(NulStr Text Array Dest Out);
 
 impl<T> Retained<Text<'_, T>> {
     pub(crate) fn get(&self) -> Text<'_, T> {
@@ -171,30 +139,6 @@ impl<T> Retained<Text<'_, T>> {
 unsafe impl<T: Sync> Send for Text<'_, T> {}
 // SAFETY: the units are only read, as through a `&[T]`.
 unsafe impl<T: Sync> Sync for Text<'_, T> {}
-
-/// `#[derive(Clone, Copy)]` without the bound on `H`.
-impl<P: Copy, H> Clone for MayAlias<P, H> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<P: Copy, H> Copy for MayAlias<P, H> {}
-
-impl<P, H> From<P> for MayAlias<P, H> {
-    fn from(pointer: P) -> Self {
-        Self(pointer, PhantomData)
-    }
-}
-
-impl<P: Pair, H> Pair for MayAlias<P, H> {
-    type First = P::First;
-    type Second = P::Second;
-    unsafe fn new(first: P::First, second: P::Second) -> Self {
-        // SAFETY: the contract of `MayAlias<P, H>` includes that of `P`.
-        unsafe { P::new(first, second) }.into()
-    }
-}
 
 impl<P: Pair> Pair for Retained<P> {
     type First = P::First;

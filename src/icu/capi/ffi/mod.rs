@@ -3,7 +3,6 @@
 mod call;
 mod dest;
 mod export;
-mod handles;
 #[cfg(any(windows, debug_assertions, bun_debug, bun_asan))]
 mod link_only;
 mod pointers;
@@ -15,7 +14,6 @@ pub(crate) use crate::sys::ptr::c_bytes;
 pub(crate) use call::*;
 pub(crate) use dest::*;
 pub(crate) use export::*;
-pub(crate) use handles::*;
 pub(crate) use pointers::*;
 pub(crate) use status::*;
 

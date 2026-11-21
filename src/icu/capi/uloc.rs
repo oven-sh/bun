@@ -1,15 +1,14 @@
 //! `unicode/uloc.h`. Only `uloc_setDefault` takes a null string.
 
 use crate::capi::ffi::raw::uloc::IdBuffer;
-use crate::capi::ffi::{
-    self, CallerMem, Dest, DestWriter, ErrorCode, LocalHandle, NulStr, Out, UBool,
-};
+use crate::capi::ffi::{self, CallerMem, Dest, DestWriter, ErrorCode, NulStr, Out, UBool};
 use crate::capi::uenum::{self, UEnumeration};
 use crate::common::charstr::ByteSink;
 use crate::common::locavailable::{uloc_count_available, uloc_get_available};
 use crate::common::locid::uloc_set_default;
 use crate::common::loclikely::{ulocimp_add_likely_subtags_to, ulocimp_minimize_subtags_to};
 use crate::common::locresdata::uloc_get_character_orientation;
+use crate::common::memory::try_box;
 use crate::common::sink::CheckedArraySink;
 use crate::common::slice_ext::{to_index, to_length};
 use crate::common::uloc::*;
@@ -108,10 +107,11 @@ fn uloc_setKeywordValue(
 }
 
 #[capi]
-fn uloc_openKeywords(locale_id: NulStr<u8>, status: ErrorCode) -> *mut UEnumeration {
-    status.open(|cx, _| {
+fn uloc_openKeywords(locale_id: NulStr<u8>, status: ErrorCode) -> Option<Box<UEnumeration>> {
+    status.run(None, |cx, _| {
         uloc_open_keywords(non_null(cx, locale_id)?)?
-            .map_or(Ok(LocalHandle::null()), uenum::open_boxed)
+            .map(|keywords| uenum::open_boxed(keywords).and_then(try_box))
+            .transpose()
     })
 }
 

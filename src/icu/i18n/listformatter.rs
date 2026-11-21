@@ -248,6 +248,7 @@ impl FormattedValue for FormattedList {
 
     /// Reports only elements. The iteration context is the number of elements passed.
     fn next_position(&self, cfpos: &mut ConstrainedFieldPosition) -> bool {
+        debug_assert!(cfpos.is_constrained());
         let context = cfpos.iteration_context();
         match self.elements.get(context as usize) {
             Some(&[start, limit]) if cfpos.matches_category(UFIELD_CATEGORY_LIST) => {

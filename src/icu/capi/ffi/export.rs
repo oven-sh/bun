@@ -113,28 +113,24 @@ pub(crate) unsafe trait Parameter {
 }
 
 macro_rules! parameters {
-    (values: $($value:ty),+; pointers: $($pointer:ident)+; handles: $($handle:ident)+;) => {
+    (values: $($value:ty),+; pointers: $($pointer:ident)+; handles: $($handle:ty),+;) => {
         // SAFETY: nothing dereferences a `Null`, and the others have no pointers.
         $(unsafe impl Parameter for $value {})+
-        // SAFETY: only methods that take a token dereference the pointer. No signature has a `Ref`, a `Mut` or a token
-        // in `T`.
+        // SAFETY: only methods that take a token dereference the pointer. No signature has a reference or a token in `T`.
         $(unsafe impl<T> Parameter for $pointer<'_, T> {})+
-        // SAFETY: a handle is not in the memory that the token stands for.
-        $(unsafe impl<H: Handle> Parameter for $handle<'_, H> {})+
+        // SAFETY: in every signature `H` is a handle, which is not in the memory that the token stands for. Threads share it.
+        $(unsafe impl<H: Send + Sync> Parameter for Option<$handle> {})+
     };
 }
 
 parameters! {
     values: i8, u8, u16, i32, u32, i64, f64, UErrorCode, Null;
     pointers: NulStr Text Array Dest Out;
-    handles: Ref Mut Owned;
+    handles: &H, &mut H, Box<H>;
 }
 
 // SAFETY: the value gives access to `P` only.
 unsafe impl<P: Parameter> Parameter for Retained<P> {}
-
-// SAFETY: the value gives access to `P` only.
-unsafe impl<P: Parameter, H> Parameter for MayAlias<P, H> {}
 
 // SAFETY: `IS_CONTEXT` is set.
 unsafe impl Parameter for ErrorCode<'_> {

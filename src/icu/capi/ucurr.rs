@@ -6,7 +6,7 @@ use crate::common::ucurr::{CurrencyName, ucurr_get_name, ucurr_open_iso_currenci
 use crate::common::unicode::ucurr::*;
 use crate::common::utypes::*;
 use bun_icu_macros::capi;
-use std::ptr::{null, null_mut};
+use std::ptr::null;
 
 /// Takes the symbol, long or narrow style.
 #[capi]
@@ -40,9 +40,9 @@ fn ucurr_getName(
 
 /// The only type is `UCURR_ALL`.
 #[capi]
-fn ucurr_openISOCurrencies(curr_type: u32, status: ErrorCode) -> *mut UEnumeration {
-    if curr_type != UCURR_ALL {
-        return status.run(null_mut(), |_, _| Err(U_UNSUPPORTED_ERROR));
-    }
-    status.open_always(|_| uenum::open_boxed(ucurr_open_iso_currencies()))
+fn ucurr_openISOCurrencies(curr_type: u32, status: ErrorCode) -> Option<Box<UEnumeration>> {
+    status.open(|_, _| match curr_type {
+        UCURR_ALL => uenum::open_boxed(ucurr_open_iso_currencies()),
+        _ => Err(U_UNSUPPORTED_ERROR),
+    })
 }

@@ -1,14 +1,13 @@
 //! `unicode/unumberrangeformatter.h`
 
-use crate::capi::ffi::{ErrorCode, MayAlias, Mut, NulStr, Null, Owned, Ref, Text, UChar};
-use crate::capi::uformattednumber::MAGIC as RESULT_MAGIC;
-use crate::capi::uformattedvalue::{UFormattedValue, Value};
+use crate::capi::ffi::{ErrorCode, NonNullHandle, NulStr, Null, Text, UChar};
+use crate::capi::uformattedvalue::UFormattedValue;
 use crate::capi::unumberformatter::{read_dec_number, read_skeleton};
 use crate::common::utypes::*;
 use crate::i18n::measunit::MeasureUnit;
 use crate::i18n::numrange_impl::{LocalizedNumberRangeFormatter, UFormattedNumberRangeData};
 use bun_icu_macros::capi;
-use std::ptr::null;
+use std::ptr::{from_ref, null};
 
 type UNumberRangeCollapse = i32;
 const UNUM_RANGE_COLLAPSE_AUTO: UNumberRangeCollapse = 0;
@@ -18,35 +17,27 @@ type UNumberRangeIdentityFallback = i32;
 const UNUM_IDENTITY_FALLBACK_APPROXIMATELY: UNumberRangeIdentityFallback = 2;
 const UNUM_IDENTITY_FALLBACK_RANGE: UNumberRangeIdentityFallback = 3;
 
-/// "NRF" in ASCII.
-pub(crate) const MAGIC: i32 = 0x4E52_4600;
-
-#[repr(C)]
-pub(crate) struct UNumberRangeFormatter {
-    magic: i32,
-    formatter: LocalizedNumberRangeFormatter,
-}
+pub(crate) type UNumberRangeFormatter = LocalizedNumberRangeFormatter;
 
 pub(crate) type UFormattedNumberRange = UFormattedValue;
 
 pub(crate) fn data(
-    uresult: Ref<'_, UFormattedNumberRange>,
+    uresult: Option<&UFormattedNumberRange>,
 ) -> Result<&UFormattedNumberRangeData, UErrorCode> {
-    match &UFormattedValue::validate(uresult, RESULT_MAGIC)?.value {
-        Value::Range(range) => Ok(range),
+    match uresult.non_null()? {
+        UFormattedValue::Range(range) => Ok(range),
         _ => Err(U_INVALID_FORMAT_ERROR),
     }
 }
 
 /// `set` returns whether the numbers are equal. An error of `set` still resets `uresult`.
 fn format(
-    uformatter: Ref<'_, UNumberRangeFormatter>,
-    uresult: Mut<'_, UFormattedNumberRange>,
+    uformatter: Option<&UNumberRangeFormatter>,
+    uresult: Option<&mut UFormattedNumberRange>,
     set: impl FnOnce(&mut UFormattedNumberRangeData) -> Result<bool, UErrorCode>,
 ) -> Result<(), UErrorCode> {
-    let formatter = &uformatter.get()?.formatter;
-    let Value::Range(result) = &mut UFormattedValue::validate_mut(uresult, RESULT_MAGIC)?.value
-    else {
+    let formatter = uformatter.non_null()?;
+    let UFormattedValue::Range(result) = uresult.non_null()? else {
         return Err(U_INVALID_FORMAT_ERROR);
     };
     result.reset();
@@ -67,7 +58,7 @@ fn unumrf_openForSkeletonWithCollapseAndIdentityFallback(
     locale: NulStr<u8>,
     perror: Null,
     ec: ErrorCode,
-) -> *mut UNumberRangeFormatter {
+) -> Option<Box<UNumberRangeFormatter>> {
     ec.open(|cx, _| {
         let macros = read_skeleton(cx, skeleton, locale)?;
         let collapses = match (collapse, identity_fallback, macros.unit) {
@@ -76,25 +67,22 @@ fn unumrf_openForSkeletonWithCollapseAndIdentityFallback(
             (UNUM_RANGE_COLLAPSE_NONE, UNUM_IDENTITY_FALLBACK_RANGE, MeasureUnit::None) => false,
             _ => return Err(U_UNSUPPORTED_ERROR),
         };
-        Ok(UNumberRangeFormatter {
-            magic: MAGIC,
-            formatter: LocalizedNumberRangeFormatter::new(macros, collapses),
-        })
+        Ok(LocalizedNumberRangeFormatter::new(macros, collapses))
     })
 }
 
 #[capi]
-fn unumrf_openResult(ec: ErrorCode) -> *mut UFormattedNumberRange {
-    let value = || Value::Range(UFormattedNumberRangeData::new());
-    UFormattedValue::open(RESULT_MAGIC, value, ec)
+fn unumrf_openResult(ec: ErrorCode) -> Option<Box<UFormattedNumberRange>> {
+    let value = || UFormattedValue::Range(UFormattedNumberRangeData::new());
+    UFormattedValue::open(value, ec)
 }
 
 #[capi]
 fn unumrf_formatDoubleRange(
-    uformatter: Ref<UNumberRangeFormatter>,
+    uformatter: Option<&UNumberRangeFormatter>,
     first: f64,
     second: f64,
-    uresult: Mut<UFormattedNumberRange>,
+    uresult: Option<&mut UFormattedNumberRange>,
     ec: ErrorCode,
 ) {
     ec.run((), |_, _| {
@@ -108,15 +96,14 @@ fn unumrf_formatDoubleRange(
 
 #[capi]
 fn unumrf_formatDecimalRange(
-    uformatter: Ref<UNumberRangeFormatter>,
-    (first, _): MayAlias<Text<u8>, UFormattedNumberRange>,
-    (second, _): MayAlias<Text<u8>, UFormattedNumberRange>,
-    uresult: Mut<UFormattedNumberRange>,
+    uformatter: Option<&UNumberRangeFormatter>,
+    (first, _): Text<u8>,
+    (second, _): Text<u8>,
+    uresult: Option<&mut UFormattedNumberRange>,
     ec: ErrorCode,
 ) {
     ec.run((), |cx, _| {
-        let [first, second] =
-            [first, second].map(|number| read_dec_number(cx, number.tied_to(&uresult)));
+        let [first, second] = [first, second].map(|number| read_dec_number(cx, number));
         format(uformatter, uresult, |result| {
             result.quantity1.set_to_dec_num(&first?)?;
             result.quantity2.set_to_dec_num(&second?)?;
@@ -127,20 +114,18 @@ fn unumrf_formatDecimalRange(
 
 #[capi]
 fn unumrf_resultAsValue(
-    uresult: Ref<UFormattedNumberRange>,
+    uresult: Option<&UFormattedNumberRange>,
     ec: ErrorCode,
 ) -> *const UFormattedValue {
-    ec.run_no_alloc(null(), |_, _| {
-        UFormattedValue::validate(uresult, RESULT_MAGIC).map(|_| uresult.as_ptr())
-    })
+    ec.run_no_alloc(null(), |_, _| uresult.non_null().map(from_ref))
 }
 
 #[capi]
-fn unumrf_close(uformatter: Owned<UNumberRangeFormatter>) {
-    uformatter.close()
+fn unumrf_close(uformatter: Option<Box<UNumberRangeFormatter>>) {
+    drop(uformatter);
 }
 
 #[capi]
-fn unumrf_closeResult(uresult: Owned<UFormattedNumberRange>) {
-    UFormattedValue::close(uresult, RESULT_MAGIC)
+fn unumrf_closeResult(uresult: Option<Box<UFormattedNumberRange>>) {
+    drop(uresult);
 }

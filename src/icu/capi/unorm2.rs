@@ -1,6 +1,6 @@
 //! `unicode/unorm2.h`
 
-use crate::capi::ffi::{Dest, ErrorCode, NulStr, Ref, Text, UBool, UChar};
+use crate::capi::ffi::{Dest, ErrorCode, NulStr, Text, UBool, UChar};
 use crate::common::normalizer2::{self, Normalizer2};
 use crate::common::sink::{AliasEnd, US_STACKBUF_SIZE, WritableAlias, stack_or_heap};
 use crate::common::slice_ext::{SliceExt, to_length};
@@ -52,13 +52,13 @@ fn unorm2_getInstance(
 }
 
 /// `String.prototype.normalize` passes on the null of a failed `unorm2_get*`, and looks for no other error.
-fn normalizer(norm2: Ref<'_, UNormalizer2>) -> Result<&UNormalizer2, UErrorCode> {
-    norm2.get().or(Err(U_MEMORY_ALLOCATION_ERROR))
+fn normalizer(norm2: Option<&UNormalizer2>) -> Result<&UNormalizer2, UErrorCode> {
+    norm2.ok_or(U_MEMORY_ALLOCATION_ERROR)
 }
 
 #[capi]
 fn unorm2_normalize(
-    norm2: Ref<UNormalizer2>,
+    norm2: Option<&UNormalizer2>,
     (src, _): Text<UChar>,
     (dest, _): Dest<UChar>,
     status: ErrorCode,
@@ -90,7 +90,11 @@ fn unorm2_normalize(
 }
 
 #[capi]
-fn unorm2_isNormalized(norm2: Ref<UNormalizer2>, (s, _): Text<UChar>, status: ErrorCode) -> UBool {
+fn unorm2_isNormalized(
+    norm2: Option<&UNormalizer2>,
+    (s, _): Text<UChar>,
+    status: ErrorCode,
+) -> UBool {
     status.run(0, |cx, _| {
         normalizer(norm2)?
             .is_normalized(cx.text(s)?)

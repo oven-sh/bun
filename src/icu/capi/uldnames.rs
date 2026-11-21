@@ -1,6 +1,6 @@
 //! `unicode/uldnames.h`
 
-use crate::capi::ffi::{Array, Dest, ErrorCode, NulStr, Owned, Ref, UChar};
+use crate::capi::ffi::{Array, Dest, ErrorCode, NonNullHandle, NulStr, UChar};
 use crate::common::locdspnm::LocaleDisplayNames;
 use crate::common::unicode::udisplaycontext::*;
 use crate::common::utypes::*;
@@ -10,7 +10,7 @@ use std::ffi::c_int;
 pub(crate) type ULocaleDisplayNames = LocaleDisplayNames;
 
 fn write_name(
-    ldn: Ref<'_, ULocaleDisplayNames>,
+    ldn: Option<&ULocaleDisplayNames>,
     code: NulStr<'_, u8>,
     result: Dest<'_, UChar>,
     status: ErrorCode<'_>,
@@ -18,7 +18,10 @@ fn write_name(
 ) -> i32 {
     status.run(0, |cx, status| {
         result.check()?;
-        let name = look_up(ldn.get()?, cx.c_str(code).ok_or(U_ILLEGAL_ARGUMENT_ERROR)?)?;
+        let name = look_up(
+            ldn.non_null()?,
+            cx.c_str(code).ok_or(U_ILLEGAL_ARGUMENT_ERROR)?,
+        )?;
         Ok(cx.extract_to(&name, result, status))
     })
 }
@@ -29,7 +32,7 @@ fn uldn_openForContext(
     locale: NulStr<u8>,
     (contexts, _): Array<c_int>,
     status: ErrorCode,
-) -> *mut ULocaleDisplayNames {
+) -> Option<Box<ULocaleDisplayNames>> {
     status.open(|cx, _| {
         let (
             Some(locale),
@@ -52,14 +55,14 @@ fn uldn_openForContext(
 }
 
 #[capi]
-fn uldn_close(ldn: Owned<ULocaleDisplayNames>) {
-    ldn.close()
+fn uldn_close(ldn: Option<Box<ULocaleDisplayNames>>) {
+    drop(ldn);
 }
 
 /// `locale` has no keywords, code page or POSIX variant.
 #[capi]
 fn uldn_localeDisplayName(
-    ldn: Ref<ULocaleDisplayNames>,
+    ldn: Option<&ULocaleDisplayNames>,
     locale: NulStr<u8>,
     (result, _): Dest<UChar>,
     status: ErrorCode,
@@ -70,7 +73,7 @@ fn uldn_localeDisplayName(
 
 #[capi]
 fn uldn_scriptDisplayName(
-    ldn: Ref<ULocaleDisplayNames>,
+    ldn: Option<&ULocaleDisplayNames>,
     script: NulStr<u8>,
     (result, _): Dest<UChar>,
     status: ErrorCode,
@@ -81,7 +84,7 @@ fn uldn_scriptDisplayName(
 
 #[capi]
 fn uldn_regionDisplayName(
-    ldn: Ref<ULocaleDisplayNames>,
+    ldn: Option<&ULocaleDisplayNames>,
     region: NulStr<u8>,
     (result, _): Dest<UChar>,
     status: ErrorCode,
@@ -93,7 +96,7 @@ fn uldn_regionDisplayName(
 /// The only key is "calendar".
 #[capi]
 fn uldn_keyValueDisplayName(
-    ldn: Ref<ULocaleDisplayNames>,
+    ldn: Option<&ULocaleDisplayNames>,
     key: NulStr<u8>,
     value: NulStr<u8>,
     (result, _): Dest<UChar>,

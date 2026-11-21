@@ -298,6 +298,7 @@ void MessagePort::peerClosed()
     // Fire 'close' (guarded against a double dispatch) and release this side's loop refs
     // so the loop can idle, matching node.
     dispatchCloseEvent();
+    m_asyncContext.clear();
     jsUnref();
 }
 

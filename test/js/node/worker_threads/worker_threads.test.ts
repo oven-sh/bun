@@ -3417,6 +3417,25 @@ test.concurrent("MessagePort events preserve creation context across GC, transfe
         assert.equal((await localClose).store.id, 0);
         assert.equal((await peerClose).store.id, 0);
 
+        // Bun releases this native snapshot at close; Node retains it until port collection.
+        if (globalThis.Bun) {
+          const released = (() => {
+            const store = { closed: true };
+            return { pair: channel(store), weak: new WeakRef(store) };
+          })();
+          const closed = new Promise(resolve => released.pair.port1.once('close', () => resolve()));
+          released.pair.port1.ref();
+          released.pair.port2.close();
+          await closed;
+          // Keep both closed ports reachable while collecting their former creation store.
+          for (let i = 0; i < 20; i++) {
+            await new Promise(resolve => setImmediate(resolve));
+            globalThis.gc();
+            if (released.weak.deref() === undefined) break;
+          }
+          assert.equal(released.weak.deref(), undefined);
+        }
+
         const outside = channel(undefined);
         const outsideMessage = context.run('registration', () => observe(outside.port1, 'message'));
         context.run('sender', () => outside.port2.postMessage('outside'));

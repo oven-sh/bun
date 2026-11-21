@@ -329,11 +329,8 @@ ObjectDefineProperty(ZlibBase.prototype, "bytesRead", {
 });
 
 ZlibBase.prototype.reset = function (this: $Node.ZlibBase) {
-  const handle = this._handle;
-  if (!handle) {
-    throw $ERR_INTERNAL_ASSERTION("zlib binding closed" + require("internal/shared").kInternalAssertionSuffix);
-  }
-  return handle.reset();
+  $assert(this._handle, "zlib binding closed");
+  return this._handle.reset();
 };
 
 // This is the _flush function called by the transform class, internally, when the last chunk has been written.

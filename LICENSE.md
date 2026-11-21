@@ -36,7 +36,7 @@ Bun statically links these libraries:
 | [`uSockets`](https://github.com/uNetworking/uSockets) | Apache 2.0 |
 | [`zlib-ng`](https://github.com/zlib-ng/zlib-ng) (not linked: `src/zlib` is derived from parts of it) | zlib |
 | [`c-ares`](https://github.com/c-ares/c-ares) | MIT licensed |
-| [`libicu`](https://github.com/unicode-org/icu) 78 | [license here](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE) |
+| [`libicu`](https://github.com/unicode-org/icu) 79 (its data are linked, and `src/icu` is derived from parts of its code) | [license here](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE) |
 | [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE) | BSD 2-Clause |
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
 | [`libdeflate`](https://github.com/ebiggers/libdeflate) (not linked: `src/deflate` and its checksum kernels are derived from it) | [MIT](https://github.com/ebiggers/libdeflate/blob/master/COPYING) |

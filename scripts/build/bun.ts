@@ -22,7 +22,7 @@ import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
-import { jscPrograms, linuxIcuRoot, webkitEngineSources } from "./deps/webkit.ts";
+import { jscPrograms, webkitEngineSources } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
 import {
   bunIncludes,
@@ -32,6 +32,7 @@ import {
   extraFlagsFor,
   linkDepends,
   linkerMapOutputs,
+  usesIcuOfLinuxSystem,
   versionScriptPaths,
 } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -77,7 +78,7 @@ function systemLibs(cfg: Config): string[] {
     // Linux local WebKit: link system ICU (prebuilt bundles its own).
     // Assumes system ICU is in default lib paths — true on most distros.
     // Android: no system ICU; the local WebKit build must bundle it.
-    if (cfg.webkit === "local" && cfg.abi !== "android" && linuxIcuRoot(cfg) === undefined) {
+    if (usesIcuOfLinuxSystem(cfg)) {
       libs.push("-licudata", "-licui18n", "-licuuc");
     }
   }

@@ -1,0 +1,80 @@
+//! ICU4C: source/common
+
+#![forbid(unsafe_code)]
+
+pub(crate) mod arrayvec;
+mod bmpset;
+mod brkeng;
+pub(crate) mod brkiter;
+pub(crate) mod bytes;
+mod bytestrie;
+pub(crate) mod charstr;
+pub(crate) mod cstring;
+mod dictbe;
+mod dictionarydata;
+pub(crate) mod emojiprops;
+mod filteredbrk;
+mod localefallback_data;
+pub(crate) mod locavailable;
+pub(crate) mod locdspnm;
+pub(crate) mod locid;
+pub(crate) mod loclikely;
+mod loclikelysubtags;
+pub(crate) mod locresdata;
+pub(crate) mod maps;
+pub(crate) mod memory;
+pub(crate) mod normalizer2;
+pub(crate) mod normalizer2impl;
+pub(crate) mod packed_strs;
+pub(crate) mod patternprops;
+pub(crate) mod propname;
+mod punycode;
+pub(crate) mod putil;
+#[cfg(unix)]
+mod putil_data;
+pub(crate) mod rbbi;
+mod rbbi_cache;
+mod rbbidata;
+pub(crate) mod resource;
+pub(crate) mod simpleformatter;
+pub(crate) mod sink;
+pub(crate) mod slice_ext;
+pub(crate) mod soft_assert;
+pub(crate) mod sorting;
+mod static_map;
+pub(crate) mod ubidi_props;
+pub(crate) mod ucase;
+pub(crate) mod uchar;
+pub(crate) mod ucharstrie;
+pub(crate) mod ucptrie;
+pub(crate) mod ucurr;
+mod ucurr_data;
+pub(crate) mod udata;
+pub(crate) mod uenum;
+pub(crate) mod uhash;
+pub(crate) mod uinvchar;
+pub(crate) mod uloc;
+mod uloc_data;
+pub(crate) mod uloc_keytype;
+pub(crate) mod uloc_tag;
+mod uloc_tag_data;
+pub(crate) mod umutex;
+pub(crate) mod unicode;
+pub(crate) mod uniset;
+pub(crate) mod unistr;
+pub(crate) mod uresbund;
+pub(crate) mod uresdata;
+pub(crate) mod uresimp;
+pub(crate) mod ustrcase;
+pub(crate) mod ustringtrie;
+pub(crate) mod utf16;
+pub(crate) mod utf8;
+pub(crate) mod utrie2;
+pub(crate) mod uts46;
+pub(crate) mod utypes;
+#[cfg(windows)]
+mod wintz;
+
+pub(crate) use packed_strs::packed_strs;
+pub(crate) use soft_assert::soft_assert;
+pub(crate) use utypes::UErrorCode;

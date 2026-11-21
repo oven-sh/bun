@@ -850,11 +850,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_icu"
+version = "0.0.0"
+dependencies = [
+ "bun_collections",
+ "bun_core",
+ "bun_icu_macros",
+ "bun_paths",
+ "bun_sema_standalone",
+ "bun_sys",
+ "bun_wyhash",
+ "libc",
+]
+
+[[package]]
 name = "bun_icu_data"
 version = "0.0.0"
 dependencies = [
  "bun_zstd_decoder",
 ]
+
+[[package]]
+name = "bun_icu_macros"
+version = "0.0.0"
 
 [[package]]
 name = "bun_ini"
@@ -1663,6 +1681,7 @@ dependencies = [
  "bun_http1",
  "bun_http_jsc",
  "bun_http_types",
+ "bun_icu",
  "bun_icu_data",
  "bun_install",
  "bun_install_jsc",

@@ -38,7 +38,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
-import { computeCpuTargetFlags, rustLtoInLink } from "./flags.ts";
+import { computeCpuTargetFlags, rustLtoInLink, usesIcuOfLinuxSystem } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { envify } from "./rust/cargo-env.ts";
 import { emitGeneratedInputsCheck, emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
@@ -474,6 +474,11 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   rustflags.push("--check-cfg=cfg(bun_disallow_code_generation_from_strings)");
   if (!cfg.codeGenerationFromStrings) {
     rustflags.push("--cfg=bun_disallow_code_generation_from_strings");
+  }
+  // `bun_system_icu`: `bun_icu` is empty.
+  rustflags.push("--check-cfg=cfg(bun_system_icu)");
+  if (usesIcuOfLinuxSystem(cfg)) {
+    rustflags.push("--cfg=bun_system_icu");
   }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a

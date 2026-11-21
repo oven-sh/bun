@@ -34,7 +34,7 @@ import type { EngineSources } from "../aot.ts";
 import { evaluateCMake, type CMakeEvaluation } from "../cmake.ts";
 import type { Config } from "../config.ts";
 import { assert, BuildError } from "../error.ts";
-import { computeCpuTargetFlags, computeHardeningFlags, fuzzilliCoverageFlags } from "../flags.ts";
+import { computeCpuTargetFlags, computeHardeningFlags, fuzzilliCoverageFlags, linuxIcuRoot } from "../flags.ts";
 import { writeIfChanged } from "../fs.ts";
 import { quote } from "../shell.ts";
 import {
@@ -261,16 +261,22 @@ function programObjects(cfg: Config, program: string): string {
   return wkLib(cfg, `${program}-objects`);
 }
 
+/** `data` joins every link. `code` is for WebKit's own programs: bun has src/icu. */
+interface IcuLibs {
+  data: string[];
+  code: string[];
+}
+
 /** ICU libs the prebuilt tarball bundles on linux/windows (macOS uses system ICU). */
-function prebuiltIcuLibs(cfg: Config): string[] {
+function prebuiltIcuLibs(cfg: Config): IcuLibs {
   if (cfg.windows) {
     const d = cfg.debug ? "d" : "";
-    return [`lib/sicudt${d}.lib`, `lib/sicuin${d}.lib`, `lib/sicuuc${d}.lib`];
+    return { data: [`lib/sicudt${d}.lib`], code: [`lib/sicuin${d}.lib`, `lib/sicuuc${d}.lib`] };
   }
   if (cfg.linux || cfg.freebsd) {
-    return ["lib/libicudata.a", "lib/libicui18n.a", "lib/libicuuc.a"];
+    return { data: ["lib/libicudata.a"], code: ["lib/libicui18n.a", "lib/libicuuc.a"] };
   }
-  return []; // darwin: system ICU
+  return { data: [], code: [] }; // darwin: system ICU
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -783,7 +789,7 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
   checkAotSourceLists(wk);
   removeGeneratedFilesThatHideSources(wk);
   const flags = webkitFlags(wk);
-  const icu = icuBuild(wk);
+  const icuOutputs = icuBuild(wk);
   const codegen = jscCodegenSteps(wk, lists.jsc);
   // Written in this graph: the first two by steps of this spec, the others by the steps of ../aot.ts.
   const aotGenerated = [
@@ -796,9 +802,9 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
   ];
   // All codegen must exist before any JSC TU compiles; after that the
   // depfiles know exactly which TU reads which header.
-  const codegenReady = [...codegen.headers, ...codegen.sources, ...aotGenerated, ...icu.outputs];
+  const codegenReady = [...codegen.headers, ...codegen.sources, ...aotGenerated, ...icuOutputs];
   const jsc = jscCompileFlags(wk, flags, lists.jsc);
-  const wtf = wtfGroup(wk, flags, lists.wtf, icu.outputs);
+  const wtf = wtfGroup(wk, flags, lists.wtf, icuOutputs);
   const llint = llintSteps(wk, jsc, lists.jsc, codegenReady);
   const jscSources = jscSourceList(wk, lists.jsc);
 
@@ -813,7 +819,7 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
       jscGroup(wk, jsc, jscSources, codegenReady, llint.assembly),
     ],
     steps: wk.steps,
-    libs: icu.libs,
+    libs: icuLibs(wk).data,
     // What a consumer's compile waits for: JSC's generated headers (bun
     // includes them through the PrivateHeaders stubs), WTF's MIG stubs, and
     // ICU's headers where a step produces them.
@@ -821,7 +827,7 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
       ...codegen.headers,
       ...aotGenerated.filter(file => !file.endsWith(".cpp")),
       ...wtf.migHeaders,
-      ...icu.outputs,
+      ...icuOutputs,
     ],
     // A directory's mtime moves when a file is added to or removed from it.
     configureInputs: [
@@ -853,7 +859,10 @@ function webkitLocalIncludes(cfg: Config): string[] {
 
 // ─── ICU ───
 //
-// Not built here. Linux uses the system's (headers on the default search
+// bun takes the headers and the data of an ICU4C, and has src/icu for its
+// code, whose names carry the version of the prebuilt's ICU4C.
+//
+// Not built here. Linux uses all of the system's (headers on the default search
 // path, -licu* in bun.ts), or the static one $BUN_ICU_ROOT names, such as the
 // include/ and lib/ of a prebuilt WebKit. macOS links the SDK's libicucore, whose
 // headers Apple does not ship: WebKit carries a matching set in Source/WTF/icu,
@@ -864,39 +873,47 @@ function webkitLocalIncludes(cfg: Config): string[] {
 // and runs msbuild, into the per-profile build dir.
 
 const androidIcuRoot = (): string => process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android";
-const windowsIcuDir = (wk: WebKitBuild): string => join(wk.B, "icu");
-export const linuxIcuRoot = (cfg: Config): string | undefined =>
-  cfg.linux && cfg.abi !== "android" ? process.env.BUN_ICU_ROOT || undefined : undefined;
-const staticIcuLibs = (root: string): string[] =>
-  ["libicui18n.a", "libicuuc.a", "libicudata.a"].map(lib => join(root, "lib", lib));
+const builtIcuDir = (wk: WebKitBuild): string => join(wk.B, "icu");
+const staticIcuLibs = (codeRoot: string, dataRoot: string): IcuLibs => ({
+  data: [join(dataRoot, "lib", "libicudata.a")],
+  code: ["libicui18n.a", "libicuuc.a"].map(lib => join(codeRoot, "lib", lib)),
+});
 
 function icuIncludes(wk: WebKitBuild): string[] {
   const { cfg } = wk;
   if (cfg.darwin) return [join(wk.WTF, "icu")];
-  if (cfg.windows) return [join(windowsIcuDir(wk), "include")];
+  if (cfg.windows) return [join(builtIcuDir(wk), "include")];
   if (cfg.abi === "android") return [join(androidIcuRoot(), "include")];
   const root = linuxIcuRoot(cfg);
   return root === undefined ? [] : [join(root, "include")];
 }
 
-/** `libs` join bun's link; `outputs` are the ones a step of this graph produces, with ICU's headers as a side effect. */
-function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
+function icuLibs(wk: WebKitBuild): IcuLibs {
   const { cfg } = wk;
-  if (cfg.abi === "android") {
-    return { libs: staticIcuLibs(androidIcuRoot()), outputs: [] };
+  if (cfg.abi === "android") return staticIcuLibs(androidIcuRoot(), androidIcuRoot());
+  if (cfg.windows) {
+    const lib = (name: string) => join(builtIcuDir(wk), "lib", name);
+    return { data: [lib("sicudt.lib")], code: [lib("icuin.lib"), lib("icuuc.lib")] };
   }
   const root = linuxIcuRoot(cfg);
+  if (root !== undefined) return staticIcuLibs(cfg.hardened ? builtIcuDir(wk) : root, root);
   if (cfg.hardened) {
-    if (root === undefined) {
-      throw new BuildError("hardened needs ICU's headers and data", {
-        hint: "Name the include/ and lib/ of a prebuilt WebKit in BUN_ICU_ROOT",
-      });
-    }
-    const dir = join(wk.B, "icu");
+    throw new BuildError("hardened needs ICU's headers and data", {
+      hint: "Name the include/ and lib/ of a prebuilt WebKit in BUN_ICU_ROOT",
+    });
+  }
+  return { data: [], code: [] };
+}
+
+/** Adds the step that produces some of `icuLibs`, if there is one. Returns the outputs that come with ICU's headers. */
+function icuBuild(wk: WebKitBuild): string[] {
+  const { cfg } = wk;
+  const { data, code } = icuLibs(wk);
+  const dir = builtIcuDir(wk);
+  if (cfg.hardened) {
     const script = join(cfg.cwd, "scripts", "build", "hardened-icu.sh");
-    const libs = ["libicui18n.a", "libicuuc.a"].map(lib => join(dir, "lib", lib));
     gen(wk, {
-      outputs: libs,
+      outputs: code,
       inputs: [script, join(wk.W, "icu", "source.json"), join(wk.W, "icu", "udata-decompress-hook.patch")],
       cwd: wk.W,
       cmd: [
@@ -914,13 +931,11 @@ function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
       ],
       desc: "ICU (hardened-icu.sh)",
     });
-    return { libs: [...libs, join(root, "lib", "libicudata.a")], outputs: [] };
+    return [];
   }
-  if (root !== undefined) return { libs: staticIcuLibs(root), outputs: [] };
-  if (!cfg.windows) return { libs: [], outputs: [] };
-  const dir = windowsIcuDir(wk);
+  if (!cfg.windows) return [];
   const script = join(wk.W, "build-icu.ps1");
-  const libs = ["sicudt.lib", "icuin.lib", "icuuc.lib"].map(l => join(dir, "lib", l));
+  const libs = [...data, ...code];
   gen(wk, {
     outputs: libs,
     inputs: [script],
@@ -943,7 +958,7 @@ function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
     ],
     desc: "ICU (build-icu.ps1)",
   });
-  return { libs, outputs: libs };
+  return libs;
 }
 
 // ─── Flags ───
@@ -1215,7 +1230,10 @@ function wtfGroup(
       // PLATFORM(COCOA) refers to it, never the JSCOnly port. In libWTF.a it is a
       // member nothing pulls in; a native macOS link takes every object, and this
       // one is ARC, so it would need the Objective-C runtime for nothing.
-      sources: lists.paths("WTF_SOURCES").filter(s => !s.endsWith(".mm")),
+      // Likewise without three files for WebCore, which call parts of ICU that src/icu does not have.
+      sources: lists
+        .paths("WTF_SOURCES")
+        .filter(s => !s.endsWith(".mm") && !/^(URLHelpers|CollatorICU|UnicodeExtras)\.cpp$/.test(basename(s))),
       includes: [...lists.paths("WTF_PRIVATE_INCLUDE_DIRECTORIES"), ...flags.bmallocConsumerIncludes],
       cflags: [
         ...flags.common,
@@ -2086,7 +2104,7 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
         ...(cfg.darwin ? (name === "jsc" ? ["-ledit"] : []) : cfg.windows ? [] : ["-Wl,--strip-debug"]),
         ...(hasCompressedData ? [icuHook] : []),
       ],
-      libs: [resolve(prebuiltDestDir(cfg), programObjects(cfg, name))],
+      libs: [programObjects(cfg, name), ...prebuiltIcuLibs(cfg).code].map(lib => resolve(prebuiltDestDir(cfg), lib)),
     }));
   }
   if (cfg.webkit !== "local") return [];
@@ -2109,6 +2127,7 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
       cxxflags: jsc.cxx,
     }).cxx,
     ldflags: [...standaloneExeLinkFlags(cfg), ...ldflags],
+    libs: icuLibs(wk).code,
   });
   const testb3 = readdirSync(testb3Dir(wk))
     .filter(f => f.startsWith("testb3_") && f.endsWith(".cpp"))
@@ -2189,7 +2208,7 @@ export const webkit: Dependency = {
       // it. If a future version drops libbmalloc.a, you'll get a clear
       // "file not found" at link time (not silent omission + cryptic
       // undefined symbols).
-      const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg), bmallocLib(cfg)];
+      const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg).data, bmallocLib(cfg)];
 
       const includes = ["include"];
       // Linux/windows: ICU headers under wtf/unicode. macOS: deleted by
@@ -2198,7 +2217,9 @@ export const webkit: Dependency = {
 
       const { schemaInputs, builtinTableInputs } = webkitEngineSources(cfg);
       const files = [...schemaInputs, ...builtinTableInputs].map(file => relative(prebuiltDestDir(cfg), file));
-      if (prebuiltHasProgramObjects(cfg)) files.push(programObjects(cfg, "jsc"), programObjects(cfg, "testaot"));
+      if (prebuiltHasProgramObjects(cfg)) {
+        files.push(programObjects(cfg, "jsc"), programObjects(cfg, "testaot"), ...prebuiltIcuLibs(cfg).code);
+      }
       // `HARDENING` in lanes.mjs has grown, and the name of a tarball does not say which list it was compiled with.
       const symbols = [
         ...(cfg.aot && cfg.guardedPages ? ["JSC__AOT__mapsGuardedPages"] : []),

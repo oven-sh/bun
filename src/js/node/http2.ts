@@ -3965,13 +3965,11 @@ function receivedValueLabel(value) {
 // Node's `neverIndex`. The native header walk adds `authorization` and short cookies itself, as nghttp2 does.
 function buildSensitiveNames(sensitives): string[] | undefined {
   if (sensitives === undefined) return undefined;
-  const length = sensitives.length;
-  if (length === 0) return undefined;
-  const names = $newArrayWithSize<string>(length);
-  for (let i = 0; i < length; i++) {
-    $putByValDirect(names, i, StringPrototypeToLowerCase.$call(String(sensitives[i])));
+  const names: string[] = [];
+  for (let i = 0; i < sensitives.length; i++) {
+    if (i in sensitives) $putByValDirect(names, names.length, StringPrototypeToLowerCase.$call(String(sensitives[i])));
   }
-  return names;
+  return names.length === 0 ? undefined : names;
 }
 
 function toHeaderObject(headers, sensitiveHeadersValue) {

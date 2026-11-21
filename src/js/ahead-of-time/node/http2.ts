@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f3f36cfd446d85e0171bf85b333acdb4335f00892652e83579e32d402b1d26b6.
+// Written against that file with the SHA-256 9ad8931657f49fc2267105a5a8993f87455c266bdad2dd6815ac3a87def7372d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -4085,13 +4085,11 @@ function receivedValueLabel(value: unknown) {
 // Node's `neverIndex`. The native header walk adds `authorization` and short cookies itself, as nghttp2 does.
 function buildSensitiveNames(sensitives: unknown[] | undefined): string[] | undefined {
   if (sensitives === undefined) return undefined;
-  const length = sensitives.length;
-  if (length === 0) return undefined;
-  const names = $newArrayWithSize<string>(length);
-  for (let i = 0; i < length; i++) {
-    $putByValDirect(names, i, StringPrototypeToLowerCase.$call(String(sensitives[i])));
+  const names: string[] = [];
+  for (let i = 0; i < sensitives.length; i++) {
+    if (i in sensitives) $putByValDirect(names, names.length, StringPrototypeToLowerCase.$call(String(sensitives[i])));
   }
-  return names;
+  return names.length === 0 ? undefined : names;
 }
 
 function toHeaderObject(headers, sensitiveHeadersValue) {

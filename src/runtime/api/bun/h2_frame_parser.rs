@@ -1719,7 +1719,7 @@ impl NeverIndexNames {
             return Err(global.throw(format_args!("Expected sensitiveHeaders to be an array")));
         }
         let mut iter = names.array_iterator(global)?;
-        let mut listed = Vec::with_capacity(iter.len as usize);
+        let mut listed = Vec::new();
         while let Some(name) = iter.next()? {
             listed.push(name.to_bun_string(global)?);
         }

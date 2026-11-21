@@ -152,6 +152,10 @@ async function rules() {
   if (process.versions.bun && !require("bun:jsc").jscDescribe(wideName).includes("8Bit:(0)")) {
     throw new Error("the listed name is not a 16-bit string");
   }
+  // A hole is no name: `map` skips it in Node.
+  const holey = ["x-a"];
+  holey[2] = "x-b";
+  const fractional = new Proxy(["x-a"], { get: (target, key) => (key === "length" ? 1.5 : target[key]) });
   const rows = [
     ["no list, no such field", { "x-a": "1" }],
     ["authorization", { authorization: "Bearer t" }],
@@ -181,6 +185,11 @@ async function rules() {
     ],
     ["an empty list", { "x-a": "1", [sensitive]: [] }],
     ["a listed name that is not sent", { "x-a": "1", [sensitive]: ["x-b"] }],
+    ["a list with a hole: x-a, x-b, undefined", { "x-a": "1", "x-b": "2", undefined: "3", [sensitive]: holey }],
+    [
+      "a list behind a Proxy with the length 1.5: x-a, undefined",
+      { "x-a": "1", undefined: "3", [sensitive]: fractional },
+    ],
     [
       "no list: 0, 123, constructor, tostring, valueof, hasownproperty",
       { 0: "1", 123: "2", constructor: "3", tostring: "4", valueof: "5", hasownproperty: "6" },

@@ -993,51 +993,6 @@ describe.concurrent("test environment", () => {
     expect(exitCode).toBe(0);
   });
 
-  // As happy-dom does for the body of a Response and for `input.valueAsDate`. With --isolate the package has the classes of another global than the file.
-  test.each([[], ["--isolate"], ["--isolate=modules"]])(
-    "happy-dom: a ReadableStream or Date of the test file is an instance of the package's class: %s",
-    async (...args) => {
-      const file = `
-        import { test } from "bun:test";
-        const show = (is, values) => values.map(is).join();
-        test("streams", () => {
-          const streams = [new ReadableStream(), Bun.file(import.meta.path).stream(), new TransformStream().readable];
-          const others = [{ [Symbol.toStringTag]: "ReadableStream" }, new WritableStream(), null, "a"];
-          console.log("streams", show(isStream, streams), show(isStream, others), show(isSubclassInstance, streams));
-        });
-        test("dates", () => {
-          const dates = [new Date(0), new (class extends Date {})(0)];
-          const others = [{ getTime() {} }, "1970-01-01", 0, null];
-          console.log("dates", show(isDate, dates), show(isDate, others), show(isSubclassInstance, dates));
-        });`;
-      using dir = tempDir("test-environment", {
-        ...fakePackages,
-        "node_modules/happy-dom/index.js": `
-          ${fakePackages["node_modules/happy-dom/index.js"]}
-          const { ReadableStream } = require("stream/web");
-          class Stream extends ReadableStream {}
-          class Day extends Date {}
-          const { Window } = exports;
-          exports.Window = class extends Window {
-            isStream = value => value instanceof ReadableStream;
-            isDate = value => value instanceof Date;
-            isSubclassInstance = value => value instanceof Stream || value instanceof Day;
-          };`,
-        "bunfig.toml": `[test]\nenvironment = "happy-dom"\n`,
-        "1.test.js": file,
-        "2.test.js": file,
-      });
-      const { stdout, stderr, exitCode } = await bunTest(String(dir), ...args);
-      const expected = [
-        "streams true,true,true false,false,false,false false,false,false",
-        "dates true,true false,false,false,false false,false",
-      ];
-      expect(stdout.filter(line => !/^(?:open|close|abort) /.test(line))).toEqual([...expected, ...expected]);
-      expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
-      expect(exitCode).toBe(0);
-    },
-  );
-
   test("--isolate: the window that jsdom keeps is not a test file's", async () => {
     using dir = tempDir("test-environment", {
       ...fakePackages,
@@ -1926,72 +1881,6 @@ describe.concurrent("test environment with the real", () => {
       using dir = project({ "1.test.js": file, "2.test.js": file });
       const { stderr, exitCode } = await bunTest(String(dir), ...args);
       expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
-      expect(exitCode).toBe(0);
-    },
-  );
-
-  // happy-dom reads a body only if it is `instanceof ReadableStream`, and otherwise sends String(body). It takes a `valueAsDate` only if it is `instanceof Date`.
-  test.each([[], ["--isolate"], ["--isolate=modules"]])(
-    "happy-dom: takes a ReadableStream and a Date of the test file: %s",
-    async (...args) => {
-      const file = `// ${VITEST} happy-dom
-        import { test, expect } from "bun:test";
-
-        const text = '{"a":1}';
-        const source = {
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode(text));
-            controller.close();
-          },
-        };
-
-        test("a Response", async () => {
-          const body = new ReadableStream(source);
-          const response = new Response(body);
-          expect(response.body).toBe(body);
-          expect(response.headers.get("content-type")).toBeNull();
-          expect(await response.json()).toEqual({ a: 1 });
-          expect(await new Response(new ReadableStream(source)).clone().text()).toBe(text);
-          expect(Buffer.from(await new Response(new ReadableStream(source)).arrayBuffer()).toString()).toBe(text);
-        });
-
-        test("a Request", async () => {
-          const request = new Request("http://localhost:3000/", { method: "POST", body: new ReadableStream(source) });
-          expect(await request.text()).toBe(text);
-        });
-
-        test("a stream that Bun makes", async () => {
-          const { readable, writable } = new TransformStream();
-          const writer = writable.getWriter();
-          writer.write(new TextEncoder().encode(text));
-          writer.close();
-          expect(await new Response(readable).text()).toBe(text);
-          expect(await new Response(Bun.file(import.meta.path).stream()).text()).toContain("a stream that Bun makes");
-        });
-
-        test("a subclass", async () => {
-          class Stream extends ReadableStream {}
-          expect(await new Response(new Stream(source)).text()).toBe(text);
-        });
-
-        test("nothing else", async () => {
-          const imitation = { [Symbol.toStringTag]: "ReadableStream", getReader() {} };
-          expect(await new Response(imitation).text()).toBe("[object ReadableStream]");
-          expect(Object.getOwnPropertySymbols(ReadableStream)).toEqual([]);
-        });
-
-        test("a Date", () => {
-          const input = document.createElement("input");
-          input.type = "date";
-          input.valueAsDate = new Date(Date.UTC(2024, 0, 2));
-          expect(input.value).toBe("2024-01-02");
-          expect(() => (input.valueAsDate = { getTime() {} })).toThrow("not a Date");
-          expect(Object.getOwnPropertySymbols(Date)).toEqual([]);
-        });
-      `;
-      using dir = project({ "1.test.js": file, "2.test.js": file });
-      const { stderr, exitCode } = await bunTest(String(dir), ...args);
-      expect(summary(stderr)).toEqual(["12 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     },
   );

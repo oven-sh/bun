@@ -9335,12 +9335,11 @@ describe.skipIf(!isWindows)("on Windows", () => {
       ],
     ]);
 
-    // Node.js has EPERM for all of them, as it opens the file a second time.
     it.each([
-      ["file", "r+", ["100444", true, "100666"]],
-      ["file", "a", ["100444", true, "100666"]],
-      ["file", "r", ["EPERM -4048 fchmod", false, "EPERM -4048 fchmod"]],
-      ["directory", "r+", ["EPERM -4048 fchmod", false, "EPERM -4048 fchmod"]],
+      ["file", "r+", ["100444", "100666"]],
+      ["file", "a", ["100444", "100666"]],
+      ["file", "r", ["100444", "100666"]],
+      ["directory", "r+", ["EPERM -4048 fchmod", "EPERM -4048 fchmod"]],
     ])("fchmod of a %s whose delete is pending, through %s", (name, flags, expected) => {
       using dir = tempDir("fs-windows", { file: "abc", directory: {} });
       const file = join(String(dir), name);
@@ -9350,16 +9349,15 @@ describe.skipIf(!isWindows)("on Windows", () => {
       const handle = symbols.CreateFileW(wide(file), DELETE | WRITE_ATTRIBUTES, 7, null, 3, BACKUP_SEMANTICS, null);
       try {
         const seen = withFd(file, flags, fd => {
-          const longAgo = new BigInt64Array([0n, 0n, 0n, 125_000_000_000_000_000n, 0n]);
+          const changedIn1997 = new BigInt64Array([0n, 0n, 0n, 125_000_000_000_000_000n, 0n]);
           expect([
-            symbols.SetFileInformationByHandle(handle, FileBasicInfo, longAgo, 40),
+            symbols.SetFileInformationByHandle(handle, FileBasicInfo, changedIn1997, 40),
             symbols.SetFileInformationByHandle(handle, FileDispositionInfo, Buffer.from([1, 0, 0, 0]), 4),
           ]).toEqual([1, 1]);
-          const { ctimeMs } = fs.fstatSync(fd);
           const chmod = (to: number) => attempt(() => (fs.fchmodSync(fd, to), mode(fs.fstatSync(fd))));
-          return [chmod(0o444), fs.fstatSync(fd).ctimeMs > ctimeMs, chmod(0o666)];
+          return [chmod(0o444), chmod(0o666), fs.fstatSync(fd).ctime.getUTCFullYear()];
         });
-        expect(seen).toEqual(expected);
+        expect(seen).toEqual([...expected, 1997]);
       } finally {
         symbols.CloseHandle(handle);
         close();

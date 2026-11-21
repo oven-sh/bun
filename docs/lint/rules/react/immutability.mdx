@@ -122,6 +122,22 @@ function Profile() {
 }
 ```
 
+A shared value from `react-native-reanimated` is made to be written to, like a ref. With an ESLint config, the rule follows eslint-plugin-react-hooks: it only knows this if the plugin can `require("react-native-reanimated")`, unless the [options](#options) say otherwise. With an oxlint config it's reported, as in oxlint 1.87.
+
+{/* good */}
+```jsx
+import { useEffect } from "react";
+import { useSharedValue } from "react-native-reanimated";
+
+function Fade() {
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    opacity.value = 1;
+  }, [opacity]);
+  return null;
+}
+```
+
 The rule doesn't know what a method call does. This modifies the parent's array but isn't reported:
 
 {/* good */}
@@ -129,5 +145,28 @@ The rule doesn't know what a method call does. This modifies the parent's array 
 function Tags({ tags }) {
   tags.push("new");
   return <span>{tags.length}</span>;
+}
+```
+
+## Options
+
+eslint-plugin-react-hooks passes the rule's options object on to the React Compiler. Bun reads two of its keys and ignores the others:
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `enableReanimatedCheck` | `true` | `false`: a shared value is an ordinary value, even if `react-native-reanimated` is installed |
+| `environment.enableCustomTypeDefinitionForReanimated` | `false` | `true`: a shared value can be written to, even if the plugin can't find the package |
+
+{/* bad {"options": [{"enableReanimatedCheck": false}]} */}
+```jsx
+import { useEffect } from "react";
+import { useSharedValue } from "react-native-reanimated";
+
+function Fade() {
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    opacity.value = 1;
+  }, [opacity]);
+  return null;
 }
 ```

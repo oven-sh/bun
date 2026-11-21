@@ -1,13 +1,15 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use bun_lint_react_compiler::{ErrorCategory, Flavor, rule};
+use bun_lint_react_compiler::{ErrorCategory, Flavor, Reanimated, rule};
 
 /// A React Compiler rule, which reports the diagnostics of one category. `RULE` below `RULES.len()` is oxlint's
 /// `react/..` rule for that entry of [`RULES`]. From `RULES.len()` on it's eslint-plugin-react-hooks' `react-hooks/..`
 /// rule for the same entries.
 ///
-/// The plugin's rule has one option, an object that's merged into the compiler's options. It's ignored here.
-pub struct CompilerRule<const RULE: usize = 0>;
+/// The plugin's rule has one option, an object of compiler options. Only its [`Reanimated`] keys are read here.
+pub struct CompilerRule<const RULE: usize = 0> {
+    reanimated: Reanimated,
+}
 
 /// (name, category, its kind in oxlint, whether it's in the plugin's `recommended` config)
 const RULES: [(&str, ErrorCategory, Kind, bool); 26] = [
@@ -65,20 +67,21 @@ impl<const RULE: usize> Rule for CompilerRule<RULE> {
         }
     };
     const ON: On = On::new().finish();
-    type State<'a> = ();
+    /// Whether the compiler knows Reanimated's types in this file.
+    type State<'a> = bool;
 
-    fn new(_: &Options) -> Self {
-        Self
+    fn new(options: &Options) -> Self {
+        Self { reanimated: Reanimated::of(options.object(0)) }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        rule::starts(file, Self::FLAVOR, Self::CATEGORY).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
+        rule::starts(file, Self::FLAVOR, Self::CATEGORY, self.reanimated)
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         match Self::FLAVOR {
-            Flavor::Oxlint => rule::report(cx, Self::CATEGORY),
-            Flavor::Eslint => rule::report_as_eslint(cx, Self::CATEGORY),
+            Flavor::Oxlint => rule::report(cx, Self::CATEGORY, cx.state),
+            Flavor::Eslint => rule::report_as_eslint(cx, Self::CATEGORY, cx.state),
         }
     }
 }

@@ -1642,6 +1642,11 @@ impl Config {
                 .map(|it| it.0.clone())
                 .collect(),
         };
+        // The React Compiler rules ask that module whether a package is installed. A comment in a file can turn them on.
+        let react_hooks = Plugin::ReactHooks.prefix().as_bytes();
+        let location = js_locations.iter().find(|it| *it.0 == *react_hooks);
+        let module = location.and_then(|it| it.1.get(b"module")?.as_str());
+        config.language.react_hooks_module = module.map(Arc::from);
         config.linter = linter;
         config.parser_name = (language_options.get(b"parser"))
             .and_then(Json::as_str)

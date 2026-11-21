@@ -142,7 +142,7 @@ pub struct IndirectExportEntry {
 /// Builds a file's [`Record`].
 pub type MakeRecord = for<'a> fn(&'a File<'a>) -> Record;
 
-/// One of eslint-plugin-import's resolvers.
+/// One of eslint-plugin-import's resolvers, or Node's.
 #[derive(Clone, Debug)]
 pub enum Lookup<'e> {
     /// eslint-import-resolver-typescript, with its `project` option verbatim.
@@ -155,6 +155,8 @@ pub enum Lookup<'e> {
         paths: SmallVec<[&'e [u8]; 2]>,
         module_directories: SmallVec<[&'e [u8]; 1]>,
     },
+    /// Node's own `require.resolve`, except that a package's `exports` and `NODE_PATH` aren't read.
+    Require,
 }
 
 /// A file found by [`Modules::list_files`].

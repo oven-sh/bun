@@ -1,8 +1,8 @@
 //! Code shared by the rules. Each rule reports the diagnostics of one category.
 
-use crate::Flavor;
 use crate::eslint::{self, Suggested};
 use crate::oxlint::{Rendered, render_all};
+use crate::{Flavor, Reanimated};
 use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::context::{Cx, Report};
@@ -14,16 +14,20 @@ const MESSAGE: &Message = &Message::new("", "{{message}}");
 const DESCRIPTION: &Message = &Message::new("", "{{description}}");
 
 /// oxlint's `run_react_compiler_rule`. Reports the compiler's diagnostics for the file in `category`.
-pub fn report<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
-    report_with(cx.file(), category, &|at| cx.report(at, MESSAGE));
+/// `knows_reanimated` is what [`starts`] returned.
+pub fn report<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory, knows_reanimated: bool) {
+    report_with(cx.file(), category, knows_reanimated, &|at| {
+        cx.report(at, MESSAGE)
+    });
 }
 
 fn report_with<'a>(
     file: &'a File<'a>,
     category: ErrorCategory,
+    knows_reanimated: bool,
     report_at: &dyn Fn(Span) -> Report<'a>,
 ) {
-    let findings = crate::findings(file, Flavor::Oxlint)
+    let findings = crate::findings(file, Flavor::Oxlint, knows_reanimated)
         .iter()
         .filter(|finding| finding.category == category);
     for (_, rendered) in render_all(file, findings) {
@@ -54,16 +58,24 @@ fn report_with<'a>(
 }
 
 /// eslint-plugin-react-hooks' `makeRule`. Reports the compiler's diagnostics for the file in `category`.
-pub fn report_as_eslint<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
-    report_as_eslint_with(cx.file(), category, &|at| cx.report(at, MESSAGE));
+/// `knows_reanimated` is what [`starts`] returned.
+pub fn report_as_eslint<'a, R: Rule>(
+    cx: &Cx<'a, R>,
+    category: ErrorCategory,
+    knows_reanimated: bool,
+) {
+    report_as_eslint_with(cx.file(), category, knows_reanimated, &|at| {
+        cx.report(at, MESSAGE)
+    });
 }
 
 fn report_as_eslint_with<'a>(
     file: &'a File<'a>,
     category: ErrorCategory,
+    knows_reanimated: bool,
     report_at: &dyn Fn(Span) -> Report<'a>,
 ) {
-    let findings = crate::findings(file, Flavor::Eslint)
+    let findings = crate::findings(file, Flavor::Eslint, knows_reanimated)
         .iter()
         .filter(|finding| finding.category == category);
     for finding in findings {
@@ -84,14 +96,20 @@ fn report_as_eslint_with<'a>(
     }
 }
 
-/// True if the rule for `category` has anything to do in the file. Call it from [`Rule::start`].
-pub fn starts<'a>(file: &'a File<'a>, flavor: Flavor, category: ErrorCategory) -> bool {
+/// For [`Rule::start`]. `None` if the rule has nothing to do in the file, or else whether Reanimated's types are known.
+pub fn starts<'a>(
+    file: &'a File<'a>,
+    flavor: Flavor,
+    category: ErrorCategory,
+    reanimated: Reanimated,
+) -> Option<bool> {
     let starts = crate::program::may_have_react_code(file, flavor)
         && (flavor == Flavor::Eslint || should_run(file));
-    if starts {
-        crate::want(file, flavor, category);
-    }
-    starts
+    starts.then(|| {
+        let knows_reanimated = crate::compile::knows_reanimated(file, reanimated);
+        crate::want(file, flavor, knows_reanimated, category);
+        knows_reanimated
+    })
 }
 
 /// oxlint's `should_run_react_compiler`

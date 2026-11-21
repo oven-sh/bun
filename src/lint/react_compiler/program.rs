@@ -1286,6 +1286,7 @@ pub(crate) fn compile_program<'a>(
     file: &'a File<'a>,
     flavor: Flavor,
     wanted: Categories,
+    knows_reanimated: bool,
 ) -> Vec<Finding> {
     if has_memo_cache_function_import(file, REACT_COMPILER_RUNTIME_MODULE, flavor) {
         return Vec::new();
@@ -1304,7 +1305,7 @@ pub(crate) fn compile_program<'a>(
 
     let mut context = ProgramContext {
         flavor,
-        compiler: Compiler::new(file, flavor, wanted),
+        compiler: Compiler::new(file, flavor, wanted, knows_reanimated),
         // The plugin validates hooks and memoization dependencies itself, and in that mode the compiler doesn't look
         // for suppression comments.
         suppressions: match flavor {

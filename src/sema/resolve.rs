@@ -1471,6 +1471,15 @@ pub(crate) fn ensure_path_is_non_module_name(path: Vec<u8>) -> Vec<u8> {
     }
 }
 
+/// Which fields of a `package.json` name the package's entry, before its `index`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Entry {
+    /// `module`, then `jsnext:main`, then `main`: eslint-import-resolver-node.
+    ForBundlers,
+    /// `main`: Node's own `require.resolve`.
+    Main,
+}
+
 /// eslint-import-resolver-node's options, for [`Resolver::resolve_as_require`].
 pub struct AsRequire<'a> {
     /// The extensions to try appending to a name.
@@ -1488,6 +1497,7 @@ pub struct AsRequire<'a> {
     /// nothing. If a package has `exports`, nothing else is tried, in that package or in one further up. `imports` and
     /// the name of the file's own package are honored.
     pub as_import: bool,
+    pub entry: Entry,
     /// `baseUrl`, absolute: where oxc-resolver looks after `paths`, before any package.
     pub base_url: Option<&'a [u8]>,
 }
@@ -1997,7 +2007,7 @@ struct Look<'a> {
     resolve_package_directory_only: bool,
     /// Follows the rules of the `resolve` 2.0 package under eslint-import-resolver-node instead of
     /// TypeScript's: see [`Resolver::resolve_as_require`].
-    as_require: bool,
+    as_require: Option<Entry>,
     /// [`AsRequire::as_import`]
     as_import: bool,
 }
@@ -3095,7 +3105,7 @@ impl<'h> Resolver<'h> {
             ignores_exports: false,
             all_features: self.options.forbids_self_name_references && mode != ResolutionMode::None,
             resolve_package_directory_only: false,
-            as_require: false,
+            as_require: None,
             as_import: false,
         }
     }
@@ -3127,7 +3137,7 @@ impl<'h> Resolver<'h> {
             declarations: false,
             ignores_exports: !how.through_paths,
             all_features: false,
-            as_require: true,
+            as_require: Some(how.entry),
             as_import: how.as_import,
             ..self.look(ResolutionMode::Require, true, &outcome)
         };
@@ -3871,7 +3881,7 @@ impl<'h> Resolver<'h> {
     /// `loadModuleFromFile`: the file that `path` maps to through its own extension, or else `path`
     /// with an extension added.
     fn file(&self, path: &[u8], look: Look) -> Option<Vec<u8>> {
-        if look.as_require {
+        if look.as_require.is_some() {
             let named = |path: Vec<u8>| self.is_file(&path).then_some(path);
             let extensions = look.outcome.require_extensions.iter();
             let mut extended = extensions.map(|it| [path, *it].concat());
@@ -3993,7 +4003,7 @@ impl<'h> Resolver<'h> {
     /// none is added. `package_json_value` is the raw value in the `package.json`, before a `*` in
     /// it is substituted.
     fn named_file(&self, path: &[u8], package_json_value: &[u8], look: Look) -> Option<Vec<u8>> {
-        if look.as_require {
+        if look.as_require.is_some() {
             return self.file_or_directory(path, look);
         }
         let is_declaration = is_declaration_file_name(path);
@@ -4037,7 +4047,7 @@ impl<'h> Resolver<'h> {
         is_package_dir: bool,
         look: Look,
     ) -> Option<Vec<u8>> {
-        if look.as_require {
+        if let Some(entry) = look.as_require {
             let json = package.filter(|_| is_package_dir).map(|it| &*it.json);
             let named = |field: &[u8]| {
                 let entry = get_package_json_path_field(json?, field, candidate, look)?;
@@ -4056,14 +4066,18 @@ impl<'h> Resolver<'h> {
             let main = json
                 .and_then(|it| it.get(b"main"))
                 .filter(|it| !is_falsy(it));
-            return (named(b"module").or_else(|| named(b"jsnext:main"))).or_else(|| {
-                let found = match main {
-                    Some(main) => main.as_str().and_then(|_| named(b"main").or_else(index)),
-                    None => return index(),
-                };
-                look.outcome.is_blocked.set(found.is_none());
-                found
-            });
+            let for_bundlers = || named(b"module").or_else(|| named(b"jsnext:main"));
+            return (entry == Entry::ForBundlers)
+                .then(for_bundlers)
+                .flatten()
+                .or_else(|| {
+                    let found = match main {
+                        Some(main) => main.as_str().and_then(|_| named(b"main").or_else(index)),
+                        None => return index(),
+                    };
+                    look.outcome.is_blocked.set(found.is_none());
+                    found
+                });
         }
         let index: &[u8] = if look.is_config_lookup {
             b"tsconfig"
@@ -4286,7 +4300,7 @@ impl<'h> Resolver<'h> {
             Some(found)
         };
         if !rest.is_empty()
-            && !look.as_require
+            && look.as_require.is_none()
             && let Some(package) = package
             && let Some(paths) = get_version_paths(&package.json, look.tracer)
             && let Some(found) = self.through_types_versions(paths, &package_dir, rest, &load, look)

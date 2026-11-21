@@ -689,12 +689,15 @@ mod tests {
     /// And for a large window of 17 bits.
     const LARGE: &[u8] = &[0x11, 0x11, 0x00, 0x00, 0x02, 0x61, 0x03];
 
-    fn decode(decoder: &mut Decoder, mut stream: &[u8]) -> Result<Vec<u8>, DecodeError> {
+    fn decodes_to_a(decoder: &mut Decoder, mut stream: &[u8]) -> Result<(), DecodeError> {
         let mut room = [0; 8];
         let mut out = BorrowedBuf::from(&mut room[..]);
         let status = decoder.decompress(&mut stream, out.unfilled())?;
-        assert_eq!(status, DecodeStatus::Finished);
-        Ok(out.filled().to_vec())
+        assert_eq!(
+            (status, out.filled()),
+            (DecodeStatus::Finished, b"a".as_slice())
+        );
+        Ok(())
     }
 
     #[test]
@@ -702,7 +705,7 @@ mod tests {
         let mut decoder =
             Decoder::with_dictionary(b"dictionary").ok_or(DecodeError::Unreachable)?;
         assert!(decoder.set_parameter(0, 1) && decoder.set_parameter(1, 1));
-        assert_eq!(decode(&mut decoder, ORDINARY)?, b"a");
+        decodes_to_a(&mut decoder, ORDINARY)?;
         // The whole window, which the header says is not a large one.
         assert_eq!(decoder.ring.size(), 1 << 16);
         assert!(!decoder.set_parameter(1, 1));
@@ -710,7 +713,7 @@ mod tests {
         decoder.reset_session();
         assert_eq!(decoder.ring.size(), 0);
         assert_eq!(decoder.dictionary, b"dictionary");
-        assert_eq!(decode(&mut decoder, LARGE)?, b"a");
+        decodes_to_a(&mut decoder, LARGE)?;
         assert_eq!(decoder.ring.size(), 1 << 17);
         Ok(())
     }

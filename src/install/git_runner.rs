@@ -559,11 +559,12 @@ fn git_ran_out_of_memory(step: &Step, status: &Status, stderr: &[u8]) -> bool {
     ];
     // ssh passes on what `upload-pack` prints as it is.
     const FROM_SERVER: [&[u8]; 4] = [
-        b"remote:",
         b"remote error:",
         b" pack-objects",
-        b"-pack-objects",
+        b"'pack-objects",
+        b"git-pack-objects",
     ];
+    const REASON: [&[u8]; 3] = [b"fatal:", b"error:", b"unexpected disconnect"];
     let has_server = matches!(
         step,
         Step::Fetch { url, .. } | Step::Clone { url, .. } if !url.starts_with(b"file://")
@@ -571,14 +572,22 @@ fn git_ran_out_of_memory(step: &Step, status: &Status, stderr: &[u8]) -> bool {
     let says = |line: &[u8], any_of: &[&[u8]]| {
         (any_of.iter()).any(|words| strings::contains_case_insensitive_ascii(line, words))
     };
-    let lines =
-        || strings::split(stderr, b"\n").filter(|line| !(has_server && says(line, &FROM_SERVER)));
+    let is_from_server = |line: &[u8]| {
+        strings::index_of(line, b"remote: ").is_some_and(|at| !line[..at].ends_with(b" to "))
+            || says(line, &FROM_SERVER)
+    };
+    let lines = || {
+        strings::split(stderr, b"\n")
+            // The end of a report of progress from the server, which git pads.
+            .flat_map(|line| strings::split(line, b"        \r"))
+            .filter(|line| !(has_server && is_from_server(line)))
+    };
     let is_killed = || {
         matches!(status, Status::Signaled(9))
             || lines().any(|line| says(line, &[b"died of signal 9"]))
-            // All that `git clone` has to say if `index-pack` ends without a word.
-            || strings::split(stderr, b"\n")
-                .find(|line| says(line, &[b"fatal:", b"error:"]))
+            // All that git has to say if `index-pack` ends without a word.
+            || lines()
+                .find(|line| says(line, &REASON) || line.starts_with(b"BUG:"))
                 .is_some_and(|first| says(first, &[b"invalid index-pack output"]))
     };
     lines().any(|line| says(line, &NO_MEMORY)) || (OUT_OF_MEMORY_SIGNAL == Some(9) && is_killed())

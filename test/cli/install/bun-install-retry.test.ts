@@ -1513,6 +1513,8 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       "fatal: remote error: out of memory",
       "error: pack-objects died of signal 9",
       "error: git-pack-objects died of signal 9",
+      "fatal: cannot exec 'pack-objects': Cannot allocate memory",
+      "remote: fatal: fetch-pack: invalid index-pack output",
     ];
     const withoutClone = (how: string) =>
       fails(
@@ -1535,28 +1537,39 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       ["ssh", "error: unpack-objects died of signal 9"],
       ["ssh", "fatal: fetch-pack: invalid index-pack output"],
       ["ssh", "fatal: Out of memory, malloc failed"],
-      ["ssh", "fatal: mmap failed: Cannot allocate memory"],
+      ["ssh", "fatal: unable to write to remote: Cannot allocate memory"],
       ["ssh", "fatal: mmap failed: Not enough space"],
+      ["ssh", "fatal: unable to access 'https://remote:1/pack-objects/': Out of memory"],
       ...byServer.map(message => ["file", message]),
     ].filter(([, message]) => isLinux || /memory|space/.test(message));
     it.each(byGit)("fails the install: git over %s, %s", async (protocol, message) => {
-      using app = withGit(protocol, `[ "$LANGUAGE" = C ] && echo ${message} >&2; exit 128`);
+      using app = withGit(protocol, `[ "$LANGUAGE" = C ] && echo "${message}" >&2; exit 128`);
       const { said, ...result } = await app.install();
       expect({ ...result, said: said.filter(line => line !== message) }).toEqual(withoutClone("exit code 128"));
     });
 
-    it.each(byServer)("is left out if that is the server: %s", async message => {
-      using app = withGit("ssh", `echo ${message} >&2; exit 128`);
+    it.each([
+      ...byServer,
+      "banner.remote: fatal: Out of memory, malloc failed",
+      "remote: 50%\rfatal: Out of memory, malloc failed",
+      "usage.c:1 error remote error: out of memory",
+    ])("is left out if that is the server: %j", async message => {
+      using app = withGit("ssh", `echo "${message}" >&2; exit 128`);
       expect(await app.install()).toMatchObject({ exitCode: 0 });
     });
 
-    it.each(["fatal: early EOF", "error: inflate: data stream error", "remote: fatal: bad object"])(
-      "is left out if there is a reason for what index-pack leaves: %s",
-      async reason => {
-        using app = withGit("ssh", `(echo ${reason}; echo fatal: fetch-pack: invalid index-pack output) >&2; exit 128`);
-        expect(await app.install()).toMatchObject({ exitCode: 0 });
-      },
-    );
+    it.each([
+      ["fatal: early EOF\\n", 0],
+      ["error: inflate: data stream error\\n", 0],
+      ["BUG: index-pack.c:1: reason\\n", 0],
+      ["fetch-pack: unexpected disconnect while reading sideband packet\\n", 0],
+      ["remote: 50%%        \\rfatal: early EOF\\n", 0],
+      ["remote: 50%%        \\r", isMacOS ? 0 : 1],
+      ["DEBUG: connected\\n", isMacOS ? 0 : 1],
+    ])("takes into account what is said before index-pack ends: %s", async (before, exitCode) => {
+      using app = withGit("ssh", `printf '${before}fatal: fetch-pack: invalid index-pack output\\n' >&2; exit 128`);
+      expect(await app.install()).toMatchObject({ exitCode });
+    });
 
     it("is installed if there is for another protocol", async () => {
       using from = await fromGit(["package.json"]);
@@ -2075,6 +2088,12 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       };
       using app = { ...project(files), args: ["--install=force", "index.js"] };
       expect(await withoutCall(app, "ENOMEM open ROOT/a/.npmrc")).toEqual(goesOn("error: caught"));
+    });
+
+    it("is installed if there is for another working directory", async () => {
+      using app = script(`process.chdir("bin"); try { require("bar/cli.js") } catch {} process.chdir("..")`);
+      mkdirSync(app.path("bin"));
+      expect(await withoutCall(app, "ENOMEM open ROOT/bin*")).toEqual(goesOn());
     });
 
     it("is installed after an error of the script's own", async () => {

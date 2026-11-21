@@ -20,6 +20,7 @@ pub fn spawn(job: impl FnOnce() + Send + 'static) {
             true => || {},
             false => bun_core::Output::Source::configure_thread_no_js,
         },
+        waits_for_first_thread: false,
     });
     POOL.go(job);
 }

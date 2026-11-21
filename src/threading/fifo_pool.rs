@@ -11,7 +11,7 @@ use bun_core::{Timespec, TimespecMockMode};
 
 use crate::spin::Spin;
 use crate::thread_pool::Task;
-use crate::{Condition, Guarded};
+use crate::{Condition, Guarded, ResetEvent};
 
 struct Queued(*mut Task);
 
@@ -35,6 +35,8 @@ pub struct Config {
     pub max_threads: usize,
     pub stack_size: usize,
     pub on_thread_start: fn(),
+    /// Once, for up to a second. Being woken from that raises the priority of the caller, which the end of a task does not.
+    pub waits_for_first_thread: bool,
 }
 
 pub struct FifoPool {
@@ -43,6 +45,7 @@ pub struct FifoPool {
     queued: Condition,
     /// For the one that is spinning.
     has_task: AtomicBool,
+    has_waited: ResetEvent,
 }
 
 fn now_ns() -> u64 {
@@ -68,6 +71,7 @@ impl FifoPool {
             }),
             queued: Condition::new(),
             has_task: AtomicBool::new(false),
+            has_waited: ResetEvent::new(),
         }
     }
 
@@ -87,6 +91,9 @@ impl FifoPool {
 
     /// If the system has none to give, tasks wait for the threads that there are.
     fn add_threads(&'static self) {
+        /// No thread starts while the caller, or what waits for it, is loading or unloading a library.
+        const MAX_WAIT_NS: u64 = 1_000_000_000;
+
         loop {
             let mut state = self.state.lock();
             if state.idle_threads >= state.tasks.len() || state.threads == self.config.max_threads {
@@ -96,6 +103,10 @@ impl FifoPool {
             state.idle_threads += 1;
             drop(state);
             if self.spawn().is_ok() {
+                if self.config.waits_for_first_thread {
+                    let _ = self.has_waited.timed_wait(MAX_WAIT_NS);
+                    self.has_waited.set();
+                }
                 continue;
             }
             let mut state = self.state.lock();
@@ -137,6 +148,7 @@ impl FifoPool {
 
         (self.config.on_thread_start)();
         POOL.set(self);
+        self.has_waited.set();
         let mut state = self.state.lock();
         loop {
             while let Some(Queued(task)) = state.tasks.pop_front() {

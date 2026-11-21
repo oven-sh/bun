@@ -2,15 +2,17 @@
 
 use core::cell::{Cell, RefCell};
 use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 use std::io::{Read as _, Write as _};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::windows::io::{AsHandle as _, AsRawSocket as _, OwnedHandle};
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::{LazyLock, mpsc};
 use std::time::Instant;
 
 use bun_sys::windows::{self as w, NTSTATUS, PipeDirection, PipeMode};
+use bun_threading::ResetEvent;
 use bun_threading::fifo_pool::{Config, FifoPool};
 use bun_threading::spin::has_other_cpu;
 
@@ -953,6 +955,7 @@ fn a_task_outlasts_a_lack_of_threads() {
         max_threads: 2,
         stack_size: 256 * 1024,
         on_thread_start: || {},
+        waits_for_first_thread: false,
     });
     let ((ran, has_run), (go, may_go)) = (mpsc::channel(), mpsc::channel());
     let first = ran.clone();
@@ -969,6 +972,55 @@ fn a_task_outlasts_a_lack_of_threads() {
     assert!(has_run.try_recv().is_err());
     go.send(()).unwrap();
     assert_eq!(has_run.recv(), Ok(2));
+}
+
+#[test]
+fn the_first_thread_is_waited_for_once() {
+    static IS_UP: AtomicBool = AtomicBool::new(false);
+    static GATE: LazyLock<ResetEvent> = LazyLock::new(ResetEvent::default);
+    const WAITS: Config = Config {
+        name: "Test",
+        max_threads: 8,
+        stack_size: 256 * 1024,
+        on_thread_start: || GATE.wait(),
+        waits_for_first_thread: true,
+    };
+    static STUCK: FifoPool = FifoPool::new(WAITS);
+    static SLOW: FifoPool = FifoPool::new(Config {
+        on_thread_start: || {
+            std::thread::sleep(Duration::from_millis(50));
+            IS_UP.store(true, Ordering::SeqCst);
+        },
+        ..WAITS
+    });
+    static LEFT_ALONE: FifoPool = FifoPool::new(Config {
+        waits_for_first_thread: false,
+        ..WAITS
+    });
+
+    let _none_yet = fail(Call::CreateThread, 2, NULL);
+    let start = Instant::now();
+    SLOW.go(|| {});
+    assert!(IS_UP.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(1));
+
+    let (ran, has_run) = mpsc::channel();
+    for (pool, seconds) in [(&LEFT_ALONE, 0), (&STUCK, 1)] {
+        let ((returned, has_returned), ran) = (mpsc::channel(), ran.clone());
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            for ran in vec![ran; 8] {
+                pool.go(move || ran.send(()).unwrap());
+            }
+            returned.send((start.elapsed().as_millis() + 100) / 1000)
+        });
+        assert_eq!(
+            has_returned.recv_timeout(Duration::from_secs(5)),
+            Ok(seconds)
+        );
+    }
+    GATE.set();
+    drop(ran);
+    assert_eq!(has_run.iter().count(), 16);
 }
 
 #[test]

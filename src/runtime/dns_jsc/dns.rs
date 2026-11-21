@@ -99,16 +99,22 @@ mod resolver_pool {
 
     use bun_threading::fifo_pool::{Config, FifoPool};
 
-    pub(super) static FOR_SCRIPT: LazyLock<FifoPool> = LazyLock::new(pool);
-    pub(super) static FOR_SOCKETS: LazyLock<FifoPool> = LazyLock::new(pool);
-
-    fn pool() -> FifoPool {
+    pub(super) static FOR_SCRIPT: LazyLock<FifoPool> = LazyLock::new(|| {
         FifoPool::new(Config {
+            waits_for_first_thread: true,
+            ..config()
+        })
+    });
+    pub(super) static FOR_SOCKETS: LazyLock<FifoPool> = LazyLock::new(|| FifoPool::new(config()));
+
+    fn config() -> Config {
+        Config {
             name: "DNS",
             max_threads: bun_core::get_thread_count().max(4).into(),
             stack_size: 1024 * 1024,
             on_thread_start: bun_core::Output::Source::configure_thread_no_js,
-        })
+            waits_for_first_thread: false,
+        }
     }
 }
 

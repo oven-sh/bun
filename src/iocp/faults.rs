@@ -148,6 +148,7 @@ calls! {
         OpenThread(a b c)
         SetFileCompletionNotificationModes(a b)
         SetWaitableTimer(a b c d e f)
+        SwitchToThread()
         WSAIoctl(a b c d e f g h i)
     }
     looked_up {

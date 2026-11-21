@@ -498,10 +498,9 @@ impl All {
         } else {
             *spec = Timespec { sec: 0, nsec: 0 };
             #[cfg(windows)]
-            bun_threading::spin::TMP_IS_OVERDUE.set(
-                !self.is_due_when_idle()
-                    && now.ns() < bun_threading::spin::TMP_DRAINED_AT.get() + 1_000_000,
-            );
+            if !self.is_due_when_idle() {
+                vm.event_loop().usockets_loop().port().note_overdue_timer();
+            }
         }
         true
     }
@@ -555,11 +554,6 @@ impl All {
             let fired = unsafe { crate::dispatch::fire_timer(t, &now, vm) };
             if fold_timer(vm, fired).is_err() {
                 break;
-            }
-            #[cfg(windows)]
-            if bun_threading::spin::tune(17, 0) == 1 {
-                let now = Timespec::now(TimespecMockMode::ForceRealTime);
-                bun_threading::spin::TMP_DRAINED_AT.set(now.ns());
             }
         }
     }

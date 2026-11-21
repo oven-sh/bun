@@ -115,6 +115,9 @@ pub struct Port {
     /// When the last turn ended, or a wait for which nothing was ready.
     busy_since_ns: Cell<u64>,
     expects_more: Cell<bool>,
+    has_overdue_timer: Cell<bool>,
+    /// `None` after a `wait` that had time.
+    yields_at_ns: Cell<Option<u64>>,
     is_stream: Cell<bool>,
     /// How many turns in a row have only received what was there at once, and when the last one began.
     flood: Cell<(u32, u64)>,
@@ -154,6 +157,8 @@ impl Port {
             next_turn: RefCell::default(),
             busy_since_ns: Cell::new(now_ns()),
             expects_more: Cell::new(false),
+            has_overdue_timer: Cell::new(false),
+            yields_at_ns: Cell::new(None),
             is_stream: Cell::new(false),
             flood: Cell::new((0, 0)),
             delayed: RefCell::default(),
@@ -196,6 +201,11 @@ impl Port {
 
     pub fn did_send(&self) {
         self.has_sent.set(true);
+    }
+
+    /// That is why the next `wait` has no time.
+    pub fn note_overdue_timer(&self) {
+        self.has_overdue_timer.set(true);
     }
 
     /// Whether a [`Hold`] is set.
@@ -272,6 +282,7 @@ impl Port {
         const TURNS_TO_FLOOD: u32 = 4;
         const TURNS_TO_DOUBT: u32 = 64;
 
+        let has_overdue_timer = self.has_overdue_timer.take();
         if self.next.get() < self.end.get() {
             return self.undispatched();
         }
@@ -286,14 +297,13 @@ impl Port {
         }
         let mut is_at_once = true;
         let start = if tune(6, 0) == 1 { now_ns() } else { 0 };
-        let is_overdue = bun_threading::spin::TMP_IS_OVERDUE.take();
         if timeout_ns == Some(0) || self.has_work() {
-            let has_work = self.has_work();
-            if !self.fill_batch(Timeout::Now) && !has_work && is_overdue {
-                std::thread::yield_now();
-                self.fill_batch(Timeout::Now);
+            self.fill_batch(Timeout::Now);
+            if has_overdue_timer && tune(17, 1) > 0 {
+                self.yield_now_and_then();
             }
         } else {
+            self.yields_at_ns.set(None);
             self.shared.is_parked.store(true, Ordering::SeqCst);
             is_at_once = self.park(timeout_ns, only_receives);
             self.shared.is_parked.store(false, Ordering::SeqCst);
@@ -306,6 +316,29 @@ impl Port {
             self.flood.set(((turns + 1) % TURNS_TO_DOUBT, now_ns()));
         }
         self.undispatched()
+    }
+
+    /// The system leaves the CPU to a thread that never waits for up to 190 ms at a time.
+    fn yield_now_and_then(&self) {
+        const CLOCK_TICK_NS: u64 = 15_625_000;
+        let now = now_ns();
+        let mut due = self.yields_at_ns.get().unwrap_or(now + CLOCK_TICK_NS);
+        if now >= due && !self.has_work() && !self.was_full.get() {
+            let busy_since = self.busy_since_ns.get();
+            if tune(21, 0) > 0 {
+                self.park(Some(tune(21, 0)), true);
+            } else {
+                std::thread::yield_now();
+            }
+            let lost = now_ns().saturating_sub(now);
+            self.busy_since_ns.set(busy_since + lost);
+            // Whoever keeps the CPU for long does not wait either.
+            due = now + lost + tune(20, 2) * lost + CLOCK_TICK_NS;
+            if tune(21, 0) == 0 {
+                self.fill_batch(Timeout::Now);
+            }
+        }
+        self.yields_at_ns.set(Some(due));
     }
 
     /// `true` if the first look was enough. With `only_receives`, that look does not wait.

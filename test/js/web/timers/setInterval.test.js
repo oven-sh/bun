@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { bunRun, isASAN, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isWindows } from "harness";
 import { join } from "path";
 
 it("setInterval", async () => {
@@ -134,3 +134,46 @@ it.concurrent(
   },
   30_000,
 );
+
+it.skipIf(!isWindows)("a thread on the same CPU runs between the turns of an interval that overruns", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { dlopen } = require("bun:ffi");
+       const { Worker } = require("worker_threads");
+       const steps = new Int32Array(new SharedArrayBuffer(4));
+       const worker = new Worker(
+         \`const { SwitchToThread } = require("bun:ffi").dlopen("kernel32.dll", { SwitchToThread: { returns: "i32" } }).symbols;
+          const { parentPort, workerData } = require("worker_threads");
+          parentPort.postMessage("running");
+          for (;;) Atomics.add(workerData, 0, 1), SwitchToThread();\`,
+         { eval: true, workerData: steps },
+       );
+       await require("events").once(worker, "message");
+       const { GetProcessAffinityMask, SetProcessAffinityMask } = dlopen("kernel32.dll", {
+         GetProcessAffinityMask: { args: ["i64", "ptr", "ptr"], returns: "i32" },
+         SetProcessAffinityMask: { args: ["i64", "u64"], returns: "i32" },
+       }).symbols;
+       const os = require("os");
+       os.setPriority(os.constants.priority.PRIORITY_ABOVE_NORMAL);
+       const allowed = new BigUint64Array(1);
+       GetProcessAffinityMask(-1n, allowed, new BigUint64Array(1));
+       console.log("pinned:", SetProcessAffinityMask(-1n, allowed[0] & -allowed[0]));
+       let turns = 0, between = 0, seen;
+       setInterval(() => {
+         between += turns > 1 && Atomics.load(steps, 0) !== seen;
+         for (const end = performance.now() + 17; performance.now() < end; );
+         seen = Atomics.load(steps, 0);
+         if (++turns < 8) return;
+         console.log(between > 3 ? "most of the time" : between);
+         process.reallyExit(0);
+       }, 1);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "pinned: 1\nmost of the time\n", stderr: "", exitCode: 0 });
+});

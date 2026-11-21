@@ -1024,6 +1024,39 @@ fn a_slow_turn_waits_a_moment_for_more() {
 }
 
 #[test]
+fn timers_that_keep_overrunning_yield() {
+    let port = Port::new().unwrap();
+    let pass = |ms| CLOCK_AHEAD.set(CLOCK_AHEAD.get() + Duration::from_millis(ms));
+    let (lost_ms, waker) = (Rc::new(Cell::new(0)), port.waker());
+    let lost = Rc::clone(&lost_ms);
+    let _waking = intercept(Call::SwitchToThread, move |_| {
+        pass(lost.get());
+        waker.wake();
+        Some(1)
+    });
+    CLOCK_STOPPED_AT.set(Some(Instant::now()));
+    let yields = |busy_ms| {
+        pass(busy_ms);
+        port.note_overdue_timer();
+        turn(&port, Duration::ZERO)
+    };
+    assert_eq!([50; 3].map(yields), [0, 1, 1]);
+    assert_eq!([6; 6].map(yields), [0, 0, 1, 0, 0, 1]);
+
+    pass(50);
+    assert_eq!(turn(&port, Duration::ZERO), 0);
+    let _ready = Request::defer(&port, || {});
+    assert_eq!([0; 2].map(yields), [0, 1]);
+
+    lost_ms.set(100);
+    assert_eq!([50; 7].map(yields), [1, 0, 0, 0, 0, 1, 0]);
+
+    port.waker().wake();
+    assert_eq!(turn(&port, Duration::from_secs(10)), 1);
+    assert_eq!([500; 2].map(yields), [0, 1]);
+}
+
+#[test]
 fn a_flood_is_left_to_gather() {
     let port = Port::new().unwrap();
     CLOCK_STOPPED_AT.set(Some(Instant::now()));

@@ -1064,6 +1064,7 @@ impl EventLoop {
 
     /// `auto_tick`, before it polls: last iteration's yielded tasks become
     /// runnable. Returns whether there are any, so the poll does not block.
+    #[inline]
     pub fn promote_yield_tasks(&self) -> bool {
         if !self.has_yield_tasks() {
             return false;

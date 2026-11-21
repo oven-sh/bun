@@ -933,6 +933,33 @@ static ALWAYS_INLINE bool hasExtraOwnProperties(JSC::Structure* structure)
         || hasIndexedProperties(structure->indexingType());
 }
 
+// A walk over the names of `first` doesn't see a name that only `second` lists. Strict comparison
+// allows no such name, and loose comparison one whose value is undefined. `ignored` is not compared.
+static bool canIgnoreNamesOnlyInSecond(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const JSC::PropertyNameArrayBuilder& firstNames, const JSC::PropertyNameArrayBuilder& secondNames, JSC::JSObject* second, bool isStrict, const JSC::Identifier& ignored = {})
+{
+    UncheckedKeyHashSet<UniquedStringImpl*> namesInFirst;
+    for (size_t i = 0; i < secondNames.size(); i++) {
+        const JSC::Identifier& name = secondNames[i];
+        if ((i < firstNames.size() && firstNames[i] == name) || name == ignored)
+            continue;
+        if (namesInFirst.isEmpty() && firstNames.size()) {
+            namesInFirst.reserveInitialCapacity(firstNames.size());
+            for (const JSC::Identifier& listed : firstNames)
+                namesInFirst.add(listed.impl());
+        }
+        if (namesInFirst.contains(name.impl()))
+            continue;
+        if (isStrict)
+            return false;
+
+        JSValue value = second->getIfPropertyExists(globalObject, JSC::PropertyName(name));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!value.isUndefined())
+            return false;
+    }
+    return true;
+}
+
 // node compares the non-index own properties of typed arrays as well;
 // only the node entry point (checkPrototypes) pays for this.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
@@ -1346,6 +1373,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             if (!eql) return false;
         }
 
+        // A hidden or inherited symbol of o2 doesn't stand in for one that o1 lists.
+        if constexpr (isStrict) {
+            bool canIgnore = canIgnoreNamesOnlyInSecond(globalObject, scope, a1, a2, o2, true);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!canIgnore)
+                return false;
+        }
+
         return true;
     }
 
@@ -1593,29 +1628,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         if (!eql) return false;
     }
 
-    // The loop above only saw o1's names, so a name that only o2 lists must be undefined.
-    // checkPrototypes requires the same names on both sides, so it has none.
+    // checkPrototypes requires the same names on both sides, so it has none that only o2 lists.
     if constexpr (!checkPrototypes) {
-        UncheckedKeyHashSet<UniquedStringImpl*> namesInFirst;
-        for (i = 0; i < propertyArrayLength2; i++) {
-            const Identifier& i2 = a2[i];
-            if (i < propertyArrayLength1 && a1[i] == i2)
-                continue;
-            if (namesInFirst.isEmpty() && propertyArrayLength1) {
-                namesInFirst.reserveInitialCapacity(propertyArrayLength1);
-                for (const Identifier& name : a1)
-                    namesInFirst.add(name.impl());
-            }
-            if (namesInFirst.contains(i2.impl()))
-                continue;
-
-            JSValue prop2 = o2->getIfPropertyExists(globalObject, PropertyName(i2));
-            RETURN_IF_EXCEPTION(scope, false);
-
-            if (!prop2.isUndefined()) {
-                return false;
-            }
-        }
+        bool canIgnore = canIgnoreNamesOnlyInSecond(globalObject, scope, a1, a2, o2, isStrict);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!canIgnore)
+            return false;
     }
 
     return true;
@@ -1982,18 +2000,10 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 }
             }
 
-            // for the remaining properties in the other object, make sure they are undefined
-            for (; i < propertyArrayLength2; i++) {
-                Identifier i2 = a2[i];
-                if (i2 == vm.propertyNames->stack) continue;
-                PropertyName propertyName2 = PropertyName(i2);
-
-                JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName2);
-                RETURN_IF_EXCEPTION(scope, {});
-
-                if (!prop2.isUndefined()) {
-                    return false;
-                }
+            bool canIgnore = canIgnoreNamesOnlyInSecond(globalObject, scope, a1, a2, right, mode.isStrict, vm.propertyNames->stack);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!canIgnore) {
+                return false;
             }
 
             return true;

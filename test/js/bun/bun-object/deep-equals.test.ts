@@ -190,6 +190,13 @@ describe("objects that list different names", () => {
     ["indices", () => [{ 0: undefined }, { 1: 5 }]],
     ["proxies", () => [new Proxy({ a: undefined }, {}), new Proxy({ b: 5 }, {})]],
     ["an inherited name", () => [withGetter({ a: undefined }), withGetter(Object.create({ b: 5 }))]],
+    [
+      "errors",
+      () => [
+        Object.assign(new Error("same"), { a: undefined }),
+        Object.assign(new Error("same"), { b: 5, a: undefined }),
+      ],
+    ],
     // At these sizes deleting and then adding a name makes an uncacheable dictionary.
     ...[126, 127, 128, 129].map(count => [
       `one of ${count} names deleted`,
@@ -214,6 +221,39 @@ describe("objects that list different names", () => {
     expect([Bun.deepEquals(a, b, true), Bun.deepEquals(b, a, true)]).toEqual([false, false]);
   });
 
+  const symbol = Symbol("listed");
+  const hide = (object: object, key: PropertyKey) => Object.defineProperty(object, key, { value: 1 });
+  it.each([
+    [
+      "a getter",
+      () => [
+        withGetter({ second: 2 }),
+        Object.defineProperty({ second: 2, extra: undefined }, "g", { get: () => 1, configurable: true }),
+      ],
+    ],
+    ["a value", () => [withGetter({ a: 1 }), withGetter(hide({ extra: undefined }, "a"))]],
+    [
+      "a property of an error",
+      () => [
+        Object.assign(new Error("same"), { a: 1 }),
+        hide(Object.assign(new Error("same"), { extra: undefined }), "a"),
+      ],
+    ],
+    [
+      "a symbol of an array",
+      () => [Object.assign([], { [symbol]: 1 }), hide(Object.assign([], { [Symbol()]: 2 }), symbol)],
+    ],
+  ] as [string, () => [object, object]][])(
+    "strict: %s that is hidden does not stand in for a listed one beside an undefined name",
+    (_, make) => {
+      const [a, b] = make();
+      expect([Bun.deepEquals(a, b, true), Bun.deepEquals(b, a, true)]).toEqual([false, false]);
+      expect(a).not.toStrictEqual(b);
+      expect(b).not.toStrictEqual(a);
+      expect([isDeepStrictEqual(a, b), isDeepStrictEqual(b, a)]).toEqual([false, false]);
+    },
+  );
+
   it("names in another order, and extra undefined ones, are still equal", () => {
     const a = withGetter({ a: 1, b: 2, x: undefined });
     const b = withGetter({ y: undefined, b: 2, a: 1 });
@@ -221,6 +261,14 @@ describe("objects that list different names", () => {
     expect([
       Bun.deepEquals(withGetter({ a: 1, b: 2 }), withGetter({ b: 2, a: 1 }), true),
       Bun.deepEquals({ 0: 1, a: undefined }, { b: undefined, 0: 1 }),
+    ]).toEqual([true, true]);
+  });
+
+  it("errors that list names in another order, or undefined ones, are still equal", () => {
+    const make = (fields: object) => Object.assign(new Error("same"), fields);
+    expect([
+      Bun.deepEquals(make({ a: 1, b: 2 }), make({ b: 2, a: 1 }), true),
+      Bun.deepEquals(make({ a: 1, x: undefined }), make({ y: undefined, a: 1 })),
     ]).toEqual([true, true]);
   });
 });

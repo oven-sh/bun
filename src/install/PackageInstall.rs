@@ -819,7 +819,7 @@ static HARDLINK_TASKS: WaitGroup = WaitGroup::init();
 static FIRST_HARDLINK_ERROR: bun_threading::Guarded<Option<crate::Error>> =
     bun_threading::Guarded::new(None);
 
-/// Dropping it waits for the tasks that were pushed.
+/// One at a time: Windows has no `LinkBatch`. Dropping it waits for the tasks that were pushed.
 #[cfg(windows)]
 struct HardLinkQueue;
 

@@ -407,7 +407,7 @@ impl RespLike for uws_sys::h3::Response {
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
         uws_sys::h3::Response::on_timeout(
             self,
-            |_: &mut c_void, _: &mut uws_sys::h3::Response| on_timeout_for_idle_warn(),
+            |_: *mut c_void, _: &mut uws_sys::h3::Response| on_timeout_for_idle_warn(),
             ud,
         );
     }
@@ -438,7 +438,7 @@ impl RespLike for uws_sys::h2::Response {
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
         uws_sys::h2::Response::on_timeout(
             self,
-            |_: &mut c_void, _: &mut uws_sys::h2::Response| on_timeout_for_idle_warn(),
+            |_: *mut c_void, _: &mut uws_sys::h2::Response| on_timeout_for_idle_warn(),
             ud,
         );
     }

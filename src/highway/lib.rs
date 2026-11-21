@@ -1,11 +1,12 @@
 // Direct `extern "C"` re-exports of the Google Highway SIMD C++ helpers.
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
-#![feature(core_io_borrowed_buf, hint_prefetch)]
+#![feature(core_io_borrowed_buf, fn_align, hint_prefetch)]
 
 pub mod brotli;
 pub mod checksums;
 pub mod webp;
 pub mod zlib;
+pub mod zstd;
 
 unsafe extern "C" {
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
@@ -80,6 +81,8 @@ unsafe extern "C" {
     ) -> usize;
 
     fn highway_scanner_run_stops(text: *const u8, text_len: usize, out: *mut u8, plane_len: usize);
+
+    fn highway_byte_bits(text: *const u8, text_len: usize, byte: u8, out: *mut u64);
 
     fn highway_odd_blocks(text: *const u8, text_len: usize, out: *mut u64);
 
@@ -766,6 +769,13 @@ impl ScannerStopsBuffer {
         self.filled(text)
     }
 
+    /// The memory that the stops of `text` take more than those of any text so far.
+    pub fn reserve(&mut self, text: &[u8]) -> &mut [core::mem::MaybeUninit<u8>] {
+        let more = (3 * Self::plane_len(text)).saturating_sub(self.planes.len());
+        self.planes.reserve(more);
+        &mut self.planes.spare_capacity_mut()[..more]
+    }
+
     /// The text of the last call is no longer held on to.
     pub fn forget(&mut self) {
         self.filled_for = None;
@@ -818,6 +828,15 @@ impl Stops<'_> {
         }
     }
 
+    /// The bits of the 64 bytes from `64 * index` on.
+    #[inline(always)]
+    pub fn block(self, index: usize) -> u64 {
+        match self.0.get(index * 8..index * 8 + 8) {
+            Some(bits) => u64::from_le_bytes(bits.try_into().unwrap_or_default()),
+            None => u64::MAX,
+        }
+    }
+
     /// How many bytes there are from `pos` to the next stop. Exact below 57; anything higher only
     /// says that there are at least 57.
     #[inline(always)]
@@ -836,6 +855,15 @@ impl Stops<'_> {
             pos += 56;
         }
     }
+}
+
+/// Fills `out` with one bit for every byte of `text`, the lowest bit of the first word first: whether
+/// it is `byte`. The bits past the end of the text are clear.
+pub fn byte_bits(text: &[u8], byte: u8, out: &mut Vec<u64>) {
+    out.clear();
+    out.resize(text.len().div_ceil(64), 0);
+    // SAFETY: `text` is readable, and the kernel writes a word for every block of 64 bytes, whole or not.
+    unsafe { highway_byte_bits(text.as_ptr(), text.len(), byte, out.as_mut_ptr()) };
 }
 
 /// Fills `out` with one bit for every 64 bytes of `text`, the lowest bit of the first word first:
@@ -1786,6 +1814,32 @@ macro_rules! with_bmi2 {
             baseline($($arg),*)
         }
     };
+}
+
+/// The same for generic code, with BMI1 and LZCNT too. `run` and what it calls have to be `#[inline(always)]`.
+#[inline(always)]
+pub fn with_bmi2<R>(run: impl FnOnce() -> R) -> R {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    if is_x86_feature_detected!("bmi1")
+        && is_x86_feature_detected!("bmi2")
+        && is_x86_feature_detected!("lzcnt")
+    {
+        #[target_feature(enable = "bmi1,bmi2,lzcnt")]
+        #[rustc_align(64)]
+        fn bmi2<R>(run: impl FnOnce() -> R) -> R {
+            run()
+        }
+        // SAFETY: the CPU has the three features.
+        return unsafe { bmi2(run) };
+    }
+    out_of_line(run)
+}
+
+/// In a function of its own, which is aligned: the speed of its loops does not depend on what is linked before it.
+#[inline(never)]
+#[rustc_align(64)]
+pub fn out_of_line<R>(run: impl FnOnce() -> R) -> R {
+    run()
 }
 
 #[cfg(test)]

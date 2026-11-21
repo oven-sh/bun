@@ -1903,27 +1903,10 @@ pub mod cache {
         }
     }
 
-    /// What the contents of an [`Entry`] were read from.
-    pub enum SourceFd {
-        /// The caller's, such as one from the resolver's entry cache. Never closed here.
-        Borrowed(Fd),
-        Owned(bun_sys::File),
-    }
-
-    impl core::ops::Deref for SourceFd {
-        type Target = bun_sys::File;
-        fn deref(&self) -> &bun_sys::File {
-            match self {
-                SourceFd::Borrowed(fd) => bun_sys::File::borrow(fd),
-                SourceFd::Owned(file) => file,
-            }
-        }
-    }
-
     pub struct Entry<C = Contents> {
         pub contents: C,
         /// `None`: no file was read, or it is already closed.
-        pub file: Option<SourceFd>,
+        pub file: Option<bun_sys::MaybeOwnedFile>,
     }
 
     impl Entry {
@@ -2010,7 +1993,7 @@ pub mod cache {
 
             let file = if let Some(f) = file_handle {
                 bun_sys::lseek(f, 0, libc::SEEK_SET).map_err(crate::Error::from)?;
-                SourceFd::Borrowed(f)
+                bun_sys::MaybeOwnedFile::Borrowed(f)
             } else if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
                 match bun_sys::File::openat(
                     dirname_fd,
@@ -2018,7 +2001,7 @@ pub mod cache {
                     bun_sys::O::RDONLY,
                     0,
                 ) {
-                    Ok(file) => SourceFd::Owned(file),
+                    Ok(file) => bun_sys::MaybeOwnedFile::Owned(file),
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                         let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
                             .map_err(crate::Error::from)?;
@@ -2027,14 +2010,14 @@ pub mod cache {
                             bstr::BStr::new(path),
                             dirname_fd,
                         );
-                        SourceFd::Owned(handle)
+                        bun_sys::MaybeOwnedFile::Owned(handle)
                     }
                     Err(err) => return Err(err.into()),
                 }
             } else {
                 let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
                     .map_err(crate::Error::from)?;
-                SourceFd::Owned(handle)
+                bun_sys::MaybeOwnedFile::Owned(handle)
             };
 
             #[cfg(not(windows))] // skip on Windows because NTCreateFile will do it.

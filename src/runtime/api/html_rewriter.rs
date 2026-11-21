@@ -759,7 +759,9 @@ impl RewriterPipe {
             && (armed || self.is_stalled())
             && vm.is_context_live(self.script_context)
         {
-            let _context = vm.enter_context(self.script_context);
+            let context = vm.enter_context(self.script_context);
+            // Collected, not disposed: handlers of its own would have kept the graph alive.
+            let _context = (!vm.calls_nobody()).then_some(context);
             self.advance(PullPacing::AlreadyYielded);
         }
     }
@@ -1669,9 +1671,17 @@ impl RewriterPipe {
             return stopped();
         };
 
+        // `call` returns `undefined` without calling, as if the handler had nothing to change.
+        let caller_is_listening = self.sync_only_noun.is_some();
+        if !caller_is_listening && callback.function.call_may_have_been_dropped(global) {
+            return stopped();
+        }
+
         // Not `try_take_exception()`: the exception checker wants the call's throw seen by an enclosing scope.
         bun_jsc::top_scope!(scope, global);
-        let result = (callback.function).call(global, callback.this_object, &[unit.to_js(global)]);
+        let args = [unit.to_js(global)];
+        let result =
+            (callback.function).call_for_running_script(global, callback.this_object, &args);
         if let Some(exception) = scope.exception() {
             self.record_exception(JSValue::from_cell(exception.as_ptr()));
             scope.clear_exception_except_termination();

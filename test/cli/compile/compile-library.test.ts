@@ -637,7 +637,7 @@ describe.concurrent("the .aot.ts file that bun compile --library writes", () => 
     [
       "how classes and JSX are written",
       { jsx: "react-jsx", experimentalDecorators: true, useDefineForClassFields: false },
-      { strict: true, jsx: "react-jsx", experimentalDecorators: true, useDefineForClassFields: false },
+      { strict: true, jsx: "react-jsx", experimentalDecorators: true, useDefineForClassFields: true },
     ],
     ["what the reader decides", { target: "es2022", module: "esnext", skipLibCheck: false }, { strict: true }],
   ])("compilerOptions in the package.json say how strict the sources are: %s", async (_, stated, written) => {

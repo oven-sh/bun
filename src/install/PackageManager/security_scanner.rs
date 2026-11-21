@@ -891,8 +891,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         }
         let [child_read, parent_write] = json_fds.map(|fd| File::from_fd(Fd::from_uv(fd)));
 
-        let pipe = bun_io::Source::open_pipe(self.event_loop_handle.uv_loop(), parent_write.fd())?;
-        let _ = parent_write.into_raw(); // pipe owns it now
+        let pipe =
+            bun_io::Source::open_pipe(self.event_loop_handle.uv_loop(), parent_write.into())?;
 
         let extra_fds: Box<[Stdio]> = Box::new([
             Stdio::Pipe(ipc_write.fd()),  // fd 3: child inherits write end
@@ -938,7 +938,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         let event_loop = self.event_loop_handle;
         let result = self
             .ipc_reader
-            .start(event_loop.as_event_loop_ctx(), ipc_read.into_raw(), true)
+            .start(event_loop.as_event_loop_ctx(), ipc_read.into(), true)
             .map_err(|e| e.to_zig_err())?;
         self.on_read_result(result);
 

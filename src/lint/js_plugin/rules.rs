@@ -6,8 +6,8 @@ use crate::linter::globals::config_globals_in_order;
 use crate::linter::{write_json, write_json_with};
 use crate::options::Json;
 use crate::rule::Kind;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 
 /// ESLint's `meta.schema`.
 #[derive(Clone, PartialEq, Debug)]
@@ -25,6 +25,17 @@ pub enum Schema {
 pub struct Rule {
     /// ESLint's `ruleId`: `<plugin>/<rule>`, or `<rule>` for a plugin without a name.
     pub id: Box<[u8]>,
+    /// Unset until [`Host::describe`](super::Host::describe) if the config has no use for the rule and hasn't loaded it.
+    pub(super) about: OnceLock<About>,
+    /// Its plugin's index among the plugins.
+    pub(super) plugin: u32,
+    /// Its number among the rules of all plugins.
+    pub(super) index: u32,
+}
+
+/// What a [`Rule`] says about itself.
+#[derive(Debug)]
+pub struct About {
     /// `meta.type`
     pub kind: Option<Kind>,
     /// `meta.fixable` is set.
@@ -40,10 +51,6 @@ pub struct Rule {
     pub needs_config_file: bool,
     /// JSON: the module that exports the rule itself, if there is one. A realm loads that instead of the plugin.
     pub(super) location: Option<Box<[u8]>>,
-    /// Its plugin's index among the plugins.
-    pub(super) plugin: u32,
-    /// Its number among the rules of all plugins.
-    pub(super) index: u32,
 }
 
 /// A loaded plugin.
@@ -63,9 +70,23 @@ pub struct Plugin {
 }
 
 impl Rule {
+    pub fn about(&self) -> &About {
+        static UNKNOWN: About = About {
+            kind: None,
+            is_fixable: false,
+            has_suggestions: false,
+            schema: Schema::Any,
+            default_options: Vec::new(),
+            deprecated: None,
+            needs_config_file: false,
+            location: None,
+        };
+        self.about.get().unwrap_or(&UNKNOWN)
+    }
+
     /// JSON: the module that exports the rule itself, if there is one.
     pub(crate) fn location(&self) -> Option<&[u8]> {
-        self.location.as_deref()
+        self.about().location.as_deref()
     }
 }
 
@@ -116,7 +137,7 @@ impl Configured {
         json.extend_from_slice(b"],");
         write_json(&mut json, &Json::String(rule.id.to_vec()));
         json.push(b',');
-        json.extend_from_slice(rule.location.as_deref().unwrap_or(b"null"));
+        json.extend_from_slice(rule.location().unwrap_or(b"null"));
         json.extend_from_slice(format!(",{}]", rule.plugin).as_bytes());
         Arc::new(Configured {
             rule,
@@ -138,6 +159,12 @@ pub struct FileSettings {
     /// the settings contain something JSON can't represent, like a function. A realm then takes them from those
     /// objects.
     pub(super) sources: Option<Box<[u8]>>,
+}
+
+impl FileSettings {
+    pub fn need_config_file(&self) -> bool {
+        self.sources.is_some()
+    }
 }
 
 /// True if `json` contains a value from the config file that JSON can't represent.

@@ -8,7 +8,8 @@ use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, 
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
-    package_json_write_back, package_manager_options::LogLevel, setup_global_dir,
+    node_can_import_from, package_json_write_back, package_manager_options::LogLevel,
+    setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, ResolutionTag, migration};
 use bun_paths::Path;
@@ -497,6 +498,36 @@ impl PackageManagerCommand {
                         break 'bunx;
                     }
                     let tmp = Fs::RealFS::platform_temp_dir();
+                    let bunx_root_name = crate::cli::bunx_command::cache_root_name();
+                    let cache = (protected.is_none() && !cache_dir.is_cwd_fallback)
+                        .then_some(cache_dir.path.as_slice());
+                    for dir in cache.into_iter().chain([tmp]) {
+                        if node_can_import_from(dir) {
+                            continue;
+                        }
+                        let base = crate::cli::bunx_command::cache_base(dir);
+                        let root = Path::from_parts(&[&base, &bunx_root_name]);
+                        if bun_sys::lstat(&root).is_err() {
+                            continue;
+                        }
+                        let packages = crate::cli::bunx_command::count_cached_packages(&base);
+                        if dry_run {
+                            bun_core::prettyln!(
+                                "<r><d>dry run:<r> would delete {}",
+                                bun_fmt::escape_control_chars(&root),
+                            );
+                        } else if let Err(err) = Dir::cwd().delete_tree(&root) {
+                            Output::err(
+                                err,
+                                "Could not delete {s}",
+                                (bstr::BStr::new(root.as_bytes()),),
+                            );
+                            had_err = true;
+                            continue;
+                        }
+                        deleted += packages;
+                    }
+
                     let tmp_dir = match Dir::open(tmp) {
                         Ok(d) => d,
                         Err(err) => {
@@ -512,7 +543,6 @@ impl PackageManagerCommand {
                     let mut iter = bun_sys::iterate_dir(tmp_dir.fd());
 
                     // `.bunx-<uid>` for all packages, or (Windows, older versions) `bunx-<uid>-<package>`.
-                    let bunx_root_name = crate::cli::bunx_command::cache_root_name();
                     let prefix = [&bunx_root_name[1..], &b"-"[..]].concat();
                     loop {
                         let entry = match iter.next() {

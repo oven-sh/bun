@@ -238,7 +238,7 @@ pub struct MixedPatterns {
     pub(crate) globs: GlobList,
 }
 
-/// For text where `\` is no name on any platform: it is an escape in a glob, and `/` in a URL.
+/// For text where `\` is no name on any platform, even behind a leading `/`: "sideEffects", globs and URLs.
 fn with_slashes(text: &[u8]) -> Cow<'_, [u8]> {
     strings::replace_char(text, b'\\', b'/')
 }
@@ -685,7 +685,7 @@ impl PackageJSON {
                 }
 
                 let dir = json_source.path.name().dir_with_trailing_slash();
-                let in_package = |name: &[u8]| Path::join(&[dir, &from_portable(name)]);
+                let in_package = |name: &[u8]| Path::join(&[dir, &with_slashes(name)]);
 
                 // If the array is empty, treat it as false (no side effects)
                 if !has_globs && !has_exact {

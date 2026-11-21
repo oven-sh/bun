@@ -282,6 +282,7 @@ lockfiles, bundles, hashes, URLs) needs a conversion, once, where it is read or 
 | the same, for an output                     | `bun_sys::converted_spelling(path, convert)`       |
 | the same, for a cache or install directory  | `from_portable(text)`: what exists must not decide |
 
+The tool that defines a file decides what `\a` is in it: the root for `tsc` and in a URL, `./a` for npm's `bin`.
 `convert` is `from_portable` or `from_portable_rooted`, and `base` is where the text was typed.
 `portable::climbs_out` goes with `from_portable`, not with `from_portable_rooted`. On Windows reject `:` too.
 

@@ -451,5 +451,3 @@ test/js/bun/resolve/resolve.test.ts: in a directory named a\b > resolves after p
 test/js/bun/resolve/resolve.test.ts: finds a worker in a directory that is created later and written with a separator at the end
 test/js/bun/resolve/resolve.test.ts: finds a worker that is created later and written with /./
 test/js/bun/resolve/resolve.test.ts: finds a worker that is created later and written with //
-# The type checker reads a leading backslash as the root.
-test/js/bun/resolve/resolve.test.ts: tsconfig.json {"extends":"\\base.json"}

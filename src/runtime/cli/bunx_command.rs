@@ -87,6 +87,11 @@ pub(crate) fn cache_root_name() -> Vec<u8> {
     format!(".bunx-{uid}").into_bytes()
 }
 
+/// Where `.bunx-<uid>` is for `dir`. Node.js refuses to import a module whose path has a `\` in a name.
+pub(crate) fn cache_base(dir: &[u8]) -> Path {
+    Path::join(&[&strings::replace_char(dir, b'\\', b'/')])
+}
+
 fn is_below(path: &[u8], dir: &[u8]) -> bool {
     bun_paths::strip_prefix(path, dir).is_some_and(|rest| !rest.is_empty())
 }
@@ -686,12 +691,12 @@ impl BunxCommand {
         package_fmt: &[u8],
         create: bool,
     ) -> Option<Vec<u8>> {
-        use bun_install::package_manager_real::{fetch_cache_directory_path, node_can_import_from};
         let uid = bun_sys::c::getuid();
         let root_name = cache_root_name();
-        let install_cache = fetch_cache_directory_path(env, configured)
-            .ok()
-            .filter(|dir| !dir.is_cwd_fallback && node_can_import_from(&dir.path));
+        let install_cache =
+            bun_install::package_manager_real::fetch_cache_directory_path(env, configured)
+                .ok()
+                .filter(|dir| !dir.is_cwd_fallback);
         // `$TMPDIR` can be relative. It is made absolute because the install runs in a different
         // working directory than this command.
         let mut temp_dir = Path::from_top_level_dir();
@@ -701,12 +706,12 @@ impl BunxCommand {
             Some(temp_dir.as_bytes()),
         ];
         for (base, is_shared) in bases.into_iter().zip([false, true]) {
-            let Some(base) = base else {
+            let Some(base) = base.map(cache_base) else {
                 continue;
             };
-            let root = Path::from_parts(&[base, root_name.as_slice()]);
+            let root = Path::from_parts(&[&base, root_name.as_slice()]);
             if create {
-                let _ = Fd::cwd().make_path(base);
+                let _ = Fd::cwd().make_path(&base);
                 let _ = bun_sys::mkdirat(Fd::cwd(), &root, 0o700);
             }
             if !bun_sys::lstat(&root).is_ok_and(|st| {

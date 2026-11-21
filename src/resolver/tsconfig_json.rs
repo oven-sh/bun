@@ -2,7 +2,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
-use bun_paths::{from_portable, portable};
+use bun_paths::portable::{self, from_portable_rooted};
 use bun_sys::converted_spelling;
 use enumset::{EnumSet, EnumSetType};
 
@@ -415,7 +415,7 @@ impl TSConfigJSON {
         if let Some(extends_value) = extends_value {
             if !source.path.is_node_module() {
                 if let Some(str) = extends_value.as_str() {
-                    result.extends = converted_spelling(str, from_portable).into();
+                    result.extends = converted_spelling(str, from_portable_rooted).into();
                 }
             }
         }
@@ -478,7 +478,7 @@ impl TSConfigJSON {
             // Parse "baseUrl"
             if let Some(base_url_prop) = base_url_v {
                 if let Some(base_url) = base_url_prop.as_str() {
-                    let base_url = converted_spelling(base_url, portable::from_portable_rooted);
+                    let base_url = converted_spelling(base_url, from_portable_rooted);
                     result.base_url =
                         match Self::str_replacing_templates(Box::from(base_url), source) {
                             Ok(v) => v,
@@ -671,12 +671,8 @@ impl TSConfigJSON {
                                         });
                                         if let Some(str_) = item.as_str() {
                                             let item_loc = this_item_loc;
-                                            // For a pattern, `\a` is below `baseUrl`.
-                                            let convert = match strings::contains_char(key, b'*') {
-                                                true => from_portable,
-                                                false => portable::from_portable_rooted,
-                                            };
-                                            let str_ = converted_spelling(str_, convert);
+                                            let str_ =
+                                                converted_spelling(str_, from_portable_rooted);
                                             let str = match Self::str_replacing_templates(
                                                 Box::from(str_),
                                                 source,

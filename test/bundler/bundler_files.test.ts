@@ -1,7 +1,7 @@
 import type { BunPlugin, OnResolveCallback } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, tempDir } from "harness";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -984,6 +984,15 @@ describe("bundler files option", () => {
       throw: false,
     });
     expect(result.logs.map(log => log.message)).toEqual([`Could not resolve: "./util.js/"`]);
+  });
+
+  test("the output of a key that starts with a slash has a relative name", async () => {
+    using dir = tempDir("files-rooted-key", {});
+    const options = { entrypoints: ["/in-memory/index.js"], files: { "/in-memory/index.js": `console.log(1);` } };
+    expect((await Bun.build(options)).outputs[0].path).toBe("in-memory/index.js");
+    const { outputs } = await Bun.build({ ...options, outdir: String(dir) });
+    expect(outputs[0].path).toBe(join(String(dir), "in-memory", "index.js"));
+    expect(await Bun.file(outputs[0].path).text()).toContain("console.log(1)");
   });
 
   test("a key with backslashes overrides the file", async () => {

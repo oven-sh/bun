@@ -1842,15 +1842,65 @@ describe.skipIf(isWindows)("cache directory", () => {
   });
 
   // Node.js refuses to import a module whose real path contains a backslash.
-  it.concurrent("is in the temp directory when HOME contains a backslash", async () => {
-    using registry = await localRegistry(...toolWithDep());
-    using box = sandbox(registry);
-    const HOME = join(box.home, "DOMAIN\\user");
-    mkdirSync(HOME);
+  it.concurrent.each([
+    ["HOME", (dir: string) => ({ HOME: dir })],
+    ["XDG_CACHE_HOME", (dir: string) => ({ XDG_CACHE_HOME: dir })],
+    ["BUN_INSTALL", (dir: string) => ({ BUN_INSTALL: dir })],
+    ["BUN_INSTALL_CACHE_DIR", (dir: string) => ({ BUN_INSTALL_CACHE_DIR: dir })],
+    ["TMPDIR", (dir: string) => ({ HOME: undefined, USERPROFILE: undefined, TMPDIR: dir, BUN_TMPDIR: dir })],
+  ])("a backslash separates in %s", async (_, variables) => {
+    using registry = await localRegistry({
+      name: "tool",
+      version: "1.0.0",
+      bin: { tool: "cli.mjs" },
+      files: { "cli.mjs": `#!/usr/bin/env node\nconsole.log("module ran");\n` },
+    });
+    using box = sandbox(registry, { cwd: { "package.json": "{}" }, home: { "DOMAIN\\user": {} } });
+    const env = { ...box.env, ...variables(join(box.home, "DOMAIN\\user")) };
 
-    expect(await box.run(["tool"], { env: { ...box.env, HOME } })).toMatchObject({ stdout: ran, exitCode: 0 });
-    expect(bunxEntries(box.tmp)).toContain(`.bunx-${uid}`);
-    expect(readdirSync(box.home)).toEqual(["DOMAIN\\user"]);
+    expect(await box.run(["tool"], { env })).toMatchObject({ stdout: "module ran\n", exitCode: 0 });
+    expect(bunxEntries(join(box.home, "DOMAIN", "user"))).not.toEqual([]);
+    expect(bunxEntries(box.tmp)).toEqual([]);
+
+    const cleared = await box.run(["cache", "rm"], { bunx: [bunExe(), "pm"], env });
+    expect(cleared.stdout).toContain("Cleared 1 cached 'bunx' packages");
+    expect(bunxEntries(box.home)).toEqual([]);
+    expect(cleared.exitCode).toBe(0);
+  });
+
+  it.concurrent(
+    "falls back to the temp directory when HOME has a backslash and its parent isn't writable",
+    async () => {
+      using registry = await localRegistry({
+        name: "tool",
+        version: "1.0.0",
+        bin: { tool: "cli.mjs" },
+        files: { "cli.mjs": `#!/usr/bin/env node\nconsole.log("module ran");\n` },
+      });
+      using box = sandbox(registry, { home: { "DOMAIN\\user": {} } });
+      using unprivileged = unprivilegedSpawnOptions(box.dir);
+      chmodSync(box.home, 0o555);
+
+      const env = { ...box.env, HOME: join(box.home, "DOMAIN\\user") };
+      const result = await box.run(["tool"], { env, ...unprivileged });
+      chmodSync(box.home, 0o755);
+      expect(result.stderr).toContain("warn: no usable private cache directory, installing into shared temp directory");
+      expect(result).toMatchObject({ stdout: "module ran\n", exitCode: 0 });
+    },
+  );
+
+  it.concurrent("bun pm cache rm deletes nothing where it refuses to clear", async () => {
+    using box = sandbox(undefined, {
+      cwd: { "package.json": "{}" },
+      home: { "DOMAIN\\user": {}, [`DOMAIN/user/.bunx-${uid}`]: { "tool@latest": {} } },
+    });
+    const HOME = join(box.home, "DOMAIN\\user");
+
+    const env = { ...box.env, HOME, BUN_INSTALL_CACHE_DIR: HOME };
+    const result = await box.run(["cache", "rm"], { bunx: [bunExe(), "pm"], env });
+    expect(result.stderr).toContain("refusing to clear");
+    expect(readdirSync(join(box.home, "DOMAIN", "user", `.bunx-${uid}`))).toEqual(["tool@latest"]);
+    expect(result.exitCode).toBe(1);
   });
 
   // The install that bunx spawns runs in the tree, and is told which directory that is.

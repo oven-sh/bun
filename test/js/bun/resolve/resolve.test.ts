@@ -2948,8 +2948,6 @@ test.concurrent("an import that starts with ..\\ finds the file in the parent di
 test.concurrent.skipIf(isWindows).each([
   [{ compilerOptions: { baseUrl: "./src/", paths: { "@": [""] } } }, "index"],
   [{ extends: "./base.json/", compilerOptions: { baseUrl: "./fallback" } }, "fallback"],
-  [{ extends: "\\base.json" }, "sibling"],
-  [{ compilerOptions: { baseUrl: ".", paths: { "@*": ["\\src\\index.js"] } } }, "index"],
 ])("tsconfig.json %j", async (tsconfig, expected) => {
   using dir = tempDir("resolve-tsconfig-spelling", {
     "tsconfig.json": JSON.stringify(tsconfig),
@@ -2982,6 +2980,27 @@ test.concurrent.each([
   await Bun.write(join(String(dir), file), text);
   const { outputs } = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], minify: true });
   expect(await outputs[0].text()).toContain(`"local"`);
+});
+
+test.concurrent.each([
+  { extends: "<dir>\\src\\base.json" },
+  { compilerOptions: { baseUrl: "<dir>\\src" } },
+  { compilerOptions: { paths: { which: ["<dir>\\src\\which.js"] } } },
+  { compilerOptions: { paths: { "*": ["<dir>\\src\\*"] } } },
+  { compilerOptions: { baseUrl: ".", paths: { "w*": ["<dir>\\src\\which.js"] } } },
+])("a leading backslash is the root in tsconfig.json: %j", async tsconfig => {
+  using dir = tempDir("resolve-tsconfig-leading-backslash", {
+    "src/base.json": JSON.stringify({ compilerOptions: { paths: { which: ["./which.js"] } } }),
+    "src/which.js": `export default "local";`,
+    "node_modules/which/index.js": `export default "installed";`,
+    "entry.js": `import which from "which"; console.log(which);`,
+  });
+  const rooted = JSON.stringify(String(dir).replaceAll("/", "\\")).slice(1, -1);
+  await Bun.write(
+    join(String(dir), "tsconfig.json"),
+    JSON.stringify(tsconfig).replace("<dir>", () => rooted),
+  );
+  expect(await bunRun(join(String(dir), "entry.js"))).toSpawn("local");
 });
 
 test.concurrent.each([

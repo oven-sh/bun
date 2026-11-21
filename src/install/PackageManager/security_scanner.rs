@@ -942,7 +942,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             .map_err(|e| e.to_zig_err())?;
         self.on_read_result(result);
 
-        // `to_process` consumes `SpawnResult` by value on POSIX (and
+        // `to_process_handle` consumes `SpawnResult` by value on POSIX (and
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
         let process = std::mem::take(spawned).to_process_handle(event_loop);

@@ -221,7 +221,7 @@ pub(crate) struct Response {
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
     /// backpressure lets GC run between `render()` and the async callback.
     weak_ptr_data: WeakPtrData,
-    js_ref: JsCell<JsRef>,
+    pub(crate) js_ref: JsCell<JsRef>,
 
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
@@ -490,7 +490,7 @@ impl Response {
     pub(crate) fn to_js(this: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
         this.calculate_estimated_byte_size();
         let this = js::wrap(this, global_object);
-        this.js_ref.set(JsRef::init_weak(this.to_js()));
+        this.set_js_ref_weak();
 
         this.check_body_stream_ref(global_object);
         this.to_js()
@@ -800,10 +800,6 @@ impl Response {
         Ok(RefPtr::new(self.clone_value(cx)?))
     }
 
-    pub(crate) fn finalize(&self) {
-        self.js_ref.with_mut(|r| r.finalize());
-    }
-
     pub(crate) fn construct_json(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
         let global_this = cx.global();
         let args = JsLocal::to_js_slice(args);
@@ -992,7 +988,7 @@ impl Response {
         let response = Self::construct_into(cx.global(), body.to_js(), init.to_js())?;
         let this = response.this_ptr();
         let this_value = structure.create(&cx.heap, response);
-        this.js_ref.set(JsRef::init_weak(this_value.to_js()));
+        this_value.set_js_ref_weak();
         this.check_body_stream_ref(cx.global());
         Ok(this_value)
     }

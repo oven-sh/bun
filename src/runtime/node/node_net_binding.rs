@@ -1,5 +1,5 @@
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use crate::generated_bindgen::socket_body::SocketHandle;
 use crate::socket::{Listener, NewSocket, SocketFlags};
@@ -10,10 +10,7 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
         // node:net and node:tls check the server's identity in JS (`checkServerIdentity`).
         socket.flags.set(SocketFlags::DEFERS_SERVER_IDENTITY);
         // Weak while idle: `_handle` owns it, and `this_value_for_connect` pins each attempt.
-        let this = socket.this_ptr();
-        let value = NewSocket::to_js(socket, global);
-        this.this_value.set(jsc::JsRef::init_weak(value));
-        value
+        NewSocket::to_js(socket, global, false)
     }
 
     if !is_ssl {

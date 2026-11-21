@@ -201,7 +201,7 @@ pub(crate) struct QuicEndpoint {
     bind_config: JsCell<BindConfig>,
     local_addr: Cell<StoredAddr>,
     poll_ref: KeepAlive,
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
 
     /// At most one server engine, and one client engine for each distinct settings struct in use.
     engines: JsCell<Vec<Rc<Engine>>>,
@@ -1002,7 +1002,11 @@ impl QuicEndpoint {
     }
 
     /// Returns `Ok(false)` when the bind fails: Node does not throw here.
-    fn ensure_bound(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<bool> {
+    fn ensure_bound(
+        &self,
+        global: &JSGlobalObject,
+        this_value: JsWrapper<'_, Self>,
+    ) -> JsResult<bool> {
         if !self.udp.get().is_null() {
             return Ok(true);
         }
@@ -1028,8 +1032,7 @@ impl QuicEndpoint {
             ))
         };
         if let Err(errno) = bound {
-            self.this_value
-                .with_mut(|r| r.set_strong(this_value, global));
+            this_value.set_js_ref_strong(global);
             self.finish_close();
             self.pending_endpoint_close.set(false);
             self.deliver_endpoint_close(global, CLOSECONTEXT_BIND_FAILURE, errno);
@@ -1048,8 +1051,7 @@ impl QuicEndpoint {
             s.bound = 1;
             s.receiving = 1;
         });
-        self.this_value
-            .with_mut(|r| r.set_strong(this_value, global));
+        this_value.set_js_ref_strong(global);
         self.update_keepalive();
         let me = core::ptr::from_ref(self).cast_mut();
         ENDPOINT_REGISTRY.with_borrow_mut(|v| {
@@ -1600,7 +1602,7 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        if !self.ensure_bound(global, this_value.to_js())? {
+        if !self.ensure_bound(global, this_value)? {
             return Ok(());
         }
         if self.server_engine().is_none() {
@@ -1674,7 +1676,7 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        if !self.ensure_bound(global, this_value.to_js())? {
+        if !self.ensure_bound(global, this_value)? {
             return Ok(JSValue::UNDEFINED);
         }
         let options = options.to_js();
@@ -1870,8 +1872,7 @@ impl QuicEndpoint {
             s.listening = 0;
         });
         if self.this_value.get().is_empty() {
-            self.this_value
-                .with_mut(|r| r.set_strong(this_value.to_js(), cx.global()));
+            this_value.set_js_ref_strong(cx.global());
         }
         if self.sessions.get().is_empty() && self.engine_conn_count() == 0 {
             self.finish_close();

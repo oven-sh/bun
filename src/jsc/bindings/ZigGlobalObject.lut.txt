@@ -84,7 +84,7 @@
   TransformStream                 TransformStreamConstructorCallback                   DontEnum|PropertyCallback
   TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback DontEnum|PropertyCallback
   URL                             DOMURLConstructorCallback                            DontEnum|PropertyCallback
-  URLPattern                      URLPatternConstructorCallback                        PropertyCallback
+  URLPattern                      Bun::Bindgen::Generated::URLPattern::getURLPatternConstructor PropertyCallback
   URLSearchParams                 URLSearchParamsConstructorCallback                   DontEnum|PropertyCallback
   WebSocket                       WebSocketConstructorCallback                         PropertyCallback
   Worker                          WorkerConstructorCallback                            PropertyCallback

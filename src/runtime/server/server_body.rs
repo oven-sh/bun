@@ -68,7 +68,7 @@ pub(super) use super::server_config::{self as server_config, ServerConfig};
 pub(super) use super::server_web_socket::ServerWebSocket;
 pub(super) use super::static_route::StaticRoute;
 
-/// Answer a request that arrived after `finalize()` set the wrapper's
+/// Answer a request that arrived after the finalizer set the wrapper's
 /// `JsRef` to `Finalized` (idle keep-alive sockets aren't counted in
 /// `pending_requests`, so `self` can outlive the wrapper between the
 /// finalizer and the next-tick `schedule_deinit`). 503 instead of
@@ -2002,7 +2002,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub(crate) fn finalize(&self) {
         httplog!("finalize");
-        self.js_value.with_mut(|js_value| js_value.finalize());
         debug_assert!(
             self.open_ref.get().is_some() != self.is_drained(),
             "the server refs itself exactly until it is drained"

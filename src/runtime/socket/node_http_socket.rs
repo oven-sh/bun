@@ -410,7 +410,7 @@ pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__onClose(
     with_handle!(ssl, handle, |this| {
         this.update_flags(|f| f.remove(SocketFlags::HELD_BY_SERVER));
         if !run_script {
-            this.update_flags(|f| f.insert(SocketFlags::FINALIZING));
+            this.update_flags(|f| f.insert(SocketFlags::CLOSED_SILENTLY));
         }
         fold(NewSocket::on_close(
             // SAFETY: the ref that `create` returned.

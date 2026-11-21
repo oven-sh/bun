@@ -5178,8 +5178,8 @@ declare module "bun" {
      * The key agreement groups for the handshake: one name, or a
      * colon-separated list in order of preference, such as
      * `"X25519:P-256:P-384"`. OpenSSL curve names such as `"prime256v1"` are
-     * also accepted. The handshake fails when the peer supports none of the
-     * groups.
+     * also accepted. A list with an unknown name is an error. The handshake
+     * fails when the peer supports none of the groups.
      *
      * The default, which `"auto"` also selects, is `X25519MLKEM768`, `X25519`,
      * `P-256` and `P-384`. `X25519MLKEM768` is a post-quantum hybrid group. Its

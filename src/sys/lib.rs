@@ -3207,10 +3207,10 @@ mod posix_impl {
 
     /// Clear CLOEXEC and return whether it was previously set.
     pub fn clear_close_on_exec(fd: Fd) -> Maybe<bool> {
-        let flags = fcntl(fd, libc::F_GETFD, 0)?;
+        let flags = fcntl(fd, Fcntl::GetFd, 0)?;
         let was_set = flags & libc::FD_CLOEXEC as isize != 0;
         if was_set {
-            fcntl(fd, libc::F_SETFD, flags & !(libc::FD_CLOEXEC as isize))?;
+            fcntl(fd, Fcntl::SetFd, flags & !(libc::FD_CLOEXEC as isize))?;
         }
         Ok(was_set)
     }

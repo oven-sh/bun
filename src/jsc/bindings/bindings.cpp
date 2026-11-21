@@ -1593,16 +1593,28 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         if (!eql) return false;
     }
 
-    // for the remaining properties in the other object, make sure they are undefined
-    for (; i < propertyArrayLength2; i++) {
-        Identifier i2 = a2[i];
-        PropertyName propertyName2 = PropertyName(i2);
+    // The loop above only saw o1's names, so a name that only o2 lists must be undefined.
+    // checkPrototypes requires the same names on both sides, so it has none.
+    if constexpr (!checkPrototypes) {
+        UncheckedKeyHashSet<UniquedStringImpl*> namesInFirst;
+        for (i = 0; i < propertyArrayLength2; i++) {
+            const Identifier& i2 = a2[i];
+            if (i < propertyArrayLength1 && a1[i] == i2)
+                continue;
+            if (namesInFirst.isEmpty() && propertyArrayLength1) {
+                namesInFirst.reserveInitialCapacity(propertyArrayLength1);
+                for (const Identifier& name : a1)
+                    namesInFirst.add(name.impl());
+            }
+            if (namesInFirst.contains(i2.impl()))
+                continue;
 
-        JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName2);
-        RETURN_IF_EXCEPTION(scope, false);
+            JSValue prop2 = o2->getIfPropertyExists(globalObject, PropertyName(i2));
+            RETURN_IF_EXCEPTION(scope, false);
 
-        if (!prop2.isUndefined()) {
-            return false;
+            if (!prop2.isUndefined()) {
+                return false;
+            }
         }
     }
 

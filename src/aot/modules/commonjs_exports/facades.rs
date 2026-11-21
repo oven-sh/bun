@@ -306,10 +306,8 @@ fn is_known_only_at_run_time(exports: &CommonJsExports, owner: ModuleRef, name: 
         && (!text.has_names
             || text.is_half
             || match name == known::default {
-                true => {
-                    exports.marker_for_imports(owner) != Some(false)
-                        && !exports.has_default_of_its_own(owner)
-                }
+                // Whoever holds the object may delete "default", and an import of it is then the whole object.
+                true => exports.marker_for_imports(owner) != Some(false),
                 false => !text.is_always_found_by_statements(name),
             })
 }

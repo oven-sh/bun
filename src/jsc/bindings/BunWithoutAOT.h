@@ -92,6 +92,7 @@ template<typename Functor> Result forEachOwnPropertyAsCreated(VM&, JSObject*, co
 enum class IdenticalValues : bool { Skip,
     Append };
 inline bool structureGuaranteesAbsence(Structure*, UniquedStringImpl*) { return false; }
+inline bool hasGetterToCall(JSObject*) { return false; }
 inline bool appendDifferingValues(JSObject*, JSObject*, IdenticalValues, MarkedArgumentBuffer&) { return false; }
 inline JSValue getDirect(VM&, const JSObject*, PropertyName, unsigned*) { return {}; }
 inline void materializeLazyProperties(VM&, JSObject*) {}

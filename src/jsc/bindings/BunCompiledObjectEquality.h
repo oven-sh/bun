@@ -89,6 +89,12 @@ std::optional<bool> areCompiledPairsEqual(JSC::JSGlobalObject* globalObject, JSC
 
 using CompareCompiledObjects = bool (*)(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject*, JSC::JSObject*);
 
+// An object that had an accessor is compared by every enumerable name on its chain, also where a value has replaced the accessor.
+inline bool mayHaveHadAccessor(JSC::JSObject* object)
+{
+    return JSC::AOT::PropertyWalk::isCompiledObject(object) && JSC::AOT::PropertyWalk::hasGetterToCall(object);
+}
+
 // std::nullopt: the caller compares by its generic path, or an exception is pending.
 template<bool isStrict, CompareCompiledObjects compareWhatIsNotListed, typename CompareValues>
 std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, bool sameIsEqual, const CompareValues& compareValues)
@@ -96,7 +102,8 @@ std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalO
     JSC::VM& vm = globalObject->vm();
     JSC::MarkedArgumentBuffer pairs;
     namespace PropertyWalk = JSC::AOT::PropertyWalk;
-    if (PropertyWalk::appendDifferingValues(o1, o2, sameIsEqual ? PropertyWalk::IdenticalValues::Skip : PropertyWalk::IdenticalValues::Append, pairs))
+    bool needsGenericPath = mayHaveHadAccessor(o1) || mayHaveHadAccessor(o2);
+    if (!needsGenericPath && PropertyWalk::appendDifferingValues(o1, o2, sameIsEqual ? PropertyWalk::IdenticalValues::Skip : PropertyWalk::IdenticalValues::Append, pairs))
         return areCompiledPairsEqual(globalObject, scope, pairs, sameIsEqual, compareValues);
 
     if constexpr (compareWhatIsNotListed != nullptr) {
@@ -105,6 +112,9 @@ std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalO
         if (!isSame)
             return false;
     }
+
+    if (needsGenericPath)
+        return std::nullopt;
 
     OwnEnumerableProperties properties1;
     OwnEnumerableProperties properties2;

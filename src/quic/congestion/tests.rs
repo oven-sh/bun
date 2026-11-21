@@ -463,11 +463,29 @@ fn pacer_starts_a_burst_after_three_packets_or_a_quarter_of_a_millisecond() {
 
 #[test]
 fn pacer_knows_when_the_last_burst_may_still_be_leaving() {
-    for (pause, place) in [(479, Place::First), (480, Place::FirstAfterGap)] {
+    for (pause, was_idle, place) in [
+        (479, false, Place::First),
+        (480, false, Place::FirstAfterGap),
+        (479, true, Place::FirstAfterGap),
+    ] {
         let mut pacer = pacer_at(1024, micros(16));
         (0..40).for_each(|_| _ = pacer.on_sent(START, 1024));
+        if was_idle {
+            pacer.on_idle_restart(START + micros(pause), false);
+        }
         assert_eq!(pacer.on_sent(START + micros(pause), 1024), place);
     }
+}
+
+#[test]
+fn pacer_drops_the_rest_of_a_quantum_after_a_loss() {
+    let (mut pacer, mut rtt) = (Pacer::default(), Rtt::default());
+    rtt.update(micros(500), Duration::ZERO);
+    pacer.set_rate(1000, millis(5), &rtt);
+    assert_eq!(pacer.delay(START), None);
+    pacer.on_sent(START, 1000);
+    pacer.on_loss();
+    assert_eq!(pacer.delay(START), Some(START + millis(5)));
 }
 
 #[test]
@@ -497,7 +515,7 @@ fn pacer_sends_in_proportion_to_the_rate_while_bursts_lose_their_starts() {
 
 #[test]
 fn pacer_adds_nothing_for_a_short_path_in_a_shared_queue() {
-    for (lost, expected) in [(5, 3), (6, 1)] {
+    for (lost, expected, bonus) in [(5, 3, 2048), (6, 1, 0)] {
         let mut pacer = pacer_at(1000, millis(2));
         (0..5).for_each(|_| pacer.on_overflow());
         (0..lost).for_each(|_| pacer.on_start_settled(true));
@@ -505,6 +523,7 @@ fn pacer_adds_nothing_for_a_short_path_in_a_shared_queue() {
         rtt.update(millis(1), Duration::ZERO);
         pacer.set_rate(1000, millis(2), &rtt);
         assert_eq!(pacer.quantum().div_ceil(1000), expected);
+        assert_eq!(pacer.bonus(), bonus);
     }
 }
 
@@ -709,6 +728,8 @@ fn bursts_stay_short_unless_the_outcome_is_comparable() {
     let mut periods = Periods::new();
     periods.is_path_limit = false;
     assert_eq!(periods.run(3, |_| (110, 10)), [2, 2, 2]);
+    periods.is_path_limit = true;
+    assert_eq!(periods.run(2, |_| (110, 10)), [2, 4]);
 
     let mut periods = Periods::new();
     (periods.sends, periods.now) = (false, periods.now + millis(150));
@@ -786,6 +807,24 @@ fn trial_that_is_interrupted_is_called_off() {
 }
 
 #[test]
+fn period_with_a_pause_is_not_comparable() {
+    let (mut trial, mut now) = (Trial::default(), START);
+    judge(&mut trial, &mut now, 1024, 0, true);
+    trial.abandon();
+    let spared = [(); 2].map(|()| judge(&mut trial, &mut now, 2000, 0, true));
+    assert_eq!(spared, [0, 1]);
+}
+
+#[test]
+fn trial_starts_from_the_shortest_bursts_of_a_period() {
+    let (mut trial, mut now) = (Trial::default(), START);
+    judge(&mut trial, &mut now, 1024, 0, true);
+    judge(&mut trial, &mut now, 2000, 0, false);
+    trial.update(now, &Feedback::default(), Some(true), MAX_OVERFLOWS - 2);
+    assert_eq!(trial.max_overflows(), MAX_OVERFLOWS - 1);
+}
+
+#[test]
 fn pause_ends_a_trial() {
     for lost in [10, 90] {
         let mut periods = Periods::new();
@@ -831,6 +870,7 @@ fn longer_bursts_are_judged_by_whole_cycles() {
         &[(2000, 0, false, 0), (2000, 0, true, 1), (1950, 0, true, 2)],
         &[(2000, 0, false, 0), (2000, 0, true, 1), (1949, 0, true, 0)],
         &[(2000, 0, true, 1), (2400, 0, true, 2), (2000, 0, true, 1)],
+        &[(2000, 0, true, 1), (1950, 0, true, 2), (1949, 0, true, 1)],
         &[
             (2000, 20, true, 1),
             (2000, 141, true, 2),
@@ -847,6 +887,7 @@ fn longer_bursts_are_judged_by_whole_cycles() {
             (2000, 242, true, 1),
         ],
         &[(2000, 0, true, 1), (1, 121, false, 1), (1, 1, false, 0)],
+        &[(2000, 0, true, 1), (2999, 182, false, 1), (1, 1, false, 0)],
         &[
             (2000, 0, true, 1),
             (2000, 0, true, 2),

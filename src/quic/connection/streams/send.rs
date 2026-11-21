@@ -10,7 +10,7 @@ use crate::frame::{kind, stream_flag};
 use crate::stream_id::StreamId;
 use crate::time::Instant;
 
-/// What a stream can take however much the others have.
+/// What a stream can take however much the others have, unless it has more than that and has to wait for its share.
 pub(super) const MIN_UNSENT: u64 = 8 * 1024;
 /// By how much what is unsent has to be below the target for the application to be asked for more.
 pub(in crate::connection) const WRITE_CHUNK: u64 = 32 * 1024;
@@ -18,7 +18,7 @@ const TURN_LEN: u64 = 16 * 1024;
 /// By how many turns a stream gives way that sends this much in one go, and has more than a little to send.
 const BULK_HANDICAP: u64 = 8;
 pub(super) const BULK_LEN: u64 = 128 * 1024;
-const LITTLE: u64 = 2 * 1024;
+pub(super) const LITTLE: u64 = 2 * 1024;
 /// After how much a response that is not incremental shares the path all the same (RFC 9218 §10).
 const LONG_LEN: u64 = 1024 * 1024;
 /// A rank is made of the urgency, this bit, the turn, and whether the stream takes turns. Those that have the bit go one
@@ -82,18 +82,17 @@ impl State {
     /// How many bytes the application may write if it has `len`, and whether they are ahead of an older stream.
     #[inline]
     pub(crate) fn capacity(&self, id: StreamId, stream: &Stream, len: usize) -> (u64, bool) {
-        let mut credit = self.send_credit();
+        let mut room =
+            (self.max_retained.saturating_sub(self.retained)).min(self.credit_for(stream));
+        if !self.sends_in_order {
+            return (self.wanted_from(id, stream, len as u64).min(room), false);
+        }
         let (has_to_wait, is_ahead) = match self.invited {
-            Some((invited, is_ahead))
-                if invited == id
-                    && let max = self.max_write(stream, len as u64)
-                    && max >= self.min_credit =>
-            {
-                credit = (credit.saturating_sub(self.spare_credit)).min(max);
+            Some((invited, is_ahead)) if invited == id => {
+                room = room.min(self.send_credit().saturating_sub(self.spare_credit));
                 (false, is_ahead)
             }
             _ if self.writable.is_empty() && self.leader.is_none() => (false, false),
-            _ if !self.sends_in_order => (self.has_to_wait(id, stream, len as u64), false),
             _ => {
                 let entry = (self.rank(stream), id);
                 let has_to_wait = self.writable.front().is_some_and(|it| *it < entry);
@@ -101,24 +100,16 @@ impl State {
                 (has_to_wait, age(entry).is_some_and(follows))
             }
         };
+        if is_ahead {
+            room =
+                room.min(self.credit_ahead + self.reserve_for(stream, len as u64 >= WRITE_CHUNK));
+        }
         let shared = match has_to_wait {
-            true if self.has_been_refused(stream) => return (0, false),
             true => 0,
-            false => (self.unsent_target + self.extra_unsent(stream, len as u64))
-                .saturating_sub(self.unsent),
+            false => self.unsent_target.saturating_sub(self.unsent),
         };
-        let least = match has_to_wait && !self.sends_in_order && len as u64 > MIN_UNSENT {
-            true => LITTLE,
-            false => MIN_UNSENT,
-        };
-        let wanted = shared.max(least.saturating_sub(stream.send.unsent_len()));
-        let room = self.max_retained.saturating_sub(self.retained);
-        let capacity = wanted.min(room).min(credit).min(stream.send_credit());
-        let max = match is_ahead {
-            true => self.credit_ahead + self.reserve_for(stream, len as u64 >= WRITE_CHUNK),
-            false => u64::MAX,
-        };
-        (capacity.min(max), is_ahead)
+        let wanted = shared.max(MIN_UNSENT.saturating_sub(stream.send.unsent_len()));
+        (wanted.min(room), is_ahead)
     }
 
     /// So that streams that the peer does not read cannot hold up short ones.
@@ -198,10 +189,9 @@ impl State {
 
     #[inline]
     pub(crate) fn start_write_round(&mut self, now: Instant) {
-        self.count_periods(now);
+        self.renew_crumbs(now);
         self.write_round += 1;
         self.is_write_round_over = false;
-        self.allowance.is_crumb = false;
     }
 
     /// Whatever the limits are.
@@ -300,10 +290,9 @@ impl State {
         self.report_blocked(id, stream);
         if stream.mark(Flags::IN_WRITABLE) {
             self.turns += 1;
-            stream.waits_since = self.periods.count;
             let rank = match self.sends_in_order {
                 true => self.rank(stream),
-                false => self.rank_share(stream),
+                false => self.start_waiting(stream),
             };
             line_up(&mut self.writable, (rank, id));
             self.is_write_round_over = false;
@@ -395,7 +384,7 @@ impl State {
             credit @ LITTLE.. if at == serial && at > Some(0) => credit / 2,
             _ => 0,
         };
-        let age_at = |at: Option<usize>| age(*line.get(at?)?);
+        let age_at = |at: Option<usize>| age(*at.and_then(|at| line.get(at))?);
         let oldest = [leader, age_at(Some(0)), age_at(serial)];
         let oldest = oldest.into_iter().flatten().min();
         let is_ahead = |at| age_at(at).is_some_and(|it| oldest < Some(it));
@@ -506,10 +495,10 @@ impl Streams {
                 continue;
             }
             stream.flags.remove(Flags::WANTS_WRITE);
-            if !state.allowance.is_crumb {
+            state.invited = Some((id, is_ahead));
+            if !state.has_crumb(id, stream) {
                 stream.write_round = state.write_round;
             }
-            state.invited = Some((id, is_ahead));
             return Some(Event::Stream(id, stream.context, StreamEvent::Writable));
         }
         None

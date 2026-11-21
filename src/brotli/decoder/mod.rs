@@ -172,11 +172,19 @@ impl Blocks {
 /// Of output for each literal tree. With less, the larger tables take more time to fill than they save.
 const BYTES_FOR_WIDE_ROOT: usize = 512;
 
+/// What [`Decoder::set_parameter`] was given. A stream does not change it.
+#[derive(Clone, Copy, Default)]
+struct Requested {
+    large_window: bool,
+    whole_window: bool,
+}
+
 pub struct Decoder {
     state: State,
     bits: Bits,
+    requested: Requested,
+    /// What the header of the stream says.
     large_window: bool,
-    whole_window: bool,
     dictionary: Vec<u8>,
     max_backward_distance: usize,
     ring: RingBuffer,
@@ -206,8 +214,8 @@ impl Default for Decoder {
         Self {
             state: State::StreamHeader,
             bits: Bits::default(),
+            requested: Requested::default(),
             large_window: false,
-            whole_window: false,
             dictionary: Vec::new(),
             max_backward_distance: 0,
             ring: RingBuffer::default(),
@@ -235,11 +243,20 @@ impl Decoder {
             return false;
         }
         match key {
-            0 => self.whole_window = value != 0,
-            1 => self.large_window = value != 0,
+            0 => self.requested.whole_window = value != 0,
+            1 => self.requested.large_window = value != 0,
             _ => return false,
         }
         true
+    }
+
+    /// Forgets the stream in progress and an error, but not the parameters and the dictionary.
+    pub fn reset_session(&mut self) {
+        *self = Self {
+            requested: self.requested,
+            dictionary: core::mem::take(&mut self.dictionary),
+            ..Self::default()
+        };
     }
 
     /// `None` if the dictionary is above 1 GiB, or too large for the memory.
@@ -257,7 +274,7 @@ impl Decoder {
         !matches!(self.state, State::Failed(_)) && self.ring.has_unflushed()
     }
 
-    /// Advances `input` by what it consumed. After an error, every call returns that error.
+    /// Advances `input` by what it consumed. An error stays until [`reset_session`](Self::reset_session).
     #[inline(never)]
     pub fn decompress(
         &mut self,
@@ -312,7 +329,7 @@ impl Decoder {
             self.state = match self.state {
                 State::StreamHeader => {
                     let (window_bits, large_window) =
-                        reader.step(|bits| read_window_bits(bits, self.large_window))?;
+                        reader.step(|bits| read_window_bits(bits, self.requested.large_window))?;
                     self.large_window = large_window;
                     self.max_backward_distance = max_backward_distance(window_bits);
                     self.ring.set_window_bits(window_bits);
@@ -424,7 +441,10 @@ impl Decoder {
                         Some(next) => State::Trees(next),
                         None => {
                             self.ring
-                                .begin_meta_block(self.remaining as usize, self.whole_window)
+                                .begin_meta_block(
+                                    self.remaining as usize,
+                                    self.requested.whole_window,
+                                )
                                 .map_err(|_| DecodeError::AllocRingBuffer2)?;
                             self.ring.grow();
                             self.cursor.command = Command::default();
@@ -502,7 +522,7 @@ impl Decoder {
         }
         if matches!(next, State::Uncompressed) {
             self.ring
-                .begin_meta_block(length as usize, self.whole_window)
+                .begin_meta_block(length as usize, self.requested.whole_window)
                 .map_err(|_| DecodeError::AllocRingBuffer1)?;
         }
         Ok(next)
@@ -655,4 +675,46 @@ fn read_count(bits: &mut Bits) -> Result<u32, Stop> {
     }
     let n = bits.read(3)?;
     Ok((1 << n) + bits.read(n)? + 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use bun_core::vec::BorrowedBuf;
+    use bun_sema_standalone as _;
+
+    use super::*;
+
+    /// "a", as google/brotli 1.2 writes it for a window of 16 bits.
+    const ORDINARY: &[u8] = &[0x00, 0x00, 0x10, 0x61, 0x03];
+    /// And for a large window of 17 bits.
+    const LARGE: &[u8] = &[0x11, 0x11, 0x00, 0x00, 0x02, 0x61, 0x03];
+
+    fn decodes_to_a(decoder: &mut Decoder, mut stream: &[u8]) -> Result<(), DecodeError> {
+        let mut room = [0; 8];
+        let mut out = BorrowedBuf::from(&mut room[..]);
+        let status = decoder.decompress(&mut stream, out.unfilled())?;
+        assert_eq!(
+            (status, out.filled()),
+            (DecodeStatus::Finished, b"a".as_slice())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reset_session_keeps_the_parameters_and_the_dictionary() -> Result<(), DecodeError> {
+        let mut decoder =
+            Decoder::with_dictionary(b"dictionary").ok_or(DecodeError::Unreachable)?;
+        assert!(decoder.set_parameter(0, 1) && decoder.set_parameter(1, 1));
+        decodes_to_a(&mut decoder, ORDINARY)?;
+        // The whole window, which the header says is not a large one.
+        assert_eq!(decoder.ring.size(), 1 << 16);
+        assert!(!decoder.set_parameter(1, 1));
+
+        decoder.reset_session();
+        assert_eq!(decoder.ring.size(), 0);
+        assert_eq!(decoder.dictionary, b"dictionary");
+        decodes_to_a(&mut decoder, LARGE)?;
+        assert_eq!(decoder.ring.size(), 1 << 17);
+        Ok(())
+    }
 }

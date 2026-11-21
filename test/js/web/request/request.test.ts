@@ -357,6 +357,34 @@ describe("RequestInit method presence", () => {
     });
   });
 
+  test("a Response passed as init sets headers and body, not a method", async () => {
+    // A Response is not a RequestInit, but it is an object with `headers` and `body`.
+    const r = new Request(put(), new Response("b", { headers: { "x-r": "2" } }));
+    expect({
+      method: r.method,
+      url: r.url,
+      redirect: r.redirect,
+      xr: r.headers.get("x-r"),
+      xk: r.headers.get("x-k"),
+    }).toEqual({
+      method: "PUT",
+      url: "http://h.example/x",
+      redirect: "manual",
+      xr: "2",
+      xk: null,
+    });
+    expect(await r.text()).toBe("b");
+    expect(new Request(put(), new Response(null, { status: 204 })).method).toBe("PUT");
+
+    // Bun lets ResponseInit carry a `method`. It is internal state, not a property, so only a
+    // Response passed as `input` gives it to the Request.
+    const withMethod = () => new Response(null, { method: "DELETE" } as ResponseInit);
+    expect(new Request(put(), withMethod() as RequestInit).method).toBe("PUT");
+    expect(new Request("http://h.example/y", withMethod() as RequestInit).method).toBe("GET");
+    // @ts-expect-error
+    expect(new Request(withMethod(), { url: "http://h.example/y" }).method).toBe("DELETE");
+  });
+
   test("a method on init overrides the method of the input", () => {
     expect(new Request(put(), { method: "POST" }).method).toBe("POST");
     expect(new Request(put(), new Proxy({ method: "POST" }, {})).method).toBe("POST");
@@ -452,5 +480,47 @@ describe("RequestInit method presence", () => {
     // `status` belongs to ResponseInit. Its range check does not apply to a Request.
     // @ts-expect-error
     expect(new Request("http://h.example/x", { status: 999 }).method).toBe("GET");
+  });
+
+  describe("a member that init has is not read from the input", () => {
+    // A subclass instance is read through its getters.
+    class Counting extends Request {
+      static reads = { headers: 0, method: 0 };
+      get headers() {
+        Counting.reads.headers++;
+        return super.headers;
+      }
+      get method() {
+        Counting.reads.method++;
+        return super.method;
+      }
+    }
+    const reads = (init: RequestInit) => {
+      const input = new Counting("http://h.example/x", { method: "PUT", headers: { "x-k": "1" } });
+      Counting.reads = { headers: 0, method: 0 };
+      new Request(input, init);
+      return Counting.reads;
+    };
+
+    test.each([
+      ["{ headers }", () => ({ headers: { "x-o": "3" } }), { headers: 0 }],
+      ["{ headers: {} }", () => ({ headers: {} }), { headers: 0 }],
+      ["{ method }", () => ({ method: "POST" }), { method: 0 }],
+      ["{ headers: {}, method }", () => ({ headers: {}, method: "POST" }), { headers: 0, method: 0 }],
+      ["a Request with no headers", () => new Request("http://h.example/y"), { headers: 0, method: 0 }],
+    ])("init is %s", (_, makeInit, expected) => {
+      expect(reads(makeInit())).toMatchObject(expected);
+    });
+
+    test("a throwing headers getter on the input is reached only when init has no headers", () => {
+      const input = {
+        url: "http://h.example/x",
+        get headers(): HeadersInit {
+          throw new RangeError("from the input");
+        },
+      } as unknown as Request;
+      expect([...new Request(input, { headers: {} }).headers]).toEqual([]);
+      expect(() => new Request(input, {})).toThrow(new RangeError("from the input"));
+    });
   });
 });

@@ -956,6 +956,8 @@ impl Request {
             &values_to_try_[0..((!is_first_argument_a_url) as usize + init.is_object() as usize)];
 
         for &value in values_to_try {
+            let is_input =
+                !is_first_argument_a_url && value == values_to_try[values_to_try.len() - 1];
             if value.js_type() == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {
                     if values_to_try.len() == 1 {
@@ -1002,7 +1004,8 @@ impl Request {
                 }
 
                 if let Some(response) = value.as_direct::<Response>() {
-                    if !fields.contains(Fields::Method) {
+                    // A Response has no `method` property, so as `init` it cannot set one.
+                    if is_input && !fields.contains(Fields::Method) {
                         req.method = response.get_method();
                         fields.insert(Fields::Method);
                     }
@@ -1067,9 +1070,7 @@ impl Request {
                         // `implementsToString` (which performs JS property
                         // lookup with observable side effects) when the first
                         // two guards already hold.
-                        if value == values_to_try[values_to_try.len() - 1]
-                            && !is_first_argument_a_url
-                        {
+                        if is_input {
                             let implements = value.implements_to_string(cx.global())?;
                             if implements {
                                 let str = BunString::from_js(value, cx.global())?;
@@ -1105,7 +1106,7 @@ impl Request {
             }
 
             // WebIDL dictionary members: present iff the member is not undefined. A native
-            // Request or Response claimed both fields above, so its getters are not called.
+            // Request or Response claimed the headers above, so that getter is not called.
             if !fields.contains(Fields::Headers) {
                 if let Some(headers_) =
                     value.fast_get(cx.global(), bun_jsc::BuiltinName::Headers)?

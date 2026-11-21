@@ -1,8 +1,6 @@
 //! `unicode/udat.h`
 
-use crate::capi::ffi::{
-    self, CallerMem, Dest, ErrorCode, NonNullHandle, NulStr, Null, Text, UBool, UChar,
-};
+use crate::capi::ffi::{self, Dest, ErrorCode, NonNullHandle, NulStr, Null, Text, UBool, UChar};
 use crate::capi::ucal::{UCalendar, locale_id, zone_for_id};
 use crate::capi::ufieldpositer::UFieldPositionIterator;
 use crate::common::locid::Locale;
@@ -35,15 +33,13 @@ fn udat_open(
     (pattern, _): Text<UChar>,
     status: ErrorCode,
 ) -> Option<Box<UDateFormat>> {
-    status.open(|cx, _| {
-        let locale = &Locale::from_name(locale_id(cx, locale)?);
-        let zone = zone_for_id(cx, tz_id)?;
+    status.open(|| {
+        let locale = &Locale::from_name(locale_id(locale)?);
+        let zone = zone_for_id(tz_id)?;
         match (time_style, date_style) {
-            (UDAT_PATTERN, UDAT_PATTERN) => boxed(SimpleDateFormat::with_pattern(
-                cx.text(pattern)?,
-                locale,
-                zone,
-            )),
+            (UDAT_PATTERN, UDAT_PATTERN) => {
+                boxed(SimpleDateFormat::with_pattern(pattern.get()?, locale, zone))
+            }
             (UDAT_NONE, UDAT_NONE) => Err(U_UNSUPPORTED_ERROR),
             (UDAT_NONE..=UDAT_SHORT, UDAT_NONE..=UDAT_SHORT) => {
                 let [time, date] = [time_style, date_style].map(|it| usize::try_from(it).ok());
@@ -63,17 +59,15 @@ fn udat_close(format: Option<Box<UDateFormat>>) {
 
 #[capi]
 fn udat_clone(fmt: Option<&UDateFormat>, status: ErrorCode) -> Option<Box<UDateFormat>> {
-    status.open(|_, _| boxed(fmt.non_null()?.try_clone()))
+    status.open(|| boxed(fmt.non_null()?.try_clone()))
 }
 
 /// Calls `format` with an alias of `result` and terminates the text. Returns the length.
 fn format_with(
-    cx: &mut CallerMem,
-    result: Dest<'_, UChar>,
+    mut result: Dest<'_, UChar>,
     status: &mut UErrorCode,
     format: impl FnOnce(&mut WritableAlias) -> Result<(), UErrorCode>,
 ) -> Result<i32, UErrorCode> {
-    let mut result = cx.writer(result);
     let mut text = result.reborrow().alias();
     format(&mut text)?;
     let end = text.end();
@@ -89,13 +83,13 @@ fn udat_format(
     position: Null,
     status: ErrorCode,
 ) -> i32 {
-    status.run(-1, |cx, status| {
+    status.run(-1, |status| {
         result.check()?;
         if !position.is_null() {
             return Err(U_UNSUPPORTED_ERROR);
         }
         let format = fmt.non_null()?;
-        format_with(cx, result, status, |text| {
+        format_with(result, status, |text| {
             match format.format(date, text, None) {
                 Err(code @ (U_INVALID_STATE_ERROR | U_UNSUPPORTED_ERROR)) => Err(code),
                 _ => Ok(()),
@@ -113,11 +107,11 @@ fn udat_formatForFields(
     fpositer: Option<&mut UFieldPositionIterator>,
     status: ErrorCode,
 ) -> i32 {
-    status.run(-1, |cx, status| {
+    status.run(-1, |status| {
         result.check()?;
         let format = fmt.non_null()?;
         let fpositer = fpositer.ok_or(U_UNSUPPORTED_ERROR)?;
-        format_with(cx, result, status, |text| {
+        format_with(result, status, |text| {
             let mut handler = FieldPositionIteratorHandler::new();
             let written = format.format(date, text, Some(&mut handler));
             _ = handler.finish_into(fpositer);
@@ -144,7 +138,7 @@ fn udat_toPattern(
     (result, _): Dest<UChar>,
     status: ErrorCode,
 ) -> i32 {
-    status.run(-1, |cx, status| {
+    status.run(-1, |status| {
         result.check()?;
         if localized != 0 {
             return Err(U_UNSUPPORTED_ERROR);
@@ -153,20 +147,15 @@ fn udat_toPattern(
             .non_null()?
             .to_pattern()
             .ok_or(U_ILLEGAL_ARGUMENT_ERROR)?;
-        Ok(cx.extract_to(pattern, result, status))
+        Ok(result.extract_to(pattern, status))
     })
 }
 
 /// Accepts `localized` false.
 #[capi]
-fn udat_applyPattern(
-    cx: &CallerMem,
-    fmt: Option<&mut UDateFormat>,
-    localized: UBool,
-    (pattern, _): Text<UChar>,
-) {
+fn udat_applyPattern(fmt: Option<&mut UDateFormat>, localized: UBool, (pattern, _): Text<UChar>) {
     debug_assert!(localized == 0);
     if let Some(format) = fmt {
-        ffi::ignore_oom(|| format.apply_pattern(cx.text_or_empty(pattern)));
+        ffi::ignore_oom(|| format.apply_pattern(pattern.get_or_empty()));
     }
 }

@@ -18,11 +18,11 @@ fn select_into(
     status: ErrorCode<'_>,
     select: impl FnOnce() -> Result<PluralForm, UErrorCode>,
 ) -> i32 {
-    status.run(0, |cx, status| {
+    status.run(0, |status| {
         keyword.check()?;
         let chars = select()?.keyword().to_bytes().iter();
         let units = ArrayVec::<_, 5>::from_iter_truncated(chars.map(|&c| UChar::from(c)));
-        Ok(cx.extract_to(&units, keyword, status))
+        Ok(keyword.extract_to(&units, status))
     })
 }
 
@@ -33,7 +33,7 @@ fn uplrules_openForType(
     type_: UPluralType,
     status: ErrorCode,
 ) -> Option<Box<UPluralRules>> {
-    status.open(|cx, _| PluralRules::for_locale(&Locale::new(cx.c_str(locale)), type_))
+    status.open(|| PluralRules::for_locale(&Locale::new(locale.get()), type_))
 }
 
 #[capi]
@@ -74,5 +74,5 @@ fn uplrules_getKeywords(
     uplrules: Option<&UPluralRules>,
     status: ErrorCode,
 ) -> Option<Box<UEnumeration>> {
-    status.open(|_, _| uenum::open_boxed(uplrules.non_null()?.get_keywords()))
+    status.open(|| uenum::open_boxed(uplrules.non_null()?.get_keywords()))
 }

@@ -16,13 +16,10 @@ fn write_name(
     status: ErrorCode<'_>,
     look_up: fn(&LocaleDisplayNames, &[u8]) -> Result<Vec<u16>, UErrorCode>,
 ) -> i32 {
-    status.run(0, |cx, status| {
+    status.run(0, |status| {
         result.check()?;
-        let name = look_up(
-            ldn.non_null()?,
-            cx.c_str(code).ok_or(U_ILLEGAL_ARGUMENT_ERROR)?,
-        )?;
-        Ok(cx.extract_to(&name, result, status))
+        let name = look_up(ldn.non_null()?, code.get().ok_or(U_ILLEGAL_ARGUMENT_ERROR)?)?;
+        Ok(result.extract_to(&name, status))
     })
 }
 
@@ -33,7 +30,7 @@ fn uldn_openForContext(
     (contexts, _): Array<c_int>,
     status: ErrorCode,
 ) -> Option<Box<ULocaleDisplayNames>> {
-    status.open(|cx, _| {
+    status.open(|| {
         let (
             Some(locale),
             &[
@@ -42,7 +39,7 @@ fn uldn_openForContext(
                 length @ (UDISPCTX_LENGTH_FULL | UDISPCTX_LENGTH_SHORT),
                 UDISPCTX_NO_SUBSTITUTE,
             ],
-        ) = (cx.c_str(locale), cx.slice(contexts))
+        ) = (locale.get(), contexts.get())
         else {
             return Err(U_UNSUPPORTED_ERROR);
         };
@@ -100,10 +97,10 @@ fn uldn_keyValueDisplayName(
     key: NulStr<u8>,
     value: NulStr<u8>,
     (result, _): Dest<UChar>,
-    mut status: ErrorCode,
+    status: ErrorCode,
 ) -> i32 {
-    if status.mem().c_str(key) != Some(b"calendar") {
-        return status.run(0, |_, _| Err(U_UNSUPPORTED_ERROR));
+    if key.get() != Some(b"calendar") {
+        return status.run(0, |_| Err(U_UNSUPPORTED_ERROR));
     }
     let look_up = LocaleDisplayNames::calendar_display_name;
     write_name(ldn, value, result, status, look_up)

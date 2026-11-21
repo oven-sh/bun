@@ -43,39 +43,39 @@ fn convert(
     idna: Option<&UIDNA>,
     form: OutputForm,
     name: Text<'_, UChar>,
-    dest: Dest<'_, UChar>,
+    mut dest: Dest<'_, UChar>,
     info: Out<'_, UIDNAInfo>,
     status: ErrorCode<'_>,
 ) -> i32 {
-    status.run(0, |cx, status| {
+    status.run(0, |status| {
         let idna = idna.non_null()?;
         if idna.form != form {
             return Err(U_UNSUPPORTED_ERROR);
         }
         dest.check()?;
-        cx.store(info, IdnaInfo::default().into());
-        let out = cx.writer(dest.at_most(to_int32(4 * to_length(name.length()) + 64)));
-        let name = out.text_disjoint(name)?;
+        info.set(IdnaInfo::default().into());
+        let out = (dest.reborrow()).at_most(to_int32(4 * to_length(name.length()) + 64));
+        let name = out.apart(name.get()?)?;
         // The work is done in `dest` if the name fits, until the result outgrows what has been cleared.
         let (mut stack, mut heap);
         let mut scratch = None;
-        let buffer = if name.len() <= to_length(out.dest().capacity()) {
+        let buffer = if name.len() <= to_length(out.capacity()) {
             out.cleared()
         } else {
             (stack, heap) = ([0; 64], Vec::new());
             scratch.insert(stack_or_heap(name.len(), &mut stack, &mut heap)?)
         };
         let mut converted = WritableAlias::new(buffer, name.len());
-        let result = idna.convert(&name, &mut converted)?;
+        let result = idna.convert(name, &mut converted)?;
         let (length, spilled) = (converted.len(), converted.into_heap());
-        cx.store(info, result.into());
+        info.set(result.into());
         Ok(
             match spilled
                 .as_deref()
                 .or_else(|| scratch.map(|scratch| scratch.slice(..length)))
             {
-                Some(text) => cx.extract_to(text, dest, status),
-                None => cx.writer(dest).terminate(length, status),
+                Some(text) => dest.extract_to(text, status),
+                None => dest.terminate(length, status),
             },
         )
     })
@@ -84,7 +84,7 @@ fn convert(
 /// Accepts `TO_ASCII`, with or without `UIDNA_NONTRANSITIONAL_TO_UNICODE`, and that option alone.
 #[capi]
 fn uidna_openUTS46(options: u32, status: ErrorCode) -> Option<Box<UIDNA>> {
-    status.open(|_, _| {
+    status.open(|| {
         if options == UIDNA_NONTRANSITIONAL_TO_UNICODE {
             Uts46::new(OutputForm::Unicode)
         } else if options & !UIDNA_NONTRANSITIONAL_TO_UNICODE == TO_ASCII {

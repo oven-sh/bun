@@ -7,20 +7,11 @@ use crate::common::utypes::UErrorCode;
 macro_rules! export {
     ($(#[$meta:meta])* $vis:vis fn $name:ident($($parameters:tt)*) $(-> $result:ty)? $body:block) => {
         $crate::capi::ffi::export! {
-            @begin [$($parameters)*] [[$(#[$meta])*] $vis $name [$(-> $result)?] $body] $($parameters)*
+            @ [[$(#[$meta])*] $vis $name [$(-> $result)?] $body] [] [] [] [] $($parameters)*
         }
     };
-    (@begin [cx: $($same:tt)*] $function:tt $cx:ident: $type:ty $(, $($rest:tt)*)?) => {
-        $crate::capi::ffi::export! {
-            @ $function [] [$cx: $type,] [$crate::capi::ffi::NewCx::new(&call),] [let call = ();]
-            [$crate::capi::ffi::Cx<$type>,] $($($rest)*)?
-        }
-    };
-    (@begin $same:tt $function:tt $($parameters:tt)*) => {
-        $crate::capi::ffi::export! { @ $function [] [] [] [] [] $($parameters)* }
-    };
-    // Each arm moves a parameter to five lists: C parameters, those of `body`, its arguments, statements that build pairs, types.
-    (@ $function:tt [$($c:tt)*] [$($own:tt)*] [$($given:tt)*] [$($join:tt)*] [$($types:tt)*]
+    // Each arm moves a parameter to four lists: C parameters, those of `body`, its arguments, statements that build pairs.
+    (@ $function:tt [$($c:tt)*] [$($own:tt)*] [$($given:tt)*] [$($join:tt)*]
         ($a:ident, $second:pat_param): $type:ty $(, $($rest:tt)*)?
     ) => {
         $crate::capi::ffi::export! { @ $function
@@ -28,10 +19,10 @@ macro_rules! export {
             [$($own)* $a: $type, $second: <$type as $crate::capi::ffi::Pair>::Second,]
             [$($given)* $a, second,]
             [$($join)* let $a = <$type as $crate::capi::ffi::Pair>::new($a, second);]
-            [$($types)* $type,] $($($rest)*)?
+            $($($rest)*)?
         }
     };
-    (@ $function:tt [$($c:tt)*] [$($own:tt)*] [$($given:tt)*] [$($join:tt)*] [$($types:tt)*]
+    (@ $function:tt [$($c:tt)*] [$($own:tt)*] [$($given:tt)*] [$($join:tt)*]
         #[len($second:ident)] $a:ident: $type:ty $(, $($rest:tt)*)?
     ) => {
         $crate::capi::ffi::export! { @ $function
@@ -39,113 +30,59 @@ macro_rules! export {
             [$($own)* $a: $type,]
             [$($given)* $a,]
             [$($join)* let $a = <$type as $crate::capi::ffi::Pair>::new($a, $second);]
-            [$($types)* $type,] $($($rest)*)?
+            $($($rest)*)?
         }
     };
-    (@ $function:tt [$($c:tt)*] [$($own:tt)*] [$($given:tt)*] $join:tt [$($types:tt)*]
-        mut $a:ident: $type:ty $(, $($rest:tt)*)?
-    ) => {
-        $crate::capi::ffi::export! { @ $function
-            [$($c)* $a: $type,] [$($own)* mut $a: $type,] [$($given)* $a,] $join
-            [$($types)* $type,] $($($rest)*)?
-        }
-    };
-    (@ $function:tt [$($c:tt)*] [$($own:tt)*] [$($given:tt)*] $join:tt [$($types:tt)*]
+    (@ $function:tt [$($c:tt)*] [$($own:tt)*] [$($given:tt)*] $join:tt
         $a:ident: $type:ty $(, $($rest:tt)*)?
     ) => {
         $crate::capi::ffi::export! { @ $function
-            [$($c)* $a: $type,] [$($own)* $a: $type,] [$($given)* $a,] $join
-            [$($types)* $type,] $($($rest)*)?
+            [$($c)* $a: $type,] [$($own)* $a: $type,] [$($given)* $a,] $join $($($rest)*)?
         }
     };
     (@ [[$($meta:tt)*] $vis:vis $name:ident [$($result:tt)*] $body:block]
-        [$($c:tt)*] [$($own:tt)*] [$($given:tt)*] [$($join:tt)*] [$($type:ty,)*]
+        [$($c:tt)*] [$($own:tt)*] [$($given:ident,)*] [$($join:tt)*]
     ) => {
         $($meta)*
-        /// SAFETY: The contract that the header states for this function.
+        /// SAFETY: The contract that the header states for this function, and the rules for pointers in README.md.
         #[unsafe(export_name = concat!(stringify!($name), "_79"))]
         #[allow(unsafe_code, unused_unsafe, non_snake_case)]
         $vis unsafe extern "C" fn $name($($c)*) $($result)* {
             #[inline(always)]
             #[forbid(unsafe_code)]
             fn body($($own)*) $($result)* $body
-            const _: () = {
-                let contexts = 0 $(+ <$type as $crate::capi::ffi::Parameter>::IS_CONTEXT as usize)*;
-                assert!(contexts <= 1, "a function has at most one status or `cx`");
-            };
             // SAFETY: the signature states what the caller guarantees.
             unsafe {
                 $($join)*
-                body($($given)*)
+                $($crate::capi::ffi::is_parameter(&$given);)*
+                $crate::capi::ffi::borrows_nothing(body($($given),*))
             }
         }
     };
 }
 pub(crate) use export;
 
-/// The types that `cx` may have.
-pub(crate) trait NewCx<'a> {
-    /// The borrow of a local variable limits `'a` to the call.
-    /// SAFETY: The contract of `CallerMem::new` holds.
-    unsafe fn new(call: &'a ()) -> Self;
-}
-
-impl<'a> NewCx<'a> for &'a CallerMem {
-    unsafe fn new(_: &'a ()) -> Self {
-        // SAFETY: the caller keeps the contract of `CallerMem::new`.
-        unsafe { CallerMem::new() }
-    }
-}
-
-impl<'a> NewCx<'a> for &'a mut CallerMem {
-    unsafe fn new(_: &'a ()) -> Self {
-        // SAFETY: the caller keeps the contract of `CallerMem::new`.
-        unsafe { CallerMem::new() }
-    }
-}
-
-/// A type that may appear in the signature of a `#[capi]` function.
-/// SAFETY: Safe code cannot dereference a pointer in the value without a `CallerMem`, except in a handle.
-/// It cannot obtain the token from the value, unless `IS_CONTEXT` is set.
-pub(crate) unsafe trait Parameter {
-    /// Provides the `CallerMem`.
-    const IS_CONTEXT: bool = false;
-}
+/// The types that C can pass whatever their bits are, or null.
+pub(crate) trait Parameter {}
 
 macro_rules! parameters {
-    (values: $($value:ty),+; pointers: $($pointer:ident)+; handles: $($handle:ty),+;) => {
-        // SAFETY: nothing dereferences a `Null`, and the others have no pointers.
-        $(unsafe impl Parameter for $value {})+
-        // SAFETY: only methods that take a token dereference the pointer. No signature has a reference or a token in `T`.
-        $(unsafe impl<T> Parameter for $pointer<'_, T> {})+
-        // SAFETY: in every signature `H` is a handle, which is not in the memory that the token stands for. Threads share it.
-        $(unsafe impl<H: Send + Sync> Parameter for Option<$handle> {})+
+    ($($value:ty),+; $($pointer:ident)+; $($handle:ty),+) => {
+        $(impl Parameter for $value {})+
+        $(impl<T> Parameter for $pointer<'_, T> {})+
+        // Threads share handles.
+        $(impl<H: Send + Sync + 'static> Parameter for Option<$handle> {})+
     };
 }
+parameters!(
+    i8, u8, u16, i32, u32, i64, f64, UErrorCode, Null, ErrorCode<'_>;
+    NulStr Text Array Dest Out;
+    &H, &mut H, Box<H>
+);
 
-parameters! {
-    values: i8, u8, u16, i32, u32, i64, f64, UErrorCode, Null;
-    pointers: NulStr Text Array Dest Out;
-    handles: &H, &mut H, Box<H>;
-}
+#[inline(always)]
+pub(crate) fn is_parameter(_: &impl Parameter) {}
 
-// SAFETY: the value gives access to `P` only.
-unsafe impl<P: Parameter> Parameter for Retained<P> {}
-
-// SAFETY: `IS_CONTEXT` is set.
-unsafe impl Parameter for ErrorCode<'_> {
-    const IS_CONTEXT: bool = true;
-}
-
-/// Represents `cx` in the list of types, so that the token types themselves are not `Parameter`s.
-pub(crate) struct Cx<C>(C);
-
-// SAFETY: `IS_CONTEXT` is set.
-unsafe impl Parameter for Cx<&CallerMem> {
-    const IS_CONTEXT: bool = true;
-}
-
-// SAFETY: `IS_CONTEXT` is set.
-unsafe impl Parameter for Cx<&mut CallerMem> {
-    const IS_CONTEXT: bool = true;
+#[inline(always)]
+pub(crate) fn borrows_nothing<T: 'static>(result: T) -> T {
+    result
 }

@@ -1,6 +1,6 @@
 //! `unicode/ufieldpositer.h`
 
-use crate::capi::ffi::{CallerMem, ErrorCode, Out};
+use crate::capi::ffi::{ErrorCode, Out};
 use crate::i18n::fphdlimp::FieldPositionIterator;
 use bun_icu_macros::capi;
 
@@ -8,7 +8,7 @@ pub(crate) type UFieldPositionIterator = FieldPositionIterator;
 
 #[capi]
 fn ufieldpositer_open(status: ErrorCode) -> Option<Box<UFieldPositionIterator>> {
-    status.open(|_, _| Ok(FieldPositionIterator::default()))
+    status.open(|| Ok(FieldPositionIterator::default()))
 }
 
 #[capi]
@@ -18,7 +18,6 @@ fn ufieldpositer_close(fpositer: Option<Box<UFieldPositionIterator>>) {
 
 #[capi]
 fn ufieldpositer_next(
-    cx: &mut CallerMem,
     fpositer: Option<&mut UFieldPositionIterator>,
     begin_index: Out<i32>,
     end_index: Out<i32>,
@@ -26,7 +25,7 @@ fn ufieldpositer_next(
     let Some(fp) = fpositer.and_then(Iterator::next) else {
         return -1;
     };
-    cx.store(begin_index, fp.start);
-    cx.store(end_index, fp.limit);
+    begin_index.set(fp.start);
+    end_index.set(fp.limit);
     fp.field
 }

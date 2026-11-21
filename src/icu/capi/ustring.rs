@@ -8,21 +8,20 @@ use bun_icu_macros::capi;
 
 fn map(
     mapping: impl FnOnce(CaseLocale) -> Mapping,
-    dest: Dest<'_, UChar>,
+    mut dest: Dest<'_, UChar>,
     src: Text<'_, UChar>,
     locale: NulStr<'_, u8>,
     status: ErrorCode<'_>,
 ) -> i32 {
-    status.run(0, |cx, status| {
-        let locale = match cx.str_up_to(locale, 3) {
+    status.run(0, |status| {
+        let locale = match locale.up_to(3) {
             Some([]) => CaseLocale::Root,
             Some(language @ (b"az" | b"el" | b"lt" | b"tr")) => CaseLocale::of(language),
             _ => return Err(U_UNSUPPORTED_ERROR),
         };
         dest.check()?;
-        let mut dest = cx.writer(dest);
-        let src = dest.text_disjoint(src)?;
-        let length = ustrcase::map(mapping(locale), &src, dest.reborrow().cleared());
+        let src = dest.apart(src.get()?)?;
+        let length = ustrcase::map(mapping(locale), src, dest.reborrow().cleared());
         if length > i32::MAX as usize {
             return Err(U_INDEX_OUTOFBOUNDS_ERROR);
         }
@@ -30,7 +29,7 @@ fn map(
     })
 }
 
-/// `locale` is "", "az", "el", "lt" or "tr".
+/// `locale` is "", "az", "el", "lt" or "tr". `src` does not overlap `dest`.
 #[capi]
 fn u_strToLower(
     (dest, _): Dest<UChar>,
@@ -41,7 +40,7 @@ fn u_strToLower(
     map(Mapping::lower, dest, src, locale, status)
 }
 
-/// `locale` is "", "az", "el", "lt" or "tr".
+/// `locale` is "", "az", "el", "lt" or "tr". `src` does not overlap `dest`.
 #[capi]
 fn u_strToUpper(
     (dest, _): Dest<UChar>,

@@ -32,7 +32,7 @@ fn uset_getItem(
     (str, _): Dest<UChar>,
     ec: ErrorCode,
 ) -> i32 {
-    ec.run_no_alloc(0, |cx, ec| {
+    ec.run_no_alloc(0, |ec| {
         let (Ok(index), Some(set)) = (usize::try_from(item_index), set) else {
             *ec = U_ILLEGAL_ARGUMENT_ERROR;
             return Ok(-1);
@@ -42,14 +42,14 @@ fn uset_getItem(
                 *ec = U_ILLEGAL_ARGUMENT_ERROR;
                 return Ok(-1);
             }
-            cx.store(start, *range.start() as i32);
-            cx.store(end, *range.end() as i32);
+            start.set(*range.start() as i32);
+            end.set(*range.end() as i32);
             return Ok(0);
         }
         let Some(string) = set.strings().get(index - set.ranges().len()) else {
             *ec = U_INDEX_OUTOFBOUNDS_ERROR;
             return Ok(-1);
         };
-        Ok(cx.extract_to(string, str, ec))
+        Ok(str.extract_to(string, ec))
     })
 }

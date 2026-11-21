@@ -1,9 +1,10 @@
-//! Typed pointers for signatures. Dereferencing one needs the `CallerMem` token.
+//! Typed pointers for signatures.
 
 use crate::common::utypes::*;
+use std::cell::Cell;
 use std::ffi::c_void;
 use std::marker::PhantomData;
-use std::ops::Range;
+use std::mem::MaybeUninit;
 
 /// A type that is made of two C parameters: `(s, length): Text<UChar>`.
 pub(crate) trait Pair {
@@ -45,19 +46,24 @@ pub(crate) struct Dest<'c, T> {
 
 /// `T *`: null, or an uninitialized variable.
 #[repr(transparent)]
-pub(crate) struct Out<'c, T> {
-    pub(super) ptr: *mut T,
-    pub(super) call: Call<'c>,
+pub(crate) struct Out<'c, T>(Option<&'c Cell<MaybeUninit<T>>>);
+
+impl<T> Out<'_, T> {
+    pub(crate) fn is_null(self) -> bool {
+        self.0.is_none()
+    }
+
+    /// `T` must have no padding, which could carry old contents of the stack to the caller.
+    pub(crate) fn set(self, value: T) {
+        if let Some(out) = self.0 {
+            out.set(MaybeUninit::new(value));
+        }
+    }
 }
 
 /// A pointer that all callers leave null.
 #[repr(transparent)]
 pub(crate) struct Null(*const c_void);
-
-/// A pointer that an object stores. It is valid until the object gets another or is closed.
-#[derive(Clone, Copy)]
-#[repr(transparent)]
-pub(crate) struct Retained<P>(pub(super) P);
 
 /// For handles, which are `Option<&H>`, `Option<&mut H>` or `Option<Box<H>>`.
 pub(crate) trait NonNullHandle<T> {
@@ -94,7 +100,7 @@ macro_rules! impl_is_null {
         }
     )+};
 }
-impl_is_null!(NulStr Text Dest Out);
+impl_is_null!(NulStr Text Dest);
 
 impl Null {
     pub(crate) fn is_null(&self) -> bool {
@@ -127,43 +133,7 @@ macro_rules! impl_copy {
         impl<T> Copy for $name<'_, T> {}
     )+};
 }
-impl_copy!(NulStr Text Array Dest Out);
-
-impl<T> Retained<Text<'_, T>> {
-    pub(crate) fn get(&self) -> Text<'_, T> {
-        self.0
-    }
-}
-
-// SAFETY: the units are only read, as through a `&[T]`.
-unsafe impl<T: Sync> Send for Text<'_, T> {}
-// SAFETY: the units are only read, as through a `&[T]`.
-unsafe impl<T: Sync> Sync for Text<'_, T> {}
-
-impl<P: Pair> Pair for Retained<P> {
-    type First = P::First;
-    type Second = P::Second;
-    unsafe fn new(first: P::First, second: P::Second) -> Self {
-        // SAFETY: the contract of `Retained<P>` includes that of `P`.
-        Self(unsafe { P::new(first, second) })
-    }
-}
-
-impl<'c, T> Text<'c, T> {
-    /// Returns `U_ILLEGAL_ARGUMENT_ERROR` where `CallerMem::text` does, without reading the text.
-    pub(crate) fn check(self) -> Result<(), UErrorCode> {
-        let is_legal = if self.is_null() {
-            self.length == 0
-        } else {
-            self.length >= -1
-        };
-        if is_legal {
-            Ok(())
-        } else {
-            Err(U_ILLEGAL_ARGUMENT_ERROR)
-        }
-    }
-}
+impl_copy!(NulStr Text Array Out);
 
 impl<'c, T> Array<'c, T> {
     pub(crate) fn check(self) -> Result<(), UErrorCode> {
@@ -171,43 +141,7 @@ impl<'c, T> Array<'c, T> {
     }
 }
 
-impl<T> Dest<'_, T> {
-    /// Returns `U_ILLEGAL_ARGUMENT_ERROR` for a negative capacity, or for null with a capacity.
-    pub(crate) fn check(self) -> Result<(), UErrorCode> {
-        check_buffer(self.ptr, self.capacity)
-    }
-
-    pub(crate) fn address_range(self) -> Range<usize> {
-        address_range(self.ptr, self.capacity)
-    }
-
-    pub(crate) fn at_most(self, capacity: i32) -> Self {
-        Self {
-            capacity: self.capacity.min(capacity),
-            ..self
-        }
-    }
-}
-
-/// Returns the addresses of `count` values at `start`.
-pub(crate) fn addresses<T>(start: *const T, count: usize) -> Range<usize> {
-    start.addr()
-        ..start
-            .addr()
-            .saturating_add(count.saturating_mul(size_of::<T>()))
-}
-
-/// Returns the addresses of the buffer `(T *dest, int32_t capacity)`.
-pub(crate) fn address_range<T>(dest: *const T, capacity: i32) -> Range<usize> {
-    addresses(dest, capacity.max(0) as usize)
-}
-
-/// Returns whether the ranges have an address in common.
-pub(crate) fn overlap(one: &Range<usize>, other: &Range<usize>) -> bool {
-    one.start.max(other.start) < one.end.min(other.end)
-}
-
-pub(crate) fn check_buffer<T>(pointer: *const T, count: i32) -> Result<(), UErrorCode> {
+pub(super) fn check_buffer<T>(pointer: *const T, count: i32) -> Result<(), UErrorCode> {
     if count < 0 || (pointer.is_null() && count != 0) {
         Err(U_ILLEGAL_ARGUMENT_ERROR)
     } else {

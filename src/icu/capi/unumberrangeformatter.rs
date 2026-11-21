@@ -59,8 +59,8 @@ fn unumrf_openForSkeletonWithCollapseAndIdentityFallback(
     perror: Null,
     ec: ErrorCode,
 ) -> Option<Box<UNumberRangeFormatter>> {
-    ec.open(|cx, _| {
-        let macros = read_skeleton(cx, skeleton, locale)?;
+    ec.open(|| {
+        let macros = read_skeleton(skeleton, locale)?;
         let collapses = match (collapse, identity_fallback, macros.unit) {
             _ if !perror.is_null() => return Err(U_UNSUPPORTED_ERROR),
             (UNUM_RANGE_COLLAPSE_AUTO, UNUM_IDENTITY_FALLBACK_APPROXIMATELY, _) => true,
@@ -85,7 +85,7 @@ fn unumrf_formatDoubleRange(
     uresult: Option<&mut UFormattedNumberRange>,
     ec: ErrorCode,
 ) {
-    ec.run((), |_, _| {
+    ec.run((), |_| {
         format(uformatter, uresult, |result| {
             result.quantity1.set_to_double(first);
             result.quantity2.set_to_double(second);
@@ -102,8 +102,8 @@ fn unumrf_formatDecimalRange(
     uresult: Option<&mut UFormattedNumberRange>,
     ec: ErrorCode,
 ) {
-    ec.run((), |cx, _| {
-        let [first, second] = [first, second].map(|number| read_dec_number(cx, number));
+    ec.run((), |_| {
+        let [first, second] = [first, second].map(read_dec_number);
         format(uformatter, uresult, |result| {
             result.quantity1.set_to_dec_num(&first?)?;
             result.quantity2.set_to_dec_num(&second?)?;
@@ -117,7 +117,7 @@ fn unumrf_resultAsValue(
     uresult: Option<&UFormattedNumberRange>,
     ec: ErrorCode,
 ) -> *const UFormattedValue {
-    ec.run_no_alloc(null(), |_, _| uresult.non_null().map(from_ref))
+    ec.run_no_alloc(null(), |_| uresult.non_null().map(from_ref))
 }
 
 #[capi]

@@ -9,7 +9,7 @@
     clippy::unreachable
 )]
 #![warn(unused_must_use)]
-#![feature(allocator_ext)]
+#![feature(allocator_ext, fn_align)]
 
 mod capi;
 mod common;

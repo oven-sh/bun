@@ -56,12 +56,12 @@ fn unum_open(
     parse_err: Null,
     status: ErrorCode,
 ) -> Option<Box<UNumberFormat>> {
-    status.open(|cx, _| {
+    status.open(|| {
         if style != UNUM_DECIMAL || !parse_err.is_null() {
             return Err(U_UNSUPPORTED_ERROR);
         }
         Ok(UNumberFormat {
-            format: NumberFormat::create_shared_instance(&Locale::new(cx.c_str(locale)))?,
+            format: NumberFormat::create_shared_instance(&Locale::new(locale.get()))?,
             attributes_set: 0,
         })
     })

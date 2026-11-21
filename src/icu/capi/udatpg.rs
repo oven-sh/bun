@@ -14,9 +14,8 @@ type UDateTimePGDisplayWidth = i32;
 
 #[capi]
 fn udatpg_open(locale: NulStr<u8>, status: ErrorCode) -> Option<Box<UDateTimePatternGenerator>> {
-    status.open(|cx, _| {
-        DateTimePatternGenerator::create_instance(&Locale::from_name(locale_id(cx, locale)?))
-    })
+    status
+        .open(|| DateTimePatternGenerator::create_instance(&Locale::from_name(locale_id(locale)?)))
 }
 
 #[capi]
@@ -33,11 +32,11 @@ fn udatpg_getBestPatternWithOptions(
     (best_pattern, _): Dest<UChar>,
     status: ErrorCode,
 ) -> i32 {
-    status.run(0, |cx, status| {
+    status.run(0, |status| {
         let result = dtpg
             .non_null()?
-            .get_best_pattern(cx.text(skeleton)?, options)?;
-        Ok(cx.extract_to(&result, best_pattern, status))
+            .get_best_pattern(skeleton.get()?, options)?;
+        Ok(best_pattern.extract_to(&result, status))
     })
 }
 
@@ -49,9 +48,9 @@ fn udatpg_getSkeleton(
     (skeleton, _): Dest<UChar>,
     status: ErrorCode,
 ) -> i32 {
-    status.run(0, |cx, status| {
-        let result = dtptngen::get_skeleton(cx.text(pattern)?)?;
-        Ok(cx.extract_to(&result, skeleton, status))
+    status.run(0, |status| {
+        let result = dtptngen::get_skeleton(pattern.get()?)?;
+        Ok(skeleton.extract_to(&result, status))
     })
 }
 
@@ -64,7 +63,7 @@ fn udatpg_getFieldDisplayName(
     (field_name, _): Dest<UChar>,
     status: ErrorCode,
 ) -> i32 {
-    status.run(-1, |cx, status| {
+    status.run(-1, |status| {
         field_name.check()?;
         match dtpg
             .non_null()?
@@ -72,7 +71,7 @@ fn udatpg_getFieldDisplayName(
         {
             None => Err(U_ILLEGAL_ARGUMENT_ERROR),
             Some([]) => Err(U_UNSUPPORTED_ERROR),
-            Some(name) => Ok(cx.extract_to(name, field_name, status)),
+            Some(name) => Ok(field_name.extract_to(name, status)),
         }
     })
 }

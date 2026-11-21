@@ -48,7 +48,7 @@ fn uenum_close(en: Option<Box<UEnumeration>>) {
 /// Counts collation types, currencies, numbering systems and time zones.
 #[capi]
 fn uenum_count(en: Option<&UEnumeration>, status: ErrorCode) -> i32 {
-    status.run(-1, |_, _| {
+    status.run(-1, |_| {
         en.map_or(Ok(-1), |en| Ok(en.source.count()? as i32))
     })
 }
@@ -60,10 +60,10 @@ fn uenum_unext(
     result_length: Out<i32>,
     status: ErrorCode,
 ) -> *const UChar {
-    status.run(null(), |cx, _| {
+    status.run(null(), |_| {
         match en.map_or(Ok(None), |en| en.source.next())? {
             Some(Item::Resource(s)) => {
-                cx.store(result_length, s.units().len() as i32);
+                result_length.set(s.units().len() as i32);
                 Ok(s.as_ptr())
             }
             Some(_) => Err(U_UNSUPPORTED_ERROR),
@@ -78,17 +78,17 @@ fn uenum_next(
     result_length: Out<i32>,
     status: ErrorCode,
 ) -> *const c_char {
-    status.run(null(), |cx, _| {
+    status.run(null(), |_| {
         let Some(UEnumeration { source, chars }) = en else {
             return Ok(null());
         };
-        cx.store(result_length, 0);
+        result_length.set(0);
         let (string, length) = match source.next()? {
             Some(Item::Chars(s)) => (s.as_ptr().cast(), s.count_bytes()),
             Some(Item::Resource(s)) => copy_as_chars(chars, s.units().iter())?,
             None => return Ok(null()),
         };
-        cx.store(result_length, length as i32);
+        result_length.set(length as i32);
         Ok(string.cast())
     })
 }

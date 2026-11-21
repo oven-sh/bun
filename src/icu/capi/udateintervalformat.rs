@@ -21,11 +21,11 @@ fn udtitvfmt_open(
     (tz_id, _): Text<UChar>,
     status: ErrorCode,
 ) -> Option<Box<UDateIntervalFormat>> {
-    status.open(|cx, _| {
+    status.open(|| {
         DateIntervalFormat::create_instance(
-            cx.text(skeleton)?,
-            &Locale::from_name(locale_id(cx, locale)?),
-            zone_for_id(cx, tz_id)?,
+            skeleton.get()?,
+            &Locale::from_name(locale_id(locale)?),
+            zone_for_id(tz_id)?,
         )
     })
 }
@@ -37,7 +37,7 @@ fn udtitvfmt_close(formatter: Option<Box<UDateIntervalFormat>>) {
 
 #[capi]
 fn udtitvfmt_openResult(ec: ErrorCode) -> Option<Box<UFormattedDateInterval>> {
-    ec.open(|_, _| Ok(UFormattedValue::new_unset()))
+    ec.open(|| Ok(UFormattedValue::new_unset()))
 }
 
 #[capi]
@@ -45,7 +45,7 @@ fn udtitvfmt_resultAsValue(
     uresult: Option<&UFormattedDateInterval>,
     ec: ErrorCode,
 ) -> *const UFormattedValue {
-    ec.run_no_alloc(null(), |_, _| uresult.non_null().map(from_ref))
+    ec.run_no_alloc(null(), |_| uresult.non_null().map(from_ref))
 }
 
 #[capi]
@@ -61,7 +61,7 @@ fn udtitvfmt_formatToResult(
     result: Option<&mut UFormattedDateInterval>,
     status: ErrorCode,
 ) {
-    status.run((), |_, _| {
+    status.run((), |_| {
         let result = result.non_null()?;
         result.set(formatter.non_null()?.format_to_value(from_date, to_date))
     })
@@ -76,7 +76,7 @@ fn udtitvfmt_formatCalendarToResult(
     result: Option<&mut UFormattedDateInterval>,
     status: ErrorCode,
 ) {
-    status.run((), |_, _| {
+    status.run((), |_| {
         let result = result.non_null()?;
         let (from, to) = (from_calendar.non_null()?, to_calendar.non_null()?);
         let formatter = formatter.non_null()?;

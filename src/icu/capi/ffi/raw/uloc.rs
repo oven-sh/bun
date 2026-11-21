@@ -1,15 +1,13 @@
 //! `unicode/uloc.h`
 
 use super::before_nul;
-use crate::capi::ffi::{CallerMem, Dest, Pair, Parameter};
+use crate::capi::ffi::{Dest, Pair, Parameter};
 use crate::common::slice_ext::to_length;
 
 /// `char *buffer, int32_t bufferCapacity`: a `Dest` that holds a string, which ends at a NUL or at the capacity.
-#[derive(Clone, Copy)]
 pub(crate) struct IdBuffer<'c>(Dest<'c, u8>);
 
-// SAFETY: safe code dereferences it only through the methods in this file.
-unsafe impl Parameter for IdBuffer<'_> {}
+impl Parameter for IdBuffer<'_> {}
 
 impl Pair for IdBuffer<'_> {
     type First = *mut u8;
@@ -21,14 +19,14 @@ impl Pair for IdBuffer<'_> {
 }
 
 impl<'c> IdBuffer<'c> {
-    pub(crate) fn dest(self) -> Dest<'c, u8> {
+    pub(crate) fn into_dest(self) -> Dest<'c, u8> {
         self.0
     }
 
     /// Returns `None` for null.
-    pub(crate) fn text(self, _: &'c CallerMem) -> Option<&'c [u8]> {
+    pub(crate) fn text(&self) -> Option<&[u8]> {
         let Dest { ptr, capacity, .. } = self.0;
-        // SAFETY: the string ends at a NUL or at the capacity, and the token excludes writes during `'c`.
+        // SAFETY: the string ends at a NUL or at the capacity, and `&self` excludes writes.
         (!ptr.is_null()).then(|| unsafe { before_nul(ptr, to_length(capacity)) })
     }
 }

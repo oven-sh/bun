@@ -13,14 +13,12 @@ pub(crate) type UNumberingSystem = NumberingSystem;
 
 #[capi]
 fn unumsys_open(locale: NulStr<u8>, status: ErrorCode) -> Option<Box<UNumberingSystem>> {
-    status.open(|cx, _| NumberingSystem::create_instance_for_locale(&Locale::new(cx.c_str(locale))))
+    status.open(|| NumberingSystem::create_instance_for_locale(&Locale::new(locale.get())))
 }
 
 #[capi]
 fn unumsys_openByName(name: NulStr<u8>, status: ErrorCode) -> Option<Box<UNumberingSystem>> {
-    status.open(|cx, _| {
-        NumberingSystem::create_instance_by_name(cx.c_str(name).ok_or(U_UNSUPPORTED_ERROR)?)
-    })
+    status.open(|| NumberingSystem::create_instance_by_name(name.get().ok_or(U_UNSUPPORTED_ERROR)?))
 }
 
 #[capi]
@@ -30,7 +28,7 @@ fn unumsys_close(unumsys: Option<Box<UNumberingSystem>>) {
 
 #[capi]
 fn unumsys_openAvailableNames(status: ErrorCode) -> Option<Box<UEnumeration>> {
-    status.open(|_, _| NumberingSystem::get_available_names().map(uenum::open))
+    status.open(|| NumberingSystem::get_available_names().map(uenum::open))
 }
 
 #[capi]

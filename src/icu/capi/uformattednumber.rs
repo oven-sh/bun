@@ -44,10 +44,10 @@ fn unumf_resultToString(
     (buffer, _): Dest<UChar>,
     ec: ErrorCode,
 ) -> i32 {
-    ec.run(0, |cx, status| {
+    ec.run(0, |status| {
         let text = data(uresult)?.text();
         buffer.check()?;
-        Ok(cx.extract_to(text, buffer, status))
+        Ok(buffer.extract_to(text, status))
     })
 }
 
@@ -57,7 +57,7 @@ fn unumf_resultGetAllFieldPositions(
     ufpositer: Option<&mut UFieldPositionIterator>,
     ec: ErrorCode,
 ) {
-    ec.run((), |_, _| {
+    ec.run((), |_| {
         let result = data(uresult)?;
         let fpi = ufpositer.non_null()?;
         let mut fpih = FieldPositionIteratorHandler::new();

@@ -41,8 +41,8 @@ four files that `ICU_TIMEZONE_FILES_DIR` can replace. No other data are read fro
 fn u_strToLower((dest, _): Dest<UChar>, (src, _): Text<UChar>, locale: NulStr<u8>, status: ErrorCode) -> i32 { .. }
 ```
 
-The body is safe code. The signature is trusted: each type states what the header guarantees. `(s, length): T` stands for
-two C parameters, `#[len(n)] s: T` takes the second from a later parameter, and `cx` in first place is no C parameter.
+The body is safe code. The signature is trusted: each type states what the callers guarantee. `(s, length): T` stands for
+two C parameters, and `#[len(n)] s: T` takes the second from a later parameter.
 
 | C                                   | Rust                           |
 | ----------------------------------- | ------------------------------ |
@@ -55,11 +55,11 @@ two C parameters, `#[len(n)] s: T` takes the second from a later parameter, and 
 | `const UObject *`, `UObject *`      | `Option<&H>`, `Option<&mut H>` |
 | `UObject *` to open, close or adopt | `Option<Box<H>>`               |
 | `UErrorCode *`                      | `ErrorCode`                    |
-| `P` that the object keeps           | `Retained<P>`                  |
 
-- A `Dest`, `Out` or status is disjoint from the others, from handles, and from memory that an object keeps.
-- A handle is null or open, even if the status is a failure. No other argument points to or into one that the call modifies.
-- A source may overlap a `Dest`. Read it before the first write, which can overwrite its NUL: the types do not check that.
+- An `Out`, the status and a handle that the call modifies share no memory with what the other arguments lead to. A
+  `Dest` shares none with handles and what they own.
+- Handles, `Out` and the status are null or valid, even if the status is a failure.
+- A source may overlap a `Dest`. Read it before the first write, or pass it through `Dest::apart`: the types do not check that.
 - The pointer to a returned string comes from a slice that includes the NUL, or from `Vec::as_ptr`. Moving a `Box`
   invalidates pointers to its contents. Moving a `Vec` does not.
 

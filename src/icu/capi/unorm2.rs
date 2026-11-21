@@ -13,26 +13,22 @@ pub(crate) type UNormalizer2 = Normalizer2;
 
 #[capi]
 fn unorm2_getNFCInstance(status: ErrorCode) -> *const UNormalizer2 {
-    status.run_no_alloc(null(), |_, _| Ok(from_ref(normalizer2::get_nfc_instance())))
+    status.run_no_alloc(null(), |_| Ok(from_ref(normalizer2::get_nfc_instance())))
 }
 
 #[capi]
 fn unorm2_getNFDInstance(status: ErrorCode) -> *const UNormalizer2 {
-    status.run_no_alloc(null(), |_, _| Ok(from_ref(normalizer2::get_nfd_instance())))
+    status.run_no_alloc(null(), |_| Ok(from_ref(normalizer2::get_nfd_instance())))
 }
 
 #[capi]
 fn unorm2_getNFKCInstance(status: ErrorCode) -> *const UNormalizer2 {
-    status.run(null(), |_, _| {
-        normalizer2::get_nfkc_instance().map(from_ref)
-    })
+    status.run(null(), |_| normalizer2::get_nfkc_instance().map(from_ref))
 }
 
 #[capi]
 fn unorm2_getNFKDInstance(status: ErrorCode) -> *const UNormalizer2 {
-    status.run(null(), |_, _| {
-        normalizer2::get_nfkd_instance().map(from_ref)
-    })
+    status.run(null(), |_| normalizer2::get_nfkd_instance().map(from_ref))
 }
 
 /// Accepts only null, "uts46" and `UNORM2_COMPOSE`.
@@ -43,11 +39,9 @@ fn unorm2_getInstance(
     mode: c_int,
     status: ErrorCode,
 ) -> *const UNormalizer2 {
-    status.run(null(), |cx, _| {
-        match (cx.c_str(package_name), cx.c_str(name), mode) {
-            (None, Some(b"uts46"), 0) => normalizer2::get_uts46_instance().map(from_ref),
-            _ => Err(U_UNSUPPORTED_ERROR),
-        }
+    status.run(null(), |_| match (package_name.get(), name.get(), mode) {
+        (None, Some(b"uts46"), 0) => normalizer2::get_uts46_instance().map(from_ref),
+        _ => Err(U_UNSUPPORTED_ERROR),
     })
 }
 
@@ -63,27 +57,27 @@ fn unorm2_normalize(
     (dest, _): Dest<UChar>,
     status: ErrorCode,
 ) -> i32 {
-    status.run(0, |cx, status| {
+    status.run(0, |status| {
         dest.check()?;
-        let (norm2, mut dest) = (normalizer(norm2)?, cx.writer(dest));
-        let src = dest.text_disjoint(src)?;
-        let unchanged = norm2.span_unchanged(&src);
+        let (norm2, mut dest) = (normalizer(norm2)?, dest);
+        let src = dest.apart(src.get()?)?;
+        let unchanged = norm2.span_unchanged(src);
         if unchanged == src.len() {
-            return Ok(dest.extract_to(&src, status));
+            return Ok(dest.extract_to(src, status));
         }
         // Perf: writing to a buffer is faster than appending to a text that has left it.
-        if to_length(dest.dest().capacity()) < src.len() {
+        if to_length(dest.capacity()) < src.len() {
             let (mut stack, mut heap) = ([0; US_STACKBUF_SIZE], Vec::new());
             let buffer = stack_or_heap(src.len(), &mut stack, &mut heap)?;
             let mut text = WritableAlias::new(buffer, 0);
-            norm2.normalize_append(&src, unchanged, &mut text)?;
+            norm2.normalize_append(src, unchanged, &mut text)?;
             return match text.end() {
                 AliasEnd::InBuffer(length) => Ok(dest.extract_to(buffer.slice(..length), status)),
                 end => dest.extract_aliased(end, status),
             };
         }
         let mut text = dest.reborrow().alias();
-        norm2.normalize_append(&src, unchanged, &mut text)?;
+        norm2.normalize_append(src, unchanged, &mut text)?;
         let end = text.end();
         dest.extract_aliased(end, status)
     })
@@ -95,9 +89,7 @@ fn unorm2_isNormalized(
     (s, _): Text<UChar>,
     status: ErrorCode,
 ) -> UBool {
-    status.run(0, |cx, _| {
-        normalizer(norm2)?
-            .is_normalized(cx.text(s)?)
-            .map(UBool::from)
+    status.run(0, |_| {
+        normalizer(norm2)?.is_normalized(s.get()?).map(UBool::from)
     })
 }

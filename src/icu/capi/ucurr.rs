@@ -18,9 +18,9 @@ fn ucurr_getName(
     len: Out<i32>,
     ec: ErrorCode,
 ) -> *const UChar {
-    ec.run(null(), |cx, ec| {
+    ec.run(null(), |ec| {
         let (Some(code), Some(locale), UCURR_SYMBOL_NAME..=UCURR_NARROW_SYMBOL_NAME) =
-            (cx.str_up_to(currency, 3), cx.c_str(locale), name_style)
+            (currency.up_to(3), locale.get(), name_style)
         else {
             return Err(U_UNSUPPORTED_ERROR);
         };
@@ -28,12 +28,12 @@ fn ucurr_getName(
             CurrencyName::Name(name) => (name.as_ptr(), name.units().len()),
             CurrencyName::IsoCode(_) => {
                 *ec = U_USING_DEFAULT_WARNING;
-                let units = cx.until_nul(currency).into_iter().flatten();
+                let units = currency.units().into_iter().flatten();
                 (currency.as_ptr(), units.count())
             }
         };
-        cx.store(is_choice_format, 0);
-        cx.store(len, ffi::to_int32(length));
+        is_choice_format.set(0);
+        len.set(ffi::to_int32(length));
         Ok(name)
     })
 }
@@ -41,7 +41,7 @@ fn ucurr_getName(
 /// The only type is `UCURR_ALL`.
 #[capi]
 fn ucurr_openISOCurrencies(curr_type: u32, status: ErrorCode) -> Option<Box<UEnumeration>> {
-    status.open(|_, _| match curr_type {
+    status.open(|| match curr_type {
         UCURR_ALL => uenum::open_boxed(ucurr_open_iso_currencies()),
         _ => Err(U_UNSUPPORTED_ERROR),
     })

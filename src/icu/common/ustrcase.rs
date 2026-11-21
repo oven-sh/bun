@@ -140,7 +140,9 @@ impl<'b> Mapper<'_, 'b> {
         }
     }
 
+    /// Perf: the loop takes up to 1.5 times as long at another offset in a cache line.
     #[inline(never)]
+    #[rustc_align(64)]
     fn map(&mut self) {
         let (mapping, mut rest, mut index) = (self.mapping, self.at.text, 0);
         loop {

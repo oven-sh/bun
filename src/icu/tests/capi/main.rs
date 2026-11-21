@@ -19,6 +19,7 @@ type Result<T> = std::result::Result<T, Status>;
 
 const MISSING_RESOURCE: Status = 2;
 const MEMORY_ALLOCATION: Status = 7;
+const UNSUPPORTED: Status = 16;
 const BUFFER_OVERFLOW: Status = 15;
 const NOT_TERMINATED: Status = -124;
 
@@ -245,6 +246,27 @@ fn check<T: PartialEq<E> + Debug, E: Debug>(expected: E, run: impl Fn() -> Resul
                 break;
             }
         }
+    }
+}
+
+#[test]
+fn a_source_that_overlaps_the_buffer_is_refused() {
+    for (from, length, to, expected) in [
+        (4, 4, 4, UNSUPPORTED),
+        (4, 4, 1, UNSUPPORTED),
+        (4, 4, 7, UNSUPPORTED),
+        (4, 4, 0, NOT_TERMINATED),
+        (4, 4, 8, NOT_TERMINATED),
+        (5, 0, 4, 0),
+    ] {
+        let (mut units, mut status) = ([u16::from(b'a'); 12], 0);
+        let start = units.as_mut_ptr();
+        // SAFETY: both ranges are in `units`.
+        unsafe {
+            let (dest, source) = (start.add(to), start.add(from));
+            u_strToUpper(dest, 4, source, length, c"".as_ptr(), &raw mut status)
+        };
+        assert_eq!(status, expected, "{from} {length} {to}");
     }
 }
 

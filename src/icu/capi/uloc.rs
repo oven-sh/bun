@@ -1,7 +1,7 @@
 //! `unicode/uloc.h`. Only `uloc_setDefault` takes a null string.
 
 use crate::capi::ffi::raw::uloc::IdBuffer;
-use crate::capi::ffi::{self, CallerMem, Dest, DestWriter, ErrorCode, NulStr, Out, UBool};
+use crate::capi::ffi::{self, Dest, ErrorCode, NulStr, Out, UBool};
 use crate::capi::uenum::{self, UEnumeration};
 use crate::common::charstr::ByteSink;
 use crate::common::locavailable::{uloc_count_available, uloc_get_available};
@@ -22,17 +22,17 @@ use bun_icu_macros::capi;
 use std::ffi::{CStr, c_char};
 use std::ptr::null;
 
-fn non_null<'a>(cx: &'a CallerMem, s: NulStr<'a, u8>) -> Result<&'a [u8], UErrorCode> {
-    cx.c_str(s).ok_or(U_UNSUPPORTED_ERROR)
+fn non_null(s: NulStr<'_, u8>) -> Result<&[u8], UErrorCode> {
+    s.get().ok_or(U_UNSUPPORTED_ERROR)
 }
 
 /// Runs `write` on a sink over `buffer` and appends the NUL. If `write` fails, its partial output stays in `buffer`.
 fn via_byte_sink(
-    mut buffer: DestWriter<'_, u8>,
+    mut buffer: Dest<'_, u8>,
     status: &mut UErrorCode,
     write: &dyn Fn(&mut ByteSink) -> Result<(), UErrorCode>,
 ) -> Result<i32, UErrorCode> {
-    buffer.dest().check()?;
+    buffer.check()?;
     let mut sink = CheckedArraySink::new(buffer.reborrow().cleared());
     write(&mut sink)?;
     let length = sink.length();
@@ -45,10 +45,9 @@ fn write_for_locale(
     status: ErrorCode<'_>,
     write: impl Fn(&[u8], &mut ByteSink) -> Result<(), UErrorCode>,
 ) -> i32 {
-    status.run(0, |cx, status| {
-        let buffer = cx.writer(buffer);
-        let locale_id = buffer.read_disjoint(|cx| non_null(cx, locale_id))?;
-        via_byte_sink(buffer, status, &|sink| write(&locale_id, sink))
+    status.run(0, |status| {
+        let locale_id = buffer.apart(non_null(locale_id)?)?;
+        via_byte_sink(buffer, status, &|sink| write(locale_id, sink))
     })
 }
 
@@ -69,12 +68,11 @@ fn uloc_getKeywordValue(
     (buffer, _): Dest<u8>,
     status: ErrorCode,
 ) -> i32 {
-    status.run(0, |cx, status| {
-        let buffer = cx.writer(buffer);
-        let keyword_name = buffer.read_disjoint(|cx| non_null(cx, keyword_name))?;
-        let locale_id = buffer.read_disjoint(|cx| non_null(cx, locale_id))?;
+    status.run(0, |status| {
+        let keyword_name = buffer.apart(non_null(keyword_name)?)?;
+        let locale_id = buffer.apart(non_null(locale_id)?)?;
         via_byte_sink(buffer, status, &|sink| {
-            ulocimp_get_keyword_value_to(&locale_id, &keyword_name, sink)
+            ulocimp_get_keyword_value_to(locale_id, keyword_name, sink)
         })
     })
 }
@@ -86,10 +84,9 @@ fn uloc_setKeywordValue(
     (buffer, buffer_capacity): IdBuffer,
     status: ErrorCode,
 ) -> i32 {
-    status.run(0, |cx, status| {
-        let (keyword_name, keyword_value) =
-            (non_null(cx, keyword_name)?, non_null(cx, keyword_value)?);
-        let id = buffer.text(cx).filter(|_| buffer_capacity > 1);
+    status.run(0, |status| {
+        let (keyword_name, keyword_value) = (non_null(keyword_name)?, non_null(keyword_value)?);
+        let id = buffer.text().filter(|_| buffer_capacity > 1);
         let id = id.ok_or(U_ILLEGAL_ARGUMENT_ERROR)?;
         let base_len = locale_get_keywords_start(id).unwrap_or(id.len());
         let keywords = id.get(base_len..).unwrap_or_default();
@@ -100,7 +97,7 @@ fn uloc_setKeywordValue(
             *status = U_BUFFER_OVERFLOW_ERROR;
             return Ok(ffi::to_int32(length));
         }
-        let mut buffer = cx.writer(buffer.dest());
+        let mut buffer = buffer.into_dest();
         buffer.write_at(base_len, &updated);
         Ok(buffer.terminate(length, status))
     })
@@ -108,8 +105,8 @@ fn uloc_setKeywordValue(
 
 #[capi]
 fn uloc_openKeywords(locale_id: NulStr<u8>, status: ErrorCode) -> Option<Box<UEnumeration>> {
-    status.run(None, |cx, _| {
-        uloc_open_keywords(non_null(cx, locale_id)?)?
+    status.run(None, |_| {
+        uloc_open_keywords(non_null(locale_id)?)?
             .map(|keywords| uenum::open_boxed(keywords).and_then(try_box))
             .transpose()
     })
@@ -153,19 +150,15 @@ fn uloc_getDefault() -> *const c_char {
 
 #[capi]
 fn uloc_setDefault(new_default_locale: NulStr<u8>, err: ErrorCode) {
-    err.run((), |cx, _| {
-        uloc_set_default(cx.c_str(new_default_locale));
+    err.run((), |_| {
+        uloc_set_default(new_default_locale.get());
         Ok(())
     })
 }
 
 #[capi]
-fn uloc_toUnicodeLocaleType(
-    cx: &CallerMem,
-    keyword: NulStr<u8>,
-    value: NulStr<u8>,
-) -> *const c_char {
-    let (Some(keyword), Some(text @ [_, ..])) = (cx.c_str(keyword), cx.c_str(value)) else {
+fn uloc_toUnicodeLocaleType(keyword: NulStr<u8>, value: NulStr<u8>) -> *const c_char {
+    let (Some(keyword), Some(text @ [_, ..])) = (keyword.get(), value.get()) else {
         return null();
     };
     match ffi::ignore_oom(|| ulocimp_to_bcp_type(keyword, text)) {
@@ -198,11 +191,11 @@ fn uloc_forLanguageTag(
     parsed_length: Out<i32>,
     status: ErrorCode,
 ) -> i32 {
-    status.run(0, |cx, status| {
-        let tag = LanguageTag::new(non_null(cx, langtag)?);
-        let tag = tag.inspect_err(|_| cx.store(parsed_length, 0))?;
-        cx.store(parsed_length, tag.parsed_length() as i32);
-        via_byte_sink(cx.writer(locale_id), status, &|sink| tag.to_locale_id(sink))
+    status.run(0, |status| {
+        let tag = LanguageTag::new(non_null(langtag)?);
+        let tag = tag.inspect_err(|_| parsed_length.set(0))?;
+        parsed_length.set(tag.parsed_length() as i32);
+        via_byte_sink(locale_id, status, &|sink| tag.to_locale_id(sink))
     })
 }
 
@@ -246,7 +239,7 @@ fn uloc_countAvailable() -> i32 {
 
 #[capi]
 fn uloc_getCharacterOrientation(locale_id: NulStr<u8>, status: ErrorCode) -> ULayoutType {
-    status.run(ULOC_LAYOUT_UNKNOWN, |cx, _| {
-        uloc_get_character_orientation(non_null(cx, locale_id)?)
+    status.run(ULOC_LAYOUT_UNKNOWN, |_| {
+        uloc_get_character_orientation(non_null(locale_id)?)
     })
 }

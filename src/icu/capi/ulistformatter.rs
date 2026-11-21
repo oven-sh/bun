@@ -1,7 +1,7 @@
 //! `unicode/ulistformatter.h`
 
 use crate::capi::ffi::raw::ulistformatter::{Lengths, StringPtrs};
-use crate::capi::ffi::{CallerMem, Dest, ErrorCode, NonNullHandle, NulStr, UChar};
+use crate::capi::ffi::{Dest, ErrorCode, NonNullHandle, NulStr, Text, UChar};
 use crate::capi::uformattedvalue::UFormattedValue;
 use crate::common::locid::Locale;
 use crate::common::memory::{self, Appendable};
@@ -24,17 +24,12 @@ const STYLES: [[&[u8]; 3]; 3] = [
 
 /// A null string is empty.
 fn get_unicode_strings<'a>(
-    cx: &'a CallerMem,
     strings: StringPtrs<'a>,
     lengths: Lengths<'a>,
 ) -> Result<Vec<&'a [UChar]>, UErrorCode> {
     strings.check()?;
-    // Reserves for the stated count: with 32-bit pointers a slice is cut at the end of the address space.
     let mut items = memory::try_with_capacity(strings.length() as usize)?;
-    items.add_each(
-        cx.strings(strings, lengths)
-            .map(|string| cx.text_or_empty(string)),
-    );
+    items.add_each(strings.texts(lengths).map(Text::get_or_empty));
     Ok(items)
 }
 
@@ -45,12 +40,12 @@ fn ulistfmt_openForType(
     width: c_int,
     status: ErrorCode,
 ) -> Option<Box<UListFormatter>> {
-    status.open(|cx, _| {
+    status.open(|| {
         let style = STYLES
             .get(type_ as usize)
             .and_then(|it| it.get(width as usize));
         let style = style.ok_or(U_ILLEGAL_ARGUMENT_ERROR)?;
-        ListFormatter::create_instance(&Locale::new(cx.c_str(locale)), style)
+        ListFormatter::create_instance(&Locale::new(locale.get()), style)
     })
 }
 
@@ -61,7 +56,7 @@ fn ulistfmt_close(listfmt: Option<Box<UListFormatter>>) {
 
 #[capi]
 fn ulistfmt_openResult(ec: ErrorCode) -> Option<Box<UFormattedList>> {
-    ec.open(|_, _| Ok(UFormattedValue::new_unset()))
+    ec.open(|| Ok(UFormattedValue::new_unset()))
 }
 
 #[capi]
@@ -69,7 +64,7 @@ fn ulistfmt_resultAsValue(
     uresult: Option<&UFormattedList>,
     ec: ErrorCode,
 ) -> *const UFormattedValue {
-    ec.run_no_alloc(null(), |_, _| uresult.non_null().map(from_ref))
+    ec.run_no_alloc(null(), |_| uresult.non_null().map(from_ref))
 }
 
 #[capi]
@@ -86,13 +81,13 @@ fn ulistfmt_format(
     (result, _): Dest<UChar>,
     status: ErrorCode,
 ) -> i32 {
-    status.run(-1, |cx, status| {
+    status.run(-1, |status| {
         result.check()?;
         match listfmt
             .non_null()?
-            .format(&get_unicode_strings(cx, strings, lengths)?)
+            .format(&get_unicode_strings(strings, lengths)?)
         {
-            Ok(list) => Ok(cx.extract_to(list.text(), result, status)),
+            Ok(list) => Ok(result.extract_to(list.text(), status)),
             Err(code) => {
                 *status = code;
                 Ok(0)
@@ -110,11 +105,11 @@ fn ulistfmt_formatStringsToResult(
     uresult: Option<&mut UFormattedList>,
     status: ErrorCode,
 ) {
-    status.run((), |cx, _| {
+    status.run((), |_| {
         let result = uresult.non_null()?;
         let list = listfmt
             .non_null()?
-            .format(&get_unicode_strings(cx, strings, lengths)?);
+            .format(&get_unicode_strings(strings, lengths)?);
         result.set(list)
     })
 }

@@ -1,6 +1,6 @@
 //! `unicode/unumberformatter.h`
 
-use crate::capi::ffi::{CallerMem, ErrorCode, NonNullHandle, NulStr, Text, UChar};
+use crate::capi::ffi::{ErrorCode, NonNullHandle, NulStr, Text, UChar};
 use crate::capi::uformattednumber::{UFormattedNumber, data_mut};
 use crate::common::locid::Locale;
 use crate::common::utypes::*;
@@ -13,11 +13,10 @@ use bun_icu_macros::capi;
 pub(crate) type UNumberFormatter = LocalizedNumberFormatter;
 
 pub(crate) fn read_skeleton(
-    cx: &CallerMem,
     skeleton: Text<'_, UChar>,
     locale: NulStr<'_, u8>,
 ) -> Result<MacroProps, UErrorCode> {
-    number_skeletons::parse(cx.text(skeleton)?, Locale::new(cx.c_str(locale)))
+    number_skeletons::parse(skeleton.get()?, Locale::new(locale.get()))
 }
 
 /// An error of `set` still resets `uresult`.
@@ -36,8 +35,8 @@ fn format(
         .inspect_err(|_| result.quantity.clear())
 }
 
-pub(crate) fn read_dec_number(cx: &CallerMem, number: Text<'_, u8>) -> Result<DecNum, UErrorCode> {
-    cx.text(number).and_then(DecNum::parse)
+pub(crate) fn read_dec_number(number: Text<'_, u8>) -> Result<DecNum, UErrorCode> {
+    number.get().and_then(DecNum::parse)
 }
 
 /// Accepts only the stems, options and units that express the options of ECMA-402.
@@ -47,7 +46,7 @@ fn unumf_openForSkeletonAndLocale(
     locale: NulStr<u8>,
     ec: ErrorCode,
 ) -> Option<Box<UNumberFormatter>> {
-    ec.open(|cx, _| read_skeleton(cx, skeleton, locale).map(LocalizedNumberFormatter::new))
+    ec.open(|| read_skeleton(skeleton, locale).map(LocalizedNumberFormatter::new))
 }
 
 #[capi]
@@ -57,7 +56,7 @@ fn unumf_formatDouble(
     uresult: Option<&mut UFormattedNumber>,
     ec: ErrorCode,
 ) {
-    ec.run((), |_, _| {
+    ec.run((), |_| {
         format(uformatter, uresult, |quantity| {
             quantity.set_to_double(value);
             Ok(())
@@ -73,8 +72,8 @@ fn unumf_formatDecimal(
     uresult: Option<&mut UFormattedNumber>,
     ec: ErrorCode,
 ) {
-    ec.run((), |cx, _| {
-        let number = read_dec_number(cx, value);
+    ec.run((), |_| {
+        let number = read_dec_number(value);
         format(uformatter, uresult, |quantity| {
             quantity.set_to_dec_num(&number?)
         })

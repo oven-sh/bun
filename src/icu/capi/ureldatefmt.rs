@@ -29,11 +29,11 @@ fn format_to_buffer(
     result: Dest<'_, UChar>,
     status: ErrorCode<'_>,
 ) -> i32 {
-    status.run(0, |cx, status| {
+    status.run(0, |status| {
         result.check()?;
         let mut output = UFormattedNumberData::new();
         (reldatefmt.non_null()?).format(offset, unit, numeric, &mut output)?;
-        Ok(cx.extract_to(output.text(), result, status))
+        Ok(result.extract_to(output.text(), status))
     })
 }
 
@@ -45,7 +45,7 @@ fn format_to_result(
     result: Option<&mut UFormattedRelativeDateTime>,
     status: ErrorCode<'_>,
 ) {
-    status.run((), |_, _| {
+    status.run((), |_| {
         let result = result.non_null()?;
         result.set(
             reldatefmt
@@ -64,7 +64,7 @@ fn ureldatefmt_open(
     capitalization_context: c_int,
     status: ErrorCode,
 ) -> Option<Box<URelativeDateTimeFormatter>> {
-    status.open(|cx, _| {
+    status.open(|| {
         let number_format = nf_to_adopt.ok_or(U_UNSUPPORTED_ERROR)?.format()?;
         if capitalization_context != UDISPCTX_CAPITALIZATION_FOR_STANDALONE {
             return Err(U_UNSUPPORTED_ERROR);
@@ -75,7 +75,7 @@ fn ureldatefmt_open(
             UDAT_STYLE_NARROW => Style::Narrow,
             _ => return Err(U_ILLEGAL_ARGUMENT_ERROR),
         };
-        RelativeDateTimeFormatter::new(&Locale::new(cx.c_str(locale)), number_format, style)
+        RelativeDateTimeFormatter::new(&Locale::new(locale.get()), number_format, style)
     })
 }
 
@@ -86,7 +86,7 @@ fn ureldatefmt_close(reldatefmt: Option<Box<URelativeDateTimeFormatter>>) {
 
 #[capi]
 fn ureldatefmt_openResult(ec: ErrorCode) -> Option<Box<UFormattedRelativeDateTime>> {
-    ec.open(|_, _| Ok(UFormattedValue::new_unset()))
+    ec.open(|| Ok(UFormattedValue::new_unset()))
 }
 
 #[capi]
@@ -94,7 +94,7 @@ fn ureldatefmt_resultAsValue(
     ufrdt: Option<&UFormattedRelativeDateTime>,
     ec: ErrorCode,
 ) -> *const UFormattedValue {
-    ec.run_no_alloc(null(), |_, _| ufrdt.non_null().map(from_ref))
+    ec.run_no_alloc(null(), |_| ufrdt.non_null().map(from_ref))
 }
 
 #[capi]

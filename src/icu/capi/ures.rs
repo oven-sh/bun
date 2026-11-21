@@ -13,8 +13,8 @@ fn ures_open(
     locale_id: NulStr<u8>,
     status: ErrorCode,
 ) -> Option<Box<UResourceBundle>> {
-    status.open(|cx, _| {
-        let locale_id = cx.c_str(locale_id).filter(|_| path.is_null());
+    status.open(|| {
+        let locale_id = locale_id.get().filter(|_| path.is_null());
         uresbund::ures_open(None, locale_id.ok_or(U_UNSUPPORTED_ERROR)?)
     })
 }
@@ -31,8 +31,8 @@ fn ures_getByKey(
     fill_in: Null,
     status: ErrorCode,
 ) -> Option<Box<UResourceBundle>> {
-    status.open(|cx, _| {
-        let key = cx.c_str(key).filter(|_| fill_in.is_null());
+    status.open(|| {
+        let key = key.get().filter(|_| fill_in.is_null());
         bundle
             .non_null()?
             .get_by_key(key.ok_or(U_UNSUPPORTED_ERROR)?)
@@ -46,17 +46,14 @@ fn ures_getStringByKey(
     len: Out<i32>,
     status: ErrorCode,
 ) -> *const UChar {
-    status.run(null(), |cx, _| {
-        let (bundle, key) = (
-            bundle.non_null()?,
-            cx.c_str(key).ok_or(U_UNSUPPORTED_ERROR)?,
-        );
+    status.run(null(), |_| {
+        let (bundle, key) = (bundle.non_null()?, key.get().ok_or(U_UNSUPPORTED_ERROR)?);
         let string = bundle.get_data_string_by_key(key);
         if matches!(string, Err(U_RESOURCE_TYPE_MISMATCH)) && bundle.find_by_key(key)?.is_alias() {
-            cx.store(len, 0);
+            len.set(0);
         }
         let string = string?;
-        cx.store(len, string.units().len() as i32);
+        len.set(string.units().len() as i32);
         Ok(string.as_ptr())
     })
 }

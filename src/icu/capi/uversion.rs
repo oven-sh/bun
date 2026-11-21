@@ -1,6 +1,6 @@
 //! `unicode/uversion.h`, `unicode/icudataver.h`, `unicode/ulocdata.h`
 
-use crate::capi::ffi::{CallerMem, ErrorCode, Out};
+use crate::capi::ffi::{ErrorCode, Out};
 use crate::common::uresimp::ures_open_direct;
 use bun_icu_macros::capi;
 
@@ -8,7 +8,7 @@ type UVersionInfo = [u8; 4];
 
 /// Stores a version like "48.1".
 fn store_version(bundle: &[u8], key: &[u8], version: Out<'_, UVersionInfo>, status: ErrorCode<'_>) {
-    status.run((), |cx, _| {
+    status.run((), |_| {
         let text = ures_open_direct(None, bundle)?.get_string_by_key(key)?;
         let mut units = text.iter();
         let fields = std::array::from_fn(|_| {
@@ -17,14 +17,14 @@ fn store_version(bundle: &[u8], key: &[u8], version: Out<'_, UVersionInfo>, stat
                 field.wrapping_mul(10).wrapping_add(digit as u8 & 0xf)
             })
         });
-        cx.store(version, fields);
+        version.set(fields);
         Ok(())
     })
 }
 
 #[capi]
-fn u_getVersion(cx: &mut CallerMem, version_array: Out<UVersionInfo>) {
-    cx.store(version_array, [79, 1, 0, 0])
+fn u_getVersion(version_array: Out<UVersionInfo>) {
+    version_array.set([79, 1, 0, 0])
 }
 
 #[capi]

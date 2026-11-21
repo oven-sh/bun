@@ -1257,8 +1257,8 @@ static void addToImportChain(Zig::GlobalObject* globalObject, BunPlugin::OnLoad:
             running.compiledImportChain.clear(*own);
     }
 #endif
-    if (size_t query = key.find('?'); query != notFound)
-        running.importChainWithoutQuery.add(key.left(query));
+    if (unsigned pathLength = moduleKeyPathLength(key); pathLength != key.length())
+        running.importChainWithoutQuery.add(key.left(pathLength));
     // See giveTurns(). The load that now asks for it has to be fetched first.
     if (reachesWaitingMock || globalObject->onLoadPlugins.waitingModuleMocks.containsIf([&](auto& waiting) { return uncheckedDowncast<JSModuleMock>(waiting.mock.get())->specifier->tryGetValue().data == key; })) [[unlikely]] {
         globalObject->onLoadPlugins.ranksAreStale = true;

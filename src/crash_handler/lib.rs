@@ -3074,9 +3074,13 @@ mod draft {
                 0 => {
                     let _ = bun_sys::close(bun_sys::Fd::stdin());
                     let _ = bun_sys::close(bun_sys::Fd::stdout());
-                    // SAFETY: argv is NUL-terminated array of NUL-terminated strings; environ is the
-                    // process environment block
+                    // SAFETY: fcntl and execve are async-signal-safe; argv and environ are
+                    // NUL-terminated. Only stderr is inherited by the crash reporter.
                     unsafe {
+                        let flags = libc::fcntl(2, libc::F_GETFD);
+                        if flags != -1 {
+                            libc::fcntl(2, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+                        }
                         libc::execve(argv[0], argv.as_ptr(), bun_core::c_environ());
                     }
                     _exit(0);

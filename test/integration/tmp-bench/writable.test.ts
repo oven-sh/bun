@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("cond.js", "all", "16 begin", "before;", "7");
+bench("begin.js", "all", "16", "0;1;2;8", "8");

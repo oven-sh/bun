@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("cswitch.js", "opsall", "before;", "5");
+bench("begin.js", "12", "4", "0;1;2;8", "8");

@@ -291,10 +291,10 @@ if (mode === "--ops") {
     const far = isOps && Bun.spawn([burner, "-e", `require("bun:ffi").dlopen("kernel32.dll", { SetProcessAffinityMask: { args: ["i64", "u64"], returns: "i32" } }).symbols.SetProcessAffinityMask(-1n, 1n); require("os").setPriority(-14); require("fs").writeFileSync(${JSON.stringify(dir + "\\at")}, Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("x") }).url.href)`]);
     if (far) (burners.push(far), Bun.sleepSync(1000), (process.env.AT = fs.readFileSync(dir + "\\at", "utf8")));
     if (isOps) console.log(`cond ops on ${isOne ? "one cpu" : "all cpus"}: priority at the start, then ms and priority after each call`);
-    for (const what of isOps ? ["open cold", "writer cold", "lookup cold", "shell cold", "text cold", "write cold"] : []) {
+    for (const what of isOps ? ["open cold", "writer cold", "lookup cold"] : []) {
       for (let round = 0; round < (what.endsWith("idle") ? 1 : rounds); round++)
         for (const [exe, variant] of columns) {
-          const out = Bun.spawnSync([exe, __filename, "--ops", what], { env: { ...process.env }, timeout: 20000, stdin: "ignore", stderr: "inherit" }).stdout.toString();
+          const out = Bun.spawnSync([exe, __filename, "--ops", what], { env: { ...process.env, BUN_TMP_RING: exe === a ? "" : variant }, timeout: 20000, stdin: "ignore", stderr: "inherit" }).stdout.toString();
           if (out) runs.push({ name: variant || "as is", what, ...JSON.parse(out) });
         }
       for (const [, variant] of columns) console.log(`cond   ${what}, ${variant || "as is"}: ${runs.filter(it => it.what === what && it.name === (variant || "as is")).map(it => it.seen).join(" | ")} (${runs[0]?.cpus} cpus)`);

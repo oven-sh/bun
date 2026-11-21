@@ -1,8 +1,2 @@
 import { bench } from "./run";
-bench(
-  "cond.js",
-  "all",
-  "at once,bursts,dns,fs.read one,promises open,Bun.file.text,open + close one,FileSink",
-  "before;",
-  "3",
-);
+bench("begin.js", "12", "8", "0;1;2;8", "8");

@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("again.js", "3", "24", "100", "test-quic-callback-error-onstream-async.mjs");
+bench("begin.js", "4", "2", "0;1;2;8", "8");

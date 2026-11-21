@@ -44,6 +44,11 @@ pub struct OutputFile {
 }
 
 impl OutputFile {
+    /// Names the file this output was read from (`src_path`).
+    pub fn set_src_path(&mut self, path: Box<[u8]>) {
+        self.src_path = Cow::Owned(path.into_vec());
+    }
+
     // Not a `const` because `Box` isn't const-constructible.
     pub fn zero_value() -> OutputFile {
         OutputFile {

@@ -32,8 +32,10 @@ pub use compiled_program::{
     forget_descriptor, has_descriptors, has_waiting_descriptors, read_descriptor,
 };
 pub use executable_file::with_executable_image;
+pub mod native_libs;
 
 // Re-export the flat surface most downstream callers use.
 pub use StandaloneModuleGraph::{
     BASE_PUBLIC_PATH, File, StandaloneModuleGraph as Graph, is_bun_standalone_file_path,
 };
+pub use native_libs::{NativeLibraryMember, NativeLibrarySet};

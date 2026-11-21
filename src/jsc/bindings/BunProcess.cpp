@@ -586,8 +586,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Handle known yet-to-be-working in Bun
-    {
+    // Handle known yet-to-be-working in Bun. Not for an embedded addon: the
+    // mirror keeps its embedded name, so a sibling library is found beside it.
+    if (!fromEmbedded) {
         static constexpr ASCIILiteral better_sqlite3_node = "better_sqlite3.node"_s;
         static constexpr ASCIILiteral better_sqlite3_message = "'better-sqlite3' is not yet supported in Bun.\nTrack the status in https://github.com/oven-sh/bun/issues/4290\nIn the meantime, you could try bun:sqlite which has a similar API."_s;
         if (filename.endsWith(better_sqlite3_node)) {

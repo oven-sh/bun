@@ -163,7 +163,7 @@ fn udat_applyPattern(
     (pattern, _): Text<UChar>,
 ) {
     debug_assert!(localized == 0);
-    if let (Ok(format), Ok(pattern)) = (fmt.get_mut(), cx.text(pattern)) {
-        ffi::ignore_oom(|| format.apply_pattern(pattern));
+    if let Ok(format) = fmt.get_mut() {
+        ffi::ignore_oom(|| format.apply_pattern(cx.text_or_empty(pattern)));
     }
 }

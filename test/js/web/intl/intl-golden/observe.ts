@@ -23,7 +23,7 @@ export async function loadCases(): Promise<Cases> {
   return JSON.parse(Buffer.from(Bun.gunzipSync(await Bun.file(fixture).bytes())).toString());
 }
 
-/** glibc sets a locale of any name if `LOCPATH` has its files. */
+/** glibc sets a locale of any name if `LOCPATH` has its files, and `locale.alias` does not list the name. */
 export const localeFiles = "/usr/lib/locale/C.utf8";
 
 /** `SETLOCALE` is for `setlocale()`, from which JavaScriptCore takes its default locale. */

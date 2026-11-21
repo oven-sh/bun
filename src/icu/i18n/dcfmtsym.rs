@@ -61,7 +61,7 @@ pub(crate) struct DecimalFormatSymbols {
 
 fn to_small_string(units: impl ExactSizeIterator<Item = u16>) -> SmallUString {
     let mut text = SmallUString::new();
-    defer_oom(text.set_to_units(units));
+    let _ = defer_oom(text.set_to_units(units));
     text
 }
 

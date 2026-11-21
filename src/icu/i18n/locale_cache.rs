@@ -72,7 +72,7 @@ impl Entries {
 
     fn count_use(&self, limit: usize) {
         if self.uses_until_sweep.fetch_sub(1, Relaxed) <= 0 {
-            best_effort(|| self.sweep(limit));
+            let _ = best_effort(|| self.sweep(limit));
         }
     }
 

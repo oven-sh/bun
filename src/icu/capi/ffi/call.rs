@@ -63,6 +63,13 @@ impl CallerMem {
         Ok(unsafe { slice(s.ptr, length) })
     }
 
+    /// Returns no units for what `text` rejects.
+    #[inline]
+    #[cfg_attr(mordant, allow(defaulted_failure))]
+    pub(crate) fn text_or_empty<'a, T: Unit>(&'a self, s: Text<'a, T>) -> &'a [T] {
+        self.text(s).unwrap_or_default()
+    }
+
     /// `text` for two texts. Reads neither if one is invalid.
     #[inline]
     pub(crate) fn texts<'a, T: Unit>(

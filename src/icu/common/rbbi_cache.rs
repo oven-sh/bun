@@ -124,7 +124,7 @@ impl Segmenter {
             current = next;
         }
         if !cache.breaks.is_empty() {
-            defer_oom(try_insert(&mut cache.breaks, 0, start));
+            let _ = defer_oom(try_insert(&mut cache.breaks, 0, start));
             cache.breaks.add(segment.end);
             cache.position_in_cache = Some(0);
         }
@@ -181,7 +181,7 @@ impl Checkpoints {
 
     fn add(&mut self, point: Boundary) {
         if self.points.last().is_none_or(|last| last.0 < point.0) {
-            best_effort(|| try_push(&mut self.points, point));
+            let _ = best_effort(|| try_push(&mut self.points, point));
         }
     }
 }

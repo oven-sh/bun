@@ -26,7 +26,6 @@ const STYLES: [[&[u8]; 3]; 3] = [
 ];
 
 /// A null string is empty.
-#[cfg_attr(mordant, allow(defaulted_failure))] // As stated above.
 fn get_unicode_strings<'a>(
     cx: &'a CallerMem,
     strings: StringPtrs<'a>,
@@ -37,7 +36,7 @@ fn get_unicode_strings<'a>(
     let mut items = memory::try_with_capacity(strings.length() as usize)?;
     items.add_each(
         cx.strings(strings, lengths)
-            .map(|string| cx.text(string).unwrap_or_default()),
+            .map(|string| cx.text_or_empty(string)),
     );
     Ok(items)
 }

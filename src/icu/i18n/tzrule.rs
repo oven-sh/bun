@@ -41,6 +41,13 @@ pub(crate) struct TimeZoneRule {
 }
 
 impl TimeZoneRule {
+    pub(crate) fn standard_time(raw_offset: i32) -> Self {
+        Self {
+            raw_offset,
+            dst_savings: 0,
+        }
+    }
+
     pub(crate) fn total_offset(self) -> i32 {
         self.raw_offset.wrapping_add(self.dst_savings)
     }

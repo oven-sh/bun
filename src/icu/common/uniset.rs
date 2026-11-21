@@ -97,7 +97,7 @@ impl UnicodeSet {
             (_, 0) => &[limit],
             _ => &[],
         };
-        defer_oom(try_splice(&mut self.list, from, to, boundaries));
+        let _ = defer_oom(try_splice(&mut self.list, from, to, boundaries));
     }
 
     /// Each string has several code points.

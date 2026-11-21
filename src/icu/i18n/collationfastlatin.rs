@@ -1,5 +1,4 @@
 //! Compares common Latin text by 16-bit "mini CEs". ICU4C: collationfastlatin.h
-#![cfg_attr(mordant, allow(generic_body_not_generic))]
 
 use crate::common::bytes::U16s;
 use crate::common::slice_ext::SliceExt;
@@ -371,6 +370,7 @@ impl<'a> Tables<'a> {
 }
 
 /// Returns the mini CEs, and `rest` without the character that a contraction consumes.
+#[cfg_attr(mordant, allow(generic_body_not_generic))] // A few lines, for two types.
 fn expansion_or_contraction<'t, U: CodeUnit>(
     table: U16s<'_>,
     ce: u32,
@@ -486,6 +486,7 @@ pub(crate) fn compare<U: CodeUnit>(
 
 /// Perf: out of line, so that the caller of `compare` is small enough to be inlined.
 #[inline(never)]
+#[cfg_attr(mordant, allow(generic_body_not_generic))] // A few lines, for two types.
 fn compare_after_primary<U: CodeUnit>(
     data: &CollationData,
     settings: &CollationSettings,

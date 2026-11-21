@@ -225,7 +225,7 @@ impl TimeZoneFormat {
             &patterns.h
         };
 
-        defer_oom(name.reserve_append(USUAL_GMT_CAPACITY));
+        let _ = defer_oom(name.reserve_append(USUAL_GMT_CAPACITY));
         name.add_all(&self.gmt_pattern_prefix);
         for item in items {
             match item {

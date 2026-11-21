@@ -9,7 +9,6 @@
     clippy::unreachable
 )]
 #![warn(unused_must_use)]
-#![cfg_attr(mordant, allow(error_collapsed_to_bool))] // A flag keeps the failure: README.md, "Allocation".
 #![feature(allocator_ext)]
 
 mod capi;

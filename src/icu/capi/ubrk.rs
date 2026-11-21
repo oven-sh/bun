@@ -22,7 +22,6 @@ pub(crate) struct UBreakIterator {
     text: Retained<Text<'static, UChar>>,
 }
 
-#[cfg_attr(mordant, allow(defaulted_failure))] // `measured` has accepted the text.
 fn step(
     cx: &CallerMem,
     bi: Mut<'_, UBreakIterator>,
@@ -31,7 +30,7 @@ fn step(
     let Ok(bi) = bi.get_mut() else {
         return UBRK_DONE;
     };
-    let text = cx.text(bi.text.get()).unwrap_or_default();
+    let text = cx.text_or_empty(bi.text.get());
     // If allocation fails, a run of a dictionary script stays undivided.
     ffi::ignore_oom(|| step(&mut bi.iter, text))
 }

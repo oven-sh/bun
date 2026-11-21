@@ -259,10 +259,7 @@ impl FinalZone {
         let Some(rules) = self.rules.annual_rules(self.start_year) else {
             return Some((
                 self.start,
-                TimeZoneRule {
-                    raw_offset: self.rules.raw_offset,
-                    dst_savings: 0,
-                },
+                TimeZoneRule::standard_time(self.rules.raw_offset),
             ));
         };
         rules

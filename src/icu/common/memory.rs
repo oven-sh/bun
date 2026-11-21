@@ -120,6 +120,7 @@ pub(crate) fn get_or_try_init<T>(
 }
 
 /// Runs `f` unless the flag is set. Returns `None` on any failure, and leaves the flag unchanged.
+#[must_use]
 pub(crate) fn best_effort<T>(f: impl FnOnce() -> Result<T, UErrorCode>) -> Option<T> {
     check_oom().ok()?;
     let result = f();
@@ -128,6 +129,7 @@ pub(crate) fn best_effort<T>(f: impl FnOnce() -> Result<T, UErrorCode>) -> Optio
 }
 
 /// Drops an allocation error. The C entry point still reports it, because the flag is set.
+#[must_use]
 pub(crate) fn defer_oom<T>(result: Result<T, UErrorCode>) -> Option<T> {
     debug_assert!(!matches!(result, Err(code) if code != U_MEMORY_ALLOCATION_ERROR));
     result.ok()

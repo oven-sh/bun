@@ -141,7 +141,7 @@ pub(crate) trait UString {
 
 impl UString for Vec<u16> {
     fn replace_range(&mut self, start: usize, length: usize, text: &[u16]) {
-        defer_oom(memory::try_splice(
+        let _ = defer_oom(memory::try_splice(
             self,
             start,
             start.saturating_add(length),

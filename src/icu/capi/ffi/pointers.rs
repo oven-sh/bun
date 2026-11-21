@@ -167,9 +167,9 @@ impl<T> Retained<Text<'_, T>> {
     }
 }
 
-// SAFETY: dereferencing needs a `CallerMem`, which is neither `Send` nor `Sync`.
+// SAFETY: the units are only read, as through a `&[T]`.
 unsafe impl<T: Sync> Send for Text<'_, T> {}
-// SAFETY: dereferencing needs a `CallerMem`, which is neither `Send` nor `Sync`.
+// SAFETY: the units are only read, as through a `&[T]`.
 unsafe impl<T: Sync> Sync for Text<'_, T> {}
 
 /// `#[derive(Clone, Copy)]` without the bound on `H`.

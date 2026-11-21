@@ -15,6 +15,7 @@ use bun_sys::Fd;
 
 use crate as resolver;
 use crate::fs;
+use crate::result::{HasDebugLogs, Indented};
 use bun_parsers::json_parser;
 
 // ── bun_install types (MOVE_DOWN: bun_install_types) ──────────────────────
@@ -1395,6 +1396,12 @@ pub(crate) struct ESModule<'a> {
     pub(crate) stack_check: StackCheck,
 }
 
+impl HasDebugLogs for ESModule<'_> {
+    fn debug_logs(&mut self) -> Option<&mut resolver::DebugLogs> {
+        self.debug_logs.as_deref_mut()
+    }
+}
+
 #[derive(Clone)]
 pub struct Resolution {
     pub(crate) status: Status,
@@ -1927,28 +1934,17 @@ impl<'a> ESModule<'a> {
                         bstr::BStr::new(subpath),
                         bstr::BStr::new(str)
                     ));
-                    log.increase_indent();
                 }
-                // A scopeguard cannot hold the &mut across the recursive
-                // `&mut self` calls below; every return path in this arm invokes
-                // `dedent!()` manually instead (audited: every return in this arm dedents).
-                macro_rules! dedent {
-                    () => {
-                        if let Some(log) = self.debug_logs.as_deref_mut() {
-                            log.decrease_indent();
-                        }
-                    };
-                }
+                let mut this = Indented::new(self);
                 macro_rules! invalid_specifier_if_too_long {
                     ($len:expr) => {
                         if $len > MAX_PATH_BYTES {
-                            if let Some(log) = self.debug_logs.as_deref_mut() {
+                            if let Some(log) = this.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "The path \"{}\" is invalid because it is too long",
                                     bstr::BStr::new(subpath)
                                 ));
                             }
-                            dedent!();
                             return Resolution {
                                 path: Box::<[u8]>::from(subpath),
                                 status: Status::InvalidModuleSpecifier,
@@ -1958,13 +1954,12 @@ impl<'a> ESModule<'a> {
                 }
 
                 if package_url.len() + str.len() + subpath.len() + 8 > MAX_PATH_BYTES {
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = this.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "The target \"{}\" is invalid because the resolved path would be too long",
                             bstr::BStr::new(str)
                         ));
                     }
-                    dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
@@ -1975,13 +1970,12 @@ impl<'a> ESModule<'a> {
                 // does not end with "/", throw an Invalid Module Specifier error.
                 if !PATTERN {
                     if !subpath.is_empty() && !strings::ends_with_char(str, b'/') {
-                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                        if let Some(log) = this.debug_logs.as_deref_mut() {
                             log.add_note_fmt(format_args!(
                                 "The target \"{}\" is invalid because it doesn't end with a \"/\"",
                                 bstr::BStr::new(str)
                             ));
                         }
-                        dedent!();
 
                         return Resolution {
                             path: Box::<[u8]>::from(str),
@@ -1998,14 +1992,13 @@ impl<'a> ESModule<'a> {
                 // segments into the target and escape the package directory.
                 if !subpath.is_empty() {
                     if let Some(invalid) = find_invalid_subpath_segment(subpath) {
-                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                        if let Some(log) = this.debug_logs.as_deref_mut() {
                             log.add_note_fmt(format_args!(
                                 "The path \"{}\" is invalid because it contains an invalid segment \"{}\"",
                                 bstr::BStr::new(subpath),
                                 bstr::BStr::new(invalid)
                             ));
                         }
-                        dedent!();
                         return Resolution {
                             path: Box::<[u8]>::from(subpath),
                             status: Status::InvalidModuleSpecifier,
@@ -2015,7 +2008,7 @@ impl<'a> ESModule<'a> {
 
                 // If target does not start with "./", then...
                 if !strings::starts_with(str, b"./") {
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = this.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "The target \"{}\" is invalid because it doesn't start with a \"./\"",
                             bstr::BStr::new(str)
@@ -2032,7 +2025,7 @@ impl<'a> ESModule<'a> {
                             invalid_specifier_if_too_long!(len);
                             let _ = replace(str, b"*", subpath, &mut resolve_target_buf2.0);
                             let result = &resolve_target_buf2.0[0..len];
-                            if let Some(log) = self.debug_logs.as_deref_mut() {
+                            if let Some(log) = this.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "Subsituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
                                     bstr::BStr::new(subpath),
@@ -2040,7 +2033,6 @@ impl<'a> ESModule<'a> {
                                     bstr::BStr::new(result)
                                 ));
                             }
-                            dedent!();
                             return Resolution {
                                 path: Box::<[u8]>::from(result),
                                 status: Status::PackageResolve,
@@ -2059,7 +2051,7 @@ impl<'a> ESModule<'a> {
                             >(
                                 &mut resolve_target_buf2.0, &parts2
                             );
-                            if let Some(log) = self.debug_logs.as_deref_mut() {
+                            if let Some(log) = this.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "Resolved \".{}\" to \".{}\"",
                                     bstr::BStr::new(str),
@@ -2067,14 +2059,12 @@ impl<'a> ESModule<'a> {
                                 ));
                             }
                             let path = Box::<[u8]>::from(result);
-                            dedent!();
                             return Resolution {
                                 path,
                                 status: Status::PackageResolve,
                             };
                         }
                     }
-                    dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
@@ -2084,14 +2074,13 @@ impl<'a> ESModule<'a> {
                 // If target split on "/" or "\" contains any ".", ".." or "node_modules"
                 // segments after the first segment, throw an Invalid Package Target error.
                 if let Some(invalid) = find_invalid_segment(str) {
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = this.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "The target \"{}\" is invalid because it contains an invalid segment \"{}\"",
                             bstr::BStr::new(str),
                             bstr::BStr::new(invalid)
                         ));
                     }
-                    dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
@@ -2107,14 +2096,13 @@ impl<'a> ESModule<'a> {
                 // If target split on "/" or "\" contains any ".", ".." or "node_modules"
                 // segments after the first segment, throw an Invalid Package Target error.
                 if let Some(invalid) = find_invalid_segment(resolved_target) {
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = this.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "The target \"{}\" is invalid because it contains an invalid segment \"{}\"",
                             bstr::BStr::new(str),
                             bstr::BStr::new(invalid)
                         ));
                     }
-                    dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidModuleSpecifier,
@@ -2127,7 +2115,7 @@ impl<'a> ESModule<'a> {
                     invalid_specifier_if_too_long!(len);
                     let _ = replace(resolved_target, b"*", subpath, &mut resolve_target_buf2.0);
                     let result = &resolve_target_buf2.0[0..len];
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = this.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "Substituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
                             bstr::BStr::new(subpath),
@@ -2137,14 +2125,13 @@ impl<'a> ESModule<'a> {
                     }
 
                     if let Some(invalid) = find_invalid_segment(result) {
-                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                        if let Some(log) = this.debug_logs.as_deref_mut() {
                             log.add_note_fmt(format_args!(
                                 "The path \"{}\" is invalid because it contains an invalid segment \"{}\"",
                                 bstr::BStr::new(result),
                                 bstr::BStr::new(invalid)
                             ));
                         }
-                        dedent!();
                         return Resolution {
                             path: Box::<[u8]>::from(result),
                             status: Status::InvalidModuleSpecifier,
@@ -2152,7 +2139,6 @@ impl<'a> ESModule<'a> {
                     }
 
                     // Wildcard expansion: tag for `probe_target_extensions` (oven-sh/bun#29679, #10001).
-                    dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(result),
                         status: Status::ExactEndsWithStar,
@@ -2162,7 +2148,7 @@ impl<'a> ESModule<'a> {
                     let result = resolve_path::resolve_path::join_string_buf::<
                         resolve_path::platform::Auto,
                     >(&mut resolve_target_buf2.0, &parts2);
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = this.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "Substituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
                             bstr::BStr::new(subpath),
@@ -2171,7 +2157,6 @@ impl<'a> ESModule<'a> {
                         ));
                     }
                     let path = Box::<[u8]>::from(result);
-                    dedent!();
                     return Resolution {
                         path,
                         status: Status::Exact,

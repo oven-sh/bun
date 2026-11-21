@@ -637,6 +637,21 @@ describe("web worker", () => {
       }
     });
 
+    // Takes 0.1s in a release build, and 40s if each waiter is found by a scan of all the others.
+    test("terminate() with many pending Atomics.waitAsync() calls", async () => {
+      const count = isDebug ? 30_000 : 100_000;
+      const src = `const view = new Int32Array(new SharedArrayBuffer(4));
+        let pending = 0;
+        for (let i = 0; i < ${count}; i++) pending += Atomics.waitAsync(view, 0, 0).async;
+        postMessage(pending);
+        setInterval(() => {}, 1000);`;
+      const w = new Worker(URL.createObjectURL(new Blob([src])));
+      const [msg] = await once(w, "message");
+      expect(msg.data).toBe(count);
+      w.terminate();
+      await once(w, "close");
+    }, 15_000);
+
     // terminate() mid `import "node:*"`: the native module's export walk stops
     // at the termination instead of clearing it and reading on.
     test("terminate() while importing every builtin module", async () => {

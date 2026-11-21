@@ -9,6 +9,7 @@ use core::ffi::{c_char, c_int, c_uint};
 #[cfg(not(windows))]
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::borrow::Cow;
 
 use crate::webcore;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
@@ -9996,11 +9997,9 @@ impl Drop for CopyDest {
     }
 }
 
-struct DeleteTreeStackItem {
-    /// Owned copy of the entry name (lives until popped). The very first item
-    /// borrows `sub_path` instead — see `name_is_borrowed`.
-    name: Vec<u8>,
-    name_is_borrowed: bool,
+struct DeleteTreeStackItem<'a> {
+    /// The first item borrows `sub_path`.
+    name: Cow<'a, [u8]>,
     /// Non-owning alias of either `self_` (first item) or the previous stack
     /// frame's `iter.dir()`. Ownership of the descriptor stays with the
     /// owner; this is just the raw fd for `Dir::borrow` at call sites.
@@ -10023,11 +10022,10 @@ pub(crate) fn zig_delete_tree(
     // pre-reserved to 16 caps the depth the same way a fixed array would,
     // with the bonus that the iterator buffers (8 KB each)
     // live on the heap instead of the stack.
-    let mut stack: Vec<DeleteTreeStackItem> = Vec::with_capacity(16);
+    let mut stack: Vec<DeleteTreeStackItem<'_>> = Vec::with_capacity(16);
 
     stack.push(DeleteTreeStackItem {
-        name: Vec::new(),
-        name_is_borrowed: true,
+        name: Cow::Borrowed(sub_path),
         parent_dir: self_.fd,
         iter: DirIterator::iterate_owned(initial_iterable_dir),
     });
@@ -10049,10 +10047,9 @@ pub(crate) fn zig_delete_tree(
                     if has_room {
                         match dt_open_dir(sys::Dir::borrow(&top_fd), entry_name) {
                             Ok(iterable_dir) => {
-                                let name = entry_name.to_vec();
+                                let name = Cow::Owned(entry_name.to_vec());
                                 stack.push(DeleteTreeStackItem {
                                     name,
-                                    name_is_borrowed: false,
                                     parent_dir: top_fd,
                                     iter: DirIterator::iterate_owned(iterable_dir),
                                 });
@@ -10068,11 +10065,7 @@ pub(crate) fn zig_delete_tree(
                                 // retries rmdir on the directory whose child could
                                 // not be opened and reports its ENOTEMPTY on macOS.
                                 let ancestor = &stack[top_idx];
-                                let ancestor_name: &[u8] = if ancestor.name_is_borrowed {
-                                    sub_path
-                                } else {
-                                    &ancestor.name
-                                };
+                                let ancestor_name: &[u8] = &ancestor.name;
                                 if matches!(
                                     dt_delete_dir(
                                         sys::Dir::borrow(&ancestor.parent_dir),
@@ -10109,11 +10102,7 @@ pub(crate) fn zig_delete_tree(
                             // NOT converted -- on macOS it can mean "target is a
                             // directory" and must keep flowing to the caller.
                             let ancestor = &stack[top_idx];
-                            let ancestor_name: &[u8] = if ancestor.name_is_borrowed {
-                                sub_path
-                            } else {
-                                &ancestor.name
-                            };
+                            let ancestor_name: &[u8] = &ancestor.name;
                             if matches!(
                                 dt_delete_dir(
                                     sys::Dir::borrow(&ancestor.parent_dir),
@@ -10141,11 +10130,7 @@ pub(crate) fn zig_delete_tree(
         drop(top.iter);
 
         let parent_dir = top.parent_dir;
-        let name: &[u8] = if top.name_is_borrowed {
-            sub_path
-        } else {
-            &top.name
-        };
+        let name: &[u8] = &top.name;
 
         let mut need_to_retry = false;
         match dt_delete_dir(sys::Dir::borrow(&parent_dir), name) {
@@ -10163,11 +10148,7 @@ pub(crate) fn zig_delete_tree(
                 // ENOTEMPTY, not the child's EACCES. (On Linux node surfaces the
                 // child's EACCES, which the plain return below produces.)
                 if let Some(ancestor) = stack.last() {
-                    let ancestor_name: &[u8] = if ancestor.name_is_borrowed {
-                        sub_path
-                    } else {
-                        &ancestor.name
-                    };
+                    let ancestor_name: &[u8] = &ancestor.name;
                     if matches!(
                         dt_delete_dir(sys::Dir::borrow(&ancestor.parent_dir), ancestor_name),
                         Err(E::ENOTEMPTY | E::EEXIST)
@@ -10221,7 +10202,6 @@ pub(crate) fn zig_delete_tree(
             // the StackItem that we previously popped.
             stack.push(DeleteTreeStackItem {
                 name: top.name,
-                name_is_borrowed: top.name_is_borrowed,
                 parent_dir,
                 iter: DirIterator::iterate_owned(iterable_dir),
             });

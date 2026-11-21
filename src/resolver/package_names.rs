@@ -1,8 +1,10 @@
 //! What a build asks so that an executable finds its entry points by the names of their packages.
 
+use core::ops::DerefMut;
 use core::ptr::NonNull;
 
 use bun_ast::{ImportKind, Log};
+use bun_core::scoped::SetForScope;
 use bun_core::strings;
 use bun_paths::is_sep_native;
 
@@ -209,6 +211,17 @@ pub fn add_hidden_names(mut names: Vec<PackageName>, hidden: Vec<PackageName>) -
 }
 
 impl Resolver<'_> {
+    #[must_use]
+    fn logging_to<'r>(&'r mut self, log: &'r mut Log) -> impl DerefMut<Target = Self> {
+        SetForScope::new(self, |this| &mut this.log, NonNull::from(log))
+    }
+
+    /// A bundler takes `module` where it can. `bun run`, whose answers these are, takes `main`.
+    #[must_use]
+    fn preferring_main_field(&mut self) -> impl DerefMut<Target = Self> {
+        SetForScope::new(self, |this| &mut this.prefer_module_field, false)
+    }
+
     fn find_entry_point_named(
         &mut self,
         folder: &[u8],
@@ -250,8 +263,9 @@ impl Resolver<'_> {
         let folder = bun_paths::strings::without_trailing_slash(&folder);
         let public_root = bun_paths::strings::without_trailing_slash(root.public_path);
         let mut unread_log = Log::default();
-        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
-        let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
+        let mut this = self.logging_to(&mut unread_log);
+        let mut this = this.preferring_main_field();
+        let this = &mut *this;
         let mut names = Vec::new();
         let separator = &[bun_paths::SEP][..];
         let written_subpaths = |resolver: &mut Self, directory: &[u8]| {
@@ -295,41 +309,39 @@ impl Resolver<'_> {
         };
         for package in &packages {
             let directory = [folder, separator, NODE_MODULES, separator, package].concat();
-            let subpaths = written_subpaths(self, &directory);
-            add(self, &mut names, package, package, subpaths.is_some());
+            let subpaths = written_subpaths(this, &directory);
+            add(this, &mut names, package, package, subpaths.is_some());
             for subpath in subpaths.iter().flatten() {
                 let name = [&package[..], &subpath[..]].concat();
-                add(self, &mut names, &name, &name, false);
+                add(this, &mut names, &name, &name, false);
             }
         }
         // `import "my-app"`, from a plug-in that lies outside the program's package.
         let mut own_folder = Some(folder);
         while let Some(place) = own_folder {
-            let manifest = self
+            let manifest = this
                 .read_dir_info_ignore_error(place)
                 .and_then(|directory| directory.package_json());
             if let Some(manifest) = manifest {
                 let own = manifest.name.to_vec();
                 if !own.is_empty() {
-                    let subpaths = written_subpaths(self, place);
+                    let subpaths = written_subpaths(this, place);
                     match subpaths.is_some() {
-                        true => add(self, &mut names, &own, &own, true),
+                        true => add(this, &mut names, &own, &own, true),
                         false => {
                             let main = [place, separator, b"."].concat();
-                            add(self, &mut names, &own, &main, false);
+                            add(this, &mut names, &own, &main, false);
                         }
                     }
                     for subpath in subpaths.iter().flatten() {
                         let name = [&own[..], &subpath[..]].concat();
-                        add(self, &mut names, &name, &name, false);
+                        add(this, &mut names, &name, &name, false);
                     }
                 }
                 break;
             }
             own_folder = parent(place);
         }
-        self.log = log_of_build;
-        self.prefer_module_field = prefers_module_field;
         names.sort_by(|a, b| a.path.cmp(&b.path));
         names.dedup_by(|later, earlier| later.path == earlier.path);
         names
@@ -384,11 +396,12 @@ impl Resolver<'_> {
         compiled.sort_unstable();
         compiled.dedup();
         let mut unread_log = Log::default();
-        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
-        let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
+        let mut this = self.logging_to(&mut unread_log);
+        let mut this = this.preferring_main_field();
+        let this = &mut *this;
         let mut places = list_places(folders);
         places.retain(|place| {
-            self.read_dir_info_ignore_error(place.source_path)
+            this.read_dir_info_ignore_error(place.source_path)
                 .is_some_and(|directory| directory.has_node_modules())
         });
         let mut names = Vec::new();
@@ -406,7 +419,7 @@ impl Resolver<'_> {
                 continue;
             }
             let node_modules = [place.source_path, separator, NODE_MODULES].concat();
-            let mut installed = self.list_names_in(&node_modules);
+            let mut installed = this.list_names_in(&node_modules);
             for scope in installed.clone() {
                 if !scope.starts_with(b"@") {
                     continue;
@@ -422,7 +435,7 @@ impl Resolver<'_> {
                 scopes_as_written.dedup();
                 for written in scopes_as_written {
                     let inside =
-                        self.list_names_in(&[&node_modules[..], separator, written].concat());
+                        this.list_names_in(&[&node_modules[..], separator, written].concat());
                     installed.extend(
                         inside
                             .iter()
@@ -438,9 +451,9 @@ impl Resolver<'_> {
                     .collect::<Vec<&[u8]>>()
             };
             for package in installed.iter().flat_map(as_written) {
-                let nearer = self.find_folder_of_package(place.source_path, package);
+                let nearer = this.find_folder_of_package(place.source_path, package);
                 let mut further_up = above.iter();
-                let further = further_up.find_map(|it| self.find_folder_of_package(it, package));
+                let further = further_up.find_map(|it| this.find_folder_of_package(it, package));
                 let (Some(nearer), Some(further)) = (nearer, further) else {
                     continue;
                 };
@@ -448,12 +461,12 @@ impl Resolver<'_> {
                     continue;
                 }
                 // The resolver keeps what it is asked for.
-                let store = &self.fs_ref().dirname_store;
+                let store = &this.fs_ref().dirname_store;
                 let Ok(specifier) = store.append_parts(&[package]) else {
                     continue;
                 };
                 let mut leads_elsewhere = |kind: ImportKind| {
-                    let found = self.resolve(place.source_path, specifier, kind).ok();
+                    let found = this.resolve(place.source_path, specifier, kind).ok();
                     found.is_some_and(|found| {
                         strip_folder(found.path_pair.primary.text(), &further).is_none()
                     })
@@ -474,8 +487,6 @@ impl Resolver<'_> {
                 });
             }
         }
-        self.log = log_of_build;
-        self.prefer_module_field = prefers_module_field;
         names
     }
 
@@ -521,8 +532,9 @@ impl Resolver<'_> {
         let separator = &[bun_paths::SEP][..];
         let generation = self.generation;
         let mut unread_log = Log::default();
-        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
-        let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
+        let mut this = self.logging_to(&mut unread_log);
+        let mut this = this.preferring_main_field();
+        let this = &mut *this;
         let mut names = Vec::new();
         let is_compiled = |path: &[u8]| {
             compiled
@@ -532,10 +544,10 @@ impl Resolver<'_> {
         let mut listed: (&[u8], Vec<Vec<u8>>) = (b"", Vec::new());
         for (folder, name, is_folder) in &asked {
             if listed.0 != folder.source_path {
-                listed = (folder.source_path, self.list_names_in(folder.source_path));
+                listed = (folder.source_path, this.list_names_in(folder.source_path));
             }
             let names_main_file = *is_folder
-                && self
+                && this
                     .read_dir_info_ignore_error(
                         &[folder.source_path, separator, &name[..]].concat(),
                     )
@@ -598,12 +610,12 @@ impl Resolver<'_> {
             };
             for &(end, written) in forms {
                 // The resolver keeps what it is asked for.
-                let store = &self.fs_ref().dirname_store;
+                let store = &this.fs_ref().dirname_store;
                 let Ok(specifier) = store.append_parts(&[b"./", &name[..], end]) else {
                     continue;
                 };
                 let mut leads_outside = |kind: ImportKind| {
-                    let found = self.resolve(folder.source_path, specifier, kind).ok();
+                    let found = this.resolve(folder.source_path, specifier, kind).ok();
                     found.is_some_and(|found| !is_compiled(found.path_pair.primary.text()))
                 };
                 let for_require = leads_outside(ImportKind::Require);
@@ -613,8 +625,6 @@ impl Resolver<'_> {
                 }
             }
         }
-        self.log = log_of_build;
-        self.prefer_module_field = prefers_module_field;
         names
     }
 
@@ -708,9 +718,9 @@ impl Resolver<'_> {
 
         // A name that leads nowhere is no error of the build.
         let mut unread_log = Log::default();
-        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
-        // A bundler takes `module` where it can. `bun run`, whose answers these are, takes `main`.
-        let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
+        let mut this = self.logging_to(&mut unread_log);
+        let mut this = this.preferring_main_field();
+        let this = &mut *this;
         let mut names = Vec::new();
         // Only a folder above an entry point can lead to one.
         let mut folders_of_entry_points: Vec<BuildPaths<'_>> = entry_points
@@ -726,7 +736,7 @@ impl Resolver<'_> {
         folders_of_entry_points.sort_unstable();
         folders_of_entry_points.dedup();
         for place in &folders_of_entry_points {
-            let names_main_file = self
+            let names_main_file = this
                 .read_dir_info_ignore_error(place.source_path)
                 .and_then(|directory| directory.package_json())
                 .is_some_and(|manifest| manifest.main_fields.count() > 0);
@@ -740,13 +750,13 @@ impl Resolver<'_> {
                     .into_iter()
                     .map(normalize_separator)
                     .collect(),
-                required: self.find_entry_point_named(
+                required: this.find_entry_point_named(
                     folder,
                     b"./",
                     ImportKind::Require,
                     entry_points,
                 ),
-                imported: self.find_entry_point_named(
+                imported: this.find_entry_point_named(
                     folder,
                     b"./",
                     ImportKind::Dynamic,
@@ -770,7 +780,7 @@ impl Resolver<'_> {
                 package,
             ]
             .concat();
-            let Some(directory) = self.read_dir_info_ignore_error(&directory) else {
+            let Some(directory) = this.read_dir_info_ignore_error(&directory) else {
                 continue;
             };
             let exports = directory
@@ -802,18 +812,18 @@ impl Resolver<'_> {
             }
             for subpath in &subpaths {
                 // The resolver keeps what it is asked for.
-                let store = &self.fs_ref().dirname_store;
+                let store = &this.fs_ref().dirname_store;
                 let Ok(specifier) = store.append_parts(&[package, &subpath[..]]) else {
                     continue;
                 };
                 let folder = place.source_path;
-                let required = self.find_entry_point_named(
+                let required = this.find_entry_point_named(
                     folder,
                     specifier,
                     ImportKind::Require,
                     entry_points,
                 );
-                let imported = self.find_entry_point_named(
+                let imported = this.find_entry_point_named(
                     folder,
                     specifier,
                     ImportKind::Dynamic,
@@ -837,8 +847,6 @@ impl Resolver<'_> {
                 }
             }
         }
-        self.log = log_of_build;
-        self.prefer_module_field = prefers_module_field;
         names.sort_by(|a, b| a.public_path.cmp(&b.public_path));
         names.dedup_by(|later, earlier| later.public_path == earlier.public_path);
         names
@@ -859,7 +867,7 @@ impl Resolver<'_> {
         let root_directory = bun_paths::strings::without_trailing_slash(&root_directory);
         let separator = &[bun_paths::SEP][..];
         let mut unread_log = Log::default();
-        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
+        let mut this = self.logging_to(&mut unread_log);
         let mut names = Vec::new();
         for name in refused {
             let Some(package) = Package::parse_name(&name.specifier) else {
@@ -870,7 +878,7 @@ impl Resolver<'_> {
                 .filter(|folder| last_component(folder) != NODE_MODULES)
                 .find(|&folder| {
                     let installed = [folder, separator, NODE_MODULES, separator, package].concat();
-                    self.read_dir_info_ignore_error(&installed).is_some()
+                    this.read_dir_info_ignore_error(&installed).is_some()
                 });
             let Some(relative) = place.and_then(|it| to_relative_specifier(root_directory, it))
             else {
@@ -890,7 +898,6 @@ impl Resolver<'_> {
                 is_hidden_from_import: !name.is_require,
             });
         }
-        self.log = log_of_build;
         names
     }
 }

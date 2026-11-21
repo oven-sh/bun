@@ -350,7 +350,7 @@ pub(crate) fn install_hoisted_packages(
                 node_modules: NodeModulesFolder {
                     path: strings::without_trailing_slash(FileSystem::get().top_level_dir())
                         .to_vec(),
-                    tree_id: 0,
+                    tree_id: tree::INVALID_ID,
                 },
                 skip_verify_installed_version_number,
                 skip_delete,
@@ -382,7 +382,6 @@ pub(crate) fn install_hoisted_packages(
                 seen_bin_links: StringHashMap::<()>::default(),
                 destination_dir_subpath_buf: bun_paths::PathBuffer::ZEROED,
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,
-                current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
                 unfinished_scripts: Default::default(),
                 direct_packages: bun_ptr::BackRef::new(&direct_packages),
@@ -419,7 +418,6 @@ pub(crate) fn install_hoisted_packages(
                 .extend_from_slice(node_modules.relative_path.as_bytes());
             installer.node_modules.tree_id = node_modules.tree_id;
             let mut remaining: &[DependencyID] = node_modules.dependencies;
-            installer.current_tree_id = node_modules.tree_id;
             installer.set_inside_replaced_folder(node_modules.tree_id);
             installer.set_outlived_root(node_modules.tree_id, node_modules.relative_path);
 

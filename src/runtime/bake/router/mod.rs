@@ -683,10 +683,8 @@ impl FrameworkRouter {
                         };
 
                         let mut log = TinyLog::empty();
-                        // The arena is reset at the end of every arm via
-                        // `reset_retain_with_limit(8M)` — keep the `mi_heap`
-                        // warm between directory entries instead of paying
-                        // `mi_heap_destroy + mi_heap_new` per file.
+                        // Not `reset`, which pays `mi_heap_destroy + mi_heap_new` per file.
+                        arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                         let parse_result =
                             t.style
                                 .parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
@@ -710,13 +708,9 @@ impl FrameworkRouter {
                                     rel_path
                                 };
                                 ctx.on_router_syntax_error(label, log)?;
-                                arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                                 continue 'outer;
                             }
-                            Ok(None) => {
-                                arena_state.reset_retain_with_limit(8 * 1024 * 1024);
-                                continue 'outer;
-                            }
+                            Ok(None) => continue 'outer,
                             Ok(Some(p)) => p,
                         };
 
@@ -724,7 +718,6 @@ impl FrameworkRouter {
                             && t.ignore_underscores
                             && base.starts_with(b"_")
                         {
-                            arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                             continue 'outer;
                         }
 
@@ -745,7 +738,6 @@ impl FrameworkRouter {
                             log.cursor_at = 0;
                             log.cursor_len = u32::try_from(full_rel_path.len()).expect("int cast");
                             ctx.on_router_syntax_error(full_rel_path, log)?;
-                            arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                             continue 'outer;
                         }
 
@@ -765,7 +757,6 @@ impl FrameworkRouter {
                                     file_name.len(),
                                 );
                                 ctx.on_router_syntax_error(full_rel_path, log)?;
-                                arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                                 continue 'outer;
                             }
                         };
@@ -827,8 +818,6 @@ impl FrameworkRouter {
                                 )?;
                             }
                         }
-
-                        arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                     }
                     bun_resolver::fs::EntryKind::Dangling => {}
                 }

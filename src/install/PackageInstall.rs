@@ -9,9 +9,9 @@ use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 use bun_sys::{self as sys, Dir, EntryKind, Fd, walker_skippable};
-#[cfg(windows)]
-use bun_threading::WaitGroup;
 use bun_threading::thread_pool::Batch;
+#[cfg(windows)]
+use bun_threading::wait_group::{Pending, WaitGroup};
 use bun_threading::work_pool::{OwnedTask, Task as WorkPoolTask};
 
 use crate::package_installer::NodeModulesFolder;
@@ -785,37 +785,6 @@ fn lay_link(
 // (takes `Fd`/`&ZStr`, returns `Maybe<()>`). The wrapper preserves the errno
 // via `Error::get_errno()` for the per-errno branching below.
 
-// ───────────────────────────── NewTaskQueue ─────────────────────────────
-
-#[cfg(windows)]
-pub(crate) struct NewTaskQueue<TaskType> {
-    /// One-shot, first-write-wins handoff of the failed task from a worker
-    /// thread to the consumer that called `wait()`. A `Mutex<Option<Box<_>>>`
-    /// makes ownership explicit (vs. the original `AtomicPtr`, which forced
-    /// every reader to remember `Box::from_raw` and risked leaks/double-free).
-    pub(crate) errored_task: bun_threading::Guarded<Option<Box<TaskType>>>,
-    pub(crate) wait_group: WaitGroup,
-}
-
-#[cfg(windows)]
-impl<TaskType> NewTaskQueue<TaskType> {
-    pub(crate) fn complete_one(&self) {
-        self.wait_group.finish();
-    }
-
-    pub(crate) fn push(&self, task: Box<TaskType>)
-    where
-        TaskType: OwnedTask,
-    {
-        self.wait_group.add_one();
-        THREAD_POOL.schedule(Batch::from_owned(task));
-    }
-
-    pub(crate) fn wait(&self) {
-        self.wait_group.wait();
-    }
-}
-
 // ───────────────────────────── HardLinkWindowsInstallTask ─────────────────────────────
 
 #[cfg(windows)]
@@ -825,10 +794,10 @@ struct HardLinkWindowsInstallTask {
     /// (which would be invalidated when this `Box<[u16]>` is moved into `Self`
     /// and again whenever `&mut self` reasserts uniqueness over it).
     bytes: Box<[u16]>,
-    src_len: usize,
+    src_len: u16,
     basename: u16,
     task: WorkPoolTask,
-    err: Option<crate::Error>,
+    _pending: Pending<&'static WaitGroup>,
 }
 
 #[cfg(windows)]
@@ -837,34 +806,49 @@ bun_threading::intrusive_work_task!(HardLinkWindowsInstallTask, task);
 #[cfg(windows)]
 impl OwnedTask for HardLinkWindowsInstallTask {
     fn run(mut self: Box<Self>) {
-        match self.link() {
-            Some(err) => {
-                self.err = Some(err);
-                // Only the first error is kept.
-                HARDLINK_QUEUE.errored_task.lock().get_or_insert(self);
-            }
-            None => drop(self),
+        if let Some(err) = self.link() {
+            FIRST_HARDLINK_ERROR.lock().get_or_insert(err);
         }
-        HARDLINK_QUEUE.complete_one();
     }
 }
 
 #[cfg(windows)]
-type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
+static HARDLINK_TASKS: WaitGroup = WaitGroup::init();
 
 #[cfg(windows)]
-static HARDLINK_QUEUE: HardLinkQueue = HardLinkQueue {
-    errored_task: bun_threading::Guarded::new(None),
-    wait_group: WaitGroup::init(),
-};
+static FIRST_HARDLINK_ERROR: bun_threading::Guarded<Option<crate::Error>> =
+    bun_threading::Guarded::new(None);
+
+/// Dropping it waits for the tasks that were pushed.
+#[cfg(windows)]
+struct HardLinkQueue;
+
+#[cfg(windows)]
+impl HardLinkQueue {
+    fn new() -> Self {
+        *FIRST_HARDLINK_ERROR.lock() = None;
+        Self
+    }
+
+    fn push(&self, task: Box<HardLinkWindowsInstallTask>) {
+        THREAD_POOL.schedule(Batch::from_owned(task));
+    }
+
+    fn finish(self) -> crate::Result<()> {
+        drop(self);
+        FIRST_HARDLINK_ERROR.lock().take().map_or(Ok(()), Err)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for HardLinkQueue {
+    fn drop(&mut self) {
+        HARDLINK_TASKS.wait();
+    }
+}
 
 #[cfg(windows)]
 impl HardLinkWindowsInstallTask {
-    fn reset_queue() -> &'static HardLinkQueue {
-        *HARDLINK_QUEUE.errored_task.lock() = None;
-        &HARDLINK_QUEUE
-    }
-
     fn init(src: &[OSPathChar], dest: &[OSPathChar], basename: &[OSPathChar]) -> Box<Self> {
         let allocation_size = src.len() + 1 + dest.len() + 1;
 
@@ -877,10 +861,10 @@ impl HardLinkWindowsInstallTask {
 
         Box::new(Self {
             bytes: combined,
-            src_len: src.len(),
+            src_len: u16::try_from(src.len()).expect("fits a WPathBuffer"),
             basename: basename.len() as u16, // @truncate
             task: WorkPoolTask::default(),
-            err: None,
+            _pending: Pending::new(&HARDLINK_TASKS),
         })
     }
 
@@ -889,7 +873,7 @@ impl HardLinkWindowsInstallTask {
         use bun_sys::windows::{self, Win32ErrorExt as _};
         // Read scalar fields before borrowing `bytes` so no `&mut self` reborrow
         // overlaps the slice borrows below.
-        let src_len = self.src_len;
+        let src_len = usize::from(self.src_len);
         let basename = usize::from(self.basename);
         // Disjoint borrows into the single backing buffer: `src` is read-only,
         // `dest` is mutated in place (temporary NUL for the dirpath).
@@ -1743,24 +1727,9 @@ impl PackageFiles<'_> {
             #[cfg(not(windows))]
             let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
             #[cfg(windows)]
-            let queue = HardLinkWindowsInstallTask::reset_queue();
-            // Workers are already running the tasks that were pushed, so remember any loop error
-            // and always reach `queue.wait()`.
-            #[cfg(windows)]
-            let mut loop_err: Option<crate::Error> = None;
+            let queue = HardLinkQueue::new();
 
-            loop {
-                let entry = match walker.next() {
-                    Ok(Some(e)) => e,
-                    Ok(None) => break,
-                    #[cfg(not(windows))]
-                    Err(e) => return Err(e.into()),
-                    #[cfg(windows)]
-                    Err(e) => {
-                        loop_err = Some(e.into());
-                        break;
-                    }
-                };
+            while let Some(entry) = walker.next()? {
                 #[cfg(unix)]
                 {
                     match entry.kind {
@@ -1815,8 +1784,7 @@ impl PackageFiles<'_> {
                     if entry.path.len() >= head1.len() - to_copy_into1_offset
                         || entry.path.len() >= head2.len() - to_copy_into2_offset
                     {
-                        loop_err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                        break;
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
 
                     let dest_len = to_copy_into1_offset + entry.path.len();
@@ -1838,20 +1806,7 @@ impl PackageFiles<'_> {
             }
 
             #[cfg(windows)]
-            {
-                queue.wait();
-
-                if let Some(err) = loop_err {
-                    return Err(err);
-                }
-
-                // No tasks are running after `wait()`, so `.take()` is uncontended.
-                if let Some(task) = queue.errored_task.lock().take() {
-                    if let Some(err) = task.err {
-                        return Err(err);
-                    }
-                }
-            }
+            queue.finish()?;
 
             Ok(())
         }

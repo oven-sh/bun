@@ -341,10 +341,9 @@ impl<C: JobContext> Job<C> {
     /// JS thread: as [`schedule`](Self::schedule) for work that is done already. It completes after this turn of the loop.
     pub fn schedule_finished(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
         let job = Self::new(cx, off, js, None);
-        let event_loop = cx.vm().event_loop();
-        event_loop.enqueue_task_after_yield(bun_event_loop::Task::init(job));
-        // The loop also runs script on its way into a poll, after it has chosen how long to wait.
-        event_loop.wakeup();
+        cx.vm()
+            .event_loop()
+            .enqueue_task_for_next_turn(bun_event_loop::Task::init(job));
     }
 
     /// `ticket`: for the other thread, if the job goes to one.

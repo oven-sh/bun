@@ -9778,7 +9778,7 @@ pub(crate) trait NodeFSDispatch<R, A> {
     /// Whether [`Self::run_cached`] can answer: the `cached =` column of `node_fs_ops!`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     const ANSWERS_FROM_CACHE: bool = false;
-    /// The answer, if the kernel holds it in memory: never a wait, so the JS thread asks in front of the pool.
+    /// The answer, if the kernel holds it in memory: no disk and no server is asked, so the JS thread asks in front of the pool.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn run_cached(_fs: &mut NodeFS, _args: &A) -> CachedAnswer<R> {
         CachedAnswer::NotAsked

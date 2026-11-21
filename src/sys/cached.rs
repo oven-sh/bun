@@ -49,7 +49,7 @@ fn open(path: &ZStr, symlink: Symlink, resolve: ResolveFlags) -> Result<Fd, i32>
 /// In blocks of 512 bytes: what a `close` here may free of a file removed meanwhile (0.1 ms per MiB, more if the journal is busy).
 const CLOSED_HERE: u64 = (1 << 20) / 512;
 
-/// `stat` or `lstat` of `path` without a wait. `close_elsewhere` gets a descriptor whose `close` can take long.
+/// `stat` or `lstat` of `path` from the kernel's caches. `close_elsewhere` gets a descriptor whose `close` can take long.
 pub fn stat(
     path: &ZStr,
     symlink: Symlink,

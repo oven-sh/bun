@@ -78,6 +78,8 @@ pub struct EventLoop {
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     yield_tasks: Cell<Vec<Task>>,
+    /// The [`iteration_number`](Self::iteration_number) at which `enqueue_task_for_next_turn` last woke the loop.
+    woken_in: Cell<u64>,
 
     pub(crate) concurrent_tasks: ConcurrentQueue,
     /// See `TaskTag::is_plugin_request`: as other threads post them, and as this thread has taken them.
@@ -135,6 +137,7 @@ impl EventLoop {
             immediate_tasks: Cell::default(),
             next_immediate_tasks: Cell::default(),
             yield_tasks: Cell::default(),
+            woken_in: Cell::new(u64::MAX),
             concurrent_tasks: ConcurrentQueue::default(),
             concurrent_plugin_requests: ConcurrentQueue::default(),
             plugin_requests: UnsafeCell::new(Queue::init()),
@@ -1011,6 +1014,16 @@ impl EventLoop {
         }
         // SAFETY: `push` only allocates.
         unsafe { &mut *self.yield_tasks.as_ptr() }.push(task);
+    }
+
+    /// As [`enqueue_task_after_yield`](Self::enqueue_task_after_yield), also for script that the loop runs on its way into a poll.
+    pub fn enqueue_task_for_next_turn(&self, task: Task) {
+        self.enqueue_task_after_yield(task);
+        // Such script runs after the loop has chosen how long to wait. One wake-up serves all that is queued before the poll.
+        let go = self.iteration_number();
+        if self.woken_in.replace(go) != go {
+            self.wakeup();
+        }
     }
 
     pub(crate) fn has_yield_tasks(&self) -> bool {

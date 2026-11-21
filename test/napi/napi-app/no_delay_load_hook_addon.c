@@ -4,6 +4,7 @@
 //   REGISTER_VIA_CONSTRUCTOR     calls napi_module_register from a static initializer, inside DllMain,
 //                                as NAPI_MODULE() did in node_api.h before v18.17.0
 //   IMPORT_MISSING_FROM_HOST     also imports a node.exe export that bun.exe doesn't have
+#define NAPI_VERSION 9
 #include <node_api.h>
 #include <stdio.h>
 

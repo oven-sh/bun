@@ -12,6 +12,12 @@
 //   a few thousand       requests later each route still answers the same, and a new array still has contiguous storage
 //   other engines        the same with the RegExp JIT off, with the GC running continuously, and with a GC every few allocations
 //                        that overwrites dead cells
+//   every process        ends by itself, prints nothing but its ports and how a new array is stored, and names on stderr the
+//                        errors that plain Bun names there
+//
+// Under either GC a process takes many times as long for the same requests, most of all in a Bun with a sanitizer, and it keeps
+// one processor busy. So there each server is asked again and again in a process of its own, which has answered every request
+// once before, and those processes run beside one another.
 //
 // Each test file works in a copy of ./app, where it installs the packages of ./app/bun.lock.
 import { afterAll, expect } from "bun:test";
@@ -64,6 +70,22 @@ async function fetchFrom(origin: string, path: string, init: RequestInit = {}) {
   }
 }
 
+/**
+ * The lines of stderr that name an error, sorted: the servers of a process write beside one another. What stands around such a
+ * line, the source above it and the frames below it, is not the same for an executable and for the sources.
+ */
+const errorsNamed = (stderr: string) =>
+  stderr
+    .split("\n")
+    .filter(line => /^(error|[A-Za-z]*Error)\b/.test(line))
+    .sort();
+
+/**
+ * The processes that have not ended. bun:test ends the children of a case that passes its time limit alone. Those of a case
+ * that runs beside others it leaves, and such a case still waits for their answer: they are ended when the file is done.
+ */
+const running = new Set<{ kill(signal: NodeJS.Signals): void; readonly exited: Promise<number> }>();
+
 /** Starts the servers on free ports and waits until each has printed `listening <port>`. */
 async function start(cmd: string[], count: number, env: Record<string, string | undefined>) {
   // stderr is piped because Express logs every error that it answers with 400.
@@ -75,6 +97,8 @@ async function start(cmd: string[], count: number, env: Record<string, string | 
     stdout: "pipe",
     stderr: "pipe",
   });
+  running.add(proc);
+  void proc.exited.then(() => running.delete(proc));
   let errors = "";
   const readErrors = (async () => {
     for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) errors += chunk;
@@ -110,12 +134,20 @@ async function start(cmd: string[], count: number, env: Record<string, string | 
     });
   return {
     origins,
-    /** Ends the input of the process, at which ./app/all/array-kind.ts has it exit. */
+    /**
+     * Ends the input of the process, at which ./app/all/array-kind.ts has it exit. Returns how it ended, all that it printed
+     * behind its ports, and the errors that it named. One that did not exit with 0 also brings the last lines of its stderr.
+     */
     async end() {
       proc.stdin.end();
-      const exitCode = await proc.exited;
-      await read;
-      return { exitCode, signal: proc.signalCode, newArrays: /^new arrays: (\w+)$/m.exec(output)?.[1] };
+      const [exitCode] = await Promise.all([proc.exited, read, readErrors]);
+      return {
+        exitCode,
+        signal: proc.signalCode,
+        stdout: output.replace(/^listening \d+\n/gm, ""),
+        errors: errorsNamed(errors),
+        ...(exitCode !== 0 && { stderr: errors.split("\n").slice(-40) }),
+      };
     },
     async [Symbol.asyncDispose]() {
       proc.kill("SIGKILL");
@@ -241,24 +273,42 @@ async function abortEventStream(origin: string) {
 }
 
 const create = apiRoutes.find(route => route.name === "create")!;
+const refused = (status: number, error: string) => ({
+  status,
+  expectedBody: JSON.stringify({ error, requestId: "r-1" }),
+});
+/** More requests to an API, each with the answer that every API of ./app owes it. */
 const otherApiRequests: Route[] = [
-  { ...create, name: "text that is not JSON", request: '{"title":' },
+  { ...create, name: "text that is not JSON", request: '{"title":', ...refused(400, "bad body") },
   {
     ...create,
     name: "a priority out of range",
     request: JSON.stringify({ title: "a", priority: 9, assigneeId: 5, tags: [] }),
+    ...refused(400, "bad priority"),
   },
   {
     ...create,
     name: "an unknown assignee",
     request: JSON.stringify({ title: "a", priority: 1, assigneeId: 500, tags: [] }),
+    ...refused(400, "no such assignee"),
   },
-  { ...create, name: "an unknown project", path: "/api/projects/77/tasks" },
-  { ...create, name: "an unknown token", headers: { ...create.headers, authorization: "Bearer nobody" } },
+  { ...create, name: "an unknown project", path: "/api/projects/77/tasks", ...refused(404, "no project 77") },
+  {
+    ...create,
+    name: "an unknown token",
+    headers: { ...create.headers, authorization: "Bearer nobody" },
+    ...refused(401, "unknown token"),
+  },
+  // The task is created as under "create". The API numbers a request that brings no id: this is the first of its process.
   { ...create, name: "no request id", headers: { authorization: create.headers!.authorization! } },
-  { ...apiRoutes[1]!, name: "an id that is not a number", path: "/api/projects/three/tasks/317" },
-  { ...apiRoutes[1]!, name: "an unknown task", path: "/api/projects/3/tasks/999" },
-  { ...apiRoutes[1]!, name: "an unknown path under /api", path: "/api/nothing" },
+  {
+    ...apiRoutes[1]!,
+    name: "an id that is not a number",
+    path: "/api/projects/three/tasks/317",
+    ...refused(400, "not an id"),
+  },
+  { ...apiRoutes[1]!, name: "an unknown task", path: "/api/projects/3/tasks/999", ...refused(404, "no task 999") },
+  { ...apiRoutes[1]!, name: "an unknown path under /api", path: "/api/nothing", ...refused(404, "not found") },
 ];
 
 /** Every request to one server, always in the same order: a server may keep state. */
@@ -309,25 +359,26 @@ const askAll = async (origins: string[], servers: Server[]) =>
 
 const routesOf = ({ kind }: Server) => (kind === "routes" ? routes : kind === "api" ? apiRoutes : []);
 
-/** Sends the request of each route `times` times on each of sixteen connections. */
-async function askAgainAndAgain(origins: string[], servers: Server[], times: number) {
-  for (const [index, server] of servers.entries()) {
-    for (const route of routesOf(server)) {
-      let mismatch: unknown;
-      await Promise.all(
-        Array.from({ length: 16 }, async () => {
-          for (let n = 0; n < times && !mismatch; n++) {
-            const { status, body } = await send(origins[index], route);
-            if (status !== (route.status ?? 200) || body !== route.expectedBody) mismatch = { status, body };
-          }
-        }),
-      );
-      expect({ server: server.file, route: route.name, mismatch }).toEqual({
-        server: server.file,
-        route: route.name,
-        mismatch: undefined,
-      });
-    }
+/**
+ * Sends the request of each route of one server `times` times on each of sixteen connections. Every answer must be the one that
+ * plain Bun gave: its status, its type, the headers that a middleware adds, and its body.
+ */
+async function askAgainAndAgain(origin: string, server: Server, times: number, ofPlainBun: Answers) {
+  for (const route of routesOf(server)) {
+    let other: unknown;
+    await Promise.all(
+      Array.from({ length: 16 }, async () => {
+        for (let n = 0; n < times && !other; n++) {
+          const answer = await send(origin, route);
+          if (!Bun.deepEquals(answer, ofPlainBun[route.name])) other = answer;
+        }
+      }),
+    );
+    expect({ server: server.file, route: route.name, answer: other ?? ofPlainBun[route.name] }).toEqual({
+      server: server.file,
+      route: route.name,
+      answer: ofPlainBun[route.name],
+    });
   }
 }
 
@@ -336,7 +387,11 @@ export function testFramework(framework: string) {
   const entry = `./all/${framework}.ts`;
   // The bundler inlines process.env.NODE_ENV and defaults it to "development", which would make Express put stack traces into its answers.
   const flags = ["--define", 'process.env.NODE_ENV="production"', "--target=bun"];
-  afterAll(() => dir[Symbol.dispose]());
+  afterAll(async () => {
+    for (const proc of running) proc.kill("SIGKILL");
+    await Promise.all(Array.from(running, proc => proc.exited));
+    dir[Symbol.dispose]();
+  });
 
   async function build() {
     const executable = join(String(dir), isWindows ? "compiled.exe" : "compiled");
@@ -379,42 +434,70 @@ export function testFramework(framework: string) {
   describe(framework, () => {
     let executable: string;
     let expected: Record<string, Answers>;
+    /** How plain Bun ended behind its answers, with the errors that it had named on stderr. */
+    let endOfPlainBun: Awaited<ReturnType<Awaited<ReturnType<typeof start>>["end"]>>;
 
     beforeAll(async () => {
       await copyApp(app);
       const building = build();
       await using plain = await start([bunExe(), entry], servers.length, bunEnv);
       expected = await askAll(plain.origins, servers);
+      endOfPlainBun = await plain.end();
       executable = await building;
     }, timeout);
 
+    /** Starts the executable, sends it every request once and those of the routes of `again` again and again, and has it end. */
+    async function answersAsPlainBun(env: Record<string, string>, again: Server[], times: number) {
+      await using compiled = await startCompiled(executable, env);
+      expect(await askAll(compiled.origins, servers)).toEqual(expected);
+      for (const server of again)
+        await askAgainAndAgain(compiled.origins[servers.indexOf(server)], server, times, expected[server.file]);
+      // ES5-style inheritance between functions (util.inherits, transpiled classes) must not switch every array of the realm to slow storage.
+      expect(await compiled.end()).toEqual({
+        exitCode: 0,
+        signal: null,
+        stdout: "new arrays: ArrayWithContiguous\n",
+        errors: endOfPlainBun.errors,
+      });
+    }
+
     test(
       "answers as plain Bun does, also after a few thousand requests",
-      async () => {
-        await using compiled = await startCompiled(executable);
-        expect(await askAll(compiled.origins, servers)).toEqual(expected);
-        await askAgainAndAgain(compiled.origins, servers, 200);
-        // ES5-style inheritance between functions (util.inherits, transpiled classes) must not switch every array of the realm to slow storage.
-        expect(await compiled.end()).toEqual({ exitCode: 0, signal: null, newArrays: "ArrayWithContiguous" });
-      },
+      () => answersAsPlainBun({}, servers, 200),
       timeout,
     );
 
     test("plain Bun answers every route with what is written down", () => {
+      expect(endOfPlainBun).toEqual({
+        exitCode: 0,
+        signal: null,
+        stdout: "new arrays: ArrayWithContiguous\n",
+        errors: expect.any(Array),
+      });
       for (const server of servers) {
-        for (const route of routesOf(server))
+        for (const route of [...routesOf(server), ...(server.kind === "api" ? otherApiRequests : [])])
           expect({ server: server.file, route: route.name, ...(expected[server.file][route.name] as object) }).toEqual({
             server: server.file,
             route: route.name,
             status: route.status ?? 200,
             type: route.type === "-" ? expect.any(String) : route.type,
-            added: server.kind === "api" ? ["r-1", "nosniff", "no-store"] : expect.any(Array),
+            added:
+              server.kind === "api"
+                ? [route.headers?.["x-request-id"] ?? "local-1", "nosniff", "no-store"]
+                : expect.any(Array),
             body: route.expectedBody,
           });
-        if (server.file === "features/bun.ts")
-          expect(expected[server.file]["a WebSocket session"]).toMatchObject({
-            ada: expect.arrayContaining(["bob left: 4001 said bye"]),
+        if (server.file === "features/bun.ts") {
+          expect(expected[server.file]["a WebSocket session"]).toEqual({
+            ada: ["hello ada", "QUIET", "bytes 3,2,1", "bob left: 4001 said bye", "closed: 1000 done"],
+            bob: ["hello bob", "ada: good morning", Buffer.alloc(100_000, "X").toString(), "closed: 4001 said bye"],
           });
+          expect(expected[server.file]["an aborted event stream"]).toEqual({
+            type: "text/event-stream",
+            first: [1, 2, 3, 4].map(id => `id: ${id}\ndata: tick\n\n`).join(""),
+            counters: { aborted: 1, cancelled: 1 },
+          });
+        }
         if (server.kind !== "routes") continue;
         expect(expected[server.file]["an unknown path"]).toBe(404);
         for (const route of routes.filter(route => route.method === "POST")) {
@@ -435,7 +518,7 @@ export function testFramework(framework: string) {
     });
 
     // Express, Koa and Hono match paths with regular expressions that are made at run time, so both RegExp engines must agree.
-    test.each([
+    const engines: [engine: string, env: Record<string, string>, times: number][] = [
       ["with the RegExp JIT off", { BUN_JSC_useRegExpJIT: "0" }, 0],
       ["with the GC running continuously", { BUN_JSC_collectContinuously: "1" }, 25],
       [
@@ -443,14 +526,23 @@ export function testFramework(framework: string) {
         { BUN_JSC_useZombieMode: "1", BUN_JSC_sweepSynchronously: "1", BUN_JSC_slowPathAllocsBetweenGCs: "50" },
         25,
       ],
-    ])(
+    ];
+    // Under either GC one process for each server that is asked again and again: see the top of this file. These cases run
+    // beside one another on every lane: in turn they take longer than the one process that they replace.
+    const askedAgain = servers.filter(server => routesOf(server).length > 0);
+    const cases = engines.flatMap(([engine, env, times]): [string, Record<string, string>, Server[], number][] =>
+      times === 0 || askedAgain.length === 0
+        ? [[engine, env, [], times]]
+        : askedAgain.map(server => [
+            `${engine}, also after ${16 * times} requests to each route of ${server.file}`,
+            env,
+            [server],
+            times,
+          ]),
+    );
+    test.concurrent.each(cases)(
       "answers the same %s",
-      async (_, env, times) => {
-        await using compiled = await startCompiled(executable, env);
-        expect(await askAll(compiled.origins, servers)).toEqual(expected);
-        await askAgainAndAgain(compiled.origins, servers, times);
-        expect(await compiled.end()).toMatchObject({ exitCode: 0, signal: null });
-      },
+      (_, env, again, times) => answersAsPlainBun(env, again, times),
       timeout,
     );
   });

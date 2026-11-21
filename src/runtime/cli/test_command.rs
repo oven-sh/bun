@@ -4096,6 +4096,10 @@ impl TestCommand {
                 }
 
                 vm.event_loop().tick_immediate_tasks();
+                // A job that finished on this thread is there, as one that a pool thread has posted: its rejection is this file's.
+                if vm.event_loop().promote_finished_jobs() {
+                    vm.event_loop().tick();
+                }
 
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;

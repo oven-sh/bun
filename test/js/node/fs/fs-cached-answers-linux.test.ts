@@ -873,6 +873,58 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     }
   });
 
+  // `bun test` does not wait for a promise that a test lets float. The run is red only if the
+  // answer is there when the file's last test ends, and then the error is that file's.
+  test.concurrent("in bun test, an answer that floats is an error of its own file", async () => {
+    const floats = (then: string) => `
+      import { test } from "bun:test";
+      import { stat } from "node:fs/promises";
+      test("t", async () => {
+        stat("missing.txt");
+        // A pool thread has answered by now too.
+        for (const end = performance.now() + 100; performance.now() < end; );
+        ${then}
+      });
+    `;
+    using dir = tempDir("fs-cached-runner", {
+      ...files,
+      "package.json": `{ "name": "p" }`,
+      "a-warm.test.mjs": `
+        import { test } from "bun:test";
+        import { stat } from "node:fs/promises";
+        test("warm", async () => {
+          for (let i = 0; i < 30; i++) {
+            await stat("file.txt");
+            await stat("missing.txt").catch(() => {});
+            await new Promise(resolve => setImmediate(resolve));
+          }
+        });
+      `,
+      "b-ends-at-once.test.mjs": floats(""),
+      "c-ends-in-an-immediate.test.mjs": floats("await new Promise(resolve => setImmediate(resolve));"),
+      "d-last.test.mjs": `import { test } from "bun:test"; test("t", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: { ...bunEnv, NO_COLOR: "1", BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const withError = new Set<string>();
+    let file = "";
+    for (const line of (stdout + "\n" + stderr).split("\n")) {
+      file = /^(\S+)\.test\.mjs:$/.exec(line)?.[1] ?? file;
+      // The error ends the test if the test still runs, and is one between tests if not.
+      if (line === "# Unhandled error between tests" || line.startsWith("(fail) ")) withError.add(file);
+    }
+    expect({ withError: [...withError].sort(), exitCode }).toEqual({
+      withError: ["b-ends-at-once", "c-ends-in-an-immediate"],
+      exitCode: 1,
+    });
+  });
+
   // The loop delivers HTTP/3 stream data to script on its way into a poll, after it has chosen how
   // long to wait. What such script leaves for the next turn must not wait for the next packet.
   test.concurrent("an answer in an HTTP/3 handler does not wait for the stream", async () => {

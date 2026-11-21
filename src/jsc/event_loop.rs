@@ -1026,6 +1026,34 @@ impl EventLoop {
         }
     }
 
+    /// The jobs among what waits for the next turn become runnable. Returns whether a job waits, as `bun test` asks when a file's last test has ended.
+    pub fn promote_finished_jobs(&self) -> bool {
+        let is_job = |task: &Task| task.tag() == bun_event_loop::task_tag::AnyTaskJob;
+        // SAFETY: `write_item` only allocates, and nothing else touches the queue here.
+        let tasks = unsafe { &mut *self.tasks.get() };
+        // One that `auto_tick` made runnable, if the caller has not ticked since.
+        let (mut waits, mut seen) = (false, 0);
+        while !waits && seen < tasks.readable_length() {
+            let slice = tasks.readable_slice(seen);
+            waits = slice.iter().any(is_job);
+            seen += slice.len();
+        }
+        if !self.has_yield_tasks() {
+            return waits;
+        }
+        let mut rest = Vec::new();
+        for task in self.yield_tasks.take() {
+            if is_job(&task) {
+                let _ = tasks.write_item(task);
+                waits = true;
+            } else {
+                rest.push(task);
+            }
+        }
+        self.yield_tasks.set(rest);
+        waits
+    }
+
     pub(crate) fn has_yield_tasks(&self) -> bool {
         // SAFETY: a read of the length.
         !unsafe { &*self.yield_tasks.as_ptr() }.is_empty()

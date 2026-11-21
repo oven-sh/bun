@@ -18,7 +18,7 @@ import {
   tls as tlsCert,
 } from "harness";
 import { createTest } from "node-harness";
-import { X509Certificate } from "node:crypto";
+import { createPrivateKey, X509Certificate } from "node:crypto";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
 import http, {
@@ -1611,6 +1611,58 @@ describe("node https server", async () => {
       existing?.destroy();
       renewed?.destroy();
       server.close();
+    }
+  });
+
+  it("setSecureContext rotates the configured servername", async () => {
+    const replacement = {
+      key: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-cert.pem")),
+    };
+    const options = { ...httpsOptions, servername: "localhost" };
+    const server = createHttpsServer(options);
+    const url = await listen(server, "https");
+    try {
+      for (const context of [httpsOptions, replacement]) {
+        if (context === replacement) server.setSecureContext(context);
+        const socket = tlsConnect({
+          host: "127.0.0.1",
+          port: Number(url.port),
+          servername: "localhost",
+          rejectUnauthorized: false,
+        });
+        try {
+          await once(socket, "secureConnect");
+          expect(socket.getPeerCertificate().fingerprint256).toBe(new X509Certificate(context.cert).fingerprint256);
+        } finally {
+          socket.destroy();
+        }
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  it("setSecureContext normalizes encrypted PEM key entries before and after listen", async () => {
+    const cert = nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-cert.pem"));
+    const key = nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem"));
+    const passphrase = "replacement-key-password";
+    const pem = createPrivateKey(key).export({ type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase });
+    const replacement = { key: [{ pem, passphrase }], cert, passphrase: "unused-context-password" };
+    for (const beforeListen of [true, false]) {
+      const server = createHttpsServer(httpsOptions);
+      let socket;
+      try {
+        if (beforeListen) server.setSecureContext(replacement);
+        const url = await listen(server, "https");
+        if (!beforeListen) server.setSecureContext(replacement);
+        socket = tlsConnect({ host: "127.0.0.1", port: Number(url.port), rejectUnauthorized: false });
+        await once(socket, "secureConnect");
+        expect(socket.getPeerCertificate().fingerprint256).toBe(new X509Certificate(cert).fingerprint256);
+      } finally {
+        socket?.destroy();
+        server.close();
+      }
     }
   });
 

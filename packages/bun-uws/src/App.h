@@ -116,6 +116,8 @@ private:
     struct PendingServerName {
         std::string hostname;
         SslCtxPtr ctx;
+        /* The server's own hostname follows replacements; explicit SNI entries do not. */
+        bool inheritDefaultContext;
     };
     std::vector<PendingServerName> pendingServerNames;
     std::vector<unsigned char> alpnProtocols;
@@ -170,7 +172,7 @@ public:
             });
             /* Queue for any listeners not yet created. We hold one SSL_CTX ref;
              * each listen socket took its own via SSL_CTX_up_ref. */
-            pendingServerNames.push_back({hostname_pattern, std::move(domainCtx)});
+            pendingServerNames.push_back({hostname_pattern, std::move(domainCtx), !applyClientCertPolicy});
             if (success) *success = true;
         }
 
@@ -223,8 +225,18 @@ public:
             if (httpContext->getSocketContextData()->http2Context) {
                 us_ssl_ctx_enable_http2_alpn(next.get(), httpContext->getSocketContextData()->allowHttp1);
             }
+            for (auto &entry : pendingServerNames) {
+                if (entry.inheritDefaultContext) {
+                    us_internal_ssl_ctx_up_ref(next.get());
+                    entry.ctx.reset(next.get());
+                }
+            }
             forEachListenSocket([&](us_listen_socket_t *ls) {
-                us_listen_socket_set_ssl_ctx(ls, next.get());
+                us_listen_socket_set_default_ssl_ctx(ls, next.get());
+                /* Replay in registration order so an explicit entry for the same name still wins. */
+                for (auto &entry : pendingServerNames) {
+                    us_listen_socket_add_server_name(ls, entry.hostname.c_str(), entry.ctx.get());
+                }
             });
 
             sslCtx = std::move(next);

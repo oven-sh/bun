@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 2958fccaa97e99e4e11b7597cdc235e747b6b0f99be44bc015431c9d6fc8a754.
+// Written against that file with the SHA-256 1514aba9db90dcdf8769abc356d292fb45492ab7144e4ffcb111b3d320ada9f9.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -1076,7 +1076,12 @@ Server.prototype[setSecureContextSymbol] = function (this: $Node.HttpServer, opt
     throw $ERR_INVALID_ARG_VALUE("options", options, "server is not configured for TLS");
   }
 
-  const { processPfxOptions, secureProtocolToVersionRange, tlsStringToProtocolVersion } = require("internal/tls");
+  const {
+    normalizePemKeyOption,
+    processPfxOptions,
+    secureProtocolToVersionRange,
+    tlsStringToProtocolVersion,
+  } = require("internal/tls");
   // Match Node's synchronous option validation before publishing a replacement.
   require("node:tls").createSecureContext(options);
   const tlsOptions = processPfxOptions(options);
@@ -1088,6 +1093,7 @@ Server.prototype[setSecureContextSymbol] = function (this: $Node.HttpServer, opt
   const range = secureProtocolToVersionRange(tlsOptions.secureProtocol);
   const next: $Node.HttpServerTLSOptions = {
     ...tlsOptions,
+    key: normalizePemKeyOption(tlsOptions.key, tlsOptions.passphrase),
     ca,
     minVersion: range ? range[0] : tlsStringToProtocolVersion(tlsOptions.minVersion),
     maxVersion: range ? range[1] : tlsStringToProtocolVersion(tlsOptions.maxVersion),

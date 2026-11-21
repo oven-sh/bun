@@ -71,6 +71,7 @@ struct Inner {
     io: OnceCell<Io>,
     /// Others may read it too, so data is only taken out at a moment when the reader is known to want it.
     is_input_shared: Cell<bool>,
+    was_full: Cell<bool>,
     read: Cell<Option<InFlight>>,
     write: Cell<Option<InFlight>>,
 }
@@ -89,6 +90,7 @@ impl Pipe {
             handle,
             io: OnceCell::new(),
             is_input_shared: Cell::new(is_input_shared),
+            was_full: Cell::new(false),
             read: Cell::new(None),
             write: Cell::new(None),
         }))
@@ -343,9 +345,13 @@ impl Inner {
         file: &AsyncFile,
         max_len: usize,
     ) -> Result<Request, Completion> {
-        let max_len = max_len.min(BUSY_SIZE);
+        let size = match self.was_full.get() {
+            true => (tune(18, 0) as usize).max(BUSY_SIZE),
+            false => 0,
+        };
+        let max_len = max_len.min(size.max(BUSY_SIZE));
         let done = self.on_read(Inner::on_data);
-        file.read(self.endpoint.buffer(max_len), max_len, done)
+        file.read(self.endpoint.buffer_for(size, max_len), max_len, done)
     }
 
     fn started_read(self: &Rc<Self>, started: Result<Request, Completion>) {
@@ -399,6 +405,8 @@ impl Inner {
 
     fn on_data(self: Rc<Self>, completion: Completion) {
         let (status, mut buffer) = (completion.status, completion.buffer);
+        self.was_full
+            .set(buffer.len() >= BUSY_SIZE && tune(18, 0) > 0);
         if !buffer.is_empty() {
             if buffer.len() >= buffer.capacity().min(BUSY_SIZE) {
                 self.endpoint.expect_much();
@@ -407,7 +415,7 @@ impl Inner {
                 self.endpoint.port.did_receive();
             }
             if tune(14, 0) == 0 && (tune(15, 0) == 0 || buffer.len() < BUSY_SIZE) {
-                self.add_what_followed(&mut buffer, BUSY_SIZE);
+                self.add_what_followed(&mut buffer, tune(19, BUSY_SIZE as u64) as usize);
             }
             self.endpoint.hold(ReadEvent::Data(buffer));
             return self.report_read();

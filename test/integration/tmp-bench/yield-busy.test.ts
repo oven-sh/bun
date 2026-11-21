@@ -1,8 +1,2 @@
 import { bench } from "./run";
-bench(
-  "cond.js",
-  "busy",
-  "50 ms turns,setTimeout,setImmediate,http keep-alive x16,http server k=64,ipc paced",
-  ";17=1",
-  "5",
-);
+bench("cond.js", "busy", "50 ms turns,setTimeout,http keep-alive x16,http server k=64", ";17=0;21=1000000", "5");

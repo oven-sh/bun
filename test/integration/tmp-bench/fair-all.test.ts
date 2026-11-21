@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("fair.js", "all", "stdin,stdin48,stdin70,stdin256", ";16=67108864;16=1073741824", "13");
+bench("fair.js", "all", "stream,buffered", ";18=131072;18=131072,15=1;18=131072,19=131072;18=262144", "15");

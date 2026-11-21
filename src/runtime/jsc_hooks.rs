@@ -2367,9 +2367,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         let pkg = match unsafe {
                             (*transpiler).resolver.read_dir_info(source.path.name().dir)
                         } {
-                            Ok(Some(dir_info)) => {
-                                dir_info.package_json_for_node_scope()
-                            }
+                            Ok(Some(dir_info)) => dir_info.package_json_for_node_scope(),
                             _ => None,
                         };
                         if pkg

@@ -540,23 +540,23 @@ impl PackageJSON {
             match (r.caches.fs).read_file_and_close(package_json_path, dirname_fd) {
                 Ok(contents) => contents.into_boxed_slice(),
                 Err(err) => {
-                if r.validate_package_config
-                    && let crate::Error::Sys(errno) = err
-                {
-                    if !matches!(
-                        errno,
-                        bun_errno::SystemErrno::ENOENT
-                            | bun_errno::SystemErrno::ENOTDIR
-                            | bun_errno::SystemErrno::EISDIR
-                    ) {
-                        return Some(PackageJSON {
-                            node_only: true,
-                            source: bun_ast::Source::init_path_string(package_json_path, b""),
-                            node_error: Some(PackageConfigError::Read(errno)),
-                            ..Default::default()
-                        });
+                    if r.validate_package_config
+                        && let crate::Error::Sys(errno) = err
+                    {
+                        if !matches!(
+                            errno,
+                            bun_errno::SystemErrno::ENOENT
+                                | bun_errno::SystemErrno::ENOTDIR
+                                | bun_errno::SystemErrno::EISDIR
+                        ) {
+                            return Some(PackageJSON {
+                                node_only: true,
+                                source: bun_ast::Source::init_path_string(package_json_path, b""),
+                                node_error: Some(PackageConfigError::Read(errno)),
+                                ..Default::default()
+                            });
+                        }
                     }
-                }
                     if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
                         r_log.add_error_fmt(
                             None,

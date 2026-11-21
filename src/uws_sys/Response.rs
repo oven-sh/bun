@@ -730,12 +730,9 @@ macro_rules! any_dispatch {
     };
 }
 
-/// Stamp the per-variant ZST adapter triplet and register it via the matching
-/// `Response<SSL>` / `H3Response` `$method`.
-/// Each arm is a generic fn *item* monomorphized over `<U, H>`,
-/// so it is itself a ZST satisfying both the `Response<SSL>` bound
-/// (`Fn(*mut U, …)`) and the `H3Response` bound (`Fn(&mut U, …)`). The H3 arm
-/// bridges its `&mut U` to the body's uniform `*mut U` via `ptr::from_mut`.
+/// Stamp one ZST adapter per variant and register it via that variant's `$method`.
+/// Each arm is a generic fn *item* monomorphized over `<U, H>`, so it is itself
+/// a ZST satisfying the `$method` bound (`Fn(*mut U, …)`).
 ///
 /// Syntax:
 ///   any_response_register_cb! {
@@ -743,8 +740,9 @@ macro_rules! any_dispatch {
 ///       <U, H: [bounds…]>
 ///       |u $(, pre: PreTy)* ; r, any $(, post: PostTy)*| -> Ret { body }
 ///   }
-/// - `u` is bound as `*mut U` in the body (H3's `&mut U` is rebound).
-/// - `r` is the typed `&mut {TLS,TCP,H3}Response` param; `any` is the
+/// - `u` is `*mut U`, never `&mut U`: handlers re-enter code that reaches `U`, and a
+///   `noalias` param lets LLVM fold away the ref they hold across that call.
+/// - `r` is the typed `&mut {TLS,TCP,H3,H2}Response` param; `any` is the
 ///   `AnyResponse` re-wrap of `r`. Underscore-prefix either if unused.
 macro_rules! any_response_register_cb {
     (
@@ -762,13 +760,11 @@ macro_rules! any_response_register_cb {
             let $any = AnyResponse::TCP(std::ptr::from_mut($r));
             $($body)*
         }
-        fn h3<$U, $H: $($bound)*>($u: &mut $U $(, $pre: $pre_ty)*, $r: &mut H3Response $(, $post: $post_ty)*) -> $ret {
-            let $u = std::ptr::from_mut::<$U>($u);
+        fn h3<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut H3Response $(, $post: $post_ty)*) -> $ret {
             let $any = AnyResponse::H3(std::ptr::from_mut($r));
             $($body)*
         }
-        fn h2<$U, $H: $($bound)*>($u: &mut $U $(, $pre: $pre_ty)*, $r: &mut H2Response $(, $post: $post_ty)*) -> $ret {
-            let $u = std::ptr::from_mut::<$U>($u);
+        fn h2<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut H2Response $(, $post: $post_ty)*) -> $ret {
             let $any = AnyResponse::H2(std::ptr::from_mut($r));
             $($body)*
         }

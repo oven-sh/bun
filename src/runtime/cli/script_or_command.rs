@@ -95,6 +95,16 @@ fn has_flag(command: &[u8], flag: &[u8]) -> bool {
     }
 }
 
+/// Whether `arg`, which stands before `command`, is a flag of `command` and not of `bun`: `bun --check fmt`, `bun -c fmt`.
+pub(crate) fn is_own_flag_before(command: &[u8], arg: &[u8]) -> bool {
+    let is_of_bun = match bun_core::strings::split_once_char(arg, b'=') {
+        // `bun -c=bunfig.toml lint`. Without a value it's `--check` of `bun fmt`.
+        Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
+        None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
+    };
+    arg.starts_with(b"-") && !is_of_bun && has_flag(command, arg)
+}
+
 /// Where the first of `args` is that is neither a flag of `bun` nor the value of one: the command, or what to run.
 /// There is none with `--eval` and `--print`.
 fn place_of_first_word(args: &[&[u8]]) -> Option<usize> {
@@ -254,7 +264,10 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
     let args: Vec<&[u8]> = bun_core::argv().into_iter().collect();
     // What follows the name of a script is for the script.
     let at = place_of_first_word(&args);
-    let has_arguments = at.is_some_and(|at| args.get(at + 1).is_some_and(|next| *next != b"--"));
+    let has_arguments = at.is_some_and(|at| {
+        args.get(at + 1).is_some_and(|next| *next != b"--")
+            || (args[1..at].iter()).any(|arg| is_own_flag_before(command, arg))
+    });
     let before = at.map_or(&args[..], |at| &args[..at]);
     let mut before = before.iter().copied();
     let mut given = None;

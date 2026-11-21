@@ -11970,7 +11970,8 @@ describe.concurrent("a script, file or executable named lint", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0 && exitCode !== 1) console.error(`bun ${cmd.join(" ")}: exit code ${exitCode}\n${stderr}`);
       return { stdout, ranTheScript: readFileSync(join(cwd, "a.ts"), "utf8") !== source, exitCode };
     }
 
@@ -11994,6 +11995,7 @@ describe.concurrent("a script, file or executable named lint", () => {
         () => ({ npm_lifecycle_event: "lint:check", npm_package_name: "sibling" }),
       ],
       ["when arguments are passed on to the other script", issue, [...runCheck, "--quiet"], none],
+      ["when the only argument stands before lint", { ...issue, "lint:check": "bun --quiet lint" }, runCheck, none],
     ])(
       "with arguments, is the linter if the lint script starts with bun lint: %s",
       async (_, scripts, cmd, variables) => {
@@ -12018,8 +12020,8 @@ describe.concurrent("a script, file or executable named lint", () => {
       symlinkSync(bunExe(), join(String(dir), "node_modules", ".bin", "bun"));
       const cmd = [bunExe(), "pm", "pack", "--dry-run"];
       await using proc = spawn({ cmd, env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toContain("prefer-const");
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toContain("prefer-const");
       expect(readFileSync(join(String(dir), "a.ts"), "utf8")).toBe(source);
       expect(exitCode).toBe(1);
     });
@@ -12128,7 +12130,8 @@ describe.concurrent("a script, file or executable named lint", () => {
             stdout: "pipe",
             stderr: "pipe",
           });
-          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
           expect(exitCode).toBe(0);
           return [lint, stdout.includes("so bun lint runs that script") ? "the script" : "the linter"];
         }),

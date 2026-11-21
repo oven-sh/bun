@@ -10200,18 +10200,19 @@ describe.concurrent("a fmt script in package.json", () => {
 
   // `"fmt:check": "bun fmt --check ."` beside `"fmt": "bun fmt --write ."` rewrote the file and exited with 0.
   test.each([
-    ["the formatter if the fmt script starts with bun fmt", "bun fmt --write .", "2 files need formatting.", 1],
-    ["the fmt script if that is another tool", "echo the script", "the script --check .", 0],
-  ])("with arguments in another script, bun fmt is %s", async (_, fmt, printed, exitCode) => {
+    ["the formatter if the fmt script starts with bun fmt", "bun fmt --write .", "bun fmt --check .", 1],
+    ["the formatter also where the flag stands before fmt", "bun fmt --write .", "bun --check fmt", 1],
+    ["the fmt script if that is another tool", "echo the script", "bun fmt --check .", 0],
+  ])("with arguments in another script, bun fmt is %s", async (_, fmt, check, exitCode) => {
     using dir = tempDir("bun-format-sibling", {
-      "package.json": JSON.stringify({ scripts: { fmt, "fmt:check": "bun fmt --check ." } }),
+      "package.json": JSON.stringify({ scripts: { fmt, "fmt:check": check } }),
       "a.js": ugly,
     });
     // With `--bun`, the `bun` of the scripts is this one.
     const cmd = [bunExe(), "--bun", "run", "fmt:check"];
     await using proc = spawn({ cmd, env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout + stderr).toContain(printed);
+    expect(stdout + stderr).toContain(exitCode === 1 ? "2 files need formatting." : "the script --check .");
     expect(readFileSync(join(String(dir), "a.js"), "utf8")).toBe(ugly);
     expect(exited).toBe(exitCode);
   });

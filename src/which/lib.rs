@@ -22,9 +22,9 @@ mod scope {
 }
 use scope::which as which_log;
 
-/// Writes `[cwd/]segment/bin\0` into `buf` and stats it as an executable.
+/// Writes `[cwd/]segment/bin\0` into `buf`.
 #[cfg(not(windows))]
-fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Option<u16> {
+fn write_candidate(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Option<u16> {
     fn len_with_sep(part: &[u8]) -> usize {
         match part.last() {
             None => 0,
@@ -49,18 +49,81 @@ fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Opt
         buf[cwd_prefix_len + segment.len()] = SEP;
     }
     buf[prefix_len..prefix_len + bin.len()].copy_from_slice(bin);
-    let filepath = ZStr::nul_terminate(buf, len);
-    if !bun_sys::is_executable_file_path(filepath) {
-        return None;
+    ZStr::nul_terminate(buf, len);
+    Some(u16::try_from(len).expect("int cast"))
+}
+
+#[cfg(not(windows))]
+fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Option<u16> {
+    let len = write_candidate(buf, cwd, segment, bin)?;
+    let filepath = ZStr::from_buf(&buf[..], len as usize);
+    bun_sys::is_executable_file_path(filepath).then_some(len)
+}
+
+/// Preserve a denied PATH candidate when no executable can be selected.
+pub fn which_for_spawn<'a>(
+    buf: &'a mut PathBuffer,
+    path: &[u8],
+    cwd: &[u8],
+    bin: &[u8],
+) -> Result<Option<&'a ZStr>, bun_sys::E> {
+    #[cfg(windows)]
+    {
+        Ok(which_for_spawn_windows(buf, path, cwd, bin))
     }
-    Some(u16::try_from(filepath.len()).expect("int cast"))
+    #[cfg(not(windows))]
+    {
+        if bin.is_empty() || bin.len() >= MAX_PATH_BYTES {
+            return Ok(None);
+        }
+        if strings::index_of_char(bin, b'/').is_some() {
+            return Ok(which(buf, path, cwd, bin));
+        }
+        let mut cwd_prefix = cwd;
+        while cwd_prefix.len() > 1 && cwd_prefix.last() == Some(&SEP) {
+            cwd_prefix = &cwd_prefix[..cwd_prefix.len() - 1];
+        }
+        let mut permission_denied = false;
+        for segment in strings::tokenize(path, &[DELIMITER]) {
+            let prefix = if is_absolute(segment) {
+                b"".as_slice()
+            } else {
+                cwd_prefix
+            };
+            let Some(len) = write_candidate(buf, prefix, segment, bin) else {
+                continue;
+            };
+            let candidate = ZStr::from_buf(&buf[..], len as usize);
+            if bun_sys::is_executable_file_path(candidate) {
+                // Probe relative to the child cwd, but exec runs after chdir.
+                let len = if !is_absolute(cwd_prefix) && !is_absolute(segment) {
+                    write_candidate(buf, b"", segment, bin)
+                        .expect("removing the cwd prefix cannot lengthen the candidate")
+                } else {
+                    len
+                };
+                return Ok(Some(ZStr::from_buf(&buf[..], len as usize)));
+            }
+            match bun_sys::stat(candidate) {
+                Ok(_) => permission_denied = true,
+                Err(err) if err.errno == bun_sys::E::EACCES as u16 => permission_denied = true,
+                _ => {}
+            }
+        }
+        if permission_denied {
+            Err(bun_sys::E::EACCES)
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 /// `which()` for spawn-style executable resolution. Windows resolves bare
 /// names against the working directory before `$PATH` (CreateProcessW search
 /// order; libuv and Node.js spawn behave the same), unlike `which()` which is
 /// `$PATH`-only for bare names on every platform.
-pub fn which_for_spawn<'a>(
+#[cfg(windows)]
+fn which_for_spawn_windows<'a>(
     buf: &'a mut PathBuffer,
     path: &[u8],
     cwd: &[u8],

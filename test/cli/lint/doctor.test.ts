@@ -114,6 +114,7 @@ describe.concurrent("bun lint --doctor", () => {
         eslint.config.js        1
     2 rules do not run
         1 is not supported: no-such-rule
+            bun lint exits with code 2 because of it. Use --allow-unsupported to make that a warning
         1 is a formatting rule, use bun fmt: indent
 
 You can remove: eslint, eslint-plugin-never-imported
@@ -145,6 +146,7 @@ Not checked:    other tools' configs, CI files, Git hooks
             { rule: "no-such-rule", reason: "not_supported" },
             { rule: "indent", reason: "formatting" },
           ],
+          unsupported: ["no-such-rule"],
         },
         packages: {
           removable: ["eslint", "eslint-plugin-never-imported"],
@@ -219,6 +221,7 @@ Not checked:    other tools' configs, CI files, Git hooks
         eslint-plugin-first    1
     2 rules do not run
         1 is not supported: vue/no-arrow-functions-in-watch
+            bun lint exits with code 2 because of it. Use --allow-unsupported to make that a warning
         1 needs types, use --type-aware: @typescript-eslint/no-floating-promises
 
 You can remove: oxlint, oxlint-tsgolint
@@ -239,10 +242,106 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(text.stdout).toContain(`
     8 rules do not run
         4 are not supported: no-such-rule, nor-any, nor-that, nor-this
+            bun lint exits with code 2 because of them. Use --allow-unsupported to make that a warning
         4 are formatting rules, use bun fmt: comma-dangle, indent, quotes, ..
 `);
     expect(JSON.parse(json.stdout).rules.not_run).toContainEqual({ rule: "semi", reason: "formatting" });
     expect(text.exitCode).toBe(0);
+  });
+
+  describe("says if bun lint exits with code 2 because a rule is not supported", () => {
+    const project = (config: object) => ({ ".oxlintrc.json": JSON.stringify(config), "a.ts": "export const a = 1;\n" });
+    const jsdoc = project({ plugins: ["jsdoc"], rules: { "jsdoc/check-access": "error" } });
+    const unknown = JSON.stringify({ rules: { "no-such-rule": "error" } });
+    const allowed = { ...jsdoc, "bunfig.toml": `[lint]\nallowUnsupported = true\n` };
+
+    test("in the text report, apart from a plugin that has no rules", async () => {
+      const [text, json] = await Promise.all([doctor(jsdoc), doctor(jsdoc, ["-f", "json"])]);
+      expect(text.stdout).toContain(`
+    2 rules do not run
+        1 is not supported: jsdoc/check-access
+            bun lint exits with code 2 because of it. Use --allow-unsupported to make that a warning
+        1 plugin has no rules in bun lint: jsdoc/*
+`);
+      const { not_run, unsupported } = JSON.parse(json.stdout).rules;
+      expect({ not_run, unsupported }).toEqual({
+        not_run: [
+          { rule: "jsdoc/check-access", reason: "not_supported" },
+          { rule: "jsdoc/*", reason: "not_supported" },
+        ],
+        unsupported: ["jsdoc/check-access"],
+      });
+      expect(text.stderr).toBe("");
+      expect(text.exitCode).toBe(0);
+      expect(json.exitCode).toBe(0);
+    });
+
+    // Each row: the project, the flags, the rules with the reason `not_supported`, `rules.unsupported`, and the exit
+    // code of `bun lint` itself.
+    test.each<[string, Record<string, string>, string[], string[], string[], number]>([
+      ["a rule that is not supported", jsdoc, [], ["jsdoc/check-access", "jsdoc/*"], ["jsdoc/check-access"], 2],
+      [
+        "a plugin that has no rules, which bun lint only notes",
+        project({ plugins: ["jsdoc"], rules: { "no-var": "error" } }),
+        [],
+        ["jsdoc/*"],
+        [],
+        0,
+      ],
+      ["--allow-unsupported", jsdoc, ["--allow-unsupported"], ["jsdoc/check-access", "jsdoc/*"], [], 0],
+      ["allowUnsupported in bunfig.toml", allowed, [], ["jsdoc/check-access", "jsdoc/*"], [], 0],
+      [
+        "--no-allow-unsupported with bunfig.toml",
+        allowed,
+        ["--no-allow-unsupported"],
+        ["jsdoc/check-access", "jsdoc/*"],
+        ["jsdoc/check-access"],
+        2,
+      ],
+      [
+        "a nested config that no linted file uses",
+        { ...project({ rules: { "no-var": "error" } }), "sub/.oxlintrc.json": unknown, "sub/notes.txt": "" },
+        [],
+        ["no-such-rule"],
+        ["no-such-rule"],
+        2,
+      ],
+      [
+        "the same rule in two configs",
+        { ".oxlintrc.json": unknown, "a.ts": "", "sub/.oxlintrc.json": unknown, "sub/b.ts": "" },
+        [],
+        ["no-such-rule"],
+        ["no-such-rule"],
+        2,
+      ],
+    ])("%s", async (_, files, flags, notSupported, unsupported, lintExitCode) => {
+      using dir = tempDir("bun-lint-doctor", files);
+      const run = async (args: string[]) => {
+        await using proc = spawn({
+          cmd: [bunExe(), "lint", "--no-script", "--threads", "2", ...flags, ...args],
+          env,
+          cwd: String(dir),
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, exitCode };
+      };
+      const [text, json, lint] = await Promise.all([run(["--doctor"]), run(["--doctor", "-f", "json"]), run(["."])]);
+      const { rules } = JSON.parse(json.stdout);
+      const rows = rules.not_run.filter((it: { reason: string }) => it.reason === "not_supported");
+      expect({ not_supported: rows.map((it: { rule: string }) => it.rule), unsupported: rules.unsupported }).toEqual({
+        not_supported: notSupported,
+        unsupported,
+      });
+      expect(text.stdout.includes("bun lint exits with code 2 because of it.")).toBe(unsupported.length > 0);
+      expect({ lint: lint.exitCode, text: text.exitCode, json: json.exitCode }).toEqual({
+        lint: lintExitCode,
+        text: 0,
+        json: 0,
+      });
+    });
   });
 
   test("the React rules are on in a project that depends on react", async () => {
@@ -269,7 +368,12 @@ Not checked:    other tools' configs, CI files, Git hooks
       ["-f", "json", "--type-aware"],
     );
     const { rules } = JSON.parse(stdout);
-    expect(rules).toEqual({ native: ["@typescript-eslint/no-floating-promises"], javascript: {}, not_run: [] });
+    expect(rules).toEqual({
+      native: ["@typescript-eslint/no-floating-promises"],
+      javascript: {},
+      not_run: [],
+      unsupported: [],
+    });
     expect(exitCode).toBe(0);
   });
 
@@ -295,6 +399,7 @@ Not checked:    other tools' configs, CI files, Git hooks
         native: ["no-var"],
         javascript: { "eslint-plugin-first": ["first/a"] },
         not_run: [{ rule: "semi", reason: "formatting" }],
+        unsupported: [],
       });
       expect(packages.removable).toEqual(["eslint"]);
       expect(packages.needed).toEqual([{ name: "eslint-plugin-first", reason: "rules", by: null }]);
@@ -327,7 +432,11 @@ Not checked:    other tools' configs, CI files, Git hooks
       "c.foo": "",
     };
     const eslint = { "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0" }) };
-    const [installed, missing] = await Promise.all([doctor({ ...files, ...eslint }), doctor(files)]);
+    const [installed, missing, allowed] = await Promise.all([
+      doctor({ ...files, ...eslint }),
+      doctor(files),
+      doctor(files, ["--allow-unsupported"]),
+    ]);
     expect(installed.stdout).toBe(`Using eslint.config.js (ESLint flat config)
 
     4 files to lint
@@ -343,14 +452,18 @@ Still needed:   eslint (some files go to it)
     2 files to lint
     2 files cannot be linted: 2 *.foo
         Install eslint to lint them
+        bun lint exits with code 2 because of them. Use --allow-unsupported to make that a warning
 
     1 rule runs natively
     0 rules run in JavaScript
 
 Still needed:   eslint (some files go to it)
 `);
+    expect(allowed.stdout).toBe(missing.stdout.replace(/^ +bun lint exits with code 2 .*\n/m, ""));
+    expect(allowed.stdout).not.toBe(missing.stdout);
     expect(installed.exitCode).toBe(0);
     expect(missing.exitCode).toBe(0);
+    expect(allowed.exitCode).toBe(0);
   });
 
   test("with both an ESLint and an oxlint config, says which one is used and why", async () => {

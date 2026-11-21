@@ -179,6 +179,8 @@ pub(crate) fn write_notes(out: &mut Vec<u8>, colors: bool, notes: &[Vec<u8>]) {
 enum Reason {
     /// It isn't built in, and none of the config's plugins has it.
     NotSupported,
+    /// Every rule of a plugin that has no rules here. A run only prints a note about it.
+    PluginWithoutRules,
     /// Same, but for an ESLint 8 config. ESLint 8 reports the missing definition in every file.
     NotDefined,
     /// `bun fmt` does its job.
@@ -190,7 +192,7 @@ enum Reason {
 impl Reason {
     fn key(self) -> &'static [u8] {
         match self {
-            Reason::NotSupported => b"not_supported",
+            Reason::NotSupported | Reason::PluginWithoutRules => b"not_supported",
             Reason::NotDefined => b"not_defined",
             Reason::Formatting => b"formatting",
             Reason::NeedsTypes => b"needs_types",
@@ -202,6 +204,8 @@ impl Reason {
         match (self, count) {
             (Reason::NotSupported, 1) => "is not supported",
             (Reason::NotSupported, _) => "are not supported",
+            (Reason::PluginWithoutRules, 1) => "plugin has no rules in bun lint",
+            (Reason::PluginWithoutRules, _) => "plugins have no rules in bun lint",
             (Reason::NotDefined, 1) => "is not defined by any plugin",
             (Reason::NotDefined, _) => "are not defined by any plugin",
             (Reason::Formatting, 1) => "is a formatting rule, use bun fmt",
@@ -258,7 +262,7 @@ impl Rules {
         let plugins = config.plugins_without_rules.iter();
         let all_of = |prefix: &str| [prefix.as_bytes(), b"/*"].concat();
         self.not_run
-            .extend(plugins.map(|it| (Reason::NotSupported, all_of(it.prefix()))));
+            .extend(plugins.map(|it| (Reason::PluginWithoutRules, all_of(it.prefix()))));
     }
 
     fn finish(&mut self) {
@@ -401,6 +405,19 @@ pub(crate) fn lint(
     rules
         .not_run
         .extend(unknown.map(|it| (Reason::NotSupported, it.to_vec())));
+    // The rules a run exits with code 2 for. It also loads the configs that no file here uses.
+    let mut fails_on = {
+        let queued = loader.unsupported.lock();
+        let rules = queued.iter().flat_map(|it| &it.rules);
+        sorted(rules.map(|it| it.to_vec()).collect())
+    };
+    let rows = fails_on.iter().cloned();
+    rules
+        .not_run
+        .extend(rows.map(|it| (Reason::NotSupported, it)));
+    if options.allow_unsupported {
+        fails_on.clear();
+    }
     rules.finish();
     if rules.has_types && own.flavor != Flavor::Oxlint {
         loader.advise_about_typescript();
@@ -490,6 +507,7 @@ pub(crate) fn lint(
                     (b"native", texts(&rules.native)),
                     (b"javascript", Json::Object(javascript.collect())),
                     (b"not_run", Json::Array(not_run.collect())),
+                    (b"unsupported", texts(&fails_on)),
                 ]),
             ),
             (b"packages", packages.json()),
@@ -555,6 +573,12 @@ pub(crate) fn lint(
     out.push(b'\n');
     let noun =
         |count: usize, one: &'static str, many: &'static str| if count == 1 { one } else { many };
+    let exits_because_of = |count: usize| {
+        let what = noun(count, "it", "them");
+        format!(
+            "bun lint exits with code 2 because of {what}. Use --allow-unsupported to make that a warning"
+        )
+    };
     write_count(
         &mut out,
         colors,
@@ -576,6 +600,10 @@ pub(crate) fn lint(
                 colors,
                 "        <d>Install eslint to lint them<r>\n"
             );
+        }
+        if !options.allow_unsupported {
+            let hint = exits_because_of(not_linted.count());
+            pretty!(&mut out, colors, "        <d>{}<r>\n", hint);
         }
     }
     out.push(b'\n');
@@ -636,6 +664,10 @@ pub(crate) fn lint(
                     ""
                 }
             );
+            if *reason == Reason::NotSupported && !fails_on.is_empty() {
+                let hint = exits_because_of(fails_on.len());
+                pretty!(&mut out, colors, "            <d>{}<r>\n", hint);
+            }
         }
     }
     packages.write(&mut out, colors);

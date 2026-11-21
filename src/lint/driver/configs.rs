@@ -449,6 +449,15 @@ impl Loaded {
 
 pub(crate) type Found = Result<Arc<Loaded>, Fatal>;
 
+/// An entry of [`Loader::unsupported`].
+pub(crate) struct Unsupported {
+    /// What the run prints.
+    pub(crate) line: Vec<u8>,
+    /// The rules `line` names, if it's about rules that don't exist here. Only `--doctor` reads them, so they stay
+    /// empty without it.
+    pub(crate) rules: Vec<Box<[u8]>>,
+}
+
 pub(crate) struct Loader<'l> {
     pub(crate) linter: &'l Linter,
     options: &'l Options,
@@ -462,10 +471,10 @@ pub(crate) struct Loader<'l> {
     by_file: Guarded<FxHashMap<Vec<u8>, Arc<OnceLock<Found>>>>,
     /// Warnings for the user, in the order they came up.
     pub(crate) warnings: Guarded<Vec<Vec<u8>>>,
-    /// Things a configuration asks for that aren't supported, one line each: rules that don't exist here, files in a
-    /// language that isn't parsed here. Silently doing less than the tool being replaced and finding no problems is
-    /// worse than failing.
-    pub(crate) unsupported: Guarded<Vec<Vec<u8>>>,
+    /// Things a configuration asks for that aren't supported: rules that don't exist here, files in a language that
+    /// isn't parsed here. Silently doing less than the tool being replaced and finding no problems is worse than
+    /// failing.
+    pub(crate) unsupported: Guarded<Vec<Unsupported>>,
     /// Suggestions for the user, one line each. They aren't problems.
     pub(crate) advice: Guarded<Vec<Vec<u8>>>,
     /// [`eslintrc::uses_flat_config`]
@@ -1009,10 +1018,19 @@ impl<'l> Loader<'l> {
 
     /// Adds to [`Loader::unsupported`].
     pub(crate) fn add_unsupported(&self, parts: &[&[u8]]) {
+        self.add_unsupported_rules(parts, &[]);
+    }
+
+    /// Adds a line about `rules`, which don't exist here, to [`Loader::unsupported`].
+    fn add_unsupported_rules(&self, parts: &[&[u8]], rules: &[&[u8]]) {
         let line = parts.concat();
         let mut unsupported = self.unsupported.lock();
-        if !unsupported.contains(&line) {
-            unsupported.push(line);
+        if unsupported.iter().all(|it| it.line != line) {
+            let rules = match self.options.doctor {
+                true => rules.iter().map(|it| Box::from(*it)).collect(),
+                false => Vec::new(),
+            };
+            unsupported.push(Unsupported { line, rules });
         }
     }
 
@@ -2061,7 +2079,7 @@ impl<'l> Loader<'l> {
                 .concat(),
                 false => Vec::new(),
             };
-            self.add_unsupported(&[
+            let line: [&[u8]; 7] = [
                 &count,
                 noun,
                 file,
@@ -2069,7 +2087,8 @@ impl<'l> Loader<'l> {
                 b" not supported: ",
                 &rules.join(&b", "[..]),
                 &hint,
-            ]);
+            ];
+            self.add_unsupported_rules(&line, &rules);
         }
     }
 

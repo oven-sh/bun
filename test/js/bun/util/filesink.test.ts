@@ -1662,6 +1662,47 @@ describe.concurrent("start() on an open writer", () => {
     expect(result).toEqual({ target: "short", initial: "", closed: "all" });
   });
 
+  // Elsewhere a file is written before the call returns.
+  describe.skipIf(!isWindows).each(["flush", "end"])("start({ path }) with a pending %s()", method => {
+    it.each(["setImmediate(run)", "process.once('beforeExit', run)"])("settles it, in %s", async schedule => {
+      const result = await run(`
+        async function run() {
+          const initial = join(dir, "initial.txt");
+          const target = join(dir, "target.txt");
+          const writer = Bun.file(initial).writer();
+          writer.write(Buffer.alloc(8 << 20));
+          const next = writer.${method}().then(() => {
+            const { size } = fs.statSync(initial);
+            writer.write("second");
+            return size;
+          });
+          writer.start({ path: target });
+          const size = await next;
+          await writer.end();
+          console.log(JSON.stringify({ size, target: read(target), closed: await closed() }));
+        }
+        ${schedule};
+      `);
+      expect(result).toEqual({ size: 8 << 20, target: "second", closed: "all" });
+    });
+
+    it("rejects it if the write fails", async () => {
+      const result = await run(`
+        fs.writeFileSync(join(dir, "initial.txt"), "");
+        const fd = fs.openSync(join(dir, "initial.txt"), "r");
+        const writer = Bun.file(fd).writer();
+        writer.write("first");
+        const pending = writer.${method}();
+        writer.start({ path: join(dir, "target.txt") });
+        const code = await pending.catch(error => error.code);
+        writer.write("second");
+        await writer.end();
+        console.log(JSON.stringify({ code, target: read(join(dir, "target.txt")) }));
+      `);
+      expect(result).toEqual({ code: "EBADF", target: "second" });
+    });
+  });
+
   it.skipIf(!isLinux)("start({ path }) moves a writer from a regular file to a FIFO and closes the file", async () => {
     const result = await run(`
       const target = join(dir, "fifo");

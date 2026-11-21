@@ -1212,6 +1212,11 @@ impl WindowsStreamingWriter {
             && self.base.with_source(WriteSource::is_file) == Some(true)
     }
 
+    /// Waits for the one in flight.
+    pub fn finish_write_to_disk(&self) -> sys::Result<()> {
+        (self.base.with_source(WriteSource::finish_write_to_disk)).unwrap_or(Ok(()))
+    }
+
     /// Bytes accepted from callers that have not reached the fd yet.
     pub fn buffered_len(&self) -> usize {
         self.queued_len() + self.base.payload_len.get()

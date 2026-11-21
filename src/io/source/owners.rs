@@ -88,7 +88,7 @@ impl Drop for Owners {
 pub fn finish_writes_to_disk() {
     let open: Vec<_> = OPEN.with_borrow(|open| open.iter().filter_map(Weak::upgrade).collect());
     for owners in open {
-        if owners.disk_write.take().is_some_and(|write| write.finish()) {
+        if (owners.disk_write.take()).is_some_and(|write| write.run().is_ok()) {
             owners.report_write(WriteEvent::WriteRestNow);
         }
     }

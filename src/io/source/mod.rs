@@ -236,6 +236,12 @@ impl WriteSource {
         }
     }
 
+    /// The event follows nevertheless.
+    pub(crate) fn finish_write_to_disk(&self) -> sys::Result<()> {
+        let write = self.0.endpoint().owners.disk_write.take();
+        write.map_or(Ok(()), |write| write.run())
+    }
+
     /// For `WriteEvent::WriteRestNow`.
     pub(crate) fn write_rest(&self, bytes: &[u8]) {
         if let Source::File(file) = &self.0 {

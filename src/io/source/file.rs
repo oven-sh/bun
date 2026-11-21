@@ -1,7 +1,7 @@
 use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use bun_iocp::blocking::{self, Cancel};
 use bun_iocp::{Port, Request};
@@ -34,28 +34,21 @@ impl Drop for OwnedFd {
 /// For the first thread that gets to it.
 pub(super) struct Write {
     fd: Arc<OwnedFd>,
-    is_claimed: AtomicBool,
-    is_written: AtomicBool,
+    is_cancelled: AtomicBool,
+    result: OnceLock<sys::Result<()>>,
     /// Locked while they are written.
     bytes: Guarded<Vec<u8>>,
 }
 
 impl Write {
     /// Waits for a thread that was there before.
-    fn run(&self) -> sys::Result<()> {
+    pub(super) fn run(&self) -> sys::Result<()> {
         let bytes = self.bytes.lock();
-        if self.is_claimed.swap(true, Ordering::SeqCst) {
-            return Err(sys::Error::from_code(E::ECANCELED, Tag::write));
-        }
-        sys::File::borrow(&self.fd.fd).write_all(&bytes)?;
-        self.is_written.store(true, Ordering::SeqCst);
-        Ok(())
-    }
-
-    /// `true` if the bytes are written, by whichever thread.
-    pub(super) fn finish(&self) -> bool {
-        let _ = self.run();
-        self.is_written.load(Ordering::SeqCst)
+        let write = || match self.is_cancelled.load(Ordering::SeqCst) {
+            true => Err(sys::Error::from_code(E::ECANCELED, Tag::write)),
+            false => sys::File::borrow(&self.fd.fd).write_all(&bytes),
+        };
+        self.result.get_or_init(write).clone()
     }
 }
 
@@ -118,8 +111,8 @@ impl File {
         let (request, remote) = Request::remote(&self.0.endpoint.port, done);
         let write = Arc::new(Write {
             fd: Arc::clone(&self.0.fd),
-            is_claimed: AtomicBool::new(false),
-            is_written: AtomicBool::new(false),
+            is_cancelled: AtomicBool::new(false),
+            result: OnceLock::new(),
             bytes: Guarded::new(buffer),
         });
         let (job, pending) = (Arc::clone(&write), self.0.endpoint.port.pending_write());
@@ -143,7 +136,7 @@ impl File {
     pub(super) fn cancel_write_unless_started(&self) {
         self.0.write.with_taken(|write| {
             if let Some((_, write)) = write {
-                write.is_claimed.store(true, Ordering::SeqCst);
+                write.is_cancelled.store(true, Ordering::SeqCst);
             }
         });
     }

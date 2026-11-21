@@ -510,6 +510,22 @@ impl FileSink {
         }
     }
 
+    /// Its end is not reported once the file is another one. What reacts to the promise runs after `start()`.
+    #[cfg(windows)]
+    fn settle_last_write_to_file(&self) {
+        if self.pending.get().state == streams::PendingState::Pending
+            && !self.writer.is_backed_up()
+            && self.writer.is_writing_to_file()
+        {
+            let mut pending = self.pending.take();
+            if let Err(err) = self.writer.finish_write_to_disk() {
+                pending.result = streams::Writable::Err(err);
+            }
+            pending.run();
+            self.js_sink_ref.set(Default::default());
+        }
+    }
+
     pub(crate) fn setup(
         &self,
         options: &Options,
@@ -607,6 +623,7 @@ impl FileSink {
         let event_loop = self.event_loop_handle.as_event_loop_ctx();
         #[cfg(windows)]
         {
+            self.settle_last_write_to_file();
             if self.force_sync.get() {
                 self.writer.start_sync(self, file.into())?;
                 self.writer.update_ref(false);

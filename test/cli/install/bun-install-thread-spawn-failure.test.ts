@@ -4,7 +4,7 @@
 // it must be reported as a plain error with exit code 1 instead of going
 // through the crash reporter ("oh no: Bun has crashed", bun.report link).
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, compileFixture, isASAN, isLinux, isMusl, tempDir } from "harness";
+import { bunEnv, bunExe, compileFixture, isASAN, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -187,3 +187,38 @@ test.skipIf(!isLinux || isMusl || isASAN || !cc)(
     }
   },
 );
+
+// Network requests need %SystemRoot% on Windows. The thread that asks for the HTTP client thread
+// checks for it, so the command stops before it runs. The value is empty and not missing, because
+// libuv copies a missing %SystemRoot% from the parent process.
+test.skipIf(!isWindows)("bun pm bin stops in every run when %SystemRoot% is not set", async () => {
+  using dir = tempDir("install-no-systemroot", {
+    "package.json": JSON.stringify({ name: "no-systemroot", version: "1.0.0" }),
+  });
+  const env = {
+    ...Object.fromEntries(Object.entries(bunEnv).filter(([name]) => name.toLowerCase() !== "systemroot")),
+    SystemRoot: "",
+    BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+  };
+  const runs = await Promise.all(
+    Array.from({ length: 5 }, async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "bin"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }),
+  );
+  expect(runs).toEqual(
+    Array(5).fill({
+      stdout: "",
+      stderr:
+        "error: The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.\n",
+      exitCode: 1,
+    }),
+  );
+});

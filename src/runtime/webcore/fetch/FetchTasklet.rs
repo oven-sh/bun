@@ -2260,7 +2260,7 @@ impl FetchTasklet {
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
-        http::http_thread::init(&http::http_thread::InitOpts::default());
+        http::http_thread::init(http::http_thread::InitOpts::default());
         let (node, request) = Self::get(cx, fetch_options, promise)?;
 
         let node_ref = Self::from_raw_mut(node);

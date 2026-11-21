@@ -451,7 +451,7 @@ unsafe fn __bun_resolver_init_package_manager(
     // both sides byte-identical or the `Result` layout diverges.
     //
     // Idempotent.
-    bun_http::http_thread::init(&Default::default());
+    bun_http::http_thread::init(Default::default());
 
     // SAFETY: when `Some`, `install` points at a live `Api::BunInstall`
     // (see `run_command::wire_transpiler_from_ctx`); read-only borrow.

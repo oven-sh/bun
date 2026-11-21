@@ -337,7 +337,7 @@ pub(crate) fn list_objects(
     task.async_http_id = http.async_http_id;
 
     // queue http request
-    bun_http::http_thread::init(&Default::default());
+    bun_http::http_thread::init(Default::default());
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());
@@ -703,7 +703,7 @@ fn download_stream(
     // enable streaming
     http.enable_response_body_streaming();
     // queue http request
-    bun_http::http_thread::init(&Default::default());
+    bun_http::http_thread::init(Default::default());
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());

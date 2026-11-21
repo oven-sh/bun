@@ -287,7 +287,7 @@ pub fn preconnect(href: Href) {
         return;
     }
 
-    crate::http_thread::init(&Default::default());
+    crate::http_thread::init(Default::default());
 
     let href = bun_core::heap::into_raw(Box::new(href));
     // SAFETY: freed after the request that borrows it.
@@ -477,7 +477,7 @@ impl SyncResultSlot {
 }
 
 fn send_and_wait<'a>(requests: impl Iterator<Item = Box<AsyncHTTP<'a>>>, slots: &[SyncResultSlot]) {
-    crate::http_thread::init(&Default::default());
+    crate::http_thread::init(Default::default());
     crate::HTTPThread::schedule(slots.iter().zip(requests).map(|(slot, mut request)| {
         request.client.result_callback = HTTPClientResultCallback::new(
             core::ptr::from_ref(slot).cast_mut(),

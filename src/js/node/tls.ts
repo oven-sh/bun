@@ -1026,7 +1026,7 @@ TLSSocket.prototype.getX509Certificate = function getX509Certificate() {
 TLSSocket.prototype[buntls] = function () {
   const ctx = this[ksecureContext];
   // An empty native serverName suppresses its connection-host fallback; tls.connect does not infer SNI.
-  const servername = this.servername || this[kservername] || "";
+  const servername = this.servername || this[kservername] || ctx?.servername || "";
   return {
     ALPNProtocols: this.ALPNProtocols,
     checkServerIdentity: this[kcheckServerIdentity],

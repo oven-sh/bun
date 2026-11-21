@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9779eb92083d8138be587f9852f9929506e63c7d50ee20e856e8613b4706a47d.
+// Written against that file with the SHA-256 b4770460bfbaf63ef739a1fe5ca26deedddc61166eefe458e4fa7cc7b080e5a6.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
@@ -1175,7 +1175,7 @@ TLSSocket.prototype.getX509Certificate = function getX509Certificate(this: $Node
 TLSSocket.prototype[buntls] = function (this: $Node.TLSSocket) {
   const ctx = this[ksecureContext];
   // An empty native serverName suppresses its connection-host fallback; tls.connect does not infer SNI.
-  const servername = this.servername || this[kservername] || "";
+  const servername = this.servername || this[kservername] || ctx?.servername || "";
   return {
     ALPNProtocols: this.ALPNProtocols,
     checkServerIdentity: this[kcheckServerIdentity],

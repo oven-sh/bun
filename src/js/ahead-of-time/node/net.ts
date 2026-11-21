@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d6861dbd59c52394231c89ff7bae0bcff81e31756f79b40db9ee7cee0562b4a5.
+// Written against that file with the SHA-256 5b860caef5d847e8ec62b761fd76720558b04001a65dd29dbecfa0949bf6de93.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -1075,6 +1075,7 @@ function onClientHandshake(
   self._securePending = false;
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
+  self.servername = self.servername || false;
   self.alpnProtocol = socket.alpnProtocol;
   // Node has no try/catch around these emits; a listener throw reaches
   // InternalCallbackScope as uncaughtException. reportError mirrors that

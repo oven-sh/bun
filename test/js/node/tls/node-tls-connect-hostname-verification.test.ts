@@ -8,6 +8,11 @@ import net, { type AddressInfo } from "node:net";
 import path from "node:path";
 import { describe, test } from "node:test";
 import tls from "node:tls";
+import {
+  expected as expectedServername,
+  observe as observeServername,
+  cases as servernameCases,
+} from "./node-tls-servername-fixture.mjs";
 
 // Server presents a cert for CN=agent1 (no SAN), signed by ca1.
 // A client connecting to host "localhost" with ca1 trusted will pass chain
@@ -604,4 +609,13 @@ describe("Bun.connect TLS hostname verification", () => {
       listener.stop(true);
     }
   });
+});
+
+// The same fixture runs directly under Node.js 24.21.0.
+describe("TLS servername selection", () => {
+  for (const scenario of servernameCases) {
+    test(`${scenario.transport} host=${scenario.host} servername=${String(scenario.servername)}`, async () => {
+      assert.deepStrictEqual(await observeServername(scenario), expectedServername(scenario));
+    });
+  }
 });

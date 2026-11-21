@@ -43,11 +43,11 @@ pub fn from_portable_rooted(text: &[u8]) -> Cow<'_, [u8]> {
     strings::replace_char(text, b'\\', b'/')
 }
 
-/// [`from_portable_rooted`] for `.\a` and `\a`. `a\b` stays, since `a/b` would name a package.
+/// [`from_portable`] for `.\a`. `a\b` stays, since `a/b` would name a package, and `\\a` too: `//a` is a URL.
 #[inline]
 pub fn from_portable_specifier(text: &[u8]) -> Cow<'_, [u8]> {
     match text {
-        [b'.' | b'\\', ..] => from_portable_rooted(text),
+        [b'.', ..] => from_portable(text),
         _ => Cow::Borrowed(text),
     }
 }

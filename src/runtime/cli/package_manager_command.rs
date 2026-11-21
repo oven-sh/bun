@@ -214,10 +214,9 @@ impl PackageManagerCommand {
                 },
                 Err(_) => path,
             };
-            if !matches!(
-                bun_paths::is_parent_or_equal(dir, real),
-                bun_paths::ParentEqual::Unrelated
-            ) {
+            // Older versions read `\` as `/`, and installed there.
+            let [dir, real] = [dir, real].map(|path| strings::replace_char(path, b'\\', b'/'));
+            if bun_paths::is_parent_or_equal(&dir, &real) != bun_paths::ParentEqual::Unrelated {
                 return Some(what);
             }
         }

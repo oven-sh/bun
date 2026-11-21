@@ -7,7 +7,7 @@ use bun_core::Output;
 use bun_core::StackCheck;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
-use bun_paths::portable::from_portable_rooted;
+use bun_paths::portable::{from_portable_rooted, from_portable_specifier};
 use bun_paths::{MAX_PATH_BYTES, NODE_MODULES_NEEDLE, Path, PathBuffer, from_portable};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
@@ -606,7 +606,7 @@ impl PackageJSON {
                                 // If this is a string, it's a replacement package
                                 package_json
                                     .browser_map
-                                    .put(key, from_portable_rooted(str.slice()).into())
+                                    .put(key, from_portable_specifier(str.slice()).into())
                                     .expect("unreachable");
                             }
                             js_ast::E::JsonValue::Boolean(boolean) => {

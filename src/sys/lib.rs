@@ -8203,7 +8203,7 @@ pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
 pub fn exists(path: &[u8]) -> bool {
     exists_z(&bun_paths::Path::from(path))
 }
-/// `path` if `dir` has something of that name, or else with `/` for each `\`. `\a` is `./a`.
+/// `path` if `dir` has something of that name or it has a NUL, or else with `/` for each `\`. `\a` is `./a`.
 pub fn existing_spelling(dir: Fd, path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     use bun_core::strings;
     let last = strings::last_index_of_char(path, b'\\').filter(|_| cfg!(not(windows)));
@@ -8213,7 +8213,7 @@ pub fn existing_spelling(dir: Fd, path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     // A `..` behind that name cancels it, so ask for the name too.
     let end = strings::index_of_char_usize(&path[last..], b'/').map_or(path.len(), |at| last + at);
     let exists = |path: &[u8]| exists_at(dir, &bun_paths::Path::join(&[path]));
-    if exists(&path[..end]) && exists(path) {
+    if strings::contains_char(path, 0) || (exists(&path[..end]) && exists(path)) {
         return path.into();
     }
     match bun_paths::is_absolute(path) {

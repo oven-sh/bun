@@ -1366,7 +1366,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     // So far these are `[bundle] entryPoints`. An AOT build expands patterns, in which `\` escapes.
     for name in &mut ctx.args.entry_points {
-        let path: Box<[u8]> = bun_paths::from_portable(name).into();
+        let path: Box<[u8]> = match from_portable_rooted(name) {
+            rooted if name.starts_with(b"\\") && bun_sys::exists(&rooted) => rooted.into(),
+            _ => bun_paths::from_portable(name).into(),
+        };
         let is_pattern = compile_options::is_aot_requested(cmd, &args)
             && bun_glob::detect_glob_syntax(name)
             && !bun_sys::exists_z(&bun_paths::Path::join(&[&path]));

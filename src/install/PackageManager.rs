@@ -2303,8 +2303,13 @@ pub fn init(
                 break 'root_package_json_file Some(json_file);
             }
         } else if package_manager_options::has_relative_env_dir()
-            && let Ok(Some((root, ..))) =
-                find_workspace_root(&mut walk, child_cwd, &mut bun_ast::Log::init(), None, None)
+            && let Ok(Some((root, ..))) = find_workspace_root(
+                &mut walk,
+                child_cwd,
+                &mut bun_ast::Log::init(),
+                Some((&mut workspace_names, &mut workspace_package_json_cache)),
+                None,
+            )
         {
             root_above_link = Some(fs.dirname_store().append(root)?);
         }

@@ -161,13 +161,14 @@ fn is_root_above_project(folder: &[u8]) -> bool {
     abs.dirname().is_none() && !is_share && Path::relative(project, &abs).starts_with(b"..")
 }
 
-/// For the row of a lockfile. `.` is the project, and on Windows a repository can be the root of a drive.
+/// For a lockfile row that starts at the project, which is `.`. On Windows a repository can be the root of a drive.
 pub(crate) fn is_whole_file_system(folder: &[u8]) -> bool {
-    // The OS stops at a NUL.
-    let folder = strings::split_once_char(folder, 0).map_or(folder, |(opened, _)| opened);
+    let identity = |path: &[u8]| {
+        (bun_sys::stat(&Path::from(path)).ok()).map(|stat| (stat.st_dev, stat.st_ino))
+    };
     cfg!(not(windows))
         && !matches!(folder, b"" | b".")
-        && Path::resolve(&[FileSystem::get().top_level_dir(), folder]).as_bytes() == b"/"
+        && identity(folder).is_some_and(|folder| Some(folder) == identity(b"/"))
 }
 
 fn read_package_json_from_disk(

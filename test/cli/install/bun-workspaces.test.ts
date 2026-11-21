@@ -19,6 +19,8 @@ import {
   bunEnv as baseEnv,
   bunExe,
   githubTarball,
+  isASAN,
+  isDebug,
   isLinux,
   isWindows,
   readdirSorted,
@@ -404,6 +406,33 @@ const canChangeRoot =
   Bun.which("unshare") !== null &&
   Bun.spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
 
+// A build with assertions stops at the NUL.
+test.skipIf(isWindows || isDebug || isASAN).each(["hoisted", "isolated"])(
+  "a bun.lock row with a NUL keeps its backslashes (%s)",
+  async linker => {
+    const dependencies = { above: "file:../.." };
+    using dir = tempDir("lock-row-nul", {
+      "secret.txt": "secret",
+      "a/b/package.json": JSON.stringify({ name: "app", dependencies }),
+      "a/b/bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "app", dependencies } },
+        packages: { above: ["above@file:..\\..\0not-inline", {}] },
+      }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile", "--linker", linker],
+      cwd: join(String(dir), "a/b"),
+      env: baseEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    expect(await proc.exited).toBe(1);
+    expect([...new Bun.Glob("a/**/secret.txt").scanSync({ cwd: String(dir), dot: true })]).toEqual([]);
+  },
+);
+
 describe.skipIf(!canChangeRoot)("package.json in the filesystem root", () => {
   const changeRoot = `set -e
 for dir in /usr /bin /lib /lib64 "$BUN_DIR"; do
@@ -488,9 +517,9 @@ exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
       ["/a/b", "../.."],
       ["/a/b", "..\\.."],
       ["/a/b", "x\\..\\..\\.."],
-      ["/a/b", "..\\..\0not-inline"],
       ["/", "..\\.."],
       ["/", ".\\"],
+      ["/a/b", "..\\..\\proc\\self\\root"],
     ])("in %s a bun.lock row file:%j is refused", async (cwd, folder) => {
       const dependencies = { "fs-root": "file:../.." };
       using dir = tempDir("fs-root-row", {
@@ -500,6 +529,7 @@ exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
           workspaces: { "": { name: "app", dependencies } },
           packages: { "fs-root": [`fs-root@file:${folder}`, {}] },
         }),
+        [join(".", cwd, "x/.keep")]: "",
         "home/secret.txt": "secret",
         "proc/.keep": "",
         "tmp/.keep": "",
@@ -510,6 +540,24 @@ exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
       const copies = new Bun.Glob("node_modules/**/secret.txt").scanSync({ cwd: join(String(dir), cwd), dot: true });
       expect([...copies]).toEqual([]);
       expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a package that depends on file:./ is installed in a project at /", async () => {
+      using dir = tempDir("fs-root-self-in-package", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { dep: "file:./dep.tgz" } }),
+        "dep.tgz": Buffer.from(
+          await githubTarball("package", {
+            "package.json": JSON.stringify({ name: "dep", version: "1.0.0", dependencies: { self: "file:./" } }),
+          }),
+        ),
+        "home/.keep": "",
+        "proc/.keep": "",
+        "tmp/.keep": "",
+      });
+      const [stderr, exitCode] = await runIn(String(dir), "/", ["install", "--linker", linker]);
+
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
     });
   });
 

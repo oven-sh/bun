@@ -118,8 +118,8 @@ test.skipIf(isWindows)("a backslash in a name made at run time means what it mea
     ["./lib\\", "throws", "folder"],
     ["./lib", "file", "file"],
     ["open/lib\\x.js", "throws", "open"],
-    ["open\\lib\\x.js", "throws", "throws"],
-    ["closed\\lib\\x.js", "throws", "throws"],
+    ["open\\lib\\x.js", "throws", "open"],
+    ["closed\\lib\\x.js", "throws", "closed"],
     [".\\lib.js", "throws", "throws"],
   ];
   using dir = tempDir("aot-backslash-in-made-names", {

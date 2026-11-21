@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -64,13 +64,14 @@ test.each([
   ["run", "main.ts", "#key/a\\b"],
   ["run", "main.ts", "#alias/setup\\pre.ts"],
   ["run", "main.ts", "@/setup\\pre.ts"],
-  ["run", "main.ts", "pkg\\pre.ts"],
+  ["test", "./main.test.ts", "pkg\\pre.ts"],
 ])("bun %s %s finds the preload %s as plain Bun does", async (command, file, preload) => {
   const files = {
     "package.json": JSON.stringify({ imports: { "#key/a\\b": "./setup/pre.ts" } }),
     "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "#alias/*": ["./*"], "@/*": ["./*"] } } }),
     "setup/pre.ts": log + `console.log("the preload ran");`,
     "node_modules/pkg/pre.ts": log + `console.log("the preload ran");`,
+    ...(isWindows ? {} : { "node_modules/pkg\\pre.ts": log + `console.log("another file ran");` }),
     "main.ts": log + `console.log("the program ran");`,
     "main.test.ts": log + `console.log("the program ran");`,
   };

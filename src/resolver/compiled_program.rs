@@ -7,7 +7,7 @@ use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_paths::{Path, SEP, is_sep};
 
 use crate::package_json::{Package, split_at_star};
-use crate::resolver::{Resolver, path_in_node_modules};
+use crate::resolver::{Resolver, WrittenIn, path_in_node_modules};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ImageFile {
@@ -1352,7 +1352,7 @@ impl CompiledProgram {
             true => ImportKind::Require,
             false => ImportKind::Stmt,
         };
-        let as_path: &[u8] = &path_in_node_modules(specifier, kind, false);
+        let as_path: &[u8] = &path_in_node_modules(specifier, kind, WrittenIn::Code);
         let how = HowNamed {
             names_directory: as_path.ends_with(&[SEP]),
             is_require,

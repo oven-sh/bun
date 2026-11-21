@@ -2264,9 +2264,10 @@ pub(crate) fn install_isolated_packages(
                     let nested = entry_nested_folder[entry_id.get() as usize];
                     let folder = pkg_res.folder().slice(string_buf);
                     // The resolver rejects most of these, so they come from an edited or old lockfile.
-                    let refused = is_whole_file_system(folder)
-                        || (crate::bin::bin_target_escapes_package_dir(folder)
-                            && (nested || !lockfile_ro.is_trusted_folder_package(pkg_id)));
+                    let refused = match nested || !lockfile_ro.is_trusted_folder_package(pkg_id) {
+                        true => crate::bin::bin_target_escapes_package_dir(folder),
+                        false => is_whole_file_system(folder),
+                    };
                     if nested || refused {
                         let state = if refused {
                             Output::err_generic(

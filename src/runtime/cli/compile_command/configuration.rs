@@ -239,6 +239,7 @@ pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error>
         core::mem::size_of::<Transpiler>(),
     );
 
+    find_preloads_with_backslash(ctx, this_transpiler);
     expand_entry_patterns(this_transpiler);
     add_addons_among_assets(ctx, this_transpiler);
     let first_entry_point: Box<[u8]> = this_transpiler
@@ -259,6 +260,22 @@ pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error>
         outfile: name.outfile,
         was_renamed_from_index: name.was_renamed_from_index,
     })
+}
+
+/// A preload is named like an import, where `\` is `/`. In an entry point it is not.
+fn find_preloads_with_backslash(ctx: &ContextData, this_transpiler: &mut Transpiler<'static>) {
+    for entry in this_transpiler.options.entry_points.iter_mut() {
+        if cfg!(windows) || !strings::contains_char(entry, b'\\') || !ctx.preloads.contains(entry) {
+            continue;
+        }
+        let directory = FileSystem::get().top_level_dir();
+        let resolver = &mut this_transpiler.resolver;
+        if let Ok(found) = resolver.resolve(directory, entry, bun_ast::ImportKind::Stmt)
+            && bun_paths::is_absolute(found.path_pair.primary.text())
+        {
+            *entry = found.path_pair.primary.text().into();
+        }
+    }
 }
 
 fn expand_entry_patterns(this_transpiler: &mut Transpiler<'static>) {

@@ -353,13 +353,20 @@ pub fn path_of_specifier(specifier: &[u8], kind: ast::ImportKind) -> Cow<'_, [u8
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WrittenIn {
+    Code,
+    BrowserField,
+    ImportsField,
+}
+
 /// What follows `node_modules/`. `a\b` is no package, so this is the only way to it.
 pub(crate) fn path_in_node_modules(
     specifier: &[u8],
     kind: ast::ImportKind,
-    is_from_imports: bool,
+    written_in: WrittenIn,
 ) -> Cow<'_, [u8]> {
-    match is_from_imports || !(kind.is_common_js() || kind.is_entry_point()) {
+    match written_in != WrittenIn::Code || !(kind.is_common_js() || kind.is_entry_point()) {
         true => from_portable_rooted(specifier),
         false => Cow::Borrowed(specifier),
     }
@@ -2443,6 +2450,7 @@ impl<'a> Resolver<'a> {
                                 remap,
                                 kind,
                                 global_cache,
+                                WrittenIn::BrowserField,
                                 &mut match_result,
                             )
                             .is_success()
@@ -2551,6 +2559,7 @@ impl<'a> Resolver<'a> {
             }
         };
 
+        let mut written_in = WrittenIn::Code;
         if self.care_about_browser_field {
             // Support remapping one package path to another via the "browser" field
             if let Some(browser_scope) = source_dir_info.get_enclosing_browser_scope() {
@@ -2571,7 +2580,7 @@ impl<'a> Resolver<'a> {
                                     kind,
                                     source_dir_info,
                                     global_cache,
-                                    false,
+                                    WrittenIn::Code,
                                     &mut node_module,
                                 )
                                 .is_success()
@@ -2607,6 +2616,7 @@ impl<'a> Resolver<'a> {
 
                         import_path = remapped;
                         source_dir_info = browser_scope;
+                        written_in = WrittenIn::BrowserField;
                     }
                 }
             }
@@ -2618,6 +2628,7 @@ impl<'a> Resolver<'a> {
             import_path,
             kind,
             global_cache,
+            written_in,
             &mut res,
         ) {
             MatchStatus::Success => {
@@ -2676,6 +2687,7 @@ impl<'a> Resolver<'a> {
                                         remap,
                                         kind,
                                         global_cache,
+                                        WrittenIn::BrowserField,
                                         &mut remapped,
                                     )
                                     .is_success()
@@ -2804,7 +2816,7 @@ impl<'a> Resolver<'a> {
         // to `&DirInfo` per use so overlapping shared reads are sound.
         _dir_info: DirInfoRef,
         global_cache: GlobalCache,
-        forbid_imports: bool,
+        written_in: WrittenIn,
         out: &mut MatchResult,
     ) -> MatchStatus {
         let mut dir_info: DirInfoRef = _dir_info;
@@ -2821,7 +2833,7 @@ impl<'a> Resolver<'a> {
         // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
 
         if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir_info) {
-            let as_written = kind.is_entry_point() && !forbid_imports;
+            let as_written = kind.is_entry_point() && written_in == WrittenIn::Code;
 
             // Try path substitutions first
             if tsconfig.paths.count() > 0 {
@@ -2868,7 +2880,10 @@ impl<'a> Resolver<'a> {
         if let Some(_dir_info_package_json) = dir_info_package_json {
             let package_json = _dir_info_package_json.package_json().unwrap();
 
-            if import_path.starts_with(b"#") && !forbid_imports && package_json.imports.is_some() {
+            if import_path.starts_with(b"#")
+                && written_in != WrittenIn::ImportsField
+                && package_json.imports.is_some()
+            {
                 let r = self.load_package_imports(
                     import_path,
                     _dir_info_package_json,
@@ -2899,7 +2914,7 @@ impl<'a> Resolver<'a> {
         }
 
         let esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
-        let as_path: &[u8] = &path_in_node_modules(import_path, kind, forbid_imports);
+        let as_path: &[u8] = &path_in_node_modules(import_path, kind, written_in);
 
         let source_dir_info = dir_info;
         let mut any_node_modules_folder = false;
@@ -3614,7 +3629,7 @@ impl<'a> Resolver<'a> {
                                 bufs!(node_modules_check),
                                 &[
                                     pkg_dir_info.abs_path,
-                                    &path_in_node_modules(esm.subpath, kind, forbid_imports),
+                                    &path_in_node_modules(esm.subpath, kind, written_in),
                                 ],
                             ) else {
                                 if let Some(d) = self.debug_logs.as_mut() {
@@ -4260,10 +4275,18 @@ impl<'a> Resolver<'a> {
         import_path: &[u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
+        written_in: WrittenIn,
         out: &mut MatchResult,
     ) -> MatchStatus {
         if is_package_path(import_path) {
-            self.load_node_modules(import_path, kind, source_dir_info, global_cache, false, out)
+            self.load_node_modules(
+                import_path,
+                kind,
+                source_dir_info,
+                global_cache,
+                written_in,
+                out,
+            )
         } else {
             let Some(resolved) = abs_path_in(
                 bufs!(resolve_without_remapping),
@@ -5170,7 +5193,7 @@ impl<'a> Resolver<'a> {
                 kind,
                 dir_info,
                 global_cache,
-                true,
+                WrittenIn::ImportsField,
                 out,
             );
         }
@@ -5338,7 +5361,7 @@ impl<'a> Resolver<'a> {
                         // `remap` is relative to the package that owns the browser map.
                         field_abs_path = match abs_path_in(
                             bufs!(field_abs_path),
-                            &[browser_scope.abs_path, remap],
+                            &[browser_scope.abs_path, &from_portable_rooted(remap)],
                         ) {
                             Some(remapped) => remapped,
                             None => dec_ret!(MatchStatus::NotFound),
@@ -5582,7 +5605,7 @@ impl<'a> Resolver<'a> {
                         }
 
                         // `remap` is relative to the browser scope, which may be an ancestor of `path`.
-                        let new_paths = [browser_scope.abs_path, remap];
+                        let new_paths = [browser_scope.abs_path, &from_portable_rooted(remap)];
                         let Some(remapped_abs) = abs_path_in(bufs!(remap_path), &new_paths) else {
                             return MatchStatus::NotFound;
                         };

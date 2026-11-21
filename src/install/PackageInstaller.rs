@@ -1778,11 +1778,13 @@ impl<'a> PackageInstaller<'a> {
                     }
                     return self.fail(is_pending_package_install, log_level);
                 }
+                let is_inside_package =
+                    is_transitive && !self.lockfile().is_trusted_folder_dependency(dependency_id);
                 if !is_workspace
-                    && (is_whole_file_system(folder)
-                        || (is_transitive
-                            && bin::bin_target_escapes_package_dir(folder)
-                            && !self.lockfile().is_trusted_folder_dependency(dependency_id)))
+                    && match is_inside_package {
+                        true => bin::bin_target_escapes_package_dir(folder),
+                        false => is_whole_file_system(folder),
+                    }
                 {
                     if log_level != Options::LogLevel::Silent {
                         bun_core::pretty_errorln!(

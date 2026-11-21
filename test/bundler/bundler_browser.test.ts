@@ -411,6 +411,23 @@ describe("bundler", () => {
       stdout: "shim shim",
     },
   });
+  itBundled("browser/BrowserFieldRemapsToPathWithBackslashes", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": /* js */ `
+        import file from "./a.js";
+        console.log(file, require("pkg"));
+      `,
+      "/package.json": JSON.stringify({ browser: { "./a.js": "closed\\lib\\y.js", pkg: "closed\\lib\\y.js" } }),
+      "/a.js": /* js */ `export default "original";`,
+      "/node_modules/closed/package.json": /* json */ `{ "name": "closed", "exports": "./index.js" }`,
+      "/node_modules/closed/lib/y.js": /* js */ `module.exports = "shim";`,
+    },
+    target: "browser",
+    run: {
+      stdout: "shim shim",
+    },
+  });
   itBundled("browser/BrowserFieldRemapsSpecifierThatClimbsOut", {
     skipOnEsbuild: true,
     files: {

@@ -2931,6 +2931,15 @@ describe.concurrent("global directories from the environment", () => {
     expect(await readdirSorted(bunInstall)).toEqual(["bin"]);
   });
 
+  test("cache rm refuses to delete tools when BUN_INSTALL is tools\\bun", async () => {
+    using side = tempDir("pm-bun-install-older", { ...sideFiles, ...projectFiles, "tools/bun/bin/bun": "" });
+    const tools = join(String(side), "tools");
+    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: tools + "\\bun", BUN_INSTALL_CACHE_DIR: tools });
+
+    expect(await pmCache(["rm"], join(String(side), "proj"), spawnEnv)).toEqual(refused(tools, "$BUN_INSTALL"));
+    expect(await readdirSorted(tools)).toEqual(["bun"]);
+  });
+
   test.skipIf(isWindows)("BUN_INSTALL with a leading backslash is a name", async () => {
     using side = tempDir("pm-cache-dir-rooted", { ...sideFiles, ...projectFiles });
     const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: "\\x" });

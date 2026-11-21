@@ -123,22 +123,6 @@ impl<'h> Resolver<'h> {
     }
 
     fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {
-        let found = self.find_code_file_as_written(search);
-        // A preload is an entry point of the build, and named like an import, where `\` is `/`.
-        let can_be_preload = cfg!(not(windows))
-            && search.kind == CodeImportKind::EntryPoint
-            && !matches!(search.specifier, [b'.', b'/', ..] | [b'.', b'.', b'/', ..])
-            && strings::contains_char(search.specifier, b'\\');
-        if !can_be_preload || !matches!(found, FoundCode::NotFound(_)) {
-            return found;
-        }
-        self.code_host().find_code_file(&FileSearch {
-            kind: CodeImportKind::Import,
-            ..*search
-        })
-    }
-
-    fn find_code_file_as_written(&self, search: &FileSearch<'_>) -> FoundCode {
         let host = self.code_host();
         let found = host.find_code_file(search);
         let is_written_like_package = search.kind == CodeImportKind::EntryPoint

@@ -527,6 +527,7 @@ known_atoms! {
     hot = "hot",
     charCodeAt = "charCodeAt",
     env = "env",
+    resolveSync = "resolveSync",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never

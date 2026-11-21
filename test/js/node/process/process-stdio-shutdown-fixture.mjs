@@ -92,7 +92,8 @@ if (role === "timing") {
   try {
     if (kind === "pipe") {
       const { dlopen, ptr } = await import("bun:ffi");
-      library = dlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", {
+      const { libcPathForDlopen } = await import("harness");
+      library = dlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : libcPathForDlopen(), {
         pipe: { args: ["ptr"], returns: "int" },
       });
       pipeFds = new Int32Array([-1, -1]);

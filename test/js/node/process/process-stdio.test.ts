@@ -5,6 +5,26 @@ import { release } from "node:os";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
+  test.skipIf(isWindows).each([1, 2])("stdio fd %i initialization does not call process.binding", async fd => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.binding = () => { throw new Error("unexpected process.binding call"); };
+         process[${JSON.stringify(fd === 1 ? "stdout" : "stderr")}].write("ready");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: fd === 1 ? "ready" : "",
+      stderr: fd === 2 ? "ready" : "",
+      exitCode: 0,
+    });
+  });
+
   test.skipIf(isWindows).each([1, 2])("socket stdio fd %i defers shutdown until after microtasks", async fd => {
     await using proc = spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "process-stdio-shutdown-fixture.mjs"), "timing", "socket", String(fd)],

@@ -63,7 +63,7 @@ export function getStdioWriteStream(
       if (process.platform !== "win32") {
         const shutdownStdio = $newCppFunction("BunProcess.cpp", "jsFunctionShutdownStdio", 2);
         const { ErrnoException } = require("internal/shared");
-        const epipe = process.binding("uv").UV_EPIPE;
+        const epipe = -$processBindingConstants.os.errno.EPIPE;
         const write = stream._write;
         const writev = stream._writev;
         const fastWrite = stream.write;
@@ -71,8 +71,8 @@ export function getStdioWriteStream(
         const final = stream._final;
         let shutdown = false;
         stream._writableState.autoDestroy = true;
-        stream.write = function (chunk, encoding, cb) {
-          return (shutdown ? writableWrite : fastWrite).$call(this, chunk, encoding, cb);
+        stream.write = function (...args) {
+          return (shutdown ? writableWrite : fastWrite).$apply(this, args);
         };
         stream._write = function (chunk, encoding, cb) {
           if (shutdown) return cb(new ErrnoException(epipe, "write"));
@@ -85,13 +85,15 @@ export function getStdioWriteStream(
           };
         }
         stream._final = function (cb) {
-          final.$call(this, err => {
+          const onFinal = err => {
             if (err) return cb(err);
             // uv_shutdown clears UV_HANDLE_WRITABLE even for a non-socket pipe.
             // https://github.com/nodejs/node/blob/v24.21.0/deps/uv/src/unix/stream.c
             shutdown = true;
             shutdownStdio(fd, cb);
-          });
+          };
+          if (final) final.$call(this, onFinal);
+          else onFinal();
         };
       }
       stream[Symbol.asyncIterator] = function () {

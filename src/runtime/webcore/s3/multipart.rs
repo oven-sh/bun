@@ -7,7 +7,7 @@ use bun_core::scoped_log;
 use bun_io::JsKeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSPromiseStrong, JSValue, JsCell, JsResult};
-use bun_ptr::{RefPtr, RefPtrCellExt as _};
+use bun_ptr::RefPtr;
 use bun_s3_signing::error::S3Error;
 use bun_s3_signing::upload::{Request, Step, Upload};
 use bun_s3_signing::{ACL, MultiPartUploadOptions, S3Credentials, StorageClass};
@@ -32,7 +32,7 @@ bun_core::declare_scope!(S3Upload, hidden);
 pub struct NetworkSink {
     ref_count: Cell<u32>,
     /// Until the upload finishes. `source` is attached only that long.
-    self_ref: Cell<Option<RefPtr<NetworkSink>>>,
+    self_ref: JsCell<Option<RefPtr<NetworkSink>>>,
     upload: JsCell<Upload>,
     target: Target,
     poll_ref: JsKeepAlive,
@@ -112,7 +112,7 @@ impl NetworkSink {
     ) -> RefPtr<Self> {
         let this = RefPtr::new(Self {
             ref_count: Cell::new(1),
-            self_ref: Cell::new(None),
+            self_ref: JsCell::new(None),
             upload: JsCell::new(Upload::new(options)),
             target,
             poll_ref: JsKeepAlive::active(),
@@ -133,7 +133,7 @@ impl NetworkSink {
 
     /// For a call that can finish the upload. `None` once it has finished.
     pub(crate) fn self_ref(&self) -> Option<RefPtr<Self>> {
-        self.self_ref.cloned()
+        self.self_ref.get().clone()
     }
 
     pub(crate) fn is_ended(&self) -> bool {
@@ -178,8 +178,9 @@ impl NetworkSink {
         if self.abort_handle.context_stopped() {
             return;
         }
-        let Some(this) = self.self_ref() else { return };
-        while let Some(request) = self.upload.with_mut(Upload::next_request) {
+        while let Some(this) = self.self_ref.get()
+            && let Some(request) = self.upload.with_mut(Upload::next_request)
+        {
             this.send(request);
         }
     }
@@ -207,6 +208,7 @@ impl NetworkSink {
         let _ = self.fail(b"AbortError", b"The operation was aborted");
     }
 
+    /// `self` is the caller's own ref, never the one in `self_ref`.
     fn take_step(self: &RefPtr<Self>, step: Step<'_>) -> JsResult<()> {
         let (result, abort) = match step {
             Step::Nothing => return Ok(()),

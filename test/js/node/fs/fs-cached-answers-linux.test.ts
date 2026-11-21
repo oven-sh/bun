@@ -5,7 +5,7 @@
 // without waiting.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
-import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { release } from "node:os";
 
 const files = {
@@ -237,7 +237,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     30_000,
   );
 
-  test.concurrent("an absolute path is answered on the mount of the root directory only", async () => {
+  test.concurrent("an absolute path is answered on the mounts of the root and of the working directory", async () => {
     using dir = tempDir("fs-cached", files);
     const cwd = String(dir);
     const result = await run(
@@ -249,7 +249,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         const calls = {
           root: async () => [(await fsp.stat("/")).ino, (await fsp.lstat("/")).ino],
           inTemp: async () => [(await fsp.stat(file)).size, (await fsp.lstat(file)).size],
-          // The walk may not leave the mount it starts on: the pool answers for another one.
+          // The pool answers for a file on any other mount.
           proc: async () => [(await fsp.stat("/proc/self/status")).isFile()],
           dev: async () => [(await fsp.stat("/dev/null")).isCharacterDevice()],
         };
@@ -271,9 +271,9 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     if (answersFromCache("/")) {
       const counts = (name: string) => ({ hits: result[name].hits, misses: result[name].misses });
       expect(counts("root")).toEqual({ hits: 2, misses: 0 });
-      // Both calls are asked about: the second comes right after the first that failed.
-      if (mountOf(cwd).point === "/") expect(counts("inTemp")).toEqual({ hits: 2, misses: 0 });
-      else expect(counts("inTemp")).toEqual({ hits: 0, misses: 2 });
+      // The temporary directory is the working directory: whatever mount it is on is known.
+      if (answersFromCache(cwd)) expect(counts("inTemp")).toEqual({ hits: 2, misses: 0 });
+      else expect(counts("inTemp").hits).toBe(0);
       expect(counts("proc")).toEqual({ hits: 0, misses: 1 });
       if (mountOf("/dev/null").point !== "/") expect(counts("dev")).toEqual({ hits: 0, misses: 1 });
     }
@@ -840,6 +840,85 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     60_000,
   );
 
+  // systemd mounts over /tmp, /home and /usr for its services, each in a mount namespace of its
+  // own. The kernel then refuses, in every namespace, a cached walk through them that may not
+  // cross mounts: the JS thread walks again without that limit and checks where it ended.
+  const canUnshareMounts =
+    isLinux &&
+    Bun.spawnSync({
+      cmd: ["unshare", "-Urm", "mount", "--bind", import.meta.dir, import.meta.dir],
+      stdout: "ignore",
+      stderr: "ignore",
+    }).exitCode === 0;
+  test.skipIf(!canUnshareMounts)("a directory that is a mount point in another mount namespace", async () => {
+    using dir = tempDir("fs-cached-ns", { ...files, "over/x": "" });
+    const cwd = String(dir);
+    await using holder = Bun.spawn({
+      cmd: [
+        "unshare",
+        "-Urm",
+        "sh",
+        "-c",
+        'mount --bind "$1" "$2" && echo mounted && exec sleep 120',
+        "sh",
+        cwd + "/over",
+        cwd + "/sub",
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = holder.stdout.getReader();
+    const { value } = await reader.read();
+    reader.releaseLock();
+    expect(new TextDecoder().decode(value)).toBe("mounted\n");
+    const result = await run(
+      cwd,
+      `
+      (async () => {
+        await warm();
+        const sizes = async () => [(await fsp.stat("sub/inner.txt")).size, (await fsp.lstat(${JSON.stringify(cwd + "/sub/inner.txt")})).size];
+        await sizes();
+        console.log(JSON.stringify(await countedUntil(round => round.hits === 2, sizes)));
+      })();
+      `,
+    );
+    // This namespace has no mount there: the file is the one of the temporary directory.
+    expect(result.result).toEqual([5, 5]);
+    if (answersFromCache("/") && answersFromCache(cwd)) {
+      expect({ hits: result.hits, misses: result.misses }).toEqual({ hits: 2, misses: 0 });
+    }
+  });
+
+  const canUseShm = isLinux && existsSync("/dev/shm") && mountOf("/dev/shm").point === "/dev/shm";
+  test.skipIf(!canUseShm)(
+    "an absolute path to the mount of the working directory, which is not that of the root",
+    async () => {
+      // `tempDir` has no directory on another mount than the temporary directory's.
+      const cwd = mkdtempSync("/dev/shm/bun-fs-cached-");
+      try {
+        writeFileSync(cwd + "/file.txt", "hello");
+        const result = await run(
+          cwd,
+          `
+        (async () => {
+          await warm();
+          const file = ${JSON.stringify(cwd + "/file.txt")};
+          const sizes = async () => [(await fsp.stat(file)).size, (await fsp.lstat(file)).size];
+          await sizes();
+          console.log(JSON.stringify(await countedUntil(round => round.hits === 2, sizes)));
+        })();
+        `,
+        );
+        expect(result.result).toEqual([5, 5]);
+        if (answersFromCache("/") && answersFromCache(cwd)) {
+          expect({ hits: result.hits, misses: result.misses }).toEqual({ hits: 2, misses: 0 });
+        }
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
   // In a compiled executable the module graph answers for some paths, and for a path that the
   // disk does not have it looks on the disk itself: those are never the JS thread's.
   describe.each([
@@ -944,7 +1023,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
           source: 0,
           besideSource: 0,
         });
-        if (answersFromCache("/") && mountOf(cwd).point === "/") {
+        if (answersFromCache("/") && answersFromCache(cwd)) {
           expect({ ...hits(answered), disk: hits(answered).disk > 0 }).toMatchObject({
             disk: true,
             inExecutable: 0,

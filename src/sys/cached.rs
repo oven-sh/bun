@@ -3,11 +3,15 @@
 //!
 //! `openat2(RESOLVE_CACHED)` bounds the walk of the path and nothing after it. `statx` of the
 //! file it opened asks an NFS server once the attribute cache has expired, and 9p asks its
-//! server whatever the flags say (`v9fs_vfs_getattr_dotl`). So the kernel is only asked about
-//! a path on a mount that is known to answer from memory: the walk starts at a directory on
-//! that mount and does not leave it (`RESOLVE_NO_XDEV`). Two directories serve, the root for an
-//! absolute path and the working directory for a relative one. [`learn_mounts`] classifies
-//! their mounts on a thread that may wait.
+//! server whatever the flags say (`v9fs_vfs_getattr_dotl`). So `statx` is only asked of a file
+//! on a mount that is known to answer from memory: that of the root or of the working
+//! directory, which [`learn_mounts`] classifies on a thread that may wait.
+//!
+//! A walk that starts at one of the two and may not leave its mount (`RESOLVE_NO_XDEV`) ends
+//! on it. But the kernel refuses that walk at every directory that is a mount point in any
+//! mount namespace, also in another one than this process's: systemd mounts over `/tmp`,
+//! `/home` and `/usr` for its services. So a walk that is refused runs again without the flag,
+//! and the mount of what it opened is read without a question to its filesystem ([`mount_of`]).
 //!
 //! Every thread is taken to share one root, working directory, mount namespace and seccomp
 //! policy: what a pool thread learns holds for the JS thread.
@@ -37,7 +41,8 @@ pub enum NoStat {
     /// The kernel remembers that the path has no entry.
     NotFound,
     /// The kernel was asked: only a lookup that may wait can tell. The path is not in its
-    /// caches, or it leaves the mount, or a filesystem has to read a symlink on the way.
+    /// caches, or the file is on another mount, or a filesystem has to read a symlink on the
+    /// way.
     Unknown,
     /// The kernel was not asked: the walk would not start on a mount that answers from memory.
     NotAsked,
@@ -87,7 +92,7 @@ pub fn stat(
         Some(b'/') => (&ROOT, 0),
         _ => (&CWD, CWD_GENERATION.load(Ordering::SeqCst)),
     };
-    let Mount::InMemory(mount) = start.load(generation) else {
+    let Mount::InMemory(mut mount) = start.load(generation) else {
         return Err(NoStat::NotAsked);
     };
     let file = match open(path, symlink, ResolveFlags::CACHED | ResolveFlags::NO_XDEV) {
@@ -98,6 +103,27 @@ pub fn stat(
             AVAILABILITY.store(UNAVAILABLE, Ordering::Relaxed);
             return Err(NoStat::Unknown);
         }
+        Err(libc::EAGAIN | libc::EXDEV) => {
+            // Not in the caches, or a mount point on the way: here, or only in another namespace.
+            let file = match open(path, symlink, ResolveFlags::CACHED) {
+                Ok(fd) => CloseOnDrop::new(fd),
+                Err(libc::ENOENT) => return Err(NoStat::NotFound),
+                Err(_) => return Err(NoStat::Unknown),
+            };
+            let in_memory = |mount| {
+                let mount = Mount::InMemory(mount);
+                ROOT.load(0) == mount || CWD.load(CWD_GENERATION.load(Ordering::SeqCst)) == mount
+            };
+            match mount_of(file.fd()).filter(|mount| in_memory(*mount)) {
+                Some(on_mount) => mount = on_mount,
+                None => {
+                    // Of a filesystem that was not classified: not this thread's to close.
+                    close_elsewhere(file.into_raw());
+                    return Err(NoStat::Unknown);
+                }
+            }
+            file
+        }
         Err(_) => return Err(NoStat::Unknown),
     };
     let Some((stat, on_mount)) = crate::fstatx_in_memory(file.fd(), mask) else {
@@ -106,7 +132,9 @@ pub fn stat(
     if on_mount != u64::from(mount) {
         // The root or the working directory changed behind this module (`chroot`, `chdir` by
         // a native library).
-        start.forget();
+        ROOT.forget();
+        CWD.forget();
+        close_elsewhere(file.into_raw());
         return Err(NoStat::Unknown);
     }
     if stat.nlink == 0 {
@@ -320,11 +348,20 @@ fn classify(directory: &ZStr, root: Option<Mount>) -> Option<Mount> {
 }
 
 /// The id of the mount that an open descriptor is on. procfs answers: the filesystem of the
-/// descriptor is not asked.
+/// descriptor is not asked. (`name_to_handle_at` would cost a tenth, but overlayfs with
+/// `nfs_export` can copy a directory up to make a file handle.)
 fn mount_of(fd: Fd) -> Option<u32> {
-    let path = format!("/proc/self/fdinfo/{}", fd.native());
-    let fdinfo = crate::File::read_from(Fd::cwd(), path.as_bytes()).ok()?;
-    split(&fdinfo, b'\n').find_map(|line| parse_id(line.strip_prefix(b"mnt_id:")?.trim_ascii()))
+    use std::io::Write as _;
+    let mut path = [0u8; 40];
+    let mut rest = &mut path[..39];
+    write!(rest, "/proc/self/fdinfo/{}", fd.native()).ok()?;
+    let length = 39 - rest.len();
+    let path = ZStr::from_slice_with_nul(&path[..=length]);
+    let fdinfo = CloseOnDrop::new(crate::open(path, O::RDONLY | O::CLOEXEC, 0).ok()?);
+    let mut text = [0u8; 256];
+    let length = crate::read(fdinfo.fd(), &mut text).ok()?;
+    split(&text[..length], b'\n')
+        .find_map(|line| parse_id(line.strip_prefix(b"mnt_id:")?.trim_ascii()))
 }
 
 /// The lines of a text of procfs, or the fields of one of its lines.

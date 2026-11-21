@@ -43,7 +43,7 @@ function parseSeenAttributes(seen: string): OwnProperty["attributes"] {
 
 // The engine defines these on the global object only under an option or in a build for its own developers.
 const isForDevelopers = (holder: string, name: string) =>
-  holder === "globalThis" && (name === "$vm" || name === "Loader" || name === "gc" || name.startsWith("__"));
+  holder === "globalThis" && (["$vm", "Decimal", "Loader", "gc"].includes(name) || name.startsWith("__"));
 // Windows has no users and groups by number.
 const isForPosix = (holder: string, name: string) =>
   isWindows && holder === "process" && /^(?:[gs]ete?[ug]id|[gs]etgroups|initgroups)$/.test(name);

@@ -174,6 +174,11 @@ const {
 // previewEntries() reads internal fields of whatever these two accept, so a script must not be able to replace them.
 const isMapIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator", 1);
 const isSetIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator", 1);
+const textOfDecimal: (value: unknown) => string | undefined = $newCppFunction(
+  "NodeUtilTypesModule.cpp",
+  "jsFunctionTextOfDecimal",
+  1,
+);
 
 // We need this duplicate here to avoid a circular dependency between node:assert and node:util.
 class AssertionError extends Error {
@@ -1473,7 +1478,7 @@ function formatRaw(ctx: Context, value, recurseTimes: number, typedArray?: boole
     if (typeof value === "function") {
       base = getFunctionBase(ctx, value, constructor, tag);
       if (keys.length === 0 && protoProps === undefined) return ctx.stylize(base, "special");
-    } else if (constructor === "Object") {
+    } else if (constructor === "Object" && textOfDecimal(value) === undefined) {
       if (isArgumentsObject(value)) {
         braces[0] = "[Arguments] {";
       } else if (tag !== "") {
@@ -1541,6 +1546,10 @@ function formatRaw(ctx: Context, value, recurseTimes: number, typedArray?: boole
       base = getBoxedBase(value, ctx, keys, constructor, tag);
       if (keys.length === 0 && protoProps === undefined) {
         return base;
+      }
+    } else if ((base = getDecimalBase(value, constructor, tag)) !== "") {
+      if (keys.length === 0 && protoProps === undefined) {
+        return ctx.stylize(base, "number");
       }
     } else {
       if (keys.length === 0 && protoProps === undefined) {
@@ -1732,6 +1741,18 @@ function getBoxedBase(value, ctx: Context, keys: Key[], constructor: string | nu
   }
   if (keys.length !== 0 || ctx.stylize === stylizeNoColor) return base;
   return ctx.stylize(base, StringPrototypeToLowerCase.$call(type));
+}
+
+// "" if the value is not a Decimal.
+function getDecimalBase(value: unknown, constructor: string | null, tag: string) {
+  const text = textOfDecimal(value);
+  if (text === undefined) return "";
+  let base = "[Decimal";
+  if (constructor === null) base += " (null prototype)";
+  else if (constructor !== "Decimal") base += ` (${constructor})`;
+  base += `: ${text}]`;
+  if (tag !== "" && tag !== constructor) base += ` [${tag}]`;
+  return base;
 }
 
 function getClassBase(value, constructor: string | null, tag: string) {

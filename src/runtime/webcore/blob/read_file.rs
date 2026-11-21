@@ -5,8 +5,10 @@ use scopeguard::ScopeGuard;
 
 #[cfg(windows)]
 use crate::node::types::PathLikeExt as _;
+#[cfg(windows)]
+use crate::server::file_response_stream::StreamFd;
 #[cfg(not(windows))]
-use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Step, Target};
+use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Interest, JobFd, Step, Target};
 use crate::webcore::blob::store::Data;
 #[cfg(windows)]
 use crate::webcore::blob::store::File as FileStore;
@@ -19,8 +21,6 @@ use bun_core::String as BunString;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 #[cfg(windows)]
 use bun_io::IntrusiveUvFs as _;
-#[cfg(not(windows))]
-use bun_io::fd_wait::{Interest, JobFd};
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
 };
@@ -218,6 +218,7 @@ impl ReadFile {
 #[cfg(not(windows))]
 impl FdOp for ReadFile {
     const INTEREST: Interest = Interest::Readable;
+    const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
     type Js = PendingReadFileCompletion;
 
     fn open(&mut self) -> Result<(JobFd, Step), Box<SystemError>> {
@@ -319,7 +320,7 @@ pub(crate) struct ReadFileUV {
     pub(crate) store: RefPtr<Store>,
     pub offset: SizeType,
     pub(crate) max_length: SizeType,
-    pub(crate) opened_fd: Fd,
+    pub(crate) opened_fd: StreamFd,
     pub(crate) read_off: SizeType,
     pub(crate) buffer: Vec<u8>,
     pub(crate) system_error: Option<SystemError>,
@@ -352,7 +353,7 @@ impl ReadFileUV {
             store, // store.ref() — Arc clone owned here
             offset: blob.offset.get(),
             max_length: blob.size.get(),
-            opened_fd: Fd::INVALID,
+            opened_fd: StreamFd::borrowed(Fd::INVALID),
             read_off: 0,
             buffer: Vec::new(),
             system_error: None,
@@ -365,7 +366,7 @@ impl ReadFileUV {
         let _caller =
             jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
         if let PathOrFileDescriptor::Fd(fd) = this.file_store.pathlike {
-            this.opened_fd = fd;
+            this.opened_fd = StreamFd::borrowed(fd);
             this.queue_stat();
         } else {
             this.open();
@@ -406,7 +407,7 @@ impl ReadFileUV {
             return;
         }
 
-        this.opened_fd = Fd::from_uv(result.to_fd());
+        this.opened_fd = bun_sys::File::from_fd(Fd::from_uv(result.to_fd())).into();
         this.queue_stat();
     }
 
@@ -443,13 +444,9 @@ impl ReadFileUV {
         log!("ReadFileUV.finalize destroy");
     }
 
-    fn on_finish(self: Box<Self>) {
+    fn on_finish(mut self: Box<Self>) {
         log!("ReadFileUV.onFinish");
-        let fd = self.opened_fd;
-        if self.file_store.pathlike.is_path() && fd != Fd::INVALID && fd.stdio_tag().is_none() {
-            bun_io::Closer::close(fd, self.loop_);
-        }
-
+        self.opened_fd = StreamFd::borrowed(Fd::INVALID);
         self.finalize();
     }
 
@@ -463,7 +460,7 @@ impl ReadFileUV {
         log!("ReadFileUV.queueStat");
         self.req.deinit();
 
-        let (loop_, fd) = (self.loop_, self.opened_fd.uv());
+        let (loop_, fd) = (self.loop_, self.opened_fd.get().uv());
         let this = bun_core::heap::into_raw(self);
         // SAFETY: the VM's loop outlives the request, and libuv has `this` until
         // `on_file_initial_stat`.
@@ -536,7 +533,7 @@ impl ReadFileUV {
 
         if this.offset > 0 {
             // We DO support offset in Bun.file()
-            match bun_sys::set_file_offset(this.opened_fd, this.offset) {
+            match bun_sys::set_file_offset(this.opened_fd.get(), this.offset) {
                 // we ignore errors because it should continue to work even if its a pipe
                 Err(_) | Ok(_) => {}
             }
@@ -607,7 +604,7 @@ impl ReadFileUV {
             self.req.assert_cleaned_up();
             let position = i64::try_from(self.offset + self.read_off).expect("int cast");
 
-            let (loop_, fd) = (self.loop_, self.opened_fd.uv());
+            let (loop_, fd) = (self.loop_, self.opened_fd.get().uv());
             let this = bun_core::heap::into_raw(self);
             // SAFETY: the VM's loop outlives the request, libuv copies `bufs` before it returns, and
             // it has `this`, whose `buffer` has the spare capacity they name, until `on_read`.

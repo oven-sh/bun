@@ -485,7 +485,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         module: ModuleRef,
         options: Option<ValueId>,
     ) -> ValueId {
-        let module = self.file.inputs.modules.facade(module).unwrap_or(module);
+        let modules = self.file.inputs.modules;
+        // Nothing is known of the namespace that a call with options gives.
+        let options = match options {
+            None if modules.may_typed_form_answer_import(module) => Some(self.builder.undefined()),
+            _ => options,
+        };
+        let module = modules.facade(module).unwrap_or(module);
         let module = self.file.fragment.declare_module(module);
         let referrer = self.file.module_id();
         self.builder.import_module(module, options, referrer)

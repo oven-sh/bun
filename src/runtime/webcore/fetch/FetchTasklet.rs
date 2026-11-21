@@ -152,6 +152,9 @@ pub struct FetchTasklet {
 
     /// buffer used to stream response to JS
     pub(crate) scheduled_response_buffer: MutableString,
+    /// `scheduled_response_buffer` could not grow. HTTP thread only.
+    is_out_of_memory: bool,
+    is_held_body_reported: bool,
     /// response weak ref we need this to track the response JS lifetime
     pub(crate) response: jsc::Weak<FetchTasklet>,
     /// native response ref if we still need it when JS is discarted
@@ -427,6 +430,10 @@ impl FetchTasklet {
             // here has already cleared it, so this just detaches the controller.
             sink.source.detach(&self.global_this);
         }
+        self.clear_request_body_buffer();
+    }
+
+    fn clear_request_body_buffer(&mut self) {
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
             // The HTTP thread may still be using its ref; `clear_drain_callback`
             // synchronises with it through the buffer's mutex.
@@ -764,7 +771,12 @@ impl FetchTasklet {
                 .has_schedule_callback
                 .store(false, Ordering::Relaxed);
             let is_done = !(*this).result.has_more;
-            let _js_ref = if is_done { (*this).js_ref.take() } else { None };
+            // A copy too: script that runs below can spin the event loop up to the last update.
+            let _js_ref = if is_done {
+                (*this).js_ref.take()
+            } else {
+                (*this).js_ref.clone()
+            };
             (*this).update_progress(vm, lock, is_done)
         }
     }
@@ -817,13 +829,33 @@ impl FetchTasklet {
         }
 
         let result = self.deliver_progress(vm);
+        let left_transport = self.result.left_transport;
         drop(lock);
+        // The HTTP layer will not drain the request body again.
         if is_done {
-            // The HTTP layer will not drain the request body again.
             self.cancel_request_body_sink(JSValue::UNDEFINED);
             self.poll_ref.unref(bun_io::js_vm_ctx());
+        } else if left_transport {
+            self.on_held_body_update();
         }
         result
+    }
+
+    fn on_held_body_update(&mut self) {
+        /// About what a decoder, its input and `scheduled_response_buffer` take.
+        const HELD_BODY_COST: usize = 1024 * 1024;
+
+        self.close_request_body_sink();
+        self.clear_request_body_buffer();
+        if let HTTPRequestBody::AnyBlob(_) = self.request_body {
+            self.request_body = HTTPRequestBody::default();
+        }
+        // Only the collector ends a held body that nobody reads.
+        if self.signal_store.body_receive_mode() == BodyReceiveMode::Paused
+            && !core::mem::replace(&mut self.is_held_body_reported, true)
+        {
+            self.global_this.vm().report_extra_memory(HELD_BODY_COST);
+        }
     }
 
     fn deliver_progress(&mut self, vm: &VirtualMachine) -> JsResult<()> {
@@ -1502,9 +1534,6 @@ impl FetchTasklet {
 
     fn on_start_streaming_http_response_body_callback(ctx: NonNull<c_void>) -> DrainResult {
         let this = Self::from_ctx(ctx);
-        if this.signal_store.aborted.load(Ordering::Relaxed) {
-            return DrainResult::Aborted;
-        }
 
         // A body consumer is attaching; keep the process alive until the
         // body finishes (undone in `on_progress_update` when `is_done`), or
@@ -1519,7 +1548,7 @@ impl FetchTasklet {
         // After the take, not before: a chunk the HTTP thread appends (and pauses for) in
         // between would otherwise reach the stream with its task finding the buffer empty, and
         // nothing left to undo that pause. Unconditional: also flushes body bytes the client
-        // holds that arrived with no follow-up read (`drain_response_body`).
+        // holds that arrived with no follow-up read (`pump_held_body`).
         this.signal_store.receive_on_demand();
         this.schedule_receive_resume();
 
@@ -1771,6 +1800,8 @@ impl FetchTasklet {
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,
             scheduled_response_buffer: MutableString::default(),
+            is_out_of_memory: false,
+            is_held_body_reported: false,
             response: jsc::Weak::default(),
             native_response: JsCell::new(None),
             response_stream: Default::default(),
@@ -1860,7 +1891,7 @@ impl FetchTasklet {
         // dereferenced. `'static`: `http` is an `AsyncHTTP<'static>` that borrows (headers_buf,
         // request_body, unix_socket_path) FetchTasklet-owned storage. NOT process-lifetime:
         // `request_headers.buf`, `request_body` and `unix_socket_path` are not reallocated for the
-        // lifetime of the request, whose ref on the tasklet goes after `callback` has dropped it.
+        // time the request has them. Its ref on the tasklet goes after `callback` has dropped it.
         let fetch_tasklet: &'static mut FetchTasklet = unsafe { &mut *fetch_tasklet_ptr };
 
         // This task gets queued on the HTTP thread.
@@ -2171,34 +2202,36 @@ impl FetchTasklet {
     }
 
     /// Cancel an in-flight request-body sink: stores the abort reason, aborts
-    /// the HTTP task, marks the sink ended/done, and fires the controller's
-    /// onClose (which cancels the upstream ReadableStream reader).
+    /// the HTTP task, and closes the sink.
     pub(crate) fn cancel_request_body_sink(&mut self, reason: JSValue) {
-        let Some(sink) = self.sink_mut() else {
-            return;
-        };
-        if sink.ended {
+        if self.sink_mut().is_none_or(|sink| sink.ended) {
             return;
         }
+        if !reason.is_empty_or_undefined_or_null() && !self.abort_reason.has() {
+            let global_this = self.global_this;
+            self.abort_reason.set(&global_this, reason);
+        }
+        self.abort_task();
+        self.close_request_body_sink();
+    }
+
+    /// Fires the controller's onClose, which cancels the upstream ReadableStream reader.
+    fn close_request_body_sink(&mut self) {
+        let Some(sink) = self.sink_mut().filter(|sink| !sink.ended) else {
+            return;
+        };
         sink.ended = true;
         sink.done = true;
         let is_native = matches!(
             sink.source,
             SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
         );
-        if !reason.is_empty_or_undefined_or_null() && !self.abort_reason.has() {
-            let global_this = self.global_this;
-            self.abort_reason.set(&global_this, reason);
-        }
-        self.abort_task();
-        if let Some(sink) = self.sink_mut() {
-            sink.pending.result = Writable::Done;
-            sink.pending.run();
-            sink.source.close(None);
-            if is_native {
-                // No pump promise will settle. This may be the last ref.
-                drop(sink.task.take());
-            }
+        sink.pending.result = Writable::Done;
+        sink.pending.run();
+        sink.source.close(None);
+        if is_native {
+            // No pump promise will settle. This may be the last ref.
+            drop(sink.task.take());
         }
     }
 
@@ -2325,7 +2358,7 @@ impl FetchTasklet {
             if success && task_ref.result.has_more {
                 return;
             }
-        } else if success {
+        } else if success && !task_ref.is_out_of_memory {
             let scheduled = &mut task_ref.scheduled_response_buffer;
             if body.is_empty() && !body_owned.is_empty() && scheduled.list.is_empty() {
                 scheduled.list = body_owned;
@@ -2348,8 +2381,12 @@ impl FetchTasklet {
                 } else {
                     body
                 };
-                if !chunk.is_empty() {
-                    bun_core::handle_oom(scheduled.write(chunk));
+                if scheduled.list.try_reserve(chunk.len()).is_ok() {
+                    scheduled.list.extend_from_slice(chunk);
+                } else {
+                    *scheduled = MutableString::default();
+                    task_ref.is_out_of_memory = true;
+                    task_ref.abort_transport();
                 }
             }
             if task_ref.result.has_more
@@ -2357,6 +2394,13 @@ impl FetchTasklet {
             {
                 task_ref.signal_store.pause_receive();
             }
+        }
+
+        if task_ref.is_out_of_memory {
+            if task_ref.result.has_more {
+                return;
+            }
+            task_ref.result.fail = Some(bun_alloc::AllocError.into());
         }
 
         if let Err(has_schedule_callback) = task_ref.has_schedule_callback.compare_exchange(

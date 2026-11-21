@@ -197,7 +197,7 @@
     "WorkPool::schedule*": 1
   },
   "src/runtime/webcore/blob/fd_job.rs": {
-    "FdWait::new": 1
+    "WorkPool::schedule*": 1
   },
   "src/runtime/webcore/fetch/FetchTasklet.rs": {
     "HTTPThread::schedule": 1

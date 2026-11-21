@@ -216,6 +216,21 @@ pub fn inside_as<'p>(style: Style, directory: &[u8], path: &'p [u8]) -> Option<&
     }
 }
 
+/// The part of `path` below the innermost directory that contains both `path` and `other`. Empty if `path` is `other`
+/// or contains it. Both must be resolved.
+pub fn below_shared<'p>(other: &[u8], path: &'p [u8]) -> &'p [u8] {
+    if let Some(rest) = inside(other, path) {
+        return rest;
+    }
+    let is_case_sensitive = Style::of(other) == Style::Posix;
+    let names = strings::split(other, b"/").zip(strings::split(path, b"/"));
+    let shared = names
+        .take_while(|(a, b)| is_same_path(a, b, is_case_sensitive))
+        .map(|(_, name)| name.len() + 1)
+        .sum();
+    path.get(shared..).unwrap_or_default()
+}
+
 /// True if `path` is `outer` or inside it. Both must be resolved.
 pub fn is_at_or_inside(outer: &[u8], path: &[u8]) -> bool {
     let is_same = match Style::of(outer) {

@@ -1072,6 +1072,17 @@ impl Config {
         entry: Option<&Entry>,
         dotfiles: Dotfiles,
     ) -> bool {
+        self.is_ignored_globally_with(parts, entry, dotfiles, true)
+    }
+
+    /// The same. See [`IgnoreLines::is_ignored`] for `reads_for_exceptions`.
+    fn is_ignored_globally_with(
+        &self,
+        parts: &Candidate,
+        entry: Option<&Entry>,
+        dotfiles: Dotfiles,
+        reads_for_exceptions: bool,
+    ) -> bool {
         let relative = parts.path();
         let mut is_ignored = false;
         // See `Config::relative`.
@@ -1084,9 +1095,15 @@ impl Config {
             }
             let ignores = object.ignores.as_deref().unwrap_or_default();
             let Some(base_path) = &object.base_path else {
+                // oxlint's built-in ignores reach outside the base path. The directories that contain the base path
+                // don't count there: a project can itself be in a `node_modules`.
+                let below = is_outside.then(|| {
+                    let absolute = &relative[usize::from(!self.base_path.starts_with(b"/"))..];
+                    Candidate::new(paths::below_shared(&self.base_path, absolute))
+                });
                 is_ignored = match &object.ignore_lines {
-                    Some(lines) => lines.is_ignored(relative, is_ignored),
-                    None => is_ignored_by(ignores, parts, is_ignored),
+                    Some(lines) => lines.is_ignored(relative, is_ignored, reads_for_exceptions),
+                    None => is_ignored_by(ignores, below.as_ref().unwrap_or(parts), is_ignored),
                 };
                 continue;
             };
@@ -1102,7 +1119,7 @@ impl Config {
                 own.push(b'/');
             }
             is_ignored = match &object.ignore_lines {
-                Some(lines) => lines.is_ignored(&own, is_ignored),
+                Some(lines) => lines.is_ignored(&own, is_ignored, reads_for_exceptions),
                 None => is_ignored_by(ignores, &Candidate::new(&own), is_ignored),
             };
         }
@@ -1167,6 +1184,16 @@ impl Config {
     /// [`Config::is_directory_ignored`] for a directory inside the base path whose ancestors are known not to be
     /// ignored.
     fn is_directory_ignored_in(&self, directory: &[u8], dotfiles: Dotfiles) -> bool {
+        self.is_directory_ignored_with(directory, dotfiles, true)
+    }
+
+    /// The same. See [`IgnoreLines::is_ignored`] for `reads_for_exceptions`.
+    fn is_directory_ignored_with(
+        &self,
+        directory: &[u8],
+        dotfiles: Dotfiles,
+        reads_for_exceptions: bool,
+    ) -> bool {
         let mut relative = self.relative(directory);
         if relative.is_empty() {
             return false;
@@ -1175,7 +1202,17 @@ impl Config {
             return true;
         }
         relative.push(b'/');
-        self.is_ignored_globally(&relative, dotfiles)
+        let parts = Candidate::new(&relative);
+        self.is_ignored_globally_with(&parts, None, dotfiles, reads_for_exceptions)
+    }
+
+    /// True if the patterns ignore `directory`, which is absolute, given that they don't ignore its parents. Unlike
+    /// [`Config::is_directory_ignored`], this stays true if a `!` line could match something inside: oxlint reads such
+    /// a directory, but only for the files that the line keeps. And it's false outside the base path, where the
+    /// patterns say nothing.
+    pub fn leaves_out_directory(&self, directory: &[u8]) -> bool {
+        !self.is_outside(directory)
+            && self.is_directory_ignored_with(directory, Dotfiles::AsConfigured, false)
     }
 
     /// True if a file inside the base path is ignored. Assumes the containing directory isn't.

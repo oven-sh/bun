@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { labelsOf, projects } from "./projects.ts";
+import { configOf, labelsOf, projects } from "./projects.ts";
 
 const args = process.argv.slice(2);
 const names = args.filter(it => !it.startsWith("--"));
@@ -87,7 +87,7 @@ for (const project of projects) {
       : {};
     const typed = project.typed ? ["--type-aware"] : [];
     for (const [path, text] of Object.entries({
-      ".oxlintrc.json": JSON.stringify(project.config),
+      ".oxlintrc.json": configOf(project),
       ...tsconfig,
       ...project.files,
     })) {

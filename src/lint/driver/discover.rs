@@ -277,8 +277,7 @@ fn search(
         // because the base path can be further down.
         let is_hidden = (inherited.config).is_directory_ignored(&search.base_path, dotfiles)
             && !inherited.config.is_outside(&search.base_path);
-        let name = paths::basename(&search.base_path);
-        if (!is_hidden || loader.looks_for_configurations_in(&inherited, name))
+        if (!is_hidden || loader.looks_for_configurations_at(&inherited, &search.base_path)?)
             && let Some(ignores) =
                 loader.ignore_files_at(&search.base_path, &inherited, are_all_in_repositories)
         {

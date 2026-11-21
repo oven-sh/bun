@@ -14,6 +14,13 @@ export interface Project {
   links?: Record<string, string>;
 }
 
+/**
+ * The text of a project's `.oxlintrc.json`. Some projects have files in `node_modules`. oxlint lints them, and
+ * `bun lint` does if the config brings the directory back.
+ */
+export const configOf = ({ config }: Pick<Project, "config">) =>
+  JSON.stringify({ ...config, ignorePatterns: ["!**/node_modules/"] });
+
 type Label = { label?: string; span: { line: number; column: number; length: number } };
 
 /** Returns all of a diagnostic's labels with their text, or `undefined` if it only has one label without text. */
@@ -1039,7 +1046,8 @@ const hand: Project[] = [
   },
   {
     name: "no-cycle/exports-itself-on-the-way",
-    about: "Request::may_reexport_itself: a module on the way that imports a name of its own and exports it: that is no step",
+    about:
+      "Request::may_reexport_itself: a module on the way that imports a name of its own and exports it: that is no step",
     config: noCycle({ maxDepth: 2 }),
     files: {
       "a.ts": `import { bar } from "./m";\nexport const a = bar;\n`,

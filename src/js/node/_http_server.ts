@@ -636,6 +636,7 @@ Server.prototype[setSecureContextSymbol] = function (options) {
     normalizePemKeyOption,
     processPfxOptions,
     secureProtocolToVersionRange,
+    stripTls13CipherNames,
     tlsStringToProtocolVersion,
   } = require("internal/tls");
   // Match Node's synchronous option validation before publishing a replacement.
@@ -646,12 +647,14 @@ Server.prototype[setSecureContextSymbol] = function (options) {
   if (pfxExtraCAs?.length && ca != null) {
     ca = $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
   }
+  const ciphers = tlsOptions.ciphers ? stripTls13CipherNames(tlsOptions.ciphers) : undefined;
   const range = secureProtocolToVersionRange(tlsOptions.secureProtocol);
   const next = {
     ...tlsOptions,
     key: normalizePemKeyOption(tlsOptions.key, tlsOptions.passphrase),
     ca,
-    minVersion: range ? range[0] : tlsStringToProtocolVersion(tlsOptions.minVersion),
+    ciphers: ciphers?.cipherList || undefined,
+    minVersion: range ? range[0] : tlsStringToProtocolVersion(ciphers?.tls13Only ? "TLSv1.3" : tlsOptions.minVersion),
     maxVersion: range ? range[1] : tlsStringToProtocolVersion(tlsOptions.maxVersion),
     serverName: tlsOptions.servername,
     requestCert: current.requestCert,

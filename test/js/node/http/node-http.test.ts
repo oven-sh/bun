@@ -1666,6 +1666,39 @@ describe("node https server", async () => {
     }
   });
 
+  it("setSecureContext normalizes TLS 1.3 cipher lists before and after listen", async () => {
+    const key = nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem"));
+    const cert = nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-cert.pem"));
+    const cases = [
+      { ciphers: "TLS_AES_256_GCM_SHA384", version: "TLSv1.3" as const },
+      { ciphers: "TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256", version: "TLSv1.2" as const },
+    ];
+    for (const beforeListen of [true, false]) {
+      for (const { ciphers, version } of cases) {
+        const server = createHttpsServer(httpsOptions);
+        let socket;
+        try {
+          if (beforeListen) server.setSecureContext({ key, cert, ciphers });
+          const url = await listen(server, "https");
+          if (!beforeListen) server.setSecureContext({ key, cert, ciphers });
+          socket = tlsConnect({
+            host: "127.0.0.1",
+            port: Number(url.port),
+            minVersion: version,
+            maxVersion: version,
+            rejectUnauthorized: false,
+          });
+          await once(socket, "secureConnect");
+          expect(socket.getPeerCertificate().fingerprint256).toBe(new X509Certificate(cert).fingerprint256);
+          expect(socket.getProtocol()).toBe(version);
+        } finally {
+          socket?.destroy();
+          server.close();
+        }
+      }
+    }
+  });
+
   it("preserves static ALPN protocols after setSecureContext", async () => {
     const replacement = {
       key: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem")),

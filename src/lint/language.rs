@@ -214,6 +214,8 @@ pub struct LanguageOptions {
     pub is_oxlint: bool,
     /// There's no ESLint or oxlint config, so no rule has to match an installed package's behavior.
     pub has_no_foreign_config: bool,
+    /// The configured eslint-plugin-react-hooks can resolve react-native-reanimated.
+    pub react_hooks_uses_reanimated: bool,
     /// Set with `has_no_foreign_config` when each file's syntax decides whether it's a module. `self` then applies to
     /// files with module syntax, and this copy applies to files without it, which are CommonJS.
     /// [`File::new`](crate::ast::File::new) picks one, so [`File::language`](crate::ast::File::language) is correct for
@@ -491,6 +493,7 @@ impl LanguageOptions {
             rejects_what_parser_rejects: true,
             is_oxlint: false,
             has_no_foreign_config: false,
+            react_hooks_uses_reanimated: false,
             without_module_syntax: None,
             has_oxc_scopes: false,
             rules_missing_in_oxlint: Vec::new(),
@@ -661,6 +664,7 @@ impl Default for LanguageOptions {
             rejects_what_parser_rejects: true,
             is_oxlint: false,
             has_no_foreign_config: false,
+            react_hooks_uses_reanimated: false,
             without_module_syntax: None,
             has_oxc_scopes: false,
             rules_missing_in_oxlint: Vec::new(),

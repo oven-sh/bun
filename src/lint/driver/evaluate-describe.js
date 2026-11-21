@@ -90,6 +90,18 @@ function locate(plugin) {
   return located.get(plugin) ?? locateWrapped(plugin);
 }
 
+// eslint-plugin-react-hooks probes for Reanimated with require.resolve from its own module.
+function withReanimatedCheck(prefix, location) {
+  if (prefix !== "react-hooks") return location;
+  try {
+    const from = require("node:module").createRequire(location.module ?? location.config);
+    from.resolve("react-native-reanimated");
+    return { ...location, usesReanimated: true };
+  } catch {
+    return location;
+  }
+}
+
 // What a package starts with for who requires it and for who imports it, if `module` is one of the two: two builds of one thing.
 function buildsOf(module) {
   const [, above, name] =

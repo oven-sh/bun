@@ -1643,6 +1643,11 @@ impl Config {
                 .collect(),
         };
         config.linter = linter;
+        config.language.react_hooks_uses_reanimated =
+            js_locations.iter().any(|(prefix, location)| {
+                &**prefix == b"react-hooks"
+                    && location.get(b"usesReanimated") == Some(&Json::Bool(true))
+            });
         config.parser_name = (language_options.get(b"parser"))
             .and_then(Json::as_str)
             .map(Box::from);

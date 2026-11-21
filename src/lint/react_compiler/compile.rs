@@ -38,9 +38,13 @@ pub(crate) struct Compiler<'a> {
 
 /// oxlint's `react_compiler_plugin_options`, or the plugin's `COMPILER_OPTIONS`. With `has_no_foreign_config` we don't
 /// follow the plugin where that would make a rule useless.
-fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
+fn config_of(flavor: Flavor, file: &File) -> EnvironmentConfig {
     let is_oxlint = flavor == Flavor::Oxlint;
+    let has_no_foreign_config = file.language().has_no_foreign_config;
     EnvironmentConfig {
+        enable_custom_type_definition_for_reanimated: !is_oxlint
+            && file.language().react_hooks_uses_reanimated
+            && file.mentions("react-native-reanimated"),
         validate_ref_access_during_render: true,
         joined_ref_values_keep_their_place: is_oxlint,
         effects_keep_their_place: is_oxlint,
@@ -81,7 +85,7 @@ impl<'a> Compiler<'a> {
             file,
             flavor,
             wanted,
-            config: config_of(flavor, file.language().has_no_foreign_config),
+            config: config_of(flavor, file),
             arena: bun_alloc::Arena::new(),
         }
     }

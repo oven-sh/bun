@@ -4435,7 +4435,11 @@ fn spawn_sync_inherit_impl(
             for fd in 0..3 {
                 let rc = if fd == 0 && stdin == StdinBehavior::Ignore {
                     libc::posix_spawn_file_actions_addopen(
-                        &raw mut actions.0, 0, c"/dev/null".as_ptr(), libc::O_RDONLY, 0,
+                        &raw mut actions.0,
+                        0,
+                        c"/dev/null".as_ptr(),
+                        libc::O_RDONLY,
+                        0,
                     )
                 } else {
                     posix_spawn_file_actions_addinherit_np(&raw mut actions.0, fd)
@@ -4484,7 +4488,9 @@ fn spawn_sync_inherit_impl(
                 for fd in 0..3 {
                     let flags = libc::fcntl(fd, libc::F_GETFD);
                     if flags < 0 {
-                        if crate::ffi::errno() == libc::EBADF { continue; }
+                        if crate::ffi::errno() == libc::EBADF {
+                            continue;
+                        }
                         libc::_exit(127);
                     }
                     if libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {

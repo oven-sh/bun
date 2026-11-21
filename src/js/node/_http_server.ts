@@ -301,6 +301,9 @@ function connectionListener(this: Server, socket) {
 }
 
 type NodeHTTPServer = import("node:http").Server;
+interface NativeNodeHTTPServer extends Bun.Server<any> {
+  _setNodeHTTPSSecureContext(options: unknown, additionalCA: unknown): void;
+}
 interface Server extends NodeHTTPServer {
   maxHeaderSize: number | undefined;
   insecureHTTPParser: boolean | undefined;
@@ -1175,7 +1178,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         return pendingPromise;
       },
-    });
+    }) as NativeNodeHTTPServer;
     const additionalCAOptions = getAdditionalCAOptions(tls);
     if (additionalCAOptions) {
       try {

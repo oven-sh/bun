@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ec3bfaec60a418fe816884584d3a93fcb0cf031f4a77407d1861891a501dff5e.
+// Written against that file with the SHA-256 2958fccaa97e99e4e11b7597cdc235e747b6b0f99be44bc015431c9d6fc8a754.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -483,6 +483,10 @@ function connectionListener(this: $Node.HttpServer, socket: $Node.HttpSocket) {
       ServerResponse: this[kServerResponse],
     },
   });
+}
+
+interface NativeNodeHTTPServer extends Bun.Server<any> {
+  _setNodeHTTPSSecureContext(options: unknown, additionalCA: unknown): void;
 }
 
 /** One `listen()`: a native listener, and what `close()` has to know about it. */
@@ -1727,7 +1731,7 @@ Server.prototype[kRealListen] = function (
           isPipelinedDispatch,
         );
       },
-    });
+    }) as NativeNodeHTTPServer;
 
     const additionalCAOptions = getAdditionalCAOptions(tls);
     if (additionalCAOptions) {

@@ -46,7 +46,13 @@ type Weak = { weak: string; ticket?: never };
 const ROWS: Row[] = [
   // ── thread pool: bun_jsc::Job ────────────────────────────────────────────
   { name: "fs.readFile", worker: `require("node:fs").readFile(process.execPath, () => {});`, ticket: "node_fs.rs" },
-  { name: "fs.promises.stat", worker: `require("node:fs").promises.stat(process.execPath);`, ticket: "node_fs.rs" },
+  {
+    name: "fs.promises.stat",
+    worker: `require("node:fs").promises.stat(process.execPath);`,
+    ticket: "node_fs.rs",
+    // On Linux the worker's own thread answers a stat that the kernel has cached, and no work is off-thread.
+    env: { BUN_FEATURE_FLAG_DISABLE_ASYNC_FS_FAST_PATH: "1" },
+  },
   { name: "fs.realpath", worker: `require("node:fs").realpath(process.execPath, () => {});`, ticket: "node_fs.rs" },
   {
     // The pool thread reads the JS buffer's bytes in place.

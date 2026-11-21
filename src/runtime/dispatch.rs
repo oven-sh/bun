@@ -264,8 +264,8 @@ pub(crate) fn run_task(
     match task.tag() {
         // ── erased-callback tasks (low-tier types — real) ────────────────
         task_tag::AnyTaskJob => {
-            // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
-            // its `Completion`; the erased entry runs `then` and frees it.
+            // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` that its `Completion`
+            // posted or `schedule_finished` queued; the erased entry runs `then` and frees it.
             unsafe { bun_jsc::job::complete_erased(task.ptr(), global) }?;
         }
         task_tag::SendQueueDeferred => counted_arm!(task, [Ipc], |queue: crate::ipc::SendQueue| {

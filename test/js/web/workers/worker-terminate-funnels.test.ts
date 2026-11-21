@@ -15,7 +15,7 @@ const FAMILIES: Record<string, number> = {
   messaging: 13,
   net: 17,
   http: 18,
-  fs: 15,
+  fs: 17,
   pool: 20,
   subprocess: 9,
   dns: 7,

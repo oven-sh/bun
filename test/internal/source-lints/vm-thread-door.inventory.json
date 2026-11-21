@@ -145,9 +145,10 @@
     ]
   },
   "src/runtime/node/node_fs.rs": {
-    "WorkPool::schedule*": 4,
+    "WorkPool::schedule*": 5,
     "owned_task!": [
       "AsyncMkdirp",
+      "CachedDescriptor",
       "CpSingleTask",
       "ReaddirSubtask"
     ],

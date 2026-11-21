@@ -4,15 +4,19 @@
 # console.log("hello world");
 # and `main-symlink.js` as a symlink to `main.js`.
 import fuse
-import errno, stat, os
+import errno, stat, os, time
 
 fuse.fuse_python_api = (0, 2)
 
 script = b'console.log("hello world");\n'
 
+# Seconds that an answer about a file or about the filesystem takes: a slow mount.
+delay = float(os.environ.get("FUSE_FS_DELAY", "0"))
+
 
 class TestingFs(fuse.Fuse):
     def getattr(self, path):
+        time.sleep(delay)
         st = fuse.Stat()
         if path == "/":
             st.st_mode = stat.S_IFDIR | 0o755
@@ -28,6 +32,10 @@ class TestingFs(fuse.Fuse):
         else:
             return -errno.ENOENT
         return st
+
+    def statfs(self):
+        time.sleep(delay)
+        return fuse.StatVfs()
 
     def readdir(self, path, offset):
         for r in ".", "..", "main.js", "main-symlink.js":

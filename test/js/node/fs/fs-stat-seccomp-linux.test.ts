@@ -6,7 +6,8 @@ import { join } from "node:path";
 
 // Seccomp helper: installs a filter that makes one syscall (`BLOCK_SYSCALL`,
 // a `-D` define) fail with the errno given in argv[1], then execs argv[2..].
-// An errno of 0 makes the syscall raise SIGSYS (SECCOMP_RET_TRAP) instead.
+// An errno of 0 makes the syscall raise SIGSYS (SECCOMP_RET_TRAP) instead,
+// and -1 makes it kill the process (SECCOMP_RET_KILL_PROCESS).
 // With `-DBLOCK_ARG1=value` only calls whose second argument is `value` fail.
 // Shared by the describe blocks below.
 const helperSrc = `
@@ -41,6 +42,13 @@ const helperSrc = `
 #ifndef __NR_close_range
   #define __NR_close_range 436
 #endif
+#ifndef __NR_openat2
+  #define __NR_openat2 437
+#endif
+
+#ifndef SECCOMP_RET_KILL_PROCESS
+  #define SECCOMP_RET_KILL_PROCESS 0x80000000U
+#endif
 
 /* instructions between the syscall-nr test and the errno return */
 #ifdef BLOCK_ARG1
@@ -53,8 +61,15 @@ const helperSrc = `
 int main(int argc, char **argv) {
   if (argc < 3) return 2;
   if (MY_AUDIT_ARCH == 0) return 77; /* unsupported arch, skip */
-  unsigned int err = (unsigned int)atoi(argv[1]);
+  int requested = atoi(argv[1]);
+  unsigned int err = (unsigned int)requested;
   unsigned int action = err == 0 ? SECCOMP_RET_TRAP : SECCOMP_RET_ERRNO | (err & SECCOMP_RET_DATA);
+  if (requested < 0) {
+    /* The death is expected: it leaves no core file. */
+    struct rlimit no_core = {0, 0};
+    setrlimit(RLIMIT_CORE, &no_core);
+    action = SECCOMP_RET_KILL_PROCESS;
+  }
 
   struct sock_filter filter[] = {
     /* arch check */
@@ -95,6 +110,7 @@ int main(int argc, char **argv) {
 `;
 
 const TRAP = 0;
+const KILL = -1;
 // Linux errno values (identical on x86_64 and aarch64).
 const EPERM = 1;
 const EACCES = 13;
@@ -151,7 +167,7 @@ async function runBunUnderSeccomp(
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode === 77) return null;
-  return { stdout, stderr, exitCode };
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
 
 // Run `bun -e snippet args...` under the seccomp helper.
@@ -602,5 +618,90 @@ describe.skipIf(!isLinux).each([
       syscall,
       message: `EACCES: permission denied, ${syscall}`,
     });
+  });
+});
+
+// The JS thread asks the kernel's caches with `openat2(RESOLVE_CACHED)` in front of the thread
+// pool (`bun_sys::cached`). Where the call is refused, every async operation is the pool's, as
+// on a kernel without it.
+describe.skipIf(!isLinux)("async fs operations when seccomp refuses openat2", () => {
+  const helperBin = tryBuildHelper("__NR_openat2");
+  const snippet = `
+    const fs = require("node:fs");
+    const { getCounters } = require("bun:internal-for-testing");
+    (async () => {
+      const results = [];
+      for (let i = 0; i < 3; i++) {
+        results.push(
+          (await fs.promises.stat("file.txt")).size,
+          (await fs.promises.lstat("link.txt")).isSymbolicLink(),
+          (await fs.promises.stat(".")).isDirectory(),
+          await fs.promises.stat("missing.txt").then(() => "found", e => e.code + " " + e.syscall),
+        );
+      }
+      const { fs_cached_hit, fs_cached_miss } = getCounters();
+      console.log(JSON.stringify({ results, fs_cached_hit, fs_cached_miss }));
+    })();
+  `;
+  const once = [5, true, true, "ENOENT stat"];
+
+  async function run(action: number, env: Record<string, string> = {}) {
+    if (helperBin == null) {
+      console.warn("SKIP openat2 seccomp: cc or seccomp headers not available");
+      return null;
+    }
+    using dir = tempDir("openat2-seccomp", { "file.txt": "hello", "android/bin/linker64": "" });
+    symlinkSync("file.txt", join(String(dir), "link.txt"));
+    const out = await runBunUnderSeccomp(helperBin, action, ["-e", snippet], {
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH: "1",
+        ...Object.fromEntries(Object.entries(env).map(([name, value]) => [name, value.replace("<dir>", String(dir))])),
+      },
+    });
+    if (out == null) {
+      console.warn("SKIP openat2 seccomp: seccomp not permitted in this environment");
+      return null;
+    }
+    return out;
+  }
+
+  function answers(out: NonNullable<Awaited<ReturnType<typeof run>>>) {
+    // Don't assert empty stderr — ASAN builds emit a startup warning there.
+    expect({ stdout: out.stdout.trim(), exitCode: out.exitCode }).toEqual({
+      stdout: expect.stringContaining('{"results":'),
+      exitCode: 0,
+    });
+    return JSON.parse(out.stdout.trim());
+  }
+
+  // A pool thread finds the refusal, and the JS thread never asks.
+  test.concurrent.each([
+    ["ENOSYS", ENOSYS],
+    ["EPERM", EPERM],
+    ["EINVAL", EINVAL],
+    ["EACCES", EACCES],
+    ["a SIGSYS that Bun's handler turns into ENOSYS", TRAP],
+  ])("with %s, the pool answers", async (_name, action) => {
+    const out = await run(action);
+    if (out == null) return;
+    expect(answers(out)).toEqual({ results: [...once, ...once, ...once], fs_cached_hit: 0, fs_cached_miss: 0 });
+  });
+
+  // For a policy that kills the process on a call it does not list.
+  test.concurrent.each([
+    ["BUN_FEATURE_FLAG_DISABLE_ASYNC_FS_FAST_PATH", "1"],
+    ["BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH", "1"],
+    // What makes the kernel an Android one to Bun: there `openat2` is never made.
+    ["ANDROID_ROOT", "<dir>/android"],
+  ])("with %s the call is not made", async (name, value) => {
+    const [unguarded, guarded] = await Promise.all([run(KILL), run(KILL, { [name]: value })]);
+    if (unguarded == null || guarded == null) return;
+    // The policy bites wherever Bun asks the kernel's caches at all.
+    if (unguarded.signalCode !== "SIGSYS") {
+      expect(answers(unguarded).fs_cached_hit).toBe(0);
+    }
+    expect(answers(guarded)).toEqual({ results: [...once, ...once, ...once], fs_cached_hit: 0, fs_cached_miss: 0 });
   });
 });

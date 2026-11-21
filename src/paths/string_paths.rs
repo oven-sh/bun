@@ -117,39 +117,6 @@ pub fn to_nt_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     wstr_in_buf(wbuf, total)
 }
 
-pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
-    if !crate::is_absolute_windows_t::<u16>(path) {
-        return to_w_path_normalized16(wbuf, path);
-    }
-
-    if strings::has_prefix_comptime_utf16(path, &windows::NT_OBJECT_PREFIX_U8)
-        || strings::has_prefix_comptime_utf16(path, &windows::NT_UNC_OBJECT_PREFIX_U8)
-    {
-        return to_w_path_normalized16(wbuf, path);
-    }
-
-    if strings::has_prefix_comptime_utf16(path, b"\\\\") {
-        if strings::has_prefix_comptime_utf16(&path[2..], &windows::LONG_PATH_PREFIX_U8[2..]) {
-            let prefix = windows::NT_OBJECT_PREFIX;
-            wbuf[..prefix.len()].copy_from_slice(&prefix);
-            let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], &path[4..]).len();
-            let total = n + prefix.len();
-            return wstr_in_buf(wbuf, total);
-        }
-        let prefix = windows::NT_UNC_OBJECT_PREFIX;
-        wbuf[..prefix.len()].copy_from_slice(&prefix);
-        let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], &path[2..]).len();
-        let total = n + prefix.len();
-        return wstr_in_buf(wbuf, total);
-    }
-
-    let prefix = windows::NT_OBJECT_PREFIX;
-    wbuf[..prefix.len()].copy_from_slice(&prefix);
-    let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], path).len();
-    let total = n + prefix.len();
-    wstr_in_buf(wbuf, total)
-}
-
 fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
     let plen = windows::NT_OBJECT_PREFIX.len();
     wbuf[..plen].copy_from_slice(&windows::NT_OBJECT_PREFIX);
@@ -210,60 +177,6 @@ pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     }
 
     to_w_path(wbuf, path_to_use)
-}
-
-fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
-    // Input (plus the NUL) doesn't fit in `wbuf` — fail-safe to "" like
-    // `to_w_path_maybe_dir` does, instead of panicking in the
-    // `normalize_slashes_only_t` copy below.
-    if path.len() >= wbuf.len() {
-        wbuf[0] = 0;
-        return wstr_in_buf(wbuf, 0);
-    }
-
-    // Capture the length and re-derive the mutable slice (borrowck-friendly
-    // alternative to writing into wbuf and re-slicing it).
-    let len = {
-        let mut path_to_use = normalize_slashes_only_t::<u16, b'\\', true>(wbuf, path);
-
-        // is there a trailing slash? Let's remove it before converting to UTF-16
-        if path_to_use.len() > 3
-            && resolve_path::is_sep_any_t::<u16>(path_to_use[path_to_use.len() - 1])
-        {
-            path_to_use = &path_to_use[..path_to_use.len() - 1];
-        }
-        path_to_use.len()
-    };
-
-    wbuf[len] = 0;
-
-    wstr_in_buf(wbuf, len)
-}
-
-fn normalize_slashes_only_t<'a, T: PathChar, const DESIRED_SLASH: u8, const ALWAYS_COPY: bool>(
-    buf: &'a mut [T],
-    path: &'a [T],
-) -> &'a [T] {
-    // Was `const _: () = assert!(..)` but Rust forbids const items
-    // referencing outer const-generic params (E0401). Debug-assert instead.
-    debug_assert!(DESIRED_SLASH == b'/' || DESIRED_SLASH == b'\\');
-    let undesired_slash: u8 = if DESIRED_SLASH == b'/' { b'\\' } else { b'/' };
-
-    if strings::contains_char_t(path, undesired_slash) {
-        buf[..path.len()].copy_from_slice(path);
-        for c in buf[..path.len()].iter_mut() {
-            if *c == ch(undesired_slash) {
-                *c = ch(DESIRED_SLASH);
-            }
-        }
-        return &buf[..path.len()];
-    }
-
-    if ALWAYS_COPY {
-        buf[..path.len()].copy_from_slice(path);
-        return &buf[..path.len()];
-    }
-    path
 }
 
 // `desired_slash` is a runtime arg (not a const generic) since a

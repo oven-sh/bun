@@ -158,8 +158,7 @@ public:
             if (applyClientCertPolicy) {
                 us_ssl_ctx_set_sni_policy(domainCtx.get(), options.request_cert, options.reject_unauthorized);
             }
-            if (!alpnProtocols.empty() && !us_ssl_ctx_set_alpn_protocols(domainCtx, alpnProtocols.data(), static_cast<unsigned int>(alpnProtocols.size()))) {
-                us_internal_ssl_ctx_unref(domainCtx);
+            if (!alpnProtocols.empty() && !us_ssl_ctx_set_alpn_protocols(domainCtx.get(), alpnProtocols.data(), static_cast<unsigned int>(alpnProtocols.size()))) {
                 if (success) *success = false;
                 return std::move(*this);
             }
@@ -197,7 +196,7 @@ public:
         if constexpr (!SSL) {
             return false;
         } else {
-            if (!us_ssl_ctx_set_alpn_protocols(sslCtx, protocols, protocolsLength)) {
+            if (!us_ssl_ctx_set_alpn_protocols(sslCtx.get(), protocols, protocolsLength)) {
                 return false;
             }
             alpnProtocols.assign(protocols, protocols + protocolsLength);
@@ -210,28 +209,25 @@ public:
             return false;
         } else {
             enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-            struct ssl_ctx_st *next = us_ssl_ctx_from_options(options, &err);
+            SslCtxPtr next{us_ssl_ctx_from_options(options, &err)};
             if (!next) return false;
 
             for (unsigned int i = 0; i < additionalCaCount; i++) {
-                if (!us_ssl_ctx_add_ca_cert(next, additionalCa[i])) {
-                    us_internal_ssl_ctx_unref(next);
+                if (!us_ssl_ctx_add_ca_cert(next.get(), additionalCa[i])) {
                     return false;
                 }
             }
-            if (alpnProtocolsLength && !us_ssl_ctx_set_alpn_protocols(next, alpnProtocols, alpnProtocolsLength)) {
-                us_internal_ssl_ctx_unref(next);
+            if (alpnProtocolsLength && !us_ssl_ctx_set_alpn_protocols(next.get(), alpnProtocols, alpnProtocolsLength)) {
                 return false;
             }
             if (httpContext->getSocketContextData()->http2Context) {
-                us_ssl_ctx_enable_http2_alpn(next, httpContext->getSocketContextData()->allowHttp1);
+                us_ssl_ctx_enable_http2_alpn(next.get(), httpContext->getSocketContextData()->allowHttp1);
             }
             forEachListenSocket([&](us_listen_socket_t *ls) {
-                us_listen_socket_set_ssl_ctx(ls, next);
+                us_listen_socket_set_ssl_ctx(ls, next.get());
             });
 
-            us_internal_ssl_ctx_unref(sslCtx);
-            sslCtx = next;
+            sslCtx = std::move(next);
             return true;
         }
     }

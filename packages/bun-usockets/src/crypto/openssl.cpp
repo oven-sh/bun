@@ -1702,7 +1702,7 @@ static int us_alpn_select_protocols(SSL *ssl, const unsigned char **out,
                                     unsigned char *outlen, const unsigned char *in,
                                     unsigned int inlen, void *arg) {
   (void)ssl;
-  struct us_ssl_alpn_protocols_t *protocols = arg;
+  struct us_ssl_alpn_protocols_t *protocols = (struct us_ssl_alpn_protocols_t *)arg;
   if (!protocols) return SSL_TLSEXT_ERR_NOACK;
   return SSL_select_next_proto((unsigned char **)out, outlen, protocols->data,
                                protocols->length, in, inlen) == OPENSSL_NPN_NEGOTIATED
@@ -1722,13 +1722,13 @@ int us_ssl_ctx_set_alpn_protocols(SSL_CTX *ctx, const unsigned char *protocols,
   us_ex_idx_ensure();
   if (us_ctx_alpn_protocols_ex_idx < 0) return 0;
   struct us_ssl_alpn_protocols_t *owned =
-      us_malloc(sizeof(struct us_ssl_alpn_protocols_t) + protocols_len);
+      (struct us_ssl_alpn_protocols_t *)us_malloc(sizeof(struct us_ssl_alpn_protocols_t) + protocols_len);
   if (!owned) return 0;
   owned->length = protocols_len;
   memcpy(owned->data, protocols, protocols_len);
 
   struct us_ssl_alpn_protocols_t *previous =
-      SSL_CTX_get_ex_data(ctx, us_ctx_alpn_protocols_ex_idx);
+      (struct us_ssl_alpn_protocols_t *)SSL_CTX_get_ex_data(ctx, us_ctx_alpn_protocols_ex_idx);
   if (!SSL_CTX_set_ex_data(ctx, us_ctx_alpn_protocols_ex_idx, owned)) {
     us_free(owned);
     return 0;

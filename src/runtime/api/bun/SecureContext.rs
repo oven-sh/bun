@@ -47,8 +47,7 @@ pub(crate) fn live_count() -> f64 {
     c::us_ssl_ctx_live_count() as f64
 }
 
-/// Exposed via `bun:internal-for-testing` so tests can assert which certificates of a `ca` option
-/// were parsed whole to validate them.
+/// For `bun:internal-for-testing`: how many `ca` certificates were parsed to validate them.
 pub(crate) fn ca_certs_parsed() -> f64 {
     c::us_ssl_ca_certs_parsed() as f64
 }

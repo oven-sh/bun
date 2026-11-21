@@ -164,6 +164,7 @@ info!(FileClass:
     FILE_MODE_INFORMATION = FileModeInformation,
     FILE_PIPE_INFORMATION = FilePipeInformation,
     FILE_POSITION_INFORMATION = FilePositionInformation,
+    FILE_STANDARD_INFORMATION = FileStandardInformation,
     FILE_STAT_BASIC_INFORMATION = FileStatBasicInformation,
 );
 info!(VolumeClass:

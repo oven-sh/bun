@@ -174,7 +174,6 @@ impl PathWatcher {
         let done = move |completion| {
             if let Some(this) = this.upgrade() {
                 this.on_changes(&next, completion);
-                FSWatcher::on_update_end(Some(this.owner));
             }
         };
         let read = file.read_changes(buffer, size, FILTER, self.recursive, done);
@@ -189,7 +188,7 @@ impl PathWatcher {
         let is_cut = status == NTSTATUS::BUFFER_OVERFLOW;
         let was_cut = self.was_cut.replace(is_cut);
         if !NT_SUCCESS(status) && (was_cut || !is_cut) {
-            return self.fail(status, timestamp);
+            return self.fail(file, status, timestamp);
         }
         let records = match status {
             NTSTATUS::SUCCESS => &buffer[..],
@@ -214,21 +213,31 @@ impl PathWatcher {
             }
         }
         if let Err(status) = next {
-            self.fail(status, timestamp);
+            self.fail(file, status, timestamp);
         }
     }
 
-    fn fail(&self, status: NTSTATUS, timestamp: u64) {
-        if let (NTSTATUS::DELETE_PENDING, Target::Directory(path)) = (status, &self.target) {
-            return self.emit(path, timestamp, WatchEventKind::Rename);
+    fn fail(&self, file: &AsyncFile, status: NTSTATUS, timestamp: u64) {
+        let error = Win32Error::from_ntstatus(status);
+        if let (Win32Error::ACCESS_DENIED, Target::Directory(path)) = (error, &self.target) {
+            let was_deleted = matches!(status, NTSTATUS::DELETE_PENDING | NTSTATUS::FILE_DELETED);
+            if w::is_delete_pending(file.handle().raw()).unwrap_or(was_deleted) {
+                self.emit(path, timestamp, WatchEventKind::Rename);
+                return self.send(Event::Deleted(sys::E::ENOENT), false);
+            }
+            // That was withdrawn, which does not bring the watch back.
+            if was_deleted {
+                return self.send(Event::Deleted(sys::E::EPERM), false);
+            }
         }
-        let errno = Win32Error::from_ntstatus(status).to_node_e();
-        let err = sys::Error::from_code(errno, sys::Tag::watch);
+        let err = sys::Error::from_code(error.to_node_e(), sys::Tag::watch);
         self.send(Event::Error { err, close: true }, false);
     }
 
+    /// In a task of its own, so that microtasks run between two events.
     fn send(&self, event: Event, is_file: bool) {
         FSWatcher::on_path_update(Some(self.owner), event, is_file);
+        FSWatcher::on_update_end(Some(self.owner));
     }
 
     fn emit(&self, name: &[u16], timestamp: u64, event_type: WatchEventKind) {

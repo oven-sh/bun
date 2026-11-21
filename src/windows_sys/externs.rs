@@ -328,6 +328,7 @@ pub struct FILE_INFORMATION_CLASS(pub u32);
 impl FILE_INFORMATION_CLASS {
     pub const FileDirectoryInformation: Self = Self(1);
     pub const FileBasicInformation: Self = Self(4);
+    pub const FileStandardInformation: Self = Self(5);
     pub const FileAccessInformation: Self = Self(8);
     pub const FileRenameInformation: Self = Self(10);
     pub const FileDispositionInformation: Self = Self(13);
@@ -1089,7 +1090,7 @@ impl NTSTATUS {
     /// `STATUS_FILE_DELETED` — an I/O request other than close was performed on
     /// a file after it was deleted (typically `NtCreateFile` against a name
     /// that has already been POSIX-delete-pended).
-    pub(crate) const FILE_DELETED: NTSTATUS = NTSTATUS(0xC000_0123);
+    pub const FILE_DELETED: NTSTATUS = NTSTATUS(0xC000_0123);
     pub const SHARING_VIOLATION: NTSTATUS = NTSTATUS(0xC000_0043);
     /// `STATUS_CANNOT_DELETE` — the file has `FILE_ATTRIBUTE_READONLY` (and the
     /// filesystem rejected `FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE`), or a

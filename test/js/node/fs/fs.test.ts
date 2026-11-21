@@ -8758,8 +8758,9 @@ describe.skipIf(!isWindows)("on Windows", () => {
           withFd(at("d"), "r", fd => attempt(() => fs.fsyncSync(fd))),
           withFd(at("d"), "r+", fd => attempt(() => fs.fsyncSync(fd))),
           withFd(at("d"), "r+", fd => attempt(() => fs.ftruncateSync(fd))),
+          withFd(at("d"), "r+", fd => attempt(() => fs.fchmodSync(fd, 0o444))),
         ],
-        ["EPERM -4048 fsync", "ok", "EINVAL -4071 ftruncate"],
+        ["EPERM -4048 fsync", "ok", "EINVAL -4071 ftruncate", "EPERM -4048 fchmod"],
       ],
       [
         "fills the buffers of readv as far as the file goes",
@@ -9333,6 +9334,83 @@ describe.skipIf(!isWindows)("on Windows", () => {
         "EINVAL -4071 readlink",
       ],
     ]);
+
+    // Node.js has EPERM for all of them, as it opens the file a second time.
+    it.each([
+      ["file", "r+", ["100444", true, "100666"]],
+      ["file", "a", ["100444", true, "100666"]],
+      ["file", "r", ["EPERM -4048 fchmod", false, "EPERM -4048 fchmod"]],
+      ["directory", "r+", ["EPERM -4048 fchmod", false, "EPERM -4048 fchmod"]],
+    ])("fchmod of a %s whose delete is pending, through %s", (name, flags, expected) => {
+      using dir = tempDir("fs-windows", { file: "abc", directory: {} });
+      const file = join(String(dir), name);
+      const { symbols, close } = kernel32();
+      const [DELETE, WRITE_ATTRIBUTES, FileBasicInfo, FileDispositionInfo] = [0x10000, 0x100, 0, 4];
+      const BACKUP_SEMANTICS = 0x02000000;
+      const handle = symbols.CreateFileW(wide(file), DELETE | WRITE_ATTRIBUTES, 7, null, 3, BACKUP_SEMANTICS, null);
+      try {
+        const seen = withFd(file, flags, fd => {
+          const longAgo = new BigInt64Array([0n, 0n, 0n, 125_000_000_000_000_000n, 0n]);
+          expect([
+            symbols.SetFileInformationByHandle(handle, FileBasicInfo, longAgo, 40),
+            symbols.SetFileInformationByHandle(handle, FileDispositionInfo, Buffer.from([1, 0, 0, 0]), 4),
+          ]).toEqual([1, 1]);
+          const { ctimeMs } = fs.fstatSync(fd);
+          const chmod = (to: number) => attempt(() => (fs.fchmodSync(fd, to), mode(fs.fstatSync(fd))));
+          return [chmod(0o444), fs.fstatSync(fd).ctimeMs > ctimeMs, chmod(0o666)];
+        });
+        expect(seen).toEqual(expected);
+      } finally {
+        symbols.CloseHandle(handle);
+        close();
+      }
+    });
+
+    it("fchmod leaves a file alone whose access list says so", () => {
+      using dir = tempDir("fs-windows", { f: "abc" });
+      const file = join(String(dir), "f");
+      const icacls = (...args: string[]) => Bun.spawnSync({ cmd: ["icacls", file, ...args] }).exitCode;
+      const seen = withFd(file, "r+", fd => {
+        expect(icacls("/deny", "*S-1-1-0:(WA)")).toBe(0);
+        try {
+          return [
+            attempt(() => fs.utimesSync(file, 1, 1)),
+            attempt(() => fs.fchmodSync(fd, 0o444)),
+            mode(fs.fstatSync(fd)),
+          ];
+        } finally {
+          icacls("/remove:d", "*S-1-1-0");
+        }
+      });
+      // The privilege to restore files goes before the list.
+      expect(seen).toEqual(
+        seen[0] === "ok" ? ["ok", "ok", "100444"] : ["EPERM -4048 utime", "EPERM -4048 fchmod", "100666"],
+      );
+    });
+
+    it.concurrent("fchmod does not wait for a read from a pipe", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const fs = require("fs");
+           fs.read(0, () => {});
+           const seen = new Set();
+           for (let i = 0; i < 200; i++) {
+             await new Promise(setImmediate);
+             try { fs.fchmodSync(0, 0o666); seen.add("ok"); } catch (error) { seen.add(error.code); }
+           }
+           console.log(...seen);
+           process.exit(0);`,
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "EBUSY\n", stderr: "", exitCode: 0 });
+    });
   });
 
   describe("still differs from Node.js", () => {

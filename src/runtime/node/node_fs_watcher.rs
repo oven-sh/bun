@@ -137,6 +137,11 @@ impl FSWatchTask {
                     self.ctx.emit_null_filename(*event_type);
                     Ok(())
                 }
+                #[cfg(windows)]
+                Event::Deleted(errno) => {
+                    self.ctx.emit_deleted(*errno);
+                    Ok(())
+                }
                 Event::Abort => {
                     self.ctx.emit_if_aborted();
                     Ok(())
@@ -214,6 +219,9 @@ pub(crate) enum Event {
     /// `Change` when the OS event queue overflowed and changes were lost.
     #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     NoFilename(WatchEventKind),
+    /// It ends the watch of a directory, as in libuv 1.53: https://github.com/libuv/libuv/pull/5013
+    #[cfg(windows)]
+    Deleted(bun_sys::E),
     Abort,
 }
 
@@ -282,7 +290,6 @@ impl FSWatcher {
         if this.verbose {
             Output::flush();
         }
-        // we only enqueue after all events are processed
         Self::enqueue_events(this);
     }
 }
@@ -494,6 +501,15 @@ impl FSWatcher {
 
         self.close();
         drop(guard);
+    }
+
+    /// As with an abort, the error is not thrown if nothing listens for it.
+    #[cfg(windows)]
+    fn emit_deleted(&self, errno: bun_sys::E) {
+        if !self.closed.get() {
+            let err = bun_sys::Error::from_code(errno, bun_sys::Tag::watch);
+            self.emit_abort(err.to_js(&self.global_this));
+        }
     }
 
     /// R-2: see `emit_abort` — `&self` + `Cell` so the trailing `close()`

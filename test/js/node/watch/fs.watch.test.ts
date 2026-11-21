@@ -15,7 +15,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
@@ -2183,6 +2183,19 @@ describe.concurrent.skipIf(!isWindows)("fs.watch on Windows", () => {
     }
   });
 
+  test("a loop over once() misses no event", async () => {
+    using dir = tempDir("watch-once", {});
+    using seen = watch(String(dir));
+    const names: string[] = [];
+    (async () => {
+      for (;;) names.push((await once(seen.watcher, "change"))[1]);
+    })().catch(() => {});
+    const made = Array.from({ length: 10 }, (_, i) => String(i));
+    for (const name of [...made, "guard"]) fs.mkdirSync(path.join(String(dir), name));
+    await seen.until("guard");
+    expect(names.slice(0, 10)).toEqual(made);
+  });
+
   test("goes on after events were lost", async () => {
     using dir = tempDir("watch-overflow", {});
     using seen = watch(String(dir));
@@ -2205,17 +2218,17 @@ describe.concurrent.skipIf(!isWindows)("fs.watch on Windows", () => {
   });
 
   describe.each([false, true])("when the watched directory is deleted (recursive: %p)", recursive => {
-    async function run(listener: string) {
+    async function run(script: string) {
       using dir = tempDir("watch-deleted", { d: {} });
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
-          `const fs = require("fs"), events = [];
-           const watcher = fs.watch("d", { recursive: ${recursive} }, type => { events.push(type); ${listener} });
-           watcher.on("error", error => events.push(error.code));
-           process.on("exit", () => console.log(events.slice(0, 3).join()));
-           fs.rmdirSync("d");`,
+          `const fs = require("fs"), events = [], options = { recursive: ${recursive} };
+           const failed = error => events.push(error.code + " " + error.syscall);
+           process.on("exit", () => console.log(events.slice(0, 4).join()));
+           ${script}
+           fs.rmSync("d", { recursive: true });`,
         ],
         cwd: String(dir),
         env: bunEnv,
@@ -2226,18 +2239,101 @@ describe.concurrent.skipIf(!isWindows)("fs.watch on Windows", () => {
       return { stdout, stderr, exitCode };
     }
 
-    test("the listener hears of it and can close the watcher", async () => {
-      expect(await run("watcher.close()")).toEqual({ stdout: "rename\n", stderr: "", exitCode: 0 });
+    test.each([
+      ["the listener hears of it once, and the watch ends", "", "rename true,ENOENT watch,close"],
+      ["the listener can close the watcher first", "watcher.close()", "rename true,close"],
+    ])("%s", async (_, listener, events) => {
+      const script = `
+        const watched = fs.realpathSync.native("d");
+        const watcher = fs.watch(watched, options, (type, name) => {
+          events.push(type + " " + (name === watched));
+          ${listener}
+        });
+        watcher.on("error", failed).on("close", () => events.push("close"));`;
+      expect(await run(script)).toEqual({ stdout: events + "\n", stderr: "", exitCode: 0 });
     });
 
-    test("the listener hears of it once", async () => {
-      // No event marks that nothing more will come.
-      expect(await run("if (events.length === 1) setTimeout(() => watcher.close(), 50)")).toEqual({
-        stdout: "rename\n",
-        stderr: "",
-        exitCode: 0,
-      });
+    test("a file in it goes first", async () => {
+      const script = `
+        fs.writeFileSync("d/f", "");
+        fs.watch("d", options, (type, name) => type === "rename" && events.push(require("path").basename(name)))
+          .on("error", failed);`;
+      expect(await run(script)).toEqual({ stdout: "f,d,ENOENT watch\n", stderr: "", exitCode: 0 });
     });
+
+    test("the watcher can be closed first after once()", async () => {
+      const script = `
+        const watcher = fs.watch("d", options);
+        require("events").once(watcher, "change").then(([type]) => (events.push(type), watcher.close()));`;
+      expect(await run(script)).toEqual({ stdout: "rename\n", stderr: "", exitCode: 0 });
+    });
+
+    test("fs.promises.watch() rejects", async () => {
+      const script = `(async () => {
+        for await (const { eventType } of fs.promises.watch("d", options)) events.push(eventType);
+      })().catch(failed);`;
+      expect(await run(script)).toEqual({ stdout: "rename,ENOENT watch\n", stderr: "", exitCode: 0 });
+    });
+
+    test("the error is not thrown if nothing listens for it", async () => {
+      const script = `fs.watch("d", options, type => events.push(type)).on("close", () => events.push("close"));`;
+      expect(await run(script)).toEqual({ stdout: "rename,close\n", stderr: "", exitCode: 0 });
+    });
+
+    test("the listener of the error can make and watch it again", async () => {
+      const script = `fs.watch("d", options, () => {}).on("error", () => {
+        fs.mkdirSync("d");
+        const again = fs.watch("d", options, (type, name) => (events.push(type + " " + name), again.close()));
+        fs.writeFileSync("d/new", "");
+      });`;
+      expect(await run(script)).toEqual({ stdout: "rename new\n", stderr: "", exitCode: 0 });
+    });
+  });
+
+  test("a directory that another thread deletes", async () => {
+    using dir = tempDir("watch-deleted-async", {});
+    const codes = new Set();
+    for (let i = 0; i < 30; i++) {
+      const watched = path.join(String(dir), String(i));
+      fs.mkdirSync(watched);
+      const failed = once(fs.watch(watched), "error");
+      await fs.promises.rmdir(watched);
+      codes.add((await failed)[0].code);
+    }
+    expect([...codes]).toEqual(["ENOENT"]);
+  });
+
+  test("a delete that is withdrawn ends the watch as well", async () => {
+    using dir = tempDir("watch-withdrawn", { d: {} });
+    const watched = path.join(String(dir), "d");
+    const { symbols, close } = dlopen("kernel32.dll", {
+      CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "i64" },
+      SetFileInformationByHandle: { args: ["i64", "i32", "ptr", "u32"], returns: "i32" },
+      CloseHandle: { args: ["i64"], returns: "i32" },
+    });
+    const [DELETE, BACKUP_SEMANTICS, FileDispositionInfo] = [0x10000, 0x02000000, 4];
+    using seen = watch(watched);
+    const closed = new Promise(resolve => seen.watcher.once("close", resolve));
+    const handle = symbols.CreateFileW(
+      Buffer.from(watched + "\0", "utf16le"),
+      DELETE,
+      7,
+      null,
+      3,
+      BACKUP_SEMANTICS,
+      null,
+    );
+    try {
+      for (const deletes of [1, 0])
+        expect(symbols.SetFileInformationByHandle(handle, FileDispositionInfo, Buffer.from([deletes]), 1)).toBe(1);
+    } finally {
+      symbols.CloseHandle(handle);
+      close();
+    }
+    await closed;
+    expect(seen.events).toEqual([]);
+    expect(await seen.until("nothing").catch(error => error.code)).toBe("EPERM");
+    expect(fs.existsSync(watched)).toBe(true);
   });
 
   test("many watchers each hear their own directory", async () => {

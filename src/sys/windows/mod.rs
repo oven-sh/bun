@@ -2287,8 +2287,8 @@ pub(crate) mod file_position;
 pub use file_position::{identity, is_disk, pinned};
 pub(crate) mod fs;
 pub use fs::{
-    HandleKind, current_umask, guess_handle, junction, mkdtemp, open_osfhandle, symlink_directory,
-    verbatim_path,
+    HandleKind, current_umask, guess_handle, is_delete_pending, junction, mkdtemp, open_osfhandle,
+    symlink_directory, verbatim_path,
 };
 pub mod named_pipe;
 mod nt;

@@ -708,6 +708,11 @@ fn unlink_directory(name: &Name) -> Result<()> {
     }
 }
 
+pub fn is_delete_pending(file: HANDLE) -> Option<bool> {
+    let info: w::FILE_STANDARD_INFORMATION = nt::query(file).ok()?;
+    Some(info.DeletePending != 0)
+}
+
 pub fn unlink(path: &ZStr) -> Maybe<()> {
     let result = name_of(path).and_then(|name| {
         if name.full().ends_with(bun_core::w!("\\")) {
@@ -854,16 +859,34 @@ pub fn chmod(path: &ZStr, mode: Mode) -> Maybe<()> {
 }
 
 pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
-    at_fd(fd, Tag::fchmod, |file| {
-        let (access, options) = (w::FILE_WRITE_ATTRIBUTES, w::FILE_NON_DIRECTORY_FILE);
-        let file = open_synchronous((Some(file), &[]), access, options)?;
-        let file = file.as_raw_handle();
-        let before: w::FILE_BASIC_INFORMATION = win32(nt::query(file))?;
+    let change = |file: HANDLE, keeps_time: bool| {
+        let before: w::FILE_BASIC_INFORMATION = nt::query(file)?;
+        if before.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
+            return Err(NTSTATUS::FILE_IS_A_DIRECTORY);
+        }
         let after = w::FILE_BASIC_INFORMATION {
-            ChangeTime: before.ChangeTime,
+            ChangeTime: if keeps_time { before.ChangeTime } else { 0 },
             ..attributes_only(attributes_for(mode, before.FileAttributes))
         };
-        win32(nt::set(file, after))
+        nt::set(file, after)
+    };
+    at_fd(fd, Tag::fchmod, |file| {
+        let access = w::FILE_READ_ATTRIBUTES | w::FILE_WRITE_ATTRIBUTES | w::SYNCHRONIZE;
+        let options = w::FILE_NON_DIRECTORY_FILE | w::FILE_SYNCHRONOUS_IO_NONALERT;
+        win32(match open_existing((Some(file), &[]), access, options) {
+            Ok(again) => change(again.as_raw_handle(), true),
+            // Node.js gives up. A time that is set through a handle no longer follows its writes.
+            Err(
+                refused @ (NTSTATUS::NO_SUCH_FILE
+                | NTSTATUS::OBJECT_NAME_INVALID
+                | NTSTATUS::OBJECT_NAME_NOT_FOUND
+                | NTSTATUS::OBJECT_PATH_NOT_FOUND
+                | NTSTATUS::SHARING_VIOLATION
+                | NTSTATUS::DELETE_PENDING
+                | NTSTATUS::FILE_DELETED),
+            ) if super::is_disk(fd) => change(file, false).map_err(|_| refused),
+            Err(refused) => Err(refused),
+        })
     })
 }
 

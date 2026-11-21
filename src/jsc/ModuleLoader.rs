@@ -24,7 +24,6 @@ pub struct ModuleLoader {
     /// Taken while a module is printed, and put back so that the next one reuses its buffer.
     pub source_code_printer: core::cell::Cell<Option<Box<bun_js_printer::BufferPrinter>>>,
     pub eval_source: core::cell::OnceCell<Box<bun_ast::Source<'static>>>,
-    pub eval_and_print: core::cell::Cell<bool>,
     pub eval_input_type: core::cell::Cell<bun_options_types::context::RuntimeInputType>,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
     pub interactive_eval_script: core::cell::Cell<Option<&'static [u8]>>,

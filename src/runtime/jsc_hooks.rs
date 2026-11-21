@@ -2077,11 +2077,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     } else {
                         None
                     },
-                    // Strip the CJS wrapper for the eval/stdin
-                    // entry point.
-                    remove_cjs_module_wrapper: is_eval_source
-                        && (forced_module_type != ModuleType::Cjs
-                            || jsc_vm.module_loader.eval_and_print.get()),
+                    // The eval/stdin evaluator executes the body directly.
+                    remove_cjs_module_wrapper: is_eval_source,
                     forced_module_type,
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
                     macro_load_states: &jsc_vm.module_loader.macro_load_states,

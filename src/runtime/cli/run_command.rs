@@ -1073,9 +1073,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 .eval_input_type
                 .set(ctx.runtime_options.input_type);
             vm.module_loader
-                .eval_and_print
-                .set(ctx.runtime_options.eval.eval_and_print);
-            vm.module_loader
                 .interactive_eval_script
                 .set(ctx.runtime_options.eval.interactive_script.take());
             if ctx.runtime_options.eval.eval_and_print {

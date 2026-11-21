@@ -33,7 +33,9 @@ impl<S: Storage> FileIn<S> {
         let mut found = None;
         for prop in props.iter().map(|prop| &self[prop]) {
             match (prop.kind, prop.key) {
-                (PropKind::Init, PropKey::Name(name)) if name == key => found = Some(prop.value),
+                (PropKind::Init | PropKind::Shorthand, PropKey::Name(name)) if name == key => {
+                    found = Some(prop.value)
+                }
                 (PropKind::Spread, _) | (_, PropKey::Computed(_)) => found = None,
                 (_, PropKey::Name(name)) if name == key => found = None,
                 _ => {}

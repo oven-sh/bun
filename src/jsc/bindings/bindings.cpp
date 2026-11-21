@@ -980,11 +980,15 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     return true;
 }
 
-// expect.arrayContaining() puts its matchers first. They get what the second object inherits or hides.
+// expect.arrayContaining() puts its matchers first. As in Jest, they get what the second object inherits, not what it hides.
 static bool isMatcherOfUnlistedProperty(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSValue value, JSObject* object, PropertyName name)
 {
     bool mayBeBuiltIn = mayBeAsymmetricMatcher(value);
     if (!mayBeBuiltIn && !asymmetricMatchMethod(globalObject, value))
+        return false;
+    bool isHidden = object->hasOwnProperty(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (isHidden)
         return false;
     JSValue received = object->getIfPropertyExists(globalObject, name);
     RETURN_IF_EXCEPTION(scope, false);
@@ -2482,6 +2486,27 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 // only reached from `Bun.deepEquals(a, b, true, true)` in BunObject.cpp.
 template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
 
+// Like Jest's `hasPropertyInObject`, but it stops at the Object.prototype of any realm.
+static NEVER_INLINE bool hasPropertyBelowObjectPrototype(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object, PropertyName name)
+{
+    for (unsigned prototypeCount = 0; !object->inherits<JSC::ObjectPrototype>();) {
+        bool hasOwn = object->hasOwnProperty(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (hasOwn)
+            return true;
+        JSValue prototype = object->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!prototype.isObject())
+            return false;
+        if (++prototypeCount > JSObject::maximumPrototypeChainDepth) [[unlikely]] {
+            throwStackOverflowError(globalObject, scope);
+            return false;
+        }
+        object = asObject(prototype);
+    }
+    return false;
+}
+
 /**
  * @brief `Bun.deepMatch(a, b)`
  */
@@ -2633,9 +2658,11 @@ bool Bun__deepMatch(
     for (const auto& property : subsetProps) {
         // In Jest and Vitest, only expect.objectContaining() takes the prototype for a `__proto__` property.
         if (property == vm.propertyNames->underscoreProto && !isMatchingObjectContaining) [[unlikely]] {
-            bool hasOwn = obj->hasOwnProperty(globalObject, property);
+            bool isOwnedByPattern = subsetObj->hasOwnProperty(globalObject, property);
             RETURN_IF_EXCEPTION(throwScope, false);
-            if (!hasOwn)
+            bool isMissing = isOwnedByPattern && !hasPropertyBelowObjectPrototype(globalObject, throwScope, obj, property);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (isMissing)
                 return false;
         }
 

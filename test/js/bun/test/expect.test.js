@@ -1278,7 +1278,11 @@ describe("expect()", () => {
         expect(received({ id: 1 })).toEqual(expect.arrayContaining([{ name, id: 1 }]));
         expect(received({ id: 1 })).not.toEqual(expect.arrayContaining([{ name }]));
         expect(received({})).not.toEqual(expect.arrayContaining([{ other: name }]));
-        expect(new Proxy(Object.defineProperty({}, "name", { value: "x" }), {})).not.toEqual({ name });
+        const hides = Object.defineProperty({}, "name", { value: "x" });
+        for (const object of [hides, new Proxy(hides, {})]) {
+          expect(object).not.toEqual({ name });
+          expect([object]).not.toEqual(expect.arrayContaining([{ name }]));
+        }
       }
       for (const name of [expect.stringContaining("y"), { asymmetricMatch: () => false }, "x"]) {
         expect(received({})).not.toEqual(expect.arrayContaining([{ name }]));
@@ -1300,6 +1304,14 @@ describe("expect()", () => {
       expect(() =>
         expect([new Proxy(new Throws(), {})]).toEqual(expect.arrayContaining([{ name: expect.anything() }])),
       ).toThrow(new RangeError("from the getter"));
+      const trap = {
+        getOwnPropertyDescriptor() {
+          throw new RangeError("from the trap");
+        },
+      };
+      expect(() =>
+        expect([new Proxy(new Named(), trap)]).toEqual(expect.arrayContaining([{ name: expect.anything() }])),
+      ).toThrow(new RangeError("from the trap"));
     });
 
     if (isBun) {
@@ -4018,6 +4030,29 @@ describe("expect()", () => {
       expect(JSON.parse('{"__proto__":{"x":2}}')).not.toMatchObject(pattern);
       expect(JSON.parse('{"a":1,"__proto__":{"x":1,"y":2}}')).toMatchObject(pattern);
       expect({ a: 1 }).toEqual(expect.objectContaining(JSON.parse('{"a":1,"__proto__":{}}')));
+      expect(Object.create(null)).not.toMatchObject(pattern);
+      const invented = { has: () => true, get: () => ({ x: 1 }) };
+      expect(new Proxy(Object.create(null), invented)).not.toMatchObject(pattern);
+      expect(Object.prototype).not.toMatchObject({ ["__proto__"]: null });
+    });
+    test("finds an inherited __proto__ property", () => {
+      const pattern = JSON.parse('{"__proto__":{"x":1}}');
+      const parent = JSON.parse('{"__proto__":{"x":1,"y":2}}');
+      expect(Object.create(parent)).toMatchObject(pattern);
+      expect(Object.create(Object.create(parent))).toMatchObject(pattern);
+      expect(new Proxy(Object.create(parent), {})).toMatchObject(pattern);
+      expect(Object.create(new Proxy(parent, {}))).toMatchObject(pattern);
+      expect(Object.create(JSON.parse('{"__proto__":{"x":2}}'))).not.toMatchObject(pattern);
+      expect({}).toMatchObject(Object.create(JSON.parse('{"__proto__":{}}')));
+
+      const endless = { getPrototypeOf: () => new Proxy({}, endless) };
+      expect(() => expect(new Proxy({}, endless)).toMatchObject(pattern)).toThrow(RangeError);
+      for (const trap of ["getOwnPropertyDescriptor", "getPrototypeOf"]) {
+        const throws = () => {
+          throw new RangeError(trap);
+        };
+        expect(() => expect(new Proxy({}, { [trap]: throws })).toMatchObject(pattern)).toThrow(new RangeError(trap));
+      }
     });
     test("ends on cycles", () => {
       const received = { v: 1, other: { v: 2 } };

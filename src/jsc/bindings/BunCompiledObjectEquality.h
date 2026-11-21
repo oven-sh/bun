@@ -28,6 +28,9 @@ inline bool collectOwnEnumerableProperties(JSC::VM& vm, JSC::JSObject* object, O
     namespace PropertyWalk = JSC::AOT::PropertyWalk;
     if (PropertyWalk::isCompiledObject(object)) {
         auto visit = [&](const PropertyWalk::OwnProperty& property) {
+            // Structure::canPerformFastPropertyEnumeration() refuses it too, enumerable or not.
+            if (property.name == vm.propertyNames->underscoreProto.impl())
+                return IterationStatus::Done;
             if (property.attributes & JSC::PropertyAttribute::DontEnum)
                 return IterationStatus::Continue;
             properties.names.append(property.name);

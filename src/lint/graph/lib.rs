@@ -639,6 +639,7 @@ impl<'h> Graph<'h> {
         extensions: &[&[u8]],
         configured_paths: &[&[u8]],
         module_directories: &[&[u8]],
+        as_node: bool,
     ) -> Option<Vec<u8>> {
         let (cwd, disk) = (&self.store.cwd[..], self.store.disk());
         // `resolve`'s `loadpkg` walks up from where the file would be until it finds a `package.json`. On a relative
@@ -667,6 +668,7 @@ impl<'h> Graph<'h> {
             paths: &paths,
             through_paths: false,
             as_import: false,
+            as_node,
             base_url: None,
         };
         // No TypeScript config applies here.
@@ -699,6 +701,7 @@ impl<'h> Graph<'h> {
             paths: &[],
             through_paths: true,
             as_import: false,
+            as_node: false,
             base_url: None,
         };
         let from_base_url = || {
@@ -864,6 +867,7 @@ impl<'h> Graph<'h> {
                 paths: &[],
                 through_paths: true,
                 as_import: true,
+                as_node: false,
                 base_url: base_url.map(Vec::as_slice),
             };
             let code = self.real(resolver.resolve_as_require(specifier, from, &how)?.0);
@@ -1425,14 +1429,22 @@ impl Modules for Graph<'_> {
                 }
             }
             Lookup::Node(extensions) => {
-                self.resolve_as_require((specifier, &from), extensions, &[], &[b"node_modules"])?
+                let directories: [&[u8]; 1] = [b"node_modules"];
+                self.resolve_as_require((specifier, &from), extensions, &[], &directories, false)?
             }
             Lookup::NodeWith {
                 extensions,
                 paths,
                 module_directories,
             } => {
-                self.resolve_as_require((specifier, &from), extensions, paths, module_directories)?
+                let directories = module_directories;
+                self.resolve_as_require((specifier, &from), extensions, paths, directories, false)?
+            }
+            Lookup::Require => {
+                // `Object.keys(Module._extensions)`
+                let extensions: [&[u8]; 3] = [b".js", b".json", b".node"];
+                let directories: [&[u8]; 1] = [b"node_modules"];
+                self.resolve_as_require((specifier, &from), &extensions, &[], &directories, true)?
             }
         };
         Some(typescript_path(&found).to_vec())

@@ -141,12 +141,9 @@ pub(crate) fn knows_reanimated<'a>(file: &'a File<'a>, option: Reanimated) -> bo
     let Some(modules) = file.modules() else {
         return true;
     };
-    // `Object.keys(Module._extensions)`
-    let extensions = [&b".js"[..], b".json", b".node"];
-    let lookup = Lookup::Node(extensions.into_iter().collect());
     let resolves = || {
         modules
-            .resolve_file(plugin, REANIMATED.as_bytes(), true, &lookup)
+            .resolve_file(plugin, REANIMATED.as_bytes(), true, &Lookup::Require)
             .is_some()
     };
     *language.has_reanimated.get_or_init(resolves)

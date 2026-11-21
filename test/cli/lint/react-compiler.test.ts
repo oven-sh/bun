@@ -702,6 +702,7 @@ export function A() {
 }
 `;
   const imported = component(`import { useSharedValue } from "react-native-reanimated";`);
+  const local = component(`import { useSharedValue } from "./shared-value";`);
   const reported = ["react-hooks/immutability 7:5"];
 
   const packageIn = (directory: string, name: string, main: string) => ({
@@ -808,17 +809,22 @@ export default [
     expect(await foundByFile(files)).toEqual({ "app2/A.jsx": reported, "app2/B.jsx": reported });
   });
 
+  // `module` is for bundlers. Node doesn't read it.
   test("the package needs an entry point that `require.resolve` finds", async () => {
     const index = { "node_modules/react-native-reanimated/index.js": "" };
-    const [withIndex, withNothing] = await Promise.all([
+    const [withIndex, withNothing, withModule] = await Promise.all([
       found({ ...config(), ...plugin(), ...reanimated("", {}), ...index, "A.jsx": imported }),
       found({ ...config(), ...plugin(), ...reanimated("", { main: "lib/missing.js" }), "A.jsx": imported }),
+      found({ ...config(), ...plugin(), ...reanimated("", { module: "lib/index.js" }), "A.jsx": imported }),
     ]);
-    expect({ withIndex, withNothing }).toEqual({ withIndex: [], withNothing: reported });
+    expect({ withIndex, withNothing, withModule }).toEqual({
+      withIndex: [],
+      withNothing: reported,
+      withModule: reported,
+    });
   });
 
   test("a hook of that name from anywhere else returns an ordinary value", async () => {
-    const local = component(`const useSharedValue = value => useBox(value);`);
     expect(await found({ ...config(), ...plugin(), ...reanimated(), "A.jsx": local })).toEqual(reported);
   });
 
@@ -843,8 +849,12 @@ export default [
   });
 
   test("with --stdin", async () => {
-    const files = { ...config(), ...plugin(), ...reanimated() };
-    expect(await found(files, ["--stdin", "--stdin-filename", "A.jsx"], imported)).toEqual([]);
+    const args = ["--stdin", "--stdin-filename", "A.jsx"];
+    const [installed, missing] = await Promise.all([
+      found({ ...config(), ...plugin(), ...reanimated() }, args, imported),
+      found({ ...config(), ...plugin() }, args, imported),
+    ]);
+    expect({ installed, missing }).toEqual({ installed: [], missing: reported });
   });
 
   test("with an .eslintrc.json", async () => {
@@ -861,13 +871,22 @@ export default [
     expect({ installed, missing }).toEqual({ installed: [], missing: reported });
   });
 
-  // There's no module to resolve the package from, so the import is enough.
+  // There's no module to resolve the package from, so the import is enough. `other.jsx` shows that the rule runs.
   test("when the plugin is an object in the config, or there's no config", async () => {
+    const inline = `"react-hooks": { meta: { name: "eslint-plugin-react-hooks" } }`;
+    const files = { "A.jsx": imported, "other.jsx": local };
     const [inConfig, asReactHooks, asReact] = await Promise.all([
-      found({ "eslint.config.js": eslintConfig, "A.jsx": imported }),
-      found({ "A.jsx": imported }, ["--rule", "react-hooks/immutability: error", "."]),
-      found({ "A.jsx": imported }, ["--rule", "react/immutability: error", "."]),
+      foundByFile({
+        "eslint.config.js": `export default [${object(inline, { "react-hooks/immutability": "error" })}];\n`,
+        ...files,
+      }),
+      foundByFile(files, ["--rule", "react-hooks/immutability: error", "."]),
+      foundByFile(files, ["--rule", "react/immutability: error", "."]),
     ]);
-    expect({ inConfig, asReactHooks, asReact }).toEqual({ inConfig: [], asReactHooks: [], asReact: [] });
+    expect({ inConfig, asReactHooks, asReact }).toEqual({
+      inConfig: { "other.jsx": reported },
+      asReactHooks: { "other.jsx": reported },
+      asReact: { "other.jsx": reported },
+    });
   });
 });

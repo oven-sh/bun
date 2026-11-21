@@ -1488,6 +1488,9 @@ pub struct AsRequire<'a> {
     /// nothing. If a package has `exports`, nothing else is tried, in that package or in one further up. `imports` and
     /// the name of the file's own package are honored.
     pub as_import: bool,
+    /// Like Node's own `require.resolve`, which doesn't read a package's `module` and `jsnext:main`: the entry is
+    /// its `main`, or else its `index`.
+    pub as_node: bool,
     /// `baseUrl`, absolute: where oxc-resolver looks after `paths`, before any package.
     pub base_url: Option<&'a [u8]>,
 }
@@ -2000,6 +2003,8 @@ struct Look<'a> {
     as_require: bool,
     /// [`AsRequire::as_import`]
     as_import: bool,
+    /// [`AsRequire::as_node`]
+    as_node: bool,
 }
 
 impl Look<'_> {
@@ -3097,6 +3102,7 @@ impl<'h> Resolver<'h> {
             resolve_package_directory_only: false,
             as_require: false,
             as_import: false,
+            as_node: false,
         }
     }
 
@@ -3129,6 +3135,7 @@ impl<'h> Resolver<'h> {
             all_features: false,
             as_require: true,
             as_import: how.as_import,
+            as_node: how.as_node,
             ..self.look(ResolutionMode::Require, true, &outcome)
         };
         let from_dir = parent_directory(from);
@@ -4056,7 +4063,8 @@ impl<'h> Resolver<'h> {
             let main = json
                 .and_then(|it| it.get(b"main"))
                 .filter(|it| !is_falsy(it));
-            return (named(b"module").or_else(|| named(b"jsnext:main"))).or_else(|| {
+            let for_bundlers = || named(b"module").or_else(|| named(b"jsnext:main"));
+            return (!look.as_node).then(for_bundlers).flatten().or_else(|| {
                 let found = match main {
                     Some(main) => main.as_str().and_then(|_| named(b"main").or_else(index)),
                     None => return index(),

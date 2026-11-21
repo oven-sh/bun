@@ -433,8 +433,8 @@ function open(
   file: string,
   keep: boolean,
   beforeCreating: () => void,
-  sharesGlobal: boolean,
-  isCompiled: boolean,
+  sharesGlobal = false,
+  isCompiled = false,
 ) {
   // With --isolate every file has a new global. Loaded into that, the package would be evaluated and compiled again for each file.
   const lasting = keep || sharesGlobal ? undefined : lastingCopyOfThisModule();
@@ -598,12 +598,11 @@ function setupSharedGlobal(
   optionsText: string | undefined,
   file: string,
   isFromComment: boolean,
-  isCompiled: boolean,
 ) {
   if (name === "node") return uninstallFromSharedGlobal();
   let result;
   try {
-    result = open(name, optionsText, file, false, () => {}, true, isCompiled);
+    result = open(name, optionsText, file, false, () => {}, true);
   } catch (error) {
     if (!isFromComment) throw error;
     result = String((error as Error)?.message ?? error);
@@ -636,7 +635,7 @@ function setup(
   sharesGlobal: boolean,
   isCompiled: boolean,
 ) {
-  if (sharesGlobal) return setupSharedGlobal(name, optionsText, file, isFromComment, isCompiled);
+  if (sharesGlobal) return setupSharedGlobal(name, optionsText, file, isFromComment);
   let last = left;
   left = undefined;
   function leaveLast() {
@@ -680,9 +679,11 @@ setup.acceptDataOfTestFiles = (isCompiled: boolean) => {
   if (acceptsDataOfTestFiles) return;
   acceptsDataOfTestFiles = true;
   acceptBinaryDataOfOtherRealms(globalThis);
-  // happy-dom asks `body instanceof ReadableStream` of a Response or Request body.
   // `bun test --aot` lets nothing define this property on a built-in class but for binary data.
-  if (!isCompiled) acceptInstancesOfOtherRealms(ReadableStream, value => $inheritsReadableStream(value));
+  if (isCompiled) return;
+  // happy-dom asks `body instanceof ReadableStream` of a Response or Request body, and `value instanceof Date` of `input.valueAsDate`.
+  acceptInstancesOfOtherRealms(ReadableStream, value => $inheritsReadableStream(value));
+  acceptInstancesOfOtherRealms(Date, types.isDate);
 };
 // For internal/test/globals.ts.
 setup.isEnvironmentGlobal = (key: PropertyKey) => originalDescriptors.$has(key as string);

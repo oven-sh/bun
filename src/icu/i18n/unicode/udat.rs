@@ -1,0 +1,30 @@
+//! `unicode/udat.h`
+
+pub(crate) type UDateFormatStyle = i32;
+pub(crate) const UDAT_SHORT: UDateFormatStyle = 3;
+pub(crate) const UDAT_NONE: UDateFormatStyle = -1;
+pub(crate) const UDAT_PATTERN: UDateFormatStyle = -2;
+
+pub(crate) type UDateFormatField = i32;
+pub(crate) const UDAT_ERA_FIELD: UDateFormatField = 0;
+pub(crate) const UDAT_YEAR_FIELD: UDateFormatField = 1;
+pub(crate) const UDAT_MONTH_FIELD: UDateFormatField = 2;
+pub(crate) const UDAT_DATE_FIELD: UDateFormatField = 3;
+pub(crate) const UDAT_HOUR_OF_DAY1_FIELD: UDateFormatField = 4;
+pub(crate) const UDAT_HOUR_OF_DAY0_FIELD: UDateFormatField = 5;
+pub(crate) const UDAT_MINUTE_FIELD: UDateFormatField = 6;
+pub(crate) const UDAT_SECOND_FIELD: UDateFormatField = 7;
+pub(crate) const UDAT_FRACTIONAL_SECOND_FIELD: UDateFormatField = 8;
+pub(crate) const UDAT_DAY_OF_WEEK_FIELD: UDateFormatField = 9;
+pub(crate) const UDAT_AM_PM_FIELD: UDateFormatField = 14;
+pub(crate) const UDAT_HOUR1_FIELD: UDateFormatField = 15;
+pub(crate) const UDAT_HOUR0_FIELD: UDateFormatField = 16;
+pub(crate) const UDAT_TIMEZONE_FIELD: UDateFormatField = 17;
+pub(crate) const UDAT_YEAR_WOY_FIELD: UDateFormatField = 18;
+pub(crate) const UDAT_TIMEZONE_GENERIC_FIELD: UDateFormatField = 24;
+pub(crate) const UDAT_STANDALONE_DAY_FIELD: UDateFormatField = 25;
+pub(crate) const UDAT_STANDALONE_MONTH_FIELD: UDateFormatField = 26;
+pub(crate) const UDAT_YEAR_NAME_FIELD: UDateFormatField = 30;
+pub(crate) const UDAT_TIMEZONE_LOCALIZED_GMT_OFFSET_FIELD: UDateFormatField = 31;
+pub(crate) const UDAT_RELATED_YEAR_FIELD: UDateFormatField = 34;
+pub(crate) const UDAT_FLEXIBLE_DAY_PERIOD_FIELD: UDateFormatField = 36;

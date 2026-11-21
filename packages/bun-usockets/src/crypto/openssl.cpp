@@ -842,15 +842,15 @@ long us_ssl_ca_certs_parsed(void) {
 
 /* `der` in a buffer for the store if it is a certificate, and NULL if not. A user-supplied certificate is validated
  * with a full parse so a bad one fails the context rather than a later handshake, where the store takes a certificate
- * that does not parse as absent; the parsed object is dropped. A bundled root is known to parse, so it skips that. */
+ * that does not parse as absent; the parsed object is dropped. A bundled root is known to parse, and its embedded bytes
+ * live as long as the process, so it is neither parsed nor copied. */
 static CRYPTO_BUFFER *us_ca_cert_buffer(const uint8_t *der, size_t len) {
-  us_crypto_buffer_ptr buf{CRYPTO_BUFFER_new(der, len, NULL)};
-  if (buf == NULL) return NULL;
-  if (us_find_bundled_root_cert(der, len) == NULL) {
-    ca_certs_parsed++;
-    if (!us_x509_ptr{X509_parse_from_buffer(buf.get())}) return NULL;
+  if (const uint8_t *bundled = us_find_bundled_root_cert(der, len)) {
+    return CRYPTO_BUFFER_new_from_static_data_unsafe(bundled, len, NULL);
   }
-  return buf.release();
+  ca_certs_parsed++;
+  us_crypto_buffer_ptr buf{CRYPTO_BUFFER_new(der, len, NULL)};
+  return buf != NULL && us_x509_ptr{X509_parse_from_buffer(buf.get())} ? buf.release() : NULL;
 }
 
 /* The `ca` option: every CERTIFICATE block of `content` as DER into `certs`, each validated by us_ca_cert_buffer; the

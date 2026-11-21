@@ -1,5 +1,5 @@
 import { addBlockedSPKIForTesting, canonicalizeIP, clearBlockedSPKIsForTesting } from "bun:internal-for-testing";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
 import { createTest } from "node-harness";
 import { createHash, createPublicKey, sign, X509Certificate } from "node:crypto";
 import { once } from "node:events";
@@ -345,7 +345,7 @@ describe("blocked public keys", () => {
 
 // A certificate of a `ca` option is parsed whole when the context is made, so that a bad one fails there and not in a
 // handshake. A bundled root is known to parse ("rootCertificates are this checkout's root_certs.der" above), so it is
-// not parsed to find out.
+// not parsed to find out, and the context refers to the bytes that the binary embeds.
 describe("bundled roots in a ca option", () => {
   const readKey = (name: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", name), "utf8");
   const der = (pem: string) => Buffer.from(pem.replace(/-----[A-Z ]+-----/g, "").replace(/\s+/g, ""), "base64");
@@ -465,6 +465,33 @@ describe("bundled roots in a ca option", () => {
       "no ca, after setDefaultCACertificates() of every bundled root and another certificate": { parsed: 1 },
     });
     expect(exitCode).toBe(0);
+  });
+
+  // A context held a copy of the DER of each certificate of its `ca`: 127 KB for the bundled roots.
+  test("a context holds no copy of the DER of a bundled root", async () => {
+    await expectRssDeltaBelow(
+      [
+        "-e",
+        `
+        import { createSecureContext, rootCertificates } from "node:tls";
+        const ca = [...rootCertificates];
+        const contexts = [];
+        const build = () => {
+          for (let i = 0; i < 64; i++) contexts.push(createSecureContext({ ca }));
+        };
+        // What the process allocates once is paid for here.
+        for (let round = 0; round < 2; round++) {
+          build();
+          Bun.gc(true);
+        }
+        const rssBefore = process.memoryUsage.rss();
+        build();
+        console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - rssBefore) / 1024 / 1024 }));
+        `,
+      ],
+      // 2.6 MiB, and 3.9 MiB under ASAN. With the copies, 64 contexts held 11 MiB, and 14 MiB under ASAN.
+      { release: 6, debug: 8 },
+    );
   });
 
   /** A certificate for the key of agent1 that names the subject of `issuer` as its issuer. That CA did not sign it. */

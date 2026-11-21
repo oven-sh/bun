@@ -28,6 +28,9 @@ pub enum Error {
     UnsupportedVersion,
     #[error("InvalidSourceMap")]
     InvalidSourceMap,
+    /// A `<file>.map` with the debug id of another build. `get_source_map_impl` gives no map for it.
+    #[error("DebugIdMismatch")]
+    DebugIdMismatch,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
@@ -52,6 +55,7 @@ impl Error {
             Self::InvalidJSON => "Invalid source map JSON",
             Self::UnsupportedVersion => "Unsupported source map version",
             Self::InvalidSourceMap => "Invalid source map",
+            Self::DebugIdMismatch => "Source map is from another build",
             Self::Alloc(_) => "Out of memory",
             Self::Core(e) => e.name(),
         }
@@ -74,6 +78,7 @@ impl Error {
             Self::InvalidJSON => "InvalidJSON",
             Self::UnsupportedVersion => "UnsupportedVersion",
             Self::InvalidSourceMap => "InvalidSourceMap",
+            Self::DebugIdMismatch => "DebugIdMismatch",
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),
         }

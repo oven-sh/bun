@@ -77,8 +77,6 @@ bun-zigld
 cmake_install.cmake
 CMakeCache.txt
 CMakeFiles
-cold-jsc-start
-cold-jsc-start.d
 compile_commands.json
 cover
 coverage

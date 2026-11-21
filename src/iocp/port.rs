@@ -9,11 +9,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_core::{Timespec, TimespecMockMode};
+use bun_threading::fifo_pool::{has_new_thread, once_on_new_thread};
 use bun_threading::spin::{Spin, has_other_cpu};
 use bun_threading::{Condition, Guarded};
 use bun_windows_sys::Win32Error;
 
 use crate::afd::{Readiness, Sockets};
+use crate::bell::{Bell, Listener};
 use crate::request::{Outcome, Requests};
 use crate::slab::Token;
 use crate::sys::{self, Packet, Timeout};
@@ -29,6 +31,7 @@ pub(crate) mod key {
     pub(crate) const POLL_AGAIN: usize = 6;
     /// A request on a file that is bound to the port.
     pub(crate) const FILE: usize = 7;
+    pub(crate) const BELL: usize = 8;
 }
 
 const BATCH: usize = 128;
@@ -36,6 +39,7 @@ const BATCH: usize = 128;
 /// The part of a [`Port`] that other threads use.
 pub(crate) struct Shared {
     pub(crate) handle: OwnedHandle,
+    bell: Bell,
     is_wake_posted: AtomicBool,
     is_parked: AtomicBool,
     outcomes: Guarded<Vec<(Token, Outcome)>>,
@@ -51,7 +55,14 @@ impl Shared {
             outcomes.len() == 1
         };
         if was_empty {
-            sys::post(&self.handle, key::OUTCOMES, 0);
+            self.notify(key::OUTCOMES);
+        }
+    }
+
+    /// On busy CPUs a thread takes long to start, and whoever waits for long loses a raised priority.
+    fn notify(&self, key: usize) {
+        if !once_on_new_thread(|| self.bell.ring(key)) {
+            sys::post(&self.handle, key, 0);
         }
     }
 
@@ -66,7 +77,7 @@ pub struct Waker(Arc<Shared>);
 impl Waker {
     pub fn wake(&self) {
         if !self.0.is_wake_posted.swap(true, Ordering::SeqCst) {
-            sys::post(&self.0.handle, key::WAKE, 0);
+            self.0.notify(key::WAKE);
         }
     }
 }
@@ -97,6 +108,7 @@ pub struct Port {
     pub(crate) sockets: Sockets,
     pub(crate) requests: Requests,
     timer: Timer,
+    listener: Listener,
     spin: Cell<Spin>,
     /// Since the last wait. What is sent unasked comes in larger pieces to a thread that sleeps.
     has_received: Cell<bool>,
@@ -136,6 +148,7 @@ impl Port {
         Ok(Rc::new(Port {
             shared: Arc::new(Shared {
                 handle: sys::create_port()?,
+                bell: Bell::default(),
                 is_wake_posted: AtomicBool::new(false),
                 is_parked: AtomicBool::new(false),
                 outcomes: Guarded::default(),
@@ -145,6 +158,7 @@ impl Port {
             sockets: Sockets::new(),
             requests: Requests::new(),
             timer: Timer::default(),
+            listener: Listener::default(),
             spin: Cell::new(Spin::new()),
             has_received: Cell::new(false),
             has_sent: Cell::new(false),
@@ -348,7 +362,12 @@ impl Port {
                 u64::MAX => Timeout::Never,
                 _ => (self.timer).timeout(&self.shared.handle, now, deadline.saturating_sub(now)),
             };
-            let has_packets = self.fill_batch(timeout);
+            let has_packets = if matches!(timeout, Timeout::Now) || !has_new_thread() {
+                self.fill_batch(timeout)
+            } else {
+                let Shared { handle, bell, .. } = &*self.shared;
+                (self.listener).listen(bell, handle, || self.fill_batch(timeout))
+            };
             now = now_ns();
             is_first &= has_packets;
             if has_packets || now >= deadline {
@@ -370,8 +389,7 @@ impl Port {
         self.has_posted.set(false);
         let mut end = 0;
         for cell in &self.batch[..removed] {
-            let packet = cell.get();
-            if self.receive(packet) {
+            if let Some(packet) = self.receive(cell.get()) {
                 self.batch[end].set(packet);
                 end += 1;
             }
@@ -381,15 +399,16 @@ impl Port {
         end > 0
     }
 
-    /// `false` if that is all there is to do for the packet.
-    fn receive(&self, packet: Packet) -> bool {
+    /// `None` if that is all there is to do for the packet.
+    fn receive(&self, packet: Packet) -> Option<Packet> {
         match packet.key {
             key::TIMER => {
                 self.timer.fired();
-                false
+                None
             }
-            key::SOCKET => self.sockets.receive(packet.context),
-            _ => true,
+            key::SOCKET => self.sockets.receive(packet.context).then_some(packet),
+            key::BELL => Some(Packet::new(self.listener.rang(&self.shared.bell), 0)),
+            _ => Some(packet),
         }
     }
 
@@ -398,7 +417,7 @@ impl Port {
         let packets = [const { Cell::new(Packet::EMPTY) }; BATCH];
         let removed = sys::remove_packets(&self.shared.handle, &packets, timeout);
         for packet in packets[..removed].iter().map(Cell::get) {
-            if self.receive(packet) {
+            if let Some(packet) = self.receive(packet) {
                 self.defer(packet);
             }
         }

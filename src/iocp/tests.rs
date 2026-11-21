@@ -2,25 +2,24 @@
 
 use core::cell::{Cell, RefCell};
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 use std::io::{Read as _, Write as _};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::os::windows::io::{AsHandle as _, AsRawSocket as _, OwnedHandle};
+use std::os::windows::io::{AsHandle as _, AsRawSocket as _, BorrowedHandle, OwnedHandle};
 use std::rc::Rc;
-use std::sync::{LazyLock, mpsc};
+use std::sync::mpsc;
 use std::time::Instant;
 
 use bun_sys::windows::{self as w, NTSTATUS, PipeDirection, PipeMode};
-use bun_threading::ResetEvent;
-use bun_threading::fifo_pool::{Config, FifoPool};
+use bun_threading::fifo_pool::{Config, FifoPool, has_new_thread, once_on_new_thread};
 use bun_threading::spin::has_other_cpu;
 
 use crate::blocking::{self, Cancel};
 use crate::faults::{self, Call, fail, intercept};
 use crate::sys;
 use crate::{
-    AsyncFile, Completion, Event, Handle, Hold, Port, Readiness, Request, SocketWatch, Watcher,
+    AsyncFile, Completion, Event, Handle, Hold, Port, Readiness, Remote, Request, SocketWatch,
+    Waker, Watcher,
 };
 
 thread_local! {
@@ -621,6 +620,232 @@ fn a_wake_waits_for_memory() {
     }
 }
 
+type Spawn = fn(Box<dyn FnOnce() + Send>);
+const ON_NEW_THREAD: Spawn = |run| new_pool().go(run);
+const AFTER_A_FAILURE: Spawn = |run| {
+    let pool = new_pool();
+    pool.go(|| assert!(!once_on_new_thread(|| false)));
+    pool.go(run);
+};
+const AFTER_A_SUCCESS: Spawn = |run| {
+    let pool = new_pool();
+    pool.go(|| assert!(once_on_new_thread(|| true)));
+    pool.go(run);
+};
+const ON_OTHER_POOL: Spawn = blocking::spawn;
+const ON_NO_POOL: Spawn = |run| drop(std::thread::spawn(run));
+
+fn new_pool() -> &'static FifoPool {
+    Box::leak(Box::new(FifoPool::new(Config {
+        name: "Test",
+        max_threads: 1,
+        stack_size: 256 * 1024,
+        on_thread_start: || {},
+        has_new_threads: true,
+    })))
+}
+
+/// Until it is dropped.
+fn keep_a_thread_new() -> mpsc::Sender<()> {
+    let (kept, is_kept) = mpsc::channel();
+    new_pool().go(move || assert!(once_on_new_thread(|| is_kept.recv().is_err())));
+    kept
+}
+
+/// `run` is called when the port goes to sleep. Returns the wakes, and how many packets that has posted.
+fn turn_ended_by(port: &Port, spawn: Spawn, run: impl FnOnce() + Send + 'static) -> (usize, usize) {
+    let (mut run, posted) = (Some(run), Rc::new(Cell::new(0)));
+    let (slot, _new) = (Rc::clone(&posted), keep_a_thread_new());
+    let _sleeps = intercept(Call::NtRemoveIoCompletionEx, move |args| {
+        // SAFETY: the timeout of the call.
+        let timeout = unsafe { ptr::with_exposed_provenance::<i64>(args[4]).as_ref() };
+        let run = run.take_if(|_| timeout != Some(&0))?;
+        let (ran, has_run) = mpsc::channel();
+        spawn(Box::new(move || {
+            let (_counted, posted) = count(Call::NtSetIoCompletion);
+            run();
+            ran.send(posted.get()).unwrap();
+        }));
+        slot.set(has_run.recv().unwrap());
+        None
+    });
+    (turn(port, Duration::from_secs(10)), posted.get())
+}
+
+fn expect_outcome(port: &Rc<Port>, came: &Rc<Cell<usize>>) -> (Request, Remote<()>) {
+    let came = Rc::clone(came);
+    Request::remote(port, move |()| came.update(|it| it + 1))
+}
+
+fn nothing_comes(port: &Port) {
+    let (_new, start) = (keep_a_thread_new(), Instant::now());
+    assert_eq!(turn(port, Duration::from_millis(20)), 0);
+    assert!(start.elapsed() >= Duration::from_millis(20));
+}
+
+#[test]
+fn a_thread_that_sleeps_is_woken_by_an_event() {
+    let (port, came) = (Port::new().unwrap(), Rc::default());
+    let without = usize::from(!has_wait_packets());
+    for (spawn, posted) in [
+        (ON_NEW_THREAD, without),
+        (AFTER_A_FAILURE, without),
+        (AFTER_A_SUCCESS, 1),
+        (ON_OTHER_POOL, 1),
+        (ON_NO_POOL, 1),
+        (ON_NEW_THREAD, without),
+    ] {
+        let waker = port.waker();
+        let ended = turn_ended_by(&port, spawn, move || waker.wake());
+        assert_eq!(ended, (1, posted));
+        nothing_comes(&port);
+
+        let (_request, remote) = expect_outcome(&port, &came);
+        let ended = turn_ended_by(&port, spawn, || remote.complete(()));
+        assert_eq!((ended, came.take()), ((0, posted), 1));
+        nothing_comes(&port);
+
+        for is_wake_first in [true, false] {
+            let ((_request, remote), waker) = (expect_outcome(&port, &came), port.waker());
+            let ended = turn_ended_by(&port, spawn, move || match is_wake_first {
+                true => (waker.wake(), remote.complete(())).0,
+                false => (remote.complete(()), waker.wake()).0,
+            });
+            assert_eq!((ended, came.take()), ((1, posted + 1), 1));
+            nothing_comes(&port);
+        }
+    }
+}
+
+#[test]
+fn an_event_can_be_late() {
+    if !has_wait_packets() {
+        return;
+    }
+    let (port, came) = (Port::new().unwrap(), Rc::default());
+    let (file, _peer) = pipe(&port, AsyncFile::exclusive);
+    for is_fetched in [false, true] {
+        let ((_request, remote), waker) = (expect_outcome(&port, &came), port.waker());
+        let (held_up, event) = mpsc::channel();
+        let ended = turn_ended_by(&port, ON_NEW_THREAD, move || {
+            let _late = intercept(Call::SetEvent, move |args| {
+                held_up.send(args[0]).unwrap();
+                Some(1)
+            });
+            waker.wake();
+            remote.complete(());
+        });
+        assert_eq!((ended, came.take()), ((0, 1), 1));
+
+        let (_request, remote) = expect_outcome(&port, &came);
+        let ended = turn_ended_by(&port, ON_NEW_THREAD, || remote.complete(()));
+        assert_eq!((ended, came.take()), ((0, 1), 1));
+
+        let event = ptr::with_exposed_provenance_mut(event.recv().unwrap());
+        // SAFETY: the port keeps it open.
+        let event = unsafe { BorrowedHandle::borrow_raw(event) };
+        w::set_event(&event.try_clone_to_owned().unwrap());
+        if is_fetched {
+            assert!(start_read(&file, &Slot::default()).finish_now().is_ok());
+        }
+        assert_eq!(turn(&port, Duration::ZERO), 1);
+        nothing_comes(&port);
+    }
+}
+
+#[test]
+fn a_thread_is_woken_without_the_event() {
+    for (call, result) in [
+        (Call::NtCreateWaitCompletionPacket, NO_RESOURCES),
+        (Call::CreateEventW, NULL),
+        (Call::NtAssociateWaitCompletionPacket, NO_RESOURCES),
+    ] {
+        let port = Port::new().unwrap();
+        let (refused, waker) = (fail(call, usize::MAX, result), port.waker());
+        assert_eq!(
+            turn_ended_by(&port, ON_NEW_THREAD, move || waker.wake()),
+            (1, 1)
+        );
+        drop(refused);
+        let (waker, without) = (port.waker(), usize::from(!has_wait_packets()));
+        let ended = turn_ended_by(&port, ON_NEW_THREAD, move || waker.wake());
+        assert_eq!(ended, (1, without));
+    }
+}
+
+#[test]
+fn a_thread_that_is_awake_or_gone_needs_no_event() {
+    let port = Port::new().unwrap();
+    let sets_event = |waker: Waker| {
+        let (ran, has_run) = mpsc::channel();
+        new_pool().go(move || {
+            let (_counted, set) = count(Call::SetEvent);
+            waker.wake();
+            ran.send(set.get() > 0).unwrap();
+        });
+        has_run.recv().unwrap()
+    };
+    nothing_comes(&port);
+    assert!(!sets_event(port.waker()));
+    assert_eq!(turn(&port, Duration::ZERO), 1);
+
+    nothing_comes(&port);
+    let waker = port.waker();
+    drop(port);
+    assert!(!sets_event(waker));
+}
+
+#[test]
+fn no_event_is_made_without_a_new_thread() {
+    const ALONE: &str = "BUN_IOCP_TEST_ALONE";
+    if std::env::var_os(ALONE).is_none() {
+        let mut alone = std::process::Command::new(std::env::current_exe().unwrap());
+        alone.arg("no_event_is_made_without_a_new_thread");
+        return assert!(alone.env(ALONE, "1").output().unwrap().status.success());
+    }
+    let refused = fail(Call::CreateThread, 2, NULL);
+    let kept = keep_a_thread_new();
+    assert!(has_new_thread());
+    drop((refused, kept));
+
+    let port = Port::new().unwrap();
+    run_until(&Port::new().unwrap(), || !has_new_thread());
+    let (request, remote) = Request::remote(&port, |()| {});
+    blocking::spawn(|| {
+        std::thread::sleep(Duration::from_millis(20));
+        remote.complete(());
+    });
+    let (_counted, created) = count(Call::CreateEventW);
+    run_until(&port, || port.callback_count() == 0);
+    assert_eq!(created.get(), 0);
+    drop(request);
+}
+
+#[test]
+fn no_wake_is_lost() {
+    let (port, came) = (Port::new().unwrap(), Rc::default());
+    let spin = |times| (0..times % 4000).for_each(|_| core::hint::spin_loop());
+    for round in 0..300 {
+        let (has_wake, has_outcome) = (round % 3 != 0, round % 3 != 1);
+        let _request = has_outcome.then(|| {
+            let (request, remote) = expect_outcome(&port, &came);
+            new_pool().go(move || (spin(round * 7), remote.complete(())).1);
+            request
+        });
+        if has_wake {
+            let waker = port.waker();
+            new_pool().go(move || (spin(round * 13), waker.wake()).1);
+        }
+        let (start, mut wakes) = (Instant::now(), 0);
+        while (wakes, came.get()) != (has_wake.into(), has_outcome.into()) {
+            port.did_receive();
+            wakes += turn(&port, Duration::from_secs(10));
+            assert!(start.elapsed() < Duration::from_secs(9));
+        }
+        came.set(0);
+    }
+}
+
 #[test]
 fn a_wait_ends_without_the_timer() {
     for (call, result) in [
@@ -955,7 +1180,7 @@ fn a_task_outlasts_a_lack_of_threads() {
         max_threads: 2,
         stack_size: 256 * 1024,
         on_thread_start: || {},
-        waits_for_first_thread: false,
+        has_new_threads: false,
     });
     let ((ran, has_run), (go, may_go)) = (mpsc::channel(), mpsc::channel());
     let first = ran.clone();
@@ -972,55 +1197,6 @@ fn a_task_outlasts_a_lack_of_threads() {
     assert!(has_run.try_recv().is_err());
     go.send(()).unwrap();
     assert_eq!(has_run.recv(), Ok(2));
-}
-
-#[test]
-fn the_first_thread_is_waited_for_once() {
-    static IS_UP: AtomicBool = AtomicBool::new(false);
-    static GATE: LazyLock<ResetEvent> = LazyLock::new(ResetEvent::default);
-    const WAITS: Config = Config {
-        name: "Test",
-        max_threads: 8,
-        stack_size: 256 * 1024,
-        on_thread_start: || GATE.wait(),
-        waits_for_first_thread: true,
-    };
-    static STUCK: FifoPool = FifoPool::new(WAITS);
-    static SLOW: FifoPool = FifoPool::new(Config {
-        on_thread_start: || {
-            std::thread::sleep(Duration::from_millis(50));
-            IS_UP.store(true, Ordering::SeqCst);
-        },
-        ..WAITS
-    });
-    static LEFT_ALONE: FifoPool = FifoPool::new(Config {
-        waits_for_first_thread: false,
-        ..WAITS
-    });
-
-    let _none_yet = fail(Call::CreateThread, 2, NULL);
-    let start = Instant::now();
-    SLOW.go(|| {});
-    assert!(IS_UP.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(1));
-
-    let (ran, has_run) = mpsc::channel();
-    for (pool, seconds) in [(&LEFT_ALONE, 0), (&STUCK, 1)] {
-        let ((returned, has_returned), ran) = (mpsc::channel(), ran.clone());
-        std::thread::spawn(move || {
-            let start = Instant::now();
-            for ran in vec![ran; 8] {
-                pool.go(move || ran.send(()).unwrap());
-            }
-            returned.send((start.elapsed().as_millis() + 100) / 1000)
-        });
-        assert_eq!(
-            has_returned.recv_timeout(Duration::from_secs(5)),
-            Ok(seconds)
-        );
-    }
-    GATE.set();
-    drop(ran);
-    assert_eq!(has_run.iter().count(), 16);
 }
 
 #[test]

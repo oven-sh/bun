@@ -182,7 +182,7 @@ impl FilePool {
                 max_threads: threads.clamp(1, 1024) as usize,
                 stack_size: 4 * 1024 * 1024,
                 on_thread_start: bun_core::Output::Source::configure_thread_no_js,
-                waits_for_first_thread: true,
+                has_new_threads: true,
             })
         });
         &POOL
@@ -203,7 +203,7 @@ pub static DEVICE_POOL: FifoPool = FifoPool::new(Config {
     max_threads: 512,
     stack_size: 4 * 1024 * 1024,
     on_thread_start: bun_core::Output::Source::configure_thread_no_js,
-    waits_for_first_thread: false,
+    has_new_threads: false,
 });
 
 impl WorkPool {

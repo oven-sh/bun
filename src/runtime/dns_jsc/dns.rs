@@ -101,7 +101,7 @@ mod resolver_pool {
 
     pub(super) static FOR_SCRIPT: LazyLock<FifoPool> = LazyLock::new(|| {
         FifoPool::new(Config {
-            waits_for_first_thread: true,
+            has_new_threads: true,
             ..config()
         })
     });
@@ -113,7 +113,7 @@ mod resolver_pool {
             max_threads: bun_core::get_thread_count().max(4).into(),
             stack_size: 1024 * 1024,
             on_thread_start: bun_core::Output::Source::configure_thread_no_js,
-            waits_for_first_thread: false,
+            has_new_threads: false,
         }
     }
 }

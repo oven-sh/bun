@@ -467,8 +467,16 @@ pub fn eq_ignore_case(a: &[u16], b: &[u16]) -> bool {
 
 /// Manual-reset, not signalled, and without a name.
 pub fn CreateEventW() -> Result<OwnedHandle, Win32Error> {
+    create_event(TRUE)
+}
+
+pub fn create_auto_reset_event() -> Result<OwnedHandle, Win32Error> {
+    create_event(FALSE)
+}
+
+fn create_event(is_manual: BOOL) -> Result<OwnedHandle, Win32Error> {
     // SAFETY: both pointers are optional.
-    let event = unsafe { kernel32::CreateEventW(ptr::null_mut(), TRUE, FALSE, ptr::null()) };
+    let event = unsafe { kernel32::CreateEventW(ptr::null_mut(), is_manual, FALSE, ptr::null()) };
     OwnedHandle::try_from(event).map_err(|_| Win32Error::get())
 }
 

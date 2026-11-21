@@ -49,11 +49,6 @@ impl ResetEvent {
         }
     }
 
-    #[cfg(windows)]
-    pub(crate) fn timed_wait(&self, timeout_ns: u64) -> Result<(), TimeoutError> {
-        self.wait_inner(Some(timeout_ns))
-    }
-
     #[inline]
     fn wait_inner(&self, timeout: Option<u64>) -> Result<(), TimeoutError> {
         // Outline the slow path to allow is_set() to be inlined.

@@ -9454,3 +9454,38 @@ describe.skipIf(!isWindows)("on Windows", () => {
     );
   });
 });
+
+it.skipIf(!isWindows)("the first call ends with a higher priority than a timer", async () => {
+  const run = async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { dlopen } from "bun:ffi";
+         import { openSync, read } from "node:fs";
+         import { promisify } from "node:util";
+         const query = { args: ["i64", "u32", "ptr", "u32", "ptr"], returns: "i32" };
+         const ntdll = dlopen("ntdll.dll", { NtQueryInformationThread: query, NtQueryInformationProcess: query }).symbols;
+         const basic = new Int32Array(12);
+         const base = (ntdll.NtQueryInformationProcess(-1n, 0, basic, basic.byteLength, null), basic[6]);
+         const priority = () => (ntdll.NtQueryInformationThread(-2n, 0, basic, basic.byteLength, null), basic[10]);
+         const after = async wait => {
+           for (const end = performance.now() + 1000; priority() > base; ) if (performance.now() > end) throw "still raised";
+           await wait();
+           return priority();
+         };
+         const [fd, buffer] = [openSync(process.execPath), Buffer.alloc(8 << 20)];
+         await Bun.sleep(1);
+         const timer = await after(() => Bun.sleep(5));
+         console.log((await after(() => promisify(read)(fd, buffer))) > timer);`,
+      ],
+      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return stdout;
+  };
+  expect((await Promise.all([run(), run(), run()])).sort().slice(1)).toEqual(["true\n", "true\n"]);
+});

@@ -3,6 +3,7 @@
 #![cfg(windows)]
 
 mod afd;
+mod bell;
 pub mod blocking;
 #[cfg(test)]
 mod faults;

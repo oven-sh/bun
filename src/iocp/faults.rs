@@ -146,6 +146,7 @@ calls! {
         NtRemoveIoCompletionEx(a b c d e f)
         NtSetIoCompletion(a b c d e)
         OpenThread(a b c)
+        SetEvent(a)
         SetFileCompletionNotificationModes(a b)
         SetWaitableTimer(a b c d e f)
         SwitchToThread()

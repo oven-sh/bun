@@ -4,6 +4,7 @@ export const PostgresSQLConnection = b.class({
   rustPath: "crate::postgres::PostgresSQLConnection",
   refCounted: true,
   finalize: true,
+  thisValue: "js_value",
   internalFields: ["onconnect", "onclose", "onretire", "checkServerIdentity", "columnTransform", "onnotification"],
   proto: {
     close: { capability: "js", rustName: "do_close" },

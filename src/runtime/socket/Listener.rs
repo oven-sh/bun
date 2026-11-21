@@ -344,9 +344,7 @@ impl Listener {
                 this_ref
                     .handlers
                     .set_listener(Some(this_value.payload_ptr()));
-                this_ref
-                    .this_value
-                    .with_mut(|r| r.set_strong(js_value, cx.global()));
+                this_value.set_js_ref_strong(cx.global());
                 this_ref.poll_ref.ref_(bun_io::js_vm_ctx());
                 // SAFETY: its address does not change; leaves its context in `Drop`.
                 unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
@@ -571,9 +569,7 @@ impl Listener {
         this_ref
             .handlers
             .set_listener(Some(this_value.payload_ptr()));
-        this_ref
-            .this_value
-            .with_mut(|r| r.set_strong(js_value, cx.global()));
+        this_value.set_js_ref_strong(cx.global());
         this_ref.poll_ref.ref_(bun_io::js_vm_ctx());
         // SAFETY: its address does not change; leaves its context in `Drop`.
         unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
@@ -860,8 +856,7 @@ impl Listener {
             return;
         }
         self.poll_ref.ref_(bun_io::js_vm_ctx());
-        self.this_value
-            .with_mut(|r| r.set_strong(this_value.to_js(), cx.global()));
+        this_value.set_js_ref_strong(cx.global());
     }
 
     pub(crate) fn unref(&self) {
@@ -1329,7 +1324,6 @@ impl Drop for Listener {
             this.unlink_unix_socket_path();
         }
         this.listener.set(ListenerType::None);
-        this.this_value.with_mut(|r| r.finalize());
 
         // Before force-closing: an accepted socket's `on_close` must not release this listener's refs a second time.
         this.handlers.set_listener(None);

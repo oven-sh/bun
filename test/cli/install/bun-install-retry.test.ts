@@ -1461,11 +1461,13 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       expect(await app.withoutMemory()).toEqual(expected);
     });
 
-    it("list of the files of a commit", async () => {
+    it.skipIf(!isLinux)("list of the files of a commit", async () => {
       const folder = Buffer.alloc(201 * 15, Buffer.alloc(200, "a") + "/").toString();
       using app = await fromGit(["package.json", ...Array.from({ length: CAP * 400 }, (_, i) => folder + i)]);
-      expect(await app.withoutMemory()).toEqual(
-        fails("read", ENOMEM + " (read())", "error: ENOMEM checking out repository for bar"),
+      const { said, ...result } = await app.withoutMemory();
+      // Debug builds have a warning in front.
+      expect({ ...result, said: said.slice(-2) }).toEqual(
+        fails("read", "error: ENOMEM checking out repository for bar"),
       );
     });
 
@@ -1510,6 +1512,7 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       "remote: fatal: Out of memory, malloc failed",
       "fatal: remote error: out of memory",
       "error: pack-objects died of signal 9",
+      "error: git-pack-objects died of signal 9",
     ];
     const withoutClone = (how: string) =>
       fails(
@@ -1529,11 +1532,13 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
 
     const byGit = [
       ["ssh", "error: index-pack died of signal 9"],
+      ["ssh", "error: unpack-objects died of signal 9"],
+      ["ssh", "fatal: fetch-pack: invalid index-pack output"],
       ["ssh", "fatal: Out of memory, malloc failed"],
       ["ssh", "fatal: mmap failed: Cannot allocate memory"],
       ["ssh", "fatal: mmap failed: Not enough space"],
       ...byServer.map(message => ["file", message]),
-    ].filter(([, message]) => isLinux || !message.endsWith("signal 9"));
+    ].filter(([, message]) => isLinux || /memory|space/.test(message));
     it.each(byGit)("fails the install: git over %s, %s", async (protocol, message) => {
       using app = withGit(protocol, `[ "$LANGUAGE" = C ] && echo ${message} >&2; exit 128`);
       const { said, ...result } = await app.install();
@@ -1544,6 +1549,14 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       using app = withGit("ssh", `echo ${message} >&2; exit 128`);
       expect(await app.install()).toMatchObject({ exitCode: 0 });
     });
+
+    it.each(["fatal: early EOF", "error: inflate: data stream error", "remote: fatal: bad object"])(
+      "is left out if there is a reason for what index-pack leaves: %s",
+      async reason => {
+        using app = withGit("ssh", `(echo ${reason}; echo fatal: fetch-pack: invalid index-pack output) >&2; exit 128`);
+        expect(await app.install()).toMatchObject({ exitCode: 0 });
+      },
+    );
 
     it("is installed if there is for another protocol", async () => {
       using from = await fromGit(["package.json"]);

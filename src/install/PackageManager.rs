@@ -2742,7 +2742,7 @@ pub(crate) fn init_with_runtime(
             .and_then(|()| Ok(bun_sys::check_memory_of_thread()?))
     });
     // The next import may find the memory, unless there is a singleton by now.
-    if result != Err(bun_errno::SystemErrno::ENOMEM.into()) || !get().is_null() {
+    if !result.is_err_and(Error::note_if_out_of_memory) || !get().is_null() {
         *init = Some(result);
     }
     result.map(|()| get())

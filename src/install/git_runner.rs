@@ -552,6 +552,18 @@ impl CacheStaging {
 
 /// A kernel without memory kills git or one of its helpers, or they say so, partly with `strerror`.
 fn git_ran_out_of_memory(step: &Step, status: &Status, stderr: &[u8]) -> bool {
+    const NO_MEMORY: [&[u8]; 3] = [
+        b"out of memory",
+        b"cannot allocate memory",
+        b": not enough space",
+    ];
+    // ssh passes on what `upload-pack` prints as it is.
+    const FROM_SERVER: [&[u8]; 4] = [
+        b"remote:",
+        b"remote error:",
+        b" pack-objects",
+        b"-pack-objects",
+    ];
     let has_server = matches!(
         step,
         Step::Fetch { url, .. } | Step::Clone { url, .. } if !url.starts_with(b"file://")
@@ -559,18 +571,17 @@ fn git_ran_out_of_memory(step: &Step, status: &Status, stderr: &[u8]) -> bool {
     let says = |line: &[u8], any_of: &[&[u8]]| {
         (any_of.iter()).any(|words| strings::contains_case_insensitive_ascii(line, words))
     };
-    const NO_MEMORY: [&[u8]; 3] = [
-        b"out of memory",
-        b"cannot allocate memory",
-        b": not enough space",
-    ];
-    matches!(status, Status::Signaled(signal) if OUT_OF_MEMORY_SIGNAL == Some(*signal))
-        || strings::split(stderr, b"\n").any(|line| {
-            // ssh passes on what `upload-pack` prints as it is.
-            !(has_server && says(line, &[b"remote:", b"remote error:", b"pack-objects"]))
-                && (says(line, &NO_MEMORY)
-                    || (OUT_OF_MEMORY_SIGNAL == Some(9) && says(line, &[b"died of signal 9"])))
-        })
+    let lines =
+        || strings::split(stderr, b"\n").filter(|line| !(has_server && says(line, &FROM_SERVER)));
+    let is_killed = || {
+        matches!(status, Status::Signaled(9))
+            || lines().any(|line| says(line, &[b"died of signal 9"]))
+            // All that `git clone` has to say if `index-pack` ends without a word.
+            || strings::split(stderr, b"\n")
+                .find(|line| says(line, &[b"fatal:", b"error:"]))
+                .is_some_and(|first| says(first, &[b"invalid index-pack output"]))
+    };
+    lines().any(|line| says(line, &NO_MEMORY)) || (OUT_OF_MEMORY_SIGNAL == Some(9) && is_killed())
 }
 
 /// `.bun-tag` is written last, so a checkout that has it is complete.

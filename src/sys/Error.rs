@@ -72,6 +72,7 @@ impl IntoErrnoInt for SystemErrno {
 }
 
 const NO_CALL: u16 = u16::MAX;
+/// Relaxed: it guards no data, and a thread that takes over the work of another has synchronized.
 static FIRST_CALL_WITHOUT_MEMORY: AtomicU16 = AtomicU16::new(NO_CALL);
 thread_local! {
     static CALL_WITHOUT_MEMORY_HERE: Cell<Option<Tag>> = const { Cell::new(None) };

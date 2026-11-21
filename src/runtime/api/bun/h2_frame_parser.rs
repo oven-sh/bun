@@ -2704,6 +2704,13 @@ impl H2FrameParser {
             // (detach -> unregister_auto_flush) see an unregistered flusher and
             // early-return instead of removing a map entry run() still owns.
             self.auto_flush_ref.set(None);
+            // This tick can run between two callbacks of one frame (the checkpoint after `'stream'`,
+            // before the END_STREAM of the same HEADERS). The close queues the teardown that aborts
+            // every open stream, and that must not run before the rest of the frame is delivered.
+            self.global_this
+                .bun_vm()
+                .event_loop()
+                .keep_jobs_for_next_checkpoint();
             self.close_transport_after_fatal_write();
             return false;
         }

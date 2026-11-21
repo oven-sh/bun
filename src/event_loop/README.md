@@ -147,9 +147,14 @@ For each task dequeued from the task queue:
 │          │   └─> ALWAYS call vm.drainMicrotasks() again     │
 │          │       (safety net for any remaining microtasks)  │
 │          │                                                   │
-│          └─> RUN DEFERRED TASK QUEUE (event_loop.rs:136-138)│
-│              └─> deferred_tasks.run()                       │
-│                  (buffered writes, file sink flushes, etc.) │
+│          └─> RUN DEFERRED TASK QUEUE (if it has a task)     │
+│              ├─> deferred_tasks.run()                       │
+│              │   (buffered writes, file sink flushes, etc.) │
+│              │                                               │
+│              └─> IF a task queued a nextTick or a microtask:│
+│                  └─> drain them once more                   │
+│                      (a task they post waits for the next   │
+│                      checkpoint; the loop does not block)   │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -227,6 +232,8 @@ Runs after microtasks to batch operations:
 - Balances latency vs. throughput
 
 The queue maintains a map of `(pointer, task_fn)` pairs and runs each task. If a task returns `true`, it remains in the queue for the next drain; if `false`, it's removed.
+
+A task can run JavaScript (a stream's `pull()`, the `_write` of a JS transport) or settle a promise. The nextTick callbacks and microtasks that a pass queues run once more before the checkpoint returns (`EventLoop::run_deferred_tasks`), so they do not wait for the next timer or I/O event. A deferred task that those jobs post runs at the next checkpoint, after timers and I/O had a turn, and the loop does not block before it.
 
 ## I/O Polling Integration
 
@@ -348,7 +355,7 @@ The Bun event loop processes work in this order:
      - Check for nextTick queue
        - If active: Run nextTick callbacks, drain microtasks after each
        - If not: Just drain microtasks
-     - Drain deferred task queue
+     - Drain deferred task queue, then the nextTick callbacks and microtasks that it queued
 5. **Handle rejected promises**
 
 This architecture ensures:

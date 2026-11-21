@@ -7538,3 +7538,58 @@ it("a session over TLS whose peer reset is first seen by a write ends without a 
     server.close();
   }
 });
+
+// The session corks the PING, and its deferred task hands it to the transport after the microtasks
+// of that turn of the loop. The _write that takes it is script, so the tick or the microtask that it
+// queues runs in the same turn, as in node. The fixture is a process of its own: nothing else on
+// its loop runs those jobs by chance.
+it("runs the tick and the microtask of a Duplex transport's _write before the next timer", async () => {
+  const fixture = `
+    const http2 = require("node:http2");
+    const { Duplex } = require("node:stream");
+    const order = [];
+    const jobs = [
+      ["tick", job => process.nextTick(job)],
+      ["microtask", job => queueMicrotask(job)],
+    ];
+    let next;
+    const transport = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        if (next) {
+          const [name, queue] = next;
+          next = undefined;
+          order.push("write");
+          setTimeout(() => {
+            order.push("timer");
+            ping();
+          }, 0);
+          queue(() => order.push(name));
+        }
+        callback();
+      },
+    });
+    const session = http2.connect("http://localhost", { createConnection: () => transport });
+    function ping() {
+      setImmediate(() => {
+        next = jobs.shift();
+        if (!next) {
+          console.log(JSON.stringify(order));
+          process.exit(0);
+        }
+        session.ping(() => {});
+      });
+    }
+    session.once("connect", ping);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(["write", "tick", "timer", "write", "microtask", "timer"]);
+  expect(exitCode).toBe(0);
+});

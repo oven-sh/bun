@@ -34,8 +34,12 @@
 //! a swap-remove can pull a freshly appended entry forward. Every callback flushes its own object's
 //! buffer to its own fd or socket, so relative order within a pass has no correctness effect, and
 //! anything a pass skips runs on the next one.
+//!
+//! The checkpoint that ran a pass then runs the ticks and microtasks that its callbacks queued
+//! (`EventLoop::run_deferred_tasks`). An entry that those jobs post waits for the next checkpoint, and
+//! `may_have_unrun_tasks()` tells the loop not to block before it.
 
-use core::cell::UnsafeCell;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -52,6 +56,7 @@ pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
 pub struct DeferredTaskQueue {
     /// No borrow spans a callback, which reaches this queue again.
     map: UnsafeCell<ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>>,
+    posted_since_run: Cell<bool>,
 }
 
 impl DeferredTaskQueue {
@@ -64,6 +69,7 @@ impl DeferredTaskQueue {
             bun_collections::hash_map::Entry::Occupied(_) => true,
             bun_collections::hash_map::Entry::Vacant(v) => {
                 v.insert(task);
+                self.posted_since_run.set(true);
                 false
             }
         }
@@ -76,7 +82,21 @@ impl DeferredTaskQueue {
         unsafe { &mut *self.map.get() }.swap_remove(&ctx)
     }
 
+    /// Whether a pass has a task to run.
+    #[inline]
+    pub fn has_entries(&self) -> bool {
+        // SAFETY: a read of the length.
+        !unsafe { &*self.map.get() }.is_empty()
+    }
+
+    /// Whether the last pass may have left a task unrun. A task that only kept its entry did run.
+    pub fn may_have_unrun_tasks(&self) -> bool {
+        // SAFETY: a read of the length.
+        self.posted_since_run.get() && !unsafe { &*self.map.get() }.is_empty()
+    }
+
     pub fn run(&self) {
+        self.posted_since_run.set(false);
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and
         // re-check slot `i` after each callback. `remaining` is a livelock bound.
@@ -114,7 +134,6 @@ impl DeferredTaskQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::cell::Cell;
 
     #[derive(Default)]
     struct Fixture {
@@ -148,5 +167,59 @@ mod tests {
         queue.post_task(Some(NonNull::from(&fixture.calls[0]).cast()), count);
         queue.run();
         assert_eq!((fixture.grow_calls.get(), fixture.calls[0].get()), (1, 1));
+    }
+
+    unsafe extern "C" fn keep(ctx: *mut c_void) -> bool {
+        // SAFETY: posted with a `Cell<u32>` that outlives `run`.
+        unsafe { &*ctx.cast::<Cell<u32>>() }.update(|n| n + 1);
+        true
+    }
+
+    #[test]
+    fn has_entries_follows_the_map() {
+        let queue = DeferredTaskQueue::default();
+        let calls = Cell::new(0u32);
+        let ctx = Some(NonNull::from(&calls).cast());
+        assert!(!queue.has_entries());
+        queue.post_task(ctx, count);
+        assert!(queue.has_entries());
+        queue.run();
+        assert_eq!((calls.get(), queue.has_entries()), (1, false));
+        queue.post_task(ctx, count);
+        queue.unregister_task(ctx);
+        assert!(!queue.has_entries());
+    }
+
+    #[test]
+    fn a_task_posted_during_a_pass_may_be_unrun_and_a_kept_task_is_not() {
+        let fixture = Fixture::default();
+        let queue = &fixture.queue;
+        let kept = Cell::new(0u32);
+        assert!(!queue.may_have_unrun_tasks());
+
+        queue.post_task(Some(NonNull::from(&kept).cast()), keep);
+        assert!(queue.may_have_unrun_tasks());
+        queue.run();
+        // It ran and kept its entry: the map is not empty, and nothing is unrun.
+        assert_eq!((kept.get(), queue.has_entries()), (1, true));
+        assert!(!queue.may_have_unrun_tasks());
+
+        // The same key again is no new task.
+        queue.post_task(Some(NonNull::from(&kept).cast()), keep);
+        assert!(!queue.may_have_unrun_tasks());
+
+        // `grow` posts tasks while the pass runs, after the pass has counted its entries.
+        queue.post_task(Some(NonNull::from(&fixture).cast()), grow);
+        queue.run();
+        assert!(queue.may_have_unrun_tasks());
+        queue.run();
+        assert!(!queue.may_have_unrun_tasks());
+
+        // A task that is posted and then removed leaves nothing to run.
+        queue.unregister_task(Some(NonNull::from(&kept).cast()));
+        queue.unregister_task(Some(NonNull::from(&fixture).cast()));
+        queue.post_task(Some(NonNull::from(&kept).cast()), keep);
+        queue.unregister_task(Some(NonNull::from(&kept).cast()));
+        assert!(!queue.may_have_unrun_tasks());
     }
 }

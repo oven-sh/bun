@@ -78,6 +78,10 @@ pub struct EventLoop {
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     yield_tasks: Cell<Vec<Task>>,
+    /// The last checkpoint ended with new `deferred_tasks`. Counts as a yielded task, as `tick()` always runs a checkpoint.
+    owes_checkpoint: Cell<bool>,
+    /// See [`EventLoop::keep_jobs_for_next_checkpoint`].
+    keeps_jobs_for_next_checkpoint: Cell<bool>,
 
     pub(crate) concurrent_tasks: ConcurrentQueue,
     /// See `TaskTag::is_plugin_request`: as other threads post them, and as this thread has taken them.
@@ -135,6 +139,8 @@ impl EventLoop {
             immediate_tasks: Cell::default(),
             next_immediate_tasks: Cell::default(),
             yield_tasks: Cell::default(),
+            owes_checkpoint: Cell::new(false),
+            keeps_jobs_for_next_checkpoint: Cell::new(false),
             concurrent_tasks: ConcurrentQueue::default(),
             concurrent_plugin_requests: ConcurrentQueue::default(),
             plugin_requests: UnsafeCell::new(Queue::init()),
@@ -184,6 +190,7 @@ mod drain_result {
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
+    safe fn JSC__JSGlobalObject__hasPendingMicrotasks(global: &JSGlobalObject) -> bool;
     safe fn Bun__noteEntryEvaluation(global: &JSGlobalObject);
 }
 
@@ -444,9 +451,10 @@ impl EventLoop {
             _ => unreachable!(),
         }
 
-        vm.is_inside_deferred_task_queue.set(true);
-        self.deferred_tasks.run();
-        vm.is_inside_deferred_task_queue.set(false);
+        self.owes_checkpoint.set(false);
+        if self.deferred_tasks.has_entries() {
+            self.run_deferred_tasks()?;
+        }
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
@@ -457,6 +465,47 @@ impl EventLoop {
 
         // Through `self`: `vm` would need one more saved register to outlive the calls above.
         Ok(self.vm_ref().has_pending_test_step.get())
+    }
+
+    /// The deferred tasks of a checkpoint, then the ticks and microtasks that they queued. A task can run
+    /// script (a stream's `pull()`, a write callback) or settle a promise, and every scope exit inside the
+    /// pass skips its checkpoint, so this is the only one those jobs get before the loop polls. A task
+    /// posted by those jobs waits for the next checkpoint, after timers and I/O had a turn.
+    /// Out of line, so that a checkpoint with no deferred task pays one test for all of this.
+    #[cold]
+    #[inline(never)]
+    fn run_deferred_tasks(&self) -> Result<(), Stopped> {
+        let vm = self.vm_ref();
+        vm.is_inside_deferred_task_queue.set(true);
+        self.deferred_tasks.run();
+        vm.is_inside_deferred_task_queue.set(false);
+
+        if self.keeps_jobs_for_next_checkpoint.take() {
+            self.owes_checkpoint.set(true);
+            return Ok(());
+        }
+        let global_object = self.global_ref();
+        if JSC__JSGlobalObject__hasPendingMicrotasks(global_object) {
+            let _entered = self.enter_scope_without_checkpoint();
+            global_object.drain_microtasks_and_next_ticks()?;
+            if self.deferred_tasks.may_have_unrun_tasks() {
+                self.owes_checkpoint.set(true);
+            }
+        }
+        Ok(())
+    }
+
+    /// For a deferred task that keeps its entry for work that arrived while it ran: the loop does not
+    /// block before the checkpoint that runs the task again.
+    pub fn owe_checkpoint(&self) {
+        self.owes_checkpoint.set(true);
+    }
+
+    /// For a deferred task whose script must not see its jobs run before the caller of this checkpoint
+    /// continues: the jobs that this pass queued run at the next checkpoint, and the loop does not block
+    /// before it.
+    pub fn keep_jobs_for_next_checkpoint(&self) {
+        self.keeps_jobs_for_next_checkpoint.set(true);
     }
 
     /// Runs the next test or hook before any other timer or I/O callback.
@@ -1010,7 +1059,7 @@ impl EventLoop {
 
     pub(crate) fn has_yield_tasks(&self) -> bool {
         // SAFETY: a read of the length.
-        !unsafe { &*self.yield_tasks.as_ptr() }.is_empty()
+        !unsafe { &*self.yield_tasks.as_ptr() }.is_empty() || self.owes_checkpoint.get()
     }
 
     /// `auto_tick`, before it polls: last iteration's yielded tasks become

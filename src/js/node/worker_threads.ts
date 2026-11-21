@@ -1245,7 +1245,10 @@ class Worker extends EventEmitter {
               }
             }
             // Like removeAllListeners(), discard listeners added by removal callbacks.
-            this._events = { __proto__: null, newListener: this.#refHook, removeListener: this.#unrefHook };
+            const events = Object.create(null);
+            events.newListener = this.#refHook;
+            events.removeListener = this.#unrefHook;
+            this._events = events;
             this._eventsCount = 2;
           } finally {
             this.#resolveOnExit?.(e.code);

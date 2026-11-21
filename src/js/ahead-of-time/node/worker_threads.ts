@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/worker_threads.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ca7f162e4565ad21eab06d112e80ab24be2a48104f214d2bbe8bb4075a500618.
+// Written against that file with the SHA-256 7028c51a1753f3dc0d01bd09ac6e31becca8aee777d74a72211fb02191436433.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 declare const self: EventTarget & {
@@ -1285,7 +1285,10 @@ class Worker extends EventEmitter {
               }
             }
             // Like removeAllListeners(), discard listeners added by removal callbacks.
-            this._events = { __proto__: null, newListener: this.#refHook, removeListener: this.#unrefHook };
+            const events = Object.create(null);
+            events.newListener = this.#refHook;
+            events.removeListener = this.#unrefHook;
+            this._events = events;
             this._eventsCount = 2;
           } finally {
             this.#resolveOnExit?.(e.code);

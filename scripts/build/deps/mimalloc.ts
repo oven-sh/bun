@@ -190,7 +190,9 @@ export const mimalloc: Dependency = {
       cflags.push(cfg.abi === "musl" ? "-ftls-model=local-dynamic" : "-ftls-model=initial-exec");
     }
 
-    if (override) cflags.push("-fno-builtin-malloc");
+    // An override needs it. It also keeps LTO from inlining mi_malloc and mi_free into their callers, which adds 3.4 MB
+    // on x64 and 4.5 MB on arm64 and no speed.
+    if (override || cfg.freebsd || (cfg.windows && cfg.arm64)) cflags.push("-fno-builtin-malloc");
     if (override || overridesDarwinAllocator(cfg)) {
       // `operator new` ends in mi_new here. Without exceptions it cannot throw: it calls this instead of returning NULL.
       // The value is a function name, and a `defines` entry would quote it.

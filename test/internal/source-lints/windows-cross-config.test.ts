@@ -14,9 +14,11 @@ import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
+import { mimalloc } from "../../../scripts/build/deps/mimalloc.ts";
 import { webkit } from "../../../scripts/build/deps/webkit.ts";
 import { computeFlags } from "../../../scripts/build/flags.ts";
 import { rustTarget } from "../../../scripts/build/rust.ts";
+import type { DirectBuild } from "../../../scripts/build/source.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -87,6 +89,16 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
   test("ci release arm64 cross builds are LTO too, unless turned off", () => {
     expect(resolveWindowsCross({ arch: "aarch64" }).lto).toBe(true);
     expect(resolveWindowsCross({ arch: "aarch64", lto: false }).lto).toBe(false);
+  });
+
+  test("LTO leaves mimalloc out of line on arm64, as on FreeBSD", () => {
+    const freebsd = resolveConfig(
+      { os: "freebsd", arch: "x64", buildType: "Release", freebsdSysroot: "/fake" },
+      mockToolchain(),
+    );
+    for (const cfg of [resolveWindowsCross({ arch: "aarch64" }), freebsd]) {
+      expect((mimalloc.build(cfg) as DirectBuild).cflags).toContain("-fno-builtin-malloc");
+    }
   });
 
   test("local (non-ci) release builds are LTO too, unless turned off", () => {

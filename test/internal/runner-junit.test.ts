@@ -100,7 +100,7 @@ describe("parseJunitFileSuites", () => {
   });
 });
 
-test("parseJunitFileSuites reads the report bun test --parallel --reporter=junit writes", async () => {
+test.concurrent("parseJunitFileSuites reads the report bun test --parallel --reporter=junit writes", async () => {
   using dir = tempDir("runner-junit", {
     "test/describes.test.ts": `
       import { describe, expect, test } from "bun:test";
@@ -157,6 +157,65 @@ test("parseJunitFileSuites reads the report bun test --parallel --reporter=junit
     },
   });
   expect(exitCode).toBe(1);
+});
+
+test.concurrent("getFileUrl links a file of this repository at the commit of the build, or gives no link", async () => {
+  // The directory and vendor/pkg in it are repositories with no commit and no remote.
+  // scripts/vendor-checkout.ts leaves a vendored suite in a repository with no remote.
+  using dir = tempDir("runner-file-url", { "vendor/pkg/test/a.test.ts": "" });
+  for (const repository of [String(dir), join(String(dir), "vendor", "pkg")]) {
+    await using git = Bun.spawn({
+      cmd: ["git", "init", "--quiet", repository],
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "inherit"],
+    });
+    expect(await git.exited).toBe(0);
+  }
+
+  const commit = "98cda0d8b1243fc3dbf6963f0a12e708efb20d80";
+  const build = { BUILDKITE_REPO: "https://github.com/oven-sh/bun.git", BUILDKITE_COMMIT: commit };
+  const blob = `https://github.com/oven-sh/bun/blob/${commit}`;
+  // What the build says, the call, and what the call gives.
+  const cases: [Record<string, string>, [filename: string, line?: number], string | null][] = [
+    [build, ["test/js/bun/a.test.ts"], `${blob}/test/js/bun/a.test.ts`],
+    [build, ["test\\js\\bun\\a.test.ts", 7], `${blob}/test/js/bun/a.test.ts#L7`],
+    // The repository under vendor/ is not asked where its files are from.
+    [build, ["vendor/pkg/test/a.test.ts", 12], `${blob}/vendor/pkg/test/a.test.ts#L12`],
+    // Not a repository on GitHub.
+    [{ ...build, BUILDKITE_REPO: "https://gitlab.com/oven-sh/bun.git" }, ["test/js/bun/a.test.ts", 7], null],
+    // What the build does not say is asked of git, which has no origin remote and no commit to name.
+    [{ BUILDKITE_COMMIT: commit }, ["test/js/bun/a.test.ts", 7], null],
+    [{ BUILDKITE_REPO: build.BUILDKITE_REPO }, ["test/js/bun/a.test.ts", 7], null],
+  ];
+
+  const buildkite = pathToFileURL(join(import.meta.dir, "..", "..", "scripts", "buildkite.ts")).href;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import * as buildkite from ${JSON.stringify(buildkite)};
+      for (const [build, call] of ${JSON.stringify(cases.map(([build, call]) => [build, call]))}) {
+        delete process.env.BUILDKITE_REPO;
+        delete process.env.BUILDKITE_COMMIT;
+        Object.assign(process.env, build);
+        console.log(buildkite.getFileUrl(...call) ?? null);
+      }
+      // A test that is of no vendored suite is a file of this repository.
+      Object.assign(process.env, ${JSON.stringify(build)});
+      console.log(buildkite.getTestUrl("test/js/bun/a.test.ts", undefined, 7) ?? null);`,
+    ],
+    cwd: String(dir),
+    // Of what scripts/buildkite.ts reads, a CI agent sets more than the cases do.
+    env: { ...bunEnv, BUILDKITE: "true", GITHUB_ACTIONS: undefined, GITHUB_SERVER_URL: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: [...cases.map(([, , url]) => url), `${blob}/test/js/bun/a.test.ts#L7`].map(url => `${url}\n`).join(""),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 /**
@@ -267,64 +326,5 @@ describe("getTestUrl", () => {
       getTestUrl("test/a.test.ts", { ...source, repository: "https://github.com/a:b/c" }, 12),
       getTestUrl("test/a.test.ts", { ...source, repository: "https://github.com/a:b/c" }),
     ]).toEqual([undefined, undefined, undefined]);
-  });
-});
-
-test("getFileUrl links a file of the repository of the build at its commit, and gives no link without either", async () => {
-  // The directory and vendor/pkg in it are repositories with no commit and no remote.
-  // scripts/vendor-checkout.ts leaves a vendored suite in a repository with no remote.
-  using dir = tempDir("runner-file-url", { "vendor/pkg/test/a.test.ts": "" });
-  for (const repository of [String(dir), join(String(dir), "vendor", "pkg")]) {
-    await using git = Bun.spawn({
-      cmd: ["git", "init", "--quiet", repository],
-      env: bunEnv,
-      stdio: ["ignore", "ignore", "inherit"],
-    });
-    expect(await git.exited).toBe(0);
-  }
-
-  const commit = "98cda0d8b1243fc3dbf6963f0a12e708efb20d80";
-  const build = { BUILDKITE_REPO: "https://github.com/oven-sh/bun.git", BUILDKITE_COMMIT: commit };
-  const blob = `https://github.com/oven-sh/bun/blob/${commit}`;
-  // What the build says, the call, and what the call gives.
-  const cases: [Record<string, string>, [filename: string, line?: number], string | null][] = [
-    [build, ["test/js/bun/a.test.ts"], `${blob}/test/js/bun/a.test.ts`],
-    [build, ["test\\js\\bun\\a.test.ts", 7], `${blob}/test/js/bun/a.test.ts#L7`],
-    // The repository under vendor/ is not asked where its files are from.
-    [build, ["vendor/pkg/test/a.test.ts", 12], `${blob}/vendor/pkg/test/a.test.ts#L12`],
-    // Not a repository on GitHub.
-    [{ ...build, BUILDKITE_REPO: "https://gitlab.com/oven-sh/bun.git" }, ["test/js/bun/a.test.ts", 7], null],
-    // What the build does not say is asked of git, which has no origin remote and no commit to name.
-    [{ BUILDKITE_COMMIT: commit }, ["test/js/bun/a.test.ts", 7], null],
-    [{ BUILDKITE_REPO: build.BUILDKITE_REPO }, ["test/js/bun/a.test.ts", 7], null],
-  ];
-
-  const buildkite = pathToFileURL(join(import.meta.dir, "..", "..", "scripts", "buildkite.ts")).href;
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `import * as buildkite from ${JSON.stringify(buildkite)};
-      for (const [build, call] of ${JSON.stringify(cases.map(([build, call]) => [build, call]))}) {
-        delete process.env.BUILDKITE_REPO;
-        delete process.env.BUILDKITE_COMMIT;
-        Object.assign(process.env, build);
-        console.log(buildkite.getFileUrl(...call) ?? null);
-      }
-      // A test that is of no vendored suite is a file of this repository.
-      Object.assign(process.env, ${JSON.stringify(build)});
-      console.log(buildkite.getTestUrl("test/js/bun/a.test.ts", undefined, 7) ?? null);`,
-    ],
-    cwd: String(dir),
-    // Of what scripts/buildkite.ts reads, a CI agent sets more than the cases do.
-    env: { ...bunEnv, BUILDKITE: "true", GITHUB_ACTIONS: undefined, GITHUB_SERVER_URL: undefined },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: [...cases.map(([, , url]) => url), `${blob}/test/js/bun/a.test.ts#L7`].map(url => `${url}\n`).join(""),
-    stderr: "",
-    exitCode: 0,
   });
 });

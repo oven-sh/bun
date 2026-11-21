@@ -650,6 +650,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     }
 #endif
 
+    // Own this load's registrations before a filename getter can load another addon.
+    auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
+    auto pendingV8Modules = std::exchange(globalObject->m_pendingV8Modules, {});
+    auto registerCallCount = std::exchange(globalObject->napiModuleRegisterCallCount, 0);
+
     WTF::String moduleFilename;
     if (fromEmbedded) {
         // Compiled addons expose their extracted file, not the virtual module key.
@@ -663,15 +668,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         }
     }
 
-    if (globalObject->napiModuleRegisterCallCount != 0) {
+    if (registerCallCount != 0) {
         // Module self-registered via static constructor(s).
-        // Move pending registrations into locals before iterating: an
-        // nm_register_func can itself call napi_module_register(), which
-        // appends to m_pendingNapiModules. Appending to a WTF::Vector while
-        // range-for iterating it reallocates the buffer and leaves the
-        // iterator dangling.
-        auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
-        auto pendingV8Modules = std::exchange(globalObject->m_pendingV8Modules, {});
         auto handle = library.release();
 
         // Save all NAPI module registrations

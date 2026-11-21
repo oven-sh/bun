@@ -147,6 +147,47 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     }
   });
 
+  it("constructor and cached addon registrations retain their own module filename", async () => {
+    using dir = tempDir("native-addon-constructor-filename", {
+      "load.cjs": `
+        const assert = require("node:assert/strict");
+        const path = require("node:path");
+        for (const name of ["no_delay_load_hook_addon", "no_delay_load_hook_ctor_addon"]) {
+          const addon = path.join(process.argv[2], name + ".node");
+          for (const suffix of ["first", "cached"]) {
+            const module = { exports: {}, filename: "C:/" + name + "-" + suffix + ".node" };
+            process.dlopen(module, addon);
+            assert.equal(module.exports.moduleFileName(), "file:///" + module.filename);
+          }
+        }
+        if (process.versions.bun) {
+          const nested = { exports: {}, filename: "C:/nested.node" };
+          const outer = {
+            exports: {},
+            get filename() {
+              process.dlopen(nested, path.join(process.argv[2], "regular_node_exe_import_ctor_addon.node"));
+              return "C:/outer.node";
+            },
+          };
+          process.dlopen(outer, path.join(process.argv[2], "no_delay_load_hook_ctor_addon.node"));
+          assert.equal(outer.exports.moduleFileName(), "file:///C:/outer.node");
+          assert.equal(nested.exports.moduleFileName(), "file:///C:/nested.node");
+        }
+        console.log("ok");
+      `,
+    });
+    for (const executable of [bunExe(), await nodeExeMatchingAbi()]) {
+      await using proc = spawn({
+        cmd: [executable, join(dir, "load.cjs"), join(__dirname, "napi-app/build/Debug")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+    }
+  });
+
   it.each(["require", "direct"])("module URLs identify native addons loaded from long paths with %s", async mode => {
     await using dir = tempDir("native-addon-url", {
       "load.cjs": `

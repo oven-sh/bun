@@ -26,12 +26,26 @@ static napi_value hello(napi_env env, napi_callback_info info) {
   return out;
 }
 
+static napi_value module_filename(napi_env env, napi_callback_info info) {
+  (void)info;
+  const char *filename;
+  napi_value result;
+  if (node_api_get_module_file_name(env, &filename) != napi_ok ||
+      napi_create_string_utf8(env, filename, NAPI_AUTO_LENGTH, &result) != napi_ok)
+    return NULL;
+  return result;
+}
+
 static napi_value init(napi_env env, napi_value exports) {
   napi_value fn;
   if (napi_create_function(env, "hello", NAPI_AUTO_LENGTH, hello, NULL, &fn) !=
       napi_ok)
     return NULL;
   if (napi_set_named_property(env, exports, "hello", fn) != napi_ok)
+    return NULL;
+  if (napi_create_function(env, "moduleFileName", NAPI_AUTO_LENGTH,
+                           module_filename, NULL, &fn) != napi_ok ||
+      napi_set_named_property(env, exports, "moduleFileName", fn) != napi_ok)
     return NULL;
   return exports;
 }

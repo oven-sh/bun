@@ -541,6 +541,7 @@
  },
  {
   "name": "audit/no-deprecated/option-allow",
+  "tsgolint": "7.0.2003",
   "about": "what tsgolint's no-deprecated reports and bun lint did not, or the reverse: option-allow",
   "config": {
    "categories": {
@@ -624,6 +625,7 @@
  },
  {
   "name": "audit/no-floating-promises/option-allow-for-known-safe-calls",
+  "tsgolint": "7.0.2003",
   "about": "what tsgolint's no-floating-promises reports and bun lint did not, or the reverse: option-allow-for-known-safe-calls",
   "config": {
    "categories": {

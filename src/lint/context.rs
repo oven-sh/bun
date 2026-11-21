@@ -640,6 +640,14 @@ impl<'a> Report<'a> {
         self
     }
 
+    /// Like [`Report::help_with`], but only with an oxlint config. "" is no help.
+    pub fn oxlint_help_with(self, text: impl FnOnce() -> String) -> Self {
+        match self.file.language().is_oxlint {
+            true => self.help_with(text),
+            false => self,
+        }
+    }
+
     /// Adds Bun's own sentence under an ESLint message that doesn't say what's wrong or what to do. It replaces
     /// [`Report::help`] and is never shown with an oxlint config. The rule must set [`Meta::hints`]. Empty means no
     /// hint.

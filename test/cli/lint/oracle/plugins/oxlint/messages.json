@@ -4688,7 +4688,8 @@
   "file": "a.tsx",
   "code": "\n/** @deprecated Reason. */ const a = { b: 1 };\nconst c = a;\n      \nexport {};\n",
   "options": [],
-  "message": "`a` is deprecated."
+  "message": "`a` is deprecated.",
+  "tsgolint": "7.0.2003"
  },
  {
   "rule": "typescript/no-duplicate-enum-values",
@@ -5245,7 +5246,8 @@
   "file": "a.ts",
   "code": "\ndeclare let foo: null;\nfoo ??= null;\n      \nexport {};\n",
   "options": [],
-  "message": "Unnecessary conditional, value is always nullish."
+  "message": "Unnecessary conditional, value is always nullish.",
+  "help": "The checked value has type `null`."
  },
  {
   "rule": "typescript/no-unnecessary-condition",
@@ -5253,7 +5255,8 @@
   "file": "a.ts",
   "code": "\n2n < 2n;\n      \nexport {};\n",
   "options": [],
-  "message": "Unnecessary comparison between literal values."
+  "message": "Unnecessary comparison between literal values.",
+  "help": "The left side has type `2n`, and the right side has type `2n`."
  },
  {
   "rule": "typescript/no-unnecessary-condition",
@@ -5261,7 +5264,8 @@
   "file": "a.ts",
   "code": "\ndeclare let foo: {};\nfoo ??= 1;\n      \nexport {};\n",
   "options": [],
-  "message": "Unnecessary conditional, expected left-hand side of `??` operator to be possibly null or undefined."
+  "message": "Unnecessary conditional, expected left-hand side of `??` operator to be possibly null or undefined.",
+  "help": "The checked value has type `{}`."
  },
  {
   "rule": "typescript/no-unnecessary-condition",
@@ -5269,7 +5273,8 @@
   "file": "a.ts",
   "code": "\nfunction test(value: string) {\n  switch (value) {\n    case undefined:\n      break;\n  }\n}\n      \nexport {};\n",
   "options": [],
-  "message": "This condition will always return the same value since the types have no overlap."
+  "message": "This condition will always return the same value since the types have no overlap.",
+  "help": "The left side has type `string`, and the right side has type `undefined`."
  },
  {
   "rule": "typescript/no-unnecessary-condition",
@@ -5281,7 +5286,78 @@
     "checkTypePredicates": true
    }
   ],
-  "message": "Type predicate is unnecessary as the parameter type already satisfies the predicate."
+  "message": "Type predicate is unnecessary as the parameter type already satisfies the predicate.",
+  "help": "Type `string` already satisfies predicate type `string`. Remove the redundant type check."
+ },
+ {
+  "rule": "typescript/no-unnecessary-condition",
+  "id": "alwaysTruthy",
+  "file": "a.ts",
+  "code": "declare const o: object;\nif (o) {\n}\nexport {};\n",
+  "options": [],
+  "message": "Unnecessary conditional, value is always truthy.",
+  "help": "The checked value has type `object`."
+ },
+ {
+  "rule": "typescript/no-unnecessary-condition",
+  "id": "alwaysTruthy",
+  "file": "a.ts",
+  "code": "if (1) {\n}\nexport {};\n",
+  "options": [],
+  "message": "Unnecessary conditional, value is always truthy."
+ },
+ {
+  "rule": "typescript/no-unnecessary-condition",
+  "id": "alwaysTruthyFunc",
+  "file": "a.ts",
+  "code": "declare const truthy: () => object;\n[1].filter(truthy);\nexport {};\n",
+  "options": [],
+  "message": "This callback should return a conditional, but return is always truthy.",
+  "help": "The callback returns type `object`."
+ },
+ {
+  "rule": "typescript/no-unnecessary-condition",
+  "id": "neverOptionalChain",
+  "file": "a.ts",
+  "code": "declare const o: { a: number };\no?.a;\nexport {};\n",
+  "options": [],
+  "message": "Unnecessary optional chain on a non-nullish value.",
+  "help": "The checked value has type `{ a: number; }`. Remove the optional chain; the value cannot be `null` or `undefined`."
+ },
+ {
+  "rule": "typescript/no-unnecessary-condition",
+  "id": "neverOptionalChain",
+  "file": "a.ts",
+  "code": "\"a\"?.length;\nexport {};\n",
+  "options": [],
+  "message": "Unnecessary optional chain on a non-nullish value.",
+  "help": "Remove the optional chain; the value cannot be `null` or `undefined`."
+ },
+ {
+  "rule": "typescript/no-unnecessary-condition",
+  "id": "alwaysTruthy",
+  "file": "a.ts",
+  "code": "declare const o: { property1: number; property2: number; property3: number; property4: number; property5: number; property6: number; property7: number; property8: number; property9: number; property10: number; property11: number; };\nif (o) {\n}\nexport {};\n",
+  "options": [],
+  "message": "Unnecessary conditional, value is always truthy.",
+  "help": "The checked value has type `{ property1: number; property2: number; property3: number; property4: number; property5: number; property6: number; p...`."
+ },
+ {
+  "rule": "typescript/no-unnecessary-condition",
+  "id": "alwaysTruthy",
+  "file": "a.ts",
+  "code": "[1].filter(() => true);\nexport {};\n",
+  "options": [],
+  "message": "Unnecessary conditional, value is always truthy."
+ },
+ {
+  "rule": "typescript/no-unnecessary-condition",
+  "id": "neverOptionalChain",
+  "file": "a.ts",
+  "code": "declare const o: { a: { c: number }; b: { c: number } } | undefined;\ndeclare const k: \"a\" | \"b\";\no?.[k]?.c;\nexport {};\n",
+  "options": [],
+  "message": "Unnecessary optional chain on a non-nullish value.",
+  "help": "The checked value has type `{ c: number; }`. Remove the optional chain; the value cannot be `null` or `undefined`."
  },
  {
   "rule": "typescript/no-unnecessary-parameter-property-assignment",
@@ -5409,8 +5485,8 @@
     "noImplicitThis": false
    }
   },
-  "message": "Unsafe assignment of an any value. `this` is typed as `any`.\n",
-  "help": "You can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function."
+  "message": "Unsafe assignment of an any value. `this` is typed as `any`.",
+  "help": "Assigned value has type `any`, so the target is also inferred as `any`. Enable `noImplicitThis` or add an explicit `this` parameter to the function."
  },
  {
   "rule": "typescript/no-unsafe-assignment",
@@ -5418,7 +5494,8 @@
   "file": "a.ts",
   "code": "declare const a: any[];\nexport const [x] = a;\n",
   "options": [],
-  "message": "Unsafe array destructuring of an any array value."
+  "message": "Unsafe array destructuring of an any array value.",
+  "help": "The destructured value has type `any[]`, and this binding receives `any`. Use a safely typed source or narrow the value before destructuring it."
  },
  {
   "rule": "typescript/no-unsafe-assignment",
@@ -5426,7 +5503,8 @@
   "file": "a.ts",
   "code": "declare const t: [any];\nexport const [x] = t;\n",
   "options": [],
-  "message": "Unsafe array destructuring of a tuple element with an any value."
+  "message": "Unsafe array destructuring of a tuple element with an any value.",
+  "help": "The destructured value has type `any`, and this binding receives `any`. Use a safely typed source or narrow the value before destructuring it."
  },
  {
   "rule": "typescript/no-unsafe-assignment",
@@ -5434,7 +5512,8 @@
   "file": "a.ts",
   "code": "declare const a: any[];\nexport const x = [...a];\n",
   "options": [],
-  "message": "Unsafe spread of an any value in an array."
+  "message": "Unsafe spread of an any value in an array.",
+  "help": "The spread value has type `any[]`. Use a safely typed array or narrow the value before spreading it."
  },
  {
   "rule": "typescript/no-unsafe-assignment",
@@ -5442,7 +5521,8 @@
   "file": "a.ts",
   "code": "declare const s: Set<any>;\nexport const x: Set<string> = s;\n",
   "options": [],
-  "message": "Unsafe assignment between incompatible types."
+  "message": "Unsafe assignment between incompatible types.",
+  "help": "Assigned value has type `Set<any>`; the target has type `Set<string>`. Use a safely typed value or `unknown`, and narrow it before use."
  },
  {
   "rule": "typescript/no-unsafe-assignment",
@@ -5450,7 +5530,35 @@
   "file": "a.ts",
   "code": "declare const o: { a: any };\nexport const { a } = o;\n",
   "options": [],
-  "message": "Unsafe array destructuring of a tuple element with an any value."
+  "message": "Unsafe array destructuring of a tuple element with an any value.",
+  "help": "The destructured value has type `any`, and this binding receives `any`. Use a safely typed source or narrow the value before destructuring it."
+ },
+ {
+  "rule": "typescript/no-unsafe-assignment",
+  "id": "anyAssignment",
+  "file": "a.ts",
+  "code": "declare const a: any;\nexport const x = a;\n",
+  "options": [],
+  "message": "Unsafe assignment of an any value.",
+  "help": "Assigned value has type `any`, so the target is also inferred as `any`. Use a safely typed value or `unknown`, and narrow it before use."
+ },
+ {
+  "rule": "typescript/no-unsafe-assignment",
+  "id": "anyAssignment",
+  "file": "a.ts",
+  "code": "declare const a: any;\nexport const x: string = a;\n",
+  "options": [],
+  "message": "Unsafe assignment of an any value.",
+  "help": "Assigned value has type `any`; the target has type `string`. Use a safely typed value or `unknown`, and narrow it before use."
+ },
+ {
+  "rule": "typescript/no-unsafe-assignment",
+  "id": "unsafeArrayPatternFromTuple",
+  "file": "a.ts",
+  "code": "declare const t: [errorType];\nexport const [x] = t;\n",
+  "options": [],
+  "message": "Unsafe array destructuring of a tuple element with an error typed value.",
+  "help": "The destructured value has type `error`, and this binding receives `error`. Use a safely typed source or narrow the value before destructuring it."
  },
  {
   "rule": "typescript/no-unsafe-call",
@@ -5558,8 +5666,53 @@
     "noImplicitThis": false
    }
   },
-  "message": "Unsafe return of a value of type ``any``. `this` is typed as `any`.",
-  "help": "You can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function."
+  "message": "Unsafe return of a value of type `any`. `this` is typed as `any`.",
+  "help": "Returned expression has type `any`. Enable `noImplicitThis` or add an explicit `this` parameter to the function."
+ },
+ {
+  "rule": "typescript/no-unsafe-return",
+  "id": "unsafeReturn",
+  "file": "a.ts",
+  "code": "declare const a: any;\nexport function f() {\n  return a;\n}\n",
+  "options": [],
+  "message": "Unsafe return of a value of type `any`.",
+  "help": "Returned expression has type `any`. Return a safely typed value or narrow the value before returning it."
+ },
+ {
+  "rule": "typescript/no-unsafe-return",
+  "id": "unsafeReturn",
+  "file": "a.ts",
+  "code": "declare const a: any;\nexport function f(): string {\n  return a;\n}\n",
+  "options": [],
+  "message": "Unsafe return of a value of type `any`.",
+  "help": "Returned expression has type `any`; the function return type is `string`. Return a safely typed value or narrow the value before returning it."
+ },
+ {
+  "rule": "typescript/no-unsafe-return",
+  "id": "unsafeReturnAssignment",
+  "file": "a.ts",
+  "code": "declare const s: Set<any>;\nexport function f(): Set<string> {\n  return s;\n}\n",
+  "options": [],
+  "message": "Unsafe return of type `Set<any>` from function with return type `Set<string>`.",
+  "help": "Returned expression has type `Set<any>`; the function return type is `Set<string>`. Return a safely typed value or narrow the value before returning it."
+ },
+ {
+  "rule": "typescript/no-unsafe-return",
+  "id": "unsafeReturn",
+  "file": "a.ts",
+  "code": "declare const a: any;\nexport const f: () => string = () => a;\n",
+  "options": [],
+  "message": "Unsafe return of a value of type `any`.",
+  "help": "Returned expression has type `any`; the function return type is `string`. Return a safely typed value or narrow the value before returning it."
+ },
+ {
+  "rule": "typescript/no-unsafe-return",
+  "id": "unsafeReturn",
+  "file": "a.ts",
+  "code": "declare const e: errorType;\nexport function f() {\n  return e;\n}\n",
+  "options": [],
+  "message": "Unsafe return of a value of type error.",
+  "help": "Returned expression has type `error`. Return a safely typed value or narrow the value before returning it."
  },
  {
   "rule": "typescript/no-unsafe-type-assertion",
@@ -5568,7 +5721,7 @@
   "code": "\ndeclare const a: [any];\na as [number];\n        \nexport {};\n",
   "options": [],
   "message": "Unsafe assertion from `any` detected.",
-  "help": "Consider using type guards or a safer assertion."
+  "help": "The original expression has type `[any]`, and the assertion changes it to `[number]`. Use a type guard to check the value before asserting its type."
  },
  {
   "rule": "typescript/no-unsafe-type-assertion",
@@ -5577,7 +5730,7 @@
   "code": "\n'foo' as any;\n        \nexport {};\n",
   "options": [],
   "message": "Unsafe assertion to `any` detected.",
-  "help": "Consider using a more specific type to ensure safety."
+  "help": "The original expression has type `\"foo\"`, and the assertion changes it to `any`. Keep the original type or use `unknown` and narrow the value before use."
  },
  {
   "rule": "typescript/no-unsafe-type-assertion",
@@ -5586,7 +5739,7 @@
   "code": "\nconst bar = 'foo' as errorType;\n        \nexport {};\n",
   "options": [],
   "message": "Unsafe assertion to error typed detected.",
-  "help": "Consider using a more specific type to ensure safety."
+  "help": "The original expression has type `\"foo\"`, and the assertion changes it to `error`. Keep the original type or use `unknown` and narrow the value before use."
  },
  {
   "rule": "typescript/no-unsafe-type-assertion",
@@ -5594,7 +5747,35 @@
   "file": "a.ts",
   "code": "\nfunction unconstrained<T>(x: T, y: string) {\n  y as T;\n}\n        \nexport {};\n",
   "options": [],
-  "message": "Unsafe type assertion: 'T' could be instantiated with an arbitrary type which could be unrelated to the original type."
+  "message": "Unsafe type assertion: 'T' could be instantiated with an arbitrary type which could be unrelated to the original type.",
+  "help": "The original expression has type `string`, and the assertion changes it to `T`. Use a type guard to narrow the value before asserting a more specific type."
+ },
+ {
+  "rule": "typescript/no-unsafe-type-assertion",
+  "id": "unsafeTypeAssertion",
+  "file": "a.ts",
+  "code": "export const x = {\n} as { a: number };\n",
+  "options": [],
+  "message": "Unsafe type assertion: type '{ a: number; }' is more narrow than the original type.",
+  "help": "The original expression has type `{}`, and the assertion changes it to `{ a: number; }`. Use a type guard to narrow the value before asserting a more specific type."
+ },
+ {
+  "rule": "typescript/no-unsafe-type-assertion",
+  "id": "unsafeTypeAssertionAssignableToConstraint",
+  "file": "a.ts",
+  "code": "export function f<T extends string>(y: string) {\n  return y as T;\n}\n",
+  "options": [],
+  "message": "Unsafe type assertion: the original type is assignable to the constraint of type 'T', but 'T' could be instantiated with a different subtype of its constraint.",
+  "help": "The original expression has type `string`, and the assertion changes it to `T`. Use a type guard to narrow the value before asserting a more specific type."
+ },
+ {
+  "rule": "typescript/no-unsafe-type-assertion",
+  "id": "unsafeTypeAssertion",
+  "file": "a.ts",
+  "code": "declare const e: errorType;\nexport const x = e as string;\n",
+  "options": [],
+  "message": "Unsafe assertion from error typed detected.",
+  "help": "The original expression has type `error`, and the assertion changes it to `string`. Use a type guard to check the value before asserting its type."
  },
  {
   "rule": "typescript/no-useless-default-assignment",

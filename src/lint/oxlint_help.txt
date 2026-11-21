@@ -646,8 +646,8 @@ Prefer explicitly defining any function parameters and return type.
 Use `()` to negate the whole expression, as '!' binds more closely than '{{operator}}'
 This can result in NaN.
 If this short-circuits with 'undefined' the evaluation will throw TypeError
-Consider using type guards or a safer assertion.
-Consider using a more specific type to ensure safety.
+
+
 Add a type parameter to the mock factory such as `typeof import({{module_name}})`
 Consider using this expression or removing it
 Remove the declaration or use it in the code.

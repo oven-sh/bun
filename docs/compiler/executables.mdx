@@ -935,6 +935,16 @@ Some addons load a shared library that ships beside them, like `sharp` and `libv
 bun build --compile --aot ./index.ts --asset node_modules/@img --outfile mycli
 ```
 
+An addon that links a shared library next to it (through `$ORIGIN` or `@loader_path`) works when that library is embedded too. Pass the directory with `--asset` (see below). At runtime, Bun writes every embedded shared library into one temporary directory that keeps the embedded layout, so the addon finds its dependencies where it expects them. Bun embeds regular files only, so if the addon asks for a name that is a symlink on disk (`libfoo.so.1` pointing at `libfoo.so.1.2`), put a regular file under that exact name in the directory you pass to `--asset`.
+
+```bash terminal icon="terminal"
+bun build --compile ./index.ts --asset ./lib --outfile myapp
+```
+
+Only the user who runs the executable can read or write that directory. The embedded layout sits eight levels below its top. A path that a library resolves relative to itself (`$ORIGIN/../../lib`, for example) therefore stays inside the directory when it goes up a few levels.
+
+The directory is created in the temp directory (`BUN_TMPDIR` or `TMPDIR`). A temp directory such as `/tmp` is shared between the users of a machine. If one of your libraries goes up more than eight levels, run the executable with `BUN_TMPDIR` set to a directory that only its user can write, inside parent directories that other users cannot write to. A path that climbs past `BUN_TMPDIR` reaches its parent.
+
 ### Embed directories
 
 Use `--asset` (or `compile.assets` in the JavaScript API) to embed a file or directory tree into the executable under its original relative path. The embedded files live under `import.meta.dir` at runtime and are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`) and `Bun.file()`.

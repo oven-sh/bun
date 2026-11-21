@@ -221,7 +221,7 @@ fn find_by_key<K: Ord + Copy, T: Copy>(
     Some(entries[at])
 }
 
-fn parent_of_pattern(bound: &Bound<'_>, mut pattern: PatId) -> Parent {
+pub(crate) fn parent_of_pattern(bound: &Bound<'_>, mut pattern: PatId) -> Parent {
     loop {
         match bound.pat_parent[pattern.idx()] {
             PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pattern = outer,

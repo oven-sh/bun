@@ -30,6 +30,7 @@ use crate::known_helpers::{
     resolve_reference,
 };
 use crate::load::sources::parsed_source;
+use crate::modules::parent_of_pattern;
 
 #[derive(Copy, Clone)]
 pub(in crate::lower) struct PrivateStateAccess {
@@ -1810,6 +1811,7 @@ pub(in crate::lower) fn is_left_out(
     let functions = file.inputs.library_functions;
     let declarations = functions.left_out_declarations();
     let bound = file.queries.files().bound(home);
+    let hir = file.queries.files().hir(home);
     let is_in_left_out_class = |member: MemberId| {
         let class = bound.member_class(member);
         class.is_some_and(|class| declarations.is_class_left_out(home, class))
@@ -1823,15 +1825,34 @@ pub(in crate::lower) fn is_left_out(
                 })
         }
         Parent::MemberInit(member) => is_in_left_out_class(member),
+        Parent::ClassExtends(class) => {
+            declarations.is_class_left_out(home, class)
+                && !declarations.is_heritage_check_kept(home, class)
+        }
+        Parent::MemberKey(member) => {
+            is_in_left_out_class(member) && !declarations.is_key_conversion_kept(home, member)
+        }
         Parent::Stmt(statement) => declarations.is_statement_left_out(home, statement),
         Parent::VarInit(declarator) => declarations.is_declarator_left_out(home, declarator),
         _ => false,
     };
     let step_outward = |&node: &Parent| match node {
         Parent::Expr(expression) => Some(bound.parent_of_expr(expression)),
-        Parent::Prop(property) => {
+        Parent::Prop(property) | Parent::PropKey(property) | Parent::MethodKey(property) => {
             let literal = bound.prop_owner[property.idx()].some()?;
             Some(bound.parent_of_expr(literal))
+        }
+        Parent::PatPropDefault(property) | Parent::PatKey(property) => {
+            Some(parent_of_pattern(bound, hir[property].value))
+        }
+        Parent::PatElemDefault(element) => Some(parent_of_pattern(bound, hir[element].pat)),
+        // A check that is kept of a left-out class is still evaluated.
+        Parent::ClassExtends(class) if !declarations.is_heritage_check_kept(home, class) => {
+            Some(bound.class_owner[class.idx()].to_parent())
+        }
+        Parent::MemberKey(member) if !declarations.is_key_conversion_kept(home, member) => {
+            let class = bound.member_class(member)?;
+            Some(bound.class_owner[class.idx()].to_parent())
         }
         Parent::Stmt(statement) => Some(bound.parent_of_stmt(statement)),
         Parent::VarInit(declarator) => Some(Parent::Stmt(bound.var_stmt[declarator.idx()])),
@@ -1843,7 +1864,7 @@ pub(in crate::lower) fn is_left_out(
         },
         _ => None,
     };
-    // A path ends at a class, a pattern or a parameter. It goes on at the function that encloses those.
+    // A path ends at a parameter, an initializer of a field or a decorator. It goes on at the function that encloses those.
     let mut around = core::iter::successors(Some(function), |&inner| {
         bound.fns[inner.idx()].enclosing.some()
     });

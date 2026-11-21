@@ -347,15 +347,14 @@ impl Terminal {
         }
         let event_loop = terminal.event_loop_handle.as_event_loop_ctx();
 
-        // Start writer with the write fd - adds a ref. On `Err` the unused closure drops the file.
+        // Start writer with the write fd - adds a ref.
         match terminal
             .writer
-            .start(&*terminal, event_loop, pty_result.write.fd(), true)
-            .map(|()| pty_result.write.into_raw())
+            .start(&*terminal, event_loop, pty_result.write, true)
         {
-            sys::Result::Ok(_) => terminal.writer_ref.set(Some(terminal.clone())),
+            sys::Result::Ok(()) => terminal.writer_ref.set(Some(terminal.clone())),
             sys::Result::Err(_) => {
-                // The writer took neither its ref nor the fd, and the reader never started.
+                // The writer did not take its ref, and the reader never started.
                 drop(pty_result.read);
                 terminal.close_internal();
                 return Err(InitError::WriterStartFailed);
@@ -365,13 +364,10 @@ impl Terminal {
         // Start reader with the read fd - adds a ref.
         let Ok(result) = terminal
             .reader
-            .start(event_loop, pty_result.read.fd(), true)
+            .start(event_loop, pty_result.read.into(), true)
         else {
-            // The reader did not take the fd.
-            drop(pty_result.read);
             return Err(terminal.fail_reader_start());
         };
-        pty_result.read.into_raw();
         terminal.reader_ref.set(Some(terminal.clone()));
         terminal.on_read_result(result);
         if terminal.is_reader_done() {

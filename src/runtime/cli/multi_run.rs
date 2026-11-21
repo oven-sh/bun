@@ -243,10 +243,10 @@ impl<'a> ProcessHandle<'a> {
             (&self.stdout_reader, stdout_pipe),
             (&self.stderr_reader, stderr_pipe),
         ] {
-            if let Some(fd) = file.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(fd);
+            if let Some(file) = file {
+                let _ = bun_sys::set_nonblocking(file.fd());
                 let event_loop = self.shared.event_loop.as_event_loop_ctx();
-                let _ = pipe.reader.start(event_loop, fd, true)?;
+                let _ = pipe.reader.start(event_loop, file.into(), true)?;
             }
         }
         #[cfg(not(unix))]

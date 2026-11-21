@@ -8,16 +8,19 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isLinux,
   isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { once } from "node:events";
 import http from "node:http";
 import { finished } from "node:stream/promises";
 import path, { join } from "path";
 import { asyncIterableBodyShapes, settled as settledBody } from "../../web/streams/async-iterable-body-shapes";
+import { drain, fill, openFifo, untilWatched } from "./fifo-helpers";
 
 let i = 0;
 const IS_UV_FS_COPYFILE_DISABLED =
@@ -1796,5 +1799,79 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(stdout).toBe("caught EISDIR\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+});
+
+it.skipIf(isWindows)("Bun.write() goes on each time a pipe has room", async () => {
+  using dir = tempDir("bun-write-pipe", {});
+  using fifo = openFifo(String(dir));
+  const room = fill(fifo.writer);
+  const file = Bun.file(fifo.writer);
+  file.size; // Finds out that it is not a regular file.
+  const write = Bun.write(file, new Blob([Buffer.alloc(8 * room)]));
+  let drained = 0;
+  while (Bun.peek.status(write) === "pending") {
+    await Bun.sleep(1);
+    drained += drain(fifo.reader);
+  }
+  expect(await write).toBe(8 * room);
+  expect(drained + drain(fifo.reader)).toBe(9 * room);
+});
+
+describe.skipIf(!isLinux).concurrent("Bun.write() to a pipe that is full", () => {
+  const data = new Blob([Buffer.alloc(1 << 20, "a")]);
+  /** `.size` makes the file find out that it is not a regular one. */
+  function knownPipe(fd) {
+    const file = Bun.file(fd);
+    file.size;
+    return file;
+  }
+
+  // The capacity of a pipe is fixed on Linux.
+  it("waits for room after the last byte", async () => {
+    using dir = tempDir("bun-write-pipe", {});
+    using fifo = openFifo(String(dir));
+    const room = fill(fifo.writer);
+    drain(fifo.reader);
+    const write = Bun.write(knownPipe(fifo.writer), data.slice(0, room));
+    await untilWatched(fifo.writer);
+    expect(Bun.peek.status(write)).toBe("pending");
+    expect(drain(fifo.reader)).toBe(room);
+    expect(await write).toBe(room);
+  });
+
+  it("waits when the file finds out after the call that it is a pipe", async () => {
+    using dir = tempDir("bun-write-pipe", {});
+    mkfifo(join(String(dir), "hold-1"));
+    mkfifo(join(String(dir), "hold-2"));
+    const script = `
+      import fs from "node:fs";
+      import { drain, fill, openFifo, untilWatched } from ${JSON.stringify(join(import.meta.dir, "fifo-helpers.ts"))};
+
+      // readFile() has a thread of the pool from its open(), which ends the ENXIO, until the writer is closed.
+      async function holdThread(path) {
+        fs.promises.readFile(path);
+        for (;;) {
+          try {
+            return fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+          } catch (error) {
+            if (error.code !== "ENXIO") throw error;
+            await Bun.sleep(1);
+          }
+        }
+      }
+
+      using fifo = openFifo(".");
+      fill(fifo.writer);
+      const held = [await holdThread("hold-1"), await holdThread("hold-2")];
+      const file = Bun.file(fifo.writer);
+      const write = Bun.write(file, new Blob(["a"]));
+      file.size;
+      held.forEach(fd => fs.closeSync(fd));
+      await untilWatched(fifo.writer);
+      drain(fifo.reader);
+      console.log(await write);
+    `;
+    expect(await bunRun(["--cwd", String(dir), "-e", script], { UV_THREADPOOL_SIZE: "2" })).toSpawn("1");
   });
 });

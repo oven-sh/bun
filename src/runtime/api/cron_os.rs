@@ -282,10 +282,10 @@ impl OsJob {
 
         let mut child = Child::OutputEnded(Ok(Vec::new()));
         #[cfg(unix)]
-        if let Some(stdout) = spawned.stdout.take().map(File::into_raw) {
+        if let Some(stdout) = spawned.stdout.take() {
             use bun_io::PosixFlags;
             (self.output).update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
-            let read = (self.output.start(bun_io::js_vm_ctx(), stdout, true))
+            let read = (self.output.start(bun_io::js_vm_ctx(), stdout.into(), true))
                 .map_err(|_| "Failed to start reading stdout")?;
             child = (self.take_output(read)).map_or(Child::Running, Child::OutputEnded);
         }

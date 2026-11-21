@@ -7672,7 +7672,7 @@ impl NodeFS {
         if holds_more_than_disk(old) {
             return refused(E::EROFS);
         }
-        if sys::exists(old) && refuses_rename_over(new) {
+        if refuses_rename_over(new) && sys::exists(old) {
             return refused(E::ENOTEMPTY);
         }
         let from = args.old_path.slice_z(&mut self.sync_error_buf);

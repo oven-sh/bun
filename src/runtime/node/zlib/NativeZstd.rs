@@ -61,6 +61,7 @@ mod _impl {
             write_state: JsLocal<'_>,
             process_callback: JsLocal<'_>,
             dictionary: JsLocal<'_>,
+            reject_garbage_after_end: bool,
         ) -> JsResult<()> {
             let global = cx.global();
             let this_value = this_value.to_js();
@@ -127,10 +128,11 @@ mod _impl {
                 dictionary_buf.byte_slice()
             };
 
-            let result = self
-                .borrow_idle_stream(global)?
-                .context
-                .init(pledged_src_size, dictionary);
+            let result = self.borrow_idle_stream(global)?.context.init(
+                pledged_src_size,
+                dictionary,
+                reject_garbage_after_end,
+            );
             result.map_err(|message| self.fail_init(global, message))?;
 
             let Some(mut params_) = init_params_array_value.as_array_buffer(global) else {
@@ -205,6 +207,13 @@ mod _impl {
         Error::init(error.message(), error as c_int, error.name())
     }
 
+    /// `zlibOnError` in `zlib.ts` makes the `TypeError` of this code.
+    const TRAILING_JUNK: Error = Error::init(
+        c"Trailing junk found after the end of the compressed stream",
+        -1,
+        c"ERR_TRAILING_JUNK_AFTER_STREAM_END",
+    );
+
     /// https://github.com/nodejs/node/blob/1d3835e7dd524f2813e5b761be6cd2f20597f8c9/src/node_zlib.cc#L1833-L1909
     struct Compressor {
         encoder: Encoder,
@@ -269,6 +278,8 @@ mod _impl {
         decoder: Decoder,
         /// `None` until a frame is complete.
         consumed_since_frame_end: Option<usize>,
+        /// `options.rejectGarbageAfterEnd`: what follows the last frame and starts no frame is an error.
+        reject_garbage_after_end: bool,
     }
 
     impl Decompressor {
@@ -294,8 +305,13 @@ mod _impl {
                     (Ok(Status::Complete), since) => *since = Some(0),
                     (Ok(Status::Pending), Some(since)) => *since = since.saturating_add(consumed),
                     (Ok(Status::Pending), None) => {}
-                    // The decoder repeats the error, so whatever comes later is ignored as well.
-                    (Err(bun_zstd::Error::PrefixUnknown), Some(_)) => return Ok(()),
+                    (Err(bun_zstd::Error::PrefixUnknown), Some(_)) => {
+                        if self.reject_garbage_after_end {
+                            return Err(TRAILING_JUNK);
+                        }
+                        // The decoder repeats the error, so whatever comes later is ignored as well.
+                        return Ok(());
+                    }
                     (Err(error), _) => return Err(codec_error(error)),
                 }
                 if result != Ok(Status::Complete) || input.is_empty() || out.room() == 0 {
@@ -308,13 +324,18 @@ mod _impl {
                     _ => bun_zstd::Error::NoForwardProgressInputEmpty,
                 }));
             }
-            let is_in_frame = (self.consumed_since_frame_end).is_none_or(|it| it >= MAGIC_LEN);
-            if flush == EndDirective::End && is_in_frame && input.is_empty() && out.room() != 0 {
-                return Err(Error::init(
-                    c"unexpected end of file",
-                    Z_BUF_ERROR,
-                    c"Z_BUF_ERROR",
-                ));
+            if flush == EndDirective::End && input.is_empty() && out.room() != 0 {
+                return match self.consumed_since_frame_end {
+                    Some(0) => Ok(()),
+                    // The input ends in a magic number.
+                    Some(1..MAGIC_LEN) if self.reject_garbage_after_end => Err(TRAILING_JUNK),
+                    Some(1..MAGIC_LEN) => Ok(()),
+                    _ => Err(Error::init(
+                        c"unexpected end of file",
+                        Z_BUF_ERROR,
+                        c"Z_BUF_ERROR",
+                    )),
+                };
             }
             Ok(())
         }
@@ -349,6 +370,7 @@ mod _impl {
             &mut self,
             pledged_src_size: Option<u64>,
             dictionary: &[u8],
+            reject_garbage_after_end: bool,
         ) -> Result<(), &'static str> {
             // Mirrors node's `state_.reset(ZSTD_createCCtx())`: free the previous
             // context first. `init` is JS-reachable twice on one handle.
@@ -377,6 +399,7 @@ mod _impl {
                     let mut state = Box::new(Decompressor {
                         decoder: Decoder::new(),
                         consumed_since_frame_end: None,
+                        reject_garbage_after_end,
                     });
                     if !dictionary.is_empty() && state.decoder.load_dictionary(dictionary).is_err()
                     {

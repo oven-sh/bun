@@ -366,48 +366,51 @@ test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is no
 });
 
 for (const spelling of ["backslash", "forward", "mixed", "unc", "unc-forward", "unc-mixed", "ordinary-unc"]) {
-  (process.platform === "win32" ? test : test.skip)(
-    "Windows namespaced addon overrides preserve " + spelling + " cache keys",
-    () => {
-      const { path: dir, cleanup } = createTempDir("namespaced-addon-override", {
-        "addon.node": "native addon fixture",
-      });
-      const unc = "\\\\server\\share\\" + spelling + "-addon.node";
-      const namespaced = toNamespacedPath(spelling.includes("unc") ? unc : join(dir, "addon.node"));
-      const key =
-        spelling === "ordinary-unc"
-          ? unc
-          : spelling.endsWith("forward")
-            ? namespaced.replaceAll("\\", "/")
-            : spelling.endsWith("mixed")
-              ? "\\/?/" + namespaced.slice(4)
-              : namespaced;
-      const alias = "namespaced-addon-override-" + spelling;
-      const originalResolve = Module._resolveFilename;
-      const originalDlopen = process.dlopen;
-      try {
-        Module._resolveFilename = function (specifier, ...args) {
-          return specifier === alias ? key : Reflect.apply(originalResolve, this, [specifier, ...args]);
-        };
-        let calls = 0;
-        process.dlopen = (module, filename) => {
-          calls++;
-          expect(module.id).toBe(key);
-          expect(toNamespacedPath(filename)).toBe(namespaced);
-          module.exports = { loaded: true };
-        };
-        expect(require.resolve(alias)).toBe(key);
-        const loaded = require(alias);
-        expect(loaded).toEqual({ loaded: true });
-        expect(require(alias)).toBe(loaded);
-        expect(require.cache[key].exports).toBe(loaded);
-        expect(calls).toBe(1);
-      } finally {
-        Module._resolveFilename = originalResolve;
-        process.dlopen = originalDlopen;
-        delete require.cache[key];
-        cleanup();
-      }
-    },
-  );
+  for (const query of ["", "?query"]) {
+    (process.platform === "win32" ? test : test.skip)(
+      "Windows namespaced addon overrides preserve " + spelling + query + " cache keys",
+      () => {
+        const { path: dir, cleanup } = createTempDir("namespaced-addon-override", {
+          "addon.node": "native addon fixture",
+        });
+        const unc = "\\\\server\\share\\" + spelling + "-addon.node";
+        const namespaced = toNamespacedPath(spelling.includes("unc") ? unc : join(dir, "addon.node"));
+        const key =
+          spelling === "ordinary-unc"
+            ? unc
+            : spelling.endsWith("forward")
+              ? namespaced.replaceAll("\\", "/")
+              : spelling.endsWith("mixed")
+                ? "\\/?/" + namespaced.slice(4)
+                : namespaced;
+        const moduleKey = key + query;
+        const alias = "namespaced-addon-override-" + spelling;
+        const originalResolve = Module._resolveFilename;
+        const originalDlopen = process.dlopen;
+        try {
+          Module._resolveFilename = function (specifier, ...args) {
+            return specifier === alias ? moduleKey : Reflect.apply(originalResolve, this, [specifier, ...args]);
+          };
+          let calls = 0;
+          process.dlopen = (module, filename) => {
+            calls++;
+            expect(module.id).toBe(moduleKey);
+            expect(toNamespacedPath(filename)).toBe(namespaced);
+            module.exports = { loaded: true };
+          };
+          expect(require.resolve(alias)).toBe(moduleKey);
+          const loaded = require(alias);
+          expect(loaded).toEqual({ loaded: true });
+          expect(require(alias)).toBe(loaded);
+          expect(require.cache[moduleKey].exports).toBe(loaded);
+          expect(calls).toBe(1);
+        } finally {
+          Module._resolveFilename = originalResolve;
+          process.dlopen = originalDlopen;
+          delete require.cache[moduleKey];
+          cleanup();
+        }
+      },
+    );
+  }
 }

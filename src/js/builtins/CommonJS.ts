@@ -83,7 +83,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       ? 4
       : 0,
   );
-  if ((queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex))) {
+  if (queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) {
     return $internalRequire(id, this, requireMap);
   }
 

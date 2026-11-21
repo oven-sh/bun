@@ -197,12 +197,12 @@ impl<'a> FcdUtf16Text<'a> {
 
     fn normalize(
         &mut self,
-        from: usize,
-        to: usize,
+        start: usize,
+        limit: usize,
         is_backward: bool,
     ) -> Result<CacheLookup, UErrorCode> {
-        self.cache.save_current(&mut self.normalized, to - from);
-        let segment = self.raw.slice(from..to);
+        self.cache.save_current(&mut self.normalized, limit - start);
+        let segment = self.raw.slice(start..limit);
         if self.normalized.capacity() == 0 {
             let mut normalized = WritableAlias::new(&mut self.short, 0);
             get_nfd_instance().normalize(segment, &mut normalized)?;
@@ -211,8 +211,8 @@ impl<'a> FcdUtf16Text<'a> {
         } else {
             get_nfd_instance().normalize(segment, &mut self.normalized)?;
         }
-        self.cache.insert_decomposed(from, to, is_backward);
-        Ok(CacheLookup::Decomposed(from, to))
+        self.cache.insert_decomposed(start, limit, is_backward);
+        Ok(CacheLookup::Decomposed(start, limit))
     }
 
     /// Switches to `normalized`, which holds the input range `from..to`.

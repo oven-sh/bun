@@ -138,11 +138,11 @@ impl TimeZoneGenericNames {
         let Some(mzid) = zonemeta::get_metazone_id(tzid, date) else {
             return;
         };
-        let Ok((raw, sav)) = tz.get_offset(date, false) else {
+        let Ok(offsets) = tz.get_offset(date, false) else {
             return;
         };
         let mz_name = names.meta_zone_display_name(mzid, generic_type);
-        let use_standard = sav == 0
+        let use_standard = offsets.dst_savings == 0
             && !tz
                 .get_previous_transition(date, true)
                 .is_some_and(|before| {
@@ -172,11 +172,11 @@ impl TimeZoneGenericNames {
         if let Some(golden_id) = golden_id.filter(|&id| !id.is_empty() && !is_same(id, tzid)) {
             // Compare at wall time: the transitions of the golden zone may be at another instant.
             let golden_zone = TimeZone::create_time_zone(&from_units(golden_id.iter()));
-            let Ok(golden) = golden_zone.get_offset(date + f64::from(raw) + f64::from(sav), true)
-            else {
+            let wall = date + f64::from(offsets.raw_offset) + f64::from(offsets.dst_savings);
+            let Ok(golden) = golden_zone.get_offset(wall, true) else {
                 return;
             };
-            if golden != (raw, sav) {
+            if golden != offsets {
                 return self.append_cached((tzid, Some((mzid, is_long))), name, &|new| {
                     self.partial_location_name(tzid, mzid, mz_name, new)
                 });

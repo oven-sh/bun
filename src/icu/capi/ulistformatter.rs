@@ -26,6 +26,7 @@ const STYLES: [[&[u8]; 3]; 3] = [
 ];
 
 /// A null string is empty.
+#[cfg_attr(mordant, allow(defaulted_failure))] // As stated above.
 fn get_unicode_strings<'a>(
     cx: &'a CallerMem,
     strings: StringPtrs<'a>,

@@ -184,8 +184,8 @@ impl History {
         }
     }
 
-    /// Returns the offsets in milliseconds. `date` is a wall time if `local` is `Some`.
-    fn offsets_at(&self, date: UDate, local: Option<LocalOptions>) -> (i32, i32) {
+    /// `date` is a wall time if `local` is `Some`.
+    fn offsets_at(&self, date: UDate, local: Option<LocalOptions>) -> TimeZoneRule {
         let seconds = date / f64::from(U_MILLIS_PER_SECOND);
         let last = match local {
             _ if self.count() == 0 => None,
@@ -193,8 +193,7 @@ impl History {
             None if seconds < self.seconds(0) as f64 => None,
             None => self.rfind(self.count(), |time| seconds >= time as f64),
         };
-        let rule = self.rule_after(last.map_or(0, |last| last + 1));
-        (rule.raw_offset, rule.dst_savings)
+        self.rule_after(last.map_or(0, |last| last + 1))
     }
 
     /// Returns the index of the first transition to a type other than 0.
@@ -294,7 +293,7 @@ impl OlsonTimeZone {
             .map(|zone| &zone.rules)
     }
 
-    pub(crate) fn get_offset(&self, date: UDate, local: bool) -> Result<(i32, i32), UErrorCode> {
+    pub(crate) fn get_offset(&self, date: UDate, local: bool) -> Result<TimeZoneRule, UErrorCode> {
         match self.final_rules_at(date) {
             Some(rules) => rules.get_offset(date, local),
             None => Ok(self
@@ -307,7 +306,7 @@ impl OlsonTimeZone {
         &self,
         date: UDate,
         options: LocalOptions,
-    ) -> Result<(i32, i32), UErrorCode> {
+    ) -> Result<TimeZoneRule, UErrorCode> {
         match self.final_rules_at(date) {
             Some(rules) => rules.get_offset_from_local(date, options),
             None => Ok(self.history.offsets_at(date, Some(options))),
@@ -318,7 +317,7 @@ impl OlsonTimeZone {
     pub(crate) fn get_raw_offset(&self) -> i32 {
         let now = uprv_get_utc_time();
         self.final_rules_at(now).map_or_else(
-            || self.history.offsets_at(now, None).0,
+            || self.history.offsets_at(now, None).raw_offset,
             |rules| rules.raw_offset,
         )
     }

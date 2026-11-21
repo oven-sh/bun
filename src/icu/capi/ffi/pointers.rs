@@ -1,6 +1,5 @@
 //! Typed pointers for signatures. Dereferencing one needs the `CallerMem` token.
 
-use super::CallerMem;
 use crate::common::utypes::*;
 use std::ffi::c_void;
 use std::marker::PhantomData;
@@ -14,7 +13,7 @@ pub(crate) trait Pair {
     unsafe fn new(first: Self::First, second: Self::Second) -> Self;
 }
 
-type Call<'c> = PhantomData<&'c CallerMem>;
+type Call<'c> = PhantomData<&'c ()>;
 
 /// `const T *`: null, or a NUL-terminated string.
 #[repr(transparent)]
@@ -169,9 +168,9 @@ impl<T> Retained<Text<'_, T>> {
 }
 
 // SAFETY: dereferencing needs a `CallerMem`, which is neither `Send` nor `Sync`.
-unsafe impl<T> Send for Text<'_, T> {}
+unsafe impl<T: Sync> Send for Text<'_, T> {}
 // SAFETY: dereferencing needs a `CallerMem`, which is neither `Send` nor `Sync`.
-unsafe impl<T> Sync for Text<'_, T> {}
+unsafe impl<T: Sync> Sync for Text<'_, T> {}
 
 /// `#[derive(Clone, Copy)]` without the bound on `H`.
 impl<P: Copy, H> Clone for MayAlias<P, H> {

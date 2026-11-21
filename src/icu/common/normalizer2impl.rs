@@ -775,30 +775,30 @@ impl Normalizer2Impl {
         }
     }
 
-    /// Decomposes `s` from `src` to its end or the first composition boundary from `min_limit` on, whose index it returns.
+    /// Decomposes `s` from `index` to its end or the first composition boundary from `min_limit` on, which it returns.
     fn decompose_short(
         &self,
         s: &[u16],
-        mut src: usize,
+        mut index: usize,
         min_limit: usize,
         buffer: &mut ReorderingBuffer,
     ) -> usize {
-        while let Some(&unit) = s.get(src) {
-            let stop_at_comp_boundary = src >= min_limit;
+        while let Some(&unit) = s.get(index) {
+            let stop_at_comp_boundary = index >= min_limit;
             if stop_at_comp_boundary && unit < self.min_comp_no_maybe_cp {
                 break;
             }
-            let prev_src = src;
-            let (c, norm16) = self.norm_trie.u16_next(s, &mut src);
+            let previous = index;
+            let (c, norm16) = self.norm_trie.u16_next(s, &mut index);
             if stop_at_comp_boundary && self.norm16_has_comp_boundary_before(norm16) {
-                return prev_src;
+                return previous;
             }
             self.decompose_code_point(c, norm16, buffer);
             if buffer.prefers_bulk_insert {
-                src = self.bulk_insert_marks(s, src, buffer);
+                index = self.bulk_insert_marks(s, index, buffer);
             }
         }
-        src
+        index
     }
 
     #[inline(always)]

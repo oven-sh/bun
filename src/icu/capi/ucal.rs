@@ -265,11 +265,11 @@ fn ucal_getTimeZoneOffsetFromLocal(
             skipped_is_latter: is_latter(non_existing_time_opt)?,
             repeated_is_latter: is_latter(duplicated_time_opt)?,
         };
-        let (raw, dst) = cal
+        let offsets = cal
             .time_zone()?
             .get_offset_from_local(cal.internal_get_time(), options)?;
-        cx.store(raw_offset, raw);
-        cx.store(dst_offset, dst);
+        cx.store(raw_offset, offsets.raw_offset);
+        cx.store(dst_offset, offsets.dst_savings);
         Ok(())
     })
 }

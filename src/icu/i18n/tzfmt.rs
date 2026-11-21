@@ -163,17 +163,19 @@ impl TimeZoneFormat {
         date: UDate,
         name: &mut Vec<u16>,
     ) {
-        let Ok((raw_offset, dst_offset)) = tz.get_offset(date, false) else {
+        let Ok(offsets) = tz.get_offset(date, false) else {
             return;
         };
         let start = name.len();
         match style {
             ZoneStyle::Generic => self.format_generic(tz, is_long, date, name),
-            ZoneStyle::Specific => self.format_specific(tz, is_long, dst_offset != 0, date, name),
+            ZoneStyle::Specific => {
+                self.format_specific(tz, is_long, offsets.dst_savings != 0, date, name)
+            }
             ZoneStyle::LocalizedGmt => {}
         }
         if name.len() == start {
-            self.format_offset_localized_gmt(raw_offset.wrapping_add(dst_offset), is_long, name);
+            self.format_offset_localized_gmt(offsets.total_offset(), is_long, name);
         }
     }
 

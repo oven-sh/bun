@@ -393,11 +393,11 @@ impl SharedCalendar {
         let newest = &**self;
         let is_offset = matches!(field, Field::ZoneOffset | Field::DstOffset);
         if is_offset && newest.is_time_set && newest.calendar_type == Gregorian {
-            let (raw, dst) = newest.time_zone()?.get_offset(newest.time, false)?;
+            let offsets = newest.time_zone()?.get_offset(newest.time, false)?;
             return Ok(if let Field::ZoneOffset = field {
-                raw
+                offsets.raw_offset
             } else {
-                dst
+                offsets.dst_savings
             });
         }
         self.completed().map(|cal| cal.internal_get(field))
@@ -796,8 +796,8 @@ impl Calendar {
 // Computing the fields from the time.
 impl Calendar {
     fn compute_fields(&mut self) -> Result<(), UErrorCode> {
-        let (raw_offset, dst_offset) = self.time_zone()?.get_offset(self.time, false)?;
-        let local_millis = self.time + f64::from(raw_offset.wrapping_add(dst_offset));
+        let offsets = self.time_zone()?.get_offset(self.time, false)?;
+        let local_millis = self.time + f64::from(offsets.total_offset());
 
         self.fields.stamps = [INTERNALLY_SET; FIELD_COUNT];
         self.next_stamp = MINIMUM_USER_STAMP;
@@ -824,8 +824,8 @@ impl Calendar {
         self.set_field(Field::HourOfDay, hour);
         self.set_field(Field::AmPm, am_pm);
         self.set_field(Field::Hour, hour - 12 * am_pm);
-        self.set_field(Field::ZoneOffset, raw_offset);
-        self.set_field(Field::DstOffset, dst_offset);
+        self.set_field(Field::ZoneOffset, offsets.raw_offset);
+        self.set_field(Field::DstOffset, offsets.dst_savings);
         Ok(())
     }
 
@@ -878,10 +878,10 @@ impl Calendar {
             * 1000.0
             + get(Field::Millisecond);
         let wall = grego::julian_day_to_millis(julian_day) + millis_in_day;
-        let (raw, dst) = self
+        let offsets = self
             .time_zone()?
             .get_offset_from_local(wall, LocalOptions::DEFAULT)?;
-        Ok(wall - f64::from(raw.wrapping_add(dst)))
+        Ok(wall - f64::from(offsets.total_offset()))
     }
 
     /// Returns `alternate_field` if it is newer, else `default_field`.

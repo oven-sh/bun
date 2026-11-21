@@ -82,6 +82,7 @@ fn new_brk_iter(locale: &Locale) -> Result<Box<BreakIterator>, UErrorCode> {
 }
 
 impl LocaleDisplayNames {
+    #[cfg_attr(mordant, allow(defaulted_failure))] // Most locales have no `contextTransforms`.
     pub(crate) fn new(
         locale_id: &[u8],
         uses_dialect_names: bool,

@@ -18,7 +18,7 @@ use crate::common::utf16::from_latin1;
 use crate::common::utypes::*;
 use crate::i18n::gregoimp::{U_MILLIS_PER_SECOND, UDate, grego};
 use crate::i18n::olsontz::OlsonTimeZone;
-use crate::i18n::tzrule::TimeZoneTransition;
+use crate::i18n::tzrule::{TimeZoneRule, TimeZoneTransition};
 use crate::i18n::zonemeta;
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -94,13 +94,20 @@ pub(crate) enum TimeZone {
 
 use TimeZone::{Fixed, Olson};
 
+fn standard_time(raw_offset: i32) -> TimeZoneRule {
+    TimeZoneRule {
+        raw_offset,
+        dst_savings: 0,
+    }
+}
+
 impl TimeZone {
     /// Returns the raw offset and the DST savings at `date`, which is a wall time if `local`, else UTC.
-    pub(crate) fn get_offset(&self, date: UDate, local: bool) -> Result<(i32, i32), UErrorCode> {
+    pub(crate) fn get_offset(&self, date: UDate, local: bool) -> Result<TimeZoneRule, UErrorCode> {
         match self {
             Fixed { raw_offset, .. } => {
                 let shift = if local { 0 } else { *raw_offset };
-                grego::time_to_day(date + f64::from(shift)).map(|_| (*raw_offset, 0))
+                grego::time_to_day(date + f64::from(shift)).map(|_| standard_time(*raw_offset))
             }
             Olson(zone) => zone.get_offset(date, local),
         }
@@ -110,9 +117,11 @@ impl TimeZone {
         &self,
         date: UDate,
         options: LocalOptions,
-    ) -> Result<(i32, i32), UErrorCode> {
+    ) -> Result<TimeZoneRule, UErrorCode> {
         match self {
-            Fixed { raw_offset, .. } => grego::time_to_day(date).map(|_| (*raw_offset, 0)),
+            Fixed { raw_offset, .. } => {
+                grego::time_to_day(date).map(|_| standard_time(*raw_offset))
+            }
             Olson(zone) => zone.get_offset_from_local(date, options),
         }
     }

@@ -465,6 +465,7 @@ impl Builder {
 
 impl DateFormatSymbols {
     // ICU4C: dtfmtsym.cpp, DateFormatSymbols::initializeData
+    #[cfg_attr(mordant, allow(defaulted_failure))] // Most calendars have no names for years.
     fn load(locale: &Locale, calendar_type: CalendarType) -> Result<Self, UErrorCode> {
         let calendar_type = calendar_type.name().to_bytes();
         let bundle = ures_open(None, locale.get_base_name())?;

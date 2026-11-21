@@ -148,7 +148,14 @@ impl SimpleRules {
         Ok(if is_daylight { self.dst_savings } else { 0 })
     }
 
-    pub(crate) fn get_offset(&self, date: UDate, local: bool) -> Result<(i32, i32), UErrorCode> {
+    fn offsets_with(&self, dst_savings: i32) -> TimeZoneRule {
+        TimeZoneRule {
+            raw_offset: self.raw_offset,
+            dst_savings,
+        }
+    }
+
+    pub(crate) fn get_offset(&self, date: UDate, local: bool) -> Result<TimeZoneRule, UErrorCode> {
         let first = self.savings_at(if local {
             date
         } else {
@@ -159,28 +166,25 @@ impl SimpleRules {
         } else {
             Ok(first)
         };
-        savings.map(|savings| (self.raw_offset, savings))
+        savings.map(|savings| self.offsets_with(savings))
     }
 
     pub(crate) fn get_offset_from_local(
         &self,
         date: UDate,
         options: LocalOptions,
-    ) -> Result<(i32, i32), UErrorCode> {
+    ) -> Result<TimeZoneRule, UErrorCode> {
         let mut savings = self.savings_at(date)?;
         if !options.picks_latter(savings > 0) {
             savings = self.savings_at(date - f64::from(self.dst_savings))?;
         }
-        Ok((self.raw_offset, savings))
+        Ok(self.offsets_with(savings))
     }
 
     /// Returns the rules that apply from `start_year` on, or `None` if the zone has no DST.
     pub(crate) fn annual_rules(&self, start_year: i32) -> Option<AnnualRules> {
         let annual = |dst_savings, rule| AnnualTimeZoneRule {
-            offsets: TimeZoneRule {
-                raw_offset: self.raw_offset,
-                dst_savings,
-            },
+            offsets: self.offsets_with(dst_savings),
             rule,
             start_year,
         };

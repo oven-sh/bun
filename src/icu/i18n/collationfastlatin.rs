@@ -1,4 +1,5 @@
 //! Compares common Latin text by 16-bit "mini CEs". ICU4C: collationfastlatin.h
+#![cfg_attr(mordant, allow(generic_body_not_generic))]
 
 use crate::common::bytes::U16s;
 use crate::common::slice_ext::SliceExt;

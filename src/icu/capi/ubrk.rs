@@ -22,6 +22,7 @@ pub(crate) struct UBreakIterator {
     text: Retained<Text<'static, UChar>>,
 }
 
+#[cfg_attr(mordant, allow(defaulted_failure))] // `measured` has accepted the text.
 fn step(
     cx: &CallerMem,
     bi: Mut<'_, UBreakIterator>,

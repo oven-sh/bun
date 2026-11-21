@@ -763,6 +763,7 @@ impl UResourceBundle {
 }
 
 /// Passes the resource at `path`, or `bundle` if `path` is empty, to `sink`, first from this bundle and then from each ancestor.
+#[cfg_attr(mordant, allow(defaulted_failure))] // An ancestor need not have the resource.
 pub(crate) fn ures_get_all_items_with_fallback(
     bundle: &UResourceBundle,
     path: &[u8],

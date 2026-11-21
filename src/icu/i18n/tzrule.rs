@@ -40,6 +40,12 @@ pub(crate) struct TimeZoneRule {
     pub(crate) dst_savings: i32,
 }
 
+impl TimeZoneRule {
+    pub(crate) fn total_offset(self) -> i32 {
+        self.raw_offset.wrapping_add(self.dst_savings)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct TimeZoneTransition {
     pub(crate) time: UDate,

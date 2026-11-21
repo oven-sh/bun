@@ -292,8 +292,9 @@ function describeForEslint8(name, plugin) {
 for (const [request, found] of Object.entries(out.plugins[pluginsFrom])) {
   try {
     if (Object.keys(found.loaded?.rules ?? {}).length === 0) continue;
-    const described = stringify(describeForEslint8(shorthandName(request, "eslint-plugin"), found.loaded));
-    found.location = { module: found.file, export: [], described };
+    const prefix = shorthandName(request, "eslint-plugin");
+    const described = stringify(describeForEslint8(prefix, found.loaded));
+    found.location = withReanimatedCheck(prefix, { module: found.file, export: [], described });
   } catch (error) {
     Object.assign(found, why(textOf(error)));
   }

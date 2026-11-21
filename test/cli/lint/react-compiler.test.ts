@@ -467,6 +467,50 @@ describe.concurrent(
         ),
       );
 
+    test.each([
+      ["eslint.config.js", "missing"],
+      ["eslint.config.js", "hoisted"],
+      ["eslint.config.js", "nested"],
+      [".eslintrc.json", "nested"],
+    ] as const)("Reanimated shared-value writes with %s and a %s package", async (config, layout) => {
+      const component = (module: string) => `import { useEffect } from "react";
+import { useSharedValue } from "${module}";
+export function Component() {
+  const progress = useSharedValue(0);
+  useEffect(() => {
+    progress.value = 1;
+  }, [progress]);
+  return null;
+}`;
+      const plugin = "node_modules/eslint-plugin-react-hooks";
+      const modules = layout === "nested" ? `${plugin}/node_modules` : "node_modules";
+      const files = {
+        [config]:
+          config === "eslint.config.js"
+            ? `import hooks from "eslint-plugin-react-hooks";
+export default [{ plugins: { "react-hooks": hooks }, rules: { "react-hooks/immutability": "error" } }];`
+            : JSON.stringify({
+                root: true,
+                parserOptions: { ecmaVersion: 2020, sourceType: "module" },
+                plugins: ["react-hooks"],
+                rules: { "react-hooks/immutability": "error" },
+              }),
+        [`${plugin}/index.js`]: `exports.meta = { name: "eslint-plugin-react-hooks" };
+exports.rules = { immutability: { meta: { schema: [] }, create() { throw new Error("expected the native rule"); } } };`,
+        ...(layout === "missing" ? {} : { [`${modules}/react-native-reanimated/index.js`]: "" }),
+        "reanimated.js": component("react-native-reanimated"),
+        "custom.js": component("./custom-hooks"),
+        "custom-hooks.js": "export const useSharedValue = value => ({ value });",
+      };
+      const { raw, directories, exitCode } = await lint(files, ["-f", "json", "reanimated.js", "custom.js"]);
+      const diagnostic = ["react-hooks/immutability 6:5-6:13 Error: This value cannot be modified"];
+      expect(briefly(byEslintFile(JSON.parse(raw), directories))).toEqual({
+        "custom.js": diagnostic,
+        ...(layout === "missing" ? { "reanimated.js": diagnostic } : {}),
+      });
+      expect(exitCode).toBe(1);
+    });
+
     test(
       "on oxlint's test cases: the rule, location and first line",
       async () => {

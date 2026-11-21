@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "bun";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, statSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, githubTarball, isASAN, isPosix, tempDir, tls, tmpdirSync } from "harness";
@@ -205,6 +205,32 @@ it("keeps tarball entry paths within the destination when checking for conflicti
   expect(out).toContain("Success! owner/conflict-check-template loaded into dest");
   expect(await Bun.file(join(x_dir, "outside.txt")).text()).toBe("keep me");
   expect(exitCode).toBe(0);
+});
+
+it.each([
+  ["cut short", (gz: Buffer) => gz.subarray(0, -1)],
+  ["damaged", (gz: Buffer) => gz.fill(0, gz.length - 8)],
+])("extracts nothing from a template tarball that is %s", async (_, spoil) => {
+  const gz = spoil(gzipSync(Buffer.concat([tarEntry("pkg/file.txt", Buffer.from("template")), Buffer.alloc(1024)])));
+  const fetch = jest.fn(() => new Response(gz, { headers: { "content-type": "application/x-gzip" } }));
+  using server = Bun.serve({
+    tls,
+    port: 0,
+    fetch,
+  });
+  const { out, err, exitCode } = await create(
+    x_dir,
+    ["github.com/owner/template", "dest", "--no-install", "--no-git"],
+    {
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+    },
+  );
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(err).toContain("error:");
+  expect(out).not.toContain("Success!");
+  expect(readdirSync(x_dir)).toEqual([]);
+  expect(exitCode).toBe(1);
 });
 
 // `\` separates as well, so this entry is `nested.txt` in `sub`.

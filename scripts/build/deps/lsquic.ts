@@ -11,10 +11,10 @@
  */
 
 import type { Dependency, DirectBuild } from "../source.ts";
-import { depBuildDir, depSourceDir } from "../source.ts";
+import { depSourceDir } from "../source.ts";
 import { lsxpackDefines } from "./lsqpack.ts";
 
-const LSQUIC_COMMIT = "f812ceb9529e26717df78c6064a2ff648b949f3e";
+const LSQUIC_COMMIT = "f52c00172e04f9b889ab9e28d21e5d1805133cfb";
 
 // gQUIC (Google QUIC, pre-IETF) sources are excluded — Bun only negotiates
 // IETF QUIC. The unconditional engine/global references to gQUIC vtables are
@@ -22,7 +22,6 @@ const LSQUIC_COMMIT = "f812ceb9529e26717df78c6064a2ff648b949f3e";
 // which lets --gc-sections drop ~175 KB of cert tables + handshake code.
 const liblsquic: string[] = [
   "ls-sfparser.c",
-  "lsquic_adaptive_cc.c",
   "lsquic_alarmset.c",
   "lsquic_arr.c",
   "lsquic_attq.c",
@@ -122,10 +121,8 @@ export const lsquic: Dependency = {
     // send_packets_out() leaked every packet already coalesced into the
     // current out_spec when encrypting a later one failed.
     "patches/lsquic/coalesce-batch-drop.patch",
-    // generate_connection_close_packet always used PNS_APP; pre-handshake
-    // there are no 1-RTT keys, so the CONNECTION_CLOSE could
-    // never be encrypted and the peer idled out instead of learning of the
-    // close. Select the PNS by handshake progress, as ngtcp2 does.
+    // A server reports the code of a CONNECTION_CLOSE it gets during the
+    // handshake, and decrypts one sent before a compatible version switch.
     "patches/lsquic/connection-close-pns.patch",
     // A connection that sent GOAWAY answered every new peer stream with
     // STOP_SENDING, unidirectional ones included. A client that opens its
@@ -157,13 +154,11 @@ export const lsquic: Dependency = {
     "patches/lsquic/http1x-lsxpack-include.patch",
   ],
 
-  fetchDeps: ["zlib", "lsqpack", "boringssl"],
+  fetchDeps: ["lsqpack", "boringssl"],
 
   build: cfg => {
     const boringssl = depSourceDir(cfg, "boringssl");
     const lsqpackSrc = depSourceDir(cfg, "lsqpack");
-    const zlibBuild = depBuildDir(cfg, "zlib");
-    const zlibSrc = depSourceDir(cfg, "zlib");
     const spec: DirectBuild = {
       kind: "direct",
       sources: [
@@ -180,8 +175,6 @@ export const lsquic: Dependency = {
         ...(cfg.windows ? ["wincompat"] : []),
         // Holds only <sys/queue.h>, which ships with glibc and BSD libc but not musl or win32.
         ...(cfg.windows || cfg.abi === "musl" ? [lsqpackSrc + "/wincompat"] : []),
-        zlibBuild,
-        zlibSrc,
       ],
       defines: {
         ...lsxpackDefines,

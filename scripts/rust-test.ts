@@ -33,6 +33,7 @@ const repo = resolve(import.meta.dirname, "..");
 const crates = [
   "bun_aot",
   "bun_base64",
+  "bun_brotli",
   "bun_builtin_sources",
   "bun_bundler",
   "bun_collections",
@@ -46,6 +47,7 @@ const crates = [
   "bun_hpack",
   "bun_http1",
   "bun_http_types",
+  "bun_icu_data",
   "bun_lint_react_compiler",
   "bun_md",
   "bun_options_types",
@@ -72,6 +74,10 @@ const crates = [
   "bun_valkey",
   "bun_webp",
   "bun_wyhash",
+  "bun_zlib",
+  "bun_zstd",
+  "bun_zstd_decoder",
+  "bun_zstd_encoder",
 ];
 
 // Not `spawnSync`: what runs beside it writes into pipes that this process empties.
@@ -131,8 +137,8 @@ const extraArgs = process.argv.slice(2);
 const programs: Promise<TestProgram>[] = [];
 const running = new Set<ChildProcess>();
 
-// The crates `include!()` generated sources, cargo cannot resolve the workspace until the vendored path dependencies
-// exist, and the build script of bun_sema_standalone compiles zstd's decoder. Of WebKit the code generators are enough.
+// The crates `include!()` generated sources, and cargo cannot resolve the workspace until the vendored path
+// dependencies exist. Of WebKit the code generators are enough.
 await run("bun", ["install", "--frozen-lockfile"]);
 // They need nothing of what follows, which leaves most of the processors idle until cargo starts.
 if (bunUnderTest && !extraArgs.length) {
@@ -144,10 +150,7 @@ if (bunUnderTest && !extraArgs.length) {
 await run(
   // A CI machine runs the build with the node of its image, and the build checks the version of what runs it.
   isBuildkite ? "node" : "bun",
-  [
-    "scripts/build.ts",
-    ...["codegen", "clone-zstd", "clone-lolhtml", "clone-rust-argon2"].map(name => `--target=${name}`),
-  ],
+  ["scripts/build.ts", ...["codegen", "clone-lolhtml", "clone-rust-argon2"].map(name => `--target=${name}`)],
   { BUN_WEBKIT_GENERATORS_ONLY: "1", ...process.env },
 );
 

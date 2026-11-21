@@ -8,8 +8,7 @@ import { compareSpellings, functionsByOrder, storedProgram } from "./same-code-i
 
 const programs = [
   "classes-and-closures/own-accessor-hides-a-getter-and-a-setter.ts",
-  "commonjs/function-given-members-object-define.cjs",
-  "commonjs/members-are-named-as-packages-name-them.cjs",
+  "commonjs/members-that-a-file-lays-under-written-and-listed-names.cjs",
   "language/members-named-every-place-name-can-stand.ts",
   "language/patterns-take-members-by-name.js",
 ];

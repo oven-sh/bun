@@ -1,10 +1,30 @@
-use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Sent};
+use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Reason, Sent};
 use bun_valkey::command::Reply;
 use bun_valkey::valkey_protocol::RESPValue;
 
 /// Stands in for wtf-bindings.cpp; no test sends a double.
 #[unsafe(no_mangle)]
 extern "C" fn WTF__parseDouble(_: *const u8, _: usize, _: *mut usize) -> f64 {
+    unreachable!()
+}
+
+/// Stands in for highway_strings.cpp.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_memmem(
+    text: *const u8,
+    len: usize,
+    part: *const u8,
+    part_len: usize,
+) -> *const u8 {
+    use core::slice::from_raw_parts;
+    // SAFETY: the caller passes two slices.
+    let (text, part) = unsafe { (from_raw_parts(text, len), from_raw_parts(part, part_len)) };
+    (text.windows(part_len).find(|window| *window == part))
+        .map_or(core::ptr::null(), <[u8]>::as_ptr)
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn highway_index_of_char(_: *const u8, _: usize, _: u8) -> usize {
     unreachable!()
 }
 
@@ -187,7 +207,7 @@ impl Driver {
     fn lost(&mut self) {
         self.batch_is_due = false;
         let line = match self.lose(false) {
-            Lost::ForGood { reason, pending } => format!("closed {pending:?} {reason}"),
+            Lost::ForGood { reason, pending } => format!("closed {pending:?} {reason:?}"),
             Lost::Retry {
                 delay_ms,
                 in_flight,
@@ -216,6 +236,7 @@ mod lifecycle {
         Select,
         Ready,
         EndingPolicy,
+        EndingRequested,
         EndingFinal,
         EndingFailed,
         Backoff,
@@ -223,20 +244,21 @@ mod lifecycle {
     }
     use State::*;
 
-    const STATES: [State; 10] = [
+    const STATES: [State; 11] = [
         Idle,
         Dialing,
         Hello,
         Select,
         Ready,
         EndingPolicy,
+        EndingRequested,
         EndingFinal,
         EndingFailed,
         Backoff,
         Closed,
     ];
 
-    /// With commands 1 and 2 waiting wherever they can.
+    /// With two commands waiting wherever they can.
     fn reach(state: State) -> Driver {
         let mut it = Driver::new(database(1));
         if state != Idle {
@@ -257,7 +279,13 @@ mod lifecycle {
                 it.read("+OK\r\n");
             }
             EndingPolicy => it.client.dial_failed(),
-            EndingFinal => drop(it.client.close()),
+            EndingRequested => drop(it.client.close()),
+            EndingFinal => {
+                it.fail();
+                it.client.connect();
+                it.send("WATCH c");
+                it.send("WATCH d");
+            }
             EndingFailed => it.fail(),
             Backoff => it.lost(),
             Closed => {
@@ -289,6 +317,10 @@ mod lifecycle {
             EndingFailed
         } else if it.client.is_ending() {
             match it.lose(false) {
+                Lost::ForGood {
+                    reason: Reason::Requested,
+                    ..
+                } => EndingRequested,
                 Lost::ForGood { .. } => EndingFinal,
                 Lost::Retry { .. } => EndingPolicy,
             }
@@ -335,7 +367,7 @@ mod lifecycle {
         check(
             |it| it.client.connect(),
             &[
-                (EndingFinal, "", EndingPolicy),
+                (EndingRequested, "", EndingPolicy),
                 (EndingFailed, "", EndingFinal),
                 (Closed, "", Backoff),
             ],
@@ -355,12 +387,12 @@ mod lifecycle {
         check(
             close,
             &[
-                (Dialing, "close the socket", EndingFinal),
-                (Hello, "close the socket", EndingFinal),
-                (Select, "close the socket", EndingFinal),
-                (Ready, "close the socket", EndingFinal),
-                (EndingPolicy, "", EndingFinal),
-                (Backoff, "disarm the retry", EndingFinal),
+                (Dialing, "close the socket", EndingRequested),
+                (Hello, "close the socket", EndingRequested),
+                (Select, "close the socket", EndingRequested),
+                (Ready, "close the socket", EndingRequested),
+                (EndingPolicy, "", EndingRequested),
+                (Backoff, "disarm the retry", EndingRequested),
             ],
         );
     }
@@ -376,7 +408,8 @@ mod lifecycle {
                 (Select, "fail Some([1, 2])", EndingFailed),
                 (Ready, "fail Some([1, 2])", EndingFailed),
                 (EndingPolicy, "fail Some([1, 2])", EndingFailed),
-                (EndingFinal, "fail Some([1, 2])", EndingFailed),
+                (EndingRequested, "fail Some([1, 2])", EndingFailed),
+                (EndingFinal, "fail Some([3, 4])", EndingFailed),
                 (EndingFailed, "fail None", EndingFailed),
                 (Backoff, "fail None", Backoff),
                 (Closed, "fail None", Closed),
@@ -399,8 +432,9 @@ mod lifecycle {
                 (Select, "retry in 50 []", Backoff),
                 (Ready, "retry in 50 [1]", Backoff),
                 (EndingPolicy, "retry in 50 []", Backoff),
-                (EndingFinal, "closed [1, 2] Connection closed", Closed),
-                (EndingFailed, "closed [] Connection closed", Closed),
+                (EndingRequested, "closed [1, 2] Requested", Closed),
+                (EndingFinal, "closed [3, 4] Final", Closed),
+                (EndingFailed, "closed [] Final", Closed),
             ],
         );
     }
@@ -461,6 +495,7 @@ mod lifecycle {
                 (Select, 7),
                 (Ready, 7),
                 (EndingPolicy, 10000),
+                (EndingRequested, 10000),
                 (EndingFinal, 10000),
                 (EndingFailed, 0),
                 (Backoff, 10000),
@@ -482,7 +517,7 @@ mod lifecycle {
         let mut expected = [50, 100, 200, 400, 800, 1600, 2000, 2000]
             .map(|ms| format!("retry in {ms} []"))
             .to_vec();
-        expected.push("closed [] Max reconnection attempts reached".into());
+        expected.push("closed [] RetriesUsedUp".into());
         assert_eq!(it.take(), expected);
 
         it.client.connect();
@@ -502,6 +537,41 @@ mod lifecycle {
             it.lost();
         }
         assert_eq!(it.take(), ["retry in 50 []"]);
+    }
+
+    #[test]
+    fn retries_count_on_within_an_attempt() {
+        let phases: [fn(&mut Driver); 3] = [|_| {}, Driver::start, |it| it.client.dial_failed()];
+        let touches: [fn(&mut Driver); 3] = [
+            |_| {},
+            |it| it.client.connect(),
+            |it| (drop(it.client.close()), it.client.connect()).1,
+        ];
+        for (phase, reach) in phases.into_iter().enumerate() {
+            for (touch, apply) in touches.into_iter().enumerate() {
+                let mut it = Driver::connected(Config::default());
+                it.lost();
+                it.dial();
+                reach(&mut it);
+                apply(&mut it);
+                it.lost();
+                assert_eq!(
+                    it.take().last().unwrap(),
+                    "retry in 100 []",
+                    "{phase}, {touch}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn connect_starts_the_retries_over_between_attempts() {
+        let mut it = Driver::connected(Config::default());
+        it.lost();
+        it.client.connect();
+        it.dial();
+        it.lost();
+        assert_eq!(it.take(), ["retry in 50 []", "retry in 50 []"]);
     }
 
     #[test]
@@ -589,6 +659,26 @@ mod handshake {
                 "broken UnsupportedProtocol Server does not support RESP3",
             ),
             (0, "-NO\r\n", "broken AuthenticationFailed NO"),
+            (0, "-LOADING x\r\n", "broken ConnectionClosed LOADING x"),
+            (0, "-BUSY x\r\n", "broken ConnectionClosed BUSY x"),
+            (0, "-BUSYKEY x\r\n", "broken AuthenticationFailed BUSYKEY x"),
+            (
+                0,
+                "-MASTERDOWN x\r\n",
+                "broken ConnectionClosed MASTERDOWN x",
+            ),
+            (0, "-TRYAGAIN x\r\n", "broken ConnectionClosed TRYAGAIN x"),
+            (1, "+OK\r\n-BUSY x\r\n", "broken ConnectionClosed BUSY x"),
+            (
+                0,
+                "-ERR max number of clients reached\r\n",
+                "broken ConnectionClosed ERR max number of clients reached",
+            ),
+            (
+                0,
+                "-ERR unknown command `HELLO`, with args beginning with: `3`, `AUTH`, `u`, `p`, \r\n",
+                "broken AuthenticationFailed ERR unknown command `HELLO`",
+            ),
             (
                 0,
                 "+NO\r\n",
@@ -928,7 +1018,7 @@ mod subscriptions {
                 "write A B",
                 "broken ServerError NO",
                 "fail Some([2, 3])",
-                "closed [] Connection closed",
+                "closed [] Final",
             ]
         );
     }

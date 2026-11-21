@@ -288,6 +288,15 @@ impl DarwinImpl {
 }
 
 #[cfg(not(any(windows, target_vendor = "apple")))]
+static SPINS: AtomicU32 = AtomicU32::new(0);
+
+/// For a process whose threads are all busy, and hold their locks for less time than a sleep and a wake-up take.
+pub fn spin_before_sleeping() {
+    #[cfg(not(any(windows, target_vendor = "apple")))]
+    SPINS.store(100, Ordering::Relaxed);
+}
+
+#[cfg(not(any(windows, target_vendor = "apple")))]
 #[derive(Default)]
 pub struct FutexImpl {
     state: AtomicU32,
@@ -342,6 +351,13 @@ impl FutexImpl {
 
     #[cold]
     fn lock_slow(&self) {
+        for _ in 0..SPINS.load(Ordering::Relaxed) {
+            if self.state.load(Ordering::Relaxed) == Self::UNLOCKED && self.try_lock() {
+                return;
+            }
+            core::hint::spin_loop();
+        }
+
         // Avoid doing an atomic swap below if we already know the state is contended.
         // An atomic swap unconditionally stores which marks the cache-line as modified unnecessarily.
         if self.state.load(Ordering::Relaxed) == Self::CONTENDED {

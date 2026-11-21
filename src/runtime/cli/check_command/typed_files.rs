@@ -179,10 +179,15 @@ fn options_of_sources(cwd: &[u8], tsconfig: Option<&[u8]>) -> CompilerOptions {
         let disk = Disk::with_already_read(1, Default::default(), &path);
         load_options_for_build(&disk, &session, &path).ok()
     });
-    match project {
+    let mut options = match project {
         Some(project) => options_that_types_depend_on(&project),
         None => vec![(b"strict".to_vec(), Json::Bool(true))],
+    };
+    let mut named = options.iter_mut();
+    if let Some((_, value)) = named.find(|option| option.0 == b"useDefineForClassFields") {
+        *value = Json::Bool(true);
     }
+    options
 }
 
 pub(crate) fn warn_unless_package_states(

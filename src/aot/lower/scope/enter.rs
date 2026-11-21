@@ -15,7 +15,7 @@ use crate::ir::{
     BlockId, ClassSlot, LocalVariable, PositionFlags, Type, TypeTable, ValueId, VariableKey,
 };
 use crate::lower::captures::Capture;
-use crate::lower::{FunctionLowering, convert, function};
+use crate::lower::{FunctionLowering, class, convert, function};
 
 struct ScopeEntry<'i> {
     scope: ScopeId,
@@ -312,12 +312,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    pub(crate) fn create_loop_header(&mut self, statement: StmtId) -> BlockId {
+    pub(crate) fn create_functions_before_loop(&mut self, statement: StmtId) {
         let created = self.file.scopes.functions_created_before_loop(statement);
         let created: SmallVec<[SymbolId; 2]> = created.iter().map(|entry| entry.1).collect();
         for symbol in created {
             self.get_binding(Binding::Symbol(symbol), self.file.bound.symbol(symbol).name);
         }
+    }
+
+    pub(crate) fn create_loop_header(&mut self, statement: StmtId) -> BlockId {
+        self.create_functions_before_loop(statement);
         let block = self.create_block();
         let mut modified: SmallVec<[LocalVariable; 8]> = SmallVec::new();
         for &binding in self.file.scopes.stored_in_loop(statement) {
@@ -595,6 +599,9 @@ fn emit_entry_value(
             ScopeSlot::Callee => lowering.builder.callee(),
             ScopeSlot::HomeObject => lowering.find_captured_value(Capture::Value(binding)),
             ScopeSlot::ModuleInstance => Some(lowering.get_module_instance()),
+            ScopeSlot::Class(slot) if class::is_filled_by_decorators(lowering.file.hir, slot) => {
+                Some(lowering.get_entry_undefined(entry))
+            }
             ScopeSlot::ArgumentsBinding => {
                 entry.find_initial(BindingRef::Slot(scope, ScopeSlot::Arguments))
             }

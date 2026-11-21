@@ -116,8 +116,8 @@ impl PipeReader {
                 f.set(PosixFlags::IS_PAUSED, lazy);
                 f.insert(PosixFlags::SOCKET | PosixFlags::NONBLOCKING);
             });
-            let fd = this.stdio_result.take().unwrap().into_raw();
-            let started = this.reader.start(this.event_loop, fd, true);
+            let file = this.stdio_result.take().unwrap();
+            let started = this.reader.start(this.event_loop, file.into(), true);
             Self::on_read_result(this, started.unwrap_or_else(ReadResult::Err));
         }
     }

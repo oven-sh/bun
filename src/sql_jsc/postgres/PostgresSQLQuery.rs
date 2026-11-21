@@ -13,6 +13,7 @@ use super::PostgresSQLStatement;
 use super::command_tag_jsc::CommandTagJsc;
 use super::error_jsc::postgres_error_to_js;
 use super::postgres_request as PostgresRequest;
+use super::postgres_sql_connection::Seat;
 use super::postgres_sql_statement::{ResultDescription, describe};
 use bun_sql::postgres::CommandTag;
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
@@ -47,7 +48,7 @@ pub struct PostgresSQLQuery {
 
 enum Place {
     New,
-    Queued(RefPtr<PostgresSQLConnection>),
+    Queued(Seat),
     Ended,
 }
 
@@ -72,9 +73,9 @@ impl PostgresSQLQuery {
     }
 
     #[inline]
-    pub(crate) fn connection(&self) -> Option<RefPtr<PostgresSQLConnection>> {
+    pub(crate) fn seat(&self) -> Option<Seat> {
         match self.place.get() {
-            Place::Queued(connection) => Some(connection.clone()),
+            Place::Queued(seat) => Some(seat.clone()),
             Place::New | Place::Ended => None,
         }
     }
@@ -360,8 +361,8 @@ impl PostgresSQLQuery {
             )));
         }
 
-        connection.enqueue(self, &declared, protocol);
-        self.place.set(Place::Queued(connection.ref_guard()));
+        let seat = connection.enqueue(self, &declared, protocol);
+        self.place.set(Place::Queued(seat));
         // Request is enqueued: keep the event loop alive until the server responds.
         connection.poll_ref.ref_(bun_io::js_vm_ctx());
         self.this_value.with_mut(|r| r.upgrade(global_object));
@@ -375,8 +376,8 @@ impl PostgresSQLQuery {
     }
 
     pub fn cancel(&self, _: &mut JsScope<'_>) {
-        match self.connection() {
-            Some(connection) => connection.cancel(self),
+        match self.seat() {
+            Some(seat) => seat.cancel(),
             // `run` refuses it from here on.
             None => self.place.set(Place::Ended),
         }

@@ -1652,6 +1652,22 @@ describe.concurrent("start() on an open writer", () => {
     expect(result).toEqual({ target: "short", initial: "", closed: "all" });
   });
 
+  it.skipIf(!isLinux)("start({ path }) moves a writer from a regular file to a FIFO and closes the file", async () => {
+    const result = await run(`
+      const target = join(dir, "fifo");
+      Bun.spawnSync(["mkfifo", target]);
+      const reader = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const writer = Bun.file(join(dir, "initial.txt")).writer();
+      writer.start({ path: target });
+      writer.write("short");
+      await writer.end();
+      const received = fs.readSync(reader, Buffer.alloc(16));
+      fs.closeSync(reader);
+      console.log(JSON.stringify({ received, closed: await closed() }));
+    `);
+    expect(result).toEqual({ received: 5, closed: "all" });
+  });
+
   // /dev/ptmx is a TTY that opens by path with no terminal attached, and `closed()` sees it on Linux.
   it.skipIf(!isLinux)("start({ path }) moves a writer from a TTY to a regular file", async () => {
     const result = await run(`

@@ -2,8 +2,11 @@
  * WebKit commit — determines prebuilt download URL + what to checkout
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
+ *
+ * After changing it, run `bun run pin-webkit`: webkit.sha256 pins the sha256
+ * of this version's tarballs, and a build refuses one that is not in there.
  */
-export const WEBKIT_VERSION = "ae8978d0331bfce97259b446378265eb327c407a";
+export const WEBKIT_VERSION = "499846f18f75962fd6e2ba01065d00305ce72c4a";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -84,13 +87,18 @@ function prebuiltSuffix(cfg: Config): string {
   return s;
 }
 
+export function webkitReleaseTag(version: string): string {
+  return version.startsWith("autobuild-") ? version : `autobuild-${version}`;
+}
+
+/** The sha256 of every tarball of `WEBKIT_VERSION`'s release. Written by scripts/pin-webkit.ts. */
+export const webkitSha256Sums: string = resolve(import.meta.dirname, "webkit.sha256");
+
 function prebuiltUrl(cfg: Config): string {
   const os = cfg.windows ? "windows" : cfg.darwin ? "macos" : cfg.freebsd ? "freebsd" : "linux";
   const arch = cfg.arm64 ? "arm64" : "amd64";
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
-  const version = cfg.webkitVersion;
-  const tag = version.startsWith("autobuild-") ? version : `autobuild-${version}`;
-  return `https://github.com/oven-sh/WebKit/releases/download/${tag}/${name}.tar.gz`;
+  return `https://github.com/oven-sh/WebKit/releases/download/${webkitReleaseTag(cfg.webkitVersion)}/${name}.tar.gz`;
 }
 
 /** Name prefix shared by every prebuilt extraction dir of one WebKit version, across targets and variants. */
@@ -1967,11 +1975,8 @@ export interface JSCProgram {
   cxxflags: string[];
   ldflags: string[];
   libs?: string[];
-  /** Its sources in C, and their flags. */
-  cSources?: string[];
-  cflags?: string[];
-  /** Dependencies of bun whose sources it compiles for itself. Its compiles wait until they are fetched. */
-  sourcesFrom?: Array<"zstd">;
+  /** Crates of bun that it links. */
+  rustCrates?: string[];
   /**
    * Headers to precompile for the program's sources, with its flags, each on top of the one before. A source takes
    * the last one whose `files` matches its path, or that has none.
@@ -2010,97 +2015,50 @@ function outOfMemoryHook(cfg: Config, program: string): string {
 
 /**
  * The data of the ICU of a prebuilt WebKit is a zstd frame an item (icu/compress-data.ts), and that ICU calls a weak hook
- * on each item that it loads (icu/udata-decompress-hook.patch). Bun defines the hook
- * (src/jsc/bindings/bun_icu_decompress.cpp), and so does the shell (jsc.cpp). testaot has none of its own. Without one
- * ICU knows no locale there, and the compiler, which asks Intl at build time how a locale writes a number or a date, is
- * told nothing.
+ * on each item that it loads (icu/udata-decompress-hook.patch). Without one ICU knows no locale, and the compiler, which
+ * asks Intl at build time how a locale writes a number or a date, is told nothing. Bun defines the hook
+ * (src/jsc/bindings/bun_icu_decompress.cpp). Returns `program` with such a hook on Bun's decoder: the hooks in WebKit's
+ * sources need the C library.
  */
-function icuDataHook(cfg: Config, program: string): string {
-  const source = join(depBuildDir(cfg, "WebKit"), "programs", program, "ICUData.cpp");
+function readingPrebuiltIcuData(cfg: Config, program: JSCProgram): JSCProgram {
+  const source = join(depBuildDir(cfg, "WebKit"), "programs", program.name, "ICUData.cpp");
   writeIfChanged(
     source,
-    `#define ZSTD_STATIC_LINKING_ONLY
-#include <zstd.h>
-#include <cstdint>
+    `#include <cstdint>
 #include <cstdlib>
-#include <cstring>
 #include <mutex>
 #include <unordered_map>
-
-extern "C" __attribute__((weak)) const unsigned char bun_icu_zstd_dict[];
-extern "C" __attribute__((weak)) const unsigned bun_icu_zstd_dict_size;
+#include "${join(cfg.cwd, "src", "icu_data", "icu_data.h").replaceAll("\\", "/")}"
 
 extern "C" const void* bun_icu_maybe_decompress(const void* item, int32_t* length)
 {
-    // An item that is not compressed has 0xda 0x27 at bytes 2 and 3, so its first word is never zstd's magic number.
-    uint32_t magic;
-    if (!item)
-        return item;
-    std::memcpy(&magic, item, sizeof(magic));
-    if (magic != ZSTD_MAGICNUMBER)
+    if (!item || !Bun::isCompressedICUItem(item))
         return item;
 
     static std::mutex lock;
     [[clang::no_destroy]] static std::unordered_map<const void*, void*> decompressed;
-    static ZSTD_DCtx* context = ZSTD_createDCtx();
-    static ZSTD_DDict* dictionary = &bun_icu_zstd_dict_size && bun_icu_zstd_dict_size
-        ? ZSTD_createDDict_byReference(bun_icu_zstd_dict, bun_icu_zstd_dict_size)
-        : nullptr;
+    static Bun::ICUDictionary* dictionary;
 
     std::lock_guard<std::mutex> locker(lock);
-    size_t compressedSize = ZSTD_findFrameCompressedSize(item, *length > 0 ? static_cast<size_t>(*length) : 1u << 20);
-    if (ZSTD_isError(compressedSize))
-        return item;
-    unsigned long long size = ZSTD_getFrameContentSize(item, compressedSize);
-    if (size == ZSTD_CONTENTSIZE_UNKNOWN || size == ZSTD_CONTENTSIZE_ERROR)
+    int32_t size = Bun__ICUItem__size(item, *length);
+    if (size < 0)
         return item;
 
     void*& kept = decompressed[item];
     if (!kept) {
         void* buffer = std::malloc(static_cast<size_t>(size));
-        if (!buffer)
-            return item;
-        size_t result = dictionary
-            ? ZSTD_decompress_usingDDict(context, buffer, size, item, compressedSize, dictionary)
-            : ZSTD_decompressDCtx(context, buffer, size, item, compressedSize);
-        if (ZSTD_isError(result)) {
+        if (!buffer || !Bun::decompressICUItem(dictionary, item, *length, buffer, size)) {
             std::free(buffer);
             return item;
         }
         kept = buffer;
     }
-    *length = static_cast<int32_t>(size);
+    *length = size;
     return kept;
 }
 `,
   );
-  return source;
-}
-
-/**
- * `program` with what reads those frames: zstd's decoder, as zstd itself puts it into one file, compiled for this program
- * alone, as shell/CMakeLists.txt compiles it for the shell. Not the objects bun links: those carry what the build asks
- * of bun's libraries (in a hardened bun they keep their arrays on a second stack, which bun's run time sets up), and
- * these programs are linked without that run time.
- */
-function withZstdDecoder(cfg: Config, program: JSCProgram): JSCProgram {
-  const zstd = join(cfg.vendorDir, "zstd");
-  const source = join(depBuildDir(cfg, "WebKit"), "programs", program.name, "ZstdDecoder.c");
-  const decoder = join(zstd, "build", "single_file_libs", "zstddeclib-in.c");
-  writeIfChanged(source, `#include "${decoder.replaceAll("\\", "/")}"\n`);
-  const include = `-I${join(zstd, "lib")}`;
-  return {
-    ...program,
-    cxxflags: [...program.cxxflags, include],
-    cSources: [source],
-    cflags: [...groupCompileFlags(cfg, cfg.buildDir, {}).c, include],
-    sourcesFrom: ["zstd"],
-  };
-}
-
-/** testaot as `program` says, reading the data of a prebuilt WebKit's ICU. */
-function readingPrebuiltIcuData(cfg: Config, program: JSCProgram): JSCProgram {
-  return withZstdDecoder(cfg, { ...program, sources: [...program.sources, icuDataHook(cfg, program.name)] });
+  return { ...program, sources: [...program.sources, source], rustCrates: ["bun_icu_data", "bun_global_allocator"] };
 }
 
 /**
@@ -2116,21 +2074,20 @@ function readingPrebuiltIcuData(cfg: Config, program: JSCProgram): JSCProgram {
  */
 export function jscPrograms(cfg: Config): JSCProgram[] {
   if (prebuiltHasProgramObjects(cfg)) {
-    return ["jsc", "testaot"].map(name => {
-      const program: JSCProgram = {
-        name,
-        sources: [outOfMemoryHook(cfg, name)],
-        cxxflags: groupCompileFlags(cfg, cfg.buildDir, {}).cxx,
-        ldflags: [
-          ...standaloneExeLinkFlags(cfg),
-          ...(cfg.darwin ? (name === "jsc" ? ["-ledit"] : []) : cfg.windows ? [] : ["-Wl,--strip-debug"]),
-        ],
-        libs: [resolve(prebuiltDestDir(cfg), programObjects(cfg, name))],
-      };
-      // The objects of jsc hold the shell's own hook.
-      const hasCompressedData = cfg.windows || (cfg.linux && cfg.abi !== "android");
-      return name === "testaot" && hasCompressedData ? readingPrebuiltIcuData(cfg, program) : program;
-    });
+    // The objects hold the hook that reads the compressed data of ICU, whose weak reference would leave it in the archive.
+    const hasCompressedData = cfg.windows || (cfg.linux && cfg.abi !== "android");
+    const icuHook = `${cfg.windows ? "/include:" : "-Wl,--undefined="}bun_icu_maybe_decompress`;
+    return ["jsc", "testaot"].map(name => ({
+      name,
+      sources: [outOfMemoryHook(cfg, name)],
+      cxxflags: groupCompileFlags(cfg, cfg.buildDir, {}).cxx,
+      ldflags: [
+        ...standaloneExeLinkFlags(cfg),
+        ...(cfg.darwin ? (name === "jsc" ? ["-ledit"] : []) : cfg.windows ? [] : ["-Wl,--strip-debug"]),
+        ...(hasCompressedData ? [icuHook] : []),
+      ],
+      libs: [resolve(prebuiltDestDir(cfg), programObjects(cfg, name))],
+    }));
   }
   if (cfg.webkit !== "local") return [];
   const wk = webkitLayout(cfg);
@@ -2157,16 +2114,11 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
     .filter(f => f.startsWith("testb3_") && f.endsWith(".cpp"))
     .sort()
     .map(f => `b3/${f}`);
-  let jscShell = program(
+  const jscShell = program(
     "jsc",
     ["jsc.cpp", "tools/JSDollarVMShell.cpp", ...shell, ...embedder],
     cfg.darwin ? ["-ledit"] : [],
   );
-  // The data of the ICU of a prebuilt WebKit is a zstd frame an item (icu/compress-data.ts). jsc.cpp has the hook that
-  // reads it, as shell/CMakeLists.txt builds it with BUN_ICU_ZSTD_SOURCE_DIR.
-  if (linuxIcuRoot(cfg) !== undefined) {
-    jscShell = withZstdDecoder(cfg, { ...jscShell, cxxflags: [...jscShell.cxxflags, "-DBUN_ICU_ZSTD=1"] });
-  }
   const testaot = program(
     "testaot",
     [
@@ -2175,17 +2127,16 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
     ],
     [],
   );
+  const readingIcuData = (program: JSCProgram) =>
+    linuxIcuRoot(cfg) !== undefined ? readingPrebuiltIcuData(cfg, program) : program;
   return [
-    jscShell,
+    readingIcuData(jscShell),
     program("testFFI", ["ffi/tests/testFFI.cpp", ...embedder], []),
     program("testb3", [...testb3, ...embedder], []),
     program("testair", ["b3/air/testair.cpp", ...embedder], []),
     program("testmasm", ["assembler/testmasm.cpp", ...embedder], []),
     program("testRegExp", ["testRegExp.cpp", ...embedder], []),
-    {
-      ...(linuxIcuRoot(cfg) !== undefined ? readingPrebuiltIcuData(cfg, testaot) : testaot),
-      pch: [{ header: join(wk.JSC, "aot", "tests", "AOTTestPrefix.h") }],
-    },
+    { ...readingIcuData(testaot), pch: [{ header: join(wk.JSC, "aot", "tests", "AOTTestPrefix.h") }] },
   ];
 }
 
@@ -2210,6 +2161,10 @@ export const webkit: Dependency = {
         identity: `${cfg.webkitVersion}${prebuiltSuffix(cfg)}`,
         destDir: prebuiltDestDir(cfg),
       };
+      // Nothing pins what `--webkit-version` asks for.
+      if (webkitReleaseTag(cfg.webkitVersion) === webkitReleaseTag(WEBKIT_VERSION)) {
+        src.sha256sums = webkitSha256Sums;
+      }
       // macOS: bundled ICU headers conflict with system ICU.
       if (cfg.darwin) {
         src.rmAfterExtract = ["include/unicode"];

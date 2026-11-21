@@ -5,11 +5,8 @@
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(thread_local)]
 #![feature(adt_const_params)]
-#![feature(core_io_borrowed_buf)]
+#![feature(core_io_borrowed_buf, borrowed_buf_init)]
 #![feature(vec_fallible_shrink)]
-// For `__rust_no_alloc_shim_is_unstable_v2` in bin_entry.
-#![feature(rustc_attrs)]
-#![allow(internal_features)]
 // The unit-test harness leaves out `bin_entry` (below), the root that keeps
 // this crate's `pub(crate)` items alive, so in a test build most of the crate
 // reads as dead code. `dead_code` is checked by the crate's own build.
@@ -66,10 +63,12 @@ pub(crate) mod jsc_hooks;
 pub(crate) mod json_line_buffer;
 pub(crate) mod linear_fifo_testing;
 pub(crate) mod napi;
+pub(crate) mod read_ahead;
 pub(crate) mod removed_feature;
 #[path = "../bun.js.rs"]
 pub(crate) mod run_main;
 pub(crate) mod timer;
+pub(crate) mod typescript_front;
 
 // In the crate graph for the functions generated C++ calls.
 use {bun_css_jsc as _, bun_install_jsc as _, bun_patch_jsc as _, bun_semver_jsc as _};

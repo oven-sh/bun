@@ -3,6 +3,7 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import crypto from "node:crypto";
 import net from "node:net";
 import { createDeflateRaw, deflateRawSync, inflateRawSync, constants as zc } from "node:zlib";
+import { input } from "../../node/zlib/zlib-golden/inputs";
 import { createPeer, encodeFrame, OP, RawSocket } from "./raw-peer";
 
 // The decompression bomb test needs extra time to compress 150MB of test data
@@ -728,3 +729,34 @@ test.each([
   ws.terminate();
   expect(outcome).toBe(expected);
 });
+
+test.each([false, true])(
+  "WebSocket client keeps a message for the next to refer to (server_no_context_takeover=%p)",
+  async serverNoContextTakeover => {
+    // Too large for the one-shot path, also when it is compressed.
+    const first = input("noise", 200_000);
+    const second = first.subarray(-9);
+    const deflated = (message: Buffer, dictionary?: Buffer) =>
+      deflateRawSync(message, { dictionary, finishFlush: zc.Z_SYNC_FLUSH }).subarray(0, -4);
+    await using peer = await createPeer({
+      headers: [
+        `Sec-WebSocket-Extensions: permessage-deflate${serverNoContextTakeover ? "; server_no_context_takeover" : ""}`,
+      ],
+      afterUpgrade: Buffer.concat([
+        encodeFrame(OP.binary, deflated(first), { rsv1: true }),
+        encodeFrame(OP.binary, deflated(second, first), { rsv1: true }),
+      ]),
+    });
+    const ws = new WebSocket(peer.url);
+    ws.binaryType = "nodebuffer";
+    const events: unknown[] = [];
+    await new Promise<void>(resolve => {
+      ws.onmessage = event => void (events.push(Bun.hash(event.data)) === 2 && resolve());
+      ws.onerror = event => events.push((event as ErrorEvent).error?.code);
+      ws.onclose = () => resolve();
+    });
+    ws.onclose = null;
+    ws.terminate();
+    expect(events).toEqual([Bun.hash(first), serverNoContextTakeover ? "Z_DATA_ERROR" : Bun.hash(second)]);
+  },
+);

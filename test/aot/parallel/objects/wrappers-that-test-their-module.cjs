@@ -1,21 +1,22 @@
-(function (definition) {
-  if (typeof module === "object" && typeof module.exports === "object") module.exports = definition();
-  else { var exports = definition(); globalThis.lib = exports; console.log("else"); }
+(function (bake) {
+  var exports = bake();
+  if (typeof module !== "object") { globalThis.bakery = exports; console.log("no module"); }
+  else if (typeof module.exports === "object") module.exports = exports;
 })(function () {
-  function Node(x) { this.x = x; }
-  var lib = { clean: function (n) { n.f = 0; n.parent = null; }, sum: function (list) { var s = 0; for (var i = 0; i < list.length; i++) { var n = list[i]; n.f = n.f + 1; s = s + n.x + n.f; } return s; } };
-  return { Node: Node, lib: lib };
+  function Loaf(weight) { this.weight = weight; }
+  var bakery = { weigh: function (loaves) { var all = 0; for (var i = 0; i < loaves.length; i++) { var loaf = loaves[i]; loaf.turns += 1; all = all + loaf.turns + loaf.weight; } return all; }, dust: function (loaf) { loaf.tin = null; loaf.turns = 0; } };
+  return { bakery: bakery, Loaf: Loaf };
 });
-const { Node, lib } = module.exports;
-var nodes = []; for (var i = 0; i < 40; i++) nodes.push(new Node(i));
-nodes.forEach(lib.clean);
-console.log(lib.sum(nodes), lib.sum(nodes), typeof module.exports, typeof globalThis.lib);
+const { bakery, Loaf } = module.exports;
+var loaves = []; for (var i = 0; i < 40; i++) loaves.push(new Loaf(i));
+loaves.forEach(bakery.dust);
+console.log(bakery.weigh(loaves), bakery.weigh(loaves), typeof module.exports, typeof globalThis.bakery);
 
 function wrapped() {
   let box = { exports: {} };
-  (function (root, factory) {
-    if (typeof box === "object" && typeof box.exports === "object") box.exports = factory();
-    else { root.boxed = factory(); console.log("else"); }
+  (function (place, bake) {
+    if (typeof box !== "object" || typeof box.exports !== "object") { place.baked = bake(); console.log("no box"); }
+    else box.exports = bake();
   })(globalThis, function () { return function () { return typeof box.exports; }; });
   return box.exports() + " " + typeof box + " " + typeof box.exports;
 }

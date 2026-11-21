@@ -44,6 +44,7 @@ describe("Bun.deepMatch", () => {
     [{ }, { a: undefined }], // NOTE: `b` may be a superset of `a`, but not vice-versa
     [{ a: { b: "foo" } }, { a: { b: "foo", c: undefined } }],
     [{ a: { b: "foo" } }, { a: { b: "foo", c: 1 } }],
+    [{ ["__proto__"]: { a: 1 } }, { ["__proto__"]: { a: 1, b: 2 } }],
 
     // Arrays
     [[], []],
@@ -92,6 +93,8 @@ describe("Bun.deepMatch", () => {
     [{ a: { b: "foo", c: 1 } }, { a: { b: "foo" } }],
     [{ a: Symbol.for("a") }, { a: Symbol.for("b") }],
     [{ a: Symbol("a") }, { a: Symbol("a") }], // new symbols are never equal
+    [{ ["__proto__"]: {} }, {}], // an own property is not the prototype
+    [{ ["__proto__"]: { a: 1 } }, { __proto__: { a: 1 } }],
 
     // Arrays
     [[1, 2, 3], [1, 2]],

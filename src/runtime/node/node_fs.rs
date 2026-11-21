@@ -1011,18 +1011,21 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
     sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
-/// Check whether a directory exists at `(fd, path)` — dispatches on path element width. On
-/// Windows `OSPathSliceZ` is already `&WStr`, so forward to the wide overload
-/// instead of narrowing to UTF-8 and re-widening. POSIX is a forwarder.
+/// Match mkdir's path semantics when checking an existing directory.
 #[inline]
-fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
+fn directory_exists_os_path(path: &OSPathSliceZ) -> Maybe<bool> {
     #[cfg(not(windows))]
     {
-        sys::directory_exists_at(dir, path)
+        sys::directory_exists_at(FD::INVALID, path)
     }
     #[cfg(windows)]
     {
-        sys::directory_exists_at_w(dir, path.as_slice())
+        // Win32 resolves relative dot components using the logical cwd, including junctions.
+        match Syscall::stat_w(path) {
+            Ok(st) => Ok(sys::S::ISDIR(st.st_mode as _)),
+            Err(err) if err.get_errno() == E::ENOENT => Ok(false),
+            Err(err) => Err(err),
+        }
     }
 }
 
@@ -6173,7 +6176,7 @@ impl NodeFS {
 
     fn mkdir_found_existing(&mut self, path: &OSPathSliceZ, err: &sys::Error) -> Maybe<ret::Mkdir> {
         // if is a directory, OK. otherwise failure
-        if matches!(directory_exists_at_os_path(FD::INVALID, path), Ok(true)) {
+        if matches!(directory_exists_os_path(path), Ok(true)) {
             return Ok(StringOrUndefined::None);
         }
         Err(sys::Error {
@@ -6252,9 +6255,7 @@ impl NodeFS {
                                 // On Windows, this may happen if trying to mkdir replacing a file
                                 #[cfg(windows)]
                                 {
-                                    if let Ok(res) =
-                                        directory_exists_at_os_path(FD::INVALID, parent)
-                                    {
+                                    if let Ok(res) = directory_exists_os_path(parent) {
                                         // is a directory. break.
                                         if !res {
                                             return Err(sys::Error {

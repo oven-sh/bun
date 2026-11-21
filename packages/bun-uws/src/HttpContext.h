@@ -1273,9 +1273,15 @@ public:
     }
 
     /* HTTP clients always send first (the request, or ClientHello for TLS), so defer
-     * accept() until data arrives and dispatch the read immediately after accept. */
-    static int tcpListenOptions(int options) {
-        return options | LIBUS_LISTEN_DEFER_ACCEPT;
+     * accept() until data arrives and dispatch the read immediately after accept.
+     * Not for node:http compat: there the server must see a connection at TCP accept,
+     * as Node does. While the kernel defers the accept, a client that has connected but
+     * not sent anything is invisible to the server: no 'connection' event, not counted by
+     * getConnections() or maxConnections, no server.setTimeout()/headersTimeout timer, and
+     * server.close() / closeAllConnections() cannot close it (the client only learns when
+     * it later writes and gets a reset). */
+    int tcpListenOptions(int options) const {
+        return isNodeHttp() ? options : options | LIBUS_LISTEN_DEFER_ACCEPT;
     }
 
     static us_listen_socket_t *unrefListenSocket(us_listen_socket_t *socket) {

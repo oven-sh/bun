@@ -3365,6 +3365,7 @@ test("getHeapStatistics reports allocated capacity separately from used heap", a
     const stats = await worker.getHeapStatistics();
     expect(stats.used_heap_size).toBeGreaterThan(0);
     expect(stats.total_heap_size).toBeGreaterThan(stats.used_heap_size);
+    expect(stats.total_allocated_bytes).toBe(stats.total_heap_size);
   } finally {
     await worker.terminate();
   }

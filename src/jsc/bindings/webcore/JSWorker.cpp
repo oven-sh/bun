@@ -833,7 +833,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBod
                 set("total_global_handles_size"_s, 8192);
                 set("used_global_handles_size"_s, 2208);
                 set("external_memory"_s, extra);
-                set("total_allocated_bytes"_s, heapSize);
+                set("total_allocated_bytes"_s, capacity);
                 return o;
             });
         });

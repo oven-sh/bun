@@ -453,8 +453,7 @@ pub(crate) type Found = Result<Arc<Loaded>, Fatal>;
 pub(crate) struct Unsupported {
     /// What the run prints.
     pub(crate) line: Vec<u8>,
-    /// The rules `line` names, if it's about rules that don't exist here. Only `--doctor` reads them, so they stay
-    /// empty without it.
+    /// The rules that `line` names. Empty unless `--doctor` is on, which is all that reads them.
     pub(crate) rules: Vec<Box<[u8]>>,
 }
 
@@ -471,9 +470,9 @@ pub(crate) struct Loader<'l> {
     by_file: Guarded<FxHashMap<Vec<u8>, Arc<OnceLock<Found>>>>,
     /// Warnings for the user, in the order they came up.
     pub(crate) warnings: Guarded<Vec<Vec<u8>>>,
-    /// Things a configuration asks for that aren't supported: rules that don't exist here, files in a language that
-    /// isn't parsed here. Silently doing less than the tool being replaced and finding no problems is worse than
-    /// failing.
+    /// Things a configuration asks for that aren't supported, one line each: rules that don't exist here, files in a
+    /// language that isn't parsed here. Silently doing less than the tool being replaced and finding no problems is
+    /// worse than failing.
     pub(crate) unsupported: Guarded<Vec<Unsupported>>,
     /// Suggestions for the user, one line each. They aren't problems.
     pub(crate) advice: Guarded<Vec<Vec<u8>>>,

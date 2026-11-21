@@ -88,17 +88,12 @@ impl Signals {
             .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Paused as u8)
     }
 
-    /// `Flowing`, `Paused` or `Unclaimed`: a consumer takes the body piece by piece.
+    /// `BufferAll`, or a consumer without backpressure.
     #[inline]
-    pub(crate) fn is_demand_driven(self) -> bool {
+    pub(crate) fn wants_whole_body(self) -> bool {
         self.body_receive_mode
             .map(bun_ptr::BackRef::from)
-            .is_some_and(|a| {
-                matches!(
-                    BodyReceiveMode::from_u8(a.load(Ordering::Acquire)),
-                    BodyReceiveMode::Flowing | BodyReceiveMode::Paused | BodyReceiveMode::Unclaimed
-                )
-            })
+            .is_none_or(|a| a.load(Ordering::Acquire) == BodyReceiveMode::BufferAll as u8)
     }
 
     /// `Unclaimed -> Paused`: a whole body waits for the consumer, which resumes the transport.

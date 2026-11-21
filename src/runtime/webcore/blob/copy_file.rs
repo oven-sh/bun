@@ -937,8 +937,8 @@ pub(crate) struct ReadWriteLoop {
 impl Default for ReadWriteLoop {
     fn default() -> Self {
         Self {
-            source_fd: StreamFd::Borrowed(Fd::INVALID),
-            destination_fd: StreamFd::Borrowed(Fd::INVALID),
+            source_fd: StreamFd::borrowed(Fd::INVALID),
+            destination_fd: StreamFd::borrowed(Fd::INVALID),
             read_buf: Vec::new(),
             uv_buf: libuv::uv_buf_t {
                 len: 0,
@@ -1158,7 +1158,7 @@ impl CopyFileWindows {
                 .map_err(|err| err.with_path(path.slice()))
         } else {
             // We assume that this is already a uv-casted file descriptor.
-            bun_sys::Result::Ok(StreamFd::Borrowed(pathlike.fd()))
+            bun_sys::Result::Ok(StreamFd::borrowed(pathlike.fd()))
         }
     }
 

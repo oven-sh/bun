@@ -406,7 +406,13 @@ pub fn directories_of_importer(
         let relative = segments[..count].join(&b"/"[..]);
         Path::resolve(&[base, &relative]).to_vec()
     };
-    (1..=segments.len()).rev().map(join).collect()
+    let mut len = 0;
+    let fits = |segment: &&&[u8]| {
+        len += segment.len() + 1;
+        len < bun_paths::MAX_PATH_BYTES
+    };
+    let count = segments.iter().take_while(fits).count();
+    (1..=count).rev().map(join).collect()
 }
 
 /// The path without the extension of its last name: `find_file()` puts others in its place.
@@ -1989,6 +1995,8 @@ mod tests {
             assert_eq!(directories(b"/$bunfs/root/lib/deep/"), nested);
             let above = [b"/shared".to_vec(), b"/".to_vec()];
             assert_eq!(directories(b"/$bunfs/_.._/_.._/shared/"), above);
+            let too_long = [ROOT, &b"a/".repeat(bun_paths::MAX_PATH_BYTES)].concat();
+            assert!(directories(&too_long).len() < bun_paths::MAX_PATH_BYTES / 2);
         }
 
         #[test]

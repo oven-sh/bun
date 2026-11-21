@@ -74,7 +74,7 @@ fn is_typescript(path: &[u8]) -> bool {
 }
 
 fn find_file(directory: &[u8], written: &[u8]) -> Option<Box<[u8]>> {
-    let written = from_portable(written);
+    let written = bun_sys::converted_spelling(written, from_portable);
     let mut absolute_path = Path::resolve(&[directory, &written]);
     absolute_path.copy_trailing_sep_from(&written);
     if bun_core::strings::contains_char(&absolute_path, 0) {

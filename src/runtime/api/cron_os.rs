@@ -59,6 +59,12 @@ pub(crate) fn register(
             _ => "Path must not contain line breaks",
         }));
     }
+    // Debian's cron reads `\\` as `\`, and fish reads `\'` as `'`.
+    if cfg!(not(windows)) && (strings::contains(&script, b"\\\\") || script.ends_with(b"\\")) {
+        return Err(invalid(
+            "Path must not end with a backslash or contain two in a row",
+        ));
+    }
     let Ok(exe) = bun_core::self_exe_path() else {
         return Err(global.throw(format_args!("Failed to get bun executable path")));
     };

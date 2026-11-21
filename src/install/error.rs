@@ -74,6 +74,8 @@ pub enum Error {
     InvalidDependencyName,
     #[error("No global directory found")]
     NoGlobalDirectoryFound,
+    #[error("$BUN_INSTALL is not an absolute path")]
+    RelativeBunInstall,
     #[error("InvalidPackageID")]
     InvalidPackageID,
     #[error("PartialInstallFailed")]
@@ -270,6 +272,7 @@ impl Error {
             Self::UnrecognizedDependencyFormat => "UnrecognizedDependencyFormat",
             Self::InvalidDependencyName => "InvalidDependencyName",
             Self::NoGlobalDirectoryFound => "No global directory found",
+            Self::RelativeBunInstall => "$BUN_INSTALL is not an absolute path",
             Self::InvalidPackageID => "InvalidPackageID",
             Self::PartialInstallFailed => "PartialInstallFailed",
             Self::NoPackagesInstalled => "NoPackagesInstalled",

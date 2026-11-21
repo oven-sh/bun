@@ -2248,6 +2248,19 @@ pub enum PlaceholderField {
     Target,
 }
 
+impl Placeholder {
+    /// For an output that is referenced by URL, where a `\` in the name of its source would be `/`.
+    pub(crate) fn replace_backslashes(&mut self) {
+        for text in [&mut self.dir, &mut self.name, &mut self.ext] {
+            if cfg!(not(windows))
+                && let Cow::Owned(replaced) = strings::replace_char(text, b'\\', b'_')
+            {
+                *text = replaced.into();
+            }
+        }
+    }
+}
+
 // Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
 #[inline]
 pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {

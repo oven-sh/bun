@@ -3098,6 +3098,20 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
       });
       expect(result).toEqual(fromDefaultRegistry);
     });
+
+    cell("is not the one above a project whose folder is spelled with two separators", async () => {
+      const result = await autoInstall({
+        args: ["x.cjs"],
+        cwd: dir => join(dir, "app", "inner"),
+        files: r => ({
+          [`app/${name}`]: settings(r),
+          "app/inner/package.json": packageJson,
+          "app/inner/src/.keep": "",
+          "app/inner/x.cjs": `console.log(require(Bun.resolveSync("@corp/thing", __dirname + "//src")));\n`,
+        }),
+      });
+      expect(result).toEqual(fromDefaultRegistry);
+    });
   });
 
   // `app` is the project of `app/<folder>` if `bun install` in that folder says so.

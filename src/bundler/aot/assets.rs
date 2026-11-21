@@ -163,6 +163,7 @@ fn create_embedded_template(
         .strip_prefix(b".")
         .unwrap_or(pathname.ext)
         .into();
+    template.placeholder.replace_backslashes();
     if template.needs(PlaceholderField::Hash) {
         template.placeholder.hash = Some(template.content_hash(content_hash));
     }
@@ -332,9 +333,13 @@ mod tests {
     }
 
     fn name_with_options(configure: impl FnOnce(&mut BundleOptions<'_>)) -> Vec<u8> {
+        name_of(b"/p/img/a.png", configure)
+    }
+
+    fn name_of(path: &[u8], configure: impl FnOnce(&mut BundleOptions<'_>)) -> Vec<u8> {
         with_test_context(configure, |context| {
             let file = SourceFile {
-                path: b"/p/img/a.png",
+                path,
                 contents: b"image",
                 loader: Loader::File,
             };
@@ -359,6 +364,17 @@ mod tests {
             options.asset_naming = Box::from(&b"[dir]/[name].[ext]"[..]);
         });
         assert_eq!(name, b"img/a.png");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    #[cfg_attr(miri, ignore)]
+    fn name_takes_no_backslash_from_source() {
+        let name = name_of(b"/p/i\\mg/..\\a.p\\ng", |options| {
+            options.root_dir = Box::from(&b"/p"[..]);
+            options.asset_naming = Box::from(&b"[dir]/[name].[ext]"[..]);
+        });
+        assert_eq!(name, b"i_mg/.._a.p_ng");
     }
 
     #[test]

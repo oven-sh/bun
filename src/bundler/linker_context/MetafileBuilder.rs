@@ -464,7 +464,7 @@ pub(crate) fn generate(c: &LinkerContext, chunks: &[Chunk]) -> crate::Result<Box
         &chunks[0],
         chunks,
         None, // no display size
-        ReferencePathStyle::ImporterRelative,
+        ReferencePathStyle::Metafile,
         SourceMapShiftTracking::Disabled,
     )?;
 

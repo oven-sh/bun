@@ -180,28 +180,19 @@ impl PackageManagerCommand {
 
     /// Returns what `bun pm cache rm` must not delete, if `dir` (a real path) is or contains it.
     fn protected_in(dir: &[u8], bun_install: Option<&[u8]>, cwd: &[u8]) -> Option<&'static str> {
-        // A relative one starts at the project, or with `--global` where the command is typed.
-        let fs = bun_paths::fs::FileSystem::instance();
-        let mut spellings = Vec::new();
-        if let Some(dir) = bun_install.filter(|dir| !dir.is_empty()) {
-            for base in [fs.top_level_dir(), fs.initial_top_level_dir()] {
-                spellings.push(Path::resolve(&[base, dir]));
-                if !bun_paths::is_absolute(dir) {
-                    spellings.push(Path::from_parts(&[base, dir]));
-                }
-            }
-        }
-        let mut protected: Vec<(&'static str, Option<&[u8]>)> = vec![
+        let protected: [(&'static str, Option<&[u8]>); 5] = [
             ("the home directory", env_var::HOME.get_not_empty()),
             (
                 "the bun executable",
                 bun_core::self_exe_path().ok().map(|exe| exe.as_bytes()),
             ),
             ("$BUN_INSTALL", bun_install),
+            (
+                "the project directory",
+                Some(Fs::FileSystem::get().top_level_dir()),
+            ),
+            ("the current directory", Some(cwd)),
         ];
-        protected.extend((spellings.iter()).map(|dir| ("$BUN_INSTALL", Some(dir.as_bytes()))));
-        protected.push(("the project directory", Some(fs.top_level_dir())));
-        protected.push(("the current directory", Some(cwd)));
         let mut buf = bun_paths::path_buffer_pool::get();
         for (what, path) in protected {
             let Some(path) = path else { continue };
@@ -450,7 +441,8 @@ impl PackageManagerCommand {
                 let (rm_path, has_global_store) =
                     found.unwrap_or((cache_dir.path.as_slice(), false));
                 let bun_install = process_env.get(b"BUN_INSTALL").map(|path| {
-                    bun_options_types::schema::api::BunInstall::resolve_path(b"", path)
+                    let path = bun_paths::portable::from_portable_rooted(path);
+                    bun_options_types::schema::api::BunInstall::resolve_path(b"", &path)
                 });
                 let protected = found
                     .and_then(|(real, _)| Self::protected_in(real, bun_install.as_deref(), &cwd));

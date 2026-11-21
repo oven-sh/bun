@@ -328,17 +328,40 @@ describe.concurrent("bun run", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.skipIf(isWindows)("--cwd reads backslashes as Windows does if nothing has that name", async () => {
-    using dir = tempDir("bun-run-cwd-backslash", { "a/b/.keep": "", "c/d/e/.keep": "", "c\\d/.keep": "" });
+  it.skipIf(isWindows)("--cwd reads backslashes as Windows does unless that leads nowhere", async () => {
+    using dir = tempDir("bun-run-cwd-backslash", {
+      "a/b/.keep": "",
+      "c/d/e/.keep": "",
+      "c\\d/.keep": "",
+      "f\\g/.keep": "",
+    });
     for (const [written, expected] of [
       ["a\\b", "a/b"],
-      ["c\\d", "c\\d"],
+      ["c\\d", "c/d"],
+      ["f\\g", "f\\g"],
+      [join(String(dir), "c\\d"), "c\\d"],
       ["a\\b/..", "a"],
       ["c\\d/e", "c/d/e"],
       [join(String(dir), "a/b").replaceAll("/", "\\"), "a/b"],
     ]) {
       const { stdout } = await $`${bunExe()} --cwd ${written} -p "process.cwd()"`.cwd(String(dir)).env(bunEnv).quiet();
       expect(stdout.toString()).toBe(join(String(dir), expected) + "\n");
+    }
+  });
+
+  it.skipIf(isWindows)("--cwd takes ..\\ for a name only on the way to the working directory", async () => {
+    using dir = tempDir("bun-run-cwd-parent", { "a/..\\b/c/.keep": "", "a/..\\missing/.keep": "", "b/c/.keep": "" });
+    for (const [cwd, written, expected] of [
+      ["a", "..\\b", "b"],
+      ["a", "<dir>/a/..\\b", "b"],
+      ["a", "..\\missing", ""],
+      ["a", "<dir>/a/..\\missing", ""],
+      ["a/..\\b", "<dir>/a/..\\b/c", "a/..\\b/c"],
+    ]) {
+      const given = written.replace("<dir>", () => String(dir));
+      const shell = $`${bunExe()} --cwd ${given} -p "process.cwd()"`.cwd(join(String(dir), cwd));
+      const { stdout } = await shell.env(bunEnv).quiet().nothrow();
+      expect(stdout.toString()).toBe(expected && join(String(dir), expected) + "\n");
     }
   });
 

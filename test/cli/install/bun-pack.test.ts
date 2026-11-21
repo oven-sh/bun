@@ -652,7 +652,7 @@ describe.concurrent("flags", () => {
     expect(tarballEntries(join(dir, filename))).toEqual(["package/package.json", "package/index.js"]);
   });
 
-  test.skipIf(isWindows)("a backslash in --destination and --filename is part of the name", async () => {
+  test("a backslash separates in --destination and --filename", async () => {
     using dir = tempDir("pack-backslash", {
       "package.json": JSON.stringify({ name: "pack-dest-test", version: "1.1.1" }),
       "index.js": indexJs,
@@ -661,12 +661,13 @@ describe.concurrent("flags", () => {
     const destination = await runPack(dir, ["--destination=de\\st"]);
     expect(destination.err).toBe("");
     expect(destination.exitCode).toBe(0);
-    const filename = await runPack(dir, ["--filename=fi\\le.tgz"]);
+    const filename = await runPack(dir, ["--filename=de\\file.tgz"]);
     expect(filename.err).toBe("");
     expect(filename.exitCode).toBe(0);
 
-    expect(await sortedNames(dir)).toEqual(["de\\st", "fi\\le.tgz", "index.js", "package.json"]);
-    expect(await sortedNames(join(dir, "de\\st"))).toEqual(["pack-dest-test-1.1.1.tgz"]);
+    expect(await sortedNames(dir)).toEqual(["de", "index.js", "package.json"]);
+    expect(await sortedNames(join(dir, "de"))).toEqual(["file.tgz", "st"]);
+    expect(await sortedNames(join(dir, "de", "st"))).toEqual(["pack-dest-test-1.1.1.tgz"]);
   });
 
   test("--filename into a directory that does not exist", async () => {

@@ -140,7 +140,8 @@ impl Context {
         original_cwd: &[u8],
         tarball_path: &[u8],
     ) -> Result<Context, PackError> {
-        let mut abs_tarball_path = path::Path::resolve(&[original_cwd, tarball_path]);
+        let spelling = bun_sys::typed_spelling(original_cwd, tarball_path, path::from_portable);
+        let mut abs_tarball_path = path::Path::resolve(&[original_cwd, &spelling]);
         abs_tarball_path.copy_trailing_sep_from(tarball_path);
 
         let tarball_bytes = match File::read_from(Fd::cwd(), &abs_tarball_path) {

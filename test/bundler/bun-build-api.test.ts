@@ -59,6 +59,40 @@ describe("Bun.build", () => {
     expect(await outputs[0].text()).toContain("console.log(1);");
   });
 
+  test.skipIf(isWindows)("a backslash in the name of a source does not lead a browser to another host", async () => {
+    using dir = tempDir("bun-build-api-backslash-source", {
+      "entry.js": `
+        import image from "./image.png";
+        console.log(image, import("./lazy.js"), import("./dir/a.js"), import("./root/host.js"), import("./second.js"));`,
+      "\\host\\image.png": "image",
+      "\\host\\lazy.js": "export default 1;",
+      "\\host/a.js": "export default 2;",
+      "\\/host.js": "export default 3;",
+      "\\host\\second.js": "export default 4;",
+    });
+    symlinkSync("\\host\\image.png", join(String(dir), "image.png"));
+    symlinkSync("\\host\\lazy.js", join(String(dir), "lazy.js"));
+    symlinkSync("\\host", join(String(dir), "dir"));
+    symlinkSync("\\", join(String(dir), "root"));
+    symlinkSync("\\host\\second.js", join(String(dir), "second.js"));
+
+    const { outputs } = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js"), join(String(dir), "second.js")],
+      splitting: true,
+      publicPath: "/",
+      naming: { chunk: "[dir]/[name].[ext]", asset: "[name].[ext]" },
+    });
+
+    const text = await outputs.find(output => output.path.endsWith("entry.js"))!.text();
+    expect([...text.matchAll(/(?:=|import\()\s*"(\/.*?)"/g)].map(match => match[1]).sort()).toEqual([
+      "/%5Chost%5Csecond.js",
+      "/_/host.js",
+      "/_host/a.js",
+      "/_host_image.png",
+      "/_host_lazy.js",
+    ]);
+  });
+
   test("process.chdir() during a build does not change the paths between outputs", async () => {
     const files: Record<string, string> = { "a/.keep": "", "b/c/d/.keep": "" };
     for (let i = 0; i < 100; i++) files[`src/lazy${i}.js`] = `export default ${i};`;
@@ -1928,6 +1962,19 @@ export { greeting };`,
     }
   });
 
+  test("a backslash separates, as in --tsconfig-override", async () => {
+    using dir = tempDir("tsconfig-api-backslash", {
+      "cfg/ts.json": JSON.stringify({ compilerOptions: { strict: false, paths: { which: ["../real.ts"] } } }),
+      "real.ts": `export default "real";`,
+      "index.ts": `export { default } from "which"; export let loose: number = null;`,
+    });
+    process.chdir(String(dir));
+    const { outputs } = await Bun.build({ entrypoints: ["./index.ts"], tsconfig: "./cfg\\ts.json", dts: true });
+    process.chdir(originalCwd);
+    expect(outputs.map(output => path.basename(output.path))).toContain("index.aot.ts");
+    expect(await outputs[0].text()).toContain(`"real"`);
+  });
+
   test("should work from nested directories", async () => {
     const dir = tempDirWithFiles("tsconfig-api-nested", {
       "tsconfig.json": `{
@@ -2798,6 +2845,17 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
         console.log(build.success, build.logs.map(log => /^Output path for .* is too long/.test(log.message)));
       `),
     ).toEqual({ stdout: "false [ true ]\n", stderr: "", exitCode: 0 });
+  });
+
+  // A build with assertions stops at the NUL.
+  test.skipIf(isWindows || isDebug || isASAN)("an outdir that is too long is refused behind a NUL too", async () => {
+    using dir = tempDir("bun-build-api-outdir-nul", { "entry.js": "" });
+    const outdir = join(String(dir), "x/y") + "\0" + Buffer.alloc(MAX_PATH_BYTES, "/a").toString();
+
+    const { success } = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], outdir, throw: false });
+
+    expect(success).toBe(false);
+    expect(readdirSync(String(dir))).toEqual(["entry.js"]);
   });
 
   test("fails the build when compile.outfile is too long", async () => {

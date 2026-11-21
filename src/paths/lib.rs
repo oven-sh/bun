@@ -226,7 +226,7 @@ pub fn ancestors<C: PathUnit>(path: &[C]) -> impl Iterator<Item = &[C]> {
 
 /// Whether `path` has a root, or its `..` lead above the directory it starts in.
 #[inline]
-pub fn climbs_out(path: &[u8]) -> bool {
+pub fn climbs_out<C: PathUnit>(path: &[C]) -> bool {
     Host::climbs_out(path)
 }
 
@@ -784,7 +784,9 @@ pub mod fs {
 
         /// Checks for a package in `node_modules` (in any case) or in the install cache.
         pub fn is_dependency(&self) -> bool {
-            let mut components = crate::components(self.name().dir).peekable();
+            let dir = self.name().dir;
+            let share = strings::tokenize_any(crate::volume(dir), b"/\\");
+            let mut components = share.chain(crate::components(dir)).peekable();
             while let Some(component) = components.next() {
                 if strings::contains(component, b"@@@")
                     || component.starts_with(b"@G@")

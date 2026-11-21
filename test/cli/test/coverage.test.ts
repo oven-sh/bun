@@ -57,7 +57,7 @@ export class Y {
   );
 });
 
-test.skipIf(isWindows)("a backslash in --coverage-dir is part of the directory name", async () => {
+test("a backslash separates in --coverage-dir", async () => {
   using dir = tempDir("cov-dir-backslash", {
     "lib.ts": `export const one = () => 1;`,
     "a.test.ts": `import { test } from "bun:test"; import { one } from "./lib"; test("t", () => { one(); });`,
@@ -71,8 +71,8 @@ test.skipIf(isWindows)("a backslash in --coverage-dir is part of the directory n
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("1 pass");
-  expect(readdirSync(String(dir)).sort()).toEqual(["a.test.ts", "cv\\r", "lib.ts"]);
-  expect(readdirSync(path.join(String(dir), "cv\\r"))).toEqual(["lcov.info"]);
+  expect(readdirSync(String(dir)).sort()).toEqual(["a.test.ts", "cv", "lib.ts"]);
+  expect(readdirSync(path.join(String(dir), "cv", "r"))).toEqual(["lcov.info"]);
   expect(exitCode).toBe(0);
 });
 

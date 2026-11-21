@@ -1461,6 +1461,7 @@ describe("bun build --metafile", () => {
     });
     const imported = Object.values(metafile!.outputs).flatMap(output => output.imports.map(it => it.path));
     expect(imported).toEqual(["./c\\lazy.js"]);
+    expect(Object.values(metafile!.inputs).flatMap(input => input.imports.map(it => it.path))).toEqual(imported);
   });
 
   // Bun.spawn replaces a lone surrogate in a JS string with U+FFFD before it reaches argv,

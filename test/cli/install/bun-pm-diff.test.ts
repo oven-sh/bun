@@ -99,11 +99,11 @@ afterAll(() => {
   root?.[Symbol.dispose]();
 });
 
-async function diff(args: string[], cwd = String(root)) {
+async function diff(args: string[], cwd = String(root), env = {}) {
   await using p = Bun.spawn({
     cmd: [bunExe(), "pm", "diff", ...args],
     cwd,
-    env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry, BUN_CONFIG_REGISTRY: registry, NO_COLOR: "1" },
+    env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry, BUN_CONFIG_REGISTRY: registry, NO_COLOR: "1", ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -1771,6 +1771,18 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
 
     expect(stderr).toBe("");
     expect(stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual(["M index.js"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["..\\one", "~/two\\..\\one"])("a backslash separates in %s", async side => {
+    const two = { ...v1, "index.js": v2["index.js"] };
+    using dir = tempDir("pm-diff-backslash", { one: v1, two: { ...two, ...(isWindows ? {} : { "..\\one": two }) } });
+
+    const home = { HOME: String(dir), USERPROFILE: String(dir) };
+    const { stdout, stderr, exitCode } = await diff([side, ".", "--name-only"], join(String(dir), "two"), home);
+
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")).toContain("M index.js");
     expect(exitCode).toBe(0);
   });
 

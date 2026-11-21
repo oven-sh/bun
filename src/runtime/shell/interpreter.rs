@@ -1748,7 +1748,7 @@ impl ShellExecEnv {
         let new_cwd = match bun_paths::is_absolute(new_cwd_) {
             true => bun_paths::Path::from(new_cwd_),
             false => {
-                let mut resolved = bun_paths::Path::resolve(&[self.cwd(), new_cwd_]);
+                let mut resolved = bun_paths::Path::join(&[self.cwd(), new_cwd_]);
                 resolved.truncate(bun_paths::without_trailing_sep(&resolved).len());
                 resolved
             }
@@ -1995,7 +1995,7 @@ fn shell_get_path<'a>(
     if to.as_bytes() == b"/dev/null" {
         return Ok(crate::shell::shell_body::WINDOWS_DEV_NULL);
     }
-    if bun_paths::is_fully_qualified(to) {
+    if bun_paths::is_fully_qualified(to) && !to.starts_with(b"/") {
         return Ok(to);
     }
     let mut dir_buf = bun_paths::path_buffer_pool::get();

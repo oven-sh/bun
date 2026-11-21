@@ -326,6 +326,8 @@ pub enum ReferencePathStyle {
     ImporterRelative,
     /// The outdir, wherever the emitting chunk lands (`bun build --compile`).
     OutdirRelative,
+    /// `ImporterRelative`, but never a URL.
+    Metafile,
 }
 
 impl ReferencePathStyle {
@@ -587,6 +589,14 @@ impl IntermediateOutput {
                 let use_outdir_relative_path = from_chunk_dir.is_empty()
                     || reference_path_style == ReferencePathStyle::OutdirRelative
                     || !import_prefix.is_empty();
+                // A browser makes a URL of a string too.
+                let prints_urls = || {
+                    let targets = linker_graph.ast.items_target();
+                    reference_path_style != ReferencePathStyle::Metafile
+                        && (!chunk.content.is_javascript()
+                            || targets[chunk.entry_point.source_index() as usize]
+                                == bun_ast::Target::Browser)
+                };
                 let reference_to = |file_path: &[u8]| {
                     let file_path: &[u8] = &chunk.as_referenced(file_path);
                     let path = if use_outdir_relative_path {
@@ -594,7 +604,7 @@ impl IntermediateOutput {
                     } else {
                         Path::relative(from_chunk_dir, file_path)
                     };
-                    chunk.escape_reference(path.into_portable())
+                    escape_reference(path.into_portable(), prints_urls)
                 };
 
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
@@ -1320,6 +1330,15 @@ pub struct CrossChunkImportItem {
 }
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
 
+/// `path` is printed as a JavaScript or JSON string, or as a URL.
+fn escape_reference(path: Path, is_url: impl Fn() -> bool) -> Path {
+    if !strings::contains_char(&path, b'\\') {
+        return path;
+    }
+    let backslash: &[u8] = if is_url() { b"%5C" } else { b"\\u005C" };
+    Path::from(&strings::replace_owned(&path, b"\\", backslash))
+}
+
 impl Chunk<'_> {
     /// `Bun.serve` has `/` for `\` in the route of an output.
     fn as_referenced<'a>(&self, output: &'a [u8]) -> Cow<'a, [u8]> {
@@ -1333,18 +1352,6 @@ impl Chunk<'_> {
             }
             false => Cow::Borrowed(output),
         }
-    }
-
-    /// `path` is printed as a JavaScript or JSON string, or as a URL.
-    fn escape_reference(&self, path: Path) -> Path {
-        if !strings::contains_char(&path, b'\\') {
-            return path;
-        }
-        let backslash: &[u8] = match self.content.is_javascript() {
-            true => b"\\u005C",
-            false => b"%5C",
-        };
-        Path::from(&strings::replace_owned(&path, b"\\", backslash))
     }
 
     /// Fills `order` with the indices of `imports_from_other_chunks`, in the order to import them.

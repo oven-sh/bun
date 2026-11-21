@@ -11,7 +11,7 @@ use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Loc, S, Stmt};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_glob::BunGlobWalker;
-use bun_paths::{Path, fs};
+use bun_paths::{Path, from_portable, fs};
 
 use crate::lexer::T;
 use crate::p::P;
@@ -236,10 +236,9 @@ fn specifier_from(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
     Some(path.check_len().ok()?.to_vec())
 }
 
-fn is_not_an_import_path(path: &[u8], is_bundling: bool) -> bool {
+fn is_not_an_import_path(path: &[u8], relative: &[u8], is_bundling: bool) -> bool {
     !strings::is_valid_utf8(path)
-        // `import` reads `\` as `/`.
-        || matches!(bun_paths::from_portable(path), Cow::Owned(_))
+        || (!cfg!(windows) && strings::contains_char(relative, b'\\'))
         // The runtime parses everything after `?` as a query.
         || (!is_bundling && strings::contains_char(path, b'?'))
 }
@@ -572,8 +571,8 @@ impl<'a> Arguments<'a, '_> {
         }
         let base_dir = match options.base {
             [] => Some(importer_dir.unwrap_or(root).to_vec()),
-            [b'/', base @ ..] => absolute_from(root, base),
-            base => absolute_from(importer_dir.unwrap_or(root), base),
+            [b'/', base @ ..] => absolute_from(root, &from_portable(base)),
+            base => absolute_from(importer_dir.unwrap_or(root), &from_portable(base)),
         };
         let Some(base_dir) = base_dir else {
             return self.invalid(
@@ -660,7 +659,8 @@ impl<'a> Arguments<'a, '_> {
                     format_args!("The path to \"{}\" is too long", bstr::BStr::new(file)),
                 );
             };
-            if is_not_an_import_path(&import_path, is_bundling) {
+            let relative = importer_dir.map_or(&key, |_| &import_path);
+            if is_not_an_import_path(&import_path, relative, is_bundling) {
                 self.warn(
                     path_loc,
                     format_args!(

@@ -288,6 +288,7 @@ test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode
 test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > with a recorded run > (unnamed)
 test/bundler/bun-build-compile.test.ts: Bun.build compile > a chunk whose bytecode cannot be generated keeps the embedded files
 test/bundler/bun-build-compile.test.ts: Bun.build compile > bytecode from a compiled executable is not copied into private memory
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the download goes to the cache that `bun install` uses
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the download of another platform's executable is cut short
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the download of another platform's executable is damaged
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the download of another platform's executable is whole
@@ -411,6 +412,8 @@ test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake 
 test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > Bun.spawnSync({ timeout }) times out while fake timers are active
 test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > child_process.spawnSync({ timeout }) times out while fake timers are active
 # --aot refuses what lies below a directory with a backslash in its name: the type checker cannot read that path.
+test/bundler/bun-build-compile.test.ts: Bun.build compile > a name with a backslash finds the embedded file before the disk
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a name with a backslash is skipped in a module that is not a file
 test/js/bun/resolve/resolve.test.ts: a backslash is part of a name: NODE_PATH
 test/js/bun/resolve/resolve.test.ts: in a directory named a\ > Bun.build
 test/js/bun/resolve/resolve.test.ts: in a directory named a\ > Bun.build({ files })

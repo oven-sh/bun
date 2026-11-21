@@ -143,7 +143,8 @@ impl PackCommand {
             if option.is_empty() {
                 continue;
             }
-            let mut abs = Path::resolve(&[original_cwd, *option]);
+            let spelling = bun_sys::converted_spelling(option, path::from_portable);
+            let mut abs = Path::resolve(&[original_cwd, &spelling]);
             // `--filename out/` names a directory, so writing the tarball to it has to fail.
             abs.copy_trailing_sep_from(option);
             let Ok(abs) = abs.check_len() else {

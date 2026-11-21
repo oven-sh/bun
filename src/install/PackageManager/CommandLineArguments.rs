@@ -1830,8 +1830,9 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         if let Some(cwd_) = args.option(b"--cwd").filter(|_| first_parse) {
             let final_path = if cwd_.starts_with(b".") {
                 let mut buf = bun_paths::path_buffer_pool::get();
-                let spelling = bun_sys::existing_spelling(bun_sys::Fd::cwd(), cwd_);
-                let mut path = Path::resolve(&[bun_sys::getcwd_z(&mut buf)?, &spelling]);
+                let base = bun_sys::getcwd_z(&mut buf)?;
+                let spelling = bun_sys::typed_spelling(base, cwd_, bun_paths::from_portable);
+                let mut path = Path::resolve(&[base, &spelling]);
                 path.copy_trailing_sep_from(cwd_);
                 path
             } else {
@@ -1860,8 +1861,18 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         // Every `parse` call reads the same `PARSED_ARGS`, so these paths are resolved only once.
         static TYPED_PATHS: OnceLock<[Box<[u8]>; 3]> = OnceLock::new();
         let [config, cache_dir, ca_file_name] = TYPED_PATHS.get_or_init(|| {
-            [cli.config, cli.cache_dir, Some(cli.ca_file_name)]
-                .map(|path| BunInstall::resolve_path(start_dir, path.unwrap_or_default()))
+            let file = |path: &'static [u8]| match bun_paths::is_absolute(path)
+                || path.starts_with(b"~/")
+            {
+                true => path.into(),
+                false => bun_sys::typed_spelling(start_dir, path, bun_paths::from_portable),
+            };
+            [
+                file(cli.config.unwrap_or_default()),
+                bun_paths::from_portable(cli.cache_dir.unwrap_or_default()),
+                file(cli.ca_file_name),
+            ]
+            .map(|path| BunInstall::resolve_path(start_dir, &path))
         });
         cli.config = cli.config.map(|_| &**config);
         cli.cache_dir = cli.cache_dir.map(|_| &**cache_dir);

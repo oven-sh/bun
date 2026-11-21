@@ -1691,15 +1691,18 @@ fn load_npmrc_files<'a>(
     // An empty or relative value is ignored, as it is when `.bunfig.toml` is looked up.
     let usable = |dir: &&[u8]| bun_paths::is_fully_qualified(dir);
     let npmrc_in = |dir: Option<&[u8]>| Some(Path::resolve(&[dir.filter(usable)?, b".npmrc"]));
+    let config_home = (bun_core::env_var::XDG_CONFIG_HOME.get())
+        .map(|dir| bun_sys::existing_spelling(bun_sys::Fd::cwd(), dir));
     let user_npmrc = match userconfig {
         Some(path) => {
-            let file = Api::BunInstall::resolve_path(start_dir, path);
+            let file = package_manager_options::expand_home(path);
+            let file = bun_sys::typed_spelling(start_dir, &file, bun_paths::from_portable);
             let mut path = Path::resolve(&[start_dir, &file]);
             path.copy_trailing_sep_from(&file);
             Some(path)
         }
         // npm ignores XDG_CONFIG_HOME: `$XDG_CONFIG_HOME/.npmrc` counts only when that file exists.
-        None => npmrc_in(bun_core::env_var::XDG_CONFIG_HOME.get())
+        None => npmrc_in(config_home.as_deref())
             .filter(|path| bun_sys::exists_z(path))
             .or_else(|| npmrc_in(bun_core::env_var::HOME.get())),
     };
@@ -1793,7 +1796,7 @@ impl<'a> PackageJsonWalk<'a> {
     fn next(&mut self, flags: i32) -> Option<(&'a [u8], bun_sys::Maybe<bun_sys::File>)> {
         loop {
             let dir = self.next_dir?;
-            self.next_dir = bun_paths::dirname(dir).map(without_trailing_sep);
+            self.next_dir = directory_above(dir);
             self.path.set(dir);
             self.path.push(b"package.json");
             let opened = bun_sys::File::openat(
@@ -1815,6 +1818,11 @@ impl<'a> PackageJsonWalk<'a> {
             return Some((dir, opened));
         }
     }
+}
+
+/// Every walk toward the root takes this step, so that what two of them yield can be compared.
+fn directory_above(dir: &[u8]) -> Option<&[u8]> {
+    bun_paths::dirname(dir).map(without_trailing_sep)
 }
 
 /// Continues `walk` above `child_cwd` to find the workspace root that `child_cwd` belongs to. Only
@@ -1852,7 +1860,7 @@ fn find_workspace_root<'a>(
         return Ok(None);
     };
     *walk = PackageJsonWalk::new(child_cwd);
-    walk.next_dir = bun_paths::dirname(child_cwd);
+    walk.next_dir = directory_above(child_cwd);
     if let Some((names, _)) = &mut members {
         **names = Package::WorkspaceMap::WorkspaceMap::init();
     }
@@ -2151,10 +2159,7 @@ pub fn init(
         if let Some(opts) = ctx.install.as_deref() {
             explicit_global_dir = opts.global_dir.as_deref().unwrap_or(explicit_global_dir);
         }
-        let global_dir = package_manager_options::open_global_dir(
-            bun_paths::fs::FileSystem::instance().initial_top_level_dir(),
-            explicit_global_dir,
-        )?;
+        let global_dir = package_manager_options::open_global_dir(explicit_global_dir)?;
         bun_sys::fchdir(global_dir)?;
     }
 
@@ -2166,7 +2171,6 @@ pub fn init(
     let mut original_package_json_path = package_json_in(&original_cwd_clone);
     let original_cwd: &[u8] = &original_cwd_clone;
 
-    let mut root_above_link = None;
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
     let mut workspace_package_json_cache = WorkspacePackageJSONCache {
         map: Default::default(),
@@ -2302,16 +2306,6 @@ pub fn init(
                 }
                 break 'root_package_json_file Some(json_file);
             }
-        } else if package_manager_options::has_relative_env_dir()
-            && let Ok(Some((root, ..))) = find_workspace_root(
-                &mut walk,
-                child_cwd,
-                &mut bun_ast::Log::init(),
-                Some((&mut workspace_names, &mut workspace_package_json_cache)),
-                None,
-            )
-        {
-            root_above_link = Some(fs.dirname_store().append(root)?);
         }
 
         // Intern via DirnameStore so the slice is process-lifetime.
@@ -2397,7 +2391,6 @@ pub fn init(
     }
 
     let options = Options {
-        root_above_link,
         global: cli.global,
         ..Default::default()
     };
@@ -2666,7 +2659,7 @@ fn init_with_runtime_once(
     // A bunfig.toml or .npmrc in a folder between the importer and the project is read too, and
     // overrides the ones above it.
     let mut settings_dirs: Vec<&[u8]> = core::iter::successors(Some(importer_dir), |&dir| {
-        bun_paths::dirname(dir).filter(|_| dir != above_importer)
+        directory_above(dir).filter(|_| dir != above_importer)
     })
     .collect();
     if project_dir != above_importer {
@@ -2677,7 +2670,7 @@ fn init_with_runtime_once(
     // `bun_install` was loaded from the directory the process started in. `top_level_dir` is not
     // used for that, because `process.chdir()` changes it.
     let start_dir = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
-    let is_start_dir = |dir: &[u8]| bun_paths::strip_prefix(dir, start_dir) == Some(b"");
+    let is_start_dir = |path: &[u8]| bun_paths::strip_prefix(path, start_dir) == Some(b"");
     // A folder nearer to the importing file overrides the ones above it, as for .npmrc. So the
     // folders below the start directory are kept apart: they override `bun_install`. If the start
     // directory is not one of the project's folders, all of them do.

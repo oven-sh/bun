@@ -72,6 +72,8 @@ const inSpecialDirectory: Case[] = [
   ['import.meta.glob("/src/*/*/*/p.ts")', [["/src/[id]/(group)/{x}/p.ts", "lazy", {"default":"p"}]]],
   ['import.meta.glob(["./*.ts", "!./p.ts"])', [["./q.ts", "lazy", {"default":"q"}]]],
   ['import.meta.glob("./p.ts", { base: "../" })', []],
+  [String.raw`import.meta.glob("./a.ts", { base: "../..\\..\\dir" })`, [["./a.ts", "lazy", A]]],
+  [String.raw`import.meta.glob("./a.ts", { base: "/src\\dir" })`, [["./a.ts", "lazy", A]]],
 ];
 table("in a directory whose name has glob syntax", inSpecialDirectory, async () => {
   using dir = tempDir("import-meta-glob", tree);
@@ -730,6 +732,20 @@ describe.concurrent("import.meta.glob", () => {
         `[["/src/dir/b.ts"],"b",{"./a.ts":"a","./b.ts":"b"}]`,
         `Expected a glob pattern in a module that is not a file to start with "/", but got "./src/dir/[ab].ts"`,
       ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.skipIf(isWindows)("a name with a backslash is skipped in a module that is not a file", async () => {
+    const source = `export default import.meta.glob("/uploads/*", { eager: true, import: "default" });`;
+    using dir = tempDir("import-meta-glob", {
+      "p\\q/uploads/a.json": `"a"`,
+      "p\\q/uploads/a\\..\\b.json": `"b"`,
+      "p\\q/entry.js": `console.log(JSON.stringify((await import("data:text/javascript,${encodeURIComponent(source)}")).default));`,
+    });
+    expect(await run(join(String(dir), "p\\q"), ["entry.js"])).toEqual({
+      stdout: `{"/uploads/a.json":"a"}\n`,
       stderr: "",
       exitCode: 0,
     });

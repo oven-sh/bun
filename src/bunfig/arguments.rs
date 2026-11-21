@@ -32,7 +32,9 @@ fn exit_code_of_failure(cmd: CommandTag) -> u32 {
 
 /// The XDG specification says to ignore `$XDG_CONFIG_HOME` when it is empty or a relative path.
 fn get_home_config_path() -> Option<Path> {
-    let dir = [env_var::XDG_CONFIG_HOME.get(), env_var::HOME.get()]
+    let config_home = (env_var::XDG_CONFIG_HOME.get())
+        .map(|dir| bun_sys::existing_spelling(bun_sys::Fd::cwd(), dir));
+    let dir = [config_home.as_deref(), env_var::HOME.get()]
         .into_iter()
         .flatten()
         .find(|dir| bun_paths::is_fully_qualified(dir))?;
@@ -317,7 +319,10 @@ pub fn load_config_for_tool(
         }
 
         let cwd = ctx.args.absolute_working_dir.as_deref().unwrap();
-        let mut config_path = Path::resolve(&[cwd, config_path_]);
+        let mut config_path = Path::resolve(&[
+            cwd,
+            &bun_sys::typed_spelling(cwd, config_path_, bun_paths::from_portable),
+        ]);
         config_path.copy_trailing_sep_from(config_path_);
         config_path
     };

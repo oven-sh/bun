@@ -25,7 +25,6 @@ pub fn normalize_npm_entry_path(entry: &Entry) -> OSPath {
 
 /// [`normalize_npm_entry_path`] as the name of the file to create. `None` for a name that is too long.
 pub fn npm_entry_destination(entry: &Entry) -> Result<Option<OSPath>, SystemErrno> {
-    #[cfg_attr(not(windows), expect(unused_mut))]
     let mut path = normalize_npm_entry_path(entry);
     if path.len() >= MAX_OS_PATH {
         // node-tar leaves the directories that fit behind, in the way of later files.
@@ -40,6 +39,10 @@ pub fn npm_entry_destination(entry: &Entry) -> Result<Option<OSPath>, SystemErrn
         if matches!(u8::try_from(*unit), Ok(b'|' | b'<' | b'>' | b'?' | b':')) {
             *unit += 0xf000;
         }
+    }
+    // `strip` has tested the name before it was decoded.
+    if bun_paths::climbs_out(&path) {
+        path.clear();
     }
     Ok(Some(path))
 }

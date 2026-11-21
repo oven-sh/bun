@@ -986,6 +986,26 @@ describe("bundler files option", () => {
     expect(result.logs.map(log => log.message)).toEqual([`Could not resolve: "./util.js/"`]);
   });
 
+  test("a key with backslashes overrides the file", async () => {
+    using dir = tempDir("files-backslash-key", {
+      "entry.js": `import "./src/a.js";`,
+      "src/a.js": `console.log("disk");`,
+    });
+    const { outputs } = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      files: { [`${dir}\\src\\a.js`]: `console.log("memory");` },
+    });
+    expect(await outputs[0].text()).toContain(`console.log("memory")`);
+  });
+
+  test("a key with a backslash is one module under both spellings", async () => {
+    const { outputs } = await Bun.build({
+      entrypoints: ["/app/e.js"],
+      files: { "/app/e.js": String.raw`require("./x\\m.js"); require("./x/m.js");`, "/app/x\\m.js": `once();` },
+    });
+    expect((await outputs[0].text()).match(/once\(\)/g)).toHaveLength(1);
+  });
+
   test("a page with a relative key loads the override of its script", async () => {
     using dir = tempDir("files-relative-html", {
       "web/a.js": `console.log("disk");`,

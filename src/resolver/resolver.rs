@@ -1124,9 +1124,23 @@ impl<'a> Resolver<'a> {
         if is_left_outside {
             return PackageLookup::Unknown;
         }
-        match self.resolve_embedded_module(source_dir, import_path, kind) {
+        let look = |kind| match self.resolve_embedded_module(source_dir, import_path, kind) {
             Some(file_name) => PackageLookup::Found(file_name),
             None => self.resolve_embedded_package(source_dir, import_path, kind),
+        };
+        match look(kind) {
+            // The disk does not answer to `a\b` for what the executable holds as `a/b`. A compiled program does as `bun run`.
+            PackageLookup::Unknown
+                if cfg!(not(windows)) && strings::contains_char(import_path, b'\\') =>
+            {
+                match look(ast::ImportKind::Dynamic) {
+                    PackageLookup::Found(_) if graph.compiled_program().is_some() => {
+                        PackageLookup::Hidden
+                    }
+                    converted => converted,
+                }
+            }
+            found => found,
         }
     }
 
@@ -3162,7 +3176,9 @@ impl<'a> Resolver<'a> {
         if !node_path.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
-                let Some(abs_path) = abs_path_in(bufs!(node_modules_check), &[path, as_path])
+                let cwd = bun_core::top_level_dir();
+                let path = bun_sys::typed_spelling(cwd, path, from_portable_rooted);
+                let Some(abs_path) = abs_path_in(bufs!(node_modules_check), &[&path, as_path])
                 else {
                     continue;
                 };
@@ -3192,6 +3208,8 @@ impl<'a> Resolver<'a> {
             && self.use_package_manager()
             && let Some(esm_ref) = esm_.as_ref()
             && strings::is_npm_package_name(esm_ref.name)
+            // `require("a/b\\c")` misses what the project has under `a/b/c`.
+            && (cfg!(windows) || !strings::contains_char(as_path, b'\\'))
         {
             let esm = esm_ref.with_auto_version();
             'load_module_from_cache: {

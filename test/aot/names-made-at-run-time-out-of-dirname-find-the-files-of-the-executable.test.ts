@@ -161,3 +161,26 @@ test.skipIf(isWindows)("a backslash in a name made at run time means what it mea
   renameSync(join(String(dir), "site"), join(String(dir), "moved-away"));
   expect(await run([executable], "away")).toEqual(expected);
 });
+
+test.skipIf(isWindows)("the working directory does not answer to a\\b for the a/b of the executable", async () => {
+  const names = ["./a\\b.js", ".\\a\\b.js", "a\\b.js"];
+  using dir = tempDir("aot-backslash-planted", {
+    "site/main.js": `
+      for (const name of JSON.parse(process.env.NAMES)) {
+        try { require(name); } catch {}
+        new Worker(name).onerror = () => console.log("refused");
+      }`,
+    "site/a/b.js": "",
+    "away/a\\b.js": `console.log("planted");`,
+    "away/.\\a\\b.js": `console.log("planted");`,
+  });
+  const run = async (cmd: string[], cwd: string) => {
+    const env = { ...bunEnv, NAMES: JSON.stringify(names) };
+    await using proc = Bun.spawn({ cmd, cwd: join(String(dir), cwd), env, stdout: "pipe", stderr: "inherit" });
+    return { stdout: await proc.stdout.text(), exitCode: await proc.exited };
+  };
+  const executable = join(String(dir), nameOfExecutable);
+  const flags = ["--compile", "--aot", "--aot-allow-code-from-disk", "--outfile", executable];
+  expect(await run([bunExe(), "build", ...flags, "./main.js", "./a/b.js"], "site")).toMatchObject({ exitCode: 0 });
+  expect(await run([executable], "away")).toEqual({ stdout: "refused\nrefused\nrefused\n", exitCode: 0 });
+});

@@ -999,7 +999,11 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
         }
     };
     // `PackageManager::init` has changed directory since it was typed.
-    let mut abs_file = bun_paths::Path::resolve(&[original_cwd, file]);
+    let spelling = match is_pack {
+        true => bun_sys::converted_spelling(file, bun_paths::from_portable),
+        false => bun_sys::typed_spelling(original_cwd, file, bun_paths::from_portable),
+    };
+    let mut abs_file = bun_paths::Path::resolve(&[original_cwd, &spelling]);
     abs_file.copy_trailing_sep_from(file);
     let Ok(abs_file) = abs_file.check_len() else {
         bun_core::pretty_errorln!("<r><red>error<r><d>:<r> \\<file\\> is too long");

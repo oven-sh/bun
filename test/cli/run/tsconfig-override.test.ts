@@ -3,13 +3,18 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "node:path";
 
 describe("bun run --tsconfig-override", () => {
-  test.skipIf(isWindows)("a backslash is part of the file name", async () => {
+  const pathsTo = (file: string) => JSON.stringify({ compilerOptions: { paths: { which: [file] } } });
+  test
+    .skipIf(isWindows)
+    .each([
+      [{ "ts\\c.json": pathsTo("./real.ts") }],
+      [{ "ts/c.json": pathsTo("../real.ts"), "ts\\c.json": pathsTo("./decoy.ts") }],
+    ])("a backslash separates unless that leads nowhere: %j", async files => {
     await using dir = tempDir("run-tsconfig-override-backslash", {
       "index.ts": `import which from "which"; console.log(which);`,
       "real.ts": `export default "real";`,
-      "ts/decoy.ts": `export default "decoy";`,
-      "ts\\c.json": JSON.stringify({ compilerOptions: { paths: { which: ["./real.ts"] } } }),
-      "ts/c.json": JSON.stringify({ compilerOptions: { paths: { which: ["./decoy.ts"] } } }),
+      "decoy.ts": `export default "decoy";`,
+      ...files,
     });
 
     await using proc = Bun.spawn({

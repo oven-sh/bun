@@ -65,6 +65,31 @@ describe("Bun.build compile", () => {
     expect(exists).toBe(true);
   });
 
+  test.concurrent.skipIf(isWindows)("a name with a backslash finds the embedded file before the disk", async () => {
+    using dir = tempDir("build-compile-backslash", {
+      "index.js": `
+        const name = process.argv[2];
+        require(name);
+        new Worker(name);`,
+      "a/b.js": `console.log("a/b");`,
+      "c\\d/e.js": `console.log("c\\\\d/e");`,
+      "away/a\\b.js": `console.log("from the working directory");`,
+    });
+    const outfile = join(String(dir), "app");
+    const entrypoints = ["index.js", "a/b.js", "c\\d/e.js"].map(name => join(String(dir), name));
+    await Bun.build({ entrypoints, compile: { outfile } });
+
+    for (const [name, found] of [
+      ["./a\\b.js", "a/b"],
+      ["./c\\d/e.js", "c\\d/e"],
+    ]) {
+      const cwd = join(String(dir), "away");
+      await using proc = Bun.spawn({ cmd: [outfile, name], cwd, env: bunEnv, stderr: "inherit" });
+      expect(await proc.stdout.text()).toBe(`${found}\n${found}\n`);
+      expect(await proc.exited).toBe(0);
+    }
+  });
+
   test.concurrent.each([
     ["..", {}, "app/src/out/dist"],
     // On POSIX the name is that of the directory, which `/` does not have.
@@ -106,6 +131,21 @@ describe("Bun.build compile", () => {
     const files = readdirSync(join(String(dir), "cache"));
     expect(files.map(name => readFileSync(join(String(dir), "cache", name), "utf8"))).toEqual(cached);
     expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("the download goes to the cache that `bun install` uses", async () => {
+    const tar = await new Bun.Archive({ "package/bin/bun": "not an executable" }).bytes();
+    using server = Bun.serve({ port: 0, fetch: () => new Response(Bun.gzipSync(tar)) });
+    using dir = tempDir("build-compile-cache-backslash", { "app/app.js": "", "cache": {} });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=bun-linux-${isArm64 ? "x64" : "arm64"}`, "app.js"],
+      cwd: join(String(dir), "app"),
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: "..\\cache", BUN_COMPILE_TARGET_TARBALL_URL: server.url.href },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await proc.exited).toBe(1);
+    expect(readdirSync(join(String(dir), "cache"))).toHaveLength(1);
   });
 
   test.skipIf(!isLinux)("the executable can be started when it was written as descriptor 0, 1 or 2", async () => {

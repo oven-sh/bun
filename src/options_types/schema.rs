@@ -311,11 +311,15 @@ pub mod api {
         /// Resolves `path` against `dir`, the directory of the config file that sets it or the
         /// directory it was typed in. As in npm, `~` and `~/<rest>` expand to the home directory.
         pub fn resolve_path(dir: &[u8], path: &[u8]) -> Box<[u8]> {
+            use bun_paths::portable;
+
             let home = bun_core::env_var::HOME.get_not_empty();
             if let ([b'~', rest @ ..], Some(home)) = (path, home)
-                && rest.first().is_none_or(|&c| bun_paths::is_sep(c))
+                && rest.first().is_none_or(|&c| portable::is_sep(c))
             {
-                return [home, rest].concat().into();
+                return [home, &portable::from_portable_rooted(rest)]
+                    .concat()
+                    .into();
             }
             // An empty path means the option is unset, so it must stay empty.
             if path.is_empty() || bun_paths::is_absolute(path) || !bun_paths::is_absolute(dir) {

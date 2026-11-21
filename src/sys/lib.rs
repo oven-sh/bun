@@ -2279,7 +2279,11 @@ mod posix_impl {
     /// `mkdir_recursive_at` with an explicit `mode` for created directories
     /// (matches `bun.api.node.fs.NodeFS.mkdirRecursive`'s `mode` arg).
     pub fn mkdir_recursive_at_mode(dir: Fd, sub_path: &[u8], mode: Mode) -> Maybe<()> {
-        mkdir_recursive_with(sub_path, |p| mkdirat(dir, &bun_paths::Path::from(p), mode))
+        mkdir_recursive_with(sub_path, |p| match bun_paths::Path::from(p).check_len() {
+            Ok(path) => mkdirat(dir, &path, mode),
+            // The OS stops at a NUL, so it may not refuse this.
+            Err(_) => Err(Error::from_code(E::ENAMETOOLONG, Tag::mkdir).with_path(sub_path)),
+        })
     }
     pub fn unlink(path: &ZStr) -> Maybe<()> {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
@@ -8203,22 +8207,72 @@ pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
 pub fn exists(path: &[u8]) -> bool {
     exists_z(&bun_paths::Path::from(path))
 }
-/// `path` if `dir` has something of that name or it has a NUL, or else with `/` for each `\`. `\a` is `./a`.
+/// `path` if `dir` has it or it has a NUL, or else with `/` for `\`. An absolute one keeps the part that exists. `\a` is `./a`.
 pub fn existing_spelling(dir: Fd, path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     use bun_core::strings;
     let last = strings::last_index_of_char(path, b'\\').filter(|_| cfg!(not(windows)));
-    let Some(last) = last else {
+    let Some(last) = last.filter(|_| !strings::contains_char(path, 0)) else {
         return path.into();
     };
-    // A `..` behind that name cancels it, so ask for the name too.
-    let end = strings::index_of_char_usize(&path[last..], b'/').map_or(path.len(), |at| last + at);
+    let end_of_name = |at: usize| {
+        strings::index_of_char_usize(&path[at..], b'/').map_or(path.len(), |len| at + len)
+    };
     let exists = |path: &[u8]| exists_at(dir, &bun_paths::Path::join(&[path]));
-    if strings::contains_char(path, 0) || (exists(&path[..end]) && exists(path)) {
-        return path.into();
+    if !bun_paths::is_absolute(path) {
+        // A `..` behind that name cancels it, so ask for the name too.
+        return match exists(&path[..end_of_name(last)]) && exists(path) {
+            true => path.into(),
+            false => bun_paths::from_portable(path),
+        };
     }
+    // Anyone who can add a name could put `..\a` in the way of `../a`.
+    let is_name = |path: &[u8]| {
+        !bun_paths::portable::has_dot_dot(bun_paths::basename(path))
+            || getcwd_alloc().is_ok_and(|cwd| bun_paths::strip_prefix(&cwd, path).is_some())
+    };
+    let mut kept = 0;
+    while let Some(at) = strings::index_of_char_usize(&path[kept..], b'\\') {
+        let end = end_of_name(kept + at);
+        if end >= bun_core::MAX_PATH_BYTES || !is_name(&path[..end]) || !exists(&path[..end]) {
+            // `/\a` does not become `//a`, which can be a URL.
+            let (kept, rest) = path.split_at(kept.max(usize::from(path.starts_with(b"//"))));
+            let rest = strings::replace_char(rest, b'\\', b'/');
+            return [kept, b"/", strings::trim_left(&rest, b"/")]
+                .concat()
+                .into();
+        }
+        kept = end;
+    }
+    path.into()
+}
+/// What `convert` makes of a relative `path`, and [`existing_spelling`] of an absolute one.
+pub fn converted_spelling(
+    path: &[u8],
+    convert: fn(&[u8]) -> std::borrow::Cow<'_, [u8]>,
+) -> std::borrow::Cow<'_, [u8]> {
     match bun_paths::is_absolute(path) {
-        true => strings::replace_char(path, b'\\', b'/'),
-        false => bun_paths::from_portable(path),
+        true => existing_spelling(Fd::cwd(), path),
+        false => convert(path),
+    }
+}
+/// [`converted_spelling`] for what was typed in `cwd`, or `path` if only that is there.
+pub fn typed_spelling<'a>(
+    cwd: &[u8],
+    path: &'a [u8],
+    convert: fn(&[u8]) -> std::borrow::Cow<'_, [u8]>,
+) -> std::borrow::Cow<'a, [u8]> {
+    use bun_paths::Path;
+    use std::borrow::Cow::{Borrowed, Owned};
+    match converted_spelling(path, convert) {
+        Owned(converted)
+            if !bun_paths::is_absolute(&converted)
+                && !exists_z(&Path::resolve(&[cwd, &converted]))
+                && let Borrowed(_) =
+                    existing_spelling(Fd::cwd(), &Path::from_parts(&[cwd, path])) =>
+        {
+            Borrowed(path)
+        }
+        converted => converted,
     }
 }
 /// `moveFileZ`. Routes through
@@ -8482,11 +8536,12 @@ pub fn write_file(args: &WriteFileArgs<'_>) -> Maybe<usize> {
 /// full env-override chain lives in `bun_install`; this is the
 /// fallback so the symbol resolves at T1. Returns an owned path (caller frees).
 pub fn fetch_cache_directory_path() -> Vec<u8> {
+    use bun_paths::portable::from_portable_rooted;
     if let Some(v) = bun_core::getenv_z(bun_core::zstr!("BUN_INSTALL_CACHE_DIR")) {
-        return v.to_vec();
+        return from_portable_rooted(v).into_owned();
     }
     if let Some(home) = bun_core::getenv_z(bun_core::zstr!("HOME")) {
-        let mut p = home.to_vec();
+        let mut p = from_portable_rooted(home).into_owned();
         p.extend_from_slice(b"/.bun/install/cache");
         return p;
     }

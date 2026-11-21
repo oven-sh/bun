@@ -4238,7 +4238,8 @@ pub(crate) fn resolve_embedded_file(input_path: &[u8], extname: &[u8]) -> Option
         let ours = st.st_uid == uid && bun_sys::S::ISREG(st.st_mode as u32);
         #[cfg(windows)]
         let ours = true;
-        if size_ok && ours {
+        // A relative one is in the working directory, where a file of ours can have any author.
+        if size_ok && ours && bun_paths::is_absolute(Fs::RealFS::tmpdir_path()) {
             return Some(in_tmpdir(canonical_name));
         }
     }

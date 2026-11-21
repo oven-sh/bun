@@ -726,12 +726,14 @@ impl Lockfile {
                 if !strings::contains_char(self.str(&stored), b'\\') {
                     continue;
                 }
-                let is_in_project = resolution.tag != ResolutionTag::Folder
-                    || self.is_trusted_folder_package(id as PackageID);
-                let dir = is_in_project.then_some(dir);
-                let Some(path) = self.convert_windows_path(dir, stored)? else {
-                    continue;
-                };
+                let mut path = self.convert_windows_path(Some(dir), stored)?;
+                if path.is_none()
+                    && resolution.tag == ResolutionTag::Folder
+                    && !self.is_trusted_folder_package(id as PackageID)
+                {
+                    path = self.convert_windows_path(None, stored)?;
+                }
+                let Some(path) = path else { continue };
                 if !is_member && as_stored.is_none() {
                     let order = self.hash_order(packages_len);
                     as_stored = Some((self.hashed_rows(&order), order));

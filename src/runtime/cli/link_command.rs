@@ -136,7 +136,6 @@ pub(crate) fn open_global_node_modules(
         None => b"",
     };
     manager.global_dir = Some(Dir::from_fd(package_manager_options::open_global_dir(
-        manager.options.env_base_dir(),
         explicit_global_dir,
     )?));
 

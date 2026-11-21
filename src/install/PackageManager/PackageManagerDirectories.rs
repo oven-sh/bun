@@ -391,14 +391,14 @@ pub fn fetch_cache_directory_path(
     let variable = |name: &[u8]| {
         env.get(name)
             .filter(|dir| !dir.is_empty())
-            .map(options::expand_home)
+            .map(options::directory_from_env)
     };
     let from_env = variable(b"BUN_INSTALL_CACHE_DIR");
     let bun_install = variable(b"BUN_INSTALL");
     let home = env_var::XDG_CACHE_HOME
         .get_not_empty()
         .or_else(|| env_var::HOME.get_not_empty())
-        .map(options::expand_home);
+        .map(options::directory_from_env);
     let (dir, subdir): (_, &[u8]) = if let Some(dir) = from_env.as_deref() {
         (dir, b"")
     } else if let Some(dir) = configured.filter(|dir| !dir.is_empty()) {
@@ -909,8 +909,7 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
     if manager.options.global_bin_dir.is_valid() {
         return Ok(());
     }
-    manager.options.global_bin_dir =
-        options::open_global_bin_dir(manager.options.env_base_dir(), ctx.install.as_deref())?;
+    manager.options.global_bin_dir = options::open_global_bin_dir(ctx.install.as_deref())?;
     let mut out_buffer = bun_paths::path_buffer_pool::get();
     let result = sys::get_fd_path_z(manager.options.global_bin_dir, &mut out_buffer)?;
     let path = FileSystem::get()
@@ -937,10 +936,7 @@ pub fn try_global_link_dir(this: &mut PackageManager) -> Result<Fd, DirectoryErr
         return Ok(d.fd());
     }
 
-    let global_dir = match options::open_global_dir(
-        this.options.env_base_dir(),
-        this.options.explicit_global_directory,
-    ) {
+    let global_dir = match options::open_global_dir(this.options.explicit_global_directory) {
         Ok(d) => Dir::from_fd(d),
         Err(crate::Error::NoGlobalDirectoryFound) => return Err(DirectoryError::NoGlobal),
         Err(err) => return Err(DirectoryError::OpenGlobal(err)),

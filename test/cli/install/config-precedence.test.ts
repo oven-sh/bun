@@ -1312,14 +1312,14 @@ describe.concurrent("directories named by config files", () => {
       expect(exitCode).toBe(1);
     });
 
-    test.skipIf(isWindows)("a backslash in --config is part of the file name", async () => {
+    test.skipIf(isWindows)("a backslash in --config separates if that leads to a file", async () => {
       using dir = tempDir("config-typed-backslash", {
         ...workspace,
-        [`${cwd}/ci\\x.toml`]: bunfig({ cache: { dir: "c" } }),
-        [`${cwd}/ci/x.toml`]: bunfig({ cache: { dir: "the-file-behind-a-slash" } }),
+        [`${cwd}/ci/x.toml`]: bunfig({ cache: { dir: "c" } }),
+        [`${cwd}/ci\\x.toml`]: bunfig({ cache: { dir: "the-file-of-that-name" } }),
       });
       expect(await run(String(dir), ["pm", "cache", "--config=ci\\x.toml"], noDirs, cwd)).toEqual({
-        stdout: join(String(dir), cwd, "c"),
+        stdout: join(String(dir), cwd, "ci", "c"),
         stderr: "",
         exitCode: 0,
       });
@@ -1340,11 +1340,11 @@ describe.concurrent("directories named by config files", () => {
       },
     );
 
-    test.skipIf(isWindows)("a backslash in --cafile is part of the file name", async () => {
+    test.skipIf(isWindows)("a backslash in --cafile separates if nothing has that name", async () => {
       using dir = tempDir("config-typed-backslash-cafile", workspace);
       const args = ["add", "no-deps", `--registry=${unreachable}`, "--cafile=ca\\x.pem"];
       const { stderr, exitCode } = await run(String(dir), args, noDirs, cwd);
-      expect(stderr).toContain(`HTTPThread: could not find CA file: '${join(String(dir), cwd, "ca\\x.pem")}'\n`);
+      expect(stderr).toContain(`HTTPThread: could not find CA file: '${join(String(dir), cwd, "ca", "x.pem")}'\n`);
       expect(exitCode).toBe(1);
     });
   });

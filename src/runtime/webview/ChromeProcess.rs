@@ -961,7 +961,7 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
     let root = getenv_z(zstr!("LOCALAPPDATA"))?;
     #[cfg(not(windows))]
     let root = getenv_z(zstr!("HOME"))?;
-    if root.is_empty() {
+    if !bun_paths::is_absolute(root) {
         return None;
     }
 

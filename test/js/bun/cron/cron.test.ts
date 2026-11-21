@@ -749,7 +749,9 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
       "table": untouched,
       "job.ts": "",
       "a b#é.ts": "",
+      "a\\b.ts": "",
       "a\\\\b.ts": "",
+      "a\\": "",
       "fixture.js": fixture,
     });
     chmodSync(`${dir}/bin/crontab`, 0o755);
@@ -832,14 +834,24 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
     { path: `"file://localhost" + import.meta.dir + "/job.ts?query#hash"`, script: "/job.ts" },
     { path: `Bun.pathToFileURL("a b#é.ts").href`, script: "/a b#é.ts" },
     { path: `Bun.pathToFileURL("a b#é.ts")`, script: "/a b#é.ts" },
-    // Debian's cron reads two backslashes in a row as one.
-    { path: String.raw`Bun.pathToFileURL("a\\\\b.ts")`, script: String.raw`/a\''\''b.ts` },
-    { path: String.raw`import.meta.dir + "/a\\\\b.ts"`, script: String.raw`/a\''\''b.ts` },
+    { path: String.raw`Bun.pathToFileURL("a\\b.ts")`, script: String.raw`/a\b.ts` },
+    { path: String.raw`import.meta.dir + "/a\\b.ts"`, script: String.raw`/a\b.ts` },
   ])("$path registers $script", async ({ path, script }) => {
     expect(await run(`await Bun.cron(${path}, "@daily", "t");`)).toEqual({
       stdout: "",
       stderr: "",
       table: `${kept}# bun-cron: t\n0 0 * * * 'bun' run --cron-title=t --cron-period='0 0 * * *' '${script}'\n`,
+      tempFiles: 0,
+      exitCode: 0,
+    });
+  });
+
+  test.each(["/a\\\\b.ts", "/a\\"])("%s, which some crons and shells read otherwise, throws", async name => {
+    const call = `Bun.cron(import.meta.dir + ${JSON.stringify(name)}, "@daily", "t")`;
+    expect(await run(`try { await ${call}; } catch (e) { console.log(e.message); }`)).toEqual({
+      stdout: "Path must not end with a backslash or contain two in a row\n",
+      stderr: "",
+      table: untouched,
       tempFiles: 0,
       exitCode: 0,
     });

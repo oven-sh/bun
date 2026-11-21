@@ -1281,7 +1281,8 @@ impl BunxCommand {
 
         // `bun add` runs in another directory.
         let cafile = opts.cafile.map(|path| {
-            let mut resolved = Path::resolve(&[top_level_dir, path]);
+            let spelling = bun_sys::typed_spelling(top_level_dir, path, bun_paths::from_portable);
+            let mut resolved = Path::resolve(&[top_level_dir, &spelling]);
             resolved.copy_trailing_sep_from(path);
             resolved
         });

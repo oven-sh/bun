@@ -971,9 +971,15 @@ pub mod bv2_impl {
                 pub map: bun_collections::StringHashMap<Box<[u8]>>,
             }
             impl FileMap {
-                /// On Windows a key has forward slashes, and its drive letter is uppercase.
+                /// A key has forward slashes, but in names that the disk has. On Windows its drive letter is uppercase.
                 pub fn key(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-                    let mut key = bun_paths::to_portable(path);
+                    use bun_paths::portable::from_portable_rooted;
+                    let mut key = match bun_paths::to_portable(path) {
+                        std::borrow::Cow::Borrowed(path) => {
+                            bun_sys::converted_spelling(path, from_portable_rooted)
+                        }
+                        converted => converted,
+                    };
                     if cfg!(windows) && matches!(*key, [b'a'..=b'z', b':', b'/', ..]) {
                         key.to_mut()[0].make_ascii_uppercase();
                     }
@@ -1029,8 +1035,8 @@ pub mod bv2_impl {
                     let parts = [base, source_file, b"..", &specifier];
                     let mut joined = bun_paths::Path::resolve(&parts);
                     joined.copy_trailing_sep_from(&specifier);
-                    let (key, _) = self.map.get_key_value(joined.into_portable().as_bytes())?;
-                    Some(Self::result_for_key(dupe(key.as_ref())))
+                    let (key, _) = self.get_key_value(&joined)?;
+                    Some(Self::result_for_key(dupe(key)))
                 }
 
                 #[inline]
@@ -3981,6 +3987,7 @@ pub mod bv2_impl {
                                 ext = &ext[1..];
                             }
                             template.placeholder.ext = ext.to_vec().into_boxed_slice();
+                            template.placeholder.replace_backslashes();
 
                             if template.needs(options::PlaceholderField::Hash) {
                                 template.placeholder.hash = Some(

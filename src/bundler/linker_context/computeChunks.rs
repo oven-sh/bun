@@ -594,12 +594,12 @@ pub(crate) fn compute_chunks<'a>(
             continue;
         }
 
-        if chunk.entry_point.is_entry_point()
+        let mirrors_source = chunk.entry_point.is_entry_point()
             && (matches!(chunk.content, chunk::Content::Html)
                 || (kinds[chunk.entry_point.source_index() as usize]
                     == crate::EntryPoint::Kind::UserSpecified
-                    && !chunk.flags.contains(chunk::Flags::HAS_HTML_CHUNK)))
-        {
+                    && !chunk.flags.contains(chunk::Flags::HAS_HTML_CHUNK)));
+        if mirrors_source {
             // Use fileWithTarget template if there are HTML imports and user hasn't manually set naming
             if has_server_html_imports && bv2.transpiler().options.entry_naming.is_empty() {
                 chunk.template = PathTemplate::FILE_WITH_TARGET.into();
@@ -682,6 +682,10 @@ pub(crate) fn compute_chunks<'a>(
 
             let root_dir = &this.resolver.opts.root_dir;
             chunk.template.placeholder.dir = Path::relative(root_dir, dir).as_bytes().into();
+        }
+
+        if !mirrors_source {
+            chunk.template.placeholder.replace_backslashes();
         }
     }
 

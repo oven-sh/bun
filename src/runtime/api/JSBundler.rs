@@ -1094,7 +1094,9 @@ pub(crate) mod js_bundler {
             }
 
             if let Some(slice) = config.get_optional_slice(global_this, b"tsconfig")? {
-                this.tsconfig_override.append_slice_exact(slice.slice())?;
+                let cwd = bun_core::top_level_dir();
+                let path = bun_sys::typed_spelling(cwd, slice.slice(), bun_paths::from_portable);
+                this.tsconfig_override.append_slice_exact(&path)?;
                 drop(slice);
             }
 

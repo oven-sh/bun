@@ -553,10 +553,14 @@ describe("bun", () => {
   });
 
   describe("test command line arguments", () => {
-    test.skipIf(isWindows)("a backslash in --config is part of the file name", async () => {
+    test
+      .skipIf(isWindows)
+      .each([
+        [{ "cfg\\x.toml": `preload = ["./real.ts"]` }],
+        [{ "cfg/x.toml": `preload = ["./real.ts"]`, "cfg\\x.toml": `preload = ["./decoy.ts"]` }],
+      ])("a backslash in --config separates unless that leads nowhere: %j", async files => {
       using dir = tempDir("config-backslash", {
-        "cfg\\x.toml": `preload = ["./real.ts"]`,
-        "cfg/x.toml": `preload = ["./decoy.ts"]`,
+        ...files,
         "real.ts": `console.log("real");`,
         "decoy.ts": `console.log("decoy");`,
         "main.ts": `console.log("main");`,

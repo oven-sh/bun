@@ -5,8 +5,6 @@
 //! `bun_clap::parse_param!` proc-macro (compile-time spec parsing) plus a
 //! const-fn slice concat (`bun_clap::concat_params!`).
 
-use std::borrow::Cow;
-
 use bun_options_types::LoaderExt as _;
 
 use bstr::BStr;
@@ -45,14 +43,6 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
 /// Whether `bun test` takes the argument for a path. One such argument makes paths of all.
 pub(crate) fn reads_as_path_of_tests(argument: &[u8]) -> bool {
     !bun_paths::is_package_path(argument) && !matches!(argument, b"." | b"..")
-}
-
-/// [`bun_sys::existing_spelling`], but `\a` is `/a`.
-pub(crate) fn existing_spelling_rooted(path: &[u8]) -> Cow<'_, [u8]> {
-    match bun_sys::existing_spelling(bun_sys::Fd::cwd(), path) {
-        Cow::Owned(_) if path.starts_with(b"\\") => from_portable_rooted(path),
-        spelling => spelling,
-    }
 }
 
 /// `bun test --files-from <list>`. Every line is a path, never a filter. A list
@@ -1260,7 +1250,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.original_cwd = Some(Box::from(original_cwd));
             original_cwd
         };
-        let out_z = bun_paths::Path::resolve(&[base, &existing_spelling_rooted(cwd_arg)]);
+        let out_z = bun_paths::Path::resolve(&[
+            base,
+            &bun_sys::typed_spelling(base, cwd_arg, from_portable_rooted),
+        ]);
         if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
             Output::err(
                 err,
@@ -1411,7 +1404,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
         let cwd = ctx.args.absolute_working_dir.as_deref().unwrap();
-        let mut path = bun_paths::Path::resolve(&[cwd, ts]);
+        let spelling = bun_sys::typed_spelling(cwd, ts, bun_paths::from_portable);
+        let mut path = bun_paths::Path::resolve(&[cwd, &spelling]);
         path.copy_trailing_sep_from(ts);
         path.as_bytes().into()
     });
@@ -2243,7 +2237,8 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 
     if let Some(dir) = args.option(b"--coverage-dir") {
-        ctx.test_options.coverage.reports_directory = Box::<[u8]>::from(dir);
+        ctx.test_options.coverage.reports_directory =
+            bun_sys::converted_spelling(dir, bun_paths::from_portable).into();
     }
 
     if !args.options(b"--path-ignore-patterns").is_empty() {

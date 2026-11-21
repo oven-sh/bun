@@ -2862,6 +2862,33 @@ test.concurrent.each([
   expect(requests).toEqual([]);
 });
 
+test.concurrent.each([
+  [".\\src", "lib/sub/mod", "local"],
+  ["src\\", "lib/sub/mod", "local"],
+  ["<dir>\\src", "lib/sub/mod", "local"],
+  ["./src", "lib/sub\\mod", isWindows ? "local" : "not found"],
+])("auto-install does not ask for what NODE_PATH=%s has: %s", async (NODE_PATH, specifier, expected) => {
+  const requests: string[] = [];
+  using registry = Bun.serve({
+    port: 0,
+    fetch(request) {
+      requests.push(new URL(request.url).pathname);
+      return new Response(null, { status: 404 });
+    },
+  });
+  using dir = autoInstallTempDir("resolve-backslash-node-path", {
+    "src/lib/sub/mod.js": `module.exports = "local";`,
+    "entry.js": `try { console.log(require(${JSON.stringify(specifier)})); } catch { console.log("not found"); }`,
+  });
+  const result = await bunRun(join(String(dir), "entry.js"), {
+    BUN_CONFIG_REGISTRY: registry.url.href,
+    BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+    NODE_PATH: NODE_PATH.replace("<dir>", () => String(dir)),
+  });
+  expect(result).toSpawn(expected);
+  expect(requests).toEqual([]);
+});
+
 test.concurrent.skipIf(isWindows).each([
   ["bun a\\b.js", ["a\\b.js"]],
   ["bun run ./a\\b.js", ["run", "./a\\b.js"]],
@@ -2934,6 +2961,27 @@ test.concurrent.skipIf(isWindows).each([
     "entry.js": `import which from "@"; console.log(which);`,
   });
   expect(await bunRun(join(String(dir), "entry.js"))).toSpawn(expected);
+});
+
+test.concurrent.each([
+  ["tsconfig.json", { compilerOptions: { baseUrl: "<dir>\\src" } }],
+  ["tsconfig.json", { compilerOptions: { paths: { which: ["<dir>\\src\\which.js"] } } }],
+  ["tsconfig.json", { compilerOptions: { paths: { "*": ["<dir>\\src\\*"] } } }],
+  ["tsconfig.json", { extends: "<dir>\\src\\base.json" }],
+  ["package.json", { browser: { which: "<dir>\\src\\which.js" } }],
+  ["package.json", { browser: { "./node_modules/which/index.js": "<dir>\\src\\which.js" } }],
+  ["node_modules/which/package.json", { main: "<dir>\\src\\which.js" }],
+])("a backslash separates behind an absolute path in %s: %j", async (file, contents) => {
+  using dir = tempDir("resolve-config-absolute-backslash", {
+    "src/base.json": JSON.stringify({ compilerOptions: { baseUrl: "." } }),
+    "src/which.js": `export default "local";`,
+    "node_modules/which/index.js": `export default "installed";`,
+    "entry.js": `import which from "which"; console.log(which);`,
+  });
+  const text = JSON.stringify(contents).replace("<dir>", () => JSON.stringify(String(dir)).slice(1, -1));
+  await Bun.write(join(String(dir), file), text);
+  const { outputs } = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], minify: true });
+  expect(await outputs[0].text()).toContain(`"local"`);
 });
 
 test.concurrent.each([

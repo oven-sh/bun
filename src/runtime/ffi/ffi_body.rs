@@ -677,7 +677,8 @@ impl CompileC {
                 ];
 
                 for sdkroot in dirs_to_try {
-                    if !sdkroot.is_empty() {
+                    // It can be the name of an SDK.
+                    if path::is_absolute(sdkroot) {
                         let include_dir = path::Path::resolve(&[sdkroot, b"usr/include"]);
                         if state.add_sys_include_path(&include_dir).is_err() {
                             global_this.throw(format_args!("TinyCC failed to add sysinclude path"));

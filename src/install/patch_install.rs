@@ -107,10 +107,9 @@ pub struct InstallContext {
 
 /// A relative path in `patchedDependencies` is resolved against the project directory.
 fn resolve_patchfile_path(project_dir: &[u8], patchfile_path: &[u8]) -> path::Path {
-    let resolve = |spelling: &[u8]| {
-        let mut resolved = path::Path::resolve(&[project_dir, spelling]);
-        resolved.copy_trailing_sep_from(spelling);
-        resolved
+    let resolve = |spelling: &[u8]| match path::is_absolute(spelling) {
+        true => path::Path::join(&[spelling]),
+        false => path::Path::join(&[project_dir, spelling]),
     };
     let as_written = resolve(patchfile_path);
     match path::from_portable(patchfile_path) {

@@ -614,8 +614,12 @@ impl RuntimeTranspilerCache {
 
         let top = FileSystem::get().top_level_dir();
 
+        let below = |dir: &[u8], subdir: &[u8]| {
+            Path::resolve(&[top, &bun_paths::portable::from_portable_rooted(dir), subdir])
+        };
+
         if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
-            return Some(Path::resolve(&[top, dir, b"bun/@t@"]));
+            return Some(below(dir, b"bun/@t@"));
         }
 
         // macOS uses ~/Library/Caches, not the install cache.
@@ -624,8 +628,7 @@ impl RuntimeTranspilerCache {
         } else {
             b".bun/install/cache/@t@"
         };
-        let home = env_var::HOME.get()?;
-        Some(Path::resolve(&[top, home, cache_subdir]))
+        Some(below(env_var::HOME.get()?, cache_subdir))
     }
 
     pub(crate) fn from_file(

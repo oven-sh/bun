@@ -48,9 +48,12 @@ pub struct WorkspaceGraph {
 enum Base {
     All,
     Name(Prepared<Box<[u8]>>),
-    Path(Prepared<Box<[u8]>>),
-    Subtree(Prepared<Box<[u8]>>),
+    Path(Spellings),
+    Subtree(Spellings),
 }
+
+/// With `\` as a separator, and as an escape if that selects nothing.
+type Spellings = [Prepared<Box<[u8]>>; 2];
 
 struct Selector {
     negated: bool,
@@ -107,6 +110,21 @@ pub fn abs_posix_dir(base: &[u8], path: &[u8]) -> Box<[u8]> {
     bun_paths::without_trailing_sep(&Path::resolve(&[base, path]).into_portable()).into()
 }
 
+/// Whether every `\` stands before what a glob would not take for a letter.
+fn only_escapes(mut glob: &[u8]) -> bool {
+    while let Some((_, rest)) = strings::split_once_char(glob, b'\\') {
+        let [
+            b'*' | b'?' | b'[' | b']' | b'{' | b'}' | b'!' | b',' | b'\\',
+            rest @ ..,
+        ] = rest
+        else {
+            return false;
+        };
+        glob = rest;
+    }
+    true
+}
+
 /// Accepted shapes: `!`* then `...`/`...^` prefix and/or `...`/`^...` suffix around `*`, `{dir}`, `./path` or a name glob.
 fn parse(raw: &[u8], original_cwd: &[u8]) -> Selector {
     let (mut remain, negated) = strip_negations(raw);
@@ -139,15 +157,20 @@ fn parse(raw: &[u8], original_cwd: &[u8]) -> Selector {
         Global::crash();
     }
 
-    let resolve = |part: &[u8]| -> Prepared<Box<[u8]>> {
+    let resolve = |part: &[u8]| -> Spellings {
         // A glob reads `\` as an escape.
-        let base = strings::replace_owned(&to_portable(original_cwd), b"\\", b"\\\\");
-        let joined = abs_posix_dir(&base, part);
-        if joined.len() >= MAX_PATH_BYTES {
-            Output::err_generic("--filter \"{}\" path is too long", (BStr::new(raw),));
-            Global::crash();
-        }
-        Prepared::new(joined)
+        let escape = |path: &[u8]| strings::replace_owned(&to_portable(path), b"\\", b"\\\\");
+        let base = escape(original_cwd);
+        let converted = escape(&bun_sys::converted_spelling(part, bun_paths::from_portable));
+        let escaped = if only_escapes(part) { part } else { &converted };
+        [&converted, escaped].map(|part| {
+            let joined = abs_posix_dir(&base, part);
+            if joined.len() >= MAX_PATH_BYTES {
+                Output::err_generic("--filter \"{}\" path is too long", (BStr::new(raw),));
+                Global::crash();
+            }
+            Prepared::new(joined)
+        })
     };
 
     let base = if remain == b"*" || remain == b"**" {
@@ -169,7 +192,7 @@ fn parse(raw: &[u8], original_cwd: &[u8]) -> Selector {
     }
 }
 
-fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> bool {
+fn base_matches(base: &Base, spelling: usize, c: &Candidate<'_>, explicit_root_only: bool) -> bool {
     match base {
         // A package.json without a name (bun run --filter's walk) is only selectable by path.
         Base::All => {
@@ -180,11 +203,11 @@ fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> boo
             }
         }
         Base::Name(glob) => glob.r#match(c.name).matches(),
-        Base::Path(glob) => glob.r#match(c.abs_posix_dir).matches(),
-        Base::Subtree(glob) => {
+        Base::Path(globs) => globs[spelling].r#match(c.abs_posix_dir).matches(),
+        Base::Subtree(globs) => {
             let mut dir = c.abs_posix_dir;
             loop {
-                if glob.r#match(dir).matches() {
+                if globs[spelling].r#match(dir).matches() {
                     return true;
                 }
                 match strings::last_index_of_char(dir, b'/') {
@@ -276,9 +299,14 @@ pub fn select(
     for (index, raw) in patterns.iter().enumerate() {
         let sel = parse(raw, original_cwd);
         let mut set = bitset(n);
-        for (i, c) in candidates.iter().enumerate() {
-            if base_matches(&sel.base, c, explicit_root_only) {
-                set.set(i);
+        for spelling in 0..2 {
+            for (i, c) in candidates.iter().enumerate() {
+                if base_matches(&sel.base, spelling, c, explicit_root_only) {
+                    set.set(i);
+                }
+            }
+            if set.count() > 0 {
+                break;
             }
         }
         if sel.dependencies || sel.dependents {
@@ -300,7 +328,7 @@ pub fn select(
 
     if !any_positive {
         for (i, c) in candidates.iter().enumerate() {
-            if base_matches(&Base::All, c, explicit_root_only) {
+            if base_matches(&Base::All, 0, c, explicit_root_only) {
                 include.set(i);
             }
         }

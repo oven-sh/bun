@@ -2882,10 +2882,9 @@ describe.concurrent("global directories from the environment", () => {
   }
 
   test.each([
-    ["bin", { BUN_INSTALL: ".here" }, "cwd/.here/bin\n"],
     ["bin", { BUN_INSTALL_BIN: "here" }, "home/.bun/install/global/here\n"],
     ["bin", { BUN_INSTALL_BIN: "../bin", BUN_INSTALL_GLOBAL_DIR: "here/global" }, "cwd/here/bin\n"],
-    ["bin", { XDG_CACHE_HOME: "here" }, "cwd/here/.bun/bin\n"],
+    ["bin", { XDG_CACHE_HOME: "here" }, "home/.bun/bin\n"],
     [
       "cache",
       { XDG_CACHE_HOME: "here", BUN_INSTALL_GLOBAL_DIR: "~/global", BUN_INSTALL_BIN: "~/bin" },
@@ -2893,7 +2892,11 @@ describe.concurrent("global directories from the environment", () => {
     ],
     ["bin", { BUN_INSTALL: "" }, "home/.bun/bin\n"],
     ["bin", { XDG_CACHE_HOME: "" }, "home/.bun/bin\n"],
-    ["bin", { BUN_INSTALL_BIN: "~\\here" }, isWindows ? "home/here\n" : "home/.bun/install/global/~\\here\n"],
+    ["bin", { BUN_INSTALL_BIN: "~\\here" }, "home/here\n"],
+    ["bin", { BUN_INSTALL: "~\\a\\b" }, "home/a/b/bin\n"],
+    ["bin", { BUN_INSTALL: "~/a\\b" }, "home/a/b/bin\n"],
+    ["cache", { BUN_INSTALL_CACHE_DIR: "~\\here" }, "home/here"],
+    ["cache", { BUN_INSTALL_CACHE_DIR: "~/a\\b" }, "home/a/b"],
     ["bin", { BUN_INSTALL_BIN: "~/a\\b" }, isWindows ? "home/a/b\n" : "home/a\\b\n"],
     ["bin", { BUN_INSTALL_GLOBAL_DIR: "~\\here" }, "home/.bun/bin\n"],
   ])("bun pm %s -g with %j", async (subcommand, variables, expected) => {
@@ -2922,8 +2925,9 @@ describe.concurrent("global directories from the environment", () => {
   });
 
   test.each(["~", "absolute"])("cache rm refuses to delete a BUN_INSTALL with a backslash (%s)", async kind => {
-    using side = tempDir("pm-bun-install-backslashes", { ...sideFiles, ...projectFiles, "home/to\\ols/bin/bun": "" });
-    const bunInstall = join(String(side), "home", "to\\ols");
+    const folder = kind === "~" ? "home/to/ols" : "home/to\\ols";
+    using side = tempDir("pm-bun-install-backslashes", { ...sideFiles, ...projectFiles, [`${folder}/bin/bun`]: "" });
+    const bunInstall = join(String(side), folder);
     const value = kind === "~" ? "~/to\\ols" : bunInstall;
     const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: value, BUN_INSTALL_CACHE_DIR: value });
 
@@ -2940,98 +2944,85 @@ describe.concurrent("global directories from the environment", () => {
     expect(await readdirSorted(tools)).toEqual(["bun"]);
   });
 
-  test.skipIf(isWindows)("BUN_INSTALL with a leading backslash is a name", async () => {
-    using side = tempDir("pm-cache-dir-rooted", { ...sideFiles, ...projectFiles });
-    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: "\\x" });
+  test.each([
+    [[], { BUN_INSTALL_CACHE_DIR: "..\\cache" }],
+    [["--cache-dir=..\\cache"], {}],
+  ])("a relative cache directory with a backslash leads out of the project: %j %j", async (args, variables) => {
+    using side = tempDir("pm-cache-dir-backslash", { ...sideFiles, ...projectFiles });
+    const spawnEnv = cacheEnv(String(side), variables);
 
-    expect(await pmCache([], join(String(side), "proj"), spawnEnv)).toEqual({
-      stdout: join(String(side), "proj/\\x/install/cache"),
+    expect(await pmCache(args, join(String(side), "proj"), spawnEnv)).toEqual({
+      stdout: join(String(side), "cache"),
       stderr: "",
       exitCode: 0,
     });
   });
 
-  test.skipIf(isWindows).each(["x", "real/x"])(
-    "cache rm refuses to delete %s when BUN_INSTALL is link/../x",
-    async cache => {
-      using side = tempDir("pm-bun-install-link", {
-        ...sideFiles,
-        ...projectFiles,
-        "real/dir/.keep": "",
-        [`${cache}/bin/bun`]: "",
-      });
-      symlinkSync("real/dir", join(String(side), "link"));
-      const cacheDir = join(String(side), cache);
-      const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: `${side}/link/../x`, BUN_INSTALL_CACHE_DIR: cacheDir });
+  test("cache rm refuses to delete what a relative BUN_INSTALL with a backslash names", async () => {
+    using side = tempDir("pm-bun-install-relative", { ...sideFiles, ...projectFiles, "tools/bin/bun": "" });
+    const tools = join(String(side), "tools");
+    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: "..\\tools", BUN_INSTALL_CACHE_DIR: tools });
 
-      expect(await pmCache(["rm"], join(String(side), "proj"), spawnEnv)).toEqual(refused(cacheDir, "$BUN_INSTALL"));
-    },
-  );
-
-  test.skipIf(isWindows).each([
-    ["rm -g", "proj", "real/x"],
-    ["rm", "proj/sub", "x"],
-  ])("cache %s in %s refuses to delete %s when BUN_INSTALL is ../link/../x", async (args, cwd, cache) => {
-    using side = tempDir("pm-bun-install-link-relative", {
-      ...sideFiles,
-      ...projectFiles,
-      "proj/sub/.keep": "",
-      "real/dir/.keep": "",
-      [`${cache}/bin/bun`]: "",
-    });
-    symlinkSync("real/dir", join(String(side), "link"));
-    const cacheDir = join(String(side), cache);
-    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: "../link/../x", BUN_INSTALL_CACHE_DIR: cacheDir });
-
-    expect(await pmCache(args.split(" "), join(String(side), cwd), spawnEnv)).toEqual(
-      refused(cacheDir, "$BUN_INSTALL"),
-    );
-    expect(await readdirSorted(cacheDir)).toEqual(["bin"]);
+    expect(await pmCache(["rm"], join(String(side), "proj"), spawnEnv)).toEqual(refused(tools, "$BUN_INSTALL"));
+    expect(await readdirSorted(tools)).toEqual(["bin"]);
   });
 
-  test("a relative BUN_INSTALL resolves against the project, or the cwd with -g", async () => {
-    using side = tempDir("pm-relative-bun-install-side", sideFiles);
-    using root = tempDir("pm-relative-bun-install", { "package.json": JSON.stringify({ name: "a" }), "src/.keep": "" });
-    const cwd = join(String(root), "src");
-    const envWith = (variables = {}) => cacheEnv(String(side), { BUN_INSTALL: "tools/bun", ...variables });
-
-    await using proc = spawn({ cmd: [bunExe(), "link"], cwd, env: envWith(), stdout: "ignore", stderr: "pipe" });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    expect(await readdirSorted(join(String(root), "tools/bun/install/global/node_modules"))).toEqual(["a"]);
-
-    for (const [flags, base] of [
-      [[], String(root)],
-      [["-g"], cwd],
-    ] as const) {
-      const tools = join(base, "tools");
-      expect(await pmCache(["rm", ...flags], cwd, envWith({ BUN_INSTALL_CACHE_DIR: tools }))).toEqual(
-        refused(tools, "$BUN_INSTALL"),
-      );
+  test.skipIf(isWindows)("the global directory stays where it is when its name has a backslash", async () => {
+    using dir = tempDir("pm-global-stable", files);
+    const BUN_INSTALL = join(String(dir), "a\\b");
+    for (let run = 0; run < 2; run++) {
+      const result = await pmGlobal(String(dir), "cache", { BUN_INSTALL, BUN_INSTALL_BIN: join(BUN_INSTALL, "bin") });
+      expect(result).toEqual({ stdout: join(BUN_INSTALL, "install", "cache"), stderr: "", exitCode: 0 });
     }
+    expect(await readdirSorted(String(dir))).toEqual(["a\\b", "cwd", "home"]);
   });
 
-  test("a relative BUN_INSTALL is one directory for link and unlink in the members of a workspace", async () => {
-    using side = tempDir("pm-relative-bun-install-side", sideFiles);
-    using root = tempDir("pm-relative-bun-install-member", {
-      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
-      "packages/a/package.json": JSON.stringify({ name: "a" }),
-      "packages/b/package.json": JSON.stringify({ name: "b" }),
-    });
-    const env = cacheEnv(String(side), { BUN_INSTALL: "tools/bun" });
+  test("the user's .bunfig.toml is found through a backslash", async () => {
+    using dir = tempDir("pm-xdg-backslash", { ...files, "xdg/.bunfig.toml": `install.globalBinDir = "~/here"` });
+    const { stdout, stderr, exitCode } = await pmGlobal(String(dir), "bin", { XDG_CONFIG_HOME: `${dir}\\xdg` });
 
-    for (const [member, args, linked] of [
-      ["a", ["link"], ["a"]],
-      ["b", ["link", "a"], ["a"]],
-      ["a", ["unlink"], []],
-    ] as const) {
-      const cwd = join(String(root), "packages", member);
+    expect({ stdout, stderr }).toEqual({ stdout: join(String(dir), "home", "here") + "\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["BUN_INSTALL", "here", expect.stringContaining("$BUN_INSTALL is not an absolute path"), 1],
+    ["XDG_CACHE_HOME", "here/.bun", "", 0],
+  ])("a relative %s does not let the project choose the global directory", async (variable, planted, error, code) => {
+    using dir = tempDir("pm-global-planted", {
+      ...files,
+      "cwd/package.json": JSON.stringify({ name: "documents" }),
+      [`cwd/${planted}/install/global/bunfig.toml`]: "does not parse",
+      [`cwd/${planted}/install/global/node_modules/documents/kept.txt`]: "",
+    });
+    const home = join(String(dir), "home");
+    const env = { ...envWithoutInstallDirs, [isWindows ? "USERPROFILE" : "HOME"]: home, [variable]: "here" };
+
+    for (const args of [["link"], ["pm", "bin", "-g"]]) {
+      const cwd = join(String(dir), "cwd");
       await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "ignore", stderr: "pipe" });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("error:");
-      expect(exitCode).toBe(0);
-      expect(await readdirSorted(join(String(root), "tools/bun/install/global/node_modules"))).toEqual(linked);
+      expect({ stderr, exitCode }).toEqual({ stderr: error, exitCode: code });
     }
+    expect(await readdirSorted(home)).toEqual(code === 0 ? [".bun", ".npmrc"] : [".npmrc"]);
+    expect(await readdirSorted(join(String(dir), "cwd", planted, "install/global/node_modules/documents"))).toEqual([
+      "kept.txt",
+    ]);
+  });
+
+  test.skipIf(isWindows)("--config finds a name with a backslash in the home directory", async () => {
+    using side = tempDir("pm-config-home", {
+      ...sideFiles,
+      ...projectFiles,
+      "home/a\\b.toml": `install.cache = "~/from-config"`,
+    });
+    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: undefined, BUN_INSTALL_CACHE_DIR: undefined });
+
+    expect(await pmCache(["--config=~/a\\b.toml"], join(String(side), "proj"), spawnEnv)).toEqual({
+      stdout: join(String(side), "home", "from-config"),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

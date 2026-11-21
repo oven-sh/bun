@@ -34,8 +34,6 @@ pub struct Options {
 
     pub(crate) global_bin_dir: bun_sys::Fd,
     pub(crate) explicit_global_directory: &'static [u8],
-    /// The workspace root, which `bun link` does not move to.
-    pub(crate) root_above_link: Option<&'static [u8]>,
     /// destination directory to link bins into
     // must be a variable due to global installs and bunx
     pub bin_path: &'static ZStr,
@@ -135,7 +133,6 @@ impl Default for Options {
             global: false,
             global_bin_dir: bun_sys::Fd::INVALID,
             explicit_global_directory: b"",
-            root_above_link: None,
             bin_path: bun_paths::path_literal!("node_modules/.bin"),
             did_override_default_scope: false,
             registry_from_command_line: false,
@@ -274,16 +271,6 @@ impl AuthType {
 impl Options {
     pub fn should_print_command_name(&self) -> bool {
         self.log_level != LogLevel::Silent && self.do_.contains(Do::SUMMARY)
-    }
-
-    /// What a relative `$BUN_INSTALL` starts at. With `--global`, the project itself is found through it.
-    pub fn env_base_dir(&self) -> &'static [u8] {
-        let fs = bun_paths::fs::FileSystem::instance();
-        if self.global {
-            fs.initial_top_level_dir()
-        } else {
-            self.root_above_link.unwrap_or_else(|| fs.top_level_dir())
-        }
     }
 
     /// Returns the dependency groups that are installed for a package with this resolution.
@@ -631,20 +618,22 @@ fn make_open_dir(path: &[u8]) -> crate::Result<bun_sys::Fd> {
 }
 
 /// Opens `<dir>/<subdir>`. `dir` comes from the environment and can have any length.
-fn make_open_dir_under(base_dir: &[u8], dir: &[u8], subdir: &[u8]) -> crate::Result<bun_sys::Fd> {
-    make_open_dir(&Path::resolve(&[base_dir, &expand_home(dir), subdir]).check_len()?)
+fn make_open_dir_under(dir: &[u8], subdir: &[u8]) -> crate::Result<bun_sys::Fd> {
+    make_open_dir(&Path::resolve(&[dir, subdir]).check_len()?)
 }
 
-pub(crate) fn has_relative_env_dir() -> bool {
-    let dirs = [
-        env_var::BUN_INSTALL.get_not_empty(),
-        env_var::XDG_CACHE_HOME.get_not_empty(),
-        env_var::HOME.get_not_empty(),
-    ];
-    (dirs.into_iter().flatten()).any(|dir| !bun_paths::is_absolute(&expand_home(dir)))
+/// `None` for a relative value, which would let the working directory choose.
+fn usable(dir: &[u8]) -> Option<Box<[u8]>> {
+    let dir = directory_from_env(dir);
+    bun_paths::is_absolute(&dir).then_some(dir)
 }
 
-pub fn open_global_dir(base_dir: &[u8], explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
+/// Bun creates names below it, so what exists cannot decide what a `\` means.
+pub(crate) fn directory_from_env(dir: &[u8]) -> Box<[u8]> {
+    expand_home(&bun_paths::portable::from_portable_rooted(dir))
+}
+
+pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
         return make_open_dir(&expand_home(home_dir));
     }
@@ -654,23 +643,20 @@ pub fn open_global_dir(base_dir: &[u8], explicit_global_dir: &[u8]) -> crate::Re
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get_not_empty() {
-        return make_open_dir_under(base_dir, home_dir, b"install/global");
+        let home_dir = usable(home_dir).ok_or(crate::Error::RelativeBunInstall)?;
+        return make_open_dir_under(&home_dir, b"install/global");
     }
 
-    if let Some(home_dir) = env_var::XDG_CACHE_HOME
-        .get_not_empty()
-        .or_else(|| env_var::HOME.get_not_empty())
+    if let Some(home_dir) = (env_var::XDG_CACHE_HOME.get().and_then(usable))
+        .or_else(|| env_var::HOME.get().and_then(usable))
     {
-        return make_open_dir_under(base_dir, home_dir, b".bun/install/global");
+        return make_open_dir_under(&home_dir, b".bun/install/global");
     }
 
     Err(crate::Error::NoGlobalDirectoryFound)
 }
 
-pub(crate) fn open_global_bin_dir(
-    base_dir: &[u8],
-    opts_: Option<&Api::BunInstall>,
-) -> crate::Result<bun_sys::Fd> {
+pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Result<bun_sys::Fd> {
     if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
         return make_open_dir(&expand_home(home_dir));
     }
@@ -683,14 +669,14 @@ pub(crate) fn open_global_bin_dir(
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get_not_empty() {
-        return make_open_dir_under(base_dir, home_dir, b"bin");
+        let home_dir = usable(home_dir).ok_or(crate::Error::RelativeBunInstall)?;
+        return make_open_dir_under(&home_dir, b"bin");
     }
 
-    if let Some(home_dir) = env_var::XDG_CACHE_HOME
-        .get_not_empty()
-        .or_else(|| env_var::HOME.get_not_empty())
+    if let Some(home_dir) = (env_var::XDG_CACHE_HOME.get().and_then(usable))
+        .or_else(|| env_var::HOME.get().and_then(usable))
     {
-        return make_open_dir_under(base_dir, home_dir, b".bun/bin");
+        return make_open_dir_under(&home_dir, b".bun/bin");
     }
 
     Err(crate::Error::MissingGlobalBinDirectoryTrySettingBUNINSTALL)

@@ -11,6 +11,7 @@ use bun_paths::portable::{from_portable_rooted, from_portable_specifier};
 use bun_paths::{MAX_PATH_BYTES, NODE_MODULES_NEEDLE, Path, PathBuffer, from_portable};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
+use bun_sys::converted_spelling;
 
 use bun_options_types::bundle_enums::ModuleType;
 use bun_sys::Fd;
@@ -557,7 +558,7 @@ impl PackageJSON {
                     if !str.is_empty() {
                         package_json
                             .main_fields
-                            .put(main, from_portable_rooted(str).into())
+                            .put(main, converted_spelling(str, from_portable_rooted).into())
                             .expect("unreachable");
                     }
                 }
@@ -606,7 +607,11 @@ impl PackageJSON {
                                 // If this is a string, it's a replacement package
                                 package_json
                                     .browser_map
-                                    .put(key, from_portable_specifier(str.slice()).into())
+                                    .put(
+                                        key,
+                                        converted_spelling(str.slice(), from_portable_specifier)
+                                            .into(),
+                                    )
                                     .expect("unreachable");
                             }
                             js_ast::E::JsonValue::Boolean(boolean) => {

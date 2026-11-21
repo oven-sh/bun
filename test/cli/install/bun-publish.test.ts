@@ -1847,6 +1847,20 @@ describe.concurrent("tarball path", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.skipIf(isWindows).each([".", "<dir>/x/.."])("is what pack wrote for %s\\dist\\a.tgz", async base => {
+    using dir = packageDir("publish-tarball-path-backslash", "publish-tarball-path-backslash");
+    const typed = base.replace("<dir>", () => String(dir)) + "\\dist\\a.tgz";
+    mkdirSync(join(String(dir), "dist"));
+    await pack(String(dir), env, `--filename=${typed}`);
+    expect(existsSync(join(String(dir), "dist", "a.tgz"))).toBeTrue();
+    await write(typed.startsWith("/") ? typed : join(String(dir), typed), "not the tarball");
+
+    const { err, exitCode } = await publish(dryRunEnv, String(dir), typed, "--dry-run");
+
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(isWindows)("with a trailing slash is not read", async () => {
     using dir = packageDir("publish-tarball-path-slash", "publish-tarball-path-slash");
     await pack(String(dir), env);

@@ -12,6 +12,7 @@ use bun_dotenv as DotEnv;
 use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
+use bun_paths::portable::from_portable_rooted;
 use bun_paths::{OSPathSlice, Path};
 use bun_resolver::fs;
 use bun_sys::FdDirExt as _;
@@ -307,10 +308,10 @@ impl CreateCommand {
 
         env_loader.load_process()?;
 
-        let dirname: &[u8] = if positionals.len() == 1 {
-            bun_paths::basename(template)
+        let dirname: &[u8] = &if positionals.len() == 1 {
+            bun_paths::basename(template).into()
         } else {
-            positionals[1]
+            bun_sys::converted_spelling(positionals[1], from_portable_rooted)
         };
 
         let destination = (filesystem.dirname_store)
@@ -1163,7 +1164,8 @@ impl CreateCommand {
             path
         };
         let template: &[u8] = 'brk: {
-            let Ok(outdir_path) = join(&[positional]).check_len() else {
+            let typed = typed_path(positional);
+            let Ok(outdir_path) = join(&[&typed]).check_len() else {
                 pretty_errorln!("<r><red>error<r>: template name too long");
                 Global::exit(1);
             };
@@ -1171,7 +1173,7 @@ impl CreateCommand {
                 bun_sys::exists_at_type(bun_sys::Fd::cwd(), &outdir_path),
                 Ok(bun_sys::ExistsAtType::File)
             ) {
-                let extension = bun_paths::extension(positional);
+                let extension = bun_paths::extension(&typed);
                 if let Some(tag) = ExampleTag::from_file_extension(extension) {
                     example_tag = tag;
                     break 'brk crate::cli::cli_dupe(&outdir_path);
@@ -1184,7 +1186,7 @@ impl CreateCommand {
                 }
             }
 
-            if !names_path_inside_dir(positional) {
+            if !names_path_inside_dir(positional) || !names_path_inside_dir(&typed) {
                 pretty_errorln!(
                     "<r><red>error<r>: <b>\"{}\"<r> is not a template name. Pass a template name, a <b>user/repo<r> on GitHub, or the absolute path of a folder.",
                     bstr::BStr::new(positional),
@@ -1192,23 +1194,27 @@ impl CreateCommand {
                 Global::exit(1);
             }
 
-            if bun_paths::is_absolute(positional) {
+            if bun_paths::is_absolute(&typed) {
                 example_tag = ExampleTag::LocalFolder;
-                break 'brk positional;
+                break 'brk crate::cli::cli_dupe(&typed);
             }
 
-            let create_dir = env_loader.map.get(b"BUN_CREATE_DIR");
+            let create_dir = env_loader.map.get(b"BUN_CREATE_DIR").map(typed_path);
             let home_dir = env_loader.map.get(b"HOME");
-            let template_dirs: [Option<Vec<&[u8]>>; 3] = [
-                create_dir.map(|dir| vec![dir, positional]),
-                Some(vec![filesystem.top_level_dir(), BUN_CREATE_DIR, positional]),
-                home_dir.map(|dir| vec![dir, BUN_CREATE_DIR, positional]),
+            let template_dirs: [Option<[&[u8]; 2]>; 3] = [
+                create_dir.as_deref().map(|dir| [dir, b""]),
+                Some([filesystem.top_level_dir(), BUN_CREATE_DIR]),
+                home_dir.map(|dir| [dir, BUN_CREATE_DIR]),
             ];
-            for parts in template_dirs.iter().flatten() {
-                let outdir_path = join(parts);
-                if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), &outdir_path).unwrap_or(false) {
-                    example_tag = ExampleTag::LocalFolder;
-                    break 'brk crate::cli::cli_dupe(&outdir_path);
+            let converted = from_portable_rooted(positional);
+            for name in [&converted, positional] {
+                for [dir, subdir] in template_dirs.into_iter().flatten() {
+                    let outdir_path = join(&[dir, subdir, name]);
+                    if let Ok(true) = bun_sys::directory_exists_at(bun_sys::Fd::cwd(), &outdir_path)
+                    {
+                        example_tag = ExampleTag::LocalFolder;
+                        break 'brk crate::cli::cli_dupe(&outdir_path);
+                    }
                 }
             }
 
@@ -1235,6 +1241,10 @@ impl CreateCommand {
             template,
         })
     }
+}
+
+fn typed_path(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    bun_sys::typed_spelling(bun_core::top_level_dir(), path, from_portable_rooted)
 }
 
 pub(crate) struct ExtractedInfo {
@@ -1447,10 +1457,10 @@ impl Example {
             progress.end();
         }
 
-        let create_dir = env_loader.map.get(b"BUN_CREATE_DIR");
+        let create_dir = env_loader.map.get(b"BUN_CREATE_DIR").map(typed_path);
         let home_dir = env_loader.map.get(bun_core::env_var::HOME.key());
         let folders: [Option<bun_sys::Dir>; 3] = [
-            create_dir.map(|dir| vec![dir]),
+            create_dir.as_deref().map(|dir| vec![dir]),
             Some(vec![filesystem.top_level_dir(), BUN_CREATE_DIR]),
             home_dir.map(|dir| vec![dir, BUN_CREATE_DIR]),
         ]

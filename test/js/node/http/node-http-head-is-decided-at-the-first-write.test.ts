@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, nodeExeAtLeast } from "harness";
+import { STATUS_CODES } from "node:http";
 import { join } from "node:path";
 
 test("what a program stores on a response, its request or its server after the first write() does not change the head", async () => {
@@ -171,9 +172,11 @@ addTrailers() between:
   expect(exitCode).toBe(0);
 });
 
-describe("the first write() or end() of a response stores the default statusMessage, as writeHead() does", () => {
-  const fixture = join(import.meta.dir, "node-http-status-message-of-an-implicit-head-fixture.ts");
-  const asInNode = `end(chunk):
+describe.concurrent(
+  "the first write() or end() of a response stores the default statusMessage, as writeHead() does",
+  () => {
+    const fixture = join(import.meta.dir, "node-http-status-message-of-an-implicit-head-fixture.ts");
+    const asInNode = `end(chunk):
     after the listener: headersSent true, statusMessage "OK"
     at 'finish': statusMessage "OK"
     stored: ["OK"]
@@ -358,7 +361,7 @@ a response that waits its turn, statusCode = 404, write(chunk), end():
     stored: ["Not Found"]
     on the wire: HTTP/1.1 404 Not Found
 `;
-  const inBunAlone = `What follows is what Bun does. Node.js does otherwise, or not the same in every release.
+    const inBunAlone = `What follows is what Bun does. Node.js does otherwise, or not the same in every release.
 STATUS_CODES[200] is written, end(chunk):
     after the listener: headersSent true, statusMessage "Fine"
     at 'finish': statusMessage "Fine"
@@ -391,20 +394,40 @@ rejectNonStandardBodyWrites: statusCode = 304, write(chunk), statusCode = 500, e
     on the wire: HTTP/1.1 500 Internal Server Error
 `;
 
-  test("in Bun", async () => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe(asInNode + inBunAlone);
-    expect(exitCode).toBe(0);
-  });
+    test("in Bun", async () => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(asInNode + inBunAlone);
+      expect(exitCode).toBe(0);
+    });
 
-  // The lines were recorded with Node.js v26.3.0 and v26.12.1.
-  const node = nodeExeAtLeast("26.3.0");
-  test.skipIf(!node)("in Node.js", async () => {
-    await using proc = Bun.spawn({ cmd: [node!, fixture], env: bunEnv, stdout: "pipe", stderr: "ignore" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe(asInNode);
-    expect(exitCode).toBe(0);
+    // The lines were recorded with Node.js v26.3.0 and v26.12.1.
+    const node = nodeExeAtLeast("26.3.0");
+    test.skipIf(!node)("in Node.js", async () => {
+      await using proc = Bun.spawn({ cmd: [node!, fixture], env: bunEnv, stdout: "pipe", stderr: "ignore" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe(asInNode);
+      expect(exitCode).toBe(0);
+    });
+  },
+);
+
+// `nativeStatusTexts` in src/js/internal/http.ts is STATUS_CODES without the status codes that differ here: for those the
+// handle is given the text of the response. A status code that is added to one table alone belongs there too.
+test("the reason phrases that the native handle writes by itself are those of STATUS_CODES, but for three status codes", async () => {
+  const source = await Bun.file(join(import.meta.dir, "../../../../src/runtime/server/HTTPStatusText.rs")).text();
+  const native: Record<string, string | undefined> = Object.fromEntries(
+    Array.from(source.matchAll(/^\s*(\d+) => Some\(b"\1 ([^"]*)"\),$/gm), match => [match[1], match[2]]),
+  );
+  expect(Object.keys(native).length).toBeGreaterThan(60);
+  const differing: Record<string, [native: string | undefined, table: string | undefined]> = {};
+  for (const code of new Set([...Object.keys(native), ...Object.keys(STATUS_CODES)])) {
+    if (native[code] !== STATUS_CODES[code]) differing[code] = [native[code], STATUS_CODES[code]];
+  }
+  expect(differing).toEqual({
+    101: ["Switching protocols", "Switching Protocols"],
+    306: ["Switch Proxy", undefined],
+    509: [undefined, "Bandwidth Limit Exceeded"],
   });
 });

@@ -325,15 +325,8 @@ describe.concurrent.skipIf(!isASAN)("bodies that are longer than an allocation c
   const rangeError = "RangeError: Out of memory";
   const memoryLimit = "Error: The memory limit has been exceeded.";
   test.each([
-    ["(await response()).arrayBuffer()", "OutOfMemory"],
-    ["(await touched()).arrayBuffer()", "OutOfMemory"],
-    ["(await touched()).text()", "OutOfMemory"],
-    ["(await response()).body.bytes()", "OutOfMemory"],
-    ["new Response((await response()).body).blob()", "OutOfMemory"],
     ["(await response()).clone().blob()", rangeError],
     ["new HTMLRewriter().transform(await response()).text()", memoryLimit],
-    ["new HTMLRewriter().transform(await response()).body.text()", memoryLimit],
-    ["new Response(s3.file('a').stream()).bytes()", "OutOfMemory"],
     ["new Blob(Array(12).fill(new Uint8Array(1024 * 1024)))", rangeError],
     ["new Blob([form()])", rangeError],
     ["FormData.from(form(), 'b')", rangeError],
@@ -348,7 +341,6 @@ describe.concurrent.skipIf(!isASAN)("bodies that are longer than an allocation c
         "-e",
         `
           const response = () => fetch("${server.url}");
-          const touched = () => response().then(it => (it.body, it));
           const s3 = new Bun.S3Client({ endpoint: "${server.url}", bucket: "a", accessKeyId: "a", secretAccessKey: "a" });
           const part = Buffer.alloc(1024 * 1024, "a").toString(), html = Buffer.alloc(12 * 7, "<p></p>").toString();
           let left = 8;

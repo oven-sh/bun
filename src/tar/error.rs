@@ -62,6 +62,10 @@ pub enum Error {
     DirectoryWithContents,
     #[error("Input requires too many filters for decoding")]
     TooManyLayers,
+    #[error(
+        "The gzip layers inside the first one decompress to more than {limit} bytes, the most that is read from an archive of this size"
+    )]
+    InnerLayersTooLarge { limit: usize },
     #[error("truncated gzip input")]
     TruncatedGzip,
     #[error("gzip input is followed by other data")]
@@ -70,6 +74,8 @@ pub enum Error {
     GzipDecompressionFailed,
     #[error("GZip compression failed")]
     GzipCompressionFailed,
+    #[error("gzip header mismatch: bad CRC16")]
+    GzipHeaderMismatch,
     #[error("gzip trailer mismatch: bad CRC32 or uncompressed size")]
     GzipTrailerMismatch,
     #[error(transparent)]

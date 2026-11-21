@@ -4593,7 +4593,6 @@ pub(crate) mod testing_apis {
                 Syscall::PollStart => fi::POLL_START,
                 Syscall::SessionBuffer => fi::SESSION_BUFFER,
                 Syscall::SslWrite => fi::SSL_WRITE,
-                Syscall::FetchBodyBuffer => fi::FETCH_BODY_BUFFER,
                 Syscall::ByteStreamBuffer => fi::BYTE_STREAM_BUFFER,
             };
 
@@ -4663,7 +4662,6 @@ pub(crate) mod testing_apis {
             let buffer = match syscall {
                 fi::SSL_LOOP_BUFFER => Some("ssl_loop_buffer"),
                 fi::SESSION_BUFFER => Some("session_buffer"),
-                fi::FETCH_BODY_BUFFER => Some("fetch_body_buffer"),
                 fi::BYTE_STREAM_BUFFER => Some("byte_stream_buffer"),
                 _ => None,
             };

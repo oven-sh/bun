@@ -1713,8 +1713,10 @@ pub(crate) mod js_bundler {
                 if !is_standalone_html {
                     this.target = Target::Bun;
                     if compile.aot.is_some() {
+                        if this.bytecode {
+                            return Err(throw_option_error(global_this, OptionError::Bytecode));
+                        }
                         ensure_compiler(global_this)?;
-                        this.bytecode = false;
                         this.format = options::Format::Esm;
                         compile.compile_target = CompileTarget::default();
                     } else if compile.executable_path.list.is_empty()

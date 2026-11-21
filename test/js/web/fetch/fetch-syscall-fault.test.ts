@@ -3,7 +3,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
-import { constants, deflateRawSync } from "node:zlib";
 
 const skip = !fault.available() || isWindows;
 
@@ -327,53 +326,6 @@ describe.skipIf(skip)("fetch() seeded short-I/O fuzz", () => {
   });
 });
 
-describe.skipIf(skip)("fetch() without memory for a part of the body", () => {
-  const readers = ["text", "arrayBuffer", "blob", "body", "clone", "tee", "write"];
-  test.concurrent.each([
-    ...readers.flatMap(reader => ["before", "after"].map(when => [reader, when, "more"])),
-    ["text", "before", "end"],
-  ])("rejects %s, which starts %s that, if it is followed by: %s", async (reader, when, rest) => {
-    using dir = tempDir("fetch-body-buffer-fault", {});
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fetch-body-buffer-fault-fixture.ts"), reader, when, rest],
-      env: { ...bunEnv, OUT: join(String(dir), "out") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OutOfMemory\n", stderr: "", exitCode: 0 });
-  });
-
-  test.concurrent.each([
-    ["fetch_body_buffer", "response.text()"],
-    ["byte_stream_buffer", "(response.body, response.text())"],
-  ])("does not get to what follows it: %s", async (syscall, read) => {
-    // The decoder would complain on stderr.
-    const damaged = Buffer.concat([
-      deflateRawSync(Buffer.alloc(8 * 1024 * 1024), { finishFlush: constants.Z_FULL_FLUSH }),
-      Buffer.from([0xff]),
-    ]);
-    using server = Bun.serve({
-      port: 0,
-      fetch: () => new Response(damaged, { headers: { "Content-Encoding": "deflate" } }),
-    });
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `import { socketFaultInjection } from "bun:internal-for-testing";
-         socketFaultInjection.set({ syscall: "${syscall}", action: "errno", errno: "ENOMEM" });
-         console.log(await fetch("${server.url}").then(response => ${read}).catch(error => error.code));`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OutOfMemory\n", stderr: "", exitCode: 0 });
-  });
-});
-
 test.skipIf(skip)("a native stream without memory for a part of the body", async () => {
   using dir = tempDir("byte-stream-buffer-fault", {});
   await using proc = Bun.spawn({
@@ -384,9 +336,10 @@ test.skipIf(skip)("a native stream without memory for a part of the body", async
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout + stderr).toMatchInlineSnapshot(`
-    "text(): OutOfMemory
-    text() at the last part: OutOfMemory
-    a read() with less room than the part needs: OutOfMemory
+    "a read() with less room than the part needs: OutOfMemory
+    a read() with less room than the last part needs: OutOfMemory
+    a read() with less room than the part of a download needs: OutOfMemory
+    a read() with less room than the last part of a download needs: OutOfMemory
     a sink that is not ready: OutOfMemory
     a later text(): OutOfMemory
     a later read(): OutOfMemory
@@ -395,12 +348,11 @@ test.skipIf(skip)("a native stream without memory for a part of the body", async
     a later HTMLRewriter: OutOfMemory
     a second upload: OutOfMemory
     a later Bun.spawn(): OutOfMemory
-    text() of an upload that goes on: OutOfMemory
-    text() at the last part of a download: OutOfMemory
-    text() of a rewrite: The memory limit has been exceeded.
-    text() of a rewrite whose handler waits, and still has its element: The memory limit has been exceeded.
-    text() of a rewrite with what its handler throws: thrown
+    a later text() of an upload that went on: OutOfMemory
+    a later text() of a download: OutOfMemory
     a later text() of a rewrite: The memory limit has been exceeded.
+    a later text() of a rewrite whose handler waits, and still has its element: The memory limit has been exceeded.
+    a later text() of a rewrite whose handler throws: thrown
     a worker that exits when its rewrite cancels the input: 3
     "
   `);

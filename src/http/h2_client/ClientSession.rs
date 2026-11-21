@@ -76,7 +76,7 @@ pub struct ClientSession {
     /// Secondary index over `streams` keyed by the owning client's
     /// `async_http_id`, so the per-chunk wakeups from the JS thread
     /// (`stream_body_by_http_id` / `resume_receive_by_http_id` /
-    /// `drain_response_body_by_http_id` / `abort_by_http_id`) resolve in O(1)
+    /// `abort_by_http_id`) resolve in O(1)
     /// instead of scanning every live stream on the session.
     pub(crate) by_http_id: ArrayHashMap<u32, *mut Stream>,
     pub(crate) next_stream_id: u31,
@@ -261,12 +261,6 @@ impl ClientSession {
     /// HTTP-thread wake-up from `resumeReceive`; see [`Self::resume_receive`].
     pub(crate) fn resume_receive_by_http_id(this: SessionPtr, async_http_id: u32) {
         Self::enter(this, |s| s.resume_receive(async_http_id));
-    }
-
-    /// HTTP-thread wake-up from `scheduleResponseBodyDrain`; see
-    /// [`Self::drain_response_body`].
-    pub(crate) fn drain_response_body_by_http_id(this: SessionPtr, async_http_id: u32) {
-        Self::enter(this, |s| s.drain_response_body(async_http_id));
     }
 
     #[inline]
@@ -671,22 +665,20 @@ impl ClientSession {
         self.by_http_id.get(&async_http_id).copied()
     }
 
-    /// A body consumer attached on the JS side: flush any body bytes that arrived between
-    /// metadata delivery and `getReader()`.
-    fn drain_response_body(&mut self, async_http_id: u32) {
+    fn resume_receive(&mut self, async_http_id: u32) {
         let Some(stream) = self.stream_for_http_id(async_http_id) else {
             return;
         };
-        if let Some(client) = &mut stream_mut(stream).client
-            && !client.state.decoded_body.list.is_empty()
-        {
-            client.send_partial_result();
-        }
-    }
-
-    fn resume_receive(&mut self, async_http_id: u32) {
-        if self.stream_for_http_id(async_http_id).is_none() {
-            return;
+        if let Some(client) = &mut stream_mut(stream).client {
+            match client.pump_held_body() {
+                Ok(true) => client.send_partial_result(),
+                Ok(false) => {}
+                Err(err) => {
+                    self.detach_with_failure(stream, err);
+                    self.rearm_timeout();
+                    return self.maybe_release();
+                }
+            }
         }
         self.replenish_window();
         if self.write_buffer.is_not_empty() {
@@ -747,10 +739,7 @@ impl ClientSession {
             if s.unacked_bytes < threshold || s.remote_closed() {
                 continue;
             }
-            if s.client
-                .as_ref()
-                .is_some_and(|c| c.signals.is_receive_paused())
-            {
+            if s.client.as_ref().is_some_and(|c| c.holds_off_receiving()) {
                 continue;
             }
             updates.push((s.id, s.unacked_bytes));
@@ -1178,16 +1167,11 @@ impl ClientSession {
                 }
             };
             stream.body_buffer.clear();
-            if terminal {
+            // Once Content-Length is satisfied, END_STREAM and trailers find no stream and are discarded.
+            if client.state.is_done() || terminal {
                 return Self::finish_stream(stream, client);
             }
             if report {
-                // handleResponseBody may report completion before END_STREAM
-                // (Content-Length satisfied); the trailing END_STREAM/trailers
-                // land on a stream we no longer track and are discarded.
-                if client.state.is_done() {
-                    return client.finish();
-                }
                 client.send_partial_result();
             }
             stream.client = Some(client);
@@ -1195,7 +1179,7 @@ impl ClientSession {
         }
 
         if stream.remote_closed() {
-            if let Err(err) = client.state.finalize_body_on_eof() {
+            if let Err(err) = client.finalize_body_on_eof() {
                 return client.fail(err);
             }
             return Self::finish_stream(stream, client);

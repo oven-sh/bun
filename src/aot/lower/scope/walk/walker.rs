@@ -108,6 +108,7 @@ pub(in crate::lower::scope) fn walk_file(
     walk.function_references = order_by(&by_callee, walk.functions.len(), |it| it.0.0 as usize);
     walk.function_references.dedup();
     sort_unique(&mut walk.names_called);
+    walk.argument_reads.sort_by_u32(|read| read.0.0);
     shared_sort_unique(&mut walk.eval_uses);
     shared_sort_unique(&mut walk.stored_slots);
     walk.this_bindings.shared_sort_unstable();

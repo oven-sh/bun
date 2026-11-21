@@ -101,22 +101,19 @@ impl Buffered {
         bytes
     }
 
-    /// `Err`: what it held is gone, too.
-    fn extend(&self, chunk: &[u8]) -> Result<(), AllocError> {
+    fn try_extend(&self, chunk: &[u8]) -> Result<(), AllocError> {
         #[cfg(socket_fault_injection)]
         {
             use bun_uws_sys::fault_inject::{BYTE_STREAM_BUFFER, fails};
             if !chunk.is_empty() && fails(BYTE_STREAM_BUFFER) {
-                self.clear();
                 return Err(AllocError);
             }
         }
-        if self.bytes.with_mut(|b| b.try_reserve(chunk.len())).is_err() {
-            self.clear();
-            return Err(AllocError);
-        }
-        self.bytes.with_mut(|b| b.extend_from_slice(chunk));
-        Ok(())
+        self.bytes.with_mut(|b| {
+            b.try_reserve(chunk.len()).map_err(|_| AllocError)?;
+            b.extend_from_slice(chunk);
+            Ok(())
+        })
     }
 
     /// Drop every buffered byte and release the allocation.
@@ -536,7 +533,7 @@ impl ByteStream {
         bun_core::handle_oom(self.try_on_data(stream));
     }
 
-    /// `Err`: what was buffered is gone, and the consumer waits for the error of the producer.
+    /// `Err`: the chunk is lost, so the producer has to send an error next.
     pub(crate) fn try_on_data(&self, mut stream: streams::Result<'_>) -> Result<(), AllocError> {
         bun_jsc::mark_binding!();
         if self.done.get() {
@@ -659,17 +656,20 @@ impl ByteStream {
                     "ByteStream.onData appendSlice and action.fulfill()"
                 );
 
-                if let Err(err) = self.buffered.extend(stream.slice()) {
-                    self.buffer_action.set(Some(action));
-                    return Err(err);
+                if self.buffered.try_extend(stream.slice()).is_err() {
+                    self.reject_out_of_memory(action);
+                    return Ok(());
                 }
                 drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
                 action.fulfill(self.parent_const().global_this(), &mut blob);
-                return Ok(());
+            } else if self.buffered.try_extend(stream.slice()).is_err()
+                && let Some(action) = self.buffer_action.replace(None)
+            {
+                self.reject_out_of_memory(action);
             }
 
-            return self.buffered.extend(stream.slice());
+            return Ok(());
         }
 
         let chunk = stream.slice();
@@ -738,6 +738,13 @@ impl ByteStream {
         self.append(stream, 0)
     }
 
+    fn reject_out_of_memory(&self, mut action: BufferAction) {
+        self.cancel_from_sink(None);
+        let global = self.parent_const().global_this();
+        let error = StrongOptional::create(global.create_out_of_memory_error(), global);
+        action.reject(global, &streams::StreamError::JSValue(error));
+    }
+
     /// Buffer `stream`, whose first `offset` bytes a pending pull already took.
     fn append(&self, stream: streams::Result<'_>, offset: usize) -> Result<(), AllocError> {
         if self.buffered.capacity() == 0 {
@@ -746,7 +753,7 @@ impl ByteStream {
                     self.buffered.adopt(owned, offset);
                 }
                 streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
-                    self.buffered.extend(&temp[offset..])?;
+                    self.buffered.try_extend(&temp[offset..])?;
                 }
                 streams::Result::Err(err) => self.pending_error.set(Some(err)),
                 streams::Result::Done => {}
@@ -757,10 +764,10 @@ impl ByteStream {
 
         match stream {
             streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
-                self.buffered.extend(&temp[offset..])?;
+                self.buffered.try_extend(&temp[offset..])?;
             }
             streams::Result::OwnedAndDone(owned) | streams::Result::Owned(owned) => {
-                self.buffered.extend(&owned.slice()[offset..])?;
+                self.buffered.try_extend(&owned.slice()[offset..])?;
                 // `owned: Vec<u8>` drops here.
             }
             streams::Result::Err(err) => {

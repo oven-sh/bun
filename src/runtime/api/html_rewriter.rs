@@ -1247,6 +1247,9 @@ impl RewriterPipe {
 
     #[inline(never)]
     fn begin_suspension(&self) {
+        if self.global.has_pending_termination_exception() {
+            return;
+        }
         // The context roots the cell, and queues `abandon_suspension` if it is collected with the promise.
         let Some(promise) = self.take_suspension_promise() else {
             return self.abandon_suspension();

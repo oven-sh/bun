@@ -202,7 +202,6 @@ export const SocketFaultSyscall = b.enumeration([
   "poll_start",
   "session_buffer",
   "ssl_write",
-  "fetch_body_buffer",
   "byte_stream_buffer",
 ]);
 export const SocketFaultAction = b.enumeration(["errno", "short", "zero", "excess", "none"]);

@@ -1487,7 +1487,7 @@ function shouldQueueResponseWrite(response) {
   const socket = response.socket;
   return !!(
     socket &&
-    (hasResponseSocketWork(socket) || (response[kCorked] && willBeChunked(response))) &&
+    (hasResponseSocketWork(socket) || (response[kCorked] > 0 && willBeChunked(response))) &&
     NodeHTTPServerSocket &&
     socket instanceof NodeHTTPServerSocket &&
     response[kHandle]
@@ -1534,9 +1534,13 @@ function queueResponseSocketWrite(response, kind, chunk, encoding, callback) {
       if (!NumberIsNaN(declared)) response._contentLength = declared;
     }
     if (kind === "write" || kind === "end") strict = strictContentLength(response, headerState, kind === "end");
-    if (!response._hasBody && length) {
-      if (response[kRejectNonStandardBodyWrites]) throw $ERR_HTTP_BODY_NOT_ALLOWED();
-      chunk = kind === "write" ? "" : undefined;
+    if (!response._hasBody && (kind === "write" || chunk)) {
+      if (chunk && response[kRejectNonStandardBodyWrites]) throw $ERR_HTTP_BODY_NOT_ALLOWED();
+      if (kind === "write") {
+        if (callback) process.nextTick(callback);
+        return true;
+      }
+      chunk = undefined;
       length = 0;
       bodyLength = 0;
     }
@@ -1547,7 +1551,6 @@ function queueResponseSocketWrite(response, kind, chunk, encoding, callback) {
         if (kind === "end" ? actual !== strict : actual > strict)
           throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(actual, strict);
       }
-      response[kResponseQueuedBodyBytes] = pending + bodyLength;
     }
     const chunked =
       willBeChunked(response) &&
@@ -1560,12 +1563,15 @@ function queueResponseSocketWrite(response, kind, chunk, encoding, callback) {
   } else if (kind === "continue") {
     length = 25;
   }
+  if (kind === "write" || kind === "end") {
+    response[kResponseQueuedBodyBytes] = (response[kResponseQueuedBodyBytes] ?? 0) + bodyLength;
+  }
   const socket = response.socket;
   if (!socket[kResponseQueueInitialized]) {
     socket[kResponseQueueInitialized] = true;
     socket.on("drain", onResponseSocketDrain);
   }
-  const responseCorked = kind === "write" && !!response[kCorked] && willBeChunked(response);
+  const responseCorked = kind === "write" && response[kCorked] > 0 && willBeChunked(response);
   const result = socket[kWriteOperation](
     { response, kind, chunk, encoding, length, bodyLength, strict, responseCorked },
     callback,
@@ -1577,6 +1583,11 @@ function queueResponseSocketWrite(response, kind, chunk, encoding, callback) {
 function executeResponseSocketWrite(operation, callback) {
   const { response, kind, chunk, encoding } = operation;
   if (kind === "write" || kind === "end") response[kResponseQueuedBodyBytes] -= operation.bodyLength;
+  const handle = response[kHandle];
+  if (!handle || (handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0) {
+    callback(response.errored ?? $ERR_STREAM_DESTROYED("write"));
+    return;
+  }
   if (kind === "write") {
     ServerResponsePrototypeWrite.$call(response, chunk, encoding, callback, kResponseSocketWrite, operation);
   } else if (kind === "end") {
@@ -1809,6 +1820,8 @@ function getNodeHTTPServerSocket() {
     // connection whose pipelined responses have buffered past the high water mark.
     _paused = false;
     #pendingCallback: ((error?: Error) => void) | null = null;
+    #pendingResponseBytes = 0;
+    #responseFramingBytes = 0;
     #pendingResponseCallback: ((error?: Error) => void) | null = null;
     #pendingAbortMessage;
     #closeHandled = false;
@@ -1863,6 +1876,7 @@ function getNodeHTTPServerSocket() {
     get bytesWritten() {
       const handle = this[kHandle];
       let bytes = handle ? handleBytesWritten(handle) : this[kBytesWritten];
+      bytes += this.#responseFramingBytes + this.#pendingResponseBytes;
       // Like net.Socket, include writes still queued in the Writable.
       const queued = this.writableBuffer;
       for (let i = 0; i < queued.length; i++) bytes += queued[i].chunk.length;
@@ -2358,28 +2372,32 @@ function getNodeHTTPServerSocket() {
     _write(_chunk, _encoding, _callback) {
       if (_encoding === kWriteOperationEncoding) {
         const response = _chunk.response;
-        const done = error => {
+        const done = (error?: Error | null) => {
           if (this.#pendingResponseCallback !== done) return;
           this.#pendingResponseCallback = null;
+          this.#pendingResponseBytes = 0;
           response[kResumeResponseSocketWrite] = undefined;
           _callback(error);
           if (!hasResponseSocketWork(this)) scheduleWriteAccountingFlush(response);
         };
         this.#pendingResponseCallback = done;
+        this.#pendingResponseBytes = _chunk.length;
         const resume = () => {
+          this.#pendingResponseBytes = 0;
+          this.#responseFramingBytes += _chunk.length - _chunk.bodyLength;
           response[kResumeResponseSocketWrite] = undefined;
           try {
             executeResponseSocketWrite(_chunk, done);
           } catch (error) {
-            done(error);
+            done(error as Error);
           }
         };
-        if (_chunk.responseCorked && response[kCorked]) response[kResumeResponseSocketWrite] = resume;
+        if (_chunk.responseCorked && response[kCorked] > 0) response[kResumeResponseSocketWrite] = resume;
         else resume();
         return;
       }
       const handle = this[kHandle];
-      const done = error => {
+      const done = (error?: Error | null) => {
         _callback(error);
         const response = this._httpMessage;
         if (response && !hasResponseSocketWork(this)) scheduleWriteAccountingFlush(response);
@@ -2390,7 +2408,7 @@ function getNodeHTTPServerSocket() {
         if (handle) {
           handle.ondrain ??= this.#onDrain.bind(this);
           const flushed = handle.write(_chunk, _encoding);
-          if (!flushed && handle.ondrain) {
+          if (!flushed) {
             // Streaming mode (CONNECT tunnels): wait for the native drain
             // callback before completing the write.
             this.#pendingCallback = done;
@@ -3529,7 +3547,7 @@ ServerResponse.prototype.cork = function cork() {
 ServerResponse.prototype.uncork = function uncork() {
   this[kCorked]--;
   this.socket?.uncork();
-  if (!this[kCorked]) this[kResumeResponseSocketWrite]?.();
+  if (this[kCorked] <= 0) this[kResumeResponseSocketWrite]?.();
 };
 
 ServerResponse.prototype.setTimeout = function setTimeout(msecs, callback) {
@@ -4165,7 +4183,7 @@ ServerResponse.prototype._implicitHeader = function () {
 
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
   get() {
-    const socket = this.socket;
+    const socket = this[fakeSocketSymbol];
     if (socket?.[kResponseQueueInitialized] && hasResponseSocketWork(socket)) {
       return !this.destroyed && !this.finished && !!this[kResponseQueueNeedDrain];
     }
@@ -4197,7 +4215,7 @@ Object.defineProperty(ServerResponse.prototype, "writableFinished", {
 Object.defineProperty(ServerResponse.prototype, "writableLength", {
   get() {
     if (this.writableFinished) return 0;
-    const socket = this.socket;
+    const socket = this[fakeSocketSymbol];
     if (socket?.[kResponseQueueInitialized] && hasResponseSocketWork(socket)) {
       return socket.writableLength + (this[kBytesBuffered] ?? 0);
     }

@@ -5,6 +5,102 @@ export async function responseCorkOracle(mode: string) {
   const { once } = require("node:events");
   const { setImmediate: immediate } = require("node:timers/promises");
   const { pipeline } = require("node:stream/promises");
+  if (mode === "pipeline-pull-count") {
+    const controller = new AbortController();
+    let response;
+    let reads = 0;
+    let completed;
+    const server = http.createServer((_req, res) => {
+      response = res;
+      res.cork();
+      completed = pipeline(
+        async function* () {
+          for (let i = 0; i < 128; i++) {
+            reads++;
+            yield Buffer.alloc(512 * 1024, 65);
+          }
+        },
+        res,
+        { signal: controller.signal },
+      ).catch(() => {});
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const request = http.get(`http://127.0.0.1:${server.address().port}/`, res => res.resume());
+    request.on("error", () => {});
+    try {
+      await once(server, "request");
+      await immediate();
+      await immediate();
+      assert.equal(response.writableNeedDrain, true);
+      assert.equal(response.writableCorked, 1);
+      assert.ok(reads <= 2, `corked pipeline pulled ${reads} half-megabyte chunks`);
+    } finally {
+      controller.abort();
+      response?.destroy();
+      request.destroy();
+      await completed;
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(resolve));
+    }
+    console.log("ok");
+    return;
+  }
+  if (["discarded-head", "discarded-204", "bodyless-empty-reject", "negative-cork", "bytes-written"].includes(mode)) {
+    const handled = Promise.withResolvers<void>();
+    const server = http.createServer({ rejectNonStandardBodyWrites: mode === "bodyless-empty-reject" }, (req, res) => {
+      (async () => {
+        if (mode === "discarded-204") res.statusCode = 204;
+        if (mode === "negative-cork") res.uncork();
+        else res.cork();
+        if (mode === "bodyless-empty-reject") {
+          assert.throws(() => res.write(Buffer.alloc(0)), { code: "ERR_HTTP_BODY_NOT_ALLOWED" });
+        } else {
+          const written = Promise.withResolvers<void>();
+          res.write("A", error => (error ? written.reject(error) : written.resolve()));
+          if (mode === "bytes-written") {
+            const before = res.socket.bytesWritten;
+            res.uncork();
+            await written.promise;
+            assert.ok(res.socket.bytesWritten >= before);
+          } else await written.promise;
+        }
+        res.end(mode === "negative-cork" || mode === "bytes-written" ? "B" : undefined);
+        handled.resolve();
+      })().catch(handled.reject);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let request;
+    try {
+      const received = new Promise<string>((resolve, reject) => {
+        request = http.request(
+          {
+            host: "127.0.0.1",
+            port: server.address().port,
+            method: mode === "discarded-head" || mode === "bodyless-empty-reject" ? "HEAD" : "GET",
+          },
+          res => {
+            let body = "";
+            res.setEncoding("utf8");
+            res.on("data", chunk => (body += chunk));
+            res.on("end", () => resolve(body));
+            res.on("error", reject);
+          },
+        );
+        request.on("error", reject);
+        request.end();
+      });
+      const [body] = await Promise.all([received, handled.promise]);
+      assert.equal(body, mode === "negative-cork" || mode === "bytes-written" ? "AB" : "");
+    } finally {
+      request?.destroy();
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(resolve));
+    }
+    console.log("ok");
+    return;
+  }
   if (mode.startsWith("standalone")) {
     const chunks: Buffer[] = [];
     const finished = Promise.withResolvers<void>();
@@ -117,7 +213,7 @@ export async function responseCorkOracle(mode: string) {
       const written = Promise.withResolvers<void>();
       let callbacks = 0;
       res.cork();
-      res.writeEarlyHints({ link: `</${"a".repeat(8 * 1024 * 1024)}>; rel=preload` }, error => {
+      res.writeEarlyHints({ link: `</${Buffer.alloc(8 * 1024 * 1024, "a").toString()}>; rel=preload` }, error => {
         if (error) written.reject(error);
         else {
           callbacks++;

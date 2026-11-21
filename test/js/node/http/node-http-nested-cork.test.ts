@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
 import { join } from "node:path";
 import { unsupported as aotUnsupported } from "../../../aot/supported";
@@ -9,6 +9,12 @@ const corkNode = nodeExeAtLeast("24.0.0");
 if (corkNode) corkRuntimes.push(["node", corkNode]);
 const corkModes = [
   "pipeline",
+  "pipeline-pull-count",
+  "discarded-head",
+  "discarded-204",
+  "bodyless-empty-reject",
+  "negative-cork",
+  "bytes-written",
   "counts",
   "bodyless-write",
   "cross-content-length",
@@ -45,6 +51,8 @@ const corkModes = [
 ];
 describe.each(corkRuntimes)("response cork Node oracle (%s)", (_runtime, executable) => {
   for (const mode of corkModes) {
+    // Node also stalls after an unmatched response uncork; only Bun checks its defensive handling.
+    if (_runtime === "node" && mode === "negative-cork") continue;
     test.concurrent(mode, async () => {
       await using child = Bun.spawn({
         cmd: [
@@ -381,34 +389,44 @@ describe.concurrent("cork buffer: no cross-socket data bleed", () => {
   });
 });
 
-test.skipIf(!!aotUnsupported)("compiled responses retain corked socket operations", async () => {
-  using dir = tempDir("compiled-response-cork", {
-    "main.ts": await Bun.file(join(import.meta.dir, "node-http-cork-oracle.fixture.ts")).text(),
-  });
-  const executable = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [buildOut, buildError, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-  expect({ buildOut: buildExit ? buildOut : "", buildError: buildExit ? buildError : "", buildExit }).toEqual({
-    buildOut: "",
-    buildError: "",
-    buildExit: 0,
-  });
-  for (const mode of corkModes) {
-    await using proc = Bun.spawn({
-      cmd: [executable, mode],
+describe.skipIf(!!aotUnsupported)("compiled responses retain corked socket operations", () => {
+  let dir: ReturnType<typeof tempDir>;
+  let executable: string;
+  beforeAll(async () => {
+    dir = tempDir("compiled-response-cork", {
+      "main.ts": await Bun.file(join(import.meta.dir, "node-http-cork-oracle.fixture.ts")).text(),
+    });
+    executable = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 10000,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ mode, stdout, stderr, exitCode }).toEqual({ mode, stdout: "ok\n", stderr: "", exitCode: 0 });
+    const [buildOut, buildError, buildExit] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect({ buildOut: buildExit ? buildOut : "", buildError: buildExit ? buildError : "", buildExit }).toEqual({
+      buildOut: "",
+      buildError: "",
+      buildExit: 0,
+    });
+  });
+  afterAll(() => dir?.[Symbol.dispose]());
+  for (const mode of corkModes) {
+    test.concurrent(mode, async () => {
+      await using proc = Bun.spawn({
+        cmd: [executable, mode],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+    });
   }
 });

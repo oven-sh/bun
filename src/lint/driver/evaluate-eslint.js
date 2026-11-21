@@ -232,9 +232,7 @@ function serializeConfigObject(given, index) {
   return out;
 }
 
-// The keys of a config object that not every tool reads. ESLint's are in `validate_object` in linter/config/flat.rs, ESLint 8's
-// in `is_eslintrc_json` in eslintrc.rs, which decides the same for a JSON file. oxlint's are those of `KEYS` in
-// linter/config/shape.rs: some only it has, the others an .eslintrc has too.
+// Keys that not every tool reads, from `validate_object` (flat.rs), `is_eslintrc_json` (eslintrc.rs) and `KEYS` (shape.rs).
 const keysOfESLint = [
   "basePath",
   "files",
@@ -256,10 +254,7 @@ const keysOfESLint8 = [
 const keysOfOxlint = ["$schema", "categories", "jsPlugins", "options"];
 const keysOfOxlintAndESLint8 = ["env", "extends", "globals", "ignorePatterns", "overrides"];
 
-// For a file whose name does not say whose it is: true if what it exports is an oxlint config. An array is ESLint's. A key,
-// `plugins` or a preset in `extends` as only one tool reads them makes an object that tool's. Any other object is the config
-// of the tool that the project uses, which `given.byExport` is. In a project that uses neither, it is ESLint's if ESLint 9
-// reads it, as ESLint 8 does too.
+// True if a file whose name does not say whose it is exports an oxlint config. What only one tool reads decides first.
 function isForOxlint(exported) {
   if (exported === null || typeof exported !== "object" || Array.isArray(exported)) return false;
   const { plugins, extends: extended } = exported;
@@ -268,7 +263,9 @@ function isForOxlint(exported) {
   const isPreset = item => typeof item === "string" && /^(?:eslint|plugin):/.test(item);
   if ([extended].flat().some(isPreset)) return false;
   if (keysOfOxlint.some(key => key in exported)) return true;
+  // Then the tool that the project uses.
   if (given.byExport !== "neither") return given.byExport === "oxlint";
+  // It uses neither: ESLint 8 and 9 both read what is left, unless it has what a flat config cannot have.
   return Array.isArray(plugins) || keysOfOxlintAndESLint8.some(key => key in exported);
 }
 

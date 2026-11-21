@@ -92,10 +92,7 @@ pub(crate) fn evaluate_with(
     (finished.map(|it| it.config)).map_err(|why| cannot_load(path, &why))
 }
 
-/// Runs [`ESLINT`] on the configuration file at `path`, whose name doesn't say whose it is. Returns what the file
-/// exports, and whether that's an oxlint config. The script decides that before it serializes the exports, which it
-/// does differently for each tool (`isForOxlint` in evaluate-eslint.js). `project` is the tool that the project uses,
-/// whose config an object is that both tools read.
+/// Runs [`ESLINT`] on a file whose name doesn't say whose it is. Also returns whether it exports an oxlint config.
 pub(crate) fn evaluate_by_export(
     environment: &Environment,
     path: &[u8],
@@ -135,8 +132,7 @@ struct Finished {
     is_for_oxlint: bool,
 }
 
-/// Returns what the script `source` passes to `finish`. `Err` has the reason it failed. `by_export` is for
-/// [`evaluate_by_export`].
+/// Returns what the script `source` passes to `finish`. `Err` has the reason it failed.
 fn run(
     environment: &Environment,
     source: Source,

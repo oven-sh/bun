@@ -120,8 +120,7 @@ const NAMES: [(&[u8], Flavor, Syntax); 10] = [
     (b"oxlint.config.mts", Flavor::Oxlint, Syntax::Program),
 ];
 
-/// Whose file a configuration file called `name` is and what it's written in, if the name says so. Lookup only finds
-/// the [`NAMES`]. `--config` can also name an `oxlint.config.js`, which oxlint reads too.
+/// The tool and the syntax of a configuration file called `name`, if the name says them. Lookup finds only [`NAMES`].
 fn by_name(name: &[u8]) -> Option<(Flavor, Syntax)> {
     let named = NAMES.iter().find(|it| it.0 == name).map(|it| (it.1, it.2));
     let is_oxlint_program = || {
@@ -139,8 +138,7 @@ fn syntax_of(name: &[u8]) -> Syntax {
     }
 }
 
-/// Whose file a JSON file is that [`by_name`] doesn't know: oxlint's if it's an object. ESLint has no JSON config, but
-/// an array can only be a flat config.
+/// Whose file a JSON file is that [`by_name`] doesn't know: an object is oxlint's, an array can only be a flat config.
 fn flavor_of_json(json: &Json) -> Flavor {
     match json.as_object() {
         Some(_) => Flavor::Oxlint,
@@ -507,8 +505,7 @@ pub(crate) struct Loader<'l> {
     tool: OnceLock<Option<Flavor>>,
     /// [`Loader::config_flag`]
     config_flag: OnceLock<ConfigFlag>,
-    /// Whose config the program that `--config` names exports, once [`Loader::read`] has run it. Only set if its name
-    /// doesn't say: [`ConfigFlag::Program`].
+    /// Whose config a [`ConfigFlag::Program`] exports, once [`Loader::read`] has run it.
     exported: OnceLock<Flavor>,
     /// [`Loader::ignored_eslint_config`]
     ignored_eslint_config: OnceLock<(Vec<u8>, Vec<u8>)>,
@@ -1913,8 +1910,7 @@ impl<'l> Loader<'l> {
                         evaluate::evaluate_with(environment, evaluate::ESLINT, path, &built_in)?
                     }
                     None => {
-                        // As in `bun fmt`: if neither the name nor the contents say which tool the file is for, it's
-                        // the tool that the project uses.
+                        // As in `bun fmt`: an object that both tools read is the config of the tool the project uses.
                         let project = match self.tool() {
                             Some(Flavor::Oxlint) => Some(Tool::Oxlint),
                             Some(Flavor::Eslint | Flavor::EslintRc) => Some(Tool::Eslint),
@@ -2172,8 +2168,7 @@ impl<'l> Loader<'l> {
                 Some((directory, found.0, found.1))
             });
             let config_flag = self.config_flag();
-            // With an ESLint 8 flag, the ESLint 8 loader reads the file. The flag only counts with `--config`, which is
-            // when `is_eslint_8_command_line` doesn't ask for the tool itself.
+            // An ESLint 8 flag hands the file to the ESLint 8 loader. Asked last: without `--config` it asks for the tool.
             let config_flag_is_oxlint = matches!(
                 config_flag,
                 ConfigFlag::Named(Flavor::Oxlint) | ConfigFlag::Json(Some(Flavor::Oxlint))
@@ -2210,8 +2205,7 @@ impl<'l> Loader<'l> {
         Some(paths::resolve(self.cwd(), &paths::from_native(path)))
     }
 
-    /// Whose file `--config` names. Everything that has to know before the file is loaded asks here. `--flavor` has no
-    /// say: it picks among the files that lookup finds.
+    /// Whose file `--config` names, for all that has to know before the file is loaded. `--flavor` has no say.
     fn config_flag(&self) -> ConfigFlag {
         *self.config_flag.get_or_init(|| {
             let Some(path) = self.named_config() else {
@@ -2744,8 +2738,7 @@ impl<'l> Loader<'l> {
     /// looked up on its own.
     fn lacks_file(&self) -> bool {
         *self.lacks_file.get_or_init(|| {
-            // `--config` names the file for every directory, unless it adds to ESLint 8's files. The configuration
-            // without a file isn't built for such a run: its flags are checked against the file that is named.
+            // `--config` names the file for every directory. Building the one without a file would check flags against it.
             if self.options.config.is_some() && !self.is_eslint_8_command_line() {
                 return false;
             }

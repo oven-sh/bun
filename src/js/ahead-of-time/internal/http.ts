@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 fb8173ad4b1d435f59685c97012314538ff32e2e02c603547e9fb33660589e61.
+// Written against that file with the SHA-256 a80d7122d9e8ac3f455d9305c7ac1eb36fe1c6b611342e3b117525f3278e90a8.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
@@ -51,6 +51,7 @@ const kAbortController = Symbol.for("kAbortController");
 const kInternalSocketData = Symbol.for("::bunternal::");
 // One symbol under two names. Asked for twice, as in the other text: a test may have replaced Symbol.for.
 const serverSymbol: typeof kInternalSocketData = Symbol.for("::bunternal::") as typeof kInternalSocketData;
+const setSecureContextSymbol = Symbol("setSecureContext");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 // IncomingMessage slot for the request's native response. null if the request was parsed in JS.
@@ -597,6 +598,7 @@ declare global {
       [serverSymbol]: NativeHTTPServer | undefined;
       [isTlsSymbol]?: boolean;
       [tlsSymbol]: HttpServerTLSOptions | null;
+      [setSecureContextSymbol](options: Record<string, any>): void;
       [optionsSymbol]: HttpServerOptions;
       [kHighWaterMark]: number | undefined;
       [kUniqueHeaders]: Set<string> | null;
@@ -843,6 +845,7 @@ export {
   responseRoad,
   serverSymbol,
   setMaxHTTPHeaderSize,
+  setSecureContextSymbol,
   setServerAppFlags,
   setServerCustomOptions,
   setServerMaxHeadersCount,

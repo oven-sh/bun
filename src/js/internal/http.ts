@@ -38,6 +38,7 @@ const tlsSymbol = Symbol("tls");
 const kAbortController = Symbol.for("kAbortController");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
+const setSecureContextSymbol = Symbol("setSecureContext");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 // IncomingMessage slot for the request's native response. null if the request was parsed in JS.
@@ -582,6 +583,7 @@ export {
   redactInvalidProxyUrl,
   serverSymbol,
   setMaxHTTPHeaderSize,
+  setSecureContextSymbol,
   setServerAppFlags,
   setServerCustomOptions,
   setServerMaxHeadersCount,

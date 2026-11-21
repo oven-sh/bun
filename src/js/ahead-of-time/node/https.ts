@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/https.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 95c4c778f38564720fd172eefcb2549f3b525352f189c741d6170e9e5591d30f.
+// Written against that file with the SHA-256 bd66177952bb65cdbd8b0f8ddb1da52d1b359122727e69f232eadd8d261bba76.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:https"
@@ -19,6 +19,7 @@ const {
 } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 const { isAnyArrayBuffer, isDataView } = require("node:util/types");
+const { setSecureContextSymbol } = require("internal/http");
 
 const ArrayPrototypeShift = Array.prototype.shift;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -601,11 +602,12 @@ function Server(options, requestListener): void {
     // ALPN requests are always answered with http/1.1.
     options.ALPNProtocols = ["http/1.1"];
   }
-  http.Server.$call(this, options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
-    require("node:tls").convertALPNProtocols(optionsALPNProtocols, this);
+    require("node:tls").convertALPNProtocols(optionsALPNProtocols, options);
   }
+  http.Server.$call(this, options, requestListener);
+  this.ALPNProtocols = options.ALPNProtocols;
   this.ALPNCallback = options.ALPNCallback;
   const blockList = options.blockList;
   if (blockList) {
@@ -619,6 +621,9 @@ function Server(options, requestListener): void {
 $toClass(Server, "Server", http.Server);
 // A listener of this class speaks TLS whatever its options hold.
 Server.prototype[isTlsSymbol] = true;
+Server.prototype.setSecureContext = function setSecureContext(options) {
+  return this[setSecureContextSymbol](options);
+};
 
 function createServer(options, requestListener) {
   return new Server(options, requestListener);

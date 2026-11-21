@@ -171,13 +171,21 @@ impl ClientSession {
     pub(crate) fn resume_receive_by_http_id(&mut self, async_http_id: u32) -> bool {
         for stream_ptr in self.pending.iter().map(AliasableBox::as_ptr) {
             let stream = stream_mut(stream_ptr);
-            let Some(client) = &stream.client else {
+            let Some(client) = &mut stream.client else {
                 continue;
             };
             if client.async_http_id != async_http_id {
                 continue;
             }
-            if core::mem::take(&mut stream.read_paused) {
+            match client.pump_held_body() {
+                Ok(true) => client.send_partial_result(),
+                Ok(false) => {}
+                Err(err) => {
+                    self.fail(stream_ptr, err);
+                    return true;
+                }
+            }
+            if !client.holds_off_receiving() && core::mem::take(&mut stream.read_paused) {
                 if let Some(qs) = stream.qstream_mut() {
                     qs.want_read(true);
                 }
@@ -369,11 +377,11 @@ impl ClientSession {
                 self.detach(stream);
                 return finish(client);
             }
+            if client.state.is_done() {
+                self.detach(stream);
+                return client.finish();
+            }
             if report {
-                if client.state.is_done() {
-                    self.detach(stream);
-                    return client.finish();
-                }
                 client.send_partial_result();
             }
             st.client = Some(client);
@@ -382,7 +390,7 @@ impl ClientSession {
 
         if done {
             self.detach(stream);
-            if let Err(err) = client.state.finalize_body_on_eof() {
+            if let Err(err) = client.finalize_body_on_eof() {
                 return client.fail(err);
             }
             return finish(client);

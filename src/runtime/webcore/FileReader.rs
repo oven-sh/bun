@@ -27,7 +27,6 @@ pub struct FileReader {
     pub(crate) done: Cell<bool>,
     pub(crate) pending: streams::Pending,
     pub(crate) pending_value: JsCell<Strong>, // Strong.Optional
-    pub(crate) fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
     pub(crate) start_offset: Option<usize>,
     /// Length of the slice window at `start_offset`; the reader is limited to it when it is started and ends the stream there. Read-only after init.
@@ -57,7 +56,6 @@ impl Default for FileReader {
             done: Cell::new(false),
             pending: streams::Pending::default(),
             pending_value: JsCell::new(Strong::empty()),
-            fd: Cell::new(Fd::INVALID),
             start_offset: None,
             max_size: None,
             started: Cell::new(false),
@@ -81,23 +79,11 @@ pub(crate) enum Lazy {
 }
 
 pub(crate) struct OpenedFileBlob {
-    pub(crate) fd: Fd,
+    pub(crate) file: sys::File,
     pub(crate) pollable: bool,
     pub(crate) nonblocking: bool,
     #[cfg(not(windows))]
     pub(crate) file_type: FileType,
-}
-
-impl Default for OpenedFileBlob {
-    fn default() -> Self {
-        Self {
-            fd: Fd::INVALID,
-            pollable: false,
-            nonblocking: true,
-            #[cfg(not(windows))]
-            file_type: FileType::File,
-        }
-    }
 }
 
 unsafe extern "C" {
@@ -107,15 +93,11 @@ unsafe extern "C" {
 
 impl Lazy {
     pub(crate) fn open_file_blob(file: &mut blob::store::File) -> sys::Result<OpenedFileBlob> {
-        let mut this = OpenedFileBlob {
-            fd: Fd::INVALID,
-            ..Default::default()
-        };
         let mut file_buf = bun_paths::path_buffer_pool::get();
         #[cfg(unix)]
         let mut is_nonblocking = false;
 
-        let fd: Fd = match &file.pathlike {
+        let opened: sys::File = match &file.pathlike {
             PathOrFileDescriptor::Fd(pl_fd) => {
                 if pl_fd.stdio_tag().is_some() {
                     'brk: {
@@ -125,10 +107,11 @@ impl Lazy {
                             if rc > -1 {
                                 is_nonblocking = true;
                                 file.is_atty = Some(true);
-                                break 'brk Fd::from_native(rc);
+                                break 'brk sys::File::from_fd(Fd::from_native(rc));
                             }
                         }
-                        break 'brk *pl_fd;
+                        // `File` leaves a standard stream open.
+                        break 'brk sys::File::from_fd(*pl_fd);
                     }
                 } else {
                     let duped = sys::dup_with_flags(*pl_fd, 0);
@@ -148,23 +131,21 @@ impl Lazy {
                         }
                     }
 
-                    sys::File::from_fd(fd)
-                        .make_lib_uv_owned_for_syscall(sys::Tag::dup)?
-                        .into_raw()
+                    sys::File::from_fd(fd).make_lib_uv_owned_for_syscall(sys::Tag::dup)?
                 }
             }
             PathOrFileDescriptor::Path(path) => {
-                match sys::open(
+                match sys::File::open(
                     bun_paths::resolve_path::z(path.slice(), &mut file_buf),
                     sys::O::RDONLY | sys::O::NONBLOCK | sys::O::CLOEXEC,
                     0,
                 ) {
-                    Ok(fd) => {
+                    Ok(opened) => {
                         #[cfg(unix)]
                         {
                             is_nonblocking = true;
                         }
-                        fd
+                        opened
                     }
                     Err(err) => {
                         return Err(crate::node::fs::error_for_caller(
@@ -175,10 +156,18 @@ impl Lazy {
                 }
             }
         };
-        let opened = sys::File::from_fd(fd);
+        #[cfg_attr(windows, allow(unused_mut))]
+        let mut this = OpenedFileBlob {
+            file: opened,
+            pollable: false,
+            nonblocking: true,
+            #[cfg(not(windows))]
+            file_type: FileType::File,
+        };
 
         #[cfg(unix)]
         {
+            let fd = this.file.fd();
             if file.is_atty.unwrap_or(false)
                 || (fd.stdio_tag().is_some() && sys::isatty(fd))
                 || (matches!(&file.pathlike, PathOrFileDescriptor::Fd(pl_fd)
@@ -225,8 +214,6 @@ impl Lazy {
             }
         }
 
-        this.fd = opened.into_raw();
-
         Ok(this)
     }
 }
@@ -268,7 +255,9 @@ impl FileReader {
 
     pub(crate) fn on_start(&self) -> streams::Start {
         self.set_reader_owner();
+        #[cfg(unix)]
         let was_lazy = !matches!(self.lazy.get(), Lazy::None);
+        let mut lazy_file = None;
         let mut pollable = false;
         #[cfg(unix)]
         let mut file_type = FileType::File;
@@ -286,13 +275,9 @@ impl FileReader {
                     // drop the RefPtr<Store>; `lazy` was already cleared above
                     drop(store);
                     match open_result {
-                        Err(err) => {
-                            self.fd.set(Fd::INVALID);
-                            return streams::Start::Err(err);
-                        }
+                        Err(err) => return streams::Start::Err(err),
                         Ok(opened) => {
-                            debug_assert!(opened.fd.is_valid());
-                            self.fd.set(opened.fd);
+                            lazy_file = Some(opened.file);
                             pollable = opened.pollable;
                             #[cfg(unix)]
                             {
@@ -309,13 +294,6 @@ impl FileReader {
         }
 
         {
-            let reader_fd = self.reader.get_fd();
-            if reader_fd != Fd::INVALID && self.fd.get() == Fd::INVALID {
-                self.fd.set(reader_fd);
-            }
-        }
-
-        {
             let global = self.parent_const().global_this();
             // `bun_vm()` is the live thread-local VM; `event_loop()` is its
             // per-thread `jsc::EventLoop`.
@@ -323,7 +301,7 @@ impl FileReader {
                 .set(EventLoopHandle::init(global.bun_vm().event_loop_ptr()));
         }
 
-        if was_lazy {
+        if let Some(file) = lazy_file {
             // The across-read ref roots the JS wrapper (`increment_count`
             // upgrades `this_jsvalue` to Strong) so an event-loop callback
             // firing with no JS on the stack never lands on a freed box. For a
@@ -340,7 +318,7 @@ impl FileReader {
                 self.io_ref.set(Some(self.ref_guard()));
             }
             self.reader.set_limit(self.max_size);
-            let (event_loop, fd) = (self.event_loop_ctx(), self.fd.get());
+            let (event_loop, fd) = (self.event_loop_ctx(), file.into());
             let start_result = if let Some(offset) = self.start_offset {
                 self.reader
                     .start_file_offset(event_loop, fd, pollable, offset)

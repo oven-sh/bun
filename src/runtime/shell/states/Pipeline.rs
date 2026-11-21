@@ -184,7 +184,7 @@ impl Pipeline {
             let child_io = {
                 let me = interp.as_pipeline(this);
                 let stdin = if let Some(read_end) = read_end.take() {
-                    let r = IOReader::init(read_end.into_raw(), evtloop);
+                    let r = IOReader::init(read_end, evtloop);
                     r.set_interp(interp);
                     InKind::Fd(r)
                 } else {
@@ -195,7 +195,7 @@ impl Pipeline {
                     // `is_socket` is set on POSIX — the POSIX
                     // pipe is actually a socketpair end (see above).
                     let w = IOWriter::init(
-                        write.into_raw(),
+                        write,
                         io_writer::Flags {
                             pollable: true,
                             is_socket: cfg!(unix),

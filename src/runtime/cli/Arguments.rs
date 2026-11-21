@@ -1453,13 +1453,22 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             | CommandTag::RunAsNodeCommand
     ) {
         ctx.runtime_options.input_type = match args.option(b"--input-type") {
-            Some(value) if value == b"commonjs" || value == b"commonjs-typescript" => {
-                bun_options_types::context::RuntimeInputType::CommonJS
+            Some(b"commonjs") => bun_options_types::context::RuntimeInputType::CommonJS,
+            Some(b"module") => bun_options_types::context::RuntimeInputType::Module,
+            Some(b"commonjs-typescript") => {
+                bun_options_types::context::RuntimeInputType::CommonJSTypeScript
             }
-            Some(value) if value == b"module" || value == b"module-typescript" => {
-                bun_options_types::context::RuntimeInputType::Module
+            Some(b"module-typescript") => {
+                bun_options_types::context::RuntimeInputType::ModuleTypeScript
             }
-            _ => bun_options_types::context::RuntimeInputType::Auto,
+            None => bun_options_types::context::RuntimeInputType::Auto,
+            Some(_) => {
+                Output::err_generic(
+                    "--input-type must be \"module\", \"commonjs\", \"module-typescript\", or \"commonjs-typescript\"",
+                    format_args!(""),
+                );
+                Global::exit(1);
+            }
         };
 
         {
@@ -1557,6 +1566,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if let Some(port_str) = args.option(b"--port") {
             if cmd == CommandTag::RunAsNodeCommand {
                 // TODO: prevent `node --port <script>` from working
+                ctx.runtime_options.eval.is_present = true;
                 ctx.runtime_options.eval.script = port_str;
                 ctx.runtime_options.eval.eval_and_print = true;
             } else {
@@ -1642,9 +1652,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if let Some(script) = args.option(b"--print") {
+            ctx.runtime_options.eval.is_present = true;
             ctx.runtime_options.eval.script = script;
             ctx.runtime_options.eval.eval_and_print = true;
         } else if let Some(script) = args.option(b"--eval") {
+            ctx.runtime_options.eval.is_present = true;
             ctx.runtime_options.eval.script = script;
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");

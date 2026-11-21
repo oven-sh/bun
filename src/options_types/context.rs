@@ -24,6 +24,26 @@ pub enum RuntimeInputType {
     Auto,
     CommonJS,
     Module,
+    CommonJSTypeScript,
+    ModuleTypeScript,
+}
+
+impl RuntimeInputType {
+    pub fn loader(self) -> bun_ast::Loader {
+        match self {
+            Self::Auto => bun_ast::Loader::Tsx,
+            Self::CommonJS | Self::Module => bun_ast::Loader::Js,
+            Self::CommonJSTypeScript | Self::ModuleTypeScript => bun_ast::Loader::Ts,
+        }
+    }
+
+    pub fn module_type(self) -> crate::ModuleType {
+        match self {
+            Self::Auto => crate::ModuleType::Unknown,
+            Self::CommonJS | Self::CommonJSTypeScript => crate::ModuleType::Cjs,
+            Self::Module | Self::ModuleTypeScript => crate::ModuleType::Esm,
+        }
+    }
 }
 
 pub struct ContextData {
@@ -725,6 +745,8 @@ pub struct RuntimeOptions {
 #[derive(Default)]
 pub struct Eval {
     pub script: &'static [u8],
+    /// Explicit eval/print or stdin, including an empty source.
+    pub is_present: bool,
     pub eval_and_print: bool,
     /// Under `--interactive`, `script` holds the node:repl bootstrap; this
     /// holds the user's actual `-e` bytes so `process._eval` reports them
@@ -732,6 +754,12 @@ pub struct Eval {
     pub interactive_script: Option<&'static [u8]>,
     /// `bun lint` or `bun fmt` started this process to read a configuration that its own tool reads in Node.js.
     pub reads_configuration: bool,
+}
+
+impl Eval {
+    pub fn has_source(&self) -> bool {
+        self.is_present
+    }
 }
 
 pub struct CpuProf {

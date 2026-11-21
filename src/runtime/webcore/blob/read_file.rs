@@ -257,11 +257,7 @@ impl FdOp for ReadFile {
                     err.path = path_for_error(&self.file.get());
                     return Err(err);
                 }
-                Err(_) if self.could_block => {}
-                // Never ends: https://github.com/oven-sh/bun/pull/49337
-                Err(_) => loop {
-                    core::hint::spin_loop();
-                },
+                Err(_) => self.could_block = true,
             }
         }
         if self.buffer.len() + 16_000 < self.buffer.capacity() {

@@ -514,6 +514,20 @@ describe("Bun.serve", () => {
 });
 
 describe("fetch", () => {
+  test("a compressed body that has arrived and that nobody reads ends the span", async () => {
+    const body = Bun.gzipSync(Buffer.alloc(8 * 1024 * 1024, "a"));
+    using server = Bun.serve({ port: 0, fetch: () => new Response(body, { headers: { "content-encoding": "gzip" } }) });
+    const response = await fetch(server.url);
+    let got: any[] = [];
+    while (!got.length) {
+      await Bun.sleep(1);
+      got = byName(await collect(), "bun.http.client");
+    }
+    expect(got.map(s => [s.status.code, s.attributes["http.response.status_code"]])).toEqual([[0, 200]]);
+    expect((await response.bytes()).length).toBe(8 * 1024 * 1024);
+    expect(byName(await collect(), "bun.http.client")).toEqual([]);
+  });
+
   test("network error produces an error span", async () => {
     // Accepts and immediately drops every connection (held so no concurrent
     // test is handed the port).

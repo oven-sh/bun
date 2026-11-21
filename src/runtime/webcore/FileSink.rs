@@ -517,15 +517,13 @@ impl FileSink {
         this
     }
 
-    /// Starts the writer on `self.fd`.
     #[cfg(windows)]
-    pub(crate) fn start_writer(&self, owns_fd: bool, sync: bool) -> sys::Result<()> {
-        self.writer.set_owns_fd(owns_fd);
+    pub(crate) fn start_writer(&self, file: sys::MaybeOwnedFile, sync: bool) -> sys::Result<()> {
         let event_loop = self.event_loop_handle.as_event_loop_ctx();
         if sync {
-            self.writer.start_sync(self, event_loop, self.fd.get())
+            self.writer.start_sync(self, event_loop, file)
         } else {
-            self.writer.start(self, event_loop, self.fd.get(), true)
+            self.writer.start(self, event_loop, file, true)
         }
     }
 
@@ -632,9 +630,7 @@ impl FileSink {
         #[cfg(windows)]
         {
             if self.force_sync.get() {
-                self.writer.start_sync(self, event_loop, file.fd())?;
-                file.into_raw();
-                self.writer.set_owns_fd(true);
+                self.writer.start_sync(self, event_loop, file.into())?;
                 self.writer.update_ref(false);
                 return sys::Result::Ok(());
             }
@@ -642,14 +638,10 @@ impl FileSink {
 
         match self
             .writer
-            .start(self, event_loop, file.fd(), self.pollable.get())
+            .start(self, event_loop, file, self.pollable.get())
         {
             sys::Result::Err(err) => return sys::Result::Err(err),
             sys::Result::Ok(()) => {
-                // The writer closes it from now on.
-                file.into_raw();
-                #[cfg(windows)]
-                self.writer.set_owns_fd(true);
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
                 self.writer.update_ref(false);

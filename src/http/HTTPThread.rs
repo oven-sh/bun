@@ -129,6 +129,8 @@ pub struct HttpThread {
 
     /// What each `InFlightRequest` owns, for `dealloc_in_flight_for_exit`.
     pub(crate) in_flight: Vec<NonNull<AsyncHttp<'static>>>,
+    /// By `async_http_id`: requests that left their transport with a body still to decode.
+    pub(crate) held_bodies: ArrayHashMap<u32, InFlightRequest>,
 }
 
 impl HttpThread {
@@ -163,6 +165,7 @@ impl HttpThread {
             timer: Instant::now(),
             lazy_libdeflater: None,
             in_flight: Vec::new(),
+            held_bodies: ArrayHashMap::new(),
         }
     }
 }
@@ -502,6 +505,8 @@ impl HttpThread {
                             socket.close(uws::CloseKind::Failure);
                         }
                     }
+                } else if let Some(held) = InFlightRequest::take_held(http.async_http_id) {
+                    held.fail(crate::Error::Aborted);
                 } else {
                     // No socket for this id. It may be a request coalesced onto a
                     // leader's in-flight h2 TLS connect (parked in `pc.waiters`
@@ -639,45 +644,30 @@ impl HttpThread {
         }
     }
 
+    /// One resume per request. A resume can queue the next one, which waits for the next turn.
     fn drain_queued_receive_resumes(&mut self) {
-        loop {
-            let queued = core::mem::take(&mut *INBOX.receive_resumes.lock());
-            if queued.is_empty() {
-                return;
-            }
-            for id in queued {
-                if let Some(socket_ptr) = abort_tracker().get(&id) {
-                    match *socket_ptr {
-                        uws::AnySocket::SocketTls(socket) => {
-                            let tagged = HTTPContext::enter_client(socket, |client| {
-                                client.resume_receive::<true>(socket);
-                                client.drain_response_body::<true>(socket)
-                            });
-                            if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
-                                // The resume may tear the session down and
-                                // release its last ref; hold one across
-                                // the second call.
-                                let _guard = RefPtr::from_this(session);
-                                h2::ClientSession::resume_receive_by_http_id(session, id);
-                                h2::ClientSession::drain_response_body_by_http_id(session, id);
-                            }
-                        }
-                        uws::AnySocket::SocketTcp(socket) => {
-                            let tagged = HTTPContext::enter_client(socket, |client| {
-                                client.resume_receive::<false>(socket);
-                                client.drain_response_body::<false>(socket)
-                            });
-                            if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
-                                // See the Tls arm.
-                                let _guard = RefPtr::from_this(session);
-                                h2::ClientSession::resume_receive_by_http_id(session, id);
-                                h2::ClientSession::drain_response_body_by_http_id(session, id);
-                            }
-                        }
+        let mut queued = core::mem::take(&mut *INBOX.receive_resumes.lock());
+        queued.sort_unstable();
+        queued.dedup();
+        for id in queued {
+            if let Some(socket_ptr) = abort_tracker().get(&id) {
+                let session = match *socket_ptr {
+                    uws::AnySocket::SocketTls(socket) => {
+                        HTTPContext::enter_client(socket, |c| c.resume_receive(socket))
+                            .and_then(ActiveSocketExt::session)
                     }
-                } else {
-                    h3::ClientContext::resume_receive_by_http_id(id);
+                    uws::AnySocket::SocketTcp(socket) => {
+                        HTTPContext::enter_client(socket, |c| c.resume_receive(socket))
+                            .and_then(ActiveSocketExt::session)
+                    }
+                };
+                if let Some(session) = session {
+                    h2::ClientSession::resume_receive_by_http_id(session, id);
                 }
+            } else if let Some(held) = InFlightRequest::take_held(id) {
+                held.resume_held();
+            } else {
+                h3::ClientContext::resume_receive_by_http_id(id);
             }
         }
     }
@@ -865,8 +855,7 @@ impl HttpThread {
             http.release_at_shutdown();
         }
         for http in core::mem::take(&mut self.in_flight) {
-            // SAFETY: from a `Box`. Its `InFlightRequest` is in a socket, a stream or a list of
-            // waiters, and is not used again: this thread parks for good.
+            // SAFETY: from a `Box`. This thread parks for good, so its `InFlightRequest` is not used again.
             unsafe { bun_core::heap::take(http.as_ptr()) }.release_at_shutdown();
         }
     }

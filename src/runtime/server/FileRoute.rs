@@ -289,7 +289,7 @@ impl FileRoute {
             req.set_yield(true);
             return;
         };
-        let fd = StreamFd::Owned(fd);
+        let fd = StreamFd::from(bun_sys::File::from_fd(fd));
 
         match this.serve(fd.get(), path, &mut req, resp, method, &mut span) {
             Serve::Done => {}

@@ -4010,7 +4010,7 @@ declare module "bun" {
     autoloadPackageJson?: boolean;
     /**
      * Compile the program's JavaScript and TypeScript to machine code at build time.
-     * `bytecode` has no effect with it.
+     * It cannot be combined with `bytecode`.
      *
      * The executable has no JIT. Code that only exists at run time, such as a string passed to
      * `eval()` or `new Function()`, runs in the interpreter.
@@ -10704,7 +10704,9 @@ declare module "bun" {
      *
      * @param data - The input data for the archive:
      *   - **Object**: Creates a new tarball with the object's keys as file paths and values as file contents
-     *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz)
+     *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz). If it was gzipped more
+     *     than once, `files()` and `extract()` reject once the inner layers decompress to more than 1,032 times
+     *     its size. Up to 64 MiB are always read.
      * @param options - Archive options, including compression settings
      *
      * @example

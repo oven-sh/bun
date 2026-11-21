@@ -1082,9 +1082,13 @@ impl EventLoop {
         self.as_handle().set_as_parent_of(uws::Loop::get());
     }
 
-    /// Asynchronously run the garbage collector and track how much memory is now allocated
+    /// Hint that now is a good time to collect, and track how much memory is now allocated. JSC makes the collection if
+    /// the program has allocated 256 KB since the last one. The idle timer collects anything less, a second later.
     pub fn perform_gc(&self) {
-        self.vm_ref().gc_controller.perform_gc(false);
+        use crate::garbage_collection_controller::Collection;
+        self.vm_ref()
+            .gc_controller
+            .perform_gc(Collection::IfAllocated(256 * 1024));
     }
 
     /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,

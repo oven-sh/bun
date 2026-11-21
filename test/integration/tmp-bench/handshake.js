@@ -64,7 +64,7 @@ if (process.argv[2] !== "--run") {
           });
           request
             .on("timeout", () => (heard.add("timeout"), request.abort()))
-            .on("error", () => {})
+            .on("error", e => heard.has("timeout") || heard.add(e.code))
             .on("close", hear("closed"))
             .end();
         });

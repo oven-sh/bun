@@ -20,6 +20,7 @@ const timers = {
     setInterval(() => {}, 1)
   ),
   "30 ms blocked every 10 ms": done => setInterval(() => (Bun.sleepSync(30), done()), 10),
+  "bursts of 3 x 20 ms every 150 ms": done => setInterval(() => { for (let i = 0; i < 3; i++) setTimeout(() => (stall(20), done()), 1 + i * 10); }, 150),
   "1000 short intervals": done => {
     for (let i = 0; i < 1000; i++) setInterval(() => (stall(0.005), done()), 20 + (i % 37));
   },
@@ -44,17 +45,19 @@ if (mode === "--burn") {
   pin(args[2]);
   const c = net.connect(+args[0], "127.0.0.1").setNoDelay(true);
   const waits = [];
-  const end = now() + SECONDS * 1000;
+  let end = Infinity;
   let sent;
   const ask = () => ((sent = now()), c.write(sent > end ? "q" : "x"));
   c.on("data", d => {
     if (d[0] !== 120) return (console.log(+d, at(waits, 0.5), at(waits, 0.95), at(waits, 1)), process.exit(0));
-    waits.push(now() - sent);
+    if (end === Infinity) end = now() + SECONDS * 1000 - 1;
+    else waits.push(now() - sent);
     setTimeout(ask, +args[1]);
   });
   ask();
 } else {
-  const [fresh, condition, only, variants, rounds = 3] = args;
+  const [fresh, condition, only, variants, rounds = 3, seconds = SECONDS] = args;
+  process.env.SECONDS = seconds;
   const columns = [[mode, "old"], ...variants.split(";").map(v => [fresh, v])];
   const isShared = condition === "shared" || condition === "low";
   const burners = (
@@ -84,8 +87,8 @@ if (mode === "--burn") {
             });
             const port = parseInt(Buffer.from((await server.stdout.getReader().read()).value));
             const asker = Bun.spawn(
-              [mode, __filename, "--ask", port, Math.min(pause, SECONDS * 1000), isShared ? "1" : ""],
-              { timeout: 20000, stderr: "inherit" },
+              [mode, __filename, "--ask", port, Math.min(pause, seconds * 1000), isShared ? "1" : ""],
+              { env, timeout: 20000, stderr: "inherit" },
             );
             seen[i].push((await asker.stdout.text()).trim().split(" ").map(Number));
             server.kill();

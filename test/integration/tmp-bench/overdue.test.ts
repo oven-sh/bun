@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("overdue.js", "1500");
+bench("cond.js", "all", "50 ms turns,cpu,spawn,startup,worker start", "", "3");

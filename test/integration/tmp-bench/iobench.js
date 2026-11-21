@@ -232,6 +232,23 @@ const small = tmp => {
   if (!fs.existsSync(f)) fs.writeFileSync(f, Buffer.alloc(2048, 97));
   return f;
 };
+const largePingPong = size => async () => {
+  const name = pipeName(),
+    p = role("pipeEcho", [name]),
+    b = Buffer.alloc(size);
+  await firstLine(p.stdout);
+  try {
+    return await pingPong(1, 1500, async got => {
+      const c = net.connect(name);
+      await once(c, "connect");
+      let n = 0;
+      c.on("data", d => (n += d.length) === size && ((n = 0), got(() => c.write(b))));
+      return { send: () => c.write(b), close: () => c.destroy() };
+    });
+  } finally {
+    p.kill();
+  }
+};
 const cmd = ["cmd.exe", "/d", "/c", "exit"];
 
 // [unit, higher is better, run]
@@ -553,6 +570,8 @@ const cases = {
       }
     },
   ],
+  "named pipe ping-pong, 100 KiB": ["msg/s", 1, largePingPong(100 * 1024)],
+  "named pipe ping-pong, 300 KiB": ["msg/s", 1, largePingPong(300 * 1024)],
   "named pipe stream": [
     "MB/s",
     1,

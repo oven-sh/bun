@@ -988,11 +988,12 @@ impl Request {
             })
         })?;
 
+        // `Some(None)`: an empty list, which still replaces the headers of `input`.
         let headers = sources.object_member(|object| match Pristine::of(&object) {
-            Pristine::Request(request) => request.clone_headers(global),
-            Pristine::Response(response) => response.clone_init_headers(global),
+            Pristine::Request(request) => request.clone_headers(global).map(Some),
+            Pristine::Response(response) => response.clone_init_headers(global).map(Some),
             Pristine::No => match object.fast_get(global, bun_jsc::BuiltinName::Headers)? {
-                Some(value) => HeadersRef::from_init_value(global, value),
+                Some(value) => HeadersRef::from_init_value(global, value).map(Some),
                 None => Ok(None),
             },
         })?;
@@ -1043,7 +1044,7 @@ impl Request {
         }
 
         let body = body.unwrap_or(BodyValue::Null);
-        let mut headers = headers;
+        let mut headers = headers.flatten();
         if let Some(headers) = &mut headers {
             body.put_content_type_default(headers, global)?;
         }

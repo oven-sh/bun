@@ -1,7 +1,6 @@
 use crate::fs;
-use crate::package_json::{PackageJSON, SideEffects};
+use crate::package_json::PackageJSON;
 use bun_collections::StringHashMap;
-use bun_options_types::bundle_enums::ModuleType;
 use bun_zstd as _;
 use std::sync::OnceLock;
 
@@ -144,16 +143,7 @@ fn init_map() -> StringHashMap<FallbackModule> {
         .map(|spec| {
             (
                 spec.name,
-                PackageJSON {
-                    name: Box::from(spec.name),
-                    version: Box::from(b"0.0.0-polyfill".as_slice()),
-                    module_type: ModuleType::Esm,
-                    // main_fields/browser_map are never read on this code path;
-                    // Default::default() fills them safely.
-                    source: bun_ast::Source::init_path_string(spec.pkgjson_path, b""),
-                    side_effects: SideEffects::False,
-                    ..Default::default()
-                },
+                PackageJSON::for_node_fallback(spec.name, spec.pkgjson_path),
                 fs::Path::init_with_namespace_virtual(spec.index_path, b"node", spec.pretty),
                 spec.code,
             )

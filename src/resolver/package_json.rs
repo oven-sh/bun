@@ -200,6 +200,18 @@ const INSTALLED_DEPENDENCY_GROUPS: [DependencyGroup; 2] =
     [DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL];
 
 impl PackageJSON {
+    /// Embedded Node fallbacks have no on-disk manifest to parse.
+    pub(crate) fn for_node_fallback(name: &'static [u8], package_json_path: &'static [u8]) -> Self {
+        Self {
+            name: Box::from(name),
+            version: Box::from(b"0.0.0-polyfill".as_slice()),
+            module_type: ModuleType::Esm,
+            source: bun_ast::Source::init_path_string(package_json_path, b""),
+            side_effects: SideEffects::False,
+            ..Default::default()
+        }
+    }
+
     /// Returns true if auto-install can look up the version of an imported package in this
     /// package.json.
     pub(crate) fn lists_dependencies(&self) -> bool {
@@ -1580,6 +1592,12 @@ impl Entry {
 
 pub type ConditionsMap = StringArrayHashMap<()>;
 
+#[derive(Clone, Copy)]
+struct PackageTargetOptions {
+    internal: bool,
+    in_array: bool,
+}
+
 pub(crate) struct ESModule<'a> {
     pub(crate) validate_package_config: bool,
     pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
@@ -1976,8 +1994,15 @@ impl<'a> ESModule<'a> {
 
             if let Some(main_export) = main_export {
                 if !matches!(main_export.data, EntryData::Null) {
-                    let result =
-                        self.resolve_target::<false>(package_url, main_export, b"", false, false);
+                    let result = self.resolve_target::<false>(
+                        package_url,
+                        main_export,
+                        b"",
+                        PackageTargetOptions {
+                            internal: false,
+                            in_array: false,
+                        },
+                    );
                     if result.status != Status::Null && result.status != Status::Undefined {
                         return Self::attach_failure_key(result, b".");
                     }
@@ -2031,8 +2056,15 @@ impl<'a> ESModule<'a> {
                     log.add_note_fmt(format_args!("Found \"{}\"", bstr::BStr::new(match_key)));
                 }
 
-                let result =
-                    self.resolve_target::<false>(package_url, target, b"", is_imports, false);
+                let result = self.resolve_target::<false>(
+                    package_url,
+                    target,
+                    b"",
+                    PackageTargetOptions {
+                        internal: is_imports,
+                        in_array: false,
+                    },
+                );
                 return Self::attach_failure_key(result, match_key);
             }
         }
@@ -2073,8 +2105,10 @@ impl<'a> ESModule<'a> {
                                 package_url,
                                 target,
                                 subpath,
-                                is_imports,
-                                false,
+                                PackageTargetOptions {
+                                    internal: is_imports,
+                                    in_array: false,
+                                },
                             );
                             return Self::attach_failure_key(result, &expansion.key);
                         }
@@ -2097,8 +2131,10 @@ impl<'a> ESModule<'a> {
                                 package_url,
                                 target,
                                 subpath,
-                                is_imports,
-                                false,
+                                PackageTargetOptions {
+                                    internal: is_imports,
+                                    in_array: false,
+                                },
                             ),
                             &expansion.key,
                         );
@@ -2161,9 +2197,9 @@ impl<'a> ESModule<'a> {
         package_url: &[u8],
         target: &Entry,
         subpath: &[u8],
-        internal: bool,
-        in_array: bool,
+        options: PackageTargetOptions,
     ) -> Resolution {
+        let PackageTargetOptions { internal, in_array } = options;
         if !self.stack_check.is_safe_to_recurse() {
             if let Some(logs) = self.debug_logs.as_deref_mut() {
                 logs.add_note(b"The package target is nested too deeply".to_vec());
@@ -2500,8 +2536,7 @@ impl<'a> ESModule<'a> {
                             package_url,
                             &entry.value,
                             subpath,
-                            internal,
-                            in_array,
+                            options,
                         );
                         if result.status.is_undefined() {
                             continue;
@@ -2552,8 +2587,10 @@ impl<'a> ESModule<'a> {
                         package_url,
                         target_value,
                         subpath,
-                        internal,
-                        true,
+                        PackageTargetOptions {
+                            in_array: true,
+                            ..options
+                        },
                     );
                     if result.status == Status::InvalidPackageTarget
                         || result.status == Status::Null

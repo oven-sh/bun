@@ -8,7 +8,7 @@ use crate::node::types::PathLikeExt as _;
 #[cfg(windows)]
 use crate::server::file_response_stream::StreamFd;
 #[cfg(not(windows))]
-use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Interest, JobFd, Step, Target};
+use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Step, Target};
 use crate::webcore::blob::store::Data;
 #[cfg(windows)]
 use crate::webcore::blob::store::File as FileStore;
@@ -21,6 +21,8 @@ use bun_core::String as BunString;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 #[cfg(windows)]
 use bun_io::IntrusiveUvFs as _;
+#[cfg(not(windows))]
+use bun_io::fd_wait::{Interest, JobFd};
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
 };
@@ -218,7 +220,6 @@ impl ReadFile {
 #[cfg(not(windows))]
 impl FdOp for ReadFile {
     const INTEREST: Interest = Interest::Readable;
-    const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
     type Js = PendingReadFileCompletion;
 
     fn open(&mut self) -> Result<(JobFd, Step), Box<SystemError>> {

@@ -70,7 +70,7 @@ const MIRI_CRATES = [
 const MIRI_UNIT_TESTS: Record<string, string[]> = {
   bun_aot: ["ir::parallel"],
   bun_core: ["c_str_list", "util::tests"],
-  bun_io: ["max_buf"],
+  bun_io: ["fd_wait", "max_buf"],
 };
 
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {

@@ -39,10 +39,7 @@ use store::{FileExt as _, S3Ext as _, StoreExt as _};
 pub(crate) mod copy_file;
 #[cfg(not(windows))]
 #[path = "blob/fd_job.rs"]
-pub(crate) mod fd_job;
-#[cfg(not(windows))]
-#[path = "blob/io_parking.rs"]
-mod io_parking;
+mod fd_job;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[path = "blob/memfd.rs"]
 mod memfd;

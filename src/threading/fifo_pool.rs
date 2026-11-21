@@ -58,7 +58,7 @@ pub fn has_new_thread() -> bool {
     NEW_THREADS.load(Ordering::SeqCst) > 0
 }
 
-const MAX_SUCCESSES: u8 = 8;
+const MAX_SUCCESSES: u8 = 2;
 
 /// A thread is new until it sleeps after `attempt` has succeeded on it, or until `MAX_SUCCESSES`.
 pub fn on_new_thread(attempt: impl FnOnce() -> bool) -> bool {

@@ -622,10 +622,9 @@ fn a_wake_waits_for_memory() {
 
 type Spawn = fn(Box<dyn FnOnce() + Send>);
 const ON_NEW_THREAD: Spawn = |run| new_pool().go(run);
-const AFTER_FAILURES: Spawn = |run| after_attempts(9, false, run);
+const AFTER_FAILURES: Spawn = |run| after_attempts(3, false, run);
 const AFTER_A_SUCCESS: Spawn = |run| after_attempts(1, true, run);
-const BEFORE_THE_LAST_SUCCESS: Spawn = |run| after_attempts(7, true, run);
-const AFTER_THE_LAST_SUCCESS: Spawn = |run| after_attempts(8, true, run);
+const AFTER_THE_LAST_SUCCESS: Spawn = |run| after_attempts(2, true, run);
 const ON_OTHER_POOL: Spawn = |run| pool_with(false).go(run);
 const ON_NO_POOL: Spawn = |run| drop(std::thread::spawn(run));
 
@@ -699,7 +698,6 @@ fn a_thread_that_sleeps_is_woken_by_an_event() {
         (ON_NEW_THREAD, without),
         (AFTER_FAILURES, without),
         (AFTER_A_SUCCESS, without),
-        (BEFORE_THE_LAST_SUCCESS, without),
         (AFTER_THE_LAST_SUCCESS, 1),
         (ON_OTHER_POOL, 1),
         (ON_NO_POOL, 1),
@@ -824,7 +822,7 @@ fn no_event_is_made_without_a_new_thread() {
 
     let (pool, (tell, told)) = (new_pool(), mpsc::channel());
     let is_new = || told.recv_timeout(Duration::from_secs(5)).unwrap();
-    for (count, result, expected) in [(1, false, true), (7, true, true), (1, true, false)] {
+    for (count, result, expected) in [(1, false, true), (1, true, true), (1, true, false)] {
         let tell = tell.clone();
         pool.go(move || {
             let attempts = Cell::new(0);
@@ -842,7 +840,7 @@ fn no_event_is_made_without_a_new_thread() {
         tell.send((on_new_thread(|| true), has_new_thread()))
             .unwrap()
     };
-    after_attempts(8, true, Box::new(ask));
+    after_attempts(2, true, Box::new(ask));
     assert_eq!(is_new(), (false, false));
     assert!(
         start.elapsed() < Duration::from_secs(9),

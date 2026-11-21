@@ -43,7 +43,16 @@ const command = [bunExe(), "fmt"];
 /** Matches the start of an error. */
 const anError = /^error: /m;
 
-const env = { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined };
+const env = {
+  ...bunEnv,
+  // Set by the package.json script that runs the tests.
+  npm_lifecycle_event: undefined,
+  npm_package_json: undefined,
+  BUN_INTERNAL_SCRIPTS_OF_COMMANDS: undefined,
+  BUN_INTERNAL_CHECK_SCRIPTS: undefined,
+  NO_COLOR: undefined,
+  FORCE_COLOR: undefined,
+};
 
 /**
  * The text that `bun fmt` prints when a file can't be formatted, with any configuration. It's Bun's usual error format:
@@ -10187,6 +10196,25 @@ describe.concurrent("a fmt script in package.json", () => {
     });
     expect(result.files).toEqual({ "a.js": formatted });
     expect(result.exitCode).toBe(0);
+  });
+
+  // `"fmt:check": "bun fmt --check ."` beside `"fmt": "bun fmt --write ."` rewrote the file and exited with 0.
+  test.each([
+    ["the formatter if the fmt script starts with bun fmt", "bun fmt --write .", "bun fmt --check .", 1],
+    ["the formatter also where the flag stands before fmt", "bun fmt --write .", "bun --check fmt", 1],
+    ["the fmt script if that is another tool", "echo the script", "bun fmt --check .", 0],
+  ])("with arguments in another script, bun fmt is %s", async (_, fmt, check, exitCode) => {
+    using dir = tempDir("bun-format-sibling", {
+      "package.json": JSON.stringify({ scripts: { fmt, "fmt:check": check } }),
+      "a.js": ugly,
+    });
+    // With `--bun`, the `bun` of the scripts is this one.
+    const cmd = [bunExe(), "--bun", "run", "fmt:check"];
+    await using proc = spawn({ cmd, env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain(exitCode === 1 ? "2 files need formatting." : "the script --check .");
+    expect(readFileSync(join(String(dir), "a.js"), "utf8")).toBe(ugly);
+    expect(exited).toBe(exitCode);
   });
 });
 

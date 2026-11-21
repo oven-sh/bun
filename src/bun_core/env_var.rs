@@ -222,6 +222,7 @@ new!(pub NODE_PRESERVE_SYMLINKS_MAIN: boolean, "NODE_PRESERVE_SYMLINKS_MAIN", { 
 new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
 new!(pub npm_lifecycle_event: string, "npm_lifecycle_event", {});
 new!(pub npm_package_json: string, "npm_package_json", {});
+new!(pub npm_package_name: string, "npm_package_name", {});
 new!(pub PATH: string, "PATH", {});
 platform_specific_new!(pub PWD: string, posix = "PWD", windows = None, {});
 new!(pub REPL_ID: boolean, "REPL_ID", { default: false });

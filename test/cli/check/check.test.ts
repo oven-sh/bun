@@ -24396,6 +24396,8 @@ describe.concurrent("--check", () => {
       [{ npm_lifecycle_event: "check", npm_package_json: own }, error],
       // Another package's script is running.
       [{ npm_lifecycle_event: "check", npm_package_json: other }, "the script ran"],
+      // yarn 1 and pnpm before 10.10 say only its name, which this package doesn't have: `cd packages/web && bun check`.
+      [{ npm_lifecycle_event: "check", npm_package_name: "another" }, "the script ran"],
     ];
     const results = await Promise.all(cases.map(([extra]) => check(dir, [], extra)));
     expect(results.map(it => it.stdout)).toEqual(cases.map(it => it[1]));
@@ -24436,6 +24438,35 @@ describe.concurrent("--check", () => {
         exitCode: it.exitCode,
       })),
     ).toEqual(cases.map(([, runs]) => ({ ranTheScript: Number(runs), reported: 1, exitCode: 1 })));
+  });
+
+  // Such a `check` script is the type checker with other arguments, and ran only itself before `bun check` was a command.
+  test("`bun check` with arguments type checks in another script if the `check` script starts with `bun check`", async () => {
+    const direct = "bun check || echo the script ran";
+    // The `check` script, the script that `bun run types` runs, and whether that runs the `check` script.
+    const cases: [string, string, boolean][] = [
+      [direct, "bun check -p tsconfig.json", false],
+      // Nothing is added to the script, so it runs as it is written.
+      [direct, "bun check", true],
+      ["echo the script ran", "bun check -p tsconfig.json", true],
+    ];
+    const results = await Promise.all(
+      cases.map(async ([check, types]) => {
+        using dir = project({
+          "a.ts": `export const a: number = "1";\n`,
+          "package.json": JSON.stringify({ scripts: { check, types } }),
+        });
+        // With `--bun`, the `bun` of the scripts is this one.
+        return await run(String(dir), ["--bun", "run", "types"]);
+      }),
+    );
+    expect(
+      results.map(it => ({
+        ranTheScript: it.stdout.includes("the script ran"),
+        exitCode: it.exitCode,
+      })),
+    ).toEqual(cases.map(([, , ranTheScript]) => ({ ranTheScript, exitCode: ranTheScript ? 0 : 1 })));
+    expect(results[0].stdout).toContain("a.ts(1,14): error TS2322");
   });
 
   // yarn doesn't set which package the script belongs to. It's assumed to be the one `bun` is started in, not every

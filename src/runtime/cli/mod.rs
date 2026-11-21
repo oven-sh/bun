@@ -1459,22 +1459,16 @@ pub(crate) mod command {
     }
 
     /// The flags of `command` that stand before it, as in `bun --check format` or `bun -c format`, and then what follows it. If
-    /// they were dropped, `--check` would write. `knows` tells whether `command` has a flag. The others are for `bun`, or come
+    /// they were dropped, `--check` would write. The others are for `bun`, or come
     /// from `BUN_OPTIONS`.
     fn with_own_flags_before(
         argv: &[&'static bun_core::ZStr],
         command: &[u8],
-        knows: fn(&[u8]) -> bool,
     ) -> Vec<&'static bun_core::ZStr> {
-        let is_of_bun = |arg: &[u8]| match strings::split_once_char(arg, b'=') {
-            // `bun -c=bunfig.toml lint`. Without a value it's `--check` of `bun fmt`.
-            Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
-            None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
-        };
+        use super::script_or_command::is_own_flag_before;
         let at = super::script_or_command::place_of_command(command).unwrap_or(argv.len());
         let mut args: Vec<_> = (argv.iter().take(at).skip(1))
-            .filter(|arg| arg.as_bytes().starts_with(b"-"))
-            .filter(|arg| !is_of_bun(arg.as_bytes()) && knows(arg.as_bytes()))
+            .filter(|arg| is_own_flag_before(command, arg.as_bytes()))
             .copied()
             .collect();
         args.extend_from_slice(after_command(argv, command));
@@ -1497,8 +1491,7 @@ pub(crate) mod command {
         let ctx = init(Tag::LintCommand, log)?;
         let argv = argv_zslice();
         print_help_if_asked_before(b"lint", Tag::LintCommand);
-        let knows = super::lint_command::LintCommand::has_flag;
-        super::lint_command::LintCommand::exec(ctx, &with_own_flags_before(&argv, b"lint", knows))
+        super::lint_command::LintCommand::exec(ctx, &with_own_flags_before(&argv, b"lint"))
     }
 
     #[cold]
@@ -1508,11 +1501,7 @@ pub(crate) mod command {
         let ctx = init(Tag::FormatCommand, log)?;
         let argv = argv_zslice();
         print_help_if_asked_before(b"fmt", Tag::FormatCommand);
-        let knows = super::format_command::FormatCommand::has_flag;
-        super::format_command::FormatCommand::exec(
-            ctx,
-            &with_own_flags_before(&argv, b"fmt", knows),
-        )
+        super::format_command::FormatCommand::exec(ctx, &with_own_flags_before(&argv, b"fmt"))
     }
 
     #[cold]

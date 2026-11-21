@@ -1,6 +1,7 @@
 //! `bun check`, `bun lint`, `bun fmt` and `bun compile` ran the script of that name in `package.json` before they were commands, so where a project has such a script they still do. In that script, and in what it
 //! runs, they are the commands: `"lint": "bun lint"`. So it is with a file `lint.ts` and with
 //! `node_modules/.bin/lint`. With `--no-script` they are the commands whatever the project has.
+//! With arguments, they are the commands in another script of that package too if the script of that name starts with `bun <command>`.
 //! A `package.json` that names the script and can't be parsed stops `bun lint` and `bun fmt`, which can write files.
 
 use bun_core::{Global, UnwrapOrOom, env_var};
@@ -94,6 +95,16 @@ fn has_flag(command: &[u8], flag: &[u8]) -> bool {
     }
 }
 
+/// Whether `arg`, which stands before `command`, is a flag of `command` and not of `bun`: `bun --check fmt`, `bun -c fmt`.
+pub(crate) fn is_own_flag_before(command: &[u8], arg: &[u8]) -> bool {
+    let is_of_bun = match bun_core::strings::split_once_char(arg, b'=') {
+        // `bun -c=bunfig.toml lint`. Without a value it's `--check` of `bun fmt`.
+        Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
+        None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
+    };
+    arg.starts_with(b"-") && !is_of_bun && has_flag(command, arg)
+}
+
 /// Where the first of `args` is that is neither a flag of `bun` nor the value of one: the command, or what to run.
 /// There is none with `--eval` and `--print`.
 fn place_of_first_word(args: &[&[u8]]) -> Option<usize> {
@@ -117,6 +128,25 @@ fn place_of_first_word(args: &[&[u8]]) -> Option<usize> {
         };
     }
     None
+}
+
+/// What follows `bun <command>` in the script `text`, if it starts with those two words: `cd web && bun lint` and `bun --config=ci.toml lint` don't.
+fn after_command_in_script<'a>(command: &[u8], text: &'a [u8]) -> Option<&'a [u8]> {
+    let text = text.trim_ascii_start();
+    let after_bun = match cfg!(windows) {
+        true => [&b"bun.exe"[..], b"bun"].iter().find_map(|name| {
+            let (program, rest) = text.split_at_checked(name.len())?;
+            program.eq_ignore_ascii_case(name).then_some(rest)
+        }),
+        false => text.strip_prefix(b"bun"),
+    }?;
+    let after_spaces = bun_core::strings::trim_left(after_bun, b" \t");
+    if after_spaces.len() == after_bun.len() {
+        return None;
+    }
+    let rest = after_spaces.strip_prefix(command)?;
+    let ends = |byte: &u8| matches!(byte, b' ' | b'\t' | b';' | b'&' | b'|' | b'\r' | b'\n');
+    rest.first().is_none_or(ends).then(|| rest.trim_ascii())
 }
 
 /// Where `command` is among the arguments of this process, if it is what `bun` is asked for.
@@ -229,11 +259,16 @@ pub(crate) fn directory_of_cwd(given: &[u8]) -> Vec<u8> {
     fold(&with_slashes)
 }
 
-/// Decides what `bun <command>` runs, without looking at `command`'s own arguments.
+/// Decides what `bun <command>` runs. Of `command`'s own arguments, it only looks at whether there are any.
 pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
     let args: Vec<&[u8]> = bun_core::argv().into_iter().collect();
     // What follows the name of a script is for the script.
-    let before = place_of_first_word(&args).map_or(&args[..], |at| &args[..at]);
+    let at = place_of_first_word(&args);
+    let has_arguments = at.is_some_and(|at| {
+        args.get(at + 1).is_some_and(|next| *next != b"--")
+            || (args[1..at].iter()).any(|arg| is_own_flag_before(command, arg))
+    });
+    let before = at.map_or(&args[..], |at| &args[..at]);
     let mut before = before.iter().copied();
     let mut given = None;
     while let Some(arg) = before.next() {
@@ -282,15 +317,15 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
     if by_an_older_bun.is_some_and(|running| running_check_scripts(running).any(|it| it == dir)) {
         return Ok(Runs::Command);
     }
-    if package_of_inherited_script(command).is_some_and(|it| it == dir) {
+    if package_of_inherited_script(command).is_some_and(|it| is_directory(&it, dir)) {
         return Ok(Runs::Command);
     }
     let other_if = |found: bool| if found { Runs::Other } else { Runs::Command };
     let Some((dir, path, contents)) = &nearest else {
         return Ok(other_if(is_file_or_executable(command, &cwd)));
     };
-    if has_script(command, path, contents)? {
-        return Ok(Runs::Script);
+    if let Some(runs) = runs_by_script(command, has_arguments, dir, path, contents)? {
+        return Ok(runs);
     }
     Ok(other_if(
         is_file_or_executable(command, &cwd)
@@ -309,23 +344,53 @@ fn is_executable_beside_package_json(name: &[u8], dir: &[u8], cwd: &[u8]) -> boo
         })
 }
 
-/// Whether the `package.json` at `path`, which has `contents`, has the script `name`.
-fn has_script(name: &[u8], path: &[u8], contents: &[u8]) -> Result<bool, Unparsable> {
+/// What `bun <name>` runs by the script `name` of the `package.json` at `path`, which is in `dir` and has `contents`, if it has one.
+fn runs_by_script(
+    name: &[u8],
+    with_arguments: bool,
+    dir: &[u8],
+    path: &[u8],
+    contents: &[u8],
+) -> Result<Option<Runs>, Unparsable> {
     // Most have no such string in them, and no escape that could spell it.
     let quoted = |quote: &[u8]| [quote, name, quote].concat();
     let spellings: [&[u8]; 4] = [&quoted(b"\""), &quoted(b"'"), b"\\u", b"\\x"];
     if !(spellings.iter()).any(|it| bun_core::strings::contains(contents, it)) {
-        return Ok(false);
+        return Ok(None);
     }
     bun_ast::initialize_store();
     let source = bun_ast::Source::init_path_string(path, contents);
     let (mut log, bump) = (bun_ast::Log::init(), bun_alloc::Arena::new());
     match bun_parsers::json::parse_package_json_utf8(&source, &mut log, &bump) {
-        Ok(json) => Ok((json.as_property(b"scripts"))
-            .and_then(|scripts| scripts.expr.as_property(name))
-            .is_some_and(|script| matches!(script.expr.data, bun_ast::ExprData::EString(_)))),
+        Ok(json) => {
+            let scripts = json.as_property(b"scripts");
+            let text_of = |name: &[u8]| {
+                let script = scripts.as_ref()?.expr.as_property(name)?;
+                script.expr.as_string(&bump)
+            };
+            let Some(text) = text_of(name) else {
+                return Ok(None);
+            };
+            let has_hook = |at: &[u8]| text_of(&[at, name].concat()).is_some();
+            // `"lint:check": "bun lint ."` beside `"lint": "bun lint --fix ."` is the linter with `.`, not the script with `--fix . .`.
+            let is_the_command = with_arguments
+                && (env_var::npm_lifecycle_event::get())
+                    .filter(|running| command_of_script(running) != Some(name))
+                    // `bunx`, `npx` and `yarn exec` put there what is no script of the package.
+                    .and_then(text_of)
+                    // A script that is `bun lint` and no more is another name for the `lint` script: `bun run ci src`.
+                    .is_some_and(|running| after_command_in_script(name, running) != Some(b""))
+                && package_of_inherited_event().is_some_and(|it| is_directory(&it, dir))
+                && after_command_in_script(name, text).is_some()
+                && !has_hook(b"pre")
+                && !has_hook(b"post");
+            Ok(Some(match is_the_command {
+                true => Runs::Command,
+                false => Runs::Script,
+            }))
+        }
         // `bun check` writes nothing.
-        Err(_) if name == b"check" => Ok(false),
+        Err(_) if name == b"check" => Ok(None),
         Err(_) => {
             let mut said = String::new();
             let _ = log.print(&mut said);
@@ -476,15 +541,46 @@ fn command_of_script(name: &[u8]) -> Option<&'static [u8]> {
 /// this process in it. npm, pnpm and yarn say which script they run. Not all say of which package:
 /// then it is the one that this process is started in, not each one whose scripts it runs.
 fn package_of_inherited_script(command: &[u8]) -> Option<Vec<u8>> {
-    use bun_paths::{platform::Auto, resolve_path::dirname};
     if env_var::npm_lifecycle_event::get().and_then(command_of_script) != Some(command) {
         return None;
     }
+    package_of_inherited_event()
+}
+
+/// The directory of the package that `npm_lifecycle_event` names a script of, as the package manager wrote it.
+fn package_of_inherited_event() -> Option<Vec<u8>> {
+    use bun_paths::{platform::Auto, resolve_path::dirname};
     match env_var::npm_package_json::get() {
         Some(of) => Some(bun_core::strings::without_trailing_slash(dirname::<Auto>(of)).to_vec()),
         None if env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get().is_some() => None,
         None if env_var::BUN_INTERNAL_CHECK_SCRIPTS::get().is_some() => None,
-        None => Some(nearest_package_json(&working_directory())?.0.to_vec()),
+        None => {
+            let cwd = working_directory();
+            let (dir, path, contents) = nearest_package_json(&cwd)?;
+            // yarn 1 and pnpm before 10.10 give only the name of the package. After `cd packages/web` the nearest has another.
+            let named = env_var::npm_package_name::get().unwrap_or_default();
+            (package_name(&path, &contents) == named).then(|| dir.to_vec())
+        }
+    }
+}
+
+/// The `name` of the `package.json` at `path`, which has `contents`. Empty if it has none.
+fn package_name(path: &[u8], contents: &[u8]) -> Vec<u8> {
+    bun_ast::initialize_store();
+    let source = bun_ast::Source::init_path_string(path, contents);
+    let (mut log, bump) = (bun_ast::Log::init(), bun_alloc::Arena::new());
+    let json = bun_parsers::json::parse_package_json_utf8(&source, &mut log, &bump).ok();
+    let name = json.and_then(|json| json.as_property(b"name")?.expr.as_string(&bump));
+    name.unwrap_or_default().to_vec()
+}
+
+/// Whether `given`, as a package manager wrote the directory of a package, is `dir`: `npm --prefix` can reach it through a link.
+fn is_directory(given: &[u8], dir: &[u8]) -> bool {
+    given == dir || {
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let given = bun_core::ZBox::from_bytes(given);
+        bun_sys::realpath(&given, &mut buffer)
+            .is_ok_and(|real| bun_core::strings::without_trailing_slash(real) == dir)
     }
 }
 

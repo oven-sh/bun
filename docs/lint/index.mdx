@@ -303,6 +303,20 @@ Already have an `eslint.config.js`, `.eslintrc`, or `.oxlintrc.json`? `bun lint`
 
 If `package.json` has a `lint` script, `bun lint` runs that script. Inside the script, `bun lint` is the linter. If `package.json` has `"lint"` in it but can't be parsed, as in the middle of a merge, `bun lint` can't tell whether that is a script: it lints nothing and exits with code 2.
 
+Bun treats a `lint` script that starts with `bun lint` as the linter with other flags: `"lint": "bun lint --fix ."`. When another script of that package calls `bun lint` with arguments, Bun runs the linter with those arguments. Bun does not add them to the `lint` script. So `"lint:check": "bun lint ."` reports problems and fixes nothing.
+
+This applies when `bun run`, npm, pnpm or yarn runs the other script. It also applies to what that script starts, such as a Makefile or a Git hook. To add arguments to the `lint` script, call `bun run lint`.
+
+`bun lint` runs the `lint` script in these cases:
+
+- The call has no arguments. `"ci": "bun lint"` runs the `lint` script as you wrote it, `--fix` included. To lint and change nothing there, use `bun lint --no-script`.
+- The `lint` script has a word before `bun`, or between `bun` and `lint`: `cd web && bun lint`, `bun --config=ci.toml lint`.
+- The package has a `prelint` or `postlint` script. Bun runs them with the `lint` script.
+- A script of another package makes the call: `cd packages/web && bun lint .` in a script of the workspace root.
+- You start the other script from a terminal or a CI step with `--filter`, `--workspaces`, `--parallel` or `--sequential`, or with `node --run`. These do not tell `bun lint` which script runs.
+- `bunx` or `npx` starts the program that calls `bun lint`.
+- You call `bun lint` from a terminal, or from a CI step, a Makefile or a Git hook that no package script started.
+
 Writing a tool that calls Bun in projects you don't control? Pass `--no-script`: `bun lint --no-script` is always the linter.
 
 Rules from built-in plugins run natively. Any other ESLint plugin still runs, in JavaScript. To see which is which, and which packages you can uninstall:

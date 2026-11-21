@@ -4,7 +4,9 @@ use bun_core::vec::BorrowedCursor;
 use bun_zlib::deflate::{self, Flush};
 use bun_zlib::{Deflater, GZIP_ID, Inflater, inflate};
 
-use crate::node::node_zlib_binding::{CompressionContext, Error, NodeMode, Z_BUF_ERROR};
+use crate::node::node_zlib_binding::{
+    CompressionContext, Error, NodeMode, Z_BUF_ERROR, Z_STREAM_ERROR,
+};
 
 mod _impl {
     use super::*;
@@ -174,6 +176,8 @@ pub(crate) struct Context {
     flush: Flush,
     dictionary: Vec<u8>,
     gzip_id_bytes_read: u8,
+    /// GZIP only: Node's `output_emitted_ && !stream_complete_` (https://github.com/nodejs/node/blob/v26.12.1/src/node_zlib.cc#L1127-L1137).
+    has_emitted_part_of_member: bool,
     write_result: Result<[u32; 2], Error>,
 }
 
@@ -207,6 +211,7 @@ impl Context {
             flush: Flush::None,
             dictionary: Vec::new(),
             gzip_id_bytes_read: 0,
+            has_emitted_part_of_member: false,
             write_result: Ok([0, 0]),
         }
     }
@@ -221,6 +226,7 @@ impl Context {
     ) -> bun_zlib::Result<()> {
         use NodeMode::*;
         self.flush = Flush::None;
+        self.has_emitted_part_of_member = false;
         self.dictionary = dictionary.to_vec();
 
         let window_bits = match self.mode {
@@ -315,7 +321,15 @@ impl Context {
         let inflater = match &mut self.state {
             None => return Err(failed(bun_zlib::Error::Internal)),
             Some(State::Deflate(deflater)) => {
-                let status = deflater.deflate(input, out, self.flush);
+                let written = out.written();
+                let status = deflater.deflate(input, out.reborrow(), self.flush);
+                if self.mode == NodeMode::GZIP {
+                    if status == Ok(deflate::Status::StreamEnd) {
+                        self.has_emitted_part_of_member = false;
+                    } else {
+                        self.has_emitted_part_of_member |= out.written() != written;
+                    }
+                }
                 return status.map(drop).map_err(failed);
             }
             Some(State::Inflate(inflater)) => inflater,
@@ -365,6 +379,14 @@ impl Context {
 
 impl CompressionContext for Context {
     fn reset(&mut self) -> Result<(), Error> {
+        // https://github.com/nodejs/node/blob/v26.12.1/src/node_zlib.cc#L1282-L1294
+        if self.has_emitted_part_of_member {
+            return Err(Error::init(
+                c"Cannot reset a gzip stream with an incomplete member; end the stream or start a new gzip compressor",
+                Z_STREAM_ERROR,
+                c"ERR_ZLIB_INCOMPLETE_FRAME",
+            ));
+        }
         match (self.mode, &mut self.state) {
             (NodeMode::UNZIP, _) => {}
             (_, Some(State::Deflate(deflater))) => deflater.reset(),

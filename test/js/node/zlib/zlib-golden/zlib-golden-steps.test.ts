@@ -60,7 +60,8 @@ test("a stream gives the same bytes", async () => {
     return { ...c, steps: [...steps, c.source[1]].join(" ") };
   };
   const some = fewerIfSlow(sample(cases, 12), 3)
-    .filter(c => /^[^!P]+$/.test(c.steps))
+    // A stream does not go on after a reset that it refuses.
+    .filter(c => /^[^!P]+$/.test(c.steps) && deflate(c).refusedResets === 0)
     .map(forStream);
   expect(some.length).toBeGreaterThan(30);
   const actual = await Promise.all(some.map(throughStream));

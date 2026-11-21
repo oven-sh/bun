@@ -249,7 +249,9 @@ function acceptInstancesOfOtherRealms(constructor: Function, isInstance: (value:
     __proto__: null,
     // A subclass inherits this function, and only has its own instances.
     value(this: unknown, value: unknown) {
-      return ordinaryHasInstance.$call(this, value) || (this === constructor && isInstance(value));
+      return (
+        $isObject(value) && (ordinaryHasInstance.$call(this, value) || (this === constructor && isInstance(value)))
+      );
     },
     configurable: true,
   } as PropertyDescriptor);

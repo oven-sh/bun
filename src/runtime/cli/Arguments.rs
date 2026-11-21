@@ -361,6 +361,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
     ),
+    parse_param!("--input-type <STR>"),
     parse_param!(
         "--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)"
     ),
@@ -573,6 +574,7 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"no-ffi-cc"), Nothing),
         (Long(b"disallow-code-generation-from-strings"), Nothing),
         (Long(b"unhandled-rejections"), Nothing),
+        (Long(b"input-type"), RuntimeCode),
         (Long(b"console-depth"), Nothing),
         (Long(b"user-agent"), Nothing),
         (Long(b"cron-title"), Nothing),
@@ -1450,6 +1452,25 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             | CommandTag::TestCommand
             | CommandTag::RunAsNodeCommand
     ) {
+        ctx.runtime_options.input_type = match args.option(b"--input-type") {
+            Some(b"commonjs") => bun_options_types::context::RuntimeInputType::CommonJS,
+            Some(b"module") => bun_options_types::context::RuntimeInputType::Module,
+            Some(b"commonjs-typescript") => {
+                bun_options_types::context::RuntimeInputType::CommonJSTypeScript
+            }
+            Some(b"module-typescript") => {
+                bun_options_types::context::RuntimeInputType::ModuleTypeScript
+            }
+            None => bun_options_types::context::RuntimeInputType::Auto,
+            Some(_) => {
+                Output::err_generic(
+                    "--input-type must be \"module\", \"commonjs\", \"module-typescript\", or \"commonjs-typescript\"",
+                    format_args!(""),
+                );
+                Global::exit(1);
+            }
+        };
+
         {
             let preloads = args.options(b"--preload");
             let preloads2 = args.options(b"--require");
@@ -1545,6 +1566,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if let Some(port_str) = args.option(b"--port") {
             if cmd == CommandTag::RunAsNodeCommand {
                 // TODO: prevent `node --port <script>` from working
+                ctx.runtime_options.eval.is_present = true;
                 ctx.runtime_options.eval.script = port_str;
                 ctx.runtime_options.eval.eval_and_print = true;
             } else {
@@ -1630,9 +1652,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if let Some(script) = args.option(b"--print") {
+            ctx.runtime_options.eval.is_present = true;
             ctx.runtime_options.eval.script = script;
             ctx.runtime_options.eval.eval_and_print = true;
         } else if let Some(script) = args.option(b"--eval") {
+            ctx.runtime_options.eval.is_present = true;
             ctx.runtime_options.eval.script = script;
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");

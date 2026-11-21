@@ -1,6 +1,6 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { rmSync, writeFileSync } from "fs";
+import { closeSync, openSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
@@ -323,6 +323,207 @@ describe("echo | bun run -", () => {
   }
 
   group(run);
+});
+
+test.each([
+  {
+    inputType: "module",
+    source: 'console.log(JSON.stringify({ value: await Promise.resolve("module"), argv: process.argv.slice(1) }));',
+    expected: { value: "module", argv: [] },
+  },
+  {
+    inputType: "commonjs",
+    source:
+      'console.log(JSON.stringify({ value: require("node:path").basename("/tmp/commonjs"), argv: process.argv.slice(1) }));',
+    expected: { value: "commonjs", argv: [] },
+  },
+])("bare --input-type $inputType executes stdin", async ({ inputType, source, expected }) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--input-type", inputType],
+    env: bunEnv,
+    stdin: Buffer.from(source),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  expect(JSON.parse(stdout)).toEqual(expected);
+});
+
+const inputTypeCases = [
+  { name: "strict mode", inputType: "module", source: strictModeProbe, stdout: strictResult, succeeds: true },
+  { name: "sloppy mode", inputType: "commonjs", source: strictModeProbe, stdout: sloppyResult, succeeds: true },
+  {
+    name: "top-level await",
+    inputType: "module",
+    source: "console.log(await Promise.resolve(42))",
+    stdout: "42\n",
+    succeeds: true,
+  },
+  {
+    name: "top-level await",
+    inputType: "commonjs",
+    source: "console.log(await Promise.resolve(42))",
+    stdout: "",
+    succeeds: false,
+  },
+  {
+    name: "export",
+    inputType: "module",
+    source: "export const value = 42; console.log(value)",
+    stdout: "42\n",
+    succeeds: true,
+  },
+  {
+    name: "export",
+    inputType: "commonjs",
+    source: "export const value = 42; console.log(value)",
+    stdout: "",
+    succeeds: false,
+  },
+  {
+    name: "import",
+    inputType: "module",
+    source: 'import { sep } from "node:path"; console.log(typeof sep)',
+    stdout: "string\n",
+    succeeds: true,
+  },
+  {
+    name: "import",
+    inputType: "commonjs",
+    source: 'import { sep } from "node:path"; console.log(typeof sep)',
+    stdout: "",
+    succeeds: false,
+  },
+  {
+    name: "import.meta",
+    inputType: "module",
+    source: 'console.log(import.meta.url.startsWith("file:"))',
+    stdout: "true\n",
+    succeeds: true,
+  },
+  {
+    name: "import.meta",
+    inputType: "commonjs",
+    source: 'console.log(import.meta.url.startsWith("file:"))',
+    stdout: "",
+    succeeds: false,
+  },
+];
+
+for (const from of ["stdin", "eval"]) {
+  test.concurrent.each(inputTypeCases)(
+    `--input-type $inputType parses ${from}: $name`,
+    async ({ name, inputType, source, stdout: expectedStdout, succeeds }) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), `--input-type=${inputType}`, ...(from === "eval" ? ["-e", source] : [])],
+        env: bunEnv,
+        stdin: Buffer.from(from === "stdin" ? source : "throw new Error('must not read stdin')"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe(expectedStdout);
+      if (succeeds) {
+        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      } else {
+        if (name === "top-level await") {
+          expect(stderr).toContain("error:");
+          expect(stderr).toContain(source);
+        } else {
+          expect(stderr).toContain("Module syntax is not allowed with --input-type=commonjs");
+        }
+        expect(exitCode).toBe(1);
+      }
+    },
+  );
+}
+
+test.concurrent.each(["module", "commonjs"])("--input-type %s accepts empty stdin", async inputType => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), `--input-type=${inputType}`],
+    env: bunEnv,
+    stdin: Buffer.alloc(0),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+});
+
+for (const inputType of [undefined, "module", "commonjs"]) {
+  test.concurrent(`empty -e ignores stdin (input-type=${inputType})`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...(inputType ? [`--input-type=${inputType}`] : []), "-e", ""],
+      env: bunEnv,
+      stdin: "pipe",
+      // Bound a regression that waits for EOF; leave the pipe open until the process exits.
+      timeout: 2000,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    expect(proc.signalCode).toBeNull();
+  });
+
+  test.concurrent.each([
+    { name: "expression", source: 'console.log("stdin ran"); 6 * 7', stdout: "stdin ran\n42\n", throws: false },
+    { name: "throw", source: 'throw new Error("stdin executed")', stdout: "", throws: true },
+    { name: "empty", source: "", stdout: "undefined\n", throws: false },
+  ])(`empty -p reads and prints stdin: $name (input-type=${inputType})`, async ({ source, stdout, throws }) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...(inputType ? [`--input-type=${inputType}`] : []), "-p", ""],
+      env: bunEnv,
+      stdin: Buffer.from(source),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [actualStdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(actualStdout).toBe(stdout);
+    if (throws) {
+      expect(stderr).toContain("stdin executed");
+      expect(stderr).toContain("[stdin]");
+      expect(exitCode).toBe(1);
+    } else {
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    }
+  });
+}
+
+test.concurrent.each(["invalid", ""])("rejects unsupported input type %j", async inputType => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), `--input-type=${inputType}`, "-e", ""],
+    env: bunEnv,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toContain('--input-type must be "module", "commonjs", "module-typescript", or "commonjs-typescript"');
+  expect(exitCode).toBe(1);
+});
+
+// Reading a directory descriptor fails on POSIX; Windows cannot open it as stdin.
+test.skipIf(isWindows)("bare --input-type preserves a stdin read failure", async () => {
+  using dir = tempDir("input-type-read-error", {});
+  const fd = openSync(String(dir), "r");
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--input-type=module"],
+      env: bunEnv,
+      stdin: fd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 1 });
+  } finally {
+    closeSync(fd);
+  }
 });
 
 test("process._eval (undefined for normal run)", async () => {

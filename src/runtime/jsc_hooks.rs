@@ -2040,6 +2040,12 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     && bun_jsc::runtime_transpiler_store::set_break_point_on_first_line();
 
                 let options = &jsc_vm.transpiler.get().options;
+                let is_eval_source = is_main && jsc_vm.module_loader.eval_source.get().is_some();
+                let forced_module_type = if is_eval_source {
+                    jsc_vm.module_loader.eval_input_type.get().module_type()
+                } else {
+                    ModuleType::Unknown
+                };
                 let mut parse_options = ParseOptions {
                     // SAFETY: `arena_ptr` points at the `Box<Arena>` interior
                     // held by `arena_guard`; the guard outlives `parse_result`.
@@ -2071,10 +2077,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     } else {
                         None
                     },
-                    // Strip the CJS wrapper for the eval/stdin
-                    // entry point.
-                    remove_cjs_module_wrapper: is_main
-                        && jsc_vm.module_loader.eval_source.get().is_some(),
+                    // The eval/stdin evaluator executes the body directly.
+                    remove_cjs_module_wrapper: is_eval_source,
+                    forced_module_type,
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
                     macro_load_states: &jsc_vm.module_loader.macro_load_states,
                     replace_exports: Default::default(),
@@ -2361,7 +2366,13 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     // CJS but lives inside a `"type":"module"` package, emit
                     // `package_json_type_module` so the C++ loader applies the
                     // correct evaluation context on cache hits.
-                    let tag = if is_commonjs_module && source.path.is_file() {
+                    let tag = if forced_module_type != ModuleType::Unknown {
+                        match forced_module_type {
+                            ModuleType::Cjs => ResolvedSourceTag::PackageJsonTypeCommonjs,
+                            ModuleType::Esm => ResolvedSourceTag::PackageJsonTypeModule,
+                            ModuleType::Unknown => unreachable!(),
+                        }
+                    } else if is_commonjs_module && source.path.is_file() {
                         // SAFETY: JS thread;
                         // `read_dir_info` is re-entrant on the JS
                         // thread and returns a stable cache slot.
@@ -2494,7 +2505,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     L::Js | L::Jsx | L::Ts | L::Tsx => {
                         // A `.cjs` under `"type":"module"` still tags as `PackageJsonTypeModule`.
                         let dir = path.name().dir;
-                        let module_type_ = if path.is_file() && bun_paths::is_absolute(dir) {
+                        let module_type_ = if forced_module_type != ModuleType::Unknown {
+                            forced_module_type
+                        } else if path.is_file() && bun_paths::is_absolute(dir) {
                             // SAFETY: JS thread; `read_dir_info` is
                             // re-entrant on the JS thread and returns a
                             // stable cache slot.
@@ -3301,7 +3314,7 @@ fn get_loader_and_virtual_source<'a>(
             && bun_paths::resolve_path::is_sep_any(specifier[specifier.len() - STDIN.len() - 1]);
         if is_eval || is_stdin {
             virtual_source = Some(eval_source);
-            loader = Some(Loader::Tsx);
+            loader = Some(jsc_vm.module_loader.eval_input_type.get().loader());
         }
     }
 
@@ -3805,7 +3818,17 @@ fn transpile_file<const DATA_ONLY: bool>(
         return ptr::null_mut();
     }
 
-    let module_type = module_type_of(&lr.path, lr.package_json);
+    let module_type = if lr.virtual_source.is_some_and(|source| {
+        jsc_vm
+            .module_loader
+            .eval_source
+            .get()
+            .is_some_and(|eval| core::ptr::eq(&raw const **eval, source))
+    }) {
+        jsc_vm.module_loader.eval_input_type.get().module_type()
+    } else {
+        module_type_of(&lr.path, lr.package_json)
+    };
     let pkg_name: Option<&[u8]> = lr
         .package_json
         .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));

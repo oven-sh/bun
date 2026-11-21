@@ -2,7 +2,6 @@ import { drainMicrotasks } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
-import http2 from "node:http2";
 import net from "node:net";
 import { Duplex } from "node:stream";
 import tls from "node:tls";

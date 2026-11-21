@@ -17,6 +17,35 @@ use crate::offline_mode::OfflineMode;
 // Every `Box<[u8]>` / `Vec<Box<[u8]>>` struct field below is a proc-lifetime
 // CLI string: populated once from argv/bunfig during startup and never freed.
 
+#[repr(u8)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum RuntimeInputType {
+    #[default]
+    Auto,
+    CommonJS,
+    Module,
+    CommonJSTypeScript,
+    ModuleTypeScript,
+}
+
+impl RuntimeInputType {
+    pub fn loader(self) -> bun_ast::Loader {
+        match self {
+            Self::Auto => bun_ast::Loader::Tsx,
+            Self::CommonJS | Self::Module => bun_ast::Loader::Js,
+            Self::CommonJSTypeScript | Self::ModuleTypeScript => bun_ast::Loader::Ts,
+        }
+    }
+
+    pub fn module_type(self) -> crate::ModuleType {
+        match self {
+            Self::Auto => crate::ModuleType::Unknown,
+            Self::CommonJS | Self::CommonJSTypeScript => crate::ModuleType::Cjs,
+            Self::Module | Self::ModuleTypeScript => crate::ModuleType::Esm,
+        }
+    }
+}
+
 pub struct ContextData {
     pub start_time: i128,
     pub args: api::TransformOptions,
@@ -694,6 +723,7 @@ pub struct RuntimeOptions {
     pub redis_preconnect: bool,
     pub sql_preconnect: bool,
     pub eval: Eval,
+    pub input_type: RuntimeInputType,
     pub preconnect: Vec<&'static [u8]>,
     pub experimental_http2_fetch: bool,
     pub experimental_http3_fetch: bool,
@@ -715,6 +745,8 @@ pub struct RuntimeOptions {
 #[derive(Default)]
 pub struct Eval {
     pub script: &'static [u8],
+    /// Explicit eval/print or stdin, including an empty source.
+    pub is_present: bool,
     pub eval_and_print: bool,
     /// Under `--interactive`, `script` holds the node:repl bootstrap; this
     /// holds the user's actual `-e` bytes so `process._eval` reports them
@@ -722,6 +754,12 @@ pub struct Eval {
     pub interactive_script: Option<&'static [u8]>,
     /// `bun lint` or `bun fmt` started this process to read a configuration that its own tool reads in Node.js.
     pub reads_configuration: bool,
+}
+
+impl Eval {
+    pub fn has_source(&self) -> bool {
+        self.is_present
+    }
 }
 
 pub struct CpuProf {
@@ -768,6 +806,7 @@ impl Default for RuntimeOptions {
             redis_preconnect: false,
             sql_preconnect: false,
             eval: Eval::default(),
+            input_type: RuntimeInputType::Auto,
             preconnect: Vec::new(),
             experimental_http2_fetch: false,
             experimental_http3_fetch: false,

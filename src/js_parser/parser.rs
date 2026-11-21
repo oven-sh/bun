@@ -158,6 +158,7 @@ pub(crate) use bun_ast::base::Ref;
 // drop their bool-placeholder guards.
 #[allow(non_snake_case)]
 pub mod Runtime {
+    use super::options;
     use bun_collections::StringSet;
     use bun_core::strings;
     use bun_wyhash::Wyhash;
@@ -185,6 +186,7 @@ pub mod Runtime {
 
         pub is_macro_runtime: bool,
         pub top_level_await: bool,
+        pub forced_module_type: options::ModuleType,
         pub auto_import_jsx: bool,
         pub allow_runtime: bool,
         pub inlining: bool,
@@ -291,6 +293,7 @@ pub mod Runtime {
                 server_components: ServerComponentsMode::None,
                 is_macro_runtime: false,
                 top_level_await: false,
+                forced_module_type: options::ModuleType::Unknown,
                 auto_import_jsx: false,
                 allow_runtime: true,
                 inlining: false,
@@ -382,7 +385,7 @@ pub mod Runtime {
 
             // `[bool; N]` is N bytes of 0x00/0x01.
             hasher.update(bun_core::slice_as_bytes(&bools));
-            hasher.update(&[self.react_compiler as u8]);
+            hasher.update(&[self.react_compiler as u8, self.forced_module_type as u8]);
 
             // `P::runs_imports_in_turn` depends on both, even when `P::uses_test_api` is false. Other files hash nothing extra.
             if self.is_test_entry_point {

@@ -60,3 +60,17 @@ Chunk: hello
 ---
 
 See [Utils](/runtime/utils) for more utilities.
+
+---
+
+To execute JavaScript from stdin, use `bun run -`. Use `--input-type=module` or `--input-type=commonjs` to select how Bun parses it:
+
+```sh terminal icon="terminal"
+echo 'console.log(await Promise.resolve("hello"))' | bun --input-type=module
+```
+
+The same flag applies to code passed with `-e`. The `module-typescript` and `commonjs-typescript` values also accept TypeScript syntax.
+
+An empty stdin source exits successfully. An explicit empty `-e ''` takes precedence over stdin. An empty `-p ''` reads stdin, evaluates it, and prints the result.
+
+Bun supports printing module stdin input; Node.js 26.12.1 rejects it with `ERR_EVAL_ESM_CANNOT_PRINT`.

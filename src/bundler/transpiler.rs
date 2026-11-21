@@ -755,6 +755,8 @@ pub struct ParseOptions<'a, 'b> {
     pub experimental_decorators: bool,
     pub use_define_for_class_fields: bool,
     pub remove_cjs_module_wrapper: bool,
+    /// Explicit stdin/eval mode; `Unknown` keeps syntax detection.
+    pub forced_module_type: options::ModuleType,
 
     pub dont_bundle_twice: bool,
     pub allow_commonjs: bool,
@@ -1393,9 +1395,9 @@ impl<'a> Transpiler<'a> {
                 opts.features.define_hash = self.options.define.user_hash;
                 opts.features.repl_mode = self.options.repl_mode;
 
-                // we'll just always enable top-level await
-                // this is incorrect for Node.js files which are CommonJS modules
-                opts.features.top_level_await = true;
+                opts.features.forced_module_type = this_parse.forced_module_type;
+                opts.features.top_level_await =
+                    this_parse.forced_module_type != options::ModuleType::Cjs;
 
                 opts.features.is_macro_runtime = target == crate::options_impl::Target::BunMacro;
                 // `bun_ast::runtime::ReplaceableExport` IS
@@ -2665,6 +2667,7 @@ impl<'a> Transpiler<'a> {
                     is_test_entry_point: false,
                     set_breakpoint_on_first_line: false,
                     remove_cjs_module_wrapper: false,
+                    forced_module_type: options::ModuleType::Unknown,
                     dont_bundle_twice: false,
                     allow_commonjs: false,
                     module_type: options::ModuleType::Unknown,

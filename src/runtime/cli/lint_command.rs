@@ -114,6 +114,7 @@ pub(crate) fn read_program_from_stdin(ctx: &mut ContextData) {
             .is_ok()
     {
         ctx.runtime_options.eval.script = program.leak();
+        ctx.runtime_options.eval.is_present = true;
         ctx.runtime_options.eval.reads_configuration = true;
     }
 }

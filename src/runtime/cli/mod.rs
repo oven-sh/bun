@@ -1047,8 +1047,7 @@ pub(crate) mod command {
         }
 
         // Fast path: `bun -v` / `bun --version` / `bun --revision`, the
-        // empty-eval forms `bun -e ''` / `bun -p ''` (and the `--eval=` /
-        // `--print=` spellings), and the dominant `bun <path>` / `bun .` run
+        // dominant `bun <path>` / `bun .` run
         // shape. Hoisted ABOVE `which()` and the per-tag `match` so these
         // common invocations never decode the subcommand-name classifier
         // (`which()` + its `RootCommandMatcher` name table / rodata) or walk
@@ -1070,8 +1069,7 @@ pub(crate) mod command {
         //  * the version check is exact-argv-shape (`len == 2`) so it cannot
         //    intercept `bun <bin> --version`, where the flag belongs to
         //    `<bin>` (the bug the old argv-scan shim had — see the
-        //    NOTE below). The empty-eval check is likewise exact-shape, falling
-        //    through to `HelpCommand.exec`.
+        //    NOTE below).
         {
             let argv = bun::argv();
             let argv0 = argv.get(0).map(bun_core::ZStr::as_bytes).unwrap_or(b"");
@@ -1082,25 +1080,6 @@ pub(crate) mod command {
                         Some(b"--revision") => print_revision_and_exit(),
                         _ => {}
                     }
-                }
-
-                let empty_eval = match argv.len() {
-                    2 => matches!(
-                        argv.get(1).map(bun_core::ZStr::as_bytes),
-                        Some(b"-e=" | b"-p=" | b"--eval=" | b"--print=")
-                    ),
-                    3 => {
-                        argv.get(2).is_some_and(|a| a.as_bytes().is_empty())
-                            && matches!(
-                                argv.get(1).map(bun_core::ZStr::as_bytes),
-                                Some(b"-e" | b"-p" | b"--eval" | b"--print")
-                            )
-                    }
-                    _ => false,
-                };
-                if empty_eval {
-                    Output::flush();
-                    return HelpCommand::exec();
                 }
 
                 // `bun <path>` / `bun .` — the dominant run shape. argv[1] is
@@ -1332,9 +1311,25 @@ pub(crate) mod command {
             return run_command::RunCommand::exec_node_repl(ctx);
         }
 
-        if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
+        if tag == Tag::AutoCommand
+            && ctx.runtime_options.eval.has_source()
+            && !(ctx.runtime_options.eval.eval_and_print
+                && ctx.runtime_options.eval.script.is_empty())
+        {
             lint_command::read_program_from_stdin(ctx);
             return run_command::RunCommand::exec_eval(ctx);
+        }
+
+        if tag == Tag::AutoCommand
+            && ctx.positionals.is_empty()
+            && (ctx.runtime_options.input_type
+                != bun_options_types::context::RuntimeInputType::Auto
+                || ctx.runtime_options.eval.eval_and_print)
+        {
+            if !run_command::RunCommand::exec_stdin(ctx, false)? {
+                Global::exit(1);
+            }
+            return Ok(());
         }
 
         if tag == Tag::AutoCommand && ctx.args.entry_points.len() == 1 {
@@ -1345,7 +1340,7 @@ pub(crate) mod command {
         }
 
         // `bun --check` and `bun run --check` are `bun check`, also where that is a script.
-        if no_target && ctx.runtime_options.check && ctx.runtime_options.eval.script.is_empty() {
+        if no_target && ctx.runtime_options.check && !ctx.runtime_options.eval.has_source() {
             super::check_command::CheckCommand::exec_without_arguments();
         }
 

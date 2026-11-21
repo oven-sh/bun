@@ -646,6 +646,7 @@ fn transpile(
             false => Some(&mut cache),
         },
         remove_cjs_module_wrapper: false,
+        forced_module_type: Default::default(),
         module_type,
         keep_json_and_toml_as_one_statement: true,
         allow_bytecode_cache: true,

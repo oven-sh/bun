@@ -771,7 +771,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             path,
             loader: Some(Self::loader_of_main(ctx, path, loader)),
             // `[eval]`, `[stdin]`
-            text: Some(ctx.runtime_options.eval.script).filter(|it| !it.is_empty()),
+            text: ctx
+                .runtime_options
+                .eval
+                .has_source()
+                .then_some(ctx.runtime_options.eval.script),
         };
         // src/js/internal/html.ts serves every argument that is a page.
         let is_page = |path: &&[u8]| path.ends_with(b".html");
@@ -789,10 +793,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun).ok()?;
             crate::jsc_hooks::loader_for_path(&bun_resolver::fs::Path::init(path), &loaders)
         };
-        let is_in_memory = !ctx.runtime_options.eval.script.is_empty();
+        let is_in_memory = ctx.runtime_options.eval.has_source();
         let named = (!is_in_memory).then(|| loader.or_else(by_name)).flatten();
         // `[eval]`, `[stdin]`, and a name that says nothing.
-        named.unwrap_or(Loader::Tsx)
+        named.unwrap_or_else(|| {
+            if is_in_memory {
+                ctx.runtime_options.input_type.loader()
+            } else {
+                Loader::Tsx
+            }
+        })
     }
 
     /// Shared ctx→transpiler/resolver option projection used by [`boot`] and
@@ -1055,10 +1065,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.set_main(entry);
 
         if let Some(entry) = entry
-            && !ctx.runtime_options.eval.script.is_empty()
+            && ctx.runtime_options.eval.has_source()
         {
             let source = bun_ast::Source::init_path_string(entry, ctx.runtime_options.eval.script);
             let _ = vm.module_loader.eval_source.set(Box::new(source));
+            vm.module_loader
+                .eval_input_type
+                .set(ctx.runtime_options.input_type);
             vm.module_loader
                 .interactive_eval_script
                 .set(ctx.runtime_options.eval.interactive_script.take());
@@ -1383,7 +1396,8 @@ impl Run<'_> {
             safe fn Bun__NodeVM__setNewContextsHaveGC(value: bool);
         }
         let ro = &ctx.runtime_options;
-        if !ro.eval.script.is_empty() {
+        if ro.eval.has_source() && ro.input_type.module_type() != bun_options_types::ModuleType::Esm
+        {
             bun_jsc::cpp::Bun__ExposeNodeModuleGlobals(global);
         }
         if ro.expose_gc {
@@ -2452,7 +2466,7 @@ impl RunCommand {
 
         // ── stdin (`bun run -`) ─────────────────────────────────────────────
         if target_name.len() == 1 && target_name[0] == b'-' {
-            return Self::exec_stdin(ctx);
+            return Self::exec_stdin(ctx, true);
         }
 
         // ── package.json script lookup ──────────────────────────────────────
@@ -2952,7 +2966,10 @@ impl RunCommand {
 
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
     /// and boot the VM with the synthetic `[stdin]` path.
-    fn exec_stdin(ctx: &mut ContextData) -> crate::Result<bool> {
+    pub(crate) fn exec_stdin(
+        ctx: &mut ContextData,
+        include_argv_marker: bool,
+    ) -> crate::Result<bool> {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
         // read from stdin
@@ -2968,6 +2985,7 @@ impl RunCommand {
             return Ok(false);
         }
         ctx.runtime_options.eval.script = list.leak();
+        ctx.runtime_options.eval.is_present = true;
 
         #[cfg(windows)]
         const STDIN_TRIGGER: &[u8] = b"\\[stdin]";
@@ -2983,12 +3001,16 @@ impl RunCommand {
         entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
         let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
 
-        // Prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
-        // Node's `node -` semantics.
-        let mut passthrough_list: Vec<Box<[u8]>> = Vec::with_capacity(ctx.passthrough.len() + 1);
-        passthrough_list.push(b"-".to_vec().into_boxed_slice());
-        passthrough_list.append(&mut ctx.passthrough);
-        ctx.passthrough = passthrough_list;
+        if include_argv_marker {
+            // Prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
+            // Node's `node -` semantics. Bare `node --input-type=module` has
+            // no argv marker even though it reads the same stdin source.
+            let mut passthrough_list: Vec<Box<[u8]>> =
+                Vec::with_capacity(ctx.passthrough.len() + 1);
+            passthrough_list.push(b"-".to_vec().into_boxed_slice());
+            passthrough_list.append(&mut ctx.passthrough);
+            ctx.passthrough = passthrough_list;
+        }
 
         // NOT routed through `boot_and_handle_error` — the
         // stdin path skips the
@@ -3016,6 +3038,7 @@ impl RunCommand {
         // internal/main/repl.js — no source splicing.
         ctx.runtime_options.eval.interactive_script = Some(ctx.runtime_options.eval.script);
         ctx.runtime_options.eval.script = bootstrap;
+        ctx.runtime_options.eval.is_present = true;
         Self::exec_eval(ctx)
     }
 
@@ -3068,7 +3091,7 @@ impl RunCommand {
             return Self::exec_node_repl(ctx);
         }
 
-        if !ctx.runtime_options.eval.script.is_empty() {
+        if ctx.runtime_options.eval.has_source() {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
             let mut cwd_buf = bun_paths::path_buffer_pool::get();

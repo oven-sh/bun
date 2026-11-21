@@ -219,6 +219,7 @@ impl<'a> Options<'a> {
                 server_components: f.server_components,
                 is_macro_runtime: f.is_macro_runtime,
                 top_level_await: f.top_level_await,
+                forced_module_type: f.forced_module_type,
                 auto_import_jsx: f.auto_import_jsx,
                 allow_runtime: f.allow_runtime,
                 inlining: f.inlining,
@@ -987,6 +988,18 @@ impl<'a> Parser<'a> {
         };
 
         parse_tracer.end();
+
+        if p.options.features.forced_module_type == options::ModuleType::Cjs {
+            for range in [p.esm_import_keyword, p.esm_export_keyword] {
+                if !range.is_empty() {
+                    p.log().add_range_error(
+                        Some(p.source),
+                        range,
+                        b"Module syntax is not allowed with --input-type=commonjs",
+                    );
+                }
+            }
+        }
 
         // Halt parsing right here if there were any errors
         // This fixes various conditions that would cause crashes due to the AST being in an invalid state while visiting
@@ -1923,7 +1936,9 @@ impl<'a> Parser<'a> {
         // Checked after `to_ast`, which marks TypeScript type-only imports unused.
         let mut reject_import_statements = false;
 
-        if p.is_deoptimized_commonjs() {
+        if p.options.features.forced_module_type == options::ModuleType::Esm {
+            exports_kind = js_ast::ExportsKind::Esm;
+        } else if p.is_deoptimized_commonjs() {
             exports_kind = js_ast::ExportsKind::Cjs;
         } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
             exports_kind = js_ast::ExportsKind::Esm;

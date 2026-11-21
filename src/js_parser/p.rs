@@ -3342,7 +3342,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // ECMAScript modules are always interpreted as strict mode. This has to be
         // done before "hoistSymbols" because strict mode can alter hoisting (!).
-        if self.esm_import_keyword.len > 0 {
+        if self.options.features.forced_module_type == options::ModuleType::Esm
+            || self.esm_import_keyword.len > 0
+        {
             self.module_scope_mut()
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeImport);
         } else if self.esm_export_keyword.len > 0 {

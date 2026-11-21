@@ -5867,6 +5867,12 @@ describe.concurrent("oxlint's command line", () => {
       );
       const { problems } = await lint(inside, ["-c", "config/oxlint.json", "."], { cwd: "node_modules/project" });
       expect(problems).toEqual(["node_modules/project/a.js:1:1 no-var"]);
+      // The config file can also be outside that node_modules, or in a sibling package.
+      const outside = { ...inside, "shared/oxlint.json": config, "node_modules/shared/oxlint.json": config };
+      for (const path of ["../../shared/oxlint.json", "../shared/oxlint.json"]) {
+        const { problems } = await lint(outside, ["-c", path, "."], { cwd: "node_modules/project" });
+        expect(problems).toEqual(["node_modules/project/a.js:1:1 no-var"]);
+      }
     });
 
     // A config file is a program, or refers to programs. The ones in `node_modules` belong to a dependency.
@@ -6021,6 +6027,26 @@ describe.concurrent("oxlint's command line", () => {
       );
       const { problems } = await lint(project, ["."], { cwd: "node_modules/project" });
       expect(problems).toEqual(["node_modules/project/a.js:1:1 no-var"]);
+      // Also with its config file above that node_modules, and from a subdirectory.
+      const { "node_modules/project/.oxlintrc.json": config, ...rest } = project;
+      const below = { ...rest, ".oxlintrc.json": config, "node_modules/project/src/d.js": code };
+      const found = ["node_modules/project/a.js:1:1 no-var", "node_modules/project/src/d.js:1:1 no-var"];
+      expect((await lint(below, ["."], { cwd: "node_modules/project" })).problems).toEqual(found);
+      expect((await lint(below, [".."], { cwd: "node_modules/project/src" })).problems).toEqual(found);
+    });
+
+    // Config files apply to a path passed as an argument even if the working directory has none.
+    test("the config of a project elsewhere decides for a file passed as an argument", async () => {
+      const elsewhere = Object.fromEntries(Object.entries(files).map(([name, text]) => [`other/${name}`, text]));
+      const included = { ...elsewhere, "other/.oxlintrc.json": ignoring("!**/node_modules/")[".oxlintrc.json"] };
+      const named = ["../other/node_modules/p/b.js"];
+      const here = { "here/package.json": "{}" };
+      const [skipped, linted] = await Promise.all([
+        lint({ ...elsewhere, ...here }, named, { cwd: "here" }),
+        lint({ ...included, ...here }, named, { cwd: "here" }),
+      ]);
+      expect(skipped.problems).toEqual([]);
+      expect(linted.problems).toEqual(["other/node_modules/p/b.js:1:1 no-var"]);
     });
 
     // Where `bun install` hard-links a package's files from its cache, a fix to one of them changes the cache too.
@@ -6043,7 +6069,8 @@ describe.concurrent("oxlint's command line", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("No problems in 1 file, fixed 1");
       expect(stderr).toBe("Fixed 1 problem in 1 file\n");
       expect([own, dependency, cached].map(it => readFileSync(it, "utf8"))).toEqual([
         "let x = 1;\nx = 2;\n",

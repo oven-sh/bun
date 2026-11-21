@@ -1502,6 +1502,7 @@ impl<'l> Loader<'l> {
         })?;
         self.advise_about_js_plugins(&config, &sources);
         config.infer_globals(self.infers_globals_besides());
+        config.start_in(self.cwd());
         Ok(config)
     }
 
@@ -2699,7 +2700,8 @@ impl<'l> Loader<'l> {
             end += name.len();
             if WITHOUT_PROJECT_FILES.contains(&name) {
                 let left_out = &directory[..end];
-                let around = self.for_directory(paths::dirname(left_out))?;
+                // Config files apply in `directory`, so the ones above it do too.
+                let around = self.for_applicable_directory(paths::dirname(left_out))?;
                 if matches!(around.flavor, Flavor::Oxlint | Flavor::BuiltIn)
                     && around.config.leaves_out_directory(left_out)
                 {
@@ -2713,9 +2715,14 @@ impl<'l> Loader<'l> {
 
     /// The configuration for the files in `directory`. It's ESLint's `loadConfigArrayForFile`.
     pub(crate) fn for_directory(&self, directory: &[u8]) -> Found {
-        if !self.applies_in(directory) {
-            return self.without_config_file();
+        match self.applies_in(directory) {
+            true => self.for_applicable_directory(directory),
+            false => self.without_config_file(),
         }
+    }
+
+    /// [`Loader::for_directory`] for a directory in which config files [apply](Loader::applies_in), or one above it.
+    fn for_applicable_directory(&self, directory: &[u8]) -> Found {
         if self.is_eslint_8_command_line() {
             if let Some((directory, name)) = self.found(directory) {
                 self.check_eslint_8_flags(directory, name)?;

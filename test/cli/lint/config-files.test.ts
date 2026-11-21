@@ -5106,6 +5106,15 @@ describe.concurrent("which tool's config files are used", () => {
         [],
       ],
       [
+        "such an object, beside both tools' config files, of which oxlint's is used",
+        {
+          "mine.ts": `export default ${forEither};`,
+          ".oxlintrc.json": "{}",
+          "eslint.config.js": `module.exports = [];`,
+        },
+        [],
+      ],
+      [
         "oxlint's defineConfig and type",
         {
           "mine.ts": `import { defineConfig, type OxlintConfig } from "oxlint";\nexport default defineConfig(${forEither} satisfies OxlintConfig);`,

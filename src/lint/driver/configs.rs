@@ -1911,11 +1911,7 @@ impl<'l> Loader<'l> {
                     }
                     None => {
                         // As in `bun fmt`: an object that both tools read is the config of the tool the project uses.
-                        let project = match self.tool() {
-                            Some(Flavor::Oxlint) => Some(Tool::Oxlint),
-                            Some(Flavor::Eslint | Flavor::EslintRc) => Some(Tool::Eslint),
-                            Some(Flavor::BuiltIn) | None => None,
-                        };
+                        let project = self.project_tool();
                         let (json, is_for_oxlint) =
                             evaluate::evaluate_by_export(environment, path, &built_in, project)?;
                         let flavor = match is_for_oxlint {
@@ -2197,6 +2193,18 @@ impl<'l> Loader<'l> {
             let from_package_json = self.tool_from_package_json(is_decided);
             decided.or(from_package_json)
         })
+    }
+
+    /// The tool that a run without `--config` uses here: with both tools' files, [`Loader::tool`] says ESLint's.
+    fn project_tool(&self) -> Option<Tool> {
+        let has_oxlint_config =
+            || self.options.flavor.is_none() && self.nearest_oxlint_config(self.cwd()).is_some();
+        match self.tool() {
+            Some(Flavor::Oxlint) => Some(Tool::Oxlint),
+            _ if has_oxlint_config() => Some(Tool::Oxlint),
+            Some(Flavor::Eslint | Flavor::EslintRc) => Some(Tool::Eslint),
+            Some(Flavor::BuiltIn) | None => None,
+        }
     }
 
     /// The path that `--config` names.
@@ -2911,9 +2919,9 @@ impl<'l> Loader<'l> {
         let file_exists = || self.named_config().is_some_and(|it| fs::is_file(&it));
         match self.config_flag() {
             ConfigFlag::Absent => self.uses_oxlint_defaults(),
+            ConfigFlag::EslintRc => false,
             // An ESLint 8 flag makes any file an ESLint 8 file.
             _ if self.is_eslint_8_command_line() => false,
-            ConfigFlag::EslintRc => false,
             ConfigFlag::Named(flavor) => flavor == Flavor::Oxlint,
             // Nothing says whose a missing file is.
             ConfigFlag::Json(_) | ConfigFlag::Program if !file_exists() => {

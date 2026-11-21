@@ -570,6 +570,14 @@ const cases = {
       }
     },
   ],
+  ...Object.fromEntries(
+    Object.entries({
+      "open": "await (await require('fs').promises.open(process.execPath)).close()",
+      "Bun.file": "await Bun.file(process.execPath).slice(0, 10).text()",
+      "lookup": "await require('dns').promises.lookup('localhost')",
+      "stdin": "for await (const c of process.stdin);",
+    }).map(([name, code]) => [`first ${name} of a process`, ["/s", 1, repeatSync(300, () => Bun.spawnSync([process.execPath, "-e", code], { stdin: Buffer.from("x") }))]]),
+  ),
   "named pipe ping-pong, 100 KiB": ["msg/s", 1, largePingPong(100 * 1024)],
   "named pipe ping-pong, 300 KiB": ["msg/s", 1, largePingPong(300 * 1024)],
   "named pipe stream": [

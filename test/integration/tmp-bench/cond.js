@@ -3,7 +3,7 @@
 const [old, now, condition, only, variants, rounds = 3] = process.argv.slice(2), file = import.meta.dir + "/iobench.js";
 const k32 = require("bun:ffi").dlopen("kernel32.dll", { SetProcessAffinityMask: { args: ["i64", "u64"], returns: "i32" } }).symbols;
 const cases = JSON.parse(Bun.spawnSync([old, file, "--list"]).stdout.toString()).filter(([n]) => only.split(",").some(o => (n + "$").includes(o)));
-const columns = [[old, ""], ...variants.split(";").map(v => [now, v])], isBusy = condition === "busy";
+const columns = [[old, ""], ...variants.split(";").map(v => [v === "before" ? process.env.BEFORE_BUN : now, v])], isBusy = condition === "busy";
 const env = { ...process.env, CYCLES: "1", NO_COLOR: "1", SHORT: process.env.SHORT ?? (isBusy ? "0.8" : "0.4"), SMALL: process.env.SMALL ?? (isBusy ? "0.125" : "0.5") };
 const burners = isBusy ? require("os").cpus().map(() => Bun.spawn([old, "-e", "const end = Date.now() + 900000; while (Date.now() < end);"], { stdio: ["ignore", "ignore", "ignore"] })) : [];
 if (/^\d/.test(condition) && !k32.SetProcessAffinityMask(-1n, BigInt(condition))) console.log("# the affinity was refused");

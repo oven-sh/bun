@@ -1,2 +1,2 @@
-import { bench } from "./run";
-bench("overrun.js", "shared", "3 ms,1000,bursts", "", "3", "4");
+import { test } from "bun:test";
+test("unused", () => {});

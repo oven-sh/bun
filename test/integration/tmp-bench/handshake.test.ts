@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("handshake.js", "1", "20");
+bench("deep.js");

@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("quiet.js");
+bench("boost.js");

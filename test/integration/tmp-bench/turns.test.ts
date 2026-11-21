@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("turns.js", "4", "old;;old;");
+bench("cond.js", "4", "busy cpus,startup,first,50 ms turns", "before;", "3");

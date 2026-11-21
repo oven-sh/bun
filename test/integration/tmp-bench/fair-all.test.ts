@@ -1,2 +1,2 @@
-import { bench } from "./run";
-bench("fair.js", "all", "stream,buffered,start,stdin,stdin48,stdin256,fetch16,stat,reads32", "", "15");
+import { test } from "bun:test";
+test("unused", () => {});

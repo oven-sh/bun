@@ -24,7 +24,18 @@ export function bench(script: string, ...args: string[]) {
         const shipped = join(import.meta.dir, "../../../release", name + ".zip");
         if (existsSync(shipped)) now = await unzip(shipped, "new");
       }
-      console.log("old", old, "new", now);
+      let before = process.env.BEFORE_BUN;
+      if (!before) {
+        const at = {
+          x64: "01a1fcab-3969-4648-92da-71c9de38c128/artifacts/01a1fcb8-494f-4da5-9088-4e8e73685e3c",
+          arm64: "01a1fcab-396a-4877-a72d-eca049ba1086/artifacts/01a1fcb2-b290-4760-81f2-8ff0759260ec",
+        }[process.arch];
+        const zip = join(String(dir), "before.zip");
+        await Bun.write(zip, await fetch(`https://buildkite.com/organizations/bun/pipelines/bun/builds/143416/jobs/${at}`));
+        before = await unzip(zip, "before");
+        if (!existsSync(before)) before = now;
+      }
+      console.log("old", old, "before", before, "new", now);
       await Bun.spawn(
         [
           old,
@@ -37,6 +48,7 @@ export function bench(script: string, ...args: string[]) {
             ...bunEnv,
             STRESS_TLS: process.env.STRESS_TLS,
             PROFILE_EXE: bunExe(),
+            BEFORE_BUN: before,
             BUN_GARBAGE_COLLECTOR_LEVEL: undefined,
             BUN_JSC_randomIntegrityAuditRate: undefined,
           },

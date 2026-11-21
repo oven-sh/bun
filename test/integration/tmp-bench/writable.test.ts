@@ -1,2 +1,2 @@
-import { bench } from "./run";
-bench("writable.js");
+import { test } from "bun:test";
+test("unused", () => {});

@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("cond.js", "4", "50 ms turns", "", "15");
+bench("cswitch.js", "opsall", "before;", "5");

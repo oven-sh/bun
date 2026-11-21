@@ -675,11 +675,17 @@ fn graph_may_answer_for(path: &[u8]) -> bool {
     standalone_module_graph().is_some_and(|graph| graph.may_answer_for(path))
 }
 
+/// Whether [`stat_failure`] asks the graph, which then looks on the disk.
+fn graph_answers_stat_failure(path: &[u8], args: &args::Stat) -> bool {
+    let written = args.path.slice();
+    graph_may_answer_for(path) || (written != path && graph_may_answer_for(written))
+}
+
 /// The disk has failed `stat` or `lstat` with `err`; `path` is what the system call was given.
 #[allow(clippy::needless_pass_by_value)] // handed on as the answer
 fn stat_failure(err: sys::Error, path: &[u8], args: &args::Stat) -> Maybe<StatOrNotFound> {
     let written = args.path.slice();
-    if graph_may_answer_for(path) || (written != path && graph_may_answer_for(written)) {
+    if graph_answers_stat_failure(path, args) {
         if let Some(result) = graph_after_disk(path).and_then(|graph| graph.stat(path)) {
             return Ok(stats_of(&result, args.big_int));
         }
@@ -1101,6 +1107,7 @@ impl CpPendingDirs {
 // AsyncFSTask / UVFSRequest / NewAsyncCpTask / AsyncReaddirRecursiveTask are
 // the thread-pool wrappers that back every `fs.promises.*` call (and the shell
 // `cp` builtin).
+// On Linux an `AsyncFSTask` skips the pool for what the kernel answers from its caches (`answer_from_cache`).
 mod _async_tasks {
     use super::*;
 
@@ -1606,7 +1613,7 @@ mod _async_tasks {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // NewAsyncFSTask — runs a NodeFS method on the thread pool.
+    // NewAsyncFSTask — runs a NodeFS method on the thread pool, or answers on the JS thread (`answer_from_cache`).
     // ──────────────────────────────────────────────────────────────────────────
 
     /// One `fs.*` operation's parsed arguments.
@@ -2031,6 +2038,13 @@ mod _async_tasks {
         ) -> Option<bun_jsc::Completion<Self>> {
             let mut node_fs = NodeFS::default();
             this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if <Op<{ F }> as NodeFSDispatch<R, A>>::ANSWERS_FROM_CACHE {
+                // Posted first: what this thread learns for the JS thread may wait for a server.
+                done.finish();
+                sys::cached::learn_mounts();
+                return None;
+            }
             Some(done)
         }
 
@@ -2102,6 +2116,24 @@ mod _async_tasks {
             tracker.did_schedule(cx.global());
             let completion = FsCompletion::new(cx.global(), callback);
             let value = completion.value();
+            let js = AsyncFSJs {
+                completion,
+                tracker,
+            };
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if <Op<{ F }> as NodeFSDispatch<R, A>>::ANSWERS_FROM_CACHE
+                && let Some(result) = answer_from_cache::<R, A, F>(cx.global().bun_vm(), &args)
+            {
+                bun_jsc::Job::<Self>::schedule_finished(cx, Self { args, result }, js);
+                return value;
+            }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if sys::cached::is_available() {
+                let vm = cx.global().bun_vm();
+                crate::jsc_hooks::runtime_state_of(vm)
+                    .fs_cached_answers
+                    .pool_job(vm.event_loop().iteration_number());
+            }
             bun_jsc::Job::<Self>::schedule(
                 cx,
                 Self {
@@ -2110,12 +2142,127 @@ mod _async_tasks {
                     // may be niche-optimised; never construct an all-zero `Result`.
                     result: Err(sys::Error::default()),
                 },
-                AsyncFSJs {
-                    completion,
-                    tracker,
-                },
+                js,
             );
             value
+        }
+    }
+
+    /// Decides, per VM, which operations of one go (one `EventLoop::iteration_number`) ask the kernel's caches.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) struct CachedAnswerGate {
+        /// `EventLoop::iteration_number` of the go in progress.
+        go: core::cell::Cell<u64>,
+        /// How many operations of the go in progress came here.
+        width: core::cell::Cell<u16>,
+        asks: core::cell::Cell<bool>,
+        /// How many of them the kernel answered.
+        answers: core::cell::Cell<u16>,
+        /// The kernel could not answer one of them, or a pool job came behind `CROWD` answers: the rest is the pool's.
+        regretted: core::cell::Cell<bool>,
+        regretted_in_a_row: core::cell::Cell<u8>,
+        /// How many goes from now on do not ask.
+        skips: core::cell::Cell<u16>,
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    impl Default for CachedAnswerGate {
+        fn default() -> Self {
+            Self {
+                go: core::cell::Cell::new(u64::MAX),
+                width: core::cell::Cell::new(0),
+                asks: core::cell::Cell::new(false),
+                answers: core::cell::Cell::new(0),
+                regretted: core::cell::Cell::new(false),
+                regretted_in_a_row: core::cell::Cell::new(0),
+                skips: core::cell::Cell::new(0),
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    impl CachedAnswerGate {
+        /// A wider go is the pool's, and the go after it: measured, the pool is as fast from 40 to 64 at once.
+        const PER_GO: u16 = 32;
+        /// A pool job behind this many answers of its go was held up by them: the go is regretted.
+        const CROWD: u16 = 2;
+        /// At most `(1 << MAX_DOUBLINGS) - 1` goes in a row do not ask.
+        const MAX_DOUBLINGS: u8 = 10;
+
+        /// Whether an operation that arrives in the go `go` is asked.
+        fn admits(&self, go: u64) -> bool {
+            if self.go.get() != go {
+                let was_wide = self.width.get() > Self::PER_GO;
+                if self.answers.get() > 0 && !self.regretted.get() {
+                    self.regretted_in_a_row.set(0);
+                }
+                let skipped = self.skips.get() > 0;
+                if skipped {
+                    self.skips.set(self.skips.get() - 1);
+                }
+                self.go.set(go);
+                self.width.set(0);
+                self.asks.set(!skipped && !was_wide);
+                self.answers.set(0);
+                self.regretted.set(false);
+            }
+            self.width.set(self.width.get().saturating_add(1));
+            self.asks.get() && !self.regretted.get() && self.width.get() <= Self::PER_GO
+        }
+
+        /// The kernel answered an operation that [`admits`](Self::admits) let through.
+        fn answered(&self) {
+            self.answers.set(self.answers.get() + 1);
+        }
+
+        /// It could not answer one: the n-th regretted go in a row is followed by `2^(n-1) - 1` goes that do not ask.
+        fn missed(&self) {
+            let in_a_row = (self.regretted_in_a_row.get() + 1).min(Self::MAX_DOUBLINGS + 1);
+            self.regretted_in_a_row.set(in_a_row);
+            self.regretted.set(true);
+            self.skips.set((1 << (in_a_row - 1)) - 1);
+        }
+
+        /// A job goes to the pool in the go `go`.
+        fn pool_job(&self, go: u64) {
+            if self.go.get() == go && self.answers.get() >= Self::CROWD && !self.regretted.get() {
+                self.missed();
+            }
+        }
+    }
+
+    /// The answer to an operation with a `cached =` column, if the kernel holds it and the VM's gate lets it ask.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn answer_from_cache<R, A: FsArgument, const F: NodeFSFunctionEnum>(
+        vm: &'static VirtualMachine,
+        args: &A,
+    ) -> Option<Maybe<R>>
+    where
+        Op<{ F }>: NodeFSDispatch<R, A>,
+    {
+        use bun_jsc::counters::Field;
+        if !sys::cached::is_available() {
+            return None;
+        }
+        let gate = &crate::jsc_hooks::runtime_state_of(vm).fs_cached_answers;
+        if !gate.admits(vm.event_loop().iteration_number()) {
+            return None;
+        }
+        let answer = crate::jsc_hooks::with_node_fs(vm, |node_fs| {
+            <Op<{ F }> as NodeFSDispatch<R, A>>::run_cached(node_fs, args)
+        });
+        match answer {
+            CachedAnswer::Answer(result) => {
+                gate.answered();
+                vm.counters.mark(Field::FsCachedHit);
+                Some(result.map_err(|err| error_for_caller(args.paths(), err)))
+            }
+            CachedAnswer::Unknown => {
+                gate.missed();
+                vm.counters.mark(Field::FsCachedMiss);
+                None
+            }
+            CachedAnswer::NotAsked => None,
         }
     }
 
@@ -3210,6 +3357,8 @@ mod _async_tasks {
         }
     }
 } // mod _async_tasks
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(crate) use _async_tasks::CachedAnswerGate;
 pub(crate) use _async_tasks::{
     AsyncCpTask, AsyncReaddirRecursiveTask, FsArgument, FsReturn, ShellAsyncCpTask, async_,
 };
@@ -9457,6 +9606,103 @@ impl NodeFS {
     }
 }
 
+/// What [`NodeFSDispatch::run_cached`] has for the JS thread, which asked in front of the pool.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(crate) enum CachedAnswer<R> {
+    /// What the operation's own body gives for the same answer of the disk.
+    Answer(Maybe<R>),
+    /// The kernel was asked in vain: it cannot say without waiting for a disk or a server.
+    Unknown,
+    /// Whatever the kernel holds, the operation is the pool's.
+    NotAsked,
+}
+
+/// A descriptor of `bun_sys::cached::stat` that a pool thread closes. Nothing of a VM goes with it.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+struct CachedDescriptor {
+    fd: sys::Fd,
+    task: WorkPoolTask,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+bun_threading::owned_task!(CachedDescriptor, task);
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl CachedDescriptor {
+    /// Each one that waits for the pool holds a slot of the descriptor table.
+    const MAX_WAITING: u32 = 64;
+
+    fn waiting() -> &'static core::sync::atomic::AtomicU32 {
+        static WAITING: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+        &WAITING
+    }
+
+    /// Whether the pool is so far behind that the JS thread opens no more for now.
+    fn is_pool_behind() -> bool {
+        Self::waiting().load(Ordering::Relaxed) >= Self::MAX_WAITING
+    }
+
+    fn close_on_pool(fd: sys::Fd) {
+        Self::waiting().fetch_add(1, Ordering::Relaxed);
+        WorkPool::schedule_owned(Box::new(Self {
+            fd,
+            task: work_pool_task(<Self as bun_threading::work_pool::OwnedTask>::__callback),
+        }));
+    }
+
+    #[allow(clippy::boxed_local)]
+    fn run_owned(self: Box<Self>) {
+        drop(sys::CloseOnDrop::new(self.fd));
+        Self::waiting().fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// The `cached =` column of `node_fs_ops!`. Not `Readlink` or `ReadFile`: they update the access time and can read the disk.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl NodeFS {
+    fn stat_cached(&mut self, args: &args::Stat) -> CachedAnswer<ret::Stat> {
+        self.stat_from_cache(args, sys::cached::Symlink::Follow, sys::Tag::stat)
+    }
+
+    fn lstat_cached(&mut self, args: &args::Lstat) -> CachedAnswer<ret::Lstat> {
+        self.stat_from_cache(args, sys::cached::Symlink::NoFollow, sys::Tag::lstat)
+    }
+
+    fn stat_from_cache(
+        &mut self,
+        args: &args::Stat,
+        symlink: sys::cached::Symlink,
+        syscall: sys::Tag,
+    ) -> CachedAnswer<StatOrNotFound> {
+        use sys::cached::NoStat;
+        let path = args.path.slice_z(&mut self.sync_error_buf);
+        if graph_before_disk(path.as_bytes()).is_some() {
+            return CachedAnswer::NotAsked;
+        }
+        if CachedDescriptor::is_pool_behind() {
+            return CachedAnswer::NotAsked;
+        }
+        let close_on_pool = CachedDescriptor::close_on_pool;
+        match sys::cached::stat(path, symlink, sys::STATX_MASK_FOR_STATS, close_on_pool) {
+            Ok(result) => CachedAnswer::Answer(Ok(StatOrNotFound::Stats(Box::new(Stats::init(
+                &result,
+                args.big_int,
+            ))))),
+            // For a path that the disk does not have, the graph looks on the disk.
+            Err(NoStat::NotFound) if graph_answers_stat_failure(path.as_bytes(), args) => {
+                CachedAnswer::NotAsked
+            }
+            Err(NoStat::NotFound) => CachedAnswer::Answer(stat_failure(
+                sys::Error::from_code(E::ENOENT, syscall),
+                path.as_bytes(),
+                args,
+            )),
+            Err(NoStat::Unknown) => CachedAnswer::Unknown,
+            Err(NoStat::NotAsked) => CachedAnswer::NotAsked,
+        }
+    }
+}
+
 /// Type-level marker for [`NodeFSDispatch`] — one ZST per `NodeFSFunctionEnum`
 /// variant. Exists so the `(R, A) ↔ F` binding can be proved by a `where`
 /// bound instead of pointer-cast identity casts.
@@ -9468,6 +9714,14 @@ pub(crate) struct Op<const F: NodeFSFunctionEnum>;
 /// bound is always satisfied at every monomorphised call site.
 pub(crate) trait NodeFSDispatch<R, A> {
     fn run(fs: &mut NodeFS, args: &A, flavor: Flavor) -> Maybe<R>;
+    /// Whether [`Self::run_cached`] can answer: the `cached =` column of `node_fs_ops!`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const ANSWERS_FROM_CACHE: bool = false;
+    /// The answer, if the kernel holds it in memory: never a wait, so the JS thread asks in front of the pool.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn run_cached(_fs: &mut NodeFS, _args: &A) -> CachedAnswer<R> {
+        CachedAnswer::NotAsked
+    }
     #[cfg(windows)]
     fn run_uv(_fs: &mut NodeFS, _args: &A, _rc: uv::ReturnCodeI64) -> Maybe<R> {
         unreachable!("uv_dispatch: not a UVFSRequest variant")
@@ -9486,6 +9740,7 @@ pub(crate) trait NodeFSDispatch<R, A> {
 macro_rules! node_fs_ops {
     ($(
         $Variant:ident => $method:ident, $Args:ty, $Ret:ty
+        $(, cached = $cached_method:ident)?
         $(, uv = $uv_method:ident)?
         $(, uv_req = $uv_req_method:ident)?
     );+ $(;)?) => {
@@ -9495,6 +9750,16 @@ macro_rules! node_fs_ops {
                 fn run(fs: &mut NodeFS, args: &$Args, flavor: Flavor) -> Maybe<$Ret> {
                     fs.$method(args, flavor)
                 }
+                $(
+                    // `bun_sys::cached` needs `openat2(RESOLVE_CACHED)`, which only Linux has.
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
+                    const ANSWERS_FROM_CACHE: bool = true;
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
+                    #[inline]
+                    fn run_cached(fs: &mut NodeFS, args: &$Args) -> CachedAnswer<$Ret> {
+                        fs.$cached_method(args)
+                    }
+                )?
                 $(
                     #[cfg(windows)]
                     #[inline]
@@ -9532,7 +9797,7 @@ node_fs_ops! {
     Lchmod => lchmod, args::LCHmod<'static>, ret::Lchmod;
     Lchown => lchown, args::LChown<'static>, ret::Lchown;
     Link => link, args::Link<'static>, ret::Link;
-    Lstat => lstat, args::Lstat<'static>, ret::Lstat;
+    Lstat => lstat, args::Lstat<'static>, ret::Lstat, cached = lstat_cached;
     Lutimes => lutimes, args::Lutimes<'static>, ret::Lutimes;
     Mkdir => mkdir, args::Mkdir<'static>, ret::Mkdir;
     Mkdtemp => mkdtemp, args::MkdirTemp<'static>, ret::Mkdtemp;
@@ -9547,7 +9812,7 @@ node_fs_ops! {
     Rename => rename, args::Rename<'static>, ret::Rename;
     Rm => rm, args::Rm<'static>, ret::Rm;
     Rmdir => rmdir, args::RmDir<'static>, ret::Rmdir;
-    Stat => stat, args::Stat<'static>, ret::Stat;
+    Stat => stat, args::Stat<'static>, ret::Stat, cached = stat_cached;
     Statfs => statfs, args::StatFS<'static>, ret::StatFS, uv_req = uv_statfs;
     Symlink => symlink, args::Symlink<'static>, ret::Symlink;
     Truncate => truncate, args::Truncate<'static>, ret::Truncate;

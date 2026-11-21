@@ -405,6 +405,12 @@ const FAMILIES: Record<string, Entry[]> = {
       worker: `const fs = require("node:fs"); fs.promises.stat(process.execPath).then(() => hit(() => fs.promises.stat(process.execPath)));`,
     },
     {
+      // Always the pool's. On Linux the worker's own thread answers a stat that the kernel has cached.
+      name: "fs.promises.access",
+      phases: ["inside", "after"],
+      worker: `const fs = require("node:fs"); fs.promises.access(process.execPath).then(() => hit(() => fs.promises.access(process.execPath)));`,
+    },
+    {
       name: "fs.createReadStream data",
       phases: ["inside", "after"],
       worker: `const rs = require("node:fs").createReadStream(process.execPath, { highWaterMark: 1 << 16 }); rs.on("data", () => hit()); rs.on("error", () => {});`,

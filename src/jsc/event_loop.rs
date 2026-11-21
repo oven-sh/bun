@@ -728,6 +728,11 @@ impl EventLoop {
         self.vm_ref().gc_controller.process_gc_timer();
     }
 
+    /// Changes at every poll and at every drain of the task queue: what ran under one number ran in one go.
+    pub fn iteration_number(&self) -> u64 {
+        self.usockets_loop().iteration_number() + self.task_drains.load(Ordering::Relaxed)
+    }
+
     /// How many times one `tick()` refills the task queue from the concurrent
     /// queue before returning to let the loop poll. Other threads can post
     /// faster than this thread runs what they post; without a bound a steady
@@ -1329,8 +1334,13 @@ impl EventLoop {
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
+        // `Job::schedule_finished` queues a task without a wake-up: with one queued, do not park.
+        let park_seconds = if self.has_pending_tasks() { 0 } else { 1 };
         loop_.tick_with_timeout(
-            Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
+            Some(&bun_core::Timespec {
+                sec: park_seconds,
+                nsec: 0,
+            }),
             uws::NOW_NS_UNKNOWN,
         );
 
@@ -1452,8 +1462,7 @@ pub fn event_loop_exit(global: &JSGlobalObject) {
 // JS thread.
 bun_event_loop::link_impl_JsEventLoop! {
     Jsc for EventLoop => |this| {
-        iteration_number() => (*this).usockets_loop().iteration_number()
-            + (*this).task_drains.load(Ordering::Relaxed),
+        iteration_number() => (*this).iteration_number(),
         uws_loop() => (*this).usockets_loop(),
         event_loop_ctx() => (*this).event_loop_ctx(),
         tick() => (*this).tick(),

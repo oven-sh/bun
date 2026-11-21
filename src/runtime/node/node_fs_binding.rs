@@ -18,7 +18,7 @@ use crate::node::fs::{
 // the bottom of this file.
 
 /// Returns bindings to call jsc.Node.fs.NodeFS.<function>.
-/// Async calls use a thread pool.
+/// Async calls use a thread pool, unless `AsyncFSTask::schedule` can answer without a wait.
 
 fn run_sync_with<R: FsReturn, A: FsArgument>(
     cx: &mut JsScope<'_>,

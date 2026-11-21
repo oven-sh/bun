@@ -98,6 +98,8 @@ pub(crate) struct RuntimeState {
     pub(crate) matcher_pass: Cell<*const crate::test_runner::expect::expect_deferred::Pass>,
     /// For the `node:fs` calls that have no binding object. See [`with_node_fs`].
     node_fs: JsCell<Option<crate::node::fs::NodeFS>>,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fs_cached_answers: crate::node::fs::CachedAnswerGate,
     /// Installed while `process.on("memoryPressure", ...)` has a listener.
     pub(crate) memory_pressure_watcher: crate::node::memory_pressure::WatcherSlot,
     pub(crate) browsers: crate::webview::Browsers,
@@ -323,6 +325,8 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         test_runner: Cell::new(None),
         matcher_pass: Cell::new(ptr::null()),
         node_fs: JsCell::new(None),
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        fs_cached_answers: Default::default(),
         memory_pressure_watcher: Default::default(),
         browsers: Default::default(),
         zstd_tables: JsCell::default(),

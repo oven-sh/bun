@@ -7,6 +7,7 @@
 //! the VM may still run script, and a completion that lands after the VM began
 //! stopping is dropped instead — on the JS thread, heap alive — like every
 //! other queued task the teardown releases.
+//! ([`Job::schedule_finished`] skips the pool and the ticket for work that needed no other thread.)
 //!
 //! The two halves are a convenience, not a safety mechanism:
 //! [`JobContext::OffThread`] is what the pool body gets (`Send`);
@@ -296,7 +297,7 @@ impl JobList {
     }
 }
 
-/// One pool-then-complete job. Heap-allocated by [`Job::schedule`]; freed on
+/// One pool-then-complete job. Heap-allocated by [`Job::schedule`] or [`Job::schedule_finished`]; freed on
 /// the JS thread by its completion or by the teardown's release.
 #[repr(C)]
 pub struct Job<C: JobContext> {
@@ -304,7 +305,7 @@ pub struct Job<C: JobContext> {
     /// `*mut Job<C>` to `*mut JobHeader`.
     header: JobHeader,
     /// Moved into the [`Completion`] when the pool picks the job up; `None`
-    /// from then on (never touched on the JS side).
+    /// from then on, and in a job that never goes to the pool (never touched on the JS side).
     ticket: Option<Ticket>,
     task: WorkPoolTask,
     /// What [`Completion::finish`] queues on the JS thread.
@@ -332,6 +333,22 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        let job = Self::new(cx, off, js, Some(cx.vm().ticket()));
+        // SAFETY: live until completed/released on this thread; the pool owns it now.
+        unsafe { WorkPool::schedule(&raw mut (*job).task) };
+    }
+
+    /// JS thread: as [`schedule`](Self::schedule) for work that is done, queued where its [`Completion`] would post it.
+    pub fn schedule_finished(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        let job = Self::new(cx, off, js, None);
+        // SAFETY: no other thread was handed the job, so nothing else touches its node.
+        let node = unsafe { (*job).concurrent_task.from(job) };
+        // No wake-up: this thread is not parked, and it looks at the queue before it parks.
+        cx.vm().event_loop().post(NonNull::from(node));
+    }
+
+    /// `ticket`: for the other thread, if the job goes to one.
+    fn new(cx: &JsThread<'_>, off: C::OffThread, js: C::Js, ticket: Option<Ticket>) -> *mut Self {
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
                 // SAFETY: (this and the entry below) the erased dispatchers are
@@ -352,7 +369,7 @@ impl<C: JobContext> Job<C> {
                 },
                 generation: cx.vm().test_isolation_generation.get(),
             },
-            ticket: Some(cx.vm().ticket()),
+            ticket,
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_on_pool,
@@ -362,18 +379,18 @@ impl<C: JobContext> Job<C> {
             off,
             js,
         }));
-        // SAFETY: live until completed/released on this thread; the pool owns it now.
-        unsafe {
-            if C::CANCELLABLE {
-                cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
-            }
-            WorkPool::schedule(&raw mut (*job).task);
+        if C::CANCELLABLE {
+            // SAFETY: live until completed/released on this thread.
+            cx.vm()
+                .jobs
+                .with_mut(|j| j.push(unsafe { &raw mut (*job).header }));
         }
+        job
     }
 
     fn run_on_pool(task: *mut WorkPoolTask) {
-        // SAFETY: only reachable through the `task.callback` slot wired in
-        // `schedule`; the pool calls back with exactly that field of a live job.
+        // SAFETY: only reachable through the `task.callback` slot wired in `new`, which only
+        // `schedule` hands to the pool; it calls back with exactly that field of a live job.
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
         // SAFETY: live job, exclusively the pool's for this callback; the
         // ticket leaves the job here, for good.
@@ -394,7 +411,7 @@ impl<C: JobContext> Job<C> {
     /// are the caller's to complete or drop.
     ///
     /// # Safety
-    /// `this` is the job its `Completion` posted; called once, on `vm`'s thread.
+    /// `this` is a job its `Completion` posted or `schedule_finished` queued; called once, on `vm`'s thread.
     unsafe fn take(this: *mut Self, vm: &VirtualMachine) -> (C::OffThread, C::Js) {
         // SAFETY: fn contract.
         let mut job = unsafe { Box::from_raw(this) };
@@ -458,7 +475,7 @@ impl<C: JobContext> Drop for Completion<C> {
 /// Event-loop dispatch for every `Job<C>` (one tag): run its completion.
 ///
 /// # Safety
-/// `ptr` is a `Job<C>` posted by its `Completion` (for some `C`).
+/// `ptr` is a `Job<C>` (for some `C`) that its `Completion` posted or `schedule_finished` queued.
 pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult<()> {
     let header = ptr.cast::<JobHeader>();
     let vm = global.bun_vm();

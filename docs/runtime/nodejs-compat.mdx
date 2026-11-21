@@ -43,6 +43,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 🟢 Fully implemented. 98% of Node.js's test suite passes. `Stats` objects lack the `Temporal.Instant` getters (`atimeInstant` and friends).
 
+On Linux 5.12 or later, canary builds answer an async `stat` or `lstat` on the JavaScript thread when the kernel has the answer in memory, and use the thread pool otherwise. The callback runs from the event loop in both cases. `BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH=1` turns this on in a release build, and `BUN_FEATURE_FLAG_DISABLE_ASYNC_FS_FAST_PATH=1` turns it off. Bun asks the kernel with the `openat2` system call, and uses the thread pool where a seccomp policy answers `openat2` with an error. If your seccomp policy kills the process instead, set `BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH=1` so that Bun never makes the call.
+
 ### [`node:http`](https://nodejs.org/api/http.html)
 
 🟢 Fully implemented. `http.Server` does not extend `net.Server`. Bun ignores `listen(handle)` and the `fd`, `ipv6Only` and `signal` options of `listen()`. `keepAlive`/`keepAliveInitialDelay` on the server are no-ops.

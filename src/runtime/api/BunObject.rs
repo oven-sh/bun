@@ -1126,9 +1126,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             if server_ref.config.get().websocket.is_some() {
                 server_ref.write_ws_handler_slots(obj, global_object);
             }
-            server_ref
-                .js_value
-                .with_mut(|js_value| js_value.set_strong(obj, global_object));
+            server.set_js_ref_strong(global_object);
             // Slots are rooted; release the scoped gcProtects and run the
             // "server just started" GC nudge split out of `listen()`.
             drop(_handler_pins);

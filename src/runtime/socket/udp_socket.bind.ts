@@ -26,6 +26,7 @@ const sourceSpecificMembership = {
 /** What `Bun.udpSocket()` resolves to. */
 export const UDPSocket = b.class({
   rustPath: "crate::socket::udp_socket::UDPSocket",
+  thisValue: "this_value",
   types: [table.exactType("$Node.UDPSocketHandle"), table.exactType("$Bindgen.UDPSocket")],
   internalFields: ["onData", "onDrain", "onError"],
   proto: {

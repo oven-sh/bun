@@ -149,9 +149,9 @@ impl Drop for Process {
 pub struct ProcessHandle(RefPtr<Process>);
 
 impl core::ops::Deref for ProcessHandle {
-    type Target = Process;
+    type Target = RefPtr<Process>;
     #[inline]
-    fn deref(&self) -> &Process {
+    fn deref(&self) -> &RefPtr<Process> {
         &self.0
     }
 }
@@ -180,11 +180,6 @@ impl ProcessHandle {
     /// [`watch_or_reap`](Self::watch_or_reap)).
     pub fn on_exit(&self, status: Status, rusage: &Rusage) {
         Process::on_exit(self.this_ptr(), status, rusage)
-    }
-
-    /// For a call that may run an exit handler which drops or overwrites this handle.
-    pub fn this_ptr(&self) -> ThisPtr<Process> {
-        self.0.this_ptr()
     }
 }
 
@@ -456,7 +451,7 @@ impl Process {
         self.set_hold(true);
     }
 
-    pub fn detach(&self) {
+    fn detach(&self) {
         self.close();
         self.exit_handler.set(None);
     }
@@ -1198,26 +1193,20 @@ pub mod waiter_thread_posix {
 
 /// Event-loop-aware extension on the raw [`SpawnResult`] from
 /// `bun_spawn_sys`. The result type itself lives in the leaf `-sys` crate (no
-/// `Process`/`EventLoopHandle` dependency); `to_process` is added here as a
-/// trait method so callers keep the `.to_process(loop_)` spelling.
+/// `Process`/`EventLoopHandle` dependency).
 pub trait SpawnResultExt: Sized {
-    fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process>;
-
-    /// [`to_process`](Self::to_process) as the exit-handler owner's handle.
-    fn to_process_handle(self, event_loop: EventLoopHandle) -> ProcessHandle {
-        ProcessHandle(self.to_process(event_loop))
-    }
+    fn to_process_handle(self, event_loop: EventLoopHandle) -> ProcessHandle;
 }
 
 impl SpawnResultExt for SpawnResult {
-    fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process> {
+    fn to_process_handle(self, event_loop: EventLoopHandle) -> ProcessHandle {
         #[cfg(unix)]
         let reaped = (self.has_exited)
             .then(|| posix_spawn::wait4(self.pid, 0, Some(&mut rusage_zeroed())))
             .and_then(|result| Status::from(self.pid, &result));
         #[cfg(windows)]
         let reaped: Option<Status> = None;
-        RefPtr::new(Process {
+        ProcessHandle(RefPtr::new(Process {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             pid: self.pid,
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1235,7 +1224,7 @@ impl SpawnResultExt for SpawnResult {
             signal: Cell::new(0),
             status: reaped.map_or_default(OnceCell::from),
             exit_handler: Cell::default(),
-        })
+        }))
     }
 }
 

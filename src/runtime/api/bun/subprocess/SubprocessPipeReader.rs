@@ -6,7 +6,7 @@ use bun_io::max_buf;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult, ReaderFlags};
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSValue, JsResult};
-use bun_ptr::{ParentRef, RefCount, RefPtr};
+use bun_ptr::{Attached, Detach, ParentRef, RefCount, RefPtr};
 
 use super::readable::Readable;
 use super::{StdioResult, Subprocess};
@@ -19,7 +19,7 @@ pub(crate) struct PipeReader {
     // Backref to owning Subprocess; cleared when `Readable::Pipe` lets go of this reader.
     // `ParentRef` encapsulates the single unsafe deref behind a safe `Deref`/`get()`;
     // the Subprocess owns this PipeReader (via `Readable::Pipe`) and is guaranteed
-    // live whenever `process.is_some()` — see `on_read_result`/`finalize` ordering.
+    // live whenever `process.is_some()`.
     // `'static` erases the borrow-checker lifetime (Subprocess is heap-pinned).
     process: Cell<Option<ParentRef<Subprocess<'static>>>>,
     event_loop: bun_io::EventLoopCtx,
@@ -41,7 +41,7 @@ impl PipeReader {
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
         limit: Option<&max_buf::OwnerRef>,
-    ) -> RefPtr<PipeReader> {
+    ) -> Attached<PipeReader> {
         let mut reader = BufferedReader::init();
         if let Some(limit) = limit {
             reader.set_maxbuf(limit.for_reader());
@@ -57,7 +57,7 @@ impl PipeReader {
         let owner = Owner::new(PollTag::SubprocessPipeReader, this.as_ptr().cast());
         // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { this.reader.set_owner(owner) };
-        this
+        this.into()
     }
 
     /// # Safety
@@ -142,19 +142,19 @@ impl PipeReader {
 
     pub(crate) fn to_js(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         let stream = ReadableStream::from_pipe(cx, &self.reader);
-        self.detach();
         self.start_ref.set(None);
         stream
     }
 
     pub(crate) fn finalize(&self) {
-        self.detach();
         if self.start_ref.take().is_some() {
             self.reader.deinit();
         }
     }
+}
 
-    pub(crate) fn detach(&self) {
+impl Detach for PipeReader {
+    fn detach(&self) {
         self.process.set(None);
     }
 }

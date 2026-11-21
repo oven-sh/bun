@@ -8,7 +8,7 @@ use crate::ipc::{
 };
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
-use bun_ptr::RefPtr;
+use bun_ptr::Attached;
 
 use crate::generated_bindgen::ipc_host::{MessageTarget, ReceivedMessage};
 use crate::socket::Listener;
@@ -344,7 +344,7 @@ unsafe extern "C" {
 
 /// Child-side IPC channel: the send queue for the inherited channel fd.
 pub(crate) struct IPCInstance {
-    pub data: RefPtr<SendQueue>,
+    pub data: Attached<SendQueue>,
 }
 
 /// One channel per JS thread; a `Worker`'s VM records no `PendingIpc`, so its thread's stays `None`.
@@ -441,7 +441,6 @@ pub(crate) fn get_ipc_instance(
             data.as_ptr(),
             true,
         ) else {
-            data.detach();
             bun_core::warn!("Unable to start IPC socket");
             return None;
         };
@@ -460,7 +459,6 @@ pub(crate) fn get_ipc_instance(
             IPC::SocketUnion::Uninitialized,
         );
         if data.windows_configure_client(fd).is_err() {
-            data.detach();
             bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
             return None;
         }

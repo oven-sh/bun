@@ -5,7 +5,7 @@ use core::mem::size_of;
 use bun_jsc::JsCell;
 #[cfg(windows)]
 use bun_ptr::CellExt as _;
-use bun_ptr::RefPtr;
+use bun_ptr::{Attached, Detach, RefPtr};
 
 use crate::json_line_buffer::JSONLineBuffer;
 #[cfg(windows)]
@@ -1066,24 +1066,26 @@ pub(crate) enum SocketUnion {
     Closed,
 }
 
+impl Detach for SendQueue {
+    fn detach(&self) {
+        log!("SendQueue#detach");
+        self.close_event_sent.set(true);
+        self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
+        self.owner.set(None);
+    }
+}
+
 impl SendQueue {
     #[inline]
     fn owner_ref(&self) -> Option<SendQueueOwner> {
         self.owner.get()
     }
 
-    pub(crate) fn detach(&self) {
-        log!("SendQueue#detach");
-        self.close_event_sent.set(true);
-        self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
-        self.owner.set(None);
-    }
-
     pub(crate) fn new(
         mode: Mode,
         owner: Option<SendQueueOwner>,
         socket: SocketUnion,
-    ) -> RefPtr<SendQueue> {
+    ) -> Attached<SendQueue> {
         log!("SendQueue#init");
         let this = RefPtr::new(Self {
             ref_count: Cell::new(1),
@@ -1121,7 +1123,7 @@ impl SendQueue {
             },
         });
         this.root.set(Some(this.as_non_null()));
-        this
+        this.into()
     }
 
     #[inline]

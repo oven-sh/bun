@@ -417,8 +417,7 @@ fn write_module_of_eager_entry(import_type: &[u8], path: &[u8]) -> Vec<u8> {
         _ => format!(" with {{ type: {} }}", quote(import_type)),
     };
     let path = quote(path);
-    let entry = EXPORT_OF_EAGER_ENTRY;
-    format!("import * as {entry} from {path}{attributes};\nexport {{ {entry} }};\n").into_bytes()
+    format!("export * as {EXPORT_OF_EAGER_ENTRY} from {path}{attributes};\n").into_bytes()
 }
 
 fn warn(messages: &LoadMessages, path: &[u8], text: &[u8], invalid: &InvalidImportMetaGlob) {

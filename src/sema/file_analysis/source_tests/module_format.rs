@@ -1012,6 +1012,7 @@ const UNRECORDED_SPECIFIERS: &[&str] = &[
 
 const JSON_ATTRIBUTES: &[&str] = &[
     r#"import j from "j" with { type: "json" }; j;"#,
+    r#"export * from "j" with { type: "json" };"#,
     r#"import("j", { with: { type: "json" } });"#,
     r#"import.meta.require("j", { type: "json" });"#,
     r#"require("j", { type: "json" });"#,
@@ -1022,7 +1023,6 @@ const NO_ATTRIBUTES: &[&str] = &[
     r#"import("j", options);"#,
     r#"require("j");"#,
     r#"require("j", options);"#,
-    r#"export * from "j" with { type: "json" };"#,
 ];
 
 const MACRO_CALL_FORMS: &[(&str, &str, usize)] = &[

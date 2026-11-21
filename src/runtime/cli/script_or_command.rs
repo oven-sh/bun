@@ -1,7 +1,8 @@
 //! `bun check`, `bun lint`, `bun fmt` and `bun compile` ran the script of that name in `package.json` before they were commands, so where a project has such a script they still do. In that script, and in what it
-//! runs, they are the commands: `"lint": "bun lint"`. In another script of that package they are the commands too if the
-//! script of that name starts with the command itself, as `"lint": "bun lint --fix ."` does. So it is with a file `lint.ts`
-//! and with `node_modules/.bin/lint`. With `--no-script` they are the commands whatever the project has.
+//! runs, they are the commands: `"lint": "bun lint"`. In another script of that package they are the commands too if they
+//! have arguments and the script of that name starts with the command itself: `bun lint .` beside `"lint": "bun lint --fix ."`.
+//! So it is with a file `lint.ts` and with `node_modules/.bin/lint`. With `--no-script` they are the commands whatever the
+//! project has.
 //! A `package.json` that names the script and can't be parsed stops `bun lint` and `bun fmt`, which can write files.
 
 use bun_core::{Global, UnwrapOrOom, env_var};
@@ -120,15 +121,6 @@ fn place_of_first_word(args: &[&[u8]]) -> Option<usize> {
     None
 }
 
-/// Whether `flag` of `bun` is about scripts: those of several packages, whatever this one has, or none.
-fn is_about_scripts(flag: &[u8]) -> bool {
-    matches!(
-        flag,
-        b"--workspaces" | b"--parallel" | b"--sequential" | b"--if-present"
-    ) || flag.starts_with(b"--filter")
-        || short_with_value(flag) == Some(b'F')
-}
-
 /// Whether `program`, the first word of a script, is this `bun`: by that name, or by the path of this executable, which is
 /// what `process.execPath` gives to whoever writes the script. Not `./tools/bun`, which can be another tool.
 fn is_bun(program: &[u8]) -> bool {
@@ -136,21 +128,20 @@ fn is_bun(program: &[u8]) -> bool {
         true => bun_paths::is_sep_any(*a) && bun_paths::is_sep_any(*b) || a.eq_ignore_ascii_case(b),
         false => a == b,
     };
-    program == b"bun"
-        || bun_core::self_exe_path().is_ok_and(|exe| {
-            let exe = exe.as_bytes();
-            program.len() == exe.len() && program.iter().zip(exe).all(|(a, b)| same(a, b))
-        })
+    let is = |other: &[u8]| {
+        program.len() == other.len() && program.iter().zip(other).all(|(a, b)| same(a, b))
+    };
+    is(b"bun")
+        || cfg!(windows) && is(b"bun.exe")
+        || bun_core::self_exe_path().is_ok_and(|exe| is(exe.as_bytes()))
 }
 
 /// Whether the script `text` starts with `bun <command>`, so running it is running the command with other arguments:
-/// `bun lint --fix .`, `"/path/to/bun" lint && bun run build`. Not `bun run lint`, `bun --cwd web lint` or
-/// `cd web && bun lint`, and not where a shell could read the words before `command` in another way.
+/// `bun lint --fix .`, `"/path/to/bun" lint && bun run build`. Not with a word between the two, as in `bun run lint` and
+/// `bun --config=ci.toml lint`, nor with one before them, as in `cd web && bun lint`.
 fn invokes_the_command(command: &[u8], text: &[u8]) -> bool {
     use bun_core::strings::{index_of_any, index_of_char_usize};
-    let is_space = |byte: &u8| matches!(byte, b' ' | b'\t');
-    let end = index_of_any(text, b";&|\r\n").unwrap_or(text.len());
-    let text = text[..end].trim_ascii_start();
+    let text = text.trim_ascii_start();
     // A path can have a space in it.
     let (program, rest) = match text.strip_prefix(b"\"") {
         Some(quoted) => match index_of_char_usize(quoted, b'"') {
@@ -159,19 +150,12 @@ fn invokes_the_command(command: &[u8], text: &[u8]) -> bool {
         },
         None => text.split_at(index_of_any(text, b" \t").unwrap_or(text.len())),
     };
-    if !rest.first().is_none_or(is_space) {
-        return false;
+    let mut word = rest;
+    while let [b' ' | b'\t', after @ ..] = word {
+        word = after;
     }
-    let mut args: Vec<&[u8]> = vec![program];
-    args.extend(rest.split(is_space).filter(|it| !it.is_empty()));
-    let Some(at) = place_of_first_word(&args).filter(|at| args[*at] == command) else {
-        return false;
-    };
-    (args[1..at].iter()).all(|arg| {
-        index_of_any(arg, b"\"'$`\\()<>").is_none()
-            && !arg.starts_with(b"--cwd")
-            && !is_about_scripts(arg)
-    }) && is_bun(program)
+    let end = index_of_any(word, b" \t;&|\r\n").unwrap_or(word.len());
+    word.len() < rest.len() && &word[..end] == command && is_bun(program)
 }
 
 /// Where `command` is among the arguments of this process, if it is what `bun` is asked for.
@@ -284,15 +268,23 @@ pub(crate) fn directory_of_cwd(given: &[u8]) -> Vec<u8> {
     fold(&with_slashes)
 }
 
-/// Decides what `bun <command>` runs, without looking at `command`'s own arguments.
+/// Decides what `bun <command>` runs. Of `command`'s own arguments, it only looks at whether there are any.
 pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
     let args: Vec<&[u8]> = bun_core::argv().into_iter().collect();
     // What follows the name of a script is for the script.
-    let before = place_of_first_word(&args).map_or(&args[..], |at| &args[..at]);
+    let at = place_of_first_word(&args);
+    let has_arguments = at.is_some_and(|at| at + 1 < args.len());
+    let before = at.map_or(&args[..], |at| &args[..at]);
     let mut before = before.iter().copied();
     let mut given = None;
     while let Some(arg) = before.next() {
-        if is_about_scripts(arg) {
+        // These are about scripts: those of several packages, whatever this one has, or none.
+        if matches!(
+            arg,
+            b"--workspaces" | b"--parallel" | b"--sequential" | b"--if-present"
+        ) || arg.starts_with(b"--filter")
+            || short_with_value(arg) == Some(b'F')
+        {
             return Ok(Runs::Other);
         }
         let value = match arg.strip_prefix(b"--cwd") {
@@ -338,7 +330,7 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
     let Some((dir, path, contents)) = &nearest else {
         return Ok(other_if(is_file_or_executable(command, &cwd)));
     };
-    if let Some(runs) = runs_by_script(command, dir, path, contents)? {
+    if let Some(runs) = runs_by_script(command, has_arguments, dir, path, contents)? {
         return Ok(runs);
     }
     Ok(other_if(
@@ -359,12 +351,13 @@ fn is_executable_beside_package_json(name: &[u8], dir: &[u8], cwd: &[u8]) -> boo
 }
 
 /// What `bun <name>` runs where the `package.json` at `path`, which is in `dir` and has `contents`, has the script `name`:
-/// that script. Not in another script of that package if this one starts with `bun <name>`, and has neither a `pre` nor a
-/// `post` script to run with it: `"lint:check": "bun lint ."` beside `"lint": "bun lint --fix ."` is the command without
-/// `--fix`. npm, pnpm, yarn and `bun run` say which script they run. `bunx`, `npx` and `yarn exec` put there what is no
-/// script of the package.
+/// that script. Not `with_arguments` in another script of that package if this one starts with `bun <name>`, and has
+/// neither a `pre` nor a `post` script to run with it: `"lint:check": "bun lint ."` beside `"lint": "bun lint --fix ."` is
+/// the command with `.`, not the script with `--fix . .`. npm, pnpm, yarn and `bun run` say which script they run. `bunx`,
+/// `npx` and `yarn exec` put there what is no script of the package.
 fn runs_by_script(
     name: &[u8],
+    with_arguments: bool,
     dir: &[u8],
     path: &[u8],
     contents: &[u8],
@@ -389,10 +382,24 @@ fn runs_by_script(
                 return Ok(None);
             };
             let has_hook = |at: &[u8]| text_of(&[at, name].concat()).is_some();
-            let is_the_command = (env_var::npm_lifecycle_event::get())
-                .filter(|running| command_of_script(running) != Some(name))
-                .is_some_and(|running| text_of(running).is_some())
+            // Where `npm_package_json` isn't set, `dir` is only where this process is: `cd packages/web && bun lint .`.
+            let is_named = |running: &[u8]| {
+                let named = json.as_property(b"name");
+                running
+                    == named
+                        .and_then(|it| it.expr.as_string(&bump))
+                        .unwrap_or_default()
+            };
+            let is_of_this_package = || {
+                env_var::npm_package_json::get().is_some()
+                    || env_var::npm_package_name::get().is_none_or(is_named)
+            };
+            let is_the_command = with_arguments
+                && (env_var::npm_lifecycle_event::get())
+                    .filter(|running| command_of_script(running) != Some(name))
+                    .is_some_and(|running| text_of(running).is_some())
                 && package_of_inherited_event().is_some_and(|it| it == dir)
+                && is_of_this_package()
                 && invokes_the_command(name, text)
                 && !has_hook(b"pre")
                 && !has_hook(b"post");

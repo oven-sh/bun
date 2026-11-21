@@ -11976,12 +11976,21 @@ describe.concurrent("a script, file or executable named lint", () => {
     test.each<[string, Record<string, string>, string[], Variables]>([
       ["from bun run", quoted, runCheck, none],
       ["from npm or a pnpm that names the package", quoted, ["lint", "."], ofNpm],
-      ["from yarn 1, which doesn't", quoted, ["lint", "."], () => ({ npm_lifecycle_event: "lint:check" })],
-    ])("is the linter if the lint script starts with bun lint: %s", async (_, scripts, cmd, variables) => {
-      const { stdout, ...result } = await inPackage(scripts, cmd, variables);
-      expect(stdout).toContain("prefer-const");
-      expect(result).toEqual({ ranTheScript: false, exitCode: 1 });
-    });
+      [
+        "from yarn 1, which only names it",
+        quoted,
+        ["lint", "."],
+        () => ({ npm_lifecycle_event: "lint:check", npm_package_name: "sibling" }),
+      ],
+      ["from a runner that doesn't", quoted, ["lint", "."], () => ({ npm_lifecycle_event: "lint:check" })],
+    ])(
+      "with arguments, is the linter if the lint script starts with bun lint: %s",
+      async (_, scripts, cmd, variables) => {
+        const { stdout, ...result } = await inPackage(scripts, cmd, variables);
+        expect(stdout).toContain("prefer-const");
+        expect(result).toEqual({ ranTheScript: false, exitCode: 1 });
+      },
+    );
 
     // `bun run` puts `node_modules/.bin` first in `PATH`. On Windows, that needs a launcher that an install creates.
     test.skipIf(isWindows)("is the linter with the scripts as the issue has them, and `bun` from PATH", async () => {
@@ -11995,6 +12004,14 @@ describe.concurrent("a script, file or executable named lint", () => {
 
     test.each<[string, Record<string, string>, string[], Variables]>([
       ["no script is running", quoted, ["lint", "."], none],
+      // Nothing is added to the script, so it runs as it is written.
+      ["bun lint has no arguments", { ...quoted, "lint:check": `${bun} lint` }, runCheck, none],
+      [
+        "yarn 1 runs a script of another package",
+        quoted,
+        ["lint", "."],
+        () => ({ npm_lifecycle_event: "lint:check", npm_package_name: "another" }),
+      ],
       [
         "a script of another package is running",
         quoted,
@@ -12022,37 +12039,38 @@ describe.concurrent("a script, file or executable named lint", () => {
     });
 
     test("runs a lint script that is another tool", async () => {
-      const result = await inPackage({ lint: "echo eslint", ci: `${bun} lint` }, ["run", "ci"], none);
-      expect(result).toEqual({ stdout: "eslint\n", ranTheScript: false, exitCode: 0 });
+      const result = await inPackage({ lint: "echo eslint", ci: `${bun} lint .` }, ["run", "ci"], none);
+      expect(result).toEqual({ stdout: "eslint .\n", ranTheScript: false, exitCode: 0 });
     });
 
-    // `bun lint --help` says whether `bun lint` runs the script. Here `lint:check` is running.
+    // `bun lint --help` says whether `bun lint` with an argument runs the script. Here `lint:check` is running.
     test("only a lint script that starts with bun lint is taken for the linter", async () => {
       const scripts: [string, "the linter" | "the script"][] = [
         ["bun lint", "the linter"],
         ["bun lint --fix .", "the linter"],
-        ["\tbun  lint --fix . && echo done", "the linter"],
+        ["\n\tbun  lint --fix . && echo done", "the linter"],
         ["bun lint; echo done", "the linter"],
-        ["bun --silent lint", "the linter"],
+        [`"bun" lint`, "the linter"],
         [`${bun} lint --fix .`, "the linter"],
         [bunExe().includes(" ") || isWindows ? "bun lint" : `${bunExe()} lint`, "the linter"],
+        ["bun.exe lint", isWindows ? "the linter" : "the script"],
         ["eslint .", "the script"],
         ["next lint", "the script"],
         ["echo lint", "the script"],
         ["bun run lint:fix", "the script"],
         ["bun lint:fix", "the script"],
+        ["bun lint>out.txt", "the script"],
+        ["bun\nlint", "the script"],
         ["bunx lint", "the script"],
         ["./tools/bun lint", "the script"],
         [`"./tools/bun" lint`, "the script"],
         ["cd . && bun lint", "the script"],
         ["NO_COLOR=1 bun lint", "the script"],
+        // What is between the two is the script's own, and `bun lint .` would run without it.
+        ["bun --silent lint", "the script"],
+        ["bun --config=ci.toml lint", "the script"],
         ["bun --cwd . lint", "the script"],
-        ["bun --cwd=. lint", "the script"],
         ["bun --filter web lint", "the script"],
-        ["bun -F web lint", "the script"],
-        ["bun --workspaces lint", "the script"],
-        ["bun --if-present lint", "the script"],
-        ["bun --config=$CONFIG lint", "the script"],
         [`"bun lint`, "the script"],
         [`"bun"x lint`, "the script"],
         ["(bun lint)", "the script"],

@@ -303,10 +303,12 @@ Already have an `eslint.config.js`, `.eslintrc`, or `.oxlintrc.json`? `bun lint`
 
 If `package.json` has a `lint` script, `bun lint` runs that script. Inside the script, `bun lint` is the linter. If `package.json` has `"lint"` in it but can't be parsed, as in the middle of a merge, `bun lint` can't tell whether that is a script: it lints nothing and exits with code 2.
 
-If the `lint` script starts with `bun lint`, as `"lint": "bun lint --fix ."` does, `bun lint` is also the linter in the other scripts of that package, when `bun run`, npm, pnpm or yarn runs them. So it is in what those scripts start, such as a Makefile or a Git hook. It takes only the flags of that call: `"lint:check": "bun lint ."` fixes nothing. To keep the flags of the `lint` script, call `bun run lint`, or set them under `[lint]` in [`bunfig.toml`](/runtime/bunfig#linter).
+If the `lint` script starts with `bun lint`, as `"lint": "bun lint --fix ."` does, `bun lint` with arguments is also the linter in the other scripts of that package, when `bun run`, npm, pnpm or yarn runs them. So it is in what those scripts start, such as a Makefile or a Git hook. The arguments are not added to the `lint` script: `"lint:check": "bun lint ."` runs `bun lint .`, which fixes nothing. To add them to the `lint` script, call `bun run lint`.
 
-`bun lint` still runs the `lint` script, with its flags, in these cases:
+`bun lint` still runs the `lint` script in these cases:
 
+- It has no arguments. `"ci": "bun lint"` runs the `lint` script as it is written.
+- The `lint` script has a word before `bun`, or between `bun` and `lint`, as in `cd web && bun lint` and `bun --config=ci.toml lint`.
 - The package has a `prelint` or `postlint` script. They run with it.
 - `--filter`, `--workspaces`, `--parallel`, `--sequential` or `node --run` started the other script.
 - `bunx` or `npx` started the program that calls `bun lint`.

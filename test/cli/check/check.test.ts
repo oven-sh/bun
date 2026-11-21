@@ -24439,14 +24439,21 @@ describe.concurrent("--check", () => {
   });
 
   // Such a `check` script is the type checker with other arguments, and ran only itself before `bun check` was a command.
-  test("`bun check` type checks in another script if the `check` script starts with `bun check`", async () => {
+  test("`bun check` with arguments type checks in another script if the `check` script starts with `bun check`", async () => {
     const bun = `"${bunExe().replaceAll("\\", "/")}"`;
-    const scripts = [`${bun} check || echo the script ran`, `echo the script ran`];
+    const direct = `${bun} check || echo the script ran`;
+    // The `check` script, the script that `bun run types` runs, and whether that runs the `check` script.
+    const cases: [string, string, boolean][] = [
+      [direct, `${bun} check -p tsconfig.json`, false],
+      // Nothing is added to the script, so it runs as it is written.
+      [direct, `${bun} check`, true],
+      [`echo the script ran`, `${bun} check -p tsconfig.json`, true],
+    ];
     const results = await Promise.all(
-      scripts.map(async check => {
+      cases.map(async ([check, types]) => {
         using dir = project({
           "a.ts": `export const a: number = "1";\n`,
-          "package.json": JSON.stringify({ scripts: { check, types: `${bun} check` } }),
+          "package.json": JSON.stringify({ scripts: { check, types } }),
         });
         return await run(String(dir), ["run", "types"]);
       }),
@@ -24454,13 +24461,10 @@ describe.concurrent("--check", () => {
     expect(
       results.map(it => ({
         ranTheScript: it.stdout.includes("the script ran"),
-        reported: it.stdout.includes("a.ts(1,14): error TS2322"),
         exitCode: it.exitCode,
       })),
-    ).toEqual([
-      { ranTheScript: false, reported: true, exitCode: 1 },
-      { ranTheScript: true, reported: false, exitCode: 0 },
-    ]);
+    ).toEqual(cases.map(([, , ranTheScript]) => ({ ranTheScript, exitCode: ranTheScript ? 0 : 1 })));
+    expect(results[0].stdout).toContain("a.ts(1,14): error TS2322");
   });
 
   // yarn doesn't set which package the script belongs to. It's assumed to be the one `bun` is started in, not every

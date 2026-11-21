@@ -310,10 +310,12 @@ Already have a `.prettierrc` or an `.oxfmtrc.json`? `bun fmt` reads it and print
 
 If `package.json` has a `fmt` script, `bun fmt` runs that script. Inside the script, `bun fmt` is the formatter. If `package.json` has `"fmt"` in it but can't be parsed, as in the middle of a merge, `bun fmt` can't tell whether that is a script: it formats nothing and exits with code 2.
 
-If the `fmt` script starts with `bun fmt`, as `"fmt": "bun fmt --write ."` does, `bun fmt` is also the formatter in the other scripts of that package, when `bun run`, npm, pnpm or yarn runs them. So it is in what those scripts start, such as a Makefile or a Git hook. It takes only the flags of that call: `"fmt:check": "bun fmt --check ."` writes nothing. To keep the flags of the `fmt` script, call `bun run fmt`.
+If the `fmt` script starts with `bun fmt`, as `"fmt": "bun fmt --write ."` does, `bun fmt` with arguments is also the formatter in the other scripts of that package, when `bun run`, npm, pnpm or yarn runs them. So it is in what those scripts start, such as a Makefile or a Git hook. The arguments are not added to the `fmt` script: `"fmt:check": "bun fmt --check ."` runs `bun fmt --check .`, which writes nothing. To add them to the `fmt` script, call `bun run fmt`.
 
-`bun fmt` still runs the `fmt` script, with its flags, in these cases:
+`bun fmt` still runs the `fmt` script in these cases:
 
+- It has no arguments. `"ci": "bun fmt"` runs the `fmt` script as it is written.
+- The `fmt` script has a word before `bun`, or between `bun` and `fmt`, as in `cd web && bun fmt` and `bun --config=ci.toml fmt`.
 - The package has a `prefmt` or `postfmt` script. They run with it.
 - `--filter`, `--workspaces`, `--parallel`, `--sequential` or `node --run` started the other script.
 - `bunx` or `npx` started the program that calls `bun fmt`.

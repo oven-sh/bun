@@ -485,10 +485,12 @@ Writing a tool or a CI step that runs in projects you don't control? `bun check 
 
 Inside the `check` script, and in any script it starts, `bun check` is the type checker. That makes `"check": "bun check"` work.
 
-If the `check` script starts with `bun check`, `bun check` is also the type checker in the other scripts of that package, when `bun run`, npm, pnpm or yarn runs them, and in what those scripts start. It takes only the flags of that call. To keep the flags of the `check` script, call `bun run check`.
+If the `check` script starts with `bun check`, `bun check` with arguments is also the type checker in the other scripts of that package, when `bun run`, npm, pnpm or yarn runs them, and in what those scripts start. The arguments are not added to the `check` script. To add them, call `bun run check`.
 
-`bun check` still runs the `check` script, with its flags, in these cases:
+`bun check` still runs the `check` script in these cases:
 
+- It has no arguments. `"ci": "bun check"` runs the `check` script as it is written.
+- The `check` script has a word before `bun`, or between `bun` and `check`, as in `cd web && bun check`.
 - The package has a `precheck` or `postcheck` script. They run with it.
 - `--filter`, `--workspaces`, `--parallel`, `--sequential` or `node --run` started the other script.
 - `bunx` or `npx` started the program that calls `bun check`.

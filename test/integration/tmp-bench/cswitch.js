@@ -31,6 +31,7 @@ const REASONS = {
   37: "Alert",
   38: "DeferredPreempt",
 };
+const NAMES = new Map();
 function events(b) {
   const list = [],
     hooks = {};
@@ -62,6 +63,7 @@ function events(b) {
         list.push({ t, cpu, ready: b.readUInt32LE(d), why: b[d + 4], plus: b[d + 5], flag: b[d + 6] });
       else if (hook === 0x501 || hook === 0x503)
         list.push({ t, pid: b.readUInt32LE(d), thread: b.readUInt32LE(d + 4) });
+      else if (hook === 0x548) NAMES.set(b.readUInt32LE(d + 4), b.toString("utf16le", d + 8, p + len).replace(/\0.*/s, "").replace(/ /g, "").slice(0, 12));
     }
   }
   return [list.sort((x, y) => x.t - y.t), hooks];
@@ -161,6 +163,27 @@ function timeline(list, run, hz) {
   console.log(`cond sw ${run.name}: ${ms(run.t1 - run.t0)} ms`);
   for (const line of lines.slice(0, 26)) console.log("cond sw   " + line);
 }
+function absences(list, run, hz, least) {
+  const pids = new Map(), ms = t => ((t * 1000) / hz).toFixed(0), who = id => (id === 0 ? "idle" : pids.get(id) === run.pid ? (NAMES.get(id) ?? "T") + (id % 1000) : "other"), running = [], lines = [];
+  let off, on, ran = {}, short = 0;
+  for (const e of list) {
+    if (e.thread) pids.set(e.thread, e.pid);
+    if (e.thread || e.t < run.t0 || e.t > run.t1) continue;
+    if (e.ready) { if (off && e.ready === run.reader) off.ready ??= { t: e.t, by: `${e.flag & 1 ? "dpc" : who(running[e.cpu])} +${e.plus}` }; continue; }
+    running[e.cpu] = e.to;
+    if (e.cpu !== 2) continue;
+    if (off && on) { const key = `${who(e.from)}@${on.toAt}`; ran[key] = (ran[key] ?? 0) + e.t - on.t; }
+    if (e.from === run.reader) (off = { ...e }), (ran = {});
+    if (e.to === run.reader && off) {
+      if (e.t - off.t < (least * hz) / 1000) short++;
+      else lines.push(`${short ? `(${short} short) ` : ""}at ${ms(off.t - run.t0)} ${off.state === 5 ? "waits" : "loses"} ${REASONS[off.reason] ?? off.reason}@${off.fromAt}${off.ready ? ` ${ms(off.ready.t - off.t)}, ${off.ready.by}` : ""}, ready ${ms(e.t - (off.ready?.t ?? off.t))}, back @${e.toAt}: ${Object.entries(ran).filter(([, t]) => t > hz / 200).map(([k, t]) => `${k} ${ms(t)}`).join(", ")}`), (short = 0);
+      off = undefined;
+    }
+    on = e;
+  }
+  console.log(`cond sw ${run.name}: ${ms(run.t1 - run.t0)} ms, ${run.chunks} turns`);
+  for (const line of lines.slice(0, 24)) console.log("cond sw   " + line);
+}
 function sequence(list, run, hz, most = 56) {
   const pids = new Map(), names = new Map([[run.reader, "J"], [0, "idle"]]), ms = t => ((t * 1000) / hz).toFixed(2), words = [];
   const who = id => (names.has(id) || names.set(id, (pids.get(id) === run.pid ? "T" : "other") + names.size), names.get(id));
@@ -199,10 +222,10 @@ if (mode === "--ops") {
   const code = `const fs = require("fs"), burn = ms => { for (const end = performance.now() + ms; performance.now() < end; ); }; onmessage = async e => { e.data[0] = require("bun:ffi").dlopen("kernel32.dll", { GetCurrentThreadId: { returns: "u32" } }).symbols.GetCurrentThreadId(); const fd = fs.openSync(${JSON.stringify(file)}), b = Buffer.alloc(4 << 20); for (;;) { await new Promise(r => fs.read(fd, b, 0, b.length, 0, r)); burn(10); } }; postMessage(0);`;
   const all = await Promise.all(Array.from({ length: +args[0] }, () => new Promise(r => { const w = new Worker("data:text/javascript," + encodeURIComponent(code)); w.onmessage = () => r(w); })));
   for (const w of all) w.postMessage(ids);
-  for (let i = 0; i < 4; i++) await Bun.sleep(250);
+  await Bun.sleep(300);
   const t0 = qpc(k.QueryPerformanceCounter), t = performance.now();
   let chunks = 0;
-  for (; performance.now() - t < 3000; chunks++) await Bun.sleep(25);
+  for (; performance.now() - t < 3500; chunks++) await Bun.sleep(25);
   console.log(JSON.stringify({ t0, t1: qpc(k.QueryPerformanceCounter), chunks, pid: process.pid, reader: k.GetCurrentThreadId(), writer: ids[0] }));
   process.exit(0);
 } else if (mode === "--writes") {
@@ -316,7 +339,7 @@ if (mode === "--ops") {
       for (let turn = 0; turn < columns.length; turn++) {
         const [exe, variant] = columns[(turn + round) % columns.length],
           out = Bun.spawnSync([exe, __filename, isBeside ? "--beside" : isOne ? "--turns" : condition === "writes" ? "--writes" : "--read", condition.slice(6)], {
-            env: { ...process.env, BUN_GC_TIMER_DISABLE: isBeside ? "1" : undefined },
+            env: { ...process.env, },
             timeout: 40000,
             stdin: "ignore",
           }).stdout.toString();
@@ -349,7 +372,7 @@ if (mode === "--ops") {
     );
     if (isBeside) {
       report(list, runs, [], hz);
-      for (const [, variant] of columns) sequence(list, { ...runs.find(it => it.name === (variant || "as is")), what: condition }, hz, 132);
+      for (const [, variant] of columns) for (const run of runs.filter(it => it.name === (variant || "as is"))) absences(list, run, hz, process.arch === "x64" ? 30 : 75);
     } else if (isOps) {
       if (isOne) for (const what of []) for (const [, variant] of columns) sequence(list, runs.find(it => it.what === what && it.name === (variant || "as is")), hz);
     } else if (isOne)

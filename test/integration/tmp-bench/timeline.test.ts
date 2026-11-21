@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("cswitch.js", "beside4", "", "3");
+bench("cswitch.js", "beside2", "", "4");

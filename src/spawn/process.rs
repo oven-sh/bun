@@ -1735,7 +1735,7 @@ mod spawn_process_body {
     /// The files opened for a child to inherit.
     #[cfg(windows)]
     struct OpenedFiles {
-        files: Vec<uv::uv_file>,
+        files: Vec<bun_sys::File>,
         loop_: *mut uv::uv_loop_t,
     }
 
@@ -1759,7 +1759,8 @@ mod spawn_process_body {
             if let Some(err) = rc.to_error(bun_sys::Tag::open) {
                 return Ok(Err(err));
             }
-            self.files.push(rc.int());
+            self.files
+                .push(bun_sys::File::from_fd(Fd::from_uv(rc.int())));
             Ok(Ok(rc.int()))
         }
     }
@@ -1767,8 +1768,8 @@ mod spawn_process_body {
     #[cfg(windows)]
     impl Drop for OpenedFiles {
         fn drop(&mut self) {
-            for &fd in &self.files {
-                bun_io::Closer::close(Fd::from_uv(fd), self.loop_);
+            for file in self.files.drain(..) {
+                bun_io::Closer::close(file, self.loop_);
             }
         }
     }

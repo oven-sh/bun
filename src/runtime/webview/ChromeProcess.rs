@@ -720,8 +720,7 @@ impl Endpoints {
     }
 
     fn wrap(event_loop: EventLoopHandle, file: File) -> bun_sys::Result<uv::Owned<uv::Pipe>> {
-        let mut pipe = bun_io::Source::open_pipe(event_loop.uv_loop(), file.fd())?;
-        let _ = file.into_raw(); // pipe owns it now
+        let mut pipe = bun_io::Source::open_pipe(event_loop.uv_loop(), file.into())?;
         // Pending commands keep the loop alive (Transport::updateKeepAlive), not
         // the pipes.
         pipe.unref();

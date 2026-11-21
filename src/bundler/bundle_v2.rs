@@ -399,7 +399,6 @@ pub mod bv2_impl {
     use bun_core::strings;
     use bun_core::{FeatureFlags, Output};
     use bun_resolver::DataURL;
-    use bun_resolver::cache::SourceFd;
     use bun_resolver::fs::PathResolverExt as _;
     use bun_resolver::{self as _resolver, is_package_path};
     use bun_threading::ThreadPool as ThreadPoolLib;
@@ -7005,10 +7004,10 @@ pub mod bv2_impl {
                         .text;
                     if this.should_add_watcher(source_path) {
                         match file {
-                            SourceFd::Borrowed(_) => {
+                            bun_sys::MaybeOwnedFile::Borrowed(_) => {
                                 let _ = bun_watcher.add_file_by_path_slow(source_path);
                             }
-                            SourceFd::Owned(file) => {
+                            bun_sys::MaybeOwnedFile::Owned(file) => {
                                 let hash = bun_wyhash::hash(source_path) as u32;
                                 let _ = match Fs::as_interned_path(source_path) {
                                     Some(path) if !cfg!(windows) => {

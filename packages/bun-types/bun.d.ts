@@ -4009,7 +4009,7 @@ declare module "bun" {
     autoloadPackageJson?: boolean;
     /**
      * Compile the program's JavaScript and TypeScript to machine code at build time.
-     * `bytecode` has no effect with it.
+     * It cannot be combined with `bytecode`.
      *
      * The executable has no JIT. Code that only exists at run time, such as a string passed to
      * `eval()` or `new Function()`, runs in the interpreter.

@@ -16,7 +16,7 @@ use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, FileType, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
-use bun_sys::{self as sys, Fd, File};
+use bun_sys::{self as sys, Fd, File, MaybeOwnedFile};
 use bun_uws::{AnyResponse, WriteResult};
 
 use crate::server::jsc::VirtualMachine;
@@ -91,33 +91,32 @@ bitflags::bitflags! {
     }
 }
 
-/// The descriptor that a response is read from.
-pub(crate) enum StreamFd {
-    /// Closed off this thread.
-    Owned(Fd),
-    Borrowed(Fd),
-}
+/// The descriptor that a response is read from. Closed off this thread.
+pub(crate) struct StreamFd(MaybeOwnedFile);
 
 impl StreamFd {
+    pub(crate) fn borrowed(fd: Fd) -> Self {
+        Self(MaybeOwnedFile::Borrowed(fd))
+    }
+
     pub(crate) fn get(&self) -> Fd {
-        let (Self::Owned(fd) | Self::Borrowed(fd)) = *self;
-        fd
+        self.0.fd()
     }
 }
 
 impl From<File> for StreamFd {
     fn from(file: File) -> Self {
-        Self::Owned(file.into_raw())
+        Self(file.into())
     }
 }
 
 impl Drop for StreamFd {
     fn drop(&mut self) {
-        if let Self::Owned(fd) = *self {
+        if let MaybeOwnedFile::Owned(file) = core::mem::take(&mut self.0) {
             #[cfg(windows)]
-            Closer::close(fd, bun_sys::windows::libuv::Loop::get());
+            Closer::close(file, bun_sys::windows::libuv::Loop::get());
             #[cfg(not(windows))]
-            Closer::close(fd, ());
+            Closer::close(file, ());
         }
     }
 }
@@ -243,8 +242,8 @@ impl FileResponseStream {
         }
 
         // The caller's fd can be at any position, so read its file at `offset` even when that's 0.
-        let positional = opts.offset > 0
-            || (matches!(this_ref.fd, StreamFd::Borrowed(_)) && opts.file_type == FileType::File);
+        let positional =
+            opts.offset > 0 || (!this_ref.fd.0.is_owned() && opts.file_type == FileType::File);
         this_ref.start_reader(
             opts.file_type,
             opts.pollable,
@@ -266,7 +265,6 @@ impl FileResponseStream {
         };
         let reader = &self.reader;
         reader.update_flags(|f| {
-            f.remove(ReaderFlags::CLOSE_HANDLE); // `self.fd` closes it
             f.set(ReaderFlags::POLLABLE, pollable);
             f.set(ReaderFlags::NONBLOCKING, file_type != FileType::File);
             #[cfg(unix)]
@@ -278,7 +276,8 @@ impl FileResponseStream {
         // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { reader.set_owner(owner) };
 
-        let (event_loop, fd) = (self.event_loop, self.fd.get());
+        let event_loop = self.event_loop;
+        let fd = MaybeOwnedFile::Borrowed(self.fd.get());
         let start_result = match offset {
             Some(offset) => reader.start_file_offset(event_loop, fd, pollable, offset as usize),
             None => reader.start(event_loop, fd, pollable),

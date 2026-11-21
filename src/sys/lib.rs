@@ -8532,27 +8532,26 @@ pub(crate) fn copy_file_z_slow_with_handle(
     let st = fstat(in_handle)?;
     // Unlink dest first — fixes ETXTBUSY on Linux.
     let _ = unlinkat(to_dir, destination);
-    let dst = CloseOnDrop::new(openat(
+    let dst = Tmpfile::open(
         to_dir,
         destination,
         O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
         0o644,
-    )?);
+    )?;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Preallocation is best-effort.
-        let _ = safe_libc::fallocate(dst.fd().native(), 0, 0, st.st_size);
+        let _ = safe_libc::fallocate(dst.file.fd().native(), 0, 0, st.st_size);
     }
     let _ = lseek(in_handle, 0, libc::SEEK_SET);
-    let r = copy_file(in_handle, dst.fd());
-    // Only stamp mode/owner on success; on copy error the
-    // partially-written dest keeps its openat() defaults.
+    copy_file(in_handle, dst.file.fd())?;
     #[cfg(unix)]
-    if r.is_ok() {
-        let _ = safe_libc::fchmod(dst.fd().native(), st.st_mode);
-        let _ = safe_libc::fchown(dst.fd().native(), st.st_uid, st.st_gid);
+    {
+        let _ = safe_libc::fchmod(dst.file.fd().native(), st.st_mode);
+        let _ = safe_libc::fchown(dst.file.fd().native(), st.st_uid, st.st_gid);
     }
-    r
+    dst.keep();
+    Ok(())
 }
 
 /// Tries an atomic NOREPLACE rename, then EXCHANGE, then a racy delete-tree + rename.

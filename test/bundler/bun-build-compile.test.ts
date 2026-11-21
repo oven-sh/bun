@@ -12,6 +12,7 @@ import {
   isPosix,
   isWindows,
   tempDir,
+  unprivilegedSpawnOptions,
 } from "harness";
 import {
   chmodSync,
@@ -2185,6 +2186,7 @@ export function inOther() {
     const readOnly = join(String(dir), "bun");
     cpSync(bunExe(), readOnly, { dereference: true });
     chmodSync(readOnly, 0o555);
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", `--compile-executable-path=${readOnly}`, "app.js"],
@@ -2192,6 +2194,7 @@ export function inOther() {
       cwd,
       stdout: "pipe",
       stderr: "pipe",
+      ...unprivileged,
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");

@@ -5026,7 +5026,7 @@ impl VirtualMachine {
 
     #[cfg(windows)]
     fn namespaced_unc_resolution_error(
-        &mut self,
+        &self,
         specifier: &[u8],
         source: &[u8],
         is_a_file_path: bool,
@@ -5047,7 +5047,7 @@ impl VirtualMachine {
             Some(ordinary)
         }
 
-        if self.transpiler.resolver.opts.preserve_symlinks {
+        if self.transpiler.get().resolver.opts.preserve_symlinks {
             return None;
         }
         let specifier = crate::resolver_jsc::module_key_without_query(specifier);

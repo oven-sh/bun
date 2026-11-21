@@ -663,10 +663,11 @@ impl Resolver<'_, '_> {
                 Some((holder, _)) => {
                     mentioned_id(self.state(self.input.hir.skip_type_assertions(holder)))
                 }
-                // `escape = reader` lays it on the global object, which may call it as a method.
-                None => table::entry(id)
+                // `escape = reader` lays it on the global object, which may call it as a method. `saved = reader` stores into a variable alone, whatever it held.
+                None if matches!(self.state(expr), ExprState::Builtin(_)) => table::entry(id)
                     .holder
                     .filter(|&holder| table::canonical_id(holder) == BuiltinId::GlobalThis),
+                None => None,
             };
             if let Some(holder) = holder {
                 self.expose(holder);

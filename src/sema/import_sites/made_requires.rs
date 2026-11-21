@@ -400,7 +400,7 @@ fn is_written_as_own_file(
         if (name == known::url || name == known::meta_filename || name == known::path)
             && matches!(expr_kind(hir, hir.skip_type_assertions(object)), Some(ExprKind::ImportMeta)));
     if is_import_meta_member {
-        return !bound.writes_import_meta_path();
+        return !bound.import_meta_may_be_modified();
     }
     let Some(conversions_left) = conversions_left.checked_sub(1) else {
         return false;

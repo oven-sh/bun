@@ -66,8 +66,7 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             loader_attribute(hir, site).or_else(|| type_held_by_constant(hir, decisions, site));
         let written = SiteOfComputedLoad {
             folder: &folder_of_text,
-            opens_database: loader_attribute(hir, site)
-                .is_some_and(|it| atoms.bytes(it) == b"sqlite")
+            opens_database: required_type.is_some_and(|it| atoms.bytes(it) == b"sqlite")
                 && !embed_attribute(hir, site).is_some_and(|it| atoms.bytes(it) == b"true")
                 && !analyzed
                     .analysis
@@ -508,7 +507,7 @@ fn resolve_database<'r>(
     let is_opened_at_run = match resolution {
         CodeResolution::File(file) => file.host_module.is_none() && written.opens_database,
         CodeResolution::NotFound(CodeFailure::ModuleNotFound) => {
-            has_text(loader_attribute(hir, site), b"sqlite")
+            written.type_attribute == Some(b"sqlite")
                 && !has_text(embed_attribute(hir, site), b"true")
         }
         _ => false,
@@ -680,7 +679,7 @@ fn type_held_by_constant(
         FoldedValue::Unknown => decisions.constant_of_let(value)?,
     };
     match constant {
-        Constant::String(text) => Some(text),
+        Constant::String(text) if text != known::r#macro => Some(text),
         _ => None,
     }
 }

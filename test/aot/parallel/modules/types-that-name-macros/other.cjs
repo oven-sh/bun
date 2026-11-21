@@ -1,0 +1,1 @@
+exports.other = 2;

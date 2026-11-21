@@ -60,6 +60,8 @@ feature Archive "Bun.Archive"
 
 feature Semver "Bun.semver"
 
+feature Diff "Bun.diff"
+
 feature Ansi "Bun.sliceAnsi and Bun.wrapAnsi"
 
 feature EscapeHtml "Bun.escapeHTML"

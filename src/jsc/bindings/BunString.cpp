@@ -496,6 +496,14 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16(const char16_t
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
+extern "C" BunString BunString__createSubstringSharingImpl(const BunString* string, size_t offset, size_t length)
+{
+    RELEASE_ASSERT(string->tag == BunStringTag::WTFStringImpl);
+    auto& impl = *string->impl.wtf;
+    RELEASE_ASSERT(length > 0 && offset <= impl.length() && length <= impl.length() - offset);
+    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::createSubstringSharingImpl(impl, offset, length).leakRef() } };
+}
+
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromBytes(const char* bytes, size_t length)
 {
     ASSERT(length > 0);

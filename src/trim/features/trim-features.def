@@ -275,6 +275,10 @@ trim-feature semver : Semver
   about "`Bun.semver`."
   saves 0.0 0.0
 
+trim-feature diff : Diff
+  about "`Bun.diff`."
+  saves 0.0 0.0
+
 trim-feature color : Color
   about "`Bun.color()`."
   saves 0.0 0.0

@@ -9,6 +9,7 @@
     "braces": "^3.0.2",
     "cli-truncate": "^5.1.1",
     "color": "^4.2.3",
+    "diff": "9.0.0",
     "esbuild": "^0.14.12",
     "eventemitter3": "^5.0.0",
     "execa": "^8.0.1",

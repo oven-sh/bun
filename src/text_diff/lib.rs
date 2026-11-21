@@ -1,4 +1,5 @@
-//! Line- and character-level diffing for test-runner output.
+//! Line- and character-level diffing for test-runner output. [`tokens`] and
+//! [`patch`] are `Bun.diff`.
 //!
 //! The core is Myers' O(ND) algorithm in its linear-space, bidirectional
 //! ("middle snake") form, made unconditional-time-limit-free by bounding
@@ -15,6 +16,10 @@
 //
 // diff-match-patch is Copyright 2018 The diff-match-patch Authors,
 // licensed under the Apache License, Version 2.0.
+
+mod bit_rows;
+pub mod patch;
+pub mod tokens;
 
 use core::ops::Range;
 
@@ -865,9 +870,9 @@ fn push_trimmed<T: Elem>(a: &[T], b: &[T], mut h: Hunk, out: &mut Vec<Hunk>) {
 
 // ───────────────────────────── line mode ─────────────────────────────
 
-/// Open-addressing table from line content to dense id. Sized up front (the
-/// line count is known) so it never rehashes; a slot is the top 32 bits of the
-/// hash plus the id, and candidates are confirmed by comparing bytes.
+/// Open-addressing table from line content to dense id. Sized up front where
+/// the tokens are lines, so that it never rehashes; a slot is the top 32 bits of
+/// the hash plus the id, and candidates are confirmed by comparing bytes.
 struct Interner<'a> {
     slots: Vec<(u32, u32)>,
     mask: usize,
@@ -897,10 +902,38 @@ impl<'a> Interner<'a> {
                 let id = self.lines.len() as u32;
                 *slot = (tag, id);
                 self.lines.push(line);
+                if self.lines.len() * 2 > self.slots.len() {
+                    self.grow();
+                }
                 return id;
             }
             if slot.0 == tag && self.lines[slot.1 as usize] == line {
                 return slot.1;
+            }
+            i = (i + 1) & self.mask;
+        }
+    }
+
+    #[cold]
+    fn grow(&mut self) {
+        let mut grown = Self::with_capacity(self.lines.len() * 2);
+        for &line in &self.lines {
+            grown.intern(line);
+        }
+        *self = grown;
+    }
+
+    fn find(&self, line: &[u8]) -> Option<u32> {
+        let h = hash_bytes(line);
+        let tag = (h >> 32) as u32;
+        let mut i = h as usize & self.mask;
+        loop {
+            let slot = self.slots[i];
+            if slot.1 == EMPTY {
+                return None;
+            }
+            if slot.0 == tag && self.lines[slot.1 as usize] == line {
+                return Some(slot.1);
             }
             i = (i + 1) & self.mask;
         }
@@ -1019,74 +1052,10 @@ pub fn diff_lines(a: &[u8], b: &[u8]) -> Vec<Hunk> {
     let mut offs_b: Vec<u32> = Vec::with_capacity(est_b + 1);
     tokenize(ma, head, &mut interner, &mut ta, &mut offs_a);
     tokenize(mb, head, &mut interner, &mut tb, &mut offs_b);
-    let (na, nb) = (ta.len(), tb.len());
-
-    // A line that never occurs on the other side cannot be part of any common
-    // subsequence, so it is marked changed up front and left out of the
-    // sequences handed to Myers. This preserves minimality while shrinking
-    // both N and D — often to nothing.
     let uniq = interner.lines.len();
     drop(interner);
-    let mut occ = vec![[0u32; 2]; uniq];
-    for &t in &ta {
-        occ[t as usize][0] += 1;
-    }
-    for &t in &tb {
-        occ[t as usize][1] += 1;
-    }
-    let mut changed = vec![false; na + nb];
-    let (changed_a, changed_b) = changed.split_at_mut(na);
-    // Surviving tokens and their original indices.
-    let mut ra: Vec<u32> = Vec::with_capacity(na);
-    let mut map_a: Vec<u32> = Vec::with_capacity(na);
-    for (i, &t) in ta.iter().enumerate() {
-        if occ[t as usize][1] == 0 {
-            changed_a[i] = true;
-        } else {
-            ra.push(t);
-            map_a.push(i as u32);
-        }
-    }
-    let mut rb: Vec<u32> = Vec::with_capacity(nb);
-    let mut map_b: Vec<u32> = Vec::with_capacity(nb);
-    for (j, &t) in tb.iter().enumerate() {
-        if occ[t as usize][0] == 0 {
-            changed_b[j] = true;
-        } else {
-            rb.push(t);
-            map_b.push(j as u32);
-        }
-    }
-    drop(occ);
 
-    if !ra.is_empty() && !rb.is_empty() {
-        let n = ra.len() + rb.len();
-        let mut sc = MyersScratch::default();
-        let mut rchanged = vec![false; n];
-        let (rchanged_a, rchanged_b) = rchanged.split_at_mut(ra.len());
-        let policy = Policy {
-            work: LINES.work + n * LINE_WORK_PER_TOKEN,
-            ..LINES
-        };
-        let mut myers = Myers::new(&ra[..], &rb[..], &mut sc, policy);
-        myers.run(0..ra.len(), 0..rb.len(), rchanged_a, rchanged_b);
-        for (ri, &c) in rchanged_a.iter().enumerate() {
-            if c {
-                changed_a[map_a[ri] as usize] = true;
-            }
-        }
-        for (rj, &c) in rchanged_b.iter().enumerate() {
-            if c {
-                changed_b[map_b[rj] as usize] = true;
-            }
-        }
-    } else {
-        changed_a.fill(true);
-        changed_b.fill(true);
-    }
-
-    let mut hunks = Vec::with_capacity(16);
-    hunks_from_changed(&ta[..], &tb[..], changed_a, changed_b, &mut hunks);
+    let mut hunks = diff_shared_tokens(&ta, &tb, uniq, &search_bounded);
     for h in &mut hunks {
         *h = Hunk {
             a_lo: offs_a[h.a_lo] as usize,
@@ -1097,6 +1066,84 @@ pub fn diff_lines(a: &[u8], b: &[u8]) -> Vec<Hunk> {
     }
     slide_line_hunks(&mut hunks, a, b);
     hunks
+}
+
+/// A token that never occurs on the other side cannot be part of any common
+/// subsequence, so it is marked changed up front and left out of the sequences
+/// handed to `search`. This preserves minimality while shrinking both N and D —
+/// often to nothing. Every token is below `uniq`; hunks are token indices.
+fn diff_shared_tokens(
+    ta: &[u32],
+    tb: &[u32],
+    uniq: usize,
+    search: &dyn Fn(&[u32], &[u32], &mut [bool], &mut [bool]),
+) -> Vec<Hunk> {
+    let (na, nb) = (ta.len(), tb.len());
+    let mut occurs = vec![[false; 2]; uniq];
+    for &t in ta {
+        occurs[t as usize][0] = true;
+    }
+    for &t in tb {
+        occurs[t as usize][1] = true;
+    }
+    let mut changed = vec![false; na + nb];
+    let (changed_a, changed_b) = changed.split_at_mut(na);
+    // Surviving tokens and their original indices.
+    let mut ra: Vec<u32> = Vec::with_capacity(na);
+    let mut map_a: Vec<u32> = Vec::with_capacity(na);
+    for (i, &t) in ta.iter().enumerate() {
+        if occurs[t as usize][1] {
+            ra.push(t);
+            map_a.push(i as u32);
+        } else {
+            changed_a[i] = true;
+        }
+    }
+    let mut rb: Vec<u32> = Vec::with_capacity(nb);
+    let mut map_b: Vec<u32> = Vec::with_capacity(nb);
+    for (j, &t) in tb.iter().enumerate() {
+        if occurs[t as usize][0] {
+            rb.push(t);
+            map_b.push(j as u32);
+        } else {
+            changed_b[j] = true;
+        }
+    }
+    drop(occurs);
+
+    // A token that survives does so on both sides.
+    if !ra.is_empty() {
+        let mut rchanged = vec![false; ra.len() + rb.len()];
+        let (rchanged_a, rchanged_b) = rchanged.split_at_mut(ra.len());
+        search(&ra, &rb, rchanged_a, rchanged_b);
+        for (ri, &c) in rchanged_a.iter().enumerate() {
+            if c {
+                changed_a[map_a[ri] as usize] = true;
+            }
+        }
+        for (rj, &c) in rchanged_b.iter().enumerate() {
+            if c {
+                changed_b[map_b[rj] as usize] = true;
+            }
+        }
+    }
+
+    let mut hunks = Vec::with_capacity(16);
+    hunks_from_changed(ta, tb, changed_a, changed_b, &mut hunks);
+    hunks
+}
+
+fn search_bounded(a: &[u32], b: &[u32], changed_a: &mut [bool], changed_b: &mut [bool]) {
+    let policy = Policy {
+        work: LINES.work + (a.len() + b.len()) * LINE_WORK_PER_TOKEN,
+        ..LINES
+    };
+    Myers::new(a, b, &mut MyersScratch::default(), policy).run(
+        0..a.len(),
+        0..b.len(),
+        changed_a,
+        changed_b,
+    );
 }
 
 /// `cleanup_merge`'s slide pass applied to byte hunks that sit on line

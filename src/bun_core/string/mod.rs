@@ -109,6 +109,11 @@ unsafe extern "C" {
     // so `safe fn` discharges the link-time proof here.
     safe fn BunString__threadIsolatedCopy(this: &String) -> String;
     safe fn BunString__makeThreadShareable(this: &mut String);
+    safe fn BunString__createSubstringSharingImpl(
+        this: &String,
+        offset: usize,
+        length: usize,
+    ) -> String;
     fn BunString__createAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__createStaticExternal(bytes: *const u8, len: usize, isLatin1: bool) -> String;
@@ -738,6 +743,17 @@ impl String {
                 }
             }
             _ => StringView::new(self),
+        }
+    }
+
+    /// Owned slice of the code units `range`. It holds a ref on the storage of `self` unless a copy is smaller.
+    pub fn shared_substring(&self, range: core::ops::Range<usize>) -> String {
+        if range.len() == self.length() {
+            self.clone()
+        } else if self.tag == Tag::WTFStringImpl && !range.is_empty() {
+            BunString__createSubstringSharingImpl(self, range.start, range.len())
+        } else {
+            String::clone(&self.substring_with_len(range.start, range.end))
         }
     }
 

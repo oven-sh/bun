@@ -4,7 +4,19 @@
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 // `net session` exits non-zero with "Access is denied" unless the process is
@@ -114,6 +126,18 @@ describe.skipIf(!isElevatedWindows)("bun install on a non-NTFS Windows volume", 
         name: "bar",
         version: "0.0.2",
       });
+
+      // FAT32 has neither POSIX deletes nor links.
+      const at = (name: string) => join(mount, "files", name);
+      mkdirSync(at("folder"), { recursive: true });
+      writeFileSync(at("read-only"), "abc", { mode: 0o444 });
+      expect(statSync(at("read-only"))).toMatchObject({ size: 3, mode: 0o100444 });
+      expect(await Bun.write(at("copy"), Bun.file(at("read-only")), { mode: 0o666 })).toBe(3);
+      renameSync(at("copy"), at("renamed"));
+      expect(() => symlinkSync(at("folder"), at("junction"), "junction")).toThrow();
+      unlinkSync(at("read-only"));
+      rmdirSync(at("folder"));
+      expect(readdirSync(at("."))).toEqual(["renamed"]);
     } finally {
       // The vdisk has to be detached before `dir`'s disposal can remove the
       // mount point and the backing .vhd; failures here are non-actionable.

@@ -449,10 +449,7 @@ impl Cmd {
                 format_args!("bun: command not found: {}\n", bstr::BStr::new(&first_arg)),
             );
         };
-        // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
-        // re-tokenizes the command line with shell metacharacter rules
-        // (BatBadBut). libuv's MSVCRT-style quoting cannot make that safe, so
-        // reject arguments that cmd.exe would reinterpret.
+        // See `bun_which::is_batch_file`.
         if cfg!(windows) && bun_which::is_batch_file(&resolved) {
             let unsafe_arg: Option<Vec<u8>> = interp
                 .as_cmd(this)
@@ -809,7 +806,6 @@ impl Cmd {
     /// [`Self::deinit`] for the VM-shutdown finalizer: defuses the
     /// `> ${arraybuffer}` unpins first — the heap sweep already deleted the
     /// `JSC::ArrayBuffer` impls they would write to.
-    #[cfg(not(windows))]
     pub(crate) fn deinit_from_finalizer(interp: &Interpreter, this: NodeId) {
         {
             let me = interp.as_cmd_mut(this);
@@ -859,7 +855,6 @@ impl Cmd {
                     (*child).unref::<true>();
                     // Stop any still-active stdio before the drop (only the
                     // VM-shutdown path reaches here in flight).
-                    #[cfg(not(windows))]
                     (*child).deinit_in_flight_io();
                     drop(bun_core::heap::take(child));
                 }

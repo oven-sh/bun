@@ -419,7 +419,7 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// through, async dispose, etc.) gets to run, and on macOS — where there's no
 /// PDEATHSIG — coordinator death surfaces as channel close. Same `Channel`
 /// abstraction as the coordinator side: usockets over the socketpair on POSIX,
-/// `uv.Pipe` over the inherited duplex named-pipe on Windows.
+/// the inherited duplex pipe on Windows.
 #[derive(Default)]
 pub(crate) struct CoordinatorLink {
     channel: Channel,
@@ -538,7 +538,7 @@ fn run_files(
     vm: &VirtualMachine,
     link: &CoordinatorLink,
 ) -> u32 {
-    let end = bun_sys::File::from_fd(Fd::from_uv(3));
+    let end = bun_sys::File::from_fd(Fd::from_crt(3));
     if !link.channel.adopt(vm, end) {
         bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
         Global::exit(1);

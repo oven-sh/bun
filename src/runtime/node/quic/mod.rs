@@ -10,8 +10,7 @@ pub(crate) use endpoint::QuicEndpoint;
 pub(crate) use session::QuicSession;
 pub(crate) use stream::QuicStream;
 
-/// Monotonic nanoseconds, mirroring Node's use of `uv_hrtime()` for the
-/// `*_AT` stats slots.
+/// Monotonic nanoseconds for the `*_AT` stats slots.
 pub(crate) fn now_ns() -> u64 {
     bun_core::util::Timespec::now_allow_mocked_time().ns()
 }

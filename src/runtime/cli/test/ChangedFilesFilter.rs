@@ -23,8 +23,6 @@ use bun_core::strings;
 use bun_core::{self, Global, Output, ZBox, env_var, fmt as bun_fmt};
 #[cfg(not(windows))]
 use bun_core::{ZStr, getenv_z};
-#[cfg(windows)]
-use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use bun_paths::SEP;
@@ -562,15 +560,6 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         stderr: spawn_sync::SyncStdio::Buffer,
         stdin: spawn_sync::SyncStdio::Ignore,
         envp: None,
-        // The test command has a JSC VM running; reuse its event loop on
-        // Windows rather than spinning up a MiniEventLoop.
-        #[cfg(windows)]
-        windows: spawn_sync::WindowsOptions {
-            // `init` takes the erased `*mut ()` event-loop pointer
-            // directly, so unwrap it here.
-            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
-            ..Default::default()
-        },
         ..Default::default()
     }) {
         Ok(p) => p,

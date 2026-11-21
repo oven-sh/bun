@@ -75,7 +75,7 @@ static uint64_t bunReadProcMeminfo(const char* what)
     return rc * 1024;
 }
 
-// Matches libuv's uv_get_free_memory (vendor/libuv/src/unix/linux.c): prefer
+// Matches libuv's uv_get_free_memory (src/unix/linux.c): prefer
 // MemAvailable from /proc/meminfo (kernel's estimate of memory available for
 // new allocations, including reclaimable page cache) and only fall back to
 // sysinfo.freeram (which excludes page cache) when /proc/meminfo cannot be
@@ -92,15 +92,6 @@ extern "C" uint64_t Bun__Os__getFreeMemory(void)
         return static_cast<uint64_t>(info.freeram) * info.mem_unit;
     }
     return 0;
-}
-#endif
-
-#if OS(WINDOWS)
-extern "C" uint64_t uv_get_available_memory(void);
-
-extern "C" uint64_t Bun__Os__getFreeMemory(void)
-{
-    return uv_get_available_memory();
 }
 #endif
 

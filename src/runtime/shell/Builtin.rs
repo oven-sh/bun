@@ -304,7 +304,6 @@ impl Builtin {
     /// impl the heap sweep already deleted; see
     /// `ShellSubprocess::defuse_array_buffer_unpins`. VM-shutdown finalizer
     /// only.
-    #[cfg(not(windows))]
     pub(crate) fn defuse_array_buf_pins(&mut self) {
         if let BuiltinInput::ArrayBuf { buf, .. } = &mut self.stdin {
             buf.defuse();
@@ -435,7 +434,7 @@ impl Builtin {
                 };
 
                 if redirect.stdin() {
-                    let r = IOReader::init(redirfd, evtloop);
+                    let r = IOReader::init_for_one_command(redirfd, evtloop);
                     r.set_interp(interp);
                     Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
                     return None;
@@ -448,7 +447,9 @@ impl Builtin {
                     redirfd,
                     io_writer::Flags {
                         pollable: if cfg!(windows) { true } else { pollable },
+                        #[cfg(not(windows))]
                         nonblock: is_nonblocking,
+                        #[cfg(not(windows))]
                         is_socket,
                         ..Default::default()
                     },

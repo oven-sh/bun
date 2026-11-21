@@ -1,7 +1,10 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { spawn as nodeSpawn } from "node:child_process";
+import { once } from "node:events";
 import { release } from "node:os";
+import type { Readable } from "node:stream";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
@@ -439,3 +442,263 @@ describe.concurrent.skipIf(isWindows)(
     );
   },
 );
+
+// On Windows: a synchronous end of a named pipe, an end from CreatePipe(), an overlapped end, and one that
+// the process in between has used.
+const pipeKinds = ["spawn", "shell", ...(isWindows ? ["fd 3", "fd 3 in use"] : [])];
+describe.concurrent.each(pipeKinds)("stdout is a pipe from %s", kind => {
+  function start(main: string) {
+    const dir = tempDir("stdout-kinds", {
+      "main.js": main,
+      "relay.js": `
+        const fs = require("fs"), buffer = Buffer.alloc(65536);
+        try {
+          for (let n; (n = fs.readSync(0, buffer)); ) for (let at = 0; at < n; ) at += fs.writeSync(1, buffer, at, n - at);
+        } catch {}
+      `,
+      "pass-on.js": `
+        if (process.argv[2]) require("net").connect({ fd: 3, pauseOnConnect: true }).unref();
+        Bun.spawn([process.execPath, "main.js"], { stdio: ["ignore", 3, "inherit"], onExit: (_, code) => process.exit(code) });
+      `,
+    });
+    const options = { cwd: String(dir), env: bunEnv };
+    const child =
+      kind === "spawn"
+        ? nodeSpawn(bunExe(), ["main.js"], options)
+        : kind === "shell"
+          ? nodeSpawn(`"${bunExe()}" main.js | "${bunExe()}" relay.js`, { ...options, shell: true })
+          : nodeSpawn(bunExe(), ["pass-on.js", ...(kind === "fd 3" ? [] : ["in use"])], {
+              ...options,
+              stdio: ["ignore", "ignore", "pipe", "pipe"],
+            });
+    let stderr = "";
+    child.stderr!.setEncoding("utf8").on("data", chunk => (stderr += chunk));
+    const ended = Promise.all([once(child, "exit"), once(child.stderr!, "end")]);
+    return {
+      output: (child.stdout ?? child.stdio[3]) as Readable,
+      result: async () => ({ exitCode: (await ended)[0][0], stderr }),
+      async [Symbol.asyncDispose]() {
+        this.output.destroy();
+        child.kill();
+        await ended;
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+  const sizes = [1, 7, 0, 65535, 65536, 65537, 1, 300_000, 3, 700_000, 2];
+  const chunks = `${JSON.stringify(sizes)}.map((size, i) => Buffer.alloc(size, i + "|"))`;
+  const digest = (data: Buffer[]) => Bun.SHA1.hash(Buffer.concat(data), "hex");
+  const expected = digest(sizes.map((size, i) => Buffer.alloc(size, i + "|")));
+
+  test.each([
+    ["process.stdout.write()", `for (const chunk of chunks) process.stdout.write(chunk)`],
+    ["process.stdout.write(string)", `for (const chunk of chunks) process.stdout.write(chunk.toString())`],
+    [
+      "process.stdout.write() and process.exit() in the last callback",
+      `chunks.forEach((chunk, i) => process.stdout.write(chunk, () => i === chunks.length - 1 && process.exit(0)))`,
+    ],
+    ["pipeline()", `require("stream").pipeline(require("stream").Readable.from(chunks), process.stdout, () => {})`],
+    ["console.write()", `for (const chunk of chunks) console.write(chunk)`],
+    [
+      "Bun.write(Bun.stdout)",
+      `(async () => { for (const chunk of chunks) if (chunk.length) await Bun.write(Bun.stdout, chunk); })()`,
+    ],
+    [
+      "Bun.stdout.writer()",
+      `const sink = Bun.stdout.writer(); for (const chunk of chunks) sink.write(chunk); sink.end()`,
+    ],
+    [
+      "fs.writeSync(1)",
+      `for (const chunk of chunks) for (let at = 0; at < chunk.length; ) at += require("fs").writeSync(1, chunk, at)`,
+    ],
+    [
+      "fs.createWriteStream",
+      `const out = require("fs").createWriteStream(null, { fd: 1 }); for (const chunk of chunks) out.write(chunk)`,
+    ],
+    [
+      "a child that inherits it",
+      `Bun.spawn([process.execPath, "-e", "for (const chunk of " + source + ") process.stdout.write(chunk)"], { stdout: "inherit" })`,
+    ],
+  ])("%s delivers every byte once, in order", async (_, write) => {
+    await using child = start(`const source = ${JSON.stringify(chunks)}, chunks = eval(source); ${write}`);
+    expect(digest(await Array.fromAsync(child.output))).toBe(expected);
+    expect(await child.result()).toEqual({ exitCode: 0, stderr: "" });
+  });
+
+  // Rejects with the error of ftruncate().
+  test.todoIf(isWindows)("Bun.write(Bun.stdout) takes an empty string", async () => {
+    await using child = start(`for (const text of ["a", "", "b"]) await Bun.write(Bun.stdout, text)`);
+    expect((await Array.fromAsync(child.output)).join("")).toBe("ab");
+    expect(await child.result()).toEqual({ exitCode: 0, stderr: "" });
+  });
+
+  test("keeps lines whole when several processes write to it", async () => {
+    await using child = start(`
+      for (const letter of "abcd")
+        Bun.spawn([process.execPath, "-e", "for (let i = 0; i < 200; i++) console.log(Buffer.alloc(200, process.argv[1]).toString())", letter], { stdout: "inherit" });
+    `);
+    const counts: Record<string, number> = {};
+    for (const line of Buffer.concat(await Array.fromAsync(child.output))
+      .toString()
+      .split("\n"))
+      counts[line] = (counts[line] ?? 0) + 1;
+    expect(counts).toEqual({
+      ...Object.fromEntries([..."abcd"].map(c => [Buffer.alloc(200, c).toString(), 200])),
+      "": 1,
+    });
+    expect(await child.result()).toEqual({ exitCode: 0, stderr: "" });
+  });
+
+  test.each([
+    [
+      "process.stdout",
+      `process.stdout.on("error", report); (function more() { process.stdout.write(chunk, error => error || setImmediate(more)); })()`,
+    ],
+    ["Bun.write(Bun.stdout)", `(async () => { for (;;) await Bun.write(Bun.stdout, chunk); })().catch(report)`],
+    [
+      "Bun.stdout.writer()",
+      `(async () => { const sink = Bun.stdout.writer(); for (;;) await sink.write(chunk), await sink.flush(); })().catch(report)`,
+    ],
+    ["fs.writeSync(1)", `try { for (;;) require("fs").writeSync(1, chunk); } catch (error) { report(error); }`],
+  ])("%s reports that the reader has left", async (_, write) => {
+    await using child = start(`
+      ${isWindows ? "" : `process.on("SIGPIPE", () => {});`}
+      const chunk = Buffer.alloc(100_000, "x");
+      const report = error => { console.error(error.code); process.exit(0); };
+      ${write}
+    `);
+    await once(child.output, "data");
+    child.output.destroy();
+    // A write that was under way when the reader left ends with ERROR_BROKEN_PIPE, which is EOF to node:fs as well, or as on a socket.
+    const underWay = isWindows ? "EOF" : isMacOS ? "ENOTCONN" : kind === "spawn" ? "ECONNRESET" : "EPIPE";
+    expect(await child.result()).toEqual({
+      exitCode: 0,
+      stderr: expect.stringMatching(new RegExp(`^(EPIPE|${underWay})\n$`)),
+    });
+  });
+});
+
+// Cygwin, MSYS2 and others hand down pipes that no Bun or Node.js process would make.
+describe.concurrent.skipIf(!isWindows).each([
+  ["does not wait", { nowait: 1 }],
+  ["does not wait and is overlapped", { nowait: 1, overlapped: 1 }],
+  ["carries messages", { message: 1 }],
+  ["carries messages and is read by message", { message: 1, byMessage: 1 }],
+  ["carries messages, is read by message and is overlapped", { message: 1, byMessage: 1, overlapped: 1 }],
+])("a pipe that %s", (_, kind) => {
+  async function run(direction: "read" | "write", script: string) {
+    using dir = tempDir("foreign-pipe", {
+      "child.js": script,
+      "peer.js": `
+        const fs = require("fs");
+        while (!fs.existsSync("ready")) Bun.sleepSync(1);
+        if (process.argv[2] === "write") console.log(fs.readFileSync(0).length);
+        else for (const size of [1, 0, 70000, 3, 200000]) fs.writeSync(1, Buffer.alloc(size)), Bun.sleepSync(2);
+      `,
+      "main.js": `
+        const fs = require("fs");
+        const k32 = require("bun:ffi").dlopen("kernel32.dll", {
+          CreateNamedPipeW: { args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "ptr"], returns: "i64" },
+          CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "i64" },
+        }).symbols;
+        const { nowait = 0, overlapped = 0, message = 0, byMessage = 0 } = ${JSON.stringify(kind)};
+        const name = Buffer.from("\\\\\\\\.\\\\pipe\\\\bun-test-" + crypto.randomUUID() + "\\0", "utf16le");
+        const [theirs, ours] = [
+          k32.CreateNamedPipeW(name, 3 | (overlapped << 30), (message << 2) | (byMessage << 1) | nowait, 1, 4096, 4096, 0, null),
+          k32.CreateFileW(name, 0xc0000000, 0, null, 3, 0, null),
+        ].map(windowsHandle => fs.createReadStream(null, { windowsHandle, autoClose: false }).fd);
+        const slots = fd => ${direction === "read"} === (fd === theirs) ? [fd, "inherit", "inherit"] : ["ignore", fd, "inherit"];
+        Bun.spawn([process.execPath, "child.js"], { stdio: slots(theirs) });
+        Bun.spawn([process.execPath, "peer.js", "${direction}"], { stdio: slots(ours) });
+        fs.closeSync(theirs), fs.closeSync(ours);
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const ready = `setImmediate(() => require("fs").writeFileSync("ready", ""));`;
+
+  test.each([
+    [
+      "process.stdin",
+      `let n = 0; process.stdin.on("data", chunk => (n += chunk.length)).on("end", () => console.log(n));`,
+    ],
+    [
+      "Bun.stdin.stream()",
+      `let n = 0; for await (const chunk of Bun.stdin.stream()) n += chunk.length; console.log(n);`,
+    ],
+  ])("is read by %s", async (_, read) => {
+    expect(await run("read", ready + read)).toEqual({ stdout: "270004\n", stderr: "", exitCode: 0 });
+  });
+
+  test.each([
+    ["process.stdout", `process.stdout.write(data)`],
+    ["console.write()", `console.write(data)`],
+    ["Bun.stdout.writer()", `const sink = Bun.stdout.writer(); sink.write(data); sink.end()`],
+    ["fs.writeSync(1)", `for (let at = 0; at < data.length; ) at += require("fs").writeSync(1, data, at)`],
+    ["Bun.write()", `Bun.write(Bun.stdout, data)`],
+    ["the shell", "Bun.$`cat < ${data}`.then()"],
+  ])("is written by %s", async (_, write) => {
+    const script = `require("fs").writeFileSync("ready", ""); const data = Buffer.alloc(300000, "x"); ${write}`;
+    expect(await run("write", script)).toEqual({ stdout: "300000\n", stderr: "", exitCode: 0 });
+  });
+});
+
+describe.concurrent.skipIf(!isWindows)("a TCP socket", () => {
+  async function run(slot: number, script: string) {
+    const { promise: received, resolve } = Promise.withResolvers<number>();
+    let count = 0;
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open: socket => void (slot === 0 && socket.end("from the peer")),
+        data: (_, data) => void (count += data.length),
+        close: () => resolve(count),
+      },
+    });
+    using dir = tempDir("socket-stdio", {
+      "child.js": script,
+      "main.js": `
+        const ws2 = require("bun:ffi").dlopen("ws2_32.dll", {
+          WSAStartup: { args: ["u16", "ptr"], returns: "i32" },
+          WSASocketW: { args: ["i32", "i32", "i32", "ptr", "u32", "u32"], returns: "i64" },
+          connect: { args: ["i64", "ptr", "i32"], returns: "i32" },
+        }).symbols;
+        ws2.WSAStartup(0x202, Buffer.alloc(512));
+        const windowsHandle = ws2.WSASocketW(2, 1, 6, null, 0, 0);
+        ws2.connect(windowsHandle, Buffer.from([2, 0, ${server.port >> 8}, ${server.port & 255}, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]), 16);
+        const { fd } = require("fs").createReadStream(null, { windowsHandle, autoClose: false });
+        const stdio = ["ignore", "inherit", "inherit"];
+        stdio[${slot}] = fd;
+        process.exitCode = await Bun.spawn([process.execPath, "child.js"], { stdio }).exited;
+      `,
+    });
+    await using proc = spawn({ cmd: [bunExe(), "main.js"], cwd: String(dir), env: bunEnv, stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout, exitCode, received: await received };
+  }
+
+  test("is read by Bun.stdin.text()", async () => {
+    expect(await run(0, `console.log(await Bun.stdin.text());`)).toEqual({
+      stdout: "from the peer\n",
+      exitCode: 0,
+      received: 0,
+    });
+  });
+
+  test("is written by process.stdout", async () => {
+    expect(await run(1, `process.stdout.write(Buffer.alloc(300000))`)).toEqual({
+      stdout: "",
+      exitCode: 0,
+      received: 300000,
+    });
+  });
+});

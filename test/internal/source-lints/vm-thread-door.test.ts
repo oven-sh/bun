@@ -16,7 +16,7 @@
 //      Every such type must either carry a `Ticket` for the VM whose state it
 //      holds, or hold no VM/JS state at all.
 //   2. Direct calls to the raw thread-crossing primitives — the work pool, the
-//      HTTP thread, thread spawning, `uv_queue_work`. VM code reaches these
+//      HTTP thread, thread spawning. VM code reaches these
 //      through `bun_jsc::Job` or through a struct that holds a `Ticket` for
 //      its in-flight duration; a new direct call site is a new path that has
 //      to be shown to do the same.
@@ -51,7 +51,8 @@ const PATTERNS: [name: string, re: RegExp][] = [
   ["worker_pool.schedule(Batch)", /\)\s*\.schedule\(\s*(?:bun_threading::thread_pool::)?Batch::from/g],
   ["HTTPThread::schedule", /\bHTTPThread::schedule\s*\(/g],
   ["thread spawn", /\bthread::(?:Builder::new\s*\(|spawn\s*\()/g],
-  ["uv_queue_work", /(?<!fn\s)\buv_queue_work\s*\(/g],
+  ["FilePool, DEVICE_POOL", /\bFilePool::(?:go|get)\b|\bDEVICE_POOL\.(?:schedule|go)/g],
+  ["blocking::spawn", /\bblocking::(?:spawn\s*\(|\{[^}]*\bspawn\b)/g],
 ];
 
 const tracked: Set<string> | null = (() => {

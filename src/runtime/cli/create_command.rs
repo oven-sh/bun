@@ -1057,14 +1057,6 @@ impl CreateCommand {
                 stderr: spawn_sync::SyncStdio::Inherit,
                 stdout: spawn_sync::SyncStdio::Inherit,
                 stdin: spawn_sync::SyncStdio::Inherit,
-                // Default would zero `loop_` → UB.
-                #[cfg(windows)]
-                windows: spawn_sync::WindowsOptions {
-                    loop_: bun_event_loop::EventLoopHandle::init_mini(
-                        bun_event_loop::MiniEventLoop::init_global(None),
-                    ),
-                    ..Default::default()
-                },
                 ..Default::default()
             });
 
@@ -1171,14 +1163,6 @@ impl CreateCommand {
                     stdin: spawn_sync::SyncStdio::Inherit,
                     stdout: spawn_sync::SyncStdio::Inherit,
                     stderr: spawn_sync::SyncStdio::Inherit,
-                    // `bun.spawnSync` on Windows requires a live `loop_` — supply it.
-                    #[cfg(windows)]
-                    windows: spawn_sync::WindowsOptions {
-                        loop_: bun_event_loop::EventLoopHandle::init_mini(
-                            bun_event_loop::MiniEventLoop::init_global(None),
-                        ),
-                        ..Default::default()
-                    },
                     ..Default::default()
                 })?;
             }
@@ -1347,7 +1331,7 @@ fn file_copier_copy(
                     }
                     if let Err(err) = result {
                         Output::err(
-                            err.to_system_errno(),
+                            err.to_e(),
                             "failed to copy file {}",
                             format_args!(
                                 "{}",
@@ -2002,10 +1986,6 @@ impl GitHandler {
 
         // The git CLI: libgit2 took three times as long for this.
         let mut bun_path_buf = bun_paths::path_buffer_pool::get();
-        #[cfg(windows)]
-        let win_loop = bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None),
-        );
         if let Some(git) = which(&mut bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();
 
@@ -2026,11 +2006,6 @@ impl GitHandler {
                     stdin: Inherit,
                     stdout: output,
                     stderr: output,
-                    #[cfg(windows)]
-                    windows: spawn_sync::WindowsOptions {
-                        loop_: win_loop,
-                        ..Default::default()
-                    },
                     ..Default::default()
                 })??)
             };

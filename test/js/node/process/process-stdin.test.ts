@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { exec } from "node:child_process";
+import { exec, spawn } from "node:child_process";
+import { once } from "node:events";
+import type { Writable } from "node:stream";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -191,13 +193,13 @@ test.concurrent("explicit read(n) with no 'readable' listener still pulls from s
       process.stdin.on("end", () => {
         console.log(JSON.stringify({ chunks, readableEnded: process.stdin.readableEnded }));
       });
-      let spins = 0;
+      const deadline = Date.now() + 4000;
       function poll() {
         let chunk;
         while ((chunk = process.stdin.read(3)) !== null) chunks.push(chunk.toString());
         if (process.stdin.readableEnded) return;
         // Bounded so a regression fails with output instead of spinning forever.
-        if (++spins > 20000) {
+        if (Date.now() > deadline) {
           console.log(JSON.stringify({ chunks, readableEnded: false }));
           process.exit(1);
         }
@@ -502,12 +504,30 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   expect(exitCode).toBe(0);
 });
 
+// Not concurrent, which also keeps the feeds of 40 MB below from holding up the tests above.
+test("process.stdin over an anonymous pipe delivers each byte exactly once", async () => {
+  const total = 10 * 1024 * 1024;
+  using dir = tempDir("stdin-pipe-exactly-once", {
+    "writer.js": `const chunk = Buffer.alloc(65536); let left = ${total}; (function pump() { while (left > 0) { left -= chunk.length; if (!process.stdout.write(chunk)) return process.stdout.once("drain", pump); } })();`,
+    "reader.js": `const h = new Bun.CryptoHasher("sha1"); let n = 0; process.stdin.on("data", d => { n += d.length; h.update(d); }); process.stdin.on("close", () => process.stdout.write(n + " " + h.digest("hex")));`,
+  });
+  const { promise, resolve } = Promise.withResolvers<{ err: Error | null; stdout: string; stderr: string }>();
+  exec(`"${bunExe()}" writer.js | "${bunExe()}" reader.js`, { cwd: String(dir), env: bunEnv }, (err, stdout, stderr) =>
+    resolve({ err, stdout, stderr }),
+  );
+  const { err, stdout, stderr } = await promise;
+  expect(stderr).toBe("");
+  const expected = new Bun.CryptoHasher("sha1").update(Buffer.alloc(total)).digest("hex");
+  expect(stdout).toBe(`${total} ${expected}`);
+  expect(err).toBeNull();
+});
+
 // The native FileReader source over a pollable pipe used to drain the fd to
 // EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
 // pipe into an internal buffer. The kernel pipe buffer filling up is the
 // backpressure signal; these tests feed far more than that and check the
 // child's resident set does not grow to match.
-describe.skipIf(isWindows)("pipe backpressure", () => {
+describe("pipe backpressure", () => {
   const feedMB = 40;
   // With no backpressure the child buffers the whole feed (Vec growth roughly
   // doubles that in RSS). With backpressure only the highwater mark plus the
@@ -679,19 +699,263 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
   });
 });
 
-test("process.stdin over an anonymous pipe delivers each byte exactly once", async () => {
-  const total = 10 * 1024 * 1024;
-  using dir = tempDir("stdin-pipe-exactly-once", {
-    "writer.js": `const chunk = Buffer.alloc(65536); let left = ${total}; (function pump() { while (left > 0) { left -= chunk.length; if (!process.stdout.write(chunk)) return process.stdout.once("drain", pump); } })();`,
-    "reader.js": `const h = new Bun.CryptoHasher("sha1"); let n = 0; process.stdin.on("data", d => { n += d.length; h.update(d); }); process.stdin.on("close", () => process.stdout.write(n + " " + h.digest("hex")));`,
-  });
-  const { promise, resolve } = Promise.withResolvers<{ err: Error | null; stdout: string; stderr: string }>();
-  exec(`"${bunExe()}" writer.js | "${bunExe()}" reader.js`, { cwd: String(dir), env: bunEnv }, (err, stdout, stderr) =>
-    resolve({ err, stdout, stderr }),
+// What fd 0 is depends on who made the pipe. On Windows: a synchronous end of a named pipe, an end from
+// CreatePipe(), an overlapped end, or one that the process in between has used.
+const pipeKinds = ["spawn", "shell", ...(isWindows ? ["fd 3", "fd 3 in use"] : [])];
+describe.concurrent.each(pipeKinds)("stdin is a pipe from %s", kind => {
+  function start(files: Record<string, string>) {
+    const dir = tempDir("stdin-kinds", {
+      ...files,
+      "relay.js": `
+        const fs = require("fs"), buffer = Buffer.alloc(65536);
+        for (let n; (n = fs.readSync(0, buffer)); ) for (let at = 0; at < n; ) at += fs.writeSync(1, buffer, at, n - at);
+      `,
+      "pass-on.js": `
+        if (process.argv[2]) require("net").connect({ fd: 3, pauseOnConnect: true }).unref();
+        Bun.spawn([process.execPath, "main.js"], { stdio: [3, "inherit", "inherit"], onExit: (_, code) => process.exit(code) });
+      `,
+    });
+    const options = { cwd: String(dir), env: bunEnv };
+    const child =
+      kind === "spawn"
+        ? spawn(bunExe(), ["main.js"], options)
+        : kind === "shell"
+          ? spawn(`"${bunExe()}" relay.js | "${bunExe()}" main.js`, { ...options, shell: true })
+          : spawn(bunExe(), ["pass-on.js", ...(kind === "fd 3" ? [] : ["in use"])], {
+              ...options,
+              stdio: ["ignore", "pipe", "pipe", "pipe"],
+            });
+    const input = (child.stdin ?? child.stdio[3]) as Writable;
+    input.on("error", () => {});
+    let stdout = "";
+    let stderr = "";
+    let wake = () => {};
+    child.stdout!.setEncoding("utf8").on("data", chunk => ((stdout += chunk), wake()));
+    child.stderr!.setEncoding("utf8").on("data", chunk => (stderr += chunk));
+    // Not the child's 'close', which also waits for fd 3.
+    const ended = Promise.all([once(child, "exit"), once(child.stdout!, "end"), once(child.stderr!, "end")]);
+    let over = false;
+    ended.finally(() => ((over = true), wake()));
+    return {
+      dir,
+      input,
+      async sees(text: string) {
+        while (!stdout.includes(text)) {
+          if (over) throw new Error(`ended before ${JSON.stringify(text)}:\n${stdout}\n${stderr}`);
+          await new Promise<void>(resolve => (wake = resolve));
+        }
+      },
+      async result() {
+        const [[exitCode, signal]] = await ended;
+        return { stdout, stderr, exitCode, signal };
+      },
+      async [Symbol.asyncDispose]() {
+        input.destroy();
+        child.kill();
+        await ended;
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+  const printed = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signal: null });
+
+  test.each([
+    ["process.stdin 'data'", `process.stdin.on("data", add).on("end", done)`],
+    ["for await (process.stdin)", `for await (const chunk of process.stdin) add(chunk); done()`],
+    ["Bun.stdin.stream()", `for await (const chunk of Bun.stdin.stream()) add(chunk); done()`],
+    ["fs.readFileSync(0)", `add(fs.readFileSync(0)); done()`],
+    ["fs.createReadStream", `fs.createReadStream(null, { fd: 0 }).on("data", add).on("end", done)`],
+  ])("%s gets every byte once, in order", (_, read) => getsEveryByte(read));
+
+  // Elsewhere about one process in a hundred exits before the end.
+  test.skipIf(!isWindows)("process.stdin paused after every chunk gets every byte once, in order", () =>
+    getsEveryByte(
+      `process.stdin.on("data", chunk => { add(chunk); process.stdin.pause(); setImmediate(() => process.stdin.resume()); }).on("end", done)`,
+    ),
   );
-  const { err, stdout, stderr } = await promise;
-  expect(stderr).toBe("");
-  const expected = new Bun.CryptoHasher("sha1").update(Buffer.alloc(total)).digest("hex");
-  expect(stdout).toBe(`${total} ${expected}`);
-  expect(err).toBeNull();
+
+  async function getsEveryByte(read: string) {
+    await using child = start({
+      "main.js": `
+        import fs from "fs";
+        const hash = new Bun.CryptoHasher("sha1");
+        let length = 0;
+        const add = chunk => { length += chunk.length; hash.update(chunk); };
+        const done = () => console.log(length, hash.digest("hex"));
+        // The first read has to wait for its data.
+        ${read.includes("Sync") ? `console.log("ready")` : `setImmediate(() => console.log("ready"))`};
+        ${read};
+      `,
+    });
+    await child.sees("ready\n");
+    const hash = new Bun.CryptoHasher("sha1");
+    let length = 0;
+    for (const size of [1, 7, 65535, 65536, 65537, 0, 300_000, 1, 700_000]) {
+      const chunk = Buffer.alloc(size, `${length}|`);
+      length += size;
+      hash.update(chunk);
+      child.input.write(chunk);
+    }
+    child.input.end();
+    expect(await child.result()).toEqual(printed(`ready\n${length} ${hash.digest("hex")}\n`));
+  }
+
+  test("answers line by line", async () => {
+    await using child = start({
+      "main.js": `for await (const line of require("readline").createInterface({ input: process.stdin })) console.log("<" + line + ">")`,
+    });
+    let expected = "";
+    for (let i = 0; i < 50; i++) {
+      child.input.write(`${i}\n`);
+      await child.sees(`<${i}>\n`);
+      expected += `<${i}>\n`;
+    }
+    child.input.end();
+    expect(await child.result()).toEqual(printed(expected));
+  });
+
+  test("ends without data", async () => {
+    await using child = start({
+      "main.js": `process.stdin.on("data", () => console.log("data")).on("end", () => console.log("end")); console.log("ready")`,
+    });
+    await child.sees("ready\n");
+    child.input.write("");
+    child.input.end();
+    expect(await child.result()).toEqual(printed("ready\nend\n"));
+  });
+
+  test.each(["Bun.spawn", "Bun.spawnSync"])("is left to a child of %s while paused, and taken back", async api => {
+    await using child = start({
+      "inner.js": `
+        console.log("inner ready");
+        process.stdin.once("data", chunk => { console.log("inner " + chunk); process.exit(0); });
+      `,
+      "main.js": `
+        process.stdin.once("data", async chunk => {
+          process.stdin.pause();
+          console.log("outer " + chunk);
+          await ${api}([process.execPath, "inner.js"], { stdio: ["inherit", "inherit", "inherit"] }).exited;
+          process.stdin.on("data", chunk => console.log("outer " + chunk)).resume();
+          console.log("resumed");
+        });
+      `,
+    });
+    child.input.write("one");
+    await child.sees("inner ready\n");
+    child.input.write("two");
+    await child.sees("resumed\n");
+    child.input.end("three");
+    expect(await child.result()).toEqual(printed("outer one\ninner ready\ninner two\nresumed\nouter three\n"));
+  });
+
+  test("keeps what arrives while paused for a child that is started later", async () => {
+    await using child = start({
+      "main.js": `
+        process.stdin.once("data", async () => {
+          process.stdin.pause();
+          console.log("paused");
+          while (!require("fs").existsSync("written")) await Bun.sleep(1);
+          Bun.spawn([process.execPath, "-e", "process.stdin.on('data', chunk => console.log(String(chunk)))"], {
+            stdio: ["inherit", "inherit", "inherit"],
+          });
+        });
+      `,
+    });
+    child.input.write("one");
+    await child.sees("paused\n");
+    child.input.end("two");
+    await once(child.input, "finish");
+    await Bun.write(`${child.dir}/written`, "");
+    expect(await child.result()).toEqual(printed("paused\ntwo\n"));
+  });
+
+  test.skipIf(!isWindows)("does not stop the event loop while a child reads it too", async () => {
+    await using child = start({
+      "inner.js": `
+        console.log("inner ready");
+        while (require("fs").readSync(0, Buffer.alloc(8)));
+      `,
+      "main.js": `
+        process.stdin.on("data", () => {});
+        Bun.spawn([process.execPath, "inner.js"], { stdio: ["inherit", "inherit", "inherit"], onExit: () => process.exit(0) });
+        const fs = require("fs");
+        let turn = 0;
+        setInterval(() => fs.existsSync("turn" + turn) && console.log("turn " + turn++), 1);
+      `,
+    });
+    await child.sees("inner ready\n");
+    for (let turn = 0; turn < 40; turn++) {
+      await new Promise(resolve => child.input.write("x", resolve));
+      await Bun.write(`${child.dir}/turn${turn}`, "");
+      await child.sees(`turn ${turn}\n`);
+    }
+    child.input.end();
+    expect(await child.result()).toMatchObject({ stderr: "", exitCode: 0 });
+  });
+
+  test.each([
+    ["pause()", "process.stdin.pause()"],
+    ["unref()", "process.stdin.unref()"],
+    ["destroy()", "process.stdin.destroy()"],
+    ["process.exit()", "process.exit(0)"],
+  ])("%s lets the process go while a read is waiting", async (_, leave) => {
+    await using child = start({
+      "main.js": `
+        process.on("exit", () => console.log("left"));
+        process.stdin.on("data", () => setImmediate(() => setImmediate(() => ${leave})));
+      `,
+    });
+    child.input.write("one");
+    await child.sees("left\n");
+    child.input.end();
+    expect(await child.result()).toEqual(printed("left\n"));
+  });
+
+  test("goes from a cancelled Bun.stdin.stream() to process.stdin", async () => {
+    await using child = start({
+      "main.js": `
+        const reader = Bun.stdin.stream().getReader();
+        console.log("first " + Buffer.from((await reader.read()).value));
+        const waiting = reader.read();
+        await new Promise(setImmediate);
+        await reader.cancel();
+        await waiting;
+        require("fs").createReadStream(null, { fd: 0 }).on("data", chunk => console.log("second " + chunk));
+        console.log("switched");
+      `,
+    });
+    child.input.write("one");
+    await child.sees("switched\n");
+    child.input.end("two");
+    expect(await child.result()).toEqual(printed("first one\nswitched\nsecond two\n"));
+  });
+
+  test("is a FIFO or a socket to fstat, and no terminal", async () => {
+    await using child = start({
+      "main.js": `const stat = require("fs").fstatSync(0); console.log(stat.isFIFO() || stat.isSocket(), require("tty").isatty(0))`,
+    });
+    child.input.end();
+    expect(await child.result()).toEqual(printed("true false\n"));
+  });
+});
+
+test("a file is read to its end with a pause after every chunk", async () => {
+  using dir = tempDir("stdin-file-pauses", { input: Buffer.alloc(1 << 20, "x") });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let n = 0;
+       process.stdin.on("end", () => console.log(n)).on("data", chunk => {
+         n += chunk.length;
+         process.stdin.pause();
+         setTimeout(() => process.stdin.resume(), 1);
+       });`,
+    ],
+    env: bunEnv,
+    stdin: Bun.file(`${dir}/input`),
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.text()).toBe(`${1 << 20}\n`);
+  expect(await proc.exited).toBe(0);
 });

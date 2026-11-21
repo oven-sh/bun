@@ -11,7 +11,6 @@ use bun_sys::{self as sys, Fd};
 
 use crate::webcore::SinkHandle;
 use crate::webcore::blob;
-use crate::webcore::jsc::SysErrorJsc as _;
 use crate::webcore::jsc::bindgen::{JsLocal, JsScope};
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
 use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
@@ -131,7 +130,7 @@ impl Lazy {
                         }
                     }
 
-                    sys::File::from_fd(fd).make_lib_uv_owned_for_syscall(sys::Tag::dup)?
+                    sys::File::from_fd(fd)
                 }
             }
             PathOrFileDescriptor::Path(path) => {
@@ -308,7 +307,7 @@ impl FileReader {
             // POSIX non-pollable regular file every read is synchronous
             // (`read_file` → `sys::pread`), so there is no such callback —
             // holding the Strong there would root an abandoned reader forever
-            // and leak its fd. Windows file reads are async via libuv even for
+            // and leak its fd. Windows file reads are async even for
             // regular files, so the ref is always taken there.
             #[cfg(unix)]
             let need_io_ref = pollable;
@@ -346,8 +345,7 @@ impl FileReader {
             #[cfg(windows)]
             {
                 // Non-lazy fromPipe path (Bun.spawn stdout/stderr): hold a
-                // ref across the pending uv_read_start so the source is not
-                // finalized while IOCP has a read queued on it.
+                // ref so the source is not finalized while it is read.
                 if !self.started.get()
                     && self.io_ref.get().is_none()
                     && self.reader.has_source()
@@ -744,20 +742,6 @@ impl FileReader {
         }
     }
 
-    pub(crate) fn set_raw_mode(&self, _flag: bool) -> sys::Result<()> {
-        #[cfg(not(windows))]
-        {
-            panic!(
-                "FileReader.setRawMode must not be called on {}",
-                std::env::consts::OS
-            );
-        }
-        #[cfg(windows)]
-        {
-            self.reader.set_raw_mode(_flag)
-        }
-    }
-
     pub(crate) fn set_flowing(&self, flag: bool) {
         bun_core::scoped_log!(
             FileReader,
@@ -922,15 +906,6 @@ impl readable_stream::SourceContext for FileReader {
 }
 
 impl Source {
-    pub fn set_raw_mode(&self, cx: &mut JsScope<'_>, flag: JsLocal<'_>) -> JSValue {
-        let flag = flag.to_js();
-        debug_assert!(flag.is_boolean());
-        match self.context.set_raw_mode(flag == JSValue::TRUE) {
-            Ok(()) => JSValue::UNDEFINED,
-            Err(e) => e.to_js(cx.global()),
-        }
-    }
-
     pub fn set_flowing(&self, _: &mut JsScope<'_>, flag: JsLocal<'_>) {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());

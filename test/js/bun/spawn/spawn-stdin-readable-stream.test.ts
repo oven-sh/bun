@@ -439,7 +439,6 @@ describe("spawn stdin ReadableStream", () => {
   // When the child dies mid-write the sink's close path must tear down the
   // ReadableStream feeding it (for an async iterable, return the generator),
   // or the still-running pull keeps the parent's event loop alive forever.
-  // On Windows the libuv write-error path skipped that close notification.
   // https://github.com/oven-sh/bun/issues/33020
   async function expectParentExitsAfterChildDies(useIterator: boolean) {
     await using proc = Bun.spawn({
@@ -508,7 +507,7 @@ describe("spawn stdin ReadableStream", () => {
   // The child closes its stdin and lives on. Then the body gives its first chunk, and that write
   // fails. The sink hands the error to the body, which is closed the way `for await` leaves an
   // iterator: return(). The error is not thrown into it.
-  // Not on Windows: fs.closeSync(0) does nothing there (libuv keeps fds 0 to 2 open), so the child
+  // Not on Windows: fs.closeSync(0) does nothing there (as in Node.js), so the child
   // cannot close its stdin and live on.
   describe.skipIf(isWindows).each(asyncIterableBodyShapes)(
     "%s as stdin is closed with return() when the child closed its stdin before a chunk",
@@ -973,36 +972,33 @@ describe("spawn stdin ReadableStream", () => {
   // Bun.write() locks the process's stdin stream without starting its lazy source. A call that fails on that lock
   // must not start the source either. Nothing reads the child's stdout until the child reports, so its write is
   // still paused at that point.
-  test.skipIf(isWindows)(
-    "process.stdin throws when Bun.write() has locked the stdin stream, and doesn't consume any bytes",
-    async () => {
-      using dir = tempDir("spawn-stdin-lazy", { "in": Buffer.alloc(1 << 20, "a").toString() });
-      await using proc = spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
+  test("process.stdin throws when Bun.write() has locked the stdin stream, and doesn't consume any bytes", async () => {
+    using dir = tempDir("spawn-stdin-lazy", { "in": Buffer.alloc(1 << 20, "a").toString() });
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const written = Bun.write(Bun.stdout, Bun.stdin.stream());
         let code;
         try { process.stdin.resume(); } catch (error) { code = error.code; }
         await Bun.write(Bun.stderr, String(code));
         await written;
       `,
-        ],
-        env: bunEnv,
-        stdin: Bun.file(path.join(String(dir), "in")),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const report = await proc.stderr.getReader().read();
-      const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
-      expect({ report: new TextDecoder().decode(report.value), length: stdout.length, exitCode }).toEqual({
-        report: "ERR_INVALID_STATE",
-        length: 1 << 20,
-        exitCode: 0,
-      });
-    },
-  );
+      ],
+      env: bunEnv,
+      stdin: Bun.file(path.join(String(dir), "in")),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const report = await proc.stderr.getReader().read();
+    const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+    expect({ report: new TextDecoder().decode(report.value), length: stdout.length, exitCode }).toEqual({
+      report: "ERR_INVALID_STATE",
+      length: 1 << 20,
+      exitCode: 0,
+    });
+  });
 
   test("ReadableStream object type count", async () => {
     const iterations = isASAN
@@ -1260,12 +1256,7 @@ describe("spawn stdin ReadableStream", () => {
   // each stderr write's index on stdout (tiny, never fills its pipe); the parent
   // drains stdout concurrently and samples the child's progress while the
   // stderr reader is deliberately stalled.
-  //
-  // Windows: WindowsBufferedReader::read_chunks discards the on_read_chunk return
-  // value, so FileReader's highwater mark never propagates to uv_read_stop and
-  // the pipe drains at socket speed regardless of JS demand. Same limitation as
-  // the process-stdin.test.ts "pipe backpressure" suite; skipped there too.
-  test.skipIf(isWindows)("spawn stderr for-await applies backpressure to the writer", async () => {
+  test("spawn stderr for-await applies backpressure to the writer", async () => {
     const chunkSize = 64 * 1024;
     const chunkCount = 128; // 8 MB — well above the OS pipe + ByteStream buffers
     const totalBytes = chunkSize * chunkCount;

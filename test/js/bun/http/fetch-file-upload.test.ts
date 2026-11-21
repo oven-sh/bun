@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readlinkSync, realpathSync } from "fs";
-import { isBroken, isLinux, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { isLinux, tempDir, withoutAggressiveGC } from "harness";
 import { join } from "path";
 
 test("uploads roundtrip", async () => {
@@ -126,38 +126,34 @@ test("formData uploads roundtrip, without a call to .body", async () => {
   expect(await (resData.get("file") as Blob).arrayBuffer()).toEqual(await file.arrayBuffer());
 });
 
-test.todoIf(isBroken && isWindows)(
-  "uploads roundtrip with sendfile()",
-  async () => {
-    // More than the buffers of the two sockets hold, so sendfile() stops and goes on several times.
-    const hugeTxt = Buffer.alloc(16 * 1024 * 1024, "huge");
-    const hash = Bun.CryptoHasher.hash("sha256", hugeTxt, "hex");
+test("uploads roundtrip with sendfile()", async () => {
+  // More than the buffers of the two sockets hold, so sendfile() stops and goes on several times.
+  const hugeTxt = Buffer.alloc(16 * 1024 * 1024, "huge");
+  const hash = Bun.CryptoHasher.hash("sha256", hugeTxt, "hex");
 
-    using dir = tempDir("fetch-file-upload-sendfile", { "huge.txt": hugeTxt });
-    const path = join(String(dir), "huge.txt");
-    using server = Bun.serve({
-      port: 0,
-      development: false,
-      maxRequestBodySize: hugeTxt.byteLength * 2,
-      async fetch(req) {
-        const hasher = new Bun.CryptoHasher("sha256");
-        for await (let chunk of req.body!) {
-          hasher.update(chunk);
-        }
-        return new Response(hasher.digest("hex"));
-      },
-    });
+  using dir = tempDir("fetch-file-upload-sendfile", { "huge.txt": hugeTxt });
+  const path = join(String(dir), "huge.txt");
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    maxRequestBodySize: hugeTxt.byteLength * 2,
+    async fetch(req) {
+      const hasher = new Bun.CryptoHasher("sha256");
+      for await (let chunk of req.body!) {
+        hasher.update(chunk);
+      }
+      return new Response(hasher.digest("hex"));
+    },
+  });
 
-    const resp = await fetch(server.url, {
-      body: Bun.file(path),
-      method: "PUT",
-    });
+  const resp = await fetch(server.url, {
+    body: Bun.file(path),
+    method: "PUT",
+  });
 
-    expect(resp.status).toBe(200);
-    expect(await resp.text()).toBe(hash);
-  },
-  10_000,
-);
+  expect(resp.status).toBe(200);
+  expect(await resp.text()).toBe(hash);
+}, 10_000);
 
 describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
   // The sendfile fast path is entered when the backing file is >= 32 KiB.

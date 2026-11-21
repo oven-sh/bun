@@ -1,5 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { mkfifo } from "mkfifo";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -828,6 +829,61 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Windows has no FIFOs.
+  test.skipIf(isWindows).each(isolateFlags)(
+    "with %s, a lookup that joins one the file before left in flight is answered",
+    async isolate => {
+      using dir = tempDir("isolate-dns-lookup", {
+        "a.test.ts": `
+          import { test } from "bun:test";
+          import fs from "node:fs";
+          test("leaves a lookup that waits for a thread", async () => {
+            // Each read holds one of the pool's two threads until its writer is closed.
+            const writers = [];
+            for (const fifo of ["fifo-0", "fifo-1"]) {
+              fs.readFile(fifo, () => {});
+              for (;;) {
+                try {
+                  writers.push(fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK));
+                  break;
+                } catch (error) {
+                  if (error.code !== "ENXIO") throw error;
+                  await Bun.sleep(1);
+                }
+              }
+            }
+            fs.writeFileSync("writers.json", JSON.stringify(writers));
+            Bun.dns.lookup("127.0.0.1", { backend: "libc" }).then(() => console.log("a: goes on"));
+          });
+        `,
+        "b.test.ts": `
+          import { test } from "bun:test";
+          import fs from "node:fs";
+          test("asks for the same name", async () => {
+            const lookup = Bun.dns.lookup("127.0.0.1", { backend: "libc" });
+            for (const writer of JSON.parse(fs.readFileSync("writers.json", "utf8"))) fs.closeSync(writer);
+            console.log(JSON.stringify(await lookup));
+          });
+        `,
+      });
+      for (const fifo of ["fifo-0", "fifo-1"]) mkfifo(join(String(dir), fifo));
+      const { stdout, stderr, exitCode } = await runTests(String(dir), [isolate], ["./a.test.ts", "./b.test.ts"], {
+        ...bunEnv,
+        UV_THREADPOOL_SIZE: "2",
+        BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
+      });
+      expect({
+        stdout: stdout.replace(/^bun test .*\n/, ""),
+        counts: stderr.match(/^ \d+ (pass|fail)$/gm),
+        exitCode,
+      }).toEqual({
+        stdout: `[{"address":"127.0.0.1","family":4,"ttl":0}]\n`,
+        counts: [" 2 pass", " 0 fail"],
+        exitCode: 0,
+      });
+    },
+  );
+
   test("with --isolate, leaked fs.watch is closed before next file", async () => {
     using dir = tempDir("isolate-fswatch", {
       "watched/.keep": "",
@@ -1403,8 +1459,9 @@ describe.concurrent("bun test --isolate", () => {
       expect(exitCode).toBe(0);
     } finally {
       // Nothing swaps after the last file of a serial run, so its sleeper is
-      // ours to kill, as is anything an unfixed runner leaked.
-      for (const pid of loggedPids()) {
+      // ours to kill, as is anything an unfixed runner leaked. On Windows they
+      // end with the runner, and their pids soon go to other processes.
+      for (const pid of isWindows ? [] : loggedPids()) {
         try {
           process.kill(Number(pid));
         } catch {}

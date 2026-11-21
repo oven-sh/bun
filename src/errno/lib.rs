@@ -33,7 +33,7 @@ macro_rules! impl_get_errno_libc {
 //   • forward  : `pub const IDENT: i32 = value;`
 //   • reverse  : `pub fn name(neg_uv_err) -> Option<&'static str>`
 //
-// The reverse map additionally hard-codes the libuv-synthetic codes that are
+// The reverse map additionally lists the libuv-synthetic codes that are
 // target-INDEPENDENT and have no `uv_e::*` const today (`EOF`, `UNKNOWN`,
 // `EAI_*`). Node's `util.getSystemErrorName()` requires them; without this the
 // JS-visible result for `-4095` would regress to `"Unknown system error -4095"`.
@@ -44,25 +44,24 @@ macro_rules! __decl_uv_e {
     ( $( $ident:ident = $value:expr => $display:literal ),+ $(,)? ) => {
         $( pub const $ident: i32 = $value; )+
 
-        /// Full (negated code, name) table: libuv-synthetic codes (vendor/libuv/include/uv/errno.h)
-        /// first, then per-OS rows. Consumed by `name()` and node:util `getSystemErrorMap()`.
+        /// Full (negated code, name) table: libuv-synthetic codes first, then per-OS rows.
         pub static ENTRIES: &[(i32, &'static str)] = &[
-            (-4095, "EOF"),
-            (-4094, "UNKNOWN"),
-            (-3000, "EAI_ADDRFAMILY"),
-            (-3001, "EAI_AGAIN"),
-            (-3002, "EAI_BADFLAGS"),
-            (-3003, "EAI_CANCELED"),
-            (-3004, "EAI_FAIL"),
-            (-3005, "EAI_FAMILY"),
-            (-3006, "EAI_MEMORY"),
-            (-3007, "EAI_NODATA"),
-            (-3008, "EAI_NONAME"),
-            (-3009, "EAI_OVERFLOW"),
-            (-3010, "EAI_SERVICE"),
-            (-3011, "EAI_SOCKTYPE"),
-            (-3013, "EAI_BADHINTS"),
-            (-3014, "EAI_PROTOCOL"),
+            ($crate::uv::UV_EOF, "EOF"),
+            ($crate::uv::UV_UNKNOWN, "UNKNOWN"),
+            ($crate::uv::UV_EAI_ADDRFAMILY, "EAI_ADDRFAMILY"),
+            ($crate::uv::UV_EAI_AGAIN, "EAI_AGAIN"),
+            ($crate::uv::UV_EAI_BADFLAGS, "EAI_BADFLAGS"),
+            ($crate::uv::UV_EAI_CANCELED, "EAI_CANCELED"),
+            ($crate::uv::UV_EAI_FAIL, "EAI_FAIL"),
+            ($crate::uv::UV_EAI_FAMILY, "EAI_FAMILY"),
+            ($crate::uv::UV_EAI_MEMORY, "EAI_MEMORY"),
+            ($crate::uv::UV_EAI_NODATA, "EAI_NODATA"),
+            ($crate::uv::UV_EAI_NONAME, "EAI_NONAME"),
+            ($crate::uv::UV_EAI_OVERFLOW, "EAI_OVERFLOW"),
+            ($crate::uv::UV_EAI_SERVICE, "EAI_SERVICE"),
+            ($crate::uv::UV_EAI_SOCKTYPE, "EAI_SOCKTYPE"),
+            ($crate::uv::UV_EAI_BADHINTS, "EAI_BADHINTS"),
+            ($crate::uv::UV_EAI_PROTOCOL, "EAI_PROTOCOL"),
             $( (-($ident), $display) ),+
         ];
 
@@ -86,21 +85,24 @@ macro_rules! __decl_uv_e {
 // The (IDENT, "E…") column pair is byte-for-byte identical across
 // linux/darwin/freebsd/windows; only the middle `i32` value differs by design
 // (native `SystemErrno::$e as i32` on POSIX vs libuv-synthetic
-// `-bun_libuv_sys::UV_E*` on Windows / for codes the host OS lacks). Rather
+// `-uv::UV_E*` on Windows / for codes the host OS lacks). Rather
 // than re-list the rows 4×, the caller supplies a tiny *value-producer* macro
 // `$cb!($id, $e, $uv) -> i32-expr` and this forwards each row to the existing
 // `__decl_uv_e!` expander (consts + reverse `name()` fn).
 //
 // `$id`/`$e`/`$uv` are passed as **literal** tokens (never captured as
 // `:ident`), so the per-OS `$cb` can override individual rows by literal-token
-// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv }` — while
+// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -crate::uv::$uv }` — while
 // a final `($i:tt, $e:tt, $uv:tt)` arm handles the native default.
 // ──────────────────────────────────────────────────────────────────────────
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __uv_e_rows {
     ($cb:ident) => {
-        $crate::__decl_uv_e! {
+        $crate::__uv_e_rows!(__decl_uv_e, $cb);
+    };
+    ($decl:ident, $cb:ident) => {
+        $decl! {
             // Rust idents can't start with a digit → `_2BIG`.
             _2BIG          = $cb!(_2BIG,          E2BIG,           UV_E2BIG)           => "E2BIG",
             ACCES          = $cb!(ACCES,          EACCES,          UV_EACCES)          => "EACCES",
@@ -175,6 +177,8 @@ macro_rules! __uv_e_rows {
     };
 }
 
+pub mod uv;
+
 #[cfg(target_os = "macos")]
 pub mod darwin_errno;
 #[cfg(target_os = "macos")]
@@ -200,8 +204,8 @@ pub use windows_errno::{posix, *};
 //
 // Landed here so the errno
 // crate stays leaf (T0) and bun_sys (T≥1) imports forward. Windows keeps its
-// own divergent `mod posix` in windows_errno.rs (no `errno()` fn, unprefixed
-// `E`); this block is the shared POSIX-target definition.
+// own divergent `mod posix` in windows_errno.rs (no `errno()` fn); this block
+// is the shared POSIX-target definition.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(not(windows))]
 #[allow(non_camel_case_types)]
@@ -260,18 +264,7 @@ pub fn last_error() -> E {
 /// discriminant. `0` is `SUCCESS`; an unmapped value is `EUNKNOWN`.
 #[inline]
 pub fn e_from_negated(errno: core::ffi::c_int) -> E {
-    let n = errno.wrapping_neg();
-    #[cfg(windows)]
-    {
-        u16::try_from(n)
-            .ok()
-            .and_then(E::try_from_raw)
-            .unwrap_or(E::EUNKNOWN)
-    }
-    #[cfg(not(windows))]
-    {
-        SystemErrno::init(i64::from(n)).unwrap_or(SystemErrno::EUNKNOWN)
-    }
+    u16::try_from(errno.unsigned_abs()).map_or(E::EUNKNOWN, E::from_raw)
 }
 
 impl SystemErrno {
@@ -342,35 +335,15 @@ impl bun_core::output::ErrName for SystemErrno {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Platform errno integer → its `SystemErrno` tag name.
-/// `None` for `0` (SUCCESS), out-of-range, or (POSIX) non-positive input —
+/// `None` for `0` (SUCCESS), out-of-range, or non-positive input —
 /// the contract bun_core's `coreutils_error_map` relies on.
 #[inline]
 fn system_errno_name(errno: i32) -> Option<&'static str> {
-    #[cfg(not(windows))]
-    {
-        if errno <= 0 {
-            return None;
-        }
-        SystemErrno::init(i64::from(errno)).map(<&'static str>::from)
-    }
-    #[cfg(windows)]
-    {
-        // Windows libuv errnos arrive negated; abs-normalise before the
-        // lookup. `from_repr` (strum::FromRepr)
-        // covers BOTH the dense 0..=137 range and the sparse UV_* tags.
-        let n = errno.unsigned_abs();
-        if n == 0 {
-            return None;
-        }
-        u16::try_from(n)
-            .ok()
-            .and_then(SystemErrno::from_repr)
-            .map(<&'static str>::from)
-    }
+    let errno = u16::try_from(errno).ok().filter(|&errno| errno != 0)?;
+    SystemErrno::from_repr(errno).map(<&'static str>::from)
 }
 
-/// Length of the dense `0..MAX` prefix of `SystemErrno` (on Windows, the
-/// dense head before the sparse UV_* range). Exposed so bun_core can pre-seed its
+/// Length of the dense `0..MAX` prefix of `SystemErrno`. Exposed so bun_core can pre-seed its
 /// interned `ERRNO_MAP` without a second hand-written per-OS length table.
 #[inline]
 const fn system_errno_max_dense() -> u32 {
@@ -454,7 +427,6 @@ mod errno_name_tests {
             );
         }
         // One past the dense end → None.
-        #[cfg(not(windows))]
         assert_eq!(system_errno_name(max as i32), None);
 
         // Spot-check the last entry on each platform.
@@ -464,15 +436,7 @@ mod errno_name_tests {
             assert_eq!(system_errno_name(134), Some("EUNKNOWN"));
         }
         #[cfg(windows)]
-        {
-            assert_eq!(system_errno_name(137), Some("EFTYPE"));
-            // Sparse UV_* range round-trips.
-            assert_eq!(system_errno_name(-4058), Some("UV_ENOENT"));
-            assert_eq!(system_errno_name(-4092), Some("UV_EACCES"));
-            assert_eq!(system_errno_name(-4095), Some("UV_EOF"));
-            assert_eq!(system_errno_name(-3008), Some("UV_EAI_NONAME"));
-            assert_eq!(system_errno_name(-5000), None);
-        }
+        assert_eq!(system_errno_name(137), Some("EFTYPE"));
         #[cfg(target_os = "macos")]
         {
             assert_eq!(system_errno_name(106), Some("EQFULL"));
@@ -544,14 +508,30 @@ mod errno_name_tests {
         }
     }
 
-    /// Matters on Windows, where `E` is a separate enum with unprefixed variant names.
     #[test]
-    fn e_spells_like_system_errno() {
-        assert_eq!(<&'static str>::from(E::ENOENT), "ENOENT");
-        assert_eq!(<&'static str>::from(E::E2BIG), "E2BIG");
-        assert_eq!(<&'static str>::from(E::SUCCESS), "SUCCESS");
-        #[cfg(windows)]
-        assert_eq!(<&'static str>::from(E::UV_ENOENT), "UV_ENOENT");
+    #[cfg(windows)]
+    fn uv_codes() {
+        for &(code, name) in uv_e::ENTRIES {
+            let again = (!name.starts_with("EAI_")).then_some(code);
+            assert_eq!(uv_to_e(code).and_then(try_e_to_uv), again);
+        }
+        assert_eq!(uv_to_e(uv::UV_ENOENT), Some(E::ENOENT));
+        assert_eq!(try_e_to_uv(E::ECHILD), None);
+        assert_eq!(E::init(4058_i64), Some(E::ENOENT));
+
+        for (win32, code) in [
+            (0, 0),
+            (uv::UV_EPERM, uv::UV_EPERM),
+            (5, uv::UV_EPERM),
+            (109, uv::UV_EOF),
+            (267, uv::UV_ENOENT),
+            (4392, uv::UV_ENOENT),
+            (10048, uv::UV_EADDRINUSE),
+            (317, uv::UV_UNKNOWN),
+            (0x1_0002, uv::UV_UNKNOWN),
+        ] {
+            assert_eq!(uv_translate_sys_error(win32), code);
+        }
     }
 
     #[test]

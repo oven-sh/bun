@@ -18,16 +18,18 @@ use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
     DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
 };
+#[cfg(unix)]
 use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
-#[cfg(not(windows))]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{PipeState, StaticPipeWriter, StdioResult};
 use bun_spawn::{
     self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage,
     SpawnOptions, Status, Stdio,
 };
-use bun_sys::{self, Fd, File};
+#[cfg(unix)]
+use bun_sys::Fd;
+use bun_sys::{self, File};
 
 use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
@@ -795,12 +797,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         // command-line length limits (>1MB), and we can't use stdin because scanners
         // may need stdin for their own setup (e.g. interactive prompts).
 
-        // fd 3 output pipe: bun.sys.pipe() + .pipe (inherit_fd) on both platforms.
-        let ipc_pipe = match bun_sys::pipe() {
-            Err(_) => return Err(crate::Error::IPCPipeFailed),
-            Ok(fds) => fds.map(File::from_fd),
-        };
-
         let exec_path = bun_core::self_exe_path()?;
 
         // Like a lifecycle script, it gets the environment that the install resolved, with no
@@ -819,11 +815,11 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         #[cfg(windows)]
         {
-            self.spawn_windows(&argv, envp.as_list(), ipc_pipe)?;
+            self.spawn_windows(&argv, envp.as_list())?;
         }
         #[cfg(not(windows))]
         {
-            self.spawn_posix(&argv, envp.as_list(), ipc_pipe)?;
+            self.spawn_posix(&argv, envp.as_list())?;
         }
 
         Ok(())
@@ -834,12 +830,10 @@ impl<'a> SecurityScanSubprocess<'a> {
     /// parent by spawn's to_close_at_end list. The parent's
     /// end comes back via spawned.extra_pipes.
     #[cfg(unix)]
-    fn spawn_posix(
-        &mut self,
-        argv: &[&ZStr],
-        envp: bun_core::CStrList<'_>,
-        [ipc_read, ipc_write]: [File; 2],
-    ) -> Result<(), Error> {
+    fn spawn_posix(&mut self, argv: &[&ZStr], envp: bun_core::CStrList<'_>) -> Result<(), Error> {
+        let [ipc_read, ipc_write] = bun_sys::pipe()
+            .map_err(|_| crate::Error::IPCPipeFailed)?
+            .map(File::from_fd);
         let extra_fds: Box<[Stdio]> = Box::new([
             Stdio::Pipe(ipc_write.fd()), // fd 3: child inherits write end
             Stdio::Buffer,               // fd 4: socketpair, parent's end in extra_pipes
@@ -864,40 +858,23 @@ impl<'a> SecurityScanSubprocess<'a> {
             .update_flags(|f| f.insert(ReaderFlags::NONBLOCKING));
 
         let json_pipe = spawned.extra_pipes.swap_remove(1).into_owned();
-        self.finish_spawn(&mut spawned, ipc_read, json_pipe)
+        self.finish_spawn(spawned, ipc_read, json_pipe)
     }
 
-    /// Windows fd 4: .buffer stdio for extra_fds sets UV_OVERLAPPED_PIPE on the
-    /// child's handle, which breaks sync reads in the child.
-    /// Instead, create the pipe ourselves with asymmetric flags so only the
-    /// parent's write end is overlapped. Child inherits the non-overlapped read
-    /// end via .pipe (inherit_fd); parent wraps the overlapped write end in a
-    /// uv.Pipe for IOCP-based async writes.
+    /// `Stdio::Buffer` in `extra_fds` gives the child an overlapped end, and it reads and writes synchronously.
     #[cfg(windows)]
-    fn spawn_windows(
-        &mut self,
-        argv: &[&ZStr],
-        envp: bun_core::CStrList<'_>,
-        [ipc_read, ipc_write]: [File; 2],
-    ) -> Result<(), Error> {
-        use bun_sys::ReturnCodeExt as _;
-        use bun_sys::windows::libuv as uv;
+    fn spawn_windows(&mut self, argv: &[&ZStr], envp: bun_core::CStrList<'_>) -> Result<(), Error> {
+        use bun_sys::windows::{PipeDirection, PipeMode, pipe_pair};
 
-        let mut json_fds: [uv::uv_file; 2] = [0; 2];
-        // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
-        let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
-        if let Some(e) = pipe_rc.errno() {
-            return Err(bun_errno::from_errno(e as i32).into());
-        }
-        let [child_read, parent_write] = json_fds.map(|fd| File::from_fd(Fd::from_uv(fd)));
-
-        let pipe =
-            bun_io::Source::open_pipe(self.event_loop_handle.uv_loop(), parent_write.into())?;
-
-        let extra_fds: Box<[Stdio]> = Box::new([
-            Stdio::Pipe(ipc_write.fd()),  // fd 3: child inherits write end
-            Stdio::Pipe(child_read.fd()), // fd 4: child inherits non-overlapped read end
-        ]);
+        let pipe = |direction| {
+            let pair = pipe_pair(PipeMode::Overlapped, PipeMode::Synchronous, direction)
+                .map_err(|_| crate::Error::IPCPipeFailed)?;
+            Ok::<_, Error>((File::from(pair.ours), File::from(pair.theirs)))
+        };
+        let (ipc_read, ipc_write) = pipe(PipeDirection::OursReads)?;
+        let (json_write, json_read) = pipe(PipeDirection::OursWrites)?;
+        let extra_fds: Box<[Stdio]> =
+            Box::new([Stdio::Pipe(ipc_write.fd()), Stdio::Pipe(json_read.fd())]);
 
         let spawn_options = SpawnOptions {
             stdout: Stdio::Inherit,
@@ -905,29 +882,22 @@ impl<'a> SecurityScanSubprocess<'a> {
             stdin: Stdio::Inherit,
             cwd: Box::from(FileSystem::get().top_level_dir()),
             extra_fds,
-            windows: spawn::WindowsOptions {
-                loop_: self.event_loop_handle,
-                ..Default::default()
-            },
             ..Default::default()
         };
 
-        let mut spawned = spawn::spawn_process_z(&spawn_options, argv, Some(envp))?
+        let spawned = spawn::spawn_process_z(&spawn_options, argv, Some(envp))?
             .map_err(|e| e.to_zig_err())?;
 
-        drop((ipc_write, child_read));
+        drop((ipc_write, json_read));
 
-        self.ipc_reader
-            .update_flags(|f| f.insert(ReaderFlags::NONBLOCKING));
-
-        self.finish_spawn(&mut spawned, ipc_read, StdioResult::Buffer(pipe))
+        self.finish_spawn(spawned, ipc_read, Some(json_write))
     }
 
     /// Common post-spawn setup: start the fd 3 reader, attach the process,
     /// start the fd 4 JSON writer, and begin watching for exit.
     fn finish_spawn(
         &mut self,
-        spawned: &mut spawn::SpawnResult,
+        spawned: spawn::SpawnResult,
         ipc_read: File,
         json_stdio: StdioResult,
     ) -> Result<(), Error> {
@@ -938,14 +908,11 @@ impl<'a> SecurityScanSubprocess<'a> {
         let event_loop = self.event_loop_handle;
         let result = self
             .ipc_reader
-            .start(event_loop.as_event_loop_ctx(), ipc_read.into(), true)
+            .start_own_pipe(event_loop.as_event_loop_ctx(), ipc_read)
             .map_err(|e| e.to_zig_err())?;
         self.on_read_result(result);
 
-        // `to_process` consumes `SpawnResult` by value on POSIX (and
-        // `&mut self` on Windows); take ownership of the result and let the
-        // moved-from `*spawned` drop empty (`extra_pipes` already read).
-        let process = std::mem::take(spawned).to_process_handle(event_loop);
+        let process = spawned.to_process_handle(event_loop);
         let process = self.process.insert(process).this_ptr();
 
         let owner = Owner::new(
@@ -1064,6 +1031,13 @@ impl<'a> SecurityScanSubprocess<'a> {
                 // fd == INVALID falls through to the spec teardown below:
                 // the reader was never started (or already torn down), so
                 // it will not report — decrement here or the wait for `is_done` hangs.
+            }
+            #[cfg(windows)]
+            while let Some(event) = self.ipc_reader.take_available() {
+                self.on_io(event);
+                if self.has_received_ipc {
+                    return;
+                }
             }
             self.ipc_reader.deinit();
             self.remaining_fds -= 1;

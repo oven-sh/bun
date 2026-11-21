@@ -1140,6 +1140,16 @@ strspn
 
 
 # ----------------------------------------------------------------------------
+# MSVC CRT powf error path. Data-in-.text false positive, NOT a gate.
+#
+# A table of RVAs as above. At 0x07C5xxxx, the upper half of an entry and the
+# first byte of the next one are `C5 07 5D`, which decodes as VMINSD.
+# (1 symbol)
+# ----------------------------------------------------------------------------
+_powf_special
+
+
+# ----------------------------------------------------------------------------
 # JSC LLInt. Data-in-.text false positive, NOT a gate.
 #
 # ENABLE(LLINT_EMBEDDED_OPCODE_ID) is on for x86_64 (WTF/wtf/PlatformEnable.h),

@@ -15,7 +15,7 @@ bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
 
 /// JSSink streaming a fetch() request body into the HTTP thread's ThreadSafeStreamBuffer
 /// with chunked framing; one write per drain-ack.
-pub struct FetchRequestBodySink {
+pub(crate) struct FetchRequestBodySink {
     /// Held until the request body ends.
     pub task: Option<RefPtr<FetchTasklet>>,
     pub source: SourceHandle,
@@ -44,7 +44,7 @@ impl Default for FetchRequestBodySink {
 }
 
 impl FetchRequestBodySink {
-    pub const NAME: &'static str = "FetchRequestBodySink";
+    pub(crate) const NAME: &'static str = "FetchRequestBodySink";
 
     /// Exclusive borrow of the owning `FetchTasklet`, if still attached.
     #[inline]
@@ -53,7 +53,7 @@ impl FetchRequestBodySink {
         self.task.as_ref().map(|p| unsafe { &mut *p.as_ptr() })
     }
 
-    pub fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
+    pub(crate) fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
         if self.ended {
             return bun_sys::Result::Ok(());
         }
@@ -102,12 +102,12 @@ impl FetchRequestBodySink {
         Writable::Pending(core::ptr::from_mut(&mut self.pending))
     }
 
-    pub fn write(&mut self, data: &StreamResult<'_>) -> Writable {
+    pub(crate) fn write(&mut self, data: &StreamResult<'_>) -> Writable {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "write({})", data.slice().len());
         self.write_chunk(EncodedChunk::Bytes(data.slice()))
     }
 
-    pub fn write_latin1(&mut self, data: &StreamResult<'_>) -> Writable {
+    pub(crate) fn write_latin1(&mut self, data: &StreamResult<'_>) -> Writable {
         let bytes = data.slice();
         if bun_core::strings::is_all_ascii(bytes) {
             return self.write_chunk(EncodedChunk::Bytes(bytes));
@@ -115,11 +115,11 @@ impl FetchRequestBodySink {
         self.write_chunk(EncodedChunk::Latin1(bytes))
     }
 
-    pub fn write_utf16(&mut self, text: &[u16]) -> Writable {
+    pub(crate) fn write_utf16(&mut self, text: &[u16]) -> Writable {
         self.write_chunk(EncodedChunk::Utf16(text))
     }
 
-    pub fn flush_from_js(
+    pub(crate) fn flush_from_js(
         &mut self,
         cx: &bun_jsc::JsThread<'_>,
         wait: bool,
@@ -146,7 +146,7 @@ impl FetchRequestBodySink {
         ))
     }
 
-    pub fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
+    pub(crate) fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
         self.end_from_stream(err.map(StreamError::Error));
         bun_sys::Result::Ok(())
     }
@@ -154,7 +154,7 @@ impl FetchRequestBodySink {
     /// Native-path terminator called from `SinkHandle::end`. Carries the full
     /// `StreamError` so a JS-valued upstream error (e.g. fetch reset) reaches
     /// `write_end_request(Some(js))` instead of being silently dropped to EOF.
-    pub fn end_from_stream(&mut self, err: Option<StreamError>) {
+    pub(crate) fn end_from_stream(&mut self, err: Option<StreamError>) {
         if self.ended {
             return;
         }
@@ -182,20 +182,20 @@ impl FetchRequestBodySink {
         self.source.close(sys_err);
     }
 
-    pub fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+    pub(crate) fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         let _ = self.end(None);
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
 
     /// HTTP-thread drain ack: resolves the pending write/flush promise and wakes source.ready().
-    pub fn on_drain(&mut self, _global_this: &JSGlobalObject) {
+    pub(crate) fn on_drain(&mut self, _global_this: &JSGlobalObject) {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "onDrain");
         self.pending_bytes = 0;
         self.pending.run();
         self.source.ready(None, None);
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         if let Some(task) = self.task.as_ref() {
             if let Some(buf) = task.request_body_streaming_buffer.as_deref() {
                 return buf.lock().buffer.size();

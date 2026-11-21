@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
 describe.concurrent("spawnSync isolated event loop", () => {
@@ -195,7 +195,7 @@ describe.concurrent("spawnSync isolated event loop", () => {
   // BUN_JSC_slowPathAllocsBetweenGCs collects every few slow-path allocations. maxBuffer is the last option spawnSync
   // reads, so the collection that follows the drop runs once it is past them. Bun.gc() leaves every free list empty,
   // so what it allocates from there on takes the slow path, whatever ran before.
-  test.skipIf(isWindows)("what is finalized during spawnSync is released on the thread's loop", async () => {
+  test("what is finalized during spawnSync is released on the thread's loop", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

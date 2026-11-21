@@ -149,6 +149,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         Bun__askForAddressSpaceToStart();
     }
 
+    #[cfg(windows)]
+    bun_sys::windows::report_errors_to_callers();
+
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
@@ -197,6 +200,11 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
+    // After stdio::init, which opens the standard handles that are missing.
+    #[cfg(windows)]
+    bun_sys::windows::disable_stdio_inheritance();
+    #[cfg(windows)]
+    bun_sys::windows::announce_inherited_descriptors();
     // After stdio::init (fd 0 is open even if we were exec'd with it closed), before any thread.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pregrow_fd_table();
@@ -239,19 +247,4 @@ fn use_mimalloc_in_dependencies() {
         safe fn Bun__useMimallocForICU();
     }
     Bun__useMimallocForICU();
-
-    // libuv (only linked on Windows). Must precede the first uv call. Left on
-    // the CRT heap under ASAN like ICU and BoringSSL, so the sanitizer sees
-    // its allocations too (the global allocator is `System` there as well).
-    // SAFETY: mimalloc fns match the libuv allocator signatures; called
-    // exactly once before any uv handle is created.
-    #[cfg(all(windows, not(bun_asan)))]
-    unsafe {
-        let _ = bun_sys::windows::libuv::uv_replace_allocator(
-            Some(bun_alloc::mimalloc::mi_malloc),
-            Some(bun_alloc::mimalloc::mi_realloc),
-            Some(bun_alloc::mimalloc::mi_calloc),
-            Some(bun_alloc::mimalloc::mi_free),
-        );
-    }
 }

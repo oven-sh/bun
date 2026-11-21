@@ -1234,10 +1234,6 @@ pub use self::event_loop::{
     Stopped, Task, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread};
-#[cfg(unix)]
-pub type PlatformEventLoop = bun_uws::Loop;
-#[cfg(not(unix))]
-pub type PlatformEventLoop = bun_io::Loop;
 
 pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 

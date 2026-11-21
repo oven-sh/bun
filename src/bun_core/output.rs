@@ -386,6 +386,12 @@ pub mod windows_stdio {
         restore();
     }
 
+    pub fn restore_stdin_mode() {
+        if let Some([Some(mode), ..]) = CONSOLE_MODE.get() {
+            let _ = SetConsoleMode(Fd::stdin().native(), *mode);
+        }
+    }
+
     pub(crate) fn restore() {
         // SAFETY: PEB access is sound on Windows; handles are valid for process
         // lifetime. `peb()` returns a raw pointer because the OS/CRT mutate the
@@ -415,8 +421,6 @@ pub mod windows_stdio {
     }
 
     pub(crate) fn init() {
-        w::libuv::uv_disable_stdio_inheritance();
-
         let stdin = w::GetStdHandle(w::STD_INPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
         let stdout = w::GetStdHandle(w::STD_OUTPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
         let stderr = w::GetStdHandle(w::STD_ERROR_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
@@ -440,8 +444,6 @@ pub mod windows_stdio {
         } else {
             Fd::INVALID
         });
-        #[cfg(debug_assertions)]
-        fd_internals::WINDOWS_CACHED_FD_SET.store(true, Ordering::Relaxed);
 
         // SAFETY: BUFFERED_STDIN is a static initialized at startup before use.
         unsafe {
@@ -2353,7 +2355,6 @@ fn init_scoped_debug_writer_at_startup() {
                 let _ = output_sink().make_path(Fd::cwd(), dir);
             }
 
-            // do not use libuv through this code path, since it might not be initialized yet.
             use std::io::Write as _;
             let mut pid = Vec::new();
             write!(&mut pid, "{}", getpid()).expect("failed to allocate path");

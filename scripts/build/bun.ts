@@ -107,6 +107,8 @@ function systemLibs(cfg: Config): string[] {
       "bcrypt.lib",
       "ntdll.lib",
       "userenv.lib",
+      "advapi32.lib",
+      "iphlpapi.lib",
       "dbghelp.lib",
       "crypt32.lib",
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)

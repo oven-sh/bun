@@ -246,15 +246,12 @@ const r = {};
 async function main() {
   r.tempRewritten = /\\\\AC\\\\Temp/i.test(process.env.TEMP || "");
 
-  // stdin must be inherit here: the NUL device ACL denies AppContainers
-  // ("ignore" opens NUL), and a piped fd 0 currently also fails uv_spawn
-  // inside a container.
+  // The NUL device ACL denies AppContainers ("ignore" opens NUL).
   const s = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log('SPAWN_OK')"], stdio: ["inherit", "pipe", "pipe"] });
   r.spawnPiped = s.exitCode === 0 && s.stdout.toString().includes("SPAWN_OK");
 
-  // User-facing fs.realpath stays Node-parity: the component walk lstats the
-  // drive root (denied), and uv_fs_realpath's mount-manager query is denied.
-  // Bun internals go through get_fd_path, not these.
+  // The component walk lstats the drive root (denied). The native one does
+  // without the mount manager, like the rest of Bun.
   r.realpath = (() => {
     const errno = fn => { try { fn(); return "OK"; } catch (e) { return e.code || e.name; } };
     return { sync: errno(() => fs.realpathSync(".")), native: errno(() => fs.realpathSync.native(".")) };
@@ -318,7 +315,7 @@ async function main() {
   })();
 
   // In an AppContainer, any call on a closed handle kills the process (exit 0xC0000008). When a socket
-  // is closed in its own data() handler, its libuv poll has to be closed before the socket.
+  // is closed in its own data() handler, its poll has to be closed before the socket.
   r.closeInHandler = await (async () => {
     let server;
     try {
@@ -367,10 +364,9 @@ main().then(
       // AppContainer children to the package's AC\Temp.
       expect(r.tempRewritten).toBe(true);
       expect(r.spawnPiped).toBe(true);
-      expect(r.realpath).toEqual({ sync: "EPERM", native: "EPERM" });
-      // Namespace denial vs name collision both surface as ERROR_ACCESS_DENIED;
-      // stock uv_pipe_bind2 maps that to EADDRINUSE. Tighten to EACCES once
-      // the disambiguation probe lands on the libuv side.
+      expect(r.realpath).toEqual({ sync: "EPERM", native: "OK" });
+      // Namespace denial vs name collision both surface as ERROR_ACCESS_DENIED,
+      // which is EADDRINUSE as in Node.js.
       expect(["EACCES", "EADDRINUSE"]).toContain(r.pipeNonLocal);
       expect(r.pipeLocal).toBe("LISTENED");
       expect(r.forkIpc).toBe("OK");

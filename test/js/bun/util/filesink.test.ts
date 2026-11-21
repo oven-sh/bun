@@ -869,12 +869,21 @@ it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the d
   });
 });
 
-// Skipped on Windows: the Windows FileSink writer hands bytes to uv_fs_write on
-// the libuv threadpool and never registers an AutoFlusher synchronously, so the
-// on_exit drain this suite exercises is a no-op there and every process.exit()
-// variant is a threadpool-vs-ExitProcess race rather than the POSIX buffered
-// flush being tested here.
-describe.skipIf(isWindows)("FileSink buffered data is flushed on process exit", () => {
+it("flush() resolves once the bytes are in the file", async () => {
+  using dir = tempDir("filesink-flush", {});
+  const sizes = new Set<number>();
+  for (let i = 0; i < 100; i++) {
+    const path = join(String(dir), String(i));
+    const writer = Bun.file(path).writer();
+    writer.write("123456");
+    await writer.flush();
+    sizes.add(fs.statSync(path).size);
+    await writer.end();
+  }
+  expect([...sizes]).toEqual([6]);
+});
+
+describe("FileSink buffered data is flushed on process exit", () => {
   const line = "LAST-LOG-LINE:fatal error, exiting\n";
   async function check(tail: string, expected: string) {
     const dir = tmpdirSync();
@@ -1095,7 +1104,7 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
     return { stdoutLength: stdout.length, stderr, exitCode };
   }
 
-  // On Windows uv_write takes the whole chunk at once and end() can return a
+  // On Windows the writer takes the whole chunk at once and end() can return a
   // plain number, hence Promise.resolve().
   it.concurrent("end() without await", async () => {
     expect(
@@ -1159,7 +1168,8 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
         `
           const child = Bun.spawn(
             [process.execPath, "-e", ${JSON.stringify(reader)}, ${JSON.stringify(flag)}],
-            { stdin: "pipe", stdout: "inherit", stderr: "inherit" },
+            // On Windows it would end with its parent, before it prints its count.
+            { stdin: "pipe", stdout: "inherit", stderr: "inherit", detached: ${isWindows} },
           );
           try {
             child.stdin.write(Buffer.alloc(${size}, 65));
@@ -1505,7 +1515,7 @@ it("fs.promises.writeFile with iterables under GC pressure does not crash", asyn
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
 
-it.skipIf(isWindows)("throws on invalid writer options instead of crashing", async () => {
+it("throws on invalid writer options instead of crashing", async () => {
   const stderr = Bun.stderr;
   const baseline = fileSinkInternals.liveCount();
   const iterations = 8;
@@ -1650,6 +1660,47 @@ describe.concurrent("start() on an open writer", () => {
       console.log(JSON.stringify({ ...out, closed: await closed() }));
     `);
     expect(result).toEqual({ target: "short", initial: "", closed: "all" });
+  });
+
+  // Elsewhere a file is written before the call returns.
+  describe.skipIf(!isWindows).each(["flush", "end"])("start({ path }) with a pending %s()", method => {
+    it.each(["setImmediate(run)", "process.once('beforeExit', run)"])("settles it, in %s", async schedule => {
+      const result = await run(`
+        async function run() {
+          const initial = join(dir, "initial.txt");
+          const target = join(dir, "target.txt");
+          const writer = Bun.file(initial).writer();
+          writer.write(Buffer.alloc(8 << 20));
+          const next = writer.${method}().then(() => {
+            const { size } = fs.statSync(initial);
+            writer.write("second");
+            return size;
+          });
+          writer.start({ path: target });
+          const size = await next;
+          await writer.end();
+          console.log(JSON.stringify({ size, target: read(target), closed: await closed() }));
+        }
+        ${schedule};
+      `);
+      expect(result).toEqual({ size: 8 << 20, target: "second", closed: "all" });
+    });
+
+    it("rejects it if the write fails", async () => {
+      const result = await run(`
+        fs.writeFileSync(join(dir, "initial.txt"), "");
+        const fd = fs.openSync(join(dir, "initial.txt"), "r");
+        const writer = Bun.file(fd).writer();
+        writer.write("first");
+        const pending = writer.${method}();
+        writer.start({ path: join(dir, "target.txt") });
+        const code = await pending.catch(error => error.code);
+        writer.write("second");
+        await writer.end();
+        console.log(JSON.stringify({ code, target: read(join(dir, "target.txt")) }));
+      `);
+      expect(result).toEqual({ code: "EBADF", target: "second" });
+    });
   });
 
   it.skipIf(!isLinux)("start({ path }) moves a writer from a regular file to a FIFO and closes the file", async () => {

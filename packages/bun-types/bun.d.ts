@@ -2603,8 +2603,8 @@ declare module "bun" {
          * On macOS, `"getaddrinfo"` shouldn't be necessary because
          * `"system"` uses the same API underneath (except non-blocking).
          *
-         * On Windows, libuv's non-blocking DNS resolver is used by default, and
-         * when specifying backends "system", "libc", or "getaddrinfo". The c-ares
+         * On Windows, Bun runs `GetAddrInfoW` in a separate thread pool by default,
+         * and when specifying backends "system", "libc", or "getaddrinfo". The c-ares
          * backend isn't supported on Windows.
          */
         backend?: "libc" | "c-ares" | "system" | "getaddrinfo";
@@ -8078,7 +8078,7 @@ declare module "bun" {
        * - POSIX: calls `setsid()` so the child starts a new session and becomes
        *   the process group leader. It can outlive the parent and receive
        *   signals independently of the parent’s terminal/process group.
-       * - Windows: sets `UV_PROCESS_DETACHED`, allowing the child to outlive
+       * - Windows: sets `DETACHED_PROCESS`, allowing the child to outlive
        *   the parent and receive signals independently.
        *
        * Note: stdio may keep the parent process alive. Pass `stdio: ["ignore",

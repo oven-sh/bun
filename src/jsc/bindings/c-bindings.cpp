@@ -35,7 +35,7 @@
 #endif
 #endif
 #else
-#include <uv.h>
+#include <fcntl.h>
 #include <windows.h>
 #include <corecrt_io.h>
 #include <atomic>
@@ -60,34 +60,23 @@ extern "C" [[noreturn]] void bun_abort_missing_simd()
     exit(134);
 }
 
+#if !OS(WINDOWS)
 // Error condition is encoded as max int32_t.
 // The only error in this function is ESRCH (no process found)
 extern "C" int32_t get_process_priority(int32_t pid)
 {
-#if OS(WINDOWS)
-    int priority = 0;
-    if (uv_os_getpriority(pid, &priority))
-        return std::numeric_limits<int32_t>::max();
-    return priority;
-#else
     errno = 0;
     int priority = getpriority(PRIO_PROCESS, pid);
     if (priority == -1 && errno != 0)
         return std::numeric_limits<int32_t>::max();
     return priority;
-#endif // OS(WINDOWS)
 }
 
 extern "C" int32_t set_process_priority(int32_t pid, int32_t priority)
 {
-#if OS(WINDOWS)
-    return uv_os_setpriority(pid, priority);
-#else
     return setpriority(PRIO_PROCESS, pid, priority);
-#endif // OS(WINDOWS)
 }
 
-#if !OS(WINDOWS)
 extern "C" bool is_executable_file(const char* path)
 {
 #if defined(O_EXEC) && !OS(LINUX)
@@ -120,18 +109,14 @@ extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
 #endif
 }
 
+#if !OS(WINDOWS)
 // Host CPU count, ignoring sched_getaffinity and cgroup cpu.max (unlike WTF::numberOfProcessorCores).
 // Used to size os.cpus() so it matches the native cpus() result count.
 extern "C" int32_t bun_sysconf__SC_NPROCESSORS_ONLN()
 {
-#if OS(WINDOWS)
-    SYSTEM_INFO sysinfo;
-    GetSystemInfo(&sysinfo);
-    return sysinfo.dwNumberOfProcessors;
-#else
     return sysconf(_SC_NPROCESSORS_ONLN);
-#endif
 }
+#endif
 
 #if OS(DARWIN) && BUN_DEBUG
 #include <malloc/malloc.h>
@@ -783,13 +768,9 @@ static termios termios_to_restore_later[3];
 // from normal execution; sig_atomic_t is the only integral type POSIX
 // guarantees can be accessed atomically across that boundary.
 extern "C" volatile sig_atomic_t bun_stdio_modified[3] = { 0, 0, 0 };
-#endif
 
 extern "C" void bun_restore_stdio()
 {
-
-#if !OS(WINDOWS)
-
     // Only suppress the restore when Bun is a pipeline producer (stdout is a
     // pipe, not a TTY) and it didn't touch termios itself. That's the #29592
     // case — a downstream consumer on the same /dev/pts/* device has already
@@ -825,10 +806,8 @@ extern "C" void bun_restore_stdio()
         while (err == -1 && errno == EINTR);
         pthread_sigmask(SIG_UNBLOCK, &sa, nullptr);
     }
-#endif
 }
 
-#if !OS(WINDOWS)
 // Implemented by bun_core::Global::raise_default_action.
 extern "C" [[noreturn]] void Bun__raiseDefaultAction(int sig);
 
@@ -840,22 +819,7 @@ extern "C" void onExitSignal(int sig)
 #endif
 
 #if OS(WINDOWS)
-extern "C" void Bun__restoreWindowsStdio();
-BOOL WINAPI Ctrlhandler(DWORD signal)
-{
-
-    if (signal == CTRL_C_EVENT) {
-        Bun__restoreWindowsStdio();
-        SetConsoleCtrlHandler(Ctrlhandler, FALSE);
-    }
-
-    return FALSE;
-}
-
-extern "C" void Bun__setCTRLHandler(BOOL add)
-{
-    SetConsoleCtrlHandler(Ctrlhandler, add);
-}
+extern "C" void Bun__installConsoleControlHandler();
 
 // Held, never released, across ExitProcess: a WTF suspender it kills between
 // SuspendThread and ResumeThread of this thread would leave it suspended forever.
@@ -971,41 +935,20 @@ extern "C" void bun_initialize_process()
     }
 #elif OS(WINDOWS)
     for (int fd = 0; fd <= 2; ++fd) {
-        auto handle = reinterpret_cast<HANDLE>(uv_get_osfhandle(fd));
+        auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
         if (handle == INVALID_HANDLE_VALUE || GetFileType(handle) == FILE_TYPE_UNKNOWN) {
             // Ignore _close result. If it fails or not depends on used Windows
             // version. We will just check _open result.
             _close(fd);
             bun_is_stdio_null[fd] = 1;
-            if (fd != _open("nul", O_RDWR)) {
-                RELEASE_ASSERT_NOT_REACHED();
-            } else {
-                switch (fd) {
-                case 0: {
-                    SetStdHandle(STD_INPUT_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_INPUT_HANDLE) == uv_get_osfhandle(fd));
-                    break;
-                }
-                case 1: {
-                    SetStdHandle(STD_OUTPUT_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_OUTPUT_HANDLE) == uv_get_osfhandle(fd));
-                    break;
-                }
-                case 2: {
-                    SetStdHandle(STD_ERROR_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_ERROR_HANDLE) == uv_get_osfhandle(fd));
-                    break;
-                }
-                default: {
-                    ASSERT_NOT_REACHED();
-                }
-                }
-            }
+            int opened = _open("nul", O_RDWR);
+            RELEASE_ASSERT(opened == fd);
+            constexpr DWORD standardHandles[] = { STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE };
+            SetStdHandle(standardHandles[fd], reinterpret_cast<HANDLE>(_get_osfhandle(fd)));
         }
     }
 
-    // add ctrl+c handler on windows
-    Bun__setCTRLHandler(1);
+    Bun__installConsoleControlHandler();
 #endif
 
 #if OS(DARWIN)
@@ -1020,13 +963,7 @@ extern "C" void bun_initialize_process()
 #endif
 }
 
-#if OS(WINDOWS)
-extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
-{
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-#else
+#if !OS(WINDOWS)
 
 static bool can_open_as_nonblocking_tty(int32_t fd)
 {

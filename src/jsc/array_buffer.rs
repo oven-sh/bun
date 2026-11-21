@@ -551,10 +551,12 @@ impl PinnedArrayBuffer {
     /// Copies the bytes if they [`can_be_freed_while_pinned`](ArrayBuffer::can_be_freed_while_pinned),
     /// so a later read can't fault. Returns `false` if the copy can't be allocated.
     pub fn copy_if_freeable_while_pinned(&mut self, global: &JSGlobalObject) -> bool {
-        if !self.buffer.can_be_freed_while_pinned()
-            || self.buffer.byte_len == 0
-            || self.copy.is_some()
-        {
+        !self.buffer.can_be_freed_while_pinned() || self.snapshot(global)
+    }
+
+    /// From now on this reads a copy of the bytes. Returns `false` if the copy can't be allocated.
+    pub fn snapshot(&mut self, global: &JSGlobalObject) -> bool {
+        if self.buffer.byte_len == 0 || self.copy.is_some() {
             return true;
         }
         let bytes = self.buffer.byte_slice();

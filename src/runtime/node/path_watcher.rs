@@ -8,7 +8,7 @@
 //! lock-ordering workarounds, a WorkPool directory crawler, and a bolted-on FSEvents
 //! side-channel.
 //!
-//! The Windows backend (`win_watcher.rs`, libuv `uv_fs_event`) never went through
+//! The Windows backend (`win_watcher.rs`) never went through
 //! `bun.Watcher` and is a quarter of the size; this file gives Linux/macOS/FreeBSD
 //! the same shape:
 //!
@@ -53,7 +53,9 @@ use bun_wyhash::hash;
 
 use bun_jsc::VirtualMachineRef as VirtualMachine;
 
-use crate::node::node_fs_watcher::{Event, FSWatcher, WatchEventKind};
+#[cfg(not(target_os = "macos"))]
+use crate::node::node_fs_watcher::Event;
+use crate::node::node_fs_watcher::{FSWatcher, WatchEventKind};
 
 #[cfg(target_os = "macos")]
 use crate::node::fs_events as fsevents;
@@ -61,7 +63,7 @@ use crate::node::fs_events as fsevents;
 bun_output::define_scoped_log!(log, fs_watch, hidden);
 
 /// Process-global manager. Created on first `fs.watch()`, never destroyed (matches
-/// the FSEvents loop and Windows libuv loop lifetimes).
+/// the FSEvents loop lifetime).
 static DEFAULT_MANAGER: OnceLock<Guarded<PathWatcherManager>> = OnceLock::new();
 /// Serializes the fallible init, which a later `get()` retries.
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
@@ -216,9 +218,6 @@ impl ChangeEvent {
     }
 }
 
-pub(crate) type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
-pub(crate) type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
-
 impl PathWatcher {
     /// `rel_path` is borrowed — `onPathUpdatePosix` dupes it before enqueuing.
     /// `&self`: per-handler state is `Cell`-based, so the emit paths never
@@ -228,11 +227,7 @@ impl PathWatcher {
         let h = hash(rel_path);
         for (&ctx, ev) in self.handlers.iter() {
             if ev.should_emit(h, timestamp, event_type) {
-                (FSWatcher::ON_PATH_UPDATE)(
-                    Some(ctx),
-                    event_type.to_event(rel_path.into()),
-                    is_file,
-                );
+                FSWatcher::on_path_update(Some(ctx), event_type.to_event(rel_path.into()), is_file);
             }
         }
     }
@@ -244,7 +239,7 @@ impl PathWatcher {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn emit_unsuppressed(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
         for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(Some(ctx), event_type.to_event(rel_path.into()), is_file);
+            FSWatcher::on_path_update(Some(ctx), event_type.to_event(rel_path.into()), is_file);
         }
     }
 
@@ -254,18 +249,14 @@ impl PathWatcher {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn emit_overflow(&self) {
         for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(
-                Some(ctx),
-                Event::NoFilename(WatchEventKind::Change),
-                false,
-            );
+            FSWatcher::on_path_update(Some(ctx), Event::NoFilename(WatchEventKind::Change), false);
         }
     }
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     fn emit_error(&self, err: &sys::Error, close: bool) {
         for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(
+            FSWatcher::on_path_update(
                 Some(ctx),
                 Event::Error {
                     err: err.clone(),
@@ -317,15 +308,8 @@ pub(crate) fn watch(
     vm: &VirtualMachine,
     path: &ZStr,
     recursive: bool,
-    callback: Callback,
-    update_end: UpdateEndCallback,
     ctx: *mut c_void,
 ) -> sys::Result<Handle> {
-    // Assert the callback/updateEnd are what node_fs_watcher passes.
-    // Compare against the *exact* fn pointers `FSWatcher` passes (not local wrappers,
-    // which would be distinct fn items with distinct addresses).
-    debug_assert!(callback as usize == FSWatcher::ON_PATH_UPDATE as usize);
-    debug_assert!(update_end as usize == (FSWatcher::on_update_end as UpdateEndCallback) as usize);
     let _ = vm;
 
     let manager = PathWatcherManager::get()?;

@@ -120,7 +120,7 @@
       "AddonData"
     ]
   },
-  "src/runtime/napi/uv_posix.rs": {
+  "src/runtime/napi/uv.rs": {
     "WorkPool::schedule*": 1,
     "unsafe impl Send": [
       "WorkRef"
@@ -145,9 +145,8 @@
     ]
   },
   "src/runtime/node/node_fs.rs": {
-    "WorkPool::schedule*": 4,
+    "WorkPool::schedule*": 3,
     "owned_task!": [
-      "AsyncMkdirp",
       "CpSingleTask",
       "ReaddirSubtask"
     ],
@@ -203,6 +202,9 @@
   },
   "src/runtime/webcore/blob/fd_job.rs": {
     "WorkPool::schedule*": 1
+  },
+  "src/runtime/webcore/blob/windows/blocking.rs": {
+    "FilePool, DEVICE_POOL": 1
   },
   "src/runtime/webcore/fetch/FetchTasklet.rs": {
     "HTTPThread::schedule": 1

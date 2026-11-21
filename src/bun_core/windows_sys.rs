@@ -35,8 +35,8 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 
 // ──────────────────────────────────────────────────────────────────────────
 // PEB access. `bun_core::output::windows_stdio`
-// reads `ProcessParameters.hStd{Input,Output,Error}` to snapshot the console
-// handles before libuv touches them. Canonical structs/asm live in the tier-0
+// reads `ProcessParameters.hStd{Input,Output,Error}` to restore the console
+// modes. Canonical structs/asm live in the tier-0
 // `bun_windows_sys` leaf and are re-exported here for the
 // `crate::windows_sys::*` path used by callers.
 // ──────────────────────────────────────────────────────────────────────────
@@ -47,12 +47,3 @@ pub use bun_windows_sys::{
 // kernel32 externs are owned by the tier-0 leaf `bun_windows_sys`; re-export
 // so existing `crate::windows_sys::kernel32::*` callers resolve.
 pub use bun_windows_sys::kernel32;
-
-/// `bun.windows.libuv` — only `uv_disable_stdio_inheritance` is called from
-/// `bun_core`; declared directly to avoid a `bun_libuv_sys` dep at tier-0.
-pub mod libuv {
-    unsafe extern "C" {
-        /// No preconditions; walks the CRT fd table and clears HANDLE_FLAG_INHERIT.
-        pub(crate) safe fn uv_disable_stdio_inheritance();
-    }
-}

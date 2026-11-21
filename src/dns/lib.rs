@@ -1,17 +1,19 @@
 #![warn(unused_must_use)]
 
 use core::ffi::c_int;
+#[cfg(not(windows))]
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
-use bun_core::{String as BunString, ZStr};
+use bun_core::String as BunString;
+#[cfg(not(windows))]
+use bun_core::ZStr;
 // `bun_wyhash` exports `Wyhash11` (iterative init/update/final_ surface).
 // Hash is in-memory dedupe only — algorithm identity is not load-bearing.
 use bun_wyhash::Wyhash11 as Wyhash;
 
 // `libc` does not expose winsock types/constants on Windows; route every
-// `libc::AF_*` / `addrinfo` reference through this shim so
-// the body of this crate stays cfg-free.
+// `libc::AF_*` / `addrinfo` reference through this shim.
 #[cfg(not(windows))]
 mod sock {
     pub use libc::addrinfo;
@@ -24,16 +26,19 @@ mod sock {
 mod sock {
     pub use bun_windows_sys::ws2_32::addrinfo;
     pub(crate) use bun_windows_sys::ws2_32::{
-        AF_INET, AF_INET6, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, freeaddrinfo,
-        getaddrinfo,
+        AF_INET, AF_INET6, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
     };
 }
 
+#[cfg(windows)]
+pub use bun_sys::windows::AddrInfoList;
 pub use sock::addrinfo;
 
 /// What `getaddrinfo` returns.
+#[cfg(not(windows))]
 pub struct AddrInfoList(NonNull<addrinfo>);
 
+#[cfg(not(windows))]
 impl AddrInfoList {
     /// `Err` is the `EAI_*` status, or 0 for an empty list.
     pub fn lookup(
@@ -62,12 +67,9 @@ impl AddrInfoList {
         // SAFETY: live until `drop`.
         Addresses(Some(unsafe { self.0.as_ref() }))
     }
-
-    pub fn to_list(&self) -> ResultList {
-        self.addresses().into_list()
-    }
 }
 
+#[cfg(not(windows))]
 impl Drop for AddrInfoList {
     fn drop(&mut self) {
         // SAFETY: from `getaddrinfo`.
@@ -76,21 +78,11 @@ impl Drop for AddrInfoList {
 }
 
 /// Iterator over the bytes of each non-null `ai_addr` of a `getaddrinfo` result.
+#[cfg(not(windows))]
 #[derive(Clone)]
 pub struct Addresses<'a>(Option<&'a addrinfo>);
 
-impl Addresses<'_> {
-    fn into_list(self) -> ResultList {
-        let mut list = ResultList::with_capacity(self.clone().count());
-        list.extend(self.map(|address| GetAddrInfoResult {
-            address: Address::from_bytes(address),
-            // no TTL in POSIX getaddrinfo()
-            ttl: 0,
-        }));
-        list
-    }
-}
-
+#[cfg(not(windows))]
 impl<'a> Iterator for Addresses<'a> {
     type Item = &'a [u8];
 
@@ -355,13 +347,15 @@ pub struct GetAddrInfoResult {
 
 pub type ResultList = Vec<GetAddrInfoResult>;
 
-#[cfg(windows)]
-impl GetAddrInfoResult {
-    /// # Safety
-    /// `addrinfo` is an entry of a `getaddrinfo` result.
-    pub unsafe fn to_list(addrinfo: &sock::addrinfo) -> ResultList {
-        Addresses(Some(addrinfo)).into_list()
-    }
+pub fn to_result_list(addr_info: &AddrInfoList) -> ResultList {
+    let addresses = addr_info.addresses();
+    let mut list = ResultList::with_capacity(addresses.clone().count());
+    list.extend(addresses.map(|address| GetAddrInfoResult {
+        address: Address::from_bytes(address),
+        // no TTL in POSIX getaddrinfo()
+        ttl: 0,
+    }));
+    list
 }
 
 pub fn address_to_string(address: &Address) -> BunString {
@@ -473,8 +467,35 @@ pub fn is_valid_hostname(name: &[u8]) -> bool {
         .all(|label| (1..=63).contains(&label.len()) && label.iter().all(|&b| is_hostname_byte(b)))
 }
 
+/// The UTS #46 form of a name that is not ASCII, if that is a valid host name.
+#[cfg(windows)]
+pub fn to_ascii(name: &[u8]) -> Option<Vec<u8>> {
+    unsafe extern "C" {
+        /// Has no bytes when `domain` does not convert.
+        safe fn Bun__idnaToASCII(domain: &BunString) -> BunString;
+    }
+    if name.len() > AddrInfoList::MAX_NAME_LEN || bun_core::strings::is_all_ascii(name) {
+        return None;
+    }
+    let ascii = Bun__idnaToASCII(&bun_core::StringView::borrow_utf8(name)).to_owned_slice();
+    let is_name =
+        bun_core::ip_address::to_ip_address(&ascii).is_none() && !ends_in_a_number(&ascii);
+    (is_name && is_valid_hostname(&ascii)).then_some(ascii)
+}
+
+/// https://url.spec.whatwg.org/#ends-in-a-number-checker
+#[cfg(windows)]
+fn ends_in_a_number(name: &[u8]) -> bool {
+    let name = name.strip_suffix(b".").unwrap_or(name);
+    let dot = bun_core::strings::last_index_of_char(name, b'.');
+    match &name[dot.map_or(0, |dot| dot + 1)..] {
+        [b'0', b'x', digits @ ..] => digits.iter().all(u8::is_ascii_hexdigit),
+        digits => digits.iter().all(u8::is_ascii_digit),
+    }
+}
+
 /// The process-wide DNS
-/// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
+/// cache lives in `bun_runtime` (it owns the resolver backends + JSC
 /// stat counters). `bun_install` reaches it via a link-time extern
 /// rather than a `bun_runtime` crate dep, which would cycle.
 pub mod internal {

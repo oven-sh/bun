@@ -764,7 +764,7 @@ fn lay_link(
                         &mut to_buf[..],
                         &[name.as_bytes()],
                     )
-                    && sys::sys_uv::link(&real, to).is_ok()
+                    && sys::link(&real, to).is_ok()
                 {
                     return Ok(());
                 }
@@ -941,7 +941,7 @@ impl HardLinkWindowsInstallTask {
         }
 
         let err = windows::CopyFileW(src, dest, false).err()?;
-        Some(err.to_system_errno().into())
+        Some(err.to_e().into())
     }
 }
 
@@ -1536,9 +1536,7 @@ impl PackageFiles<'_> {
             let mut buf2 = bun_paths::w_path_buffer_pool::get();
 
             let mut i = windows::GetFinalPathNameByHandleW(destbase.fd().native(), &mut buf[..], 0)
-                .map_err(|err| {
-                    Failure::boxed(err.to_system_errno().into(), Step::OpeningDestDir)
-                })?;
+                .map_err(|err| Failure::boxed(err.to_e().into(), Step::OpeningDestDir))?;
             if buf[i] != u16::from(b'\\') {
                 buf[i] = u16::from(b'\\');
                 i += 1;
@@ -1565,9 +1563,7 @@ impl PackageFiles<'_> {
 
             let cache_path_length =
                 windows::GetFinalPathNameByHandleW(walker.root().native(), &mut buf2[..], 0)
-                    .map_err(|err| {
-                        Failure::boxed(err.to_system_errno().into(), Step::CopyingFiles)
-                    })?;
+                    .map_err(|err| Failure::boxed(err.to_e().into(), Step::CopyingFiles))?;
             // borrowck — index by `cache_path_length` directly so no shared borrow is live.
             let to_copy_buf2_off = if buf2[cache_path_length - 1] != u16::from(b'\\') {
                 buf2[cache_path_length] = u16::from(b'\\');
@@ -1693,9 +1689,7 @@ impl PackageFiles<'_> {
                 let _ = sys::unlink_w(dest);
                 result = windows::CopyFileW(src, dest, true);
             }
-            result.map_err(|err| {
-                copy_failed(err.to_system_errno().into(), entry_path, &mut failed_file)
-            })
+            result.map_err(|err| copy_failed(err.to_e().into(), entry_path, &mut failed_file))
         });
         #[cfg(not(windows))]
         let result = copy(&state.subdir, &mut state.walker, &mut failed_file);
@@ -2035,11 +2029,7 @@ impl<'a> PackageInstall<'a> {
     }
 
     fn is_dangling_symlink(path: &ZStr) -> bool {
-        #[cfg(windows)]
-        let opened = sys::sys_uv::open(path, 0, 0);
-        #[cfg(not(windows))]
-        let opened = sys::open(path, sys::O::PATH, 0);
-        opened.map(sys::File::from_fd).is_err()
+        sys::File::open(path, sys::O::PATH, 0).is_err()
     }
 
     pub(crate) fn install_from_link(
@@ -2122,7 +2112,7 @@ impl<'a> PackageInstall<'a> {
             let mut i = match windows::GetFinalPathNameByHandleW(handle, &mut wbuf[..], 0) {
                 Ok(len) => len,
                 Err(err) => {
-                    let err = err.to_system_errno().into();
+                    let err = err.to_e().into();
                     return InstallResult::fail(err, Step::LinkingDependency);
                 }
             };

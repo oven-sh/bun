@@ -124,9 +124,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect.unreachable();
     } catch (exception) {
       expect(exception.code).toBe("ENOENT");
-      if (!IS_UV_FS_COPYFILE_DISABLED) {
-        expect(exception.path).toBe(dst.name);
-      }
+      expect(exception.path).toBe(dst.name);
     }
 
     const src = Bun.file(path.join(tmpbase, `test-bun-write-${Date.now()}.txt`));
@@ -138,9 +136,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       await gcTick();
     } catch (exception) {
       expect(exception.code).toBe("ENOENT");
-      if (!IS_UV_FS_COPYFILE_DISABLED) {
-        expect(exception.path).toBe(dst.name);
-      }
+      expect(exception.path).toBe(dst.name);
     } finally {
       fs.unlinkSync(src.name);
     }
@@ -170,7 +166,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stdout).toContain("CODE=ENOENT");
-        if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
+        if (isWindows) {
           expect(stdout).toContain("PATH_IS_SRC=true");
         }
         expect(stderr).toBe("");
@@ -225,7 +221,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(exitCode).toBe(0);
   });
 
-  it.skipIf(isWindows)("Bun.write('', Bun.file(src)) rejects with ENOENT", async () => {
+  it("Bun.write('', Bun.file(src)) rejects with ENOENT", async () => {
     using dir = tempDir("bun-write-empty-dest", { file: "x" });
     const script = `
       import fs from "node:fs";
@@ -359,6 +355,15 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
   });
 
+  it("Bun.file lastModified after 2038", async () => {
+    using dir = tempDir("bun-file-lastmodified-2038", { file: "" });
+    fs.utimesSync(path.join(String(dir), "file"), 2 ** 31 + 5, 2 ** 31 + 5);
+    expect(Bun.file(path.join(String(dir), "file")).lastModified).toBe((2 ** 31 + 5) * 1000);
+    const read = Bun.file(path.join(String(dir), "file"));
+    await read.text();
+    expect(read.lastModified).toBe((2 ** 31 + 5) * 1000);
+  });
+
   it("Bun.file as a Blob", async () => {
     const filePath = path.join(import.meta.path, "../fetch.js.txt");
     const fixture = fs.readFileSync(filePath, "utf8");
@@ -480,7 +485,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   // ftruncate(dst, N); both destroy bytes in a file the caller already had
   // open. BUN_CONFIG_DISABLE_COPY_FILE_RANGE=1 routes Linux through the
   // fallback so the assertion fail-befores on every POSIX lane.
-  describe.skipIf(isWindows)("Bun.write(Bun.file(fd), Bun.file(path)) does not truncate the fd", () => {
+  describe("Bun.write(Bun.file(fd), Bun.file(path)) does not truncate the fd", () => {
     const fallbackEnv = { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1" };
 
     it("preserves bytes past the slice window in an r+ fd", async () => {
@@ -508,7 +513,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(exitCode).toBe(0);
     });
 
-    it("preserves pre-existing bytes when stdout is redirected with >>", async () => {
+    // Needs sh.
+    it.skipIf(isWindows)("preserves pre-existing bytes when stdout is redirected with >>", async () => {
       using dir = tempDir("bun-write-stdout-append", {
         "src.bin": Buffer.alloc(1000, "S").toString(),
         "log.txt": "AAAAAAAAAA",
@@ -877,7 +883,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
   }, 25000);
 
   if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
-    it("Bun.write() without uv_fs_copyfile", async () => {
+    it("Bun.write() without CopyFileW", async () => {
       const { exited } = Bun.spawn({
         cmd: [bunExe(), "test", import.meta.path],
         env: {
@@ -1685,9 +1691,17 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       );
       expect(retry.bodyUsed).toBe(false);
       expect((await retry.arrayBuffer()).byteLength).toBe(CHUNK * COUNT);
-      await expect(
-        Bun.write(join(String(dir), "missing", "c"), await fetch(server.url), { createPath: false }),
-      ).rejects.toThrow(expect.objectContaining({ code: "ENOENT" }));
+      const missing = join(String(dir), "missing", "c");
+      await expect(Bun.write(missing, await fetch(server.url), { createPath: false })).rejects.toThrow(
+        expect.objectContaining({ code: "ENOENT", path: missing }),
+      );
+      // A folder that cannot be made is what the error names.
+      fs.writeFileSync(join(String(dir), "file"), "");
+      const below = join(String(dir), "file", "folder");
+      const failed = await Bun.write(join(below, "d"), await fetch(server.url)).catch(error => error);
+      expect(failed).toMatchObject(
+        isWindows ? { code: "ENOTDIR", syscall: "mkdir", path: expect.not.stringMatching(/d$/) } : { code: "ENOTDIR" },
+      );
     });
   });
 
@@ -1748,7 +1762,6 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     ["a TypedArray written to a directory", `Bun.write(dir, new Uint8Array(4))`, "EISDIR"],
     // Truncating a directory fails with EINVAL on Windows and EISDIR elsewhere.
     ["an empty Blob written to a directory", `Bun.write(dir, new Blob([]))`, isWindows ? "EINVAL" : "EISDIR"],
-    // Windows reports these two as "UV_EBADF" (errno -4083), which the substring check also accepts.
     ["a string written to a read-only file descriptor", `Bun.write(Bun.file(fs.openSync(file, "r")), "x")`, "EBADF"],
     [
       "a TypedArray written to a read-only file descriptor",
@@ -1799,6 +1812,45 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(stdout).toBe("caught EISDIR\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+});
+
+// A directory cannot be renamed on Windows while a file in it is open.
+describe.skipIf(!isWindows || IS_UV_FS_COPYFILE_DISABLED)("a file is closed soon while other threads compute", () => {
+  it.each([
+    ["Bun.write()", `await Bun.write(file, "abc")`],
+    ["text()", `await Bun.file(file).text()`],
+    ["stream()", `for await (const _ of Bun.file(file).stream());`],
+    ["writer()", `const sink = Bun.file(file).writer(); sink.write("x"); await sink.end()`],
+    [
+      "a Response",
+      `using server = Bun.serve({ port: 0, fetch: () => new Response(Bun.file(file)) }); await (await fetch(server.url)).text()`,
+    ],
+    ["a redirect of the shell", "await Bun.$\\`echo hi > \\${file}\\`".replaceAll("\\", "")],
+    ["a FileHandle", `await (await fs.promises.open(file)).close()`],
+    ["createReadStream()", `for await (const _ of fs.createReadStream(file));`],
+  ])("%s", async (_, use) => {
+    using dir = tempDir("closed-soon", { "d/f": "hello" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import fs from "fs";
+         const file = "d/f";
+         let finished = 0;
+         for (let i = 0; i < 4; i++) require("crypto").pbkdf2("a", "b", 2e7, 32, "sha256", () => finished++);
+         { ${use} }
+         for (;;) { try { fs.renameSync("d", "e"); break; } catch { await Bun.sleep(1); } }
+         console.log(finished);
+         process.reallyExit(0);`,
+      ],
+      cwd: String(dir),
+      env: { ...bunEnv, GOMAXPROCS: "2" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
   });
 });
 

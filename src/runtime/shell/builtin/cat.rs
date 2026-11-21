@@ -70,7 +70,8 @@ impl Cat {
         };
         match shell_openat(Builtin::cwd(interp, cmd), path, bun_sys::O::RDONLY, 0) {
             Ok(fd) => {
-                let reader = IOReader::init(bun_sys::File::from_fd(fd), interp.event_loop);
+                let file = bun_sys::File::from_fd(fd);
+                let reader = IOReader::init_for_one_command(file, interp.event_loop);
                 Self::read(interp, cmd, &reader, idx + 1)
             }
             Err(e) => Builtin::finish(interp, cmd, IoKind::Stderr, &Kind::Cat.task_error(&e), 1),

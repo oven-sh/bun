@@ -109,7 +109,6 @@ bun_standalone_graph.workspace = true
 bun_bunfig.workspace = true
 bun_sys.workspace = true
 bun_sys_jsc.workspace = true
-bun_libuv_sys.workspace = true
 bun_tcc_sys.workspace = true
 bun_test_schedule.workspace = true
 bun_text_diff.workspace = true
@@ -131,6 +130,9 @@ bun_icu_data.workspace = true
 bun_install_jsc.workspace = true
 bun_patch_jsc.workspace = true
 bun_css_jsc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_iocp.workspace = true
 
 [features]
 default = []

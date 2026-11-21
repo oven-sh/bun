@@ -733,12 +733,8 @@ impl RuntimeTranspilerCache {
         input_stat_size: u64,
     ) -> crate::CrateResult<Entry> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE];
-        // NONBLOCK: a FIFO must not block the open. On Windows it would make the handle overlapped.
-        #[cfg(unix)]
-        let open_flags = sys::O::RDONLY | sys::O::NONBLOCK;
-        #[cfg(not(unix))]
-        let open_flags = sys::O::RDONLY;
-        let cache_fd = sys::open(cache_file_path, open_flags, 0)?;
+        // NONBLOCK: a FIFO must not block the open.
+        let cache_fd = sys::open(cache_file_path, sys::O::RDONLY | sys::O::NONBLOCK, 0)?;
         let file = sys::File::from_fd(cache_fd);
         // On any error, delete the cache file.
         let unlink_guard = scopeguard::guard(cache_file_path, |p| {
@@ -752,10 +748,6 @@ impl RuntimeTranspilerCache {
         let stat_size = u64::try_from(stat.st_size).map_err(|_| crate::CrateError::MissingData)?;
 
         let metadata_bytes = file.pread_all(&mut metadata_bytes_buf, 0)?;
-        #[cfg(windows)]
-        {
-            file.seek_to(0)?;
-        }
         let mut reader = bun_io::FixedBufferStream::new(&metadata_bytes_buf[0..metadata_bytes]);
 
         let mut entry = Entry::default();
@@ -806,7 +798,7 @@ impl RuntimeTranspilerCache {
             None
         } else {
             let dir = sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
-            Some(sys::File::from_fd(dir.into_raw()).make_lib_uv_owned()?)
+            Some(sys::File::from_fd(dir.into_raw()))
         };
 
         Entry::save(

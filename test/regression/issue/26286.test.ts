@@ -5,7 +5,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // https://github.com/oven-sh/bun/issues/26286
 // Bun.Terminal callbacks not invoked inside AsyncLocalStorage.run()
 
-// Bun.Terminal uses PTY which is not supported on Windows
+// The first data of a ConPTY is an escape sequence of its own.
 test.skipIf(isWindows)("Bun.Terminal data callback works inside AsyncLocalStorage.run()", async () => {
   const storage = new AsyncLocalStorage();
 
@@ -36,7 +36,7 @@ test.skipIf(isWindows)("Bun.Terminal data callback works inside AsyncLocalStorag
   expect(new TextDecoder().decode(result.data!)).toContain("Hello");
 });
 
-test.skipIf(isWindows)("Bun.Terminal preserves async context inside callbacks", async () => {
+test("Bun.Terminal preserves async context inside callbacks", async () => {
   const storage = new AsyncLocalStorage<{ id: number }>();
 
   async function terminalTest() {

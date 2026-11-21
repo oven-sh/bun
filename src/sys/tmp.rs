@@ -1,6 +1,6 @@
 use bun_core::ZStr;
 
-use crate::{CloseOnDrop, Error, Fd, Mode, O, Tag};
+use crate::{CloseOnDrop, Error, Fd, Mode, O};
 
 // To be used with files
 // not folders!
@@ -42,10 +42,7 @@ impl<'a> Tmpfile<'a> {
             name: tmpfilename,
         };
 
-        Ok(Tmpfile {
-            file: file.make_lib_uv_owned_for_syscall(Tag::open)?,
-            entry,
-        })
+        Ok(Tmpfile { file, entry })
     }
 
     /// A failure hands the file back.

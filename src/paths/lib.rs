@@ -314,8 +314,6 @@ pub fn stem(p: &[u8]) -> &[u8] {
 // `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_which::which`
 // etc. accept a buffer obtained from this crate without a pointer cast.
 pub use bun_core::{MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, WPathBuffer};
-/// Alias for [`PATH_MAX_WIDE`].
-pub const MAX_WPATH: usize = PATH_MAX_WIDE;
 
 #[cfg(windows)]
 pub type OSPathChar = u16;

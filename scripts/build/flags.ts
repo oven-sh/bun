@@ -526,7 +526,6 @@ export const globalFlags: Flag[] = [
   {
     // libuv stubs use C23 anonymous parameters
     flag: "-Wno-c23-extensions",
-    when: c => c.unix,
     desc: "Allow C23 extensions (libuv stubs use anonymous parameters)",
   },
 
@@ -1926,6 +1925,8 @@ export function bunIncludes(cfg: Config): string[] {
     join(cwd, "src/js/builtins"),
     join(cwd, "src/runtime/napi"),
     join(cwd, "src/uws_sys"),
+    // The uv_* ABI that native addons are compiled against.
+    join(cwd, "src/jsc/bindings/libuv"),
     codegenDir,
     vendorDir,
     // NODEJS_HEADERS_PATH comes from the nodejs dep; added separately
@@ -1933,9 +1934,6 @@ export function bunIncludes(cfg: Config): string[] {
 
   if (cfg.windows) {
     includes.push(join(cwd, "src/jsc/bindings/windows"));
-  } else {
-    // libuv stubs for unix (real libuv used on windows)
-    includes.push(join(cwd, "src/jsc/bindings/libuv"));
   }
 
   return includes;

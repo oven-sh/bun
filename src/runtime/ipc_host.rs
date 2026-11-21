@@ -7,8 +7,6 @@ use crate::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
 use bun_jsc::bindgen::{JsLocal, JsScope};
-#[cfg(windows)]
-use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_ptr::RefPtr;
 
@@ -29,25 +27,6 @@ pub(crate) enum FromEnum {
     SubprocessExited,
     Subprocess,
     Process,
-}
-
-#[cfg(windows)]
-pub(crate) fn attach_windows_socket_payload(
-    global: &JSGlobalObject,
-    message: JSValue,
-    fd: bun_sys::Fd,
-    peer_pid: u32,
-) -> JsResult<Option<Box<[u8]>>> {
-    if peer_pid == 0 {
-        return Ok(None);
-    }
-    let Some(hex) = IPC::windows_export_socket_hex(fd, peer_pid) else {
-        log!("attachWindowsSocketPayload: WSADuplicateSocketW failed");
-        return Ok(None);
-    };
-    let str_js = bun_string_jsc::create_utf8_for_js(global, &hex)?;
-    message.put(global, IPC::WIN_SOCKET_INFO_KEY, str_js);
-    Ok(Some(hex))
 }
 
 pub(crate) fn emit_process_error_event<'a>(cx: &mut JsScope<'a>, error: JsLocal<'a>) {
@@ -157,7 +136,6 @@ pub(crate) fn do_send(
 
     let mut zig_handle: Option<Handle> = None;
     let mut pause_target = JSValue::UNDEFINED;
-    #[cfg_attr(windows, allow(unused_mut, unused_variables))]
     let mut dup_err: Option<bun_sys::Error> = None;
     if !handle.is_undefined_or_null() {
         if let Some(listener) = Listener::from_js(&handle) {
@@ -175,7 +153,7 @@ pub(crate) fn do_send(
                     }
                     #[cfg(windows)]
                     {
-                        zig_handle = Some(Handle::init(fd, handle));
+                        zig_handle = Handle::export(fd, peer_pid, handle, false);
                     }
                 }
                 #[cfg(windows)]
@@ -200,11 +178,7 @@ pub(crate) fn do_send(
                 }
                 #[cfg(windows)]
                 {
-                    zig_handle = Some(if keep_open {
-                        Handle::init(fd, handle)
-                    } else {
-                        Handle::init_close_on_complete(fd, handle)
-                    });
+                    zig_handle = Handle::export(fd, peer_pid, handle, !keep_open);
                 }
             }
         } else if let Some(udp) = handle.as_class_ref::<crate::socket::UDPSocket>() {
@@ -215,9 +189,12 @@ pub(crate) fn do_send(
                     Ok(h) => zig_handle = Some(h),
                     Err(e) => dup_err = Some(e),
                 }
+                // A frame has room for TCP only.
                 #[cfg(windows)]
                 {
-                    zig_handle = Some(Handle::init(fd, handle));
+                    let _ = fd;
+                    let (errno, tag) = (bun_sys::E::ENOTSUP, bun_sys::Tag::write);
+                    dup_err = Some(bun_sys::Error::from_code(errno, tag));
                 }
             }
         }
@@ -241,23 +218,12 @@ pub(crate) fn do_send(
         call_handle_method(global_object, target, "close")
     };
 
-    #[cfg(not(windows))]
     if let Some(e) = dup_err {
         use bun_jsc::SysErrorJsc as _;
         close_detached(global_object, pause_target)?;
         return do_send_err(global_object, callback, e.to_js(global_object), from);
     }
 
-    #[cfg(windows)]
-    if let Some(h) = &mut zig_handle {
-        match attach_windows_socket_payload(global_object, message, h.fd, peer_pid)? {
-            Some(hex) => {
-                h.win_export_hex = Some(hex);
-                h.peer_pid = peer_pid;
-            }
-            None => zig_handle = None,
-        }
-    }
     if zig_handle.is_none() {
         message = original_message;
         close_detached(global_object, pause_target)?;
@@ -351,15 +317,7 @@ pub(crate) fn send<'a>(
     let vm = global.bun_vm();
     let ipc = get_ipc_instance(vm).map(IPCInstance::data);
     #[cfg(windows)]
-    let peer_pid = {
-        let from_pipe = ipc.as_ref().map(|i| i.ipc_peer_pid()).unwrap_or(0);
-        if from_pipe != 0 {
-            from_pipe
-        } else {
-            // SAFETY: the VM's uv loop exists, so `uv__winapi_init` has run.
-            unsafe { bun_libuv_sys::uv_os_getppid() as u32 }
-        }
-    };
+    let peer_pid = ipc.map_or(0, SendQueue::parent_pid);
     #[cfg(not(windows))]
     let peer_pid = 0;
     do_send(
@@ -501,13 +459,7 @@ pub(crate) fn get_ipc_instance(
             Some(IPC::SendQueueOwner::Instance),
             IPC::SocketUnion::Uninitialized,
         );
-        let send_queue: *mut SendQueue = data.as_ptr();
-
-        // `windows_configure_client` STORES the `*mut SendQueue` in
-        // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
-        // allocation's root raw pointer.
-        // SAFETY: `send_queue` is the live SendQueue owned by `data`.
-        if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd) } {
+        if data.windows_configure_client(fd).is_err() {
             data.detach();
             bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
             return None;

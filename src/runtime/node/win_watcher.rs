@@ -1,28 +1,23 @@
-//! Windows-only filesystem watcher backed by libuv `uv_fs_event_t`.
+//! The backend of `fs.watch()` on Windows.
 
 #![cfg(windows)]
 
 use core::cell::Cell;
-use core::ffi::{c_char, c_int, c_void};
-use core::ptr;
+use core::ffi::c_void;
+use std::rc::Rc;
 
-use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{String as BunString, ZStr};
+use bun_core::strings::basename_windows;
+use bun_core::{Timespec, TimespecMockMode, WStr, ZStr};
+use bun_iocp::{AsyncFile, Completion, Request};
 use bun_jsc as jsc;
-use bun_jsc::JsCell;
+use bun_ptr::CellExt as _;
 use bun_sys as sys;
-use bun_sys::ReturnCodeExt as _;
-use bun_sys::windows::libuv as uv;
-use bun_sys::windows::libuv::UvHandle as _;
+use bun_sys::Win32ErrorExt as _;
+use bun_sys::windows::{self as w, NT_SUCCESS, NTSTATUS, Win32Error};
+use bun_sys::windows_format::directory_changes::{self, Change};
 
 use super::node_fs_watcher::WatchEventKind;
-use crate::jsc_hooks::path_watchers;
-// The callbacks are *associated functions* on `FSWatcher`, not free fns.
-use crate::node::node_fs_watcher::{Event, FSWatcher, StringOrBytesToDecode};
-#[allow(non_upper_case_globals)]
-const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PATH_UPDATE;
-#[allow(non_upper_case_globals)]
-const on_update_end_fn: fn(Option<*mut c_void>) = FSWatcher::on_update_end;
+use crate::node::node_fs_watcher::{Event, FSWatcher};
 
 // Rust identifiers cannot contain '.', so
 // the static is declared by hand (instead of via `declare_scope!`) with the
@@ -34,25 +29,101 @@ pub(crate) static fs_watch: bun_output::ScopedLogger =
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A VM's watchers, by `recursive` and path.
-pub(crate) type PathWatchers = [JsCell<StringArrayHashMap<uv::Owned<PathWatcher>>>; 2];
+pub(crate) type Handle = Rc<PathWatcher>;
 
-pub(crate) type Handle = *mut PathWatcher;
-
-// TODO: we probably should use native instead of libuv abstraction here for better performance
-#[repr(C)]
 pub(crate) struct PathWatcher {
-    handle: uv::uv_fs_event_t,
+    /// The `FSWatcher`, which has the only [`Handle`].
+    owner: *mut c_void,
+    last_event: Cell<ChangeEvent>,
+    target: Target,
     recursive: bool,
-    emit_in_progress: Cell<bool>,
-    handlers: JsCell<ArrayHashMap<*mut c_void, ChangeEvent>>,
+    /// Has the only handle to the directory, which keeps its parents from being renamed.
+    read: Cell<Option<Request>>,
+    spare: Cell<Vec<u8>>,
+    /// Whether the last read ended with `BUFFER_OVERFLOW`.
+    was_cut: Cell<bool>,
 }
 
-// SAFETY: `#[repr(C)]` with the handle first.
-unsafe impl uv::UvHandle for PathWatcher {}
+enum Target {
+    /// Without short names.
+    Directory(Vec<u16>),
+    /// Its directory is what is watched.
+    File {
+        name: Vec<u16>,
+        short_name: Vec<u16>,
+    },
+}
+
+impl Target {
+    fn open(path: &WStr) -> Result<(Target, std::os::windows::io::OwnedHandle), Win32Error> {
+        let (target, mut directory) =
+            if w::GetFileAttributesW(path)? & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
+                let long = w::long_path(path).unwrap_or_else(|_| path.to_vec());
+                (Target::Directory(long), path.to_vec())
+            } else {
+                let name = basename_windows(path);
+                let short = w::short_path(path).unwrap_or_default();
+                let target = Target::File {
+                    name: name.to_vec(),
+                    short_name: basename_windows(&short).to_vec(),
+                };
+                match &path[..path.len() - name.len()] {
+                    [] => (target, bun_core::w!(".").to_vec()),
+                    parent => (target, parent.to_vec()),
+                }
+            };
+        directory.push(0);
+        let handle = w::CreateFileW(
+            WStr::from_slice_with_nul(&directory),
+            w::FILE_LIST_DIRECTORY,
+            w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+            w::OPEN_EXISTING,
+            w::FILE_FLAG_BACKUP_SEMANTICS | w::FILE_FLAG_OVERLAPPED,
+        )?;
+        Ok((target, handle))
+    }
+
+    /// `None` for a neighbour of the file.
+    fn name_to_report(&self, Change { name, action }: Change) -> Option<Vec<u16>> {
+        match self {
+            // It is spelled as whoever made the change has opened it.
+            Target::Directory(directory)
+                if has_short_name(&name)
+                    && !matches!(
+                        action,
+                        w::FILE_ACTION_REMOVED | w::FILE_ACTION_RENAMED_OLD_NAME
+                    ) =>
+            {
+                Some(long_name(directory, &name).unwrap_or(name))
+            }
+            Target::Directory(_) => Some(name),
+            Target::File {
+                name: long,
+                short_name,
+            } => [long, short_name]
+                .iter()
+                .any(|it| w::eq_ignore_case(it, &name))
+                .then(|| long.clone()),
+        }
+    }
+}
+
+fn has_short_name(path: &[u16]) -> bool {
+    (path.split(|&unit| bun_paths::is_sep_any_t(unit)))
+        .any(|name| name.len() <= "12345678.123".len() && name.contains(&u16::from(b'~')))
+}
+
+fn long_name(directory: &[u16], name: &[u16]) -> Option<Vec<u16>> {
+    let path = [directory, bun_core::w!("\\"), name, &[0]].concat();
+    let long = w::long_path(WStr::from_slice_with_nul(&path)).ok()?;
+    let is_separator = |&unit: &u16| bun_paths::is_sep_any_t(unit);
+    let depth = name.split(is_separator).count();
+    let parent = long.rsplitn(depth + 1, is_separator).nth(depth)?;
+    Some(long[parent.len() + 1..].to_vec())
+}
 
 #[derive(Clone, Copy)]
-pub(crate) struct ChangeEvent {
+struct ChangeEvent {
     hash: bun_watcher::HashType,
     event_type: WatchEventKind,
     timestamp: u64,
@@ -92,244 +163,105 @@ impl ChangeEvent {
 }
 
 impl PathWatcher {
-    extern "C" fn uv_event_callback(
-        event: *mut uv::uv_fs_event_t,
-        filename: *const c_char,
-        events: c_int,
-        status: uv::ReturnCode,
-    ) {
-        // SAFETY: libuv guarantees `event` is the handle we registered.
-        if unsafe { (*event).data }.is_null() {
-            bun_core::debug_warn!("uvEventCallback called with null data");
-            return;
-        }
-        // SAFETY: event points to PathWatcher.handle; recover the parent via offset_of.
-        let this: *mut PathWatcher =
-            unsafe { bun_core::from_field_ptr!(PathWatcher, handle, event) };
-        // SAFETY: `this` was heap-allocated in `init` and is kept alive until
-        // uv_close fires; only shared access is taken and `me` is not used past
-        // any call that can free it.
-        let me = unsafe { &*this };
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(me.handle.data == this.cast::<c_void>());
-        }
-
-        // SAFETY: libuv contract — `loop_` is valid while the handle is open.
-        let timestamp = unsafe { (*me.handle.loop_).time };
-
-        if let Some(err) = status.to_error(sys::Tag::watch) {
-            me.emit_in_progress.set(true);
-
-            let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
-            for ctx in keys {
-                if !me.handlers.get().contains_key(&ctx) {
-                    continue;
-                }
-                on_path_update_fn(
-                    Some(ctx),
-                    Event::Error {
-                        err: err.clone(),
-                        close: true,
-                    },
-                    false,
-                );
-                on_update_end_fn(Some(ctx));
+    fn read_changes(self: &Rc<Self>, file: &Rc<AsyncFile>) -> Result<(), NTSTATUS> {
+        const FILTER: u32 = w::FileNotifyChangeFilter::all().bits();
+        // The system holds as much as the first read had room for, and a share takes no more than 64 KiB.
+        let size = if self.recursive { 64 * 1024 } else { 4096 };
+        let mut buffer = self.spare.take();
+        buffer.clear();
+        buffer.reserve_exact(size);
+        let (this, next) = (Rc::downgrade(self), Rc::clone(file));
+        let done = move |completion| {
+            if let Some(this) = this.upgrade() {
+                this.on_changes(&next, completion);
             }
-
-            me.emit_in_progress.set(false);
-            Self::maybe_deinit(this);
-            return;
-        }
-
-        let event_type = if events & uv::UV_RENAME != 0 {
-            WatchEventKind::Rename
-        } else {
-            WatchEventKind::Change
         };
-
-        if filename.is_null() {
-            // ReadDirectoryChangesW overflowed and changes were lost (always
-            // UV_CHANGE), or libuv could not convert the name to UTF-8.
-            // Forward `(event, null)` to every handler like node, unsuppressed.
-            me.emit_in_progress.set(true);
-            let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
-            for ctx in keys {
-                if !me.handlers.get().contains_key(&ctx) {
-                    continue;
-                }
-                on_path_update_fn(Some(ctx), Event::NoFilename(event_type), false);
-                on_update_end_fn(Some(ctx));
-            }
-            me.emit_in_progress.set(false);
-            Self::maybe_deinit(this);
-            return;
-        }
-        // SAFETY: libuv passes a valid NUL-terminated string when non-null.
-        let path = ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(filename) });
-
-        // Intentional wrap to bun_watcher::HashType
-        let hash = me.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
-        let is_file = !me.handle.is_dir();
-        Self::emit(this, path.as_bytes(), hash, timestamp, is_file, event_type);
+        let read = file.read_changes(buffer, size, FILTER, self.recursive, done);
+        self.read.set(Some(read.map_err(|refused| refused.status)?));
+        Ok(())
     }
 
-    fn emit(
-        this: *mut PathWatcher,
-        path: &[u8],
-        hash: bun_watcher::HashType,
-        timestamp: u64,
-        is_file: bool,
-        event_type: WatchEventKind,
-    ) {
-        {
-            // SAFETY: `this` is the live heap pointer from `init`; the borrow ends
-            // before `maybe_deinit` may free it.
-            let me = unsafe { &*this };
-            me.emit_in_progress.set(true);
-            #[cfg(debug_assertions)]
-            let mut debug_count: usize = 0;
-
-            let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
-            for key in keys {
-                let Some(fire) = me
-                    .handlers
-                    .with_mut(|h| h.get_mut(&key).map(|v| v.emit(hash, timestamp, event_type)))
-                else {
-                    continue;
-                };
-                if fire {
-                    let ctx: *mut FSWatcher = key.cast::<FSWatcher>();
-                    // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
-                    let encoding = unsafe { (*ctx).encoding };
-                    // `EventPathString` on Windows is `StringOrBytesToDecode`.
-                    let payload = match encoding {
-                        crate::node::Encoding::Utf8 => {
-                            StringOrBytesToDecode::String(BunString::clone_utf8(path))
-                        }
-                        _ => StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(path)),
-                    };
-                    on_path_update_fn(Some(ctx.cast()), event_type.to_event(payload), is_file);
-                    #[cfg(debug_assertions)]
-                    {
-                        debug_count += 1;
-                    }
-                    on_update_end_fn(Some(ctx.cast()));
-                }
-            }
-
-            #[cfg(debug_assertions)]
-            bun_output::scoped_log!(
-                fs_watch,
-                "emit({}, {}, {}, at {}) x {}",
-                bstr::BStr::new(path),
-                if is_file { "file" } else { "dir" },
-                <&'static str>::from(event_type),
-                timestamp,
-                debug_count,
-            );
-
-            me.emit_in_progress.set(false);
+    fn on_changes(self: &Rc<Self>, file: &Rc<AsyncFile>, completion: Completion) {
+        let Completion { status, buffer, .. } = completion;
+        let timestamp = Timespec::now(TimespecMockMode::ForceRealTime).ms_unsigned();
+        // One is how a share can say that there were too many.
+        let is_cut = status == NTSTATUS::BUFFER_OVERFLOW;
+        let was_cut = self.was_cut.replace(is_cut);
+        if !NT_SUCCESS(status) && (was_cut || !is_cut) {
+            return self.fail(file, status, timestamp);
         }
-        Self::maybe_deinit(this);
+        let records = match status {
+            NTSTATUS::SUCCESS => &buffer[..],
+            _ => &[],
+        };
+        let changes: Vec<_> = directory_changes::parse(records).collect();
+        self.spare.set(buffer);
+        let next = self.read_changes(file);
+        for change in changes {
+            let Ok(change) = change else {
+                // There were too many. Forward `(event, null)` like node, unsuppressed.
+                self.send(Event::NoFilename(WatchEventKind::Change), false);
+                continue;
+            };
+            let event_type = match change.action {
+                w::FILE_ACTION_MODIFIED => WatchEventKind::Change,
+                w::FILE_ACTION_ADDED..=w::FILE_ACTION_RENAMED_NEW_NAME => WatchEventKind::Rename,
+                _ => continue,
+            };
+            if let Some(name) = self.target.name_to_report(change) {
+                self.emit(&name, timestamp, event_type);
+            }
+        }
+        if let Err(status) = next {
+            self.fail(file, status, timestamp);
+        }
     }
 
-    fn init(
-        vm: &jsc::VirtualMachineRef,
-        path: &ZStr,
-        recursive: bool,
-    ) -> sys::Result<*mut PathWatcher> {
-        let mut outbuf = bun_paths::path_buffer_pool::get();
-        // Windows `sys::readlink` returns the byte length; the link target is
-        // written into `outbuf[..len]` with `outbuf[len] == 0` (sys_uv NUL-terminates). Reconstruct
-        // the NUL-terminated string via `ZStr::from_buf`.
-        let readlink_result = sys::readlink(path, &mut outbuf);
-        let event_path: &ZStr = match readlink_result {
-            sys::Result::Err(err) => 'brk: {
-                if err.errno == sys::E::NOENT as _ {
-                    return sys::Result::Err(sys::Error {
-                        errno: err.errno,
-                        syscall: sys::Tag::open,
-                        ..Default::default()
-                    });
-                }
-                break 'brk path;
+    fn fail(&self, file: &AsyncFile, status: NTSTATUS, timestamp: u64) {
+        let error = Win32Error::from_ntstatus(status);
+        if let (Win32Error::ACCESS_DENIED, Target::Directory(path)) = (error, &self.target) {
+            let was_deleted = matches!(status, NTSTATUS::DELETE_PENDING | NTSTATUS::FILE_DELETED);
+            if w::is_delete_pending(file.handle().raw()).unwrap_or(was_deleted) {
+                self.emit(path, timestamp, WatchEventKind::Rename);
+                return self.send(Event::Deleted(sys::E::ENOENT), false);
             }
-            sys::Result::Ok(len) => ZStr::from_buf(outbuf.as_slice(), len),
-        };
-
-        let watchers = &path_watchers()[usize::from(recursive)];
-        if let Some(existing) = watchers.get().get(event_path.as_bytes()) {
-            return sys::Result::Ok(existing.as_ptr());
+            // That was withdrawn, which does not bring the watch back.
+            if was_deleted {
+                return self.send(Event::Deleted(sys::E::EPERM), false);
+            }
         }
+        let err = sys::Error::from_code(error.to_node_e(), sys::Tag::watch);
+        self.send(Event::Error { err, close: true }, false);
+    }
 
-        let mut owned = uv::Owned::new(PathWatcher {
-            handle: bun_core::ffi::zeroed(),
-            recursive,
-            emit_in_progress: Cell::new(false),
-            handlers: JsCell::new(ArrayHashMap::default()),
-        });
-        let this = owned.as_ptr();
+    /// In a task of its own, so that microtasks run between two events.
+    fn send(&self, event: Event, is_file: bool) {
+        FSWatcher::on_path_update(Some(self.owner), event, is_file);
+        FSWatcher::on_update_end(Some(self.owner));
+    }
 
-        // uv_fs_event_init on Windows unconditionally returns 0 (vendor/libuv/src/win/fs-event.c).
-        // bun.assert evaluates its argument before the inline early-return, so this runs in release too.
-        // SAFETY: `this` is a freshly-allocated valid pointer; uv_loop comes from the VM.
-        unsafe {
-            // `ptr::addr_of_mut!` (not `&mut (*this).handle`): libuv stashes this pointer and
-            // hands it back to `uv_event_callback`, which `from_field_ptr!`-offsets it to recover
-            // the parent `PathWatcher`. Deriving via `addr_of_mut!` keeps `this`'s whole-allocation
-            // provenance so that container-of access stays in-bounds under Stacked Borrows.
-            let rc = uv::uv_fs_event_init(vm.uv_loop(), ptr::addr_of_mut!((*this).handle));
-            debug_assert!(rc == uv::ReturnCode::zero());
-            (*this).handle.data = this.cast::<c_void>();
+    fn emit(&self, name: &[u16], timestamp: u64, event_type: WatchEventKind) {
+        let path = bun_core::strings::wtf16_to_wtf8(name);
+        let hash = bun_wyhash::hash(&path) as bun_watcher::HashType;
+        let is_file = matches!(self.target, Target::File { .. });
+        bun_output::scoped_log!(
+            fs_watch,
+            "emit({}, {}, {}, at {})",
+            bstr::BStr::new(&path),
+            if is_file { "file" } else { "dir" },
+            <&'static str>::from(event_type),
+            timestamp,
+        );
+
+        if !(self.last_event).with_taken(|last| last.emit(hash, timestamp, event_type)) {
+            return;
         }
-
-        // UV_FS_EVENT_RECURSIVE only works for Windows and OSX
-        // SAFETY: `(*this).handle` was initialized by uv_fs_event_init above; event_path is NUL-terminated.
-        unsafe {
-            uv::uv_fs_event_start(
-                ptr::addr_of_mut!((*this).handle),
-                Some(PathWatcher::uv_event_callback),
-                event_path.as_ptr().cast::<c_char>(),
-                if recursive {
-                    uv::UV_FS_EVENT_RECURSIVE as u32
-                } else {
-                    0
-                },
-            )
-        }
-        .to_result(sys::Tag::watch)?;
-        // we handle this in node_fs_watcher
-        owned.unref();
-
-        watchers.with_mut(|watchers| watchers.insert(event_path.as_bytes(), owned));
-        sys::Result::Ok(this)
+        self.send(event_type.to_event(path.into()), is_file);
     }
 
     /// JS-thread entry point from `FSWatcher.detach()`.
-    pub(crate) fn detach(this: Handle, handler: *mut c_void) {
-        // SAFETY: `this` is the live `heap::alloc`'d pointer returned from `watch()`;
-        // it stays valid until `maybe_deinit` self-destroys on the last handler.
-        let removed = unsafe { &*this }
-            .handlers
-            .with_mut(|h| h.swap_remove(&handler));
-        if removed {
-            Self::maybe_deinit(this);
-        }
-    }
-
-    fn maybe_deinit(this: *mut PathWatcher) {
-        // SAFETY: `this` is the live heap pointer from `init`, not used once it is dropped.
-        let me = unsafe { &*this };
-        if me.handlers.get().len() != 0 || me.emit_in_progress.get() {
-            return;
-        }
-        bun_output::scoped_log!(fs_watch, "deinit");
-        path_watchers()[usize::from(me.recursive)].with_mut(|watchers| {
-            if let Some(index) = watchers.values().iter().position(|w| w.as_ptr() == this) {
-                watchers.swap_remove_at(index);
-            }
-        });
+    pub(crate) fn detach(this: Handle, _owner: *mut c_void) {
+        drop(this);
     }
 }
 
@@ -339,12 +271,40 @@ pub(crate) fn watch(
     vm: &jsc::VirtualMachineRef,
     path: &ZStr,
     recursive: bool,
-    ctx: *mut c_void,
+    owner: *mut c_void,
 ) -> sys::Result<Handle> {
-    let watcher = PathWatcher::init(vm, path, recursive)?;
-    // SAFETY: watcher is a valid freshly-returned heap pointer.
-    unsafe { &*watcher }.handlers.with_mut(|h| {
-        h.insert(ctx, ChangeEvent::default());
+    let mut outbuf = bun_paths::path_buffer_pool::get();
+    let event_path: &[u8] = match sys::readlink(path, &mut outbuf) {
+        sys::Result::Err(err) if err.get_errno() == sys::E::ENOENT => {
+            return sys::Result::Err(sys::Error::from_code(sys::E::ENOENT, sys::Tag::open));
+        }
+        sys::Result::Err(_) => path.as_bytes(),
+        sys::Result::Ok(_) => match sys::realpath(path, &mut outbuf) {
+            sys::Result::Err(err) if err.get_errno() == sys::E::ENOENT => {
+                return sys::Result::Err(sys::Error::from_code(sys::E::ENOENT, sys::Tag::open));
+            }
+            result => result.unwrap_or(path.as_bytes()),
+        },
+    };
+
+    let error = |err: Win32Error| sys::Error::from_code(err.to_node_e(), sys::Tag::watch);
+    let mut wide = bun_paths::w_path_buffer_pool::get();
+    let wide = sys::windows_format::wide::encode(event_path, &mut wide[..]);
+    let wide = wide.map_err(|err| error(err.into()))?;
+    let (target, handle) = Target::open(wide).map_err(error)?;
+    let this = Rc::new(PathWatcher {
+        owner,
+        last_event: Cell::default(),
+        recursive: recursive && matches!(target, Target::Directory(_)),
+        target,
+        read: Cell::new(None),
+        spare: Cell::default(),
+        was_cut: Cell::new(false),
     });
-    sys::Result::Ok(watcher)
+    let handle = bun_iocp::Handle::from_owned(handle);
+    let file = AsyncFile::exclusive(vm.uws_loop().port(), handle);
+    (this.read_changes(&Rc::new(file)))
+        .map_err(|status| error(Win32Error::from_ntstatus(status)))?;
+
+    sys::Result::Ok(this)
 }

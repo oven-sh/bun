@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tls } from "harness";
 
 const node = nodeExe();
 
-describe.skipIf(isWindows)("process.send(message, handle)", () => {
+describe("process.send(message, handle)", () => {
   test.concurrent("bun parent -> bun child: net.Server handle and message both arrive", async () => {
     using dir = tempDir("ipc-handle-bun-bun", {
       "parent.js": `
@@ -442,9 +442,12 @@ process.on('message', (m, socket) => {
     });
   });
 
-  test.concurrent("dgram.Socket handle arrives as a bound dgram.Socket the child can send/receive on", async () => {
-    using dir = tempDir("ipc-handle-dgram", {
-      "parent.js": `
+  // As in Node.js, a UDP socket cannot be sent on Windows.
+  test.concurrent.skipIf(isWindows)(
+    "dgram.Socket handle arrives as a bound dgram.Socket the child can send/receive on",
+    async () => {
+      using dir = tempDir("ipc-handle-dgram", {
+        "parent.js": `
 const { fork } = require('node:child_process');
 const dgram = require('node:dgram');
 
@@ -480,7 +483,7 @@ server.bind(0, '127.0.0.1', () => {
   });
 });
 `,
-      "child.js": `
+        "child.js": `
 const dgram = require('node:dgram');
 process.on('message', (m, socket) => {
   if (!(socket instanceof dgram.Socket)) return process.send({ error: 'handle was ' + typeof socket });
@@ -491,22 +494,23 @@ process.on('message', (m, socket) => {
   process.send('ready');
 });
 `,
-    });
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "parent.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ exitCode, stderr, response: stdout.includes("RESPONSE:pong:ping") }).toEqual({
-      exitCode: 0,
-      stderr: expect.any(String),
-      response: true,
-    });
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ exitCode, stderr, response: stdout.includes("RESPONSE:pong:ping") }).toEqual({
+        exitCode: 0,
+        stderr: expect.any(String),
+        response: true,
+      });
+    },
+  );
 
   test.concurrent("received net.Socket has connecting=false and remoteAddress synchronously", async () => {
     using dir = tempDir("ipc-handle-connecting", {
@@ -666,7 +670,8 @@ server.listen(0, '127.0.0.1', () => {
     },
   );
 
-  test.concurrent("a received handle that lands on fd 0 is adopted", async () => {
+  // A socket has no descriptor number on Windows.
+  test.concurrent.skipIf(isWindows)("a received handle that lands on fd 0 is adopted", async () => {
     using dir = tempDir("ipc-handle-fd0", {
       "parent.js": `
 const { fork } = require('node:child_process');
@@ -814,4 +819,26 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
     });
     expect(exitCode).toBe(0);
   });
+});
+
+test.skipIf(!isWindows)("a UDP socket cannot be sent, as in Node.js", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const child = require("child_process").spawn(process.execPath, ["-e", "process.on('message', () => {})"], {
+         stdio: ["ignore", "inherit", "inherit", "ipc"],
+       });
+       const socket = require("dgram").createSocket("udp4").bind(0, "127.0.0.1", () => {
+         child.send("x", socket, error => {
+           console.log(error.code);
+           socket.close(), child.disconnect();
+         });
+       });`,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.text()).toBe("ENOTSUP\n");
+  expect(await proc.exited).toBe(0);
 });

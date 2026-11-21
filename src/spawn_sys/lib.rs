@@ -1,18 +1,18 @@
 //! `bun_spawn_sys` — raw OS process-spawn layer split out of `bun_spawn`.
 //!
-//! This crate owns everything that talks directly to the kernel/libuv to
+//! This crate owns everything that talks directly to the kernel to
 //! create a child process and read its exit status, with **no** event-loop
-//! integration:
+//! integration (`CreateProcessW` is in `bun_sys::windows::process`):
 //!
 //!   - `posix_spawn(2)` libc wrappers (`Actions`/`Attr`/`spawn_z`/`wait4`)
 //!   - the `posix_spawn_bun` repr(C) request structs and FFI decl
 //!   - `spawn_process_posix` (fd plumbing + `posix_spawn` call)
-//!   - `PosixSpawnOptions`/`PosixStdio`/`PosixSpawnResult`/`ExtraPipe`/
+//!   - `SpawnOptions`/`Stdio`/`SpawnResult`/`ExtraPipe`/
 //!     `StdioKind`/`Dup2`/`Rusage`
 //!   - signal-forwarding / no-orphans `extern "C"` decls
 //!
 //! Dependencies are deliberately leaf-only: `libc`, `bun_sys`, `bun_core`,
-//! (Unix-only) `bun_analytics`, and (Windows-only) `bun_libuv_sys`. There is **no**
+//! and (Unix-only) `bun_analytics`. There is **no**
 //! `bun_event_loop`/`bun_io`/`bun_io`/`bun_threading` dependency — `Process`,
 //! `Poller`, `WaiterThread`, and the `sync` runner stay in `bun_spawn` and
 //! depend on this crate.
@@ -77,7 +77,7 @@ pub mod ffi {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Waiter-thread fallback flag — owned here so `spawn_process_posix` /
-// `PosixSpawnResult::pifd_from_pid` can flip it without depending on
+// `SpawnResult::pifd_from_pid` can flip it without depending on
 // `bun_threading`. `bun_spawn::process::WaiterThread` reads/writes through these.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod waiter_thread_flag {
@@ -102,7 +102,7 @@ pub mod waiter_thread_flag {
 
 // ──────────────────────────────────────────────────────────────────────────
 // `PR_SET_PDEATHSIG` default — `spawn_process_posix` consults this when
-// `PosixSpawnOptions::linux_pdeathsig` is `None`. Storage lives here (lowest
+// `SpawnOptions::linux_pdeathsig` is `None`. Storage lives here (lowest
 // tier that reads it); `bun_io::ParentDeathWatchdog::enable()` flips it on
 // from the main thread. `PR_SET_PDEATHSIG` is *thread*-scoped in the kernel,
 // so the default only applies when spawning from the same thread that armed
@@ -148,11 +148,11 @@ pub mod pdeathsig {
 // Public surface — flat re-exports so `bun_spawn` can `pub use bun_spawn_sys::*`.
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(windows)]
+pub use spawn_process::process_rusage;
 #[cfg(unix)]
 pub use spawn_process::spawn_process_posix;
-#[cfg(windows)]
-pub use spawn_process::uv_getrusage;
 pub use spawn_process::{
-    Dup2, ExtraPipe, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio, Rusage, RusageFields,
-    StdioKind, rusage_zeroed,
+    Dup2, ExtraPipe, PidT, Rusage, RusageFields, SpawnOptions, SpawnResult, Stdio, StdioKind,
+    rusage_zeroed,
 };

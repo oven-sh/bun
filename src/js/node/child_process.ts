@@ -1044,7 +1044,7 @@ function normalizeSpawnArguments(file, args, options?) {
       args = ["-c", command];
     }
   } else if (process.platform === "win32" && /\.(?:cmd|bat)[\s.]*$/i.exec(file) !== null) {
-    // CreateProcess routes .bat/.cmd through cmd.exe, which re-parses argv
+    // .bat/.cmd files run through cmd.exe, which re-parses argv
     // with shell metacharacter rules. Reject unless the caller explicitly
     // opted into shell semantics. Surface via the returned options so each
     // caller can deliver the error in its API-appropriate shape (synchronous
@@ -1183,14 +1183,14 @@ class ChildProcess extends EventEmitter {
         this.#stdioOptions[0] = "destroyed";
       }
 
-      // If there was an error while spawning the subprocess, then we will never have any IO to drain.
-      if (err) {
-        if (this.#stdioOptions[1] === "pipe") this.#stdioOptions[1] = "destroyed";
-        if (this.#stdioOptions[2] === "pipe") this.#stdioOptions[2] = "destroyed";
-      }
-
       const stdout = this.#stdout,
         stderr = this.#stderr;
+
+      // If there was an error while spawning the subprocess, then we will never have any IO to drain.
+      if (err) {
+        if (stdout === undefined && this.#stdioOptions[1] === "pipe") this.#stdioOptions[1] = "destroyed";
+        if (stderr === undefined && this.#stdioOptions[2] === "pipe") this.#stdioOptions[2] = "destroyed";
+      }
 
       if (stdout === undefined) {
         this.#stdout = this.#getBunSpawnIo(1, true);
@@ -1420,12 +1420,9 @@ class ChildProcess extends EventEmitter {
     // as UnownedFd from the start and Subprocess.finalize_streams never
     // double-closes it. Async path only: spawnSync never wraps extra fds in
     // net.Socket (no .stdio on Bun.spawnSync's result yet) and must keep
-    // them OwnedFd so finalize_streams still closes them. On Windows extra
-    // stdio is a libuv pipe handle with no raw-fd handoff, so leave as "pipe".
-    if (process.platform !== "win32") {
-      for (let i = 3; i < bunStdio.length; i++) {
-        if (bunStdio[i] === "pipe") bunStdio[i] = "socket-fd";
-      }
+    // them OwnedFd so finalize_streams still closes them.
+    for (let i = 3; i < bunStdio.length; i++) {
+      if (bunStdio[i] === "pipe") bunStdio[i] = "socket-fd";
     }
 
     const has_ipc = $isJSArray(stdio) && stdio.includes("ipc");

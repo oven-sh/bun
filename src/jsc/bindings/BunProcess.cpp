@@ -104,10 +104,10 @@
 #include <io.h>
 #include <fcntl.h>
 #include "NodeExeImportsWindows.h"
-// Using the same typedef and define for `mode_t` and `umask` as node on windows.
-// https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
-#define umask _umask
 typedef int mode_t;
+extern "C" uint32_t Bun__getUmask();
+extern "C" uint32_t Bun__setUmask(uint32_t);
+#define umask Bun__setUmask
 #endif
 #include "JSNextTickQueue.h"
 #include "ProcessBindingUV.h"
@@ -314,18 +314,13 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         // Not linked: src/zstd writes what this version writes.
         { "zstd", "1.5.7" },
         { "v8", REPORTED_NODEJS_V8_VERSION },
-#if !OS(WINDOWS)
-        { "uv", "1.48.0" },
-#endif
+        { "uv", reportedLibuvVersion },
     };
     auto putVersion = [&](const char* name, String&& version) {
         object->putDirect(vm, JSC::Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(name)), JSC::jsOwnedString(vm, version), 0);
     };
     for (auto& entry : versions)
         putVersion(entry.name, String(ASCIILiteral::fromLiteralUnsafe(entry.version)));
-#if OS(WINDOWS)
-    putDirectNamed(vm, object, "uv"_s, JSValue(JSC::jsOwnedString(vm, String::fromLatin1(uv_version_string()))));
-#endif
 #define STRINGIFY_IMPL(x) #x
 #define STRINGIFY(x) STRINGIFY_IMPL(x)
     putVersion("napi", STRINGIFY(NODE_API_SUPPORTED_VERSION_MAX) ""_s);
@@ -855,8 +850,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     if (callFrame->argumentCount() == 0 || callFrame->argument(0).isUndefined()) {
+#if OS(WINDOWS)
+        mode_t currentMask = Bun__getUmask();
+#else
         mode_t currentMask = umask(0);
         umask(currentMask);
+#endif
         return JSValue::encode(jsNumber(currentMask));
     }
 
@@ -1077,19 +1076,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
 static HashMap<int, Vector<String, 2>>* signalNumberToNamesMap = nullptr;
 static HashMap<String, int>* signalNameToNumberMap = nullptr;
 
-#if OS(WINDOWS)
-extern "C" void Bun__UVSignalHandle__close(uv_signal_t*);
-struct SignalHandleCloser {
-    void operator()(uv_signal_t* handle) const { Bun__UVSignalHandle__close(handle); }
-};
-#endif
-// On windows, signals need to have a handle to the uv_signal_t. When sigaction is used, this is kept track globally for you.
-struct SignalHandleValue {
-#if OS(WINDOWS)
-    std::unique_ptr<uv_signal_t, SignalHandleCloser> handle;
-#endif
-};
-static HashMap<int, SignalHandleValue>* signalToContextIdsMap = nullptr;
+static HashSet<int>* signalsWithListeners = nullptr;
 
 static const NeverDestroyed<String>* getSignalNames()
 {
@@ -1140,7 +1127,7 @@ static void loadSignalNumberMap()
         signalNameToNumberMap = new HashMap<String, int>();
         signalNameToNumberMap->reserveInitialCapacity(31);
 #if OS(WINDOWS)
-        // libuv-supported console-control signals on Windows:
+        // Console-control signals on Windows:
         // CTRL_C_EVENT → SIGINT, CTRL_BREAK_EVENT → SIGBREAK,
         // CTRL_CLOSE_EVENT → SIGHUP, plus SIGWINCH on console resize.
         signalNameToNumberMap->add(signalNames[0], SIGHUP);
@@ -1348,33 +1335,6 @@ extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
     }
     return fired;
 }
-
-#if OS(WINDOWS)
-extern "C" uv_signal_t* Bun__UVSignalHandle__init(JSC::JSGlobalObject* lexicalGlobalObject, int signalNumber, void (*callback)(uv_signal_t*, int));
-#endif
-
-#if !OS(WINDOWS)
-void signalHandler(int signalNumber)
-#else
-void signalHandler(uv_signal_t* signal, int signalNumber)
-#endif
-{
-#if OS(WINDOWS)
-    if (!signalNumberToNamesMap->contains(signalNumber)) [[unlikely]]
-        return;
-
-    auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
-    if (!context) [[unlikely]]
-        return;
-    // uv_signal_t callbacks fire on the uv_run thread (JS thread), but defer to avoid
-    // re-entering JS from inside the libuv poll loop
-    context->postTaskConcurrently([signalNumber](ScriptExecutionContext& context) {
-        Bun__onSignalForJS(signalNumber, uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject()));
-    });
-#else
-
-#endif
-};
 
 extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
 
@@ -1600,6 +1560,11 @@ extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 extern "C" void Bun__onSignalListenerCountChanged(int signalNumber, int listenerCount);
+#if OS(WINDOWS)
+extern "C" void Bun__watchConsoleSignal(int signalNumber, bool isWatched);
+extern "C" int Bun__killProcess(int pid, int signalNumber);
+extern "C" void Bun__restoreWindowsStdio();
+#endif
 extern "C" bool Bun__AOT__isRecordingOrder();
 
 // `bun run --watch` keeps this signal's handler installed for the process
@@ -1717,8 +1682,8 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         loadSignalNumberMap();
         loadSignalNumberToNamesMap();
 
-        if (!signalToContextIdsMap) {
-            signalToContextIdsMap = new HashMap<int, SignalHandleValue>();
+        if (!signalsWithListeners) {
+            signalsWithListeners = new HashSet<int>();
         }
 
         if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
@@ -1740,33 +1705,25 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #endif
 
                 if (isAdded) {
-                    if (!signalToContextIdsMap->contains(signalNumber)) {
-                        SignalHandleValue signal_handle;
-#if !OS(WINDOWS)
+                    if (signalsWithListeners->add(signalNumber).isNewEntry) {
                         Bun__ensureSignalHandler();
+#if !OS(WINDOWS)
                         installForwardSignalHandler(signalNumber);
 #else
-                        signal_handle.handle.reset(Bun__UVSignalHandle__init(
-                            eventEmitter.scriptExecutionContext()->jsGlobalObject(),
-                            signalNumber,
-                            &signalHandler));
-
-                        if (!signal_handle.handle) [[unlikely]]
-                            return;
+                        Bun__watchConsoleSignal(signalNumber, true);
 #endif
-
-                        signalToContextIdsMap->set(signalNumber, WTF::move(signal_handle));
                     }
                 } else {
-                    if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && listenerCount == 0) {
+                    if (listenerCount == 0 && signalsWithListeners->remove(signalNumber)) {
                         // The watch-mode sticky signal keeps its OS handler installed; only the
                         // handler teardown is skipped. The map entry is still removed — it is the
                         // "has JS listeners" source of truth that e.g. self-kill flush consults.
 #if !OS(WINDOWS)
                         if (signalNumber != watchModeStickySignal)
                             uninstallForwardSignalHandler(signalNumber);
+#else
+                        Bun__watchConsoleSignal(signalNumber, false);
 #endif
-                        signalToContextIdsMap->remove(signalNumber);
                     }
                 }
             }
@@ -1782,18 +1739,11 @@ extern "C" bool Bun__NODE_NO_WARNINGS();
 
 // All of the bytes, to a descriptor that the process has had from its start. Zero, or the number of the error.
 #if OS(WINDOWS)
+extern "C" bool Bun__Process__writeAllToStdio(int descriptor, const char* bytes, size_t length);
+
 static int writeToStandardDescriptor(int descriptor, std::span<const char> bytes)
 {
-    while (!bytes.empty()) {
-        uv_buf_t buffer = uv_buf_init(const_cast<char*>(bytes.data()), static_cast<unsigned int>(std::min<size_t>(bytes.size(), 1 << 30)));
-        uv_fs_t request;
-        int written = uv_fs_write(nullptr, &request, descriptor, &buffer, 1, -1, nullptr);
-        uv_fs_req_cleanup(&request);
-        if (written <= 0)
-            return EIO;
-        bytes = bytes.subspan(static_cast<size_t>(written));
-    }
-    return 0;
+    return Bun__Process__writeAllToStdio(descriptor, bytes.data(), bytes.size()) ? 0 : EIO;
 }
 #else
 static bool waitUntilWritable(int descriptor)
@@ -2121,6 +2071,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
 #if OS(WINDOWS)
     // Raising SIGABRT is handled in the CRT in windows, calling _exit() with ambiguous code "3" by default.
     // This adjustment to the abort behavior gives a more sane exit code on abort, by calling _exit directly with code 134.
+    Bun__restoreWindowsStdio();
     _exit(134);
 #else
     // process.abort() is user-requested; bypass the crash handler so it does
@@ -3042,7 +2993,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
     // Get the Process object - needed for accessing report settings
     Process* process = globalObject->processObject();
 
-    return constructReportObjectWindows(vm, globalObject, process);
+    RELEASE_AND_RETURN(scope, constructReportObjectWindows(vm, globalObject, process));
 #endif
 }
 
@@ -4252,6 +4203,8 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
 
 #if OS(WINDOWS)
 #define getpid _getpid
+#define getppid Bun__Process__getParentId
+extern "C" int32_t Bun__Process__getParentId();
 #endif
 
 static JSValue constructPid(VM& vm, JSObject* processObject)
@@ -4264,11 +4217,7 @@ JSC_DEFINE_CUSTOM_GETTER(processPpid, (JSC::JSGlobalObject * globalObject, JSC::
     // Always call the syscall so the value reflects reparenting
     // (e.g. after the original parent dies and the child is
     // reparented to init). Matches Node.js behavior.
-#if OS(WINDOWS)
-    return JSValue::encode(jsNumber(uv_os_getppid()));
-#else
     return JSValue::encode(jsNumber(getppid()));
-#endif
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setProcessPpid, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
@@ -4967,6 +4916,20 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory, (JSC::JSGlobalObject
     return JSValue::encode(jsNumber(WTF::ramSize()));
 }
 
+#if OS(WINDOWS)
+// ResourceUsage in src/sys/windows/process_info.rs.
+struct ResourceUsage {
+    CpuUsage cpu;
+    uint64_t peakWorkingSetBytes { 0 };
+    uint64_t pageFaults { 0 };
+    uint64_t reads { 0 };
+    uint64_t writes { 0 };
+};
+static_assert(sizeof(ResourceUsage) == 48);
+
+extern "C" int Bun__Process__getResourceUsage(ResourceUsage*);
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -4979,9 +4942,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
         return {};
     }
 #else
-    uv_rusage_t rusage;
-    int err = uv_getrusage(&rusage);
-    if (err) {
+    ResourceUsage usage;
+    if (int err = Bun__Process__getResourceUsage(&usage)) {
         throwSystemError(throwScope, globalObject, "uv_getrusage"_s, err);
         return {};
     }
@@ -4991,6 +4953,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
     Structure* resourceUsageStructure = process->resourceUsageStructure();
     JSObject* result = JSC::constructEmptyObject(vm, resourceUsageStructure);
 
+#if OS(WINDOWS)
+    for (PropertyOffset offset = 0; offset < 16; offset++)
+        result->putDirectOffset(vm, offset, jsNumber(0));
+    result->putDirectOffset(vm, 0, jsNumber(usage.cpu.user));
+    result->putDirectOffset(vm, 1, jsNumber(usage.cpu.system));
+    result->putDirectOffset(vm, 2, jsNumber(usage.peakWorkingSetBytes / 1024));
+    result->putDirectOffset(vm, 7, jsNumber(usage.pageFaults));
+    result->putDirectOffset(vm, 9, jsNumber(usage.reads));
+    result->putDirectOffset(vm, 10, jsNumber(usage.writes));
+#else
     result->putDirectOffset(vm, 0, jsNumber(std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec));
     result->putDirectOffset(vm, 1, jsNumber(std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec));
 #if OS(DARWIN)
@@ -5015,6 +4987,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
     result->putDirectOffset(vm, 13, jsNumber(rusage.ru_nsignals));
     result->putDirectOffset(vm, 14, jsNumber(rusage.ru_nvcsw));
     result->putDirectOffset(vm, 15, jsNumber(rusage.ru_nivcsw));
+#endif
 
     return JSValue::encode(result);
 }
@@ -5029,21 +5002,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
         throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "getrusage"_s, errno);
         return {};
     }
+    double user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
+    double system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
 #else
-    uv_rusage_t rusage;
-    int err = uv_getrusage(&rusage);
-    if (err) {
+    CpuUsage usage;
+    if (int err = Bun__Process__getCpuUsage(&usage)) {
         throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "uv_getrusage"_s, err);
         return {};
     }
+    double user = usage.user;
+    double system = usage.system;
 #endif
 
     auto* process = getProcessObject(globalObject, callFrame->thisValue());
 
     Structure* cpuUsageStructure = process->cpuUsageStructure();
-
-    double user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
-    double system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
 
     if (callFrame->argumentCount() > 0) {
         JSValue comparatorValue = callFrame->argument(0);
@@ -5149,9 +5122,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     user = 1e6 * info.user_time.seconds + info.user_time.microseconds;
     system = 1e6 * info.system_time.seconds + info.system_time.microseconds;
 #elif OS(LINUX) || OS(FREEBSD)
-    // FreeBSD has supported RUSAGE_THREAD since 8.1; the #else branch must
-    // stay Windows-only because uv_getrusage_thread is an aborting stub in
-    // uv-posix-stubs.c on the POSIX targets that link it.
+    // FreeBSD has supported RUSAGE_THREAD since 8.1.
     struct rusage threadUsage;
     if (getrusage(RUSAGE_THREAD, &threadUsage) != 0) {
         throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "getrusage"_s, errno);
@@ -5160,14 +5131,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     user = 1e6 * threadUsage.ru_utime.tv_sec + threadUsage.ru_utime.tv_usec;
     system = 1e6 * threadUsage.ru_stime.tv_sec + threadUsage.ru_stime.tv_usec;
 #else
-    uv_rusage_t threadUsage;
-    int err = uv_getrusage_thread(&threadUsage);
-    if (err) {
+    CpuUsage threadUsage;
+    if (int err = Bun__Process__getThreadCpuUsage(&threadUsage)) {
         throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "uv_getrusage_thread"_s, err);
         return {};
     }
-    user = 1e6 * threadUsage.ru_utime.tv_sec + threadUsage.ru_utime.tv_usec;
-    system = 1e6 * threadUsage.ru_stime.tv_sec + threadUsage.ru_stime.tv_usec;
+    user = threadUsage.user;
+    system = threadUsage.system;
 #endif
 
     user -= userComparator;
@@ -5190,6 +5160,7 @@ static bool readTaskVMInfo(task_vm_info_data_t& info)
 }
 #endif
 
+#if !OS(WINDOWS)
 extern "C" int getRSS(size_t* rss)
 {
 #if defined(__APPLE__)
@@ -5264,8 +5235,6 @@ err:
         return errno;
     *rss = static_cast<size_t>(kinfo.ki_rssize) * static_cast<size_t>(getpagesize());
     return 0;
-#elif OS(WINDOWS)
-    return uv_resident_set_memory(rss);
 #else
 #error "Unknown platform"
 #endif
@@ -5281,14 +5250,6 @@ extern "C" int getPeakRSS(size_t* peak)
         return -1;
     *peak = static_cast<size_t>(info.ledger_phys_footprint_peak);
     return 0;
-#elif OS(WINDOWS)
-    uv_rusage_t rusage;
-    int err = uv_getrusage(&rusage);
-    if (err)
-        return err;
-    // libuv converts PeakWorkingSetSize to kilobytes.
-    *peak = static_cast<size_t>(rusage.ru_maxrss) * 1024;
-    return 0;
 #else
     struct rusage rusage;
     if (getrusage(RUSAGE_SELF, &rusage) != 0)
@@ -5298,6 +5259,7 @@ extern "C" int getPeakRSS(size_t* peak)
     return 0;
 #endif
 }
+#endif // !OS(WINDOWS)
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -5855,31 +5817,9 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-#if !OS(WINDOWS)
     auto* result = jsString(globalObject->vm(), Bun__Process__getTitle(globalObject).transferToWTFString());
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
-#else
-    // When a title was explicitly set (`--title` CLI flag or a prior
-    // `process.title = ...`), the store is authoritative — the console title
-    // that uv_get_process_title reads is unavailable in console-less
-    // processes (CI) and never reflects the CLI flag.
-    if (Bun__Process__hasTitle()) {
-        auto* result = jsString(vm, Bun__Process__getTitle(globalObject).transferToWTFString());
-        RETURN_IF_EXCEPTION(scope, {});
-        RELEASE_AND_RETURN(scope, JSValue::encode(result));
-    }
-
-    char title[1024];
-    title[0] = '\0'; // Initialize buffer to empty string
-    if (uv_get_process_title(title, sizeof(title)) != 0 || title[0] == '\0') {
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, String("bun"_s))));
-    }
-
-    auto* result = jsString(vm, WTF::String::fromUTF8(title));
-    RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(result));
-#endif
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))
@@ -5893,19 +5833,9 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     }
     WTF::String wtfStr = jsString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-#if !OS(WINDOWS)
     BunString str = Bun::toString(wtfStr);
     Bun__Process__setTitle(globalObject, &str);
     return true;
-#else
-    // Update the store first so the getter reflects the assignment; the uv
-    // call is best-effort (it fails in console-less processes).
-    BunString str = Bun::toString(wtfStr);
-    Bun__Process__setTitle(globalObject, &str);
-    UTF8CString cstr = wtfStr.utf8();
-    uv_set_process_title(cstr.legacyCStringPointer());
-    return true;
-#endif
 }
 
 JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
@@ -5964,7 +5894,7 @@ static void bypassCrashHandlerForSelfSentSignal(int pid, int ownPid, int signalN
 static bool selfSentSignalEndsProcess(int pid, int ownPid, int signal)
 {
 #if OS(WINDOWS)
-    // What uv_kill() ends the process for.
+    // What Bun__killProcess() ends the process for.
     return (pid == ownPid || !pid) && (signal == SIGINT || signal == SIGTERM || signal == SIGKILL || signal == SIGQUIT);
 #else
     if (!killReachesThisProcess(pid, ownPid))
@@ -6001,16 +5931,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     int signal = callFrame->argument(1).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-#if !OS(WINDOWS)
     int ownPid = getpid();
-#else
-    int ownPid = uv_os_getpid();
-#endif
     // Node's Kill binding runs RunAtExit for a self-directed unhandled signal, so flush profiles
-    // first. `signalToContextIdsMap` is mutated only on the main thread; workers never set
+    // first. `signalsWithListeners` is mutated only on the main thread; workers never set
     // profiler configs, so skipping the flush there avoids a rehash race.
     if (signal > 0 && (pid == 0 || pid == -1 || pid == ownPid || pid == -ownPid)
-        && !(Bun__isMainThreadVM() && signalToContextIdsMap && signalToContextIdsMap->contains(signal))) {
+        && !(Bun__isMainThreadVM() && signalsWithListeners && signalsWithListeners->contains(signal))) {
         Bun__writeProfilesBeforeSelfKill(selfSentSignalEndsProcess(pid, ownPid, signal));
     }
 
@@ -6022,7 +5948,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     if (result < 0)
         result = errno;
 #else
-    int result = uv_kill(pid, signal);
+    if (selfSentSignalEndsProcess(pid, ownPid, signal))
+        Bun__restoreWindowsStdio();
+    int result = Bun__killProcess(pid, signal);
 #endif
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(result)));

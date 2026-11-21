@@ -132,22 +132,22 @@ pub mod uv_e {
     // FreeBSD lacks (ECHARSET / ENONET / ENOTSUP / EREMOTEIO / ENODATA / EUNATCH).
     macro_rules! __v {
         (CHARSET,  $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -crate::uv::$uv
         };
         (NONET,    $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -crate::uv::$uv
         };
         (NOTSUP,   $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -crate::uv::$uv
         };
         (REMOTEIO, $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -crate::uv::$uv
         };
         (NODATA,   $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -crate::uv::$uv
         };
         (UNATCH,   $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -crate::uv::$uv
         };
         ($i:tt,    $e:tt, $uv:tt) => {
             super::SystemErrno::$e as i32

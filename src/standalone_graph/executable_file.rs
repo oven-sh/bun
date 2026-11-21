@@ -494,9 +494,8 @@ pub fn with_executable_image<R>(
     path: &ZStr,
     use_image: impl FnOnce(&mut Image<'_>) -> R,
 ) -> bun_sys::Maybe<R> {
-    // Otherwise opening a named pipe waits for a writer.
-    let without_waiting = if cfg!(unix) { bun_sys::O::NONBLOCK } else { 0 };
-    let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | without_waiting;
+    // Without `O_NONBLOCK`, opening a named pipe waits for a writer.
+    let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
     let file = bun_sys::File::open(path, flags, 0)?;
     let len = file.get_end_pos()?;
     let mut read = |offset: usize, out: &mut [u8]| matches!(file.pread_all(out, offset as u64), Ok(count) if count == out.len());

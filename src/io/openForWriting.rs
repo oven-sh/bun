@@ -100,9 +100,6 @@ where
     {
         let _ = (is_socket, out_nonblocking, ctx, on_tty, is_pollable);
     }
-    // `O_NONBLOCK` opens an asynchronous handle, and `uv_fs_write` fails on those with EINVAL.
-    #[cfg(windows)]
-    let input_flags = input_flags & !bun_sys::O::NONBLOCK;
     // TODO: this should be concurrent.
     #[cfg(unix)]
     let mut isatty = false;
@@ -154,7 +151,6 @@ where
         *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
             != 0
             && !force_sync;
-        // The libuv writer needs a CRT fd. `Fd::uv()` panics on a HANDLE.
-        return file.make_lib_uv_owned_for_syscall(bun_sys::Tag::open);
+        return Ok(file);
     }
 }

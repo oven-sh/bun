@@ -85,7 +85,6 @@ fn spawn() -> std::io::Result<&'static Waker> {
         .name("Bundler".into())
         .spawn(move || {
             Output::Source::configure_named_thread(zstr!("Bundler"));
-            // On Windows the waker is this thread's libuv loop, so create it here.
             let waker = Waker::init().map(|waker| &*Box::leak(Box::new(waker)));
             let _ = slot.set(waker);
             // `thread_main` never returns.
@@ -97,22 +96,9 @@ fn spawn() -> std::io::Result<&'static Waker> {
     waker_result.wait().map_err(std::io::Error::other)
 }
 
-/// Used to keep the bundle thread from spinning on Windows
-#[cfg(windows)]
-extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) {}
-
 fn thread_main(waker: &Waker) -> ! {
     let uws_loop: &bun_uws::Loop = bun_uws::Loop::get();
     UWS_LOOP.store(core::ptr::from_ref(uws_loop).cast_mut(), Ordering::SeqCst);
-
-    // At function scope: the loop holds its address.
-    #[cfg(windows)]
-    let mut timer: bun_sys::windows::libuv::Timer = bun_core::ffi::zeroed();
-    #[cfg(windows)]
-    {
-        timer.init(uws_loop.uv_loop());
-        timer.start(u64::MAX, u64::MAX, Some(timer_callback));
-    }
 
     let mut generation: bun_core::Generation = 0;
     loop {

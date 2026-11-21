@@ -1984,8 +1984,8 @@ mod stdio_stores {
         static STDERR: core::cell::RefCell<Option<RefPtr<Store>>> = const { core::cell::RefCell::new(None) };
     }
 
-    fn build_store(uv_fd: i32, is_atty: bool) -> RefPtr<Store> {
-        let fd = bun_sys::Fd::from_uv(uv_fd);
+    fn build_store(fd_number: i32, is_atty: bool) -> RefPtr<Store> {
+        let fd = bun_sys::Fd::from_crt(fd_number);
         let mode: bun_sys::Mode = match bun_sys::fstat(fd) {
             Ok(stat) => stat.st_mode as bun_sys::Mode,
             Err(_) => 0,
@@ -2004,7 +2004,7 @@ mod stdio_stores {
     fn make_blob(
         global_this: &JSGlobalObject,
         slot: &'static std::thread::LocalKey<core::cell::RefCell<Option<RefPtr<Store>>>>,
-        uv_fd: i32,
+        fd_number: i32,
         is_atty: bool,
         feature: &'static core::sync::atomic::AtomicUsize,
     ) -> JSValue {
@@ -2012,7 +2012,7 @@ mod stdio_stores {
         let store = slot.with(|cell| {
             let mut s = cell.borrow_mut();
             if s.is_none() {
-                *s = Some(build_store(uv_fd, is_atty));
+                *s = Some(build_store(fd_number, is_atty));
             }
             // store.ref() — extra +1 for the new Blob.
             s.as_ref().unwrap().clone()
@@ -2021,7 +2021,7 @@ mod stdio_stores {
     }
 
     pub(super) fn stdin(global_this: &JSGlobalObject) -> JSValue {
-        let is_atty = bun_sys::isatty(bun_sys::Fd::from_uv(0));
+        let is_atty = bun_sys::isatty(bun_sys::Fd::from_crt(0));
         make_blob(
             global_this,
             &STDIN,

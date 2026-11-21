@@ -1,6 +1,8 @@
 use std::sync::OnceLock;
 
 use crate::ThreadPool;
+#[cfg(windows)]
+use crate::fifo_pool::{Config, FifoPool};
 
 pub use crate::thread_pool::Batch;
 pub use crate::thread_pool::Task;
@@ -118,14 +120,42 @@ macro_rules! owned_task {
     };
 }
 
+fn task_from_owned<T: OwnedTask>(mut task: Box<T>) -> *mut Task {
+    task.task_mut().callback = T::__callback;
+    let raw = Box::into_raw(task);
+    // SAFETY: `raw` is a live heap allocation, which the task now owns. The `Task` is
+    // projected from the raw pointer, so that it covers the whole allocation.
+    unsafe { T::field_of(raw) }
+}
+
 impl Batch {
     /// [`OwnedTask::run`] gets the `Box` back on a thread of the pool that schedules the batch.
-    pub fn from_owned<T: OwnedTask>(mut task: Box<T>) -> Batch {
-        task.task_mut().callback = T::__callback;
-        let raw = Box::into_raw(task);
-        // SAFETY: `raw` is a live heap allocation, which the batch now owns. The `Task` is
-        // projected from the raw pointer, so that it covers the whole allocation.
-        Batch::from(unsafe { T::field_of(raw) })
+    pub fn from_owned<T: OwnedTask>(task: Box<T>) -> Batch {
+        Batch::from(task_from_owned(task))
+    }
+}
+
+struct Call<F> {
+    task: Task,
+    run: F,
+}
+
+intrusive_work_task!([F] Call<F>, task);
+
+impl<F: FnOnce() + Send + 'static> OwnedTask for Call<F> {
+    fn run(self: Box<Self>) {
+        (self.run)();
+    }
+}
+
+pub(crate) fn task_from_fn(run: impl FnOnce() + Send + 'static) -> *mut Task {
+    let task = Task::default();
+    task_from_owned(Box::new(Call { task, run }))
+}
+
+impl Batch {
+    pub fn from_fn(run: impl FnOnce() + Send + 'static) -> Batch {
+        Batch::from(task_from_fn(run))
     }
 }
 
@@ -138,6 +168,43 @@ fn create() -> ThreadPool {
         stack_size: crate::thread_pool::POOL_THREAD_STACK_SIZE,
     })
 }
+
+/// For calls on open files. On Windows those pin their directory, so they do not wait behind computations.
+pub struct FilePool;
+
+impl FilePool {
+    #[cfg(windows)]
+    pub fn get() -> &'static FifoPool {
+        static POOL: std::sync::LazyLock<FifoPool> = std::sync::LazyLock::new(|| {
+            let threads = bun_core::env_var::UV_THREADPOOL_SIZE.get().unwrap_or(4);
+            FifoPool::new(Config {
+                name: "File I/O",
+                max_threads: threads.clamp(1, 1024) as usize,
+                stack_size: 4 * 1024 * 1024,
+                on_thread_start: bun_core::Output::Source::configure_thread_no_js,
+                has_new_threads: true,
+            })
+        });
+        &POOL
+    }
+
+    pub fn go(run: impl FnOnce() + Send + 'static) {
+        #[cfg(windows)]
+        Self::get().go(run);
+        #[cfg(not(windows))]
+        WorkPool::schedule(task_from_fn(run));
+    }
+}
+
+/// For calls of scripts on pipes, consoles and other devices, which can take any time.
+#[cfg(windows)]
+pub static DEVICE_POOL: FifoPool = FifoPool::new(Config {
+    name: "Device I/O",
+    max_threads: 512,
+    stack_size: 4 * 1024 * 1024,
+    on_thread_start: bun_core::Output::Source::configure_thread_no_js,
+    has_new_threads: false,
+});
 
 impl WorkPool {
     #[inline]
@@ -165,35 +232,7 @@ impl WorkPool {
     }
 
     pub fn go<C: Send + 'static>(context: C, function: fn(C)) -> Result<(), bun_alloc::AllocError> {
-        // PERF: `function` is stored as a runtime field rather than
-        // monomorphized into the callback — profile if it shows up on a hot path.
-        #[repr(C)]
-        struct TaskType<C> {
-            task: Task,
-            context: C,
-            function: fn(C),
-        }
-
-        unsafe fn callback<C>(task: *mut Task) {
-            // SAFETY: `task` points to the `task` field of a `TaskType<C>` allocated below
-            // via Box::into_raw; recover the parent pointer, run the user fn, then free.
-            unsafe {
-                let this_task = bun_core::from_field_ptr!(TaskType<C>, task, task);
-                let this_task = Box::from_raw(this_task);
-                (this_task.function)(this_task.context);
-            }
-        }
-
-        let task_ = Box::into_raw(Box::new(TaskType::<C> {
-            task: Task {
-                node: crate::thread_pool::Node::default(),
-                callback: callback::<C>,
-            },
-            context,
-            function,
-        }));
-        // SAFETY: task_ is a valid Box-allocated TaskType<C>; .task is its first field.
-        Self::schedule(unsafe { &raw mut (*task_).task });
+        Self::get().schedule(Batch::from_fn(move || function(context)));
         Ok(())
     }
 }

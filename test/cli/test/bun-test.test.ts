@@ -2629,26 +2629,24 @@ describe.concurrent("a test file that can never finish loading", () => {
     test("passes", () => {});
   `;
 
-  test.each([
-    [[]],
-    [["--isolate"]],
-    // On Windows the pipe to the coordinator keeps a worker's loop alive.
-    ...(isWindows ? [] : [[["--parallel=2"]], [["--parallel=2", "--isolate"]]]),
-  ])("fails immediately and the run continues %j", async flags => {
-    const { errors, counts, exitCode } = await runFiles(
-      { "a.test.ts": neverLoads, "b.test.ts": passes, "c.test.ts": passes },
-      ...flags,
-    );
-    expect({ errors, counts, exitCode }).toEqual({
-      errors: [
-        'error: "a.test.ts" never finished loading',
-        nothingLeft,
-        'note: unsettled top-level await in "a.test.ts"',
-      ],
-      counts: [" 2 pass", " 1 fail"],
-      exitCode: 1,
-    });
-  });
+  test.each([[[]], [["--isolate"]], [["--parallel=2"]], [["--parallel=2", "--isolate"]]])(
+    "fails immediately and the run continues %j",
+    async flags => {
+      const { errors, counts, exitCode } = await runFiles(
+        { "a.test.ts": neverLoads, "b.test.ts": passes, "c.test.ts": passes },
+        ...flags,
+      );
+      expect({ errors, counts, exitCode }).toEqual({
+        errors: [
+          'error: "a.test.ts" never finished loading',
+          nothingLeft,
+          'note: unsettled top-level await in "a.test.ts"',
+        ],
+        counts: [" 2 pass", " 1 fail"],
+        exitCode: 1,
+      });
+    },
+  );
 
   test("once the last timer has fired", async () => {
     const { errors, counts, exitCode } = await runFiles({
@@ -2673,8 +2671,7 @@ describe.concurrent("a test file that can never finish loading", () => {
     ["process.stderr", []],
     [`process.stdout.write("written\\n")`, []],
     ["process.stdout", ["--isolate"]],
-    // On Windows the pipe to the coordinator keeps a worker's loop alive.
-    ...(isWindows ? [] : [["process.stdout", ["--parallel=2"]]]),
+    ["process.stdout", ["--parallel=2"]],
   ] as [string, string[]][])("after %s %j", async (touch, flags) => {
     const { errors, counts, exitCode } = await runFiles(
       {
@@ -2898,8 +2895,7 @@ describe.concurrent("a test file that can never finish loading", () => {
     expect(exitCode).toBe(1);
   });
 
-  // On Windows faked timers share the ref'd timers' hold on the loop, which can't be told apart from any other ref.
-  test.skipIf(isWindows)("waiting on a fake timer that nothing fires", async () => {
+  test("waiting on a fake timer that nothing fires", async () => {
     const { errors, counts, exitCode } = await runFiles({
       "a.test.ts": `
         import { jest } from "bun:test";

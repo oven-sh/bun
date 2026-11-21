@@ -5,28 +5,30 @@ use core::marker::PhantomData;
 #[cfg(unix)]
 type Raw = libc::iovec;
 #[cfg(windows)]
-type Raw = bun_libuv_sys::uv_buf_t;
-
-#[inline]
-fn raw(base: *mut u8, len: usize) -> Raw {
-    #[cfg(unix)]
-    return Raw {
-        iov_base: base.cast(),
-        iov_len: len,
-    };
-    #[cfg(windows)]
-    return Raw {
-        len: len as bun_libuv_sys::ULONG,
-        base,
-    };
+#[derive(Clone, Copy)]
+struct Raw {
+    iov_base: *mut core::ffi::c_void,
+    iov_len: usize,
 }
 
 #[inline]
-fn raw_len(raw: &Raw) -> usize {
-    #[cfg(unix)]
-    return raw.iov_len;
-    #[cfg(windows)]
-    return raw.len as usize;
+fn raw(base: *mut u8, len: usize) -> Raw {
+    Raw {
+        iov_base: base.cast(),
+        iov_len: len,
+    }
+}
+
+/// `raw` in pieces that one request can take. An empty buffer is one piece.
+#[cfg(windows)]
+fn parts(raw: Raw) -> impl Iterator<Item = (*mut u8, usize)> {
+    use crate::MAX_COUNT;
+    (0..raw.iov_len.max(1))
+        .step_by(MAX_COUNT)
+        .map(move |start| {
+            let base = raw.iov_base.cast::<u8>().wrapping_add(start);
+            (base, MAX_COUNT.min(raw.iov_len - start))
+        })
 }
 
 /// Bytes that the system reads.
@@ -42,13 +44,18 @@ impl<'a> IoVec<'a> {
 
     #[inline]
     pub fn size(&self) -> usize {
-        raw_len(&self.0)
+        self.0.iov_len
     }
 
-    /// An array of `iovec`, or of `uv_buf_t` on Windows.
+    #[cfg(unix)]
     #[inline]
-    pub fn as_raw(vecs: &[Self]) -> *const Raw {
+    pub(crate) fn as_raw(vecs: &[Self]) -> *const Raw {
         vecs.as_ptr().cast()
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn parts(vecs: &[Self]) -> impl Iterator<Item = (*mut u8, usize)> {
+        vecs.iter().flat_map(|vec| parts(vec.0))
     }
 }
 
@@ -78,13 +85,18 @@ impl<'a> IoVecMut<'a> {
 
     #[inline]
     pub fn size(&self) -> usize {
-        raw_len(&self.0)
+        self.0.iov_len
     }
 
-    /// As [`IoVec::as_raw`].
+    #[cfg(unix)]
     #[inline]
-    pub fn as_raw(vecs: &[Self]) -> *const Raw {
+    pub(crate) fn as_raw(vecs: &[Self]) -> *const Raw {
         vecs.as_ptr().cast()
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn parts(vecs: &[Self]) -> impl Iterator<Item = (*mut u8, usize)> {
+        vecs.iter().flat_map(|vec| parts(vec.0))
     }
 }
 

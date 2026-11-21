@@ -893,24 +893,6 @@ fn scope_index(zone: &[u8]) -> u32 {
     idx
 }
 
-#[cfg(windows)]
-pub(crate) mod inet {
-    #![allow(non_camel_case_types)]
-    use bun_sys::windows::ws2_32 as ws2;
-    // Note: `bun_windows_sys::ws2_32` does not currently surface
-    // `INET6_ADDRSTRLEN` / `ADDRESS_FAMILY` / `USHORT`; mirror the
-    // `ws2ipdef.h` / `ws2def.h` values locally so the Windows build
-    // resolves without widening the leaf crate.
-    /// `ws2ipdef.h`: `INET6_ADDRSTRLEN == 65` on Windows (vs 46 on POSIX).
-    pub(crate) use bun_sys::posix::INET6_ADDRSTRLEN;
-    pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
-    pub(crate) use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
-    pub(crate) use ws2::AF_INET;
-    pub(crate) use ws2::AF_INET6;
-    pub(crate) type socklen_t = super::ares::ares_socklen_t;
-}
-
-#[cfg(not(windows))]
 pub(crate) mod inet {
     #![allow(non_camel_case_types)]
     pub(crate) use bun_sys::posix::INET6_ADDRSTRLEN;

@@ -52,7 +52,7 @@ test.skipIf(isWindows)("spawn without explicit cwd works after the parent's cwd 
 });
 
 // An explicit `cwd` option must still chdir the child.
-test.skipIf(isWindows)("spawn with explicit cwd still changes the child's directory", async () => {
+test("spawn with explicit cwd still changes the child's directory", async () => {
   using dir = tempDir("spawn-explicit-cwd", { "sub/.keep": "" });
   const sub = join(String(dir), "sub");
 

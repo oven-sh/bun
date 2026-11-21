@@ -19,10 +19,6 @@ use crate::webcore::jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsError, JsR
 use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
 use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
-#[cfg(windows)]
-use bun_sys::windows::libuv::UvHandle as _;
 
 bun_core::declare_scope!(FileSink, visible);
 
@@ -32,7 +28,7 @@ bun_core::declare_scope!(FileSink, visible);
 
 // Shared borrows only. A method may release every ref but the one its caller borrows from.
 #[derive(bun_ptr::CellRefCounted)]
-pub struct FileSink {
+pub(crate) struct FileSink {
     ref_count: Cell<u32>,
     pub(crate) writer: StreamingWriter,
     /// Held while a write is in flight.
@@ -175,22 +171,13 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     // SAFETY: the object's live sink.
     let this: &FileSink = unsafe { this.as_ref() };
 
+    this.force_sync.set(true);
     #[cfg(not(windows))]
     {
-        this.force_sync.set(true);
         this.writer.set_force_sync(true);
         if this.fd.get() != Fd::INVALID {
             let _ = sys::update_nonblocking(this.fd.get(), false);
         }
-    }
-    #[cfg(windows)]
-    {
-        if this.writer.set_blocking() {
-            return;
-        }
-
-        // Fallback to WriteFile() if it fails.
-        this.force_sync.set(true);
     }
 }
 
@@ -426,8 +413,8 @@ impl FileSink {
         }));
     }
 
-    /// `writer.end()`; `on_close` follows, except (Windows) for an fd the writer
-    /// does not own, which is never closed: settle a piped stream here then.
+    /// `writer.end()`; `on_close` follows, except (Windows) for a synchronous writer
+    /// on an fd that it does not own: settle a piped stream here then.
     fn end_writer(&self) {
         #[cfg(windows)]
         if !self.writer.owns_fd() {
@@ -500,36 +487,43 @@ impl FileSink {
         }
     }
 
-    #[cfg(windows)]
-    pub(crate) fn create_with_pipe(
-        event_loop_: impl Into<EventLoopHandle>,
-        pipe: uv::Owned<uv::Pipe>,
-    ) -> RefPtr<FileSink> {
-        // `UvHandle::fd()` returns the raw `uv_os_fd_t` (HANDLE on Windows);
-        // INVALID_HANDLE_VALUE maps to `Fd::INVALID`, anything else is
-        // tagged as a system handle.
-        let fd = match pipe.fd() {
-            h if h == uv::INVALID_HANDLE_VALUE => Fd::INVALID,
-            h => Fd::from_system(h),
-        };
-        let this = Self::init(fd, event_loop_);
-        this.writer.set_pipe(pipe);
-        this
+    /// For our end of a pipe that `bun_spawn` has made.
+    pub(crate) fn create_with_own_pipe(
+        event_loop: EventLoopHandle,
+        pipe: sys::File,
+    ) -> sys::Result<RefPtr<FileSink>> {
+        let this = Self::init(pipe.fd(), event_loop);
+        (this.writer).start_own_pipe(&*this, event_loop.as_event_loop_ctx(), pipe)?;
+        #[cfg(not(windows))]
+        this.writer.set_poll_flag(bun_io::FilePollFlag::Socket);
+        Ok(this)
     }
 
     #[cfg(windows)]
-    pub(crate) fn start_writer(&self, file: sys::MaybeOwnedFile, sync: bool) -> sys::Result<()> {
-        let event_loop = self.event_loop_handle.as_event_loop_ctx();
-        if sync {
-            self.writer.start_sync(self, event_loop, file)
+    pub(crate) fn start_writer(&self, file: sys::MaybeOwnedFile) -> sys::Result<()> {
+        use sys::Stdio::{StdErr, StdOut};
+        if !file.is_owned() && matches!(file.fd().stdio_tag(), Some(StdOut | StdErr)) {
+            self.writer.start_sync(self, file)
         } else {
+            let event_loop = self.event_loop_handle.as_event_loop_ctx();
             self.writer.start(self, event_loop, file, true)
         }
     }
 
-    #[cfg(not(windows))]
-    pub(crate) fn create(event_loop_: impl Into<EventLoopHandle>, fd: Fd) -> RefPtr<FileSink> {
-        Self::init(fd, event_loop_)
+    /// Its end is not reported once the file is another one. What reacts to the promise runs after `start()`.
+    #[cfg(windows)]
+    fn settle_last_write_to_file(&self) {
+        if self.pending.get().state == streams::PendingState::Pending
+            && !self.writer.is_backed_up()
+            && self.writer.is_writing_to_file()
+        {
+            let mut pending = self.pending.take();
+            if let Err(err) = self.writer.finish_write_to_disk() {
+                pending.result = streams::Writable::Err(err);
+            }
+            pending.run();
+            self.js_sink_ref.set(Default::default());
+        }
     }
 
     pub(crate) fn setup(
@@ -629,8 +623,9 @@ impl FileSink {
         let event_loop = self.event_loop_handle.as_event_loop_ctx();
         #[cfg(windows)]
         {
+            self.settle_last_write_to_file();
             if self.force_sync.get() {
-                self.writer.start_sync(self, event_loop, file.into())?;
+                self.writer.start_sync(self, file.into())?;
                 self.writer.update_ref(false);
                 return sys::Result::Ok(());
             }
@@ -833,6 +828,10 @@ impl FileSink {
         };
         // A flush takes no new chunk from the caller; a pending one reports the
         // bytes it pushed out. It only reaches here when no write is pending.
+        #[cfg(windows)]
+        if !self.writer.is_backed_up() && self.writer.is_writing_to_file() {
+            return sys::Result::Ok(self.pending_result(flushed).to_js(cx));
+        }
         match self.to_result(rc, flushed) {
             streams::Writable::Err(_) => unreachable!(),
             result => sys::Result::Ok(result.to_js(cx)),
@@ -888,7 +887,7 @@ impl FileSink {
         this
     }
 
-    pub fn write(&self, data: &streams::Result<'_>) -> streams::Writable {
+    pub(crate) fn write(&self, data: &streams::Result<'_>) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
@@ -1041,7 +1040,7 @@ impl FileSink {
         }
     }
 
-    pub fn to_js(this: RefPtr<FileSink>, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(this: RefPtr<FileSink>, global_this: &JSGlobalObject) -> JSValue {
         JSSink::create_object(global_this, WrapperRef(this), None)
     }
 
@@ -1241,7 +1240,7 @@ impl FileSink {
         {
             match self.fd.get().decode_windows() {
                 bun_sys::fd::DecodeWindows::Windows(_) => -1, // TODO:
-                bun_sys::fd::DecodeWindows::Uv(num) => num,
+                bun_sys::fd::DecodeWindows::Crt(num) => num,
             }
         }
         #[cfg(not(windows))]
@@ -1293,8 +1292,10 @@ impl FileSink {
                 streams::Writable::Err(err)
             }
             WriteResult::Pending(_) => {
+                // `inflight_write_ref` does it on Windows.
+                #[cfg(not(windows))]
                 self.keep_alive_until_eof();
-                // A Windows uv_write is always async: Pending with an empty
+                // A Windows write is always async: Pending with an empty
                 // outgoing buffer is not backpressure, so keep the source flowing.
                 if !self.writer.is_backed_up() {
                     return streams::Writable::Owned(accepted);
@@ -1306,13 +1307,17 @@ impl FileSink {
                 ) {
                     return streams::Writable::Backpressure(accepted);
                 }
-                self.pending.with_mut(|p| {
-                    p.consumed += accepted;
-                    p.result = streams::Writable::Owned(p.consumed);
-                });
-                streams::Writable::Pending(self.pending.as_ptr())
+                self.pending_result(accepted)
             }
         }
+    }
+
+    fn pending_result(&self, accepted: u64) -> streams::Writable {
+        self.pending.with_mut(|p| {
+            p.consumed += accepted;
+            p.result = streams::Writable::Owned(p.consumed);
+        });
+        streams::Writable::Pending(self.pending.as_ptr())
     }
 
     // Helper for struct-init defaults. `EventLoopHandle` has
@@ -1457,7 +1462,7 @@ pub(crate) fn on_reject_stream(
 
 impl FileSink {
     /// `Bun.write(file, stream)`: the byte-count promise `on_close` settles.
-    pub fn pipe_stream(
+    pub(crate) fn pipe_stream(
         this: &RefPtr<FileSink>,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,
@@ -1511,7 +1516,7 @@ impl FileSink {
         }
     }
 
-    pub fn assign_to_stream(
+    pub(crate) fn assign_to_stream(
         this: &RefPtr<FileSink>,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,

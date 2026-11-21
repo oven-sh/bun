@@ -1602,8 +1602,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.unref();
         }
         // A graceful stop with work in flight keeps the ref (deinit_if_we_can
-        // unrefs when the drain completes): on Windows uv_run skips I/O with
-        // zero ref'd handles, so unrefing here wedged server.close() teardown.
+        // unrefs when the drain completes).
 
         if !SSL {
             let fd = bun_opaque::opaque_deref_mut(listener.as_ptr())
@@ -1829,7 +1828,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
         let socket = listener.as_ptr();
         self.listener.set(Some(listener));
-        self.vm().event_loop_handle.set(Some(bun_io::Loop::get()));
+        self.vm().event_loop_handle.set(Some(bun_uws::Loop::get()));
         if !SSL {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             let fd = bun_opaque::opaque_deref_mut(socket).socket().fd();
@@ -2797,7 +2796,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             if !tcp {
                                 jsc::VirtualMachine::get()
                                     .event_loop_handle
-                                    .set(Some(bun_io::Loop::get()));
+                                    .set(Some(bun_uws::Loop::get()));
                             }
                         }
                     }

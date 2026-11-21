@@ -1,7 +1,7 @@
 use core::cell::Cell;
-#[cfg(windows)]
-use core::mem::ManuallyDrop;
 use core::mem::size_of;
+#[cfg(windows)]
+use std::rc::Rc;
 
 use bun_event_loop::EventLoopHandle;
 use bun_io::{BufferedWriteHandler, BufferedWriter, IoEvent, Owner, WriteHandler, WriteStatus};
@@ -29,19 +29,28 @@ impl Source for Box<[u8]> {
 
 /// Writes its source to a pipe and closes it. Dropping it closes the pipe now.
 pub struct StaticPipeWriter<S: Source> {
-    #[cfg(not(windows))]
     state: AliasableBox<State<S>>,
-    /// A write in flight keeps it past the drop.
-    #[cfg(windows)]
-    state: ManuallyDrop<AliasableBox<State<S>>>,
+}
+
+/// For a write in flight, which keeps it past the drop of the writer.
+#[cfg(windows)]
+struct Shared<S>(S);
+
+#[cfg(windows)]
+impl<S: Source> AsRef<[u8]> for Shared<S> {
+    fn as_ref(&self) -> &[u8] {
+        self.0.slice()
+    }
 }
 
 struct State<S> {
     writer: BufferedWriter,
     /// Until `start` hands it to `writer`.
-    #[cfg(not(windows))]
     file: Cell<StdioResult>,
+    #[cfg(not(windows))]
     source: S,
+    #[cfg(windows)]
+    source: Rc<Shared<S>>,
     written: Cell<usize>,
 }
 
@@ -62,21 +71,15 @@ impl<S: Source> StaticPipeWriter<S> {
     pub unsafe fn create(owner: Owner, result: StdioResult, source: S) -> Self {
         let state = AliasableBox::new(State {
             writer: BufferedWriter::default(),
-            #[cfg(not(windows))]
             file: Cell::new(result),
+            #[cfg(not(windows))]
             source,
+            #[cfg(windows)]
+            source: Rc::new(Shared(source)),
             written: Cell::new(0),
         });
         // SAFETY: fn contract, and the box gives out shared borrows only.
         unsafe { state.writer.set_owner(owner) };
-        #[cfg(windows)]
-        let state = {
-            let StdioResult::Buffer(pipe) = result else {
-                unreachable!("StaticPipeWriter stdin requires WindowsStdioResult::Buffer");
-            };
-            state.writer.set_pipe(pipe);
-            ManuallyDrop::new(state)
-        };
         Self { state }
     }
 
@@ -91,15 +94,18 @@ impl<S: Source> StaticPipeWriter<S> {
     pub fn start(&self, event_loop: EventLoopHandle) -> bun_sys::Result<PipeState> {
         let state: &State<S> = &self.state;
         bun_output::scoped_log!(StaticPipeWriter, "StaticPipeWriter({:p}) start()", state);
+        let file = state.file.take().unwrap();
         #[cfg(windows)]
         {
-            let _ = event_loop;
-            // SAFETY: `source` is never borrowed mutably, and `Drop` leaves it to a write in flight.
-            unsafe { state.writer.write_no_copy(state) };
+            let (writer, source) = (&state.writer, Rc::<Shared<S>>::clone(&state.source));
+            writer.set_pipe(bun_io::Pipe::from_exclusive(
+                event_loop.loop_().port(),
+                file,
+            ));
+            writer.write_shared(state, source);
         }
         #[cfg(not(windows))]
         {
-            let file = state.file.take().unwrap();
             state
                 .writer
                 .start(state, event_loop.as_event_loop_ctx(), file.into(), true)?;
@@ -127,32 +133,20 @@ impl<S: Source> StaticPipeWriter<S> {
     }
 
     pub fn memory_cost(&self) -> usize {
-        size_of::<State<S>>() + self.state.source.memory_cost() + self.state.writer.memory_cost()
-    }
-}
-
-#[cfg(windows)]
-impl<S: Source> Drop for StaticPipeWriter<S> {
-    fn drop(&mut self) {
-        /// # Safety
-        /// `state` is the box of a writer that was dropped.
-        unsafe fn free<S>(state: *mut ()) {
-            // SAFETY: fn contract.
-            unsafe { bun_core::heap::destroy(state.cast::<State<S>>()) };
-        }
-        let state = self.state.as_ptr().cast();
-        // SAFETY: nothing else frees the box, or uses it from here on.
-        unsafe {
-            if !self.state.writer.close_and_detach(state, free::<S>) {
-                free::<S>(state);
-            }
-        }
+        size_of::<State<S>>() + self.state.source().memory_cost() + self.state.writer.memory_cost()
     }
 }
 
 impl<S: Source> State<S> {
+    fn source(&self) -> &S {
+        #[cfg(windows)]
+        return &self.source.0;
+        #[cfg(not(windows))]
+        return &self.source;
+    }
+
     fn remaining(&self) -> &[u8] {
-        let source = self.source.slice();
+        let source = self.source().slice();
         source.get(self.written.get()..).unwrap_or_default()
     }
 }
@@ -196,8 +190,4 @@ impl<S: Source> WriteHandler for State<S> {
     fn on_close(&self) {
         bun_output::scoped_log!(StaticPipeWriter, "StaticPipeWriter({:p}) onClose()", self);
     }
-
-    /// `Drop` leaves the state to the write's callback.
-    #[cfg(windows)]
-    fn set_has_inflight_write(&self, _: bool) {}
 }

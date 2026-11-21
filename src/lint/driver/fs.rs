@@ -23,10 +23,8 @@ fn null_terminated<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
     }
 }
 
-/// Same, for the calls that go through libuv on Windows (`stat`, `lstat`, `realpath`, `rename`). libuv passes the path
-/// to the system unchanged, which limits it to 260 characters unless it's in the namespaced form that Node uses for
-/// every path.
-fn for_libuv<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
+/// Same, for the calls that limit a path to 260 characters unless it is in the namespaced form (`stat`, `lstat`, `realpath`, `rename`).
+fn for_win32<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
     match cfg!(windows) && path.len() >= 240 {
         true => null_terminated(&paths::namespaced(path), buffer),
         false => null_terminated(path, buffer),
@@ -50,7 +48,7 @@ fn identity_if_linked(found: &bun_sys::Stat) -> Option<Identity> {
 /// Returns the kind and size of the file at `path`, following symlinks, plus [`identity_if_linked`]. Returns `None` if
 /// nothing exists there, or if it's neither a file nor a directory.
 pub(crate) fn stat(path: &[u8]) -> Option<(Kind, u64, Option<Identity>)> {
-    let found = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get())).ok()?;
+    let found = bun_sys::stat(for_win32(path, &mut path_buffer_pool::get())).ok()?;
     let kind = match bun_sys::kind_from_mode(found.st_mode as _) {
         EntryKind::File => Kind::File,
         EntryKind::Directory => Kind::Directory,
@@ -72,7 +70,7 @@ pub(crate) enum LinkKind {
 
 /// Like [`stat`], but doesn't follow a symlink at `path`.
 pub(crate) fn lstat(path: &[u8]) -> Option<(LinkKind, u64, Option<Identity>)> {
-    let found = bun_sys::lstat(for_libuv(path, &mut path_buffer_pool::get())).ok()?;
+    let found = bun_sys::lstat(for_win32(path, &mut path_buffer_pool::get())).ok()?;
     let kind = match bun_sys::kind_from_mode(found.st_mode as _) {
         EntryKind::File => LinkKind::File,
         EntryKind::Directory => LinkKind::Directory,
@@ -88,7 +86,7 @@ pub(crate) fn link_kind_and_size(path: &[u8]) -> Option<(LinkKind, u64)> {
 
 /// Returns what the symlink at `path` resolves to. `Ok(None)` if that's neither a file nor a directory.
 pub(crate) fn link_target_kind(path: &[u8]) -> bun_sys::Result<Option<Kind>> {
-    let found = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get()))?;
+    let found = bun_sys::stat(for_win32(path, &mut path_buffer_pool::get()))?;
     Ok(match bun_sys::kind_from_mode(found.st_mode as _) {
         EntryKind::File => Some(Kind::File),
         EntryKind::Directory => Some(Kind::Directory),
@@ -110,8 +108,7 @@ fn too_large() -> bun_sys::Error {
 
 /// Opens `path` for reading without blocking. A blocking open of a named pipe waits for a writer that may never come.
 fn open_nonblocking(path: &[u8]) -> bun_sys::Result<File> {
-    let nonblocking = if cfg!(unix) { O::NONBLOCK } else { 0 };
-    File::openat(Fd::cwd(), path, O::RDONLY | nonblocking, 0)
+    File::openat(Fd::cwd(), path, O::RDONLY | O::NONBLOCK, 0)
 }
 
 /// Reads `file` to the end. `file` isn't a regular file and was opened by [`open_nonblocking`].
@@ -283,7 +280,7 @@ pub(crate) fn list(path: &[u8]) -> Option<Listing> {
 /// Returns `path` with symlinks resolved and every name spelled as its directory stores it.
 pub(crate) fn real_path(path: &[u8]) -> Option<Vec<u8>> {
     let mut buffer = path_buffer_pool::get();
-    let real = bun_sys::realpath(for_libuv(path, &mut path_buffer_pool::get()), &mut buffer);
+    let real = bun_sys::realpath(for_win32(path, &mut path_buffer_pool::get()), &mut buffer);
     Some(paths::from_native(real.ok()?))
 }
 
@@ -311,8 +308,8 @@ fn rename(from: &[u8], to: &[u8]) -> bun_sys::Result<()> {
     )
     .or_else(|error| match cfg!(windows) {
         true => bun_sys::rename(
-            for_libuv(&from, &mut path_buffer_pool::get()),
-            for_libuv(&to, &mut path_buffer_pool::get()),
+            for_win32(&from, &mut path_buffer_pool::get()),
+            for_win32(&to, &mut path_buffer_pool::get()),
         ),
         false => Err(error),
     })
@@ -497,7 +494,7 @@ pub(crate) fn write_atomically(
 ) -> Result<(), Vec<u8>> {
     let resolve = || {
         let mut buffer = path_buffer_pool::get();
-        bun_sys::realpath(for_libuv(path, &mut path_buffer_pool::get()), &mut buffer)
+        bun_sys::realpath(for_win32(path, &mut path_buffer_pool::get()), &mut buffer)
             .map(<[u8]>::to_vec)
             .map_err(|error| describe(&error))
     };
@@ -536,7 +533,7 @@ fn real_path_of_new(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
                 return Err(fails(bun_sys::E::ELOOP));
             }
             let (mut link, mut target) = (path_buffer_pool::get(), path_buffer_pool::get());
-            let len = bun_sys::readlink(for_libuv(&path, &mut link), &mut target[..])?;
+            let len = bun_sys::readlink(for_win32(&path, &mut link), &mut target[..])?;
             let target = paths::from_native(&target[..len]);
             followed.push(path);
             path = paths::resolve(&real_path(&parent).unwrap_or(parent), &target);
@@ -592,7 +589,7 @@ fn write_to_stream(cwd: &[u8], path: &[u8], stream: Identity, text: &[u8]) -> Re
 /// `/dev/stdout`, is written to directly.
 pub(crate) fn write_new(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
     if cfg!(unix)
-        && let Ok(found) = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get()))
+        && let Ok(found) = bun_sys::stat(for_win32(path, &mut path_buffer_pool::get()))
         && let Some(stream) = identity_if_stream(&found)
     {
         return write_to_stream(cwd, path, stream, text);

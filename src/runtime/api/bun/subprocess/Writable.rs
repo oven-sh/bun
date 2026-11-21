@@ -1,7 +1,6 @@
 use core::ptr::NonNull;
 
 use bun_io::{Owner, PollTag};
-#[cfg(not(windows))]
 use bun_jsc::SysErrorJsc as _;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, event_loop::EventLoop};
 use bun_ptr::RefPtr;
@@ -125,75 +124,22 @@ impl Writable {
         // SAFETY: fn contract.
         let create_writer = |result, blob| unsafe { StaticPipeWriter::create(owner, result, blob) };
 
-        #[cfg(windows)]
-        {
-            match stdio {
-                Stdio::Pipe | Stdio::ReadableStream(_) => {
-                    if let StdioResult::Buffer(buffer) = result {
-                        let pipe_ref = FileSink::create_with_pipe(evtloop, buffer);
-                        subprocess
-                            .weak_file_sink_stdin_ptr
-                            .set(Some(pipe_ref.as_non_null()));
-                        subprocess.hold_for_stdin_sink();
-                        subprocess.update_flags(|f| f.remove(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
-
-                        if let Stdio::ReadableStream(rs) = &mut stdio {
-                            *promise_for_stream =
-                                Self::attach_stream(&pipe_ref, rs, subprocess, global)?;
-                        }
-
-                        return Ok(Writable::Pipe(pipe_ref));
-                    }
-                    return Ok(Writable::Inherit);
-                }
-
-                Stdio::Blob(blob) => {
-                    return Ok(Writable::Buffer(create_writer(result, blob)));
-                }
-                Stdio::Fd(fd) => {
-                    return Ok(Writable::Fd(fd));
-                }
-                Stdio::Dup2(dup2) => {
-                    return Ok(Writable::Fd(dup2.to.to_fd()));
-                }
-                Stdio::Inherit => {
-                    return Ok(Writable::Inherit);
-                }
-                Stdio::Path(_) | Stdio::Ignore => {
-                    return Ok(Writable::Ignore);
-                }
-                Stdio::Ipc | Stdio::Capture => {
-                    return Ok(Writable::Ignore);
-                }
-                // Rejected at i < 3 in Stdio::extract(); stdin never sees this.
-                Stdio::SocketFd => unreachable!("SocketFd at stdin"),
-            }
+        if matches!(stdio, Stdio::Pipe) {
+            let _ = bun_sys::set_nonblocking(result.as_ref().unwrap().fd());
         }
 
-        #[cfg(unix)]
-        {
-            if matches!(stdio, Stdio::Pipe) {
-                let _ = bun_sys::set_nonblocking(result.as_ref().unwrap().fd());
-            }
-        }
-
-        #[cfg(not(windows))]
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
-                let file = result.unwrap();
-                let pipe_ref = FileSink::create(evtloop, file.fd());
-
-                let writer = &pipe_ref.writer;
-                if let Err(err) = writer.start(&*pipe_ref, evtloop.as_event_loop_ctx(), file, true)
-                {
-                    if let Stdio::ReadableStream(rs) = &mut stdio {
-                        rs.cancel(global)?;
+                let pipe_ref = match FileSink::create_with_own_pipe(evtloop, result.unwrap()) {
+                    Ok(pipe_ref) => pipe_ref,
+                    Err(err) => {
+                        if let Stdio::ReadableStream(rs) = &mut stdio {
+                            rs.cancel(global)?;
+                        }
+                        return Err(global.throw_value(err.to_js(global)));
                     }
-                    return Err(global.throw_value(err.to_js(global)));
-                }
-
-                writer.set_poll_flag(bun_io::FilePollFlag::Socket);
+                };
 
                 subprocess
                     .weak_file_sink_stdin_ptr

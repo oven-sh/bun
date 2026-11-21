@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,110,480": 10 s, 2 min and 10 min of quiet; 0 = off) full collections so JSC can age out code that no longer runs, the last of which also drops the bytecode JSC can decode again. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async_if_allocated()` (JSC makes the collection only if the program has allocated since the last one) so a process that stops allocating still releases memory, and once the heap has been quiet for `BUN_IDLE_GC_SECONDS` (default "10,110,480": 10 s, 2 min and 10 min of quiet; 0 = off) full collections so JSC can age out code that no longer runs, the last of which also drops the bytecode JSC can decode again. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -10,6 +10,16 @@ use bun_uws as uws;
 use crate::virtual_machine::VirtualMachine;
 
 const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
+
+/// What `perform_gc` asks JSC for.
+#[derive(Clone, Copy)]
+pub(crate) enum Collection {
+    /// The full collection of a tick at which the heap has been quiet for a `BUN_IDLE_GC_SECONDS` entry.
+    IdleFull,
+    /// A hint: JSC makes the collection only if the program has allocated this many bytes since the last one, or if it
+    /// owes a full collection (`VM::collect_async_if_allocated`). 0 is for any cell at all.
+    IfAllocated(usize),
+}
 
 pub struct GarbageCollectionController {
     pub gc_repeating_timer: EventLoopTimer,
@@ -145,15 +155,14 @@ impl GarbageCollectionController {
         Self::arm(VirtualMachine::get(), &self.gc_repeating_timer, interval);
     }
 
-    pub(crate) fn perform_gc(&self, idle_full: bool) {
+    pub(crate) fn perform_gc(&self, collection: Collection) {
         if self.disabled.get() {
             return;
         }
         let vm = VirtualMachine::get().jsc_vm();
-        if idle_full {
-            vm.collect_async_idle();
-        } else {
-            vm.collect_async(false);
+        match collection {
+            Collection::IdleFull => vm.collect_async_idle(),
+            Collection::IfAllocated(minimum_bytes) => vm.collect_async_if_allocated(minimum_bytes),
         }
         self.gc_last_heap_size.set(vm.block_bytes_allocated());
     }
@@ -176,7 +185,12 @@ impl GarbageCollectionController {
         let prev_heap_size = self.gc_last_heap_size.get();
         let grew = vm.jsc_vm().block_bytes_allocated() > prev_heap_size + idle_growth_slack;
         let (full, idle_gc_due_in) = self.idle_tick(vm, grew, interval);
-        self.perform_gc(full);
+        // No floor on the hint: a small object can own memory that JSC does not count (the unread output of a subprocess).
+        self.perform_gc(if full {
+            Collection::IdleFull
+        } else {
+            Collection::IfAllocated(0)
+        });
         // Growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job. Where the
         // event loop cannot let an idle collection finish while parked (Windows: Bun__JSC_onBeforeWait), it proceeds at
         // this timer's ticks instead, fast ones for the next 30.

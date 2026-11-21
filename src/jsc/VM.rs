@@ -41,6 +41,7 @@ unsafe extern "C" {
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
     safe fn JSC__VM__blockBytesAllocated(vm: &VM) -> usize;
+    safe fn JSC__VM__collectAsyncIfAllocated(vm: &VM, minimum_bytes: usize);
 }
 
 bun_opaque::opaque_ffi! {
@@ -107,6 +108,14 @@ impl VM {
     /// Request a concurrent collection; JSC picks the scope unless `full`.
     pub(crate) fn collect_async(&self, full: bool) {
         JSC__VM__collectAsync(self, full)
+    }
+
+    /// `collect_async(false)` as a hint: JSC queues the collection only if the program has allocated `minimum_bytes`
+    /// since the last collection ended (for 0: any cell since the last collection began), or if it would be the full
+    /// collection that the eden collections before it left owing. Any other collection would be an eden one, which can
+    /// free only what was allocated since the last collection began.
+    pub(crate) fn collect_async_if_allocated(&self, minimum_bytes: usize) {
+        JSC__VM__collectAsyncIfAllocated(self, minimum_bytes)
     }
 
     /// A full collection tagged as the embedder's idle collection, in which JSC may also let idle optimized code go.

@@ -126,6 +126,21 @@ describe.concurrent("no collection is requested while starting up", () => {
     });
     expect(await edenCollectionsLoggedBy([bunExe(), "entry.js"], String(dir))).toEqual([]);
   });
+
+  // Bun.serve() asks for a collection once it listens, so that a server starts out without what building its routes
+  // left behind. It asked whatever had been allocated: an eden collection per server, with 60 KB to look at for the
+  // first one and nothing for the others. JSC now makes that collection only once 256 KB were allocated since the
+  // last one.
+  test("starting servers", async () => {
+    const script = `
+      const servers = Array.from({ length: 5 }, () => Bun.serve({ port: 0, fetch: () => new Response("ok") }));
+      setTimeout(() => {
+        for (const server of servers) server.stop(true);
+        console.log("entry ran");
+      }, 100);
+    `;
+    expect(await edenCollectionsLoggedBy([bunExe(), "-e", script])).toEqual([]);
+  });
 });
 
 describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
@@ -159,6 +174,75 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
   test.concurrent("the tick backs off while timers allocate a trickle", async () => {
     const { eden } = await countEdenCollections({ BUN_GC_TIMER_INTERVAL: "20" }, 80, 4_000, 20);
     expect(eden).toBeLessThan(55);
+  });
+});
+
+// The tick requested a collection every time it fired: in a program that allocates nothing, one eden collection a second
+// for 30 s and one every 30 s from then on, each of which woke the collector's threads to free nothing. A tick now asks
+// JSC for a collection that JSC makes only if the program has allocated since the last collection began, or if JSC owes
+// a full collection (Heap::collectAsyncIfAllocated). Any other collection would be an eden one, which can free only what
+// was allocated since the last collection began.
+describe("the tick of the idle GC timer", () => {
+  const env = {
+    ...bunEnv,
+    BUN_GC_TIMER_DISABLE: undefined,
+    BUN_GC_TIMER_INTERVAL: "100",
+    BUN_IDLE_GC_SECONDS: "0",
+    BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+  };
+
+  // 20 ticks pass between the two marks.
+  const idleBetweenMarks = `setTimeout(() => console.error("MARK"), 500); setTimeout(() => console.error("DONE"), 2500);`;
+
+  async function collectionsBetweenMarks(extraEnv: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", idleBetweenMarks],
+      env: { ...env, BUN_JSC_logGC: "1", ...extraEnv },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(exitCode, stderr).toBe(0);
+    const log = stderr.slice(stderr.indexOf("MARK"), stderr.indexOf("DONE"));
+    return { collections: log.match(/=> (Eden|Full)Collection/g) ?? [], stderr };
+  }
+
+  // Each of the 20 ticks used to collect. Now one does: the first one after the callback that prints MARK, for what
+  // that callback allocated.
+  test.concurrent("requests no collection for a program that allocates nothing", async () => {
+    const { collections, stderr } = await collectionsBetweenMarks();
+    expect(collections.length, stderr).toBeLessThanOrEqual(3);
+  });
+
+  // After an eden collection that leaves little room, JSC makes the next collection a full one, and nothing but the
+  // next request runs it. The ratio makes every eden collection such a one. So the tick after the eden collection
+  // gets a full collection, although the program has allocated nothing since.
+  test.concurrent("runs the full collection that an eden collection left owing", async () => {
+    const { collections, stderr } = await collectionsBetweenMarks({ BUN_JSC_minEdenToOldGenerationRatio: "2" });
+    const eden = collections.indexOf("=> EdenCollection");
+    expect(collections.slice(eden, eden + 2), stderr).toEqual(["=> EdenCollection", "=> FullCollection"]);
+  });
+
+  // The tick has no floor on what the program must have allocated. A small object can own memory that JSC does not
+  // count (the unread output of a subprocess, a database), and with no idle collections only the tick frees it.
+  test.concurrent("collects a small object that an idle program drops", async () => {
+    const script = `
+      globalThis.registry = new FinalizationRegistry(() => {
+        console.log("finalized");
+        process.exit(0);
+      });
+      setTimeout(() => {
+        (() => registry.register({ small: true }, 1))();
+      }, 400);
+      setTimeout(() => {
+        console.log("not finalized");
+        process.exit(1);
+      }, 4000);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("finalized\n");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -513,19 +597,30 @@ describe("idle release lets FTL code age out", () => {
     return { ...counts, stdout, exitCode };
   }
 
-  test.concurrent("the idle collections drop the warmed-up code", async () => {
-    const { before, after, stdout, exitCode } = await run({ BUN_IDLE_GC_SECONDS: "1,1,1" });
-    expect(before, stdout).toBeGreaterThan(40);
-    expect(after, stdout).toBeLessThan(before! / 4);
-    expect(exitCode).toBe(0);
-  });
+  // The program waits 4.5 s after its warm-up, and on a debug build the warm-up takes 2 s more.
+  const timeout = 20_000;
 
-  test.concurrent("collections the program forces itself do not", async () => {
-    const { before, after, stdout, exitCode } = await run({ BUN_IDLE_GC_SECONDS: "0", MODE: "forced" });
-    expect(before, stdout).toBeGreaterThan(40);
-    expect(after, stdout).toBeGreaterThan(before! / 2);
-    expect(exitCode).toBe(0);
-  });
+  test.concurrent(
+    "the idle collections drop the warmed-up code",
+    async () => {
+      const { before, after, stdout, exitCode } = await run({ BUN_IDLE_GC_SECONDS: "1,1,1" });
+      expect(before, stdout).toBeGreaterThan(40);
+      expect(after, stdout).toBeLessThan(before! / 4);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test.concurrent(
+    "collections the program forces itself do not",
+    async () => {
+      const { before, after, stdout, exitCode } = await run({ BUN_IDLE_GC_SECONDS: "0", MODE: "forced" });
+      expect(before, stdout).toBeGreaterThan(40);
+      expect(after, stdout).toBeGreaterThan(before! / 2);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
 });
 
 // A leak test reads the footprint right after Bun.gc(true). The allocator hands freed pages back after a purge delay, on

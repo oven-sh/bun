@@ -30,6 +30,14 @@ extern "C" void Bun__JSC_acquireHeapAccessAfterWait(JSC::VM* _Nonnull vm)
     vm->heap.acquireAccess();
 }
 
+// GarbageCollectionController's hint (its timer, and Bun.serve() once it listens): a collection that the heap makes only
+// if it has something to collect.
+extern "C" void JSC__VM__collectAsyncIfAllocated(JSC::VM* _Nonnull vm, size_t minimumBytes)
+{
+    JSC::JSLockHolder lock(*vm);
+    vm->heap.collectAsyncIfAllocated(minimumBytes);
+}
+
 // Returns in how many milliseconds the caller is to call this again even if nothing else
 // wakes it (0: no need). Only the libuv loop gets anything but 0.
 //

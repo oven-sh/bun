@@ -247,7 +247,7 @@ pub struct LanguageOptions {
     pub parser_options: Json,
     /// ESLint's `settings`.
     pub settings: Arc<Json>,
-    /// The module that the config loads eslint-plugin-react-hooks from, if a native rule replaces one of its rules.
+    /// The module that the config loads its `react-hooks` plugin from.
     pub react_hooks_module: Option<Arc<[u8]>>,
     /// Whether `require.resolve("react-native-reanimated")` succeeds in [`react_hooks_module`](Self::react_hooks_module).
     /// The React Compiler rules set it for the first file that imports the package.

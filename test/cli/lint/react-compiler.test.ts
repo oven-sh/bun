@@ -217,6 +217,13 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(exit).toBe(1);
   });
 
+  test("a Reanimated shared value is an ordinary value, even with the package installed", async () => {
+    const { diagnostics, exit } = await report(small.reanimated);
+    expect(diagnostics).toEqual(expected.reports.reanimated.diagnostics);
+    expect(locationsOf(diagnostics["shared-value.jsx"])).toEqual([["react(immutability)", 7, 5]]);
+    expect(exit).toBe(1);
+  });
+
   test("each write to a captured variable is reported at its own location", async () => {
     const { diagnostics, exit } = await report(small.writes);
     expect(diagnostics).toEqual(expected.reports.writes.diagnostics);
@@ -697,14 +704,16 @@ export function A() {
   const imported = component(`import { useSharedValue } from "react-native-reanimated";`);
   const reported = ["react-hooks/immutability 7:5"];
 
-  const plugin = (root = "") => ({
-    [`${root}node_modules/eslint-plugin-react-hooks/package.json`]: JSON.stringify({
-      name: "eslint-plugin-react-hooks",
-      version: "7.1.1",
-      main: "index.js",
-    }),
-    [`${root}node_modules/eslint-plugin-react-hooks/index.js`]: `module.exports = { meta: { name: "eslint-plugin-react-hooks", version: "7.1.1" }, rules: { immutability: { create: () => ({}) } } };\n`,
+  const packageIn = (directory: string, name: string, main: string) => ({
+    [`${directory}/package.json`]: JSON.stringify({ name, version: "7.1.1", main: "index.js" }),
+    [`${directory}/index.js`]: main,
   });
+  const plugin = (root = "") =>
+    packageIn(
+      `${root}node_modules/eslint-plugin-react-hooks`,
+      "eslint-plugin-react-hooks",
+      `module.exports = { meta: { name: "eslint-plugin-react-hooks", version: "7.1.1" }, rules: { immutability: { create: () => ({}) } } };\n`,
+    );
   const reanimated = (root = "", fields: object = { main: "lib/index.js" }) => ({
     [`${root}node_modules/react-native-reanimated/package.json`]: JSON.stringify({
       name: "react-native-reanimated",
@@ -713,31 +722,29 @@ export function A() {
     }),
     [`${root}node_modules/react-native-reanimated/lib/index.js`]: `exports.useSharedValue = value => ({ value });\n`,
   });
-  const config = (from = "eslint-plugin-react-hooks") => ({
-    "eslint.config.js": `import reactHooks from "${from}";
-
-export default [
-  {
-    files: ["**/*.jsx"],
-    plugins: { "react-hooks": reactHooks },
-    rules: { "react-hooks/immutability": "error" },
-    languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
-  },
-];
-`,
+  const object = (plugins: string, rules: object, files = "**/*.jsx") =>
+    `{ files: ["${files}"], plugins: { ${plugins} }, rules: ${JSON.stringify(rules)}, languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }`;
+  const config = (from = "eslint-plugin-react-hooks", rules: object = { "react-hooks/immutability": "error" }) => ({
+    "eslint.config.js": `import reactHooks from "${from}";\n\nexport default [${object(`"react-hooks": reactHooks`, rules)}];\n`,
   });
 
-  /** The rule and position of each report. */
-  async function found(files: Files, args: string[] = ["."], stdin?: string) {
-    const { raw, stderr, exitCode } = await lint(files, ["-f", "json", ...args], {}, stdin);
+  /** The rule and position of each report, by file. */
+  async function foundByFile(files: Files, args: string[] = ["."], stdin?: string) {
+    const { raw, stderr, exitCode, directories } = await lint(files, ["-f", "json", ...args], {}, stdin);
     if (!raw.startsWith("[") && !raw.startsWith("{")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
     const report = JSON.parse(raw);
-    return Array.isArray(report)
-      ? (report as { messages: { ruleId: string; line: number; column: number }[] }[]).flatMap(file =>
-          file.messages.map(it => `${it.ruleId} ${it.line}:${it.column}`),
-        )
-      : (report.diagnostics as Found[]).map(it => `${it.code} ${it.labels[0].span.line}:${it.labels[0].span.column}`);
+    const positions = Array.isArray(report)
+      ? Object.entries(byEslintFile(report, directories)).map(([name, { messages }]) => [
+          name,
+          messages.map(it => `${it.ruleId} ${it.line}:${it.column}`),
+        ])
+      : Object.entries(byFile(report)).map(([name, all]) => [
+          name,
+          (all as Found[]).map(it => `${it.code} ${it.labels[0].span.line}:${it.labels[0].span.column}`),
+        ]);
+    return Object.fromEntries(positions) as Record<string, string[]>;
   }
+  const found = async (...args: Parameters<typeof foundByFile>) => Object.values(await foundByFile(...args)).flat();
 
   // https://github.com/oven-sh/bun/issues/49368
   test("when the package is installed next to the plugin", async () => {
@@ -757,24 +764,82 @@ export default [
     expect({ nextToThePlugin, nextToTheFile }).toEqual({ nextToThePlugin: [], nextToTheFile: reported });
   });
 
+  test("and not the module of another plugin", async () => {
+    const files = {
+      "eslint.config.js": `import react from "./a/node_modules/eslint-plugin-react/index.js";
+import reactHooks from "./b/node_modules/eslint-plugin-react-hooks/index.js";
+
+export default [${object(`react, "react-hooks": reactHooks`, { "react/jsx-key": "error", "react-hooks/immutability": "error" })}];
+`,
+      ...packageIn(
+        "a/node_modules/eslint-plugin-react",
+        "eslint-plugin-react",
+        `module.exports = { rules: { "jsx-key": { create: () => ({}) } } };\n`,
+      ),
+      ...plugin("b/"),
+      "A.jsx": imported,
+    };
+    const [nextToReactHooks, nextToReact] = await Promise.all([
+      found({ ...files, ...reanimated("b/") }),
+      found({ ...files, ...reanimated("a/") }),
+    ]);
+    expect({ nextToReactHooks, nextToReact }).toEqual({ nextToReactHooks: [], nextToReact: reported });
+  });
+
+  test("each config asks the plugin that it loads", async () => {
+    const rules = { "react-hooks/immutability": "error" };
+    const files = {
+      "eslint.config.js": `import one from "./app1/node_modules/eslint-plugin-react-hooks/index.js";
+import two from "./app2/node_modules/eslint-plugin-react-hooks/index.js";
+
+export default [
+  ${object(`"react-hooks": one`, rules, "app1/**/*.jsx")},
+  ${object(`"react-hooks": two`, rules, "app2/**/*.jsx")},
+];
+`,
+      ...plugin("app1/"),
+      ...plugin("app2/"),
+      ...reanimated("app1/"),
+      "app1/A.jsx": imported,
+      "app1/B.jsx": imported,
+      "app2/A.jsx": imported,
+      "app2/B.jsx": imported,
+    };
+    expect(await foundByFile(files)).toEqual({ "app2/A.jsx": reported, "app2/B.jsx": reported });
+  });
+
   test("the package needs an entry point that `require.resolve` finds", async () => {
-    const [withIndex, withExports, withNothing] = await Promise.all([
-      found({
-        ...config(),
-        ...plugin(),
-        ...reanimated("", {}),
-        "node_modules/react-native-reanimated/index.js": "",
-        "A.jsx": imported,
-      }),
-      found({ ...config(), ...plugin(), ...reanimated("", { exports: { ".": "./lib/index.js" } }), "A.jsx": imported }),
+    const index = { "node_modules/react-native-reanimated/index.js": "" };
+    const [withIndex, withNothing] = await Promise.all([
+      found({ ...config(), ...plugin(), ...reanimated("", {}), ...index, "A.jsx": imported }),
       found({ ...config(), ...plugin(), ...reanimated("", { main: "lib/missing.js" }), "A.jsx": imported }),
     ]);
-    expect({ withIndex, withExports, withNothing }).toEqual({ withIndex: [], withExports: [], withNothing: reported });
+    expect({ withIndex, withNothing }).toEqual({ withIndex: [], withNothing: reported });
   });
 
   test("a hook of that name from anywhere else returns an ordinary value", async () => {
     const local = component(`const useSharedValue = value => useBox(value);`);
     expect(await found({ ...config(), ...plugin(), ...reanimated(), "A.jsx": local })).toEqual(reported);
+  });
+
+  test("the rule's options can turn the types on without the package, and off with it", async () => {
+    const on = { environment: { enableCustomTypeDefinitionForReanimated: true } };
+    const rule = (options: object) => config(undefined, { "react-hooks/immutability": ["error", options] });
+    const [onWithout, offWith, bothWith] = await Promise.all([
+      found({ ...rule(on), ...plugin(), "A.jsx": imported }),
+      found({ ...rule({ enableReanimatedCheck: false }), ...plugin(), ...reanimated(), "A.jsx": imported }),
+      found({ ...rule({ enableReanimatedCheck: false, ...on }), ...plugin(), ...reanimated(), "A.jsx": imported }),
+    ]);
+    expect({ onWithout, offWith, bothWith }).toEqual({ onWithout: [], offWith: reported, bothWith: [] });
+  });
+
+  test("when a comment in the file turns the rule on", async () => {
+    const commented = `/* eslint react-hooks/immutability: "error" */\n${imported}`;
+    const [installed, missing] = await Promise.all([
+      found({ ...config(undefined, {}), ...plugin(), ...reanimated(), "A.jsx": commented }),
+      found({ ...config(undefined, {}), ...plugin(), "A.jsx": commented }),
+    ]);
+    expect({ installed, missing }).toEqual({ installed: [], missing: ["react-hooks/immutability 8:5"] });
   });
 
   test("with --stdin", async () => {
@@ -804,11 +869,5 @@ export default [
       found({ "A.jsx": imported }, ["--rule", "react/immutability: error", "."]),
     ]);
     expect({ inConfig, asReactHooks, asReact }).toEqual({ inConfig: [], asReactHooks: [], asReact: [] });
-  });
-
-  // oxlint 1.87.0 reports it whether or not the package is installed.
-  test("but not with an oxlint config", async () => {
-    const files = { ".oxlintrc.json": rc(["react/immutability"]), ...reanimated(), "A.jsx": imported };
-    expect(await found(files)).toEqual(["react(immutability) 7:5"]);
   });
 });

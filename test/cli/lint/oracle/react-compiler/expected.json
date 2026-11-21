@@ -2477,6 +2477,41 @@
     ]
    }
   },
+  "reanimated": {
+   "exit": 1,
+   "files": 2,
+   "diagnostics": {
+    "shared-value.jsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value returned from a hook is not allowed. Consider moving the modification into the hook where the value is constructed",
+      "labels": [
+       {
+        "label": "`progress` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 7,
+         "offset": 178
+        }
+       },
+       {
+        "label": "`progress` originates here",
+        "span": {
+         "column": 9,
+         "length": 8,
+         "line": 5,
+         "offset": 124
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "not React": {
    "exit": 1,
    "files": 3,

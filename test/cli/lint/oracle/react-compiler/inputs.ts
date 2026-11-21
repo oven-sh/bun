@@ -409,6 +409,23 @@ function NotNull(props: Props) {
 /** The small input directories, keyed by test name. */
 export const small: Record<string, Files> = {
   comments,
+  // A shared value is made to be written to. oxlint doesn't know that, even with the package installed.
+  reanimated: {
+    ".oxlintrc.json": rc(["react/immutability"]),
+    "node_modules/react-native-reanimated/package.json": `{ "name": "react-native-reanimated", "version": "4.7.1" }\n`,
+    "node_modules/react-native-reanimated/index.js": `exports.useSharedValue = value => ({ value });\n`,
+    "shared-value.jsx": `import { useEffect } from "react";
+import { useSharedValue } from "react-native-reanimated";
+
+export function A() {
+  const progress = useSharedValue(0);
+  useEffect(() => {
+    progress.value = 1;
+  }, [progress]);
+  return null;
+}
+`,
+  },
   "not React": {
     ".oxlintrc.json": rc(),
     // Nothing here creates JSX or calls a hook, and nothing is named like a component or a hook.

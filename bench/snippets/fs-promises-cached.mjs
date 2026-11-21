@@ -79,7 +79,7 @@ if (process.argv.includes("--usage")) {
   let answered = () => null;
   try {
     const { getCounters } = await import("bun:internal-for-testing");
-    answered = () => getCounters().fs_cached_hit;
+    if (typeof getCounters().fs_cached_hit === "number") answered = () => getCounters().fs_cached_hit;
   } catch {}
   const usage = async (name, calls, work) => {
     await work();

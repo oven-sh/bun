@@ -2233,6 +2233,11 @@ mod _async_tasks {
             self.answers.set(self.answers.get() + 1);
         }
 
+        /// A pool thread closes the descriptor of the answer in progress: such an answer takes two places of its go.
+        pub(super) fn closes_elsewhere(&self) {
+            self.width.set(self.width.get().saturating_add(1));
+        }
+
         /// It could not answer one.
         fn missed(&self) {
             self.regretted.set(true);
@@ -9743,7 +9748,10 @@ impl NodeFS {
         if CachedDescriptors::is_pool_behind() {
             return CachedAnswer::NotAsked;
         }
-        let close_elsewhere = |fd| state.fs_cached_descriptors.push(fd);
+        let close_elsewhere = |fd| {
+            state.fs_cached_descriptors.push(fd);
+            state.fs_cached_answers.closes_elsewhere();
+        };
         match sys::cached::stat(path, symlink, sys::STATX_MASK_FOR_STATS, close_elsewhere) {
             Ok(result) => CachedAnswer::Answer(Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                 &result,

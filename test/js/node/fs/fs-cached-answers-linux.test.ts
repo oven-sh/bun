@@ -485,6 +485,13 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
           round => round.hits === ${PER_GO} + 3,
           async () => [await counts(() => stats(100)), await counts(() => stats(3)), await counts(() => stats(3))],
         );
+        // A pool thread closes the descriptor of a file this large: such an answer takes two places of its go.
+        fs.writeFileSync("large.bin", Buffer.alloc(2 << 20, 1));
+        await fsp.stat("large.bin");
+        const large = await countedUntil(
+          round => round.hits === ${PER_GO / 2},
+          () => Promise.all(Array.from({ length: ${PER_GO / 2 + 4} }, () => fsp.stat("large.bin"))),
+        );
         // A name that the kernel has never been asked for: the rest of its go is the pool's.
         const unknown = await countedUntil(
           round => round.hits === 2 && round.misses === 1,
@@ -516,7 +523,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         await asking();
         for (let i = 0; i < 300; i++) await size("never-d-" + i);
         const recovered = await counted(async () => { for (let i = 0; i < 200; i++) { await size("file.txt"); await size("never-e-" + i); } });
-        console.log(JSON.stringify({ wide: wide.result, unknown, persistent, alternating, crowded, one, behind, recovered }));
+        console.log(JSON.stringify({ wide: wide.result, large, unknown, persistent, alternating, crowded, one, behind, recovered }));
       })();
       `,
     );
@@ -524,6 +531,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     if (answersFromCache(cwd)) {
       expect({
         wide: result.wide,
+        large: [result.large.hits, result.large.misses],
         unknown: [result.unknown.hits, result.unknown.misses],
         persistent: [result.persistent.hits, result.persistent.misses],
         alternating: [result.alternating.hits, result.alternating.misses],
@@ -537,6 +545,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
           [0, 0],
           [3, 0],
         ],
+        large: [PER_GO / 2, 0],
         unknown: [2, 1],
         // Four in a row, then 1 that is not asked about, four, then 3 that are not, four, then 7, ...
         persistent: [0, 28],
@@ -684,8 +693,8 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         const descriptors = () => fs.readdirSync("/proc/self/fd").length;
         const before = { descriptors: descriptors(), hits: getCounters().fs_cached_hit };
         const stats = [];
-        for (let go = 0; go < 4; go++) {
-          for (let i = 0; i < 30; i++) stats.push(fsp.stat("large.bin"));
+        for (let go = 0; go < 6; go++) {
+          for (let i = 0; i < ${PER_GO / 2}; i++) stats.push(fsp.stat("large.bin"));
           await nextTurn();
         }
         const waiting = { descriptors: descriptors() - before.descriptors, hits: getCounters().fs_cached_hit - before.hits };

@@ -2,6 +2,8 @@
 // JavaScriptCore heap directly.
 #include "root.h"
 
+#include "BunClientData.h"
+#include "BunProcess.h"
 #include "ErrorCode.h"
 #include "NodeV8.h"
 #include "ZigGlobalObject.h"
@@ -11,11 +13,76 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/StdLibExtras.h>
+
+#include "mimalloc.h"
 
 namespace Bun {
 
 using namespace JSC;
+
+HeapSizes heapSizes(JSC::VM& vm)
+{
+    // heap.size() walks every block. This is what process.memoryUsage().heapUsed reports, as in Node.
+    const size_t used = heapUsage(vm).used;
+    // capacity() is live and can be below a size that dates from the last collection. Used is never more than size.
+    return { used, std::max(vm.heap.capacity(), used), vm.heap.extraMemorySize() };
+}
+
+// The live global objects of this VM, node:vm contexts and ShadowRealms too. O(globals).
+static size_t countGlobalObjects(JSC::VM& vm)
+{
+    size_t count = 0;
+    for (JSC::IsoSubspace* space : WebCore::clientData(vm)->heapData().globalObjectSpaces()) {
+        // HeapIterationScope stops every allocator in the heap, which costs more than a read. Only this subspace's have to stop.
+        space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.stopAllocating(); });
+        space->forEachLiveCell([&](JSC::HeapCell*, JSC::HeapCell::Kind) { ++count; });
+        space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.resumeAllocating(); });
+    }
+    return count;
+}
+
+// Returns: [used, capacity, extraMemory]
+JSC_DEFINE_HOST_FUNCTION(functionHeapSizes, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSArray* result = nullptr;
+    {
+        ObjectInitializationScope initializationScope(vm);
+        result = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 3);
+        if (result) {
+            // Read the heap after the allocation above, which can run a collection: the three numbers describe one state.
+            const HeapSizes sizes = heapSizes(vm);
+            result->initializeIndex(initializationScope, 0, jsNumber(sizes.used));
+            result->initializeIndex(initializationScope, 1, jsNumber(sizes.capacity));
+            result->initializeIndex(initializationScope, 2, jsNumber(sizes.extraMemory));
+        }
+    }
+
+    if (!result) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCountGlobalObjects, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return JSValue::encode(jsNumber(countGlobalObjects(JSC::getVM(globalObject))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionPeakRSS, (JSGlobalObject*, CallFrame*))
+{
+    // Same value and same fallback as bun:jsc memoryUsage().peak.
+    size_t peakRSS = 0;
+    if (getPeakRSS(&peakRSS) != 0)
+        mi_process_info(nullptr, nullptr, nullptr, nullptr, &peakRSS, nullptr, nullptr, nullptr);
+    return JSValue::encode(jsNumber(peakRSS));
+}
 
 // v8.isStringOneByteRepresentation() asks whether the engine is storing the
 // string with one byte per character. JSC's JSString::is8Bit() answers exactly
@@ -102,6 +169,9 @@ JSC::JSValue createNodeV8Binding(JSC::JSGlobalObject* globalObject)
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "startGCProfiler"_s), 0, functionStartGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "stopGCProfiler"_s), 1, functionStopGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "discardGCProfiler"_s), 1, functionDiscardGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
+    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "heapSizes"_s), 0, functionHeapSizes, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
+    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "countGlobalObjects"_s), 0, functionCountGlobalObjects, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
+    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "peakRSS"_s), 0, functionPeakRSS, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     return object;
 }
 

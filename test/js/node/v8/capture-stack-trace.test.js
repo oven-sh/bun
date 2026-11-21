@@ -1958,6 +1958,18 @@ test.concurrent.each([
     "formatted handler",
   ],
   [
+    "bun:jsc heapStats() in Error.prepareStackTrace, error from an arrow that has returned",
+    `import { heapStats } from "bun:jsc";
+     Error.prepareStackTrace = (err, callSites) => { heapStats(); return "formatted " + callSites[1].getFunctionName(); };
+     async function handler() {
+       const e = (() => { try { return new Error("request failed"); } finally {} })();
+       await 1;
+       return e.stack;
+     }
+     console.log(await handler());`,
+    "formatted handler",
+  ],
+  [
     "Bun.gc(true) in a message getter",
     `const e = ${errorWithDeadFrames};
      Object.defineProperty(e, "message", { get() { Bun.gc(true); return "from getter"; } });

@@ -21,12 +21,20 @@ const {
   startGCProfiler,
   stopGCProfiler,
   discardGCProfiler,
+  heapSizes,
+  countGlobalObjects,
+  peakRSS,
 }: {
   isStringOneByteRepresentation(content: string): boolean;
   /** The session's id. */
   startGCProfiler(): number;
   stopGCProfiler(session: number): GCEvent[];
   discardGCProfiler(session: number): void;
+  /** Counters of the heap. The cost does not follow the heap size. */
+  heapSizes(): [used: number, capacity: number, extraMemory: number];
+  /** Visits each live global object. */
+  countGlobalObjects(): number;
+  peakRSS(): number;
 } = $cpp("NodeV8.cpp", "Bun::createNodeV8Binding");
 
 const setNewContextsHaveGC = $newCppFunction("NodeVM.cpp", "jsFunctionSetNewContextsHaveGC", 1);
@@ -204,8 +212,12 @@ function totalmem() {
 }
 
 function getHeapStatistics() {
-  const stats = jsc.heapStats();
-  const memory = jsc.memoryUsage();
+  // Indexed reads: a destructure would run a user-replaced Array.prototype[Symbol.iterator].
+  const sizes = heapSizes();
+  const heapUsed = sizes[0];
+  const heapCapacity = sizes[1];
+  const extraMemorySize = sizes[2];
+  const peak = peakRSS();
 
   // These numbers need to be plausible, even if incorrect
   // From npm's codebase:
@@ -213,25 +225,26 @@ function getHeapStatistics() {
   // > static #heapLimit = Math.floor(getHeapStatistics().heap_size_limit)
   //
   return {
-    total_heap_size: stats.heapSize,
-    total_heap_size_executable: stats.heapSize >> 1,
-    total_physical_size: memory.peak,
-    total_available_size: totalmem() - stats.heapSize,
-    used_heap_size: stats.heapSize,
-    total_allocated_bytes: stats.heapCapacity,
-    heap_size_limit: Math.min(memory.peak * 10, totalmem()),
-    malloced_memory: stats.heapSize,
-    peak_malloced_memory: memory.peak,
+    total_heap_size: heapUsed,
+    // `>> 1` wraps from 2 GiB.
+    total_heap_size_executable: (heapUsed - (heapUsed % 2)) / 2,
+    total_physical_size: peak,
+    total_available_size: totalmem() - heapUsed,
+    used_heap_size: heapUsed,
+    total_allocated_bytes: heapCapacity,
+    heap_size_limit: $min(peak * 10, totalmem()),
+    malloced_memory: heapUsed,
+    peak_malloced_memory: peak,
 
     // -- Copied from Node:
     does_zap_garbage: 0,
-    number_of_native_contexts: stats.globalObjectCount,
+    number_of_native_contexts: countGlobalObjects(),
     number_of_detached_contexts: 0,
     total_global_handles_size: 8192,
     used_global_handles_size: 2208,
     // ---- End of copied from Node
 
-    external_memory: stats.extraMemorySize,
+    external_memory: extraMemorySize,
   };
 }
 // V8 divides its heap into fixed spaces; JSC manages one undivided heap, so
@@ -253,13 +266,15 @@ const kHeapSpaces = [
   "trusted_large_object_space",
 ];
 function getHeapSpaceStatistics() {
-  const stats = jsc.heapStats();
+  const sizes = heapSizes();
+  const heapUsed = sizes[0];
+  const heapCapacity = sizes[1];
   const spaces = [];
   for (let i = 0; i < kHeapSpaces.length; i++) {
     const space_name = kHeapSpaces[i];
     const isHeap = space_name === "old_space";
-    const used = isHeap ? stats.heapSize : 0;
-    const size = isHeap ? stats.heapCapacity : 0;
+    const used = isHeap ? heapUsed : 0;
+    const size = isHeap ? heapCapacity : 0;
     $arrayPush(spaces, {
       space_name,
       space_size: size,

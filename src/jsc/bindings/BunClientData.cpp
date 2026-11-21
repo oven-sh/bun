@@ -55,7 +55,6 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvide
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
-    , m_heapSizeAfterLastCollection(vm.heap)
 {
 }
 
@@ -211,6 +210,8 @@ JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, const SubspaceForIn
 
         if (init.hasOutputConstraints)
             heapData.outputConstraintSpaces().append(space);
+        if (init.isGlobalObject)
+            heapData.globalObjectSpaces().append(space);
     }
 
     clientSlot = makeUnique<JSC::GCClient::IsoSubspace>(*space).release();

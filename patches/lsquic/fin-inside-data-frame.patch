@@ -1,0 +1,39 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -1510,6 +1510,27 @@ verify_cl_on_fin (struct lsquic_stream *
+ }
+ 
+ 
++/* bun: hq_read() catches a FIN inside the frames it reads itself, which
++ * leaves out the payload of a DATA frame.  RFC 9114, Section 7.1.
++ */
++static void
++verify_data_frame_on_fin (struct lsquic_stream *stream)
++{
++    struct hq_filter *const filter = &stream->sm_hq_filter;
++    struct lsquic_conn *lconn;
++
++    if (filter->hqfi_type == HQFT_DATA
++                && filter->hqfi_state == HQFI_STATE_READING_PAYLOAD
++                && !(filter->hqfi_flags & HQFI_FLAG_ERROR))
++    {
++        filter->hqfi_flags |= HQFI_FLAG_ERROR;
++        lconn = stream->conn_pub->lconn;
++        lconn->cn_if->ci_abort_error(lconn, 1, HEC_FRAME_ERROR,
++            "last HTTP/3 frame on stream %"PRIu64" was truncated", stream->id);
++    }
++}
++
++
+ static void
+ stream_consumed_bytes (struct lsquic_stream *stream)
+ {
+@@ -1603,6 +1624,8 @@ read_data_frames (struct lsquic_stream *
+                 if (fin)
+                 {
+                     stream->stream_flags |= STREAM_FIN_REACHED;
++                    if (do_filtering && stream->sm_sfi)
++                        verify_data_frame_on_fin(stream);
+                     if (stream->sm_bflags & SMBF_VERIFY_CL)
+                         verify_cl_on_fin(stream);
+                     goto end_while;

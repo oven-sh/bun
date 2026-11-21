@@ -1635,6 +1635,41 @@ describe("client TLS options", () => {
       });
     });
 
+    it("sends each certificate of a pfx once", async () => {
+      using server = await serve({ maxVersion: "TLSv1.2" });
+      // TLS 1.2 sends the client's Certificate message in the clear, so a relay can count its entries.
+      let sent = Buffer.alloc(0);
+      const relay = net.createServer(client => {
+        const upstream = net.connect(Number(new URL(server.url).port), "127.0.0.1");
+        client.on("data", (chunk: Buffer) => {
+          sent = Buffer.concat([sent, chunk]);
+          upstream.write(chunk);
+        });
+        upstream.on("data", chunk => client.write(chunk));
+        client.on("error", () => {}).on("close", () => upstream.destroy());
+        upstream.on("error", () => {}).on("close", () => client.destroy());
+      });
+      await once(relay.listen(0, "127.0.0.1"), "listening");
+      try {
+        const url = `wss://localhost:${(relay.address() as AddressInfo).port}`;
+        expect(await dial(url, { ca, pfx, passphrase: "sample" })).toBe(identified);
+      } finally {
+        relay.close();
+      }
+      let handshake = Buffer.alloc(0);
+      for (let at = 0; at + 5 <= sent.length && sent[at] === 22; at += 5 + sent.readUInt16BE(at + 3)) {
+        handshake = Buffer.concat([handshake, sent.subarray(at + 5, at + 5 + sent.readUInt16BE(at + 3))]);
+      }
+      let certificates = 0;
+      for (let at = 0; at + 4 <= handshake.length; at += 4 + handshake.readUIntBE(at + 1, 3)) {
+        if (handshake[at] !== 11) continue;
+        const end = at + 4 + handshake.readUIntBE(at + 1, 3);
+        for (let entry = at + 7; entry < end; entry += 3 + handshake.readUIntBE(entry, 3)) certificates++;
+      }
+      // agent1 and ca1.
+      expect(certificates).toBe(2);
+    });
+
     it("minVersion and maxVersion", async () => {
       using tls12 = await serve({ maxVersion: "TLSv1.2" });
       using tls13 = await serve({ minVersion: "TLSv1.3" });
@@ -1919,6 +1954,26 @@ describe("client TLS options", () => {
         inherited: await dial(server.url, { tls: Object.assign(Object.create({ ca: ca1 }), { checkServerIdentity }) }),
         getter: await dial(server.url, { tls: new Options() }),
       }).toEqual({ inherited: anonymous, getter: anonymous });
+    });
+
+    it("runs the `tls` option's getters on that object", async () => {
+      using server = await serve(agent1);
+      class Options {
+        #ca = ca1;
+        #serverName = "agent1";
+        get ca() {
+          return this.#ca;
+        }
+        get serverName() {
+          return this.#serverName;
+        }
+      }
+      const connect = (own: object) => dial(server.url, { tls: Object.assign(new Options(), own) });
+      expect({
+        checkServerIdentity: await connect({ checkServerIdentity: () => undefined }),
+        pfx: await connect({ pfx, passphrase: "sample" }),
+        both: await connect({ pfx, passphrase: "sample", checkServerIdentity: () => new Error("pinned") }),
+      }).toEqual({ checkServerIdentity: anonymous, pfx: identified, both: "refused" });
     });
 
     it("an own `pfx` in the `tls` option keeps the inherited options", async () => {

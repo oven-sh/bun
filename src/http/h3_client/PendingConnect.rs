@@ -94,8 +94,11 @@ impl PendingConnect {
         let _registry_ref =
             ClientContext::get().and_then(|ctx| ClientContext::as_mut(ctx).unregister(s));
         while !s.pending.is_empty() {
-            let stream = s.pending[0].as_ptr();
-            s.fail(stream, err);
+            let client = s.pending[0].client.take();
+            s.detach(s.pending[0].as_ptr());
+            if let Some(client) = client {
+                client.h3_upgrade_failed(err);
+            }
         }
     }
 }

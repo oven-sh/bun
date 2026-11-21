@@ -28,7 +28,7 @@ test("IncomingMessage.prototype._dump reads nothing extra through a Proxy", () =
     trapsOf(Object.create(http.IncomingMessage.prototype), receiver =>
       http.IncomingMessage.prototype._dump.call(receiver),
     ),
-  ).toEqual(["_dumped", "_dumped =", "removeAllListeners", "_events", "resume", "_readableState"]);
+  ).toEqual(["_dumped", "_dumped =", "removeAllListeners", "_events", "_readableState"]);
 });
 
 test("EventEmitter.call(proxy) performs every read and store in order", () => {

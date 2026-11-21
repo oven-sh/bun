@@ -188,6 +188,8 @@ pub enum PollTag {
     ParentDeathWatchdog,
     #[cfg(not(windows))]
     MemoryPressure,
+    #[cfg(not(windows))]
+    FdPipe,
     SubprocessPipeReader,
     ShellPipeReader,
     ShellIoReader,

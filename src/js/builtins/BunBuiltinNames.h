@@ -39,7 +39,6 @@ using namespace JSC;
     macro(_events) \
     macro(abort) \
     macro(addAbortAlgorithmToSignal) \
-    macro(armedTimeout) \
     macro(arrayBuffer) \
     macro(asUint8Array) \
     macro(asymmetricMatch) \
@@ -65,6 +64,7 @@ using namespace JSC;
     macro(ctimeMs) \
     macro(data) \
     macro(decode) \
+    macro(defaultTimeout) \
     macro(dest) \
     macro(detail) \
     macro(dirname) \
@@ -89,15 +89,14 @@ using namespace JSC;
     macro(fastPath) \
     macro(fatal) \
     macro(fd) \
+    macro(fdIsWriteOnly) \
     macro(filename) \
     macro(flush) \
     macro(format) \
     macro(globScan) \
     macro(globScanSync) \
     macro(handleEvent) \
-    macro(hasWaitingResponses) \
     macro(headers) \
-    macro(heldChunk) \
     macro(highWaterMark) \
     macro(host) \
     macro(hostDefinedImportType) \
@@ -153,14 +152,12 @@ using namespace JSC;
     macro(originalLine) \
     macro(overridableRequire) \
     macro(ownReadableState) \
-    macro(ownWritableState) \
     macro(parse) \
     macro(partitioned) \
     macro(path) \
     macro(paths) \
     macro(peekPromiseSettledValue) \
     macro(peekPromiseStatus) \
-    macro(pipelinedResponses) \
     macro(pokePromiseAsHandled) \
     macro(port) \
     macro(prev) \
@@ -229,15 +226,10 @@ using namespace JSC;
 // Among the names above: those that only src/js reads and writes, never native code. A property under one of them is an
 // ordinary property that nothing lists: a Proxy reads and writes it on its target, without a trap. Keep this list sorted.
 #define BUN_MODULE_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
-    macro(armedTimeout) \
     macro(exchange) \
-    macro(hasWaitingResponses) \
-    macro(heldChunk) \
     macro(isOpen) \
     macro(isPrepared) \
     macro(ownReadableState) \
-    macro(ownWritableState) \
-    macro(pipelinedResponses) \
     macro(requestListener) \
     macro(resumeUnlessFlowing)
 

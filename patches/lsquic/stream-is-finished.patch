@@ -1,0 +1,34 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -2299,6 +2299,14 @@ lsquic_conn_abort_error (lsquic_conn_t *, int is_app, unsigned error_code,
+ uint64_t
+ lsquic_stream_get_error_code (const lsquic_stream_t *);
+ 
++/**
++ * True if both sides are closed and all data is acknowledged.  Inside
++ * on_close(), false means the stream was torn down with its connection or
++ * closed with frames still in flight.
++ */
++int
++lsquic_stream_is_finished (const lsquic_stream_t *);
++
+ /**
+  * Send RESET_STREAM(error_code) regardless of FIN state; the read side ends
+  * only if the peer FIN'd/RST'd. maybe_reset skips RST when FIN was sent.
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -4513,6 +4513,14 @@ lsquic_stream_get_error_code (const lsquic_stream_t *stream)
+ }
+ 
+ 
++/* bun */
++int
++lsquic_stream_is_finished (const lsquic_stream_t *stream)
++{
++    return (stream->stream_flags & STREAM_FINISHED) != 0;
++}
++
++
+ /* bun: send RESET_STREAM(code) regardless of FIN state.
+  * lsquic_stream_maybe_reset skips RST when FIN_SENT and falls back to
+  * shutdown_read (which sends STOP_SENDING(HEC_NO_ERROR)), losing the

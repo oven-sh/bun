@@ -13,7 +13,6 @@
 #include <JavaScriptCore/JSStringInlines.h>
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSCast.h>
-#include <JavaScriptCore/HeapIterationScope.h>
 #include <JavaScriptCore/MarkedSpaceInlines.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 
@@ -50,11 +49,14 @@ using namespace WebCore;
 
 void invalidateLiveDateInstanceCaches(JSC::VM& vm)
 {
-    JSC::HeapIterationScope iterationScope(vm.heap);
-    vm.heap.dateInstanceSpace.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
+    // HeapIterationScope stops every allocator, and resuming one leaves the address of its next cell on the stack.
+    auto& space = vm.heap.dateInstanceSpace;
+    space.forEachDirectory([](JSC::BlockDirectory& directory) { directory.stopAllocating(); });
+    space.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
         static_cast<JSC::DateInstance*>(static_cast<JSC::JSCell*>(cell))->invalidateCachedLocalGregorianDateTime();
         return IterationStatus::Continue;
     });
+    space.forEachDirectory([](JSC::BlockDirectory& directory) { directory.resumeAllocating(); });
 }
 
 void resetDateCachesAfterTimeZoneChange(JSC::VM& vm)
@@ -399,7 +401,6 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
 
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
 extern "C" void Bun__setTLSRejectUnauthorizedValue(int value);
-extern "C" int Bun__getVerboseFetchValue();
 extern "C" void Bun__setVerboseFetchValue(int value);
 
 ALWAYS_INLINE static Identifier NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(VM& vm)
@@ -1167,4 +1168,9 @@ JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     return object;
 #endif
 }
+}
+
+extern "C" JSC::EncodedJSValue Bun__Process__getEnvObjectIfCreated(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(defaultGlobalObject(globalObject)->m_processEnvObject.get());
 }

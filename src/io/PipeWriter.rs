@@ -1158,6 +1158,10 @@ impl StreamBuffer {
         }
     }
 
+    pub fn memory_cost(&self) -> usize {
+        self.list.capacity()
+    }
+
     pub fn size(&self) -> usize {
         self.list.len() - self.cursor
     }

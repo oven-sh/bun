@@ -233,6 +233,20 @@ function resistStopPropagation<T extends object>(options: T): T & AddEventListen
   return options;
 }
 
+// `options` with some members replaced. A spread would drop its inherited and non-enumerable members.
+function withMembers<T extends object, M extends object>(options: T, members: M): Omit<T, keyof M> & M {
+  const result = { __proto__: options, ...members };
+  // The getters of a Request, or of a class with private fields, throw for any receiver but `options`.
+  for (let object = options; object && object !== Object.prototype; object = Object.getPrototypeOf(object)) {
+    for (const key of Object.getOwnPropertyNames(object)) {
+      if (!Object.hasOwn(result, key) && Object.getOwnPropertyDescriptor(object, key)?.get) {
+        Object.defineProperty(result, key, { __proto__: null, get: () => options[key] } as PropertyDescriptor);
+      }
+    }
+  }
+  return result as unknown as Omit<T, keyof M> & M;
+}
+
 function getLazy<T>(initializer: () => T) {
   let value: T;
   let initialized = false;
@@ -440,18 +454,8 @@ const kHandle = Symbol("kHandle");
 const kClusterOwner = Symbol("kClusterOwner");
 const kCapture = Symbol("kCapture");
 const kShapeMode = Symbol("shapeMode");
-const kAutoDestroyed = Symbol("kAutoDestroyed");
 const kWeakHandler = Symbol("kWeak");
 const kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
-
-declare global {
-  namespace $Node {
-    interface Readable {
-      /** Set when the stream destroyed itself after its end, as `autoDestroy` asks. */
-      [kAutoDestroyed]?: boolean;
-    }
-  }
-}
 
 // Filled by the module that writes the functions. What lies in a public prototype object when another module loads may be a program's patch.
 const originals: {
@@ -475,6 +479,7 @@ export default {
   ErrnoException,
   once,
   getLazy,
+  withMembers,
   guardCallback,
   isInsideNodeModules,
   resistStopPropagation,
@@ -491,7 +496,6 @@ export default {
   kClusterOwner,
   kCapture,
   kShapeMode,
-  kAutoDestroyed,
   kWeakHandler,
   kCustomPromisifyArgsSymbol,
   kEmptyObject,

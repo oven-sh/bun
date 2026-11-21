@@ -170,18 +170,13 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
 pub use bun_jsc::event_loop::EventLoop;
 pub use bun_jsc::virtual_machine::VirtualMachine;
 
-// `bun_runtime` owns the per-VM `RuntimeState` (SSLContextCache, SSLConfig parser) and
+// `bun_runtime` owns the per-VM `RuntimeState` and the SSLConfig parser, and
 // depends on this crate, so importing it would be a cycle. This crate defines the table of
 // function pointers, `bun_runtime::hw_exports::sql_hooks` the one instance.
 pub struct SqlRuntimeHooks {
     /// `&runtime_state().sql_rare` — this crate's [`RareData`] storage.
     pub sql_rare: fn(&VirtualMachine) -> &RareData,
-    /// `SSLContextCache::getOrCreateOpts` — digest-keyed weak `SSL_CTX*` cache.
-    pub ssl_ctx_get_or_create: fn(
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<OwnedSslCtx>,
-    /// `SSLConfig::fromJS` — parse a JS TLS-options object. `None` if it held no TLS config, or threw.
+    /// Parses a JS TLS-options object. `None` if it threw.
     pub ssl_config_from_js: fn(&JSGlobalObject, JSValue) -> Option<Box<bun_http::SSLConfig>>,
 }
 
@@ -320,7 +315,7 @@ pub mod api {
     pub mod server_config {
         use super::*;
 
-        /// `None`: no TLS options were given.
+        /// `None` is a connection without TLS.
         #[derive(Default)]
         pub struct SSLConfig(Option<Box<bun_http::SSLConfig>>);
 
@@ -354,40 +349,19 @@ pub mod api {
             }
 
             pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
-                let config = (hooks().ssl_config_from_js)(global, value);
-                if global.has_exception() {
-                    debug_assert!(config.is_none());
-                    return Err(JsError::Thrown);
-                }
-                Ok(Self(config))
+                let config = (hooks().ssl_config_from_js)(global, value).ok_or(JsError::Thrown)?;
+                Ok(Self(Some(config)))
             }
 
             /// `SSLConfig.asUSocketsForClientVerification` — projects to the
             /// `#[repr(C)]` `us_bun_socket_context_options_t` for client mode
             /// (request_cert=1, reject_unauthorized=0; SQL re-verifies hostname
-            /// itself). Returns `Default` for the empty/`tls:true` config.
+            /// itself).
             pub(crate) fn as_usockets_for_client_verification(
                 &self,
-            ) -> bun_uws::us_bun_socket_context_options_t {
-                match &self.0 {
-                    None => bun_uws::us_bun_socket_context_options_t {
-                        request_cert: 1,
-                        reject_unauthorized: 0,
-                        ..Default::default()
-                    },
-                    Some(config) => config.as_usockets_for_client_verification(),
-                }
+            ) -> Option<bun_uws::us_bun_socket_context_options_t> {
+                Some(self.0.as_ref()?.as_usockets_for_client_verification())
             }
         }
     }
-}
-
-use bun_boringssl_sys::OwnedSslCtx;
-
-/// The `SSL_CTX` for `opts` from the `SSLContextCache` of this thread's VM.
-pub(crate) fn ssl_ctx_get_or_create(
-    opts: &bun_uws::us_bun_socket_context_options_t,
-    err: &mut bun_uws::create_bun_socket_error_t,
-) -> Option<OwnedSslCtx> {
-    (hooks().ssl_ctx_get_or_create)(opts, err)
 }

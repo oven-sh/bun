@@ -1,18 +1,20 @@
 import { expect } from "bun:test";
 import { isASAN, isWindows, rss } from "harness";
+import { rmSync } from "node:fs";
 import * as net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout } from "node:timers/promises";
 
-const listen_path = join(tmpdir(), "test-net-successful-connection-handle-leak.sock");
+// Use a per-process path so a stale socket from a killed run can't fail the listen with EADDRINUSE.
+const listen_path = join(tmpdir(), `test-net-successful-connection-handle-leak-${process.pid}.sock`);
 
-const { promise, resolve } = Promise.withResolvers();
+const { promise: listening, resolve, reject } = Promise.withResolvers<void>();
 const server = net
   .createServer()
   .listen(listen_path)
-  .on("listening", () => resolve());
-await promise;
+  .on("listening", () => resolve())
+  .on("error", reject);
+await listening;
 const address = server.address();
 console.log("server address", address);
 
@@ -22,67 +24,45 @@ console.log("server address", address);
 const warmup_total = isASAN ? 10_000 : 50_000;
 const measured_total = isASAN ? 20_000 : 100_000;
 
-let started;
+async function run(total: number) {
+  let started = 0;
+  while (started < total) {
+    const promises: Promise<void>[] = [];
+    for (let i = 0; i < 100; i++) {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const socket = net
+        .connect({ path: listen_path })
+        .on("connect", () => {
+          socket.on("close", () => resolve());
+          socket.end();
+        })
+        .on("error", reject);
 
-started = 0;
-while (started < warmup_total) {
-  const promises: Promise<void>[] = [];
-  for (let i = 0; i < 100; i++) {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    const socket = net
-      .connect({ path: listen_path })
-      .on("connect", () => {
-        socket.on("close", () => resolve());
-        socket.end();
-      })
-      .on("error", e => {
-        reject(e);
-      });
-
-    promises.push(promise);
-    started++;
-  }
-  await Promise.all(promises);
-  await setTimeout(1);
-  if (started % 10_000 === 0) {
-    console.log(`Completed ${started} connections. RSS: ${(rss() / 1024 / 1024) | 0} MB`);
+      promises.push(promise);
+      started++;
+    }
+    await Promise.all(promises);
+    if (started % 10_000 === 0) {
+      console.log(`Completed ${started} connections. RSS: ${(rss() / 1024 / 1024) | 0} MB`);
+    }
   }
 }
 
-Bun.gc(true);
-const warmup_rss = rss();
+let warmup_rss: number, post_rss: number;
+try {
+  await run(warmup_total);
+  Bun.gc(true);
+  warmup_rss = rss();
 
-started = 0;
-while (started < measured_total) {
-  const promises: Promise<void>[] = [];
-  for (let i = 0; i < 100; i++) {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    const socket = net
-      .connect({ path: listen_path })
-      .on("connect", () => {
-        socket.on("close", () => resolve());
-        socket.end();
-      })
-      .on("error", e => {
-        reject(e);
-      });
-
-    promises.push(promise);
-    started++;
-  }
-  await Promise.all(promises);
-  await setTimeout(1);
-  if (started % 10_000 === 0) {
-    console.log(`Completed ${started} connections. RSS: ${(rss() / 1024 / 1024) | 0} MB`);
-  }
+  await run(measured_total);
+  // Mirror the warmup sample: collect before measuring so the assertion compares
+  // like-for-like and isn't sensitive to garbage still in flight from the last batch.
+  Bun.gc(true);
+  post_rss = rss();
+} finally {
+  server.close();
+  rmSync(listen_path, { force: true });
 }
-
-// Mirror the warmup sample: collect before measuring so the assertion compares
-// like-for-like and isn't sensitive to garbage still in flight from the last batch.
-Bun.gc(true);
-const post_rss = rss();
-
-server.close();
 
 // Per-Socket fields added for onread/tls bookkeeping raise steady-state RSS a
 // few MB across ~30k iterations; a real per-connection leak would blow past 24.

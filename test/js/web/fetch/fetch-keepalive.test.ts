@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tls } from "harness";
 import { once } from "node:events";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
 import { release } from "node:os";
@@ -258,6 +258,103 @@ test.concurrent.each([
   20_000,
 );
 
+// A small file is read into memory and a large one is sent from its descriptor. Both can be sent from the start again.
+test.concurrent.each([
+  ["small", 1000],
+  ["large", 300_000],
+])("PUT of a %s Bun.file() is sent again when the reused connection drops", async (_, size) => {
+  using dir = tempDir("fetch-keepalive-file", {});
+  const content = Buffer.alloc(size, "0123456789");
+  await Bun.write(join(String(dir), "body"), content);
+
+  const received: Buffer[] = [];
+  let connections = 0;
+  const server = createServer(socket => {
+    const first = ++connections === 1;
+    let buffered = Buffer.alloc(0);
+    socket.on("error", () => {});
+    socket.on("data", (data: Buffer) => {
+      buffered = Buffer.concat([buffered, data]);
+      const headEnd = buffered.indexOf("\r\n\r\n");
+      if (headEnd < 0) return;
+      const isUpload = buffered.toString("latin1", 0, 4) === "PUT ";
+      // The first connection answers the GET and goes away once the upload has started.
+      if (first && isUpload) return void socket.destroy();
+      if (isUpload && buffered.length < headEnd + 4 + size) return;
+      if (isUpload) received.push(buffered.subarray(headEnd + 4));
+      buffered = Buffer.alloc(0);
+      socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    expect(await (await fetch(url)).text()).toBe("ok");
+    const res = await fetch(url, { method: "PUT", body: Bun.file(join(String(dir), "body")) });
+    expect(await res.text()).toBe("ok");
+    expect({ connections, uploads: received.length, whole: received[0]?.equals(content) }).toEqual({
+      connections: 2,
+      uploads: 1,
+      whole: true,
+    });
+  } finally {
+    server.close();
+  }
+});
+
+// The client is a subprocess so that it runs in parallel with the server. Debug builds are too slow to need many rounds.
+test("PUT of a Bun.file() is delivered once per request while reused connections keep dropping", async () => {
+  const size = 70_000;
+  const rounds = isDebug || isASAN ? 25 : 250;
+  using dir = tempDir("fetch-keepalive-file-drops", {
+    "client.js": `
+      const [url, path, rounds] = process.argv.slice(2);
+      let ok = 0;
+      for (let i = 0; i < +rounds; i++) {
+        await fetch(url, { method: "POST", body: "warm" }).then(res => res.text(), () => {});
+        const res = await fetch(url, { method: "PUT", body: Bun.file(path) });
+        if ((await res.text()) === "ok") ok++;
+      }
+      console.log(ok);
+    `,
+  });
+  await Bun.write(join(String(dir), "body"), Buffer.alloc(size, "0123456789"));
+
+  let uploads = 0;
+  const server = createServer(socket => {
+    let buffered = Buffer.alloc(0);
+    socket.on("error", () => {});
+    socket.on("data", (data: Buffer) => {
+      buffered = Buffer.concat([buffered, data]);
+      const headEnd = buffered.indexOf("\r\n\r\n");
+      if (headEnd < 0) return;
+      const isUpload = buffered.toString("latin1", 0, 4) === "PUT ";
+      if (buffered.length < headEnd + 4 + (isUpload ? size : 4)) return;
+      buffered = Buffer.alloc(0);
+      if (isUpload) uploads++;
+      socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", () => {
+        if (!isUpload) socket.resetAndDestroy();
+      });
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "client.js", url, join(String(dir), "body"), String(rounds)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), uploads }).toEqual({ stdout: String(rounds), uploads: rounds });
+    expect(exitCode).toBe(0);
+  } finally {
+    server.close();
+  }
+});
+
 // A reused keep-alive connection reset during a streaming PUT must reject with
 // ECONNRESET, not retry: the stream body is already consumed, and the retry
 // panicked in send_initial_request_payload. Subprocess: the panic aborts the process.
@@ -500,6 +597,7 @@ test("a completed streaming POST keeps its connection in the keep-alive pool", a
 //   /302-body         a 302 that carries a body
 //   /302-http10       the same 302 from an HTTP/1.0 server (socket left open)
 //   /302-http10-ka    ... that says Connection: keep-alive
+//   /307-end          the same 307, then the server closes without Connection: close
 //   anything else     200 whose body is "<method>:<request body length>"
 const redirectServer = `
   import net from "node:net";
@@ -526,12 +624,15 @@ const redirectServer = `
           "/302-http10-ka": "302 Found",
           "/303": "303 See Other",
           "/307": "307 Temporary Redirect",
+          "/307-end": "307 Temporary Redirect",
         }[path];
         if (!redirect) {
           const body = method + ":" + len;
           sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + body.length + "\\r\\n\\r\\n" + body);
         } else if (path === "/302-close") {
           sock.end("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n");
+        } else if (path === "/307-end") {
+          sock.end("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\n\\r\\n");
         } else if (path === "/302-body") {
           sock.write("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 5\\r\\n\\r\\nmoved");
         } else if (path === "/302-http10") {
@@ -560,7 +661,7 @@ const redirectServer = `
 test.concurrent.each([
   ["GET -> 302", "/302", "{}", "GET:0", 1],
   ["POST -> 303 (hop is a bodyless GET)", "/303", '{ method: "POST", body: "payload" }', "GET:0", 1],
-  ["POST -> 307 (hop resends the body)", "/307", '{ method: "POST", body: "payload" }', "POST:7", 1],
+  ["PUT -> 307 (hop resends the body)", "/307", '{ method: "PUT", body: "payload" }', "PUT:7", 1],
   ["GET -> HTTP/1.0 302 with Connection: keep-alive", "/302-http10-ka", "{}", "GET:0", 1],
   // Not reusable, so every fetch dials once more for the hop; the hop's own
   // connection is pooled and carries the next fetch's 3xx. The HTTP/1.0 row is
@@ -569,6 +670,25 @@ test.concurrent.each([
   ["GET -> 302 with Connection: close", "/302-close", "{}", "GET:0", 5],
   ["GET -> 302 carrying a body", "/302-body", "{}", "GET:0", 5],
   ["GET -> HTTP/1.0 302", "/302-http10", "{}", "GET:0", 5],
+  // A hop that's still a POST can't be retried if the server closed behind the
+  // 3xx, so it always dials.
+  ["POST -> 307", "/307", '{ method: "POST", body: "payload" }', "POST:7", 5],
+  ["POST -> 307, then the server closes", "/307-end", '{ method: "POST", body: "payload" }', "POST:7", 5],
+  ["PUT -> 307, then the server closes (hop is retried)", "/307-end", '{ method: "PUT", body: "payload" }', "PUT:7", 5],
+  [
+    "PUT of a Bun.file() -> 307 (hop resends the file)",
+    "/307",
+    '{ method: "PUT", body: Bun.file(process.execPath).slice(0, 40000) }',
+    "PUT:40000",
+    1,
+  ],
+  [
+    "PUT of a Bun.file() -> 307, then the server closes (hop is retried)",
+    "/307-end",
+    '{ method: "PUT", body: Bun.file(process.execPath).slice(0, 40000) }',
+    "PUT:40000",
+    5,
+  ],
 ])("redirect keep-alive: %s", async (_, path, init, hopBody, connections) => {
   await using proc = Bun.spawn({
     cmd: [
@@ -963,6 +1083,38 @@ function eachRequest(socket: Socket, onRequest: () => void) {
   });
 }
 
+test.concurrent.each([[["0\r\n\r\n"]], [["0\r", "\n\r", "\n"]], [["\r\n"]], [["\r", "\n"]]])(
+  "a chunked body whose origin sends %j once the next request is out: the next response is read",
+  async late => {
+    let connections = 0;
+    const sockets: Socket[] = [];
+    const server = createServer({ noDelay: true }, socket => {
+      connections++;
+      sockets.push(socket);
+      socket.on("error", () => {});
+      let requests = 0;
+      eachRequest(socket, async () => {
+        if (requests++ === 0) {
+          return void socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n");
+        }
+        // One write each, so that they can be reads of their own.
+        for (const bytes of [...late, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nnext"]) {
+          await new Promise(resolve => socket.write(bytes, () => setImmediate(resolve)));
+        }
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+      await (await fetch(url)).text();
+      expect({ next: await (await fetch(url)).text(), connections }).toEqual({ next: "next", connections: 1 });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
+  },
+);
+
 // An https origin that keeps its connections alive. It leaves the second request of its first connection, the one fetch
 // reuses, to `secondRequest`, which gets the TLS session and the TCP socket under it. `requests` is what arrived.
 async function originWithBrokenReuse(secondRequest: (session: TLSSocket, raw: Socket) => void) {
@@ -1010,6 +1162,7 @@ test.concurrent.each<[string, Parameters<typeof originWithBrokenReuse>[0]]>([
   ["FIN", (_session, raw) => raw.end()],
   ["RST", (_session, raw) => raw.resetAndDestroy()],
   ["a late last chunk, then close_notify", session => session.end("0\r\n\r\n")],
+  ["a few bytes that are no response, then close_notify", session => session.end("junk\r\n")],
 ])("a GET that a reused https connection answers with %s is sent again", async (_label, secondRequest) => {
   await using origin = await originWithBrokenReuse(secondRequest);
   const bodies = [await bodyOrCode(origin.url, {}), await bodyOrCode(origin.url, {})];
@@ -1039,8 +1192,8 @@ test.concurrent.each<[string, BunFetchRequestInit, Parameters<typeof originWithB
 );
 
 test.concurrent.each<[string, string]>([
-  ["POST", "0\r\n\r\n"],
-  ["GET", "0\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n"],
+  ["POST", "junk\r\n"],
+  ["GET", "junk\r\nHTTP/1.1 204 No Content\r\n\r\n"],
   ["GET", "HTTP/1.1 204 No Content\r\nA : b\r\n\r\n"],
 ])("a %s that a reused connection answers with %j is not sent again", async (method, reply) => {
   await using origin = await originWithBrokenReuse(session => session.write(reply));
@@ -1057,6 +1210,8 @@ test.concurrent.each<[string, string, string]>([
   // https://github.com/oven-sh/bun/issues/36940
   ["GET", "200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n0\r\n\r\n", "ok"],
   ["HEAD", "304 Not Modified\r\nTransfer-Encoding: chunked\r\n\r\n", ""],
+  // RFC 9112 6.3 rule 1: a response to HEAD ends at its header section, so it needs no Content-Length to be complete.
+  ["HEAD", "200 OK\r\nConnection: keep-alive\r\n\r\n", ""],
 ])("a connection is reused after a %s answered with %j", async (method, reply, body) => {
   await using origin = await originWithBrokenReuse(session => session.write(`HTTP/1.1 ${reply}`));
   const bodies = [
@@ -1068,6 +1223,58 @@ test.concurrent.each<[string, string, string]>([
     bodies: ["ok", body, "ok"],
     requests: ["connection 1 request 1", "connection 1 request 2", "connection 1 request 3"],
   });
+});
+
+// The origin may still send the chunked body that it announced.
+test.concurrent.each(["204 No Content", "304 Not Modified"])(
+  "a connection is not reused after a GET answered with %s and Transfer-Encoding: chunked",
+  async status => {
+    await using origin = await originWithBrokenReuse(session =>
+      session.write(`HTTP/1.1 ${status}\r\nTransfer-Encoding: chunked\r\n\r\n`),
+    );
+    const bodies = [
+      await bodyOrCode(origin.url, {}),
+      await bodyOrCode(origin.url, {}),
+      await bodyOrCode(origin.url, {}),
+    ];
+    expect({ bodies, requests: origin.requests }).toEqual({
+      bodies: ["ok", "", "ok"],
+      requests: ["connection 1 request 1", "connection 1 request 2", "connection 2 request 1"],
+    });
+  },
+);
+
+test.concurrent.each([
+  // They belong to no response.
+  ["that bytes follow", "Connection: keep-alive\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nstray"],
+  // The origin may end its bodies with a close, and still send this one.
+  ["that doesn't say keep-alive", "\r\n"],
+])("a connection is not reused after a HEAD response with no Content-Length %s", async (_, rest) => {
+  await using origin = await originWithBrokenReuse(session => session.write(`HTTP/1.1 200 OK\r\n${rest}`));
+  const bodies = [
+    await bodyOrCode(origin.url, {}),
+    await bodyOrCode(origin.url, { method: "HEAD" }),
+    await bodyOrCode(origin.url, {}),
+  ];
+  expect({ bodies, requests: origin.requests }).toEqual({
+    bodies: ["ok", "", "ok"],
+    requests: ["connection 1 request 1", "connection 1 request 2", "connection 2 request 1"],
+  });
+});
+
+test.concurrent("a connection to Bun.serve is reused after a HEAD response with no Content-Length", async () => {
+  const ports = new Set<number>();
+  const inits: ResponseInit[] = [{}, { headers: { Connection: "keep-alive" } }, { status: 404 }];
+  await using server = Bun.serve({
+    port: 0,
+    fetch: (request, server) => (ports.add(server.requestIP(request)!.port), new Response(null, inits.shift())),
+  });
+  const heads = [];
+  while (inits.length) {
+    const { headers } = await fetch(server.url, { method: "HEAD" });
+    heads.push([headers.get("content-length"), headers.get("connection")]);
+  }
+  expect({ heads, connections: ports.size }).toEqual({ heads: Array(3).fill([null, "keep-alive"]), connections: 1 });
 });
 
 // The session with an https proxy is the one that breaks, under a CONNECT tunnel that fetch reuses.
@@ -1112,3 +1319,64 @@ test.concurrent(
     }
   },
 );
+
+async function originThatSendsKeepAlive(keepAlive: string) {
+  const sockets: Socket[] = [];
+  const server = createServer(socket => {
+    sockets.push(socket);
+    socket.on("error", () => {});
+    eachRequest(socket, () => {
+      socket.write(`HTTP/1.1 200 OK\r\nContent-Length: 2\r\nKeep-Alive: ${keepAlive}\r\n\r\nok`);
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  return {
+    sockets,
+    async post() {
+      expect(await (await fetch(url, { method: "POST", body: "select 1" })).text()).toBe("ok");
+    },
+    async [Symbol.asyncDispose]() {
+      for (const socket of sockets) socket.destroy();
+      await new Promise(closed => server.close(closed));
+    },
+  };
+}
+
+test.concurrent.each([
+  ["timeout=0", 2],
+  ["max=100, timeout=0", 2],
+  ["timeout=0; max=100", 2],
+  ["TIMEOUT = 0", 2],
+  ["timeout=60\r\nKeep-Alive: timeout=0", 2],
+  ["timeout=60", 1],
+  ["timeout=99999999999", 1],
+  ["timeout=soon", 1],
+  ["max=100", 1],
+])("two POSTs to an origin that sends Keep-Alive: %s use %i connection(s)", async (keepAlive, expected) => {
+  await using origin = await originThatSendsKeepAlive(keepAlive);
+  await origin.post();
+  await origin.post();
+  expect(origin.sockets.length).toBe(expected);
+});
+
+// Reuse stops 2 seconds before the timeout, but never earlier than halfway through it. A loaded machine can miss a
+// window, so this only rules out a connection per request.
+test.concurrent.each([1, 2])(
+  "back-to-back POSTs share connections when the origin sends Keep-Alive: timeout=%i",
+  async timeout => {
+    await using origin = await originThatSendsKeepAlive(`timeout=${timeout}`);
+    for (let i = 0; i < 10; i++) await origin.post();
+    expect(origin.sockets.length).toBeLessThan(10);
+  },
+);
+
+// The window of timeout=1 is half a second, and only the clock shows its end.
+test.concurrent("a POST dials a new connection 600 ms after a response with Keep-Alive: timeout=1", async () => {
+  await using origin = await originThatSendsKeepAlive("timeout=1");
+  await origin.post();
+  await Bun.sleep(600);
+  await origin.post();
+  expect(origin.sockets.length).toBe(2);
+});

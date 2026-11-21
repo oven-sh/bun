@@ -1,11 +1,6 @@
-//! From-scratch rewrite of the `node:http2` native engine (replacing `h2_frame_parser.rs`).
-//!
-//! Clean-room, spec-organized modules. HPACK is in `bun_hpack`.
-//! Build order: wire -> settings -> flow_control -> stream -> connection, then the
-//! JSC binding is pointed at this engine and `h2_frame_parser.rs` is removed.
+//! The protocol engine of `node:http2`. `h2_frame_parser.rs` binds it to JS and to the socket.
 
 pub(crate) mod connection;
-pub(crate) mod flow_control;
-pub(crate) mod settings;
+mod field_checks;
+pub(crate) mod outbound_fields;
 pub(crate) mod stream;
-pub(crate) mod wire;

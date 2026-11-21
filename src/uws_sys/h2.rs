@@ -29,8 +29,11 @@ impl Response {
         // SAFETY: self is a live FFI handle; data ptr/len valid for read
         unsafe { c::uws_h2_res_try_end(self, data.as_ptr(), data.len(), total, close_connection) }
     }
-    pub fn end_without_body(&mut self, close_connection: bool) {
-        c::uws_h2_res_end_without_body(self, close_connection)
+    pub(crate) fn accept_request_body(&mut self) -> bool {
+        c::uws_h2_res_accept_request_body(self)
+    }
+    pub fn end_without_body(&mut self, _close_connection: bool) {
+        c::uws_h2_res_end_without_body(self)
     }
     pub(crate) fn end_stream(&mut self, close_connection: bool) {
         c::uws_h2_res_end_stream(self, close_connection)
@@ -72,18 +75,6 @@ impl Response {
         // SAFETY: self is a live FFI handle; key ptr/len valid for read
         unsafe { c::uws_h2_res_write_header_int(self, key.as_ptr(), key.len(), value) }
     }
-    pub(crate) fn write_mark(&mut self) {
-        c::uws_h2_res_write_mark(self)
-    }
-    pub(crate) fn mark_wrote_content_length_header(&mut self) {
-        c::uws_h2_res_mark_wrote_content_length_header(self)
-    }
-    pub(crate) fn mark_wrote_date_header(&mut self) {
-        c::uws_h2_res_mark_wrote_date_header(self)
-    }
-    pub(crate) fn write_continue(&mut self) {
-        c::uws_h2_res_write_continue(self)
-    }
     pub(crate) fn write_informational(&mut self, _data: &[u8]) {
         // node:http (the only caller) never reaches HTTP/2; kept for AnyResponse dispatch parity.
     }
@@ -101,7 +92,7 @@ impl Response {
     pub(crate) fn resume(&mut self) {
         c::uws_h2_res_resume(self)
     }
-    pub fn timeout(&mut self, seconds: u8) {
+    pub(crate) fn timeout(&mut self, seconds: u8) {
         c::uws_h2_res_timeout(self, seconds)
     }
     pub(crate) fn reset_timeout(&mut self) {
@@ -137,7 +128,6 @@ impl Response {
         false
     }
     pub(crate) fn prepare_for_sendfile(&mut self) {}
-    pub(crate) fn mark_needs_more(&mut self) {}
     pub(crate) fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut port: i32 = 0;
         let mut is_ipv6: bool = false;
@@ -343,6 +333,7 @@ impl OwnedApp {
         parent: &mut crate::app::App<SSL>,
         allow_http1: bool,
         idle_timeout_s: u32,
+        max_request_body_size: u64,
     ) -> Option<Self> {
         // SAFETY: parent is a live TemplatedApp<SSL>
         let p = unsafe {
@@ -351,6 +342,7 @@ impl OwnedApp {
                 std::ptr::from_mut(parent).cast::<crate::app::uws_app_t>(),
                 allow_http1,
                 idle_timeout_s,
+                max_request_body_size,
             )
         };
         core::ptr::NonNull::new(p).map(Self)
@@ -515,6 +507,7 @@ mod c {
             parent: *mut crate::app::uws_app_t,
             allow_http1: bool,
             idle_timeout_s: u32,
+            max_request_body_size: u64,
         ) -> *mut App;
         pub(super) fn uws_h2_app_destroy(app: *mut App);
         pub(super) fn uws_h2_app_on_schedule_drain(
@@ -524,7 +517,6 @@ mod c {
         );
         pub(super) safe fn uws_h2_app_drain(app: &mut App) -> bool;
         pub(super) safe fn uws_h2_app_clear_routes(app: &mut App);
-        pub(super) safe fn uws_h2_res_write_continue(res: &mut Response);
         pub(super) fn uws_h2_app_get(
             app: *mut App,
             p: *const u8,
@@ -608,7 +600,8 @@ mod c {
             total: usize,
             close: bool,
         ) -> bool;
-        pub(super) safe fn uws_h2_res_end_without_body(res: &mut Response, close: bool);
+        pub(super) safe fn uws_h2_res_accept_request_body(res: &mut Response) -> bool;
+        pub(super) safe fn uws_h2_res_end_without_body(res: &mut Response);
         pub(super) safe fn uws_h2_res_grow_request_window(res: &mut Response);
         pub(super) safe fn uws_h2_res_pause(res: &mut Response);
         pub(super) safe fn uws_h2_res_resume(res: &mut Response);
@@ -626,9 +619,6 @@ mod c {
             kn: usize,
             v: u64,
         );
-        pub(super) safe fn uws_h2_res_mark_wrote_content_length_header(res: &mut Response);
-        pub(super) safe fn uws_h2_res_mark_wrote_date_header(res: &mut Response);
-        pub(super) safe fn uws_h2_res_write_mark(res: &mut Response);
         pub(super) safe fn uws_h2_res_flush_headers(res: &mut Response, immediate: bool);
         pub(super) fn uws_h2_res_write(res: *mut Response, p: *const u8, len: *mut usize) -> bool;
         pub(super) safe fn uws_h2_res_has_responded(res: &mut Response) -> bool;

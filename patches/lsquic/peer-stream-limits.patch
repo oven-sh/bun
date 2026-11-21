@@ -1,0 +1,43 @@
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -1402,16 +1402,21 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
+     /* Do not infer anything about server limits before processing its
+      * transport parameters.
+      */
+-    conn->ifc_max_streams_in[SD_BIDI] = enpub->enp_settings.es_max_streams_in;
+-    conn->ifc_max_allowed_stream_id[SIT_BIDI_SERVER] =
+-        enpub->enp_settings.es_max_streams_in << SIT_SHIFT;
++    /* bun: the limit for the streams the server opens, and the window that
++     * sizes MAX_STREAMS credit, have to be what gen_trans_params() advertises.
++     * Upstream read es_max_streams_in, the gQUIC setting, for both. */
++    conn->ifc_max_streams_in[SD_BIDI]
++        = enpub->enp_settings.es_init_max_streams_bidi;
++    conn->ifc_max_allowed_stream_id[SIT_BIDI_SERVER]
++        = (lsquic_stream_id_t) conn->ifc_max_streams_in[SD_BIDI] << SIT_SHIFT;
+ 
+     if (flags & IFC_HTTP)
+         conn->ifc_max_streams_in[SD_UNI] = 3;
+     else
+-        conn->ifc_max_streams_in[SD_UNI] = enpub->enp_settings.es_max_streams_in;
++        conn->ifc_max_streams_in[SD_UNI]
++            = enpub->enp_settings.es_init_max_streams_uni;
+     conn->ifc_max_allowed_stream_id[SIT_UNI_SERVER]
+-                                = conn->ifc_max_streams_in[SD_UNI] << SIT_SHIFT;
++        = (lsquic_stream_id_t) conn->ifc_max_streams_in[SD_UNI] << SIT_SHIFT;
+ 
+     init_ver_neg(conn, versions, &ver);
+     assert(ver == conn->ifc_u.cli.ifcli_ver_neg.vn_ver);
+@@ -1583,11 +1588,11 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
+     conn->ifc_max_streams_in[SD_BIDI]
+         = enpub->enp_settings.es_init_max_streams_bidi;
+     conn->ifc_max_allowed_stream_id[SIT_BIDI_CLIENT]
+-        = conn->ifc_max_streams_in[SD_BIDI] << SIT_SHIFT;
++        = (lsquic_stream_id_t) conn->ifc_max_streams_in[SD_BIDI] << SIT_SHIFT;
+     conn->ifc_max_streams_in[SD_UNI]
+         = enpub->enp_settings.es_init_max_streams_uni;
+     conn->ifc_max_allowed_stream_id[SIT_UNI_CLIENT]
+-        = conn->ifc_max_streams_in[SD_UNI] << SIT_SHIFT;
++        = (lsquic_stream_id_t) conn->ifc_max_streams_in[SD_UNI] << SIT_SHIFT;
+     conn->ifc_conn.cn_version     = mini_conn->cn_version;
+     conn->ifc_conn.cn_flags      |= LSCONN_VER_SET;
+     conn->ifc_conn.cn_pf          = mini_conn->cn_pf;

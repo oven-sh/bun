@@ -27,6 +27,7 @@
  * to signal error with -1 (which is how the entire UNIX syscalling is built). */
 
 #include <cstring>
+#include <wtf/SetForScope.h>
 
 #include "libusockets.h"
 #include "bun-usockets/src/internal/internal.h"
@@ -68,6 +69,12 @@ public:
         return (LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) this)));
     }
 
+    /* A handler can tick the loop (waitForPromise). After an await no tick is under its caller to keep a socket that closes there allocated. */
+    [[nodiscard]] SetForScope<int> holdClosedSockets() {
+        int &tickDepth = us_socket_group_loop(us_socket_group((us_socket_t *) this))->data.tick_depth;
+        return SetForScope<int>(tickDepth, tickDepth + 1);
+    }
+
     /* Get socket extension */
     AsyncSocketData<SSL> *getAsyncSocketData() {
         return (AsyncSocketData<SSL> *) us_socket_ext((us_socket_t *) this);
@@ -95,10 +102,11 @@ public:
         return (us_socket_t *) this;
     }
 
-    /* Immediately close socket */
-    us_socket_t *close() {
+    /* Immediately close socket. A close_notify says that the stream is whole: not if more was to come, or if this drops buffered bytes. */
+    us_socket_t *close(bool moreWasToCome = false) {
         this->uncork();
-        return us_socket_close((us_socket_t *) this, 0, nullptr);
+        const bool truncates = SSL && (moreWasToCome || getBufferedAmount());
+        return us_socket_close((us_socket_t *) this, truncates ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, nullptr);
     }
 
     void uncorkWithoutSending() {
@@ -213,39 +221,12 @@ public:
         return true;
     }
 
-    /* Returns the text representation of an IPv4 or IPv6 address */
-    std::string_view addressAsText(std::string_view binary) {
-        static thread_local char buf[64];
-        int ipLength = 0;
-
-        if (!binary.length()) {
-            return {};
-        }
-
-        unsigned char *b = (unsigned char *) binary.data();
-
-        if (binary.length() == 4) {
-            ipLength = snprintf(buf, sizeof(buf), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
-        } else {
-            ipLength = snprintf(buf, sizeof(buf), "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
-                b[12], b[13], b[14], b[15]);
-        }
-
-        return {buf, (unsigned int) ipLength};
-    }
-
     /* Returns the remote IP address or empty string on failure */
     std::string_view getRemoteAddress() {
         static thread_local char buf[16];
         int ipLength = 16;
         us_socket_remote_address((us_socket_t *) this, buf, &ipLength);
         return std::string_view(buf, (unsigned int) ipLength);
-    }
-
-    /* Returns the text representation of IP */
-    std::string_view getRemoteAddressAsText() {
-        return addressAsText(getRemoteAddress());
     }
 
     /**
@@ -305,6 +286,7 @@ public:
         return total_written;
     }
 
+    /* Room for `length` bytes in this socket's cork buffer, which the caller fills. nullptr if write() has to take them. */
     char *reserveInCorkBuffer(size_t length) {
         if (!length || length > LoopData::CORK_COPY_MAX || us_socket_is_closed((us_socket_t *) this) || getAsyncSocketData()->buffer.length()) {
             return nullptr;

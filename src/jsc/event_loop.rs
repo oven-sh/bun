@@ -78,6 +78,10 @@ pub struct EventLoop {
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     yield_tasks: Cell<Vec<Task>>,
+    /// Like `yield_tasks`, for an iteration that no handler of the uws loop has on its stack.
+    outermost_tasks: Cell<Vec<Task>>,
+    /// The last checkpoint ended with new `deferred_tasks`. Counts as a yielded task, as `tick()` always runs a checkpoint.
+    owes_checkpoint: Cell<bool>,
 
     pub(crate) concurrent_tasks: ConcurrentQueue,
     /// See `TaskTag::is_plugin_request`: as other threads post them, and as this thread has taken them.
@@ -135,6 +139,8 @@ impl EventLoop {
             immediate_tasks: Cell::default(),
             next_immediate_tasks: Cell::default(),
             yield_tasks: Cell::default(),
+            outermost_tasks: Cell::default(),
+            owes_checkpoint: Cell::new(false),
             concurrent_tasks: ConcurrentQueue::default(),
             concurrent_plugin_requests: ConcurrentQueue::default(),
             plugin_requests: UnsafeCell::new(Queue::init()),
@@ -444,9 +450,18 @@ impl EventLoop {
             _ => unreachable!(),
         }
 
+        self.owes_checkpoint.set(false);
         vm.is_inside_deferred_task_queue.set(true);
         self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
+
+        // Drain again, or the microtasks that JS queued wait for the next event and are lost if the loop exits first.
+        if vm.deferred_task_called_js.take() {
+            let _scope = self.enter_scope_without_checkpoint();
+            global_object.drain_microtasks_and_next_ticks()?;
+            self.owes_checkpoint
+                .set(self.deferred_tasks.may_have_unrun_tasks());
+        }
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
@@ -584,6 +599,11 @@ impl EventLoop {
         self.task_drains.store(drains + 1, Ordering::Relaxed);
         __bun_tick_queue_with_count(self, virtual_machine, &mut counter)?;
         Ok(counter)
+    }
+
+    /// See [`EventLoop::task_drains`].
+    pub fn task_drains(&self) -> u64 {
+        self.task_drains.load(Ordering::Relaxed)
     }
 
     fn tick_concurrent(&self) {
@@ -957,7 +977,7 @@ impl EventLoop {
                 plugin_requests,
                 self.concurrent_plugin_requests.pop_batch(),
             );
-            let _ = self.promote_yield_tasks();
+            let _ = self.promote_yield_tasks(false);
             while let Some(task) = self.next_task() {
                 // SAFETY: JS thread, heap alive; `task` just left the queue.
                 unsafe { self.release_task_unrun(task) };
@@ -1010,12 +1030,23 @@ impl EventLoop {
 
     pub(crate) fn has_yield_tasks(&self) -> bool {
         // SAFETY: a read of the length.
-        !unsafe { &*self.yield_tasks.as_ptr() }.is_empty()
+        !unsafe { &*self.yield_tasks.as_ptr() }.is_empty() || self.owes_checkpoint.get()
+    }
+
+    /// See [`EventLoop::outermost_tasks`]. For a task that is running, so the queue is open.
+    pub fn enqueue_task_for_outermost_tick(&self, task: Task) {
+        // SAFETY: `push` only allocates.
+        unsafe { &mut *self.outermost_tasks.as_ptr() }.push(task);
     }
 
     /// `auto_tick`, before it polls: last iteration's yielded tasks become
     /// runnable. Returns whether there are any, so the poll does not block.
-    pub fn promote_yield_tasks(&self) -> bool {
+    pub fn promote_yield_tasks(&self, is_nested: bool) -> bool {
+        // SAFETY: a read of the length.
+        if !is_nested && !unsafe { &*self.outermost_tasks.as_ptr() }.is_empty() {
+            // SAFETY: `extend` only allocates.
+            unsafe { &mut *self.yield_tasks.as_ptr() }.extend(self.outermost_tasks.take());
+        }
         if !self.has_yield_tasks() {
             return false;
         }
@@ -1400,6 +1431,19 @@ pub(crate) fn get_active_tasks(
         concurrent_ref: event_loop.concurrent_ref.load(Ordering::SeqCst),
         num_polls,
         iteration: event_loop.usockets_loop().iteration_number(),
+        sweep_timer_count: event_loop
+            .usockets_loop()
+            .internal_loop_data
+            .sweep_timer_count(),
+        #[cfg(windows)]
+        sweep_deadline: None,
+        #[cfg(not(windows))]
+        sweep_deadline: Some(
+            event_loop
+                .usockets_loop()
+                .internal_loop_data
+                .sweep_next_tick_ns() as f64,
+        ),
     }
 }
 

@@ -12,7 +12,7 @@ use bun_core::strings;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
 
 use crate::webcore::blob::{self, Any as AnyBlob, BlobExt};
-use crate::webcore::body::{BodyMixin as _, Value as BodyValue};
+use crate::webcore::body::{BodyMixin as _, Unusable, Value as BodyValue};
 use crate::webcore::{ReadableStream, Response};
 
 unsafe extern "C" {
@@ -48,7 +48,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
     };
 
     {
-        let content_type_slice = response.get_content_type()?;
+        let content_type_slice = response.get_content_type();
         let content_type: &[u8] = match &content_type_slice {
             Some(ct) => ct.slice(),
             None => b"null",
@@ -83,7 +83,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
             .throw());
     }
 
-    if response.body_stream_check(this, ReadableStream::is_disturbed) {
+    if response.body_unusable(this) == Some(Unusable::Disturbed) {
         return Err(this
             .err(
                 ErrorCode::WEBASSEMBLY_RESPONSE,

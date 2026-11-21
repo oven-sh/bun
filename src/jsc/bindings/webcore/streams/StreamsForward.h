@@ -112,6 +112,12 @@ enum class WritableStreamState : uint8_t {
 // Algorithm kind tags. SourceKind::Direct deliberately DOES NOT EXIST: a Bun `type:"direct"`
 // stream is a JSDirectStreamController (ControllerKind::Direct), never a spec controller.
 
+// Native readers never hand a chunk object to script, so a body-clone tee branch gives them the shared chunk without a copy.
+enum class ReaderOwner : uint8_t {
+    Script,
+    Native,
+};
+
 // Which arm runs a readable controller's pull/cancel/start algorithms. No closures are stored.
 enum class SourceKind : uint8_t {
     JavaScript, // new ReadableStream({...}) — user underlyingSource (underlyingObject + methods)
@@ -247,9 +253,6 @@ static_assert(sizeof(StreamingUTF8DecodeState) == 4);
 // dictionary conversion.
 enum class ReadableStreamType : uint8_t { Bytes };
 
-// WebIDL `enum ReadableStreamReaderMode { "byob" }` (getReader(options).mode)
-enum class ReadableStreamReaderMode : uint8_t { Byob };
-
 } // namespace WebStreams
 } // namespace Bun
 
@@ -259,7 +262,6 @@ namespace WebCore {
 using Bun::WebStreams::BunStreamMode;
 using Bun::WebStreams::ControllerKind;
 using Bun::WebStreams::DirectSinkKind;
-using Bun::WebStreams::ReadableStreamReaderMode;
 using Bun::WebStreams::ReadableStreamState;
 using Bun::WebStreams::ReadableStreamType;
 using Bun::WebStreams::ReaderType;

@@ -44,6 +44,8 @@ pub struct InternalState<'a> {
     /// Prefix of `compressed_body` the decoder has already taken.
     compressed_body_consumed: usize,
     pub(crate) content_length: Option<usize>,
+    /// How long the connection can be reused after this response, from its `Keep-Alive: timeout=N` header.
+    pub(crate) keepalive_reuse_ms: Option<u32>,
     pub(crate) total_body_received: usize,
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
     // outlives-holder invariant (the backing `original_request_body` is a
@@ -55,8 +57,8 @@ pub struct InternalState<'a> {
     /// `request_sent_len` indexes these bytes.
     pub(crate) partial_request_head: Vec<u8>,
     pub(crate) fail: Option<Error>,
-    /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`; 0 otherwise.
-    pub(crate) connect_errno: i32,
+    /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`.
+    pub(crate) connect_errno: Option<bun_errno::SystemErrno>,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
     /// 0 otherwise. The JS side turns it into the resolver error
     /// (`ENOTFOUND`, ...) with `syscall`/`hostname`, matching `node:dns`.
@@ -78,7 +80,6 @@ pub struct InternalState<'a> {
 pub struct InternalStateFlags {
     pub(crate) allow_keepalive: bool,
     pub(crate) received_last_chunk: bool,
-    pub(crate) is_redirect_pending: bool,
     pub(crate) is_libdeflate_fast_path_disabled: bool,
     pub(crate) resend_request_body_on_redirect: bool,
     /// Set when the TLS handshake completed but the user-supplied JS
@@ -96,10 +97,12 @@ pub struct InternalStateFlags {
     /// `init()` so each redirect/retry hop re-compresses from the
     /// original uncompressed `original_request_body`.
     pub(crate) body_compressed: bool,
-    /// Held input or buffered decoder output remains for `HTTPClient::pump_held_body`.
+    /// Held input or buffered decoder output remains for `HTTPClient::send_held_body`.
     pub(crate) decompress_output_pending: bool,
-    /// See [`crate::HTTPClientResult::left_transport`].
-    pub(crate) left_transport: bool,
+    /// A resume has come, so the program has chosen how it takes the body.
+    pub(crate) is_consumer_known: bool,
+    /// `decoded_body` has chunks that were decoded before a malformed one. Report them before the failure.
+    pub(crate) has_body_ahead_of_failure: bool,
 }
 
 impl InternalStateFlags {
@@ -108,14 +111,14 @@ impl InternalStateFlags {
         Self {
             allow_keepalive: true,
             received_last_chunk: false,
-            is_redirect_pending: false,
             is_libdeflate_fast_path_disabled: false,
             resend_request_body_on_redirect: false,
             is_waiting_for_cert_check: false,
             receive_paused: false,
             body_compressed: false,
             decompress_output_pending: false,
-            left_transport: false,
+            is_consumer_known: false,
+            has_body_ahead_of_failure: false,
         }
     }
 }
@@ -134,13 +137,14 @@ impl Default for InternalState<'_> {
             compressed_body: MutableString::init_empty(),
             compressed_body_consumed: 0,
             content_length: None,
+            keepalive_reuse_ms: None,
             total_body_received: 0,
             request_body: bun_ptr::RawSlice::EMPTY,
             original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,
             partial_request_head: Vec::new(),
             fail: None,
-            connect_errno: 0,
+            connect_errno: None,
             dns_error: 0,
             dns_hostname: None,
             request_stage: HTTPStage::Pending,
@@ -170,6 +174,15 @@ impl<'a> InternalState<'a> {
 
     pub(crate) fn is_chunked_encoding(&self) -> bool {
         self.transfer_encoding == Encoding::Chunked
+    }
+
+    /// Lets go of the body as it stands: input that isn't decoded yet, the decoder, and output that isn't reported yet.
+    pub(crate) fn drop_body(&mut self) {
+        self.compressed_body = MutableString::init_empty();
+        self.compressed_body_consumed = 0;
+        self.decompressor = Decompressor::None;
+        self.decoded_body = MutableString::init_empty();
+        self.flags.decompress_output_pending = false;
     }
 
     /// The buffer response body bytes accumulate into. For compressed
@@ -217,7 +230,6 @@ impl<'a> InternalState<'a> {
         bun_core::feature_flags::is_libdeflate_enabled()
             && self.encoding == Encoding::Gzip
             && !self.flags.is_libdeflate_fast_path_disabled
-            && !self.flags.is_redirect_pending
             && matches!(self.decompressor, Decompressor::None)
             && self.is_done()
             && gzip_trailer_size(&self.compressed_body.list).is_some_and(|size| {
@@ -230,10 +242,6 @@ impl<'a> InternalState<'a> {
     /// than failing it: chunked decoder already in the trailers state, or a
     /// close-delimited response (no Content-Length, no Transfer-Encoding).
     pub(crate) fn is_body_complete_on_close(&self) -> bool {
-        // Every byte arrived; only the decode is outstanding.
-        if self.flags.decompress_output_pending && self.is_done() {
-            return true;
-        }
         if self.is_chunked_encoding() {
             return self.chunked_decoder.has_whole_body();
         }
@@ -400,10 +408,6 @@ impl<'a> InternalState<'a> {
         is_final_chunk: bool,
         max_output: usize,
     ) -> Result<bool, Error> {
-        if self.flags.is_redirect_pending {
-            return Ok(false);
-        }
-
         if self.encoding.is_compressed() {
             // `decompress_bytes` takes `&mut self`, so the bytes move out first.
             let mut buffer = core::mem::take(&mut self.compressed_body.list);

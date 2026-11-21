@@ -190,6 +190,51 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
     expect(proc.signalCode).toBeNull();
     expect(proc.exitCode).toBe(0);
   });
+
+  test("poll_start → Bun.serve throws the injected errno", async () => {
+    using dir = tempDir("serve-listen-fault", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+          const { errno } = require("os").constants;
+          const { getSystemErrorName } = require("util");
+          const out = {};
+          for (const [label, name, address] of [
+            ["tcp EACCES", "EACCES", { hostname: "127.0.0.1", port: 0 }],
+            ["tcp ENOBUFS", "ENOBUFS", { hostname: "127.0.0.1", port: 0 }],
+            ["unix ENOBUFS", "ENOBUFS", { unix: process.env.SOCKET_PATH }],
+          ]) {
+            fault.set({ syscall: "poll_start", action: "errno", errno: errno[name], repeat: 1 });
+            try {
+              Bun.serve({ ...address, fetch: () => new Response() }).stop(true);
+              out[label] = "listening";
+            } catch (e) {
+              out[label] = [e.code, e.syscall, e.errno < 0 ? getSystemErrorName(e.errno) : e.errno];
+            } finally {
+              fault.clear();
+            }
+          }
+          console.log(JSON.stringify(out));
+        `,
+      ],
+      env: { ...bunEnv, SOCKET_PATH: join(String(dir), "fault.sock") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout || "null"), stderr }).toEqual({
+      out: {
+        "tcp EACCES": ["EACCES", "listen", "EACCES"],
+        "tcp ENOBUFS": ["ENOBUFS", "listen", "ENOBUFS"],
+        "unix ENOBUFS": ["ENOBUFS", "listen", "ENOBUFS"],
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // The dispatcher removes a paused socket from the epoll set when its peer hangs up, so resuming it

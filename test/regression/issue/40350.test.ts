@@ -5,7 +5,7 @@ test("pipelined response replay does not re-enter monkey-patched write/end (#403
   // Compression middleware (@polka/compression, used by vite preview) patches
   // res.write/res.end as own properties that feed a gzip stream, and sends the
   // gzip output through the captured prototype write/end. Those prototype
-  // calls are what advanceResponsePipeline buffers for a queued pipelined
+  // calls are what node:http buffers for a queued pipelined
   // response, so the replay must call the prototype implementations too:
   // replaying through the patched res.write fed the already-compressed bytes
   // back into the ended gzip stream and killed the process with an uncaught

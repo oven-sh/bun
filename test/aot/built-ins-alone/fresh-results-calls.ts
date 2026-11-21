@@ -307,11 +307,17 @@ export const calls: Record<string, string[]> = {
   "native:Bindgen:pack_command.bind.ts:readTarball": [
     `import { readTarball } from "bun:internal-for-testing";\n${temporary}\nawait Bun.write(folder + "/a.tgz", await new Bun.Archive({ "package/package.json": "{}" }, { compress: "gzip" }).bytes());\nreadTarball(folder + "/a.tgz")`,
   ],
+  "native:Bindgen:node_tls_binding.bind.ts:getDefaultCA": [
+    'import { getCACertificates, setDefaultCACertificates } from "node:tls";\nsetDefaultCACertificates(getCACertificates("default"));\ngetCACertificates("default")',
+  ],
   "native:NewCppFunction:NodeTLS.cpp:getBundledRootCertificates": [
     'import { getCACertificates } from "node:tls";\nconst list = getCACertificates("bundled");\nlist',
   ],
   "native:NewCppFunction:NodeTLS.cpp:getExtraCACertificates": [
     'import { getCACertificates } from "node:tls";\nconst list = getCACertificates("extra");\nlist',
+  ],
+  "native:NewCppFunction:NodeTLS.cpp:getOpenSSLDefaultCertificates": [
+    'import { getCACertificates } from "node:tls";\nconst list = getCACertificates("default");\nlist',
   ],
   "native:NewCppFunction:NodeTLS.cpp:getSystemCACertificates": [
     'import { getCACertificates } from "node:tls";\nconst list = getCACertificates("system");\nlist',
@@ -430,7 +436,6 @@ export const calls: Record<string, string[]> = {
   "Bun.Archive": ['new Bun.Archive({ "a.txt": "a" })'],
   "Bun.CryptoHasher": ['new Bun.CryptoHasher("sha256")', 'new Bun.CryptoHasher("sha256", "key")'],
   "Bun.FileSystemRouter": [`${temporary}\nnew Bun.FileSystemRouter({ style: "nextjs", dir: folder })`],
-  "Bun.RedisClient": ["new Bun.RedisClient()", 'new Bun.RedisClient("redis://127.0.0.1:1", { autoReconnect: false })'],
   "Bun.S3Client": ["new Bun.S3Client({})"],
   "Bun.Transpiler": ["new Bun.Transpiler()"],
   "Bun.Transpiler.prototype.scan": ['new Bun.Transpiler().scan(`import a from "b"; export const c = a;`)'],
@@ -631,6 +636,7 @@ export const notCalled: Record<string, string> = {
   "native:Bindgen:ffi.bind.ts:openLibrary": ofOneModule("bun:ffi"),
   "native:Bindgen:ffi.bind.ts:printSource": ofOneModule("bun:ffi"),
   "native:Bindgen:node_fs_binding.bind.ts:binding": ofOneModule("internal/fs/binding"),
+  "native:Bindgen:node_tls_binding.bind.ts:getDefaultCACertificateTypes": ofOneModule("node:tls"),
   "native:Bindgen:node_util_binding.bind.ts:extractedSplitNewLinesFastPathStringsOnly":
     ofOneModule("internal/util/inspect"),
   "native:Bindgen:node_util_binding.bind.ts:internalErrorEntries": ofOneModule("node:util"),

@@ -17,7 +17,7 @@ import type { AddressInfo, Server as NetServer, Socket as NetSocket } from "node
 import { createServer as createNetServer } from "node:net";
 import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
-import { createServer as createTlsServer } from "node:tls";
+import { connect as connectTls, createServer as createTlsServer } from "node:tls";
 import { fileURLToPath } from "node:url";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
@@ -215,6 +215,20 @@ for (const [protocol, transport] of Object.entries(transports)) {
       );
     });
 
+    guardTest("destroys a free socket with allowHalfOpen that the server ends", async () => {
+      await withAgent(
+        transport,
+        async ({ agent, name, serverSockets, request }) => {
+          await request("/first");
+          const closed = once(await theFreeSocket(agent, name), "close");
+          serverSockets[0].end();
+          await closed;
+          assert.deepStrictEqual(await request("/next"), { body: "/next", poisoned: undefined, reusedSocket: false });
+        },
+        { allowHalfOpen: true } as http.AgentOptions,
+      );
+    });
+
     test("reuses a free socket that received nothing", async () => {
       await withAgent(transport, async ({ agent, name, serverSockets, request }) => {
         assert.deepStrictEqual(await request("/first"), { body: "/first", poisoned: undefined, reusedSocket: false });
@@ -226,6 +240,39 @@ for (const [protocol, transport] of Object.entries(transports)) {
         assert.strictEqual(serverSockets.length, 1);
       });
     });
+  });
+}
+
+for (const when of ["with the response", "later"]) {
+  guardTest(`a TLS session inside another leaves the pool when its close_notify comes ${when}`, async () => {
+    const sockets: NetSocket[] = [];
+    const response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+    const inner = createTlsServer({ cert, key }, socket => {
+      sockets.push(socket);
+      socket.once("data", () => (when === "later" ? socket.write(response) : socket.end(response)));
+    });
+    const outer = createTlsServer({ cert, key, allowHalfOpen: true }, socket => inner.emit("connection", socket));
+    const agent = new http.Agent({ keepAlive: true });
+    try {
+      await once(outer.listen(0, "127.0.0.1"), "listening");
+      const options = { host: "127.0.0.1", port: (outer.address() as AddressInfo).port, ca: cert, allowHalfOpen: true };
+      agent.createConnection = (_, created) => {
+        const socket = connectTls(options, () => created!(null, connectTls({ ...options, socket })));
+        return undefined;
+      };
+      const req = http.get({ host: "tunnelled.test", agent });
+      const [socket] = await once(req, "socket");
+      const closed = once(socket, "close");
+      const [res] = await once(req, "response");
+      if (when === "later") agent.once("free", () => sockets[0].end());
+      res.resume();
+      await closed;
+      assert.deepStrictEqual(Object.keys(agent.freeSockets), []);
+    } finally {
+      agent.destroy();
+      outer.close();
+      for (const socket of sockets) socket.destroy();
+    }
   });
 }
 

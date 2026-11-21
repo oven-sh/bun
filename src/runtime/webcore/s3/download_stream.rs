@@ -37,7 +37,7 @@ pub struct S3HttpDownloadStreamingTask {
 
     pub(crate) concurrent_task: ConcurrentTask,
     pub(crate) proxy_url: Box<[u8]>,
-    pub(crate) async_http_id: u32,
+    pub(crate) async_http_id: u64,
     pub(crate) abort_handle: bun_jsc::AbortHandle,
 }
 

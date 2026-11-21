@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 34b28730976f3729b1f08385ac19a7f622a31d5c76459e81ae77e00f2e40eba8.
+// Written against that file with the SHA-256 6366390fff0b38c5f866c0cbf4242859d46a357b0c0d6a1e0da7c524bf04952d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -155,9 +155,9 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     // listeners, resume(), ref(), an explicit read()) may take the reader back.
     if (stream_reachedEof) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
+    // Attaching a reader also undoes the pause that disown() left on the source.
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
-    source?.setFlowing?.(true);
 
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
@@ -165,18 +165,21 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     }
   }
 
-  function disown() {
+  function disown(wasHeldByAnotherReader = !reader && native.locked) {
     $debug("unref();");
-    source?.setFlowing?.(false);
 
+    // A reader of Bun.stdin.stream() that came after pause() keeps the source.
+    if (reader || wasHeldByAnotherReader || !native.locked) source?.setFlowing?.(false);
+    if (wasHeldByAnotherReader) source?.updateRef?.(false);
     if (reader) {
       // releaseLock() rejects any in-flight internalRead() with a TypeError; that
       // rejection is handled there by observing that `reader` was cleared here.
       reader.releaseLock();
       reader = undefined;
       $debug("released reader");
+      // A paused source keeps nothing alive; its ref is for the next reader of Bun.stdin.stream().
+      source?.updateRef?.(!forceUnref);
     }
-    source?.updateRef?.(false);
   }
 
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
@@ -320,11 +323,12 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   stream._readableState.reading = false;
 
   stream.on("pause", () => {
+    const wasHeldByAnotherReader = !reader && native.locked;
     process.nextTick(() => {
       // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
         stream._readableState.reading = false;
-        disown();
+        disown(wasHeldByAnotherReader);
       }
     });
   });

@@ -892,7 +892,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 {
                     continue;
                 }
-                bun_http::async_http::preconnect(url_str.into());
+                bun_http::async_http::preconnect(url_str.into(), None);
             }
         })
     }

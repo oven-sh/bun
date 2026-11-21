@@ -2,11 +2,12 @@
 //! For the client there is exactly one of these per HTTP-thread loop and it
 //! lives for the process; the server creates one per `Bun.serve({http3:true})`.
 
-use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
+use core::ffi::{CStr, c_char, c_int, c_uint};
 use core::ptr::NonNull;
 
 use crate::Loop;
 use crate::quic::{OwnedPendingConnect, Socket, Stream};
+use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 
 bun_opaque::opaque_ffi! { pub struct Context; }
 
@@ -24,10 +25,12 @@ unsafe extern "C" {
         port: c_int,
         sni: *const c_char,
         reject_unauthorized: c_int,
+        ssl_ctx: *mut SSL_CTX,
         out_qs: *mut *mut Socket,
         out_pending: *mut Option<OwnedPendingConnect>,
-        user: *mut c_void,
     ) -> c_int;
+
+    fn us_quic_prepare_client_ssl_ctx(ssl_ctx: *mut SSL_CTX);
 
     // `Context` is an `opaque_ffi!` ZST: shims that take only it and a callback are `safe fn`.
     safe fn us_quic_socket_context_on_hsk_done(
@@ -73,11 +76,17 @@ pub enum ConnectResult {
     Err,
 }
 
+/// Prepares a context for [`Context::connect`]: TLS 1.3 only, and the verify step that reads each connection's `reject_unauthorized`.
+pub fn prepare_client_ssl_ctx(ssl_ctx: &OwnedSslCtx) {
+    // SAFETY: `ssl_ctx` is a live SSL_CTX.
+    unsafe { us_quic_prepare_client_ssl_ctx(ssl_ctx.as_ptr()) }
+}
+
 impl Context {
     #[inline]
     pub fn create_client(loop_: &'static Loop) -> Option<NonNull<Context>> {
         // The slot of `Socket::ext` and `Stream::ext`.
-        const EXT: c_uint = size_of::<*mut c_void>() as c_uint;
+        const EXT: c_uint = size_of::<*mut ()>() as c_uint;
         // SAFETY: the context keeps `loop_`, which is `'static`.
         NonNull::new(unsafe { us_create_quic_client_context(loop_, 0, EXT, EXT) })
     }
@@ -88,11 +97,11 @@ impl Context {
         port: u16,
         sni: &CStr,
         reject_unauthorized: bool,
-        user: *mut c_void,
+        ssl_ctx: Option<&OwnedSslCtx>,
     ) -> ConnectResult {
         let mut qs: *mut Socket = core::ptr::null_mut();
         let mut pc = None;
-        // SAFETY: self is a live us_quic_socket_context_t; out-params are valid for write.
+        // SAFETY: self is a live us_quic_socket_context_t; out-params are valid for write; C takes its own reference to `ssl_ctx`.
         let rc = unsafe {
             us_quic_socket_context_connect(
                 self,
@@ -100,9 +109,9 @@ impl Context {
                 c_int::from(port),
                 sni.as_ptr(),
                 reject_unauthorized as c_int,
+                ssl_ctx.map_or(core::ptr::null_mut(), OwnedSslCtx::as_ptr),
                 &raw mut qs,
                 &raw mut pc,
-                user,
             )
         };
         match pc {

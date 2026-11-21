@@ -442,12 +442,8 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
                 socket.once("data", greet);
                 renegotiate(answer);
               } else if (process.env.WHEN === "behind a message") {
-                socket.once("data", () => {
-                  // From the write's callback: renegotiate() arms the request at once, so a frame that is still
-                  // queued behind the 101 (on Windows that write can be in flight here) would leave after the
-                  // HelloRequest. A BoringSSL client takes no application data during the new handshake.
-                  send("renegotiating", () => renegotiate(greetThenEcho));
-                });
+                // renegotiate() overtakes a write that waits behind the 101's, which may not have completed yet.
+                socket.once("data", () => send("renegotiating", () => renegotiate(greetThenEcho)));
                 answer();
               } else {
                 socket.once("data", () => renegotiate(greet));

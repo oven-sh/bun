@@ -13,7 +13,7 @@ use bun_dotenv::Loader as DotEnvLoader;
 use crate::headers::{self, Headers};
 use crate::{
     FetchRedirect, FinishedRequest, Flags, HTTPClient, HTTPRequestBody, HTTPVerboseLevel,
-    InternalState, Method, Signals,
+    InternalState, Method, MethodRef, Signals,
 };
 use crate::{HTTPClientResult, HTTPClientResultCallback};
 
@@ -27,7 +27,7 @@ bun_core::declare_scope!(AsyncHTTP, visible);
 pub struct AsyncHTTP<'a> {
     request_headers: headers::EntryList,
     pub request_body: HTTPRequestBody<'a>,
-    method: Method,
+    method: MethodRef,
     url: URL<'a>,
     /// Set by the first attempt.
     original: Option<OriginalClientState<'a>>,
@@ -37,7 +37,6 @@ pub struct AsyncHTTP<'a> {
     pub(crate) next: bun_threading::Link<AsyncHTTP<'static>>,
 
     pub client: HTTPClient<'a>,
-    pub async_http_id: u32,
 
     pub elapsed: u64,
 }
@@ -131,12 +130,11 @@ pub fn basic_authorization(url: &URL<'_>) -> Option<Vec<u8>> {
 /// `HTTPClient` has no `Default` (it has a `Drop` impl with side-effects), so
 /// this is the single place that enumerates the field set.
 fn make_client<'a>(
-    method: Method,
+    method: MethodRef,
     url: URL<'a>,
     header_entries: headers::EntryList,
     header_buf: &'a [u8],
     signals: Signals,
-    async_http_id: u32,
     http_proxy: Option<URL<'a>>,
     proxy_headers: Option<Headers>,
     redirect_type: FetchRedirect,
@@ -144,6 +142,8 @@ fn make_client<'a>(
 ) -> HTTPClient<'a> {
     HTTPClient {
         result_callback,
+        async_http_id: crate::ASYNC_HTTP_ID_MONOTONIC.fetch_add(1, Ordering::Relaxed),
+        holds_slot: false,
         method,
         header_entries,
         header_buf,
@@ -171,9 +171,9 @@ fn make_client<'a>(
         proxy_headers,
         proxy_authorization: None,
         proxy_tunnel: None,
+        carrier: crate::Carrier::None,
         pending_h2: None,
         signals,
-        async_http_id,
         unix_socket_path: b"",
         compress: None,
         compressed_request_body: Vec::new(),
@@ -282,7 +282,14 @@ fn on_preconnect_result(
     unsafe { bun_core::heap::destroy(href) };
 }
 
-pub fn preconnect(href: Href) {
+/// SAFETY: `href` is the box that `preconnect()` leaked, and its request will have no result.
+unsafe fn release_preconnect_at_shutdown(href: *mut ()) {
+    // SAFETY: fn contract.
+    unsafe { bun_core::heap::destroy(href.cast::<Href>()) };
+}
+
+/// `tls_props` is what the request this is for will pass: a pooled socket is only taken by a request with the same one.
+pub fn preconnect(href: Href, tls_props: Option<SSLConfigSharedPtr>) {
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
         return;
     }
@@ -298,9 +305,16 @@ pub fn preconnect(href: Href) {
         headers::EntryList::default(),
         b"",
         b"",
-        HTTPClientResultCallback::new(href, on_preconnect_result),
+        HTTPClientResultCallback::new_with_release(
+            href,
+            on_preconnect_result,
+            release_preconnect_at_shutdown,
+        ),
         FetchRedirect::Manual,
-        Options::default(),
+        Options {
+            tls_props,
+            ..Default::default()
+        },
     );
     async_http.client.flags.is_preconnect_only = true;
     crate::HTTPThread::schedule([async_http]);
@@ -311,8 +325,10 @@ pub fn preconnect(href: Href) {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl<'a> AsyncHTTP<'a> {
+    /// `method` is a verb, or a [`MethodRef`] whose token is in `headers_buf`.
+    #[inline]
     pub fn init(
-        method: Method,
+        method: impl Into<MethodRef>,
         url: URL<'a>,
         headers: headers::EntryList,
         headers_buf: &'a [u8],
@@ -321,19 +337,28 @@ impl<'a> AsyncHTTP<'a> {
         redirect_type: FetchRedirect,
         options: Options<'a>,
     ) -> Box<AsyncHTTP<'a>> {
-        let async_http_id = if options
-            .signals
-            .as_ref()
-            .map(|s| s.aborted.is_some())
-            .unwrap_or(false)
-        {
-            crate::ASYNC_HTTP_ID_MONOTONIC.fetch_add(1, Ordering::Relaxed)
-        } else {
-            0
-        };
+        Self::init_with_method(
+            method.into(),
+            url,
+            headers,
+            headers_buf,
+            request_body,
+            callback,
+            redirect_type,
+            options,
+        )
+    }
 
-        let signals = options.signals.unwrap_or_default();
-
+    fn init_with_method(
+        method: MethodRef,
+        url: URL<'a>,
+        headers: headers::EntryList,
+        headers_buf: &'a [u8],
+        request_body: &'a [u8],
+        callback: HTTPClientResultCallback,
+        redirect_type: FetchRedirect,
+        options: Options<'a>,
+    ) -> Box<AsyncHTTP<'a>> {
         let client = make_client(
             method,
             url.clone(),
@@ -341,8 +366,7 @@ impl<'a> AsyncHTTP<'a> {
             // and `client.header_entries`; `MultiArrayList` owns its allocation, so clone here.
             headers.clone().expect("OOM"),
             headers_buf,
-            signals,
-            async_http_id,
+            options.signals.unwrap_or_default(),
             options.http_proxy,
             options.proxy_headers,
             redirect_type,
@@ -357,7 +381,6 @@ impl<'a> AsyncHTTP<'a> {
             original: None,
             next: bun_threading::Link::new(),
             client,
-            async_http_id,
             elapsed: 0,
         });
         if let Some(val) = options.unix_socket_path {
@@ -367,8 +390,7 @@ impl<'a> AsyncHTTP<'a> {
             this.client.flags.disable_timeout = val;
         }
         if let Some(val) = options.idle_timeout_seconds {
-            this.client.idle_timeout_seconds =
-                Some(crate::normalize_idle_timeout_seconds(val.into()));
+            this.client.idle_timeout_seconds = Some(val);
         }
         if let Some(val) = options.verbose {
             this.client.verbose = val;
@@ -525,7 +547,7 @@ impl<'a> AsyncHTTP<'a> {
     }
 }
 
-/// Owns a request until its last result. A socket's ext slot, a stream, a list of waiters or `HttpThread::held_bodies` holds it between events.
+/// Owns a request until its last result. What `HTTPClient::carrier` names holds it between events.
 #[must_use]
 pub(crate) struct InFlightRequest {
     // A drop leaks it, because `HttpThread::in_flight` points to it until `finish`.
@@ -557,7 +579,8 @@ impl core::ops::DerefMut for InFlightRequest {
 impl InFlightRequest {
     pub(crate) fn start(http: Box<AsyncHTTP<'static>>) {
         let mut this = Self::new(http.into());
-        crate::http_thread().in_flight.push(this.http.as_non_null());
+        let in_flight = &mut crate::http_thread().in_flight;
+        bun_core::handle_oom(in_flight.put(this.async_http_id, this.http.as_non_null()));
         this.http.on_start();
         this.connect();
     }
@@ -579,98 +602,43 @@ impl InFlightRequest {
         self.into_inner().into_non_null()
     }
 
-    pub(crate) fn fail(mut self, err: crate::Error) {
-        self.record_failure(err);
-        self.finish();
-    }
-
-    /// The request has left its transport. It goes to its callback once nothing is left to decode.
-    pub(crate) fn finish(mut self) {
-        self.unregister_abort_tracker();
-        // Shrink the abort tracker once it has drained from a high-water mark.
-        {
-            let tracker = crate::abort_tracker();
-            let count = tracker.count();
-            if count > 0 {
-                bun_core::scoped_log!(
-                    AsyncHTTP,
-                    "socket_async_http_abort_tracker count: {}",
-                    count
-                );
-            }
-            if tracker.capacity() > 10_000 && count < 100 {
-                tracker.shrink_and_free(count);
-            }
-        }
-
-        // Release HTTP-thread resources before another thread gets the request.
-        self.proxy_tunnel = None;
-        self.custom_ssl_ctx = None;
-
-        let was_active = !core::mem::replace(&mut self.state.flags.left_transport, true);
-        if self.state.fail.is_none() && self.state.has_pending_compressed() {
-            if was_active {
-                self.release_request_body();
-            }
-            if self.streams_response_body() {
-                self.send_partial_result();
-            }
-            if was_active && self.signals.is_receive_paused() {
-                self.state.decoded_body = MutableString::default();
-            }
-            self.hold();
-        } else {
-            self.send_last_result();
-        }
-        if !was_active {
-            return;
-        }
-
-        let active_requests = ACTIVE_REQUESTS_COUNT.fetch_sub(1, Ordering::Relaxed);
-        debug_assert!(active_requests > 0);
-
-        if crate::http_thread().has_unstarted_tasks()
-            && ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed)
-                < MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed)
-        {
-            crate::HTTPThread::wakeup();
-        }
-    }
-
-    /// See [`HTTPClientResult::left_transport`].
-    fn release_request_body(&mut self) {
+    /// See [`crate::HTTPClientResult::left_transport`].
+    pub(crate) fn release_request_body(&mut self) {
         self.http.request_body = HTTPRequestBody::Bytes(b"");
         self.state.request_body = bun_ptr::RawSlice::EMPTY;
         self.state.original_request_body = HTTPRequestBody::Bytes(b"");
         self.compressed_request_body = Vec::new();
     }
 
-    fn hold(self) {
-        let held_bodies = &mut crate::http_thread().held_bodies;
-        bun_core::handle_oom(held_bodies.put_no_clobber(self.async_http_id, self));
+    /// Until the next resume.
+    pub(crate) fn hold(self) {
+        debug_assert!(matches!(self.carrier, crate::Carrier::None));
+        bun_core::handle_oom(crate::http_thread().held.put(self.async_http_id, self));
     }
 
-    pub(crate) fn take_held(async_http_id: u32) -> Option<Self> {
-        let held_bodies = &mut crate::http_thread().held_bodies;
-        Some(held_bodies.fetch_swap_remove(&async_http_id)?.1)
+    pub(crate) fn take_held(async_http_id: u64) -> Self {
+        let held = &mut crate::http_thread().held;
+        let this = held.fetch_swap_remove(&async_http_id);
+        release_past_peak(held);
+        this.expect("a request with no carrier is held").1
     }
 
-    /// For a request from [`Self::take_held`].
-    pub(crate) fn resume_held(mut self) {
-        match self.pump_held_body() {
-            Ok(true) => self.finish(),
-            Ok(false) => self.hold(),
-            Err(err) => self.fail(err),
+    pub(crate) fn fail(mut self, err: crate::Error) {
+        self.record_failure(err);
+        self.finish();
+    }
+
+    /// Moves the request to its callback with the last result.
+    pub(crate) fn finish(mut self) {
+        if self.state.flags.has_body_ahead_of_failure {
+            self.send_partial_result();
         }
-    }
+        self.hold_slot(false);
 
-    fn send_last_result(self) {
         let in_flight = &mut crate::http_thread().in_flight;
-        // From the back: held bodies gather at the front.
-        let index = in_flight
-            .iter()
-            .rposition(|&n| n == self.http.as_non_null());
-        in_flight.swap_remove(index.expect("in flight"));
+        let removed = in_flight.swap_remove(&self.async_http_id);
+        assert!(removed, "in flight");
+        release_past_peak(in_flight);
         let mut this = self.into_inner().into_box();
         this.elapsed = http_thread_timer_read().saturating_sub(this.elapsed);
         bun_core::scoped_log!(AsyncHTTP, "finish: {:?}", this.elapsed);
@@ -679,10 +647,40 @@ impl InFlightRequest {
         if result.is_success() {
             result.body_owned = core::mem::take(&mut this.client.state.decoded_body.list);
         }
+
+        // Release HTTP-thread resources before another thread gets the request.
+        this.client.proxy_tunnel = None;
+        this.client.custom_ssl_ctx = None;
         this.client.state = InternalState::default();
 
         let callback = this.client.result_callback;
         callback.run(Some(this), result);
+    }
+}
+
+fn release_past_peak<V>(map: &mut bun_collections::ArrayHashMap<u64, V>) {
+    if map.capacity() > 10_000 && map.count() < 100 {
+        map.shrink_and_free(map.count());
+    }
+}
+
+impl HTTPClient<'_> {
+    /// Taking a slot back never waits: the request is already under way.
+    pub(crate) fn hold_slot(&mut self, hold: bool) {
+        if core::mem::replace(&mut self.holds_slot, hold) == hold {
+            return;
+        }
+        if hold {
+            ACTIVE_REQUESTS_COUNT.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        let active_requests = ACTIVE_REQUESTS_COUNT.fetch_sub(1, Ordering::Relaxed);
+        debug_assert!(active_requests > 0);
+        if crate::http_thread().has_unstarted_tasks()
+            && active_requests <= MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed)
+        {
+            crate::HTTPThread::wakeup();
+        }
     }
 }
 
@@ -703,7 +701,7 @@ impl AsyncHTTP<'static> {
 
 impl<'a> AsyncHTTP<'a> {
     fn on_start(&mut self) {
-        let _ = ACTIVE_REQUESTS_COUNT.fetch_add(1, Ordering::Relaxed);
+        self.client.hold_slot(true);
 
         match self.original {
             Some(original) => self.reset_for_retry(original),

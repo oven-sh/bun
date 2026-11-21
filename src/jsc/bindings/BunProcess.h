@@ -5,6 +5,7 @@
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
 #include "JSEventEmitter.h"
+#include <wtf/Deque.h>
 
 namespace Zig {
 class GlobalObject;
@@ -36,6 +37,10 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSObject> m_onWarning;
     // A function of the library: it hands native code what it kept for a tick. No tick runs once the process exits.
     WriteBarrier<JSObject> m_runsWhenProcessExits;
+    // Pairs: a message, and the descriptor that came with it or undefined.
+    WTF::Deque<WriteBarrier<Unknown>> m_heldChannelMessages;
+    bool m_holdsChannelEvents = false;
+    bool m_heldDisconnect = false;
 
     void installDefaultWarningListener(JSC::VM&);
 
@@ -83,6 +88,12 @@ public:
     void emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event);
 
     JSObject* ensureOnWarning(Zig::GlobalObject*);
+
+    // Opens the IPC channel ahead of the program, unless a preload did. What arrives waits for the first listener (node:cluster's Worker adds one for 'message'), as if that had opened it.
+    void openChannelOfClusterWorker(Zig::GlobalObject*);
+    bool holdMessage(JSValue message, JSValue fd);
+    bool holdDisconnect() { return m_heldDisconnect = m_holdsChannelEvents; }
+    void releaseChannelEvents();
 
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);

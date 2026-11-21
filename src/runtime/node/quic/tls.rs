@@ -1,15 +1,21 @@
-use core::ffi::c_int;
+use core::ffi::{CStr, c_char, c_int};
+use core::net::IpAddr;
 
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_uws as uws;
 
 pub(super) struct TlsConfig {
     pub is_server: bool,
     pub alpn: Vec<u8>,
-    pub servername: Option<Vec<u8>>,
+    /// Ends with a NUL.
+    pub servername: Vec<u8>,
     pub certs_pem: Vec<Vec<u8>>,
     pub keys_pem: Vec<Vec<u8>>,
-    pub ca_pem: Vec<Vec<u8>>,
+    /// `None` is the default CA store.
+    pub ca_pem: Option<Vec<Vec<u8>>>,
+    /// `ca_pem` is the list of `tls.setDefaultCACertificates()`, which a server trusts and doesn't announce.
+    pub ca_is_default: bool,
     pub crl_pem: Vec<Vec<u8>>,
     pub verify_peer_strict: bool,
     pub verify_hostname: bool,
@@ -36,19 +42,40 @@ fn value_to_bytes(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Ve
     Ok(None)
 }
 
+/// Each PEM ends with a NUL, for `pem_list`.
 fn collect_pem(global: &JSGlobalObject, value: JSValue) -> JsResult<Vec<Vec<u8>>> {
     let mut out = Vec::new();
     if value.is_array() {
         let len = value.get_length(global)? as u32;
         for i in 0..len {
-            if let Some(bytes) = value_to_bytes(global, value.get_index(global, i)?)? {
-                out.push(bytes);
-            }
+            out.extend(value_to_bytes(global, value.get_index(global, i)?)?);
         }
-    } else if let Some(bytes) = value_to_bytes(global, value)? {
-        out.push(bytes);
+    } else {
+        out.extend(value_to_bytes(global, value)?);
     }
+    out.iter_mut().for_each(|pem| pem.push(0));
     Ok(out)
+}
+
+/// Returns each CRL of a PEM as its own entry, because `us_ssl_ctx_build_raw` reads one CRL per entry.
+fn split_crls(mut pem: &[u8]) -> Vec<Vec<u8>> {
+    const BEGIN: &[u8] = b"-----BEGIN X509 CRL-----";
+    let mut crls = Vec::new();
+    let mut after_begin = bun_core::strings::index_of(pem, BEGIN).unwrap_or(0) + 1;
+    while let Some(next) = bun_core::strings::index_of(&pem[after_begin..], BEGIN) {
+        let (crl, rest) = pem.split_at(after_begin + next);
+        crls.push([crl, b"\0"].concat());
+        pem = rest;
+        after_begin = 1;
+    }
+    crls.push(pem.to_vec());
+    crls
+}
+
+/// The C strings of `collect_pem`'s result, which has to outlive them.
+fn pem_list(pems: &[Vec<u8>]) -> Vec<*const c_char> {
+    debug_assert!(pems.iter().all(|pem| pem.last() == Some(&0)));
+    pems.iter().map(|pem| pem.as_ptr().cast()).collect()
 }
 
 /// The TLS 1.3 cipher suites BoringSSL implements (RFC 8446 appendix B.4
@@ -57,8 +84,7 @@ const TLS13_AES_128_GCM_SHA256: &[u8] = b"TLS_AES_128_GCM_SHA256";
 const TLS13_AES_256_GCM_SHA384: &[u8] = b"TLS_AES_256_GCM_SHA384";
 const TLS13_CHACHA20_POLY1305_SHA256: &[u8] = b"TLS_CHACHA20_POLY1305_SHA256";
 
-// `node_quic_shim.c` asserts these, and the `SSL_EARLY_DATA_*` and `X509_V_FLAG_*` values below, against BoringSSL's
-// headers.
+// `node_quic_shim.c` asserts these, and the `SSL_EARLY_DATA_*` values below, against BoringSSL's headers.
 const SSL_COMPLIANCE_POLICY_FIPS_202205: c_int = 1;
 const SSL_COMPLIANCE_POLICY_WPA3_192_202304: c_int = 3;
 
@@ -90,13 +116,32 @@ impl TlsConfig {
         tls: JSValue,
         is_server: bool,
     ) -> JsResult<Self> {
+        let mut given = bun_http::ssl_config::Builder::default();
+        if tls.is_object()
+            && let Some(v) = tls.get(global, "ca")?
+        {
+            let ca_pem = collect_pem(global, v)?;
+            if !ca_pem.is_empty() {
+                given.ca = Some(
+                    ca_pem
+                        .iter()
+                        .map(|pem| bun_core::SensitiveCString::new(pem))
+                        .collect(),
+                );
+            }
+        }
+        let trust = global.bun_vm().tls_config(given, is_server);
         let mut config = TlsConfig {
             is_server,
             alpn: Vec::new(),
-            servername: None,
+            // As in Node: https://github.com/nodejs/node/blob/v26.5.0/src/quic/tlscontext.h#L182
+            servername: b"localhost\0".to_vec(),
             certs_pem: Vec::new(),
             keys_pem: Vec::new(),
-            ca_pem: Vec::new(),
+            ca_pem: trust
+                .ca_bytes()
+                .map(|certs| certs.map(|cert| [cert, b"\0"].concat()).collect()),
+            ca_is_default: trust.ca_is_default,
             crl_pem: Vec::new(),
             verify_peer_strict: false,
             verify_hostname: false,
@@ -114,7 +159,7 @@ impl TlsConfig {
                 config.alpn = bytes;
             }
         }
-        if let Some(v) = tls.get(global, "servername")?.filter(|v| v.is_string()) {
+        if let Some(v) = tls.get(global, "servername")? {
             let mut bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
             if bun_core::strings::contains_char(&bytes, 0) {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -122,7 +167,7 @@ impl TlsConfig {
                 )));
             }
             bytes.push(0);
-            config.servername = Some(bytes);
+            config.servername = bytes;
         }
         if let Some(v) = tls.get(global, "certs")? {
             config.certs_pem = collect_pem(global, v)?;
@@ -130,11 +175,11 @@ impl TlsConfig {
         if let Some(v) = tls.get(global, "keys")? {
             config.keys_pem = collect_pem(global, v)?;
         }
-        if let Some(v) = tls.get(global, "ca")? {
-            config.ca_pem = collect_pem(global, v)?;
-        }
         if let Some(v) = tls.get(global, "crl")? {
-            config.crl_pem = collect_pem(global, v)?;
+            config.crl_pem = collect_pem(global, v)?
+                .iter()
+                .flat_map(|pem| split_crls(pem))
+                .collect();
         }
         if let Some(v) = tls.get(global, "verifyPeerStrict")? {
             config.verify_peer_strict = v.to_boolean();
@@ -151,18 +196,13 @@ impl TlsConfig {
         if let Some(v) = tls.get(global, "enableEarlyData")? {
             config.enable_early_data = v.to_boolean();
         }
-        if let Some(v) = tls.get(global, "ciphers")?.filter(|v| v.is_string()) {
+        if let Some(v) = tls.get(global, "ciphers")? {
             config.ciphers = Some(bun_core::String::from_js(v, global)?.to_owned_slice());
         }
-        if let Some(v) = tls.get(global, "groups")?.filter(|v| v.is_string()) {
+        if let Some(v) = tls.get(global, "groups")? {
             let mut bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
             bytes.push(0);
             config.groups = Some(bytes);
-        }
-        // Node defaults the servername to "localhost" when none is given
-        // (node/src/quic/tlscontext.h TLSContext::Options::servername).
-        if config.servername.is_none() {
-            config.servername = Some(b"localhost\0".to_vec());
         }
         Ok(config)
     }
@@ -205,52 +245,61 @@ pub(super) struct TlsContext {
         reason = "BoringSSL keeps the `arg` pointer (this Vec's header address) across ClientHellos, so the Vec must not move; the Box pins it"
     )]
     _alpn: Option<Box<Vec<u8>>>,
+    /// A client's. Its tickets carry it.
+    session_id_context: Option<[u8; 32]>,
+}
+
+/// A resumed handshake checks no certificate, so this covers all that decides which server is accepted.
+fn client_session_id_context(
+    options: &uws::SocketContext::BunSocketContextOptions,
+    config: &TlsConfig,
+) -> [u8; 32] {
+    let mut id = options.digest();
+    let mut hasher = bun_sha_hmac::SHA256::init();
+    hasher.update(&id);
+    if config.ca_pem.is_none() {
+        hasher.update(bun_uws_sys::socket_context::c::us_get_default_ca_store_digest());
+    }
+    hasher.update(&[
+        u8::from(config.verify_peer_strict),
+        u8::from(config.verify_hostname),
+    ]);
+    hasher.update(&config.servername);
+    hasher.r#final(&mut id);
+    id
+}
+
+/// Returns the session of the lsquic conn that owns `ssl`, which must be live.
+unsafe fn session_of<'a>(ssl: *const ssl::SSL) -> Option<&'a super::session::QuicSession> {
+    // SAFETY: lsquic keeps the SSL -> conn link for as long as the SSL lives.
+    let conn = unsafe { bun_lsquic_sys::lsquic_ssl_to_conn(ssl.cast()) };
+    if conn.is_null() {
+        return None;
+    }
+    // SAFETY: `conn` is live, and its ctx is its session or null (`ctx_ref`).
+    unsafe { super::ffi::ctx_ref(bun_lsquic_sys::lsquic_conn_get_ctx(conn)) }
 }
 
 unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_char) {
     if line.is_null() {
         return;
     }
-    // SAFETY: `line` is the NUL-terminated NSS key log line BoringSSL
-    // guarantees valid for this callback; the SSL → conn → session walk is
-    // safe because lsquic owns all three for the SSL's lifetime.
+    // SAFETY: BoringSSL passes the SSL of the handshake that made the line.
+    let Some(session) = (unsafe { session_of(ssl) }) else {
+        return;
+    };
+    // SAFETY: BoringSSL passes a NUL-terminated line that is valid for this callback.
     let bytes = unsafe { core::ffi::CStr::from_ptr(line).to_bytes().to_vec() };
-    // SAFETY: lsquic stored the conn on the SSL via SSL_set_app_data — but
-    // we can't rely on that index; use lsquic_ssl_to_conn instead.
-    let conn = unsafe { bun_lsquic_sys::lsquic_ssl_to_conn(ssl.cast()) };
-    if conn.is_null() {
-        return;
-    }
-    // SAFETY: as above.
-    let ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_ctx(conn) };
-    if ctx.is_null() {
-        // SAFETY: peer_ctx is the Rust QuicEndpoint for every conn on it.
-        let peer_ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_peer_ctx(conn, core::ptr::null()) };
-        if !peer_ctx.is_null() {
-            // SAFETY: as above.
-            let endpoint = unsafe { &*peer_ctx.cast::<super::endpoint::QuicEndpoint>() };
-            let mut local = core::ptr::null();
-            let mut peer = core::ptr::null();
-            // SAFETY: `conn` is live; out-params point at stack slots.
-            let peer_addr = if unsafe {
-                bun_lsquic_sys::lsquic_conn_get_sockaddr(
-                    conn,
-                    core::ptr::from_mut(&mut local),
-                    core::ptr::from_mut(&mut peer),
-                )
-            } == 0
-            {
-                super::endpoint::stored_addr_from_sockaddr(peer)
-            } else {
-                return;
-            };
-            endpoint.buffer_early_keylog(ssl.cast_mut().cast(), peer_addr, bytes);
-        }
-        return;
-    }
-    // SAFETY: ctx is the QuicSession (conn-ctx).
-    let session = unsafe { &*ctx.cast::<super::session::QuicSession>() };
     session.push_event(super::session::SessionEvent::Keylog(bytes));
+}
+
+/// BoringSSL calls this once it has parsed a server handshake's ClientHello.
+unsafe extern "C" fn client_hello_cb(hello: *const ssl::SSL_CLIENT_HELLO) -> c_int {
+    // SAFETY: BoringSSL passes a live ClientHello, and `ssl` is the SSL of its handshake.
+    if let Some(session) = unsafe { session_of((*hello).ssl) } {
+        session.on_client_hello();
+    }
+    ssl::ssl_select_cert_success
 }
 
 unsafe extern "C" fn alpn_select_cb(
@@ -285,147 +334,78 @@ unsafe extern "C" fn alpn_select_cb(
     }
 }
 
-/// SAFETY: `ctx` is not shared yet.
-unsafe fn load_cert_chain(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for certificate")?;
-    let leaf = bio
-        .read_x509_aux()
-        .ok_or("failed to parse certificate PEM")?;
-    // SAFETY: fn contract.
-    if unsafe { ssl::SSL_CTX_use_certificate(ctx, &leaf) } != 1 {
-        return Err("failed to install certificate");
-    }
-    while let Some(extra) = bio.read_x509() {
-        // SAFETY: fn contract.
-        if unsafe { ssl::SSL_CTX_add1_chain_cert(ctx, &extra) } != 1 {
-            return Err("failed to add chain certificate");
-        }
-    }
-    ssl::ERR_clear_error();
-    Ok(())
-}
-
-/// SAFETY: `ctx` is not shared yet.
-unsafe fn load_private_key(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for key")?;
-    let pkey = bio
-        .read_private_key()
-        .ok_or("failed to parse private key PEM")?;
-    // SAFETY: fn contract.
-    if unsafe { ssl::SSL_CTX_use_PrivateKey(ctx, &pkey) } != 1 {
-        return Err("failed to install private key");
-    }
-    Ok(())
-}
-
-const X509_V_FLAG_CRL_CHECK: core::ffi::c_ulong = 0x4;
-/// `X509_V_FLAG_CRL_CHECK_ALL` — also check intermediate CAs (Node sets both).
-const X509_V_FLAG_CRL_CHECK_ALL: core::ffi::c_ulong = 0x8;
-/// `X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS` (oven-sh/boringssl) — as every other Bun SSL_CTX: an expired CA in the
-/// trust set does not shadow the valid certificate for the same issuer that the peer sends.
-const X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: core::ffi::c_ulong = 0x40000000;
-
-/// SAFETY: `ctx` is not shared yet.
-unsafe fn load_crl_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    let store = ssl::SSL_CTX_get_cert_store(ctx).expect("a new SSL_CTX has a store");
-    let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for CRL")?;
-    let mut added = 0;
-    while let Some(crl) = bio.read_x509_crl() {
-        if ssl::X509_STORE_add_crl(store, &crl) != 1 {
-            ssl::ERR_clear_error();
-            return Err("failed to add CRL to trust store");
-        }
-        added += 1;
-    }
-    ssl::ERR_clear_error();
-    if added == 0 {
-        return Err("CRL PEM contained no revocation lists");
-    }
-    // SAFETY: fn contract.
-    unsafe { ssl::X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL) };
-    Ok(())
-}
-
-fn load_ca_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    let store = ssl::SSL_CTX_get_cert_store(ctx).expect("a new SSL_CTX has a store");
-    let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for CA")?;
-    let mut added = 0;
-    while let Some(cert) = bio.read_x509() {
-        if ssl::X509_STORE_add_cert(store, &cert) != 1 {
-            ssl::ERR_clear_error();
-            return Err("failed to add CA certificate to trust store");
-        }
-        added += 1;
-    }
-    ssl::ERR_clear_error();
-    if added == 0 {
-        return Err("CA PEM contained no certificates");
-    }
-    Ok(())
-}
-
 impl TlsContext {
-    pub(super) fn new(config: &TlsConfig) -> Result<Self, &'static str> {
-        // SAFETY: each SSL_CTX call below is paired with the matching free on
-        // failure via Drop (the half-built `this` is dropped on early return).
-        unsafe {
-            let Some(owned) = ssl::OwnedSslCtx::from_raw(ssl::SSL_CTX_new(ssl::TLS_method()))
-            else {
-                return Err("failed to allocate SSL_CTX");
-            };
-            let ctx = owned.as_ptr();
-            let mut this = TlsContext {
-                ctx: owned,
-                _alpn: None,
-            };
+    /// Throws what Node throws: https://github.com/nodejs/node/blob/v26.5.0/src/quic/endpoint.cc#L1198-L1203
+    pub(super) fn new(global: &JSGlobalObject, config: &TlsConfig) -> JsResult<Self> {
+        Self::build(config).map_err(|reason| {
+            global
+                .err(
+                    bun_jsc::ErrorCode::INVALID_STATE,
+                    format_args!("Failed to create TLS context: {reason}"),
+                )
+                .throw()
+        })
+    }
 
+    fn build(config: &TlsConfig) -> Result<Self, &'static str> {
+        let [cert, key, crl] =
+            [&config.certs_pem, &config.keys_pem, &config.crl_pem].map(|pems| pem_list(pems));
+        let ca = config.ca_pem.as_deref().map(pem_list);
+        let mut err = uws::create_bun_socket_error_t::none;
+        let options = uws::SocketContext::BunSocketContextOptions {
+            cert: cert.as_ptr(),
+            cert_count: cert.len() as u32,
+            key: key.as_ptr(),
+            key_count: key.len() as u32,
+            ca: ca.as_ref().map_or(core::ptr::null(), |list| list.as_ptr()),
+            ca_count: ca.as_ref().map_or(0, |list| list.len() as u32),
+            ca_is_default: i32::from(config.ca_is_default),
+            crl: crl.as_ptr(),
+            crl_count: crl.len() as u32,
+            ssl_min_version: ssl::TLS1_3_VERSION.into(),
+            ssl_max_version: ssl::TLS1_3_VERSION.into(),
+            ..Default::default()
+        };
+        let session_id_context =
+            (!config.is_server).then(|| client_session_id_context(&options, config));
+        let built = match &session_id_context {
+            Some(id) => options.create_ssl_context_with_digest(id, &mut err),
+            None => options.create_ssl_context(&mut err),
+        };
+        let Some(owned) = built else {
+            // Without a message of its own, the reason is BoringSSL's.
+            let reason = ssl::ERR_reason_error_string(ssl::ERR_get_error());
+            ssl::ERR_clear_error();
+            let reason: &[u8] = match err.message() {
+                Some(message) => message,
+                None if reason.is_null() => b"Invalid certificate or key",
+                // SAFETY: BoringSSL's reason strings are static and NUL-terminated.
+                None => unsafe { CStr::from_ptr(reason) }.to_bytes(),
+            };
+            return Err(core::str::from_utf8(reason).unwrap_or_default());
+        };
+        let ctx = owned.as_ptr();
+        let mut this = TlsContext {
+            ctx: owned,
+            _alpn: None,
+            session_id_context,
+        };
+        // SAFETY: `ctx` is live and nothing else has it yet. The pointers it's given are NUL-terminated or come with a length.
+        unsafe {
             if let Some(policy) = config.ciphers.as_deref().and_then(tls13_policy_for_ciphers) {
-                if ssl::SSL_CTX_set_compliance_policy(ctx, policy) != 1 {
+                // A policy also sets the versions and the signature algorithms.
+                if ssl::SSL_CTX_set_compliance_policy(ctx, policy) != 1
+                    || ssl::SSL_CTX_set_min_proto_version(ctx, ssl::TLS1_3_VERSION) != 1
+                    || ssl::SSL_CTX_set_max_proto_version(ctx, ssl::TLS1_3_VERSION) != 1
+                    || us_ssl_ctx_set_verify_signature_algorithms(ctx) != 1
+                {
                     return Err("failed to apply cipher policy");
                 }
             }
-            if ssl::SSL_CTX_set_min_proto_version(ctx, ssl::TLS1_3_VERSION) != 1
-                || ssl::SSL_CTX_set_max_proto_version(ctx, ssl::TLS1_3_VERSION) != 1
-            {
-                return Err("failed to pin TLS 1.3");
-            }
-            ssl::X509_VERIFY_PARAM_set_flags(
-                ssl::SSL_CTX_get0_param(ctx),
-                X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS,
-            );
-            if us_ssl_ctx_set_verify_signature_algorithms(ctx) != 1 {
-                return Err("failed to set the signature algorithms");
-            }
-            us_ssl_ctx_reject_blocked_keys(ctx);
             if let Some(groups) = &config.groups {
                 if ssl::SSL_CTX_set1_groups_list(ctx, groups.as_ptr().cast()) != 1 {
                     return Err("invalid TLS groups list");
                 }
-            }
-            if config.ca_pem.is_empty() {
-                ssl::SSL_CTX_set_default_verify_paths(ctx);
-            }
-
-            // Node pairs `certs[i]` with `keys[i]`.
-            for (i, pem) in config.certs_pem.iter().enumerate() {
-                if i > 0 {
-                    ssl::SSL_CTX_clear_chain_certs(ctx);
-                }
-                load_cert_chain(&this.ctx, pem)?;
-                if let Some(key) = config.keys_pem.get(i) {
-                    load_private_key(&this.ctx, key)?;
-                }
-            }
-            if config.certs_pem.is_empty() {
-                if let Some(key) = config.keys_pem.first() {
-                    load_private_key(&this.ctx, key)?;
-                }
-            }
-            for pem in &config.ca_pem {
-                load_ca_store(&this.ctx, pem)?;
-            }
-            for pem in &config.crl_pem {
-                load_crl_store(&this.ctx, pem)?;
             }
 
             ssl::SSL_CTX_set_early_data_enabled(ctx, config.enable_early_data as c_int);
@@ -433,6 +413,7 @@ impl TlsContext {
                 ssl::SSL_CTX_set_keylog_callback(ctx, Some(keylog_cb));
             }
             if config.is_server {
+                ssl::SSL_CTX_set_select_certificate_cb(ctx, Some(client_hello_cb));
                 if config.verify_client {
                     // SSL_VERIFY_PEER alone matches Node's TLS 1.3 semantics (see QuicSession::maybe_report_handshake).
                     ssl::SSL_CTX_set_verify(ctx, ssl::SSL_VERIFY_PEER, None);
@@ -462,18 +443,26 @@ impl TlsContext {
                 };
                 ssl::SSL_CTX_set_verify(ctx, mode, None);
                 if config.verify_hostname {
-                    let Some(servername) = &config.servername else {
-                        return Err("verifyHostname requires a servername");
-                    };
-                    let host = servername.strip_suffix(b"\0").unwrap_or(servername);
+                    let host = &config.servername[..config.servername.len() - 1];
                     if host.is_empty() {
                         return Err("verifyHostname requires a non-empty servername");
                     }
                     let param = ssl::SSL_CTX_get0_param(ctx);
-                    if param.is_null()
-                        || ssl::X509_VERIFY_PARAM_set1_host(param, host.as_ptr().cast(), host.len())
-                            != 1
-                    {
+                    // BoringSSL's set1_host only matches DNS SANs. OpenSSL's SSL_set1_host, which Node calls, tries an IP first.
+                    let bound = match bun_core::ip_address::parse_strict(host) {
+                        Some(IpAddr::V4(ip)) => {
+                            ssl::X509_VERIFY_PARAM_set1_ip(param, ip.octets().as_ptr(), 4)
+                        }
+                        Some(IpAddr::V6(ip)) => {
+                            ssl::X509_VERIFY_PARAM_set1_ip(param, ip.octets().as_ptr(), 16)
+                        }
+                        None => ssl::X509_VERIFY_PARAM_set1_host(
+                            param,
+                            host.as_ptr().cast(),
+                            host.len(),
+                        ),
+                    };
+                    if bound != 1 {
                         return Err("failed to bind hostname for certificate verification");
                     }
                 }
@@ -488,14 +477,19 @@ impl TlsContext {
         self.ctx.as_ptr()
     }
 
-    pub(super) fn alpn_cstr(config: &TlsConfig) -> Vec<u8> {
-        if config.alpn.len() < 2 {
-            return Vec::new();
-        }
-        let n = config.alpn[0] as usize;
-        let mut out = config.alpn[1..1 + n.min(config.alpn.len() - 1)].to_vec();
-        out.push(0);
-        out
+    /// Whether a client with the same options got `ticket`: lsquic's version tag, format version and length, then the session.
+    pub(super) fn can_resume(&self, ticket: &[u8]) -> bool {
+        let Some((head, rest)) = ticket.split_first_chunk::<12>() else {
+            return false;
+        };
+        let len = u32::from_be_bytes([head[8], head[9], head[10], head[11]]);
+        let session = rest
+            .get(..len as usize)
+            .and_then(ssl::OwnedSslSession::from_der);
+        ssl::ERR_clear_error();
+        session
+            .zip(self.session_id_context)
+            .is_some_and(|(session, id)| session.id_context() == id)
     }
 }
 
@@ -526,8 +520,6 @@ unsafe extern "C" {
     safe fn Bun__X509__validationErrorCode(err: i32) -> *const core::ffi::c_char;
     /// openssl.cpp: the signature algorithms every other TLS context of Bun accepts from a peer.
     fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
-    /// openssl.cpp: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
-    fn us_ssl_ctx_reject_blocked_keys(ctx: *mut ssl::SSL_CTX);
 }
 
 /// node's `X509_V_ERR_UNSPECIFIED`, reported when a peer sent no certificate
@@ -604,8 +596,7 @@ pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     if ssl.is_null() {
         return None;
     }
-    // `load_cert_chain` only installs certificates on the context. The context parses its
-    // leaf once, but `SSL_get_certificate` parses a copy for each SSL.
+    // The context parses its leaf once, but `SSL_get_certificate` parses a copy for each SSL.
     // SAFETY: returns a borrowed X509 owned by `ssl`'s context.
     let cert = unsafe { ssl::SSL_CTX_get0_certificate(ssl::SSL_get_SSL_CTX(ssl)) };
     if cert.is_null() {

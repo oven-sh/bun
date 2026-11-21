@@ -630,13 +630,15 @@ extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlob
     return Bun::toStringRef(url.string()).leak();
 }
 
-extern "C" BunString URL__getHref(const BunString* input)
+extern "C" BunString URL__getHref(const BunString* input, bool excludeFragment)
 {
     auto&& str = input->toWTFString();
     auto url = WTF::URL(str);
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
 
+    if (excludeFragment && url.hasFragmentIdentifier())
+        return Bun::toStringRef(url.stringWithoutFragmentIdentifier()).leak();
     return Bun::toStringRef(url.string()).leak();
 }
 
@@ -650,7 +652,7 @@ extern "C" BunString URL__pathFromFileURL(const BunString* input)
     return Bun::toStringRef(url.fileSystemPath()).leak();
 }
 
-extern "C" BunString URL__getHrefJoin(const BunString* baseStr, const BunString* relativeStr)
+extern "C" BunString URL__getHrefJoin(const BunString* baseStr, const BunString* relativeStr, bool excludeFragment)
 {
     auto base = baseStr->toWTFString();
     auto relative = relativeStr->toWTFString();
@@ -658,7 +660,7 @@ extern "C" BunString URL__getHrefJoin(const BunString* baseStr, const BunString*
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
 
-    return Bun::toStringRef(url.string()).leak();
+    return Bun::toStringRef(excludeFragment ? url.stringWithoutFragmentIdentifier() : url.string()).leak();
 }
 
 extern "C" BunString URL__fragmentIdentifier(WTF::URL* url)

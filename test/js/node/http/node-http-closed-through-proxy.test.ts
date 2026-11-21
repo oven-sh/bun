@@ -37,6 +37,6 @@ test.each([
     return { lines: stdout.trim().split("\n"), exitCode };
   };
   const [direct, throughProxy] = await Promise.all([run("socket"), run(wrapped)]);
-  expect(direct.lines).toContain("close");
+  expect(direct.lines).toContain("error TypeError in _destroy");
   expect(throughProxy).toEqual(direct);
 });

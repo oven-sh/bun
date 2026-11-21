@@ -137,8 +137,7 @@ public:
     // Text sink: the ONE shared createTextStream accumulator value type
     // (BunStandaloneTextSink.h), also owned by the standalone JSBunStandaloneTextSink — one
     // implementation, two owners. Its `pieces` barrier container is mutated AND visited
-    // under THIS cell's cellLock() (see the visit-list comment above). This arm does NOT
-    // BOM-strip.
+    // under THIS cell's cellLock() (see the visit-list comment above).
     Bun::WebStreams::BunTextAccumulator m_textAccumulator;
 
     // Array sink.

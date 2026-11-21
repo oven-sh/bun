@@ -1,6 +1,4 @@
-//! MOVE-IN: ssl_config (MOVE_DOWN bun_runtime::socket::SSLConfig → bun_http)
-//! JSC-dependent constructors (from_js / from_generated / read_from_blob /
-//! handle_path / handle_file*) stay in bun_runtime (tier-6, Pass C).
+//! Parsing a `tls` object needs JSC, so that half is `bun_runtime::socket::ssl_config`.
 
 use core::ffi::CStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,6 +26,8 @@ pub struct SSLConfig {
     pub key: CStrSlice,
     pub cert: CStrSlice,
     pub ca: CStrSlice,
+    /// `ca` is the `tls.setDefaultCACertificates()` list. A server trusts it without naming it to clients, as in Node.
+    pub ca_is_default: bool,
     pub crl: CStrSlice,
 
     pub secure_options: u32,
@@ -45,20 +45,12 @@ pub struct SSLConfig {
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
     pub requires_custom_request_ctx: bool,
-    pub is_using_default_ciphers: bool,
     pub low_memory_mode: bool,
     /// Memoized `content_hash()`. Interior-mutable because it's lazily filled
     /// through `Arc<SSLConfig>` (shared ref) by the intern registry's hash
     /// context.
-    pub cached_hash: CachedHash,
+    pub(crate) cached_hash: AtomicU64,
 }
-
-/// Opaque, so that other crates can write an `SSLConfig` literal but not its hash.
-#[derive(Default)]
-pub struct CachedHash(AtomicU64);
-
-/// Casing alias for callers that snake_cased the type name.
-pub type SslConfig = SSLConfig;
 
 /// Atomic shared pointer with weak support. Refcounting and allocation are
 /// managed non-intrusively by `Arc`; the `SSLConfig` struct itself has no
@@ -92,8 +84,84 @@ impl core::ops::Deref for SharedPtr {
     }
 }
 
+/// The TLS options a caller gave. `VirtualMachine::tls_config` fills in the rest, and is the only way to an [`SSLConfig`].
+#[derive(Clone)]
+pub struct Builder {
+    config: SSLConfig,
+    pub reject_unauthorized: Option<bool>,
+    /// `ca: []`, which means the built-in store.
+    pub ca_is_empty: bool,
+}
+
+impl Default for Builder {
+    fn default() -> Self {
+        Self {
+            config: SSLConfig::ZERO,
+            reject_unauthorized: None,
+            ca_is_empty: false,
+        }
+    }
+}
+
+impl core::ops::Deref for Builder {
+    type Target = SSLConfig;
+    #[inline]
+    fn deref(&self) -> &SSLConfig {
+        &self.config
+    }
+}
+
+impl core::ops::DerefMut for Builder {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut SSLConfig {
+        &mut self.config
+    }
+}
+
+impl Builder {
+    /// No `ciphers` means `default_ciphers`, and neither `ca` nor `caFile` means `default_ca`, as in Node's `configSecureContext`.
+    pub fn build(
+        self,
+        reject_unauthorized: bool,
+        default_ciphers: Option<&[u8]>,
+        default_ca: Option<&[Box<[u8]>]>,
+    ) -> SSLConfig {
+        let mut config = self.config;
+        config.reject_unauthorized = i32::from(reject_unauthorized);
+        if config.ssl_ciphers.is_none()
+            && let Some(ciphers) = default_ciphers
+        {
+            config.ssl_ciphers = Some(SensitiveCString::new(ciphers));
+            config.requires_custom_request_ctx = true;
+            // An empty TLS 1.2 list would leave BoringSSL's built-in one in effect.
+            if ciphers.is_empty() {
+                config.ssl_min_version = config
+                    .ssl_min_version
+                    .max(i32::from(bun_boringssl_sys::TLS1_3_VERSION));
+            }
+        }
+        if config.ca.is_none()
+            && config.ca_file_name.is_none()
+            && let Some(certs) = default_ca
+        {
+            // A client's shared context may have the list, or lack it.
+            config.requires_custom_request_ctx = true;
+            if !self.ca_is_empty {
+                config.ca = Some(
+                    certs
+                        .iter()
+                        .map(|cert| SensitiveCString::new(cert))
+                        .collect(),
+                );
+                config.ca_is_default = true;
+            }
+        }
+        config
+    }
+}
+
 impl SSLConfig {
-    pub(crate) const ZERO: SSLConfig = SSLConfig {
+    const ZERO: SSLConfig = SSLConfig {
         server_name: None,
         key_file_name: None,
         cert_file_name: None,
@@ -103,6 +171,7 @@ impl SSLConfig {
         key: None,
         cert: None,
         ca: None,
+        ca_is_default: false,
         crl: None,
         secure_options: 0,
         session_timeout: 0,
@@ -118,27 +187,9 @@ impl SSLConfig {
         client_renegotiation_limit: 0,
         client_renegotiation_window: 0,
         requires_custom_request_ctx: false,
-        is_using_default_ciphers: true,
         low_memory_mode: false,
-        cached_hash: CachedHash(AtomicU64::new(0)),
+        cached_hash: AtomicU64::new(0),
     };
-
-    #[inline]
-    pub fn zero() -> Self {
-        Self::default()
-    }
-
-    /// What was assigned to `tls.DEFAULT_CIPHERS`, for a config without `ciphers`. It then needs a context of its own, like one with `ciphers`.
-    pub fn set_default_ciphers(&mut self, ciphers: &[u8]) {
-        self.ssl_ciphers = Some(SensitiveCString::new(ciphers));
-        self.requires_custom_request_ctx = true;
-        // An empty TLS 1.2 list would leave BoringSSL's built-in one in effect.
-        if ciphers.is_empty() {
-            self.ssl_min_version = self
-                .ssl_min_version
-                .max(i32::from(bun_boringssl_sys::TLS1_3_VERSION));
-        }
-    }
 
     #[inline]
     pub fn server_name_cstr(&self) -> Option<&CStr> {
@@ -153,6 +204,12 @@ impl SSLConfig {
     #[inline]
     pub fn protos_bytes(&self) -> Option<&[u8]> {
         self.protos.as_ref().map(SensitiveCString::as_bytes)
+    }
+
+    /// The `ca` certificates. `None` means the built-in store, and an empty list trusts nothing.
+    pub fn ca_bytes(&self) -> Option<impl Iterator<Item = &[u8]>> {
+        let ca = self.ca.as_ref()?;
+        Some(ca.iter().map(SensitiveCString::as_bytes))
     }
 
     /// Extract the raw `*const SSLConfig` from an optional shared handle for
@@ -210,6 +267,7 @@ impl SSLConfig {
         ctx_opts.client_renegotiation_window = self.client_renegotiation_window;
         ctx_opts.session_timeout = self.session_timeout;
         ctx_opts.allow_partial_trust_chain = i32::from(self.allow_partial_trust_chain);
+        ctx_opts.ca_is_default = i32::from(self.ca_is_default);
         if let Some(sigalgs) = &self.sigalgs {
             ctx_opts.sigalgs = sigalgs.as_ptr();
         }
@@ -236,16 +294,6 @@ impl SSLConfig {
         opts
     }
 
-    /// Returns a copy of this config for client-side TLS with manual verification.
-    /// Sets request_cert=1 (to receive server cert) and reject_unauthorized=0
-    /// (to handle verification manually in handshake callback).
-    pub fn for_client_verification(&self) -> SSLConfig {
-        let mut copy = self.clone();
-        copy.request_cert = 1;
-        copy.reject_unauthorized = 0;
-        copy
-    }
-
     pub(crate) fn is_same(&self, other: &SSLConfig) -> bool {
         self.server_name == other.server_name
             && self.key_file_name == other.key_file_name
@@ -256,6 +304,7 @@ impl SSLConfig {
             && self.key == other.key
             && self.cert == other.cert
             && self.ca == other.ca
+            && self.ca_is_default == other.ca_is_default
             && self.crl == other.crl
             && self.secure_options == other.secure_options
             && self.session_timeout == other.session_timeout
@@ -271,7 +320,6 @@ impl SSLConfig {
             && self.client_renegotiation_limit == other.client_renegotiation_limit
             && self.client_renegotiation_window == other.client_renegotiation_window
             && self.requires_custom_request_ctx == other.requires_custom_request_ctx
-            && self.is_using_default_ciphers == other.is_using_default_ciphers
             && self.low_memory_mode == other.low_memory_mode
     }
 
@@ -279,7 +327,7 @@ impl SSLConfig {
     // a pointer derived from `Arc::as_ptr`, which only grants shared provenance.
     // The memoization write goes through `AtomicU64` (interior mutability).
     pub(crate) fn content_hash(&self) -> u64 {
-        let cached = self.cached_hash.0.load(Ordering::Relaxed);
+        let cached = self.cached_hash.load(Ordering::Relaxed);
         if cached != 0 {
             return cached;
         }
@@ -294,6 +342,8 @@ impl SSLConfig {
         }
         macro_rules! hash_slice {
             ($f:ident) => {
+                // An empty list trusts nothing; no list means the default store.
+                hasher.update(&[u8::from(self.$f.is_some())]);
                 if let Some(slice) = &self.$f {
                     for s in slice.iter() {
                         hasher.update(s.as_bytes());
@@ -316,6 +366,7 @@ impl SSLConfig {
         hasher.update(&self.secure_options.to_ne_bytes());
         hasher.update(&self.session_timeout.to_ne_bytes());
         hasher.update(&[self.allow_partial_trust_chain as u8]);
+        hasher.update(&[self.ca_is_default as u8]);
         hash_cstr!(sigalgs);
         hash_cstr!(ecdh_curve);
         hasher.update(&self.ssl_min_version.to_ne_bytes());
@@ -327,13 +378,12 @@ impl SSLConfig {
         hasher.update(&self.client_renegotiation_limit.to_ne_bytes());
         hasher.update(&self.client_renegotiation_window.to_ne_bytes());
         hasher.update(&[u8::from(self.requires_custom_request_ctx)]);
-        hasher.update(&[u8::from(self.is_using_default_ciphers)]);
         hasher.update(&[u8::from(self.low_memory_mode)]);
         let hash = hasher.final_();
         // Avoid 0 since it's the sentinel for "not computed"
         let hash = if hash == 0 { 1 } else { hash };
         // Relaxed: idempotent pure cache; racing writers store the same value.
-        self.cached_hash.0.store(hash, Ordering::Relaxed);
+        self.cached_hash.store(hash, Ordering::Relaxed);
         hash
     }
 
@@ -343,12 +393,6 @@ impl SSLConfig {
 
     pub fn take_server_name(&mut self) -> Option<Box<[u8]>> {
         Some(self.server_name.take()?.as_bytes().into())
-    }
-}
-
-impl Default for SSLConfig {
-    fn default() -> Self {
-        Self::ZERO
     }
 }
 
@@ -364,6 +408,7 @@ impl Clone for SSLConfig {
             key: self.key.clone(),
             cert: self.cert.clone(),
             ca: self.ca.clone(),
+            ca_is_default: self.ca_is_default,
             crl: self.crl.clone(),
             secure_options: self.secure_options,
             session_timeout: self.session_timeout,
@@ -379,9 +424,8 @@ impl Clone for SSLConfig {
             client_renegotiation_limit: self.client_renegotiation_limit,
             client_renegotiation_window: self.client_renegotiation_window,
             requires_custom_request_ctx: self.requires_custom_request_ctx,
-            is_using_default_ciphers: self.is_using_default_ciphers,
             low_memory_mode: self.low_memory_mode,
-            cached_hash: CachedHash::default(),
+            cached_hash: AtomicU64::new(0),
         }
     }
 }
@@ -493,7 +537,7 @@ pub mod global_registry {
         // Read memoized hash via the atomic — never recompute here (we're
         // inside `Drop::drop`, holding `&mut SSLConfig`, and recomputation
         // would race with nothing but is wasted work for non-interned configs).
-        let hash = config.cached_hash.0.load(Ordering::Relaxed);
+        let hash = config.cached_hash.load(Ordering::Relaxed);
         let self_ptr: *const SSLConfig = config;
 
         let mut configs = REGISTRY.lock();

@@ -45,13 +45,15 @@ pub(crate) enum TLS {
     #[default]
     None,
     Enabled,
-    Custom(Box<crate::server::server_config::SSLConfig>),
+    Custom(Box<bun_http::ssl_config::Builder>),
 }
 
 impl TLS {
     pub(crate) fn reject_unauthorized(&self, vm: &VirtualMachine) -> bool {
         match self {
-            TLS::Custom(ssl_config) => ssl_config.reject_unauthorized != 0,
+            TLS::Custom(given) => given
+                .reject_unauthorized
+                .unwrap_or_else(|| vm.get_tls_reject_unauthorized()),
             TLS::Enabled => vm.get_tls_reject_unauthorized(),
             _ => false,
         }
@@ -60,9 +62,7 @@ impl TLS {
     /// `tls.serverName`: replaces the URL host as SNI and as the name the certificate must match.
     pub(crate) fn server_name(&self) -> Option<&[u8]> {
         match self {
-            TLS::Custom(ssl_config) => ssl_config
-                .server_name_bytes()
-                .filter(|name| !name.is_empty()),
+            TLS::Custom(given) => given.server_name_bytes().filter(|name| !name.is_empty()),
             _ => None,
         }
     }
@@ -117,7 +117,7 @@ impl Address {
             let kind = SocketKind::ValkeyTls;
             let sock = match self {
                 Address::Unix(path) => {
-                    uws::SocketTLS::connect_unix_group(group, kind, ssl_ctx, path, owner, false)?
+                    uws::SocketTLS::connect_unix_group(group, kind, ssl_ctx, path, owner)?
                 }
                 Address::Host { host, port } => uws::SocketTLS::connect_group(
                     group,
@@ -126,7 +126,6 @@ impl Address {
                     host,
                     i32::from(*port),
                     owner,
-                    false,
                 )?,
             };
             Ok(AnySocket::SocketTls(sock))
@@ -134,7 +133,7 @@ impl Address {
             let kind = SocketKind::Valkey;
             let sock = match self {
                 Address::Unix(path) => {
-                    uws::SocketTCP::connect_unix_group(group, kind, ssl_ctx, path, owner, false)?
+                    uws::SocketTCP::connect_unix_group(group, kind, ssl_ctx, path, owner)?
                 }
                 Address::Host { host, port } => uws::SocketTCP::connect_group(
                     group,
@@ -143,7 +142,6 @@ impl Address {
                     host,
                     i32::from(*port),
                     owner,
-                    false,
                 )?,
             };
             Ok(AnySocket::SocketTcp(sock))

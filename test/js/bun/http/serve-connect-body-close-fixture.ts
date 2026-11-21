@@ -1,7 +1,7 @@
-// The connection of a CONNECT request closes while the handler reads the body. The handler then answers.
+// The connection of a request closes while the handler reads the body. The handler then answers.
 import { tls } from "harness";
 
-const [transport, how, answer, target] = process.argv.slice(2);
+const [transport, how, answer, request] = process.argv.slice(2);
 const heard: string[] = [];
 const reading = Promise.withResolvers<void>();
 const closed = Promise.withResolvers<void>();
@@ -11,8 +11,9 @@ const server = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
   tls: transport === "TLS" ? tls : undefined,
+  maxRequestBodySize: 4,
   async fetch(req) {
-    if (req.method !== "CONNECT") return new Response("ok");
+    if (req.method === "GET") return new Response("ok");
     req.signal.addEventListener("abort", () => heard.push("abort"));
     const text = req.text();
     reading.resolve();
@@ -53,7 +54,7 @@ const client = await Bun.connect({
   tls: transport === "TLS" ? { ca: tls.cert } : undefined,
   socket: {
     open(socket) {
-      socket.write(`CONNECT ${target} HTTP/1.1\r\nHost: a:1\r\nContent-Length: 1\r\n\r\n`);
+      socket.write(`${request} HTTP/1.1\r\nHost: a:1\r\nContent-Length: 1\r\n\r\n`);
     },
     data(_, data) {
       status += data.toString("latin1", 0, "HTTP/1.1 200".length - status.length);
@@ -69,7 +70,8 @@ const client = await Bun.connect({
 });
 await reading.promise;
 if (how === "FIN") client.shutdown();
-else client.terminate();
+else if (how === "RST") client.terminate();
+else client.write("too much");
 await closed.promise;
 
 const deadline = Date.now() + 2000;

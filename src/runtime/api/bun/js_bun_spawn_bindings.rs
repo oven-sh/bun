@@ -1323,6 +1323,8 @@ fn spawn_maybe_sync(
     #[cfg(unix)]
     let mut posix_ipc_info: Option<IPC::Socket> = None;
     #[cfg(unix)]
+    let mut posix_ipc_err: Option<sys::Error> = None;
+    #[cfg(unix)]
     if !is_sync {
         if let Some(mode) = maybe_ipc_mode {
             let loop_ = jsc_vm.uws_loop();
@@ -1334,7 +1336,17 @@ fn spawn_maybe_sync(
                 0,
                 true,
             );
-            if !raw_socket.is_null() {
+            if raw_socket.is_null() {
+                let syscall = if cfg!(any(target_os = "linux", target_os = "android")) {
+                    sys::Tag::epoll_ctl
+                } else {
+                    sys::Tag::kevent
+                };
+                posix_ipc_err = Some(sys::Error::from_code_int(sys::last_errno(), syscall));
+                subprocess.stdio_pipes.with_mut(|v| {
+                    v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
+                });
+            } else {
                 let socket = raw_socket;
                 subprocess.ipc_data.set(Some(IPC::SendQueue::new(
                     mode,
@@ -1480,10 +1492,14 @@ fn spawn_maybe_sync(
         }
         _ => None,
     };
-    if let Some(err) = &setup_err {
+    #[cfg(unix)] // Windows adopts the pipe at create and start() cannot fail there.
+    if setup_err.is_some() {
         // A Buffer left here pins the wrapper.
-        #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
         subprocess.close_stdin_buffer();
+    } else {
+        setup_err = posix_ipc_err;
+    }
+    if let Some(err) = &setup_err {
         // Only this call can reap a sync child: it is killed once watched, and the error thrown after the wait.
         if !is_sync {
             // Not `kill_signal`, which the child may ignore: nobody is handed it to end it another way.

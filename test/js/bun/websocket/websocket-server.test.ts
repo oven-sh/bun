@@ -2,7 +2,17 @@ import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun"
 import { serve, spawn } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc, isASAN, isDebug, isWindows, tempDir, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  forceGuardMalloc,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
 import { once } from "node:events";
 import net, { isIP } from "node:net";
 import path from "node:path";
@@ -3944,3 +3954,287 @@ describe.concurrent.each([
     await client.closed;
   });
 });
+
+it.skipIf(!isLinux)("a paused socket gets the messages ahead of a hangup that fails its send()", async () => {
+  using dir = tempDir("ws-paused-hangup", {});
+  const unix = path.join(String(dir), "ws.sock");
+  const events: string[] = [];
+  const opened = Promise.withResolvers<ServerWebSocket>();
+  const closed = Promise.withResolvers<void>();
+  using _server = serve({
+    unix,
+    fetch: (request, server) => (server.upgrade(request) ? undefined : new Response("fence")),
+    websocket: {
+      open(ws) {
+        ws.pause();
+        opened.resolve(ws);
+      },
+      message: (_, message) => void events.push(String(message)),
+      close(_, code) {
+        events.push("close " + code);
+        closed.resolve();
+      },
+    },
+  });
+  const client = net.connect(unix);
+  client.write(
+    "GET / HTTP/1.1\r\nHost: a\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+  );
+  await once(client, "data");
+  await new Promise(resolve => client.write("\x81\x81\0\0\0\0a\x88\x82\0\0\0\0\x03\xe8", "latin1", resolve));
+  const ws = await opened.promise;
+  client.destroy();
+  ws.send("lost");
+  // The server polls its sockets.
+  await (await fetch("http://a/", { unix })).text();
+  events.push("resume");
+  ws.resume();
+  await closed.promise;
+  expect(events).toEqual(["resume", "a", "close 1000"]);
+});
+
+// Bun.build() waits for an async plugin setup() by running the event loop, here from inside a handler.
+it("stop(true) survives a close handler that terminates the other sockets and runs the event loop", async () => {
+  using dir = tempDir("ws-stop-nested-tick", {
+    "stop.test.js": /* js */ `
+      import { expect, test } from "bun:test";
+
+      test("stop(true)", async () => {
+        const count = 6;
+        const sockets = [];
+        const stopped = Promise.withResolvers();
+        let closed = false;
+        let ranLoop = false;
+        const server = Bun.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          idleTimeout: 0,
+          fetch(request, server) {
+            return server.upgrade(request) ? undefined : new Response("no upgrade", { status: 400 });
+          },
+          websocket: {
+            open(ws) {
+              // From a timer, so that no tick of the socket loop is on the stack.
+              if (sockets.push(ws) === count) setTimeout(() => stopped.resolve(server.stop(true)), 1);
+            },
+            message() {},
+            close() {
+              if (closed) return;
+              closed = true;
+              for (const ws of sockets) ws.terminate();
+              let waited = false;
+              Bun.build({
+                entrypoints: ["./none.js"],
+                plugins: [{ name: "nested tick", setup: () => Bun.sleep(400).then(() => void (waited = true)) }],
+              }).catch(() => {});
+              ranLoop = waited;
+            },
+          },
+        });
+        const clients = [];
+        for (let i = 0; i < count; i++) {
+          const client = new WebSocket("ws://127.0.0.1:" + server.port);
+          client.onerror = () => {};
+          clients.push(client);
+        }
+        await stopped.promise;
+        expect(ranLoop).toBe(true);
+      });
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "stop.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});
+
+it("an upgrade after an await survives an open handler that terminates the socket and runs the event loop", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { once } from "node:events";
+      import net from "node:net";
+      const upgraded = Promise.withResolvers();
+      let ranLoop = false;
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        async fetch(request, server) {
+          // From a timer, so that no tick of the socket loop is on the stack.
+          await Bun.sleep(1);
+          upgraded.resolve(server.upgrade(request));
+        },
+        websocket: {
+          open(ws) {
+            ws.terminate();
+            let waited = false;
+            Bun.build({
+              entrypoints: ["./none.js"],
+              plugins: [{ name: "nested tick", setup: () => closed.then(() => void (waited = true)) }],
+            }).catch(() => {});
+            ranLoop = waited;
+          },
+          message() {},
+        },
+      });
+      const client = net.connect(server.port, "127.0.0.1").on("error", () => {}).resume();
+      const closed = new Promise(resolve => client.on("close", resolve));
+      await once(client, "connect");
+      // A frame that doesn't wait for the 101.
+      client.write("GET / HTTP/1.1\\r\\nHost: a\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n\\x81\\x80\\0\\0\\0\\0", "latin1");
+      console.log(await upgraded.promise, ranLoop);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("true true\n");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent.each(["close", "terminate"])(
+  "cork() survives a callback that calls %s() and runs the event loop",
+  async method => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+      const opened = Promise.withResolvers();
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: (request, server) => void server.upgrade(request),
+        websocket: { open: opened.resolve, message() {} },
+      });
+      const client = new WebSocket("ws://127.0.0.1:" + server.port);
+      const closed = new Promise(resolve => (client.onclose = resolve));
+      const ws = await opened.promise;
+      // From a timer, so that no tick of the socket loop is on the stack.
+      await Bun.sleep(1);
+      let ranLoop = false;
+      ws.cork(() => {
+        ws.${method}();
+        let waited = false;
+        Bun.build({
+          entrypoints: ["./none.js"],
+          // One more turn, for the server's end to see the client's FIN.
+          plugins: [{ name: "nested tick", setup: () => closed.then(() => Bun.sleep(1)).then(() => void (waited = true)) }],
+        }).catch(() => {});
+        ranLoop = waited;
+      });
+      console.log(ranLoop);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
+// A sweep is 4 seconds, and the upgrade comes a moment after one.
+it.concurrent.each([
+  [8, "ping 2, close 3"],
+  [10, "ping 2, close 3"],
+  [16, "ping 3, close 5"],
+  [120, "ping 27, close 31"],
+])("idleTimeout %d closes a silent client within 4 seconds of it: %s", async (idleTimeout, expected) => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { sweepSocketTimers } from "bun:internal-for-testing";
+      import { once } from "node:events";
+      import net from "node:net";
+      let sweeps = 0, ping, close;
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: (request, server) => void server.upgrade(request),
+        websocket: { idleTimeout: ${idleTimeout}, message() {}, close: () => void (close = sweeps) },
+      });
+      const client = net.connect(server.port, "127.0.0.1").on("error", () => {});
+      await once(client, "connect");
+      sweepSocketTimers(1);
+      client.write("GET / HTTP/1.1\\r\\nHost: a\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n");
+      await once(client, "data");
+      const pinged = once(client, "data");
+      while (close === undefined) {
+        sweeps++;
+        sweepSocketTimers(1);
+        if (sweeps === ${Number.parseInt(expected.slice(5))}) ping = (await pinged)[0][0] === 0x89 && sweeps;
+      }
+      console.log("ping " + ping + ", close " + close);
+      client.destroy();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe(expected);
+  expect(exitCode).toBe(0);
+});
+
+it.each(["before", "after", "around"])(
+  "an upgrade holds when the handler runs the event loop for another request %s it",
+  async when => {
+    const message = Promise.withResolvers<string>();
+    let ranLoop = false;
+    let upgrading: Request;
+    function runLoop() {
+      let waited = false;
+      Bun.build({
+        entrypoints: ["./none.js"],
+        plugins: [{ name: "nested tick", setup: () => fetch(server.url).then(() => void (waited = true)) }],
+      }).catch(() => {});
+      ranLoop = waited;
+    }
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request, server) {
+        if (!request.headers.has("upgrade")) {
+          if (when === "around") server.upgrade(upgrading);
+          return new Response(null, { headers: { connection: "close" } });
+        }
+        upgrading = request;
+        if (when !== "after") runLoop();
+        if (when !== "around") server.upgrade(request);
+        if (when === "after") runLoop();
+      },
+      websocket: {
+        message: (_, data) => message.resolve(String(data)),
+        close: (_, code) => message.resolve("close " + code),
+      },
+    });
+    const client = net.connect(server.port!, "127.0.0.1").resume();
+    try {
+      client.on("close", () => message.resolve("closed")).on("error", message.reject);
+      // A frame that doesn't wait for the 101.
+      client.write(
+        "GET / HTTP/1.1\r\nHost: a\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n\x81\x81\0\0\0\0a",
+        "latin1",
+      );
+      expect({ message: await message.promise, ranLoop }).toEqual({ message: "a", ranLoop: true });
+    } finally {
+      client.destroy();
+    }
+  },
+);

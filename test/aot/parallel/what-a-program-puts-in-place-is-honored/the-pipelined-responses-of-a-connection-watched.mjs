@@ -9,13 +9,13 @@ const server = http.createServer((req, res) => {
   if (req.url !== "/one") return res.end("two");
   setTimeout(() => {
     const socket = req.socket;
-    const symbol = Object.getOwnPropertySymbols(socket).find(each => each.description === "kPipelinedResponses");
+    const symbol = Object.getOwnPropertySymbols(socket).find(each => each.description === "kConnectionState");
     log.push("the name is there: " + (symbol !== undefined));
     if (symbol !== undefined) {
       const held = socket[symbol];
-      log.push("it holds " + (Array.isArray(held) ? "a list of " + held.length : String(held)));
+      log.push("it holds " + (Array.isArray(held?.outgoing) ? "a list of " + held.outgoing.length : String(held)));
       if (way === "forgotten") socket[symbol] = undefined;
-      if (way === "emptied") socket[symbol] = [];
+      if (way === "emptied") held.outgoing = [];
       if (way === "watched")
         Object.defineProperty(socket, symbol, {
           configurable: true,

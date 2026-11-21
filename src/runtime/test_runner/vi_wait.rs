@@ -200,7 +200,7 @@ impl ViWait {
         this.root.set(Strong::create(this_value, global));
         this.keep_alive.ref_(bun_io::js_vm_ctx());
         // SAFETY: heap-allocated by `to_js`; `finish` leaves the context before `root` releases the wrapper.
-        unsafe { AbortHandle::arm_owner(this.as_ptr(), cx.context()) };
+        unsafe { AbortHandle::arm_owner(this.as_ctx_ptr(), cx.context()) };
 
         if let Err(err) = this.poll(global, this_value, true) {
             match thrown_value(global, err) {

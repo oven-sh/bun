@@ -340,6 +340,15 @@ describe("bundler", () => {
       stdout: /^..\/image-.*\.png$/,
     },
   });
+  itBundled("loader/DataURLBase64URLSafeAlphabet", {
+    files: {
+      "/entry.js": /* js */ `
+        import a from "data:text/javascript;base64,ZXhwb3J0IGRlZmF1bHQgIj4_Pn5-Pz4wIjs=";
+        console.log(a);
+      `,
+    },
+    run: { stdout: ">?>~~?>0" },
+  });
   // itBundled("loader/FileRelativePathCSS", {
   //   // GENERATED
   //   files: {

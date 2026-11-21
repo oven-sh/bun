@@ -558,6 +558,10 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
         const plain = Buffer.alloc(11 * 1024 * 1024);
         const server = createServer(socket =>
           socket.on("error", () => {}).once("data", request => {
+            if (request.includes("/chunked")) {
+              socket.write("HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n" + plain.length.toString(16) + "\\r\\n");
+              return socket.write(plain);
+            }
             const isPlain = request.includes("/plain");
             const status = request.includes("/error") ? "500 Error" : "200 OK";
             socket.write("HTTP/1.1 " + status + "\\r\\n" + (isPlain ? "" : "Content-Encoding: zstd\\r\\n") + "\\r\\n");
@@ -571,6 +575,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
         results.plain = await (await fetch(endpoint + "/plain")).bytes().then(bytes => bytes.length, e => e.code);
         results.zstd = await (await fetch(endpoint + "/zstd")).bytes().then(bytes => bytes.length, e => e.code);
         results.s3 = await s3.file("zstd").bytes().then(bytes => bytes.length, e => e.code);
+        results.s3Chunked = await s3.file("chunked").bytes().then(bytes => bytes.length, e => e.code);
         results.s3Error = await s3.file("error").stream().getReader().read().catch(e => e.code);
         for (const [name, stream] of [
           ["plainStream", (await fetch(endpoint + "/plain")).body],
@@ -586,6 +591,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       plain: "OutOfMemory",
       zstd: "OutOfMemory",
       s3: "OutOfMemory",
+      s3Chunked: "OutOfMemory",
       s3Error: "OutOfMemory",
       plainStream: outOfMemory,
       zstdStream: outOfMemory,

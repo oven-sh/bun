@@ -440,6 +440,7 @@ impl DevServer {
                 },
                 deferred.this_ptr(),
             );
+            resp.suspend_timeout();
             current_bundle.script_requests.push(deferred);
             return;
         }

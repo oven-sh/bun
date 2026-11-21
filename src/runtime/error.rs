@@ -46,8 +46,6 @@ pub enum Error {
     InvalidValue,
     #[error("ConnectionFailed")]
     ConnectionFailed,
-    #[error("InvalidOptions")]
-    InvalidOptions,
     #[error("FailedToInitPipe")]
     FailedToInitPipe,
     #[error("FailedToBindPipe")]
@@ -252,16 +250,6 @@ impl From<bun_uws::ConnectError> for Error {
     }
 }
 
-impl From<bun_uws::ssl_wrapper::InitError> for Error {
-    #[inline]
-    fn from(e: bun_uws::ssl_wrapper::InitError) -> Self {
-        match e {
-            bun_uws::ssl_wrapper::InitError::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
-            bun_uws::ssl_wrapper::InitError::InvalidOptions => Self::InvalidOptions,
-        }
-    }
-}
-
 impl From<bun_archive::Error> for Error {
     fn from(e: bun_archive::Error) -> Self {
         match e {
@@ -348,7 +336,6 @@ impl Error {
             Self::TooSmall => "TooSmall",
             Self::InvalidValue => "InvalidValue",
             Self::ConnectionFailed => "ConnectionFailed",
-            Self::InvalidOptions => "InvalidOptions",
             Self::FailedToInitPipe => "FailedToInitPipe",
             Self::FailedToBindPipe => "FailedToBindPipe",
             Self::HTTPForbidden => "HTTPForbidden",

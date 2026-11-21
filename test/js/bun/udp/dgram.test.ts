@@ -2,7 +2,7 @@ import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isLinux, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -247,8 +247,8 @@ describe.skipIf(isWindows)("cluster", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   });
 
-  // Multi-worker traffic + close: exercises the DGRAM_FDS Owned/Adopted state
-  // machine and SharedHandle teardown. A regression removing the double-close
+  // Multi-worker traffic + close: every worker adopts the primary's descriptor,
+  // and SharedHandle closes it once. A regression removing the double-close
   // guard would EBADF an IPC pipe and hang this fixture.
   test("multi-worker shared socket adopts and tears down cleanly", async () => {
     // Assert the success line, not just exit 0: the fixture has bail-out paths
@@ -425,6 +425,75 @@ test.skipIf(isWindows)("Bun.udpSocket({ fd }) rejects a descriptor a live socket
 
   socket.close();
   wrap.close();
+});
+
+describe("a failed bind() reports the error Node reports", () => {
+  const uv = (process as any).binding("uv");
+
+  async function listening() {
+    const socket = createSocket("udp4");
+    const { promise, resolve } = Promise.withResolvers<void>();
+    socket.bind(0, "127.0.0.1", resolve);
+    await promise;
+    return socket;
+  }
+
+  // Emitted for an address, thrown for a descriptor.
+  async function bindError(...args: any[]) {
+    const socket = createSocket("udp4");
+    const { promise, resolve } = Promise.withResolvers<any>();
+    socket.on("error", resolve);
+    socket.on("listening", () => resolve(undefined));
+    try {
+      (socket.bind as any)(...args);
+    } catch (err) {
+      resolve(err);
+    }
+    const err = await promise;
+    socket.close();
+    expect(err).toBeInstanceOf(Error);
+    const { errno, code, syscall, address, port, message } = err;
+    return { errno, code, syscall, address, port, message };
+  }
+
+  test("port in use", async () => {
+    const holder = await listening();
+    const { port } = holder.address();
+    const error = await bindError(port, "127.0.0.1").finally(() => holder.close());
+    expect(error).toEqual({
+      errno: isLinux ? -98 : uv.UV_EADDRINUSE,
+      code: "EADDRINUSE",
+      syscall: "bind",
+      address: "127.0.0.1",
+      port,
+      message: `bind EADDRINUSE 127.0.0.1:${port}`,
+    });
+  });
+
+  test("address not local", async () => {
+    expect(await bindError(0, "192.0.2.1")).toEqual({
+      errno: isLinux ? -99 : uv.UV_EADDRNOTAVAIL,
+      code: "EADDRNOTAVAIL",
+      syscall: "bind",
+      address: "192.0.2.1",
+      port: undefined,
+      message: "bind EADDRNOTAVAIL 192.0.2.1",
+    });
+  });
+
+  test.skipIf(isWindows)("descriptor of a live socket", async () => {
+    const holder = await listening();
+    const state = Object.getOwnPropertySymbols(holder).find(symbol => symbol.description === "state symbol")!;
+    const error = await bindError({ fd: holder[state].handle.fd }).finally(() => holder.close());
+    expect(error).toEqual({
+      errno: isLinux ? -17 : uv.UV_EEXIST,
+      code: "EEXIST",
+      syscall: "open",
+      address: undefined,
+      port: undefined,
+      message: "open EEXIST",
+    });
+  });
 });
 
 // Node throws an ErrnoException from the option setters of an unbound socket;

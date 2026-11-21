@@ -136,9 +136,9 @@ export function getStdinStream(
     // listeners, resume(), ref(), an explicit read()) may take the reader back.
     if (stream_reachedEof) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
+    // Attaching a reader also undoes the pause that disown() left on the source.
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
-    source?.setFlowing?.(true);
 
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
@@ -146,18 +146,21 @@ export function getStdinStream(
     }
   }
 
-  function disown() {
+  function disown(wasHeldByAnotherReader = !reader && native.locked) {
     $debug("unref();");
-    source?.setFlowing?.(false);
 
+    // A reader of Bun.stdin.stream() that came after pause() keeps the source.
+    if (reader || wasHeldByAnotherReader || !native.locked) source?.setFlowing?.(false);
+    if (wasHeldByAnotherReader) source?.updateRef?.(false);
     if (reader) {
       // releaseLock() rejects any in-flight internalRead() with a TypeError; that
       // rejection is handled there by observing that `reader` was cleared here.
       reader.releaseLock();
       reader = undefined;
       $debug("released reader");
+      // A paused source keeps nothing alive; its ref is for the next reader of Bun.stdin.stream().
+      source?.updateRef?.(!forceUnref);
     }
-    source?.updateRef?.(false);
   }
 
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
@@ -301,11 +304,12 @@ export function getStdinStream(
   stream._readableState.reading = false;
 
   stream.on("pause", () => {
+    const wasHeldByAnotherReader = !reader && native.locked;
     process.nextTick(() => {
       // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
         stream._readableState.reading = false;
-        disown();
+        disown(wasHeldByAnotherReader);
       }
     });
   });

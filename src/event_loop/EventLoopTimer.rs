@@ -120,7 +120,6 @@ pub enum Tag {
     TimeoutObject,
     ImmediateObject,
     StatWatcherScheduler,
-    UpgradedDuplex,
     DNSResolver,
     DnsSdConnection,
     WindowsNamedPipe,
@@ -140,7 +139,6 @@ pub enum Tag {
     EventLoopDelayMonitor,
     CronJob,
     GcRepeating,
-    QuicEndpoint,
     FakeTimersTick,
     ViWait,
     /// An N-API addon's `uv_timer_t` (POSIX, where Bun emulates libuv).
@@ -171,7 +169,6 @@ impl Tag {
             Tag::TimeoutObject
             | Tag::ImmediateObject
             | Tag::StatWatcherScheduler
-            | Tag::UpgradedDuplex
             | Tag::DNSResolver
             | Tag::DnsSdConnection
             | Tag::WindowsNamedPipe
@@ -184,7 +181,6 @@ impl Tag {
             | Tag::SubprocessTimeout
             | Tag::AbortSignalTimeout
             | Tag::CronJob
-            | Tag::QuicEndpoint
             | Tag::FakeTimersTick
             | Tag::ViWait
             | Tag::UvTimer

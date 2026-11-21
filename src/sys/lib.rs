@@ -1040,19 +1040,12 @@ pub mod O {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub const PATH: i32 = libc::O_PATH;
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub const NOATIME: i32 = libc::O_NOATIME;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub const TMPFILE: i32 = libc::O_TMPFILE;
-    // Windows defines these (non-zero) so the `O.PATH` /
-    // `O.NOATIME` bit-tests in `openat_windows_impl` are meaningful.
+    // Non-zero on Windows so the `O::PATH` bit-test in `openat_windows_impl` is meaningful.
     #[cfg(windows)]
     pub const PATH: i32 = 0o10000000;
-    #[cfg(windows)]
-    pub const NOATIME: i32 = 0o1000000;
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub const PATH: i32 = 0;
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-    pub const NOATIME: i32 = 0;
     // Defined for every platform; Darwin-only flags map to 0
     // elsewhere so `flags & O.EVTONLY` etc. compile and are no-ops.
     #[cfg(unix)]
@@ -1073,8 +1066,6 @@ pub mod O {
     pub const NOCTTY: i32 = libc::O_NOCTTY;
     #[cfg(windows)]
     pub const NOCTTY: i32 = 0;
-    #[cfg(windows)]
-    pub const ACCMODE: i32 = 3;
     #[cfg(target_os = "macos")]
     pub const SYMLINK: i32 = libc::O_SYMLINK;
     #[cfg(not(target_os = "macos"))]
@@ -1280,8 +1271,6 @@ impl Tag {
     pub(crate) const getsockname: Tag = Tag(115);
     #[cfg(not(windows))]
     pub(crate) const getifaddrs: Tag = Tag(116);
-    #[cfg(not(windows))]
-    pub(crate) const socket: Tag = Tag(117);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1289,7 +1278,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 118] = [
+        const NAMES: [&str; 117] = [
             "TODO",
             "dup",
             "access",
@@ -1408,7 +1397,6 @@ impl Tag {
             "_open_osfhandle",
             "getsockname",
             "getifaddrs",
-            "socket",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1486,7 +1474,6 @@ mod safe_libc {
         // `c_int` writes); kernel only writes the slot and reports failure via
         // the return value — no other preconditions.
         pub(crate) safe fn pipe(fds: &mut [c_int; 2]) -> c_int;
-        pub(crate) safe fn socket(domain: c_int, ty: c_int, proto: c_int) -> c_int;
         pub(crate) safe fn listen(fd: c_int, backlog: c_int) -> c_int;
         pub(crate) safe fn socketpair(
             domain: c_int,
@@ -4673,30 +4660,10 @@ pub mod c {
     // single `bun_sys::c::*` import path matching the `bun.c` namespacing.
     #[cfg(target_os = "macos")]
     pub use libc::{
-        _NSGetEnviron,
         COPYFILE_ACL,
-        COPYFILE_CHECK,
-        COPYFILE_CLONE,
-        COPYFILE_CLONE_FORCE,
         COPYFILE_DATA,
         COPYFILE_EXCL,
-        COPYFILE_METADATA,
-        COPYFILE_MOVE,
-        COPYFILE_NOFOLLOW,
-        COPYFILE_NOFOLLOW_DST,
         COPYFILE_NOFOLLOW_SRC,
-        COPYFILE_RECURSIVE,
-        COPYFILE_SECURITY,
-        COPYFILE_STAT,
-        COPYFILE_UNLINK,
-        COPYFILE_XATTR,
-        CPU_STATE_IDLE,
-        CPU_STATE_MAX,
-        CPU_STATE_NICE,
-        CPU_STATE_SYSTEM,
-        CPU_STATE_USER,
-        HOST_VM_INFO64,
-        HOST_VM_INFO64_COUNT,
         PROCESSOR_CPU_LOAD_INFO,
         // <copyfile.h> / <sys/clonefile.h>
         clonefile,
@@ -4707,7 +4674,6 @@ pub mod c {
         fclonefileat,
         fcopyfile,
         host_processor_info,
-        host_statistics64,
         integer_t,
         mach_msg_type_number_t,
         mach_port_t,
@@ -4718,17 +4684,12 @@ pub mod c {
         // <mach/*.h> — host/processor/vm primitives for `os.cpus()` & memory stats
         natural_t,
         processor_cpu_load_info,
-        processor_cpu_load_info_data_t,
-        processor_flavor_t,
         processor_info_array_t,
         // <sys/sysctl.h> — `sysctlbyname` already re-exported above for all BSDs.
         sysctl,
-        sysctlnametomib,
         // misc libc
         vm_deallocate,
         vm_size_t,
-        vm_statistics64,
-        vm_statistics64_data_t,
     };
 
     /// Safe rc-returning `clonefile(2)` — callers that want their own
@@ -4807,16 +4768,6 @@ pub mod c {
         dyld_get_image_header_raw(image_index).cast()
     }
 
-    /// Darwin `sendfile(fd, s, off, *len, *hdtr, flags)`, without headers or trailers.
-    /// NOTE: on `EINTR`/`EAGAIN` the kernel still writes the
-    /// bytes-sent count back through `*len` before returning -1 — callers MUST
-    /// advance their offset by `*len` even on error. This wrapper is raw (no
-    /// EINTR retry); the caller owns the offset bookkeeping.
-    #[cfg(target_os = "macos")]
-    pub fn sendfile(fd: c_int, s: c_int, off: i64, len: &mut i64, flags: c_int) -> c_int {
-        // SAFETY: `len` is live, and a null `hdtr` is allowed.
-        unsafe { libc::sendfile(fd, s, off, len, core::ptr::null_mut(), flags) }
-    }
     /// FreeBSD `sendfile(fd, s, off, nbytes, *hdtr, *sbytes, flags)`, without headers or trailers.
     #[cfg(target_os = "freebsd")]
     pub fn sendfile(
@@ -4966,7 +4917,6 @@ pub mod linux {
         pub const PRI: u32 = libc::EPOLLPRI as u32;
         pub const ERR: u32 = libc::EPOLLERR as u32;
         pub const HUP: u32 = libc::EPOLLHUP as u32;
-        pub const RDHUP: u32 = libc::EPOLLRDHUP as u32;
         pub const ET: u32 = libc::EPOLLET as u32;
         pub const ONESHOT: u32 = libc::EPOLLONESHOT as u32;
         pub const CTL_ADD: i32 = libc::EPOLL_CTL_ADD;
@@ -5003,11 +4953,8 @@ pub mod linux {
 
     /// inotify mask flags (`IN_*`).
     pub mod IN {
-        pub const ACCESS: u32 = libc::IN_ACCESS;
         pub const MODIFY: u32 = libc::IN_MODIFY;
         pub const ATTRIB: u32 = libc::IN_ATTRIB;
-        pub const CLOSE_WRITE: u32 = libc::IN_CLOSE_WRITE;
-        pub const CLOSE_NOWRITE: u32 = libc::IN_CLOSE_NOWRITE;
         pub const OPEN: u32 = libc::IN_OPEN;
         pub const MOVED_FROM: u32 = libc::IN_MOVED_FROM;
         pub const MOVED_TO: u32 = libc::IN_MOVED_TO;
@@ -5016,9 +4963,7 @@ pub mod linux {
         pub const DELETE_SELF: u32 = libc::IN_DELETE_SELF;
         pub const MOVE_SELF: u32 = libc::IN_MOVE_SELF;
         pub const ONLYDIR: u32 = libc::IN_ONLYDIR;
-        pub const DONT_FOLLOW: u32 = libc::IN_DONT_FOLLOW;
         pub const EXCL_UNLINK: u32 = libc::IN_EXCL_UNLINK;
-        pub const MASK_ADD: u32 = libc::IN_MASK_ADD;
         pub const ISDIR: u32 = libc::IN_ISDIR;
         pub const ONESHOT: u32 = libc::IN_ONESHOT;
         pub const IGNORED: u32 = libc::IN_IGNORED;
@@ -5219,7 +5164,6 @@ pub mod darwin {
         pub const WRITE: i16 = libc::EVFILT_WRITE;
         pub const VNODE: i16 = libc::EVFILT_VNODE;
         pub const PROC: i16 = libc::EVFILT_PROC;
-        pub const SIGNAL: i16 = libc::EVFILT_SIGNAL;
         pub const TIMER: i16 = libc::EVFILT_TIMER;
         pub const USER: i16 = libc::EVFILT_USER;
         pub const MACHPORT: i16 = libc::EVFILT_MACHPORT;
@@ -5232,10 +5176,8 @@ pub mod darwin {
         pub const ADD: u16 = libc::EV_ADD;
         pub const DELETE: u16 = libc::EV_DELETE;
         pub const ENABLE: u16 = libc::EV_ENABLE;
-        pub const DISABLE: u16 = libc::EV_DISABLE;
         pub const ONESHOT: u16 = libc::EV_ONESHOT;
         pub const CLEAR: u16 = libc::EV_CLEAR;
-        pub const RECEIPT: u16 = libc::EV_RECEIPT;
         pub const DISPATCH: u16 = libc::EV_DISPATCH;
         pub const EOF: u16 = libc::EV_EOF;
         pub const ERROR: u16 = libc::EV_ERROR;
@@ -5243,11 +5185,7 @@ pub mod darwin {
     /// kqueue fflags (Darwin).
     pub mod NOTE {
         pub const EXIT: u32 = libc::NOTE_EXIT;
-        pub const EXITSTATUS: u32 = libc::NOTE_EXITSTATUS;
-        pub const SIGNAL: u32 = libc::NOTE_SIGNAL;
         pub const FORK: u32 = libc::NOTE_FORK;
-        pub const EXEC: u32 = libc::NOTE_EXEC;
-        pub const TRIGGER: u32 = libc::NOTE_TRIGGER;
         pub const DELETE: u32 = libc::NOTE_DELETE;
         pub const WRITE: u32 = libc::NOTE_WRITE;
         pub const EXTEND: u32 = libc::NOTE_EXTEND;
@@ -5257,7 +5195,6 @@ pub mod darwin {
         pub const REVOKE: u32 = libc::NOTE_REVOKE;
         /// `EVFILT_MEMORYSTATUS` fflags (xnu `<sys/event_private.h>`). Values are
         /// ABI-stable; libdispatch depends on them for `DISPATCH_MEMORYPRESSURE_*`.
-        pub const MEMORYSTATUS_PRESSURE_NORMAL: u32 = 0x00000001;
         pub const MEMORYSTATUS_PRESSURE_WARN: u32 = 0x00000002;
         pub const MEMORYSTATUS_PRESSURE_CRITICAL: u32 = 0x00000004;
     }
@@ -7316,10 +7253,6 @@ pub mod posix {
         // Windows literals live in `bun_windows_sys::ws2_32` (leaf tier-0); route
         // through it so the hardcoded `2/23` exists in exactly one place.
         #[cfg(windows)]
-        pub const UNSPEC: c_int = bun_windows_sys::ws2_32::AF_UNSPEC;
-        #[cfg(windows)]
-        pub const UNIX: c_int = bun_windows_sys::ws2_32::AF_UNIX;
-        #[cfg(windows)]
         pub const INET: c_int = bun_windows_sys::ws2_32::AF_INET;
         #[cfg(windows)]
         pub const INET6: c_int = bun_windows_sys::ws2_32::AF_INET6;
@@ -7361,11 +7294,6 @@ pub mod posix {
     #[inline]
     pub const fn s_islnk(m: u32) -> bool {
         (m & libc::S_IFMT as u32) == libc::S_IFLNK as u32
-    }
-    #[cfg(unix)]
-    #[inline]
-    pub const fn s_isdir(m: u32) -> bool {
-        (m & libc::S_IFMT as u32) == libc::S_IFDIR as u32
     }
 
     // ── signals ──
@@ -7815,14 +7743,6 @@ pub mod net {
         use core::mem::offset_of;
         use libc::{sockaddr, socklen_t};
 
-        pub fn socket(family: c_int, kind: c_int) -> Maybe<Fd> {
-            let fd = safe_libc::socket(family, kind, 0);
-            if fd < 0 {
-                return Err(err_with(Tag::socket));
-            }
-            Ok(Fd::from_native(fd))
-        }
-
         /// `address` is the bytes of a `sockaddr_*`.
         pub fn bind(fd: Fd, address: &[u8]) -> Maybe<()> {
             let len = address.len() as socklen_t;
@@ -8117,7 +8037,6 @@ pub mod freebsd {
         pub const WRITE: i16 = libc::EVFILT_WRITE;
         pub const VNODE: i16 = libc::EVFILT_VNODE;
         pub const PROC: i16 = libc::EVFILT_PROC;
-        pub const SIGNAL: i16 = libc::EVFILT_SIGNAL;
         pub const TIMER: i16 = libc::EVFILT_TIMER;
         pub const USER: i16 = libc::EVFILT_USER;
     }
@@ -8126,10 +8045,8 @@ pub mod freebsd {
         pub const ADD: u16 = libc::EV_ADD;
         pub const DELETE: u16 = libc::EV_DELETE;
         pub const ENABLE: u16 = libc::EV_ENABLE;
-        pub const DISABLE: u16 = libc::EV_DISABLE;
         pub const ONESHOT: u16 = libc::EV_ONESHOT;
         pub const CLEAR: u16 = libc::EV_CLEAR;
-        pub const RECEIPT: u16 = libc::EV_RECEIPT;
         pub const DISPATCH: u16 = libc::EV_DISPATCH;
         pub const EOF: u16 = libc::EV_EOF;
         pub const ERROR: u16 = libc::EV_ERROR;
@@ -8138,8 +8055,6 @@ pub mod freebsd {
     pub mod NOTE {
         pub const EXIT: u32 = libc::NOTE_EXIT;
         pub const FORK: u32 = libc::NOTE_FORK;
-        pub const EXEC: u32 = libc::NOTE_EXEC;
-        pub const TRIGGER: u32 = libc::NOTE_TRIGGER;
         pub const DELETE: u32 = libc::NOTE_DELETE;
         pub const WRITE: u32 = libc::NOTE_WRITE;
         pub const EXTEND: u32 = libc::NOTE_EXTEND;

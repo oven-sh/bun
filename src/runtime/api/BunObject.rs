@@ -74,7 +74,7 @@ use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd};
-use bun_zlib::{Inflater, deflate, inflate};
+use bun_zlib::{GZIP_ID, Inflater, deflate, inflate};
 
 use crate::node;
 use bun_collections::index_sort;
@@ -1007,7 +1007,6 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
         crate::server::server_config::FromJSOptions {
             allow_bake_config: bun_core::FeatureFlags::bake(),
             may_start_development_server: true,
-            is_fetch_required: true,
             previous_fetch: false,
             previous_routes: false,
         },
@@ -1049,7 +1048,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
                     ($T:ty) => {{
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
                         let server: &$T = unsafe { &*entry.ptr.cast::<$T>() };
-                        server.on_reload_from_zig(&mut config, global_object);
+                        server.apply_reload(&mut config, global_object)?;
                         // Its handlers are the calling script's now, and so is the server: it goes
                         // with that script's context, not with the one that first listened.
                         server.abort_handle.leave();
@@ -1173,10 +1172,10 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
         }};
     }
 
-    // Monomorphized over (has_ssl_config, development), expanded here.
-    let has_ssl_config = config.ssl_config.is_some();
+    // Monomorphized over (development, tls), expanded here.
+    let tls = config.tls.is_on();
     let development = config.is_development();
-    match (development, has_ssl_config) {
+    match (development, tls) {
         (true, true) => bun_removable_features::removable_body!(TlsSockets, Abort, {
             serve_with!(
                 crate::api::DebugHTTPSServer,
@@ -1374,7 +1373,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         JSValue::UNDEFINED,
         JSValue::UNDEFINED,
     ) {
-        Ok(p) => p,
+        Ok((client, _)) => client,
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
             let _ =
@@ -1699,7 +1698,18 @@ pub(crate) mod JSZlib {
                     .map_or(if is_gzip { 31 } else { -15 }, |bits| bits as i32);
                 let status = Inflater::from_zlib_window_bits(window_bits)
                     .and_then(|mut inflater| {
-                        inflater.inflate_to_vec(&mut { compressed }, &mut list, max_output)
+                        let mut rest = compressed;
+                        loop {
+                            let room = max_output - list.len();
+                            let status = inflater.inflate_to_vec(&mut rest, &mut list, room)?;
+                            if status != inflate::Status::StreamEnd
+                                || inflater.container() != inflate::Container::Gzip
+                                || !rest.starts_with(&GZIP_ID)
+                            {
+                                break Ok(status);
+                            }
+                            inflater.reset();
+                        }
                     })
                     .map_err(|err| zlib_error(heap, err))?;
                 match status {
@@ -1716,9 +1726,21 @@ pub(crate) mod JSZlib {
                 } else {
                     bun_deflate::inflate
                 };
-                let (vec, limit) = (&mut list, max_output);
-                match decompress(compressed, Output::Vec { vec, limit }) {
-                    Ok(_) => heap.create_uint8_array_from_box(list.into_boxed_slice()),
+                let mut rest = compressed;
+                let result = loop {
+                    let limit = max_output - list.len();
+                    let vec = &mut list;
+                    match decompress(rest, Output::Vec { vec, limit }) {
+                        Ok(member) => rest = &rest[member.read..],
+                        Err(err) => break Err(err),
+                    }
+                    // `gunzip` decodes one member per call (RFC 1952 §2.2).
+                    if !is_gzip || !rest.starts_with(&GZIP_ID) {
+                        break Ok(());
+                    }
+                };
+                match result {
+                    Ok(()) => heap.create_uint8_array_from_box(list.into_boxed_slice()),
                     Err(Error::Alloc(err)) => Err(err.into()),
                     Err(Error::InsufficientSpace) => Err(too_large_error(heap)),
                     Err(err) => {

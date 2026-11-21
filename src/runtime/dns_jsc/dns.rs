@@ -1060,12 +1060,21 @@ pub(crate) mod internal {
     // interleaved (RFC 8305 §4) so an unroutable family can never fill all
     // CONCURRENT_CONNECTIONS parallel connect attempts. See #4938 / #33278.
     fn process_results<'a>(addrs: impl Iterator<Item = &'a [u8]> + Clone) -> Box<[ResultEntry]> {
-        let mut total = FamilyCounts::default();
+        let first_family = match Order::for_connect() {
+            Order::Ipv4first => Some(netc::AF_INET),
+            Order::Ipv6first => Some(netc::AF_INET6),
+            Order::Verbatim => None,
+        };
+        let counts = || FamilyCounts {
+            first_family,
+            ..Default::default()
+        };
+        let mut total = counts();
         for addr in addrs.clone() {
             total.add(addr, 0);
         }
         let mut results = ResultEntry::zeroed_slice(total.first + total.other);
-        let (mut placed, pairs) = (FamilyCounts::default(), total.first.min(total.other));
+        let (mut placed, pairs) = (counts(), total.first.min(total.other));
         for addr in addrs {
             results[placed.add(addr, pairs)].set_addr(addr);
         }
@@ -1519,6 +1528,26 @@ pub(crate) mod internal {
     fn __bun_dns_prefetch(loop_: *const c_void, hostname: &[u8], port: u16) {
         let host = (!hostname.is_empty()).then_some(hostname);
         prefetch(loop_.cast::<Loop>(), host, port);
+    }
+
+    /// Invalidates every cache entry too: `process_results` packed them, or is about to, in the old order.
+    pub(crate) fn set_connect_order(order: Order) {
+        if Order::for_connect() == order {
+            return;
+        }
+        Order::set_for_connect(order);
+
+        let mut guard = global_cache().lock();
+        let mut i: usize = 0;
+        while let Some(entry) = guard.cache.get(i) {
+            entry.valid.store(false, Ordering::Relaxed);
+            if GlobalCache::is_unused(entry) {
+                // Swaps the last entry into slot `i`.
+                guard.delete_entry_at(i);
+            } else {
+                i += 1;
+            }
+        }
     }
 
     /// Writes a ref to `request`, for `Bun__addrinfo_freeRequest`. SAFETY: `loop_` is live; `host` is null or NUL-terminated.
@@ -2581,5 +2610,15 @@ impl Resolver {
             _ => Order::Verbatim,
         };
         bun::String::static_(<&'static str>::from(order))
+    }
+
+    pub(crate) fn set_connect_result_order(order: &[u8]) {
+        // The order and the DNS cache are process-wide, so a Worker must not change them for the other threads.
+        if !VirtualMachine::get().is_main_thread.get() {
+            return;
+        }
+        if let Some(order) = Order::from_string(order) {
+            internal::set_connect_order(order);
+        }
     }
 }

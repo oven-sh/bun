@@ -1,5 +1,5 @@
-use core::ops::ControlFlow::{self, Break, Continue};
-use core::sync::atomic::Ordering;
+use core::ops::ControlFlow::{self, Continue};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::Error;
 use bun_core::scoped_log;
@@ -8,8 +8,7 @@ use bun_uws as uws;
 use crate::http_cert_error::HTTPCertError;
 use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::internal_state::HTTPStage;
-use crate::ssl_config::SSLConfig;
-use crate::ssl_wrapper::{Handler as SSLWrapperHandler, InitError, SSLWrapper};
+use crate::ssl_wrapper::{Handler as SSLWrapperHandler, SSLWrapper};
 use crate::{AlpnOffer, HTTPClient, NextStep};
 
 bun_core::declare_scope!(http_proxy_tunnel, visible);
@@ -17,7 +16,6 @@ bun_core::declare_scope!(http_proxy_tunnel, visible);
 pub struct ProxyTunnel {
     /// `None` while `start` or `receive` runs it. They pass it on as `lent_wrapper`.
     wrapper: Option<SSLWrapper>,
-    write_buffer: bun_io::StreamBuffer,
     /// Property of the inner TLS session, not the owning client. Captured from
     /// the client in record_verification() and restored to the next client in adopt()
     /// so the pool's did_have_handshaking_error_while_reject_unauthorized_is_false
@@ -30,6 +28,15 @@ pub struct ProxyTunnel {
     /// without this, a strict caller could reuse a tunnel where the hostname
     /// was never checked natively.
     pub(crate) verification: PeerVerification,
+}
+
+/// For the leak test in proxy-stress-concurrent.test.ts, which reads it from the JS thread.
+pub static LIVE_TUNNELS: AtomicU32 = AtomicU32::new(0);
+
+impl Drop for ProxyTunnel {
+    fn drop(&mut self) {
+        LIVE_TUNNELS.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 /// TLS failed in a write or a flush. The caller must call [`HTTPClient::on_proxy_tunnel_close`].
@@ -69,9 +76,9 @@ impl<const IS_SSL: bool> ClientHandler<'_, '_, IS_SSL> {
         }
     }
 
-    fn close(&mut self, err: Error) {
+    fn fail(&mut self, err: Error) {
         self.wrapper.deinit();
-        self.next_step = self.client.on_proxy_tunnel_close(err, self.socket);
+        self.next_step = self.client.close_and_fail(err, self.socket);
     }
 }
 
@@ -215,11 +222,11 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
                 let flow = client.handle_on_data_headers(decoded_data, self.socket, wrapper);
                 return self.stop_on_break(flow);
             }
-            Decrypted::Unexpected => return self.close(crate::Error::UnexpectedData),
+            Decrypted::Unexpected => return self.fail(crate::Error::UnexpectedData),
         };
         let flow = match report_progress {
             Ok(true) => client.progress_update(self.socket),
-            Ok(false) => return,
+            Ok(false) => return client.maybe_pause_receive(self.socket),
             Err(err) => client.close_and_fail(err, self.socket),
         };
         self.stop_on_break(flow);
@@ -232,7 +239,7 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
         match on_tunnel_handshake(self.client, self.wrapper, handshake_success, ssl_error) {
             Ok(true) => {}
             Ok(false) => return,
-            Err(err) => return self.close(err),
+            Err(err) => return self.fail(err),
         }
         let client = &mut *self.client;
         if client.wants_server_identity_check() {
@@ -257,15 +264,13 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
         self.stop_on_break(flow);
     }
 
-    fn write(&mut self, encoded_data: &[u8]) {
-        if let Some(tunnel) = &mut self.client.proxy_tunnel {
-            write_encrypted(&mut tunnel.write_buffer, self.socket.into(), encoded_data);
-        }
+    fn write(&mut self, encoded_data: &[u8]) -> usize {
+        OuterSocket::from(self.socket).write(encoded_data)
     }
 
     fn on_close(&mut self) {
         if self.next_step.is_continue() {
-            self.close(crate::Error::ConnectionClosed);
+            self.next_step = self.client.on_proxy_tunnel_close(self.socket);
         }
     }
 
@@ -281,13 +286,12 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
 }
 
 /// The handler for a call that does not feed the wrapper, which can then only seal records or fail.
-struct EncryptHandler<'a> {
-    write_buffer: &'a mut bun_io::StreamBuffer,
+struct EncryptHandler {
     socket: OuterSocket,
     result: Result<(), TunnelClosed>,
 }
 
-impl SSLWrapperHandler for EncryptHandler<'_> {
+impl SSLWrapperHandler for EncryptHandler {
     fn on_open(&mut self) {
         unreachable!();
     }
@@ -302,34 +306,12 @@ impl SSLWrapperHandler for EncryptHandler<'_> {
         self.on_close();
     }
 
-    fn write(&mut self, encoded_data: &[u8]) {
-        write_encrypted(self.write_buffer, self.socket, encoded_data);
+    fn write(&mut self, encoded_data: &[u8]) -> usize {
+        self.socket.write(encoded_data)
     }
 
     fn on_close(&mut self) {
         self.result = Err(TunnelClosed);
-    }
-}
-
-fn write_encrypted(
-    write_buffer: &mut bun_io::StreamBuffer,
-    socket: OuterSocket,
-    encoded_data: &[u8],
-) {
-    // Preserve TLS record ordering: if any encrypted bytes are buffered,
-    // enqueue new bytes and flush them in FIFO via onWritable.
-    if write_buffer.is_not_empty() {
-        if write_buffer.write(encoded_data).is_err() {
-            bun_core::out_of_memory();
-        }
-        return;
-    }
-    let pending = &encoded_data[socket.write(encoded_data)..];
-    if !pending.is_empty() {
-        // lets flush when we are truly writable
-        if write_buffer.write(pending).is_err() {
-            bun_core::out_of_memory();
-        }
     }
 }
 
@@ -345,34 +327,33 @@ impl HTTPClient<'_> {
         lent_wrapper: Option<&SSLWrapper>,
         buf: &[u8],
     ) -> ControlFlow<NextStep, Option<usize>> {
-        let Some(tunnel) = &mut self.proxy_tunnel else {
+        let Some(tunnel) = &self.proxy_tunnel else {
             return Continue(None);
         };
         match tunnel.write(socket.into(), lent_wrapper, buf) {
             Ok(written) => Continue(written),
-            Err(TunnelClosed) => self
-                .on_proxy_tunnel_close(Error::ConnectionClosed, socket)
-                .map_continue(|()| None),
+            Err(TunnelClosed) => self.on_proxy_tunnel_close(socket).map_continue(|()| None),
         }
     }
 
     pub(crate) fn on_proxy_tunnel_close<const IS_SSL: bool>(
         &mut self,
-        mut err: Error,
         socket: HTTPSocket<IS_SSL>,
     ) -> ControlFlow<NextStep> {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onClose");
         // Mirror `HTTPClient::on_close`:
         // treat connection close as end-of-body for identity transfer when no content-length.
-        if !self.state.flags.is_redirect_pending && self.state.is_body_complete_on_close() {
-            match self.finalize_body_on_eof() {
-                Ok(()) => return Break(NextStep::ReleaseSocket),
-                Err(e) => err = e,
-            }
+        if self.retries_on_close() {
+            crate::HTTPContext::<IS_SSL>::terminate_socket(socket);
+            return self.on_close();
         }
-
-        // Otherwise, treat as failure.
-        self.close_and_fail(err, socket)
+        if !self.state.is_body_complete_on_close() {
+            return self.close_and_fail(Error::ConnectionClosed, socket);
+        }
+        match self.end_body() {
+            Ok(()) => self.progress_update(socket),
+            Err(err) => self.close_and_fail(err, socket),
+        }
     }
 }
 
@@ -382,10 +363,9 @@ impl ProxyTunnel {
     pub(crate) fn start<const IS_SSL: bool>(
         this: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
-        ssl_options: Option<&SSLConfig>,
         start_payload: &[u8],
     ) -> ControlFlow<NextStep> {
-        let wrapper = match Self::create(this, ssl_options) {
+        let wrapper = match Self::create(this) {
             Ok(wrapper) => wrapper,
             Err(err) => return this.close_and_fail::<IS_SSL>(err, socket),
         };
@@ -395,42 +375,18 @@ impl ProxyTunnel {
     }
 
     /// Gives `this` a tunnel, and returns its wrapper.
-    fn create(this: &mut HTTPClient, ssl_options: Option<&SSLConfig>) -> Result<SSLWrapper, Error> {
-        let mut err = uws::create_bun_socket_error_t::none;
-        let ssl_ctx = match ssl_options {
-            // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-            Some(ssl_options) => ssl_options
-                .as_usockets_for_client_verification()
-                .create_ssl_context(&mut err),
-            // The context a direct connection uses: it holds the thread's CA options (`bun install --ca`).
-            None => Some(crate::http_thread().default_ssl_ctx()),
-        };
-        let Some(ssl_ctx) = ssl_ctx else {
-            // Invalid TLS options; the errors a direct request reports for them.
-            let error = match err {
-                uws::create_bun_socket_error_t::invalid_crl => crate::Error::InvalidCRL,
-                _ => crate::Error::FailedToOpenSocket,
-            };
-            return Err(error);
-        };
-        let wrapper = match SSLWrapper::init_with_ctx(ssl_ctx, true) {
-            Ok(w) => w,
-            Err(e) => {
-                if e == InitError::OutOfMemory {
-                    bun_core::out_of_memory();
-                }
-
-                // invalid TLS Options
-                return Err(crate::Error::FailedToOpenSocket);
-            }
-        };
+    fn create(this: &mut HTTPClient) -> Result<SSLWrapper, Error> {
+        // The context a direct connection with these options uses.
+        let ssl_ctx = crate::http_thread().ssl_ctx_for(this.tls_props.as_ref())?;
+        let wrapper = SSLWrapper::init_with_ctx(ssl_ctx, true);
+        wrapper.enable_server_identity_check();
         // The inner connection's form of the `set_inline_reject` call in `HTTPClient::configure_tls`.
         if this.flags.reject_unauthorized {
             wrapper.set_inline_reject();
         }
+        LIVE_TUNNELS.fetch_add(1, Ordering::Relaxed);
         this.proxy_tunnel = Some(Box::new(ProxyTunnel {
             wrapper: None,
-            write_buffer: bun_io::StreamBuffer::default(),
             did_have_handshaking_error: false,
             verification: PeerVerification::None,
         }));
@@ -472,39 +428,23 @@ impl ProxyTunnel {
         next_step
     }
 
-    fn wrapper_and_encrypt_handler<'a>(
-        &'a mut self,
-        socket: OuterSocket,
-        lent_wrapper: Option<&'a SSLWrapper>,
-    ) -> (&'a SSLWrapper, EncryptHandler<'a>) {
-        let wrapper = lent_wrapper.or(self.wrapper.as_ref());
-        let handler = EncryptHandler {
-            write_buffer: &mut self.write_buffer,
-            socket,
-            result: Ok(()),
-        };
-        (wrapper.expect("lent by run_wrapper"), handler)
+    fn wrapper<'a>(&'a self, lent_wrapper: Option<&'a SSLWrapper>) -> &'a SSLWrapper {
+        (lent_wrapper.or(self.wrapper.as_ref())).expect("lent by run_wrapper")
     }
 
     /// Outer socket became writable.
     pub(crate) fn on_writable(
-        &mut self,
+        &self,
         socket: OuterSocket,
         lent_wrapper: Option<&SSLWrapper>,
     ) -> Result<(), TunnelClosed> {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onWritable");
-        let encoded_data = self.write_buffer.slice();
-        if !encoded_data.is_empty() {
-            let written = socket.write(encoded_data);
-            if written == encoded_data.len() {
-                self.write_buffer.reset();
-            } else {
-                self.write_buffer.cursor += written;
-            }
-        }
-        let (wrapper, mut handler) = self.wrapper_and_encrypt_handler(socket, lent_wrapper);
-        // Cycle to through the SSL state machine
-        wrapper.flush(&mut handler);
+        let mut handler = EncryptHandler {
+            socket,
+            result: Ok(()),
+        };
+        // Sends what the socket refused, then cycles through the SSL state machine.
+        self.wrapper(lent_wrapper).flush(&mut handler);
         handler.result
     }
 
@@ -521,20 +461,28 @@ impl ProxyTunnel {
         })
     }
 
+    /// `write` takes every byte and keeps what the socket refuses, so a body without a bound waits while this is true.
+    pub(crate) fn holds_refused_ciphertext(&self, lent_wrapper: Option<&SSLWrapper>) -> bool {
+        self.wrapper(lent_wrapper).refused_ciphertext() > 0
+    }
+
     /// `None` if TLS takes no data now.
     pub(crate) fn write(
-        &mut self,
+        &self,
         socket: OuterSocket,
         lent_wrapper: Option<&SSLWrapper>,
         buf: &[u8],
     ) -> Result<Option<usize>, TunnelClosed> {
-        let (wrapper, mut handler) = self.wrapper_and_encrypt_handler(socket, lent_wrapper);
-        let written = wrapper.write_data(&mut handler, buf);
+        let mut handler = EncryptHandler {
+            socket,
+            result: Ok(()),
+        };
+        let written = self.wrapper(lent_wrapper).write_data(&mut handler, buf);
         handler.result.map(|()| written.ok())
     }
 
     pub(crate) fn can_pool(&self) -> bool {
-        self.write_buffer.is_empty() && self.wrapper.as_ref().is_some_and(is_reusable)
+        self.wrapper.as_ref().is_some_and(is_reusable)
     }
 
     /// Call before the tunnel moves from `client` to the keep-alive pool.
@@ -553,16 +501,11 @@ impl ProxyTunnel {
     /// is reused as-is — no CONNECT and no new TLS handshake. The client's
     /// request/response stage is set to .proxy_headers so the next onWritable
     /// writes the HTTP request directly into the tunnel.
-    pub(crate) fn adopt(mut self: Box<Self>, client: &mut HTTPClient) {
+    pub(crate) fn adopt(self: Box<Self>, client: &mut HTTPClient) {
         scoped_log!(
             http_proxy_tunnel,
             "ProxyTunnel adopt (reusing pooled tunnel)"
         );
-        // Discard any stale encrypted bytes from the previous request. A clean
-        // request boundary should leave this empty, but an early server response
-        // (e.g. HTTP 413) with Connection: keep-alive before the full body was
-        // consumed could leave unsent bytes that would corrupt the next request.
-        self.write_buffer.reset();
         // Restore the cert-error flag captured in record_verification() — no handshake
         // runs here, so the client's own flag would otherwise stay false and
         // re-pooling would erase the record.

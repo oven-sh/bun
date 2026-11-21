@@ -1,27 +1,21 @@
-const { kInternalSocketData, serverSymbol } = require("internal/http");
-const { kAutoDestroyed } = require("internal/shared");
 const { Duplex } = require("internal/stream");
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]?: [import("node:http").Server, import("node:http").ServerResponse, Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
   timeout = 0;
   isServer = false;
 
-  #address;
+  #address: { address?: string; port?: number; family?: string } = {};
   _httpMessage: any;
   constructor(httpMessage: any) {
     super();
     this._httpMessage = httpMessage;
   }
   address() {
-    // Call server.requestIP() without doing any property getter twice.
-    var internalData;
-    return (this.#address ??=
-      (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol]?.requestIP(internalData[2]) ?? {});
+    return this.#address;
   }
 
   get bufferSize() {
@@ -34,14 +28,6 @@ var FakeSocket = class Socket extends Duplex {
   _onTimeout = function () {
     this.emit("timeout");
   };
-
-  _destroy(_err, _callback) {
-    const socketData = this[kInternalSocketData];
-    if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
-    if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
-  }
-
-  _final(_callback) {}
 
   get localAddress() {
     return this.address() ? "127.0.0.1" : undefined;
@@ -113,12 +99,7 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  setTimeout(timeout, callback) {
-    const socketData = this[kInternalSocketData];
-    if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
-
-    const http_res = socketData[1];
-    http_res?.req?.setTimeout(timeout, callback);
+  setTimeout(_timeout, _callback) {
     return this;
   }
 
@@ -126,7 +107,9 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  _write(_chunk, _encoding, _callback) {}
+  _write(_chunk, _encoding, callback) {
+    callback();
+  }
 
   destroy() {
     this._httpMessage?.destroy?.();

@@ -41,6 +41,22 @@ Bun.serve({
 });
 ```
 
+### Protocol versions
+
+To limit the TLS protocol versions a connection can use, set `minVersion` and `maxVersion`. They take the same names as `node:tls`: `"TLSv1"`, `"TLSv1.1"`, `"TLSv1.2"` and `"TLSv1.3"`. The defaults are `"TLSv1.2"` and `"TLSv1.3"`.
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
+    minVersion: "TLSv1.3", // [!code ++]
+  },
+});
+```
+
+The same two options work in every API that takes a `tls` object, such as `fetch`, `Bun.connect` and `Bun.listen`. When `tls` is an array (see [SNI](#server-name-indication-sni) below), every entry uses the range of the first one.
+
 ### CA Certificates
 
 Pass `ca` to override the trusted CA certificates. By default, the server trusts the list of well-known CAs curated by Mozilla; setting `ca` replaces that list.

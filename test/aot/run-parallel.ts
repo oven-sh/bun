@@ -1194,12 +1194,13 @@ async function measureGrowthOfBuild(
  * A run below a process that holds little and prints how the run ended and what it held at most. Linux counts for a child what the process that
  * starts it holds, until the child runs its program: a driver that held 334 MB was told so of /bin/true.
  */
-const startBelowSmallProcess: typeof start = (cmd, cwd, env) => {
-  const script = `const child = Bun.spawn({ cmd: ${JSON.stringify(cmd)}, stdio: ["ignore", "ignore", "ignore"] });
+function startBelowSmallProcess(cmd: string[], cwd: string, env: Parameters<typeof start>[2], envOfRunAlone = {}) {
+  const script = `const env = { ...process.env, ...${JSON.stringify(envOfRunAlone)} };
+    const child = Bun.spawn({ cmd: ${JSON.stringify(cmd)}, env, stdio: ["ignore", "ignore", "ignore"] });
     await child.exited;
     console.log(child.exitCode + " " + child.resourceUsage().maxRSS);`;
   return start([process.execPath, "-e", script], cwd, env);
-};
+}
 
 /** What the small process told, where it ended by itself and its run ended as `run` did. */
 function mostResidentTold(told: Output, run: Output) {
@@ -1383,9 +1384,9 @@ async function run(program: Program): Promise<void> {
       (isTooMuch(compiled.mostResidentMB, plain.mostResidentMB) || isTooMuch(compiled.peakMB, plain.peakMB))
     ) {
       const again = await withSlotOfRun(() =>
-        startBelowSmallProcess([executable], cwd, { ...envOfRuns, ...program.envOfExecutable }),
+        startBelowSmallProcess([executable], cwd, envOfRuns, program.envOfExecutable),
       );
-      const plainAgain = await runReference(program.path, startBelowSmallProcess);
+      const plainAgain = await runReference(program.path, (cmd, cwd, env) => startBelowSmallProcess(cmd, cwd, env));
       const most = mostResidentTold(again.output, compiled.output);
       const mostOfPlain = mostResidentTold(plainAgain.output, plain.output);
       if (most === undefined || mostOfPlain === undefined || isTooMuch(most, mostOfPlain))

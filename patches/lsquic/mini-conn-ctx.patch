@@ -1,0 +1,170 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -249,13 +249,27 @@ struct lsquic_stream_if {
+      */
+     void (*on_hsk_confirmed)(lsquic_conn_t *c);
+     /**
+-     * Optional callback fired when a server mini connection is destroyed
+-     * without promoting (handshake failure or client abandonment).  The
+-     * peer address identifies which connection attempt died.  bun addition.
+-     */
+-    void (*on_mini_conn_failed)(void *stream_if_ctx,
+-                                const struct sockaddr *peer_sa,
+-                                uint64_t error_code);
++     * Optional callback fired when a server mini connection is created for
++     * a first packet, before that packet is processed and so before the TLS
++     * handshake starts.  The return value becomes the connection's context:
++     * lsquic_conn_get_ctx() returns it during the handshake (in the TLS
++     * callbacks), on_new_conn() finds it on the promoted connection, and
++     * on_mini_conn_failed() receives it if the handshake dies first.  The
++     * callback may refuse the connection with lsquic_conn_abort_error().
++     * The peer's next first packet is then offered again.  After the
++     * callback returns, only lsquic_conn_get_ctx(), lsquic_conn_set_ctx()
++     * and lsquic_conn_get_sockaddr() are valid on the mini connection.  bun
++     * addition.
++     */
++    lsquic_conn_ctx_t *(*on_new_mini_conn)(void *stream_if_ctx,
++                                           lsquic_conn_t *c);
++    /**
++     * Optional callback fired when a server mini connection that has a
++     * context is destroyed without promoting (handshake failure or client
++     * abandonment).  The context is already off the connection.  bun
++     * addition.
++     */
++    void (*on_mini_conn_failed)(lsquic_conn_ctx_t *ctx, uint64_t error_code);
+     /**
+      * Optional callback fired once for each DATAGRAM frame when its packet
+      * is acknowledged, when its packet is declared lost, or when the frame
+@@ -1313,6 +1327,13 @@ struct lsquic_engine_settings {
+      * maxIdleTimeout transport parameter is specified in milliseconds).
+      */
+     unsigned        es_idle_timeout_ms;
++
++    /**
++     * bun: when nonzero, @ref es_handshake_to bounds the whole handshake of
++     * a server connection.  By default a mini connection that has read a
++     * Handshake packet may live until the idle timeout.
++     */
++    int             es_handshake_to_strict;
+ };
+ 
+ /* Initialize `settings' to default values */
+--- a/src/liblsquic/lsquic_engine.c
++++ b/src/liblsquic/lsquic_engine.c
+@@ -986,14 +986,15 @@ destroy_conn (struct lsquic_engine *engine, struct lsquic_conn *conn,
+ 
+     engine->mini_conns_count -= !!(conn->cn_flags & LSCONN_MINI);
+     /* bun: a server mini-conn dying WITHOUT promotion means the handshake
+-     * failed or the client abandoned it; tell the application (which may
+-     * have announced a session at Initial receipt) so it isn't orphaned.
++     * failed or the client abandoned it; hand its context back to the
++     * application, so that it isn't orphaned.
+      * The error code mirrors imico_generate_conn_close's choice. */
+     if ((conn->cn_flags & (LSCONN_MINI|LSCONN_PROMOTED)) == LSCONN_MINI
+             && (conn->cn_flags & LSCONN_IETF)
++            && conn->cn_conn_ctx
+             && engine->pub.enp_stream_if->on_mini_conn_failed)
+     {
+-        const struct sockaddr *local_sa, *peer_sa;
++        lsquic_conn_ctx_t *const conn_ctx = conn->cn_conn_ctx;
+         const struct ietf_mini_conn *imc = (struct ietf_mini_conn *) conn;
+         uint64_t error_code;
+         if (imc->imc_flags & IMC_ABORT_ERROR)
+@@ -1010,9 +1011,8 @@ destroy_conn (struct lsquic_engine *engine, struct lsquic_conn *conn,
+             error_code = (1ULL << 63) | imc->imc_close_code;
+         else
+             error_code = TEC_NO_ERROR;
+-        if (0 == lsquic_conn_get_sockaddr(conn, &local_sa, &peer_sa))
+-            engine->pub.enp_stream_if->on_mini_conn_failed(
+-                        engine->pub.enp_stream_if_ctx, peer_sa, error_code);
++        conn->cn_conn_ctx = NULL;
++        engine->pub.enp_stream_if->on_mini_conn_failed(conn_ctx, error_code);
+     }
+     if (engine->purga && !(conn->cn_flags & LSCONN_NO_BL)
+         /* Blacklist all CIDs except for promoted mini connections */
+@@ -1497,12 +1497,14 @@ lsquic_engine_sreset_stats (const lsquic_engine_t *engine,
+ static lsquic_conn_t *
+ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
+          struct packin_parse_state *ppstate, const struct sockaddr *sa_local,
+-         const struct sockaddr *sa_peer, void *peer_ctx, size_t packet_in_size)
++         const struct sockaddr *sa_peer, void *peer_ctx, size_t packet_in_size,
++         int *created)
+ {
+     struct lsquic_hash_elem *el;
+     struct purga_el *puel;
+     lsquic_conn_t *conn;
+ 
++    *created = 0;
+     if (!(packet_in->pi_flags & PI_CONN_ID))
+     {
+         LSQ_DEBUG("packet header does not have connection ID: discarding");
+@@ -1693,6 +1695,7 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
+     conn->cn_flags |= LSCONN_HASHED;
+     eng_hist_inc(&engine->history, packet_in->pi_received, sl_new_mini_conns);
+     conn->cn_last_sent = engine->last_sent;
++    *created = 1;
+     return conn;
+ }
+ 
+@@ -1827,6 +1830,7 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
+ {
+     lsquic_conn_t *conn;
+     const unsigned char *packet_in_data;
++    int created = 0;
+ 
+     if (lsquic_packet_in_is_gquic_prst(packet_in)
+                                 && !engine->pub.enp_settings.es_honor_prst)
+@@ -1839,7 +1843,7 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
+     if (engine->flags & ENG_SERVER)
+     {
+         conn = find_or_create_conn(engine, packet_in, ppstate, sa_local,
+-                                            sa_peer, peer_ctx, packet_in_size);
++                                sa_peer, peer_ctx, packet_in_size, &created);
+         if (!engine->curr_conn)
+             engine->curr_conn = conn;
+     }
+@@ -1885,6 +1889,20 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
+     }
+     packet_in->pi_path_id = lsquic_conn_record_sockaddr(conn, peer_ctx,
+                                                         sa_local, sa_peer);
++    /* bun: the application's context is on the mini conn before its first
++     * packet is processed, so the TLS callbacks of the handshake can reach it
++     * and no later step has to find it again by address.  A conn that the
++     * callback aborts leaves no purgatory entry, so the peer's next first
++     * packet is a new attempt and not a stateless reset. */
++    if (created && (conn->cn_flags & LSCONN_IETF)
++            && engine->pub.enp_stream_if->on_new_mini_conn)
++    {
++        conn->cn_conn_ctx = engine->pub.enp_stream_if->on_new_mini_conn(
++                                        engine->pub.enp_stream_if_ctx, conn);
++        if (((const struct ietf_mini_conn *) conn)->imc_flags
++                                                        & IMC_ABORT_ERROR)
++            conn->cn_flags |= LSCONN_NO_BL;
++    }
+     lsquic_packet_in_upref(packet_in);
+ #if LOG_PACKET_CHECKSUM
+     log_packet_checksum(lsquic_conn_log_cid(conn), "in", packet_in->pi_data,
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -1692,6 +1692,10 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
+     if (0 != handshake_ok(&conn->ifc_conn))
+         goto err3;
+ 
++    /* bun: the context on_new_mini_conn gave the mini conn moves here, past
++     * the last failure exit, so exactly one of the two conns has it. */
++    conn->ifc_conn.cn_conn_ctx = mini_conn->cn_conn_ctx;
++    mini_conn->cn_conn_ctx = NULL;
+     LSQ_DEBUG("Calling on_new_conn callback");
+     conn->ifc_conn.cn_conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
+                         conn->ifc_enpub->enp_stream_if_ctx, &conn->ifc_conn);
+--- a/src/liblsquic/lsquic_mini_conn_ietf.c
++++ b/src/liblsquic/lsquic_mini_conn_ietf.c
+@@ -1524,7 +1524,7 @@ ignore_init (struct ietf_mini_conn *conn)
+             ? (lsquic_time_t) conn->imc_enpub->enp_settings.es_idle_timeout_ms * 1000
+             : (lsquic_time_t) conn->imc_enpub->enp_settings.es_idle_timeout * 1000000)
+             - (int64_t) conn->imc_enpub->enp_settings.es_handshake_to;
+-    if (ext_to > 0)
++    if (ext_to > 0 && !conn->imc_enpub->enp_settings.es_handshake_to_strict)
+     {
+         conn->imc_expire += ext_to;
+         LSQ_DEBUG("extend mini-conn expire time to %d seconds",

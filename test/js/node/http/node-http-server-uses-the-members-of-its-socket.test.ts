@@ -67,12 +67,12 @@ const answered = Array(3).fill('answered HTTP/1.1 200 OK "ok"');
 const isAnswer = (line: string) => line.startsWith("answered");
 
 test.each(["removeListener of the socket", "removeListener of EventEmitter.prototype"])(
-  "each response that ends, and the close of the connection, call the %s",
+  "each response that ends calls the %s",
   async change => {
     const { stdout, stderr, exitCode } = await run(change);
     expect(stderr).toBe("");
     expect(stdout.filter(isAnswer)).toEqual(answered);
-    expect(stdout.filter(line => !isAnswer(line))).toEqual(Array(4).fill("removeListener close"));
+    expect(stdout.filter(line => !isAnswer(line))).toEqual(Array(3).fill("removeListener close"));
     expect(exitCode).toBe(0);
   },
 );

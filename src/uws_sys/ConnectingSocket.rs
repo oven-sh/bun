@@ -59,10 +59,6 @@ impl ConnectingSocket {
         us_connecting_socket_is_shut_down(self) == 1
     }
 
-    pub(crate) fn long_timeout(&mut self, seconds: c_uint) {
-        us_connecting_socket_long_timeout(self, seconds)
-    }
-
     pub(crate) fn shutdown(&mut self) {
         us_connecting_socket_shutdown(self)
     }
@@ -93,7 +89,6 @@ unsafe extern "C" {
     ) -> *mut c_void;
     pub(crate) safe fn us_connecting_socket_is_closed(s: &mut ConnectingSocket) -> i32;
     pub(crate) safe fn us_connecting_socket_is_shut_down(s: &mut ConnectingSocket) -> i32;
-    pub(crate) safe fn us_connecting_socket_long_timeout(s: &mut ConnectingSocket, seconds: c_uint);
     pub(crate) safe fn us_connecting_socket_shutdown(s: &mut ConnectingSocket);
     pub(crate) safe fn us_connecting_socket_shutdown_read(s: &mut ConnectingSocket);
     pub(crate) safe fn us_connecting_socket_timeout(s: &mut ConnectingSocket, seconds: c_uint);

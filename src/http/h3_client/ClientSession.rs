@@ -16,9 +16,9 @@ use super::encode;
 use super::stream::Stream;
 use crate::h3_client as H3;
 use crate::http_thread::WriteMessageType;
-use crate::internal_state::HTTPStage;
 use crate::signals::Field as Signal;
-use crate::{HeaderResult, InFlightRequest, Protocol};
+use crate::ssl_config::{SSLConfig, SharedPtr};
+use crate::{Carrier, InFlightRequest, Protocol, StreamProgress};
 
 use crate::h3_client::h3_client;
 
@@ -32,10 +32,14 @@ pub struct ClientSession {
     pub(crate) hostname: Vec<u8>,
     pub(crate) port: u16,
     pub(crate) reject_unauthorized: bool,
+    /// The interned TLS options the connection was opened with, `None` for the default context.
+    pub(crate) tls_props: Option<SharedPtr>,
     /// The fetch session whose requests may share this connection.
     pub(crate) pool_id: u64,
     pub(crate) handshake_done: bool,
     pub(crate) closed: bool,
+    /// `close_if_idle` closed the connection, so its close says nothing about the peer.
+    pub(crate) closed_by_us: bool,
     pub(crate) registry_index: u32,
 
     /// Requests waiting for `onStreamOpen` to hand them a stream. Order is
@@ -48,6 +52,7 @@ impl ClientSession {
         hostname: Vec<u8>,
         port: u16,
         reject_unauthorized: bool,
+        tls_props: Option<SharedPtr>,
         pool_id: u64,
     ) -> RefPtr<ClientSession> {
         H3::live_sessions.fetch_add(1, Ordering::Relaxed);
@@ -57,9 +62,11 @@ impl ClientSession {
             hostname,
             port,
             reject_unauthorized,
+            tls_props,
             pool_id,
             handshake_done: false,
             closed: false,
+            closed_by_us: false,
             registry_index: u32::MAX,
             pending: Vec::new(),
         })
@@ -70,12 +77,14 @@ impl ClientSession {
         hostname: &[u8],
         port: u16,
         reject_unauthorized: bool,
+        tls_props: Option<*const SSLConfig>,
         pool_id: u64,
     ) -> bool {
         !self.closed
             && self.port == port
             && self.pool_id == pool_id
             && self.reject_unauthorized == reject_unauthorized
+            && SSLConfig::raw_ptr(self.tls_props.as_ref()) == tls_props
             && strings::eql_long(&self.hostname, hostname)
     }
 
@@ -101,6 +110,7 @@ impl ClientSession {
         if let Some(qs) = self.qsocket_mut() {
             // No later request may pick a connection that is going away.
             self.closed = true;
+            self.closed_by_us = true;
             qs.close();
         }
     }
@@ -130,8 +140,10 @@ impl ClientSession {
         client.flags.protocol = Protocol::Http3;
         client.allow_retry = false;
 
-        let stream = AliasableBox::new(Stream::new(self, client));
+        let mut stream = AliasableBox::new(Stream::new(self));
         let _ = H3::live_streams.fetch_add(1, Ordering::Relaxed);
+        client.carrier = Carrier::H3(stream.as_non_null());
+        stream.client = Some(client);
         self.pending.push(stream);
 
         if self.handshake_done {
@@ -140,59 +152,45 @@ impl ClientSession {
         }
     }
 
-    pub(crate) fn stream_body_by_http_id(
-        &mut self,
-        async_http_id: u32,
-        message: WriteMessageType,
-    ) -> bool {
-        for stream_ptr in self.pending.iter().map(AliasableBox::as_ptr) {
-            let stream = stream_mut(stream_ptr);
-            let Some(client) = &mut stream.client else {
-                continue;
-            };
-            if client.async_http_id != async_http_id {
-                continue;
-            }
-            if let crate::HTTPRequestBody::Stream(s) = &mut client.state.original_request_body {
-                if message == WriteMessageType::LengthMismatch {
-                    self.fail(stream_ptr, crate::Error::RequestBodyLengthMismatch);
-                    return true;
-                }
-                s.ended = message == WriteMessageType::End;
-                if let Some(qs) = stream.qstream_mut() {
-                    encode::drain_send_body(stream, qs);
-                }
-            }
-            return true;
-        }
-        false
+    /// The request on `stream` was aborted.
+    pub(crate) fn abort_stream(stream: NonNull<Stream>) {
+        stream_mut(stream.as_ptr())
+            .session_mut()
+            .fail(stream.as_ptr(), crate::Error::Aborted);
     }
 
-    pub(crate) fn resume_receive_by_http_id(&mut self, async_http_id: u32) -> bool {
-        for stream_ptr in self.pending.iter().map(AliasableBox::as_ptr) {
-            let stream = stream_mut(stream_ptr);
-            let Some(client) = &mut stream.client else {
-                continue;
-            };
-            if client.async_http_id != async_http_id {
-                continue;
-            }
-            match client.pump_held_body() {
-                Ok(true) => client.send_partial_result(),
-                Ok(false) => {}
-                Err(err) => {
-                    self.fail(stream_ptr, err);
-                    return true;
-                }
-            }
-            if !client.holds_off_receiving() && core::mem::take(&mut stream.read_paused) {
-                if let Some(qs) = stream.qstream_mut() {
-                    qs.want_read(true);
-                }
-            }
-            return true;
+    /// The producer of the request's stream body has more bytes, or ended it.
+    pub(crate) fn stream_request_body(stream_ptr: NonNull<Stream>, message: WriteMessageType) {
+        let stream = stream_mut(stream_ptr.as_ptr());
+        let Some(client) = &mut stream.client else {
+            return;
+        };
+        let crate::HTTPRequestBody::Stream(body) = &mut client.state.original_request_body else {
+            return;
+        };
+        if message == WriteMessageType::LengthMismatch {
+            return stream
+                .session_mut()
+                .fail(stream_ptr.as_ptr(), crate::Error::RequestBodyLengthMismatch);
         }
-        false
+        body.ended = message == WriteMessageType::End;
+        if let Some(qs) = stream.qstream_mut() {
+            encode::drain_send_body(stream, qs);
+        }
+    }
+
+    /// See [`crate::HTTPClient::send_held_body`].
+    pub(crate) fn resume_receive(stream_ptr: NonNull<Stream>) {
+        let stream = stream_mut(stream_ptr.as_ptr());
+        let Some(client) = &mut stream.client else {
+            return;
+        };
+        if let Err(err) = client.send_held_body() {
+            return stream.session_mut().fail(stream_ptr.as_ptr(), err);
+        }
+        if let Some(qs) = stream.qstream {
+            quic_stream_mut(qs.as_ptr()).hold_window(client.holds_off_receiving());
+        }
     }
 
     /// Unlink and free `stream`, whose `client` the caller has taken.
@@ -214,6 +212,9 @@ impl ClientSession {
             // the stream instead of leaking it on the pooled session.
             if abort || !request_body_done {
                 qs.reset();
+            } else {
+                // Trailers and the FIN can still arrive, and nothing else releases the hold.
+                qs.hold_window(false);
             }
         }
         st.qstream = None;
@@ -241,6 +242,11 @@ impl ClientSession {
         let Some(mut client) = st.client.take() else {
             return self.fail(stream, err);
         };
+        // An Alt-Svc upgrade whose connection never came up goes back to TCP (RFC 7838 §2.4).
+        if !self.handshake_done && client.flags.forced_protocol != Some(Protocol::Http3) {
+            self.detach_with(stream, true);
+            return client.h3_upgrade_failed(err);
+        }
         // RFC 9110 §9.2.2: the origin may have acted on a request that was written.
         let replay_safe = !st.headers_sent || st.peer_rejected || client.method.is_idempotent();
         if client.flags.h3_retried || st.is_streaming_body || !replay_safe {
@@ -267,33 +273,37 @@ impl ClientSession {
             bstr::BStr::new(err.name()),
         );
         self.detach_with(stream, true);
-        if let Err(client) = ClientContext::as_mut(ctx).connect(client, port) {
-            client.fail(err);
+        if let Err((client, _)) = ClientContext::as_mut(ctx).connect(client, port) {
+            client.h3_upgrade_failed(err);
         }
     }
 
-    pub(crate) fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
-        // `fail` mutates `pending`, so it cannot be called while the iterator
-        // holds `&self.pending`, and only one entry can match — so locate
-        // first via raw-ptr reads, then act.
-        let mut found: *mut Stream = core::ptr::null_mut();
-        for stream_ptr in self.pending.iter().map(AliasableBox::as_ptr) {
-            if let Some(client) = &stream_ref(stream_ptr).client
-                && client.async_http_id == async_http_id
-            {
-                found = stream_ptr;
-                break;
-            }
+    /// The stream closed without a FIN (`deliver` detaches at the FIN), so a body that already started is truncated.
+    pub(crate) fn on_stream_closed(&mut self, stream: *mut Stream, peer_reset: bool) {
+        let st = stream_mut(stream);
+        if st
+            .client
+            .as_ref()
+            .is_some_and(|client| client.signals.get(Signal::Aborted))
+        {
+            return self.fail(stream, crate::Error::Aborted);
         }
-        if !found.is_null() {
-            self.fail(found, crate::Error::Aborted);
-            return true;
+        if st.status_code == 0 {
+            // A handshake failure, a reset, or a FIN that lsquic refused because no header block came first.
+            return self.retry_or_fail(stream, crate::Error::HTTP3StreamReset);
         }
-        false
+        self.fail(
+            stream,
+            if peer_reset {
+                crate::Error::HTTP3StreamReset
+            } else {
+                crate::Error::ConnectionClosed
+            },
+        );
     }
 
     /// Runs from inside lsquic's process_conns via on_stream_{headers,data,close}.
-    /// `done` = the lsquic stream is gone; deliver whatever is buffered then
+    /// `done` = the FIN of the peer arrived; deliver whatever is buffered then
     /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
     /// machine sees the same call sequence regardless of transport.
     pub(crate) fn deliver(&mut self, stream: *mut Stream, done: bool) {
@@ -310,93 +320,37 @@ impl ClientSession {
             return client.fail(crate::Error::Aborted);
         }
 
-        if st.status_code != 0 && !st.headers_delivered {
-            st.headers_delivered = true;
-            let (result, response) = match client
-                .apply_multiplexed_headers(u32::from(st.status_code), &mut st.decoded_headers)
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    self.detach_with(stream, true);
-                    return client.fail(e);
-                }
-            };
-            // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an SSE content-type).
-            if result == HeaderResult::Finished
-                || (done && st.body_buffer.is_empty())
-                || client.state.is_done()
-            {
-                if client.state.flags.is_redirect_pending {
-                    self.detach(stream);
-                    return client.do_redirect_multiplexed();
-                }
-                client.store_metadata(response);
-                client.state.flags.received_last_chunk = true;
-                if result == HeaderResult::Finished {
-                    client.state.content_length = Some(0);
-                }
-                self.detach(stream);
-                return finish(client);
-            }
-            client.store_metadata(response);
-            if client.signals.get(Signal::HeaderProgress) {
-                client.send_partial_result();
-            }
-        }
-
-        if client.state.response_stage != HTTPStage::Body {
+        if st.status_code == 0 {
+            // Only interim responses so far.
             st.client = Some(client);
             if done {
-                // Stream closed before headers — handshake/reset failure.
-                return self.retry_or_fail(
-                    stream,
-                    if st.status_code == 0 {
-                        crate::Error::HTTP3StreamReset
-                    } else {
-                        crate::Error::ConnectionClosed
-                    },
-                );
+                self.retry_or_fail(stream, crate::Error::HTTP3StreamReset);
             }
             return;
         }
-
-        if !st.body_buffer.is_empty() {
-            if done {
-                client.state.flags.received_last_chunk = true;
-            }
-            let report = match client.handle_response_body(st.body_buffer.as_slice(), false) {
-                Ok(r) => r,
-                Err(e) => {
-                    st.body_buffer.clear();
-                    self.detach_with(stream, true);
-                    return client.fail(e);
-                }
-            };
-            st.body_buffer.clear();
-            if done {
+        let head = (!core::mem::replace(&mut st.headers_delivered, true)).then(|| {
+            crate::Response::from_fields(
+                u32::from(st.status_code),
+                core::mem::take(&mut st.decoded_headers),
+            )
+        });
+        let progress = client.receive_from_stream(head, &st.body_buffer, done);
+        st.body_buffer.clear();
+        match progress {
+            Ok(StreamProgress::Open) => st.client = Some(client),
+            Ok(StreamProgress::Complete) => {
                 self.detach(stream);
-                return finish(client);
+                client.deliver();
             }
-            if client.state.is_done() {
+            Ok(StreamProgress::Redirect) => {
                 self.detach(stream);
-                return client.finish();
+                client.follow_redirect();
             }
-            if report {
-                client.send_partial_result();
+            Err(err) => {
+                self.detach_with(stream, true);
+                client.fail(err);
             }
-            st.client = Some(client);
-            return;
         }
-
-        if done {
-            self.detach(stream);
-            if let Err(err) = client.finalize_body_on_eof() {
-                return client.fail(err);
-            }
-            return finish(client);
-        }
-
-        st.client = Some(client);
     }
 }
 
@@ -465,15 +419,6 @@ pub(super) fn stream_ref(p: *mut Stream) -> bun_ptr::ParentRef<Stream> {
 pub(super) fn session_mut<'a>(p: *mut ClientSession) -> &'a mut ClientSession {
     // SAFETY: see INVARIANT above.
     unsafe { &mut *p }
-}
-
-fn finish(client: InFlightRequest) {
-    if let Some(cl) = client.state.content_length {
-        if client.state.total_body_received != cl {
-            return client.fail(crate::Error::HTTP3ContentLengthMismatch);
-        }
-    }
-    client.finish();
 }
 
 impl Drop for ClientSession {

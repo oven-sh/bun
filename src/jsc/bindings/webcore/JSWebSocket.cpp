@@ -219,9 +219,9 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
 
         JSValue proxyHeadersValue = get(proxy, builtinNames.headersPublicName());
         RETURN_IF_EXCEPTION(throwScope, );
-        if (auto* jsHeaders = dynamicDowncast<JSFetchHeaders>(proxyHeadersValue)) {
+        if (auto* headers = JSFetchHeaders::toWrappedAsInit(proxyHeadersValue)) {
             Vector<KeyValuePair<String, String>> pairs;
-            auto iterator = jsHeaders->wrapped().createIterator(false);
+            auto iterator = headers->createIterator(false);
             while (auto value = iterator.next()) {
                 pairs.append({ value->key, value->value });
             }
@@ -804,12 +804,6 @@ template<> NEVER_INLINE JSC::JSValue toJS<WebSocket>(JSC::JSGlobalObject* lexica
 {
     BUN_REMOVABLE_DEFINITION(WebSocket, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, WebSocket&)>(toJS));
     return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-// https://github.com/oven-sh/bun/issues/11866
-JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject)
-{
-    return WebCore::JSWebSocket::getConstructor(globalObject->vm(), globalObject);
 }
 
 // Parses the `ws` module options shared by createWebSocket() and createWebSocketOverStream().

@@ -76,7 +76,7 @@ pub(crate) enum S3ListObjectsResult<'a> {
 }
 
 pub(crate) struct S3HttpSimpleTask {
-    pub(crate) async_http_id: u32,
+    pub(crate) async_http_id: u64,
     /// Held while the request is out on the HTTP thread: how it delivers the
     /// response, and what makes the VM wait for it.
     pub(crate) http_ticket: Option<bun_jsc::Ticket>,
@@ -619,7 +619,7 @@ pub(crate) fn execute_simple_s3_request(
             ..Default::default()
         },
     );
-    task.async_http_id = async_http.async_http_id;
+    task.async_http_id = async_http.client.async_http_id;
     // queue http request
     bun_http::http_thread::init(&Default::default());
     // Out on the HTTP thread until its final callback: its context aborts it

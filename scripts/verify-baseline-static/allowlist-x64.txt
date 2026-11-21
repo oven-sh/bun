@@ -851,6 +851,15 @@ _ZN3bun9N_AVX3_DLL14CopyAndAdler32EjPKhPhm       [AVX, AVX2, AVX512BW, AVX512F, 
 
 
 # ----------------------------------------------------------------------------
+# Bun zstd encoder (src/jsc/bindings/highway_zstd.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (3 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun9N_AVX3_DLL11CountGroupsERNS0_3BinEPj     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun9N_AVX3_DLL14ZstdCountBytesEPKhmPj        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI2, BMI1, BMI2]
+_ZN3bun9N_AVX3_DLL14ZstdWriteCodesEPKhmPKtPhmPm  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
+
+
+# ----------------------------------------------------------------------------
 # Bun Brotli (src/brotli).
 # Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (8 symbols)
 # ----------------------------------------------------------------------------
@@ -1046,28 +1055,11 @@ CRYPTO_rdrand_multiple8_buf  [RDRAND]
 
 
 # ----------------------------------------------------------------------------
-# zstd Huffman/FSE BMI2. Gate: ZSTD_cpuid().
-# (19 symbols)
+# Bun zstd (src/zstd).
+# Gate: is_x86_feature_detected! in with_bmi2() (src/highway/lib.rs), its only caller.
+# (1 generic function)
 # ----------------------------------------------------------------------------
-FSE_decompress_wksp_body_bmi2                         [BMI2, LZCNT]
-FSE_readNCount_body_bmi2                              [BMI2, LZCNT]
-HUF_compress1X_usingCTable_internal_bmi2              [BMI2]
-HUF_decompress1X1_usingDTable_internal_bmi2           [BMI1, BMI2, LZCNT]
-HUF_decompress1X2_usingDTable_internal_bmi2           [BMI1, BMI2, LZCNT]
-HUF_decompress4X1_usingDTable_internal_bmi2           [BMI1, BMI2, LZCNT]
-HUF_decompress4X1_usingDTable_internal_fast           [BMI1, BMI2]
-HUF_decompress4X1_usingDTable_internal_fast_asm_loop  [BMI2]
-HUF_decompress4X1_usingDTable_internal_fast_c_loop    [BMI2]
-HUF_decompress4X2_usingDTable_internal_bmi2           [BMI1, BMI2, LZCNT]
-HUF_decompress4X2_usingDTable_internal_fast           [BMI1, BMI2]
-HUF_decompress4X2_usingDTable_internal_fast_asm_loop  [BMI2]
-HUF_decompress4X2_usingDTable_internal_fast_c_loop    [BMI2]
-HUF_readStats_body_bmi2                               [BMI2, LZCNT]
-ZSTD_buildFSETable_body_bmi2                          [BMI2]
-ZSTD_decompressSequencesLong_bmi2                     [BMI1, BMI2, LZCNT]
-ZSTD_decompressSequencesSplitLitBuffer_bmi2           [BMI1, BMI2, LZCNT]
-ZSTD_decompressSequences_bmi2                         [BMI1, BMI2, LZCNT]
-ZSTD_encodeSequences_bmi2                             [BMI2]
+_RINvNv<rust-hash>11bun_highway9with_bmi24bmi2<generic-args>  [BMI1, BMI2, LZCNT]
 
 
 # ----------------------------------------------------------------------------
@@ -1161,25 +1153,31 @@ _ZN9bun_image9N_AVX10_2L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512VL
 
 # ----------------------------------------------------------------------------
 # Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun fmt`. Gate: hwy::SupportedTargets via CPUID.
-# (18 symbols)
+# (24 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun6N_AVX219ScannerRunStopsImplEPKhmPhm        [AVX, AVX2, BMI1, BMI2]
 _ZN3bun6N_AVX214LineStartsImplEPKhmPj              [AVX, AVX2, BMI1, BMI2]
+_ZN3bun6N_AVX212ByteBitsImplEPKhmhPm               [AVX, AVX2, BMI2]
 _ZN3bun6N_AVX213OddBlocksImplEPKhmPm               [AVX, AVX2, BMI1, BMI2]
 _ZN3bun6N_AVX319ScannerRunStopsImplEPKhmPhm        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun6N_AVX314LineStartsImplEPKhmPj              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+_ZN3bun6N_AVX312ByteBitsImplEPKhmhPm               [AVX, AVX512BW, AVX512F, BMI2]
 _ZN3bun6N_AVX313OddBlocksImplEPKhmPm               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX10_219ScannerRunStopsImplEPKhmPhm     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun9N_AVX10_214LineStartsImplEPKhmPj           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun9N_AVX10_212ByteBitsImplEPKhmhPm            [AVX, AVX512BW, AVX512F, BMI2]
 _ZN3bun9N_AVX10_213OddBlocksImplEPKhmPm            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun9N_AVX3_DL19ScannerRunStopsImplEPKhmPhm     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun9N_AVX3_DL14LineStartsImplEPKhmPj           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun9N_AVX3_DL12ByteBitsImplEPKhmhPm            [AVX, AVX512BW, AVX512F, BMI2]
 _ZN3bun9N_AVX3_DL13OddBlocksImplEPKhmPm            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun10N_AVX3_SPR19ScannerRunStopsImplEPKhmPhm   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun10N_AVX3_SPR14LineStartsImplEPKhmPj         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun10N_AVX3_SPR12ByteBitsImplEPKhmhPm          [AVX, AVX512BW, AVX512F, BMI2]
 _ZN3bun10N_AVX3_SPR13OddBlocksImplEPKhmPm          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN419ScannerRunStopsImplEPKhmPhm  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN414LineStartsImplEPKhmPj        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun11N_AVX3_ZEN412ByteBitsImplEPKhmhPm         [AVX, AVX512BW, AVX512F, BMI2]
 _ZN3bun11N_AVX3_ZEN413OddBlocksImplEPKhmPm         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 
 

@@ -678,7 +678,7 @@ describe.concurrent("an eslint.config.js", () => {
       stderr: "inherit",
     });
     const stdout = await proc.stdout.text();
-    const { config } = JSON.parse(stdout.slice(stdout.lastIndexOf("<marker>") + "<marker>".length));
+    const { config } = JSON.parse(stdout.split("<marker>").at(-2)!);
     expect({
       configs: Object.keys(config.configs),
       extended: Object.keys(config.configs["C:/t/.eslintrc.json"] ?? {}),
@@ -709,7 +709,7 @@ describe.concurrent("an eslint.config.js", () => {
       stderr: "inherit",
     });
     const stdout = await proc.stdout.text();
-    const { config } = JSON.parse(stdout.slice(stdout.lastIndexOf("<marker>") + "<marker>".length));
+    const { config } = JSON.parse(stdout.split("<marker>").at(-2)!);
     expect(Object.keys(config.configs["C:/t/.eslintrc.json"])).toEqual([
       "C:/t/base.json",
       "./near.json",
@@ -739,7 +739,7 @@ describe.concurrent("an eslint.config.js", () => {
       stderr: "inherit",
     });
     const stdout = await proc.stdout.text();
-    const { config } = JSON.parse(stdout.slice(stdout.lastIndexOf("<marker>") + "<marker>".length));
+    const { config } = JSON.parse(stdout.split("<marker>").at(-2)!);
     expect({ files: Object.keys(config.files), configs: Object.keys(config.configs) }).toEqual({
       files: [path],
       configs: [path],
@@ -770,7 +770,7 @@ describe.concurrent("an eslint.config.js", () => {
           stderr: "inherit",
         });
         const stdout = await proc.stdout.text();
-        const { config } = JSON.parse(stdout.slice(stdout.lastIndexOf("<marker>") + "<marker>".length));
+        const { config } = JSON.parse(stdout.split("<marker>").at(-2)!);
         return Object.keys(config[0].$jsPlugins.local).sort();
       }),
     );
@@ -1490,7 +1490,7 @@ describe.concurrent("evaluating an eslint.config.js doesn't load the packages of
     async () => {
       expect(await run(recommended, "9.0.0")).toEqual({
         reported: [builtIn],
-        loaded: [rules, estree, typescript].sort(),
+        loaded: [rules, estree].sort(),
         failure: undefined,
       });
     },

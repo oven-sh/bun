@@ -3,10 +3,11 @@ use core::fmt::Write as _;
 use crate::expression::values;
 use crate::{CronExpression, Registration, XmlText};
 
-pub fn plist(job: &Registration<'_>) -> String {
+pub fn plist(job: &Registration<'_>, logs: &[u8]) -> String {
     let (title, schedule) = (&job.title, &job.schedule);
     let (exe, script) = (XmlText(job.exe), XmlText(job.script));
     let interval = calendar_interval(schedule);
+    let logs = XmlText(logs);
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -25,9 +26,9 @@ pub fn plist(job: &Registration<'_>) -> String {
 <key>StartCalendarInterval</key>
 {interval}
 <key>StandardOutPath</key>
-<string>/tmp/bun.cron.{title}.stdout.log</string>
+<string>{logs}/bun.cron.{title}.stdout.log</string>
 <key>StandardErrorPath</key>
-<string>/tmp/bun.cron.{title}.stderr.log</string>
+<string>{logs}/bun.cron.{title}.stderr.log</string>
 </dict>
 </plist>
 "#

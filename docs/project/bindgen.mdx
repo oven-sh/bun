@@ -262,6 +262,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.callable`                                     | `JsLocal<'a, Callable>`          | a function, or a proxy of one                                 |
 | `b.object`                                       | `JsLocal<'a, JSObject>`          | an object                                                     |
 | `b.jsArray`                                      | `JsLocal<'a, JSArray>`           | an array, as itself                                           |
+| `b.url`                                          | `JsLocal<'a, DOMURL>`            | a `URL`                                                       |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.any.variadic`                                 | `&'a [JsLocal<'a>]`              | this argument and every one after it; only the last argument  |
 | `b.rest(T)`                                      | `&'a [T]`                        | the same, each converted to `T`; see below                    |

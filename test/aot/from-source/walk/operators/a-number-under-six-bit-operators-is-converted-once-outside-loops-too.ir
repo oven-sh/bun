@@ -8,7 +8,7 @@
 # FORMS-NOT: Shift {{*}} form=Numbers
 # -- source: main.ts
 # export {};
-# function mix(x: number): number { return ((x >>> 2) | (x << 30)) ^ ((x >>> 13) | (x << 19)) ^ ((x >>> 22) | (x << 10)); }
+# function tells(hour: number): number { return ((hour << 4) & 4080) + ((hour >> 3) | (hour & 7)) - ((hour ^ 85) >>> 1) + (hour | 64) - (hour >>> 2); }
 # const fraction: number = JSON.parse("1.5");
-# console.log(mix(fraction), mix(fraction + 1));
+# console.log(tells(fraction), tells(fraction + 1));
 # -- end of source

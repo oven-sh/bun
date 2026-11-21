@@ -9,6 +9,7 @@ use bun_collections::HashMap;
 use bun_collections::VecExt;
 use bun_dotenv as dot_env;
 use bun_js_parser as js_ast;
+use bun_js_parser::lower::defer_requires::is_in_known_package;
 use bun_resolver::fs as Fs;
 use bun_resolver::{self as resolver, Resolver};
 
@@ -146,7 +147,7 @@ impl<'a> Transpiler<'a> {
     /// The returned value is a normal owned `Transpiler` whose `Drop` is sound
     /// — no `MaybeUninit` / `ptr::write` field-overwrite contract is needed by
     /// callers.
-    pub(crate) fn for_worker(
+    pub fn for_worker(
         from: &Transpiler<'a>,
         arena: &'a Arena,
         log: *mut bun_ast::Log,
@@ -171,6 +172,13 @@ impl<'a> Transpiler<'a> {
             linker: crate::linker::Linker::init(log),
             env: from.env,
         }
+    }
+
+    /// The defines of [`Self::for_worker`] point into the arena of the transpiler that has loaded them.
+    pub fn load_own_defines(&mut self) -> crate::Result<()> {
+        self.options.defines_loaded = false;
+        let env = self.env_mut();
+        self.options.load_defines(self.arena, Some(env))
     }
 
     /// # Safety
@@ -1216,7 +1224,7 @@ impl<'a> Transpiler<'a> {
                 }
             };
             if let Some(opened_file) = this_parse.opened_file
-                && let Some(resolver::cache::SourceFd::Owned(file)) = entry.file
+                && let Some(bun_sys::MaybeOwnedFile::Owned(file)) = entry.file
             {
                 *opened_file = Some(file);
             }
@@ -1342,6 +1350,10 @@ impl<'a> Transpiler<'a> {
                 opts.features.code_coverage = self.options.code_coverage;
 
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
+                opts.features.lists_loads =
+                    self.options.defers_requires && this_parse.allow_commonjs;
+                opts.features.defers_requires =
+                    opts.features.lists_loads && is_in_known_package(source.path.text);
 
                 opts.features.inlining = self.options.inlining;
                 opts.features.auto_import_jsx = self.options.auto_import_jsx;

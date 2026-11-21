@@ -645,6 +645,7 @@ fn download_stream(
             mutex: Default::default(),
             request_error: None,
             reported_response_buffer: MutableString::default(),
+            is_out_of_memory: false,
             // `State::default()` sets
             // `has_more = true` (bit 48). Passing 0 here would start the task with
             // `has_more == false`, tripping the `assert(state.has_more)` in

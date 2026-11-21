@@ -277,7 +277,7 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
         return;
     }
     let Some(client) = &stream.client else { return };
-    if client.signals.is_receive_paused() {
+    if client.holds_off_receiving() {
         stream.read_paused = true;
         s.want_read(false);
     }

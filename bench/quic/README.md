@@ -1,6 +1,6 @@
 # node:quic (HTTP/3)
 
-Compares bun's `node:quic` against node's. Bun implements the API on lsquic,
+Compares bun's `node:quic` against node's. Bun implements the API on `src/quic`,
 node on ngtcp2 + nghttp3; the JS surface is the same, so `server.mjs` and
 `client.mjs` run unmodified on either runtime and only the runtime executing
 them changes.

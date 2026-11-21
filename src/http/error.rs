@@ -83,8 +83,6 @@ pub enum Error {
     HTTP3HandshakeFailed,
     #[error("HTTP3ProtocolError")]
     HTTP3ProtocolError,
-    #[error("HTTP3HeaderEncodingError")]
-    HTTP3HeaderEncodingError,
     #[error("DNSResolutionFailed")]
     DNSResolutionFailed,
     #[error("HTTP3StreamReset")]
@@ -301,7 +299,6 @@ impl Error {
             Self::ShortRead => "ShortRead",
             Self::HTTP3HandshakeFailed => "HTTP3HandshakeFailed",
             Self::HTTP3ProtocolError => "HTTP3ProtocolError",
-            Self::HTTP3HeaderEncodingError => "HTTP3HeaderEncodingError",
             Self::DNSResolutionFailed => "DNSResolutionFailed",
             Self::HTTP3StreamReset => "HTTP3StreamReset",
             Self::HTTP3ContentLengthMismatch => "HTTP3ContentLengthMismatch",

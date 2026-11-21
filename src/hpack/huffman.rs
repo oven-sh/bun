@@ -309,7 +309,7 @@ fn long_code(bits: u64) -> Option<u64> {
 
 /// `context` ends with `encoded`. Returns the length of the result, which may reach into the [`SLACK`] of `out`.
 #[inline(never)]
-pub(crate) fn decode(mut encoded: &[u8], context: &[u8], out: &mut [u8]) -> Result<usize> {
+pub fn decode(mut encoded: &[u8], context: &[u8], out: &mut [u8]) -> Result<usize> {
     let mut reader = Reader {
         out,
         written: 0,

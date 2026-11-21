@@ -34,11 +34,7 @@ struct Http3ResponseData {
     void *userData = nullptr;
     /* onWritable is owned by the body writer (HTTPServerWritable sink),
      * which is a different object than the RequestContext that owns
-     * onAborted/onTimeout/onData, and the two are armed concurrently:
-     * QUIC always reports backpressure between HEADERS and DATA (lsquic
-     * needs a process_conns() in between), and TCP tryEnd() does when the
-     * peer stalls or aborts mid-stream. Keep the onWritable context
-     * pointer in its own slot, same as HttpResponseData<SSL>. */
+     * onAborted/onTimeout/onData, and the two are armed concurrently. */
     void *writableUserData = nullptr;
     void *socketData = nullptr;
     OnWritableCallback onWritable = nullptr;
@@ -60,7 +56,7 @@ struct Http3ResponseData {
     bool endAfterDrain = false;
 
     uint64_t offset = 0;
-    uint8_t state = 0;
+    uint8_t state = HTTP_RESPONSE_PENDING;
 
     void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {
         size_t off = hdrBuf.size();
@@ -73,21 +69,6 @@ struct Http3ResponseData {
         memcpy(dst + nlen, value, vlen);
         hdrs.append({(const char *)(uintptr_t) off, nlen,
                      (const char *)(uintptr_t)(off + nlen), vlen, -1});
-    }
-
-    void reset() {
-        userData = nullptr;
-        writableUserData = nullptr;
-        onWritable = nullptr;
-        onAborted = nullptr;
-        inStream = nullptr;
-        onTimeout = nullptr;
-        hdrBuf.shrink(0);
-        hdrs.shrink(0);
-        backpressure.clear();
-        endAfterDrain = false;
-        offset = 0;
-        state = HTTP_RESPONSE_PENDING;
     }
 };
 

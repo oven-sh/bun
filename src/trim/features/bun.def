@@ -169,7 +169,6 @@ feature BrotliDecoder "Brotli decompression"
   minimum 20000
 
 feature Http3 "HTTP/3 in Bun.serve and fetch"
-  c-function us_quic_loop_process us_quic_loop_flush_if_pending
   cxx-function uws_h3_ ^uws_h3_(?!app_clear_routes$|listen_socket_port$|listen_socket_local_address$|listen_socket_close$)
   cxx-function Http3 (^|\s)uWS::Http3\w*::
   cxx-function H3 (^|\s)uWS::H3\w*::

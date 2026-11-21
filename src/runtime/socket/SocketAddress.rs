@@ -550,13 +550,6 @@ impl SocketAddress {
         self._addr.as_sin6().map(|s| s.flowinfo)
     }
 
-    pub(crate) fn socklen(&self) -> inet::socklen_t {
-        match self._addr.family() {
-            AF::INET => mem::size_of::<inet::sockaddr_in>() as inet::socklen_t,
-            AF::INET6 => mem::size_of::<inet::sockaddr_in6>() as inet::socklen_t,
-        }
-    }
-
     pub(crate) fn to_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         // `jsc.JSObject.create` requires a `PojoFields` impl, so use a local
         // struct.
@@ -826,12 +819,7 @@ impl sockaddr {
 // =============================================================================
 
 // The same types are defined in a bunch of different places. We should probably unify them.
-// Compile-time checks: socklen_t shape parity + layout of `sockaddr` + AF constant parity with c-ares.
-#[cfg(not(windows))]
-const _: () = {
-    assert!(mem::size_of::<inet::socklen_t>() == mem::size_of::<libc::socklen_t>());
-    assert!(mem::align_of::<inet::socklen_t>() == mem::align_of::<libc::socklen_t>());
-};
+// Compile-time checks: layout of `sockaddr` + AF constant parity with c-ares.
 const _: () = {
     use inet::{sockaddr_in, sockaddr_in6};
     assert!(mem::size_of::<sockaddr>() == mem::size_of::<sockaddr_in6>());
@@ -907,7 +895,6 @@ pub(crate) mod inet {
     pub(crate) use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub(crate) use ws2::AF_INET;
     pub(crate) use ws2::AF_INET6;
-    pub(crate) type socklen_t = super::ares::ares_socklen_t;
 }
 
 #[cfg(not(windows))]
@@ -918,5 +905,4 @@ pub(crate) mod inet {
     pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub(crate) use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub(crate) use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
-    pub(crate) type socklen_t = super::ares::ares_socklen_t;
 }

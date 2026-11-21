@@ -1183,7 +1183,7 @@ where
             // SAFETY: FFI handle
             resp.end(data, close_connection);
             // end_request_streaming_and_drain() must run after the last
-            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // `resp` access: its drain_microtasks() can re-enter QUIC (H3)
             // and free the stream out from under the local `resp` copy.
             self.end_request_streaming_and_drain();
         }
@@ -1201,7 +1201,7 @@ where
                 resp.end_stream(close_connection);
             }
             // end_request_streaming_and_drain() must run after the last
-            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // `resp` access: its drain_microtasks() can re-enter QUIC (H3)
             // and free the stream out from under the local `resp` copy.
             self.end_request_streaming_and_drain();
         }
@@ -1248,7 +1248,7 @@ where
             // gate runs later) or already closed.
             resp.close_if_done_and_marked();
             // end_request_streaming_and_drain() must run after the last
-            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // `resp` access: its drain_microtasks() can re-enter QUIC (H3)
             // and free the stream out from under the local `resp` copy.
             self.end_request_streaming_and_drain();
         }
@@ -1285,7 +1285,10 @@ where
         }
         // The normal end path detaches `self.resp` and releases the base ref. uWS
         // markDone() clears onAborted, so no abort would ever do either.
-        self.end_without_body(!MUX);
+        match MUX && resp.state().is_http_write_called() {
+            true => self.force_close(),
+            false => self.end_without_body(!MUX),
+        }
         self.unpipe();
     }
 
@@ -1303,7 +1306,7 @@ where
             // SAFETY: FFI handle
             resp.force_close();
             // end_request_streaming_and_drain() must run after the last
-            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // `resp` access: its drain_microtasks() can re-enter QUIC (H3)
             // and free the stream out from under the local `resp` copy.
             self.end_request_streaming_and_drain();
         }
@@ -1347,7 +1350,7 @@ where
 
     #[inline]
     fn req_method(r: *mut Req<SSL_ENABLED, MUX>) -> &'static [u8] {
-        // SAFETY: r is a live uWS/lsquic request handle for the duration of
+        // SAFETY: r is a live uWS request handle for the duration of
         // the request callback; both surfaces return request-owned slices.
         unsafe {
             if MUX {

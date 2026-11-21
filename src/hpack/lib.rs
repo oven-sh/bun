@@ -11,12 +11,16 @@
 #![warn(unused_must_use)]
 
 mod decoder;
-mod dynamic_table;
 mod encoder;
 mod error;
-mod huffman;
-mod integer;
 mod static_table;
+
+// QPACK has these in common.
+pub mod dynamic_table;
+pub mod huffman;
+pub mod integer;
+pub mod literal;
+pub mod searchable_table;
 
 pub use decoder::{Decoder, Field, Fields};
 pub use encoder::{Block, Encoder, Indexing};
@@ -31,7 +35,7 @@ pub const MAX_FIELD_LEN: usize = 65536;
 
 /// `a == b` without a call for what is short.
 #[inline(always)]
-fn equal(a: &[u8], b: &[u8]) -> bool {
+pub fn equal(a: &[u8], b: &[u8]) -> bool {
     #[inline(always)]
     fn ends_equal<const N: usize>(a: &[u8], b: &[u8]) -> bool {
         a.first_chunk::<N>() == b.first_chunk() && a.last_chunk::<N>() == b.last_chunk()
@@ -51,14 +55,14 @@ fn equal(a: &[u8], b: &[u8]) -> bool {
 /// `table[index % N]`, which the compiler knows to be in bounds.
 #[inline(always)]
 #[expect(clippy::indexing_slicing, reason = "the index is less than N")]
-fn wrapped<T, const N: usize>(table: &[T; N], index: usize) -> &T {
+pub fn wrapped<T, const N: usize>(table: &[T; N], index: usize) -> &T {
     const { assert!(N.is_power_of_two()) };
     &table[index % N]
 }
 
 #[inline(always)]
 #[expect(clippy::indexing_slicing, reason = "the index is less than N")]
-fn wrapped_mut<T, const N: usize>(table: &mut [T; N], index: usize) -> &mut T {
+pub fn wrapped_mut<T, const N: usize>(table: &mut [T; N], index: usize) -> &mut T {
     const { assert!(N.is_power_of_two()) };
     &mut table[index % N]
 }

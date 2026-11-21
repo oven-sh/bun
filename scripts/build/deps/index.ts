@@ -4,7 +4,7 @@
  * Order matters for two reasons:
  *   1. `fetchDeps` relationships — a dep with fetchDeps must come AFTER the
  *      deps it references, so the referenced .ref stamp node exists in ninja
- *      when we add order-only edges to it. (lsqpack before lsquic.)
+ *      when we add order-only edges to it. (mimalloc before WebKit.)
  *   2. Link order — when these libs hit the final link line, static linking
  *      resolves left-to-right. Deps that PROVIDE symbols should come after
  *      deps that USE them. This list becomes the link order.
@@ -16,8 +16,6 @@ import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
 import { libuv } from "./libuv.ts";
 import { lolhtml } from "./lolhtml.ts";
-import { lsqpack } from "./lsqpack.ts";
-import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
 import { rustArgon2 } from "./rust-argon2.ts";
@@ -39,33 +37,14 @@ export const allDeps: readonly Dependency[] = [
   libuv,
   lolhtml,
   rustArgon2,
-  lsqpack,
   mimalloc,
   sqlite,
   tinycc,
   boringssl,
-  // lsquic after boringssl: needs ssl.h at compile time (fetchDeps), and as
-  // a DirectBuild dep its .o files go straight on the link line so static
-  // link order doesn't apply.
-  lsquic,
   // WebKit LAST in link order — WTF/JSC provide symbols that everything
   // above might reference (via JavaScriptCore types in headers).
   webkit,
 ];
 
 // Re-export individuals for direct import when needed.
-export {
-  boringssl,
-  cares,
-  highway,
-  libuv,
-  lolhtml,
-  lsqpack,
-  lsquic,
-  mimalloc,
-  nodejsHeaders,
-  rustArgon2,
-  sqlite,
-  tinycc,
-  webkit,
-};
+export { boringssl, cares, highway, libuv, lolhtml, mimalloc, nodejsHeaders, rustArgon2, sqlite, tinycc, webkit };

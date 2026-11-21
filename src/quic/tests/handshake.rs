@@ -1,0 +1,648 @@
+use std::rc::Rc;
+
+use bun_quic::Layer::Transport;
+use bun_quic::crypto::Cipher;
+use bun_quic::tls::{self, Alert, Level, Session, Status};
+use bun_quic::transport_code::*;
+use bun_quic::{Batch, Direction, Duration, Side};
+
+use crate::harness::keys::{V1, V2};
+use crate::harness::raw::Kind::{Handshake, Initial, Short};
+use crate::harness::raw::{RTT, Raw};
+use crate::harness::tls::{TICKET, Toy, message};
+use crate::harness::wire::show_hex;
+
+#[test]
+fn flights_of_a_server() {
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    assert_eq!(raw.events(), "");
+    assert_eq!(raw.outline(), "I[ack, crypto] H[crypto]");
+    assert!(!raw.connection().is_ready() && raw.connection().tls().is_some());
+    raw.shake_hands();
+    assert_eq!(raw.events(), "ready, confirmed");
+    let frames = "1[handshake_done, new_token, crypto, new_connection_id]";
+    assert_eq!(raw.outline(), frames);
+    assert!(raw.connection().is_ready() && raw.connection().tls().is_none());
+    raw.confirm();
+    raw.advance(1000);
+    assert_eq!((raw.packets(), raw.events()), Default::default());
+}
+
+#[test]
+fn flights_of_a_client() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    assert_eq!(raw.outline(), "I[crypto]");
+    assert!(raw.connection().peer_parameters().is_none());
+    raw.shake_hands();
+    assert_eq!(raw.events(), "ready");
+    assert_eq!(raw.outline(), "I[ack] H[ack, crypto] 1[new_connection_id]");
+    assert!(raw.connection().peer_parameters().is_some() && raw.connection().tls().is_some());
+    raw.confirm();
+    assert_eq!(raw.events(), "confirmed");
+    assert_eq!(raw.outline(), "1[ack]");
+    assert!(raw.connection().tls().is_none());
+    raw.send("handshake_done");
+    assert_eq!(raw.events(), "");
+}
+
+#[test]
+fn datagrams_with_initial_packets_are_expanded() {
+    for mut raw in Raw::both() {
+        raw.peer.tls.certificate_len = 10;
+        raw.start(&[]);
+        assert_eq!(raw.sizes(), [1200]);
+        raw.shake_hands();
+        assert_eq!(raw.sizes()[0] == 1200, raw.side.is_server());
+    }
+}
+
+#[test]
+fn other_datagrams_are_not_expanded() {
+    let mut raw = Raw::client();
+    raw.send_in(Initial, "hello 0 100");
+    assert!(raw.sizes()[0] < 100);
+
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.shake_hands();
+    raw.forget();
+    raw.send_in(Handshake, "ping");
+    raw.send("ping");
+    raw.send("ping");
+    assert!(matches!(raw.sizes()[..], [..100, ..100]));
+}
+
+#[test]
+fn cipher_suites() {
+    use Cipher::*;
+    for cipher in [Aes128GcmSha256, Aes256GcmSha384, ChaCha20Poly1305Sha256] {
+        for mut raw in Raw::both() {
+            raw.peer.tls.cipher = cipher;
+            raw = raw.connected();
+            raw.send("ping, ping");
+            raw.advance(25);
+            assert_eq!(raw.outline(), "1[ack]");
+        }
+    }
+}
+
+#[test]
+fn key_log() {
+    let [mut client, mut server] = Raw::both();
+    (client.peer.tls.logs_keys, server.peer.tls.logs_keys) = (true, true);
+    client.start(&[]);
+    assert_eq!(client.events(), "key Handshake, key Application");
+    server.start(&[]);
+    server.shake_hands();
+    assert_eq!(server.events(), "key Handshake, key Application, ready");
+}
+
+#[test]
+fn lengths_of_connection_ids() {
+    for len in [0, 1, 20] {
+        for mut raw in Raw::both() {
+            raw.source = vec![7; len];
+            raw = raw.connected();
+            raw.send("path_challenge *8");
+            assert_eq!(raw.take()[0].destination, raw.source);
+        }
+    }
+    for len in 7..=21 {
+        let mut raw = Raw::client();
+        (raw.original, raw.destination) = (vec![7; len], vec![7; len]);
+        raw.start(&[]);
+        let packets = raw.take();
+        assert_eq!(packets.is_empty(), !(8..=20).contains(&len));
+        assert!(
+            packets
+                .iter()
+                .all(|it| it.source.len() == 8 && it.source != raw.original)
+        );
+    }
+    let mut raw = Raw::client();
+    raw.source = vec![7; 21];
+    raw.start(&[]);
+    assert_eq!(raw.packets(), "");
+    for (random, len) in [(0, 8), (12, 20), (13, 8), (255, 16)] {
+        let mut raw = Raw::server();
+        raw.peer.crypto.planned.borrow_mut().push(vec![random; 21]);
+        raw.start(&[]);
+        assert_eq!(raw.original, vec![random; len]);
+    }
+}
+
+#[test]
+fn a_client_goes_on_with_the_id_that_the_server_chose() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    assert_eq!(raw.take()[0].destination, raw.original);
+    raw.send_in(Initial, "ack");
+    raw.wait();
+    assert_eq!(raw.take()[0].destination, raw.source);
+}
+
+#[test]
+fn hello_in_pieces() {
+    for order in [[0, 1, 2], [2, 1, 0], [1, 0, 2], [0, 2, 1]] {
+        for mut raw in Raw::both() {
+            raw.hello_len = 2500;
+            if raw.side.is_server() {
+                raw.start(&[]);
+                raw.forget();
+            }
+            let pieces = ["hello 0 1000", "hello 1000 2000", "hello 2000"];
+            for at in [order[0], order[0], order[1]] {
+                raw.send_in(Initial, pieces[at]);
+                assert_eq!(raw.outline(), "I[ack]");
+            }
+            raw.send_in(Initial, pieces[order[2]]);
+            raw.send_in(Handshake, "flight");
+            assert!(raw.peer.has_logged("ready"));
+        }
+    }
+}
+
+/// RFC 9000 §7.5.
+#[test]
+fn buffers_4096_bytes_that_are_out_of_order() {
+    for mut raw in Raw::both() {
+        raw.hello_len = 4096;
+        if raw.side.is_server() {
+            raw.start(&[]);
+        }
+        for range in ["3000", "2000 3000", "1000 2000", "1 1000", "0 1"] {
+            raw.send_in(Initial, &format!("hello {range}"));
+        }
+        raw.send_in(Handshake, "flight");
+        assert!(raw.peer.has_logged("ready"));
+    }
+}
+
+#[test]
+fn long_flights() {
+    let mut raw = Raw::server();
+    raw.peer.tls.hello_len = 2500;
+    raw.start(&[]);
+    assert_eq!(raw.sizes(), [1200; 3]);
+    raw.shake_hands();
+    assert_eq!(raw.events(), "ready");
+}
+
+/// RFC 8446 §4.1.4.
+#[test]
+fn a_second_hello() {
+    for (offered, chosen) in [("00000001", V1), ("000000016b3343cf", V2)] {
+        let mut raw = Raw::client().with(&format!("version_information=#00000001{offered}"));
+        raw.peer.tls.asks_for_another_hello = true;
+        raw.start(&[]);
+        assert_eq!(raw.packets(), "I[ack 0, crypto 0 #02000000]");
+        let hello = raw.hello();
+        raw.version = chosen;
+        let frame = format!("crypto {} {}", hello.len(), show_hex(&hello));
+        raw.send_in(Initial, &frame);
+        assert_eq!(raw.versions_of_packets(), [chosen; 2]);
+        raw.shake_hands();
+        assert_eq!(raw.events(), "ready, confirmed");
+    }
+    let mut raw = Raw::server().with_ticket();
+    raw.resume();
+    raw.forget();
+    raw.send_in(Initial, "ack, crypto 0 #02000000");
+    assert_eq!(raw.events(), "early data rejected");
+    assert_eq!(raw.outline(), "I[ack, crypto]");
+    raw.send_in(Initial, &format!("crypto 4 {}", show_hex(&raw.hello())));
+    raw.send_in(Handshake, "flight");
+    assert_eq!(raw.events(), "ready");
+}
+
+/// RFC 9000 §8.1.
+#[test]
+fn a_server_sends_three_times_what_it_got_until_the_address_is_validated() {
+    let mut raw = Raw::client();
+    raw.peer.tls.certificate_len = 10_000;
+    raw.start(&[]);
+    assert_eq!(raw.sizes(), [1200; 3]);
+    raw.send_in(Initial, "ack");
+    assert_eq!(raw.sizes(), [1200; 3]);
+    raw.send_in(Handshake, "ack");
+    assert_eq!(raw.sizes().len(), 4);
+    raw.send_in(Handshake, "ack, flight");
+    assert_eq!(raw.events(), "ready, confirmed");
+}
+
+#[test]
+fn a_client_repeats_its_hello_until_it_gives_up() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.forget();
+    for timeout in [150, 300, 600, 1200, 2400, 4800] {
+        assert_eq!(raw.wait(), timeout);
+        assert_eq!(raw.outline(), "I[crypto]; I[crypto]");
+    }
+    assert_eq!(raw.wait(), 10_000 - 9450);
+    assert_eq!(raw.events(), "closed: HandshakeTimeout");
+    assert_eq!(raw.packets(), "");
+}
+
+#[test]
+fn bounds_of_the_probe_timeout() {
+    let mut raw = Raw::server().config(|it| {
+        it.handshake_timeout = Duration::ZERO;
+        it.parameters.max_idle_timeout_millis = 0;
+    });
+    raw.peer.tls.hello_len = 2000;
+    raw.start(&[]);
+    for count in 0..12 {
+        raw.forget();
+        assert_eq!(raw.wait(), 60_000.min(150 << count));
+    }
+    for mut raw in Raw::both() {
+        raw.start(&[]);
+        raw.advance(1);
+        raw.send_in(Initial, "ack");
+        raw.forget();
+        assert_eq!(raw.wait(), [9, 10][raw.side as usize]);
+    }
+}
+
+#[test]
+fn a_server_repeats_its_flight() {
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    raw.forget();
+    assert_eq!(raw.wait(), 150);
+    assert_eq!(raw.outline(), "I[crypto] H[crypto]");
+    for answer in ["I[ack, crypto] H[crypto]", "I[ack]"] {
+        raw.send_in(Initial, "hello");
+        assert_eq!(raw.outline(), answer);
+    }
+    raw.advance(RTT);
+    raw.send_in(Initial, "ack");
+    assert_eq!(raw.wait(), RTT);
+    assert_eq!(raw.outline(), "H[crypto]");
+}
+
+/// RFC 9002 §6.2.2.1.
+#[test]
+fn a_client_probes_as_long_as_the_server_may_be_unable_to_send() {
+    for (frames, probe) in [("ack", "I[ping]"), ("ack, hello", "H[ping]")] {
+        let mut raw = Raw::server();
+        raw.start(&[]);
+        raw.advance(RTT);
+        raw.send_in(Initial, frames);
+        raw.forget();
+        assert_eq!(raw.wait(), 2 * RTT);
+        assert_eq!(raw.outline(), probe);
+    }
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.advance(RTT);
+    raw.send_in(Initial, "ack");
+    raw.forget();
+    for (timeout, probes) in [(40, "I[ping]"), (80, "I[ping]; I[ping]")] {
+        assert_eq!(raw.wait(), timeout);
+        assert_eq!(raw.outline(), probes);
+    }
+    raw.send_all(&[(Initial, "ack, hello"), (Handshake, "ping")]);
+    raw.forget();
+    raw.wait();
+    assert_eq!(raw.outline(), "H[ping]");
+    raw.send_in(Handshake, "ack");
+    raw.wait();
+    assert_eq!(raw.events(), "closed: HandshakeTimeout");
+}
+
+#[test]
+fn lost_packets_of_a_flight() {
+    let mut raw = Raw::client();
+    raw.peer.tls.certificate_len = 6000;
+    raw.start(&[]);
+    raw.advance(RTT);
+    raw.send_all(&[(Initial, "ack"), (Handshake, "ack 0")]);
+    let sent = raw.take();
+    raw.advance(RTT);
+    raw.send_in(Handshake, "ack 4 0");
+    assert_eq!(raw.take()[0].frames, sent[2].frames);
+    assert_eq!(raw.connection().stats().packets_lost, 2);
+    assert_eq!(raw.wait(), RTT / 8);
+    assert_eq!(raw.take()[0].frames, sent[4].frames);
+}
+
+#[test]
+fn the_end_of_the_handshake_is_repeated() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.shake_hands();
+    raw.forget();
+    assert_eq!(raw.wait(), 2 * RTT);
+    assert!(raw.outline().starts_with("H[crypto]"));
+
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.shake_hands();
+    raw.request_packets("a");
+    raw.wait();
+    assert_eq!(
+        raw.frames(),
+        "crypto 0 #14000000, new_connection_id 1 0, stream 2 0 a, crypto 0 #14000000, ping"
+    );
+
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    raw.shake_hands();
+    raw.forget();
+    raw.wait();
+    assert!(
+        raw.frames()
+            .starts_with("handshake_done, new_token, crypto 0 ")
+    );
+}
+
+/// RFC 9001 §4.8.
+#[test]
+fn alerts() {
+    for (mut raw, packets) in Raw::both().into_iter().zip([
+        "I[ack 0, close 0x12a]",
+        "I[ack 0, close 0x12a] H[close 0x12a]",
+    ]) {
+        raw.peer.tls.rejects_peer_with = Some(Alert(42));
+        raw.start(&[]);
+        if raw.side.is_server() {
+            raw.forget();
+            raw.shake_hands();
+        }
+        assert_eq!(raw.error(), Some((Transport, CRYPTO_ERROR + 42)));
+        assert_eq!(raw.reason, b"TLS alert");
+        assert_eq!(raw.packets(), packets);
+    }
+    let mut raw = Raw::client();
+    raw.peer.tls.rejects_peer_with = Some(Alert(120));
+    raw.start(&[]);
+    assert_eq!(raw.error(), Some((Transport, CRYPTO_ERROR + 120)));
+    assert_eq!(raw.reason, b"no application protocol");
+
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    raw.send_in(Handshake, "crypto 4 #0000, crypto 0 #63000002");
+    assert_eq!(raw.error(), Some((Transport, CRYPTO_ERROR + 10)));
+
+    let mut raw = Raw::server();
+    raw.peer.tls.fails_to_start = true;
+    raw.start(&[]);
+    assert_eq!(raw.events(), "closed with close 0x150");
+    assert_eq!(raw.packets(), "");
+}
+
+/// RFC 9001 §4.1.3.
+#[test]
+fn new_data_at_a_level_that_is_over() {
+    for mut raw in Raw::both() {
+        raw.start(&[]);
+        let frame = format!("crypto {} a", raw.hello().len());
+        raw.send_in(Initial, &format!("hello, {frame}"));
+        assert_eq!(raw.error(), Some((Transport, PROTOCOL_VIOLATION)));
+    }
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.shake_hands();
+    raw.send_in(Handshake, "flight");
+    assert_eq!(raw.error(), None);
+    raw.send_in(Handshake, &format!("crypto {} a", raw.flight().len()));
+    assert_eq!(raw.error(), Some((Transport, PROTOCOL_VIOLATION)));
+}
+
+/// RFC 9001 §5.7.
+#[test]
+fn packets_that_are_ahead_of_their_keys() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.forget();
+    raw.send("handshake_done, fin 3 0 a");
+    raw.send_in(Handshake, "flight");
+    assert_eq!((raw.packets(), raw.events()), Default::default());
+    raw.send_in(Initial, "ack, hello");
+    assert_eq!(
+        raw.events(),
+        "ready, confirmed, 3 opened, 3 fin a, 3 closed"
+    );
+    assert_eq!(raw.connection().stats().packets_received, 3);
+
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    raw.forget();
+    raw.send("fin 0 0 a");
+    raw.send_in(Handshake, "ack");
+    assert_eq!((raw.packets(), raw.events()), Default::default());
+    raw.send_in(Handshake, "flight");
+    assert_eq!(raw.events(), "ready, confirmed, 0 opened, 0 fin a");
+}
+
+/// RFC 9001 §4.9.
+#[test]
+fn keys_are_discarded() {
+    for mut raw in Raw::both() {
+        raw.start(&[]);
+        let frames = ["ack", "ack, hello"][raw.side as usize];
+        raw.send_in(Initial, frames);
+        raw.forget();
+        raw.send_in(Initial, "ping");
+        assert_eq!(raw.outline(), "I[ack]");
+        raw.send_in(Handshake, "ping");
+        assert_eq!(raw.outline(), "H[ack]");
+        raw.send_in(Initial, "ping");
+        assert_eq!(raw.outline(), "");
+        raw.send_in(Handshake, "ack, flight");
+        raw.confirm();
+        raw.forget();
+        raw.send_in(Handshake, "ping");
+        assert_eq!(raw.outline(), "");
+    }
+}
+
+#[test]
+fn tickets_and_tokens() {
+    let ticket = format!("crypto 0 {}", show_hex(&message(TICKET, &[b"a"])));
+    for (wants_tickets, events) in [(false, "token abc"), (true, "token abc, ticket")] {
+        let raw = Raw::server().config(|it| it.wants_tickets = wants_tickets);
+        let mut raw = raw.connected();
+        raw.send(&format!("new_token abc, {ticket}"));
+        raw.send(&ticket);
+        assert_eq!(raw.events(), events);
+        assert_eq!(raw.connection().tls().is_some(), wants_tickets);
+    }
+}
+
+struct Careless(Box<Toy>);
+
+impl Session for Careless {
+    fn resume(&mut self, ticket: &[u8]) -> bool {
+        self.0.resume(ticket)
+    }
+
+    fn advance(
+        &mut self,
+        input: Option<(Level, &[u8])>,
+        handshake: &mut tls::Handshake<'_>,
+    ) -> Result<Status, Alert> {
+        handshake.read_secret(Level::Initial, Cipher::Aes128GcmSha256, &[0; 32]);
+        handshake.write_secret(Level::Initial, Cipher::Aes128GcmSha256, &[0; 32]);
+        if let Some((Level::Application, _)) = input {
+            handshake.send(Level::Initial, b"a");
+            handshake.send(Level::Handshake, b"a");
+            assert!(!handshake.peer_parameters(&[0, 0], false));
+        }
+        self.0.advance(input, handshake)
+    }
+}
+
+#[test]
+fn calls_of_tls_that_are_out_of_place() {
+    let mut raw = Raw::server().config(|it| it.wants_tickets = true);
+    let tls = Careless(Toy::new(Side::Client, raw.random, raw.peer.tls));
+    let (config, tls) = (Rc::new(raw.peer.config.clone()), Box::new(tls));
+    let endpoint = &mut raw.peer.endpoint;
+    raw.peer.handle = Some(endpoint.connect(raw.now, config, raw.addresses, tls, &[]));
+    raw.process();
+    raw.shake_hands();
+    raw.confirm();
+    raw.forget();
+    let ticket = show_hex(&message(TICKET, &[b"a"]));
+    raw.send(&format!("crypto 0 {ticket}"));
+    assert_eq!((raw.events(), raw.frames()), ("ticket".into(), "".into()));
+}
+
+#[test]
+fn datagrams_wait_for_keys() {
+    for raw in Raw::both() {
+        let mut raw = raw.with("max_datagram_frame_size=100");
+        match raw.side {
+            Side::Client => raw.send_in(Initial, "hello 0 100"),
+            Side::Server => raw.start(&[]),
+        }
+        raw.forget();
+        raw.connection().send_datagram(1, b"a".to_vec());
+        assert_eq!(raw.packets(), "");
+        raw.send_all(&[(Initial, "hello"), (Handshake, "flight")]);
+        assert!(raw.frames().ends_with("datagram a"));
+    }
+}
+
+#[test]
+fn the_peer_closes_during_the_handshake() {
+    for kind in [Initial, Handshake] {
+        for mut raw in Raw::both() {
+            raw.start(&[]);
+            raw.send_in(Initial, "hello");
+            raw.forget();
+            raw.send_all(&[(kind, "close 0x128 6 no, ping"), (Handshake, "flight")]);
+            assert_eq!(raw.events(), "closed by close 0x128 no");
+            assert_eq!(raw.packets(), "");
+        }
+    }
+}
+
+#[test]
+fn streams_can_be_opened_once_the_application_knows() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.peer.polls = false;
+    raw.shake_hands();
+    let available = |raw: &mut Raw| raw.connection().available_streams(Direction::Bidirectional);
+    assert_eq!(available(&mut raw), 0);
+    raw.peer.polls = true;
+    assert_eq!(raw.events(), "ready");
+    assert_eq!(available(&mut raw), 100);
+    let id = raw.peer.open(Direction::Bidirectional);
+    raw.forget();
+    raw.peer.send(id, b"a", true);
+    assert_eq!(raw.packets(), "1[fin 0 0 a]");
+    raw.send_all(&[(Handshake, "ack"), (Short, "ack, fin 0 0 b")]);
+    assert_eq!(raw.events(), "confirmed, 0 fin b, 0 closed");
+}
+
+/// RFC 9001 §4.1.2.
+#[test]
+fn acknowledgment_of_a_1_rtt_packet_confirms_the_handshake() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.shake_hands();
+    raw.forget();
+    raw.send("ack");
+    assert_eq!(raw.events(), "confirmed");
+    raw.send_all(&[(Handshake, "ping"), (Short, "handshake_done")]);
+    raw.advance(RTT);
+    assert_eq!((raw.events(), raw.outline()), ("".into(), "1[ack]".into()));
+}
+
+#[test]
+fn a_server_does_not_probe_for_a_hello_that_has_arrived() {
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    raw.forget();
+    raw.wait();
+    assert_eq!(raw.outline(), "I[crypto] H[crypto]");
+    raw.send_in(Initial, "ack 0");
+    raw.wait();
+    assert_eq!(raw.outline(), "H[crypto]");
+}
+
+/// RFC 9002 §6.2.2.1.
+#[test]
+fn a_client_keeps_probing_while_the_server_may_be_unable_to_send() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.advance(RTT);
+    raw.send_in(Initial, "ack");
+    raw.forget();
+    let mut timeouts = Vec::new();
+    for _ in 0..3 {
+        timeouts.push(raw.wait());
+        let probe = raw.take().pop().unwrap();
+        assert_eq!(probe.frames, ["ping"]);
+        raw.send_in(Initial, &format!("ack {}", probe.number));
+        raw.forget();
+    }
+    assert_eq!(timeouts, [40, 70, 122]);
+}
+
+/// RFC 9002 §6.2.2.1.
+#[test]
+fn a_server_probes_as_soon_as_it_can_send_again() {
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    raw.advance(2000);
+    raw.waits = false;
+    raw.send_in(Initial, "padding 1");
+    let mut batch = Batch::default();
+    (raw.peer.endpoint).poll_transmit(raw.now, &mut batch, 64, |_| {});
+    assert_eq!(batch.len(), 1);
+}
+
+/// RFC 9002 §6.4.
+#[test]
+fn probe_timeout_starts_over_when_keys_are_discarded() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.forget();
+    let timeout = raw.wait();
+    raw.advance(timeout * 3 / 2);
+    raw.send_all(&[(Initial, "hello"), (Handshake, "ping")]);
+    raw.forget();
+    assert_eq!((raw.wait(), raw.outline()), (timeout, "H[ping]".into()));
+}
+
+#[test]
+fn backoff_ends_with_the_first_round_trip_time() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    for _ in 0..2 {
+        raw.forget();
+        raw.wait();
+    }
+    raw.forget();
+    raw.advance(RTT);
+    raw.send_in(Initial, "ack");
+    assert_eq!((raw.wait(), raw.outline()), (2 * RTT, "I[ping]".into()));
+}

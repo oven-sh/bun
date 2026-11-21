@@ -1971,12 +1971,6 @@ export const fileOverrides: FileOverride[] = [
     desc: "Defines the C functions that trimming cuts to remove TLS",
   },
   {
-    file: "packages/bun-usockets/src/quic.cpp",
-    extraFlags: keepTrimmedFunctions,
-    when: c => c.trimmable && c.lto,
-    desc: "Defines the C functions that trimming cuts to remove HTTP/3",
-  },
-  {
     file: "src/jsc/bindings/windows/rescle.cpp",
     extraFlags: "/EHsc",
     when: c => c.windows,

@@ -569,7 +569,7 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // sendfile() needs a real socket fd; SSL writes go through BIO and H3
-        // through lsquic stream frames — neither has one.
+        // through QUIC stream frames — neither has one.
         if !matches!(resp, AnyResponse::TCP(_)) {
             return false;
         }

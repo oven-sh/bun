@@ -1476,6 +1476,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn is_closed(&self) -> bool {
         self.pending_requests.get() == 0
             && !self.has_listener()
+            && self.h3_draining_listener.get().is_none()
             && !self.has_active_web_sockets()
             && !self.has_loop_holding_connections()
     }
@@ -1553,9 +1554,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // progressing until deinit. Abrupt: close the fd now.
             if !abrupt {
                 if let (Some(h3l), Some(h3a)) = (h3l, self.h3_app()) {
-                    // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
-                    bun_opaque::opaque_deref_mut(h3a).close();
                     self.h3_draining_listener.set(Some(h3l));
+                    // `stop()` runs `deinit_if_we_can` right after this returns.
+                    self.deinit_running.set(true);
+                    // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                    bun_opaque::opaque_deref_mut(h3a)
+                        .close(Self::on_h3_drained, self.as_ctx_ptr().cast());
+                    self.deinit_running.set(false);
                 }
             } else if let Some(h3l) = h3l.or_else(|| self.h3_draining_listener.take()) {
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
@@ -1566,7 +1571,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let already_terminated = self.flags.get().contains(ServerFlags::TERMINATED);
         let Some(listener) = self.listener.take() else {
             if Self::HAS_H3 && self.h3_app().is_some() {
-                self.unref();
+                if abrupt || self.is_closed() {
+                    self.unref();
+                }
                 self.notify_inspector_server_stopped();
                 if abrupt {
                     self.flags.set(self.flags.get() | ServerFlags::TERMINATED);
@@ -1671,6 +1678,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             });
         }
+    }
+
+    extern "C" fn on_h3_drained(this: *mut c_void) {
+        // SAFETY: the server owns the app that calls this.
+        let this = unsafe { &*this.cast::<Self>() };
+        this.h3_draining_listener.set(None);
+        this.deinit_if_we_can();
     }
 
     pub(crate) fn stop(&self, abrupt: bool) {
@@ -2448,6 +2462,29 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     // ─── listen ──────────────────────────────────────────────────────────────
+    /// On failure an exception is pending and `false` returned.
+    fn add_http3_server_name(
+        &self,
+        name: &core::ffi::CStr,
+        options: &uws_sys::BunSocketContextOptions,
+    ) -> bool {
+        let Some(h3_app) = self.h3_app().filter(|_| Self::HAS_H3) else {
+            return true;
+        };
+        // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+        let is_added = bun_opaque::opaque_deref_mut(h3_app)
+            .add_server_name_with_options(bun_core::ZStr::from_cstr(name), options)
+            .is_ok();
+        let global = self.global_this();
+        if !is_added && !global.has_exception() {
+            let _ = global.throw(format_args!(
+                "Failed to add serverName \"{}\" for HTTP/3",
+                bstr::BStr::new(name.to_bytes())
+            ));
+        }
+        is_added
+    }
+
     /// `config.http2`: attach an HTTP/2 context to `app`. On failure an
     /// exception is pending and `false` returned.
     fn attach_http2(&self, app: *mut uws_sys::NewApp<SSL>) -> bool {
@@ -2620,7 +2657,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                     return None;
                 }
-                if throw_ssl_error_if_necessary(global) {
+                if throw_ssl_error_if_necessary(global)
+                    || !this_ref.add_http3_server_name(server_name, &ssl_options)
+                {
                     return None;
                 }
             }
@@ -2634,24 +2673,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     continue;
                 }
                 let sni_opts = sni_ssl_config.as_usockets();
-                let z = bun_core::ZStr::from_cstr(sni_name);
-
-                if Self::HAS_H3 {
-                    if let Some(h3_app) = this_ref.h3_app() {
-                        // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
-                        if bun_opaque::opaque_deref_mut(h3_app)
-                            .add_server_name_with_options(z, &sni_opts)
-                            .is_err()
-                        {
-                            if !global.has_exception() {
-                                let _ = global.throw(format_args!(
-                                    "Failed to add serverName \"{}\" for HTTP/3",
-                                    bstr::BStr::new(sni_name.to_bytes())
-                                ));
-                            }
-                            return None;
-                        }
-                    }
+                if !this_ref.add_http3_server_name(sni_name, &sni_opts) {
+                    return None;
                 }
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)

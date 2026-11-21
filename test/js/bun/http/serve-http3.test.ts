@@ -2,7 +2,7 @@ import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isLinux, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir, tls } from "harness";
 import { once } from "node:events";
 import type { SocketAddress } from "node:net";
 import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
@@ -26,7 +26,7 @@ const DEAD_PORT_ABORT_MS = 1000;
 
 // Every fixture server in this file is torn down on stdin close so the client's
 // pooled session sees CONNECTION_CLOSE and is dropped; otherwise a killed
-// process leaves the client retransmitting until lsquic's idle timeout, and if
+// process leaves the client retransmitting until its idle timeout, and if
 // the OS reuses that ephemeral UDP port a later test's request gets matched
 // onto the dead conn. us_quic_listen_socket_close() flushes CONNECTION_CLOSE
 // synchronously during stop(true); the trailing setTimeout gives the kernel a
@@ -280,6 +280,27 @@ test("the TCP port is released if the UDP port is taken", async () => {
     exitCode: 0,
   });
 });
+
+// All of 127.0.0.0/8 is local on Linux, and the kernel would pick 127.0.0.1 as the source of a reply.
+test.skipIf(!isLinux).each(["0.0.0.0", "::"])(
+  "a listener on %s replies from the address it was reached at",
+  async hostname => {
+    const body = Buffer.alloc(200_000, "abcdefgh");
+    await using server = Bun.serve({
+      port: 0,
+      hostname,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: () => new Response(body),
+    });
+    const res = await fetch(`https://127.0.0.2:${server.port}/`, {
+      protocol: "http3",
+      tls: { rejectUnauthorized: false },
+    } as RequestInit);
+    expect(Buffer.from(await res.bytes()).equals(body)).toBe(true);
+  },
+);
 
 describe("Bun.serve HTTP/3", () => {
   test("basic GET", async () => {
@@ -644,7 +665,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
       .digest("hex");
 
   test("64 concurrent streams on one connection", async () => {
-    // h2o uses 1000; 64 stays inside lsquic's default initial-max-streams
+    // h2o uses 1000; 64 stays inside the default initial-max-streams
     // and the debug-build 5s budget while still being 4× the existing
     // 16-concurrent coverage.
     await withServer(async port => {
@@ -730,7 +751,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
   test("lying content-length doesn't take down the listener", async () => {
     await withServer(async port => {
       // RFC 9114 §4.1.2: a request whose payload doesn't match content-length
-      // is malformed. lsquic/nghttp3 may RESET_STREAM here — we don't care
+      // is malformed. Either end may RESET_STREAM here — we don't care
       // about the exact response, only that the process keeps serving.
       await fetchH3(port, "/echo", {
         method: "POST",
@@ -763,7 +784,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
   });
 
   // The big one: every concurrent stream gets back exactly its own bytes,
-  // transformed. Catches shared-buffer reuse in quic.cpp read_buf, response
+  // transformed. Catches shared-buffer reuse on the read path, response
   // backpressure aliasing in Http3ResponseData, and partial-write offset
   // bugs in HTTPSResponseSink. Bodies are crypto-random so any cross-stream
   // leak shows up as an md5 mismatch, not just an offset shift.
@@ -805,10 +826,8 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     }
   };
 
-  // 8 × 96KB — past the 16KB quic.cpp read_buf and the 64KB lsquic stream
-  // window. Aliasing bugs reproduce at any N≥2; 8 fits the debug-build 5s
-  // default. (Unlike the curl version these now share one QUIC connection,
-  // which is the more interesting case for read_buf reuse.)
+  // Aliasing bugs reproduce at any N≥2; 8 fits the debug-build 5s default.
+  // They share one QUIC connection, which is the interesting case for buffer reuse.
   test("per-stream body isolation: 8 concurrent 96KB transformed echoes", async () => {
     await withServer(port => isolationRound(port, 8, 96 * 1024));
   });
@@ -1043,10 +1062,6 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
   // retry) is placed on the dead session and fails with HTTP3StreamReset
   // once the idle alarm fires. This is the root cause of the intermittent
   // `POST body without Content-Length` failure across the adversarial suite.
-  //
-  // lsquic's ietf_full_conn_ci_close path only packs CONNECTION_CLOSE for a
-  // server conn if there are already-scheduled packets or IFC_GOAWAY_CLOSE;
-  // an idle conn satisfies neither, so abrupt stop used lsquic_conn_abort.
   test("server.stop(true) sends CONNECTION_CLOSE on an idle H3 connection", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
@@ -1065,9 +1080,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       process.stdin.setEncoding("utf8");
       process.stdin.on("data", async line => {
         if (line.includes("stop")) {
-          // Let the delayed-ACK timer fire so send_ctl has nothing scheduled
-          // when listen_socket_close runs; that's the state in which the old
-          // lsquic_conn_close() path went silent.
+          // Let the delayed-ACK timer fire so that the connection has nothing
+          // else to send when the listener is closed.
           await Bun.sleep(100);
           const port = server.port;
           server.stop(true);
@@ -1108,10 +1122,35 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     });
   });
 
+  // Linux's loopback takes all the datagrams at once. The handshakes take 10 seconds in a debug build.
+  test.skipIf(!isLinux || isDebug)(
+    "server.stop(true) sends CONNECTION_CLOSE on all of many H3 connections",
+    async () => {
+      const server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        idleTimeout: 255,
+        fetch: () => new Response(),
+      });
+      await using endpoint = new QuicEndpoint();
+      const options = { endpoint, verifyPeer: "manual", transportParams: { maxIdleTimeout: 255 } } as SessionOptions;
+      const closed: Promise<void>[] = [];
+      while (closed.length < 400) {
+        const some = await Promise.all(Array.from({ length: 50 }, () => connect(`127.0.0.1:${server.port}`, options)));
+        await Promise.all(some.map(session => session.opened));
+        closed.push(...some.map(session => session.closed));
+      }
+      server.stop(true);
+      expect(await Promise.allSettled(closed)).toHaveLength(400);
+    },
+  );
+
   // server.stop(true) from the request handler, or from a microtask the handler
-  // resolved, runs while lsquic's process_conns is on the stack. The aborted
-  // connection only packs its CONNECTION_CLOSE when that tick resumes, so the
-  // UDP fd has to stay open until process_conns returns. It used to close at
+  // resolved, runs while the QUIC events are being dispatched. The aborted
+  // connection only sends its CONNECTION_CLOSE after that, so the
+  // UDP fd has to stay open until then. It used to close at
   // once: the peer got no close signal and only noticed through its idle timer.
   // The client never retries a ReadableStream request body, so the rejection
   // surfaces as soon as the client sees the connection close.
@@ -1158,7 +1197,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
   });
 
   // The fd of a listener stopped from inside a handler stays open until
-  // process_conns returns, but stop(true) promises that the port is free when
+  // the dispatch returns, but stop(true) promises that the port is free when
   // it returns: a new listener on the same port must still bind in that turn.
   test("server.stop(true) then Bun.serve on the same port inside an H3 handler binds", async () => {
     // The client runs in the same subprocess: the rebind releases the old fd
@@ -1233,7 +1272,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 
   // `using server` disposes with stop(true). Here the scope ends in a
   // continuation of a promise that the handler resolved, so the disposal runs
-  // inside process_conns like the stop(true) calls above.
+  // inside the dispatch like the stop(true) calls above.
   test("a `using` server disposed after a handler-resolved await sends CONNECTION_CLOSE", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
@@ -1268,7 +1307,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
   });
 
   // A graceful server.stop() from the same place must not enter the engine
-  // either. The GOAWAY goes out after process_conns returns and the request
+  // either. The GOAWAY goes out after the dispatch returns and the request
   // that is in the handler still completes. `warm` runs one request first, so
   // the connection that carries the in-flight request is not a new one.
   test.each([
@@ -1311,12 +1350,10 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
   });
 
   // GOAWAY rejects new requests only (RFC 9114 section 5.2). The peer can still
-  // open its control and QPACK streams, and an lsquic client opens its QPACK
-  // encoder stream when the server's SETTINGS arrive. On a new connection that
-  // is after the GOAWAY of a stop() in the first handler. lsquic answered that
-  // stream with STOP_SENDING, which a client has to treat as
-  // H3_CLOSED_CRITICAL_STREAM: it closed the connection, and the request that
-  // stop() was draining died with it.
+  // open its control and QPACK streams, which on a new connection can be after
+  // the GOAWAY of a stop() in the first handler. A client has to treat
+  // STOP_SENDING for such a stream as H3_CLOSED_CRITICAL_STREAM: it closes the
+  // connection, and the request that stop() is draining dies with it.
   //
   // The node:quic client shares this thread with the server, so the order is
   // exact. The request is queued before the handshake completes and leaves with
@@ -1368,9 +1405,10 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         },
       });
       stream.closed.catch(() => {});
-      for await (const _ of stream as AsyncIterable<Uint8Array[]>) {
-      }
-      return status || "no response";
+      return Array.fromAsync(stream as AsyncIterable<Uint8Array[]>).then(
+        () => status,
+        (err: Error) => err.message,
+      );
     }
 
     let status = "";
@@ -1397,15 +1435,14 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 
     expect({ inHandler: await outcome, afterStop: await afterStop.promise, handled }).toEqual({
       inHandler: "200 late:body",
-      afterStop: "no response",
+      afterStop: "The QUIC stream was reset by the peer with error code 267", // H3_REQUEST_REJECTED
       handled: 1,
     });
     if (!client.destroyed) client.close().catch(() => {});
   });
 
-  // bughunt #3: server.stop() must not leave the lsquic engine pointing at a
-  // freed listen-socket. The follow-up GET should cleanly fail to connect,
-  // and the process must still be alive to exit 0 on its own.
+  // The follow-up GET should cleanly fail to connect, and the process must
+  // still be alive to exit 0 on its own.
   test("server.stop() with live H3 connections does not UAF", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
@@ -1434,12 +1471,6 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     });
   });
 
-  // end_stream()/end()/end_without_body()/force_close() captured a local
-  // copy of `resp`, cleared onAborted via detach_response(), then called
-  // end_request_streaming_and_drain() (whose drain_microtasks() can re-enter
-  // lsquic via drain_quic_if_necessary and free the H3 stream when a client
-  // RESET is queued) before the final resp.state() read.
-  // Only detectable under ASAN; release builds corrupt memory silently.
   test.skipIf(!isASAN)(
     "client abort during streaming response + pending request body does not UAF",
     async () => {
@@ -1459,8 +1490,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
                 ctrl.write("a");
                 ctrl.flush?.();
                 // Yield to a macro-task so the sink's resolve microtask runs
-                // with ctx->processing == 0 (outside lsquic), letting the
-                // drain_quic_if_necessary() re-entry reach process_conns.
+                // outside of the dispatch, letting drain_quic_if_necessary()
+                // start one.
                 await new Promise(r => setTimeout(r, 1));
                 ctrl.write("b");
                 ctrl.flush?.();
@@ -1531,8 +1562,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
   );
 
   // B: server.stop() (graceful) sends GOAWAY and lets in-flight H3 requests
-  // finish before the engine tears down. lsquic_engine_cooldown drops mini
-  // (still-handshaking) conns immediately, so we wait until the server has
+  // finish before the engine tears down. Connections that are still
+  // handshaking are dropped immediately, so we wait until the server has
   // actually entered every handler before stopping — no arbitrary sleep.
   test("graceful stop: in-flight H3 requests complete after server.stop()", async () => {
     const script = `
@@ -1562,8 +1593,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     await withCustomServer(script, async (port, send) => {
       const N = 4;
       const inflight = Array.from({ length: N }, () => fetchH3(port, "/slow").then(r => r.text()));
-      // Poll until the server has entered all N handlers (handshakes promoted),
-      // then it's safe to cooldown — drop_all_mini_conns won't bite.
+      // Poll until the server has entered all N handlers.
       while (true) {
         const r = await fetchH3(port, "/inflight").then(r => r.text());
         if (Number(r) >= N) break;
@@ -1571,7 +1601,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       send("stop");
       const results = await Promise.all(inflight);
       for (const r of results) expect(r).toBe("late");
-      // New connection during drain is rejected (engine cooling down).
+      // New connection during drain is rejected.
       await expect(fetchH3(port, "/", { signal: AbortSignal.timeout(DEAD_PORT_ABORT_MS) })).rejects.toThrow();
       send("exit");
     });
@@ -1664,11 +1694,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  // The HEADERS of the first response on a connection wait for the QPACK encoder
-  // stream, and lsquic takes no DATA until they are out. A small streamed body is
-  // therefore written, and the response ended, from the stream's writable
-  // callback. The same tick closes the finished stream, before the promise
-  // reaction of the body stream can run: the close has to end the request.
+  // A finished stream can be closed before the promise reaction of the body
+  // stream runs: the close has to end the request.
   // Each case has its own server, so its request is the first on a connection.
   describe("a streamed response body ends its request when the stream closes", () => {
     const bodies: Record<string, () => Bun.BodyInit> = {
@@ -1777,8 +1804,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       await Bun.sleep(200);
       ac.abort();
       await expect(p).rejects.toThrow();
-      // The signal fires from on_stream_close, which runs on the next
-      // process_conns tick after the RST lands.
+      // The signal fires once the RST has landed.
       let count = "0";
       for (let i = 0; i < 60 && count === "0"; i++) {
         count = await fetchH3(port, "/aborted").then(r => r.text());
@@ -1900,6 +1926,7 @@ async function h3Exchange(
           status = received[":status"] as string;
         },
       });
+      stream.onreset = (err: Error & { errorCode?: bigint }) => outcome.resolve(`reset ${err.errorCode}`);
       stream.closed.catch(() => {});
       let body = "";
       for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
@@ -1942,9 +1969,9 @@ describe("Bun.serve HTTP/3 request validation", () => {
     results.after = await h3Exchange(server.port!, requestHeaders("/"));
 
     expect(results).toEqual({
-      [JSON.stringify("a\r\nb: c")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
-      [JSON.stringify("a\nb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
-      [JSON.stringify("a\rb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      [JSON.stringify("a\r\nb: c")]: "reset 270",
+      [JSON.stringify("a\nb")]: "reset 270",
+      [JSON.stringify("a\rb")]: "reset 270",
       wellFormed: "200 1",
       after: "200 1",
     });
@@ -2031,7 +2058,7 @@ describe("Bun.serve HTTP/3 request validation", () => {
     }).toEqual({
       atTheLimit: "200",
       overTheLimit: "431 ",
-      farOverTheLimit: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      farOverTheLimit: "reset 270",
       after: "200 " + JSON.stringify({ host: "localhost" }),
     });
   });
@@ -2145,7 +2172,7 @@ describe("Bun.serve HTTP/3 request validation", () => {
         }).toEqual({
           atTheLimit: 200,
           overTheLimit: 431,
-          farOverTheLimit: "HTTP3StreamReset",
+          farOverTheLimit: "HTTP3ProtocolError",
           after: 200,
         });
       },
@@ -2321,9 +2348,7 @@ describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of 
     expect(await exchange(server, { handshakeFirst: true })).toEqual(expected);
   });
 
-  // The request leaves with the client's handshake. The server then still has
-  // the first byte of its QPACK encoder stream to send, and lsquic holds the 100
-  // header block back until that byte is out.
+  // The server then still has the first bytes of its control and QPACK streams to send.
   test("on the first request of a connection, sent with the handshake", async () => {
     await using server = serve();
     expect(await exchange(server, { handshakeFirst: false })).toEqual(expected);

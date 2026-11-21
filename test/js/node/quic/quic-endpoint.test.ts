@@ -1,8 +1,5 @@
-// lsquic fixes HTTP/3-vs-raw framing per client *engine*, set by the first
-// connect() through an endpoint; a later connect in the other mode must fail
-// loudly instead of silently reusing an engine that cannot frame it.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { readFileSync } from "node:fs";
@@ -14,32 +11,37 @@ const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
 const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
 
-describe("QuicEndpoint client-engine mode", () => {
-  test("an explicit endpoint rejects a connect() in the other mode", async () => {
-    await using server = await listen(
-      s => {
-        s.onerror = () => {};
-        s.closed.catch(() => {});
-      },
-      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"], transportParams: { maxIdleTimeout: 1 } },
-    );
-
-    const endpoint = new QuicEndpoint();
-    const raw = await connect(server.address!, {
-      endpoint,
-      alpn: "quic-test",
-      verifyPeer: "manual",
-      transportParams: { maxIdleTimeout: 1 },
-    } as SessionOptions);
-    await raw.opened;
-    raw.close();
-
-    // The engine is raw now; an h3 (default-ALPN) connect cannot reuse it.
-    expect(() => connect(server.address!, { endpoint, verifyPeer: "manual" } as SessionOptions)).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_STATE" }),
-    );
-    await endpoint.close();
+test("one endpoint carries raw and HTTP/3 client sessions side by side", async () => {
+  const sni = { "*": { keys: [key], certs: [cert] } };
+  await using rawServer = await listen(
+    session => {
+      session.onstream = stream => stream.setBody(new TextEncoder().encode("raw"));
+    },
+    { sni, alpn: ["quic-test"] },
+  );
+  await using h3Server = await listen(session => void (session.onstream = () => {}), {
+    sni,
+    onheaders(this: any) {
+      this.sendHeaders({ ":status": "200" });
+      this.setBody(new TextEncoder().encode("h3"));
+    },
   });
+
+  await using endpoint = new QuicEndpoint();
+  const [raw, h3] = await Promise.all([
+    connect(rawServer.address!, { endpoint, alpn: "quic-test", verifyPeer: "manual" } as SessionOptions),
+    connect(h3Server.address!, { endpoint, verifyPeer: "manual" } as SessionOptions),
+  ]);
+  const streams = await Promise.all([
+    raw.createBidirectionalStream({ body: new Uint8Array(1) }),
+    h3.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+    }),
+  ]);
+  const text = async (stream: AsyncIterable<Uint8Array[]>) =>
+    Buffer.concat((await Array.fromAsync(stream)).flat()).toString();
+  expect(await Promise.all(streams.map(stream => text(stream as any)))).toEqual(["raw", "h3"]);
+  await Promise.all([raw.close(), h3.close()]);
 });
 
 describe("endpoint blockList", () => {
@@ -172,10 +174,8 @@ describe("node:quic under --isolate", () => {
   }, 30000);
 });
 
-// An endpoint that both listens and dials keeps two lsquic engines on one
-// socket. A 1-RTT packet for the client leg that also reaches the server
-// engine misses its conns_hash, and the server engine answers unknown packets
-// with a stateless reset -- at our own live connection.
+// An endpoint that listens answers unknown packets with a stateless reset.
+// The packets of a connection that it dialed from the same socket are not unknown.
 describe("dual-mode endpoint", () => {
   test("does not stateless-reset its own client connection", async () => {
     const tp = { maxIdleTimeout: 1 };
@@ -219,9 +219,7 @@ describe("dual-mode endpoint", () => {
 });
 
 // RFC 9000 §18.2: maxIdleTimeout 0 disables the idle timeout, and node stores
-// it as `max_idle_timeout * NGTCP2_SECONDS` so 0 survives. lsquic reads its
-// seconds field whenever the ms field is zero, so 0 has to reach both or it
-// silently becomes the 10s default.
+// it as `max_idle_timeout * NGTCP2_SECONDS` so 0 survives.
 describe("transportParams.maxIdleTimeout", () => {
   test("0 disables the idle timeout instead of falling back to the default", async () => {
     const sniOpt = { "*": { keys: [key], certs: [cert] } };
@@ -255,8 +253,7 @@ describe("transportParams.maxIdleTimeout", () => {
 // A graceful close() waits for live sessions to drain, but the listener kept
 // accepting: each new session re-filled `sessions`, so the
 // `closing && sessions.is_empty()` finish gate never tripped and `closed`
-// never resolved. Bun's own HTTP/3 listener refuses in on_new_conn while
-// closing (packages/bun-usockets/src/quic.cpp us_quic_on_new_conn).
+// never resolved.
 describe("endpoint.close() while a session is live", () => {
   test("stops accepting new sessions so closed can resolve", async () => {
     const tp = { maxIdleTimeout: 30 };
@@ -354,79 +351,5 @@ describe("a handshake in flight", () => {
         exitCode: 0,
       });
     },
-  );
-});
-
-// lsquic queues a stateless reset for retry when its send fails. The endpoint socket sets IP_RECVERR,
-// so on Linux the ICMP port unreachable for one reset fails the next send with ECONNREFUSED.
-describe("endpoint.close() with an unsent stateless reset", () => {
-  test.skipIf(!isASAN || !isLinux)(
-    "frees the reset's connection object",
-    async () => {
-      const fixture = `
-        import { createPrivateKey } from "node:crypto";
-        import { readFileSync } from "node:fs";
-        import { listen } from "node:quic";
-
-        const key = createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}));
-        const cert = readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))});
-        const server = await listen(async s => {
-          await s.closed.catch(() => {});
-        }, {
-          sni: { "*": { keys: [key], certs: [cert] } },
-          transportParams: { maxIdleTimeout: 1 },
-        });
-        const { port } = server.address;
-
-        // A short-header packet with an unknown DCID. The server answers each one with a stateless reset.
-        const stray = fill => Buffer.alloc(64, fill);
-
-        // The server socket's first writable event retries unsent packets, so wait until it has fired.
-        const answered = Promise.withResolvers();
-        const live = await Bun.udpSocket({ hostname: "127.0.0.1", socket: { data: () => answered.resolve() } });
-        live.send(stray(0x40), port, "127.0.0.1");
-        await answered.promise;
-        live.close();
-
-        // Trigger two resets to ports that close before the server answers. The ICMP
-        // error for the first reset makes the second send fail.
-        const fills = [0x41, 0x42];
-        const gone = await Promise.all(fills.map(() => Bun.udpSocket({ hostname: "127.0.0.1" })));
-        gone.forEach((socket, i) => socket.send(stray(fills[i]), port, "127.0.0.1"));
-        for (const socket of gone) socket.close();
-        while (server.stats.statelessResetCount < 3n) await new Promise(resolve => setImmediate(resolve));
-        console.log("resets=" + server.stats.statelessResetCount + " sent=" + server.stats.packetsSent);
-        await server.close();
-
-        // The loop's send buffer still points into the unsent reset. Send one more
-        // datagram to overwrite it, so LeakSanitizer doesn't see the reset as reachable.
-        const last = await Bun.udpSocket({ hostname: "127.0.0.1" });
-        last.send(Buffer.alloc(8), last.port, "127.0.0.1");
-        last.close();
-      `;
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", fixture],
-        env: {
-          ...bunEnv,
-          NODE_NO_WARNINGS: "1",
-          BUN_DESTRUCT_VM_ON_EXIT: "1",
-          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      // sent=2 means the third reset was still unsent when the engine was destroyed.
-      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: "resets=3 sent=2",
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    // LeakSanitizer needs more than the default 5 s on a debug build.
-    60_000,
   );
 });

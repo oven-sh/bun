@@ -1,7 +1,6 @@
 //! Native implementation of `node:quic` (reference: node/src/quic/*, v26.3.0).
 
 pub(crate) mod endpoint;
-pub(crate) mod ffi;
 pub(crate) mod session;
 pub(crate) mod stream;
 pub(crate) mod tls;
@@ -28,16 +27,14 @@ pub(crate) mod callbacks {
             .with_mut(|callbacks| callbacks.set(global, holder));
     }
 
-    pub(crate) fn get(global: &JSGlobalObject, name: &str) -> Option<JSValue> {
-        let holder = global
-            .bun_vm()
-            .rare_data()
-            .node_quic_callbacks
-            .get()
-            .get()?;
-        match holder.get(global, name) {
-            Ok(Some(value)) if value.is_callable() => Some(value),
-            _ => None,
+    pub(crate) fn run(global: &JSGlobalObject, name: &str, this: JSValue, args: &[JSValue]) {
+        let vm = global.bun_vm();
+        if let Some(holder) = vm.rare_data().node_quic_callbacks.get().get()
+            && let Ok(Some(callback)) = holder.get(global, name)
+            && callback.is_callable()
+        {
+            let context = bun_event_loop::ContextId::NONE;
+            (vm.event_loop()).run_callback(context, callback, global, this, args);
         }
     }
 }

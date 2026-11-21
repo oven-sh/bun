@@ -72,6 +72,7 @@ members = [
   "src/highway",
   "src/histogram",
   "src/hpack",
+  "src/qpack",
   "src/http1",
   "src/http_jsc",
   "src/http_types",
@@ -128,7 +129,8 @@ members = [
   "src/shell_parser",
   "src/tcc_sys",
   "src/uws_sys",
-  "src/lsquic_sys",
+  "src/quic",
+  "src/quic_tls",
   "src/zstd",
   "src/zstd/decoder",
   "src/zstd/encoder",
@@ -453,6 +455,7 @@ bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
 bun_hpack = { path = "src/hpack" }
+bun_qpack = { path = "src/qpack" }
 bun_http1 = { path = "src/http1" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
@@ -509,7 +512,8 @@ bun_spawn = { path = "src/spawn" }
 bun_spawn_sys = { path = "src/spawn_sys" }
 bun_tcc_sys = { path = "src/tcc_sys" }
 bun_uws_sys = { path = "src/uws_sys" }
-bun_lsquic_sys = { path = "src/lsquic_sys" }
+bun_quic = { path = "src/quic" }
+bun_quic_tls = { path = "src/quic_tls" }
 bun_global_allocator = { path = "src/global_allocator" }
 bun_icu_data = { path = "src/icu_data" }
 bun_zstd = { path = "src/zstd" }
@@ -548,8 +552,16 @@ opt-level = 3
 [profile.dev.package.bun_http1]
 opt-level = 3
 
-# Runs for every field of an HTTP/2 header block.
+# Run for every field of an HTTP/2 header block or an HTTP/3 field section.
 [profile.dev.package.bun_hpack]
+opt-level = 3
+[profile.dev.package.bun_qpack]
+opt-level = 3
+
+# Runs for every packet of a QUIC connection.
+[profile.dev.package.bun_quic]
+opt-level = 3
+[profile.dev.package.bun_quic_tls]
 opt-level = 3
 
 # Runs for every byte that is compressed or decompressed.

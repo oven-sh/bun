@@ -228,23 +228,10 @@ impl PosixLoop {
         unsafe { &*c::uws_get_loop() }
     }
 
-    /// Packetize HTTP/3 stream writes that happened since the last
-    /// process_conns. Early-returns when nothing wrote, so safe to call
-    /// from drainMicrotasks without per-iteration cost.
+    /// Sends what has been written to QUIC streams. Early-returns when nothing
+    /// was, so safe to call from drainMicrotasks without per-iteration cost.
     pub fn drain_quic_if_necessary(&self) {
-        if !self.internal_loop_data.nq_head.get().is_null() {
-            // Full pass with close dispatch deferred to the next loop point.
-            // SAFETY: `self` is this thread's live loop. The walk holds its successor while JS
-            // runs, and relies on an endpoint staying rooted until its close is delivered.
-            unsafe { c::us_nq_loop_drain(self) };
-        }
-        if !self.internal_loop_data.has_quic() {
-            return;
-        }
-        // SAFETY: `self` is this thread's live loop. `processing` keeps this out of every lsquic
-        // callback but the `on_stream_open` that `us_quic_socket_make_stream` makes, and that one
-        // does not flush.
-        unsafe { c::us_quic_loop_flush_if_pending(self) };
+        crate::quic::drivers::flush(self);
     }
 
     /// `None` if epoll/kqueue cannot be created (EMFILE).
@@ -408,19 +395,7 @@ impl WindowsLoop {
     }
 
     pub fn drain_quic_if_necessary(&self) {
-        if !self.internal_loop_data.nq_head.get().is_null() {
-            // Full pass with close dispatch deferred to the next loop point.
-            // SAFETY: `self` is this thread's live loop. The walk holds its successor while JS
-            // runs, and relies on an endpoint staying rooted until its close is delivered.
-            unsafe { c::us_nq_loop_drain(self) };
-        }
-        if !self.internal_loop_data.has_quic() {
-            return;
-        }
-        // SAFETY: `self` is this thread's live loop. `processing` keeps this out of every lsquic
-        // callback but the `on_stream_open` that `us_quic_socket_make_stream` makes, and that one
-        // does not flush.
-        unsafe { c::us_quic_loop_flush_if_pending(self) };
+        crate::quic::drivers::flush(self);
     }
 
     /// `None` if `uv_loop_init` fails (handle exhaustion).
@@ -539,8 +514,6 @@ mod c {
             ext_size: c_uint,
         ) -> *mut Loop;
         pub(super) fn us_loop_free(loop_: *mut Loop);
-        pub(super) fn us_quic_loop_flush_if_pending(loop_: &Loop);
-        pub(super) fn us_nq_loop_drain(loop_: &Loop);
         #[cfg(windows)]
         pub(super) fn us_loop_run(loop_: &Loop);
         #[cfg(windows)]

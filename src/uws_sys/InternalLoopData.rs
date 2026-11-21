@@ -35,10 +35,8 @@ pub struct InternalLoopData {
     sweep_timer_count: Cell<i32>,
     wakeup_async: Cell<*mut us_internal_async>,
     head: Cell<*mut SocketGroup>,
-    quic_head: Cell<*mut c_void>,
-    quic_next_tick_us: Cell<i64>,
-    /// `us_nq_driver_s *` — node:quic's loop driver list.
-    pub(crate) nq_head: Cell<*mut c_void>,
+    pub(crate) quic_drivers: Cell<*const c_void>,
+    pub(crate) quic_next_tick_us: Cell<i64>,
     #[cfg(windows)]
     quic_timer: Cell<*mut Timer>,
     pub iterator: Cell<*mut SocketGroup>,
@@ -83,16 +81,11 @@ impl InternalLoopData {
     /// When the QUIC engines next need a tick, if the loop has any.
     #[inline]
     pub fn quic_next_tick_us(&self) -> Option<i64> {
-        if self.quic_head.get().is_null() {
+        if self.quic_drivers.get().is_null() {
             None
         } else {
             Some(self.quic_next_tick_us.get())
         }
-    }
-
-    #[inline]
-    pub(crate) fn has_quic(&self) -> bool {
-        !self.quic_head.get().is_null()
     }
 
     pub(crate) fn should_enable_date_header_timer(&self) -> bool {

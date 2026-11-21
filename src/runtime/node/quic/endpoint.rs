@@ -1,30 +1,40 @@
-//! `QuicEndpoint` native handle (lsquic-backed) — Node's
-//! `internalBinding('quic').Endpoint` analog (node/src/quic/endpoint.{h,cc}).
+//! Node's `internalBinding('quic').Endpoint` analog (node/src/quic/endpoint.{h,cc}).
 
-use core::cell::Cell;
-use core::ffi::{c_char, c_int, c_uint, c_void};
-use core::ptr::{null, null_mut};
+use core::cell::{Cell, RefCell, RefMut};
+use core::ffi::{c_int, c_void};
+use core::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV6};
+use core::ptr::null_mut;
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, VecDeque};
+use std::rc::Rc;
 
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::smallvec::SmallVec;
 use bun_io::KeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
     self as jsc, ArrayBuffer, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc,
 };
-use bun_lsquic_sys as lsquic;
+use bun_ptr::BackRef;
+use bun_quic::{
+    Addresses, Algorithm, Batch, Config, Duration, FieldLimits, Http3Config, Incoming, Instant,
+    PreferredAddress, Side, TokenBucket, Unrouted, Version,
+};
 use bun_uws as uws;
+use bun_uws::quic::drivers::{Driver, Registration};
+use bun_uws::quic::io::{Binding, Outbox, now, or_loopback};
 
 use crate::jsc_hooks::timer_all;
+use crate::socket::SocketAddress;
 use crate::timer::{EventLoopTimerTag, OwnedTimer};
 
 use super::callbacks;
-use super::ffi::lsquic_callback;
 use super::now_ns;
-use super::session::{self, QuicSession, SOCKADDR_IN_LEN, SOCKADDR_IN6_LEN, StoredAddr};
-use super::stream;
-use super::tls::{TlsConfig, TlsContext};
-
-bun_core::declare_scope!(quic, hidden);
+use super::session::{
+    Application, CRYPTO_ERROR_HANDSHAKE_FAILURE, CloseType, QuicSession, SessionEvent,
+    address_to_js,
+};
+use super::tls::TlsConfig;
 
 /// Mirrors Node's `Endpoint::State`.
 #[repr(C)]
@@ -63,32 +73,21 @@ pub(crate) const ENDPOINT_STATS_FIELDS: &[&str] = &[
 const IDX_STATS_SERVER_BUSY_COUNT: usize = 8;
 const IDX_STATS_STATELESS_RESET_COUNT: usize = 13;
 const IDX_STATS_STATELESS_RESET_RATE_LIMITED: usize = 14;
-/// QUIC transport error code for CONNECTION_REFUSED (RFC 9000 §20.1).
-const QUIC_TRANSPORT_CONNECTION_REFUSED: core::ffi::c_uint = 0x2;
-/// QUIC v1 wire version (RFC 9000).
-const QUIC_VERSION_1: u32 = 0x0000_0001;
-/// QUIC v2 wire version (RFC 9369 §3).
-const QUIC_VERSION_2: u32 = 0x6b33_43cf;
-const INITIAL_TYPE_V1: u8 = 0b00; // RFC 9000 §17.2
-const INITIAL_TYPE_V2: u8 = 0b01; // RFC 9369 §3.2
-/// Longest connection ID QUIC v1/v2 allow (RFC 9000 §17.2).
-const MAX_CID_LEN: usize = 20;
-/// Long-header form bit (byte0 bit 7; RFC 8999 §5.1).
-const LONG_HEADER_FORM_BIT: u8 = 0x80;
-const LONG_HEADER_TYPE_MASK: u8 = 0x3;
-/// Byte offset of the DCID length in a long-header packet: form/type byte +
-/// 4-byte version (RFC 8999 §5.1).
-const LONG_HEADER_DCID_LEN_OFFSET: usize = 5;
-/// Shortest parseable long header: form byte + version + dcid_len + ≥1 CID
-/// byte (RFC 8999 §5.1).
-const LONG_HEADER_MIN_LEN: usize = 7;
+const VERSIONS: &[Version] = &[Version::V1, Version::V2];
 /// Matches Node's 1200-byte default.
 const DEFAULT_DATAGRAM_FRAME_SIZE: u64 = 1200;
-const IPV4_ADDR_LEN: usize = 4;
-const IPV6_ADDR_LEN: usize = 16;
-/// QUIC CRYPTO_ERROR base (RFC 9001 §4.8) + TLS handshake_failure(40).
-const CRYPTO_ERROR_HANDSHAKE_FAILURE: u64 = 0x0100 + 40;
-const PROVISIONAL_TIMEOUT_NS: u64 = 10_000_000_000;
+/// RFC 9000 §18.2.
+const MIN_UDP_PAYLOAD_SIZE: u64 = 1200;
+const RAW_CLIENT_MAX_STREAMS_UNI: u64 = 100;
+const MAX_HEADER_LENGTH: usize = 0xff_ffff;
+/// For a field section, of which what is beyond `maxHeaderLength` is dropped.
+const MIN_TOLERATED_HEADER_LENGTH: usize = 128 * 1024;
+/// node/src/quic/endpoint.h.
+const DEFAULT_STATELESS_RESET_RATE: f64 = 100.0;
+const DEFAULT_STATELESS_RESET_BURST: f64 = 200.0;
+const VERNEG_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// After which the rest of the loop gets its turn.
+const MAX_ROUNDS: usize = 16;
 
 const IDX_STATS_CREATED_AT: usize = 0;
 const IDX_STATS_DESTROYED_AT: usize = 1;
@@ -113,712 +112,259 @@ const PREFERRED_ADDRESS_USE: u64 = 1;
 const DEFAULT_MAX_IDLE_TIMEOUT_SECS: u64 = 10;
 pub(super) const MS_PER_SEC: u64 = 1_000;
 
-/// Copy a sockaddr sized by its family (sockaddr_in = 16, sockaddr_in6 = 28)
-/// so an AF_INET address never over-reads past its allocation.
-pub(super) fn stored_addr_from_sockaddr(ptr: *const c_void) -> StoredAddr {
-    use crate::socket::socket_address::inet;
-    if ptr.is_null() {
-        return StoredAddr::default();
-    }
-    // SAFETY: caller passes a live sockaddr; the family field is within the
-    // smallest sockaddr variant on every supported platform.
-    let family = unsafe {
-        #[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "ios"))]
-        {
-            *ptr.cast::<u8>().add(1) as u16
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "freebsd", target_os = "ios")))]
-        {
-            u16::from_ne_bytes([*ptr.cast::<u8>(), *ptr.cast::<u8>().add(1)])
-        }
-    };
-    let len = if family == inet::AF_INET6 as u16 {
-        SOCKADDR_IN6_LEN
-    } else {
-        SOCKADDR_IN_LEN
-    };
-    StoredAddr::from_raw(ptr.cast(), len)
-}
-
-fn conn_peer_addr(conn: lsquic::Conn) -> Option<StoredAddr> {
-    let mut local: *const c_void = null();
-    let mut peer: *const c_void = null();
-    // SAFETY: `conn` is live for the duration of the callback that passed it.
-    if unsafe {
-        lsquic::lsquic_conn_get_sockaddr(
-            conn.raw(),
-            core::ptr::from_mut(&mut local),
-            core::ptr::from_mut(&mut peer),
-        )
-    } == 0
-        && !peer.is_null()
-    {
-        Some(stored_addr_from_sockaddr(peer))
-    } else {
-        None
+pub(super) fn socket_address(address: SocketAddr) -> SocketAddress {
+    match address.ip() {
+        IpAddr::V4(ip) => SocketAddress::init_ipv4(ip.octets(), address.port()),
+        IpAddr::V6(ip) => SocketAddress::init_ipv6(ip.octets(), address.port(), 0, 0),
     }
 }
 
-struct ProvisionalSession {
-    dcid: Vec<u8>,
-    peer: StoredAddr,
-    created_ns: u64,
-    session: *mut QuicSession,
+fn address_from_js(value: JSValue) -> Option<SocketAddr> {
+    let address = value.as_class_ref::<SocketAddress>()?;
+    Some(match address._addr.as_sin6() {
+        Some(it) => SocketAddrV6::new(it.addr.into(), address.port(), 0, it.scope_id).into(),
+        None => (address._addr.as_v4()?.to_ne_bytes(), address.port()).into(),
+    })
 }
 
-struct BindConfig {
-    host: Vec<u8>,
-    port: u16,
+type SniContexts = RefCell<Vec<(Vec<u8>, OwnedSslCtx)>>;
+
+struct Server {
+    config: Rc<Config>,
+    tls: OwnedSslCtx,
+    alpn: Rc<[u8]>,
+    allows_early_data: bool,
 }
 
-impl Default for BindConfig {
-    fn default() -> Self {
-        BindConfig {
-            host: b"127.0.0.1\0".to_vec(),
-            port: 0,
-        }
-    }
-}
-
-/// `#[repr(C)]` so `vtable_ptr` is at offset 0 — the C shim reads it via
-/// `*(us_nq_vtable**)peer_ctx`. Without it Rust may reorder fields.
-#[repr(C)]
 pub(crate) struct QuicEndpoint {
-    /// MUST stay the first field — `ea_get_ssl_ctx`'s `peer_ctx` is the
-    /// QuicEndpoint pointer, and the C shim's thunk reads
-    /// `*(us_nq_vtable**)peer_ctx` to recover the vtable.
-    vtable_ptr: *const lsquic::NqVtable,
-    /// The vtable storage itself; `vtable_ptr` and `ea_stream_if_ctx` point
-    /// into this box, so it must outlive both engines.
-    vtable: JsCell<Option<Box<lsquic::NqVtable>>>,
     /// Borrowed views into JSC-owned ArrayBuffers (the wrapper owns both the
     /// ArrayBuffer and this struct, so the pointers are valid for our life).
     state: *mut EndpointState,
     stats: *mut u64,
-    closing: Cell<bool>,
+    pub(super) closing: Cell<bool>,
     closed: Cell<bool>,
 
-    socket: Cell<Option<*mut uws::udp::Socket>>,
-    bind_config: JsCell<BindConfig>,
-    local_addr: Cell<StoredAddr>,
+    binding: Cell<Option<Binding>>,
+    bind_address: SocketAddr,
+    local_addr: Cell<Option<SocketAddr>>,
     poll_ref: KeepAlive,
     this_value: JsCell<JsRef>,
 
-    /// Both can coexist on one endpoint — Node allows that.
-    server_engine: Cell<*mut lsquic::lsquic_engine>,
-    client_engine: Cell<*mut lsquic::lsquic_engine>,
-    server_tls: JsCell<Option<TlsContext>>,
-    client_tls: JsCell<Option<TlsContext>>,
-    sni_contexts: JsCell<Vec<(Vec<u8>, TlsContext)>>,
-    server_alpn_wire: JsCell<Vec<u8>>,
-    send_scratch: JsCell<Vec<u8>>,
-    /// NUL-terminated ALPN string for the client engine's `ea_alpn` (must
-    /// outlive the engine; lsquic stores the pointer).
-    client_alpn: JsCell<Vec<u8>>,
-    server_alpn: JsCell<Vec<u8>>,
-    server_is_http: Cell<bool>,
-    client_is_http: Cell<bool>,
+    /// For both roles — Node allows that.
+    quic: RefCell<bun_quic::Endpoint>,
+    outbox: RefCell<Outbox>,
+    server: JsCell<Option<Server>>,
+    sni_contexts: Rc<SniContexts>,
     pub(super) server_verify_client: Cell<bool>,
     server_session_options: JsCell<Option<bun_jsc::Strong>>,
-    disable_stateless_reset: Cell<bool>,
-    stateless_reset_burst: Cell<u32>,
-    stateless_reset_rate: Cell<f64>,
-    /// Pre-encoded HTTP/3 ORIGIN frame payload (RFC 9412). lsquic borrows
-    /// the bytes for the engine's lifetime — set before engine creation,
-    /// never mutated afterwards.
-    origin_blob: JsCell<Vec<u8>>,
+    stateless_resets: Option<RefCell<TokenBucket>>,
 
     processing: Cell<bool>,
-    followup_due: Cell<bool>,
+    /// An iteration of the loop. What has been sent until then is received first, if it is for this process.
+    followup_after: Cell<Option<u64>>,
+    wake_at: Cell<Option<Instant>>,
+    /// In the order of their addresses.
     sessions: JsCell<Vec<*mut QuicSession>>,
-    pub(super) server_local_tp: JsCell<lsquic::NqTransportParams>,
-    pub(super) client_local_tp: JsCell<lsquic::NqTransportParams>,
-    pending_new_sessions: JsCell<Vec<*mut QuicSession>>,
-    /// Server sessions announced at Initial receipt (Node's event order).
-    provisional: JsCell<Vec<ProvisionalSession>>,
-    pending_verneg: JsCell<Vec<(*mut QuicSession, [u8; VERNEG_PROBE_CID_LEN], u64)>>,
-    dead_provisional_peers: JsCell<Vec<(StoredAddr, u64)>>,
+    /// The ones that the next pass has to see to.
+    marked_sessions: JsCell<VecDeque<*mut QuicSession>>,
+    sessions_per_host: RefCell<BTreeMap<IpAddr, usize>>,
+    pending_new_sessions: JsCell<VecDeque<*mut QuicSession>>,
+    pending_verneg: JsCell<Vec<(*mut QuicSession, [u8; VERNEG_PROBE_CID_LEN], Instant)>>,
     block_list: Cell<Option<*mut crate::node::net::block_list::BlockList>>,
-    early_keylog: JsCell<Vec<(*mut c_void, StoredAddr, Vec<u8>)>>,
-    block_list_js: JsCell<Option<bun_jsc::Strong>>,
+    _block_list_js: Option<bun_jsc::Strong>,
     block_list_allow: Cell<bool>,
     pub(crate) event_loop_timer: OwnedTimer,
     pending_endpoint_close: Cell<bool>,
-    /// Intrusive node on the loop's node:quic driver list; linked only while
-    /// this endpoint holds a socket. `us_nq_loop_flush_if_pending` runs the
-    /// process pass once per loop turn when `pending` is set.
-    nq_driver: JsCell<UsNqDriver>,
-    nq_registered: Cell<bool>,
+    close_context: Cell<u8>,
+    /// Registered with the loop while this endpoint holds a socket.
+    driver: JsCell<Option<(Rc<LoopDriver>, Registration)>>,
+    driver_pending: Cell<bool>,
     /// Set while the pass runs from the microtask drain: session Closed events
     /// are requeued for the next loop point instead of dispatching mid-chain.
     pub(super) defer_closes: Cell<bool>,
     /// Native-entry depth, node's Session::SendPendingDataScope. Non-zero means
-    /// a native callback (on_data, the timer) is on the stack and owns the
-    /// flush when it unwinds -- JS it dispatches (onSessionNew and friends) must
-    /// not re-enter lsquic mid-callback, which is why `processing` alone is not
-    /// enough: on_data announces to JS *before* it feeds packets.
+    /// a native callback (on_data, the driver) is on the stack and owns the
+    /// flush when it unwinds.
     send_scope_depth: Cell<u32>,
 
-    global: Cell<*const JSGlobalObject>,
+    global: *const JSGlobalObject,
 }
 
-/// Mirrors `struct us_nq_driver_s` in node_quic_shim.c. Owned by the endpoint
-/// it belongs to; the C side only ever links it into the loop's list.
-#[repr(C)]
-pub(crate) struct UsNqDriver {
-    next: *mut UsNqDriver,
-    owner: *mut c_void,
-    pending: c_int,
-}
+struct LoopDriver(BackRef<QuicEndpoint>);
 
-impl Default for UsNqDriver {
-    fn default() -> Self {
-        Self {
-            next: null_mut(),
-            owner: null_mut(),
-            pending: 0,
+impl Driver for LoopDriver {
+    /// The writes a JS turn queued leave as one batch.
+    fn process(&self) {
+        self.0.run_driver_pass(false);
+    }
+
+    /// Session close events hold until the next loop point, so a running microtask chain never
+    /// observes a session ending mid-chain (node's loop never interleaves that way).
+    fn flush(&self) {
+        self.0.run_driver_pass(true);
+    }
+
+    fn timeout(&self) -> Option<Instant> {
+        match self.0.has_pass_pending() || self.0.followup_after.get().is_some() {
+            true => Some(Instant::default()),
+            false => self.0.timeout(),
         }
     }
-}
-
-unsafe extern "C" {
-    fn us_nq_loop_register(loop_: &uws::Loop, d: *mut UsNqDriver, owner: *mut c_void);
-    fn us_nq_loop_unregister(loop_: &uws::Loop, d: *mut UsNqDriver);
 }
 
 impl QuicEndpoint {
-    /// Links this endpoint into the loop's driver list. Idempotent.
-    fn link_loop_driver(&self) {
-        if self.nq_registered.replace(true) {
-            return;
-        }
-        // SAFETY: the node lives in `self` and is only reachable through the
-        // list, which `unlink_loop_driver` clears before the endpoint dies.
-        unsafe {
-            us_nq_loop_register(
-                uws::Loop::get(),
-                self.nq_driver.as_ptr(),
-                core::ptr::from_ref(self).cast_mut().cast(),
-            );
+    /// Not to be held on to while JavaScript runs or allocates.
+    pub(super) fn quic(&self) -> RefMut<'_, bun_quic::Endpoint> {
+        self.wake();
+        self.quic.borrow_mut()
+    }
+
+    fn wake(&self) {
+        match self.driver.get() {
+            Some((_, registration)) if self.has_pass_pending() => registration.wake(),
+            Some((_, registration)) => registration.forget_timeout(),
+            None => {}
         }
     }
 
-    /// Unlinks from the loop's driver list. Idempotent; must run before the
-    /// endpoint can be freed so the walk never reaches dead memory.
-    fn unlink_loop_driver(&self) {
-        if !self.nq_registered.replace(false) {
-            return;
-        }
-        // SAFETY: registered by `link_loop_driver` on this same loop.
-        unsafe { us_nq_loop_unregister(uws::Loop::get(), self.nq_driver.as_ptr()) };
+    pub(super) fn mark_driver_pending(&self) {
+        self.driver_pending.set(true);
+        self.wake();
     }
 
-    /// Marks that lsquic has work queued, so the next driver pass runs.
-    fn mark_driver_pending(&self) {
-        self.nq_driver.with_mut(|d| d.pending = 1);
-    }
-
-    /// Runs a driver pass, or hands `pending` back when one cannot run now.
     /// `defer_closes` distinguishes the microtask-drain pass, which must not
     /// let a session end mid-chain, from the loop_pre/loop_post pass.
     fn run_driver_pass(&self, defer_closes: bool) {
-        if self.closed.get() {
-            return;
+        if self.has_pass_pending() || !defer_closes && self.is_pass_due() {
+            self.driver_pending.set(false);
+            self.defer_closes.set(defer_closes);
+            self.process();
+            self.defer_closes.set(false);
         }
-        // A pass is already on the stack (the walker cleared `pending` before
-        // calling): give the flag back so that pass's tail flush sees it,
-        // otherwise the write that set it waits out the backstop timer.
-        let global_ptr = self.global.get();
-        if self.send_scope_depth.get() != 0 || global_ptr.is_null() {
-            self.mark_driver_pending();
-            return;
-        }
-        // SAFETY: `global_ptr` is the realm that created this endpoint and
-        // outlives it; null was ruled out above.
-        let global = unsafe { &*global_ptr };
-        self.defer_closes.set(defer_closes);
-        self.process(global);
-        self.defer_closes.set(false);
     }
 
-    fn server_ssl_ctx(&self) -> *mut lsquic::SSL_CTX {
-        self.server_tls
-            .get()
-            .as_ref()
-            .or_else(|| self.client_tls.get().as_ref())
-            .map(|t| t.raw().cast())
-            .unwrap_or(null_mut())
+    /// A pass that is on the stack flushes at its end.
+    fn has_pass_pending(&self) -> bool {
+        self.driver_pending.get() && !self.scope_held()
     }
-}
 
-/// The microtask-drain pass: full processing, but session close events hold
-/// until the next loop point so a running microtask chain never observes a
-/// session ending mid-chain (node's loop never interleaves that way).
-///
-/// `owner` is the pointer `link_loop_driver` installed.
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__nodeQuic__drainEndpoint(owner: &QuicEndpoint) {
-    owner.run_driver_pass(true);
-}
+    fn plan_followup(&self) {
+        (self.followup_after).set(Some(uws::Loop::get().iteration_number() + 1));
+        self.wake();
+    }
 
-/// One process pass per loop turn (loop_pre/loop_post): the writes a JS turn
-/// queued leave as one engine pass and one sendmmsg batch.
-///
-/// `owner` is the pointer `link_loop_driver` installed.
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__nodeQuic__processEndpoint(owner: &QuicEndpoint) {
-    owner.run_driver_pass(false);
+    /// Every pass forgets it.
+    pub(super) fn plan_pass(&self, at: Instant) {
+        self.wake_at.update(|it| Some(it.unwrap_or(at).min(at)));
+        self.wake();
+    }
+
+    fn is_pass_due(&self) -> bool {
+        (self.followup_after.get()).is_some_and(|it| it < uws::Loop::get().iteration_number())
+            || self.timeout().is_some_and(|it| it <= now())
+    }
+
+    fn timeout(&self) -> Option<Instant> {
+        let probes = self.pending_verneg.get().iter().map(|it| it.2);
+        (probes
+            .chain(self.wake_at.get())
+            .chain(self.quic.borrow_mut().timeout()))
+        .min()
+    }
+
+    fn global<'a>(&self) -> &'a JSGlobalObject {
+        // SAFETY: the realm that created this endpoint outlives it.
+        unsafe { &*self.global }
+    }
+
+    fn of<'a>(socket: *mut uws::udp::Socket) -> &'a Self {
+        // SAFETY: it closes the socket before it goes away.
+        unsafe { &*uws::udp::Socket::opaque_mut(socket).user().cast() }
+    }
 }
 
 bun_event_loop::impl_timer_owner!(QuicEndpoint; from_timer_ptr => event_loop_timer);
 
-extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
-    let user = uws::udp::Socket::opaque_mut(socket).user();
-    if user.is_null() {
-        return;
-    }
-    // SAFETY: `user` is the QuicEndpoint, live until close.
-    let this = unsafe { &*user.cast::<QuicEndpoint>() };
-    if this.closed.get() {
-        return;
-    }
-    for engine in [this.server_engine.get(), this.client_engine.get()] {
-        if !engine.is_null() {
-            // SAFETY: engines are live while the endpoint is not closed.
-            unsafe { lsquic::lsquic_engine_send_unsent_packets(engine) };
+extern "C" fn on_drain(_socket: *mut uws::udp::Socket) {
+    for endpoint in registered_endpoints() {
+        if endpoint.outbox.borrow().is_blocked() {
+            endpoint.outbox.borrow_mut().unblock();
+            endpoint.mark_driver_pending();
         }
     }
-    this.schedule_process();
 }
-extern "C" fn on_close(_socket: *mut uws::udp::Socket) {}
-extern "C" fn on_recv_error(_socket: *mut uws::udp::Socket, _errno: c_int, _is_errqueue: c_int) {}
+
+extern "C" fn on_close(socket: *mut uws::udp::Socket) {
+    for endpoint in registered_endpoints() {
+        if endpoint.binding.get().is_some_and(|it| it.socket == socket) {
+            endpoint.binding.set(None);
+            endpoint.closing.set(true);
+            endpoint.close_context.set(CLOSECONTEXT_RECEIVE_FAILURE);
+            endpoint.abort_connections();
+            endpoint.plan_followup();
+        }
+    }
+    on_drain(socket);
+}
 
 thread_local! {
     /// A server may advertise another local endpoint's address as its
     /// preferred_address (RFC 9000 sec 9.6).
-    static ENDPOINT_REGISTRY: core::cell::RefCell<Vec<*mut QuicEndpoint>> =
-        const { core::cell::RefCell::new(Vec::new()) };
+    static ENDPOINT_REGISTRY: RefCell<Vec<BackRef<QuicEndpoint>>> = const { RefCell::new(Vec::new()) };
 }
 
-const ENDPOINT_REGISTRY_INLINE_CAP: usize = 4;
-
-fn registry_find_by_addr(addr: &StoredAddr, not: *const QuicEndpoint) -> Option<*mut QuicEndpoint> {
-    let want = addr.decode().map(|(f, p, ip)| (f, p, ip.to_vec()));
-    ENDPOINT_REGISTRY.with_borrow(|v| {
-        v.iter().copied().find(|&e| {
-            if core::ptr::eq(e, not) {
-                return false;
-            }
-            // SAFETY: registered endpoints are unregistered in finish_close
-            // before they can be freed.
-            let theirs = unsafe { (*e).local_addr.get() };
-            theirs.decode().map(|(f, p, ip)| (f, p, ip.to_vec())) == want
-        })
-    })
+/// They are live until JavaScript runs.
+fn registered_endpoints() -> SmallVec<[BackRef<QuicEndpoint>; 4]> {
+    ENDPOINT_REGISTRY.with_borrow(|v| SmallVec::from_slice(v))
 }
 
-/// Header byte 0 bit 7 (RFC 8999 sec 5.1): 1 = long header, 0 = short.
-const HEADER_FORM_LONG: u8 = 0x80;
-/// Minimum stateless reset size (RFC 9000 sec 10.3: header byte + 4+ random
-/// bytes + 16-byte token).
-const STATELESS_RESET_MIN_LEN: usize = 21;
-/// RFC 8999 sec 5.1: the second header bit is fixed to 1.
-const LONG_HEADER_FIXED_BIT: u8 = 0x40;
-/// A Version Negotiation packet carries version 0 (RFC 8999 sec 6).
-const VERSION_NEGOTIATION_VERSION: [u8; 4] = [0, 0, 0, 0];
-const VERSION_FIELD_LEN: usize = 4;
+/// Of a long header (RFC 8999 §5.1).
+const HEADER_FORM_AND_FIXED_BITS: u8 = 0xc0;
 const VERNEG_PROBE_CID_LEN: usize = 8;
 /// RFC 9000 sec 14.1: servers may drop Initial-like datagrams smaller than
 /// 1200 bytes, so the probe pads to the minimum.
 const VERNEG_PROBE_LEN: usize = 1200;
-const SHORT_HEADER_DCID_LEN: usize = 8;
 
 extern "C" fn on_data(
     socket: *mut uws::udp::Socket,
     buf: *mut uws::udp::PacketBuffer,
     packets: c_int,
 ) {
-    let user = uws::udp::Socket::opaque_mut(socket).user();
-    if user.is_null() {
+    let this = QuicEndpoint::of(socket);
+    let Some(binding) = this.binding.get() else {
         return;
-    }
-    // SAFETY: `user` was set to the QuicEndpoint at bind time
-    // and stays live until close; all mutated fields are Cell-based.
-    let this = unsafe { &*user.cast::<QuicEndpoint>() };
-    let global_ptr = this.global.get();
-    if global_ptr.is_null() {
-        return;
-    }
-    // SAFETY: endpoints only exist on the JS thread of this realm and the
-    // global outlives every live endpoint.
-    let global = unsafe { &*global_ptr };
-    let local = this.local_addr.get();
+    };
     // Apply a stashed close before feeding: a closing peer discards new
-    // streams rather than announcing them (RFC 9000 s10.2.1), and ci_close
-    // only schedules, so the engines have to run for it to take effect.
-    let mut closed_any = false;
-    for session in this.sessions.get().clone() {
-        if let Some(session) = this.live_session(session) {
-            closed_any |= session.flush_pending_graceful();
-        }
+    // streams rather than announcing them (RFC 9000 s10.2.1).
+    if this.flush_pending_graceful() {
+        this.drive_once();
     }
-    if closed_any {
-        this.drive_engines_once();
-    }
-    // This callback dispatches JS (provisional announce) before it feeds
-    // packets; hold the send scope so that JS cannot flush lsquic underneath us.
+    // A graceful close a handler queues during this dispatch must not join the
+    // same flight as the data the handlers wrote (sessions stash it; the next
+    // depth-0 pass applies it).
     let _send_scope = this.send_scope();
-    bun_boringssl_sys::ERR_clear_error();
-    for i in 0..packets {
-        let payload = uws::udp::PacketBuffer::opaque_mut(buf).get_payload(i);
-        let peer = uws::udp::PacketBuffer::opaque_mut(buf).get_peer(i);
-        if payload.is_empty() {
-            continue;
-        }
+    let now = now();
+    let receive = |from: &Addresses, payload: &mut [u8]| {
         this.add_stat(IDX_STATS_PACKETS_RECEIVED, 1);
         this.add_stat(IDX_STATS_BYTES_RECEIVED, payload.len() as u64);
-        // SAFETY: `peer` is the live sockaddr for this packet.
-        let peer_sa = unsafe {
-            &*core::ptr::from_ref(peer).cast::<crate::socket::socket_address::sockaddr>()
-        };
-        if this.peer_blocked(peer_sa) {
-            continue;
+        if !this.peer_blocked(from.peer) && !this.handle_version_negotiation(payload) {
+            this.receive(now, from, payload);
         }
-        // Which of our engines already hashes this DCID, if either. Feeding the
-        // other one a packet it cannot match makes it answer with a stateless
-        // reset, so remember the owner for the feed below.
-        let mut owner_engine = None;
-        if payload[0] & HEADER_FORM_LONG == 0 && payload.len() > 1 + SHORT_HEADER_DCID_LEN {
-            let dcid = &payload[1..1 + SHORT_HEADER_DCID_LEN];
-            owner_engine = [this.server_engine.get(), this.client_engine.get()]
-                .into_iter()
-                .filter(|e| !e.is_null())
-                .find(|&e| {
-                    // SAFETY: engines are live while the endpoint is.
-                    let in_use =
-                        unsafe { lsquic::lsquic_engine_cid_in_use(e, dcid.as_ptr(), dcid.len()) };
-                    in_use != 0
-                });
-            if owner_engine.is_none() {
-                // Keep which engine hashed the DCID, as the local path above
-                // does: feeding the sibling engine too makes it treat the
-                // packet as an unknown-CID arrival.
-                let owner = ENDPOINT_REGISTRY.with_borrow(|v| {
-                    v.iter().copied().find_map(|other| {
-                        if core::ptr::eq(other, this) {
-                            return None;
-                        }
-                        [
-                            // SAFETY: registered endpoints outlive their
-                            // registry entry.
-                            unsafe { (*other).server_engine.get() },
-                            // SAFETY: as above.
-                            unsafe { (*other).client_engine.get() },
-                        ]
-                        .into_iter()
-                        .filter(|e| !e.is_null())
-                        .find(|&e| {
-                            // SAFETY: as above.
-                            let in_use = unsafe {
-                                lsquic::lsquic_engine_cid_in_use(e, dcid.as_ptr(), dcid.len())
-                            };
-                            in_use != 0
-                        })
-                        .map(|engine| (other, engine))
-                    })
-                });
-                if let Some((owner, engine)) = owner {
-                    // SAFETY: as above; the packet is fed with OUR local
-                    // address (the migration target).
-                    let other = unsafe { &*owner };
-                    if other.peer_blocked(peer_sa) {
-                        continue;
-                    }
-                    // SAFETY: as in the direct feed below.
-                    unsafe {
-                        lsquic::lsquic_engine_packet_in(
-                            engine,
-                            payload.as_ptr(),
-                            payload.len(),
-                            local.as_ptr().cast(),
-                            core::ptr::from_ref(peer).cast(),
-                            owner.cast(),
-                            0,
-                        );
-                    }
-                    other.process(global);
-                    continue;
-                }
-                // May be a stateless reset (RFC 9000 sec 10.3).
-                if payload.len() >= STATELESS_RESET_MIN_LEN {
-                    let others: SmallVec<[*mut QuicEndpoint; ENDPOINT_REGISTRY_INLINE_CAP]> =
-                        ENDPOINT_REGISTRY.with_borrow(|v| {
-                            v.iter()
-                                .copied()
-                                .filter(|&other| !core::ptr::eq(other, this))
-                                .collect()
-                        });
-                    for other_ptr in others {
-                        // Registration is the liveness guarantee: `teardown`
-                        // unregisters before dropping the self-reference that
-                        // keeps the wrapper alive, so a listed pointer is live.
-                        if !ENDPOINT_REGISTRY.with_borrow(|v| v.contains(&other_ptr)) {
-                            continue;
-                        }
-                        // SAFETY: registered as of the check above, so its
-                        // backing storage is live.
-                        let other = unsafe { &*other_ptr };
-                        if other.peer_blocked(peer_sa) {
-                            continue;
-                        }
-                        for engine in [other.server_engine.get(), other.client_engine.get()] {
-                            if engine.is_null() {
-                                continue;
-                            }
-                            // SAFETY: as in the direct feed below.
-                            unsafe {
-                                lsquic::lsquic_engine_packet_in(
-                                    engine,
-                                    payload.as_ptr(),
-                                    payload.len(),
-                                    local.as_ptr().cast(),
-                                    core::ptr::from_ref(peer).cast(),
-                                    other_ptr.cast(),
-                                    0,
-                                );
-                            }
-                        }
-                        other.process(global);
-                    }
-                }
-            }
-        }
-        // Version Negotiation packet (long header, version 0 — RFC 8999 sec 6).
-        if payload.len() > LONG_HEADER_MIN_LEN
-            && payload[0] & HEADER_FORM_LONG != 0
-            && payload[1..5] == VERSION_NEGOTIATION_VERSION
-            && this.handle_version_negotiation(payload)
-        {
-            continue;
-        }
-        // Node announces server sessions at Initial receipt — before the
-        // handshake — so `onsession` precedes the client's `opened`.
-        if let Err(err) =
-            this.maybe_announce_provisional(global, payload, core::ptr::from_ref(peer).cast())
-        {
-            crate::dispatch::fold(Err(err));
-        }
-        let engines = match owner_engine {
-            // Already matched above: the other engine would only miss it.
-            Some(e) => [e, null_mut()],
-            None => [this.server_engine.get(), this.client_engine.get()],
-        };
-        for engine in engines {
-            if engine.is_null() {
-                continue;
-            }
-            // SAFETY: `engine` is live while the endpoint is; payload/local/
-            // peer are valid for this callback.
-            unsafe {
-                lsquic::lsquic_engine_packet_in(
-                    engine,
-                    payload.as_ptr(),
-                    payload.len(),
-                    local.as_ptr().cast(),
-                    core::ptr::from_ref(peer).cast(),
-                    user.cast(),
-                    0,
-                );
-            }
-        }
-    }
-    // Keep the scope through the tail pass: a graceful close a handler queued
-    // during this dispatch must not join the same flight as the data the
-    // handlers wrote (sessions stash it; the next depth-0 pass applies it).
-    this.process(global);
-}
-
-lsquic_callback! {
-    fn on_mini_conn_failed(this: &QuicEndpoint, peer_sa: *const c_void, error_code: u64) {
-        /// CRYPTO_ERROR base (RFC 9001 §4.8) + TLS no_application_protocol(120).
-        const CRYPTO_ERROR_NO_APPLICATION_PROTOCOL: u64 = 0x0100 + 120;
-        if peer_sa.is_null() {
-            return;
-        }
-        let peer = stored_addr_from_sockaddr(peer_sa);
-        this.discard_early_keylog(&peer);
-        let peer_decoded = peer.decode();
-        let failed = this.provisional.with_mut(|v| {
-            let idx = v.iter().position(|p| p.peer.decode() == peer_decoded);
-            idx.map(|i| v.remove(i).session)
-        });
-        /// Bit 63 marks "the peer sent its own CONNECTION_CLOSE" (QUIC codes
-        /// fit in 62 bits); the low bits carry the peer's code. See the
-        /// connection-close-pns lsquic patch.
-        const PEER_CLOSE_BIT: u64 = 1 << 63;
-        if let Some(session) = failed {
-            if let Some(session) = this.live_session(session) {
-                if error_code & PEER_CLOSE_BIT != 0 {
-                    // Not a failure: the client closed during the handshake
-                    // (connect() then immediate close()). Report the peer's
-                    // own code so `closed` settles the way node's does.
-                    session.push_event(session::SessionEvent::PeerClose {
-                        app_error: false,
-                        code: error_code & !PEER_CLOSE_BIT,
-                        reason: Vec::new(),
-                    });
-                    session.push_event(session::SessionEvent::Closed);
-                    session.schedule_process();
-                    return;
-                }
-                if error_code == 0 {
-                    // The peer went away without a frame (destroyed client,
-                    // dropped packets): node's server surfaces the idle death
-                    // of a handshaking session as a clean close, not an error.
-                    session.push_event(session::SessionEvent::PeerClose {
-                        app_error: false,
-                        code: 0,
-                        reason: Vec::new(),
-                    });
-                    session.push_event(session::SessionEvent::Closed);
-                    session.schedule_process();
-                    return;
-                }
-                let code = error_code;
-                let reason: &[u8] = if code == CRYPTO_ERROR_NO_APPLICATION_PROTOCOL {
-                    b"no application protocol"
-                } else {
-                    b"handshake failed"
-                };
-                session.push_event(session::SessionEvent::PeerClose {
-                    app_error: false,
-                    code,
-                    reason: reason.to_vec(),
-                });
-                session.push_event(session::SessionEvent::Closed);
-                session.schedule_process();
-            }
-        }
-    }
-
-    fn packets_out(
-        this: &QuicEndpoint,
-        specs: *const lsquic::lsquic_out_spec,
-        n: c_uint,
-    ) -> c_int = 0; {
-        let Some(socket) = this.socket.get() else {
-            return 0;
-        };
-        let my_addr = this.local_addr.get();
-        let stride = lsquic::us_nq_spec_stride();
-        let mut sent = 0;
-        for i in 0..n as usize {
-            // SAFETY: lsquic guarantees `specs[0..n]` is valid for this callback;
-            // each spec is `stride` bytes apart.
-            let spec = unsafe {
-                specs
-                    .cast::<u8>()
-                    .add(i * stride)
-                    .cast::<lsquic::lsquic_out_spec>()
-            };
-            let mut iovlen: usize = 0;
-            // SAFETY: as above.
-            let iov = unsafe { lsquic::us_nq_spec_iov(spec, core::ptr::from_mut(&mut iovlen)) };
-            let mut total = 0usize;
-            let mut payload = core::ptr::null::<u8>();
-            if iovlen == 1 {
-                // SAFETY: as above.
-                let v = unsafe { &*iov };
-                if !v.iov_base.is_null() {
-                    payload = v.iov_base.cast::<u8>();
-                    total = v.iov_len;
-                }
-            } else if iovlen > 1 {
-                this.send_scratch.with_mut(|buf| {
-                    buf.clear();
-                    for j in 0..iovlen {
-                        // SAFETY: as above.
-                        let v = unsafe { &*iov.add(j) };
-                        if v.iov_base.is_null() || v.iov_len == 0 {
-                            continue;
-                        }
-                        // SAFETY: lsquic guarantees `iov_base[..iov_len]` is valid.
-                        let src =
-                            unsafe { core::slice::from_raw_parts(v.iov_base.cast::<u8>(), v.iov_len) };
-                        buf.extend_from_slice(src);
-                    }
-                    total = buf.len();
-                });
-                // Read after the last `extend_from_slice`, so a realloc cannot
-                // leave it dangling. Nothing below touches `send_scratch`.
-                payload = this.send_scratch.get().as_ptr();
-            }
-            // SAFETY: `dest` points at lsquic-owned sockaddr storage valid for
-            // this callback.
-            let dest = StoredAddr::from_raw(
-                unsafe { lsquic::us_nq_spec_dest(spec) }.cast(),
-                SOCKADDR_IN6_LEN,
-            );
-            if total == 0 || payload.is_null() || !dest.is_set() {
-                sent += 1;
-                continue;
-            }
-            // SAFETY: `local_sa` points at lsquic-owned storage valid for this
-            // callback.
-            let spec_local = StoredAddr::from_raw(
-                unsafe { lsquic::us_nq_spec_local(spec) }.cast(),
-                SOCKADDR_IN6_LEN,
-            );
-            let out_socket = if spec_local.is_set() && spec_local.decode() != my_addr.decode() {
-                registry_find_by_addr(&spec_local, this)
-                    // SAFETY: registered endpoints outlive their registry entry.
-                    .and_then(|other| unsafe { (*other).socket.get() })
-                    .unwrap_or(socket)
-            } else {
-                socket
-            };
-            let rv = uws::udp::Socket::opaque_mut(out_socket).send(
-                &[payload],
-                &[total],
-                &[dest.as_ptr().cast()],
-            );
-            if rv < 1 {
-                // SAFETY: `errno_ptr()` is this thread's errno slot.
-                unsafe {
-                    let e = bun_core::ffi::errno_ptr();
-                    // EMSGSIZE has to survive: it is how lsquic learns to drop
-                    // an oversized packet and feed DPLPMTUD (ci_packet_too_large).
-                    // Anything else it cannot act on becomes backpressure.
-                    if *e != libc::EAGAIN && *e != libc::EWOULDBLOCK && *e != libc::EMSGSIZE {
-                        *e = libc::EAGAIN;
-                    }
-                }
-                break;
-            }
-            this.add_stat(IDX_STATS_PACKETS_SENT, 1);
-            this.add_stat(IDX_STATS_BYTES_SENT, total as u64);
-            sent += 1;
-        }
-        sent as c_int
-    }
-
-    fn get_ssl_ctx(this: &QuicEndpoint, _local: *const c_void) -> *mut lsquic::SSL_CTX = null_mut(); {
-        this.server_ssl_ctx()
-    }
-
-    fn get_client_ssl_ctx(this: &QuicEndpoint, _local: *const c_void) -> *mut lsquic::SSL_CTX = null_mut(); {
-        this.client_tls
-            .get()
-            .as_ref()
-            .or_else(|| this.server_tls.get().as_ref())
-            .map(|t| t.raw().cast())
-            .unwrap_or(null_mut())
+    };
+    // SAFETY: they are our arguments.
+    let read = unsafe { binding.for_each_datagram(buf, packets, receive) };
+    let reads_on = this.outbox.borrow_mut().reads_on(&read, &this.quic());
+    // The more is acknowledged, the more can be sent together.
+    if reads_on {
+        this.mark_driver_pending();
+    } else {
+        this.process();
     }
 }
 
 /// Node's SNI resolution order: exact hostname, then a `*.suffix` wildcard,
 /// then the `*` default. Comparison is ASCII-case-insensitive (RFC 6066).
-fn match_sni<'a>(entries: &'a [(Vec<u8>, TlsContext)], host: &[u8]) -> Option<&'a TlsContext> {
+fn match_sni<'a>(entries: &'a [(Vec<u8>, OwnedSslCtx)], host: &[u8]) -> Option<&'a OwnedSslCtx> {
     let eq = |a: &[u8], b: &[u8]| a.eq_ignore_ascii_case(b);
     if let Some((_, ctx)) = entries.iter().find(|(h, _)| eq(h, host)) {
         return Some(ctx);
@@ -838,55 +384,6 @@ fn match_sni<'a>(entries: &'a [(Vec<u8>, TlsContext)], host: &[u8]) -> Option<&'
         .map(|(_, ctx)| ctx)
 }
 
-lsquic_callback! {
-    fn lookup_cert(
-        this: &QuicEndpoint,
-        _local: *const c_void,
-        sni: *const c_char,
-    ) -> *mut lsquic::SSL_CTX = null_mut(); {
-        if !sni.is_null() {
-            // SAFETY: lsquic passes a NUL-terminated servername valid for this call.
-            let host = unsafe { core::ffi::CStr::from_ptr(sni) }.to_bytes();
-            let entries = this.sni_contexts.get();
-            if let Some(ctx) = match_sni(entries, host) {
-                return ctx.raw().cast();
-            }
-        }
-        this.server_ssl_ctx()
-    }
-}
-
-/// Node's documented default ALPN is `'h3'`.
-fn alpn_cstr_is_http(alpn_cstr: &[u8]) -> bool {
-    match alpn_cstr.strip_suffix(b"\0") {
-        None | Some(b"") => true,
-        Some(a) => a == b"h3" || a.starts_with(b"h3-"),
-    }
-}
-
-/// Whether every protocol in a wire-format ALPN list agrees on HTTP/3-ness.
-/// The engine's framing is fixed from the first entry, but `alpn_select_cb`
-/// offers the whole list, so a mixed one can negotiate the framing we did not
-/// build for.
-fn alpn_list_is_uniform(alpn: &[u8]) -> bool {
-    let mut i = 0usize;
-    let mut want: Option<bool> = None;
-    while i < alpn.len() {
-        let n = alpn[i] as usize;
-        i += 1;
-        if n == 0 || i + n > alpn.len() {
-            break;
-        }
-        let p = &alpn[i..i + n];
-        let is_http = p == b"h3" || p.starts_with(b"h3-");
-        if *want.get_or_insert(is_http) != is_http {
-            return false;
-        }
-        i += n;
-    }
-    true
-}
-
 pub(super) fn read_u64_option(
     global: &JSGlobalObject,
     obj: JSValue,
@@ -902,167 +399,198 @@ pub(super) fn read_u64_option(
     }
 }
 
-fn snapshot_datagram_frame_size(s: &lsquic::Settings) -> u64 {
-    if s.get_datagrams() == 0 {
-        return 0;
-    }
-    match s.get_max_datagram_frame_size() {
-        0 => DEFAULT_DATAGRAM_FRAME_SIZE,
-        v => v,
-    }
-}
-
-/// lsquic settings are engine-wide; matches Node's per-endpoint listen options.
-fn apply_transport_params(
+fn config_from_js(
     global: &JSGlobalObject,
-    s: &mut lsquic::Settings,
     options: JSValue,
-    local_tp: &mut lsquic::NqTransportParams,
-) -> JsResult<()> {
-    // Node's default max_idle_timeout is 10 seconds
-    // (node/src/quic/transportparams.h DEFAULT_MAX_IDLE_TIMEOUT); lsquic's is 30.
-    s.idle_timeout(10);
-    if !options.is_object() {
-        local_tp.max_idle_timeout = match s.get_idle_timeout_ms() {
-            0 => s.get_idle_timeout().saturating_mul(1000),
-            ms => ms,
-        };
-        local_tp.initial_max_data = s.get_init_max_data();
-        local_tp.initial_max_stream_data_bidi_local = s.get_init_max_stream_data_bidi_local();
-        local_tp.initial_max_stream_data_bidi_remote = s.get_init_max_stream_data_bidi_remote();
-        local_tp.initial_max_stream_data_uni = s.get_init_max_stream_data_uni();
-        local_tp.initial_max_streams_bidi = s.get_init_max_streams_bidi();
-        local_tp.initial_max_streams_uni = s.get_init_max_streams_uni();
-        local_tp.max_udp_payload_size = s.get_max_udp_payload_size_rx();
-        local_tp.ack_delay_exponent = 3;
-        local_tp.max_ack_delay = 25;
-        local_tp.active_connection_id_limit = 8;
-        local_tp.max_datagram_frame_size = snapshot_datagram_frame_size(s);
-        local_tp.disable_active_migration = (s.get_allow_migration() == 0) as c_int;
-        return Ok(());
-    }
-    if let Some(ms) = read_u64_option(global, options, "handshakeTimeout")? {
-        s.handshake_to((ms.saturating_mul(1000)).min(c_uint::MAX as u64) as _);
-    }
-    if let Some(ms) = read_u64_option(global, options, "keepAlive")? {
-        // Node's keepAlive is exact (millisecond-granular).
-        s.ping_period(1);
-        s.ping_period_us(ms.saturating_mul(1000));
+    side: Side,
+    is_http3: bool,
+) -> JsResult<Config> {
+    let (server, client) = (Config::server(), Config::client());
+    let mut config = Config {
+        versions: VERSIONS,
+        progress_timeout: Duration::ZERO,
+        keep_alive: bun_quic::KeepAlive::Never,
+        // Node's `closed` promise on the peer resolves on receipt of CONNECTION_CLOSE.
+        closes_silently: false,
+        adapts_ack_frequency: false,
+        wants_tickets: true,
+        has_priorities: is_http3,
+        sends_in_order: true,
+        awaits_consumption: true,
+        ..if side.is_server() { server } else { client }
+    };
+    let parameters = &mut config.parameters;
+    let window = (parameters.initial_max_stream_data_bidi_local)
+        .max(parameters.initial_max_stream_data_bidi_remote);
+    parameters.initial_max_stream_data_bidi_local = window;
+    parameters.initial_max_stream_data_bidi_remote = window;
+    parameters.max_idle_timeout_millis = DEFAULT_MAX_IDLE_TIMEOUT_SECS * MS_PER_SEC;
+    parameters.max_datagram_frame_size = DEFAULT_DATAGRAM_FRAME_SIZE;
+    if side.is_client() && !is_http3 {
+        parameters.initial_max_streams_uni = RAW_CLIENT_MAX_STREAMS_UNI;
     }
     if let Some(tp) = options
         .get(global, "transportParams")?
         .filter(|v| v.is_object())
     {
-        // Layout mirrors lsquic's `tp_preferred_address` prefix
-        // (lsquic_trans_params.h): 4-byte IPv4 + u16 port + 16-byte IPv6 +
-        // u16 port. IPs are wire order; ports are HOST order.
-        let mut pref = [0u8; 24];
-        let mut have_pref = false;
-        for (key, is_v4) in [
-            ("preferredAddressIpv4", true),
-            ("preferredAddressIpv6", false),
-        ] {
-            let Some(addr_js) = tp.get(global, key)?.filter(|v| v.is_object()) else {
-                continue;
-            };
-            let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() else {
-                continue;
-            };
-            let stored = session::StoredAddr::from_socket_address(&addr);
-            let Some((_family, port, ip)) = stored.decode() else {
-                continue;
-            };
-            if is_v4 && ip.len() == 4 {
-                pref[0..4].copy_from_slice(ip);
-                pref[4..6].copy_from_slice(&port.to_ne_bytes());
-                have_pref = true;
-            } else if !is_v4 && ip.len() == 16 {
-                pref[6..22].copy_from_slice(ip);
-                pref[22..24].copy_from_slice(&port.to_ne_bytes());
-                have_pref = true;
-            }
-        }
-        if have_pref {
-            s.preferred_address(&pref);
-        }
-        if let Some(v) = read_u64_option(global, tp, "initialMaxStreamDataBidiLocal")? {
-            s.init_max_stream_data_bidi_local(v.min(c_uint::MAX as u64) as _);
-        }
-        if let Some(v) = read_u64_option(global, tp, "initialMaxStreamDataBidiRemote")? {
-            s.init_max_stream_data_bidi_remote(v.min(c_uint::MAX as u64) as _);
-        }
-        if let Some(v) = read_u64_option(global, tp, "initialMaxStreamDataUni")? {
-            s.init_max_stream_data_uni(v.min(c_uint::MAX as u64) as _);
-        }
-        if let Some(v) = read_u64_option(global, tp, "initialMaxData")? {
-            s.init_max_data(v.min(c_uint::MAX as u64) as _);
-        }
-        if let Some(v) = read_u64_option(global, tp, "initialMaxStreamsBidi")? {
-            s.init_max_streams_bidi(v.min(c_uint::MAX as u64) as _);
-        }
-        if let Some(v) = read_u64_option(global, tp, "initialMaxStreamsUni")? {
-            s.init_max_streams_uni(v.min(c_uint::MAX as u64) as _);
-        }
-        if let Some(secs) = read_u64_option(global, tp, "maxIdleTimeout")? {
-            // Node's maxIdleTimeout is SECONDS: transportparams.cc:197 stores
-            // `max_idle_timeout * NGTCP2_SECONDS`; the getter at :473 divides
-            // it back out.
-            if secs == 0 {
-                // Only the seconds field can say "disabled" (RFC 9000 §18.2);
-                // lsquic readers fall back to it when ms is zero. Non-zero
-                // stays ms-only: lsquic rejects es_idle_timeout above 600.
-                s.idle_timeout(0);
-            }
-            s.idle_timeout_ms(secs.saturating_mul(MS_PER_SEC).min(c_uint::MAX as u64) as _);
-        }
-        if let Some(v) = read_u64_option(global, tp, "maxUdpPayloadSize")? {
-            s.max_udp_payload_size_rx(v.min(u16::MAX as u64) as _);
-        }
-        if let Some(v) = tp.get(global, "disableActiveMigration")? {
-            s.allow_migration(!v.to_boolean() as _);
-        }
-        if let Some(v) = read_u64_option(global, tp, "maxDatagramFrameSize")? {
-            if v == 0 {
-                s.datagrams(0);
-            } else {
-                s.datagrams(1);
-                s.max_datagram_frame_size(v.min(u16::MAX as u64) as u16);
-            }
+        apply_transport_params(global, tp, parameters, side)?;
+        config.limits_unread_data = read_u64_option(global, tp, "initialMaxData")?.is_some();
+    }
+    if let Some(ms) = read_u64_option(global, options, "handshakeTimeout")? {
+        config.handshake_timeout = Duration::from_millis(ms);
+    }
+    if let Some(ms) = read_u64_option(global, options, "keepAlive")? {
+        config.keep_alive = bun_quic::KeepAlive::Every(Duration::from_millis(ms));
+    }
+    config.uses_preferred_address =
+        read_u64_option(global, options, "preferredAddressPolicy")? == Some(PREFERRED_ADDRESS_USE);
+    if let Some(cc) = options.get(global, "cc")?.filter(|v| v.is_string()) {
+        let name = bun_core::String::from_js(cc, global)?;
+        // Cubic is the closest there is to Reno.
+        if name.eq_ascii(b"cubic") || name.eq_ascii(b"reno") {
+            config.congestion = Algorithm::Cubic;
         }
     }
-    *local_tp = lsquic::NqTransportParams {
-        initial_max_stream_data_bidi_local: s.get_init_max_stream_data_bidi_local(),
-        initial_max_stream_data_bidi_remote: s.get_init_max_stream_data_bidi_remote(),
-        initial_max_stream_data_uni: s.get_init_max_stream_data_uni(),
-        initial_max_data: s.get_init_max_data(),
-        initial_max_streams_bidi: s.get_init_max_streams_bidi(),
-        initial_max_streams_uni: s.get_init_max_streams_uni(),
-        max_idle_timeout: match s.get_idle_timeout_ms() {
-            0 => s.get_idle_timeout().saturating_mul(1000),
-            ms => ms,
-        },
-        max_udp_payload_size: s.get_max_udp_payload_size_rx(),
-        // lsquic hardcodes these (RFC 9000 defaults / lsquic.h LSQUIC_DF_*).
-        ack_delay_exponent: 3,
-        max_ack_delay: 25,
-        active_connection_id_limit: 8,
-        max_datagram_frame_size: snapshot_datagram_frame_size(s),
-        disable_active_migration: (s.get_allow_migration() == 0) as c_int,
-        ..lsquic::NqTransportParams::default()
+    if is_http3 {
+        let mut http3 = http3_config_from_js(global, options)?;
+        http3.datagrams &= config.parameters.max_datagram_frame_size > 0;
+        config.http3 = Some(http3);
+    }
+    Ok(config)
+}
+
+fn apply_transport_params(
+    global: &JSGlobalObject,
+    tp: JSValue,
+    parameters: &mut bun_quic::TransportParameters,
+    side: Side,
+) -> JsResult<()> {
+    for (name, value) in [
+        (
+            "initialMaxStreamDataBidiLocal",
+            &mut parameters.initial_max_stream_data_bidi_local,
+        ),
+        (
+            "initialMaxStreamDataBidiRemote",
+            &mut parameters.initial_max_stream_data_bidi_remote,
+        ),
+        (
+            "initialMaxStreamDataUni",
+            &mut parameters.initial_max_stream_data_uni,
+        ),
+        ("initialMaxData", &mut parameters.initial_max_data),
+        (
+            "initialMaxStreamsBidi",
+            &mut parameters.initial_max_streams_bidi,
+        ),
+        (
+            "initialMaxStreamsUni",
+            &mut parameters.initial_max_streams_uni,
+        ),
+        (
+            "maxDatagramFrameSize",
+            &mut parameters.max_datagram_frame_size,
+        ),
+    ] {
+        if let Some(v) = read_u64_option(global, tp, name)? {
+            *value = v.min(u32::MAX.into());
+        }
+    }
+    if let Some(secs) = read_u64_option(global, tp, "maxIdleTimeout")? {
+        // Node's maxIdleTimeout is SECONDS: transportparams.cc:197 stores
+        // `max_idle_timeout * NGTCP2_SECONDS`; the getter at :473 divides
+        // it back out.
+        parameters.max_idle_timeout_millis = secs.saturating_mul(MS_PER_SEC).min(u32::MAX.into());
+    }
+    match read_u64_option(global, tp, "maxUdpPayloadSize")? {
+        None | Some(0) => {}
+        Some(v @ ..MIN_UDP_PAYLOAD_SIZE) => {
+            return Err(global
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The property 'options.transportParams.maxUdpPayloadSize' must be at least {MIN_UDP_PAYLOAD_SIZE}. Received {v}"
+                    ),
+                )
+                .throw());
+        }
+        Some(v) => parameters.max_udp_payload_size = parameters.max_udp_payload_size.min(v),
+    }
+    if let Some(v) = tp.get(global, "disableActiveMigration")? {
+        parameters.disable_active_migration = v.to_boolean();
+    }
+    let ipv4 = match (tp.get(global, "preferredAddressIpv4")?).and_then(address_from_js) {
+        Some(SocketAddr::V4(address)) => Some(address),
+        _ => None,
     };
-    if let Some(cc) = options.get(global, "cc")?.filter(|v| v.is_string()) {
-        let name = bun_core::String::from_js(cc, global)?.to_owned_slice();
-        // lsquic.h es_cc_algo: 0=default (BBRv1), 1=Cubic, 2=BBRv1. lsquic ships
-        // no Reno (NGTCP2_CC_ALGO_RENO in node's backend), so map 'reno' to
-        // Cubic, the closest loss-based option.
-        let algo = match name.as_slice() {
-            b"cubic" | b"reno" => 1,
-            b"bbr" => 2,
-            _ => 0,
-        };
-        s.cc_algo(algo);
+    let ipv6 = match (tp.get(global, "preferredAddressIpv6")?).and_then(address_from_js) {
+        Some(SocketAddr::V6(address)) => Some(address),
+        _ => None,
+    };
+    if side.is_server() && (ipv4.is_some() || ipv6.is_some()) {
+        parameters.preferred_address = Some(PreferredAddress::new(ipv4, ipv6));
     }
     Ok(())
+}
+
+fn http3_config_from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<Http3Config> {
+    let mut config = Http3Config {
+        kept_fields: FieldLimits {
+            size: MAX_HEADER_LENGTH,
+            count: usize::MAX,
+        },
+        datagrams: true,
+        ..Http3Config::default()
+    };
+    if let Some(app) = options
+        .get(global, "application")?
+        .filter(|v| v.is_object())
+    {
+        let boolean = |name| JsResult::Ok(app.get(global, name)?.filter(|v| v.is_boolean()));
+        if let Some(v) = boolean("enableConnectProtocol")? {
+            config.connect_protocol = v.to_boolean();
+        }
+        if let Some(v) = boolean("enableDatagrams")? {
+            config.datagrams = v.to_boolean();
+        }
+        if let Some(v @ 1..) = read_u64_option(global, app, "maxHeaderPairs")? {
+            config.kept_fields.count = v.min(u16::MAX.into()) as usize;
+        }
+        if let Some(v @ 1..) = read_u64_option(global, app, "maxHeaderLength")? {
+            config.kept_fields.size = v.min(MAX_HEADER_LENGTH as u64) as usize;
+        }
+    }
+    config.tolerated_fields = FieldLimits {
+        size: (2 * config.kept_fields.size).max(MIN_TOLERATED_HEADER_LENGTH),
+        count: usize::MAX,
+    };
+    Ok(config)
+}
+
+/// RFC 9412 §2: each Origin-Entry is a 16-bit length prefix followed by the ASCII origin.
+fn origins_from_js(global: &JSGlobalObject, tls: JSValue) -> JsResult<Vec<u8>> {
+    let mut payload = Vec::new();
+    if let Some(origins) = tls.get(global, "origins")?.filter(|v| v.is_array()) {
+        for i in 0..origins.get_length(global)? as u32 {
+            let v = origins.get_index(global, i)?;
+            if !v.is_string() {
+                continue;
+            }
+            let bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
+            if let Ok(len @ 1..) = u16::try_from(bytes.len()) {
+                payload.extend_from_slice(&len.to_be_bytes());
+                payload.extend_from_slice(&bytes);
+            }
+        }
+    }
+    Ok(payload)
+}
+
+fn application_of(config: &Config) -> Application {
+    match config.http3 {
+        Some(_) => Application::Http3,
+        None => Application::Default,
+    }
 }
 
 pub(super) fn alloc_exposed_array_buffer(
@@ -1086,54 +614,18 @@ impl QuicEndpoint {
         structure: JsStructure<'a, Self>,
         options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        static INIT: std::sync::Once = std::sync::Once::new();
-        INIT.call_once(|| {
-            if bun_core::getenv_z(bun_core::zstr!("BUN_DEBUG_lsquic")).is_some() {
-                // SAFETY: static C string.
-                unsafe { lsquic::us_nq_enable_logging(c"debug".as_ptr()) };
-            }
-        });
-        lsquic::debug_assert_layout();
-
-        let mut bind_config = BindConfig::default();
+        let mut bind_address = (Ipv4Addr::LOCALHOST, 0).into();
         let mut block_list = None;
         let mut block_list_js = None;
         let mut block_list_allow = false;
         let mut disable_stateless_reset = false;
-        let mut stateless_reset_burst = 0;
-        let mut stateless_reset_rate = 0.0;
+        let mut stateless_reset_burst = DEFAULT_STATELESS_RESET_BURST;
+        let mut stateless_reset_rate = DEFAULT_STATELESS_RESET_RATE;
         let options = options.to_js();
         if options.is_object() {
             let global = cx.global();
-            if let Some(addr_js) = options
-                .get(global, "address")?
-                .filter(|v| !v.is_empty_or_undefined_or_null())
-            {
-                if let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() {
-                    let stored = StoredAddr::from_socket_address(&addr);
-                    if let Some((_, port, ip)) = stored.decode() {
-                        use core::fmt::Write;
-                        let mut host = String::new();
-                        match ip.len() {
-                            4 => {
-                                let _ = write!(host, "{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
-                            }
-                            16 => {
-                                let segs: [u16; 8] = core::array::from_fn(|i| {
-                                    u16::from_be_bytes([ip[2 * i], ip[2 * i + 1]])
-                                });
-                                let _ = write!(host, "{}", std::net::Ipv6Addr::from(segs));
-                            }
-                            _ => {}
-                        }
-                        let mut host_nul = host.into_bytes();
-                        host_nul.push(0);
-                        bind_config = BindConfig {
-                            host: host_nul,
-                            port,
-                        };
-                    }
-                }
+            if let Some(address) = options.get(global, "address")?.and_then(address_from_js) {
+                bind_address = address;
             }
             if let Some(bl_js) = options.get(global, "blockList")?.filter(|v| v.is_object()) {
                 if let Some(bl) =
@@ -1160,103 +652,58 @@ impl QuicEndpoint {
                 .get(global, "statelessResetBurst")?
                 .filter(|v| v.is_number())
             {
-                stateless_reset_burst = v.as_number().max(0.0).min(u32::MAX as f64) as u32;
+                stateless_reset_burst = v.as_number();
             }
             if let Some(v) = options
                 .get(global, "statelessResetRate")?
                 .filter(|v| v.is_number())
             {
-                stateless_reset_rate = v.as_number().max(0.0);
+                stateless_reset_rate = v.as_number().min(f64::MAX);
             }
         }
 
         let this = QuicEndpoint {
-            vtable_ptr: null(),
-            vtable: JsCell::new(None),
             state: null_mut(),
             stats: null_mut(),
             closing: Cell::new(false),
             closed: Cell::new(false),
-            socket: Cell::new(None),
-            bind_config: JsCell::new(bind_config),
-            local_addr: Cell::new(StoredAddr::default()),
+            binding: Cell::new(None),
+            bind_address,
+            local_addr: Cell::new(None),
             poll_ref: KeepAlive::init(),
             this_value: JsCell::new(JsRef::empty()),
-            server_engine: Cell::new(null_mut()),
-            client_engine: Cell::new(null_mut()),
-            server_tls: JsCell::new(None),
-            sni_contexts: JsCell::new(Vec::new()),
-            server_alpn_wire: JsCell::new(Vec::new()),
-            send_scratch: JsCell::new(Vec::new()),
-            client_tls: JsCell::new(None),
-            client_alpn: JsCell::new(Vec::new()),
-            server_alpn: JsCell::new(Vec::new()),
-            server_is_http: Cell::new(false),
+            quic: RefCell::new(bun_quic::Endpoint::new(&bun_quic_tls::BoringSsl)),
+            outbox: RefCell::default(),
+            server: JsCell::new(None),
+            sni_contexts: Rc::default(),
             server_verify_client: Cell::new(false),
             server_session_options: JsCell::new(None),
-            disable_stateless_reset: Cell::new(disable_stateless_reset),
-            origin_blob: JsCell::new(Vec::new()),
-            stateless_reset_burst: Cell::new(stateless_reset_burst),
-            stateless_reset_rate: Cell::new(stateless_reset_rate),
-            client_is_http: Cell::new(false),
+            stateless_resets: (!disable_stateless_reset)
+                .then(|| TokenBucket::new(stateless_reset_rate, stateless_reset_burst).into()),
             processing: Cell::new(false),
-            followup_due: Cell::new(false),
+            followup_after: Cell::new(None),
+            wake_at: Cell::new(None),
             sessions: JsCell::new(Vec::new()),
-            server_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
-            client_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
-            pending_new_sessions: JsCell::new(Vec::new()),
-            provisional: JsCell::new(Vec::new()),
+            marked_sessions: JsCell::new(VecDeque::new()),
+            sessions_per_host: RefCell::default(),
+            pending_new_sessions: JsCell::new(VecDeque::new()),
             pending_verneg: JsCell::new(Vec::new()),
-            dead_provisional_peers: JsCell::new(Vec::new()),
             block_list: Cell::new(block_list),
-            early_keylog: JsCell::new(Vec::new()),
-            block_list_js: JsCell::new(block_list_js),
+            _block_list_js: block_list_js,
             block_list_allow: Cell::new(block_list_allow),
             event_loop_timer: OwnedTimer::init_paused(EventLoopTimerTag::QuicEndpoint),
             pending_endpoint_close: Cell::new(false),
-            nq_driver: JsCell::new(UsNqDriver::default()),
-            nq_registered: Cell::new(false),
+            close_context: Cell::new(CLOSECONTEXT_CLOSE),
+            driver: JsCell::new(None),
+            driver_pending: Cell::new(false),
             defer_closes: Cell::new(false),
             send_scope_depth: Cell::new(0),
-            global: Cell::new(core::ptr::from_ref(cx.global())),
+            global: cx.global(),
         };
         let this_value = structure.create(&cx.heap, this);
         let js_value = this_value.to_js();
         let raw: *mut Self = this_value.payload_ptr().as_ptr();
         let global = cx.global();
-
-        let vt = Box::new(lsquic::NqVtable {
-            owner: raw.cast(),
-            on_new_conn: session::on_new_conn,
-            on_hsk_done: session::on_hsk_done,
-            on_hsk_confirmed: session::on_hsk_confirmed,
-            on_goaway_received: session::on_goaway_received,
-            on_conn_closed: session::on_conn_closed,
-            on_conncloseframe: session::on_conncloseframe,
-            on_new_token: session::on_new_token,
-            on_sess_resume: session::on_sess_resume,
-            on_new_stream: stream::on_new_stream,
-            on_stream_read: stream::on_stream_read,
-            on_stream_write: stream::on_stream_write,
-            on_stream_close: stream::on_stream_close,
-            on_stream_reset: stream::on_stream_reset,
-            on_dg_write: session::on_dg_write,
-            on_datagram: session::on_datagram,
-            on_datagram_status: session::on_datagram_status,
-            on_early_data_failed: session::on_early_data_failed,
-            on_path_switch: session::on_path_switch,
-            on_origin: session::on_origin,
-            get_ssl_ctx,
-            get_client_ssl_ctx,
-            lookup_cert,
-            packets_out,
-            on_mini_conn_failed,
-        });
-        // SAFETY: `raw` was just created and nothing else has the wrapper.
-        unsafe {
-            (*raw).vtable_ptr = &raw const *vt;
-            (*raw).vtable.set(Some(vt));
-        }
 
         let state_ptr = alloc_exposed_array_buffer(
             global,
@@ -1300,7 +747,25 @@ impl QuicEndpoint {
     /// JS thread.
     fn live_session(&self, p: *mut QuicSession) -> Option<&QuicSession> {
         // SAFETY: see doc comment.
-        self.sessions.get().contains(&p).then(|| unsafe { &*p })
+        (self.sessions.get().binary_search(&p).ok()).map(|_| unsafe { &*p })
+    }
+    pub(super) fn mark(&self, session: &QuicSession) {
+        if !session.is_marked.replace(true) {
+            let session = core::ptr::from_ref(session).cast_mut();
+            self.marked_sessions.with_mut(|v| v.push_back(session));
+        }
+    }
+    fn marked_sessions(&self) -> impl Iterator<Item = &QuicSession> {
+        let marked = (0..).map_while(|at| self.marked_sessions.get().get(at).copied());
+        marked.filter_map(|it| self.live_session(it))
+    }
+    fn register_session(&self, session: &QuicSession) -> *mut QuicSession {
+        let session = core::ptr::from_ref(session).cast_mut();
+        self.sessions.with_mut(|v| {
+            let at = v.partition_point(|&it| it < session);
+            v.insert(at, session);
+        });
+        session
     }
     fn write_stat(&self, idx: usize, value: u64) {
         if !self.stats.is_null() && idx < ENDPOINT_STATS_FIELDS.len() {
@@ -1315,13 +780,14 @@ impl QuicEndpoint {
         }
     }
 
-    fn peer_blocked(&self, peer: &crate::socket::socket_address::sockaddr) -> bool {
+    fn peer_blocked(&self, peer: SocketAddr) -> bool {
         let Some(bl) = self.block_list.get() else {
             return false;
         };
-        // SAFETY: the Strong in `block_list_js` keeps the wrapper (and
+        // SAFETY: the Strong in `_block_list_js` keeps the wrapper (and
         // native object) alive for the endpoint's lifetime.
-        let blocked = unsafe { (*bl).check_sockaddr(peer) } != self.block_list_allow.get();
+        let is_listed = unsafe { (*bl).check_sockaddr(&socket_address(peer)._addr) };
+        let blocked = is_listed != self.block_list_allow.get();
         if blocked {
             self.add_stat(IDX_STATS_PACKETS_BLOCKED, 1);
         }
@@ -1330,28 +796,26 @@ impl QuicEndpoint {
 
     /// Returns `Ok(false)` when the bind fails: Node does not throw here.
     fn ensure_bound(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<bool> {
-        if self.socket.get().is_some() {
+        if self.local_addr.get().is_some() {
             return Ok(true);
         }
         let mut err: c_int = 0;
-        let cfg = self.bind_config.get();
+        let host = match self.bind_address {
+            SocketAddr::V6(it) if it.scope_id() != 0 => format!("{}%{}", it.ip(), it.scope_id()),
+            it => it.ip().to_string(),
+        };
         let socket = uws::udp::Socket::create(
             uws::Loop::get(),
             on_data,
             on_drain,
             on_close,
-            on_recv_error,
-            bun_core::ZStr::from_slice_with_nul(&cfg.host),
-            cfg.port,
+            None,
+            Some(&bun_core::ZBox::from_bytes(host.as_bytes())),
+            self.bind_address.port(),
             0,
             Some(&mut err),
             core::ptr::from_ref(self).cast_mut().cast::<c_void>(),
         );
-        if !socket.is_null() {
-            // Linked only while we hold a socket, so an idle endpoint costs
-            // the loop nothing.
-            self.link_loop_driver();
-        }
         if socket.is_null() {
             self.this_value
                 .with_mut(|r| r.set_strong(this_value, global));
@@ -1360,20 +824,13 @@ impl QuicEndpoint {
             self.deliver_endpoint_close(global, CLOSECONTEXT_BIND_FAILURE, err);
             return Ok(false);
         }
-        self.socket.set(Some(socket));
-        let sock = uws::udp::Socket::opaque_mut(socket);
-        let port = sock.bound_port();
-        let mut ip = [0u8; IPV6_ADDR_LEN];
-        let mut len: i32 = ip.len() as i32;
-        sock.bound_ip(ip.as_mut_ptr(), &mut len);
-        let addr = match len as usize {
-            IPV4_ADDR_LEN => {
-                crate::socket::SocketAddress::init_ipv4([ip[0], ip[1], ip[2], ip[3]], port as u16)
-            }
-            IPV6_ADDR_LEN => crate::socket::SocketAddress::init_ipv6(ip, port as u16, 0, 0),
-            _ => crate::socket::SocketAddress::init_ipv4([127, 0, 0, 1], port as u16),
-        };
-        self.local_addr.set(StoredAddr::from_socket_address(&addr));
+        let binding = Binding::new(socket);
+        self.binding.set(Some(binding));
+        self.local_addr.set(Some(binding.address));
+        let driver = Rc::new(LoopDriver(BackRef::new(self)));
+        let registration =
+            Registration::new(uws::Loop::get(), Rc::<LoopDriver>::downgrade(&driver));
+        self.driver.set(Some((driver, registration)));
         self.with_state(|s| {
             s.bound = 1;
             s.receiving = 1;
@@ -1381,17 +838,12 @@ impl QuicEndpoint {
         self.this_value
             .with_mut(|r| r.set_strong(this_value, global));
         self.update_keepalive();
-        let me = core::ptr::from_ref(self).cast_mut();
-        ENDPOINT_REGISTRY.with_borrow_mut(|v| {
-            if !v.contains(&me) {
-                v.push(me);
-            }
-        });
+        ENDPOINT_REGISTRY.with_borrow_mut(|v| v.push(BackRef::new(self)));
         Ok(true)
     }
 
     fn update_keepalive(&self) {
-        if self.closed.get() || self.socket.get().is_none() {
+        if self.closed.get() || self.local_addr.get().is_none() {
             return;
         }
         let listening = self.with_state(|s| s.listening) != 0;
@@ -1404,131 +856,69 @@ impl QuicEndpoint {
         }
     }
 
-    fn process(&self, global: &JSGlobalObject) {
-        if self.closed.get() {
-            return;
-        }
-        if self.processing.replace(true) {
+    fn flush_pending_graceful(&self) -> bool {
+        let sessions = self.marked_sessions();
+        sessions.filter(|it| it.flush_pending_graceful()).count() > 0
+    }
+
+    fn process(&self) {
+        if self.closed.get() || self.processing.get() {
             return;
         }
         // A depth-0 pass runs after the previous flight left the socket: safe
         // point for graceful closes stashed during a dispatch.
-        if self.send_scope_depth.get() == 0 {
-            for session in self.sessions.get().clone() {
-                if let Some(session) = self.live_session(session) {
-                    session.flush_pending_graceful();
-                }
-            }
+        if !self.scope_held() {
+            self.flush_pending_graceful();
         }
         let send_scope = self.send_scope();
-        self.followup_due.set(false);
-        // Not from the mid-turn drain pass: a deferred abort is dropped when
-        // a later stream writes first, and node decides that over the whole
-        // turn -- flushing mid-chain puts a RESET on the wire node never sends.
-        if !self.defer_closes.get() {
-            for session in self.sessions.get().clone() {
-                if let Some(session) = self.live_session(session) {
-                    session.flush_deferred_aborts();
-                }
-            }
-        }
-        bun_boringssl_sys::ERR_clear_error();
-        for engine in [self.server_engine.get(), self.client_engine.get()] {
-            if !engine.is_null() {
-                // SAFETY: engine is live while the endpoint is.
-                unsafe { lsquic::lsquic_engine_process_conns(engine) };
-            }
-        }
-        self.processing.set(false);
-        let server_engine = self.server_engine.get();
-        if !server_engine.is_null() {
-            let (mut sent, mut limited) = (0u64, 0u64);
-            // SAFETY: engine is live while the endpoint is; out-params are
-            // stack slots.
-            unsafe {
-                lsquic::lsquic_engine_sreset_stats(
-                    server_engine,
-                    core::ptr::from_mut(&mut sent),
-                    core::ptr::from_mut(&mut limited),
-                )
-            };
-            self.write_stat(IDX_STATS_STATELESS_RESET_COUNT, sent);
-            self.write_stat(IDX_STATS_STATELESS_RESET_RATE_LIMITED, limited);
-        }
+        self.followup_after.set(None);
+        self.wake_at.set(None);
+        self.drive_once();
 
+        let global = self.global();
         // Every callback below runs user JS that can synchronously destroy
         // sessions and (via close()) drop the endpoint's wrapper Strong;
         // hold one for the duration so `self` survives GC.
         let _keep_alive = bun_jsc::Strong::create(self.this_value.get().get(), global);
 
-        loop {
-            // Arrival order: both push sites append, and a burst of Initials in
-            // one recvmmsg batch must announce in the order the sessions loop
-            // below then walks them.
-            let Some(session) = self.pending_new_sessions.with_mut(|v| {
-                if v.is_empty() {
-                    None
-                } else {
-                    Some(v.remove(0))
-                }
-            }) else {
-                break;
-            };
+        while let Some(session) = self.pending_new_sessions.with_mut(VecDeque::pop_front) {
             let Some(session) = self.live_session(session) else {
                 continue;
             };
             let handle = session.handle();
-            if let Some(callback) = callbacks::get(global, "onSessionNew") {
-                let vm = global.bun_vm();
-                vm.event_loop().run_callback(
-                    bun_event_loop::ContextId::NONE,
-                    callback,
-                    global,
-                    self.this_value.get().get(),
-                    &[handle],
-                );
+            callbacks::run(
+                global,
+                "onSessionNew",
+                self.this_value.get().get(),
+                &[handle],
+            );
+        }
+        for _ in 0..self.marked_sessions.get().len() {
+            let session = self.marked_sessions.with_mut(VecDeque::pop_front);
+            if let Some(session) = session.and_then(|it| self.live_session(it)) {
+                session.is_marked.set(false);
+                session.process_events(global);
             }
         }
-        let sessions: Vec<*mut QuicSession> = self.sessions.get().clone();
-        for session in sessions {
-            let Some(session) = self.live_session(session) else {
-                continue;
-            };
-            session.process_events(global);
-            session.maybe_finish_deferred_close();
-        }
-        self.sweep_provisional();
-        self.rearm_timer();
+        self.sweep_verneg_probes();
         self.update_keepalive();
-        if self.closing.get()
-            && self.sessions.get().is_empty()
-            && self.engine_conn_count() == 0
-            && !self.closed.get()
-        {
+        if self.closing.get() && self.is_drained() && !self.closed.get() {
             self.finish_close();
         }
         drop(send_scope);
         // Writes made by the dispatch above could not flush inline (the scope
         // was held). Send them at the pass's outer edge, where node's
         // SendPendingDataScope flushes, not a loop turn later.
-        if self
-            .nq_driver
-            .with_mut(|d| core::mem::replace(&mut d.pending, 0))
-            != 0
-        {
-            self.drive_engines_once();
+        if self.driver_pending.take() {
+            self.drive_once();
+        }
+        if self.marked_sessions().any(QuicSession::has_events) {
+            self.plan_followup();
         }
     }
 
-    fn engine_conn_count(&self) -> u32 {
-        let mut n = 0u32;
-        for engine in [self.server_engine.get(), self.client_engine.get()] {
-            if !engine.is_null() {
-                // SAFETY: engines live until finish_close.
-                n += unsafe { lsquic::lsquic_engine_conn_count(engine) };
-            }
-        }
-        n
+    fn is_drained(&self) -> bool {
+        self.sessions.get().is_empty() && self.quic().connection_count() == 0
     }
 
     /// Whether a native dispatch (on_data, process) is on the stack.
@@ -1540,523 +930,244 @@ impl QuicEndpoint {
         if self.closed.get() {
             return;
         }
-        self.followup_due.set(true);
+        self.plan_followup();
         // Flush at the outermost native exit (node's SendPendingDataScope):
-        // a response must leave before a later handler's close, or lsquic's
-        // control-stream priority coalesces GOAWAY ahead of the data.
-        if self.send_scope_depth.get() == 0 {
-            self.drive_engines_once();
+        // a response must leave before a later handler's close, or the control
+        // stream's priority puts GOAWAY ahead of the data.
+        if !self.scope_held() {
+            self.drive_once();
         }
-        // The loop driver dispatches what the flush queued at the next loop
-        // point; the timer below is only the backstop for lsquic's
-        // time-driven state (RTO, ACK delay, idle) and the deferred close.
+        // The loop driver dispatches what the flush queued at the next loop point.
         self.mark_driver_pending();
-        let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
-    }
-
-    fn rearm_timer(&self) {
-        if self.closed.get() {
-            return;
-        }
-        let mut earliest_us: Option<i32> = None;
-        for engine in [self.server_engine.get(), self.client_engine.get()] {
-            if engine.is_null() {
-                continue;
-            }
-            let mut diff: c_int = 0;
-            // SAFETY: engine is live.
-            if unsafe {
-                lsquic::lsquic_engine_earliest_adv_tick(engine, core::ptr::from_mut(&mut diff))
-            } != 0
-            {
-                earliest_us = Some(earliest_us.map_or(diff, |e| e.min(diff)));
-            }
-        }
-        let mut ms = earliest_us.map(|us| (us.max(0) as u64).div_ceil(1000).max(1));
-        // Both of these are settled only by `sweep_provisional`, and neither
-        // keeps an engine ticking on its own -- a probe has no engine at all,
-        // and an idle engine stops advising a tick -- so without a poll the
-        // sweep never runs and an announced session never settles.
-        const SWEEP_POLL_MS: u64 = 250;
-        if !self.pending_verneg.get().is_empty() || !self.provisional.get().is_empty() {
-            ms = Some(ms.map_or(SWEEP_POLL_MS, |m| m.min(SWEEP_POLL_MS)));
-        }
-        if self.followup_due.get() {
-            ms = Some(ms.map_or(1, |m| m.min(1)));
-        }
-        if let Some(ms) = ms {
-            let next = bun_core::Timespec::ms_from_now(
-                bun_core::TimespecMockMode::ForceRealTime,
-                ms as i64,
-            );
-            timer_all().update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
-        }
     }
 
     pub(crate) fn on_timer_fire(this: *mut Self) {
         // SAFETY: the timer heap only holds timers of live endpoints.
         let this_ref = unsafe { &*this };
-        let global_ptr = this_ref.global.get();
-        if global_ptr.is_null() {
-            return;
-        }
-        // SAFETY: as in `on_data`.
-        let global = unsafe { &*global_ptr };
         if this_ref.pending_endpoint_close.replace(false) {
-            this_ref.deliver_endpoint_close(global, CLOSECONTEXT_CLOSE, 0);
-            return;
+            this_ref.deliver_endpoint_close(this_ref.global(), this_ref.close_context.get(), 0);
         }
-        this_ref.process(global);
     }
 
-    /// Node announces server sessions at Initial receipt.
-    fn maybe_announce_provisional(
-        &self,
-        global: &JSGlobalObject,
-        payload: &[u8],
-        peer: *const c_void,
-    ) -> JsResult<()> {
-        if self.server_engine.get().is_null()
-            || self.with_state(|s| s.listening) == 0
-            || self.closing.get()
-        {
-            return Ok(());
-        }
-        // Long header: 0b1xxx_xxxx; version != 0 (0 = version negotiation);
-        // DCID length-prefixed at byte 5 (RFC 8999 §5.1).
-        if payload.len() < LONG_HEADER_MIN_LEN || payload[0] & LONG_HEADER_FORM_BIT == 0 {
-            return Ok(());
-        }
-        let version = u32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]);
-        // Type bits (byte0 5:4): v1 Initial = 0b00 (RFC 9000 §17.2), v2
-        // Initial = 0b01 (RFC 9369 §3.2).
-        let type_bits = (payload[0] >> 4) & LONG_HEADER_TYPE_MASK;
-        let is_initial = match version {
-            QUIC_VERSION_1 => type_bits == INITIAL_TYPE_V1,
-            QUIC_VERSION_2 => type_bits == INITIAL_TYPE_V2,
-            _ => false,
-        };
-        if !is_initial {
-            return Ok(());
-        }
-        let dcid_len = payload[LONG_HEADER_DCID_LEN_OFFSET] as usize;
-        let dcid_start = LONG_HEADER_DCID_LEN_OFFSET + 1;
-        if dcid_len == 0 || dcid_len > MAX_CID_LEN || payload.len() < dcid_start + dcid_len {
-            return Ok(());
-        }
-        let dcid = &payload[dcid_start..dcid_start + dcid_len];
-        if self.provisional.get().iter().any(|p| p.dcid == dcid) {
-            return Ok(());
-        }
-        // On a dual-mode endpoint the peer's Initial *response* carries our
-        // client's SCID, which only the client engine hashes -- checking the
-        // server engine alone would announce a phantom server session for it.
-        let known = [self.server_engine.get(), self.client_engine.get()]
-            .into_iter()
-            .filter(|e| !e.is_null())
-            .any(|e| {
-                // SAFETY: engines live until release_socket.
-                unsafe { lsquic::lsquic_engine_cid_in_use(e, dcid.as_ptr(), dcid.len()) != 0 }
-            });
-        if known {
-            return Ok(());
-        }
-        let peer_stored = stored_addr_from_sockaddr(peer);
-        let peer_decoded = peer_stored.decode();
-        let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));
-        // `closing`: on_new_conn refuses these at promotion, so announcing one
-        // here would surface a session that can never open.
-        if self.closing.get()
-            || busy != 0
-            || (max_conns > 0 && self.sessions.get().len() >= max_conns as usize)
-        {
-            return Ok(());
-        }
-        bun_core::scoped_log!(
-            quic,
-            "announce provisional dcid={:02x?} peer={:?}",
-            dcid,
-            peer_decoded
-        );
-        let endpoint_handle = self.this_value.get().get();
-        let (session, _handle) = QuicSession::create(
-            global,
-            self.vtable_ptr,
-            self,
-            endpoint_handle,
-            None,
-            true,
-            self.application(true),
-        )?;
-        let applied = self.apply_server_session_options(global, session);
-        let session = core::ptr::from_ref(session).cast_mut();
-        self.sessions.with_mut(|v| v.push(session));
-        self.pending_new_sessions.with_mut(|v| v.push(session));
-        self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
-        self.provisional.with_mut(|v| {
-            v.push(ProvisionalSession {
-                dcid: dcid.to_vec(),
-                peer: peer_stored,
-                created_ns: now_ns(),
-                session,
-            })
-        });
-        applied
-    }
-
-    /// Queues the handshake-failure close both timeout lists deliver.
-    fn expire_session(&self, session: *mut QuicSession) -> bool {
-        let Some(session) = self.live_session(session) else {
-            return false;
-        };
-        session.push_event(session::SessionEvent::PeerClose {
-            app_error: false,
-            code: CRYPTO_ERROR_HANDSHAKE_FAILURE,
-            reason: b"handshake failed".to_vec(),
-        });
-        session.push_event(session::SessionEvent::Closed);
-        true
-    }
-
-    fn sweep_provisional(&self) {
-        let now = now_ns();
-        let mut n_expired = 0usize;
-        // Unbounded, like `pending_verneg` below: a fixed cap left the overflow
-        // in `provisional`, where `on_new_conn` can still match it and promote
-        // a session that was already past its deadline as a successful one.
-        let mut expired: Vec<*mut QuicSession> = Vec::new();
-        self.provisional.with_mut(|v| {
-            v.retain(|p| {
-                if now.saturating_sub(p.created_ns) < PROVISIONAL_TIMEOUT_NS {
-                    return true;
-                }
-                expired.push(p.session);
-                false
-            });
-        });
-        // A probe has no lsquic conn, so no handshake or idle timeout covers
-        // it, and RFC 9000 s6.1 makes the reply optional with no retransmit:
-        // without this a dropped reply hangs `opened` and `close()` forever.
-        self.pending_verneg.with_mut(|v| {
-            v.retain(|(session, _, created_ns)| {
-                if now.saturating_sub(*created_ns) < PROVISIONAL_TIMEOUT_NS {
-                    return true;
-                }
-                expired.push(*session);
-                false
-            });
-        });
-        for session in expired {
-            if self.expire_session(session) {
-                n_expired += 1;
-            }
-        }
-        if n_expired > 0 {
-            // This runs after `process()` already drained the event queues, so
-            // ask `rearm_timer` for the follow-up pass that delivers these.
-            self.followup_due.set(true);
-        }
-        self.dead_provisional_peers
-            .with_mut(|d| d.retain(|&(_, at)| now.saturating_sub(at) < PROVISIONAL_TIMEOUT_NS));
-    }
-
-    /// lsquic promotes a server conn after its handshake and never calls `on_hsk_done` for it.
-    pub(super) fn on_new_conn(&self, handshaken: lsquic::Conn) -> *mut QuicSession {
-        let global_ptr = self.global.get();
-        if global_ptr.is_null() {
-            return null_mut();
-        }
-        // SAFETY: as in `on_data`.
-        let global = unsafe { &*global_ptr };
-        let endpoint_handle = self.this_value.get().get();
-        let peer = conn_peer_addr(handshaken);
-        let provisional = self.provisional.with_mut(|v| {
-            let idx = peer
-                .as_ref()
-                .and_then(|peer| v.iter().position(|p| p.peer.decode() == peer.decode()));
-            idx.map(|i| v.remove(i).session)
-        });
-        if let Some(session) = provisional {
-            if let Some(live) = self.live_session(session) {
-                live.bind_conn(handshaken);
-                live.note_handshake_ok(handshaken);
-                return session;
-            }
-        }
-        // A close() must stop accepting: a session promoted now keeps
-        // `sessions` non-empty and the finish gate never trips. CONNECTION_
-        // REFUSED (not a code-0 close) is what makes the client reject.
-        if self.closing.get() {
-            handshaken.abort_error(false, QUIC_TRANSPORT_CONNECTION_REFUSED, c"");
-            return null_mut();
-        }
-        let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));
-        if busy != 0 || (max_conns > 0 && self.sessions.get().len() >= max_conns as usize) {
-            handshaken.abort_error(false, QUIC_TRANSPORT_CONNECTION_REFUSED, c"");
-            self.add_stat(IDX_STATS_SERVER_BUSY_COUNT, 1);
-            return null_mut();
-        }
-        let peer_decoded = peer.as_ref().and_then(StoredAddr::decode);
-        let was_dead = peer_decoded.is_some()
-            && self
-                .dead_provisional_peers
-                .get()
-                .iter()
-                .any(|(addr, _)| addr.decode() == peer_decoded);
-        if was_dead {
-            // One marker per destroyed provisional, so consume exactly one:
-            // draining them all would treat a peer's later retries as live.
-            self.dead_provisional_peers.with_mut(|d| {
-                if let Some(i) = d.iter().position(|(addr, _)| addr.decode() == peer_decoded) {
-                    d.swap_remove(i);
-                }
-            });
-            // Node's dead server goes silent, and `lsquic_conn_abort` sends a
-            // CONNECTION_CLOSE -- use the silent variant the sibling in
-            // session.rs uses.
-            handshaken.abort_silent();
-            return null_mut();
-        }
-        match QuicSession::create(
-            global,
-            self.vtable_ptr,
-            self,
-            endpoint_handle,
-            Some(handshaken),
-            true,
-            self.application(true),
-        ) {
-            Ok((session, _handle)) => {
-                if let Err(err) = self.apply_server_session_options(global, session) {
+    fn receive(&self, now: Instant, from: &Addresses, datagram: &mut [u8]) {
+        let accepted = self.server.get().as_ref().map_or(&[][..], |_| VERSIONS);
+        let unrouted = self.quic().receive(now, from, datagram, accepted);
+        match unrouted {
+            Some(Unrouted::Incoming(incoming)) => {
+                if let Err(err) = self.accept(now, from.peer, incoming) {
                     crate::dispatch::fold(Err(err));
                 }
-                let session_ptr = core::ptr::from_ref(session).cast_mut();
-                self.sessions.with_mut(|v| v.push(session_ptr));
-                self.pending_new_sessions.with_mut(|v| v.push(session_ptr));
-                self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
-                session.note_handshake_ok(handshaken);
-                session_ptr
             }
-            Err(e) => {
-                // Abort like the sibling null-return branches, or the conn
-                // lingers with no session behind it.
-                crate::dispatch::fold(Err(e));
-                handshaken.abort_silent();
-                null_mut()
-            }
+            Some(Unrouted::Stray(stray)) => self.on_stray(now, from, stray),
+            None => {}
         }
     }
 
-    pub(super) fn configured_alpn(&self, is_server: bool) -> Option<Vec<u8>> {
-        let alpn = if is_server {
-            self.server_alpn.get()
-        } else {
-            self.client_alpn.get()
+    fn on_stray(&self, now: Instant, from: &Addresses, stray: &mut [u8]) {
+        for other in registered_endpoints() {
+            if !core::ptr::eq(other.get(), self)
+                && !other.peer_blocked(from.peer)
+                && other.quic().receive(now, from, stray, &[]).is_none()
+            {
+                return other.mark_driver_pending();
+            }
+        }
+        let Some(mut bucket) = self.stateless_resets.as_ref().map(RefCell::borrow_mut) else {
+            return;
         };
-        let bytes = alpn.strip_suffix(b"\0").unwrap_or(alpn);
-        if bytes.is_empty() {
-            None
+        if !bucket.take(now, 1) {
+            self.add_stat(IDX_STATS_STATELESS_RESET_RATE_LIMITED, 1);
+        } else if self.quic().reset(from, stray) {
+            self.add_stat(IDX_STATS_STATELESS_RESET_COUNT, 1);
         } else {
-            Some(bytes.to_vec())
+            bucket.put_back(1);
         }
     }
 
-    pub(super) fn is_http(&self, is_server: bool) -> bool {
-        if is_server {
-            self.server_is_http.get()
-        } else {
-            self.client_is_http.get()
+    /// Node announces server sessions at Initial receipt — before the
+    /// handshake — so `onsession` precedes the client's `opened`.
+    fn accept(&self, now: Instant, peer: SocketAddr, incoming: Incoming<'_>) -> JsResult<()> {
+        let Some(server) = self.server.get().as_ref().filter(|_| !self.closing.get()) else {
+            self.quic().refuse(incoming);
+            return Ok(());
+        };
+        let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));
+        if busy != 0
+            || (1..=self.sessions.get().len()).contains(&max_conns.into())
+            || !self.has_room_for(peer.ip().to_canonical())
+        {
+            self.quic().refuse(incoming);
+            self.add_stat(IDX_STATS_SERVER_BUSY_COUNT, 1);
+            return Ok(());
         }
+        let Some(mut tls) = bun_quic_tls::Session::new(&server.tls, Side::Server) else {
+            return Ok(());
+        };
+        tls.accept(Rc::clone(&server.alpn));
+        let contexts = Rc::clone(&self.sni_contexts);
+        tls.select_context_with(Box::new(move |name| {
+            match_sni(&contexts.borrow(), name?).cloned()
+        }));
+        let (global, config) = (self.global(), Rc::clone(&server.config));
+        let (session, _handle) = QuicSession::create(
+            global,
+            self,
+            self.this_value.get().get(),
+            true,
+            application_of(&config),
+        )?;
+        let conn = self.quic().accept(now, incoming, config, Box::new(tls));
+        session.bind(conn);
+        let session_ptr = self.register_session(session);
+        (self.pending_new_sessions).with_mut(|v| v.push_back(session_ptr));
+        self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
+        self.apply_server_session_options(global, session)
     }
 
-    fn application(&self, is_server: bool) -> session::Application {
-        if self.is_http(is_server) {
-            session::Application::Http3
-        } else {
-            session::Application::Default
+    fn has_room_for(&self, host: IpAddr) -> bool {
+        let count = self.sessions_per_host.borrow().get(&host).copied();
+        let max = self.with_state(|s| s.max_connections_per_host);
+        !(1..=count.unwrap_or(0)).contains(&max.into())
+    }
+
+    /// For a client whose address is validated. Returns false if it is one too many.
+    pub(super) fn count_session(&self, session: &QuicSession, peer: SocketAddr) -> bool {
+        let host = peer.ip().to_canonical();
+        let has_room = self.has_room_for(host);
+        session.host.set(Some(host));
+        *self.sessions_per_host.borrow_mut().entry(host).or_default() += 1;
+        has_room
+    }
+
+    /// RFC 9000 §6.1 makes the reply optional, and a probe is not sent again.
+    fn sweep_verneg_probes(&self) {
+        let now = now();
+        let expired: Vec<_> =
+            (self.pending_verneg).with_mut(|v| v.extract_if(.., |it| it.2 <= now).collect());
+        for session in expired.iter().filter_map(|it| self.live_session(it.0)) {
+            session.push_event(SessionEvent::Closed(Some((
+                CloseType::Transport,
+                CRYPTO_ERROR_HANDSHAKE_FAILURE,
+                b"handshake failed".to_vec(),
+            ))));
+            self.plan_followup();
         }
     }
 
     fn send_scope(&self) -> SendScope<'_> {
         self.send_scope_depth.update(|depth| depth + 1);
-        SendScope(&self.send_scope_depth)
+        SendScope(self)
     }
 
-    pub(super) fn drive_engines_once(&self) {
-        if self.processing.replace(true) {
+    /// Sends what there is to send, and queues the events for JavaScript.
+    pub(super) fn drive_once(&self) {
+        if self.closed.get() || self.processing.replace(true) {
             return;
         }
-        let send_scope = self.send_scope();
-        bun_boringssl_sys::ERR_clear_error();
-        for engine in [self.server_engine.get(), self.client_engine.get()] {
-            if !engine.is_null() {
-                // SAFETY: engine is live while the endpoint is.
-                unsafe { lsquic::lsquic_engine_process_conns(engine) };
-                // SAFETY: as above.
-                if unsafe { lsquic::lsquic_engine_has_unsent_packets(engine) } != 0 {
-                    // SAFETY: as above.
-                    unsafe { lsquic::lsquic_engine_send_unsent_packets(engine) };
-                }
+        let _send_scope = self.send_scope();
+        let now = now();
+        self.quic().handle_timeouts(now);
+        self.outbox.borrow_mut().start_pass(now);
+        for _ in 0..MAX_ROUNDS {
+            self.collect_events();
+            self.transmit();
+            if !self.quic().has_events() || self.outbox.borrow().is_pass_over() {
+                break;
             }
         }
-        drop(send_scope);
+        if self.quic().has_events() || self.outbox.borrow().is_pass_over() {
+            self.plan_followup();
+        }
         self.processing.set(false);
     }
 
-    pub(super) fn unregister_session(&self, session: *mut QuicSession) {
-        self.sessions.with_mut(|v| v.retain(|&s| s != session));
+    /// For between two callbacks of `session`.
+    pub(super) fn drive_if_overdue(&self, session: &QuicSession) {
+        let is_busy = self.marked_sessions.get().len() > session.is_marked.get().into();
+        if self.driver_pending.get() && self.outbox.borrow_mut().is_overdue(is_busy) {
+            self.drive_once();
+        }
+    }
+
+    fn collect_events(&self) {
+        let now = now();
+        loop {
+            let Some((_, session, event)) = self.quic().poll_event(now) else {
+                return;
+            };
+            // SAFETY: a session takes itself out before it can be collected.
+            if let Some(session) = unsafe { session.cast::<QuicSession>().as_ref() } {
+                session.on_event(event);
+            }
+        }
+    }
+
+    fn transmit(&self) {
+        let binding = |local| {
+            let of = |it: &QuicEndpoint| it.binding.get().filter(|it| it.has(local));
+            of(self).or_else(|| registered_endpoints().iter().find_map(|it| of(it)))
+        };
+        let count = |batch: &Batch| {
+            self.add_stat(IDX_STATS_PACKETS_SENT, batch.len() as u64);
+            self.add_stat(IDX_STATS_BYTES_SENT, batch.bytes().len() as u64);
+        };
+        let visit = |conn: &bun_quic::Connection| {
+            // SAFETY: a session takes itself out before it can be collected.
+            if let Some(session) = unsafe { conn.context.cast::<QuicSession>().as_ref() } {
+                session.on_activity(conn);
+            }
+        };
+        (self.outbox.borrow_mut()).flush(&mut self.quic(), binding, visit, count);
+    }
+
+    pub(super) fn unregister_session(&self, session: &QuicSession) {
+        if let Some(host) = session.host.take()
+            && let Entry::Occupied(mut count) = self.sessions_per_host.borrow_mut().entry(host)
+        {
+            *count.get_mut() -= 1;
+            if *count.get() == 0 {
+                count.remove();
+            }
+        }
+        let session = core::ptr::from_ref(session).cast_mut();
+        let Ok(at) = self.sessions.get().binary_search(&session) else {
+            return;
+        };
+        self.sessions.with_mut(|v| v.remove(at));
         self.pending_new_sessions
             .with_mut(|v| v.retain(|&s| s != session));
         self.pending_verneg
             .with_mut(|v| v.retain(|&(s, _, _)| s != session));
-        let now = now_ns();
-        self.provisional.with_mut(|v| {
-            v.retain(|p| {
-                if p.session != session {
-                    return true;
-                }
-                self.dead_provisional_peers
-                    .with_mut(|d| d.push((p.peer, now)));
-                false
-            })
-        });
-    }
-
-    fn build_engine(
-        &self,
-        is_server: bool,
-        config: &TlsConfig,
-        options: JSValue,
-        global: &JSGlobalObject,
-    ) -> JsResult<*mut lsquic::lsquic_engine> {
-        let tls = TlsContext::new(config).map_err(|e| global.throw(format_args!("tls: {}", e)))?;
-        // Node accepts a list, so own ALPN on the SSL_CTX and pass NULL here.
-        let alpn_cstr = TlsContext::alpn_cstr(config);
-        let is_http = alpn_cstr_is_http(&alpn_cstr);
-        if is_server && !alpn_list_is_uniform(&config.alpn) {
-            return Err(global
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "options.alpn cannot mix HTTP/3 and non-HTTP/3 protocols on one endpoint; use a separate QuicEndpoint for each"
-                    ),
-                )
-                .throw());
-        }
-        if is_server {
-            self.server_tls.set(Some(tls));
-            self.server_alpn.set(alpn_cstr);
-            self.server_is_http.set(is_http);
-            self.server_verify_client.set(config.verify_client);
-        } else {
-            self.client_tls.set(Some(tls));
-            self.client_alpn.set(alpn_cstr);
-            self.client_is_http.set(is_http);
-        }
-        let mut settings = lsquic::Settings::new(is_server, is_http);
-        // Node always advertises datagram support.
-        settings.datagrams(1);
-        settings.delayed_acks(0);
-        // Node's `closed` promise on the peer resolves on receipt of CONNECTION_CLOSE.
-        settings.silent_close(0);
-        // RFC 9000 sec 10.3: stateless reset.
-        settings.send_prst(!self.disable_stateless_reset.get() as c_int);
-        settings.honor_prst(1);
-        if is_server {
-            let burst = self.stateless_reset_burst.get();
-            if burst > 0 {
-                settings.sreset_burst(burst as c_uint);
-                settings.sreset_rate(self.stateless_reset_rate.get());
-            }
-            let origin_blob = self.origin_blob.get();
-            if !origin_blob.is_empty() {
-                settings.origin_blob(origin_blob);
-            }
-        }
-        let mut local_tp = lsquic::NqTransportParams::default();
-        apply_transport_params(global, &mut settings, options, &mut local_tp)?;
-        if let Some(app) = options
-            .get(global, "application")?
-            .filter(|v| v.is_object())
-        {
-            if let Some(v) = app
-                .get(global, "enableConnectProtocol")?
-                .filter(|v| v.is_boolean())
-            {
-                settings.h3_connect_protocol(v.to_boolean() as c_int);
-            }
-            if let Some(v) = app
-                .get(global, "enableDatagrams")?
-                .filter(|v| v.is_boolean())
-            {
-                // RFC 9297: HTTP/3 datagram support is advertised separately
-                // from the transport-level max_datagram_frame_size.
-                settings.h3_datagram(v.to_boolean() as c_int);
-            }
-            if let Some(v) = read_u64_option(global, app, "maxHeaderPairs")? {
-                settings.max_h3_header_pairs(v.min(u16::MAX as u64) as u16);
-            }
-            if let Some(v) = read_u64_option(global, app, "maxHeaderLength")? {
-                settings.max_h3_header_bytes(v.min(u32::MAX as u64) as u32);
-            }
-        }
-        if is_server {
-            self.server_local_tp.set(local_tp);
-        } else {
-            self.client_local_tp.set(local_tp);
-        }
-        // SAFETY: `vtable` outlives both engines (held in this struct);
-        // `settings` is copied by lsquic before this returns.
-        let engine = unsafe {
-            lsquic::us_nq_engine_new(
-                is_server as c_int,
-                is_http as c_int,
-                self.vtable_ptr.cast_mut(),
-                settings.as_ptr(),
-                core::ptr::null(),
-            )
-        };
-        if engine.is_null() {
-            return Err(global.throw(format_args!("failed to create QUIC engine")));
-        }
-        Ok(engine)
     }
 
     fn release_native(&self) -> bool {
         if self.closed.replace(true) {
             return false;
         }
-        // Unlink first: the driver walk must never reach a freed endpoint.
-        self.unlink_loop_driver();
+        self.driver.set(None);
         self.event_loop_timer.disarm();
-        for engine in [
-            self.server_engine.replace(null_mut()),
-            self.client_engine.replace(null_mut()),
-        ] {
-            if !engine.is_null() {
-                // SAFETY: engine was created by this endpoint.
-                unsafe { lsquic::lsquic_engine_destroy(engine) };
-            }
+        ENDPOINT_REGISTRY.with_borrow_mut(|v| v.retain(|it| !core::ptr::eq(it.get(), self)));
+        if let Some(binding) = self.binding.take() {
+            uws::udp::Socket::opaque_mut(binding.socket).close();
         }
-        if let Some(socket) = self.socket.take() {
-            uws::udp::Socket::opaque_mut(socket).close();
-        }
-        let me = core::ptr::from_ref(self).cast_mut();
-        ENDPOINT_REGISTRY.with_borrow_mut(|v| v.retain(|&e| e != me));
         true
     }
 
-    /// `closed` is set FIRST: it gates `schedule_process`/`rearm_timer`, so a
-    /// callback running below cannot re-arm a tick onto engines this function
-    /// is about to free.
+    fn abort_connections(&self) {
+        let mut quic = self.quic();
+        for conn in quic.handles() {
+            quic.get_mut(conn).map(bun_quic::Connection::abort_silently);
+        }
+    }
+
     fn teardown(&self) -> bool {
         if !self.release_native() {
             return false;
         }
-        self.server_tls.set(None);
-        self.client_tls.set(None);
-        self.sni_contexts.with_mut(Vec::clear);
+        self.abort_connections();
+        self.collect_events();
+        self.server.set(None);
+        self.sni_contexts.borrow_mut().clear();
         self.server_session_options.set(None);
         self.with_state(|s| {
             s.closing = 1;
@@ -2095,49 +1206,18 @@ impl QuicEndpoint {
         Ok(())
     }
 
-    pub(super) fn buffer_early_keylog(&self, ssl: *mut c_void, peer: StoredAddr, line: Vec<u8>) {
-        self.early_keylog.with_mut(|v| v.push((ssl, peer, line)));
-    }
-
-    /// Without this, buffered lines outlive the freed `SSL*` and a later
-    /// handshake at the recycled address claims a dead handshake's secrets.
-    fn discard_early_keylog(&self, peer: &StoredAddr) {
-        let peer_decoded = peer.decode();
-        self.early_keylog
-            .with_mut(|v| v.retain(|(_, p, _)| p.decode() != peer_decoded));
-    }
-    pub(super) fn take_early_keylog(&self, ssl: *mut c_void) -> Vec<Vec<u8>> {
-        self.early_keylog.with_mut(|v| {
-            let mut out = Vec::new();
-            v.retain_mut(|(s, _, line)| {
-                if *s == ssl {
-                    out.push(core::mem::take(line));
-                    false
-                } else {
-                    true
-                }
-            });
-            out
-        })
-    }
-
     fn deliver_endpoint_close(&self, global: &JSGlobalObject, context: u8, status: c_int) {
         self.poll_ref.disable();
-        if let Some(callback) = callbacks::get(global, "onEndpointClose") {
-            let vm = global.bun_vm();
-            vm.event_loop().run_callback(
-                bun_event_loop::ContextId::NONE,
-                callback,
-                global,
-                self.this_value.get().get(),
-                &[
-                    JSValue::js_number(context as f64),
-                    JSValue::js_number(status as f64),
-                ],
-            );
-        }
+        callbacks::run(
+            global,
+            "onEndpointClose",
+            self.this_value.get().get(),
+            &[
+                JSValue::js_number(context as f64),
+                JSValue::js_number(status as f64),
+            ],
+        );
         self.this_value.with_mut(|r| r.downgrade());
-        self.vtable.set(None);
     }
 
     pub(crate) fn listen(
@@ -2158,49 +1238,43 @@ impl QuicEndpoint {
         if !self.ensure_bound(global, this_value.to_js())? {
             return Ok(());
         }
-        if self.server_engine.get().is_null() {
+        if self.server.get().is_none() {
             let options = options.to_js();
             if options.is_object() {
                 self.server_session_options
                     .set(Some(bun_jsc::Strong::create(options, global)));
             }
             let tls = options.get(global, "tls")?.unwrap_or(JSValue::UNDEFINED);
-            // Authoritative origins for the HTTP/3 ORIGIN frame (RFC 9412
-            // sec 2): each Origin-Entry is a 16-bit length prefix followed
-            // by the ASCII origin.
+            let tls_config = TlsConfig::from_js(global, tls, true)?;
+            let Some(is_http3) = tls_config.is_http3() else {
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "options.alpn cannot mix HTTP/3 and non-HTTP/3 protocols on one endpoint; use a separate QuicEndpoint for each"
+                        ),
+                    )
+                    .throw());
+            };
+            let mut config = config_from_js(global, options, Side::Server, is_http3)?;
             if tls.is_object() {
-                if let Some(origins) = tls.get(global, "origins")?.filter(|v| v.is_array()) {
-                    let len = origins.get_length(global)? as u32;
-                    let mut blob = Vec::new();
-                    for i in 0..len {
-                        let v = origins.get_index(global, i)?;
-                        if !v.is_string() {
-                            continue;
-                        }
-                        let bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
-                        if bytes.is_empty() || bytes.len() > u16::MAX as usize {
-                            continue;
-                        }
-                        blob.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
-                        blob.extend_from_slice(&bytes);
-                    }
-                    self.origin_blob.with_mut(|b| *b = blob);
+                if let Some(http3) = &mut config.http3 {
+                    http3.origins = origins_from_js(global, tls)?;
                 }
-            }
-            let mut config = TlsConfig::from_js(global, tls, true)?;
-            if config.alpn.is_empty() {
-                // Node's default ALPN is `h3`.
-                config.alpn = b"\x02h3".to_vec();
-            }
-            self.server_alpn_wire.set(config.alpn.clone());
-            if tls.is_object() {
                 if let Some(sni) = tls.get(global, "sni")?.filter(|v| v.is_object()) {
-                    let built = Self::build_sni_contexts(global, sni, &config.alpn)?;
-                    self.sni_contexts.with_mut(|m| *m = built);
+                    let built =
+                        Self::build_sni_contexts(global, sni, tls_config.enable_early_data)?;
+                    *self.sni_contexts.borrow_mut() = built;
                 }
             }
-            let engine = self.build_engine(true, &config, options, global)?;
-            self.server_engine.set(engine);
+            self.server_verify_client.set(tls_config.verify_client);
+            self.server.set(Some(Server {
+                config: Rc::new(config),
+                tls: (tls_config.create_context())
+                    .map_err(|e| global.throw(format_args!("tls: {e}")))?,
+                alpn: tls_config.alpn.into(),
+                allows_early_data: tls_config.enable_early_data,
+            }));
         }
         // SAFETY: state buffer is live.
         self.with_state(|s| s.listening = 1);
@@ -2231,7 +1305,7 @@ impl QuicEndpoint {
         let address = address.to_js();
         let options = options.to_js();
         let session_ticket = session_ticket.to_js();
-        let Some(addr) = address.as_class_ref::<crate::socket::SocketAddress>() else {
+        let Some(remote) = address_from_js(address) else {
             return Err(global
                 .err(
                     jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -2239,13 +1313,12 @@ impl QuicEndpoint {
                 )
                 .throw());
         };
-        let remote = StoredAddr::from_socket_address(&addr);
         if let Some(version) = read_u64_option(global, options, "version")?
             .map(|v| v as u32)
-            .filter(|v| *v != QUIC_VERSION_1 && *v != QUIC_VERSION_2)
+            .filter(|&v| VERSIONS.iter().all(|it| it.number() != v))
         {
             let min_version = read_u64_option(global, options, "minVersion")?
-                .map_or(QUIC_VERSION_1, |v| v as u32);
+                .map_or(Version::V1.number(), |v| v as u32);
             return self.connect_verneg_probe(
                 global,
                 this_value.to_js(),
@@ -2255,139 +1328,47 @@ impl QuicEndpoint {
             );
         }
         let tls = options.get(global, "tls")?.unwrap_or(JSValue::UNDEFINED);
-        let config = TlsConfig::from_js(global, tls, false)?;
-        if self.client_engine.get().is_null() {
-            let engine = self.build_engine(false, &config, options, global)?;
-            self.client_engine.set(engine);
-        } else {
-            if alpn_cstr_is_http(&TlsContext::alpn_cstr(&config)) != self.client_is_http.get() {
-                let (was, want) = if self.client_is_http.get() {
-                    ("an HTTP/3", "raw")
-                } else {
-                    ("a raw", "HTTP/3")
-                };
-                return Err(global
-                    .err(
-                        jsc::ErrorCode::INVALID_STATE,
-                        format_args!(
-                            "This endpoint's client engine was created for {was} ALPN; use a separate QuicEndpoint for a {want} connection"
-                        ),
-                    )
-                    .throw());
-            }
-            // Node's TLS options are per-session, but the lsquic engine is
-            // per-endpoint. Each conn's SSL holds a reference to its SSL_CTX,
-            // so replacing ours is safe for earlier sessions.
-            match TlsContext::new(&config) {
-                Ok(fresh) => self.client_tls.set(Some(fresh)),
-                Err(e) => return Err(global.throw(format_args!("{e}"))),
-            }
-        }
-        // Node's DEFAULT_MAX_IDLE_TIMEOUT is 10 seconds when unspecified.
-        let idle_ms = options
-            .get(global, "transportParams")?
-            .filter(|v| v.is_object())
-            .map(|tp| read_u64_option(global, tp, "maxIdleTimeout"))
-            .transpose()?
-            .flatten()
-            .map(|secs| secs.saturating_mul(MS_PER_SEC))
-            .unwrap_or(DEFAULT_MAX_IDLE_TIMEOUT_SECS * MS_PER_SEC);
-        // SAFETY: the client engine exists after the branch above.
-        unsafe {
-            lsquic::lsquic_engine_set_idle_timeout_ms(
-                self.client_engine.get(),
-                idle_ms.min(c_uint::MAX as u64) as c_uint,
-            )
-        };
-        // Keep what localTransportParams() reports in step with what this
-        // connect() just put on the wire; a reused endpoint would otherwise
-        // still echo the first session's value.
-        self.client_local_tp
-            .with_mut(|tp| tp.max_idle_timeout = idle_ms);
-        // Read before the session exists: `QuicSession::create` self-roots, and
-        // the conn that follows holds it as its ctx, so a throw after either
-        // point has to unwind state that a plain `?` here avoids creating.
-        let keepalive_us =
-            read_u64_option(global, options, "keepAlive")?.map_or(0, |ms| ms.saturating_mul(1000));
-        let use_preferred = read_u64_option(global, options, "preferredAddressPolicy")?
-            == Some(PREFERRED_ADDRESS_USE);
-        let (session, handle) = QuicSession::create(
-            global,
-            self.vtable_ptr,
-            self,
-            this_value.to_js(),
-            None,
-            false,
-            self.application(false),
-        )?;
-        let session_ptr = core::ptr::from_ref(session).cast_mut();
-        // `TlsConfig::from_js` defaults servername to "localhost\0" (Node parity).
-        let sni = config.servername.as_ref();
-        let local = self.local_addr.get();
-        let resume_blob: Option<Vec<u8>> = if config.enable_early_data {
-            session_ticket
-                .as_array_buffer(global)
-                .map(|buf| buf.byte_slice().to_vec())
-        } else {
-            None
-        };
-        let (resume_ptr, resume_len) = match resume_blob.as_deref() {
-            Some(b) if !b.is_empty() => (b.as_ptr(), b.len()),
-            _ => (null(), 0),
-        };
-        // engine_connect fires on_new_conn synchronously; hold the scope so a
-        // schedule_process from inside it cannot re-enter the engine.
-        let send_scope = self.send_scope();
-        // SAFETY: engine is live; local/remote/sni/resume are valid for this
-        // call (lsquic copies the resume blob); `session` is the
-        // conn-ctx, at its final address in its wrapper.
-        let conn = unsafe {
-            let conn = lsquic::lsquic_engine_connect(
-                self.client_engine.get(),
-                lsquic::N_LSQVER,
-                local.as_ptr().cast(),
-                remote.as_ptr().cast(),
-                core::ptr::from_ref(self).cast_mut().cast(),
-                session_ptr.cast(),
-                sni.map_or(null(), |s| s.as_ptr().cast()),
-                0,
-                resume_ptr,
-                resume_len,
-                // `options.token` is validated in JS but deliberately not
-                // replayed: handing it to lsquic breaks the token and zero-rtt
-                // tests, at the cost of the Retry RTT it would have saved.
-                null(),
-                0,
-            );
-            // SAFETY: lsquic returns a live conn or null. The session's copy is cleared as in
-            // `on_new_conn`. The local copy is used after `apply_options`, which reads
-            // `datagramDropPolicy`, `qlog`, `verifyPeer` and `application`: quic.ts passes an
-            // object it builds, with these as own data properties, so no script runs there.
-            lsquic::Conn::from_raw(conn)
-        };
-        drop(send_scope);
-        let Some(conn) = conn else {
-            session.teardown(global);
+        let tls_config = TlsConfig::from_js(global, tls, false)?;
+        let is_http3 = tls_config.is_http3() == Some(true);
+        let config = config_from_js(global, options, Side::Client, is_http3)?;
+        let ctx =
+            (tls_config.create_context()).map_err(|e| global.throw(format_args!("tls: {e}")))?;
+        let (Some(mut tls), Some(local)) = (
+            bun_quic_tls::Session::new(&ctx, Side::Client),
+            self.local_addr.get(),
+        ) else {
             return Ok(JSValue::UNDEFINED);
         };
-        // SAFETY: `conn` is live.
-        unsafe { lsquic::lsquic_conn_set_ctx(conn.raw(), session_ptr.cast()) };
-        session.conn.set(Some(conn));
-        session.cache_sockaddrs(conn);
-        // `conn` is set above, so teardown clears its ctx and no late callback reaches the session.
+        if let Some(name) = tls_config.servername.as_deref().filter(|it| it.len() > 1)
+            && !(tls.ssl_mut()).set_servername(bun_core::ZStr::from_slice_with_nul(name))
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let ticket = (session_ticket.as_array_buffer(global))
+            .filter(|_| tls_config.enable_early_data)
+            .map(|buf| buf.byte_slice().to_vec())
+            .unwrap_or_default();
+        let (session, handle) = QuicSession::create(
+            global,
+            self,
+            this_value.to_js(),
+            false,
+            application_of(&config),
+        )?;
         if let Err(e) = session.apply_options(global, options) {
             session.teardown(global);
             return Err(e);
         }
-        if resume_len != 0 {
-            session.apply_peer_datagram_budget();
-        }
-        // keepAlive is per-session in Node.
-        conn.set_ping_period_us(keepalive_us);
-        if use_preferred {
-            conn.use_preferred_address(true);
-        }
-        self.sessions.with_mut(|v| v.push(session_ptr));
+        let mut peer = remote;
+        peer.set_ip(match or_loopback(peer.ip()).to_canonical() {
+            IpAddr::V4(ip) if local.is_ipv6() => ip.to_ipv6_mapped().into(),
+            ip => ip,
+        });
+        let addresses = Addresses { local, peer };
+        let conn = (self.quic()).connect(now(), Rc::new(config), addresses, Box::new(tls), &ticket);
+        session.bind(conn);
+        session.apply_peer_datagram_budget();
+        self.register_session(session);
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         self.schedule_process();
         Ok(handle)
@@ -2397,51 +1378,35 @@ impl QuicEndpoint {
         &self,
         global: &JSGlobalObject,
         this_value: JSValue,
-        remote: StoredAddr,
+        remote: SocketAddr,
         version: u32,
         min_version: u32,
     ) -> JsResult<JSValue> {
-        let (session, handle) = QuicSession::create(
-            global,
-            self.vtable_ptr,
-            self,
-            this_value,
-            None,
-            false,
-            session::Application::None,
-        )?;
-        let mut dcid = [0u8; VERNEG_PROBE_CID_LEN];
-        let mut scid = [0u8; VERNEG_PROBE_CID_LEN];
-        bun_boringssl_sys::rand_bytes(&mut dcid);
-        bun_boringssl_sys::rand_bytes(&mut scid);
-        // RFC 8999 sec 5.1 long header: form+fixed bits, version, then
-        // length-prefixed DCID and SCID.
-        let mut probe = [0u8; VERNEG_PROBE_LEN];
-        probe[0] = HEADER_FORM_LONG | LONG_HEADER_FIXED_BIT;
-        probe[1..5].copy_from_slice(&version.to_be_bytes());
-        let mut off = LONG_HEADER_DCID_LEN_OFFSET;
-        probe[off] = VERNEG_PROBE_CID_LEN as u8;
-        off += 1;
-        probe[off..off + VERNEG_PROBE_CID_LEN].copy_from_slice(&dcid);
-        off += VERNEG_PROBE_CID_LEN;
-        probe[off] = VERNEG_PROBE_CID_LEN as u8;
-        off += 1;
-        probe[off..off + VERNEG_PROBE_CID_LEN].copy_from_slice(&scid);
+        let (session, handle) =
+            QuicSession::create(global, self, this_value, false, Application::None)?;
+        let mut ids = [[0; VERNEG_PROBE_CID_LEN]; 2];
+        bun_boringssl_sys::rand_bytes(ids.as_flattened_mut());
+        let mut probe = vec![HEADER_FORM_AND_FIXED_BITS];
+        probe.extend_from_slice(&version.to_be_bytes());
+        for id in ids {
+            probe.push(VERNEG_PROBE_CID_LEN as u8);
+            probe.extend_from_slice(&id);
+        }
+        probe.resize(VERNEG_PROBE_LEN, 0);
         session.verneg.set(Some((version, min_version)));
-        session.remote_addr.set(remote);
-        let session = core::ptr::from_ref(session).cast_mut();
+        session.remote_addr.set(Some(remote));
+        let session = self.register_session(session);
         self.pending_verneg
-            .with_mut(|v| v.push((session, scid, now_ns())));
-        // A probe has no engine, so nothing else would ever arm the timer that
-        // runs the sweep expiring it.
-        self.schedule_process();
-        self.sessions.with_mut(|v| v.push(session));
+            .with_mut(|v| v.push((session, ids[1], now() + VERNEG_PROBE_TIMEOUT)));
+        self.wake();
+        self.update_keepalive();
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
-        if let Some(socket) = self.socket.get() {
-            uws::udp::Socket::opaque_mut(socket).send(
+        if let Some(binding) = self.binding.get() {
+            let remote = socket_address(remote);
+            uws::udp::Socket::opaque_mut(binding.socket).send(
                 &[probe.as_ptr()],
                 &[probe.len()],
-                &[remote.as_ptr().cast()],
+                &[(&raw const remote._addr).cast()],
             );
             self.add_stat(IDX_STATS_PACKETS_SENT, 1);
             self.add_stat(IDX_STATS_BYTES_SENT, probe.len() as u64);
@@ -2451,44 +1416,25 @@ impl QuicEndpoint {
 
     /// The VN packet's DCID echoes the probe's SCID — RFC 8999 sec 6.
     fn handle_version_negotiation(&self, payload: &[u8]) -> bool {
-        if self.pending_verneg.get().is_empty() {
+        const LEN: u8 = VERNEG_PROBE_CID_LEN as u8;
+        let [0x80..=0xff, 0, 0, 0, 0, LEN, rest @ ..] = payload else {
             return false;
-        }
-        let mut off = LONG_HEADER_DCID_LEN_OFFSET;
-        let dcid_len = payload[off] as usize;
-        off += 1;
-        if dcid_len > MAX_CID_LEN || payload.len() < off + dcid_len + 1 {
-            return false;
-        }
-        let dcid = &payload[off..off + dcid_len];
-        off += dcid_len;
-        let scid_len = payload[off] as usize;
-        off += 1;
-        if scid_len > MAX_CID_LEN || payload.len() < off + scid_len {
-            return false;
-        }
-        off += scid_len;
-        let session = self.pending_verneg.with_mut(|v| {
-            v.iter()
-                .position(|(_, probe_scid, _)| probe_scid.as_slice() == dcid)
-                .map(|i| v.swap_remove(i).0)
-        });
-        let Some(session) = session else { return false };
-        let mut server_versions = Vec::new();
-        while off + VERSION_FIELD_LEN <= payload.len() {
-            server_versions.push(u32::from_be_bytes([
-                payload[off],
-                payload[off + 1],
-                payload[off + 2],
-                payload[off + 3],
-            ]));
-            off += VERSION_FIELD_LEN;
-        }
-        // SAFETY: pending entries are pruned in `unregister_session`, so a
-        // matched pointer is live.
-        unsafe {
-            (*session).push_event(session::SessionEvent::VersionNegotiation { server_versions })
         };
+        let Some((dcid, [LEN, rest @ ..])) = rest.split_first_chunk() else {
+            return false;
+        };
+        let session = self.pending_verneg.with_mut(|v| {
+            let at = v.iter().position(|(_, probe_scid, _)| probe_scid == dcid);
+            at.map(|i| v.swap_remove(i).0)
+        });
+        let Some(session) = session.and_then(|it| self.live_session(it)) else {
+            return false;
+        };
+        let versions = rest.get(VERNEG_PROBE_CID_LEN..).unwrap_or_default();
+        let versions = versions.as_chunks().0.iter().copied();
+        session.push_event(SessionEvent::VersionNegotiation {
+            server_versions: versions.map(u32::from_be_bytes).collect(),
+        });
         self.schedule_process();
         true
     }
@@ -2506,9 +1452,12 @@ impl QuicEndpoint {
             self.this_value
                 .with_mut(|r| r.set_strong(this_value.to_js(), cx.global()));
         }
-        if self.sessions.get().is_empty() && self.engine_conn_count() == 0 {
+        if self.is_drained() {
             self.finish_close();
         } else {
+            (self.sessions.get().iter())
+                .filter_map(|&it| self.live_session(it))
+                .for_each(QuicSession::expect_end);
             self.schedule_process();
         }
     }
@@ -2520,7 +1469,7 @@ impl QuicEndpoint {
     }
 
     pub(crate) fn address(&self, cx: &mut JsScope<'_>) -> JSValue {
-        self.local_addr.get().to_js_socket_address(cx.global())
+        address_to_js(cx.global(), self.local_addr.get())
     }
     pub(crate) fn mark_busy(&self, busy: bool) {
         // SAFETY: state buffer is live.
@@ -2529,8 +1478,8 @@ impl QuicEndpoint {
     fn build_sni_contexts(
         global: &JSGlobalObject,
         entries: JSValue,
-        alpn: &[u8],
-    ) -> JsResult<Vec<(Vec<u8>, TlsContext)>> {
+        allows_early_data: bool,
+    ) -> JsResult<Vec<(Vec<u8>, OwnedSslCtx)>> {
         let keys = entries.keys(global)?;
         let len = keys.get_length(global)? as u32;
         let mut out = Vec::with_capacity(len as usize);
@@ -2544,10 +1493,8 @@ impl QuicEndpoint {
                 continue;
             }
             let mut config = TlsConfig::from_js(global, value, true)?;
-            if config.alpn.is_empty() {
-                config.alpn = alpn.to_vec();
-            }
-            match TlsContext::new(&config) {
+            config.enable_early_data &= allows_early_data;
+            match config.create_context() {
                 Ok(ctx) => out.push((host, ctx)),
                 Err(e) => {
                     return Err(global
@@ -2584,58 +1531,35 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        let mut alpn = self.server_alpn_wire.get().clone();
-        if alpn.is_empty() {
-            alpn = b"\x02h3".to_vec();
+        let server = self.server.get().as_ref();
+        let allows_early_data = server.is_some_and(|it| it.allows_early_data);
+        let built = Self::build_sni_contexts(global, entries, allows_early_data)?;
+        let mut map = self.sni_contexts.borrow_mut();
+        if replace.to_boolean() {
+            map.clear();
         }
-        let built = Self::build_sni_contexts(global, entries, &alpn)?;
-        self.sni_contexts.with_mut(|map| {
-            if replace.to_boolean() {
-                map.clear();
+        for (host, ctx) in built {
+            if let Some(slot) = map.iter_mut().find(|(h, _)| h.eq_ignore_ascii_case(&host)) {
+                slot.1 = ctx;
+            } else {
+                map.push((host, ctx));
             }
-            for (host, ctx) in built {
-                if let Some(slot) = map.iter_mut().find(|(h, _)| h.eq_ignore_ascii_case(&host)) {
-                    slot.1 = ctx;
-                } else {
-                    map.push((host, ctx));
-                }
-            }
-        });
+        }
         Ok(())
-    }
-
-    /// Swaps in close callbacks that are safe to run during VM teardown.
-    ///
-    /// Teardown finalizes endpoints, sessions and streams in any order, so
-    /// `lsquic_engine_destroy` can call back for a session or stream that's already freed.
-    /// `Drop` nulls a freed object's lsquic ctx, and for a live one these callbacks
-    /// don't dereference session or endpoint pointers.
-    fn detach_for_finalize(&self) {
-        self.sessions.with_mut(Vec::clear);
-        self.pending_new_sessions.with_mut(Vec::clear);
-        self.provisional.with_mut(Vec::clear);
-        self.pending_verneg.with_mut(Vec::clear);
-        self.vtable.with_mut(|vt| {
-            if let Some(vt) = vt.as_mut() {
-                vt.owner = null_mut();
-                vt.on_stream_close = stream::QuicStream::on_close_detached;
-                vt.on_conn_closed = QuicSession::on_closed_detached;
-            }
-        });
     }
 }
 
-struct SendScope<'a>(&'a Cell<u32>);
+struct SendScope<'a>(&'a QuicEndpoint);
 
 impl Drop for SendScope<'_> {
     fn drop(&mut self) {
-        self.0.update(|depth| depth - 1);
+        self.0.send_scope_depth.update(|depth| depth - 1);
+        self.0.wake();
     }
 }
 
 impl Drop for QuicEndpoint {
     fn drop(&mut self) {
-        self.detach_for_finalize();
         self.release_native();
     }
 }

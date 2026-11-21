@@ -781,13 +781,7 @@ describe.each(["http1.1", "http2", "http3"] as const)("padded response field val
     );
   });
 
-  // lsquic checks content-length itself when it decodes the QPACK block. It
-  // refuses the padded value before Bun sees the field.
-  const [title, expected] =
-    protocol === "http3"
-      ? ["lsquic refuses a padded Content-Length", { error: "HTTP3StreamReset" }]
-      : ["a padded Content-Length frames the body", { contentLength: "5", body: "hello" }];
-  test(title, async () => {
+  test("a padded Content-Length frames the body", async () => {
     await withRawOrigin(
       protocol,
       () => [{ status: 200, fields: [["content-length", " 5\t"]], body: "hello" }],
@@ -796,7 +790,7 @@ describe.each(["http1.1", "http2", "http3"] as const)("padded response field val
           async res => ({ contentLength: res.headers.get("content-length"), body: await res.text() }),
           e => ({ error: e.code }),
         );
-        expect(result).toEqual(expected);
+        expect(result).toEqual({ contentLength: "5", body: "hello" });
       },
     );
   });

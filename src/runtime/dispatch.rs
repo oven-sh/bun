@@ -1541,7 +1541,7 @@ pub(crate) unsafe fn fire_timer(
 }
 
 /// The fold for a foreign dispatcher's landing frame — a uSockets / uWS /
-/// lsquic / pipe-reader callback that returns `void`, so what its JS left
+/// QUIC / pipe-reader callback that returns `void`, so what its JS left
 /// pending has nowhere to go but here: reported as uncaught (or, for the VM's
 /// termination, left for the loop to stand down on), on the JS thread this
 /// dispatch runs on, rather than left pending for whatever enters JS next.

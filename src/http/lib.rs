@@ -1961,7 +1961,7 @@ impl<'a> HTTPClient<'a> {
         ) {
             return false;
         }
-        if self.has_tls_options_unsupported_by_h3() {
+        if self.has_tls_options_unsupported_by_h3() || self.method == Method::CONNECT {
             return false;
         }
         h3_alt_svc_enabled()
@@ -2648,7 +2648,7 @@ impl InFlightRequest {
             if self.http_proxy.is_some() || !self.unix_socket_path.is_empty() {
                 return self.fail(crate::Error::HTTP3Unsupported);
             }
-            if self.has_tls_options_unsupported_by_h3() {
+            if self.has_tls_options_unsupported_by_h3() || self.method == Method::CONNECT {
                 return self.fail(crate::Error::HTTP3Unsupported);
             }
             let Some(ctx) = h3::ClientContext::get_or_create() else {

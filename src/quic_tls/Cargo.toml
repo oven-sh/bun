@@ -1,0 +1,16 @@
+[package]
+name = "bun_quic_tls"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_boringssl_sys.workspace = true
+bun_core.workspace = true
+bun_opaque.workspace = true
+bun_quic.workspace = true

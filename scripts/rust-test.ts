@@ -53,6 +53,8 @@ const crates = [
   "bun_options_types",
   "bun_paths",
   "bun_pod",
+  "bun_qpack",
+  "bun_quic",
   "bun_removable_features",
   "bun_resolve_builtins",
   "bun_resolver",

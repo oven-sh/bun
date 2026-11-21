@@ -604,6 +604,12 @@ impl Resolver<'_, '_> {
                 if let Some(global) = self.find_global_out_of_sight_through(expr) {
                     self.mention(global);
                     self.expose(global);
+                } else if self.may_be_global_object(expr)
+                    && self.is_handed_to_hook_of_instanceof_alone(expr)
+                {
+                    self.output
+                        .handed_to_hooks_of_instanceof
+                        .push(BuiltinId::GlobalThis);
                 }
                 return;
             }
@@ -658,12 +664,19 @@ impl Resolver<'_, '_> {
         if let Some(receiver) = self.find_receiver_held_as_answer(expr, id) {
             self.expose(receiver);
         }
-        if self.is_stored_over_by_what_may_read_this(expr, id)
-            && let Some((holder, _)) = self.input.hir.member_key(expr)
-            && let Some(holder) =
-                mentioned_id(self.state(self.input.hir.skip_type_assertions(holder)))
-        {
-            self.expose(holder);
+        if self.is_stored_over_by_what_may_read_this(expr, id) {
+            let holder = match self.input.hir.member_key(expr) {
+                Some((holder, _)) => {
+                    mentioned_id(self.state(self.input.hir.skip_type_assertions(holder)))
+                }
+                // `escape = reader` lays it on the global object, which may call it as a method.
+                None => table::entry(id)
+                    .holder
+                    .filter(|&holder| table::canonical_id(holder) == BuiltinId::GlobalThis),
+            };
+            if let Some(holder) = holder {
+                self.expose(holder);
+            }
         }
         self.mention_members_read_under_written_keys(expr);
         let mention_use = self.classify_use(expr);

@@ -4,8 +4,8 @@ use bun_sema::bind::{
 };
 use bun_sema::check::aot::{FunctionRef, ObjectMemberKind};
 use bun_sema::hir::{
-    self, BinOp, Call, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, MemberKey, NodeData, PatKind,
-    PropKey, PropKind, StmtId, StmtKind, UnOp,
+    self, BinOp, Call, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, MemberId, MemberKey,
+    NodeData, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp,
 };
 use bun_sema::program::FileId;
 use smallvec::SmallVec;
@@ -1810,16 +1810,24 @@ pub(in crate::lower) fn is_left_out(
     let functions = file.inputs.library_functions;
     let declarations = functions.left_out_declarations();
     let bound = file.queries.files().bound(home);
+    let is_in_left_out_class = |member: MemberId| {
+        let class = bound.member_class(member);
+        class.is_some_and(|class| declarations.is_class_left_out(home, class))
+    };
     let is_node_left_out = |node: Parent| match node {
-        Parent::FnBody(function) => functions.is_left_out(FunctionRef {
-            file: home,
-            function,
-        }),
+        Parent::FnBody(function) => {
+            matches!(bound.fns[function.idx()].owner, FnOwner::Member(member) if is_in_left_out_class(member))
+                || functions.is_left_out(FunctionRef {
+                    file: home,
+                    function,
+                })
+        }
+        Parent::MemberInit(member) => is_in_left_out_class(member),
         Parent::Stmt(statement) => declarations.is_statement_left_out(home, statement),
         Parent::VarInit(declarator) => declarations.is_declarator_left_out(home, declarator),
         _ => false,
     };
-    let mut nodes = core::iter::successors(Some(Parent::FnBody(function)), |&node| match node {
+    let step_outward = |&node: &Parent| match node {
         Parent::Expr(expression) => Some(bound.parent_of_expr(expression)),
         Parent::Prop(property) => {
             let literal = bound.prop_owner[property.idx()].some()?;
@@ -1834,8 +1842,14 @@ pub(in crate::lower) fn is_left_out(
             FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => None,
         },
         _ => None,
+    };
+    // A path ends at a class, a pattern or a parameter. It goes on at the function that encloses those.
+    let mut around = core::iter::successors(Some(function), |&inner| {
+        bound.fns[inner.idx()].enclosing.some()
     });
-    nodes.any(is_node_left_out)
+    around.any(|from| {
+        core::iter::successors(Some(Parent::FnBody(from)), step_outward).any(is_node_left_out)
+    })
 }
 
 fn is_plain_call(file: &FileLowering<'_, '_, '_, '_>, site: Call) -> bool {

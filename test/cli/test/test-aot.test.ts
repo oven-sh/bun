@@ -474,6 +474,31 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.concurrent("a deferred import under a type has the value of the type that was imported first", async () => {
+    const { stderr, exitCode } = await expectSameAsBunTest({
+      "a.test.ts": `
+        import { expect, test } from "bun:test";
+        test("after an import", async () => {
+          const casks = (await import("./casks.toml", { with: { type: "toml" } })).default;
+          const { readCasks } = await import("./casks.mjs");
+          expect(readCasks()).toEqual(casks);
+        });
+        test("beside a pending import", async () => {
+          const pending = import("./vats.toml", { with: { type: "toml" } });
+          const { readVats } = await import("./vats.mjs");
+          expect(readVats()).toEqual((await pending).default);
+        });
+      `,
+      "casks.mjs": `import defer * as casks from "./casks.toml" with { type: "text" };\nexport const readCasks = () => casks.default;`,
+      "vats.mjs": `import defer * as vats from "./vats.toml" with { type: "text" };\nexport const readVats = () => vats.default;`,
+      "casks.toml": "hoops = 7\n",
+      "vats.toml": "staves = 30\n",
+    });
+    expect(stderr).toContain("(pass) after an import");
+    expect(stderr).toContain("(pass) beside a pending import");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("a build error", async () => {
     using dir = tempDir("test-aot", { "bad.test.ts": `import "./does-not-exist";` });
     const { stderr, exitCode } = await runTests(String(dir), true, [], false);

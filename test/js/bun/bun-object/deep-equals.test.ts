@@ -176,6 +176,55 @@ describe("the global of a node:vm context compares by its properties", () => {
   });
 });
 
+describe("objects that list different names", () => {
+  const withGetter = (object: object) =>
+    Object.defineProperty(object, "g", { get: () => 1, enumerable: true, configurable: true });
+  const manyNames = (count: number) => {
+    const object: Record<string, unknown> = { owner: "Ida" };
+    for (let i = 0; i < count; i++) object["w" + i] = 5;
+    return object;
+  };
+
+  it.each([
+    ["getters", () => [withGetter({ a: undefined }), withGetter({ b: 5 })]],
+    ["indices", () => [{ 0: undefined }, { 1: 5 }]],
+    ["proxies", () => [new Proxy({ a: undefined }, {}), new Proxy({ b: 5 }, {})]],
+    ["an inherited name", () => [withGetter({ a: undefined }), withGetter(Object.create({ b: 5 }))]],
+    // At these sizes deleting and then adding a name makes an uncacheable dictionary.
+    ...[126, 127, 128, 129].map(count => [
+      `one of ${count} names deleted`,
+      () => {
+        const all = manyNames(count);
+        const fewer = manyNames(count);
+        delete fewer.w0;
+        fewer.spare = undefined;
+        return [fewer, all];
+      },
+    ]),
+  ] as [string, () => [object, object]][])("%s: unequal either way", (_, make) => {
+    const [a, b] = make();
+    expect([Bun.deepEquals(a, b), Bun.deepEquals(b, a)]).toEqual([false, false]);
+    expect(a).not.toEqual(b);
+    expect(b).not.toEqual(a);
+  });
+
+  it("strict: a hidden property does not stand in for a listed one", () => {
+    const a = withGetter({ a: 1 });
+    const b = withGetter(Object.defineProperty({ b: 5 }, "a", { value: 1 }));
+    expect([Bun.deepEquals(a, b, true), Bun.deepEquals(b, a, true)]).toEqual([false, false]);
+  });
+
+  it("names in another order, and extra undefined ones, are still equal", () => {
+    const a = withGetter({ a: 1, b: 2, x: undefined });
+    const b = withGetter({ y: undefined, b: 2, a: 1 });
+    expect([Bun.deepEquals(a, b), Bun.deepEquals(b, a)]).toEqual([true, true]);
+    expect([
+      Bun.deepEquals(withGetter({ a: 1, b: 2 }), withGetter({ b: 2, a: 1 }), true),
+      Bun.deepEquals({ 0: 1, a: undefined }, { b: undefined, 0: 1 }),
+    ]).toEqual([true, true]);
+  });
+});
+
 // The cases documented at https://bun.sh/docs/api/utils#bun-deepequals as the
 // differences between the default and strict modes.
 describe("Bun.deepEquals strict mode", () => {

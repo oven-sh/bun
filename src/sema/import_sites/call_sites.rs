@@ -2116,6 +2116,7 @@ fn find_path_below_working_directory(
 }
 
 fn call_attributes(hir: &File<'_>, kind: ImportSiteKind, options: ExprId) -> ExprId {
+    let options = hir.skip_type_assertions(options);
     match kind {
         ImportSiteKind::ImportCall(_) => import_call_attributes(hir, options),
         ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_)
@@ -2132,7 +2133,8 @@ fn is_object(hir: &File<'_>, e: ExprId) -> bool {
 }
 
 fn import_call_attributes(hir: &File<'_>, options: ExprId) -> ExprId {
-    match hir.import_attribute_value(options, known::with) {
+    let with = hir.import_attribute_value(options, known::with);
+    match with.map(|it| hir.skip_type_assertions(it)) {
         Some(with) if is_object(hir, with) => with,
         Some(_) | None => ExprId::NONE,
     }

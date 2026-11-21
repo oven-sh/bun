@@ -108,6 +108,14 @@ impl Resolver<'_, '_> {
         }
     }
 
+    // `this instanceof F` is how a constructor asks for `new`, so `this` counts only where the hooks are supposed to be everywhere.
+    fn may_hand_to_hook_of_instanceof(&self, tested: ExprId, right: ExprId) -> bool {
+        let is_this = matches!(self.input.hir[tested].kind, ExprKind::This);
+        let supposed = self.hooks_of_instanceof_supposed.get();
+        (!is_this || matches!(supposed, HooksOfInstanceof::Everywhere))
+            && self.may_have_hook_of_instanceof(right)
+    }
+
     fn is_own_exports(&self, e: ExprId) -> bool {
         let value = self.value_of(e).or_else(|| self.held_value_of(e));
         value.is_some_and(|value| value.path.id == BuiltinId::ModuleObjectExports)
@@ -160,7 +168,7 @@ impl Resolver<'_, '_> {
             ExprKind::Binary { op: BinOp::Comma, right, .. } if node == right => {
                 return ControlFlow::Continue(parent);
             }
-            ExprKind::Binary { op: BinOp::Instanceof, left, right } if node == left && !matches!(hir[e].kind, ExprKind::This) && self.may_have_hook_of_instanceof(right) => MentionUse::Exposed,
+            ExprKind::Binary { op: BinOp::Instanceof, left, right } if node == left && self.may_hand_to_hook_of_instanceof(e, right) => MentionUse::Exposed,
             ExprKind::Binary { .. } => MentionUse::Inspected,
             ExprKind::Cond { test, .. } if node != test && self.is_resolved(parent) => MentionUse::Aliased,
             ExprKind::Cond { test, .. } if node != test => return ControlFlow::Continue(parent),

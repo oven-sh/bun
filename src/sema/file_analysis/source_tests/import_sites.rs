@@ -329,12 +329,12 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; const meta = import.meta; createRequire(import.meta.url)("a");"#,
-        &[],
+        &["a"],
     ),
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; import.meta.tag`x`; createRequire(import.meta.url)("a");"#,
-        &[],
+        &["a"],
     ),
     (
         "a.mts",

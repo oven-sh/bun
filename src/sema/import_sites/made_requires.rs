@@ -400,7 +400,7 @@ fn is_written_as_own_file(
         if (name == known::url || name == known::meta_filename || name == known::path)
             && matches!(expr_kind(hir, hir.skip_type_assertions(object)), Some(ExprKind::ImportMeta)));
     if is_import_meta_member {
-        return !bound.import_meta_may_be_modified();
+        return !bound.writes_import_meta_path();
     }
     let Some(conversions_left) = conversions_left.checked_sub(1) else {
         return false;
@@ -1859,6 +1859,12 @@ fn find_require_written_as(
     e: ExprId,
     left: StepsLeft,
 ) -> Option<WrittenRequire> {
+    let written = hir.skip_type_assertions(e);
+    if !bound.import_meta_may_be_modified()
+        && (is_import_meta_require(hir, written) || holds_import_meta_require(hir, bound, written))
+    {
+        return Some((None, false));
+    }
     match follow_to_own_require(Text::of(hir, bound, Some(decisions)), e, left)? {
         OwnRequire::OfFile => {
             (!may_be_modified(hir, bound, CommonJsVariable::Require)).then_some((None, false))

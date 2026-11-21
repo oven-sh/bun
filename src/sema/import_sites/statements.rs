@@ -100,7 +100,11 @@ pub(super) fn scan_statements(
             kind,
             specifier: ImportSpecifier::Constant(spec),
             specifier_node: ExprId::NONE,
-            attributes,
+            // Bun reads no attributes of a re-export: the file loads under its own type.
+            attributes: match kind {
+                ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_) => ExprId::NONE,
+                _ => attributes,
+            },
             consults_resolver: true,
             is_host_value: false,
         });

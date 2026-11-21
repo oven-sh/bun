@@ -1,6 +1,7 @@
 use super::code_barrels::ImportRequests;
 use super::code_load::{Analyzed, CodeTarget, LoadKey, LoadedCode};
 use super::*;
+use crate::fold::{Constant, Decisions, FoldedValue};
 use crate::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, ResolvedFrom, find_names_folded_by_transpiler,
     find_written_arms, is_linked_by_bundler, is_name_read_by_transpiler, is_name_written_out,
@@ -61,6 +62,8 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             true => NamesKnown::ToTranspiler,
             false => NamesKnown::ToLoader,
         };
+        let required_type = loader_attribute(hir, site)
+            .or_else(|| type_held_by_constant(hir, decisions, site));
         let written = SiteOfComputedLoad {
             folder: &folder_of_text,
             opens_database: loader_attribute(hir, site)
@@ -76,7 +79,7 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             starts_at_own_folder: analyzed
                 .analysis
                 .is_path_from_own_directory(site.specifier_node),
-            type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
+            type_attribute: required_type.map(|value| atoms.bytes(value)),
             is_written_in_load: !may_have_unread_type(hir, site)
                 && is_path_written_in_load(hir, site, names),
         };
@@ -116,7 +119,7 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             kind: loader_kind(site),
             is_linked_by_bundler: matches!(site.specifier, ImportSpecifier::Constant(_))
                 && is_linked_by_bundler(hir, bound, site.kind),
-            type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
+            type_attribute: required_type.map(|value| atoms.bytes(value)),
             may_have_unread_type: may_have_unread_type(hir, site),
             embed_attribute: embed_attribute(hir, site).map(|value| atoms.bytes(value)),
             is_statement: matches!(
@@ -658,6 +661,26 @@ fn is_macro_import(hir: &hir::File<'_>, site: &ImportSite) -> bool {
 
 fn loader_attribute(hir: &hir::File<'_>, site: &ImportSite) -> Option<Atom> {
     type_attribute(hir, site).filter(|&value| value != known::r#macro)
+}
+
+/// The type that a constant of the file gives to a require().
+fn type_held_by_constant(
+    hir: &hir::File<'_>,
+    decisions: &Decisions<'_>,
+    site: &ImportSite,
+) -> Option<Atom> {
+    let (ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_)) = site.kind else {
+        return None;
+    };
+    let value = hir.import_attribute_value(site.attributes.some()?, known::r#type)?;
+    let constant = match decisions.constant(hir, value) {
+        FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => constant,
+        FoldedValue::Unknown => decisions.constant_of_let(value)?,
+    };
+    match constant {
+        Constant::String(text) => Some(text),
+        _ => None,
+    }
 }
 
 fn may_have_unread_type(hir: &hir::File<'_>, site: &ImportSite) -> bool {

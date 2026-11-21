@@ -5,6 +5,7 @@
 #include <string_view>
 #include <unordered_set>
 #include <vector>
+#include <algorithm>
 #include "./default_ciphers.h"
 
 // System-specific includes for certificate loading
@@ -137,7 +138,6 @@ extern "C" const uint8_t *us_bundled_root_cert(size_t index, size_t *out_len);
 struct us_bundled_roots_t {
   std::vector<const uint8_t *> certs;
   std::vector<size_t> lens;
-  X509_LAZY_CERT_SET *set = nullptr;
 };
 
 static const us_bundled_roots_t &us_bundled_roots() {
@@ -148,18 +148,53 @@ static const us_bundled_roots_t &us_bundled_roots() {
     roots.certs.resize(count);
     roots.lens.resize(count);
     for (size_t i = 0; i < count; i++) roots.certs[i] = us_bundled_root_cert(i, &roots.lens[i]);
-    roots.set = X509_LAZY_CERT_SET_new_static(roots.certs.data(), roots.lens.data(), count);
   });
   return roots;
 }
 
-X509_LAZY_CERT_SET *us_get_bundled_root_cert_set() { return us_bundled_roots().set; }
+// Only a default store needs the subject index, so the readers of the DER below do not build it.
+X509_LAZY_CERT_SET *us_get_bundled_root_cert_set() {
+  static X509_LAZY_CERT_SET *set = nullptr;
+  static std::once_flag once;
+  std::call_once(once, []() {
+    const us_bundled_roots_t &roots = us_bundled_roots();
+    set = X509_LAZY_CERT_SET_new_static(roots.certs.data(), roots.lens.data(), roots.certs.size());
+  });
+  return set;
+}
 
 extern "C" size_t us_bundled_root_certs_der(const uint8_t *const **out_certs, const size_t **out_lens) {
   const us_bundled_roots_t &roots = us_bundled_roots();
   *out_certs = roots.certs.data();
   *out_lens = roots.lens.data();
   return roots.certs.size();
+}
+
+const uint8_t *us_find_bundled_root_cert(const uint8_t *der, size_t len) {
+  // The roots in the order of their lengths, and for each length the index of the first root that has it. A
+  // certificate of another length than every bundled root is found missing without a read of it.
+  static std::vector<std::string_view> by_length;
+  static std::vector<uint32_t> first;
+  static std::once_flag once;
+  std::call_once(once, []() {
+    const us_bundled_roots_t &roots = us_bundled_roots();
+    size_t longest = 0;
+    by_length.reserve(roots.certs.size());
+    for (size_t i = 0; i < roots.certs.size(); i++) {
+      by_length.emplace_back(reinterpret_cast<const char *>(roots.certs[i]), roots.lens[i]);
+      longest = std::max(longest, roots.lens[i]);
+    }
+    std::sort(by_length.begin(), by_length.end(),
+              [](std::string_view a, std::string_view b) { return a.size() < b.size(); });
+    uint32_t count = static_cast<uint32_t>(by_length.size());
+    first.assign(longest + 1, count);
+    for (uint32_t i = count; i-- > 0;) first[by_length[i].size()] = i;
+  });
+  if (len >= first.size()) return nullptr;
+  for (size_t i = first[len]; i < by_length.size() && by_length[i].size() == len; i++) {
+    if (memcmp(by_length[i].data(), der, len) == 0) return reinterpret_cast<const uint8_t *>(by_length[i].data());
+  }
+  return nullptr;
 }
 
 // std::call_once, not a flag: concurrent Workers must block until the list is

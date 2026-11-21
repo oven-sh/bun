@@ -110,6 +110,7 @@ const shellLex = $bindgen("shell_body.bind.ts", "shellLex");
 const shellParse = $bindgen("shell_body.bind.ts", "shellParse");
 
 export const sslCtxLiveCount = $bindgen("SecureContext.bind.ts", "liveCount");
+export const sslCaCertsParsed = $bindgen("SecureContext.bind.ts", "caCertsParsed");
 
 export const napiThreadsafeFunctionLiveCount = $bindgen("napi_body.bind.ts", "threadsafeFunctionLiveCount");
 

@@ -62,8 +62,8 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             true => NamesKnown::ToTranspiler,
             false => NamesKnown::ToLoader,
         };
-        let required_type = loader_attribute(hir, site)
-            .or_else(|| type_held_by_constant(hir, decisions, site));
+        let required_type =
+            loader_attribute(hir, site).or_else(|| type_held_by_constant(hir, decisions, site));
         let written = SiteOfComputedLoad {
             folder: &folder_of_text,
             opens_database: loader_attribute(hir, site)
@@ -674,7 +674,9 @@ fn type_held_by_constant(
     };
     let value = hir.import_attribute_value(site.attributes.some()?, known::r#type)?;
     let constant = match decisions.constant(hir, value) {
-        FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => constant,
+        FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
+            constant
+        }
         FoldedValue::Unknown => decisions.constant_of_let(value)?,
     };
     match constant {

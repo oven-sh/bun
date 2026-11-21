@@ -1511,10 +1511,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let spelled_modules = candidates.spelled_modules();
         let is_answered_by_program = |spelled: &&SpelledModule| {
             // A name among others brings no built-in module into the program, so the resolver answers for one.
-            !matches!(spelled.module, ModuleRef::External { .. } | ModuleRef::Runtime(_))
-                && does_import_meta_resolve_ask_resolver(
-                    self.file.queries.atom_bytes(spelled.spelling),
-                )
+            !matches!(
+                spelled.module,
+                ModuleRef::External { .. } | ModuleRef::Runtime(_)
+            ) && does_import_meta_resolve_ask_resolver(
+                self.file.queries.atom_bytes(spelled.spelling),
+            )
         };
         let answered: Vec<&SpelledModule> = spelled_modules
             .iter()

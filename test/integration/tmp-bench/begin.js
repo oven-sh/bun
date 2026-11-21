@@ -1,23 +1,22 @@
-// Usage: bun begin.js <old> <new> <all|affinity mask> <workers> <variant;...> <rounds>   Timers next to busy Workers that begin to read files.
+// Usage: bun begin.js <old> <new> <all|affinity mask> <workers> <kind;...> <rounds> [nogc]   Timers next to Workers that make a call and compute.
 const fs = require("fs"), now = () => performance.now();
 if (process.argv[2] === "--one") {
-  const f = process.argv[4], code = `const fs = require("fs"), burn = ms => { for (const end = performance.now() + ms; performance.now() < end; ); }; onmessage = async e => { const fd = fs.openSync(${JSON.stringify(f)}), b = Buffer.alloc(4 << 20); burn(300); for (;;) { await new Promise(r => fs.read(fd, b, 0, b.length, 0, r)); Atomics.add(e.data, 0, 1); burn(10); } }; postMessage(0);`;
-  const n = new Int32Array(new SharedArrayBuffer(4)), all = await Promise.all(Array.from({ length: +process.argv[3] }, () => new Promise(r => { const w = new Worker("data:text/javascript," + encodeURIComponent(code)); w.onmessage = () => r(w); })));
+  const [count, f, kind] = process.argv.slice(3), call = { "read 4 MB": "fs.read(fd, b, 0, b.length, 0, r)", "read 4 KB": "fs.read(fd, b, 0, 4096, 0, r)", stat: "fs.stat(f, r)", readFile: "fs.readFile(f + '.small', r)", text: "Bun.file(f + '.small').text().then(r)", immediate: "setImmediate(r)", pbkdf2: "require('crypto').pbkdf2('a', 'b', 100, 32, 'sha256', r)" }[kind];
+  const code = `const fs = require("fs"), f = ${JSON.stringify(f)}, burn = ms => { for (const end = performance.now() + ms; performance.now() < end; ); }; onmessage = async e => { const fd = fs.openSync(f), b = Buffer.alloc(4 << 20); for (;;) { await new Promise(r => ${call}); Atomics.add(e.data, 0, 1); burn(10); } }; postMessage(0);`;
+  const n = new Int32Array(new SharedArrayBuffer(4)), all = await Promise.all(Array.from({ length: +count }, () => new Promise(r => { const w = new Worker("data:text/javascript," + encodeURIComponent(code)); w.onmessage = () => r(w); })));
   for (const w of all) w.postMessage(n);
-  const t = now(), turns = [];
-  for (let last = t; now() - t < 4000; last = now()) await Bun.sleep(25), turns.push([now() - last, last - t]);
-  const top = turns.toSorted((x, y) => y[0] - x[0]).slice(0, 2).map(([ms, at]) => `${ms.toFixed(0)}@${(at / 1000).toFixed(1)}`);
-  console.log(`${((now() - t) / turns.length - 25).toFixed(0)} ${top.join(",")} r${n[0]}`);
+  await Bun.sleep(500);
+  const t = now(), first = n[0], turns = [];
+  for (let last = t; now() - t < 2500; last = now()) await Bun.sleep(25), turns.push(now() - last);
+  console.log(`${((now() - t) / turns.length - 25).toFixed(0)}/${Math.max(...turns).toFixed(0)} r${(((n[0] - first) * 1000) / (now() - t)).toFixed(0)}`);
   process.exit(0);
 }
-const [old, exe, condition, workers, variants, rounds] = process.argv.slice(2), f = require("os").tmpdir() + "/begin-" + process.pid;
-fs.writeFileSync(f, Buffer.alloc(4 << 20));
+const [old, exe, condition, workers, kinds, rounds, nogc] = process.argv.slice(2), f = require("os").tmpdir() + "/begin-" + process.pid;
+fs.writeFileSync(f, Buffer.alloc(4 << 20)), fs.writeFileSync(f + ".small", Buffer.alloc(4096));
 if (condition !== "all") require("bun:ffi").dlopen("kernel32.dll", { SetProcessAffinityMask: { args: ["i64", "u64"], returns: "i32" } }).symbols.SetProcessAffinityMask(-1n, BigInt(condition));
-const columns = ["old", ...variants.split(";")], seen = columns.map(() => []), end = Date.now() + 225000;
-for (let round = 0; round < rounds && Date.now() < end; round++)
-  for (let turn = 0; turn < columns.length; turn++) {
-    const i = (turn + round) % columns.length;
-    seen[i].push(Bun.spawnSync([i ? exe : old, __filename, "--one", workers, f], { env: { ...process.env, BUN_TMP_RING: i ? columns[i] : "" }, timeout: 30000, stdin: "ignore", stderr: "inherit" }).stdout.toString().trim());
-  }
-console.log(`cond hot begin, cpus ${condition}, ${workers} workers: ms late on average, the two longest turns, reads`);
-columns.forEach((it, i) => console.log(`cond   ${it}: ${seen[i].sort((x, y) => parseInt(x) - parseInt(y)).join(" | ")}`));
+console.log(`cond hot begin, cpus ${condition}, ${workers} workers ${nogc ?? ""}: ms late on average / the longest turn, calls/s`);
+for (const kind of kinds.split(";")) {
+  const seen = [[], []];
+  for (let round = 0; round < rounds * 2; round++) seen[(round + (round >> 1)) & 1].push(Bun.spawnSync([(round + (round >> 1)) & 1 ? exe : old, __filename, "--one", workers, f, kind], { env: { ...process.env, BUN_GC_TIMER_DISABLE: nogc && "1" }, timeout: 30000, stdin: "ignore", stderr: "inherit" }).stdout.toString().trim());
+  seen.forEach((it, i) => console.log(`cond   ${kind}, ${i ? "new" : "old"}: ${it.sort((x, y) => parseInt(x) - parseInt(y)).join(" | ")}`));
+}

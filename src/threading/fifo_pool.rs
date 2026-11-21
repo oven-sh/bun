@@ -71,16 +71,6 @@ pub fn on_new_thread(attempt: impl FnOnce() -> bool) -> bool {
     has_succeeded
 }
 
-/// Temporary: `BUN_TMP_RING`.
-#[allow(clippy::disallowed_methods)]
-fn tmp() -> u8 {
-    static VALUE: std::sync::LazyLock<u8> = std::sync::LazyLock::new(|| {
-        let value = std::env::var_os("BUN_TMP_RING").unwrap_or_default();
-        (value.as_encoded_bytes().first()).map_or(MAX_SUCCESSES, |it| it - b'0')
-    });
-    *VALUE
-}
-
 fn stop_being_new() {
     if SUCCESSES_LEFT.take() > 0 {
         NEW_THREADS.fetch_sub(1, Ordering::SeqCst);
@@ -178,7 +168,7 @@ impl FifoPool {
 
         (self.config.on_thread_start)();
         POOL.set(self);
-        SUCCESSES_LEFT.set(tmp() * u8::from(self.config.has_new_threads));
+        SUCCESSES_LEFT.set(MAX_SUCCESSES * u8::from(self.config.has_new_threads));
         let mut state = self.state.lock();
         loop {
             while let Some(Queued(task)) = state.tasks.pop_front() {
@@ -205,7 +195,7 @@ impl FifoPool {
                 state = self.state.lock();
                 state.is_spinning = false;
             }
-            if state.tasks.is_empty() && SUCCESSES_LEFT.get() < tmp() {
+            if state.tasks.is_empty() && SUCCESSES_LEFT.get() < MAX_SUCCESSES {
                 stop_being_new();
             }
             if state.tasks.is_empty()

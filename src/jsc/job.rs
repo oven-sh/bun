@@ -7,9 +7,7 @@
 //! the VM may still run script, and a completion that lands after the VM began
 //! stopping is dropped instead — on the JS thread, heap alive — like every
 //! other queued task the teardown releases.
-//!
-//! A job whose work needed no other thread skips the pool and the ticket
-//! ([`Job::schedule_finished`]): it queues itself where its [`Completion`] would have posted it.
+//! ([`Job::schedule_finished`] skips the pool and the ticket for work that needed no other thread.)
 //!
 //! The two halves are a convenience, not a safety mechanism:
 //! [`JobContext::OffThread`] is what the pool body gets (`Send`);
@@ -299,16 +297,15 @@ impl JobList {
     }
 }
 
-/// One pool-then-complete job. Heap-allocated by [`Job::schedule`] or
-/// [`Job::schedule_finished`]; freed on the JS thread by its completion or by the teardown's
-/// release.
+/// One pool-then-complete job. Heap-allocated by [`Job::schedule`] or [`Job::schedule_finished`]; freed on
+/// the JS thread by its completion or by the teardown's release.
 #[repr(C)]
 pub struct Job<C: JobContext> {
     /// First (asserted at the bottom of the file): erased dispatch casts
     /// `*mut Job<C>` to `*mut JobHeader`.
     header: JobHeader,
-    /// `Some` only while a scheduled job waits for the pool: moved into the [`Completion`]
-    /// when the pool picks the job up (never touched on the JS side).
+    /// Moved into the [`Completion`] when the pool picks the job up; `None`
+    /// from then on, and in a job that never goes to the pool (never touched on the JS side).
     ticket: Option<Ticket>,
     task: WorkPoolTask,
     /// What [`Completion::finish`] queues on the JS thread.
@@ -341,10 +338,7 @@ impl<C: JobContext> Job<C> {
         unsafe { WorkPool::schedule(&raw mut (*job).task) };
     }
 
-    /// JS thread: as [`schedule`](Self::schedule), for work that needed no other thread. `off`
-    /// is as [`JobContext::run`] would have left it. The job goes where its [`Completion`]
-    /// would have posted it had the pool been done already, so [`JobContext::then`] runs where
-    /// it does for a job that the pool finished before this thread was back at its loop.
+    /// JS thread: as [`schedule`](Self::schedule) for work that is done, queued where its [`Completion`] would post it.
     pub fn schedule_finished(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
         let job = Self::new(cx, off, js, None);
         // SAFETY: no other thread was handed the job, so nothing else touches its node.
@@ -417,8 +411,7 @@ impl<C: JobContext> Job<C> {
     /// are the caller's to complete or drop.
     ///
     /// # Safety
-    /// `this` is a job that no other thread holds: its `Completion` posted it, or
-    /// `schedule_finished` queued it. Called once, on `vm`'s thread.
+    /// `this` is a job its `Completion` posted or `schedule_finished` queued; called once, on `vm`'s thread.
     unsafe fn take(this: *mut Self, vm: &VirtualMachine) -> (C::OffThread, C::Js) {
         // SAFETY: fn contract.
         let mut job = unsafe { Box::from_raw(this) };

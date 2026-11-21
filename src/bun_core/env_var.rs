@@ -320,8 +320,7 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE, "BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE", {});
     new_feature_flag!(pub BUN_DUMP_STATE_ON_CRASH, "BUN_DUMP_STATE_ON_CRASH", {});
     new_feature_flag!(pub BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS, "BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS", {});
-    // Release builds answer `node:fs` operations from the kernel's caches too (Linux). Canary
-    // builds do without it.
+    // A release build answers cached `node:fs` calls on the JS thread too, as canary builds do (Linux).
     new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH, "BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE, "BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE", {});
     // Offer "h2" in the fetch() TLS ALPN list and speak HTTP/2 when the

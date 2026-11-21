@@ -1106,8 +1106,8 @@ impl CpPendingDirs {
 // ──────────────────────────────────────────────────────────────────────────
 // AsyncFSTask / UVFSRequest / NewAsyncCpTask / AsyncReaddirRecursiveTask are
 // the thread-pool wrappers that back every `fs.promises.*` call (and the shell
-// `cp` builtin). On Linux an `AsyncFSTask` skips the pool for an operation that
-// the kernel answers from its caches (`answer_from_cache`).
+// `cp` builtin).
+// On Linux an `AsyncFSTask` skips the pool for what the kernel answers from its caches (`answer_from_cache`).
 mod _async_tasks {
     use super::*;
 
@@ -1613,8 +1613,7 @@ mod _async_tasks {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // NewAsyncFSTask — runs a NodeFS method on the thread pool, or on the JS
-    // thread where the operation cannot wait (`answer_from_cache`).
+    // NewAsyncFSTask — runs a NodeFS method on the thread pool, or answers on the JS thread (`answer_from_cache`).
     // ──────────────────────────────────────────────────────────────────────────
 
     /// One `fs.*` operation's parsed arguments.
@@ -2041,8 +2040,7 @@ mod _async_tasks {
             this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if <Op<{ F }> as NodeFSDispatch<R, A>>::ANSWERS_FROM_CACHE {
-                // The result does not wait for what this thread learns for the JS thread,
-                // which asks the cache first and may not wait for a server.
+                // Posted first: what this thread learns for the JS thread may wait for a server.
                 done.finish();
                 sys::cached::learn_mounts();
                 return None;
@@ -2150,19 +2148,7 @@ mod _async_tasks {
         }
     }
 
-    /// Decides, for one VM, when [`NodeFSDispatch::run_cached`] is asked in front of the pool.
-    ///
-    /// An answer costs the JS thread three system calls, about as much CPU as a pool job costs
-    /// it once many share the wake-up of the pool. An attempt that fails costs one system call
-    /// in front of the pool job, and every answer holds up the pool jobs that the same go
-    /// schedules after it. So the operations of one go (those that arrive under one
-    /// `EventLoop::iteration_number`) are asked only while that pays:
-    /// - A go that is wider than [`Self::PER_GO`] is the pool's from there on: its threads make
-    ///   those calls side by side. The go after a wide one is taken to be wide too.
-    /// - A go is regretted if the kernel could not answer one of its operations, or if a job
-    ///   for the pool came behind [`Self::CROWD`] answers: the rest of it is the pool's. The
-    ///   n-th such go in a row is followed by `2^(n-1) - 1` goes that do not ask. A go that got
-    ///   answers and is not regretted ends the row.
+    /// Decides, per VM, which operations of one go (one `EventLoop::iteration_number`) ask the kernel's caches.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) struct CachedAnswerGate {
         /// `EventLoop::iteration_number` of the go in progress.
@@ -2172,6 +2158,7 @@ mod _async_tasks {
         asks: core::cell::Cell<bool>,
         /// How many of them the kernel answered.
         answers: core::cell::Cell<u16>,
+        /// The kernel could not answer one of them, or a pool job came behind `CROWD` answers: the rest is the pool's.
         regretted: core::cell::Cell<bool>,
         regretted_in_a_row: core::cell::Cell<u8>,
         /// How many goes from now on do not ask.
@@ -2195,11 +2182,9 @@ mod _async_tasks {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     impl CachedAnswerGate {
-        /// Measured on 12 CPUs, the pool is as fast per operation in wall time from 40 to 64
-        /// at once. Below that the JS thread's answer is the faster one, and on one CPU at
-        /// every width.
+        /// A wider go is the pool's, and the go after it: measured, the pool is as fast from 40 to 64 at once.
         const PER_GO: u16 = 32;
-        /// One answer in front of it does not make a pool job measurably later.
+        /// A pool job behind this many answers of its go was held up by them: the go is regretted.
         const CROWD: u16 = 2;
         /// At most `(1 << MAX_DOUBLINGS) - 1` goes in a row do not ask.
         const MAX_DOUBLINGS: u8 = 10;
@@ -2230,7 +2215,7 @@ mod _async_tasks {
             self.answers.set(self.answers.get() + 1);
         }
 
-        /// It could not answer one.
+        /// It could not answer one: the n-th regretted go in a row is followed by `2^(n-1) - 1` goes that do not ask.
         fn missed(&self) {
             let in_a_row = (self.regretted_in_a_row.get() + 1).min(Self::MAX_DOUBLINGS + 1);
             self.regretted_in_a_row.set(in_a_row);
@@ -2246,8 +2231,7 @@ mod _async_tasks {
         }
     }
 
-    /// The answer to an operation whose `node_fs_ops!` row has a `cached =` column, if the
-    /// kernel holds it in memory and the VM's gate is open.
+    /// The answer to an operation with a `cached =` column, if the kernel holds it and the VM's gate lets it ask.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn answer_from_cache<R, A: FsArgument, const F: NodeFSFunctionEnum>(
         vm: &'static VirtualMachine,
@@ -9633,8 +9617,7 @@ pub(crate) enum CachedAnswer<R> {
     NotAsked,
 }
 
-/// A descriptor that the JS thread opened to ask the kernel's caches and may not close itself
-/// (`bun_sys::cached::stat`): a pool thread does. Nothing of a VM goes with it.
+/// A descriptor of `bun_sys::cached::stat` that a pool thread closes. Nothing of a VM goes with it.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 struct CachedDescriptor {
     fd: sys::Fd,
@@ -9674,9 +9657,7 @@ impl CachedDescriptor {
     }
 }
 
-/// The `cached =` column of `node_fs_ops!`: the operations that `bun_sys::cached` can answer.
-/// `Readlink` and `ReadFile` have none: `readlinkat` and every read of a file's content update
-/// the access time and can read from the disk, whatever the flags.
+/// The `cached =` column of `node_fs_ops!`. Not `Readlink` or `ReadFile`: they update the access time and can read the disk.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl NodeFS {
     fn stat_cached(&mut self, args: &args::Stat) -> CachedAnswer<ret::Stat> {
@@ -9736,8 +9717,7 @@ pub(crate) trait NodeFSDispatch<R, A> {
     /// Whether [`Self::run_cached`] can answer: the `cached =` column of `node_fs_ops!`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     const ANSWERS_FROM_CACHE: bool = false;
-    /// The answer, if the kernel holds it in memory. It does not wait for a disk or a server,
-    /// so the JS thread asks in front of the pool.
+    /// The answer, if the kernel holds it in memory: never a wait, so the JS thread asks in front of the pool.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn run_cached(_fs: &mut NodeFS, _args: &A) -> CachedAnswer<R> {
         CachedAnswer::NotAsked

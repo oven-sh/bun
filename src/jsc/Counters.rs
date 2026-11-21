@@ -44,8 +44,7 @@ pub enum Field {
     /// An async `node:fs` operation that `bun_sys::cached` answered on the JS thread.
     #[strum(serialize = "fs_cached_hit")]
     FsCachedHit,
-    /// One that it asked the kernel about in vain, which went to the pool. Not one that it did
-    /// not ask about.
+    /// One that it asked the kernel about in vain (not one that it did not ask about).
     #[strum(serialize = "fs_cached_miss")]
     FsCachedMiss,
 }

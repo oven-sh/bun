@@ -728,8 +728,7 @@ impl EventLoop {
         self.vm_ref().gc_controller.process_gc_timer();
     }
 
-    /// A number that changes whenever the loop polls and whenever it begins another drain of
-    /// its task queue: what ran under one number ran in one go.
+    /// Changes at every poll and at every drain of the task queue: what ran under one number ran in one go.
     pub fn iteration_number(&self) -> u64 {
         self.usockets_loop().iteration_number() + self.task_drains.load(Ordering::Relaxed)
     }
@@ -1335,8 +1334,7 @@ impl EventLoop {
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        // A job that finished on this thread queues itself without a wake-up
-        // (`Job::schedule_finished`).
+        // `Job::schedule_finished` queues a task without a wake-up: with one queued, do not park.
         let park_seconds = if self.has_pending_tasks() { 0 } else { 1 };
         loop_.tick_with_timeout(
             Some(&bun_core::Timespec {

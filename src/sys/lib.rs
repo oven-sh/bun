@@ -2033,8 +2033,8 @@ mod posix_impl {
             }
 
             // `struct statx` from `<linux/stat.h>` — fixed 256-byte layout the
-            // kernel writes. Only the fields `posix_stat_of_statx` and
-            // `fstatx_in_memory` read are named; the rest is reserved padding.
+            // kernel writes. Only the fields that this module reads are named; the
+            // rest is reserved padding.
             #[repr(C)]
             #[derive(Copy, Clone)]
             pub(crate) struct statx {
@@ -2238,11 +2238,7 @@ mod posix_impl {
         }
     }
 
-    /// `fstatx` of the attributes the kernel holds in memory (`AT_STATX_DONT_SYNC`), always with
-    /// the link count and the blocks, and with the id of the mount the file is on. `None` where the kernel gives no mount id (before Linux 5.8)
-    /// and on any error. A filesystem that keeps attributes on a server answers with what it
-    /// last fetched, or asks the server all the same (9p): call this only for a mount that
-    /// [`cached`](crate::cached) has classified.
+    /// `fstatx` from memory, with the mount id. 9p asks its server all the same: only for a mount that `cached` classified.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn fstatx_in_memory(fd: Fd, mask: u32) -> Option<(PosixStat, u64)> {
         const AT_STATX_DONT_SYNC: c_int = 0x4000;

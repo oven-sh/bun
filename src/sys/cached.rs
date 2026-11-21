@@ -1,24 +1,4 @@
-//! Answers about a path from what the kernel holds in memory, for a thread that must not wait
-//! for a disk or a server: the JS thread, in front of a thread-pool job. Linux 5.12.
-//!
-//! `openat2(RESOLVE_CACHED)` bounds the walk of the path and nothing after it. `statx` of the
-//! file it opened asks an NFS server once the attribute cache has expired, and 9p asks its
-//! server whatever the flags say (`v9fs_vfs_getattr_dotl`). So `statx` is only asked of a file
-//! on a mount that is known to answer from memory: that of the root or of the working
-//! directory, which [`learn_mounts`] classifies on a thread that may wait.
-//!
-//! A walk that starts at one of the two and may not leave its mount (`RESOLVE_NO_XDEV`) ends
-//! on it. But the kernel refuses that walk at every directory that is a mount point in any
-//! mount namespace, also in another one than this process's: systemd mounts over `/tmp`,
-//! `/home` and `/usr` for its services. So a walk that is refused runs again without the flag,
-//! and the mount of what it opened is read without a question to its filesystem ([`mount_of`]).
-//!
-//! Every thread is taken to share one root, working directory, mount namespace and seccomp
-//! policy: what a pool thread learns holds for the JS thread.
-//!
-//! The `close` of the descriptor can be the last reference to a file that was removed
-//! meanwhile, and then it frees the file's blocks. So this thread closes the descriptor of a
-//! small file only ([`CLOSED_HERE`]).
+//! `stat` from what the kernel holds in memory, for a thread that must not wait for a disk or a server (Linux 5.12).
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
@@ -40,9 +20,7 @@ pub enum Symlink {
 pub enum NoStat {
     /// The kernel remembers that the path has no entry.
     NotFound,
-    /// The kernel was asked: only a lookup that may wait can tell. The path is not in its
-    /// caches, or the file is on another mount, or a filesystem has to read a symlink on the
-    /// way.
+    /// The kernel was asked and cannot tell without a wait: not cached, on another mount, or behind a symlink it must read.
     Unknown,
     /// The kernel was not asked: the walk would not start on a mount that answers from memory.
     NotAsked,
@@ -54,10 +32,7 @@ const UNAVAILABLE: u8 = 2;
 /// Whether the kernel honours `RESOLVE_CACHED`: [`learn_mounts`] finds out.
 static AVAILABILITY: AtomicU8 = AtomicU8::new(UNCHECKED);
 
-/// Whether [`stat`] can answer. Not before [`learn_mounts`] has run once. Never where the
-/// kernel, a seccomp policy or a system-call translator does not honour
-/// `openat2(RESOLVE_CACHED)`, on an Android kernel, or under
-/// `BUN_FEATURE_FLAG_DISABLE_ASYNC_FS_FAST_PATH` or `BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH`.
+/// Whether [`stat`] can answer: [`learn_mounts`] found `openat2(RESOLVE_CACHED)` honoured and no flag turns it off.
 #[inline]
 pub fn is_available() -> bool {
     AVAILABILITY.load(Ordering::Relaxed) == AVAILABLE
@@ -71,14 +46,10 @@ fn open(path: &ZStr, symlink: Symlink, resolve: ResolveFlags) -> Result<Fd, i32>
     linux_syscall::openat2(Fd::cwd(), path, O::PATH | O::CLOEXEC | nofollow, 0, resolve)
 }
 
-/// The blocks of 512 bytes that a file may hold for this thread to close its descriptor: the
-/// `close` that frees 1 MiB of written pages takes about 0.1 ms on ext4 and on tmpfs.
+/// In blocks of 512 bytes: the `close` that frees 1 MiB of a file that was removed meanwhile takes about 0.1 ms.
 const CLOSED_HERE: u64 = (1 << 20) / 512;
 
-/// `stat` or `lstat` of `path`, without a wait for a disk or a server.
-///
-/// `close_elsewhere` gets the descriptor where its `close` can take long, to close it on a
-/// thread that may wait.
+/// `stat` or `lstat` of `path` without a wait. `close_elsewhere` gets a descriptor whose `close` can take long.
 pub fn stat(
     path: &ZStr,
     symlink: Symlink,
@@ -104,7 +75,7 @@ pub fn stat(
             return Err(NoStat::Unknown);
         }
         Err(libc::EAGAIN | libc::EXDEV) => {
-            // Not in the caches, or a mount point on the way: here, or only in another namespace.
+            // Not cached, or a mount point on the way, which refuses the walk even if it is one of another namespace only.
             let file = match open(path, symlink, ResolveFlags::CACHED) {
                 Ok(fd) => CloseOnDrop::new(fd),
                 Err(libc::ENOENT) => return Err(NoStat::NotFound),
@@ -130,8 +101,7 @@ pub fn stat(
         return Err(NoStat::Unknown);
     };
     if on_mount != u64::from(mount) {
-        // The root or the working directory changed behind this module (`chroot`, `chdir` by
-        // a native library).
+        // The root or the working directory changed behind this module (`chroot`, a native `chdir`).
         ROOT.forget();
         CWD.forget();
         close_elsewhere(file.into_raw());
@@ -155,8 +125,7 @@ enum Mount {
     Other,
 }
 
-/// What is known of the mount of a directory that walks start at, in one word:
-/// bits 0-1 the kind of [`Mount`], bits 2-33 the mount id, bits 34-63 the generation.
+/// The mount of a directory that walks start at, in one word: bits 0-1 kind of [`Mount`], 2-33 id, 34-63 generation.
 struct Start(AtomicU64);
 
 const GENERATION_BITS: u32 = 30;
@@ -202,13 +171,10 @@ pub(crate) fn working_directory_changed() {
     CWD_GENERATION.fetch_add(1, Ordering::SeqCst);
 }
 
-/// One thread learns at a time. The others have nothing to wait for: until it is done,
-/// [`stat`] does not ask.
+/// One thread learns at a time. Until it is done, [`stat`] does not ask.
 static LEARNING: AtomicBool = AtomicBool::new(false);
 
-/// Finds out whether the kernel honours `RESOLVE_CACHED`, and classifies the mounts of the
-/// root and of the working directory, whatever of that is still to do. Not for the JS thread:
-/// it opens the two directories, which may wait for a server.
+/// Probes `RESOLVE_CACHED` and classifies the mounts of the root and of the working directory. May wait for a server.
 #[inline]
 pub fn learn_mounts() {
     let learned = match AVAILABILITY.load(Ordering::Relaxed) {
@@ -269,14 +235,12 @@ fn kernel_honours_resolve_cached() -> Option<bool> {
     if !enabled || DISABLED.get().unwrap_or(false) {
         return Some(false);
     }
-    // The call fails without `openat2` (before Linux 5.6, Android, seccomp) and without
-    // `RESOLVE_CACHED` (before 5.12).
+    // Fails without `openat2` (before Linux 5.6, Android, seccomp) and without `RESOLVE_CACHED` (before 5.12).
     match open(bun_core::zstr!("/"), Symlink::Follow, ResolveFlags::CACHED) {
         Ok(fd) => drop(CloseOnDrop::new(fd)),
         Err(errno) => return (!is_transient(errno)).then_some(false),
     }
-    // A name that nothing has looked up is not in the kernel's caches, so the kernel cannot
-    // say that it does not exist. gVisor and PRoot take the flag and ignore it.
+    // The kernel cannot know that a name nothing looked up is missing. gVisor and PRoot ignore the flag and say so.
     let mut name = *b"/.bun-resolve-cached-0000000000000000\0";
     let digits = name.len() - 17..name.len() - 1;
     let random = bun_core::fast_random();
@@ -297,8 +261,7 @@ fn kernel_honours_resolve_cached() -> Option<bool> {
     }
 }
 
-/// `None`: could not tell this time. `root` is what is known of the mount of the root
-/// directory, which stays mounted while this process has it as its root.
+/// `None`: could not tell this time. `root`: the mount of the root directory, which stays mounted.
 fn classify(directory: &ZStr, root: Option<Mount>) -> Option<Mount> {
     let plain = match crate::open(directory, O::PATH | O::DIRECTORY | O::CLOEXEC, 0) {
         Ok(fd) => CloseOnDrop::new(fd),
@@ -323,8 +286,7 @@ fn classify(directory: &ZStr, root: Option<Mount>) -> Option<Mount> {
             return Some(Mount::Other);
         }
     }
-    // A system-call translator that rewrites the path for `openat` and not for `openat2`
-    // (PRoot) opens two different directories here.
+    // PRoot rewrites the path for `openat` and not for `openat2`: then these are two directories.
     let cached = match open(
         directory,
         Symlink::Follow,
@@ -347,9 +309,7 @@ fn classify(directory: &ZStr, root: Option<Mount>) -> Option<Mount> {
     })
 }
 
-/// The id of the mount that an open descriptor is on. procfs answers: the filesystem of the
-/// descriptor is not asked. (`name_to_handle_at` would cost a tenth, but overlayfs with
-/// `nfs_export` can copy a directory up to make a file handle.)
+/// The mount id of a descriptor, from procfs: its filesystem is not asked (`name_to_handle_at` can copy up on overlayfs).
 fn mount_of(fd: Fd) -> Option<u32> {
     use std::io::Write as _;
     let mut path = [0u8; 40];
@@ -385,8 +345,7 @@ fn parse_id(digits: &[u8]) -> Option<u32> {
     })
 }
 
-/// The filesystem type of the mount with this id in the text of `/proc/<pid>/mountinfo`
-/// (`proc(5)`): the first field of a line is the id, the type follows the field `-`.
+/// The filesystem type of a mount in `/proc/<pid>/mountinfo`: the id is the first field, the type follows the field `-`.
 fn filesystem_of(mountinfo: &[u8], mount: u32) -> Option<&[u8]> {
     split(mountinfo, b'\n').find_map(|line| {
         let mut fields = split(line, b' ');
@@ -398,11 +357,7 @@ fn filesystem_of(mountinfo: &[u8], mount: u32) -> Option<&[u8]> {
     })
 }
 
-/// The filesystems whose `getattr` reads the inode in memory and nothing else, by the name the
-/// kernel's mount table has for the driver. Not the network and cluster filesystems, not FUSE,
-/// and not one this list has never heard of. The name is the driver's own: `statfs` is not,
-/// a 9p mount reports the magic number of the filesystem its server exports. overlayfs asks the
-/// filesystems of its layers, which this cannot see.
+/// Drivers whose `getattr` only reads memory, by mount-table name (the `statfs` magic of a 9p mount is its server's).
 fn answers_from_memory(filesystem: &[u8]) -> bool {
     matches!(
         filesystem,

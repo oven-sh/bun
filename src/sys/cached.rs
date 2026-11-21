@@ -1,4 +1,4 @@
-//! `stat` from what the kernel holds in memory, for a thread that must not wait for a disk or a server (Linux 5.12).
+//! `stat` from what the kernel holds in memory: no read from a disk and no request to a server (Linux 5.12).
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
@@ -46,7 +46,7 @@ fn open(path: &ZStr, symlink: Symlink, resolve: ResolveFlags) -> Result<Fd, i32>
     linux_syscall::openat2(Fd::cwd(), path, O::PATH | O::CLOEXEC | nofollow, 0, resolve)
 }
 
-/// In blocks of 512 bytes: the `close` that frees 1 MiB of a file that was removed meanwhile takes about 0.1 ms.
+/// In blocks of 512 bytes: what a `close` here may free of a file removed meanwhile (0.1 ms per MiB, more if the journal is busy).
 const CLOSED_HERE: u64 = (1 << 20) / 512;
 
 /// `stat` or `lstat` of `path` without a wait. `close_elsewhere` gets a descriptor whose `close` can take long.

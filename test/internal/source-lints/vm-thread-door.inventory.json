@@ -148,7 +148,7 @@
     "WorkPool::schedule*": 5,
     "owned_task!": [
       "AsyncMkdirp",
-      "CachedDescriptor",
+      "ClosesDescriptors",
       "CpSingleTask",
       "ReaddirSubtask"
     ],

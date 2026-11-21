@@ -4,7 +4,7 @@
 // the place in the event loop, and that the pool still gets what the kernel cannot answer
 // without waiting.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir, tls } from "harness";
 import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { release } from "node:os";
 
@@ -98,9 +98,10 @@ async function run(
   script: string,
   env: Record<string, string> = {},
   wrap: (cmd: string[]) => string[] = cmd => cmd,
+  canAnswer = answersFromCache(dir),
 ) {
   await using proc = Bun.spawn({
-    cmd: wrap([bunExe(), "-e", `const canAnswer = ${answersFromCache(dir)};` + prelude + script]),
+    cmd: wrap([bunExe(), "-e", `const canAnswer = ${canAnswer};` + prelude + script]),
     // A release build that is not a canary answers only where it is asked to.
     env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH: "1", ...env },
     cwd: dir,
@@ -581,13 +582,19 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         const { getCounters } = require("bun:internal-for-testing");
         setImmediate(() => {
           const before = getCounters().fs_cached_hit;
-          for (let i = 0; i < 8; i++) fsp.stat("file.txt");
+          // A pool thread closes the descriptor of a file this large, after the turn.
+          for (let i = 0; i < 8; i++) fsp.stat("large.bin");
           require("node:worker_threads").parentPort.postMessage(getCounters().fs_cached_hit - before);
           process.exit(0);
         });
       \`;
       (async () => {
+        fs.writeFileSync("large.bin", Buffer.alloc(2 << 20, 1));
+        const large = fs.realpathSync("large.bin");
+        const isLarge = fd => { try { return fs.readlinkSync("/proc/self/fd/" + fd) === large; } catch { return false; } };
+        const descriptors = () => fs.readdirSync("/proc/self/fd").filter(isLarge).length;
         await warm();
+        await fsp.stat("large.bin");
         let result;
         for (let attempt = 0; attempt < 3 && (${canAnswer} ? result?.queued !== 8 : attempt < 1); attempt++) {
           const worker = new Worker(queueAndExit, { eval: true });
@@ -595,13 +602,15 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
             new Promise(resolve => worker.once("message", resolve)),
             new Promise(resolve => worker.once("exit", resolve)),
           ]);
-          result = { queued, exitCode };
+          // The worker's thread hands them to the pool when it ends.
+          for (const deadline = performance.now() + 3000; descriptors() !== 0 && performance.now() < deadline; ) await nextTurn();
+          result = { queued, exitCode, left: descriptors() };
         }
         console.log(JSON.stringify(result));
       })();
       `,
     );
-    expect(result).toEqual({ queued: canAnswer ? 8 : expect.any(Number), exitCode: 0 });
+    expect(result).toEqual({ queued: canAnswer ? 8 : expect.any(Number), exitCode: 0, left: 0 });
   });
 
   test.concurrent("with no descriptor left, the pool answers and nothing is remembered of it", async () => {
@@ -684,7 +693,8 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         fs.writeFileSync("fifo-b", "b");
         const sizes = new Set((await Promise.all(stats)).map(stats => stats.size));
         const read = await Promise.all(readers);
-        for (let i = 0; i < 200 && descriptors() !== before.descriptors; i++) await nextTurn();
+        const deadline = performance.now() + 3000;
+        while (descriptors() !== before.descriptors && performance.now() < deadline) await nextTurn();
         console.log(JSON.stringify({ waiting, sizes: [...sizes], read, left: descriptors() - before.descriptors }));
       })();
       `,
@@ -757,10 +767,10 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // A debug build also logs the macro call to stdout.
+    // A debug build also logs the macro call to stdout. The pool decides which of the two lines is first.
     const lines = stdout.split("\n").filter(line => line === "settled" || line.startsWith("answered: "));
-    expect({ lines, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-      lines: ["settled", "answered: 0"],
+    expect({ lines: lines.sort(), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      lines: ["answered: 0", "settled"],
       stderr: "",
       exitCode: 0,
     });
@@ -808,6 +818,92 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     }
     if (canAnswer) {
       expect({ hits: answer.hits, isParked: answer.ms >= 900 }).toEqual({ hits: 40, isParked: false });
+    }
+  });
+
+  // The loop delivers HTTP/3 stream data to script on its way into a poll, after it has chosen how
+  // long to wait. What such script leaves for the next turn must not wait for the next packet.
+  test.concurrent("an answer in an HTTP/3 handler does not wait for the stream", async () => {
+    using dir = tempDir("fs-cached-h3", files);
+    const cwd = String(dir);
+    const canAnswer = answersFromCache(cwd);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const canAnswer = ${canAnswer};` +
+          prelude +
+          `
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          tls: ${JSON.stringify(tls)},
+          http3: true,
+          async fetch(req) {
+            // The kernel answers the first on this thread. A pool thread answers the second.
+            const call = req.url.endsWith("/answered") ? () => fsp.stat("file.txt") : () => fsp.access("file.txt");
+            const reader = req.body.getReader();
+            // The client fills the stream's window meanwhile: a later read then waits for the stream.
+            await Bun.sleep(10);
+            let ms = null;
+            let hits = 0;
+            while (true) {
+              let isSettled = false;
+              const read = reader.read().then(result => ((isSettled = true), result));
+              await null;
+              await null;
+              await null;
+              // A read that its own microtasks did not settle is settled by the stream.
+              const isFromStream = !isSettled;
+              if ((await read).done) break;
+              if (isFromStream && ms === null) {
+                const started = performance.now();
+                ({ hits } = await counted(call));
+                ms = performance.now() - started;
+              }
+            }
+            return Response.json({ ms, hits });
+          },
+        });
+        (async () => {
+          await warm();
+          await asking();
+          console.log(JSON.stringify({ port: server.port }));
+        })();
+        `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH: "1" },
+      cwd,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    let printed = "";
+    for await (const chunk of proc.stdout) {
+      printed += new TextDecoder().decode(chunk);
+      if (/\{"port":\d+\}/.test(printed)) break;
+    }
+    const { port } = JSON.parse(/\{"port":\d+\}/.exec(printed)![0]);
+    const upload = async (path: string): Promise<{ ms: number | null; hits: number }> => {
+      const response = await fetch(`https://127.0.0.1:${port}${path}`, {
+        method: "POST",
+        body: Buffer.alloc(1536 * 1024, "x"),
+        protocol: "http3",
+        tls: { rejectUnauthorized: false },
+      });
+      return await response.json();
+    };
+    const answered: number[] = [];
+    const pooled: number[] = [];
+    for (let round = 0; round < 12 && (answered.length < 5 || pooled.length < 5); round++) {
+      const answer = await upload("/answered");
+      if (answer.ms !== null && answer.hits === 1) answered.push(answer.ms);
+      const pool = await upload("/pool");
+      if (pool.ms !== null) pooled.push(pool.ms);
+    }
+    const median = (values: number[]) => values.sort((a, b) => a - b)[values.length >> 1];
+    // Parked, an answer waits for the stream's next packet or timer: 15 ms and more where the pool takes 0.2 ms.
+    if (canAnswer && answered.length >= 3 && pooled.length >= 3) {
+      expect(median(answered)).toBeLessThan(5 * median(pooled) + 1);
     }
   });
 
@@ -912,6 +1008,88 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     expect(result.result).toEqual([5, 5]);
     if (answersFromCache(cwd))
       expect({ hits: result.hits, isAsked: result.misses >= 1 }).toEqual({ hits: 0, isAsked: true });
+  });
+
+  // A container's root directory is an overlayfs mount. Here: one of a user namespace, with its
+  // upper layer on a tmpfs of that namespace (overlayfs leaves a work directory that nobody can remove).
+  const onOverlay = (dir: string) => (cmd: string[]) => [
+    "unshare",
+    "-Urm",
+    "sh",
+    "-c",
+    'mount -t tmpfs tmpfs "$1/scratch" && mkdir "$1/scratch/upper" "$1/scratch/work" && mount -t overlay overlay -o "lowerdir=$1/lower,upperdir=$1/scratch/upper,workdir=$1/scratch/work" "$1/merged" && cd "$1/merged" && shift && exec "$@"',
+    "sh",
+    dir,
+    ...cmd,
+  ];
+  const canMountOverlay =
+    canUnshareMounts &&
+    (() => {
+      using dir = tempDir("fs-cached-overlay-probe", { lower: {}, scratch: {}, merged: {} });
+      const cmd = onOverlay(String(dir))(["true"]);
+      return Bun.spawnSync({ cmd, stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+    })();
+  test.skipIf(!canMountOverlay)("with the working directory on overlayfs", async () => {
+    using dir = tempDir("fs-cached-overlay", { lower: files, scratch: {}, merged: {} });
+    const cwd = String(dir);
+    const rows: [name: string, async_: string, sync: string, isAnswered: boolean][] = [
+      ["file of the lower layer", `fsp.stat("file.txt")`, `fs.statSync("file.txt")`, true],
+      ["file of the upper layer", `fsp.stat("upper.txt")`, `fs.statSync("upper.txt")`, true],
+      ["directory", `fsp.stat("sub")`, `fs.statSync("sub")`, true],
+      ["below a directory", `fsp.stat("sub/inner.txt")`, `fs.statSync("sub/inner.txt")`, true],
+      ["missing file", `fsp.stat("missing.txt")`, `fs.statSync("missing.txt")`, true],
+      ["lstat of a symlink", `fsp.lstat("link")`, `fs.lstatSync("link")`, true],
+      // overlayfs does not let a cached lookup read a symlink.
+      ["through a symlink", `fsp.stat("link")`, `fs.statSync("link")`, false],
+      // The walk from the root directory may not cross onto the overlay mount.
+      ["absolute path", `fsp.stat(process.cwd() + "/file.txt")`, `fs.statSync(process.cwd() + "/file.txt")`, false],
+    ];
+    const { type, results } = await run(
+      cwd,
+      `
+      fs.writeFileSync("upper.txt", "upper");
+      fs.symlinkSync("file.txt", "link");
+      const rows = [${rows.map(([, async_, sync, isAnswered]) => `[${isAnswered}, () => ${async_}, () => ${sync}]`).join(",\n")}];
+      (async () => {
+        await warm();
+        const mount = fs.readFileSync("/proc/self/mountinfo", "utf8").split("\\n").find(line => line.split(" ")[4] === process.cwd());
+        const results = [];
+        for (const [isAnswered, call, callSync] of rows) {
+          const first = await settle(call);
+          const repeats = await countedUntil(
+            round => !isAnswered || (round.hits === 3 && round.misses === 0),
+            async () => [await settle(call), await settle(call), await settle(call)],
+          );
+          results.push({ first, repeats, sync: settleSync(callSync) });
+        }
+        console.log(JSON.stringify({ type: mount?.split(" - ")[1]?.split(" ")[0], results }));
+      })();
+      `,
+      {},
+      onOverlay(cwd),
+      kernelHasResolveCached,
+    );
+    expect(type).toBe("overlay");
+    const seen = Object.fromEntries(
+      rows.map(([name, , , isAnswered], index) => {
+        const { first, repeats, sync } = results[index];
+        // Whoever answers, the answer is that of the sync function.
+        expect(first).toEqual(sync);
+        expect(repeats.result).toEqual([sync, sync, sync]);
+        const { hits, misses } = repeats;
+        return [name, isAnswered ? { hits, misses } : { hits, isAsked: misses >= 1 }];
+      }),
+    );
+    if (kernelHasResolveCached) {
+      expect(seen).toEqual(
+        Object.fromEntries(
+          rows.map(([name, , , isAnswered]) => [
+            name,
+            isAnswered ? { hits: 3, misses: 0 } : { hits: 0, isAsked: true },
+          ]),
+        ),
+      );
+    }
   });
 
   // In a compiled executable the module graph answers for some paths, and for a path that the

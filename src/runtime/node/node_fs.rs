@@ -2054,6 +2054,12 @@ mod _async_tasks {
             let _dispatch = js.tracker.dispatch(global_object);
 
             move_waiting_descriptors();
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if <Op<{ F }> as NodeFSDispatch<R, A>>::ANSWERS_FROM_CACHE {
+                crate::jsc_hooks::runtime_state_of(global_object.bun_vm())
+                    .fs_cached_descriptors
+                    .close_on_pool();
+            }
             if let Ok(result) = &result {
                 args.write_back(result.bytes_read());
             }
@@ -9634,43 +9640,78 @@ pub(crate) enum CachedAnswer<R> {
     NotAsked,
 }
 
-/// A descriptor of `bun_sys::cached::stat` that a pool thread closes. Nothing of a VM goes with it.
+/// The descriptors of `bun_sys::cached::stat` that the JS thread does not close itself, per VM.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-struct CachedDescriptor {
-    fd: sys::Fd,
-    task: WorkPoolTask,
+#[derive(Default)]
+pub(crate) struct CachedDescriptors {
+    waiting: core::cell::Cell<Vec<sys::Fd>>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-bun_threading::owned_task!(CachedDescriptor, task);
+impl CachedDescriptors {
+    /// Each one that is open holds a slot of the descriptor table.
+    const MAX_OPEN: u32 = 64;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-impl CachedDescriptor {
-    /// Each one that waits for the pool holds a slot of the descriptor table.
-    const MAX_WAITING: u32 = 64;
-
-    fn waiting() -> &'static core::sync::atomic::AtomicU32 {
-        static WAITING: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-        &WAITING
+    /// How many are open in the process: they wait in a VM or for a pool thread.
+    fn open() -> &'static core::sync::atomic::AtomicU32 {
+        static OPEN: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+        &OPEN
     }
 
     /// Whether the pool is so far behind that the JS thread opens no more for now.
     fn is_pool_behind() -> bool {
-        Self::waiting().load(Ordering::Relaxed) >= Self::MAX_WAITING
+        Self::open().load(Ordering::Relaxed) >= Self::MAX_OPEN
     }
 
-    fn close_on_pool(fd: sys::Fd) {
-        Self::waiting().fetch_add(1, Ordering::Relaxed);
-        WorkPool::schedule_owned(Box::new(Self {
-            fd,
-            task: work_pool_task(<Self as bun_threading::work_pool::OwnedTask>::__callback),
+    fn push(&self, fd: sys::Fd) {
+        Self::open().fetch_add(1, Ordering::Relaxed);
+        let mut waiting = self.waiting.take();
+        waiting.push(fd);
+        self.waiting.set(waiting);
+    }
+
+    /// One pool task for all that wait: the completion of a `stat` calls this, a turn after the go that opened them.
+    fn close_on_pool(&self) {
+        let fds = self.waiting.take();
+        if fds.is_empty() {
+            return;
+        }
+        WorkPool::schedule_owned(Box::new(ClosesDescriptors {
+            fds,
+            task: work_pool_task(
+                <ClosesDescriptors as bun_threading::work_pool::OwnedTask>::__callback,
+            ),
         }));
     }
+}
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl Drop for CachedDescriptors {
+    fn drop(&mut self) {
+        self.close_on_pool();
+    }
+}
+
+/// Nothing of a VM goes with it.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+struct ClosesDescriptors {
+    fds: Vec<sys::Fd>,
+    task: WorkPoolTask,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+bun_threading::owned_task!(ClosesDescriptors, task);
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl ClosesDescriptors {
     #[allow(clippy::boxed_local)]
     fn run_owned(self: Box<Self>) {
-        drop(sys::CloseOnDrop::new(self.fd));
-        Self::waiting().fetch_sub(1, Ordering::Relaxed);
+        let Self { fds, .. } = *self;
+        let count = fds.len() as u32;
+        for fd in fds {
+            drop(sys::CloseOnDrop::new(fd));
+        }
+        CachedDescriptors::open().fetch_sub(count, Ordering::Relaxed);
     }
 }
 
@@ -9696,11 +9737,14 @@ impl NodeFS {
         if graph_before_disk(path.as_bytes()).is_some() {
             return CachedAnswer::NotAsked;
         }
-        if CachedDescriptor::is_pool_behind() {
+        let Some(state) = crate::jsc_hooks::try_runtime_state() else {
+            return CachedAnswer::NotAsked;
+        };
+        if CachedDescriptors::is_pool_behind() {
             return CachedAnswer::NotAsked;
         }
-        let close_on_pool = CachedDescriptor::close_on_pool;
-        match sys::cached::stat(path, symlink, sys::STATX_MASK_FOR_STATS, close_on_pool) {
+        let close_elsewhere = |fd| state.fs_cached_descriptors.push(fd);
+        match sys::cached::stat(path, symlink, sys::STATX_MASK_FOR_STATS, close_elsewhere) {
             Ok(result) => CachedAnswer::Answer(Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                 &result,
                 args.big_int,

@@ -100,6 +100,8 @@ pub(crate) struct RuntimeState {
     node_fs: JsCell<Option<crate::node::fs::NodeFS>>,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fs_cached_answers: crate::node::fs::CachedAnswerGate,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fs_cached_descriptors: crate::node::fs::CachedDescriptors,
     /// Installed while `process.on("memoryPressure", ...)` has a listener.
     pub(crate) memory_pressure_watcher: crate::node::memory_pressure::WatcherSlot,
     pub(crate) browsers: crate::webview::Browsers,
@@ -327,6 +329,8 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         node_fs: JsCell::new(None),
         #[cfg(any(target_os = "linux", target_os = "android"))]
         fs_cached_answers: Default::default(),
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        fs_cached_descriptors: Default::default(),
         memory_pressure_watcher: Default::default(),
         browsers: Default::default(),
         zstd_tables: JsCell::default(),

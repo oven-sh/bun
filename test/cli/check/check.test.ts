@@ -24438,6 +24438,31 @@ describe.concurrent("--check", () => {
     ).toEqual(cases.map(([, runs]) => ({ ranTheScript: Number(runs), reported: 1, exitCode: 1 })));
   });
 
+  // Such a `check` script is the type checker with other arguments, and ran only itself before `bun check` was a command.
+  test("`bun check` type checks in another script if the `check` script starts with `bun check`", async () => {
+    const bun = `"${bunExe().replaceAll("\\", "/")}"`;
+    const scripts = [`${bun} check || echo the script ran`, `echo the script ran`];
+    const results = await Promise.all(
+      scripts.map(async check => {
+        using dir = project({
+          "a.ts": `export const a: number = "1";\n`,
+          "package.json": JSON.stringify({ scripts: { check, types: `${bun} check` } }),
+        });
+        return await run(String(dir), ["run", "types"]);
+      }),
+    );
+    expect(
+      results.map(it => ({
+        ranTheScript: it.stdout.includes("the script ran"),
+        reported: it.stdout.includes("a.ts(1,14): error TS2322"),
+        exitCode: it.exitCode,
+      })),
+    ).toEqual([
+      { ranTheScript: false, reported: true, exitCode: 1 },
+      { ranTheScript: true, reported: false, exitCode: 0 },
+    ]);
+  });
+
   // yarn doesn't set which package the script belongs to. It's assumed to be the one `bun` is started in, not every
   // package that `--filter` visits.
   test("`bun check` runs another package's `check` script even under a `check` script run by another package manager", async () => {

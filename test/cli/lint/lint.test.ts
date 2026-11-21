@@ -59,6 +59,11 @@ const env = {
   REPL_ID: undefined,
   GITHUB_ACTIONS: undefined,
   GITHUB_WORKSPACE: undefined,
+  // Set by the package.json script that runs the tests.
+  npm_lifecycle_event: undefined,
+  npm_package_json: undefined,
+  BUN_INTERNAL_SCRIPTS_OF_COMMANDS: undefined,
+  BUN_INTERNAL_CHECK_SCRIPTS: undefined,
   NO_COLOR: undefined,
   FORCE_COLOR: undefined,
 };
@@ -11928,6 +11933,149 @@ describe.concurrent("a script, file or executable named lint", () => {
     );
     expect(stdout).toContain("[Error/no-debugger]");
     expect(exitCode).toBe(1);
+  });
+
+  // `"lint:check": "bun lint ."` beside `"lint": "bun lint --fix ."` fixed the file and exited with 0.
+  describe("bun lint in another script of the package", () => {
+    const bun = `"${bunExe().replaceAll("\\", "/")}"`;
+    const issue = { lint: "bun lint --fix .", "lint:check": "bun lint ." };
+    const check = { "lint:check": `${bun} lint .` };
+    const quoted = { lint: `${bun} lint --fix .`, ...check };
+    const runCheck = ["run", "lint:check"];
+    const source = "export function f() {\n\tlet x = 1;\n\treturn x;\n}\n";
+    type Variables = (own: string, other: string) => Record<string, string>;
+    const none: Variables = () => ({});
+    const ofNpm: Variables = own => ({ npm_lifecycle_event: "lint:check", npm_package_json: own });
+
+    /** Runs `bun ...cmd` in a package with `scripts`. The `lint` script ran if `a.ts` is fixed. */
+    async function inPackage(
+      scripts: Record<string, string>,
+      cmd: string[],
+      variables: Variables,
+      before?: (dir: string) => void,
+    ) {
+      using dir = tempDir("bun-lint-sibling", {
+        "package.json": JSON.stringify({ name: "sibling", scripts }),
+        ".oxlintrc.json": JSON.stringify({ rules: { "prefer-const": "error" } }),
+        "a.ts": source,
+        "other/package.json": "{}",
+      });
+      before?.(String(dir));
+      const [own, other] = [join(String(dir), "package.json"), join(String(dir), "other", "package.json")];
+      await using proc = spawn({
+        cmd: [bunExe(), ...cmd],
+        env: { ...env, ...variables(own, other) },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { stdout, ranTheScript: readFileSync(join(String(dir), "a.ts"), "utf8") !== source, exitCode };
+    }
+
+    test.each<[string, Record<string, string>, string[], Variables]>([
+      ["from bun run", quoted, runCheck, none],
+      ["from npm or a pnpm that names the package", quoted, ["lint", "."], ofNpm],
+      ["from yarn 1, which doesn't", quoted, ["lint", "."], () => ({ npm_lifecycle_event: "lint:check" })],
+    ])("is the linter if the lint script starts with bun lint: %s", async (_, scripts, cmd, variables) => {
+      const { stdout, ...result } = await inPackage(scripts, cmd, variables);
+      expect(stdout).toContain("prefer-const");
+      expect(result).toEqual({ ranTheScript: false, exitCode: 1 });
+    });
+
+    // `bun run` puts `node_modules/.bin` first in `PATH`. On Windows, that needs a launcher that an install creates.
+    test.skipIf(isWindows)("is the linter with the scripts as the issue has them, and `bun` from PATH", async () => {
+      const { stdout, ...result } = await inPackage(issue, runCheck, none, dir => {
+        mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true });
+        symlinkSync(bunExe(), join(dir, "node_modules", ".bin", "bun"));
+      });
+      expect(stdout).toContain("prefer-const");
+      expect(result).toEqual({ ranTheScript: false, exitCode: 1 });
+    });
+
+    test.each<[string, Record<string, string>, string[], Variables]>([
+      ["no script is running", quoted, ["lint", "."], none],
+      [
+        "a script of another package is running",
+        quoted,
+        ["lint", "."],
+        (_, other) => ({ npm_lifecycle_event: "lint:check", npm_package_json: other }),
+      ],
+      // `bunx`, `npx` and `yarn exec` set the variable to what is no script of the package.
+      ...["bunx", "npx", "exec"].map((event): [string, Record<string, string>, string[], Variables] => [
+        `${event} is running`,
+        quoted,
+        ["lint", "."],
+        own => ({ npm_lifecycle_event: event, npm_package_json: own }),
+      ]),
+      ["the package has a prelint script", { prelint: "echo before", ...quoted }, runCheck, none],
+      ["the package has a postlint script", { postlint: "echo after", ...quoted }, runCheck, none],
+      ["the other script calls bun run lint", { ...quoted, "lint:check": `${bun} run lint` }, runCheck, none],
+      // These start the script without saying which one it is.
+      ["from bun --filter", quoted, ["--filter", "sibling", "lint:check"], none],
+      ["from bun run --parallel", quoted, ["run", "--parallel", "lint:check"], none],
+      ["from bun run --sequential", quoted, ["run", "--sequential", "lint:check"], none],
+    ])("runs the lint script: %s", async (_, scripts, cmd, variables) => {
+      const { stdout, ...result } = await inPackage(scripts, cmd, variables);
+      expect(stdout).not.toContain("prefer-const");
+      expect(result).toEqual({ ranTheScript: true, exitCode: 0 });
+    });
+
+    test("runs a lint script that is another tool", async () => {
+      const result = await inPackage({ lint: "echo eslint", ci: `${bun} lint` }, ["run", "ci"], none);
+      expect(result).toEqual({ stdout: "eslint\n", ranTheScript: false, exitCode: 0 });
+    });
+
+    // `bun lint --help` says whether `bun lint` runs the script. Here `lint:check` is running.
+    test("only a lint script that starts with bun lint is taken for the linter", async () => {
+      const scripts: [string, "the linter" | "the script"][] = [
+        ["bun lint", "the linter"],
+        ["bun lint --fix .", "the linter"],
+        ["\tbun  lint --fix . && echo done", "the linter"],
+        ["bun lint; echo done", "the linter"],
+        ["bun --silent lint", "the linter"],
+        [`${bun} lint --fix .`, "the linter"],
+        [bunExe().includes(" ") || isWindows ? "bun lint" : `${bunExe()} lint`, "the linter"],
+        ["eslint .", "the script"],
+        ["next lint", "the script"],
+        ["echo lint", "the script"],
+        ["bun run lint:fix", "the script"],
+        ["bun lint:fix", "the script"],
+        ["bunx lint", "the script"],
+        ["./tools/bun lint", "the script"],
+        [`"./tools/bun" lint`, "the script"],
+        ["cd . && bun lint", "the script"],
+        ["NO_COLOR=1 bun lint", "the script"],
+        ["bun --cwd . lint", "the script"],
+        ["bun --cwd=. lint", "the script"],
+        ["bun --filter web lint", "the script"],
+        ["bun -F web lint", "the script"],
+        ["bun --workspaces lint", "the script"],
+        ["bun --if-present lint", "the script"],
+        ["bun --config=$CONFIG lint", "the script"],
+        [`"bun lint`, "the script"],
+        [`"bun"x lint`, "the script"],
+        ["(bun lint)", "the script"],
+      ];
+      const results = await Promise.all(
+        scripts.map(async ([lint]) => {
+          using dir = tempDir("bun-lint-sibling", {
+            "package.json": JSON.stringify({ scripts: { lint, "lint:check": "bun lint ." } }),
+          });
+          await using proc = spawn({
+            cmd: [bunExe(), "lint", "--help"],
+            env: { ...env, ...ofNpm(join(String(dir), "package.json"), "") },
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          expect(exitCode).toBe(0);
+          return [lint, stdout.includes("so bun lint runs that script") ? "the script" : "the linter"];
+        }),
+      );
+      expect(results).toEqual(scripts);
+    });
   });
 
   // This is what `bun lint` did before the linter existed.

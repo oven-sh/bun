@@ -303,6 +303,15 @@ Already have an `eslint.config.js`, `.eslintrc`, or `.oxlintrc.json`? `bun lint`
 
 If `package.json` has a `lint` script, `bun lint` runs that script. Inside the script, `bun lint` is the linter. If `package.json` has `"lint"` in it but can't be parsed, as in the middle of a merge, `bun lint` can't tell whether that is a script: it lints nothing and exits with code 2.
 
+If the `lint` script starts with `bun lint`, as `"lint": "bun lint --fix ."` does, `bun lint` is also the linter in the other scripts of that package, when `bun run`, npm, pnpm or yarn runs them. So it is in what those scripts start, such as a Makefile or a Git hook. It takes only the flags of that call: `"lint:check": "bun lint ."` fixes nothing. To keep the flags of the `lint` script, call `bun run lint`, or set them under `[lint]` in [`bunfig.toml`](/runtime/bunfig#linter).
+
+`bun lint` still runs the `lint` script, with its flags, in these cases:
+
+- The package has a `prelint` or `postlint` script. They run with it.
+- `--filter`, `--workspaces`, `--parallel`, `--sequential` or `node --run` started the other script.
+- `bunx` or `npx` started the program that calls `bun lint`.
+- You call `bun lint` from a terminal, or from a CI step, a Makefile or a Git hook that no package script started.
+
 Writing a tool that calls Bun in projects you don't control? Pass `--no-script`: `bun lint --no-script` is always the linter.
 
 Rules from built-in plugins run natively. Any other ESLint plugin still runs, in JavaScript. To see which is which, and which packages you can uninstall:

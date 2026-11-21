@@ -310,6 +310,15 @@ Already have a `.prettierrc` or an `.oxfmtrc.json`? `bun fmt` reads it and print
 
 If `package.json` has a `fmt` script, `bun fmt` runs that script. Inside the script, `bun fmt` is the formatter. If `package.json` has `"fmt"` in it but can't be parsed, as in the middle of a merge, `bun fmt` can't tell whether that is a script: it formats nothing and exits with code 2.
 
+If the `fmt` script starts with `bun fmt`, as `"fmt": "bun fmt --write ."` does, `bun fmt` is also the formatter in the other scripts of that package, when `bun run`, npm, pnpm or yarn runs them. So it is in what those scripts start, such as a Makefile or a Git hook. It takes only the flags of that call: `"fmt:check": "bun fmt --check ."` writes nothing. To keep the flags of the `fmt` script, call `bun run fmt`.
+
+`bun fmt` still runs the `fmt` script, with its flags, in these cases:
+
+- The package has a `prefmt` or `postfmt` script. They run with it.
+- `--filter`, `--workspaces`, `--parallel`, `--sequential` or `node --run` started the other script.
+- `bunx` or `npx` started the program that calls `bun fmt`.
+- You call `bun fmt` from a terminal, or from a CI step, a Makefile or a Git hook that no package script started.
+
 Writing a tool that calls Bun in projects you don't control? Pass `--no-script`: `bun fmt --no-script` is always the formatter.
 
 Astro isn't built in. If your `.prettierrc` lists its plugin, Bun sends those files to your installed Prettier. To see which files those are, and which packages you can uninstall:

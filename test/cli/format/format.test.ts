@@ -43,7 +43,16 @@ const command = [bunExe(), "fmt"];
 /** Matches the start of an error. */
 const anError = /^error: /m;
 
-const env = { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined };
+const env = {
+  ...bunEnv,
+  // Set by the package.json script that runs the tests.
+  npm_lifecycle_event: undefined,
+  npm_package_json: undefined,
+  BUN_INTERNAL_SCRIPTS_OF_COMMANDS: undefined,
+  BUN_INTERNAL_CHECK_SCRIPTS: undefined,
+  NO_COLOR: undefined,
+  FORCE_COLOR: undefined,
+};
 
 /**
  * The text that `bun fmt` prints when a file can't be formatted, with any configuration. It's Bun's usual error format:
@@ -10187,6 +10196,24 @@ describe.concurrent("a fmt script in package.json", () => {
     });
     expect(result.files).toEqual({ "a.js": formatted });
     expect(result.exitCode).toBe(0);
+  });
+
+  // `"fmt:check": "bun fmt --check ."` beside `"fmt": "bun fmt --write ."` rewrote the file and exited with 0.
+  const bun = `"${bunExe().replaceAll("\\", "/")}"`;
+  test.each([
+    ["the formatter if the fmt script starts with bun fmt", `${bun} fmt --write .`, "2 files need formatting.", 1],
+    ["the fmt script if that is another tool", "echo the script", "the script --check .", 0],
+  ])("in another script, bun fmt is %s", async (_, fmt, printed, exitCode) => {
+    using dir = tempDir("bun-format-sibling", {
+      "package.json": JSON.stringify({ scripts: { fmt, "fmt:check": `${bun} fmt --check .` } }),
+      "a.js": ugly,
+    });
+    const cmd = [bunExe(), "run", "fmt:check"];
+    await using proc = spawn({ cmd, env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain(printed);
+    expect(readFileSync(join(String(dir), "a.js"), "utf8")).toBe(ugly);
+    expect(exited).toBe(exitCode);
   });
 });
 

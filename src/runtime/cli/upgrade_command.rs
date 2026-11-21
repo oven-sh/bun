@@ -785,9 +785,7 @@ impl UpgradeCommand {
 
                 #[cfg(unix)]
                 {
-                    let mut unzip_path_buf = bun_paths::path_buffer_pool::get();
                     let Some(unzip_exe) = which(
-                        &mut unzip_path_buf,
                         env_loader.map.get(b"PATH").unwrap_or(b""),
                         filesystem.top_level_dir(),
                         b"unzip",
@@ -863,12 +861,7 @@ impl UpgradeCommand {
                     )
                     .expect("oom");
 
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    // Separate fallback buffer — borrowck holds `buf` for the lifetime
-                    // of `which`'s returned `Option<&ZStr>` even across the `None` arm.
-                    let mut buf2 = bun_paths::path_buffer_pool::get();
-                    let powershell_path: &ZStr = match which(
-                        &mut buf,
+                    let powershell_path = match which(
                         bun_core::env_var::PATH.get().unwrap_or(b""),
                         b"",
                         b"powershell",
@@ -878,15 +871,10 @@ impl UpgradeCommand {
                             let system_root = bun_core::env_var::SYSTEMROOT
                                 .get()
                                 .unwrap_or(b"C:\\Windows");
-                            let hardcoded_system_powershell =
-                                bun_paths::join_abs_string_buf_z::<bun_paths::platform::Windows>(
-                                    system_root,
-                                    &mut buf2[..],
-                                    &[
-                                        system_root,
-                                        b"System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-                                    ],
-                                );
+                            let hardcoded_system_powershell = bun_paths::Path::resolve(&[
+                                system_root,
+                                b"System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                            ]);
                             if !sys::exists(hardcoded_system_powershell.as_bytes()) {
                                 bun_core::pretty_errorln!(
                                     "<r><red>error:<r> Failed to unzip {} due to PowerShell not being installed.",
@@ -1056,7 +1044,7 @@ impl UpgradeCommand {
             let target_filename = ZStr::from_slice_with_nul(bun_paths::basename(
                 destination_executable_z.as_bytes_with_nul(),
             ));
-            let target_dirname = bun_core::dirname(destination_executable)
+            let target_dirname = bun_paths::dirname(destination_executable)
                 .ok_or(crate::Error::UpgradeFailedBecauseOfMissingExecutableDir)?;
             let target_dir_it = match sys::Dir::open(target_dirname) {
                 Ok(d) => d,
@@ -1071,11 +1059,7 @@ impl UpgradeCommand {
             };
             let target_dir: sys::Dir = target_dir_it;
 
-            // `move_file_z` wants `&ZStr`; pre-compute a NUL-terminated
-            // copy of `exe`.
-            let mut exe_z_buf = bun_paths::path_buffer_pool::get();
-            exe_z_buf[..exe.len()].copy_from_slice(exe);
-            let exe_z: &ZStr = ZStr::nul_terminate(&mut exe_z_buf, exe.len());
+            let exe_z: &ZStr = &bun_paths::Path::from(exe);
 
             if use_canary {
                 // Check if the versions are the same
@@ -1313,13 +1297,9 @@ pub(crate) mod upgrade_js_bindings {
         {
             use sys::windows as w;
 
-            let mut buf = bun_paths::w_path_buffer_pool::get();
-            let tmpdir_path = fs::RealFS::get_default_temp_dir();
-            let mut wtmp = bun_paths::w_path_buffer_pool::get();
-            let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
-            let path = match sys::normalize_path_windows(sys::Fd::INVALID, tmpdir_w, &mut buf[..]) {
-                sys::Result::Err(_) => return,
-                sys::Result::Ok(norm) => norm,
+            let tmpdir = bun_paths::OSPath::from(fs::RealFS::get_default_temp_dir());
+            let Ok(path) = sys::normalize_path_windows(sys::Fd::INVALID, &tmpdir) else {
+                return;
             };
 
             let options = sys::NtCreateFileOptions {
@@ -1335,7 +1315,7 @@ pub(crate) mod upgrade_js_bindings {
                 attributes: 0,
                 sharing_mode: w::FILE_SHARE_READ | w::FILE_SHARE_WRITE,
             };
-            if let Ok(handle) = w::NtCreateFile(None, path, options) {
+            if let Ok(handle) = w::NtCreateFile(None, &path, options) {
                 // SAFETY: test-only helper; access is single-threaded (JS thread).
                 unsafe { TEMPDIR_FD.write(Some(handle.into())) };
             }

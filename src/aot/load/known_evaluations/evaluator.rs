@@ -1,8 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
@@ -10,6 +8,7 @@ use bun_sema::hir::{
     IdList, ImportId, ImportedName, MemberKind, PatId, PatKind, PropKey, PropKind, StmtId,
     StmtKind, UnOp, VarKind,
 };
+use bun_sema::resolve::parent_directory;
 use bun_sema_driver::host::from_argument;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -166,7 +165,7 @@ impl<'a, 's> Evaluator<'a, 's> {
         let mut module = Object::unseen();
         module.set(b"exports", exports.clone());
         let module = self.create(module);
-        let folder = Value::Path(dirname::<Posix>(self.beside.path).into());
+        let folder = Value::Path(parent_directory(self.beside.path).into());
         let names = [
             (known::require, Value::Global(Global::Require)),
             (known::exports, exports),
@@ -815,13 +814,13 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
             Value::Global(Global::RequireResolve) => match args {
                 [Value::String(specifier)] if is_relative(specifier) => {
-                    self.join_path(&dirname::<Posix>(self.beside.path).into(), specifier)
+                    self.join_path(&parent_directory(self.beside.path).into(), specifier)
                 }
                 _ => Value::Unknown,
             },
             Value::Global(Global::ReadFileSync) => self.read_file(args),
             Value::Global(Global::PathDirname) => match args {
-                [Value::Path(path)] => Value::Path(dirname::<Posix>(path).into()),
+                [Value::Path(path)] => Value::Path(parent_directory(path).into()),
                 _ => Value::Unknown,
             },
             Value::Global(Global::PathJoin) => {
@@ -1490,7 +1489,7 @@ impl<'a, 's> Evaluator<'a, 's> {
                     (Value::Global(Global::Array), Some(args)) => self.create_array_of(args),
                     (Value::Global(Global::Url), Some(args)) => match &args[..] {
                         [Value::String(relative), Value::Path(path)] if is_relative(relative) => {
-                            self.join_path(&dirname::<Posix>(path).into(), relative)
+                            self.join_path(&parent_directory(path).into(), relative)
                         }
                         _ => Value::Unknown,
                     },
@@ -1587,7 +1586,7 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
             Value::Global(Global::ImportMeta) => match key {
                 b"url" | b"filename" | b"path" => Value::Path(self.beside.path.into()),
-                b"dirname" | b"dir" => Value::Path(dirname::<Posix>(self.beside.path).into()),
+                b"dirname" | b"dir" => Value::Path(parent_directory(self.beside.path).into()),
                 _ => Value::Unknown,
             },
             Value::Global(global) => {

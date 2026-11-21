@@ -1350,6 +1350,15 @@ describe.concurrent("where the scanner is looked up", () => {
     expect(await install(files)).toEqual({ ran: "the user", exitCode: 0 });
   });
 
+  it("a trailing slash in the user's bunfig means the directory", async () => {
+    const files = {
+      "home/.bunfig.toml": bunfig("./s/"),
+      "home/s/index.ts": scannerOf("the directory"),
+      "home/s.ts": scannerOf("the file"),
+    };
+    expect(await install(files)).toEqual({ ran: "the directory", exitCode: 0 });
+  });
+
   it("a relative path in a --config file starts at that file", async () => {
     const files = {
       "ci/bunfig.toml": bunfig("./s.ts"),
@@ -1366,6 +1375,20 @@ describe.concurrent("where the scanner is looked up", () => {
       "project/node_modules/a-scanner/index.js": scannerOf("a-scanner"),
     };
     expect(await install(files)).toEqual({ ran: "a-scanner", exitCode: 0 });
+  });
+
+  it("a relative path with a backslash in the user's bunfig starts at that file", async () => {
+    const files = {
+      "home/.bunfig.toml": bunfig(".\\s.ts"),
+      "home/s.ts": scannerOf("the user"),
+      "project/node_modules/s.ts": scannerOf("the project"),
+    };
+    expect(await install(files)).toEqual({ ran: "the user", exitCode: 0 });
+  });
+
+  it.each(["project/bunfig.toml", "home/.bunfig.toml"])("a data: URL with a backslash in %s", async file => {
+    const files = { [file]: bunfig("data:text/javascript," + scannerOf("a\\b")) };
+    expect(await install(files)).toEqual({ ran: "a\\b", exitCode: 0 });
   });
 
   it.skipIf(isWindows)("a file with a quote in its name", async () => {

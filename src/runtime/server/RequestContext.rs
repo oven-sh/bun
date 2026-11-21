@@ -1728,7 +1728,7 @@ where
         let crate::webcore::blob::store::Data::File(file) = &blob_ref.store().unwrap().data else {
             unreachable!("do_sendfile called with non-file blob");
         };
-        let mut file_buf = bun_paths::path_buffer_pool::get();
+        let mut file_buf = bun_paths::Path::new();
         let opened = match &file.pathlike {
             crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => None,
             crate::webcore::node_types::PathOrFileDescriptor::Path(path) => {

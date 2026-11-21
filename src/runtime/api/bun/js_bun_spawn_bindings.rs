@@ -110,7 +110,6 @@ fn get_argv0(
             )
             .throw());
     }
-    let mut path_buf = bun_paths::path_buffer_pool::get();
 
     let argv0_to_use: &[u8] = arg0.slice();
 
@@ -136,12 +135,10 @@ fn get_argv0(
     let actual_argv0: ZBox = if path_to_use.is_empty() {
         ZBox::from_bytes(argv0_to_use)
     } else {
-        let Some(resolved) =
-            bun_which::which_for_spawn(&mut path_buf, path_to_use, cwd, argv0_to_use)
-        else {
+        let Some(resolved) = bun_which::which_for_spawn(path_to_use, cwd, argv0_to_use) else {
             return Err(throw_command_not_found(global_this, argv0_to_use));
         };
-        ZBox::from_bytes(resolved.as_bytes())
+        resolved.to_zbox()
     };
 
     Ok(Argv0Result {

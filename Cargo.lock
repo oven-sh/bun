@@ -517,7 +517,6 @@ dependencies = [
  "bun_removable_features",
  "bun_sys",
  "bun_threading",
- "bun_which",
  "bun_zlib",
  "const_format",
  "libc",
@@ -870,6 +869,7 @@ dependencies = [
  "bun_install_types",
  "bun_options_types",
  "bun_parsers",
+ "bun_paths",
  "bun_url",
  "strum",
 ]
@@ -955,6 +955,7 @@ dependencies = [
  "bun_alloc",
  "bun_ast",
  "bun_core",
+ "bun_paths",
  "bun_semver",
  "bun_wyhash",
  "strum",
@@ -1005,7 +1006,6 @@ dependencies = [
  "bun_crash_handler",
  "bun_glob",
  "bun_highway",
- "bun_node_path",
  "bun_options_types",
  "bun_paths",
  "bun_ptr",
@@ -1473,11 +1473,9 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_errno",
+ "bun_highway",
  "bun_simdutf_sys",
  "const_format",
- "libc",
- "strum",
- "thiserror",
 ]
 
 [[package]]
@@ -1572,6 +1570,7 @@ dependencies = [
  "bun_http_types",
  "bun_install_types",
  "bun_js_parser",
+ "bun_node_path",
  "bun_options_types",
  "bun_parsers",
  "bun_paths",
@@ -1786,7 +1785,6 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_core",
- "bun_paths",
  "bun_sema",
  "bun_sema_driver",
  "bun_sys",

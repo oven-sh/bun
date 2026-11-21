@@ -1,6 +1,6 @@
 import type { BunPlugin, OnResolveCallback } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import { basename } from "node:path";
 
 describe("bundler files option", () => {
@@ -976,6 +976,52 @@ describe("bundler files option", () => {
       expect(exitCode).toBe(0);
     });
   }
+
+  test("a specifier with a trailing slash does not match a file", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/app/entry.js"],
+      files: { "/app/entry.js": `import "./util.js/";`, "/app/util.js": `` },
+      throw: false,
+    });
+    expect(result.logs.map(log => log.message)).toEqual([`Could not resolve: "./util.js/"`]);
+  });
+
+  test("a key with backslashes overrides the file", async () => {
+    using dir = tempDir("files-backslash-key", {
+      "entry.js": `import "./src/a.js";`,
+      "src/a.js": `console.log("disk");`,
+    });
+    const { outputs } = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      files: { [`${dir}\\src\\a.js`]: `console.log("memory");` },
+    });
+    expect(await outputs[0].text()).toContain(`console.log("memory")`);
+  });
+
+  test("a key with a backslash is one module under both spellings", async () => {
+    const { outputs } = await Bun.build({
+      entrypoints: ["/app/e.js"],
+      files: { "/app/e.js": String.raw`require("./x\\m.js"); require("./x/m.js");`, "/app/x\\m.js": `once();` },
+    });
+    expect((await outputs[0].text()).match(/once\(\)/g)).toHaveLength(1);
+  });
+
+  test("a page with a relative key loads the override of its script", async () => {
+    using dir = tempDir("files-relative-html", {
+      "web/a.js": `console.log("disk");`,
+      "build.js": `
+        const { outputs } = await Bun.build({
+          entrypoints: ["./web/index.html"],
+          files: {
+            "./web/index.html": '<script src="a.js"></script>',
+            [process.cwd() + "/web/a.js"]: 'console.log("memory");',
+          },
+        });
+        eval(await outputs.find(output => output.path.endsWith(".js")).text());
+      `,
+    });
+    expect(await bunRun(`${dir}/build.js`)).toSpawn("memory");
+  });
 
   test("an html entry point in files of a server build is a page for the browser", async () => {
     const result = await Bun.build({

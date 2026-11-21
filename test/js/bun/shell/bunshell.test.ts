@@ -751,6 +751,9 @@ describe("bunshell", () => {
       TestBuilder.command`echo ~/Documents`.stdout(`${process.env.HOME}/Documents\n`).runAsTest("normal");
       TestBuilder.command`echo ~/Do"cu"me"nts"`.stdout(`${process.env.HOME}/Documents\n`).runAsTest("compound word");
       TestBuilder.command`echo ~/LOL hi hello`.stdout(`${process.env.HOME}/LOL hi hello\n`).runAsTest("multiple words");
+      TestBuilder.command`HOME=/h USERPROFILE=/h && echo ~'\x'`
+        .stdout(isWindows ? "/h\\x\n" : "~\\x\n")
+        .runAsTest("backslash");
     });
 
     describe("normal", async () => {
@@ -3762,6 +3765,21 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(stdout.toString()).toBe("from-onlyintool\n");
     expect(exitCode).toBe(0);
   }
+});
+
+test.if(isWindows)("an operand that starts with // is on the drive of the shell's cwd", async () => {
+  using dir = tempDir("shell-rooted-operand", { "in.txt": "content\n" });
+  const rooted = "/" + String(dir).slice("C:".length).replaceAll("\\", "/") + "/in.txt";
+  expect(await $`cat ${rooted}`.cwd(String(dir)).text()).toBe("content\n");
+});
+
+test.if(isWindows)("cd does not follow a name that is relative to a drive", async () => {
+  using dir = tempDir("shell-cd-drive-relative", { "a/.keep": "" });
+  const { exitCode } = await $`cd ${String(dir).slice(0, "C:".length) + ".."}`
+    .cwd(join(String(dir), "a"))
+    .nothrow()
+    .quiet();
+  expect(exitCode).toBe(1);
 });
 
 // Windows joins each file operand onto the shell's cwd in one path buffer. POSIX passes operands to the *at() syscalls.

@@ -913,33 +913,21 @@ fn create_overlapped_pipe_pair(
 ) -> Result<PipePair, CreatePtyError> {
     let pid: u32 = windows::GetCurrentProcessId();
     let counter = PIPE_SERIAL.fetch_add(1, Ordering::Relaxed);
-    let mut name_utf8_buf = [0u8; 96];
-    let name = {
-        use std::io::Write;
-        let mut cursor = &mut name_utf8_buf[..];
-        // An AppContainer may only create server pipes under `\\.\pipe\LOCAL\`;
-        // insert the segment only then so the name is unchanged outside one
-        // (matches libuv's uv__unique_pipe_name).
-        let local = if windows::is_app_container() {
-            r"LOCAL\"
-        } else {
-            ""
-        };
-        if write!(cursor, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}").is_err() {
-            return Err(CreatePtyError::OpenPtyFailed);
-        }
-        let written = 96 - cursor.len();
-        &name_utf8_buf[..written]
+    // An AppContainer may only create server pipes under `\\.\pipe\LOCAL\` (libuv's uv__unique_pipe_name).
+    let local = if windows::is_app_container() {
+        r"LOCAL\"
+    } else {
+        ""
     };
-    let mut name_w_buf = [0u16; 97]; // [96:0]u16
-    let name_w_len = bun_core::convert_utf8_to_utf16_in_buffer(&mut name_w_buf, name).len();
-    name_w_buf[name_w_len] = 0;
-    // SAFETY: name_w_buf[name_w_len] == 0 written above.
-    let name_w = bun_core::WStr::from_buf(&name_w_buf[..], name_w_len);
+    let mut name_w = bun_paths::OSPath::new();
+    write!(name_w, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}");
 
-    let server =
-        windows::CreateNamedPipeW(name_w, server_access | windows::FILE_FLAG_OVERLAPPED, 65536)
-            .map_err(|_| CreatePtyError::OpenPtyFailed)?;
+    let server = windows::CreateNamedPipeW(
+        &name_w,
+        server_access | windows::FILE_FLAG_OVERLAPPED,
+        65536,
+    )
+    .map_err(|_| CreatePtyError::OpenPtyFailed)?;
 
     let client_access: u32 = if server_access == windows::PIPE_ACCESS_INBOUND {
         windows::GENERIC_WRITE
@@ -947,7 +935,7 @@ fn create_overlapped_pipe_pair(
         windows::GENERIC_READ
     };
 
-    let client = windows::CreateFileW(name_w, client_access, 0, windows::OPEN_EXISTING, 0)
+    let client = windows::CreateFileW(&name_w, client_access, 0, windows::OPEN_EXISTING, 0)
         .map_err(|_| CreatePtyError::OpenPtyFailed)?;
 
     let server = File::from_fd(Fd::from_system(server.into_raw_handle()))

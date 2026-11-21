@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
+import { posix, sep } from "node:path";
 import { ESBUILD, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -72,6 +73,61 @@ describe("bundler", () => {
         stdout: "3",
       },
     ],
+  });
+  // Not always the common ancestor. Builds depend on these names, so they only change on purpose.
+  const numbered = (count: number, name: (i: number) => string) => Array.from({ length: count }, (_, i) => name(i));
+  for (const [name, { entryPoints, files, outputs }] of Object.entries({
+    Eight: {
+      entryPoints: numbered(8, i => `./pages/p${i}.js`),
+      outputs: numbered(8, i => `p${i}.js`),
+    },
+    Nine: {
+      entryPoints: numbered(9, i => `./pages/p${i}.js`),
+      outputs: numbered(9, i => `pages/p${i}.js`),
+    },
+    NineInPackage: {
+      entryPoints: numbered(9, i => `pkg/p${i}.js`),
+      files: numbered(9, i => `node_modules/pkg/p${i}.js`),
+      outputs: numbered(9, i => `node_modules/pkg/p${i}.js`),
+    },
+    Directory: {
+      entryPoints: ["./pub", "./pub/a.js"],
+      files: ["pub/index.js", "pub/a.js"],
+      outputs: ["a.js", "index.js"],
+    },
+    NameStartsWithTheOther: {
+      entryPoints: ["./ab/x.js", "./abc/y.js"],
+      outputs: ["_.._/abc/y.js", "x.js"],
+    },
+    ...(isWindows && {
+      CaseDiffers: {
+        entryPoints: ["./Src/a.js", "./src/b.js"],
+        files: ["src/a.js", "src/b.js"],
+        outputs: ["src/a.js", "src/b.js"],
+      },
+    }),
+  } as Record<string, { entryPoints: string[]; files?: string[]; outputs: string[] }>)) {
+    for (const backend of ["cli", "api"] as const) {
+      itBundled(`naming/ImplicitOutbase${name}-${backend}`, {
+        skipOnEsbuild: true,
+        backend,
+        files: Object.fromEntries((files ?? entryPoints).map(file => [posix.join("/", file), `console.log(1);`])),
+        entryPointsRaw: entryPoints,
+        onAfterBundle(api) {
+          const written = new Bun.Glob("**/*.js").scanSync({ cwd: api.outdir });
+          expect(Array.from(written, file => file.replaceAll(sep, "/").toLowerCase()).sort()).toEqual(outputs);
+        },
+      });
+    }
+  }
+  itBundled("naming/ImplicitOutbaseTrailingSlash", {
+    skipOnEsbuild: true,
+    backend: "api",
+    files: { "/src/index.js": `console.log(1);` },
+    entryPointsRaw: ["./src/"],
+    onAfterBundle(api) {
+      api.assertFileExists(isWindows ? "out/index.js" : "out/src/index.js");
+    },
   });
   itBundled("naming/EntryNamingTemplate1", {
     files: {

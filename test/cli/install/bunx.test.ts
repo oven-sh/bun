@@ -1841,6 +1841,18 @@ describe.skipIf(isWindows)("cache directory", () => {
     });
   });
 
+  // Node.js refuses to import a module whose real path contains a backslash.
+  it.concurrent("is in the temp directory when HOME contains a backslash", async () => {
+    using registry = await localRegistry(...toolWithDep());
+    using box = sandbox(registry);
+    const HOME = join(box.home, "DOMAIN\\user");
+    mkdirSync(HOME);
+
+    expect(await box.run(["tool"], { env: { ...box.env, HOME } })).toMatchObject({ stdout: ran, exitCode: 0 });
+    expect(bunxEntries(box.tmp)).toContain(`.bunx-${uid}`);
+    expect(readdirSync(box.home)).toEqual(["DOMAIN\\user"]);
+  });
+
   // The install that bunx spawns runs in the tree, and is told which directory that is.
   it.concurrent("a relative temp directory works like an absolute one", async () => {
     using registry = await localRegistry(...toolWithDep());
@@ -2918,6 +2930,23 @@ describe("a package in node_modules", () => {
       exitCode: 0,
       requests: [],
     });
+  });
+
+  it.concurrent.skipIf(isWindows)("after an install, a native bin with a colon in its name", async () => {
+    using registry = await localRegistry(
+      { name: "mytool-native", version: "1.0.0", ...anyPlatform, files: { "build:all": echoBin("native") } },
+      {
+        name: "mytool",
+        version: "1.0.0",
+        bin: { mytool: "bin/build:all" },
+        files: { "bin/build:all": echoBin("stub") },
+        optionalDependencies: { "mytool-native": "1.0.0" },
+      },
+    );
+    const app = { name: "app", dependencies: { mytool: "1.0.0" }, nativeDependencies: ["mytool"] };
+    using box = sandbox(registry, { cwd: { "package.json": JSON.stringify(app) } });
+    expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+    expect(join(box.cwd, "node_modules", ".bin", "mytool")).toBeValidBin(join("..", "mytool-native", "build:all"));
   });
 
   // `other-dep` comes before the platform package in the dependencies, and is the name of a folder above the project

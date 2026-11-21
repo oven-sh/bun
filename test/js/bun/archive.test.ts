@@ -986,6 +986,36 @@ describe("Bun.Archive", () => {
   });
 
   describe("path safety", () => {
+    test("a backslash in an entry name separates, and `..` behind one stays inside", async () => {
+      using dir = tempDir("archive-backslash", {});
+      const out = join(String(dir), "a", "b", "out");
+      const archive = new Bun.Archive({ "p\\q.txt": "q", "..\\..\\up.txt": "up" });
+      expect(await archive.extract(out)).toBe(2);
+      expect(readdirSync(String(dir), { recursive: true }).map(String).sort()).toEqual(
+        ["a", "a/b", "a/b/out", "a/b/out/p", "a/b/out/p/q.txt", "a/b/out/up.txt"].map(name => join(name)),
+      );
+    });
+
+    test.skipIf(isWindows).each([
+      ["\\..\\..\\up.txt", undefined, 1],
+      ["\\..\\..\\up.txt", { glob: "**" }, 1],
+      ["/../../up.txt", undefined, 1],
+      ["/../../up.txt", { glob: "**" }, 0],
+    ])("`..` behind the leading slash of %j stays inside with %j", async (name, options, count) => {
+      using dir = tempDir("archive-leading-slash", {});
+      const out = join(String(dir), "a", "b", "out");
+      expect(await new Bun.Archive({ [name]: "up" }).extract(out, options)).toBe(count);
+      expect(readdirSync(String(dir), { recursive: true }).map(String).sort()).toEqual(
+        ["a", "a/b", "a/b/out", "a/b/out/up.txt"].slice(0, 3 + count),
+      );
+    });
+
+    test.skipIf(isWindows)("a character outside of ASCII and a colon is not a drive", async () => {
+      using dir = tempDir("archive-colon", {});
+      const archive = new Bun.Archive({ "注:説明.txt": "1", "é:/inner.txt": "2" });
+      expect(await archive.extract(String(dir), { glob: "**/*.txt" })).toBe(2);
+    });
+
     test("skips tar entries whose pathname exceeds the platform path limit", async () => {
       // GNU `@LongLink` ('L') records let a tar entry carry a pathname of
       // arbitrary length, far beyond what fits in the extractor's fixed-size

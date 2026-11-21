@@ -29,7 +29,7 @@ use bun_core::define_scoped_log;
 use bun_core::env::IS_WINDOWS;
 use bun_core::strings;
 use bun_core::{ZBox, ZStr};
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, resolve_path};
+use bun_paths::{MAX_PATH_BYTES, Path};
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self as Syscall, Dir, E, Error as SysError, O, Result as Maybe, S, Stat};
 
@@ -41,21 +41,16 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
     false
 }
 
+/// Not every [`Accessor`] makes a syscall that says so, or lets the walk go on after it.
+#[cold]
+fn name_too_long(path: &[u8]) -> SysError {
+    SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open).with_path(path)
+}
+
 #[cfg(windows)]
 pub(crate) fn statat_windows(fd: Syscall::Fd, path: &ZStr) -> Maybe<Stat> {
-    use bun_paths::resolve_path::{self, platform};
-    // Rust's `&mut`/`&` aliasing rules forbid
-    // passing the same buffer as both `join_z_buf`'s output and an input part,
-    // so we need two buffers — but on Windows `PathBuffer` is ~96 KB,
-    // and this is called from deep inside `Iterator::next()` (via `lstatat`
-    // for `FileKind::Unknown`), so two stack `PathBuffer`s (~192 KB) risk
-    // overflowing the smaller worker-thread stacks.
-    let mut dir_buf = bun_paths::path_buffer_pool::get();
-    let dir = Syscall::get_fd_path(fd, &mut dir_buf)?;
-    let parts: &[&[u8]] = &[&dir[..], path.as_bytes()];
-    let mut join_buf = bun_paths::path_buffer_pool::get();
-    let statpath = resolve_path::join_z_buf::<platform::Auto>(&mut join_buf[..], parts);
-    Syscall::stat(statpath)
+    let dir = Syscall::get_fd_path_owned(fd)?;
+    Syscall::stat(&bun_paths::Path::join(&[&dir, path]))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -293,10 +288,7 @@ pub struct Directory<A: Accessor> {
     /// `None` is the iterator's `cwd_fd`.
     pub(crate) fd: Option<A::Handle>,
     pub(crate) iter: A::DirIter,
-    pub(crate) path: bun_paths::path_buffer_pool::Guard,
-    // The dir path is a prefix of `path` (self-referential).
-    // Store the length and reconstruct on demand.
-    pub(crate) dir_path_len: usize,
+    pub(crate) path: Path,
 
     /// Active component indices. Multiple indices mean one readdir
     /// evaluates all of them instead of revisiting the directory.
@@ -312,7 +304,6 @@ pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
     pub(crate) iter_state: IterState<A>,
     /// `init` opens it unless there is nothing to walk.
     pub(crate) cwd_fd: Option<A::Handle>,
-    path_buf: bun_paths::path_buffer_pool::Guard,
 
     #[cfg(windows)]
     pub(crate) nt_filter_buf: [u16; 256],
@@ -324,7 +315,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             walker,
             iter_state: IterState::GetNext,
             cwd_fd: None,
-            path_buf: bun_paths::path_buffer_pool::get(),
             #[cfg(windows)]
             nt_filter_buf: [0; 256],
         }
@@ -337,14 +327,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         );
         let mut was_absolute = false;
         let root_work_item: WorkItem<A> = 'brk: {
-            let is_absolute = if cfg!(unix) {
-                bun_paths::is_absolute(&self.walker.pattern)
-            } else {
-                bun_paths::is_absolute(&self.walker.pattern)
-                    || bun_paths::is_absolute_posix(&self.walker.pattern)
-            };
-
-            if !is_absolute {
+            if !bun_paths::is_absolute(&self.walker.pattern) {
                 break 'brk WorkItem::new(
                     self.walker.cwd.clone(),
                     self.walker.single_set(0),
@@ -363,7 +346,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 path_without_special_syntax = if !IS_WINDOWS {
                     b"/"
                 } else {
-                    resolve_path::windows_filesystem_root(&self.walker.cwd)
+                    bun_paths::root(&self.walker.cwd)
                 };
             } else {
                 // Skip the components associated with the literal path
@@ -412,16 +395,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         };
 
         let root_path = &root_work_item.path;
-        if root_path.len() >= self.path_buf.len() {
-            return Ok(Err(SysError::from_code(
-                E::ENAMETOOLONG,
-                Syscall::Tag::open,
-            )
-            .with_path(root_path)));
+        if root_path.len() >= MAX_PATH_BYTES {
+            return Ok(Err(name_too_long(root_path)));
         }
-        self.path_buf[..root_path.len()].copy_from_slice(root_path);
-        let root_path_z = ZStr::nul_terminate(&mut self.path_buf, root_path.len());
-        let cwd_fd = match A::open(root_path_z)? {
+        let cwd_fd = match A::open(&Path::from(root_path))? {
             Err(err) => return Ok(Err(err.with_path(root_path))),
             Ok(fd) => fd,
         };
@@ -450,24 +427,13 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         log!("transition => {}", bstr::BStr::new(work_item_path));
         // Build the Directory in a local and assign at the end (borrowck:
         // mutating `iter_state` in place would overlap the `self.walker` borrow).
-        let mut dir_path_buf = bun_paths::path_buffer_pool::get();
-        let mut dir_path_len: usize = 'dir_path: {
-            if ROOT {
-                if !self.walker.absolute {
-                    break 'dir_path 0;
-                }
+        let mut dir_path = Path::new();
+        if !ROOT || self.walker.absolute {
+            if work_item_path.len() >= MAX_PATH_BYTES {
+                return Ok(Err(name_too_long(work_item_path)));
             }
-            // TODO Optimization: On posix systems filepaths are already null byte terminated so we can skip this if thats the case
-            if work_item_path.len() >= dir_path_buf.len() {
-                return Ok(Err(SysError::from_code(
-                    E::ENAMETOOLONG,
-                    Syscall::Tag::open,
-                )
-                .with_path(work_item_path)));
-            }
-            dir_path_buf[0..work_item_path.len()].copy_from_slice(work_item_path);
-            work_item_path.len()
-        };
+            dir_path.set(work_item_path);
+        }
 
         let mut had_dot_dot = false;
         // Single-index sets (the initial WorkItem) may point to Dot/DotBack
@@ -479,8 +445,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     u32::try_from(work_item.active.find_first_set().unwrap()).expect("int cast");
                 let norm = match self.walker.skip_special_components(
                     single,
-                    &mut dir_path_len,
-                    &mut *dir_path_buf,
+                    &mut dir_path,
                     &mut had_dot_dot,
                 ) {
                     Err(e) => {
@@ -498,11 +463,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             work_item.active
         };
 
-        let dir_path = ZStr::nul_terminate(&mut dir_path_buf, dir_path_len);
-
         let cwd_fd = self.cwd_fd.as_ref().expect("opened by init");
         let opened = match work_item.fd {
-            None if !ROOT || had_dot_dot => match A::openat(cwd_fd, dir_path)? {
+            None if !ROOT || had_dot_dot => match A::openat(cwd_fd, &dir_path)? {
                 Err(err) => {
                     return Ok(Err(err.with_path(dir_path.as_bytes())));
                 }
@@ -531,8 +494,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             self.iter_state = IterState::GetNext;
                             return Ok(Ok(()));
                         }
-                        let full_path =
-                            self.walker.join(&[dir_path.as_bytes(), pathz.as_bytes()])?;
+                        let full_path = self.walker.join(dir_path.as_bytes(), pathz.as_bytes());
                         return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&full_path))));
                     }
                     Ok(stat) => stat,
@@ -586,8 +548,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         self.iter_state = IterState::Directory(Directory {
             fd: opened,
             iter: iterator,
-            path: dir_path_buf,
-            dir_path_len,
+            path: dir_path,
             active,
         });
 
@@ -677,32 +638,23 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             // NUL re-written at `[len]` below isn't left embedded in the path.
                             let work_item_path: &[u8] = work_item_logical_path(&work_item.path);
                             if work_item_path.len() >= MAX_PATH_BYTES {
-                                return Ok(Err(SysError::from_code(
-                                    E::ENAMETOOLONG,
-                                    Syscall::Tag::open,
-                                )
-                                .with_path(work_item_path)));
+                                return Ok(Err(name_too_long(work_item_path)));
                             }
-                            let mut symlink_full_path_len = work_item_path.len();
+                            let mut symlink_full_path = Path::from(work_item_path);
                             // Note: reshaped for borrowck — entry_name is a sub-slice
                             // of symlink_full_path; capture range and re-slice later.
                             let entry_start = work_item.entry_start as usize;
 
                             let mut has_dot_dot = false;
-                            let scratch_path_buf = &mut *self.path_buf;
                             let active: ComponentSet = {
                                 let walker = &*self.walker;
-                                scratch_path_buf[0..work_item_path.len()]
-                                    .copy_from_slice(work_item_path);
-
                                 if work_item.active.count() == 1 {
                                     let single: u32 =
                                         u32::try_from(work_item.active.find_first_set().unwrap())
                                             .unwrap();
                                     let norm = match walker.skip_special_components(
                                         single,
-                                        &mut symlink_full_path_len,
-                                        scratch_path_buf,
+                                        &mut symlink_full_path,
                                         &mut has_dot_dot,
                                     ) {
                                         Err(e) => return Ok(Err(e)),
@@ -718,8 +670,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 }
                             };
 
-                            let symlink_full_path_z =
-                                ZStr::nul_terminate(scratch_path_buf, symlink_full_path_len);
+                            let symlink_full_path_z: &ZStr = &symlink_full_path;
                             let entry_name: &[u8] = &symlink_full_path_z[entry_start..];
 
                             self.iter_state = IterState::GetNext;
@@ -772,9 +723,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     // cannot be a cycle: defer identifying the target
                                     // (record its logical path) so the walk performs
                                     // no stat unless a nested followed link needs it.
-                                    followed_link = Some(FollowedLink::Pending(ZBox::from_bytes(
-                                        symlink_full_path_z.as_bytes(),
-                                    )));
+                                    followed_link =
+                                        Some(FollowedLink::Pending(symlink_full_path_z.to_zbox()));
                                     true
                                 } else {
                                     match A::statat(&dir_fd, bun_core::zstr!(".")) {
@@ -823,7 +773,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 IterState::Directory(dir) => {
                     let entry = match dir.iter.next() {
                         Err(err) => {
-                            let err = err.with_path(&dir.path[..dir.dir_path_len]);
+                            let err = err.with_path(&dir.path);
                             self.iter_state = IterState::GetNext;
                             return Ok(Err(err));
                         }
@@ -835,7 +785,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     };
                     let entry_name = entry.name;
                     // A closure: an entry that does not match needs no bounds check.
-                    let dir_path = || &dir.path[..dir.dir_path_len];
+                    let dir_path = || dir.path.as_bytes();
                     log!(
                         "dir: {} entry: {}",
                         bstr::BStr::new(dir_path()),
@@ -862,8 +812,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     entry.symlink_target,
                                     &mut followed_link,
                                 ) {
-                                    let subdir_parts: &[&[u8]] = &[dir_path(), entry_name];
-                                    let subdir_entry_name = self.walker.join(subdir_parts)?;
+                                    let subdir_entry_name =
+                                        self.walker.join(dir_path(), entry_name);
                                     self.walker.push_work_item(
                                         WorkItem::new(
                                             subdir_entry_name,
@@ -956,8 +906,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     let child =
                                         self.walker.eval_dir(&active, entry_name, &mut add_dir);
                                     if child.count() != 0 {
-                                        let subdir_parts: &[&[u8]] = &[dir_path(), entry_name];
-                                        let subdir_entry_name = self.walker.join(subdir_parts)?;
+                                        let subdir_entry_name =
+                                            self.walker.join(dir_path(), entry_name);
                                         self.walker.push_work_item(
                                             WorkItem::new(
                                                 subdir_entry_name,
@@ -1306,53 +1256,27 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     fn collapse_dots(
         &self,
         idx: u32,
-        dir_path_len: &mut usize,
-        path_buf: &mut PathBuffer,
+        dir_path: &mut Path,
         encountered_dot_dot: &mut bool,
     ) -> Maybe<u32> {
         let mut component_idx = idx;
-        let mut len = *dir_path_len;
-        while (component_idx as usize) < self.pattern_components.len() {
-            match self.pattern_components[component_idx as usize].syntax_hint {
-                SyntaxHint::Dot => {
-                    if len + 2 >= MAX_PATH_BYTES {
-                        return Err(SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open)
-                            .with_path(&path_buf[..len]));
-                    }
-                    if len == 0 {
-                        path_buf[len] = b'.';
-                        len += 1;
-                    } else {
-                        path_buf[len] = b'/';
-                        path_buf[len + 1] = b'.';
-                        len += 2;
-                    }
-                    component_idx += 1;
-                }
+        while let Some(component) = self.pattern_components.get(component_idx as usize) {
+            let dots: &[u8] = match component.syntax_hint {
+                SyntaxHint::Dot => b"/.",
                 SyntaxHint::DotBack => {
                     *encountered_dot_dot = true;
-                    if len + 3 >= MAX_PATH_BYTES {
-                        return Err(SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open)
-                            .with_path(&path_buf[..len]));
-                    }
-                    if len == 0 {
-                        path_buf[len] = b'.';
-                        path_buf[len + 1] = b'.';
-                        len += 2;
-                    } else {
-                        path_buf[len] = b'/';
-                        path_buf[len + 1] = b'.';
-                        path_buf[len + 2] = b'.';
-                        len += 3;
-                    }
-                    component_idx += 1;
+                    b"/.."
                 }
                 _ => break,
-            }
+            };
+            let start = usize::from(dir_path.is_empty());
+            dir_path.extend_from_slice(&dots[start..]);
+            component_idx += 1;
         }
 
-        *dir_path_len = len;
-
+        if dir_path.len() >= MAX_PATH_BYTES {
+            return Err(name_too_long(dir_path));
+        }
         Ok(component_idx)
     }
 
@@ -1372,8 +1296,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     pub(crate) fn skip_special_components(
         &self,
         work_item_idx: u32,
-        dir_path_len: &mut usize,
-        scratch_path_buf: &mut PathBuffer,
+        dir_path: &mut Path,
         encountered_dot_dot: &mut bool,
     ) -> Maybe<u32> {
         let pattern_components = self.pattern_components.as_slice();
@@ -1382,12 +1305,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         if (component_idx as usize) < pattern_components.len() {
             // Skip `.` and `..` while also appending them to `dir_path`
             component_idx = match pattern_components[component_idx as usize].syntax_hint {
-                SyntaxHint::Dot | SyntaxHint::DotBack => self.collapse_dots(
-                    component_idx,
-                    dir_path_len,
-                    scratch_path_buf,
-                    encountered_dot_dot,
-                )?,
+                SyntaxHint::Dot | SyntaxHint::DotBack => {
+                    self.collapse_dots(component_idx, dir_path, encountered_dot_dot)?
+                }
                 _ => component_idx,
             };
         }
@@ -1703,8 +1623,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         entry_name: &[u8],
         dir_name: &[u8],
     ) -> Result<Option<MatchedPath>, AllocError> {
-        let subdir_parts: &[&[u8]] = &[&dir_name[0..dir_name.len()], entry_name];
-        let name_matched_path = self.join(subdir_parts)?;
+        let name_matched_path = self.join(dir_name, entry_name);
         // PERF: two lookups here (contains_key + insert); profile if hot.
         if self.matched_paths.contains_key(&name_matched_path) {
             log!(
@@ -1720,15 +1639,17 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     }
 
     #[inline]
-    fn join(&self, subdir_parts: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
-        if !self.absolute {
-            // If relative paths enabled, stdlib join is preferred over
-            // ResolvePath.joinBuf because it doesn't try to normalize the path
-            return Ok(bun_paths::join_sep_maybe_z::<SENTINEL>(subdir_parts));
+    fn join(&self, dir: &[u8], name: &[u8]) -> Box<[u8]> {
+        if self.absolute {
+            return dupe_matched::<SENTINEL>(&bun_paths::Path::join(&[dir, name]));
         }
-
-        // For SENTINEL, bun_join already included trailing NUL in the slice it returned.
-        Ok(bun_join::<SENTINEL>(subdir_parts))
+        // Both stay as the pattern spells them: `name` can be `.`.
+        let mut path = bun_paths::Path::from(dir);
+        if !name.is_empty() {
+            path.push_trailing_sep();
+            path.extend_from_slice(name);
+        }
+        dupe_matched::<SENTINEL>(&path)
     }
 
     fn push_symlink_work_item(
@@ -1737,10 +1658,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         entry_name: &[u8],
         active: ComponentSet,
     ) -> Result<(), AllocError> {
-        let subdir_entry_name = self.join(&[dir_path, entry_name])?;
+        let subdir_entry_name = self.join(dir_path, entry_name);
         let joined = work_item_logical_path(&subdir_entry_name);
         let entry_start: u32 =
-            u32::try_from(joined.len() - strings::basename(joined).len()).unwrap();
+            u32::try_from(joined.len() - bun_paths::basename(joined).len()).unwrap();
         self.push_work_item(
             WorkItem::new_symlink(subdir_entry_name, active, entry_start),
             None,
@@ -1930,7 +1851,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             let c = pattern[i as usize];
             width = u32::from(strings::wtf8_byte_sequence_length(c));
 
-            if bun_core::path_sep::is_sep_native(c) {
+            if bun_paths::is_sep(c) {
                 let mut end_byte = i;
                 // is last char
                 if (i + width) as usize == pattern.len() {
@@ -2058,25 +1979,5 @@ fn work_item_logical_path(path: &[u8]) -> &[u8] {
         &path[..path.len() - 1]
     } else {
         path
-    }
-}
-
-// const bunJoin = if (!sentinel) ResolvePath.join else ResolvePath.joinZ;
-fn bun_join<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
-    use bun_paths::platform;
-    // Deeply nested trees join to more than the fixed thread-local buffer
-    // holds; the `_spill` variants grow onto the heap instead of writing
-    // past it. Oversized work items still fail with ENAMETOOLONG later.
-    let mut spill: Vec<u8> = Vec::new();
-    if SENTINEL {
-        let s = resolve_path::join_z_spill::<platform::Auto>(&mut spill, parts);
-        // include trailing NUL in the owned box
-        let mut v = s.as_bytes().to_vec();
-        v.push(0);
-        v.into_boxed_slice()
-    } else {
-        Box::from(resolve_path::join_spill::<platform::Auto>(
-            &mut spill, parts,
-        ))
     }
 }

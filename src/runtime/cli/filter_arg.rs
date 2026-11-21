@@ -2,14 +2,12 @@ use bstr::BStr;
 use bun_ast::{self, ExprData, Log};
 use bun_core::Global;
 use bun_core::Output;
-use bun_core::strings;
 use bun_glob as glob;
 use bun_install::package_manager::workspace_selection::{
     self, Candidate, NegatedWorkspaces, RootSelection, WorkspaceGraph,
 };
 use bun_parsers::json;
-use bun_paths::path_buffer_pool;
-use bun_paths::{PathBuffer, platform, resolve_path};
+use bun_paths::{Path, PathBuffer, dirname_or_root, without_trailing_sep};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
 use crate::cli::Command;
@@ -59,15 +57,7 @@ fn get_candidate_package_patterns<'a>(
     // `break` → `break 'walk`.
     'walk: loop {
         'body: {
-            let mut name_buf = bun_paths::path_buffer_pool::get();
-            // Treat a path that's too long like a missing package.json and try the parent.
-            let Some(json_path) = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-                workdir,
-                &mut name_buf[..],
-                &[b"package.json".as_slice()],
-            ) else {
-                break 'body;
-            };
+            let json_path = Path::resolve(&[workdir, b"package.json"]);
 
             log.msgs.clear();
             log.errors = 0;
@@ -75,11 +65,12 @@ fn get_candidate_package_patterns<'a>(
 
             // Note: `bun.sys.File.toSource` was MOVE_DOWN'd to `bun_ast::to_source`
             // (T1 cannot name T2 — see src/sys/File.rs:446).
-            let json_source = match bun_ast::to_source(json_path, Default::default()) {
+            let json_source = match bun_ast::to_source(&json_path, Default::default()) {
                 Err(err) => match err.get_errno() {
-                    bun_sys::Errno::ENOENT | bun_sys::Errno::EACCES | bun_sys::Errno::EPERM => {
-                        break 'body;
-                    }
+                    bun_sys::Errno::ENOENT
+                    | bun_sys::Errno::EACCES
+                    | bun_sys::Errno::EPERM
+                    | bun_sys::Errno::ENAMETOOLONG => break 'body,
                     _ => return Err(err.into()),
                 },
                 Ok(source) => source,
@@ -110,12 +101,7 @@ fn get_candidate_package_patterns<'a>(
                         if negated.take(pattern_bytes) {
                             continue;
                         }
-                        let size = pattern_bytes.len() + b"/package.json".len();
-                        let mut pattern = vec![0u8; size].into_boxed_slice();
-                        pattern[0..pattern_bytes.len()].copy_from_slice(pattern_bytes);
-                        pattern[pattern_bytes.len()..size].copy_from_slice(b"/package.json");
-
-                        out_patterns.push(pattern);
+                        out_patterns.push([pattern_bytes, b"/package.json"].concat().into());
                     }
                     _ => {
                         bun_core::pretty_errorln!(
@@ -126,12 +112,12 @@ fn get_candidate_package_patterns<'a>(
                 }
             }
 
-            let parent_trimmed = strings::without_trailing_slash(workdir);
+            let parent_trimmed = without_trailing_sep(workdir);
             root_buf[0..parent_trimmed.len()].copy_from_slice(parent_trimmed);
             return Ok(&root_buf[0..parent_trimmed.len()]);
         }
 
-        workdir = match bun_core::dirname(workdir) {
+        workdir = match bun_paths::dirname(workdir) {
             Some(d) => d,
             None => break 'walk,
         };
@@ -139,7 +125,7 @@ fn get_candidate_package_patterns<'a>(
 
     // if we were not able to find a workspace root, we simply glob for all package.json files
     out_patterns.push(Box::<[u8]>::from(b"**/package.json".as_slice()));
-    let root_dir = strings::without_trailing_slash(workdir_);
+    let root_dir = without_trailing_sep(workdir_);
     root_buf[0..root_dir.len()].copy_from_slice(root_dir);
     Ok(&root_buf[0..root_dir.len()])
 }
@@ -182,9 +168,7 @@ pub(crate) fn select_packages(
 
     let mut discovered: Vec<WorkspacePackage> = Vec::new();
     for_each_package_json(&glob_patterns, &negated, &root_dir, |package_json_path| {
-        let dir = strings::without_trailing_slash(resolve_path::dirname::<platform::Auto>(
-            &package_json_path,
-        ));
+        let dir = without_trailing_sep(dirname_or_root(&package_json_path));
         if ctx.workspaces && dir == &*root_dir {
             return;
         }
@@ -208,19 +192,10 @@ pub(crate) fn select_packages(
         });
     })?;
 
-    let mut path_buf = path_buffer_pool::get();
     let posix_dirs: Vec<Box<[u8]>> = discovered
         .iter()
-        .map(|p| {
-            strings::without_trailing_slash(resolve_path::join_abs_string_buf::<platform::Posix>(
-                &p.dir,
-                &mut path_buf.0,
-                &[b".".as_slice()],
-            ))
-            .into()
-        })
+        .map(|p| workspace_selection::abs_posix_dir(&p.dir, b"."))
         .collect();
-    drop(path_buf);
 
     let candidates: Vec<Candidate<'_>> = discovered
         .iter()
@@ -273,9 +248,10 @@ impl WorkspacePackage {
     /// `package.json` name, or the directory relative to the workspace root for unnamed packages.
     pub(crate) fn display_name(&self, root_dir: &[u8]) -> Box<[u8]> {
         if self.json.name.is_empty() {
-            Box::from(resolve_path::relative_platform::<platform::Posix, false>(
-                root_dir, &self.dir,
-            ))
+            (Path::relative(root_dir, &self.dir)
+                .into_portable()
+                .as_bytes())
+            .into()
         } else {
             Box::from(&self.json.name[..])
         }
@@ -339,13 +315,7 @@ fn for_each_package_json(
                 // As in `bun install`, a `!` entry never removes a path that's listed literally.
                 Ok(Some(path))
                     if glob::detect_glob_syntax(pattern)
-                        && negated.excludes(resolve_path::relative_platform::<
-                            platform::Auto,
-                            false,
-                        >(
-                            root_dir,
-                            resolve_path::dirname::<platform::Auto>(&path),
-                        )) => {}
+                        && negated.excludes(&Path::relative(root_dir, dirname_or_root(&path))) => {}
                 Ok(Some(path)) => found(path),
                 Ok(None) => break,
                 Err(err) => bun_core::pretty_errorln!("Error: {}", err),

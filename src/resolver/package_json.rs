@@ -1,4 +1,5 @@
 use core::cell::{OnceCell, UnsafeCell};
+use std::borrow::Cow;
 
 use bun_ast as js_ast;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
@@ -6,9 +7,11 @@ use bun_core::Output;
 use bun_core::StackCheck;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
-use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
+use bun_paths::portable::{from_portable_rooted, from_portable_specifier};
+use bun_paths::{MAX_PATH_BYTES, NODE_MODULES_NEEDLE, Path, PathBuffer, from_portable};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
+use bun_sys::converted_spelling;
 
 use bun_options_types::bundle_enums::ModuleType;
 use bun_sys::Fd;
@@ -175,8 +178,6 @@ pub enum IncludeDependencies {
     None,
 }
 
-const NODE_MODULES_PATH: &str = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR);
-
 /// If a name is in several groups, the last group wins, as it does in `bun install`.
 const INSTALLED_DEPENDENCY_GROUPS: [DependencyGroup; 2] =
     [DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL];
@@ -210,14 +211,6 @@ impl PackageJSON {
                 .filter_map(move |row| Some((row.value.as_str()?, group.behavior)))
         })
     }
-
-    /// Normalize path separators to forward slashes for glob matching
-    /// This is needed because glob patterns use forward slashes but Windows uses backslashes
-    fn normalize_path_for_glob(path: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
-        let mut normalized = path.to_vec();
-        bun_paths::slashes_to_posix_in_place(&mut normalized[..]);
-        Ok(normalized)
-    }
 }
 
 #[derive(Default)]
@@ -230,7 +223,7 @@ pub enum SideEffects {
     False,
     /// "sideEffects": ["file.js", "other.js"]
     Map(SideEffectsMap),
-    /// "sideEffects": ["side_effects/*.js"]
+    /// "sideEffects": ["side_effects/*.js"]. Patterns and paths have `/` for `\`, which a glob reads as an escape.
     Glob(GlobList),
     /// "sideEffects": ["file.js", "side_effects/*.js"] - mixed patterns
     Mixed(MixedPatterns),
@@ -245,6 +238,11 @@ pub struct MixedPatterns {
     pub(crate) globs: GlobList,
 }
 
+/// For text where `\` is no name on any platform: it is an escape in a glob, and `/` in a URL.
+fn with_slashes(text: &[u8]) -> Cow<'_, [u8]> {
+    strings::replace_char(text, b'\\', b'/')
+}
+
 impl SideEffects {
     pub(crate) fn has_side_effects(&self, path: &[u8]) -> bool {
         match self {
@@ -252,10 +250,7 @@ impl SideEffects {
             SideEffects::False => false,
             SideEffects::Map(map) => map.contains_key(&StringHashMapUnownedKey::init(path)),
             SideEffects::Glob(glob_list) => {
-                // Normalize path for cross-platform glob matching
-                let Ok(normalized_path) = PackageJSON::normalize_path_for_glob(path) else {
-                    return true;
-                };
+                let normalized_path = with_slashes(path);
 
                 for pattern in glob_list.iter() {
                     if pattern.r#match(&normalized_path).matches() {
@@ -273,9 +268,7 @@ impl SideEffects {
                     return true;
                 }
                 // Then check glob patterns with normalized path
-                let Ok(normalized_path) = PackageJSON::normalize_path_for_glob(path) else {
-                    return true;
-                };
+                let normalized_path = with_slashes(path);
 
                 for pattern in mixed.globs.iter() {
                     if pattern.r#match(&normalized_path).matches() {
@@ -285,27 +278,6 @@ impl SideEffects {
                 false
             }
         }
-    }
-}
-
-// ── Local extension shims so `parse` can call shapes that live in higher-tier
-//    crates (full FileSystem). Bodies forward to bun_paths. ────────────────
-//
-// the former `JsonCachePackageJsonExt` shim trait is removed —
-// `JsonCacheVTable` now has a real `parse_package_json` slot and `JsonCache`
-// exposes the inherent forwarder (tsconfig_json.rs).
-// `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to `bun_parsers::json`.
-
-/// Thin extension trait that delegates to `bun_paths::resolve_path`.
-trait FileSystemPackageJsonExt {
-    /// Returns a slice of `spill` if the result is too long for the thread-local join buffer.
-    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8];
-}
-impl FileSystemPackageJsonExt for crate::fs::FileSystem {
-    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8] {
-        resolve_path::resolve_path::join_spill::<resolve_path::resolve_path::platform::Auto>(
-            spill, parts,
-        )
     }
 }
 
@@ -408,9 +380,9 @@ impl PackageJSON {
         // single-thread `Resolver` aliasing contract.
         let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
 
-        // TODO: remove this extra copy
-        let parts: [&[u8]; 2] = [input_path, b"package.json"];
-        let Ok(package_json_path_) = r_fs.abs_checked(&parts) else {
+        let package_json_path_ =
+            Path::resolve(&[r_fs.top_level_dir(), input_path, b"package.json"]);
+        if package_json_path_.len() > MAX_PATH_BYTES {
             r_log.add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
@@ -420,10 +392,10 @@ impl PackageJSON {
                 ),
             );
             return None;
-        };
+        }
         let package_json_path = r_fs
             .dirname_store
-            .append_slice(package_json_path_)
+            .append_slice(&package_json_path_)
             .expect("unreachable");
 
         // DirInfo cache is reused globally
@@ -586,7 +558,7 @@ impl PackageJSON {
                     if !str.is_empty() {
                         package_json
                             .main_fields
-                            .put(main, Box::from(str))
+                            .put(main, converted_spelling(str, from_portable_rooted).into())
                             .expect("unreachable");
                     }
                 }
@@ -614,7 +586,6 @@ impl PackageJSON {
                     // The value is an object
 
                     // Remap all files in the browser field
-                    let mut key_spill: Vec<u8> = Vec::new();
                     for prop in obj.get().properties() {
                         // Normalize the path so we can compare against it without getting
                         // confused by "./". There is no distinction between package paths and
@@ -625,17 +596,22 @@ impl PackageJSON {
                         // import of "foo", but that's actually not a bug. Or arguably it's a
                         // bug in Browserify but we have to replicate this bug because packages
                         // do this in the wild.
-                        let key: &[u8] = resolve_path::resolve_path::normalize_string_spill::<
-                            true,
-                            resolve_path::platform::Auto,
-                        >(&mut key_spill, prop.key.slice());
+                        let key = Path::join(&[b".", &with_slashes(prop.key.slice())]);
+                        let key = match bun_paths::without_trailing_sep(&key) {
+                            b"." => b"",
+                            key => key,
+                        };
 
                         match &prop.value {
                             js_ast::E::JsonValue::String(str) => {
                                 // If this is a string, it's a replacement package
                                 package_json
                                     .browser_map
-                                    .put(key, Box::from(str.slice()))
+                                    .put(
+                                        key,
+                                        converted_spelling(str.slice(), from_portable_specifier)
+                                            .into(),
+                                    )
                                     .expect("unreachable");
                             }
                             js_ast::E::JsonValue::Boolean(boolean) => {
@@ -648,10 +624,7 @@ impl PackageJSON {
                             }
                             _ => {
                                 // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
-                                if !strings::contains(
-                                    json_source.path.text,
-                                    NODE_MODULES_PATH.as_bytes(),
-                                ) {
+                                if !strings::contains(json_source.path.text, NODE_MODULES_NEEDLE) {
                                     let value_loc = json_parser::property_value_loc(
                                         &json_source.contents,
                                         prop.key_loc,
@@ -711,7 +684,8 @@ impl PackageJSON {
                     }
                 }
 
-                let mut spill: Vec<u8> = Vec::new();
+                let dir = json_source.path.name().dir_with_trailing_slash();
+                let in_package = |name: &[u8]| Path::join(&[dir, &from_portable(name)]);
 
                 // If the array is empty, treat it as false (no side effects)
                 if !has_globs && !has_exact {
@@ -728,11 +702,7 @@ impl PackageJSON {
                                 continue;
                             }
 
-                            // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
-
-                            let pattern = r_fs.join(&mut spill, &joined);
+                            let pattern: &[u8] = &in_package(name);
 
                             if strings::contains_char(name, b'*')
                                 || strings::contains_char(name, b'?')
@@ -740,12 +710,7 @@ impl PackageJSON {
                                 || strings::contains_char(name, b'{')
                                 || glob::has_extglob_prefix(name)
                             {
-                                // Normalize pattern to use forward slashes for cross-platform compatibility
-                                let normalized_pattern = Self::normalize_path_for_glob(pattern)
-                                    .unwrap_or_else(|_| pattern.to_vec());
-                                glob_list.push(glob::Prepared::new(
-                                    normalized_pattern.into_boxed_slice(),
-                                ));
+                                glob_list.push(glob::Prepared::new(with_slashes(pattern).into()));
                             } else {
                                 let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
                             }
@@ -765,16 +730,8 @@ impl PackageJSON {
                                 continue;
                             }
 
-                            // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
-
-                            let pattern = r_fs.join(&mut spill, &joined);
-                            // Normalize pattern to use forward slashes for cross-platform compatibility
-                            let normalized_pattern = Self::normalize_path_for_glob(pattern)
-                                .unwrap_or_else(|_| pattern.to_vec());
-                            glob_list
-                                .push(glob::Prepared::new(normalized_pattern.into_boxed_slice()));
+                            let pattern: &[u8] = &in_package(name);
+                            glob_list.push(glob::Prepared::new(with_slashes(pattern).into()));
                         }
                     }
                     package_json.side_effects = SideEffects::Glob(glob_list);
@@ -783,11 +740,8 @@ impl PackageJSON {
                     map.reserve(items.len());
                     for item in items {
                         if let Some(name) = item.as_str() {
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
-
-                            let pattern = r_fs.join(&mut spill, &joined);
-                            let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
+                            let _ =
+                                map.insert(StringHashMapUnownedKey::init(&in_package(name)), ());
                         }
                     }
                     package_json.side_effects = SideEffects::Map(map);
@@ -846,7 +800,7 @@ impl PackageJSON {
                             DependencyGroup::DEV,
                             DependencyGroup::OPTIONAL,
                         ]
-                    } else if !strings::contains(package_json_path, NODE_MODULES_PATH.as_bytes()) {
+                    } else if !strings::contains(package_json_path, NODE_MODULES_NEEDLE) {
                         // One of the project's own package.json files. A package.json in the cache
                         // has a `package_id`, which is handled above.
                         &[
@@ -950,10 +904,7 @@ impl PackageJSON {
                                         version_str,
                                         &sliced_str,
                                         Some(&mut *r_log),
-                                        !strings::contains(
-                                            package_json_path,
-                                            NODE_MODULES_PATH.as_bytes(),
-                                        ),
+                                        !strings::contains(package_json_path, NODE_MODULES_NEEDLE),
                                     ) {
                                         let dependency = Dependency {
                                             name,
@@ -1599,7 +1550,6 @@ const INVALID_PERCENT_CHARS: [&[u8]; 4] = [b"%2f", b"%2F", b"%5c", b"%5C"];
 struct ModuleBufs {
     resolved_path_buf_percent: PathBuffer,
     resolve_target_buf: PathBuffer,
-    resolve_target_buf2: PathBuffer,
 }
 
 thread_local! {
@@ -1620,7 +1570,6 @@ fn module_bufs() -> *mut ModuleBufs {
             Box::new(UnsafeCell::new(ModuleBufs {
                 resolved_path_buf_percent: PathBuffer::ZEROED,
                 resolve_target_buf: PathBuffer::ZEROED,
-                resolve_target_buf2: PathBuffer::ZEROED,
             }))
         })
         .get()
@@ -1917,9 +1866,6 @@ impl<'a> ESModule<'a> {
                 // the duration of this arm. Map/Array arms below DO recurse and must not
                 // hold these — that's why acquisition is here, not at fn entry.
                 let resolve_target_buf: &mut PathBuffer = unsafe { &mut (*mb).resolve_target_buf };
-                // SAFETY: see above — disjoint field of the same threadlocal struct.
-                let resolve_target_buf2: &mut PathBuffer =
-                    unsafe { &mut (*mb).resolve_target_buf2 };
                 let str: &[u8] = str;
                 if let Some(log) = self.debug_logs.as_deref_mut() {
                     log.add_note_fmt(format_args!(
@@ -2030,8 +1976,8 @@ impl<'a> ESModule<'a> {
                             // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
                             let len = replacement_size(str, b"*", subpath);
                             invalid_specifier_if_too_long!(len);
-                            let _ = replace(str, b"*", subpath, &mut resolve_target_buf2.0);
-                            let result = &resolve_target_buf2.0[0..len];
+                            let _ = replace(str, b"*", subpath, &mut resolve_target_buf.0);
+                            let result = &resolve_target_buf.0[0..len];
                             if let Some(log) = self.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "Subsituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
@@ -2050,14 +1996,12 @@ impl<'a> ESModule<'a> {
                             // `imports` target is itself a package specifier
                             // (e.g. `@myproject/resolver`) that we hand back to
                             // package-resolve. Per the Node.js packages spec these
-                            // are URL-like specifiers and must keep forward slashes;
-                            // `Auto` normalizes them to `\` on Windows and the
-                            // scoped-name match fails, falling through to `main`.
-                            let parts2 = [str, subpath];
-                            let result = resolve_path::resolve_path::join_string_buf::<
-                                resolve_path::platform::Posix,
-                            >(
-                                &mut resolve_target_buf2.0, &parts2
+                            // are URL-like specifiers and must keep forward slashes.
+                            let mut joined = bun_paths::path_buffer_pool::get();
+                            let result = bun_node_path::join_posix_t(
+                                &[str, subpath],
+                                &mut resolve_target_buf.0,
+                                &mut joined.0,
                             );
                             if let Some(log) = self.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
@@ -2099,10 +2043,9 @@ impl<'a> ESModule<'a> {
                 }
 
                 // Let resolvedTarget be the URL resolution of the concatenation of packageURL and target.
-                let parts = [package_url, str];
-                let resolved_target = resolve_path::resolve_path::join_string_buf::<
-                    resolve_path::platform::Auto,
-                >(&mut resolve_target_buf.0, &parts);
+                let str: &[u8] = &from_portable(str);
+                let subpath: &[u8] = &with_slashes(subpath);
+                let resolved_target: &[u8] = &Path::join(&[package_url, str]);
 
                 // If target split on "/" or "\" contains any ".", ".." or "node_modules"
                 // segments after the first segment, throw an Invalid Package Target error.
@@ -2125,8 +2068,8 @@ impl<'a> ESModule<'a> {
                     // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
                     let len = replacement_size(resolved_target, b"*", subpath);
                     invalid_specifier_if_too_long!(len);
-                    let _ = replace(resolved_target, b"*", subpath, &mut resolve_target_buf2.0);
-                    let result = &resolve_target_buf2.0[0..len];
+                    let _ = replace(resolved_target, b"*", subpath, &mut resolve_target_buf.0);
+                    let result = &resolve_target_buf.0[0..len];
                     if let Some(log) = self.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "Substituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
@@ -2158,10 +2101,7 @@ impl<'a> ESModule<'a> {
                         status: Status::ExactEndsWithStar,
                     };
                 } else {
-                    let parts2 = [package_url, str, subpath];
-                    let result = resolve_path::resolve_path::join_string_buf::<
-                        resolve_path::platform::Auto,
-                    >(&mut resolve_target_buf2.0, &parts2);
+                    let result: &[u8] = &Path::join(&[resolved_target, subpath]);
                     if let Some(log) = self.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "Substituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",

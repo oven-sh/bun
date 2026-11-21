@@ -112,9 +112,8 @@ impl YarnCommands {
 pub fn strip_bin_dirs(path: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(path.len());
     for entry in bun_core::strings::split(path, &[bun_paths::DELIMITER]) {
-        let dir = bun_core::strings::without_trailing_slash(entry);
-        let is_bin_dir = bun_paths::basename(dir) == b".bin"
-            && bun_paths::dirname(dir)
+        let is_bin_dir = bun_paths::basename(entry) == b".bin"
+            && bun_paths::dirname(entry)
                 .is_some_and(|parent| bun_paths::basename(parent) == b"node_modules");
         if !is_bin_dir {
             if !result.is_empty() {

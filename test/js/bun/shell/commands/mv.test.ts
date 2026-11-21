@@ -98,6 +98,13 @@ describe("mv", async () => {
     expect(read("dst")).toBe("new a");
   });
 
+  test.skipIf(isWindows).each(["d/.", "d/sub/.."])("-n %s fails", async source => {
+    using dir = tempDir("mv-n-dot", { d: { sub: {}, a: "a" }, out: {} });
+    const { exitCode } = await $`mv -n ${source} out`.cwd(String(dir)).quiet();
+    expect(existsSync(join(String(dir), "d", "a"))).toBe(true);
+    expect(exitCode).not.toBe(0);
+  });
+
   test("fails when a source name is longer than the path buffers", async () => {
     const segment = Buffer.alloc(240, "d").toString();
     const deep = join(segment, segment);

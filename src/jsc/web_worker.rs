@@ -1484,6 +1484,26 @@ fn resolve_entry_point_specifier<'s>(
         return Ok(crate::compiled_program::module_key(entry));
     }
 
+    // The disk does not answer to `a\b` for what the executable holds as `a/b`. A compiled program does as `bun run`.
+    if let Some(graph) = parent.standalone_module_graph
+        && let std::borrow::Cow::Owned(converted) = bun_paths::from_portable(str)
+    {
+        let file = graph.resolve(graph.base_public_path_with_default_suffix(), &converted);
+        if graph.compiled_program().is_none()
+            && let Some(file) = file
+        {
+            return Ok(file);
+        }
+        if file.is_some()
+            || resolver.resolve_embedded_entry_point(&converted).is_some()
+            || (resolver.resolve_embedded_entry_point_from_working_directory(&converted)).is_some()
+        {
+            return Err(Unresolved::Because(
+                "A backslash does not separate names on this platform",
+            ));
+        }
+    }
+
     // Spec `bun.webcore.ObjectURLRegistry.isBlobURL(str)` — prefix `"blob:"`
     // AND `len >= specifier_len` (`"blob:".len + UUID.stringLength = 41`).
     // A short `"blob:foo"` must fall through to the resolver below, not enter

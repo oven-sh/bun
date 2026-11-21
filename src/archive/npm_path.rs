@@ -3,40 +3,48 @@
 
 use bun_core::strings;
 use bun_errno::SystemErrno;
-use bun_paths::resolve_path::is_drive_letter;
-use bun_paths::{PathChar, SEP, is_sep_any};
+use bun_paths::{OSPath, OSPathChar, SEP, is_sep};
 use bun_tar::Entry;
+
+use crate::MAX_OS_PATH;
 
 const MAX_DEPTH: usize = 1024;
 const ANY_SEPARATOR: &[u8] = b"/\\";
 const SEPARATORS: &[u8] = if cfg!(windows) { ANY_SEPARATOR } else { b"/" };
 
-/// Returns the path in the package where node-tar would extract `entry`. It is empty for an entry
-/// that node-tar skips, and `None` for a name that does not fit in `buf` with a NUL behind it.
-pub fn normalize_npm_entry_path<'a, T: PathChar>(
-    entry: &Entry,
-    buf: &'a mut [T],
-) -> Result<Option<&'a mut [T]>, SystemErrno> {
-    let mut len = 0;
+/// The path in the package where node-tar would extract `entry`. Empty for an entry that it skips.
+pub fn normalize_npm_entry_path(entry: &Entry) -> OSPath {
+    let mut path = OSPath::new();
     for name in strings::tokenize_any(strip(entry.path()).unwrap_or_default(), SEPARATORS) {
-        if name == b"." {
-            continue;
+        if name != b"." {
+            path.push(name);
         }
-        let start = len + usize::from(len != 0);
-        if start + name.len() >= buf.len() {
-            // node-tar leaves the directories that fit behind, in the way of later files.
-            return if len == 0 {
-                Ok(None)
-            } else {
-                Err(SystemErrno::ENAMETOOLONG)
-            };
-        }
-        if len != 0 {
-            buf[len] = T::from_u8(SEP);
-        }
-        len = start + T::write_u8_part(&mut buf[start..], name);
     }
-    Ok(Some(&mut buf[..len]))
+    path
+}
+
+/// [`normalize_npm_entry_path`] as the name of the file to create. `None` for a name that is too long.
+pub fn npm_entry_destination(entry: &Entry) -> Result<Option<OSPath>, SystemErrno> {
+    let mut path = normalize_npm_entry_path(entry);
+    if path.len() >= MAX_OS_PATH {
+        // node-tar leaves the directories that fit behind, in the way of later files.
+        return match strings::index_of_scalar(&path[..MAX_OS_PATH], SEP as OSPathChar) {
+            Some(_) => Err(SystemErrno::ENAMETOOLONG),
+            None => Ok(None),
+        };
+    }
+    // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
+    #[cfg(windows)]
+    for unit in path.as_mut_slice() {
+        if matches!(u8::try_from(*unit), Ok(b'|' | b'<' | b'>' | b'?' | b':')) {
+            *unit += 0xf000;
+        }
+    }
+    // `strip` has tested the name before it was decoded.
+    if bun_paths::climbs_out(&path) {
+        path.clear();
+    }
+    Ok(Some(path))
 }
 
 fn strip(path: &[u8]) -> Option<&[u8]> {
@@ -56,14 +64,13 @@ fn strip(path: &[u8]) -> Option<&[u8]> {
 /// What is a root on Windows is one on every platform.
 // https://github.com/isaacs/node-tar/blob/v7.5.19/src/strip-absolute-path.ts
 fn root_len(path: &[u8]) -> usize {
-    let is_slash = |c: u8| c == b'/' || (cfg!(windows) && c == b'\\');
     match *path {
-        [a, b, b'?', c, ..] if [a, b, c].into_iter().all(is_slash) => share_len(path),
-        [a, ..] if is_slash(a) => 1,
+        [a, b, b'?', c, ..] if [a, b, c].into_iter().all(is_sep) => share_len(path),
+        [a, ..] if is_sep(a) => 1,
         [b'\\', b'/' | b'\\', ..] => share_len(path),
         [b'\\', ..] => 1,
-        [letter, b':', c, ..] if is_drive_letter(letter) && is_sep_any(c) => 3,
-        [letter, b':', ..] if is_drive_letter(letter) => 2,
+        [letter, b':', b'/' | b'\\', ..] if letter.is_ascii_alphabetic() => 3,
+        [letter, b':', ..] if letter.is_ascii_alphabetic() => 2,
         _ => 0,
     }
 }

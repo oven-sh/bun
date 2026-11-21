@@ -661,6 +661,14 @@ describe("trailing directory separator", async () => {
   });
 });
 
+test("a pattern that ends in /./ keeps the dot", () => {
+  using dir = tempDir("glob-trailing-dot", { "a/x": "", "ab/x": "" });
+  expect([...new Glob("*/./").scanSync({ cwd: String(dir), onlyFiles: false })].sort()).toEqual([
+    `a${path.sep}.`,
+    `ab${path.sep}.`,
+  ]);
+});
+
 describe("absolute path pattern", async () => {
   test("works *", async () => {
     const tmpdir = tmpdirSync();

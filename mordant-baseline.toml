@@ -109,10 +109,6 @@
 "parallel_vecs:src/parsers/xml.rs" = 1
 "unused_pub:src/parsers/yaml.rs" = 2
 
-[bun_paths]
-"generic_body_not_generic:src/paths/resolve_path.rs" = 1
-"safe_fn_returns_shared_mut:src/paths/resolve_path.rs" = 2
-
 [bun_ptr]
 "bound_checked_only_in_debug:src/ptr/weak_ptr.rs" = 1
 "unused_pub:src/ptr/ref_count.rs" = 2

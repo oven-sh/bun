@@ -1146,7 +1146,7 @@ impl PackageManifest {
 
 pub mod package_manifest {
     use super::*;
-    use bun_io::Write as _;
+    use bun_paths::Path;
 
     pub struct Serializer;
 
@@ -1286,18 +1286,11 @@ pub mod package_manifest {
             // GetFinalPathnameByHandle is very expensive if called many times
             // We skip calling it when we are giving an absolute file path.
             // This needs many more call sites, doesn't have much impact on this location.
-            let mut realpath_buf = bun_paths::path_buffer_pool::get();
             #[cfg(windows)]
             let path_to_use_for_opening_file =
-                bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-                    &temp_dir.path,
-                    &mut realpath_buf[..],
-                    &[tmp_path.as_bytes()],
-                );
+                &bun_paths::Path::resolve(&[&temp_dir.path, tmp_path]);
             #[cfg(not(windows))]
             let path_to_use_for_opening_file = tmp_path;
-            #[cfg(not(windows))]
-            let _ = &mut realpath_buf;
             let tmpdir = temp_dir.handle.fd();
             #[cfg(not(windows))]
             let cache_dir = temp_dir.cache.handle.fd();
@@ -1362,14 +1355,7 @@ pub mod package_manifest {
 
             #[cfg(windows)]
             {
-                let mut realpath2_buf = bun_paths::path_buffer_pool::get();
-                let cache_dir_abs = &temp_dir.cache.path;
-                let cache_path_abs =
-                    bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-                        cache_dir_abs,
-                        &mut realpath2_buf[..],
-                        &[cache_dir_abs, outpath.as_bytes()],
-                    );
+                let cache_path_abs = &bun_paths::Path::resolve(&[&temp_dir.cache.path, outpath]);
                 drop(file);
                 bun_sys::renameat(
                     Fd::cwd(),
@@ -1498,27 +1484,14 @@ pub mod package_manifest {
             THREAD_POOL.schedule(batch);
         }
 
-        fn manifest_file_name<'b>(
-            buf: &'b mut [u8],
-            file_id: u64,
-            url_hash: u64,
-        ) -> Result<&'b bun_core::ZStr, Error> {
-            let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
-            let mut stream = bun_io::FixedBufferStream::new_mut(buf);
-            if url_hash == *registry::DEFAULT_URL_HASH {
-                write!(stream, "{}.npm", file_id_hex_fmt)?;
-            } else {
-                write!(
-                    stream,
-                    "{}-{}.npm",
-                    file_id_hex_fmt,
-                    bun_fmt::hex_int_lower::<16>(url_hash),
-                )?;
+        fn manifest_file_name(file_id: u64, url_hash: u64) -> Path {
+            let mut name = Path::new();
+            write!(name, "{}", bun_fmt::hex_int_lower::<16>(file_id));
+            if url_hash != *registry::DEFAULT_URL_HASH {
+                write!(name, "-{}", bun_fmt::hex_int_lower::<16>(url_hash));
             }
-            stream.write_byte(0)?;
-            let len = stream.pos;
-            // We wrote `len` bytes ending in a NUL into `buf`.
-            Ok(bun_core::ZStr::from_buf(buf, len - 1))
+            name.extend_from_slice(b".npm");
+            name
         }
 
         pub(crate) fn save(
@@ -1529,10 +1502,8 @@ pub mod package_manifest {
             let file_id = Wyhash11::hash(0, this.name());
             let mut tmp_path_buf = [0u8; 64];
             let tmp_path = FileSystem::tmpname(b"npm", &mut tmp_path_buf, bun_core::fast_random())?;
-            let mut out_path_buf =
-                [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
-            let out_path = Self::manifest_file_name(&mut out_path_buf, file_id, registry.url_hash)?;
-            Self::write_file(this, registry, tmp_path, temp_dir, out_path)
+            let out_path = Self::manifest_file_name(file_id, registry.url_hash);
+            Self::write_file(this, registry, tmp_path, temp_dir, &out_path)
         }
 
         pub(crate) fn load_by_file_id(
@@ -1540,19 +1511,17 @@ pub mod package_manifest {
             cache_dir: Fd,
             name: &[u8],
             file_id: u64,
-        ) -> Result<Option<PackageManifest>, Error> {
-            let mut file_path_buf = [0u8; 512 + 64];
-            let file_name = Self::manifest_file_name(&mut file_path_buf, file_id, scope.url_hash)?;
-            let Ok(cache_file) = File::openat(cache_dir, file_name, bun_sys::O::RDONLY, 0) else {
-                return Ok(None);
-            };
+        ) -> Option<PackageManifest> {
+            let file_name = Self::manifest_file_name(file_id, scope.url_hash);
+            let cache_file = bun_sys::openat(cache_dir, &file_name, bun_sys::O::RDONLY, 0);
+            let cache_file = File::from_fd(cache_file.ok()?);
 
             // A file that cannot be used is not deleted. Another version of bun may have written
             // it, and the next download of the manifest replaces it.
-            Ok(Self::load_by_file(scope, &cache_file)
+            Self::load_by_file(scope, &cache_file)
                 .ok()
                 .flatten()
-                .filter(|manifest| manifest.name() == name))
+                .filter(|manifest| manifest.name() == name)
         }
 
         pub fn load_by_file(

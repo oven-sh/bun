@@ -25,7 +25,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{LogJsc as _, StringJsc as _};
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths as paths;
 use bun_sys as sys;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
 use bun_watcher::WatchItemColumns as _;

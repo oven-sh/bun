@@ -5,13 +5,11 @@ mod keys_of_cache;
 mod tests;
 
 use bun_paths::is_absolute;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Bound, Parent};
 use bun_sema::hir::{ExprId, File, NodeData};
 use bun_sema::program::{CodeAnswer, ComputedTargets, FileId, Files};
-use bun_sema::resolve::FinishedFile;
+use bun_sema::resolve::{FinishedFile, parent_directory};
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::from_native;
 
@@ -245,7 +243,7 @@ fn read_text_of_run(files: &Files<'_>, file: FileId, text: &TextOfRun) -> Option
             };
             files.module(named).file_name().to_vec()
         }
-        TextOfRun::Dirname(of) => dirname::<Posix>(&read_text_of_run(files, file, of)?).to_vec(),
+        TextOfRun::Dirname(of) => parent_directory(&read_text_of_run(files, file, of)?).to_vec(),
         TextOfRun::Concatenation(parts) => {
             let [first, second] = &**parts;
             let mut whole = read_text_of_run(files, file, first)?;
@@ -283,7 +281,7 @@ pub(crate) fn collect_loads_of_run(files: &Files<'_>, options: &Options<'_>) -> 
             );
             let start = match start {
                 [b'.', ..] => {
-                    write_whole_start(dirname::<Posix>(files.module(file).file_name()), start)
+                    write_whole_start(parent_directory(files.module(file).file_name()), start)
                 }
                 _ => start.to_vec(),
             };

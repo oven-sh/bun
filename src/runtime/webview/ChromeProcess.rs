@@ -32,7 +32,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
 use bun_libuv_sys::{UvHandle as _, UvStream as _};
 use bun_output::{declare_scope, scoped_log};
-use bun_paths::{self, path_buffer_pool, platform, resolve_path};
+use bun_paths::{self, Path};
 use bun_ptr::{AliasableBox, CellExt as _};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
@@ -257,8 +257,6 @@ fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
         return Some(ZBox::from_bytes(p));
     }
 
-    let mut buf = path_buffer_pool::get();
-
     // $PATH first — `brew install chromium`, distro packages, manual symlinks
     // all land here. Same precedence as `which` at a shell prompt.
     let path = env_var::PATH.get().unwrap_or(b"");
@@ -275,7 +273,7 @@ fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
     #[cfg(windows)]
     let names: &[&[u8]] = &[b"chrome", b"chromium", b"brave", b"msedge"];
     for n in names {
-        if let Some(found) = which(&mut buf, path, b"", n) {
+        if let Some(found) = which(path, b"", n) {
             return Some(ZBox::from_bytes(&found[..]));
         }
     }
@@ -299,17 +297,14 @@ fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
         // or drag-to-home-folder) land in the latter.
         let home = env_var::HOME.get().unwrap_or(b"");
         for b in bundles {
-            let sys_parts: [&[u8]; 2] = [b"/Applications", b];
-            let sys = resolve_path::join_string_buf_z::<platform::Auto>(&mut buf[..], &sys_parts);
-            if is_browser_binary(sys) {
-                return Some(ZBox::from_bytes(&sys[..]));
+            let sys = Path::join(&[b"/Applications", b]).to_zbox();
+            if is_browser_binary(&sys) {
+                return Some(sys);
             }
             if !home.is_empty() {
-                let user_parts: [&[u8]; 3] = [home, b"Applications", b];
-                let user =
-                    resolve_path::join_string_buf_z::<platform::Auto>(&mut buf[..], &user_parts);
-                if is_browser_binary(user) {
-                    return Some(ZBox::from_bytes(&user[..]));
+                let user = Path::join(&[home, b"Applications", b]).to_zbox();
+                if is_browser_binary(&user) {
+                    return Some(user);
                 }
             }
         }
@@ -354,11 +349,9 @@ fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
                 if root.is_empty() {
                     continue;
                 }
-                let parts: [&[u8]; 2] = [root, rel];
-                let candidate =
-                    resolve_path::join_string_buf_z::<platform::Auto>(&mut buf[..], &parts);
-                if is_browser_binary(candidate) {
-                    return Some(ZBox::from_bytes(&candidate[..]));
+                let candidate = Path::join(&[root, rel]).to_zbox();
+                if is_browser_binary(&candidate) {
+                    return Some(candidate);
                 }
             }
         }
@@ -387,9 +380,7 @@ fn find_playwright_shell() -> Option<ZBox> {
     #[cfg(not(any(windows, target_os = "macos")))]
     let (root, cache_subpath): (&[u8], &[u8]) = (env_var::HOME.get()?, b".cache/ms-playwright");
 
-    let mut dir_buf = path_buffer_pool::get();
-    let parts: [&[u8]; 2] = [root, cache_subpath];
-    let cache_dir = resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &parts);
+    let cache_dir = Path::join(&[root, cache_subpath]);
 
     let dir = File::from_fd(bun_sys::open_dir_absolute(&cache_dir[..]).ok()?);
 
@@ -461,11 +452,9 @@ fn find_playwright_shell() -> Option<ZBox> {
     let subdir_cft: &[u8] = &subdir_cft_owned;
 
     let cache_dir: &[u8] = &cache_dir[..];
-    let mut bin_buf = path_buffer_pool::get();
-    let bin_parts: [&[u8]; 3] = [cache_dir, &best_name[..best_len], subdir_cft];
-    let bin = resolve_path::join_string_buf_z::<platform::Auto>(&mut bin_buf[..], &bin_parts);
-    if is_browser_binary(bin) {
-        return Some(ZBox::from_bytes(&bin[..]));
+    let bin = Path::join(&[cache_dir, &best_name[..best_len], subdir_cft]).to_zbox();
+    if is_browser_binary(&bin) {
+        return Some(bin);
     }
 
     // Fall back to the non-cft linux arm64 layout.
@@ -479,9 +468,9 @@ fn find_playwright_shell() -> Option<ZBox> {
             &best_name[..best_len],
             b"chrome-linux/headless_shell",
         ];
-        let bin2 = resolve_path::join_string_buf_z::<platform::Auto>(&mut bin_buf[..], &bin_parts2);
-        if is_browser_binary(bin2) {
-            return Some(ZBox::from_bytes(&bin2[..]));
+        let bin2 = Path::join(&bin_parts2).to_zbox();
+        if is_browser_binary(&bin2) {
+            return Some(bin2);
         }
     }
     None
@@ -533,11 +522,8 @@ fn spawn(
                 &mut name_buf,
                 bun_core::fast_random(),
             )?;
-            let mut dir_buf = path_buffer_pool::get();
-            let dir_parts: [&[u8]; 2] = [bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()];
-            let dir =
-                resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &dir_parts);
-            bun_sys::mkdir(dir, 0o700)?;
+            let dir = Path::join(&[bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()]);
+            bun_sys::mkdir(&dir, 0o700)?;
             let mut v = Vec::with_capacity(16 + dir.len());
             v.extend_from_slice(b"--user-data-dir=");
             v.extend_from_slice(&dir[..]);
@@ -975,6 +961,9 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
     let root = getenv_z(zstr!("LOCALAPPDATA"))?;
     #[cfg(not(windows))]
     let root = getenv_z(zstr!("HOME"))?;
+    if !bun_paths::is_absolute(root) {
+        return None;
+    }
 
     #[cfg(target_os = "macos")]
     let candidates: &[&[u8]] = &[
@@ -1012,11 +1001,9 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
     )))]
     let candidates: &[&[u8]] = &[];
 
-    let mut path_buf = path_buffer_pool::get();
     for rel in candidates {
-        let path =
-            resolve_path::join_abs_string_buf_z::<platform::Auto>(root, &mut path_buf[..], &[rel]);
-        let contents: Vec<u8> = match bun_sys::File::read_from(Fd::cwd(), path) {
+        let path = Path::resolve(&[root, rel]);
+        let contents: Vec<u8> = match bun_sys::File::read_from(Fd::cwd(), &path) {
             Err(_) => continue, // ENOENT or EACCES — try next
             Ok(c) => c,
         };

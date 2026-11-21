@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_core::{ZBox, ZStr, strings};
-use bun_paths::resolve_path::{self, Platform, platform};
+use bun_paths::Path;
 use bun_ptr::{AliasableBox, BackRef, RefPtr};
 use bun_sys::{E, File, Maybe, dir_iterator};
 
@@ -75,25 +75,15 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
 
     // Check that none of the paths will delete the root.
     let cwd_path = Builtin::shell(interp, cmd).cwd();
-    // Operands can be longer than the fixed-size buffers behind `join` and `normalize_string`.
-    let mut join_spill = Vec::new();
-    let mut normalize_buf = Vec::new();
     for path in paths {
-        let resolved: &[u8] = if Platform::AUTO.is_absolute(path) {
-            path
-        } else {
-            resolve_path::join_spill::<platform::Auto>(&mut join_spill, &[cwd_path, path])
+        let resolved = match bun_paths::is_absolute(path) {
+            true => Path::from(path),
+            false => Path::join(&[cwd_path, path]),
         };
-        // Normalizing adds at most one byte.
-        if normalize_buf.len() <= resolved.len() {
-            normalize_buf.resize(resolved.len() + 1, 0);
-        }
-        let normalized = resolve_path::normalize_string_buf::<false, platform::Auto, false>(
-            resolved,
-            &mut normalize_buf[..],
-        );
-        if resolve_path::dirname::<platform::Auto>(normalized).is_empty() {
-            let resolved = bstr::BStr::new(resolved);
+        // A root, or what is directly in `/`.
+        if (Path::resolve(&[resolved.as_bytes()]).dirname()).is_none_or(|parent| parent.len() == 1)
+        {
+            let resolved = bstr::BStr::new(resolved.as_bytes());
             return Builtin::fail(
                 interp,
                 cmd,
@@ -245,7 +235,7 @@ impl ShellRmTask {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             err: bun_threading::Guarded::new(None),
             join_style: JoinStyle::from_path(root_path),
-            was_on_disk: is_on_disk_at(cwd, root_path),
+            was_on_disk: !root_path.is_empty() && is_on_disk_at(cwd, root_path),
             task: ShellTask::new(interp),
         });
         // SAFETY: both freshly allocated. Stay on raw pointers: once
@@ -344,40 +334,33 @@ impl ShellRmTask {
         Ok(())
     }
 
-    /// Join into `buf` honoring [`join_style`].
-    fn buf_join<'a>(
-        &self,
-        buf: &'a mut bun_paths::PathBuffer,
-        spill: &'a mut Vec<u8>,
-        parts: &[&[u8]],
-    ) -> &'a ZStr {
+    fn join_in_style(&self, parent: &[u8], name: &[u8]) -> Path {
+        let mut path = Path::join(&[parent, name]);
         if self.join_style == JoinStyle::Posix {
-            resolve_path::join_z_buf_spill::<platform::Posix>(buf.as_mut_slice(), spill, parts)
-        } else {
-            resolve_path::join_z_buf_spill::<platform::Windows>(buf.as_mut_slice(), spill, parts)
+            bun_paths::to_portable_in_place(path.as_mut_slice());
         }
+        path
     }
 
     /// A relative path is not normalized.
     fn join(parent: &[u8], name: &[u8]) -> ZBox {
-        if Platform::AUTO.is_absolute(parent) {
-            let mut spill = Vec::new();
-            let joined = resolve_path::join_spill::<platform::Auto>(&mut spill, &[parent, name]);
-            return ZBox::from_bytes(joined);
+        if bun_paths::is_absolute(parent) {
+            return Path::join(&[parent, name]).to_zbox();
         }
-        let mut out = Vec::with_capacity(parent.len() + name.len() + 2);
-        out.extend_from_slice(parent);
-        if !parent.last().is_some_and(|&c| bun_paths::is_sep_native(c)) {
-            out.push(bun_paths::SEP);
-        }
-        out.extend_from_slice(name);
-        ZBox::from_vec(out)
+        let mut path = Path::from(parent);
+        path.push(name);
+        path.to_zbox()
     }
 
     /// Removes what takes no walk. `Some` is the directory to walk.
     fn remove_or_open(&self, dir_task: *mut DirTask, path: &ZStr) -> Maybe<Option<File>> {
         // SAFETY: `dir_task` is live; this thread owns it.
         let is_operand = unsafe { (*dir_task).parent_task.is_null() };
+        // NT opens the working directory for an empty name.
+        if cfg!(windows) && path.is_empty() {
+            let missing = bun_sys::Error::from_code(E::ENOENT, bun_sys::Tag::unlink);
+            return self.forgive(dir_task, path, &missing).map(|()| None);
+        }
         if is_operand && let Unlinked::Done = self.remove_entry_file(dir_task, path)? {
             return Ok(None);
         }
@@ -425,10 +408,8 @@ impl ShellRmTask {
         }
 
         let mut iterator = dir_iterator::iterate(dir.fd());
-        let mut buf = bun_paths::path_buffer_pool::get();
         // No return from inside the loop: children may be out, and only the hand-off below accounts for them.
         let mut i: usize = 0;
-        let mut join_spill = Vec::new();
         let loop_result: Maybe<()> = loop {
             let current = match iterator.next() {
                 Err(e) => break Err(e.with_path(path)),
@@ -445,10 +426,10 @@ impl ShellRmTask {
                 self.enqueue(dir_task, Self::join(path, name));
                 continue;
             }
-            let file_path = self.buf_join(&mut buf, &mut join_spill, &[path, name]);
-            match self.remove_entry_file(dir_task, file_path) {
+            let file_path = self.join_in_style(path, name);
+            match self.remove_entry_file(dir_task, &file_path) {
                 Ok(Unlinked::Done) => {}
-                Ok(_) => self.enqueue(dir_task, ZBox::from_bytes(file_path.as_bytes())),
+                Ok(_) => self.enqueue(dir_task, file_path.to_zbox()),
                 Err(e) => break Err(e),
             }
         };
@@ -501,7 +482,7 @@ impl ShellRmTask {
                 // TODO: this task's own count is never released: no child is the last, and `rm` hangs.
                 #[cfg(not(any(target_os = "linux", target_os = "android")))]
                 Unlinked::NotEmpty => {
-                    self.enqueue(dir_task, ZBox::from_bytes(path.as_bytes()));
+                    self.enqueue(dir_task, path.to_zbox());
                     return Ok(Owner::LastChild);
                 }
             }

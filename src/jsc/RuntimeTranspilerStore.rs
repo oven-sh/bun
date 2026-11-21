@@ -79,37 +79,28 @@ fn dump_source_string_failiable(
 
     let mut holder = BUN_DEBUG_HOLDER.lock();
 
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-
     if holder.is_none() {
-        let base_name: &[u8] = if cfg!(windows) {
-            let temp = Fs::RealFS::platform_temp_dir();
-            let suffix = b"\\bun-debug-src";
-            path_buf.0[..temp.len()].copy_from_slice(temp);
-            path_buf.0[temp.len()..temp.len() + suffix.len()].copy_from_slice(suffix);
-            &path_buf.0[..temp.len() + suffix.len()]
+        let temp: &[u8] = if cfg!(windows) {
+            Fs::RealFS::platform_temp_dir()
         } else if bun_core::env::IS_ANDROID {
-            b"/data/local/tmp/bun-debug-src/"
+            b"/data/local/tmp"
         } else {
-            b"/tmp/bun-debug-src/"
+            b"/tmp"
         };
-        *holder = Some(Dir::cwd().make_open_path(base_name, OpenDirOptions::default())?);
+        let dump_dir = bun_paths::Path::from_parts(&[temp, b"bun-debug-src"]);
+        *holder = Some(Dir::cwd().make_open_path(&dump_dir, OpenDirOptions::default())?);
     }
     // `Dir` is `!Copy`; the singleton stays owned by `BUN_DEBUG_HOLDER` for
     // process lifetime — borrow it for the duration of this dump.
     let dir = holder.as_ref().expect("just initialized above");
 
     if let Some(dir_path) = bun_paths::dirname(specifier) {
-        let root_len = if cfg!(windows) {
-            bun_paths::resolve_path::windows_filesystem_root(dir_path).len()
-        } else {
-            b"/".len()
-        };
+        let root_len = bun_paths::root(dir_path).len();
         let parent = dir.make_open_path(&dir_path[root_len..], OpenDirOptions::default())?;
 
         let base = bun_paths::basename(specifier);
-        let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
-        if let Err(e) = File::write_file(parent.fd, base_z, written) {
+        let mut path = bun_paths::Path::from(base);
+        if let Err(e) = File::write_file(parent.fd, &path, written) {
             bun_core::debug_warn!(
                 "Failed to dump source string: writeFile {}",
                 crate::CrateError::from(e).name()
@@ -119,12 +110,9 @@ fn dump_source_string_failiable(
 
         if let Some(mappings) = maps.get(specifier) {
             // `defer mappings.deref()` → Arc::drop.
-            let mut map_path = Vec::with_capacity(base.len() + b".map".len());
-            map_path.extend_from_slice(base);
-            map_path.extend_from_slice(b".map");
-            let map_path_z = bun_paths::resolve_path::z(&map_path, &mut path_buf);
+            path.extend_from_slice(b".map");
             let file = parent.create_file_z(
-                map_path_z,
+                &path,
                 bun_sys::CreateFlags {
                     truncate: true,
                     read: false,
@@ -158,9 +146,8 @@ fn dump_source_string_failiable(
             file.write_all(out.as_bytes())?;
         }
     } else {
-        let base = bun_paths::basename(specifier);
-        let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
-        let _ = File::write_file(dir.fd, base_z, written);
+        let base = bun_paths::Path::from(bun_paths::basename(specifier));
+        let _ = File::write_file(dir.fd, &base, written);
     }
 
     Ok(())

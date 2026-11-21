@@ -2,14 +2,13 @@
 
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
-use bun_paths::{self, SEP};
+use bun_paths::{self, SEP, fs as PFs};
 // two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
 // the `Path`/`PathName` value types that `ImportRecord.path` is typed against.
 // B-3 collapses them. Until then, construct
 // `import_record.path` via `PFs::Path` so the field assignment unifies.
 use bun_core::strings;
-use bun_paths::fs as PFs;
 use bun_resolver as resolver;
 use bun_resolver::fs as Fs;
 use bun_sys::Fd;
@@ -206,11 +205,11 @@ impl Linker {
 
                     if !IGNORE_RUNTIME {
                         if import_record.path.namespace == b"runtime" {
-                            let relative_name =
-                                bun_paths::resolve_path::relative(source_dir, RUNTIME_SOURCE_PATH);
+                            let relative_name: &[u8] =
+                                &bun_paths::Path::relative(source_dir, RUNTIME_SOURCE_PATH);
                             import_record.path = match import_path_format {
                                 ImportPathFormat::AbsoluteUrl => PFs::Path::init_with_namespace(
-                                    dupe(&origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?),
+                                    dupe(&[origin.origin, b"/bun:wrap"].concat()),
                                     b"bun",
                                 ),
                                 ImportPathFormat::AbsolutePath => PFs::Path::init_with_pretty(

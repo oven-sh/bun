@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 
 const xml2js = require("xml2js");
 
@@ -1258,6 +1258,24 @@ describe("only block", () => {
       expect(bunfig.stderr).toContain(`error: expected "junitSuites" to be "nested" or "flat" but received "deep"`);
       expect({ xml: bunfig.xml, exitCode: bunfig.exitCode }).toEqual({ xml: null, exitCode: 1 });
     });
+  });
+
+  it("file= is the full path for a sibling directory that starts with the name of the cwd", async () => {
+    await using tmpDir = tempDir("junit-sibling", {
+      "proj/package.json": "{}",
+      "proj-other/a.test.js": `test("passes", () => {});`,
+    });
+    await using proc = spawn(
+      [bunExe(), "test", "../proj-other/a.test.js", "--reporter=junit", "--reporter-outfile=junit.xml"],
+      { cwd: join(String(tmpDir), "proj"), env: bunEnv, stdout: "ignore", stderr: "pipe" },
+    );
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(" 1 pass");
+    const xml = await file(join(String(tmpDir), "proj", "junit.xml")).text();
+    const files = xml.match(/(?<= file=")[^"]*/g).map(normalize);
+    expect([...new Set(files)]).toEqual([join(String(tmpDir), "proj-other", "a.test.js")]);
+    expect(exitCode).toBe(0);
   });
 
   it("prints a write error when the outfile is longer than the path buffer", async () => {

@@ -4872,40 +4872,17 @@ impl VirtualMachine {
                     }
                     retry_on_not_found = false;
 
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    let buf = buf.as_mut_slice();
-                    let mut busted_as_spelled = false;
-                    let mut busted_working_directory = false;
-                    let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
-                        if let Some(dir) = bun_paths::dirname(normalized_specifier) {
-                            if dir.len() > buf.len() {
-                                return Err(crate::CrateError::ModuleNotFound);
-                            }
-                            // `load_as_file` caches the listing under the specifier's own slashes, so bust that key too.
-                            busted_as_spelled = bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(dir),
-                            );
-                            // Normalized without trailing slash.
-                            bun_paths::string_paths::normalize_slashes_only(
-                                buf,
-                                dir,
-                                bun_paths::SEP,
-                            )
-                        } else {
-                            // Absolute but root — fall through to join.
-                            &b""[..]
-                        }
-                    } else {
-                        &b""[..]
+                    let path = bun_resolver::path_of_specifier(normalized_specifier, import_kind);
+                    let bust_parent_from = |base: &[u8]| {
+                        let parts = [top_level_dir, base, &path, b".."];
+                        bust_dir_cache(&bun_paths::Path::resolve(&parts))
                     };
-                    let buster_name: &[u8] = if !buster_name.is_empty() {
-                        buster_name
+                    let busted = if bun_paths::is_absolute(normalized_specifier) {
+                        // `load_as_file` caches the listing under the specifier's own slashes, so bust that key too.
+                        let as_spelled = bun_paths::dirname_or_root(normalized_specifier);
+                        bust_dir_cache(as_spelled) | bust_parent_from(source_to_use)
                     } else {
-                        // If the specifier is too long to join, it can't name
-                        // a real directory — skip the cache bust and fail.
-                        if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
-                            return Err(crate::CrateError::ModuleNotFound);
-                        }
+                        let mut busted_working_directory = false;
                         // The folder of a module of an executable stands for a folder on disk, and that is where the resolver has looked.
                         let is_in_executable =
                             bun_options_types::standalone_path::is_bun_standalone_file_path(
@@ -4925,39 +4902,18 @@ impl VirtualMachine {
                                 });
                                 // From there the resolver has gone on to the working directory.
                                 if found.is_some() {
-                                    use bun_paths::resolve_path::{
-                                        join_abs_string_buf_checked, platform,
-                                    };
-                                    let mut buffer = bun_paths::path_buffer_pool::get();
-                                    let parts = [normalized_specifier, &b".."[..]];
-                                    let folder = join_abs_string_buf_checked::<platform::Auto>(
-                                        top_level_dir,
-                                        &mut buffer[..],
-                                        &parts,
-                                    );
-                                    busted_working_directory = folder.is_some_and(bust_dir_cache);
+                                    busted_working_directory = bust_parent_from(top_level_dir);
                                 }
                                 Some(found.unwrap_or_else(|| top_level_dir.to_vec()))
                             }
                             _ => None,
                         };
-                        let parts: [&[u8]; 3] = [
-                            folder_on_disk.as_deref().unwrap_or(source_to_use),
-                            normalized_specifier,
-                            bun_paths::path_literal!("..").as_bytes(),
-                        ];
-                        bun_paths::resolve_path::join_abs_string_buf_z::<
-                            bun_paths::resolve_path::platform::Auto,
-                        >(top_level_dir, buf, &parts)
-                        .as_bytes()
+                        bust_parent_from(folder_on_disk.as_deref().unwrap_or(source_to_use))
+                            || busted_working_directory
                     };
 
                     // Only re-query if we previously had something cached.
-                    if bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) || busted_as_spelled
-                        || busted_working_directory
-                    {
+                    if busted {
                         continue;
                     }
                     return Err(crate::CrateError::ModuleNotFound);
@@ -5541,22 +5497,15 @@ impl VirtualMachine {
         let fs = self.fs();
         bun_sys::chdir(to)?;
         let mut buf = bun_paths::path_buffer_pool::get();
-        let mut len = match bun_sys::getcwd(&mut buf[..]) {
-            bun_sys::Result::Ok(r) => r,
+        let mut cwd = match bun_sys::getcwd_z(&mut buf) {
+            bun_sys::Result::Ok(cwd) => bun_paths::Path::from(cwd),
             bun_sys::Result::Err(err) => {
-                let mut rollback = bun_paths::path_buffer_pool::get();
-                let _ = bun_sys::chdir(bun_paths::resolve_path::z(
-                    fs.top_level_dir(),
-                    &mut rollback,
-                ));
+                let _ = bun_sys::chdir(&bun_paths::Path::from(fs.top_level_dir()));
                 return bun_sys::Result::Err(err);
             }
         };
-        if len > 0 && buf[len - 1] != bun_paths::SEP && len < buf.len() {
-            buf[len] = bun_paths::SEP;
-            len += 1;
-        }
-        fs.set_top_level_dir(Self::intern_cwd(fs, &buf[..len]));
+        cwd.push_trailing_sep();
+        fs.set_top_level_dir(Self::intern_cwd(fs, &cwd));
         Ok(())
     }
 
@@ -5643,9 +5592,7 @@ impl VirtualMachine {
         }
 
         if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let z = bun_paths::resolve_path::z(&cwd, &mut buf);
-            let _ = self.set_process_cwd(z);
+            let _ = self.set_process_cwd(&bun_paths::Path::from(&cwd));
         }
 
         let _ = self.event_loop().drain_microtasks();
@@ -7226,7 +7173,7 @@ impl VirtualMachine {
                 let _ = write!(
                     writer,
                     "\n::error file={},line={},col={},title=",
-                    bun_core::fmt::github_action_property(file),
+                    bun_core::fmt::github_action_property(&file),
                     frame.position.line.one_based(),
                     frame.position.column.one_based(),
                 );
@@ -7287,7 +7234,8 @@ impl VirtualMachine {
             };
             for frame in frames {
                 let source_url = frame.source_url.to_utf8();
-                let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
+                let file: &[u8] =
+                    &crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
                 let func = frame.function_name.to_utf8();
                 if file.is_empty() && func.slice().is_empty() {
                     continue;

@@ -9,6 +9,7 @@ use bun_glob as glob;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult};
 use bun_jsc::{StringJsc as _, SysErrorJsc};
+use bun_paths::{OSPathChar, Path, from_portable, portable};
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
 use bun_sys::{self, Fd, FdDirExt as _, Mode};
@@ -1024,35 +1025,9 @@ fn compress_gzip(data: &[u8], level: bun_deflate::Level) -> Result<Vec<u8>, Comp
 
 /// Check if a path is safe (no absolute paths or path traversal)
 pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
-    // Reject empty paths
-    if pathname.is_empty() {
-        return false;
-    }
-
-    // Reject absolute paths
-    if pathname[0] == b'/' || pathname[0] == b'\\' {
-        return false;
-    }
-
-    // Check for Windows drive letters (e.g., "C:")
-    if pathname.len() >= 2 && pathname[1] == b':' {
-        return false;
-    }
-
-    // Reject paths with ".." components
-    for component in strings::split(pathname, b"/") {
-        if component == b".." {
-            return false;
-        }
-        // Also check Windows-style separators
-        for win_component in strings::split(component, b"\\") {
-            if win_component == b".." {
-                return false;
-            }
-        }
-    }
-
-    true
+    pathname.first().is_some_and(|&c| !portable::is_sep(c))
+        && pathname.get(1) != Some(&b':')
+        && !portable::has_dot_dot(pathname)
 }
 
 /// One pattern of the `glob` option.
@@ -1130,6 +1105,7 @@ fn extract_to_disk_filtered(
     let mut write_strategy = bun_archive::WriteStrategy::default();
     #[cfg(unix)]
     let (mut deferred_symlinks, mut deferred_bytes) = (Vec::new(), 0usize);
+    let mut os_path_buf = Vec::new();
 
     loop {
         let entry_ref = match reader.next_entry() {
@@ -1137,20 +1113,22 @@ fn extract_to_disk_filtered(
             Ok(Some(entry)) => entry,
             Err(_) => return Err(crate::Error::ReadError),
         };
-        let raw_pathname = bun_archive::display_path(entry_ref)?;
-        let raw_pathname: &[u8] = &raw_pathname;
-
-        let mut normalized_buf = bun_paths::path_buffer_pool::get();
-        if raw_pathname.len() >= normalized_buf.len() {
+        let name = bun_archive::os_path(entry_ref, &mut os_path_buf)?;
+        let Some(destination) = bun_archive::entry_destination(name) else {
             continue;
+        };
+        if name.first() == Some(&(b'/' as OSPathChar)) {
+            let name = Path::from(name);
+            let below_root = from_portable(strings::trim_left(&name, b"/\\"));
+            if bun_paths::climbs_out(&below_root) {
+                continue;
+            }
         }
-        let pathname_z: &bun_core::ZStr = bun_paths::resolve_path::normalize_buf_z::<
-            bun_paths::platform::Posix,
-        >(raw_pathname, &mut normalized_buf[..]);
+        let pathname_z = &Path::from(&destination).into_portable();
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)
-        if pathname == b"." || !is_safe_path(pathname) {
+        if !is_safe_path(pathname) {
             continue;
         }
 
@@ -1190,7 +1168,7 @@ fn extract_to_disk_filtered(
                 #[cfg(windows)]
                 let open = || bun_sys::openat(dir.fd(), pathname_z, flags, mode);
                 let opened = open().or_else(|err| {
-                    make_path(bun_core::dirname(pathname).ok_or(err)?)?;
+                    make_path(bun_paths::dirname(pathname).ok_or(err)?)?;
                     open()
                 });
                 let Ok(file) = opened.map(bun_sys::File::from_fd) else {

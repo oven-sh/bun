@@ -13,7 +13,6 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPool, WorkPoolTask,
 };
-use bun_paths::resolve_path::{self as Path, platform};
 use bun_ptr::{BackRef, RefPtr, ThisPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
 use bun_sys::{self, PosixStat};
@@ -600,21 +599,15 @@ impl StatWatcher {
     fn init(args: &Arguments) -> Result<JSValue, crate::Error> {
         log!("init");
 
-        let mut buf = bun_paths::path_buffer_pool::get();
-        // guard puts back on Drop
         let mut slice = args.path.slice();
         if strings::starts_with(slice, b"file://") {
             slice = &slice[b"file://".len()..];
         }
 
         let top_level_dir = fs::FileSystem::get().top_level_dir();
-        let parts: [&[u8]; 1] = [slice];
-        let file_path =
-            Path::join_abs_string_buf::<platform::Auto>(top_level_dir, &mut buf[..], &parts);
-
-        // allocSentinel + memcpy → owned NUL-terminated copy (ZBox)
-        let alloc_file_path = ZBox::from_bytes(file_path);
-        // errdefer free → Drop handles it
+        let mut file_path = bun_paths::Path::resolve(&[top_level_dir, slice]);
+        file_path.copy_trailing_sep_from(slice);
+        let alloc_file_path = file_path.to_zbox();
 
         // `args.global_this` is a `BackRef` (JSC_BORROW); safe Deref.
         let vm = args.global_this.bun_vm();

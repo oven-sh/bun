@@ -12,6 +12,7 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ObjectPrototype.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/RegExpObject.h>
 #include <wtf/BitVector.h>
@@ -127,10 +128,10 @@ public:
     // What snapshot serializers are offered for the object of `place`, which is a place of this cell. Empty only with an exception pending.
     JSC::JSValue forSerializers(JSC::JSGlobalObject*, uint32_t place);
 
-    // Set in `order` of a row that the walk for the diff added. Those rows come after the ones of the comparison with and without it.
+    // Set in `order` of a row that the walk for the diff added.
     static constexpr uint32_t ofDiffWalk = 1u << 31;
     void markRowsOfDiffWalk(uint32_t firstOrder);
-    // A copy with the rows of the comparison alone. Empty if the walk for the diff added none of the rows, or all of them.
+    // The rows of the comparison alone: this cell if the walk for the diff added none, else a copy without its rows, or nothing.
     JSC::JSValue ofComparisonAlone(JSC::VM&);
 
 private:
@@ -456,10 +457,43 @@ void JestMatchedRows::markRowsOfDiffWalk(uint32_t firstOrder)
 
 JSC::JSValue JestMatchedRows::ofComparisonAlone(JSC::VM& vm)
 {
+    // As matchedRowsFrom() keeps them: a place stays if the comparison found a matcher in it, or went from it into a place that stays.
+    WTF::BitVector stays(m_places.size() + 1);
+    WTF::Vector<uint32_t, 16> toLookAbove;
+    // The place that each nested row of the comparison leads to, and the place of that row.
+    WTF::Vector<std::pair<uint32_t, uint32_t>, 16> leadsFrom;
+    bool walkAddedRows = false;
+    for (uint32_t place = 1; place <= m_places.size(); place++) {
+        for (auto& row : rowsOf(place)) {
+            if (row.order & ofDiffWalk)
+                walkAddedRows = true;
+            else if (row.childPlace)
+                leadsFrom.append({ row.childPlace, place });
+            else if (!stays.quickGet(place)) {
+                stays.quickSet(place);
+                toLookAbove.append(place);
+            }
+        }
+    }
+    if (!walkAddedRows)
+        return this;
+    std::sort(leadsFrom.begin(), leadsFrom.end());
+    while (!toLookAbove.isEmpty()) {
+        uint32_t place = toLookAbove.takeLast();
+        for (auto above = std::lower_bound(leadsFrom.begin(), leadsFrom.end(), std::pair { place, 0u }); above != leadsFrom.end() && above->first == place; ++above) {
+            if (!stays.quickGet(above->second)) {
+                stays.quickSet(above->second);
+                toLookAbove.append(above->second);
+            }
+        }
+    }
+    auto isKept = [&](const Row& row) {
+        return !(row.order & ofDiffWalk) && (!row.childPlace || stays.quickGet(row.childPlace));
+    };
     unsigned kept = 0;
     for (auto& row : m_rows)
-        kept += !(row.order & ofDiffWalk);
-    if (!kept || kept == m_rows.size())
+        kept += isKept(row);
+    if (!kept)
         return {};
     auto* copy = create(vm, structure(), m_places.size(), kept);
     unsigned next = 0;
@@ -468,7 +502,7 @@ JSC::JSValue JestMatchedRows::ofComparisonAlone(JSC::VM& vm)
         placeOfCopy.holder.set(vm, copy, m_places[place].holder.get());
         placeOfCopy.firstRow = next;
         for (auto& row : rowsOf(place + 1)) {
-            if (row.order & ofDiffWalk)
+            if (!isKept(row))
                 continue;
             auto& rowOfCopy = copy->m_rows[next++];
             rowOfCopy.name = row.name;
@@ -485,29 +519,29 @@ JSC::JSValue JestMatchedRows::ofComparisonAlone(JSC::VM& vm)
 
 } // namespace Bun
 
-// expect.rs. Whether `value` is one of the five kinds of matcher that the walk below asks, with no promise to read.
+// expect.rs. Whether `value` is a matcher that the walk below asks: one of its five kinds, with no promise to read.
 extern "C" bool Expect__diffMayAskMatcher(JSC::EncodedJSValue value);
 
 namespace Bun {
 
-// The walk after a comparison that failed, for its message alone. It adds the matchers of the pattern that pass after the first mismatch to the records of the comparison.
+// The walk after a comparison that failed (https://github.com/oven-sh/bun/issues/9089): for the diff, it adds the matchers that pass after the first mismatch to the records.
 struct DiffWalk {
     using RecordKey = std::tuple<JSC::JSCell*, JSC::JSCell*, UniquedStringImpl*>;
-    // A getter can give a new object each time, with no end. The walk goes into this many objects that the received value does not hold as listed data of its own.
+    // A getter can give a new object on each read with no end, so the walk goes into this many objects that the received value does not hold as listed data.
     static constexpr unsigned maxGivenObjects = 4096;
-    // The printer shows what is below such an object only for its rows, so deeper than it did. The walk goes this many levels below one.
+    // It goes this many levels below one, so that its rows make the print no deeper than the printer can go.
     static constexpr unsigned maxLevelsBelowGiven = 64;
 
     DeepMatchState& comparison;
-    // The record of the comparison for a holder, the pattern of that holder and a name. At such a key the walk takes what the comparison found, and reads neither value again.
+    // The record of the comparison by holder, pattern of the holder and name: there the walk reads neither value again.
     HashMap<RecordKey, unsigned> recordOfComparison;
-    // The received objects and the objects of the pattern that the walk was in. It goes into two values only if one of them is new, and lists the keys of a new one. So its work does not grow with the product of the two values.
+    // The received objects and the objects of the pattern that the walk was in: it goes into two values only if one is new.
     WTF::HashSet<JSC::JSCell*> receivedIn;
     WTF::HashSet<JSC::JSCell*> patternsIn;
     // The ones that it is inside of now, kept only where `ofDeepEquals`.
     WTF::HashSet<JSC::JSCell*> receivedInsideOf;
     WTF::HashSet<JSC::JSCell*> patternsInsideOf;
-    // What leadsToMatcher() found for an object of the pattern. `waitsAt` is set while the answer waits for an object that this one leads around to: its place in `waiting`, plus one.
+    // The answer of leadsToMatcher() for an object of the pattern. While the answer waits, `waitsAt` is its place in `waiting` plus one.
     struct Looked {
         bool leads { false };
         unsigned waitsAt { 0 };
@@ -515,20 +549,75 @@ struct DiffWalk {
     UncheckedKeyHashMap<JSC::JSObject*, Looked> patternLeadsToMatcher;
     // The objects that leadsToMatcher() is still inside of, and the ones that lead around to one of those.
     Vector<JSC::JSObject*, 16> waiting;
-    // The two values that an equality tester said no to, where the comparison ended so. The walk calls no tester, and shows no matcher in them as passed.
+    // What keysThatCanGiveARow() found for an object of the pattern.
+    HashMap<JSC::JSObject*, Vector<JSC::Identifier>> keysOfPattern;
+    // The two values that the equality testers said no to, if toMatchObject() ended there.
     JSC::JSCell* refusedValue { nullptr };
     JSC::JSCell* refusedPattern { nullptr };
     unsigned givenObjectsLeft { maxGivenObjects };
     // Set where the walk is past a limit. It ends there, and the message gets the rows of the comparison alone.
     bool gaveUp { false };
-    // The comparison was Bun__deepEquals (toEqual and the like), which keeps no record. The walk looks inside two values only where that comparison does.
+    // The comparison was Bun__deepEquals (toEqual and the like), which keeps no record.
     bool ofDeepEquals { false };
 };
 
-// The kinds of object whose keys the walk reads: a plain object, a class instance and an array. At most other kinds the printer shows no row, and a read can be a native getter that changes the object.
-static bool diffWalkReadsKeysOf(JSC::JSType type)
+// The kinds of matcher that the walk asks. None compares with what another value holds, so none starts a user matcher or an equality tester.
+template<typename... Kinds>
+struct MatcherKinds {
+    // Until a global has made a matcher of one of these kinds, no pattern holds one.
+    static bool wereMadeIn(Zig::GlobalObject* global)
+    {
+        return (global->m_bindgenAdditions.m_classes[Kinds::classIndex].getConcurrently() || ...);
+    }
+    static bool have(JSC::JSObject* matcher)
+    {
+        return (matcher->inherits<Kinds>() || ...);
+    }
+};
+using KindsThatDiffAsks = MatcherKinds<Bindgen::Generated::JSExpectAny, Bindgen::Generated::JSExpectAnything, Bindgen::Generated::JSExpectCloseTo, Bindgen::Generated::JSExpectStringContaining, Bindgen::Generated::JSExpectStringMatching>;
+
+bool diffMayAsk(JSC::JSObject* matcher)
 {
-    switch (type) {
+    if (matcher->type() != JSC::JSType(WebCore::JSDOMWrapperType))
+        return false;
+    JSC::DisallowVMEntry noUserCode(matcher->vm());
+    if (auto* matching = dynamicDowncast<Bindgen::Generated::JSExpectStringMatching>(matcher)) {
+        auto* pattern = dynamicDowncast<JSC::RegExpObject>(matching->m_pattern.get());
+        // A g or y flag makes a question change the next answer, and a lastIndex that is no number is an object that a match reads.
+        if (pattern && (pattern->regExp()->globalOrSticky() || !pattern->getLastIndex().isNumber()))
+            return false;
+    } else if (auto* containing = dynamicDowncast<Bindgen::Generated::JSExpectStringContaining>(matcher)) {
+        // A String object has a toString() of the user, and the matcher calls it.
+        if (!containing->m_stringValue.get().isString())
+            return false;
+    }
+    bool mayAsk = Expect__diffMayAskMatcher(JSC::JSValue::encode(matcher));
+    ASSERT(!mayAsk || KindsThatDiffAsks::have(matcher));
+    return mayAsk;
+}
+
+// Whether the user wrote `getter`: a native or built-in function can change its object in ways that the user does not see.
+static bool isGetterOfTheUser(JSC::JSObject* getter)
+{
+#if ENABLE(AOT)
+    if (JSC::AOT::CompiledCallee::isCompiledCallee(getter))
+        return !JSC::AOT::belongsToBuiltinModule(getter);
+#endif
+    auto* function = dynamicDowncast<JSC::JSFunction>(getter);
+    return function && !function->isHostOrBuiltinFunction();
+}
+
+// Whether the walk reads the keys of `object`: a plain object, a class instance or an array. A look-up in another kind can build the property.
+static bool diffWalkReadsKeysOf(JSC::VM& vm, JSC::JSObject* object)
+{
+#if ENABLE(AOT)
+    // Under `bun test --aot` the prototype of a compiled class is of another kind until somebody looks at its members.
+    if (object->type() == JSC::ObjectType && vm.hasCompiledCode()) [[unlikely]]
+        JSC::AOT::PropertyWalk::materializeLazyProperties(vm, object);
+#else
+    UNUSED_PARAM(vm);
+#endif
+    switch (object->type()) {
     case JSC::FinalObjectType:
     case JSC::ArrayType:
     case JSC::DerivedArrayType:
@@ -541,34 +630,9 @@ static bool diffWalkReadsKeysOf(JSC::JSType type)
     }
 }
 
-// The walk asks five kinds of matcher and no other. None of them compares with what another value holds, so an ask starts no function of expect.extend(), no asymmetricMatch() method and no equality tester.
-bool diffMayAsk(JSC::JSObject* matcher)
+static bool isArrayForDiff(JSC::JSObject* object)
 {
-    if (matcher->type() != JSC::JSType(WebCore::JSDOMWrapperType))
-        return false;
-    JSC::DisallowVMEntry noUserCode(matcher->vm());
-    if (auto* matching = dynamicDowncast<Bun::Bindgen::Generated::JSExpectStringMatching>(matcher)) {
-        auto* pattern = dynamicDowncast<JSC::RegExpObject>(matching->m_pattern.get());
-        // With a g or y flag the expression keeps where it matched, so a question changes the next answer. A lastIndex that is no number is an object of the user, and a match reads it.
-        if (pattern && (pattern->regExp()->globalOrSticky() || !pattern->getLastIndex().isNumber()))
-            return false;
-    } else if (auto* containing = dynamicDowncast<Bun::Bindgen::Generated::JSExpectStringContaining>(matcher)) {
-        // A String object has a toString() of the user, and the matcher calls it.
-        if (!containing->m_stringValue.get().isString())
-            return false;
-    }
-    return Expect__diffMayAskMatcher(JSC::JSValue::encode(matcher));
-}
-
-// Whether the user wrote `getter`. A native function or a function of a built-in module can change its object in ways that the user does not see.
-static bool isGetterOfTheUser(JSC::JSObject* getter)
-{
-#if ENABLE(AOT)
-    if (JSC::AOT::CompiledCallee::isCompiledCallee(getter))
-        return !JSC::AOT::belongsToBuiltinModule(getter);
-#endif
-    auto* function = dynamicDowncast<JSC::JSFunction>(getter);
-    return function && !function->isHostOrBuiltinFunction();
+    return object->type() == JSC::ArrayType || object->type() == JSC::DerivedArrayType;
 }
 
 // What a read of a property finds: a value, or a getter that the user wrote.
@@ -578,11 +642,11 @@ struct FoundForDiff {
     // Whether the object has the property as its own, at a key that it lists.
     bool isListed { false };
     explicit operator bool() const { return value || getter; }
-    // Whether it is data that the object lists as its own. The printer shows such a value also where it has no row.
+    // Whether it is data that the object lists as its own, which the printer shows with or without a row.
     bool isHeld() const { return isListed && !getter; }
 };
 
-// What `slot` found. Nothing where a read would run code that the user did not write: a native getter, or a getter of a built-in module.
+// What `slot` found, and nothing where a read would run a native getter or one of a built-in module.
 static FoundForDiff foundInSlot(JSC::JSGlobalObject* globalObject, JSC::PropertyName name, const JSC::PropertySlot& slot, bool isOwn)
 {
     bool isListed = isOwn && !(slot.attributes() & JSC::PropertyAttribute::DontEnum);
@@ -594,28 +658,18 @@ static FoundForDiff foundInSlot(JSC::JSGlobalObject* globalObject, JSC::Property
     return { {}, getter && isGetterOfTheUser(getter) ? getter : nullptr, isListed };
 }
 
-// Where a look-up goes on after `holder`: its prototype, if that is a plain object, a class instance or an array. At an object of another kind, such as `process`, a look-up can make the engine build the property.
+// Where a look-up goes on after `holder`: its prototype, if the walk reads the keys of that.
 static JSC::JSObject* nextHolderForDiff(JSC::VM& vm, JSC::JSObject* holder)
 {
     JSC::JSValue prototype = holder->getPrototypeDirect();
-    if (!prototype.isObject())
-        return nullptr;
-    JSC::JSObject* next = asObject(prototype);
-#if ENABLE(AOT)
-    // Under `bun test --aot` the prototype of a compiled class is of another kind until somebody looks at its members.
-    if (next->type() == JSC::ObjectType && vm.hasCompiledCode()) [[unlikely]]
-        JSC::AOT::PropertyWalk::materializeLazyProperties(vm, next);
-#else
-    UNUSED_PARAM(vm);
-#endif
-    return diffWalkReadsKeysOf(next->type()) ? next : nullptr;
+    return prototype.isObject() && diffWalkReadsKeysOf(vm, asObject(prototype)) ? asObject(prototype) : nullptr;
 }
 
-// Looks `name` up in `object` and, unless `ownOnly`, up its prototypes, as a read does. A VMInquiry slot forbids entering the VM while it is alive. Nothing if it finds no property.
+// Looks `name` up in `object` and, unless `ownOnly`, up its prototypes. The VMInquiry slot forbids entering the VM.
 static FoundForDiff lookUpForDiff(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* object, JSC::PropertyName name, bool ownOnly = false)
 {
     JSC::VM& vm = globalObject->vm();
-    for (JSC::JSObject* holder = diffWalkReadsKeysOf(object->type()) ? object : nullptr; holder; holder = ownOnly ? nullptr : nextHolderForDiff(vm, holder)) {
+    for (JSC::JSObject* holder = diffWalkReadsKeysOf(vm, object) ? object : nullptr; holder; holder = ownOnly ? nullptr : nextHolderForDiff(vm, holder)) {
         JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
         bool has = holder->methodTable()->getOwnPropertySlot(holder, globalObject, name, slot);
         RETURN_IF_EXCEPTION(scope, {});
@@ -630,17 +684,14 @@ static JSC::JSValue valueForDiff(JSC::JSGlobalObject* globalObject, JSC::JSObjec
     return found.getter ? JSC::call(globalObject, found.getter, JSC::getCallData(found.getter), object, JSC::ArgList()) : found.value;
 }
 
-// The keys that `object` lists as its own. With `upThePrototypes`, every key at which lookUpForDiff() finds a property of it.
-static void listKeysForDiff(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* object, JSC::PropertyNameArrayBuilder& names, bool upThePrototypes = false)
+// The keys that `object` lists as its own.
+static void listKeysForDiff(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* object, JSC::PropertyNameArrayBuilder& names)
 {
-    ASSERT(diffWalkReadsKeysOf(object->type()));
     JSC::VM& vm = globalObject->vm();
+    ASSERT(diffWalkReadsKeysOf(vm, object));
     JSC::DisallowVMEntry noUserCode(vm);
-    auto unlisted = upThePrototypes ? JSC::DontEnumPropertiesMode::Include : JSC::DontEnumPropertiesMode::Exclude;
-    for (JSC::JSObject* holder = object; holder; holder = upThePrototypes ? nextHolderForDiff(vm, holder) : nullptr) {
-        holder->methodTable()->getOwnPropertyNames(holder, globalObject, names, unlisted);
-        RETURN_IF_EXCEPTION(scope, );
-    }
+    object->methodTable()->getOwnPropertyNames(object, globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 // Appends each value that `object` holds as data of its own, at a key that it lists. It can append other things that are no object.
@@ -648,8 +699,8 @@ static void appendHeldValues(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&
 {
     using namespace JSC;
     VM& vm = globalObject->vm();
-    // Most objects and arrays have their values in a row, and a read of that row needs no list of the keys. A compiled object does not.
-    bool inARow = object->type() == FinalObjectType || object->type() == ArrayType || object->type() == DerivedArrayType;
+    // Most objects and arrays hold their values in a row, which reads with no list of the keys.
+    bool inARow = object->type() == FinalObjectType || isArrayForDiff(object);
     if (inARow) {
         switch (object->indexingType()) {
         case ALL_BLANK_INDEXING_TYPES:
@@ -686,18 +737,19 @@ static void appendHeldValues(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&
     }
 }
 
-// Whether the walk comes to a matcher that it asks through `value` of the pattern. `lowestOfHolder` is for the call from inside: the lowest place in `waiting` that the holder of `value` leads around to.
+// Whether `value` of the pattern leads to a matcher that the walk asks. Tarjan's algorithm: objects that lead around to each other share one answer, and `lowestOfHolder` is the lowlink of the caller.
 static bool leadsToMatcher(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, DiffWalk& walk, JSC::JSValue value, unsigned* lowestOfHolder = nullptr)
 {
     using namespace JSC;
     // An array has an empty value where it has a hole, and so has a key with a getter here.
     if (!value || !value.isObject())
         return false;
-    DisallowVMEntry noUserCode(globalObject->vm());
+    VM& vm = globalObject->vm();
+    DisallowVMEntry noUserCode(vm);
     JSObject* object = asObject(value);
     if (diffMayAsk(object))
         return true;
-    if (!diffWalkReadsKeysOf(object->type()) || !globalObject->vm().isSafeToRecurse())
+    if (!diffWalkReadsKeysOf(vm, object) || !vm.isSafeToRecurse())
         return false;
     unsigned place = walk.waiting.size() + 1;
     auto added = walk.patternLeadsToMatcher.add(object, DiffWalk::Looked { false, place });
@@ -708,7 +760,7 @@ static bool leadsToMatcher(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& s
         return added.iterator->value.leads;
     }
     walk.waiting.append(object);
-    // What the walk runs can take an object out of the pattern. Kept alive, no other object gets the address of one that has an answer.
+    // Kept alive, so that no object that the walk's calls make takes the address of one that has an answer.
     walk.comparison.gcBuffer.append(object);
 
     Vector<JSValue, 16> held;
@@ -735,36 +787,76 @@ static bool leadsToMatcher(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& s
     return leads;
 }
 
-// How many keys `array` has as the comparison counts them for two arrays: its elements that are there, its other keys that it lists, and its private fields.
-static unsigned countKeysOfArray(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* array)
+// The keys of an object of the pattern where a row is possible: it holds a matcher that the walk asks, an object that leads to one, or a getter. Found once for an object that stands beside several received objects.
+static std::span<const JSC::Identifier> keysThatCanGiveARow(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, DiffWalk& walk, JSC::JSObject* subsetObj)
+{
+    using namespace JSC;
+    if (walk.keysOfPattern.add(subsetObj, Vector<Identifier>()).isNewEntry) {
+        Vector<Identifier> keys;
+        PropertyNameArrayBuilder names(globalObject->vm(), PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        listKeysForDiff(globalObject, scope, subsetObj, names);
+        RETURN_IF_EXCEPTION(scope, {});
+        for (const auto& name : names) {
+            FoundForDiff held = lookUpForDiff(globalObject, scope, subsetObj, name, true);
+            RETURN_IF_EXCEPTION(scope, {});
+            bool canGiveARow = !held.isHeld() || leadsToMatcher(globalObject, scope, walk, held.value);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (canGiveARow)
+                keys.append(name);
+        }
+        walk.keysOfPattern.set(subsetObj, WTF::move(keys));
+    }
+    // The map can move its vectors, and not what they hold.
+    return walk.keysOfPattern.find(subsetObj)->value.span();
+}
+
+// Whether a list of the keys of `object` up its prototypes starts no Proxy trap: each prototype is of a kind that the walk reads, up to an Object.prototype.
+static bool listsKeysUpThePrototypesWithNoTrap(JSC::VM& vm, JSC::JSObject* object)
+{
+    for (JSC::JSObject* holder = object;;) {
+        JSC::JSValue prototype = holder->getPrototypeDirect();
+        if (!prototype.isObject())
+            return true;
+        JSC::JSObject* next = nextHolderForDiff(vm, holder);
+        if (!next)
+            return asObject(prototype)->inherits<JSC::ObjectPrototype>();
+        holder = next;
+    }
+}
+
+// Whether the comparison goes into these two values key by key, as far as a look with no call tells. Where it does not, the walk shows no matcher as passed.
+static bool comparisonLooksInside(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, DiffWalk& walk, JSC::JSObject* obj, JSC::JSObject* subsetObj)
 {
     using namespace JSC;
     VM& vm = globalObject->vm();
-    unsigned count = 0;
-    if (hasAnyArrayStorage(array->indexingType())) {
-        PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    if (obj == walk.refusedValue && subsetObj == walk.refusedPattern)
+        return false;
+    if (walk.ofDeepEquals) {
+        // toEqual and the like refuse an array beside what is no array before they read a key.
+        if (isArrayForDiff(obj) != isArrayForDiff(subsetObj))
+            return false;
+    } else if (isArrayForDiff(obj) && isArrayForDiff(subsetObj) && obj->getArrayLength() == subsetObj->getArrayLength()) {
+        // toMatchObject() refuses two arrays of one length whose keys differ in number, which no print shows. Its own count tells, and that lists the keys up the prototypes.
+        if (!listsKeysUpThePrototypesWithNoTrap(vm, obj) || !listsKeysUpThePrototypesWithNoTrap(vm, subsetObj))
+            return false;
         DisallowVMEntry noUserCode(vm);
-        array->methodTable()->getOwnPropertyNames(array, globalObject, names, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, 0);
-        count = names.size();
-    } else {
-        for (unsigned index = 0, length = array->getArrayLength(); index < length; index++)
-            count += array->canGetIndexQuickly(index);
-        array->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-            count += !(entry.attributes() & PropertyAttribute::DontEnum) || (entry.key()->isSymbol() && static_cast<SymbolImpl*>(entry.key())->isPrivate());
-            return true;
-        });
+        bool asMany = arraysHaveAsManyKeysForMatch(globalObject, scope, obj, subsetObj);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!asMany)
+            return false;
     }
-#if ENABLE(AOT)
-    if (vm.aotState().someClassHasPrivateNames) [[unlikely]] {
-        count += AOT::PropertyWalk::countPrivateFieldsOfCompiledClasses(globalObject, array);
-        RETURN_IF_EXCEPTION(scope, 0);
-    }
-#endif
-    return count;
+    // The comparison leaves two DOM nodes to isEqualNode(). The walk takes two values that both have one for such nodes, and does not call it.
+    const Identifier& isEqualNode = WebCore::builtinNames(vm).isEqualNodePublicName();
+    FoundForDiff ofObj = lookUpForDiff(globalObject, scope, obj, isEqualNode);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!ofObj)
+        return true;
+    FoundForDiff ofPattern = lookUpForDiff(globalObject, scope, subsetObj, isEqualNode);
+    RETURN_IF_EXCEPTION(scope, false);
+    return !ofPattern;
 }
 
-static void collectMatchersIn(JSC::JSGlobalObject*, JSC::ThrowScope&, DiffWalk&, JSC::JSObject*, JSC::JSObject*, unsigned levelsBelowGiven, bool listsReceived);
+static void collectMatchersInside(JSC::JSGlobalObject*, JSC::ThrowScope&, DiffWalk&, JSC::JSObject*, JSC::JSObject*, unsigned levelsBelowGiven, bool patternIsNew);
 
 static void collectMatchersAtKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, DiffWalk& walk, JSC::JSObject* obj, JSC::JSObject* subsetObj, const JSC::Identifier& property, unsigned levelsBelowGiven)
 {
@@ -782,7 +874,7 @@ static void collectMatchersAtKey(JSC::JSGlobalObject* globalObject, JSC::ThrowSc
         if (!subsetProp.isObject() || prop == subsetProp)
             return;
     } else {
-        // The comparison left no record here: it did not come to this key, or it stopped at it with a value that is no object. The walk has to read it.
+        // No record: the comparison did not come to this key, or stopped at it with a value that is no object. The walk reads it.
         FoundForDiff ofPattern = lookUpForDiff(globalObject, scope, subsetObj, property, true);
         RETURN_IF_EXCEPTION(scope, );
         if (!ofPattern.isHeld() || !ofPattern.value.isObject())
@@ -815,7 +907,7 @@ static void collectMatchersAtKey(JSC::JSGlobalObject* globalObject, JSC::ThrowSc
             return;
         prop = valueForDiff(globalObject, obj, found);
         RETURN_IF_EXCEPTION(scope, );
-        // The comparison looks inside two values key by key. It does not where they are one object, nor where an asymmetricMatch() method answers for them.
+        // The comparison does not look inside one object on both sides, nor where an asymmetricMatch() method answers for the two.
         if (!prop.isObject() || prop == subsetProp || oneAnswersByAsymmetricMatch(globalObject, prop, subsetProp))
             return;
         if (walk.ofDeepEquals && walk.receivedInsideOf.contains(prop.asCell()))
@@ -840,12 +932,14 @@ static void collectMatchersAtKey(JSC::JSGlobalObject* globalObject, JSC::ThrowSc
     bool patternIsNew = walk.patternsIn.add(subsetProp.asCell()).isNewEntry;
     if (!receivedIsNew && !patternIsNew)
         return;
-    // The comparison listed the keys of the pattern in a pair that it was in. In any other pair the walk lists the keys of the object that is new.
-    collectMatchersIn(globalObject, scope, walk, asObject(prop), asObject(subsetProp), levels, !wasRecorded && !patternIsNew);
+    bool looksInside = comparisonLooksInside(globalObject, scope, walk, asObject(prop), asObject(subsetProp));
+    RETURN_IF_EXCEPTION(scope, );
+    if (looksInside)
+        collectMatchersInside(globalObject, scope, walk, asObject(prop), asObject(subsetProp), levels, patternIsNew);
 }
 
-// The walk over a received object and its pattern. It goes on where the comparison returns false.
-static void collectMatchersIn(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, DiffWalk& walk, JSC::JSObject* obj, JSC::JSObject* subsetObj, unsigned levelsBelowGiven, bool listsReceived)
+// The walk over a received object and its pattern that the comparison looks inside. It goes on where the comparison returns false.
+static void collectMatchersInside(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, DiffWalk& walk, JSC::JSObject* obj, JSC::JSObject* subsetObj, unsigned levelsBelowGiven, bool patternIsNew)
 {
     using namespace JSC;
     VM& vm = globalObject->vm();
@@ -853,36 +947,6 @@ static void collectMatchersIn(JSC::JSGlobalObject* globalObject, JSC::ThrowScope
         walk.gaveUp = true;
         return;
     }
-    if (obj == walk.refusedValue && subsetObj == walk.refusedPattern)
-        return;
-    // The printer shows a row of an array only at an index.
-    bool holderIsArray = obj->type() == ArrayType || obj->type() == DerivedArrayType;
-    bool patternIsArray = subsetObj->type() == ArrayType || subsetObj->type() == DerivedArrayType;
-    // toEqual and the like refuse an array beside what is no array before they read a key.
-    if (walk.ofDeepEquals && holderIsArray != patternIsArray)
-        return;
-    // The comparison refuses two arrays of one length whose keys differ in number before it reads one, and no print shows a key that is no index, a private field or a hole beside undefined. It counts the keys up the prototypes too, so the walk looks inside two such arrays only if they have one prototype.
-    if (holderIsArray && patternIsArray && obj->getArrayLength() == subsetObj->getArrayLength()) {
-        if (obj->getPrototypeDirect() != subsetObj->getPrototypeDirect())
-            return;
-        unsigned keys = countKeysOfArray(globalObject, scope, obj);
-        RETURN_IF_EXCEPTION(scope, );
-        unsigned keysOfPattern = countKeysOfArray(globalObject, scope, subsetObj);
-        RETURN_IF_EXCEPTION(scope, );
-        if (keys != keysOfPattern)
-            return;
-    }
-    // The comparison leaves two DOM nodes to isEqualNode(), and does not look inside them. The walk takes two values that both have one for such nodes, and does not call it.
-    const Identifier& isEqualNode = WebCore::builtinNames(vm).isEqualNodePublicName();
-    FoundForDiff ofObj = lookUpForDiff(globalObject, scope, obj, isEqualNode);
-    RETURN_IF_EXCEPTION(scope, );
-    if (ofObj) {
-        FoundForDiff ofPattern = lookUpForDiff(globalObject, scope, subsetObj, isEqualNode);
-        RETURN_IF_EXCEPTION(scope, );
-        if (ofPattern)
-            return;
-    }
-
     if (walk.ofDeepEquals) {
         walk.receivedInsideOf.add(obj);
         walk.patternsInsideOf.add(subsetObj);
@@ -893,36 +957,25 @@ static void collectMatchersIn(JSC::JSGlobalObject* globalObject, JSC::ThrowScope
             walk.patternsInsideOf.remove(subsetObj);
         }
     });
-    auto atKey = [&](const Identifier& property) -> bool {
+    // The first time in an object of the pattern, the walk lists its keys, as the comparison does. For each further received object beside it, it takes the keys where a row is possible.
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    std::span<const Identifier> keys;
+    if (patternIsNew) {
+        listKeysForDiff(globalObject, scope, subsetObj, names);
+        keys = names.data()->propertyNameVector().span();
+    } else
+        keys = keysThatCanGiveARow(globalObject, scope, walk, subsetObj);
+    RETURN_IF_EXCEPTION(scope, );
+    for (const Identifier& property : keys) {
+        // The printer shows a row of an array only at an index that the array has. The keys come with the indices first, from the lowest.
+        if (isArrayForDiff(obj)) {
+            auto index = parseIndex(property);
+            if (!index || *index >= obj->getArrayLength())
+                break;
+        }
         collectMatchersAtKey(globalObject, scope, walk, obj, subsetObj, property, levelsBelowGiven);
         // What a getter or Symbol.hasInstance throws costs this key its row, and no more. A termination ends the walk.
-        return !(scope.exception() && !scope.tryClearException()) && !walk.gaveUp;
-    };
-
-    // A row is possible only at an index that both arrays have. Most arrays have their elements in a row: that needs no list of the keys, and the length is what the array holds.
-    if (holderIsArray && patternIsArray && !hasAnyArrayStorage(subsetObj->indexingType())) {
-        // A row of numbers, or of nothing, holds no object.
-        if (!hasContiguous(subsetObj->indexingType()))
-            return;
-        for (unsigned index = 0, length = std::min(obj->getArrayLength(), subsetObj->getArrayLength()); index < length; index++) {
-            // What the walk runs can change the array, so each read looks at it anew.
-            if (!subsetObj->canGetIndexQuickly(index) || !subsetObj->getIndexQuickly(index).isObject())
-                continue;
-            if (!atKey(Identifier::from(vm, index))) [[unlikely]]
-                return;
-        }
-        return;
-    }
-    PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    if (!listsReceived)
-        listKeysForDiff(globalObject, scope, subsetObj, names);
-    else if (diffWalkReadsKeysOf(obj->type()))
-        listKeysForDiff(globalObject, scope, obj, names, !walk.ofDeepEquals);
-    RETURN_IF_EXCEPTION(scope, );
-    for (const auto& property : names) {
-        if (holderIsArray && !parseIndex(property))
-            continue;
-        if (!atKey(property)) [[unlikely]]
+        if ((scope.exception() && !scope.tryClearException()) || walk.gaveUp) [[unlikely]]
             return;
     }
 }
@@ -930,30 +983,31 @@ static void collectMatchersIn(JSC::JSGlobalObject* globalObject, JSC::ThrowScope
 // Out of line: one caller is the entry of every toMatchObject().
 NEVER_INLINE JSC::JSValue matchedRowsOfFailedMatch(JSC::JSGlobalObject* globalObject, DeepMatchState& comparison, JSC::JSValue received, JSC::JSValue pattern, bool ofDeepEquals)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned recordsOfComparison = comparison.recordedNames.size();
     // The walk lists the keys of the pattern, so the pattern has to be of a kind whose keys it reads. A matcher with keys of its own is not.
-    if (!comparison.recorded.hasOverflowed() && diffWalkReadsKeysOf(asObject(pattern)->type())) {
+    if (!comparison.recorded.hasOverflowed() && KindsThatDiffAsks::wereMadeIn(defaultGlobalObject(globalObject)) && diffWalkReadsKeysOf(vm, asObject(pattern))) {
         DiffWalk walk { comparison };
         walk.ofDeepEquals = ofDeepEquals;
-        bool leads = leadsToMatcher(globalObject, scope, walk, pattern);
-        // Most patterns have no matcher that the walk asks, and then it reads nothing of the received value.
+        if (comparison.endedAtRefusedPair()) {
+            walk.refusedValue = comparison.recordedAt(recordsOfComparison - 1, DeepMatchState::Holder).asCell();
+            walk.refusedPattern = comparison.recordedAt(recordsOfComparison - 1, DeepMatchState::PatternOfHolder).asCell();
+        }
+        // What needs no look through the pattern comes first. Most patterns hold no matcher that the walk asks, and it ends here.
+        bool looksInside = comparisonLooksInside(globalObject, scope, walk, asObject(received), asObject(pattern));
+        bool leads = !scope.exception() && looksInside && leadsToMatcher(globalObject, scope, walk, pattern);
         if (!scope.exception() && leads) {
             for (unsigned record = 0; record < recordsOfComparison; record++) {
                 JSC::JSObject* patternOfHolder = asObject(comparison.recordedAt(record, DeepMatchState::PatternOfHolder));
-                // The walk goes into no object of the pattern that leads to no matcher, so it looks up no record there. Most records of a long list are of those.
+                // The walk goes into no object of the pattern that leads to no matcher, so most records of a long list need no entry.
                 auto looked = walk.patternLeadsToMatcher.find(patternOfHolder);
                 if (looked == walk.patternLeadsToMatcher.end() || looked->value.leads)
                     walk.recordOfComparison.set(DiffWalk::RecordKey { comparison.recordedAt(record, DeepMatchState::Holder).asCell(), patternOfHolder, comparison.recordedNames[record].impl() }, record);
             }
-            auto [refusedValue, refusedPattern] = pairThatTestersRefused(globalObject);
-            if (refusedValue.isCell() && refusedPattern.isCell()) {
-                walk.refusedValue = refusedValue.asCell();
-                walk.refusedPattern = refusedPattern.asCell();
-            }
             walk.receivedIn.add(received.asCell());
             walk.patternsIn.add(pattern.asCell());
-            collectMatchersIn(globalObject, scope, walk, asObject(received), asObject(pattern), 0, false);
+            collectMatchersInside(globalObject, scope, walk, asObject(received), asObject(pattern), 0, true);
         }
         // Whatever the walk throws, the match has failed, and the message is the one of the assertion. A termination stays.
         if (scope.exception() && !scope.tryClearException()) [[unlikely]]
@@ -971,7 +1025,7 @@ NEVER_INLINE JSC::JSValue matchedRowsOfFailedMatch(JSC::JSGlobalObject* globalOb
 
 } // namespace Bun
 
-// The rows for the diff of two values that toEqual or the like found unequal: the matchers in `expected` that pass. Asks those, so it enters JavaScript and can throw.
+// The rows for the diff of two values that toEqual or the like found unequal. The walk asks matchers, so this enters JavaScript and can throw.
 extern "C" void Bun__JestMatchedRows__ofFailedEquals(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedReceived, JSC::EncodedJSValue encodedExpected, JSC::EncodedJSValue* rows)
 {
     JSC::JSValue received = JSC::JSValue::decode(encodedReceived);
@@ -984,7 +1038,7 @@ extern "C" void Bun__JestMatchedRows__ofFailedEquals(JSC::JSGlobalObject* global
     *rows = JSC::JSValue::encode(Bun::matchedRowsOfFailedMatch(globalObject, noRecords, received, expected, true));
 }
 
-// The rows of the comparison alone, without the ones that the walk for the diff added. Empty if that changes nothing, or leaves none.
+// The rows that the comparison made: `rows` itself if the walk for the diff added none to them, and nothing if it added them all.
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__JestMatchedRows__ofComparisonAlone(JSC::EncodedJSValue rows)
 {
     auto* cell = Bun::JestMatchedRows::from(rows);

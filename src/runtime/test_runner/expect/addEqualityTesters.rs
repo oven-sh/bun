@@ -138,24 +138,9 @@ impl Expect {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Expect__runEqualityTesters(global: &JSGlobalObject, a: JSValue, b: JSValue) -> i8 {
         match Self::run_equality_testers(global, a, b) {
-            Ok(Some(true)) => 1,
-            Ok(Some(false)) => {
-                // A comparison ends at a no. The diff of a failed match calls no tester, and asks for these two values.
-                if let Some(utils) = ExpectMatcherUtils::singleton(global).as_class_ref::<ExpectMatcherUtils>() {
-                    utils.refused_by_testers.set([a, b]);
-                }
-                0
-            }
+            Ok(Some(equal)) => i8::from(equal),
             Ok(None) => -1,
             Err(_) => 0,
-        }
-    }
-
-    /// Hands out the two values of the testers' last no, once. Writes `ZERO`s if they said no to nothing since the last call.
-    #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Expect__pairThatTestersRefused(global: &JSGlobalObject, a: &mut JSValue, b: &mut JSValue) {
-        if let Some(utils) = ExpectMatcherUtils::singleton(global).as_class_ref::<ExpectMatcherUtils>() {
-            [*a, *b] = utils.refused_by_testers.take();
         }
     }
 }

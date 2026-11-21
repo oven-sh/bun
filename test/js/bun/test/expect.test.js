@@ -4923,6 +4923,147 @@ describe("expect()", () => {
             }
           });
 
+          test.each(sites)("%s shows a matcher that passed in an array with keys of its own", (_, assert) => {
+            // What a query of a database gives: a subclass of Array that holds the rows, with keys of the result
+            // beside them. These comparisons read the indices of two arrays, and no other key.
+            class Result extends Array {}
+            const rows = () =>
+              Object.assign(Result.of({ id: 1, name: "a" }, { id: 2, name: "b" }), { count: 2, command: "SELECT" });
+            const row = (/** @type {string} */ name) => ({ id: expect.any(Number), name });
+            expect(flaggedBy(() => assert(rows(), [row("a"), row("wrong")]))).toEqual([
+              '- "name": "wrong",',
+              '+ "name": "b",',
+            ]);
+            expect(
+              flaggedBy(() =>
+                assert({ line: 12, m: "id=42".match(/id=(\d+)/) }, { line: 13, m: [expect.any(String), "42"] }),
+              ),
+            ).toEqual(['- "line": 13,', '+ "line": 12,']);
+          });
+
+          test("toEqual shows the matchers that passed in the rows of a query of Bun.SQL", async () => {
+            await using sql = new Bun.SQL("sqlite://:memory:");
+            await sql`create table users (id integer primary key, name text, created text)`;
+            for (const name of ["a", "b", "c"])
+              await sql`insert into users (name, created) values (${name}, ${"2024"})`;
+            const users = await sql`select * from users order by id`;
+            const user = (/** @type {string} */ name) => ({
+              id: expect.any(Number),
+              name,
+              created: expect.any(String),
+            });
+            expect(users).toEqual([user("a"), user("b"), user("c")]);
+            expect(flaggedBy(() => expect(users).toEqual([user("a"), user("wrong"), user("c")]))).toEqual([
+              '- "name": "wrong",',
+              '+ "name": "b",',
+            ]);
+          });
+
+          test("shows a matcher as passed wherever two values pass alone", () => {
+            class List extends Array {}
+            class Tagged extends Array {
+              #tag = 1;
+            }
+            class Account {
+              get email() {
+                return "ada@example.com";
+              }
+            }
+            const number = () => expect.any(Number);
+            const asATable = (/** @type {unknown[]} */ array) => Object.defineProperty(array, 0, { writable: false });
+            const key = Symbol("key");
+            const withAKeyOfEachArray = (/** @type {() => unknown} */ run) => {
+              ANY(Array.prototype).listed = 0;
+              try {
+                return run();
+              } finally {
+                delete ANY(Array.prototype).listed;
+              }
+            };
+            /**
+             * Each gives a received value and a pattern whose matchers all pass.
+             * @type {[string, () => [any, any], ((run: () => unknown) => unknown)?][]}
+             */
+            const shapes = [
+              ["two arrays", () => [[1], [number()]]],
+              ["a subclass of Array", () => [List.of(1), [number()]]],
+              ["two of a subclass of Array", () => [List.of(1), List.of(number())]],
+              [
+                "a subclass of Array with keys of its own",
+                () => [Object.assign(List.of({ id: 1 }), { count: 1 }), [{ id: number() }]],
+              ],
+              ["a subclass of Array with a private field", () => [Tagged.of(1), [number()]]],
+              ["an array with no prototype", () => [Object.setPrototypeOf([1], null), [number()]]],
+              ["an array of another realm", () => [require("node:vm").runInNewContext("[1]"), [number()]]],
+              ["a key that is no index", () => [Object.assign([1], { extra: "x" }), [number()]]],
+              [
+                "the same key that is no index in both",
+                () => [Object.assign([1], { extra: "x" }), Object.assign([number()], { extra: "x" })],
+              ],
+              // toMatchObject counts the keys that an array lists, also up its prototypes. An own key of a name that
+              // Array.prototype lists adds nothing to that count.
+              [
+                "a key that Array.prototype lists too",
+                () => [Object.assign(["a"], { listed: 1 }), Object.assign([expect.any(String)], { other: 1 })],
+                withAKeyOfEachArray,
+              ],
+              ["a key of each array", () => [[1], [number()]], withAKeyOfEachArray],
+              [
+                "a hole beside undefined",
+                () => [
+                  [1, , "x"],
+                  [number(), undefined, "x"],
+                ],
+              ],
+              ["what a RegExp match gives", () => ["id=42".match(/id=(\d+)/), [expect.any(String), "42"]]],
+              ["two arrays that the engine keeps as tables", () => [asATable([1]), asATable([number()])]],
+              ["a frozen array", () => [Object.freeze([1]), [number()]]],
+              [
+                "a symbol key of two arrays",
+                () => [Object.assign([1], { [key]: 1 }), Object.assign([number()], { [key]: 1 })],
+              ],
+              ["a getter of a class", () => [new Account(), { email: expect.any(String) }]],
+              ["an inherited key", () => [Object.create({ id: 1 }), { id: number() }]],
+              [
+                "a key that the object does not list",
+                () => [Object.defineProperty({}, "id", { value: 1 }), { id: number() }],
+              ],
+              ["an object with no prototype", () => [Object.assign(Object.create(null), { id: 1 }), { id: number() }]],
+              ["a symbol key", () => [{ [key]: 1 }, { [key]: number() }]],
+            ];
+            /** @type {[string, (received: any, pattern: any) => unknown][]} */
+            const matchers = [
+              ["toMatchObject", (received, pattern) => expect(received).toMatchObject(pattern)],
+              ...sites,
+            ];
+            const disagreements = [];
+            let passedAlone = 0;
+            for (const [matcher, assert] of matchers) {
+              for (const [shape, pair, around = run => run()] of shapes) {
+                const flaggedIn = (/** @type {() => unknown} */ assertion) => ANY(around(() => flaggedBy(assertion)));
+                const passesAlone = flaggedIn(() => assert(...pair())) === null;
+                passedAlone += Number(passesAlone);
+                for (const order of ["first", "last"]) {
+                  const [received, pattern] = pair();
+                  /** @type {string[]} */
+                  const flagged =
+                    flaggedIn(() =>
+                      order === "first"
+                        ? assert({ a: 1, at: received }, { a: 2, at: pattern })
+                        : assert({ at: received, a: 1 }, { at: pattern, a: 2 }),
+                    ) ?? [];
+                  const ofMatchers = flagged.filter(line => line.includes("Any<"));
+                  // Where the comparison looks inside the two values and says yes, the diff shows each matcher in them
+                  // as passed. Where it says no, no matcher is on a flagged line in place of a received value.
+                  const agrees = passesAlone ? ofMatchers.length === 0 : !ofMatchers.some(line => line.startsWith("+"));
+                  if (!agrees) disagreements.push(`${matcher}, ${shape}, the mismatch ${order}: ${flagged.join(" ")}`);
+                }
+              }
+            }
+            expect(disagreements).toEqual([]);
+            expect(passedAlone).toBeGreaterThan(shapes.length * 4);
+          });
+
           test.each(sites)("%s shows none in an object beside one that the comparison is inside of", (_, assert) => {
             const ring = (/** @type {number} */ length, /** @type {unknown} */ id) => {
               const nodes = Array.from({ length }, (_, index) => ({ id: id ?? index, next: ANY(undefined) }));
@@ -4979,8 +5120,8 @@ describe("expect()", () => {
                 return 1;
               }
             }
-            // One object of the pattern for two received objects. For the second one the diff goes through the keys
-            // that the received object lists as its own, and `id` is none of them.
+            // One object of the pattern for two received objects. toEqual reads the keys that an object lists as its
+            // own, and `id` of the second one is none of them.
             const item = { id: askedOf(() => (asked++, true)) };
             for (const assert of [sites[0][1], sites[1][1]]) {
               asked = 0;
@@ -5106,6 +5247,13 @@ describe("expect()", () => {
           expect(
             flaggedLines({ rows: Object.assign([{ id: 1 }], { total: 1 }) }, { rows: [{ id: number() }] }),
           ).toEqual(['-       "id": Any<Number>,', '+       "id": 1,']);
+          // The same for the two values of the assertion, beside an element of them that differs.
+          expect(flaggedLines(Object.assign([1, "x"], { extra: 1 }), [number(), "y"])).toEqual([
+            "-   Any<Number>,",
+            '-   "y",',
+            "+   1,",
+            '+   "x",',
+          ]);
           // What a RegExp match gives has keys that are no index.
           expect(flaggedLines({ line: 12, m: "id=42".match(/id=(\d+)/) }, { m: [expect.any(String), "42"] })).toEqual([
             '+   "line": 12,',
@@ -5120,11 +5268,54 @@ describe("expect()", () => {
               { a: number(), list: [number()], z: number() },
             ),
           ).toEqual(["-     Any<Number>,", "+     1,"]);
-          // Here the comparison stops at a key that no print shows, with no pair that it refused as a whole. The rows
-          // would leave no flagged line, so the diff prints with none.
+          // No print shows that two symbols of one description differ. With the matcher after them as passed, the diff
+          // would have no line that differs, so the received value prints a second time, without the rows that the diff
+          // added: the matcher before the mismatch is shown as passed, and the one after it is flagged.
+          const same = () => Symbol("same");
+          let prints = 0;
+          const printed = (/** @type {object} */ received) =>
+            Object.defineProperty(received, "printed", { enumerable: true, get: () => (prints++, 0) });
           expect(
-            flaggedLines(Object.assign([1, 2], { extra: "x" }), Object.assign([number(), number()], { extra: "y" })),
-          ).toEqual(["-   Any<Number>,", "-   Any<Number>,", "+   1,", "+   2,"]);
+            flaggedLines(printed({ before: 1, s: same(), after: 1 }), {
+              before: number(),
+              s: same(),
+              after: number(),
+              printed: 0,
+            }),
+          ).toEqual(['-   "after": Any<Number>,', '+   "after": 1,']);
+          expect(prints).toBe(2);
+          // The second print keeps a matcher that the comparison found two objects down.
+          expect(
+            flaggedLines(
+              { outer: { inner: { before: 1 } }, s: same(), after: 1 },
+              { outer: { inner: { before: number() } }, s: same(), after: number() },
+            ),
+          ).toEqual(['-   "after": Any<Number>,', '+   "after": 1,']);
+          // The same where the comparison went into two values at a key that the received value does not list: without
+          // a matcher that the comparison found below it, the print does not show that key.
+          expect(
+            flaggedLines(Object.defineProperty({ first: 1 }, "hidden", { value: { x: same(), n: 1 } }), {
+              first: number(),
+              hidden: { x: same(), n: number() },
+            }),
+          ).toEqual(['-   "hidden": {', '-     "n": Any<Number>,', '-     "x": Symbol(same),', "-   },"]);
+          // Where the diff added no row, the received value prints once, as it does without this look for matchers.
+          prints = 0;
+          expect(flaggedLines(printed({ before: 1, s: same() }), { before: number(), s: same(), printed: 0 })).toEqual(
+            [],
+          );
+          expect(prints).toBe(1);
+          // The second print can have no line that differs either. There is no third one.
+          prints = 0;
+          expect(
+            flaggedLines(printed({ before: 1, s: same(), after: expect.anything() }), {
+              before: number(),
+              s: same(),
+              after: expect.anything(),
+              printed: 0,
+            }),
+          ).toEqual([]);
+          expect(prints).toBe(2);
         });
 
         describe("and to find them", () => {
@@ -5247,6 +5438,33 @@ describe("expect()", () => {
             };
             expect(flaggedLines({ inner: { m: 1 }, a: 1, last: 1 }, pattern)).toEqual(onlyA);
             expect(asked).toBe(1);
+            // Where the comparison stopped inside what the getter gave, the diff goes on there.
+            const stopsInside = {
+              get inner() {
+                return { a: 2, m: expect.any(Number) };
+              },
+              last: expect.any(Number),
+            };
+            expect(flaggedLines({ inner: { a: 1, m: 1 }, last: 1 }, stopsInside)).toEqual([
+              '-     "a": 2,',
+              '+     "a": 1,',
+            ]);
+            // The same in an object of the pattern that stands beside a second received object.
+            const item = {
+              held: expect.any(Number),
+              get inner() {
+                return { a: 2, m: expect.any(Number) };
+              },
+            };
+            expect(
+              flaggedLines(
+                [
+                  { held: 1, inner: { a: 2, m: 1 } },
+                  { held: 1, inner: { a: 1, m: 1 } },
+                ],
+                [item, item],
+              ),
+            ).toEqual(['-       "a": 2,', '+       "a": 1,']);
           });
 
           test("takes each answer of the comparison, also in two objects that it came to through a typed array", () => {
@@ -5482,6 +5700,42 @@ describe("expect()", () => {
               '-     "own": Any<Number>,',
               "-     Any<Number>,",
             ]);
+          });
+
+          test("starts no trap of a Proxy that an array inherits from", () => {
+            let traps = 0;
+            /** A handler that counts each trap that runs. */
+            const counted = new Proxy(
+              {},
+              {
+                get:
+                  (_, trap) =>
+                  (/** @type {any[]} */ ...args) => (traps++, ANY(Reflect)[trap](...args)),
+              },
+            );
+            const below = (/** @type {unknown[]} */ array) =>
+              Object.setPrototypeOf(array, new Proxy(Object.create(Array.prototype), counted));
+            const trapsWith = (/** @type {(held: unknown) => unknown[][]} */ pair, /** @type {unknown} */ held) => {
+              traps = 0;
+              const [received, pattern] = pair(held);
+              const flagged = flaggedLines({ a: 1, list: received }, { a: 2, list: pattern });
+              return { traps, flagged };
+            };
+            // toMatchObject counts the keys that two arrays of one length list, also up their prototypes. The diff takes
+            // that count only where the list starts no trap, and looks inside no other two arrays of one length.
+            for (const pair of [
+              (/** @type {unknown} */ held) => [below([1]), [held]],
+              (/** @type {unknown} */ held) => [[1], below([held])],
+            ]) {
+              // With no matcher that the diff asks, only the two prints start traps.
+              const byThePrints = trapsWith(pair, 1);
+              expect(byThePrints.flagged).toEqual(onlyA);
+              const withAWalk = trapsWith(pair, expect.any(Number));
+              expect(withAWalk).toEqual({
+                traps: byThePrints.traps,
+                flagged: [...onlyA, "-     Any<Number>,", "+     1,"],
+              });
+            }
           });
 
           test("reads the keys of a plain object, a class instance and an array, and of no other kind", () => {
@@ -5923,8 +6177,8 @@ describe("expect()", () => {
                 return 1;
               }
             }
-            // After the first of them, the diff goes through the keys of the received object and not through the keys
-            // of the pattern again. It finds the key of a getter of the class, ...
+            // For each of them the diff goes through the keys at which the object of the pattern holds a matcher. It
+            // finds the key of a getter of the class, ...
             const item = { id: counted() };
             expect(
               flaggedLines(
@@ -5965,6 +6219,76 @@ describe("expect()", () => {
               { a: 2, list: [hidesOne, hidesOne] },
             );
             expect(asked).toBe(2);
+          });
+
+          test("in a time that grows with the two values, and not with the one times the other", () => {
+            const { isASAN, isDebug, withoutAggressiveGC } = require("harness");
+            // A debug build prints so slowly that it hides the look for matchers at a size that is fast to run.
+            // EXPECT_DIFF_COST_SIZE looks further.
+            const size = Number(process.env.EXPECT_DIFF_COST_SIZE ?? (isDebug || isASAN ? 200 : 8000));
+            /** The least processor time of three runs of a failed `assertion`, so that a collection in one does not count. */
+            const timeOf = (/** @type {() => unknown} */ assertion) => {
+              let least = Infinity;
+              for (let run = 0; run < 3; run++) {
+                const before = process.cpuUsage();
+                expect(assertion).toThrow();
+                const used = process.cpuUsage(before);
+                least = Math.min(least, used.user + used.system);
+              }
+              return least;
+            };
+            /** @type {[string, (held: () => unknown) => [object, object]][]} */
+            const shapes = [
+              // A post with many keys whose comments point back at it, beside what a loader with no identity map
+              // gives: a copy of the post for each comment. Each copy stands beside the one post of the pattern.
+              [
+                "copies of a wide parent",
+                held => {
+                  /** @type {Record<string, any>} */
+                  const post = { id: held(), title: "expected", comments: [] };
+                  for (let index = 0; index < size; index++) post["column" + index] = index;
+                  for (let index = 0; index < size; index++) post.comments.push({ id: held(), post });
+                  const comment = () => ({ id: 1, post: { id: 1, title: "expected", comments: [] } });
+                  return [{ id: 1, title: "received", comments: Array.from({ length: size }, comment) }, post];
+                },
+              ],
+              // Each instance stands beside the one item of the pattern, which names one key of it.
+              [
+                "instances of a class with many members",
+                held => {
+                  class Wide {
+                    constructor(/** @type {number} */ id) {
+                      this.id = id;
+                    }
+                  }
+                  for (let index = 0; index < size; index++) ANY(Wide.prototype)["method" + index] = () => {};
+                  const item = { id: held() };
+                  return [
+                    { a: 1, list: Array.from({ length: size }, (_, id) => new Wide(id)) },
+                    { a: 2, list: Array.from({ length: size }, () => item) },
+                  ];
+                },
+              ],
+            ];
+            /** @type {Record<string, number>} */
+            const timesAsLong = {};
+            withoutAggressiveGC(() => {
+              for (const [shape, make] of shapes) {
+                for (const [matcher, assert] of [
+                  ["toMatchObject", (/** @type {[object, object]} */ pair) => expect(pair[0]).toMatchObject(pair[1])],
+                  ["toEqual", (/** @type {[object, object]} */ pair) => expect(pair[0]).toEqual(pair[1])],
+                ]) {
+                  // The same two values with a number in place of each matcher: there the diff looks for no matcher.
+                  const [withMatchers, withNumbers] = [make(() => expect.any(Number)), make(() => 1)];
+                  timesAsLong[`${matcher}, ${shape}`] =
+                    timeOf(() => ANY(assert)(withMatchers)) / timeOf(() => ANY(assert)(withNumbers));
+                }
+              }
+            });
+            // On a release build at 8,000 the call with matchers takes 0.7 to 1.6 times as long. A look that listed the
+            // class again for each instance took 76 times as long.
+            for (const [name, times] of Object.entries(timesAsLong))
+              expect(`${name}: ${times < 5}`).toBe(`${name}: true`);
           });
 
           test("throws the failed match when a getter or a matcher after the mismatch throws", () => {
@@ -6312,6 +6636,90 @@ describe("expect()", () => {
             }
           });
           expect(failed).toBeGreaterThan(10);
+        });
+
+        test("for generated values that match, beside a mismatch, in each comparison", () => {
+          const { pairs, pick } = generate((value, roll) => {
+            if (roll < 0.45) return { same: value };
+            if (roll < 0.5) return { differs: pick([7, "zzz", false]) };
+            if (roll < 0.8) return { matcher: () => askedOf(() => true) };
+            if (roll < 0.9) return { matcher: () => (value === null ? expect.anything() : expect.any(Symbol)) };
+            return { matcher: () => (value === null ? ANY(expect.not).anything() : expect.anything()) };
+          });
+          class List extends Array {}
+          const asATable = (/** @type {unknown[]} */ array) => Object.defineProperty(array, 0, { writable: false });
+          const key = Symbol("key");
+          // What a rule of the diff names, around a generated value and around its pattern.
+          /** @type {((value: any, pattern: any) => [object, object])[]} */
+          const shapes = [
+            (value, pattern) => [{ only: value }, { only: pattern }],
+            (value, pattern) => [[value], [pattern]],
+            (value, pattern) => [List.of(value), [pattern]],
+            (value, pattern) => [Object.assign(List.of(value), { count: 1 }), [pattern]],
+            (value, pattern) => [Object.assign([value], { extra: 1 }), Object.assign([pattern], { extra: 1 })],
+            (value, pattern) => [
+              [value, , 1],
+              [pattern, undefined, 1],
+            ],
+            (value, pattern) => [Object.setPrototypeOf([value], null), [pattern]],
+            (value, pattern) => [asATable([value]), asATable([pattern])],
+            (value, pattern) => [Object.freeze([value]), [pattern]],
+            (value, pattern) => [require("node:vm").runInNewContext("[0]").fill(value), [pattern]],
+            (value, pattern) => [Object.assign(Object.create(null), { only: value }), { only: pattern }],
+            (value, pattern) => [Object.create({ only: value }), { only: pattern }],
+            (value, pattern) => [Object.defineProperty({}, "only", { value }), { only: pattern }],
+            (value, pattern) => [{ [key]: value }, { [key]: pattern }],
+            (value, pattern) => [
+              new (class Holder {
+                get only() {
+                  return value;
+                }
+              })(),
+              { only: pattern },
+            ],
+          ];
+          /** @type {[string, (received: any, pattern: any) => unknown][]} */
+          const comparisons = [
+            ["toMatchObject", (received, pattern) => expect(received).toMatchObject(pattern)],
+            ["toEqual", (received, pattern) => expect(received).toEqual(pattern)],
+            ["toStrictEqual", (received, pattern) => expect(received).toStrictEqual(pattern)],
+          ];
+          const linesOfMatchers = (/** @type {() => unknown} */ assertion) => {
+            try {
+              assertion();
+            } catch (error) {
+              return Bun.stripANSI(ANY(error).message)
+                .split("\n")
+                .filter(line => /^[-+] {3}.*\b(Not)?Any(thing\b|<)/.test(line));
+            }
+            return null;
+          };
+          /** @type {Record<string, number>} */
+          const matched = { toMatchObject: 0, toEqual: 0, toStrictEqual: 0 };
+          const flaggedAMatcher = [];
+          let shape = 0;
+          require("harness").withoutAggressiveGC(() => {
+            for (const [value, patternIn] of pairs()) {
+              const shaped = shapes[shape++ % shapes.length];
+              for (const [name, assert] of comparisons) {
+                // Alone, the comparison looks inside the two values and finds that they match: each matcher passes.
+                if (linesOfMatchers(() => assert(...shaped(value(), patternIn("written")))) !== null) continue;
+                matched[name]++;
+                // So beside a mismatch, before them or after them, the diff shows each of their matchers as passed.
+                for (const first of [true, false]) {
+                  const [received, pattern] = shaped(value(), patternIn("written"));
+                  const lines = linesOfMatchers(() =>
+                    first
+                      ? assert({ wrong: 1, at: received }, { wrong: 2, at: pattern })
+                      : assert({ at: received, wrong: 1 }, { at: pattern, wrong: 2 }),
+                  );
+                  if (lines?.length !== 0) flaggedAMatcher.push([name, shape - 1, first, lines]);
+                }
+              }
+            }
+          });
+          expect(flaggedAMatcher).toEqual([]);
+          for (const count of Object.values(matched)) expect(count).toBeGreaterThan(5);
         });
 
         test("for generated values, starts no function of the user that the comparison did not start", () => {

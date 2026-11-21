@@ -1098,6 +1098,10 @@ describe("expect.addEqualityTesters", () => {
       messageOf(() => expect(received).toMatchObject(expected))
         .split("\n")
         .filter(line => /^[-+] {3}/.test(line));
+    const flaggedByToEqual = (received: object, expected: object) =>
+      messageOf(() => expect(received).toEqual(expected))
+        .split("\n")
+        .filter(line => /^[-+] {3}/.test(line));
     class Part {
       constructor(public id: unknown) {}
     }
@@ -1177,16 +1181,49 @@ describe("expect.addEqualityTesters", () => {
       // Here the comparison stopped before the two volumes, and asked no tester about them. The diff asks none
       // either, and shows what their matcher says.
       expect(flaggedLines({ a: 1, v: volume() }, { a: 2, v: withMatcher() })).toEqual(['-   "a": 2,', '+   "a": 1,']);
+      // Two levels down, and with a matcher that passed inside two other volumes before.
+      expect(
+        flaggedLines(
+          { first: new Volume(1, "L"), deep: { v: volume() }, z: 1 },
+          { first: new Volume(1, "L"), deep: { v: withMatcher() }, z: expect.any(Number) },
+        ),
+      ).toEqual(['-       "amount": Any<Number>,', '+       "amount": 1,']);
 
-      // toEqual asks the same testers, and its diff shows no matcher as passed in the two volumes either.
-      const flaggedByToEqual = (received: object, expected: object) =>
-        messageOf(() => expect(received).toEqual(expected))
-          .split("\n")
-          .filter(line => /^[-+] {3}/.test(line));
-      expect(flaggedByToEqual({ a: 1, v: volume() }, { a: expect.any(Number), v: withMatcher() })).toEqual(amount);
-      expect(flaggedByToEqual({ v: volume(), z: 1 }, { v: withMatcher(), z: expect.any(Number) })).toEqual(amount);
-      // Here toEqual stopped at the key that the pattern does not name, before it came to the two volumes.
+      // toEqual asks the same testers, and keeps no record of where it ended: its diff shows the matcher in the two
+      // volumes as passed. Where that leaves no line that differs, the diff prints with no matcher as passed.
+      expect(flaggedByToEqual({ a: 1, v: volume() }, { a: expect.any(Number), v: withMatcher() })).toEqual([
+        '-   "a": Any<Number>,',
+        '+   "a": 1,',
+        ...amount,
+      ]);
+      expect(flaggedByToEqual(volume(), withMatcher())).toEqual(['-   "amount": Any<Number>,', '+   "amount": 1,']);
+      // Beside a line that differs for another reason, it does not show the two volumes as a cause.
       expect(flaggedByToEqual({ more: 1, v: volume() }, { v: withMatcher() })).toEqual(['+   "more": 1,']);
+    });
+
+    test("is the same for the same two values, whatever an earlier assertion compared", () => {
+      class Sealed {
+        constructor(
+          public n: unknown,
+          seal: number,
+        ) {
+          Object.defineProperty(this, "seal", { value: seal });
+        }
+      }
+      expect.addEqualityTesters([
+        (a, b) => (a instanceof Sealed && b instanceof Sealed ? (a as any).seal === (b as any).seal : undefined),
+      ]);
+      const inner = new Sealed(5, 1);
+      const innerPattern = new Sealed(expect.any(Number), 2);
+      const received = { wrong: "x", inner };
+      const pattern = { wrong: "WRONG", inner: innerPattern };
+      const onlyWrong = ['-   "wrong": "WRONG",', '+   "wrong": "x",'];
+      expect(flaggedLines(received, pattern)).toEqual(onlyWrong);
+      // This assertion passes: the tester says no to the two inner values.
+      expect(inner).not.toEqual(innerPattern);
+      expect(flaggedLines(received, pattern)).toEqual(onlyWrong);
+      expect(flaggedLines(received, pattern)).toEqual(onlyWrong);
+      expect(flaggedByToEqual(received, pattern)).toEqual(onlyWrong);
     });
   });
 

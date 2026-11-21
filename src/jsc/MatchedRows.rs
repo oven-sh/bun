@@ -16,7 +16,7 @@ impl MatchedRows {
         self.0.is_empty()
     }
 
-    /// The rows for the diff of two values that a comparison with no records (`toEqual` and the like) found unequal: the matchers in `expected` that pass. Asks those, so it enters JavaScript.
+    /// The rows for the diff of two values that `toEqual` or the like found unequal: the matchers in `expected` that pass. Enters JavaScript.
     pub fn of_failed_equals(
         global: &JSGlobalObject,
         received: JSValue,
@@ -29,12 +29,13 @@ impl MatchedRows {
         Ok(rows)
     }
 
-    /// The rows of the comparison alone, without the ones that the walk for a diff added after the first mismatch. Empty if that walk added none of the rows, or all of them.
-    pub fn of_comparison_alone(self) -> Self {
+    /// The rows that the comparison made, without the ones that the walk for the diff added. `None` if that walk added no row.
+    pub fn of_comparison_alone(self) -> Option<Self> {
         if self.is_empty() {
-            return self;
+            return None;
         }
-        Self(crate::cpp::Bun__JestMatchedRows__ofComparisonAlone(self.0))
+        let alone = crate::cpp::Bun__JestMatchedRows__ofComparisonAlone(self.0);
+        (alone != self.0).then_some(Self(alone))
     }
 
     /// The place of the object that was matched. None if there are no rows.

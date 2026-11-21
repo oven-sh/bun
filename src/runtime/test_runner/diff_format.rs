@@ -24,7 +24,7 @@ impl<'a> DiffFormatter<'a> {
         received: JSValue,
         expected: JSValue,
         not: bool,
-        mut rows: MatchedRows,
+        rows: MatchedRows,
     ) -> JsResult<DiffFormatter<'static>> {
         let fmt_options = FormatOptions {
             enable_colors: false,
@@ -52,9 +52,10 @@ impl<'a> DiffFormatter<'a> {
             fmt_options,
             MatchedRows::default(),
         )?;
-        // The diff of a match that failed has a line that differs. If the rows take every such line away, the received value prints with the rows of the comparison alone, and then with none.
-        while !rows.is_empty() && received_buf == expected_buf {
-            rows = rows.of_comparison_alone();
+        // The rows that the walk for the diff added must not take the last line that differs out of it. Where they do, the received value prints without them.
+        if received_buf == expected_buf
+            && let Some(of_comparison) = rows.of_comparison_alone()
+        {
             received_buf.clear();
             JestPrettyFormat::format(
                 MessageLevel::Debug,
@@ -63,7 +64,7 @@ impl<'a> DiffFormatter<'a> {
                 1,
                 &mut received_buf,
                 fmt_options,
-                rows,
+                of_comparison,
             )?;
         }
         Ok(DiffFormatter {

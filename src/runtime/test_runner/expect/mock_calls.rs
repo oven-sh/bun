@@ -2,7 +2,7 @@ use core::fmt;
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::cpp::JSMockFunction__getCalls as calls_of;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, js_error_to_write_error};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, MatchedRows, js_error_to_write_error};
 
 use super::Expect;
 use super::matcher::{EXPECTED, Matcher, NO_PARAMS, Params, This, Verdict, fail, params};
@@ -245,7 +245,8 @@ impl Expect {
                 fail!(m, "Expected call #{} not to be with: <green>{}<r>\nBut it was.", nth, m.show(expected))
             }
             Some(call) => {
-                let diff = DiffFormatter::new(global, call, expected, false)?;
+                let rows = MatchedRows::of_failed_equals(global, call, expected)?;
+                let diff = DiffFormatter::with_matched_rows(global, call, expected, false, rows)?;
                 Err(m.fail(format_args!("Call #{nth}:\n{diff}\n")))
             }
             None => mock::fail_called_less(&m, count, nth, ""),

@@ -363,6 +363,25 @@ impl Expect {
         false
     }
 
+    /// Called by C++ (`diffMayAsk`): whether `value` is of a kind that the diff of a failed match asks, and not of `expect.resolvesTo` or `expect.rejectsTo`, which read a promise.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect__diffMayAskMatcher(value: JSValue) -> bool {
+        let flags = if let Some(matcher) = value.as_class_ref::<ExpectAny>() {
+            matcher.flags
+        } else if let Some(matcher) = value.as_class_ref::<ExpectAnything>() {
+            matcher.flags
+        } else if let Some(matcher) = value.as_class_ref::<ExpectStringContaining>() {
+            matcher.flags
+        } else if let Some(matcher) = value.as_class_ref::<ExpectStringMatching>() {
+            matcher.flags
+        } else if let Some(matcher) = value.as_class_ref::<ExpectCloseTo>() {
+            matcher.flags
+        } else {
+            return false;
+        };
+        flags.promise() == Promise::None
+    }
+
     /// Called by C++ when matching with asymmetric matchers
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Expect_readFlagsAndProcessPromise(
@@ -2278,7 +2297,8 @@ impl ExpectMatcherUtils {
         }
 
         if expected_type != "string" {
-            return Self::diff_text(global_this, &DiffFormatter::new(global_this, received, expected, false)?);
+            let diff = DiffFormatter::with_matched_rows(global_this, received, expected, false, MatchedRows::default())?;
+            return Self::diff_text(global_this, &diff);
         }
         let (expected, received) = (expected.to_bun_string(global_this)?, received.to_bun_string(global_this)?);
         let (expected, received) = (expected.to_utf8(), received.to_utf8());
@@ -2462,7 +2482,7 @@ unsafe extern "C" {
 }
 
 // Exports: handled by #[unsafe(no_mangle)] on:
-//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute
+//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute, Expect__diffMayAskMatcher
 
 #[cfg(test)]
 mod tests {

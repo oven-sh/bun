@@ -16,6 +16,28 @@ impl MatchedRows {
         self.0.is_empty()
     }
 
+    /// The rows for the diff of two values that `toEqual` or the like found unequal: the matchers in `expected` that pass. Enters JavaScript.
+    pub fn of_failed_equals(
+        global: &JSGlobalObject,
+        received: JSValue,
+        expected: JSValue,
+    ) -> JsResult<Self> {
+        let mut rows = Self::default();
+        crate::host_fn::from_js_host_call_generic(global, || {
+            Bun__JestMatchedRows__ofFailedEquals(global, received, expected, &mut rows)
+        })?;
+        Ok(rows)
+    }
+
+    /// The rows that the comparison made, without the ones that the walk for the diff added. `None` if that walk added no row.
+    pub fn of_comparison_alone(self) -> Option<Self> {
+        if self.is_empty() {
+            return None;
+        }
+        let alone = crate::cpp::Bun__JestMatchedRows__ofComparisonAlone(self.0);
+        (alone != self.0).then_some(Self(alone))
+    }
+
     /// The place of the object that was matched. None if there are no rows.
     pub fn root(self) -> MatchedPlace {
         if self.is_empty() {
@@ -229,4 +251,11 @@ unsafe extern "C" {
         index: u32,
         child: &mut PlaceHandle,
     ) -> JSValue;
+    // safe: C++ writes `rows` only during the call. It enters JS, so the caller checks for an exception.
+    safe fn Bun__JestMatchedRows__ofFailedEquals(
+        global: &JSGlobalObject,
+        received: JSValue,
+        expected: JSValue,
+        rows: &mut MatchedRows,
+    );
 }

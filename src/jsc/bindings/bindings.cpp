@@ -694,6 +694,18 @@ static NEVER_INLINE std::optional<bool> runEqualityTesters(JSGlobalObject* globa
     return verdict != 0;
 }
 
+// runEqualityTesters() for two objects that toMatchObject() is about to look inside. A no leaves the record that DeepMatchState::endedAtRefusedPair() reads.
+static NEVER_INLINE std::optional<bool> runEqualityTestersOfPair(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue value, JSValue pattern)
+{
+    int8_t verdict = Expect__runEqualityTesters(globalObject, JSValue::encode(value), JSValue::encode(pattern));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (verdict < 0)
+        return std::nullopt;
+    if (!verdict) [[unlikely]]
+        state.recordIfAsked(asObject(value), asObject(pattern), globalObject->vm().propertyNames->emptyIdentifier, pattern, pattern);
+    return verdict != 0;
+}
+
 // Rules out most objects without a property lookup.
 static ALWAYS_INLINE bool mayHaveAsymmetricMatchMethod(JSGlobalObject* globalObject, JSValue value)
 {
@@ -885,6 +897,23 @@ static NEVER_INLINE std::optional<bool> domNodesDequal(JSGlobalObject* globalObj
     JSValue result = JSC::call(globalObject, isEqualNode, JSC::getCallData(isEqualNode), o1, arguments);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     return result.toBoolean(globalObject);
+}
+
+namespace Bun {
+bool oneAnswersByAsymmetricMatch(JSGlobalObject* globalObject, JSValue a, JSValue b)
+{
+    DisallowVMEntry noUserCode(globalObject->vm());
+    return oneMayHaveAsymmetricMatchMethod(globalObject, a, b) && !asymmetricMatchMethod(globalObject, a) != !asymmetricMatchMethod(globalObject, b);
+}
+
+std::optional<bool> askMatcherOfDiff(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* matcher, JSValue value)
+{
+    if (!diffMayAsk(matcher))
+        return std::nullopt;
+    auto result = matchAsymmetricMatcher(globalObject, matcher, value, scope);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    return result == AsymmetricMatcherResult::PASS;
+}
 }
 
 JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)
@@ -2561,6 +2590,42 @@ static bool matchesPrivateFieldOfCompiledClass(JSGlobalObject* globalObject, Thr
 }
 #endif
 
+// The walk for the diff must not ask a matcher again that said no: the comparison records it beside itself, which makes no row.
+static COLD NEVER_INLINE void recordMatcherThatSaidNo(Bun::DeepMatchState& state, JSObject* holder, JSObject* pattern, const Identifier& name, JSValue matcher)
+{
+    state.recordIfAsked(holder, pattern, name, matcher, matcher);
+}
+
+// Whether two arrays have as many keys as toMatchObject() counts them: what each lists up its prototypes, and its private fields. False also with an exception pending.
+static ALWAYS_INLINE bool arraysHaveAsManyKeys(JSGlobalObject* globalObject, ThrowScope& throwScope, VM& vm, JSObject* obj, JSObject* subsetObj, const PropertyNameArrayBuilder& subsetProps)
+{
+    PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    size_t objCount = objProps.size();
+    size_t subsetCount = subsetProps.size();
+#if ENABLE(AOT)
+    if (vm.aotState().someClassHasPrivateNames) [[unlikely]] {
+        objCount += JSC::AOT::PropertyWalk::countPrivateFieldsOfCompiledClasses(globalObject, obj);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        subsetCount += JSC::AOT::PropertyWalk::countPrivateFieldsOfCompiledClasses(globalObject, subsetObj);
+        RETURN_IF_EXCEPTION(throwScope, false);
+    }
+#endif
+    return objCount == subsetCount;
+}
+
+namespace Bun {
+bool arraysHaveAsManyKeysForMatch(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* obj, JSObject* subsetObj)
+{
+    VM& vm = globalObject->vm();
+    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, false);
+    return arraysHaveAsManyKeys(globalObject, scope, vm, obj, subsetObj, subsetProps);
+}
+}
+
 template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSValue objValue,
@@ -2583,7 +2648,7 @@ bool Bun__deepMatch(
     if constexpr (enableAsymmetricMatchers) {
         // expect.objectContaining()'s argument is a pattern, so the testers don't see it.
         if (!isMatchingObjectContaining && hasEqualityTesters(globalObject)) [[unlikely]] {
-            if (auto verdict = runEqualityTesters(globalObject, throwScope, objValue, subsetValue))
+            if (auto verdict = runEqualityTestersOfPair(globalObject, throwScope, state, objValue, subsetValue))
                 return *verdict;
         }
     }
@@ -2620,22 +2685,8 @@ bool Bun__deepMatch(
         if (obj->getArrayLength() != subsetObj->getArrayLength()) {
             return false;
         }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-        obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(throwScope, false);
-        size_t objCount = objProps.size();
-        size_t subsetCount = subsetProps.size();
-#if ENABLE(AOT)
-        if (vm.aotState().someClassHasPrivateNames) [[unlikely]] {
-            objCount += JSC::AOT::PropertyWalk::countPrivateFieldsOfCompiledClasses(globalObject, obj);
-            RETURN_IF_EXCEPTION(throwScope, false);
-            subsetCount += JSC::AOT::PropertyWalk::countPrivateFieldsOfCompiledClasses(globalObject, subsetObj);
-            RETURN_IF_EXCEPTION(throwScope, false);
-        }
-#endif
-        if (objCount != subsetCount) {
+        if (!arraysHaveAsManyKeys(globalObject, throwScope, vm, obj, subsetObj, subsetProps))
             return false;
-        }
     }
 
     for (const auto& property : subsetProps) {
@@ -2655,6 +2706,8 @@ bool Bun__deepMatch(
             if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
                 switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
+                    if (state.records) [[unlikely]]
+                        recordMatcherThatSaidNo(state, obj, subsetObj, property, subsetProp);
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
@@ -3663,7 +3716,15 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
     RETURN_IF_EXCEPTION(scope, false);
     if (rows) {
-        *rows = JSValue::encode(matched == rowsWhen ? Bun::matchedRowsFrom(globalObject, state, obj, subset) : JSValue());
+        JSValue matchedRows;
+        if (matched == rowsWhen) {
+            // A comparison that failed gets the rows for its diff.
+            if (rowsWhen) [[likely]]
+                matchedRows = Bun::matchedRowsFrom(globalObject, state, obj, subset);
+            else
+                matchedRows = Bun::matchedRowsOfFailedMatch(globalObject, state, obj, subset);
+        }
+        *rows = JSValue::encode(matchedRows);
         RETURN_IF_EXCEPTION(scope, false);
     }
     return matched;

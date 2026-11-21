@@ -527,6 +527,25 @@ struct DeepMatchState {
         recorded.append(patternOfValue);
         recordedNames.append(name);
     }
+
+    // The four values of a record, in the order that recordIfAsked appends them.
+    enum RecordedValue : unsigned {
+        Holder,
+        PatternOfHolder,
+        Value,
+        PatternOfValue,
+    };
+    JSC::JSValue recordedAt(unsigned record, RecordedValue which) { return recorded.at(record * 4 + which); }
+
+    // Whether toMatchObject() ended at two values that the equality testers refused: its last record is then their pattern beside itself, at no name.
+    bool endedAtRefusedPair()
+    {
+        unsigned records = recordedNames.size();
+        if (!records || !recordedNames[records - 1].isEmpty())
+            return false;
+        JSC::JSValue pattern = recordedAt(records - 1, PatternOfHolder);
+        return recordedAt(records - 1, Value) == pattern && recordedAt(records - 1, PatternOfValue) == pattern;
+    }
 };
 
 // JestMatchedRows.cpp. A place is an object together with the pattern it was compared with. 0 is no place and 1 is the root.
@@ -537,6 +556,16 @@ struct MatchedRow {
 JSC::Structure* createMatchedRowsStructure(JSC::VM&, JSC::JSGlobalObject*);
 // The rows cell for what `state` recorded (one cell per call), or empty if the root gets no row. Takes the names out of `state`. Enters no JavaScript.
 JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject*, DeepMatchState&, JSC::JSValue root, JSC::JSValue rootPattern);
+// The same for a comparison that failed, plus the matchers that pass after the first mismatch. It asks those, so it enters JavaScript. `ofDeepEquals`: the comparison was Bun__deepEquals.
+JSC::JSValue matchedRowsOfFailedMatch(JSC::JSGlobalObject*, DeepMatchState& comparison, JSC::JSValue root, JSC::JSValue rootPattern, bool ofDeepEquals = false);
+// Whether that walk may ask `matcher`. Runs no user code.
+bool diffMayAsk(JSC::JSObject* matcher);
+// bindings.cpp. The answer of a matcher that diffMayAsk() admits, and nothing for any other: the walk has no other way to a matcher.
+std::optional<bool> askMatcherOfDiff(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* matcher, JSC::JSValue value);
+// bindings.cpp. Whether the comparison hands these two values to an asymmetricMatch() method of one of them, and does not look inside.
+bool oneAnswersByAsymmetricMatch(JSC::JSGlobalObject*, JSC::JSValue, JSC::JSValue);
+// bindings.cpp. Whether two arrays of one length have as many keys as toMatchObject() counts them. It lists the keys of both up their prototypes.
+bool arraysHaveAsManyKeysForMatch(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject*, JSC::JSObject*);
 // `value` is empty if the place has no row of that name or index: the printer then reads the property from the object.
 MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, JSC::PropertyName);
 MatchedRow matchedRowAtIndex(JSC::JSCell* rows, uint32_t place, uint32_t index);

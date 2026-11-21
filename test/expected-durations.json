@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/the-diff-of-a-failed-match-finds-the-members-of-a-class-at-the-first-look.test.ts": {
+    "default": 2000,
+    "asan": 8000
+  },
   "aot/an-import-in-a-text-calls-the-replaced-eval.test.ts": {
     "default": 6200,
     "asan": 24800

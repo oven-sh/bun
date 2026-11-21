@@ -8,7 +8,7 @@ use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
 /// Renders a Jest-style diff of two already-formatted values. Formatting a JS value runs user code
-/// (getters, Proxy traps) and can throw, so it happens up front in [`DiffFormatter::new`], never
+/// (getters, Proxy traps) and can throw, so it happens up front in [`DiffFormatter::with_matched_rows`], never
 /// inside `Display::fmt`.
 pub(crate) struct DiffFormatter<'a> {
     pub(crate) received_string: Cow<'a, [u8]>,
@@ -17,17 +17,7 @@ pub(crate) struct DiffFormatter<'a> {
 }
 
 impl<'a> DiffFormatter<'a> {
-    #[optimize(size)]
-    pub(crate) fn new(
-        global_this: &JSGlobalObject,
-        received: JSValue,
-        expected: JSValue,
-        not: bool,
-    ) -> JsResult<DiffFormatter<'static>> {
-        Self::with_matched_rows(global_this, received, expected, not, MatchedRows::default())
-    }
-
-    /// Like [`DiffFormatter::new`], but `received` prints the matchers in `rows` in place of what they matched.
+    /// `received` prints the matchers in `rows` in place of what they matched. A caller with no rows says so: `MatchedRows::default()`.
     #[optimize(size)]
     pub(crate) fn with_matched_rows(
         global_this: &JSGlobalObject,
@@ -62,6 +52,21 @@ impl<'a> DiffFormatter<'a> {
             fmt_options,
             MatchedRows::default(),
         )?;
+        // The rows that the walk for the diff added must not take the last line that differs out of it. Where they do, the received value prints without them.
+        if received_buf == expected_buf
+            && let Some(of_comparison) = rows.of_comparison_alone()
+        {
+            received_buf.clear();
+            JestPrettyFormat::format(
+                MessageLevel::Debug,
+                global_this,
+                core::slice::from_ref(&received),
+                1,
+                &mut received_buf,
+                fmt_options,
+                of_comparison,
+            )?;
+        }
         Ok(DiffFormatter {
             received_string: Cow::Owned(trim_one_newline(received_buf)),
             expected_string: Cow::Owned(trim_one_newline(expected_buf)),

@@ -1,7 +1,7 @@
 use core::fmt;
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{BuiltinName, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, js_error_to_write_error};
+use bun_jsc::{BuiltinName, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, MatchedRows, js_error_to_write_error};
 
 use super::Expect;
 use super::matcher::{EXPECTED, Matcher, NO_PARAMS, Params, This, Verdict, fail, params};
@@ -174,7 +174,7 @@ fn has_values(m: &Matcher<'_>, mock: JSValue, kind: Kind, times: Times, argument
 #[optimize(size)]
 fn fail_mismatch(m: &Matcher<'_>, label: fmt::Arguments<'_>, expected: JSValue, received: JSValue) -> Verdict {
     if expected.is_string() && received.is_string() {
-        let diff = DiffFormatter::new(m.global, received, expected, false)?;
+        let diff = DiffFormatter::with_matched_rows(m.global, received, expected, false, MatchedRows::default())?;
         return Err(m.fail(format_args!("{label}{diff}\n")));
     }
     fail!(m, "{}Expected: <green>{}<r>\nReceived: <red>{}<r>", label, m.show(expected), m.show(received))

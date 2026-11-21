@@ -3823,7 +3823,7 @@ fn transpile_file<const DATA_ONLY: bool>(
             .module_loader
             .eval_source
             .get()
-            .is_some_and(|eval| core::ptr::eq(&**eval, source))
+            .is_some_and(|eval| core::ptr::eq(&raw const **eval, source))
     }) {
         jsc_vm.module_loader.eval_input_type.get().module_type()
     } else {

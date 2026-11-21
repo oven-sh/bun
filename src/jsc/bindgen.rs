@@ -17,6 +17,9 @@ use crate::{
 
 #[path = "bindgen/extern_types.rs"]
 pub mod extern_types;
+#[path = "bindgen/reg_exp.rs"]
+mod reg_exp;
+pub use reg_exp::{Captures, JsRegExp};
 
 /// Makes `'a` invariant, so two calls' lifetimes never unify.
 type InvariantLifetime<'a> = PhantomData<fn(&'a ()) -> &'a ()>;
@@ -84,6 +87,12 @@ impl<'a> JsHeap<'a> {
             .report_extra_memory_allocated(owner.0, size);
     }
 
+    /// For a loop that can take long. `Err` once a timeout or `worker.terminate()` asks the script to stop.
+    #[inline]
+    pub fn check_termination(&self) -> Result<'a, ()> {
+        crate::call_check_slow(self.global_object(), || ()).map_err(Error::pending)
+    }
+
     /// An array of what `convert`, a function of [`to_js`], makes of each item.
     #[inline]
     pub fn create_array<I: IntoIterator>(
@@ -144,6 +153,29 @@ impl<'a> JsHeap<'a> {
             .ok_or_else(|| self.memory_allocation_failed())
     }
 
+    #[inline]
+    pub fn create_string(&self, string: bun_core::String) -> Result<'a, JsLocal<'a, JSString>> {
+        JsLocal::from_js_result(crate::StringJsc::into_js(string, self.global_object()))
+    }
+
+    /// A string with a copy of `text`.
+    #[inline]
+    pub fn try_create_string(
+        &self,
+        text: bun_core::EncodedSlice<'_>,
+    ) -> core::result::Result<JsLocal<'a, JSString>, bun_alloc::AllocError> {
+        if !text.is_16bit() && !text.is_utf8() && text.len <= JSString::MAX_LENGTH {
+            return self
+                .try_copy_latin1(text.slice())
+                .ok_or(bun_alloc::AllocError);
+        }
+        let string = extern_types::Bun__Bindgen__tryCopyString(self.global_object(), &text);
+        if string.is_empty() {
+            return Err(bun_alloc::AllocError);
+        }
+        Ok(JsLocal::from_raw(string))
+    }
+
     /// At most [`JSString::MAX_LENGTH`] characters. `None` when they cannot be allocated.
     #[inline]
     fn try_copy_latin1(&self, latin1: &[u8]) -> Option<JsLocal<'a, JSString>> {
@@ -194,6 +226,25 @@ impl<'a> JsHeap<'a> {
     #[inline]
     pub fn create_empty_object(&self) -> JsLocal<'a, JSObject> {
         JsLocal::from_raw(JSValue::create_empty_object(self.global_object(), 0))
+    }
+
+    /// An object with these properties. A key that comes again keeps its place and takes the new value.
+    #[inline]
+    pub fn create_object<'key>(
+        &self,
+        properties: impl IntoIterator<Item = Result<'a, (PropertyKey<'key>, JsLocal<'a>)>>,
+    ) -> Result<'a, JsLocal<'a, JSObject>> {
+        let global = self.global_object();
+        let object = self.create_empty_object();
+        for property in properties {
+            match property? {
+                (PropertyKey::Index(index), value) => object.0.put_index(global, index, value.0)?,
+                (PropertyKey::Name(name), value) => {
+                    object.0.put_may_be_index(global, name, value.0)?
+                }
+            }
+        }
+        Ok(object)
     }
 
     /// A `Uint8Array` whose bytes are whatever the allocator left there.
@@ -279,6 +330,13 @@ impl<'a> JsHeap<'a> {
     pub fn memory_allocation_failed(&self) -> Error<'a> {
         Error::unthrown(self.global_object().create_memory_allocation_failed_error())
     }
+}
+
+/// For [`JsHeap::create_object`].
+#[derive(Clone, Copy)]
+pub enum PropertyKey<'key> {
+    Index(u32),
+    Name(&'key bun_core::String),
 }
 
 impl<'a> JsScope<'a> {
@@ -1104,6 +1162,13 @@ impl<'a, T> JsWrapper<'a, T> {
     pub fn to_js(self) -> JSValue {
         JSValue::from_cell(self.0.as_ptr())
     }
+
+    /// `heap`, to allocate with the global object of the wrapper's class. The function that was called can be another realm's.
+    #[inline]
+    pub fn realm<'heap>(self, _: &'heap JsHeap<'a>) -> &'heap JsHeap<'a> {
+        // SAFETY: a `JsHeap` is a global object, and every structure that the cell takes holds this one.
+        unsafe { &*extern_types::Bun__Bindgen__globalObjectOf(self.0.as_ptr()).cast() }
+    }
 }
 
 impl<'a, T: JsPayload> JsWrapper<'a, T> {
@@ -1295,7 +1360,7 @@ pub mod to_js {
 
     #[inline]
     pub fn string<'a>(heap: &JsHeap<'a>, value: bun_core::String) -> Result<'a, JsLocal<'a>> {
-        JsLocal::from_js_result(crate::StringJsc::into_js(value, heap.global_object()))
+        heap.create_string(value).map(JsLocal::as_value)
     }
 
     #[inline]

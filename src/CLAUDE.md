@@ -245,7 +245,7 @@ and the narrow (`u8`) variant on POSIX.
 ## URL Parsing (`bun_url::whatwg`)
 
 WHATWG-compliant, backed by WebKit's URL parser. `Parsed` owns the C++
-`WTF::URL` (freed on `Drop`) and derefs to `URL` for the getters; parsing
+`WTF::URL` (released on `Drop`) and derefs to `URL` for the getters; parsing
 returns `None` for invalid input. `bun_jsc::url` re-exports both; the
 JS-value entry point (`URL::href_from_js`) comes from the `bun_jsc::URLJsc`
 trait.
@@ -255,9 +255,9 @@ use bun_url::whatwg::Parsed;
 
 let url: Parsed = Parsed::from_utf8(href)?;       // or Parsed::from_string(&bun_string)?
 
-url.protocol()   // bun_core::String
-url.pathname()   // bun_core::String
-url.host()       // bun_core::String — the hostname WITHOUT the port (opposite of JS `host`!)
+url.protocol()   // EncodedSlice<'_>, borrowed from `url`
+url.pathname()   // EncodedSlice<'_>
+url.host()       // EncodedSlice<'_> — the hostname WITHOUT the port (opposite of JS `host`!)
 url.hostname()   // bun_core::String — the host WITH the port (opposite of JS `hostname`!)
 url.port()       // u32 (u32::MAX = unset; otherwise u16 range)
 ```

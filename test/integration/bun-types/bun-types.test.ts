@@ -373,6 +373,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "TextDecoder.bind.ts": "{ TextDecoder: typeof TextDecoder }",
   "Timer.bind.ts": null,
   "Transpiler.bind.ts": "typeof Bun",
+  "URLPattern.bind.ts": '{ URLPattern: typeof import("node:url").URLPattern }',
   "UnsafeObject.bind.ts": "typeof Bun.unsafe",
   "UpgradedDuplex.bind.ts": null,
   "XMLObject.bind.ts": "typeof Bun.XML",

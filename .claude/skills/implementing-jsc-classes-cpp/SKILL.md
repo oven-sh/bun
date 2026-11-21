@@ -1,9 +1,11 @@
 ---
 name: implementing-jsc-classes-cpp
-description: Implements JavaScript classes in C++ using JavaScriptCore. Use when creating new JS classes with C++ bindings, prototypes, or constructors.
+description: How the JavaScript classes that are written by hand in C++ are built. Use when changing one of them. For a new class use implementing-jsc-classes-rust.
 ---
 
 # Implementing JavaScript Classes in C++
+
+A new class is written in Rust, with the bindings generator: see the `implementing-jsc-classes-rust` skill. This is for the classes that are still C++.
 
 ## Class Structure
 

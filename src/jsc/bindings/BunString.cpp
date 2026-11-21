@@ -661,32 +661,85 @@ extern "C" BunString URL__getHrefJoin(const BunString* baseStr, const BunString*
     return Bun::toStringRef(url.string()).leak();
 }
 
-extern "C" BunString URL__fragmentIdentifier(WTF::URL* url)
-{
-    const auto& fragment = url->fragmentIdentifier().isEmpty()
-        ? emptyString()
-        : url->fragmentIdentifier().toString();
-    return Bun::toStringRef(fragment).leak();
-}
+// `whatwg::URL` in src/url/lib.rs is the storage.
+static_assert(sizeof(WTF::URL) == 40 && alignof(WTF::URL) == 8);
 
-extern "C" WTF::URL* URL__fromString(const BunString* input)
+// Leaves a URL in `storage` exactly when it returns true.
+extern "C" bool URL__fromString(void* storage, const BunString* input, const WTF::URL* base)
 {
-    auto&& str = input->toWTFString();
-    auto url = WTF::URL(str);
-    if (!url.isValid())
-        return nullptr;
-
-    return new WTF::URL(WTF::move(url));
-}
-
-extern "C" BunString URL__protocol(WTF::URL* url)
-{
-    return Bun::toStringRef(url->protocol().toString()).leak();
+    auto string = input->toWTFString();
+    auto* url = base
+        ? new (NotNull, storage) WTF::URL(*base, string.isNull() ? emptyString() : string)
+        : new (NotNull, storage) WTF::URL(WTF::move(string));
+    if (url->isValid())
+        return true;
+    url->~URL();
+    return false;
 }
 
 extern "C" void URL__deinit(WTF::URL* url)
 {
-    delete url;
+    url->~URL();
+}
+
+extern "C" EncodedSlice URL__protocol(const WTF::URL* url)
+{
+    return Zig::toEncodedSlice(url->protocol());
+}
+
+extern "C" EncodedSlice URL__encodedUsername(const WTF::URL* url)
+{
+    return Zig::toEncodedSlice(url->encodedUser());
+}
+
+extern "C" EncodedSlice URL__encodedPassword(const WTF::URL* url)
+{
+    return Zig::toEncodedSlice(url->encodedPassword());
+}
+
+extern "C" EncodedSlice URL__query(const WTF::URL* url)
+{
+    return Zig::toEncodedSlice(url->query());
+}
+
+extern "C" EncodedSlice URL__fragmentIdentifier(const WTF::URL* url)
+{
+    return Zig::toEncodedSlice(url->fragmentIdentifier());
+}
+
+extern "C" bool URL__hasOpaquePath(const WTF::URL* url)
+{
+    return url->hasOpaquePath();
+}
+
+extern "C" void URL__setUsername(WTF::URL* url, const EncodedSlice* value)
+{
+    url->setUser(Zig::toStringView(*value));
+}
+
+extern "C" void URL__setPassword(WTF::URL* url, const EncodedSlice* value)
+{
+    url->setPassword(Zig::toStringView(*value));
+}
+
+extern "C" bool URL__setHost(WTF::URL* url, const EncodedSlice* value)
+{
+    return url->setHost(Zig::toStringView(*value));
+}
+
+extern "C" void URL__setPathname(WTF::URL* url, const EncodedSlice* value)
+{
+    url->setPath(Zig::toStringView(*value));
+}
+
+extern "C" void URL__setQuery(WTF::URL* url, const EncodedSlice* value)
+{
+    url->setQuery(Zig::toStringView(*value));
+}
+
+extern "C" void URL__setFragmentIdentifier(WTF::URL* url, const EncodedSlice* value)
+{
+    url->setFragmentIdentifier(Zig::toStringView(*value));
 }
 
 extern "C" BunString URL__href(WTF::URL* url)
@@ -711,9 +764,9 @@ extern "C" BunString URL__password(WTF::URL* url)
 /// ```
 /// URL("http://example.com:8080").host() => "example.com"
 /// ```
-extern "C" BunString URL__host(WTF::URL* url)
+extern "C" EncodedSlice URL__host(const WTF::URL* url)
 {
-    return Bun::toStringRef(url->host().toString()).leak();
+    return Zig::toEncodedSlice(url->host());
 }
 
 /// Returns the host WITH the port.
@@ -739,9 +792,9 @@ extern "C" uint32_t URL__port(WTF::URL* url)
     return std::numeric_limits<uint32_t>::max();
 }
 
-extern "C" BunString URL__pathname(WTF::URL* url)
+extern "C" EncodedSlice URL__pathname(const WTF::URL* url)
 {
-    return Bun::toStringRef(url->path().toString()).leak();
+    return Zig::toEncodedSlice(url->path());
 }
 
 WTF::String BunString::toWTFString() const

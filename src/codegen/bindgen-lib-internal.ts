@@ -104,6 +104,7 @@ export type ValueKind =
   | "number"
   | "bigint"
   | "string"
+  | "symbol"
   | "stringObject"
   | "array"
   | "arrayBuffer"
@@ -133,6 +134,7 @@ export const kindTests: Record<
   number: { ofValue: value => `${value}.isNumber()` },
   bigint: { ofCell: "cell->isHeapBigInt()" },
   string: { ofCell: "cell->isString()" },
+  symbol: { ofCell: "cell->isSymbol()" },
   stringObject: { ofCell: "cell->inherits<JSC::StringObject>()" },
   array: { ofCell: "cell->inherits<JSC::JSArray>()" },
   arrayBuffer: { ofCell: "cell->inherits<JSC::JSArrayBuffer>()" },
@@ -140,7 +142,15 @@ export const kindTests: Record<
   callable: { ofCell: "cell->isCallable()" },
 };
 
-const primitiveKinds: readonly (ValueKind | "other")[] = ["undefined", "null", "boolean", "number", "bigint", "string"];
+const primitiveKinds: readonly (ValueKind | "other")[] = [
+  "undefined",
+  "null",
+  "boolean",
+  "number",
+  "bigint",
+  "string",
+  "symbol",
+];
 /** What a type that takes every object `refuses`. */
 const nonObjects = "what is not an object";
 export const refusesNonObjects = (type: Type) => type.refuses === nonObjects;
@@ -298,6 +308,7 @@ const primitiveOfKind = new Map<ValueKind | "other", Primitive>([
   ["number", "Number"],
   ["bigint", "BigInt"],
   ["string", "String"],
+  ["symbol", "Symbol"],
 ]);
 
 /** A value of the type is made without the heap. */
@@ -979,7 +990,13 @@ export class StringType extends Type {
   /** `ToString`: any value is accepted. */
   get loose(): StringType {
     assert(!this.valueKinds.includes("stringObject"), ".loose already takes a String object");
+    assert(this.idlType !== "WebCore::IDLUSVString", ".usv is already loose");
     return new StringType("WebCore::IDLDOMString", "any");
+  }
+  /** WebIDL's `USVString`: `ToString`, then U+FFFD for each unpaired surrogate. */
+  get usv(): StringType {
+    assert(this.idlType === "Bun::Bindgen::IDLStrictString", ".usv follows b.string");
+    return new StringType("WebCore::IDLUSVString", "any");
   }
   /** Also takes a `String` object, as `.utf8` does. */
   get allowStringObject(): StringType {
@@ -1116,6 +1133,9 @@ export class OwnedStringType extends StringType {
   get loose(): never {
     throw new TypeError("write b.string.loose.owned");
   }
+  get usv(): never {
+    throw new TypeError("write b.string.usv.owned");
+  }
   get allowStringObject(): never {
     throw new TypeError("write b.string.allowStringObject.owned");
   }
@@ -1143,6 +1163,9 @@ export class OwnedUtf8Type extends StringType {
   }
   get loose(): never {
     throw new TypeError("write b.string.loose.utf8.owned");
+  }
+  get usv(): never {
+    throw new TypeError("b.string.utf8.owned has no unpaired surrogate");
   }
   get allowStringObject(): never {
     throw new TypeError("b.string.utf8.owned already takes a String object");
@@ -2529,6 +2552,8 @@ export class Member {
 export interface DictionaryOptions {
   /** Also generate `Name::from_js`, for Rust that holds a JS value and no typed signature. */
   fromJS?: boolean;
+  /** Also generate `into_js`, for Rust that puts the object in a JS value it makes itself. */
+  toJS?: boolean;
   /** An array is read like any other object, not refused. */
   allowArray?: boolean;
   /**
@@ -2538,6 +2563,8 @@ export interface DictionaryOptions {
   nonObjectAsEmpty?: boolean | "typeof";
   /** As a result, the object has no prototype. */
   nullPrototype?: boolean;
+  /** Read as WebIDL reads one: members come from `Object.prototype` too, an array is an object like any other, and what is not an object throws `TypeError: Type error`. */
+  webIDL?: boolean;
   /** What an error calls the dictionary: `"options"` makes a member `options.level`, and `""` makes it `level`. Defaults to the name of the type. */
   reportedAs?: string;
 }
@@ -2573,6 +2600,8 @@ export class DictionaryType extends NamedType {
       !this.nonObjectAsEmpty || this.hasDefault,
       "nonObjectAsEmpty: every member must be optional or have a default",
     );
+    assert(!this.webIDL || this.hasDefault, "webIDL: every member must be optional or have a default");
+    assert(!(this.webIDL && this.nonObjectAsEmpty), "webIDL refuses what nonObjectAsEmpty takes");
     assert(
       !this.borrowsHeap,
       "the bytes of a buffer are only for an argument: they are read after everything else is converted",
@@ -2589,11 +2618,17 @@ export class DictionaryType extends NamedType {
   get fromJS(): boolean {
     return !!this.options.fromJS;
   }
+  get toJS(): boolean {
+    return !!this.options.toJS;
+  }
   get insteadOfOtherAsNull(): string | null {
     return this.allowArray ? null : "give the dictionary allowArray";
   }
   get allowArray(): boolean {
-    return !!this.options.allowArray;
+    return !!this.options.allowArray || this.webIDL;
+  }
+  get webIDL(): boolean {
+    return !!this.options.webIDL;
   }
   get nonObjectAsEmpty(): boolean | "typeof" {
     return this.options.nonObjectAsEmpty ?? false;
@@ -2619,7 +2654,11 @@ export class DictionaryType extends NamedType {
       this.nonObjectAsEmpty ? anyPrimitiveType : neverType,
       this.nonObjectAsEmpty === "typeof" ? { type: "Function" } : neverType,
     );
-    return { ...convertingType(accepted, "Dictionary", unionType(accepted, { type: "Object" })), members: this.names };
+    return {
+      ...convertingType(accepted, "Dictionary", unionType(accepted, { type: "Object" })),
+      refused: this.webIDL ? anyPrimitiveType : neverType,
+      members: this.names,
+    };
   }
   /** With no JS value in it, it is new objects, new arrays and primitives. Plain data inherits from Object.prototype and Array.prototype. Otherwise it is still a new ordinary object: `to_js::object`, `to_js::null_prototype_object`. */
   get resultType(): TypeSpec {
@@ -2936,6 +2975,7 @@ export class Signature {
       "privateSymbol",
       "rustName",
       "passStructure",
+      "fresh",
       "calledFromCpp",
     ]);
     this.length = options.length;
@@ -3086,8 +3126,16 @@ function refuseResultType(name: string, type: Type): void {
   assert(!result, `${name}: ${result?.refusal}`);
 }
 
-/** Call a signature, or look at the kind of one more argument. */
-export type OverloadDispatch = Signature | { argument: number; byKind: Map<ValueKind | "other", OverloadDispatch> };
+/** Call a signature, look at the kind of one more argument, or at whether the call has it. */
+export type OverloadDispatch =
+  | Signature
+  | { argument: number; byKind: Map<ValueKind | "other", OverloadDispatch> }
+  | { argument: number; passed: OverloadDispatch; notPassed: OverloadDispatch };
+
+function isRefusedPrimitive(type: Type, kind: ValueKind | "other"): boolean {
+  const primitive = primitiveOfKind.get(kind);
+  return membersOf(type.parameterType.refused).some(spec => spec.type === "Primitive" && spec.primitive === primitive);
+}
 
 export class FunctionDefinition {
   readonly signatures: readonly Signature[];
@@ -3100,7 +3148,12 @@ export class FunctionDefinition {
   readonly isValue: boolean;
   name = "";
   origin: Origin | null = null;
-  constructor(signatures: readonly (SignatureOptions | Signature)[], options: FunctionOptions = {}, isValue = false) {
+  constructor(
+    signatures: readonly (SignatureOptions | Signature)[],
+    options: FunctionOptions = {},
+    isValue = false,
+    webIDL = false,
+  ) {
     this.isValue = isValue;
     assert(signatures.length > 0, "b.overloads needs at least one signature");
     this.passThis = options.passThis ?? false;
@@ -3137,7 +3190,10 @@ export class FunctionDefinition {
       ".ifPassed is not for overloads: the kind of an argument chooses one, and an argument that is not passed has none",
     );
     const nodes = new Map<string, OverloadDispatch>();
-    this.dispatch = this.dispatchOn(this.signatures, 0, nodes);
+    this.dispatch =
+      webIDL && this.signatures.length > 1
+        ? this.dispatchOnCount(this.signatures[0].requiredArguments, nodes)
+        : this.dispatchOn(this.signatures, 0, nodes);
     const chosen = new Set(nodes.values());
     this.signatures.forEach((signature, i) =>
       assert(
@@ -3146,27 +3202,58 @@ export class FunctionDefinition {
       ),
     );
   }
-  /** "Overloads" in the docs. Equal inputs give the same object of `nodes`: nodes are compared by identity. */
+  /** WebIDL's resolution, for a call with `count` or more arguments. */
+  private dispatchOnCount(count: number, nodes: Map<string, OverloadDispatch>): OverloadDispatch {
+    const candidates = this.signatures.filter(
+      signature => signature.requiredCount <= count && count <= signature.args.length,
+    );
+    assert(candidates.length > 0, `webIDL: no overload takes ${count} arguments`);
+    assert(
+      !candidates.some(({ args }) => args.some(({ type }) => type instanceof VariadicType || type instanceof RestType)),
+      "webIDL: an overload takes a known number of arguments",
+    );
+    assert(
+      candidates.every(({ args }) =>
+        args.every(({ type }, i) => i >= count - 1 || type === candidates[0].args[i].type),
+      ),
+      `webIDL: the overloads that take ${count} arguments share the types of all but the last`,
+    );
+    const notPassed = this.dispatchOn(candidates, 0, nodes, count);
+    if (this.signatures.every(signature => signature.args.length <= count)) return notPassed;
+    const passed = this.dispatchOnCount(count + 1, nodes);
+    // A call without this argument is without the next.
+    const isDecidedLater = passed === notPassed || ("notPassed" in passed && passed.notPassed === notPassed);
+    return isDecidedLater ? passed : { argument: count, passed, notPassed };
+  }
+  /** "Overloads" in the docs. Equal inputs give the same object of `nodes`: nodes are compared by identity. `webIDLCount`: of the arguments of the call. */
   private dispatchOn(
     candidates: readonly Signature[],
     argument: number,
     nodes: Map<string, OverloadDispatch>,
+    webIDLCount?: number,
   ): OverloadDispatch {
-    const key = `${candidates.map(signature => this.signatures.indexOf(signature))} ${argument}`;
+    const key = `${candidates.map(signature => this.signatures.indexOf(signature))} ${argument} ${webIDLCount}`;
     const existing = nodes.get(key);
     if (existing) return existing;
     let dispatch: OverloadDispatch = candidates[0];
-    if (candidates.length > 1 && candidates.some(signature => argument < signature.args.length)) {
+    const webIDL = webIDLCount !== undefined;
+    if (
+      candidates.length > 1 &&
+      (webIDL ? argument < webIDLCount : candidates.some(signature => argument < signature.args.length))
+    ) {
       const types = candidates.map(signature => signature.args[argument]?.type);
       const next = (kind: ValueKind | "other") => {
         const keep = (test: (type: Type) => boolean) =>
           candidates.filter((signature, i) => (types[i] ? test(types[i]) : kind === "undefined"));
-        const ofKind = keep(type => takes(type, kind));
+        const ofKind = keep(type => takes(type, kind) && !(webIDL && isRefusedPrimitive(type, kind)));
         const takers = kind === "undefined" ? keep(type => type.takesUndefined) : ofKind;
         const kept = [takers, ofKind, candidates.filter((signature, i) => types[i])].find(list => list.length > 0)!;
-        return this.dispatchOn(kept, argument + 1, nodes);
+        return this.dispatchOn(kept, argument + 1, nodes, webIDLCount);
       };
-      const kinds = new Set(["undefined" as const, ...distinguishingKinds(types.filter(type => type !== undefined))]);
+      const kinds = new Set([
+        ...(webIDL ? primitiveKinds : ["undefined" as const]),
+        ...distinguishingKinds(types.filter(type => type !== undefined)),
+      ]);
       const byKind = new Map([...kinds].map(kind => [kind, next(kind)]));
       dispatch = new Set(byKind.values()).size === 1 ? byKind.get("other")! : { argument, byKind };
     }
@@ -3239,9 +3326,12 @@ export interface CalledFromRustField {
 export class CellClass {
   readonly cpp: string;
   readonly header: string;
-  constructor(cpp: string, header: string) {
+  /** What Rust holds one as, for the call `'a`. It has the `from_extern` and `to_js` of a `JsLocal`. */
+  readonly rust: string | undefined;
+  constructor(cpp: string, header: string, rust?: string) {
     this.cpp = cpp;
     this.header = header;
+    this.rust = rust;
     assert(/^([A-Za-z_]\w*::)+[A-Z]\w*$/.test(cpp), `b.cell: ${cpp} needs its namespace`);
   }
 }
@@ -3302,6 +3392,10 @@ export type StaticField =
 export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "returns"> {
   /** The constructor creates the object itself, with `structure.create(..)`, and returns it: it can then set internal fields. */
   passStructure?: boolean;
+  /** With `passStructure`. Somebody has read the constructor: it returns the object it created, gives it no property and keeps it nowhere. */
+  fresh?: boolean;
+  /** The Rust function. Defaults to `constructor`. */
+  rustName?: string;
 }
 
 type ClassTableColumns = Pick<ClassColumns, "slots" | "stateHeap" | "types" | "lockedMembers"> & EntryColumns;
@@ -3327,6 +3421,8 @@ export interface ClassOptions extends ClassTableColumns {
   rustTraits?: readonly string[];
   /** The prototype inherits from `Error.prototype` instead of `Object.prototype`, and its `name` is the class's. */
   prototypeBase?: "Error";
+  /** A WebIDL interface, as WebCore's bindings make one. See "webIDL" in the docs. */
+  webIDL?: boolean;
   /** `true`: native properties are configurable. */
   configurable?: boolean;
   /** `false`: native properties are non-enumerable. */
@@ -3337,15 +3433,15 @@ export interface ClassOptions extends ClassTableColumns {
   memoryCost?: boolean;
   /** `fn estimated_size(&self) -> usize`: the same for the GC, whose marking threads call it. For a heap snapshot too, without `memoryCost`. */
   estimatedSize?: boolean;
-  /** Absent: JavaScript cannot construct one, and there is no constructor object. `"illegal"`: there is one, and `new` on it throws `Illegal constructor`. */
-  construct?: ConstructOptions | "illegal";
+  /** Absent: JavaScript cannot construct one, and there is no constructor object. `"illegal"`: there is one, and `new` on it throws `Illegal constructor`. With `webIDL`, several are overloads. */
+  construct?: ConstructOptions | readonly ConstructOptions[] | "illegal";
   /** `Name(..)` without `new`, which otherwise throws. The Rust function is `call`. */
   call?: Omit<SignatureOptions, "rustPath">;
   /** `instance(..)`, which makes `typeof instance` `"function"`. The Rust function is `call_instance`. */
   callInstance?: Omit<SignatureOptions, "rustPath">;
   /**
    * JS values the object holds, empty at first. The GC visits them; `js_Name` gets `x_get_cached` / `x_set_cached` / `x_take_cached` for each.
-   * In a record each field names its type: `b.any` is what a list declares, and `b.cell("JSC::JSPromise", ..)` makes `m_x` a `WriteBarrier<JSC::JSPromise>` that only hand-written C++ uses.
+   * In a record each field names its type: `b.any` is what a list declares, and `b.cell("JSC::JSPromise", ..)` makes `m_x` a `WriteBarrier<JSC::JSPromise>`. Only hand-written C++ uses it, unless it names a Rust type too: then `js_Name` gets `x` and `set_x`.
    */
   internalFields?: readonly string[] | Readonly<Record<string, AnyType | CellClass>>;
   /** Properties of the prototype. */
@@ -3448,6 +3544,25 @@ export class Method extends Signature {
     assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: an @@ key has no privateSymbol`);
     this.functionName = options.name;
     assert(this.functionName === undefined || wellKnownSymbol(name), `${name}: name is only for an @@ key`);
+  }
+}
+
+/** What `new` calls. */
+export class Construction extends Signature {
+  readonly rustName: string;
+  readonly passStructure: boolean;
+  readonly isFresh: boolean;
+  constructor(options: ConstructOptions) {
+    super(options);
+    this.rustName = memberRustName(options.rustName ?? "constructor");
+    this.passStructure = !!options.passStructure;
+    assert(
+      !this.passStructure || this.capability !== "none",
+      'passStructure: creating the object takes capability: "heap" or "js"',
+    );
+    assert(this.passStructure || !options.fresh, "fresh: without passStructure the object always is");
+    // A constructor that makes the object itself can keep it.
+    this.isFresh = !this.passStructure || !!options.fresh;
   }
 }
 
@@ -3626,8 +3741,10 @@ export class ClassType extends NamedType {
   /** No member has `mutates`, so every member takes `&self`. */
   readonly sharedThis: boolean;
   readonly finalize: boolean;
-  readonly construct: Signature | null;
+  /** Its signatures are `Construction`s. */
+  readonly construct: FunctionDefinition | null;
   readonly passStructure: boolean;
+  readonly webIDL: boolean;
   readonly call: FunctionDefinition | null;
   readonly callInstance: FunctionDefinition | null;
   readonly memoryCost: boolean;
@@ -3675,6 +3792,7 @@ export class ClassType extends NamedType {
       "protoCaller",
       "rustTraits",
       "prototypeBase",
+      "webIDL",
       "configurable",
       "enumerable",
       "writable",
@@ -3714,6 +3832,23 @@ export class ClassType extends NamedType {
         'extends: construct is "illegal", and the base has a constructor too',
       );
     }
+    this.webIDL = options.webIDL ?? false;
+    if (this.webIDL) {
+      for (const key of [
+        "extends",
+        "final",
+        "refCounted",
+        "forBind",
+        "protoCaller",
+        "prototypeBase",
+        "call",
+        "callInstance",
+        "static",
+      ] as const)
+        assert(options[key] === undefined, `${key}: a webIDL class does not have it yet`);
+      assert(typeof options.construct === "object", "construct: a webIDL class is constructed by JavaScript");
+    }
+    assert(this.webIDL || !Array.isArray(options.construct), "construct: overloads are for a webIDL class");
     assert(this.base || options.rustPath !== undefined, "a class has a rustPath");
     this.rustPath = this.base?.rustPath ?? options.rustPath!;
     this.refCounted = options.refCounted ?? false;
@@ -3741,13 +3876,24 @@ export class ClassType extends NamedType {
       ...(signature.returns ? { returns: own(signature.returns) } : {}),
     });
     this.illegalConstructor = options.construct === "illegal";
-    this.construct = options.construct
-      ? new Signature(options.construct === "illegal" ? {} : resolve(options.construct))
-      : null;
-    this.passStructure = typeof options.construct === "object" && !!options.construct.passStructure;
+    const constructions = [options.construct === "illegal" ? {} : (options.construct ?? [])]
+      .flat()
+      .map(overload => new Construction(resolve(overload)));
+    this.construct = options.construct ? new FunctionDefinition(constructions, {}, false, this.webIDL) : null;
+    this.passStructure = constructions.some(overload => overload.passStructure);
+    // The compiler may go by the first overload that has enough parameters.
+    for (const key of ["passStructure", "isFresh", "capability", "throws"] as const)
+      assert(
+        constructions.every(overload => overload[key] === constructions[0][key]),
+        `construct: every overload has the same ${key}`,
+      );
     assert(
-      !this.passStructure || this.construct!.capability !== "none",
-      'passStructure: creating the object takes capability: "heap" or "js"',
+      constructions.every(
+        ({ args, requiredCount }, i) =>
+          i === 0 ||
+          (args.length >= constructions[i - 1].args.length && requiredCount >= constructions[i - 1].requiredCount),
+      ),
+      "construct: an overload follows those that take or require fewer arguments",
     );
     this.memoryCost = options.memoryCost ?? false;
     this.estimatedSize = options.estimatedSize ?? false;
@@ -3793,6 +3939,7 @@ export class ClassType extends NamedType {
           `${name}: a calledFromCpp function has no overloads`,
         );
         assert(!(isStatic && wellKnownSymbol(name)), `${name}: an @@ key is a property of the prototype`);
+        assert(overloads.length === 1 || !this.webIDL, `${name}: a method of a webIDL class has no overloads yet`);
         const fn = new FunctionDefinition(
           overloads.map(overload => new Method(name, resolve(overload), isStatic, this.sharedThis)),
         );
@@ -3858,7 +4005,7 @@ export class ClassType extends NamedType {
       );
       assert(
         internalField === undefined || !this.internalFieldClasses.has(internalField),
-        `${name}: ${internalField} is a b.cell field, which only C++ reads and writes`,
+        `${name}: ${internalField} is a b.cell field, which only native code reads and writes`,
       );
     }
     for (const field of this.internalFields)
@@ -3870,7 +4017,11 @@ export class ClassType extends NamedType {
     );
     // A `rustName` may be another member's function. A class and its subclasses have one struct.
     const rustFunctions = [
-      ...(this.base ? this.root.#rustFunctions : ["constructor"]),
+      ...(this.base
+        ? this.root.#rustFunctions
+        : this.construct
+          ? constructions.map(overload => overload.rustName)
+          : ["constructor"]),
       ...this.methods.filter(method => method.hasDefaultRustName).map(method => method.rustName),
       ...[...getters, ...this.staticGetters]
         .filter(getter => getter.hasDefaultRustName)
@@ -3888,7 +4039,7 @@ export class ClassType extends NamedType {
         (this.internalFieldAccessors.length === 0 && getters.every(getter => !getter.hasSetter && !getter.writable)),
       "forBind: a member is a function or a getter without a setter",
     );
-    this.configurable = options.configurable ?? false;
+    this.configurable = options.configurable ?? this.webIDL;
     this.enumerable = options.enumerable ?? true;
     this.writable = options.writable ?? true;
     this.prototypeBase = options.prototypeBase;
@@ -3908,6 +4059,9 @@ export class ClassType extends NamedType {
       ...(this.call ? [this.call] : []),
       ...(this.callInstance ? [this.callInstance] : []),
     ];
+  }
+  get constructions(): readonly Construction[] {
+    return (this.construct?.signatures ?? []) as readonly Construction[];
   }
   /** Every signature that a Rust function implements. */
   get methods(): readonly Method[] {
@@ -3942,7 +4096,7 @@ export class ClassType extends NamedType {
   /** Signatures are not dependencies: a class may mention itself. */
   get signatureTypes(): Type[] {
     return [
-      ...(this.construct ? this.construct.args.map(arg => arg.type) : []),
+      ...this.constructions.flatMap(construction => construction.args.map(arg => arg.type)),
       ...this.methods.flatMap(method => [...method.args.map(arg => arg.type), method.returns]),
       ...[...this.getters, ...this.staticGetters].map(getter => getter.type),
     ];

@@ -175,7 +175,7 @@ impl SocketAddress {
         };
 
         let url = bun_jsc::url::Parsed::from_string(&url_str)?;
-        let host: BunString = url.host();
+        let host = url.host().to_utf8();
         let port_: u16 = {
             let port32 = url.port();
             if port32 > u32::from(u16::MAX) {
@@ -184,12 +184,11 @@ impl SocketAddress {
                 u16::try_from(port32).expect("int cast")
             }
         };
-        debug_assert!(host.tag() != bun_core::Tag::Dead);
 
         // NOTE: parsed host cannot be used as presentation string. e.g.
         // - "[::1]" -> "::1"
         // - "0x.0x.0" -> "0.0.0.0"
-        let paddr = host.latin1(); // presentation address
+        let paddr = host.slice(); // presentation address
         let mut buf = [0; inet::INET6_ADDRSTRLEN + 1];
         // A `%scope` suffix populates `scope_id`, but
         // `ares_inet_pton` does not accept it, so we strip and parse it here.

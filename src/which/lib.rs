@@ -115,7 +115,6 @@ pub fn which_for_spawn<'a>(
         } else {
             Ok(None)
         }
-
     }
 }
 

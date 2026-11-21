@@ -26,6 +26,8 @@ const proc = Bun.spawn(["bun", "--version"], {
 proc.pid; // process ID of subprocess
 ```
 
+On POSIX, Bun searches `PATH` for bare commands and resolves relative `PATH` entries from `cwd`. If no candidate can execute, an existing but non-executable candidate produces `EACCES`; a missing command produces `ENOENT`.
+
 ## Input stream
 
 By default, the input stream of the subprocess is undefined; configure it with the `stdin` parameter.

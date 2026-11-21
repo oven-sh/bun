@@ -14,6 +14,15 @@ unsafe extern "C" {
     safe fn Bun__Process__getExecArgv(global: &JSGlobalObject) -> JSValue;
 }
 
+#[unsafe(export_name = "Bun__Process__createReportArgv")]
+extern "C" fn create_report_argv(global_object: &JSGlobalObject) -> JSValue {
+    let result =
+        JSValue::create_array_from_iter(global_object, bun_core::argv_storage().iter(), |arg| {
+            Ok(EncodedSlice::from_bytes(arg.as_bytes()).to_js(global_object))
+        });
+    bun_jsc::to_js_host_fn_result(global_object, result)
+}
+
 // ───────────────────────────── argv0 / execPath ─────────────────────────────
 
 // `&JSGlobalObject` is ABI-identical to `*const JSGlobalObject` (non-null) in

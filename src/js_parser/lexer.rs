@@ -6,7 +6,6 @@ use bun_alloc::Arena;
 use bun_ast as js_ast;
 use bun_ast::lexer_tables as tables;
 use bun_ast::{LexerLog, Loc, Log, Range, Source};
-use bun_core::Environment;
 use bun_core::fmt::hex_digit_value_u32;
 pub(crate) use bun_core::lexer::is_whitespace;
 use bun_core::strings;
@@ -820,7 +819,7 @@ impl<'a> Lexer<'a> {
                     // Non-ASCII strings need the slow path
                     if self.code_point >= 0x80 {
                         needs_decode = true;
-                    } else if (QUOTE == 0x22 || QUOTE == 0x27) && Environment::IS_NATIVE {
+                    } else if QUOTE == 0x22 || QUOTE == 0x27 {
                         let remainder = &contents[self.current..];
                         if remainder.len() >= 4096 {
                             match index_of_interesting_character_in_string_literal(

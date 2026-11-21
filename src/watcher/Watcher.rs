@@ -21,8 +21,6 @@ use crate::windows_watcher as platform;
 use bun_collections::index_sort;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use platform::watch_loop;
-#[cfg(target_arch = "wasm32")]
-compile_error!("Unsupported platform");
 
 bun_core::define_scoped_log!(log, watcher, visible);
 

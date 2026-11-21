@@ -1,27 +1,11 @@
 // `build_options` is a generated module (build.rs consts), re-exported publicly.
 pub use crate::build_options;
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum BuildTarget {
-    Native,
-    Wasm,
-}
-
-const BUILD_TARGET: BuildTarget = {
-    if cfg!(target_family = "wasm") {
-        BuildTarget::Wasm
-    } else {
-        BuildTarget::Native
-    }
-};
-
-const IS_WASM: bool = matches!(BUILD_TARGET, BuildTarget::Wasm);
-pub const IS_NATIVE: bool = matches!(BUILD_TARGET, BuildTarget::Native);
-const IS_MAC: bool = IS_NATIVE && cfg!(target_os = "macos");
-pub(crate) const IS_BROWSER: bool = IS_WASM;
+/// Always `true`: Bun has no wasm build. Kept for one reader in `parsers/xml_index.rs`.
+pub const IS_NATIVE: bool = true;
+const IS_MAC: bool = cfg!(target_os = "macos");
 pub const IS_WINDOWS: bool = cfg!(windows);
-pub(crate) const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
+pub(crate) const IS_POSIX: bool = !IS_WINDOWS;
 /// `true` only for the `dev` cargo profile (Debug buildtype). Keyed on
 /// `--cfg=bun_debug` (set by `scripts/build/rust.ts` when `cfg.debug`), not on
 /// `cfg!(debug_assertions)`: release-asan / release-assertions builds enable
@@ -161,8 +145,6 @@ pub const OS: OperatingSystem = if IS_MAC {
     OperatingSystem::Freebsd
 } else if IS_WINDOWS {
     OperatingSystem::Windows
-} else if IS_WASM {
-    OperatingSystem::Wasm
 } else {
     panic!("Please add your OS to the OperatingSystem enum")
 };
@@ -200,9 +182,7 @@ crate::comptime_string_map! {
     };
 }
 
-pub const ARCH: Architecture = if IS_WASM {
-    Architecture::Wasm
-} else if IS_X64 {
+pub const ARCH: Architecture = if IS_X64 {
     Architecture::X64
 } else if IS_AARCH64 {
     Architecture::Arm64

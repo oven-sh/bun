@@ -431,29 +431,18 @@ impl<'a> Parser<'a> {
         self.parse_with_cache(None)
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
     pub fn parse_with_cache(
-        mut self,
+        self,
         cache: Option<&mut dyn TranspilerCache>,
     ) -> Result<crate::Result<'a>, Error> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.options.ts = true;
-            self.options.jsx.parse = true;
-            return self._parse::<true>(cache);
-        }
-
         // JSX is no longer part of the parser's monomorphization (it only
         // affects a few expr arms — see `parser.rs`); `P::init` reads the
         // transform mode off `options.jsx.parse` at runtime, so the only
         // remaining compile-time split is TypeScript.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if self.options.ts {
-                self._parse::<true>(cache)
-            } else {
-                self._parse::<false>(cache)
-            }
+        if self.options.ts {
+            self._parse::<true>(cache)
+        } else {
+            self._parse::<false>(cache)
         }
     }
 
@@ -928,7 +917,6 @@ impl<'a> Parser<'a> {
         let mut parsed_for_cache: Option<&mut Option<ParsedForCache>> = None;
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
-        #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
             if let Some(cache) = cache {
                 // `Path::is_node_module`/`is_jsx_file` live on the resolver
@@ -2556,7 +2544,6 @@ impl<'a> Parser<'a> {
         // Pop the module scope to apply the "ContainsDirectEval" rules
         // p.popScope();
 
-        #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
             if let Some(parsed) = parsed_for_cache {
                 *parsed = (!p.depends_on_more_than_source()).then_some(ParsedForCache {

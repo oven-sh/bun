@@ -138,10 +138,7 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
         utf16_remaining = &utf16_remaining[replacement.len as usize..];
 
         let count: usize = replacement.utf8_width() as usize;
-        #[cfg(not(target_family = "wasm"))]
         let extra = ((utf16_remaining.len() as u64 & ((1u64 << 52) - 1)) as f64 * 1.2) as usize;
-        #[cfg(target_family = "wasm")]
-        let extra = utf16_remaining.len() + 4;
         list.try_reserve_exact(i + count + extra)
             .map_err(|_| AllocError)?;
         append_u16_as_u8(list, to_copy);

@@ -187,13 +187,7 @@ mod bun_sys {
         path: &::bun_core::ZStr,
         opts: OpenDirOptions,
     ) -> crate::CrateResult<Fd> {
-        #[cfg(unix)]
         let nofollow = if opts.no_follow { libc::O_NOFOLLOW } else { 0 };
-        #[cfg(not(unix))]
-        let nofollow = {
-            let _ = opts;
-            0
-        };
         ::bun_sys::open(path, O::DIRECTORY | O::CLOEXEC | O::RDONLY | nofollow, 0)
             .map_err(Into::into)
     }

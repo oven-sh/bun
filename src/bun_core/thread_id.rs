@@ -14,7 +14,7 @@
 //! integer it can store in an atomic and compare against a sentinel.
 
 // ── ThreadId width ─────────────────────────────────────────────────────────
-//   linux / *bsd / haiku / wasi / serenity → u32
+//   linux / *bsd / haiku / serenity → u32
 //   macOS / iOS / watchOS / tvOS / visionOS → u64
 //   Windows                                → DWORD (u32)
 //   else                                   → usize
@@ -26,7 +26,6 @@
     target_os = "openbsd",
     target_os = "dragonfly",
     target_os = "haiku",
-    target_os = "wasi",
     target_os = "windows",
 ))]
 pub type ThreadId = u32;
@@ -48,7 +47,6 @@ pub type ThreadId = u64;
     target_os = "openbsd",
     target_os = "dragonfly",
     target_os = "haiku",
-    target_os = "wasi",
     target_os = "windows",
     target_os = "macos",
     target_os = "ios",

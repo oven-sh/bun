@@ -52,7 +52,7 @@ pub struct StructuralIndex<'c> {
 
 impl<'c> StructuralIndex<'c> {
     pub fn new(contents: &'c [u8]) -> Self {
-        Self::with_producer(contents, !bun_core::env::IS_NATIVE)
+        Self::with_producer(contents, false)
     }
 
     fn with_producer(contents: &'c [u8], use_scalar: bool) -> Self {
@@ -120,7 +120,7 @@ impl<'c> StructuralIndex<'c> {
 
     fn refill_once(&mut self) {
         let len = self.contents.len();
-        if bun_core::env::IS_NATIVE && !self.use_scalar {
+        if !self.use_scalar {
             if self.src_off >= len {
                 return self.finish();
             }
@@ -431,7 +431,7 @@ mod tests {
                 assert_eq!(sf, cf);
                 let mut clean = StructuralIndex::new(strict.as_bytes());
                 collect(&mut clean);
-                assert!(!clean.use_scalar || !bun_core::env::IS_NATIVE);
+                assert!(!clean.use_scalar);
             }
         }
     }

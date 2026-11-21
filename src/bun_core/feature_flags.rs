@@ -6,7 +6,7 @@ use crate::feature_flag;
 
 /// Store and reuse file descriptors during module resolution
 /// This was a ~5% performance improvement
-pub const STORE_FILE_DESCRIPTORS: bool = !env::IS_BROWSER;
+pub const STORE_FILE_DESCRIPTORS: bool = true;
 
 pub const TRACING: bool = true;
 
@@ -25,7 +25,7 @@ pub const HTTP_BUFFER_POOLING: bool = true;
 /// https://github.com/oven-sh/bun/issues/10733
 pub const SUPPORT_JSXS_IN_JSX_TRANSFORM: bool = true;
 
-pub(crate) const USE_SIMDUTF: bool = env::IS_NATIVE;
+pub(crate) const USE_SIMDUTF: bool = true;
 
 pub const INLINE_PROPERTIES_IN_TRANSPILER: bool = true;
 
@@ -98,14 +98,8 @@ pub const WINDOWS_BUNX_FAST_PATH: bool = true;
 // TODO: fix Windows-only test failures in fetch-preconnect.test.ts
 pub const IS_FETCH_PRECONNECT_SUPPORTED: bool = env::IS_POSIX;
 
-const LIBDEFLATE_SUPPORTED: bool = env::IS_NATIVE;
-
 // Mostly exists as a way to turn it off later, if necessary.
 pub fn is_libdeflate_enabled() -> bool {
-    if !LIBDEFLATE_SUPPORTED {
-        return false;
-    }
-
     feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE.get() != Some(true)
 }
 

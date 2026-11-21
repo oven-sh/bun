@@ -24,7 +24,7 @@ macro_rules! impl_tag_error {
 // cross-crate enum.
 //
 // Layout: one shared BASE table (the glibc/coreutils strings — used as-is on
-// linux/android/windows/wasm) plus a small per-OS DELTA on macOS/FreeBSD that
+// linux/android/windows) plus a small per-OS DELTA on macOS/FreeBSD that
 // overrides divergent texts and adds OS-only errnos. Because lookup is gated
 // by the per-OS `SystemErrno` name space, BASE rows for Linux-only errnos are
 // unreachable on macOS/FreeBSD and harmless to keep — so the three full per-OS
@@ -48,7 +48,7 @@ pub mod coreutils_error_map {
         BASE.get(name.as_bytes()).copied()
     }
 
-    // The glibc/coreutils strerror() texts. Linux/Android/Windows/wasm use this
+    // The glibc/coreutils strerror() texts. Linux/Android/Windows use this
     // table verbatim; macOS/FreeBSD consult DELTA first then fall back here.
     crate::comptime_string_map! {
     static BASE: &'static str = {

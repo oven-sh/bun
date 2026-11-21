@@ -1410,11 +1410,6 @@ impl ScopeUseIndex {
 pub fn compute_initial_reserved_names(
     output_format: Format,
 ) -> Result<StringHashMap<u32>, bun_alloc::AllocError> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        unreachable!();
-    }
-
     let mut names = StringHashMap::<u32>::default();
 
     /// Globals the linker or printer reference by name in generated code. A

@@ -959,10 +959,7 @@ pub(crate) mod internal {
         // https://github.com/nodejs/node/issues/33816
         // https://github.com/aio-libs/aiohttp/issues/5357
         // https://github.com/libuv/libuv/issues/2225
-        #[cfg(unix)]
-        {
-            h.ai_flags = netc::AI_ADDRCONFIG;
-        }
+        h.ai_flags = netc::AI_ADDRCONFIG;
         h.ai_socktype = netc::SOCK_STREAM;
         h
     }

@@ -514,6 +514,21 @@ fn header_value_bytes<'a>(value: &'a bun_jsc::JSStringView<'_>) -> Cow<'a, [u8]>
     Cow::Owned(bytes)
 }
 
+/// The wire bytes of an outbound header value, and its length in code units.
+struct OutboundValue<'a> {
+    bytes: Cow<'a, [u8]>,
+    units: usize,
+}
+
+impl<'a> OutboundValue<'a> {
+    fn new(value: &'a bun_jsc::JSStringView<'_>) -> Self {
+        Self {
+            bytes: header_value_bytes(value),
+            units: value.length(),
+        }
+    }
+}
+
 #[inline]
 pub(crate) fn is_malformed_field_name(name: &[u8]) -> bool {
     let rest = match name.split_first() {
@@ -1691,16 +1706,67 @@ impl Stream {
 // H2FrameParser impl — core methods
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Node's `neverIndex`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L774-L775
+struct NeverIndexNames(Vec<bun_core::String>);
+
+impl NeverIndexNames {
+    /// `names` is `undefined` or an array of strings.
+    fn from_js(global: &JSGlobalObject, names: JSValue) -> JsResult<Self> {
+        if names.is_undefined() {
+            return Ok(Self(Vec::new()));
+        }
+        if !names.is_array() {
+            return Err(global.throw(format_args!("Expected sensitiveHeaders to be an array")));
+        }
+        let mut iter = names.array_iterator(global)?;
+        let mut listed = Vec::new();
+        while let Some(name) = iter.next()? {
+            listed.push(name.to_bun_string(global)?);
+        }
+        Ok(Self(listed))
+    }
+
+    fn rule_for(&self, name: &[u8]) -> NeverIndex {
+        debug_assert!(!name.iter().any(u8::is_ascii_uppercase));
+        if name == b"authorization" || self.0.iter().any(|listed| listed.eq_ascii(name)) {
+            NeverIndex::Always
+        } else if name == b"cookie" {
+            NeverIndex::ShortValue
+        } else {
+            NeverIndex::No
+        }
+    }
+}
+
+/// What nghttp2 never indexes by itself: https://github.com/nghttp2/nghttp2/blob/v1.69.0/lib/nghttp2_hd.c#L1377-L1385
+#[derive(Clone, Copy)]
+enum NeverIndex {
+    No,
+    Always,
+    ShortValue,
+}
+
+impl NeverIndex {
+    /// Node writes one byte for each code unit of a value, so nghttp2's byte count is `value.units`.
+    fn applies_to(self, value: &OutboundValue<'_>) -> bool {
+        match self {
+            NeverIndex::No => false,
+            NeverIndex::Always => true,
+            NeverIndex::ShortValue => value.units < 20,
+        }
+    }
+}
+
 /// `false`: the field is too long to send.
 fn add_outbound_field(
     fields: &mut HeaderFields,
     name: &[u8],
-    value: &[u8],
-    never_index: bool,
+    value: &OutboundValue<'_>,
+    never_index: NeverIndex,
 ) -> bool {
-    let fits = name.len() + value.len() <= bun_hpack::MAX_FIELD_LEN;
+    let fits = name.len() + value.bytes.len() <= bun_hpack::MAX_FIELD_LEN;
     if fits {
-        fields.push(name, value, never_index);
+        fields.push(name, &value.bytes, never_index.applies_to(value));
     }
     fits
 }
@@ -5046,22 +5112,6 @@ impl H2FrameParser {
         Ok(if any { &out[0..in_.len()] } else { in_ })
     }
 
-    /// Property lookups by name go through `getIfPropertyExistsImpl`, which must
-    /// not be handed an integer-index-like name (debug assert). Header names that
-    /// are all ASCII digits are valid HTTP tokens but can never be marked
-    /// sensitive, so callers skip the lookup for them.
-    fn is_index_like_name(name: &[u8]) -> bool {
-        if name.is_empty() {
-            return false;
-        }
-        for &c in name {
-            if !c.is_ascii_digit() {
-                return false;
-            }
-        }
-        true
-    }
-
     pub(crate) fn send_trailers(
         &self,
         cx: &mut JsScope<'_>,
@@ -5071,18 +5121,13 @@ impl H2FrameParser {
     ) -> JsResult<()> {
         let global_object = cx.global();
         let headers = headers.to_js();
-        let sensitive_headers = sensitive_headers.to_js();
         let stream = self.stream_from_js(global_object, stream_id.to_js())?;
 
         let Some(headers_obj) = headers.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
         };
 
-        if !sensitive_headers.is_object() {
-            return Err(
-                global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
-            );
-        }
+        let never_index_names = NeverIndexNames::from_js(global_object, sensitive_headers.to_js())?;
 
         let mut fields = HeaderFields::with_usual_capacity();
         let mut name_buffer = [0u8; 4096];
@@ -5139,9 +5184,11 @@ impl H2FrameParser {
                 }
             };
 
+            let never_index = never_index_names.rule_for(validated_name);
+
             // `false`: it is too long, and the stream is ended.
-            let mut add_value = |value: &[u8], never_index: bool| -> JsResult<bool> {
-                if !is_valid_header_value(value) {
+            let mut add_value = |value: &OutboundValue<'_>| -> JsResult<bool> {
+                if !is_valid_header_value(&value.bytes) {
                     let exception = global_object.to_type_error(
                         bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
                         format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)),
@@ -5152,7 +5199,7 @@ impl H2FrameParser {
                     H2FrameParser,
                     "encode header {} {}",
                     BStr::new(validated_name),
-                    BStr::new(value)
+                    BStr::new(&value.bytes)
                 );
                 if add_outbound_field(&mut fields, validated_name, value, never_index) {
                     return Ok(true);
@@ -5207,22 +5254,9 @@ impl H2FrameParser {
                     }
 
                     let value_view = item.to_js_string_view(global_object)?;
+                    let value = OutboundValue::new(&value_view);
 
-                    // All-digit names can't be passed to get_truthy (integer-index-like names
-                    // trip a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
-                    let never_index = if Self::is_index_like_name(validated_name) {
-                        false
-                    } else {
-                        match sensitive_headers.get_truthy(global_object, validated_name)? {
-                            Some(_) => true,
-                            None => sensitive_headers.get_truthy(global_object, name)?.is_some(),
-                        }
-                    };
-
-                    let value_bytes = header_value_bytes(&value_view);
-                    let value = value_bytes.as_ref();
-
-                    if !add_value(value, never_index)? {
+                    if !add_value(&value)? {
                         return Ok(());
                     }
                 }
@@ -5241,28 +5275,15 @@ impl H2FrameParser {
                     single_value_headers[idx] = true;
                 }
                 let value_view = js_value.to_js_string_view(global_object)?;
-
-                // All-digit names can't be passed to get_truthy (integer-index-like names trip
-                // a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
-                let never_index = if Self::is_index_like_name(validated_name) {
-                    false
-                } else {
-                    match sensitive_headers.get_truthy(global_object, validated_name)? {
-                        Some(_) => true,
-                        None => sensitive_headers.get_truthy(global_object, name)?.is_some(),
-                    }
-                };
-
-                let value_bytes = header_value_bytes(&value_view);
-                let value = value_bytes.as_ref();
+                let value = OutboundValue::new(&value_view);
                 bun_output::scoped_log!(
                     H2FrameParser,
                     "encode header {} {}",
                     BStr::new(name),
-                    BStr::new(value)
+                    BStr::new(&value.bytes)
                 );
 
-                if !add_value(value, never_index)? {
+                if !add_value(&value)? {
                     return Ok(());
                 }
             }
@@ -5510,7 +5531,6 @@ impl H2FrameParser {
         let parent_id = parent_id.to_js();
         let promised_id = promised_id.to_js();
         let headers = headers.to_js();
-        let sensitive_headers = sensitive_headers.to_js();
         if !parent_id.is_number() {
             return Err(global_object.throw(format_args!("Expected parentId to be a number")));
         }
@@ -5528,6 +5548,7 @@ impl H2FrameParser {
         let Some(headers_obj) = headers.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
         };
+        let never_index_names = NeverIndexNames::from_js(global_object, sensitive_headers.to_js())?;
 
         let mut name_buffer = [0u8; 4096];
         let mut fields = HeaderFields::with_usual_capacity();
@@ -5585,21 +5606,11 @@ impl H2FrameParser {
                 if js_value.is_empty_or_undefined_or_null() {
                     continue;
                 }
-                // All-digit names can't be passed to get_truthy (integer-index-like names trip
-                // a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
-                let never_index = if Self::is_index_like_name(validated_name) {
-                    false
-                } else {
-                    match sensitive_headers.get_truthy(global_object, validated_name)? {
-                        Some(_) => true,
-                        None => sensitive_headers.get_truthy(global_object, name)?.is_some(),
-                    }
-                };
+                let never_index = never_index_names.rule_for(validated_name);
                 let mut add_value = |item: JSValue| -> JsResult<Option<JSValue>> {
                     let value_view = item.to_js_string_view(global_object)?;
-                    let value_bytes = header_value_bytes(&value_view);
-                    let value = value_bytes.as_ref();
-                    if !is_valid_header_value(value) {
+                    let value = OutboundValue::new(&value_view);
+                    if !is_valid_header_value(&value.bytes) {
                         return Err(global_object
                             .err(
                                 JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
@@ -5614,9 +5625,9 @@ impl H2FrameParser {
                         H2FrameParser,
                         "encode header {} {}",
                         BStr::new(validated_name),
-                        BStr::new(value)
+                        BStr::new(&value.bytes)
                     );
-                    if !add_outbound_field(&mut fields, validated_name, value, never_index) {
+                    if !add_outbound_field(&mut fields, validated_name, &value, never_index) {
                         // Same as in request/respond: nghttp2 fails the whole
                         // session, and node never surfaces this through the pushStream callback.
                         self.schedule_header_compression_session_error();
@@ -5913,17 +5924,12 @@ impl H2FrameParser {
         let stream_id = stream_id.to_js();
         let context = context.to_js();
         let headers = headers.to_js();
-        let sensitive_headers = sensitive_headers.to_js();
         let options = options.to_js();
         let Some(headers_obj) = headers.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
         };
 
-        if !sensitive_headers.is_object() {
-            return Err(
-                global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
-            );
-        }
+        let never_index_names = NeverIndexNames::from_js(global_object, sensitive_headers.to_js())?;
         let mut fields = HeaderFields::with_usual_capacity();
         let mut name_buffer = [0u8; 4096];
         let stream_id: u32 = if stream_id.is_number() {
@@ -6013,19 +6019,8 @@ impl H2FrameParser {
                     }
 
                     let value_view = value_js.to_js_string_view(global_object)?;
-
-                    let never_index = if Self::is_index_like_name(validated_name) {
-                        false
-                    } else {
-                        match sensitive_headers.get_truthy(global_object, validated_name)? {
-                            Some(_) => true,
-                            None => sensitive_headers.get_truthy(global_object, name)?.is_some(),
-                        }
-                    };
-
-                    let value_bytes = header_value_bytes(&value_view);
-                    let value = value_bytes.as_ref();
-                    if !is_valid_header_value(value) {
+                    let value = OutboundValue::new(&value_view);
+                    if !is_valid_header_value(&value.bytes) {
                         return Err(global_object
                             .err(
                                 JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
@@ -6040,10 +6035,15 @@ impl H2FrameParser {
                         H2FrameParser,
                         "encode header {} {}",
                         BStr::new(validated_name),
-                        BStr::new(value)
+                        BStr::new(&value.bytes)
                     );
 
-                    if !add_outbound_field(&mut fields, validated_name, value, never_index) {
+                    if !add_outbound_field(
+                        &mut fields,
+                        validated_name,
+                        &value,
+                        never_index_names.rule_for(validated_name),
+                    ) {
                         let Some(stream) = self.handle_received_stream_id(stream_id) else {
                             return Ok(JSValue::js_number(-1.0));
                         };
@@ -6138,6 +6138,8 @@ impl H2FrameParser {
                     return Err(global_object.throw_value(exception));
                 }
 
+                let never_index = never_index_names.rule_for(validated_name);
+
                 if js_value.js_type().is_array() {
                     bun_output::scoped_log!(H2FrameParser, "array header {}", BStr::new(name));
                     let mut value_iter = js_value.array_iterator(global_object)?;
@@ -6170,21 +6172,8 @@ impl H2FrameParser {
                         }
 
                         let value_view = item.to_js_string_view(global_object)?;
-
-                        let never_index = if Self::is_index_like_name(validated_name) {
-                            false
-                        } else {
-                            match sensitive_headers.get_truthy(global_object, validated_name)? {
-                                Some(_) => true,
-                                None => {
-                                    sensitive_headers.get_truthy(global_object, name)?.is_some()
-                                }
-                            }
-                        };
-
-                        let value_bytes = header_value_bytes(&value_view);
-                        let value = value_bytes.as_ref();
-                        if !is_valid_header_value(value) {
+                        let value = OutboundValue::new(&value_view);
+                        if !is_valid_header_value(&value.bytes) {
                             return Err(global_object
                                 .err(
                                     JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
@@ -6199,10 +6188,10 @@ impl H2FrameParser {
                             H2FrameParser,
                             "encode header {} {}",
                             BStr::new(validated_name),
-                            BStr::new(value)
+                            BStr::new(&value.bytes)
                         );
 
-                        if !add_outbound_field(&mut fields, validated_name, value, never_index) {
+                        if !add_outbound_field(&mut fields, validated_name, &value, never_index) {
                             let Some(stream) = self.handle_received_stream_id(stream_id) else {
                                 return Ok(JSValue::js_number(-1.0));
                             };
@@ -6229,19 +6218,8 @@ impl H2FrameParser {
                         single_value_headers[idx] = true;
                     }
                     let value_view = js_value.to_js_string_view(global_object)?;
-
-                    let never_index = if Self::is_index_like_name(validated_name) {
-                        false
-                    } else {
-                        match sensitive_headers.get_truthy(global_object, validated_name)? {
-                            Some(_) => true,
-                            None => sensitive_headers.get_truthy(global_object, name)?.is_some(),
-                        }
-                    };
-
-                    let value_bytes = header_value_bytes(&value_view);
-                    let value = value_bytes.as_ref();
-                    if !is_valid_header_value(value) {
+                    let value = OutboundValue::new(&value_view);
+                    if !is_valid_header_value(&value.bytes) {
                         return Err(global_object
                             .err(
                                 JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
@@ -6256,10 +6234,10 @@ impl H2FrameParser {
                         H2FrameParser,
                         "encode header {} {}",
                         BStr::new(validated_name),
-                        BStr::new(value)
+                        BStr::new(&value.bytes)
                     );
 
-                    if !add_outbound_field(&mut fields, validated_name, value, never_index) {
+                    if !add_outbound_field(&mut fields, validated_name, &value, never_index) {
                         let Some(stream) = self.handle_received_stream_id(stream_id) else {
                             return Ok(JSValue::js_number(-1.0));
                         };

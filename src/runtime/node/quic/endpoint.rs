@@ -2535,10 +2535,10 @@ impl QuicEndpoint {
         let len = keys.get_length(global)? as u32;
         let mut out = Vec::with_capacity(len as usize);
         for i in 0..len {
-            let key = keys.get_index(global, i)?;
-            let host = bun_core::String::from_js(key, global)?.to_owned_slice();
+            let host = bun_core::String::from_js(keys.get_index(global, i)?, global)?;
+            // Node drops a host that is an array index, as V8 lists that key as a number: https://github.com/nodejs/node/blob/v26.3.0/src/quic/session.cc#L677-L685
             let value = entries
-                .get(global, host.as_slice())?
+                .get_own(global, &host)?
                 .unwrap_or(JSValue::UNDEFINED);
             if !value.is_object() {
                 continue;
@@ -2548,7 +2548,7 @@ impl QuicEndpoint {
                 config.alpn = alpn.to_vec();
             }
             match TlsContext::new(&config) {
-                Ok(ctx) => out.push((host, ctx)),
+                Ok(ctx) => out.push((host.to_owned_slice(), ctx)),
                 Err(e) => {
                     return Err(global
                         .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!("tls: {e}"))

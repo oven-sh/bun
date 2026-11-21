@@ -93,6 +93,75 @@ test("setSNIContexts() replaces and merges identities", async () => {
   }
 });
 
+// A host name is a property key that comes from data: "123" is an array index, and a name can be
+// outside ASCII. A debug build used to stop at the first of these, so they run in a child process.
+// Node serves the name outside ASCII too. It drops a host that is an array index, because V8 lists
+// that key as a number (src/quic/session.cc and src/quic/endpoint.cc). Bun serves every host.
+test("sni entries are read when the host is an array index or not ASCII", async () => {
+  const script = `
+    import { createPrivateKey, X509Certificate } from "node:crypto";
+    import { readFileSync } from "node:fs";
+    import { join } from "node:path";
+    import { connect, listen, QuicEndpoint } from "node:quic";
+
+    const readKey = name => readFileSync(join(${JSON.stringify(keysDir)}, name));
+    const identity1 = { keys: [createPrivateKey(readKey("agent1-key.pem"))], certs: [readKey("agent1-cert.pem")] };
+    const identity2 = { keys: [createPrivateKey(readKey("agent2-key.pem"))], certs: [readKey("agent2-cert.pem")] };
+    const hosts = ["0", "123", "4294967294", "m\\u00fcnchen.example"];
+    const entries = identity => Object.fromEntries(hosts.map(host => [host, identity]));
+
+    function ignoreErrors(session) {
+      session.onerror = () => {};
+      session.opened.catch(() => {});
+    }
+    async function servedCommonName(address, servername) {
+      const session = await connect(address, { alpn: "quic-test", servername, verifyPeer: "manual" });
+      try {
+        await session.opened;
+        const cert = session.peerCertificate;
+        const x509 = cert instanceof X509Certificate ? cert : new X509Certificate(Buffer.from(cert));
+        return x509.subject.match(/CN=([^\\s,]+)/)[1];
+      } finally {
+        await session.close();
+      }
+    }
+
+    const endpoint = new QuicEndpoint();
+    const server = await listen(ignoreErrors, {
+      endpoint,
+      sni: { "*": identity1, ...entries(identity2) },
+      alpn: ["quic-test"],
+    });
+    const listened = [];
+    for (const host of hosts) listened.push(await servedCommonName(server.address, host));
+    endpoint.setSNIContexts({ "*": identity2, ...entries(identity1) }, { replace: true });
+    const set = [];
+    for (const host of hosts) set.push(await servedCommonName(server.address, host));
+    await server.close();
+    console.log(JSON.stringify({ listened, set }));
+    process.exit(0);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      listened: ["agent2", "agent2", "agent2", "agent2"],
+      set: ["agent1", "agent1", "agent1", "agent1"],
+    }),
+    stderr: expect.stringContaining(
+      "ExperimentalWarning: quic is an experimental feature and might change at any time",
+    ),
+    exitCode: 0,
+  });
+});
+
 test("an identity with several cert/key pairs installs a matching pair", async () => {
   // Node pairs certs[i] with keys[i]. Installing certs[last] against keys[0]
   // fails BoringSSL's consistency check, so listen() used to throw here.

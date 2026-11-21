@@ -11,9 +11,7 @@ use bun_core::{Mutex, MutexGuard};
 use std::ffi::c_char;
 
 /// Copies a C string without its NUL. Returns `None` for null, or if allocation fails.
-///
-/// # Safety
-/// `text` is null or points to a NUL-terminated string.
+/// SAFETY: `text` is null or points to a NUL-terminated string.
 pub(crate) unsafe fn cstr_to_vec(text: *const c_char) -> Option<Vec<u8>> {
     // SAFETY: `text` is not null, so it is NUL-terminated.
     (!text.is_null()).then(|| defer_oom(try_to_vec(unsafe { c_bytes(text) })))?

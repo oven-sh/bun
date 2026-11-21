@@ -15,8 +15,7 @@ unsafe extern "C" {
 /// `DataHeader { uint16_t headerSize; uint8_t magic1, magic2; UDataInfo info; }`
 type DataHeader = [u8; 24];
 
-/// # Safety
-/// The `N` bytes at `data` are readable.
+/// SAFETY: The `N` bytes at `data` are readable.
 unsafe fn bytes_at<const N: usize>(data: *const u8) -> [u8; N] {
     // SAFETY: an array of bytes needs no alignment.
     unsafe { data.cast::<[u8; N]>().read() }
@@ -76,9 +75,7 @@ fn collation_data_size(index: impl Fn(usize) -> usize) -> usize {
 }
 
 /// Returns the length that the item states, or 0 if the format is not known.
-///
-/// # Safety
-/// `item` is an item of the package.
+/// SAFETY: `item` is an item of the package.
 unsafe fn stated_length(item: *const u8) -> usize {
     // SAFETY: an item with the magic bytes has a header. The formats start with `int32_t indexes[]`, and have the
     // indexes that are read.

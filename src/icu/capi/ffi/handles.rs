@@ -11,16 +11,13 @@ use std::mem::ManuallyDrop;
 use std::ptr::null_mut;
 
 /// An object that lives in a `Box` from an `open` to a `close`, or in a `static`.
-///
-/// # Safety
-/// A type with `MAGIC` is `#[repr(C)]` and begins with that number.
+/// SAFETY: A type with `MAGIC` is `#[repr(C)]` and begins with that number.
 pub(crate) unsafe trait Handle: Sized + Unpin {
     /// ICU4C: capi_helper.h, IcuCApiHelper::validate
     const MAGIC: Option<i32> = None;
 }
 
-/// # Safety
-/// `handle` is null or came from `LocalHandle::new`, and is not used again.
+/// SAFETY: `handle` is null or came from `LocalHandle::new`, and is not used again.
 unsafe fn close_box<H>(handle: *mut H) {
     if !handle.is_null() {
         // SAFETY: `LocalHandle::new` has leaked the `Box`.
@@ -75,8 +72,7 @@ impl<H: Handle> IntoHandle<H> for LocalHandle<H> {
     }
 }
 
-/// # Safety
-/// `handle` is null or points to an `i32`.
+/// SAFETY: `handle` is null or points to an `i32`.
 unsafe fn check<H>(handle: *const H, magic: Option<i32>) -> Result<(), UErrorCode> {
     if handle.is_null() {
         return Err(U_ILLEGAL_ARGUMENT_ERROR);

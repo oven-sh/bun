@@ -200,8 +200,7 @@ fn utf16(text: &str) -> (Vec<u16>, i32) {
     (units, length)
 }
 
-/// # Safety
-/// `units` points to `length` units and a NUL.
+/// SAFETY: `units` points to `length` units and a NUL.
 unsafe fn kept(units: *const u16, length: i32) -> String {
     // SAFETY: the caller's.
     let units = unsafe { std::slice::from_raw_parts(units, length as usize + 1) };

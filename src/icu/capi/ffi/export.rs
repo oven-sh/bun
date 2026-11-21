@@ -62,8 +62,7 @@ macro_rules! export {
         [$($c:tt)*] [$($own:tt)*] [$($given:tt)*] [$($join:tt)*] [$($type:ty,)*]
     ) => {
         $($meta)*
-        /// # Safety
-        /// The contract that the header states for this function.
+        /// SAFETY: The contract that the header states for this function.
         #[unsafe(export_name = concat!(stringify!($name), "_79"))]
         #[allow(unsafe_code, unused_unsafe, non_snake_case)]
         $vis unsafe extern "C" fn $name($($c)*) $($result)* {
@@ -87,9 +86,7 @@ pub(crate) use export;
 /// The types that `cx` may have.
 pub(crate) trait NewCx<'a> {
     /// The borrow of a local variable limits `'a` to the call.
-    ///
-    /// # Safety
-    /// The contract of `CallerMem::new` holds.
+    /// SAFETY: The contract of `CallerMem::new` holds.
     unsafe fn new(call: &'a ()) -> Self;
 }
 
@@ -108,9 +105,7 @@ impl<'a> NewCx<'a> for &'a mut CallerMem {
 }
 
 /// A type that may appear in the signature of a `#[capi]` function.
-///
-/// # Safety
-/// Safe code cannot dereference a pointer in the value without a `CallerMem`, except in a handle.
+/// SAFETY: Safe code cannot dereference a pointer in the value without a `CallerMem`, except in a handle.
 /// It cannot obtain the token from the value, unless `IS_CONTEXT` is set.
 pub(crate) unsafe trait Parameter {
     /// Provides the `CallerMem`.

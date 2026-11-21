@@ -10,12 +10,9 @@ use std::ptr::NonNull;
 pub(crate) struct CallerMem(PhantomData<*mut ()>);
 
 /// A code unit.
-///
-/// # Safety
-/// `Default` is NUL, whose bytes are zero, `PartialEq` compares the value, and `strlen` counts no unit from the NUL on.
+/// SAFETY: `Default` is NUL, whose bytes are zero, `PartialEq` compares the value, and `strlen` counts no unit from the NUL on.
 pub(crate) unsafe trait Unit: Copy + Default + PartialEq {
-    /// # Safety
-    /// `s` points to a NUL-terminated string.
+    /// SAFETY: `s` points to a NUL-terminated string.
     #[inline]
     unsafe fn strlen(s: *const Self) -> usize {
         UntilNul {
@@ -38,8 +35,7 @@ unsafe impl Unit for u8 {
 unsafe impl Unit for UChar {}
 
 impl CallerMem {
-    /// # Safety
-    /// During `'a` the call has no other token and no other reference to the caller's memory.
+    /// SAFETY: During `'a` the call has no other token and no other reference to the caller's memory.
     pub(crate) unsafe fn new<'a>() -> &'a mut Self {
         // SAFETY: the type is zero-sized.
         unsafe { NonNull::dangling().as_mut() }

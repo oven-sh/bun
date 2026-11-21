@@ -83,9 +83,7 @@ impl<T> AtomicRef<T> {
 }
 
 /// Returns the bytes before the NUL.
-///
-/// # Safety
-/// As for [`CStr::from_ptr`].
+/// SAFETY: As for [`CStr::from_ptr`].
 #[inline]
 pub(crate) unsafe fn c_bytes<'a>(s: *const c_char) -> &'a [u8] {
     // SAFETY: the caller's.

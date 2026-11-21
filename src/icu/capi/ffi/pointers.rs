@@ -10,8 +10,7 @@ use std::ops::Range;
 pub(crate) trait Pair {
     type First;
     type Second: Copy;
-    /// # Safety
-    /// The arguments satisfy the contract of the type for its lifetime.
+    /// SAFETY: The arguments satisfy the contract of the type for its lifetime.
     unsafe fn new(first: Self::First, second: Self::Second) -> Self;
 }
 
@@ -87,9 +86,7 @@ pub(crate) struct MayAlias<P, H>(pub(super) P, PhantomData<fn() -> H>);
 pub(crate) struct Retained<P>(pub(super) P);
 
 /// The only value through which an `H` is modified.
-///
-/// # Safety
-/// A shared reference to the value cannot overwrite or free memory of the `H` to which C may point.
+/// SAFETY: A shared reference to the value cannot overwrite or free memory of the `H` to which C may point.
 pub(crate) unsafe trait Mutates<H> {}
 // SAFETY: the methods that overwrite or free such memory take `self`.
 unsafe impl<H> Mutates<H> for Mut<'_, H> {}

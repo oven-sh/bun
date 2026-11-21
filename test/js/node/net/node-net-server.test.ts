@@ -177,6 +177,48 @@ describe("net.createServer listen", () => {
     );
   });
 
+  // https://github.com/oven-sh/bun/issues/45090
+  // Node skips an `undefined`/`null` backlog and takes the callback from the
+  // last argument: listen(port, host, backlog, callback).
+  it("should invoke the listen callback when backlog is undefined or null", async () => {
+    const forms: ((server: Server, cb: () => void) => void)[] = [
+      (server, cb) => {
+        server.listen(0, "127.0.0.1", undefined, cb);
+      },
+      (server, cb) => {
+        server.listen(0, undefined, undefined, cb);
+      },
+      (server, cb) => {
+        server.listen(0, "127.0.0.1", null, cb);
+      },
+      (server, cb) => {
+        server.listen(0, undefined, 511, cb);
+      },
+      (server, cb) => {
+        server.listen(0, "127.0.0.1", 511, cb);
+      },
+    ];
+    for (const listen of forms) {
+      const server: Server = createServer();
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      server.on("error", reject);
+      listen(server, resolve);
+      await promise;
+      expect(server.listening).toBeTrue();
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  it("should listen with a numeric backlog and no host", async () => {
+    const server: Server = createServer();
+    server.listen(0, undefined, 511);
+    await once(server, "listening");
+    expect(server.listening).toBeTrue();
+    server.close();
+    await once(server, "close");
+  });
+
   it("should bind IPv4 0.0.0.0 when listen on 0.0.0.0, issue#7355", done => {
     const { mustCall } = createCallCheckCtx(done);
 

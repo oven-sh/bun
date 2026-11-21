@@ -551,6 +551,7 @@ private:
 
         /* Initialize websocket with any moved backpressure intact */
         webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure), socketData, httpContextData->onSocketClosed);
+        ((WebSocketData *) us_socket_ext(usSocket))->onSocketDrain = httpContextData->onSocketDrain;
         if (httpContextData->onSocketUpgraded) {
             httpContextData->onSocketUpgraded(socketData, SSL, usSocket);
         }

@@ -15,6 +15,8 @@ const kIsWritable = SymbolFor("nodejs.stream.writable");
 const kIsDisturbed = SymbolFor("nodejs.stream.disturbed");
 
 const kOnConstructed = Symbol("kOnConstructed");
+const kWriteOperation = Symbol("kWriteOperation");
+const kWriteOperationEncoding = "bun:write-operation";
 
 const kIsClosedPromise = SymbolFor("nodejs.webstream.isClosedPromise");
 const kControllerErrorFunction = SymbolFor("nodejs.webstream.controllerErrorFunction");
@@ -265,6 +267,8 @@ function isErrored(stream) {
 
 export default {
   kOnConstructed,
+  kWriteOperation,
+  kWriteOperationEncoding,
   isDestroyed,
   kIsDestroyed,
   isDisturbed,

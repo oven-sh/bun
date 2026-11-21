@@ -157,7 +157,7 @@ public:
     /* Sends the response bytes that are not in the uWS buffer (the zero-copy tail of a res.write(), the cork buffer) to the kernel or into it. A raw write or a FIN then goes out behind them. */
     void flushResponseBytesAhead();
     /* Only a tunnel gets the drain call that flushes streamBuffer. On any other socket the uWS buffer takes what the kernel does not. */
-    bool flushesStreamBufferOnDrain() const { return !!functionToCallOnDrain; }
+    bool flushesStreamBufferOnDrain() const;
     /* The WebSocket that adopted the connection reads from here on. */
     void releaseTunnelReadsForUpgrade();
 

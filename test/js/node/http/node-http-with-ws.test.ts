@@ -260,27 +260,19 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
 
   test.each([
     ["a fresh caller cork", "fresh"],
-    ["a caller cork below the dispatcher cork", "below-dispatcher"],
+    ["a caller cork on a reused socket", "reused"],
     ["nested caller corks after a partial release", "partial-nested"],
-    ["a caller cork that replaced the dispatcher cork", "replaced-dispatcher"],
-    ["a caller cork when dispatcher corking is suppressed", "suppressed-dispatcher"],
+    ["a caller cork after uncorking and corking again", "recorked"],
   ] as const)("preserves %s and its pending writes", async (_name, mode) => {
     let serverSocket!: Socket;
-    let suppressedCork: Socket["cork"] | undefined;
     const server = http.createServer((_req, res) => res.end("ok"));
     server.on("connection", socket => {
       serverSocket = socket;
-      if (mode !== "replaced-dispatcher") socket.cork();
-      if (mode === "partial-nested") socket.cork();
-      if (mode === "suppressed-dispatcher") {
-        suppressedCork = socket.cork;
-        socket.cork = () => {};
-      }
+      if (mode === "fresh") socket.cork();
     });
     const wss = new NpmWebSocketServer({ noServer: true });
     const upgraded = Promise.withResolvers<void>();
     server.on("upgrade", (req, socket, head) => {
-      if (suppressedCork) socket.cork = suppressedCork;
       try {
         wss.handleUpgrade(req, socket, head, ws => {
           ws.send("pending");
@@ -297,12 +289,16 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
     try {
       if (mode !== "fresh") {
         await finishKeepAliveRequest(port, agent);
+        serverSocket.cork();
       }
-      if (mode === "replaced-dispatcher") {
+      if (mode === "recorked") {
         serverSocket.uncork();
         serverSocket.cork();
       }
-      if (mode === "partial-nested") serverSocket.uncork();
+      if (mode === "partial-nested") {
+        serverSocket.cork();
+        serverSocket.uncork();
+      }
       client = new NpmWebSocket(`ws://127.0.0.1:${port}/upgrade`, { agent });
       const opened = waitForWebSocketOpen(client);
       const message = waitForWebSocketMessage(client);
@@ -1217,3 +1213,31 @@ test.concurrent.each(["another stream", "its own destroyed socket, patched to lo
     expect(exitCode).toBe(0);
   },
 );
+
+test("native WebSocket adoption forwards raw socket drain callbacks", async () => {
+  const server = http.createServer();
+  const wss = new WebSocketServer({ server });
+  const written = Promise.withResolvers<void>();
+  wss.on("connection", ws => {
+    const socket = (ws as any)._socket as Socket;
+    socket.write(Buffer.alloc(32 * 1024 * 1024, 65), error => {
+      if (error) written.reject(error);
+      else socket.write("done", error => (error ? written.reject(error) : written.resolve()));
+    });
+  });
+  const port = await listen(server);
+  const client = net.connect(port, "127.0.0.1");
+  try {
+    await once(client, "connect");
+    client.resume();
+    client.write(
+      "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    );
+    await written.promise;
+  } finally {
+    client.destroy();
+    for (const ws of wss.clients) ws.terminate();
+    await new Promise<void>(resolve => wss.close(() => resolve()));
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

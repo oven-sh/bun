@@ -1232,6 +1232,27 @@ fn body_of_bundled_commonjs_is_parsed() {
 }
 
 #[test]
+fn bundled_function_may_end_behind_a_template_or_before_a_comment() {
+    let head = "// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
+    let whole = format!("{head}f(`a\n// ${{b}}`, \"`\");}});\n");
+    let footer = format!("{head}f(`a }})\n// ${{b}}`);}})\n// wraps f({{}})\n");
+    let broken = format!("{head}f()\n// see `f);}});\n");
+    let files = [
+        ("whole.js", &*whole),
+        ("footer.js", &*footer),
+        ("broken.js", &*broken),
+    ];
+    with_host(&files, |fixture| {
+        for path in [&b"/project/whole.js"[..], b"/project/footer.js"] {
+            assert_eq!(fixture.parse(path, BY_NAME).hir.fns.len(), 0);
+            assert!(fixture.take_messages().is_empty());
+        }
+        fixture.parse(b"/project/broken.js", BY_NAME);
+        fixture.take_refusal(Code::UnsupportedOption);
+    });
+}
+
+#[test]
 fn file_marked_as_bundled_commonjs_without_the_function_is_refused() {
     let files = [("bare.js", "// @bun @bun-cjs\nmodule.exports = 1;")];
     with_host(&files, |fixture| {

@@ -82,18 +82,27 @@ pub(crate) fn blank_commonjs_wrapper(text: &[u8]) -> Option<Vec<u8>> {
     let head_start = find_transpiled_mark(text)?.end;
     let body_start = find_body_start(text, head_start)?;
     let tail = find_tail(&text[body_start..])?;
+    let tail = body_start + tail.start..body_start + tail.end;
+    Some(blank_parts(text, [head_start..body_start, tail]))
+}
+
+/// `tail` is from the `}` of the function to the end of its statement, as the parser has read them.
+pub(crate) fn blank_commonjs_wrapper_with_tail(text: &[u8], tail: Range<usize>) -> Option<Vec<u8>> {
+    let head_start = find_transpiled_mark(text)?.end;
+    let body_start = find_body_start(text, head_start)?;
+    (body_start <= tail.start).then(|| blank_parts(text, [head_start..body_start, tail]))
+}
+
+fn blank_parts(text: &[u8], parts: [Range<usize>; 2]) -> Vec<u8> {
     let mut blanked = text.to_vec();
-    for part in [
-        head_start..body_start,
-        body_start + tail.start..body_start + tail.end,
-    ] {
+    for part in parts {
         for byte in &mut blanked[part] {
             if !byte.is_ascii_whitespace() {
                 *byte = b' ';
             }
         }
     }
-    Some(blanked)
+    blanked
 }
 
 #[cfg(test)]

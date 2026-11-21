@@ -1067,6 +1067,15 @@ impl BunTest {
         self.result_queue.with_taken(|queue| queue.push_back(result));
     }
 
+    /// Retain error attribution while closing a file, including an abandoned load.
+    /// Close callbacks must not resume its tests or hooks.
+    pub(crate) fn begin_file_teardown(&self) {
+        debug_assert!(!self.in_run_loop.get());
+        self.phase.set(Phase::Done);
+        self.wants_wakeup.set(false);
+        self.timer.disarm();
+    }
+
     pub(crate) fn has_queued_results(&self) -> bool {
         self.result_queue.with_taken(|queue| !queue.is_empty())
     }

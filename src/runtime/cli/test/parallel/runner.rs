@@ -585,18 +585,15 @@ fn run_files(
             first: true,
             last: true,
         };
-        if let Err(err) = TestCommand::run(reporter, vm, path, first_last) {
+        let isolation = if vm.test_isolation_enabled.get() {
+            test_command::FileIsolation::SwapGlobal
+        } else {
+            test_command::FileIsolation::KeepGlobal
+        };
+        if let Err(err) = TestCommand::run(reporter, vm, path, first_last, isolation) {
             test_command::handle_top_level_test_error_before_javascript_start(&err);
         }
-        if vm.test_isolation_enabled.get() {
-            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-            vm.swap_global_for_test_isolation();
-            reporter
-                .jest
-                .bun_test_root
-                .reset_preload_for_test_isolation();
-            crate::test_runner::Expect::reset_for_test_isolation(vm.global());
-        } else {
+        if !vm.test_isolation_enabled.get() {
             Global::mimalloc_cleanup(false);
         }
         reporter.jest.default_timeout_override.set(u32::MAX);

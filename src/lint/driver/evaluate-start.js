@@ -24,13 +24,10 @@ if (typeof $Bun_lazy === "function") $Bun_lazy.onFirst = () => writeAll(marker);
 for (const it of given.commandLine) process.argv.push(it);
 
 // Who has removed the packages of oxlint, oxfmt and Vite+ still has `import { defineConfig } from "oxlint"` in the file.
-// `cacheKeys`: the key each has in `require.cache` once the file has loaded it. The stand-in has the name as its key.
-const cacheKeys = {};
 for (const name of ["oxlint", "oxfmt", "vite-plus"]) {
   try {
-    cacheKeys[name] = Bun.resolveSync(name, resolve(path, ".."));
+    Bun.resolveSync(name, resolve(path, ".."));
   } catch {
-    cacheKeys[name] = name;
     const exports = { defineConfig: config => config };
     Bun.plugin({
       name: `${name}, which is not installed`,

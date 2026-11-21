@@ -155,7 +155,8 @@ enum ConfigFlag {
     Named(Flavor),
     /// JSON by another name: [`flavor_of_json`]. `None` if it can't be read or isn't JSON.
     Json(Option<Flavor>),
-    /// A program by another name. What it exports decides, which only running it tells: `Loader::exported`.
+    /// A program by another name. What it exports decides, which only running it tells: `Loader::exported`. An object
+    /// that either tool reads is oxlint's there too.
     Program,
 }
 
@@ -1902,7 +1903,7 @@ impl<'l> Loader<'l> {
         let mut exported = None;
         let json = match syntax {
             Syntax::Program => {
-                let (environment, tie_break) = (self.environment, self.options.flavor);
+                let environment = self.environment;
                 let built_in = self.linter.registry().rules_that_replace_packages();
                 match known {
                     Some(_) => {
@@ -1910,7 +1911,7 @@ impl<'l> Loader<'l> {
                     }
                     None => {
                         let (json, is_for_oxlint) =
-                            evaluate::evaluate_by_export(environment, path, &built_in, tie_break)?;
+                            evaluate::evaluate_by_export(environment, path, &built_in)?;
                         let flavor = match is_for_oxlint {
                             true => Flavor::Oxlint,
                             false => Flavor::Eslint,
@@ -2905,10 +2906,14 @@ impl<'l> Loader<'l> {
         let file_exists = || self.named_config().is_some_and(|it| fs::is_file(&it));
         match self.config_flag() {
             ConfigFlag::Absent => self.uses_oxlint_defaults(),
-            _ if !file_exists() => self.uses_oxlint_defaults(),
+            // An ESLint 8 flag makes any file an ESLint 8 file.
             _ if self.is_eslint_8_command_line() => false,
             ConfigFlag::EslintRc => false,
             ConfigFlag::Named(flavor) => flavor == Flavor::Oxlint,
+            // Nothing says whose a missing file is.
+            ConfigFlag::Json(_) | ConfigFlag::Program if !file_exists() => {
+                self.uses_oxlint_defaults()
+            }
             ConfigFlag::Json(_) => true,
             // A program that fails before it exports anything is treated as ESLint's.
             ConfigFlag::Program => self.exported.get() == Some(&Flavor::Oxlint),

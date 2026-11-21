@@ -232,15 +232,28 @@ function serializeConfigObject(given, index) {
   return out;
 }
 
-// For a file whose name does not say whose it is: true if what it exports is an oxlint config. ESLint reads one object too,
-// so a key that only oxlint has decides, then `--flavor`, which `given.byExport` has, then whether the file has loaded oxlint,
-// as for `defineConfig`.
+// The keys of a config object that only ESLint reads, in an eslint.config.js or an .eslintrc: `validate_object` in
+// linter/config/flat.rs has them, and `KEYS` in linter/config/shape.rs, which are oxlint's, does not.
+const keysOfESLint = [
+  "basePath",
+  "files",
+  "ignores",
+  "language",
+  "languageOptions",
+  "linterOptions",
+  "name",
+  "processor",
+];
+const keysOfESLint8 = ["noInlineConfig", "parser", "parserOptions", "reportUnusedDisableDirectives", "root"];
+
+// For a file whose name does not say whose it is: true if what it exports is an oxlint config. An array is ESLint's, and so
+// is an object with a key or with `plugins` as only ESLint reads them. Any other object is oxlint's, also one that ESLint
+// reads too, as in a JSON file by another name.
 function isForOxlint(exported) {
   if (exported === null || typeof exported !== "object" || Array.isArray(exported)) return false;
-  if (["categories", "jsPlugins", "options"].some(key => exported[key] !== undefined)) return true;
-  if (typeof exported.$schema === "string" && exported.$schema.includes("oxlint")) return true;
-  if (given.byExport !== "") return given.byExport === "oxlint";
-  return require.cache[cacheKeys.oxlint] !== undefined;
+  const { plugins } = exported;
+  if (plugins !== null && typeof plugins === "object" && !Array.isArray(plugins)) return false;
+  return ![...keysOfESLint, ...keysOfESLint8].some(key => key in exported);
 }
 
 const isOfVite = require("node:path").basename(path).startsWith("vite.config.");
@@ -255,7 +268,7 @@ let isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config."
   exported = await exported;
   // Vite+: what `vp lint` reads.
   if (isOfVite) exported = exported?.lint ?? null;
-  if (given.byExport !== undefined) isOfOxlint ||= isForOxlint(exported);
+  if (given.byExport) isOfOxlint ||= isForOxlint(exported);
   const compat = Object.keys(require.cache).find(file => /[\\/]@eslint[\\/]compat[\\/]dist[\\/]/.test(file));
   if (compat !== undefined) fixupPluginRules = (await import(pathToFileURL(compat).href)).fixupPluginRules ?? null;
   [exported].flat(Infinity).forEach((object, index) => {
@@ -268,5 +281,5 @@ let isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config."
   if (Array.isArray(exported)) config = exported.flat(Infinity).map(serializeConfigObject);
   else if (exported !== undefined) config = serializeConfigObject(exported, 0);
 
-  finish(config, stringify, given.byExport === undefined ? undefined : isOfOxlint);
+  finish(config, stringify, given.byExport ? isOfOxlint : undefined);
 })();

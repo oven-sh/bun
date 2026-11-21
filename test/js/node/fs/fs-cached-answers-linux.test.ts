@@ -481,13 +481,13 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
       (async () => {
         await warm();
         await asking();
-        // The chain ends once the loop has run each of the three beside it.
+        // The chain ends once the loop has run each of the three beside it. Its first link is the pool's: the read is in front.
         let timerFired = false, immediateRan = false, read = false;
         setTimeout(() => { timerFired = true; }, 1);
         fs.readFile("sub/inner.txt", () => { read = true; });
         setImmediate(() => { immediateRan = true; });
         const { hits } = await counted(async () => {
-          while (!(timerFired && read && immediateRan)) await fsp.stat("file.txt");
+          for (let links = 0; links < 50 || !(timerFired && read && immediateRan); links++) await fsp.stat("file.txt");
         });
         console.log(JSON.stringify({ timerFired, read, immediateRan, isAnswered: hits > 0 }));
       })();
@@ -718,11 +718,20 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         await warm();
         await fsp.stat("large.bin");
         await asking();
-        // Both threads of the pool wait for a writer.
+        // Each of the two threads of the pool reads a FIFO that nothing is written to yet.
         require("node:child_process").execFileSync("mkfifo", ["fifo-a", "fifo-b"]);
         const readers = [fsp.readFile("fifo-a", "utf8"), fsp.readFile("fifo-b", "utf8")];
-        await nextTurn();
-        const descriptors = () => fs.readdirSync("/proc/self/fd").length;
+        const writers = [];
+        for (const name of ["fifo-a", "fifo-b"]) {
+          // A writer that does not wait can open a FIFO only once a reader is in its open.
+          for (const deadline = performance.now() + 3000; ; await nextTurn()) {
+            try { writers.push(fs.openSync(name, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK)); break; }
+            catch (e) { if (e.code !== "ENXIO" || performance.now() > deadline) throw e; }
+          }
+        }
+        const large = fs.realpathSync("large.bin");
+        const isLarge = fd => { try { return fs.readlinkSync("/proc/self/fd/" + fd) === large; } catch { return false; } };
+        const descriptors = () => fs.readdirSync("/proc/self/fd").filter(isLarge).length;
         const before = { descriptors: descriptors(), hits: getCounters().fs_cached_hit };
         const stats = [];
         for (let go = 0; go < 6; go++) {
@@ -730,8 +739,10 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
           await nextTurn();
         }
         const waiting = { descriptors: descriptors() - before.descriptors, hits: getCounters().fs_cached_hit - before.hits };
-        fs.writeFileSync("fifo-a", "a");
-        fs.writeFileSync("fifo-b", "b");
+        for (const [i, fd] of writers.entries()) {
+          fs.writeSync(fd, "ab"[i]);
+          fs.closeSync(fd);
+        }
         const sizes = new Set((await Promise.all(stats)).map(stats => stats.size));
         const read = await Promise.all(readers);
         const deadline = performance.now() + 3000;

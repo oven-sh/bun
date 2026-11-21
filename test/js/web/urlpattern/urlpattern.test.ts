@@ -358,6 +358,18 @@ describe("URLPattern", () => {
     });
   });
 
+  test.each([
+    [String.raw`[[\:\:1]]\:80/`, String.raw`[[\:\:1]]`, "80", "/", "*", "*"],
+    [String.raw`[[\:\:1]\:80/`, String.raw`[[\:\:1]\:80`, "", "/", "*", "*"],
+    [String.raw`[\:\:1]]\:80/`, String.raw`[\:\:1]]`, "80", "/", "*", "*"],
+    [String.raw`[\:\:1/foo`, String.raw`[\:\:1`, "", "/foo", "*", "*"],
+    [String.raw`[\:\:1?q`, String.raw`[\:\:1`, "", "/", "q", "*"],
+    [String.raw`[\:\:1#h`, String.raw`[\:\:1`, "", "/", "", "h"],
+  ])("brackets in the hostname of https://%s", (text, ...expected) => {
+    const { hostname, port, pathname, search, hash } = new URLPattern(`https://${text}`);
+    expect([hostname, port, pathname, search, hash]).toEqual(expected);
+  });
+
   test("a timeout ends the search for the protocol of a constructor string", async () => {
     // What is before each `:` is compiled, and is no protocol. To try them all takes minutes.
     const script = String.raw`

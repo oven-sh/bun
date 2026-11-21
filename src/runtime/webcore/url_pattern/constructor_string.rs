@@ -17,7 +17,8 @@ enum State {
     Authority,
     Username,
     Password,
-    Hostname,
+    /// With the IPv6 bracket depth.
+    Hostname(usize),
     Port,
     Pathname,
     Search,
@@ -32,7 +33,6 @@ struct Parser<'i> {
     component_start: usize,
     token_index: usize,
     token_increment: usize,
-    ipv6_bracket_depth: usize,
     protocol_matches_special_scheme: bool,
     state: State,
 }
@@ -95,7 +95,7 @@ impl<'i> Parser<'i> {
             State::Protocol => self.result[Kind::Protocol] = text,
             State::Username => self.result[Kind::Username] = text,
             State::Password => self.result[Kind::Password] = text,
-            State::Hostname => self.result[Kind::Hostname] = text,
+            State::Hostname(_) => self.result[Kind::Hostname] = text,
             State::Port => self.result[Kind::Port] = text,
             State::Pathname => self.result[Kind::Pathname] = text,
             State::Search => self.result[Kind::Search] = text,
@@ -104,7 +104,7 @@ impl<'i> Parser<'i> {
 
         if self.state != State::Init && new_state != State::Done {
             let passes = |skipped| self.state < skipped && skipped < new_state;
-            if passes(State::Hostname) {
+            if passes(State::Hostname(0)) {
                 self.result[Kind::Hostname].get_or_insert(EncodedSlice::EMPTY);
             }
             if passes(State::Pathname) {
@@ -155,26 +155,25 @@ impl<'i> Parser<'i> {
             State::Authority
                 if self.is_char(b'/') || self.is_search_prefix() || self.is_char(b'#') =>
             {
-                self.rewind_and_set_state(State::Hostname)
+                self.rewind_and_set_state(State::Hostname(0))
             }
             State::Username if self.is_char(b':') => self.change_state(State::Password, 1),
             State::Username | State::Password if self.is_char(b'@') => {
-                self.change_state(State::Hostname, 1)
+                self.change_state(State::Hostname(0), 1)
             }
-            State::Hostname if self.is_char(b'[') => self.ipv6_bracket_depth += 1,
-            State::Hostname if self.is_char(b']') && self.ipv6_bracket_depth > 0 => {
-                self.ipv6_bracket_depth -= 1
+            State::Hostname(depth) if self.is_char(b'[') => self.state = State::Hostname(depth + 1),
+            // Unlike the spec, a `]` that closes nothing is passed over.
+            State::Hostname(depth @ 1..) if self.is_char(b']') => {
+                self.state = State::Hostname(depth - 1)
             }
-            State::Hostname if self.is_char(b':') && self.ipv6_bracket_depth == 0 => {
-                self.change_state(State::Port, 1)
-            }
-            State::Hostname | State::Port if self.is_char(b'/') => {
+            State::Hostname(0) if self.is_char(b':') => self.change_state(State::Port, 1),
+            State::Hostname(_) | State::Port if self.is_char(b'/') => {
                 self.change_state(State::Pathname, 0)
             }
-            State::Hostname | State::Port | State::Pathname if self.is_search_prefix() => {
+            State::Hostname(_) | State::Port | State::Pathname if self.is_search_prefix() => {
                 self.change_state(State::Search, 1)
             }
-            State::Hostname | State::Port | State::Pathname | State::Search
+            State::Hostname(_) | State::Port | State::Pathname | State::Search
                 if self.is_char(b'#') =>
             {
                 self.change_state(State::Hash, 1)
@@ -196,7 +195,6 @@ pub(super) fn parse<'a, 'i>(
         component_start: 0,
         token_index: 0,
         token_increment: 1,
-        ipv6_bracket_depth: 0,
         protocol_matches_special_scheme: false,
         state: State::Init,
     };
@@ -216,7 +214,7 @@ pub(super) fn parse<'a, 'i>(
                         parser.change_state(State::Pathname, 0);
                     }
                 }
-                State::Authority => parser.rewind_and_set_state(State::Hostname),
+                State::Authority => parser.rewind_and_set_state(State::Hostname(0)),
                 _ => parser.change_state(State::Done, 0),
             },
             TokenType::Open => group_depth += 1,

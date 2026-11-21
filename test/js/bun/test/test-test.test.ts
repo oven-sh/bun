@@ -854,3 +854,60 @@ test("my-test", () => {
     });
   }
 });
+
+// A rejection that a setImmediate callback makes is reported when that callback returns, as in
+// Node. A handler that a later callback attaches comes after the report.
+test("a rejection in an immediate is reported before a later callback handles it", async () => {
+  using dir = tempDir("immediate-rejection", {
+    "package.json": "{}",
+    "late.test.js": /*js*/ `
+import { test } from "bun:test";
+
+const reject = name => Promise.reject(new Error("## " + name + " ##"));
+
+test("the next immediate", async () => {
+  const { promise: done, resolve } = Promise.withResolvers();
+  let promise;
+  setImmediate(() => { promise = reject("the next immediate"); });
+  setImmediate(() => { promise.catch(() => {}); resolve(); });
+  await done;
+});
+
+test("a timer", async () => {
+  const { promise: done, resolve } = Promise.withResolvers();
+  setImmediate(() => {
+    const promise = reject("a timer");
+    setTimeout(() => { promise.catch(() => {}); resolve(); }, 1);
+  });
+  await done;
+});
+
+test("a microtask of the immediate", async () => {
+  const { promise: done, resolve } = Promise.withResolvers();
+  setImmediate(() => {
+    const promise = reject("a microtask of the immediate");
+    queueMicrotask(() => { promise.catch(() => {}); resolve(); });
+  });
+  await done;
+});
+`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "late.test.js"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect([...stderr.matchAll(/^(?:error: ## (.*) ##|\((pass|fail)\) (.*) \[)/gm)].map(m => m[1] ?? m[2] + " " + m[3])).toEqual([
+    "the next immediate",
+    "fail the next immediate",
+    "a timer",
+    "fail a timer",
+    "pass a microtask of the immediate",
+  ]);
+  expect(exitCode).toBe(1);
+});

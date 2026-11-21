@@ -1167,6 +1167,66 @@ describe.concurrent(() => {
         ).toEqual({ stdout: "handled\n", stderr: "", exitCode: 0 });
       });
     });
+
+    // Bun.build() runs the loop until the promise of a plugin's setup() settles. It is called from
+    // a timer, so script is beneath these immediates and their exit is no microtask checkpoint.
+    describe("an immediate that runs inside Bun.build()", () => {
+      async function build(setup) {
+        using dir = tempDir("loop-inside-build", { "entry.js": "export default 1;" });
+        return await run(
+          `process.on("unhandledRejection", () => console.log("unhandledRejection"));
+           setTimeout(async () => {
+             await Bun.build({
+               entrypoints: [${JSON.stringify(join(String(dir), "entry.js"))}],
+               plugins: [{ name: "setup", setup() { ${setup} } }],
+             });
+             console.log("built");
+             clearTimeout(keepAlive);
+           }, 1);`,
+        );
+      }
+
+      it("and resumes a setup() that awaits three of them", async () => {
+        expect(
+          await build(
+            `return (async () => {
+               for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve));
+             })();`,
+          ),
+        ).toEqual({ stdout: "built\n", stderr: "", exitCode: 0 });
+      });
+
+      it("and rejects a promise that gets its handler in a microtask, which is not reported", async () => {
+        expect(
+          await build(
+            `return new Promise(resolve => {
+               setImmediate(() => {
+                 const promise = Promise.reject(new Error("boom"));
+                 queueMicrotask(() => promise.catch(() => console.log("handled")));
+                 setImmediate(resolve);
+               });
+             });`,
+          ),
+        ).toEqual({ stdout: "handled\nbuilt\n", stderr: "", exitCode: 0 });
+      });
+    });
+
+    it("an immediate that settles the top-level await of a --preload", async () => {
+      using dir = tempDir("loop-preload", {
+        "preload.mjs": `globalThis.keepAlive = setTimeout(() => {}, 2 ** 30);
+          await new Promise(resolve => setImmediate(() => { Bun.gc(true); setImmediate(resolve); }));`,
+        "main.js": `console.log("main"); clearTimeout(keepAlive);`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--preload", "./preload.mjs", "main.js"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "main\n", stderr: "", exitCode: 0 });
+    });
   });
 
   describe("process.onBeforeExit", () => {

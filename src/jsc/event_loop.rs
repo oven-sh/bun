@@ -598,8 +598,10 @@ impl EventLoop {
     #[inline(never)]
     fn report_rejected_promises_slow(&self) -> JsResult<()> {
         self.vm_ref().has_rejected_promises.set(false);
-        // The listeners are script: a callback that one of them makes does not run their ticks in the middle of them.
-        let _entered = self.enter_scope_without_checkpoint();
+        // The listeners run entered, as at the end of `tick()`: a callback that one of them
+        // makes does not run their ticks in the middle of them.
+        let _entered = (self.entered_event_loop_count.get() == 0)
+            .then(|| self.enter_scope_without_checkpoint());
         self.global_ref().handle_rejected_promises()
     }
 

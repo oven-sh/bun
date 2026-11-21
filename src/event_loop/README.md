@@ -67,14 +67,21 @@ Built-in JSC microtask queue for promises and queueMicrotask.
 └─────────────────────────────────────┘
 ```
 
-### autoTick Flow (`event_loop.rs:349-401`)
+### autoTick Flow (`loop_turn` in `src/runtime/jsc_hooks.rs`)
 
-This is called when the event loop is active and needs to wait for I/O:
+This is called when the event loop is active and needs to wait for I/O. `auto_tick` and
+`auto_tick_active` are the same turn. `auto_tick_active` skips the imminent GC timer and step 7.
+
+The caller names what it waits for (`WaitFor`): the loop staying alive, a promise, or only an
+event of the loop. The immediates of step 1 are script, and they can end that wait. So when the
+poll of step 4 would sleep and the wait is over, the turn returns without steps 3 to 5: an
+unhandled error has ended the run, the promise has settled, or the immediates ran beneath script
+and owe their microtask checkpoint to the caller's `tick()`.
 
 ```
 ┌─────────────────────────────────────┐
-│  1. Tick immediate tasks            │ ← setImmediate() callbacks
-└──────────────┬──────────────────────┘
+│  1. Tick immediate tasks            │ ← setImmediate() callbacks; a rejected promise
+└──────────────┬──────────────────────┘   is reported when its callback returns
                │
                ▼
 ┌─────────────────────────────────────┐

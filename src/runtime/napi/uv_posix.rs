@@ -14,7 +14,7 @@
 //! - `uv_async_send` sets the handle's `pending` flag and posts at most one
 //!   dispatch task per loop through the VM's [`VmHandle`], where libuv writes to an
 //!   eventfd. The task walks the loop's handles on the JS thread like `uv__async_io`.
-//! - `auto_tick` (jsc_hooks.rs) runs idle and prepare handles before it polls and
+//! - `loop_turn` (jsc_hooks.rs) runs idle and prepare handles before it polls and
 //!   check handles after. It doesn't block while an idle handle is started.
 //! - A timer is an [`EventLoopTimer`] in the VM's timer heap. It's too big for the
 //!   handle, so it's heap-allocated in a [`UvTimerNode`].
@@ -337,7 +337,7 @@ impl UvLoop {
         }
     }
 
-    /// Runs the idle handles, then the prepare handles. `auto_tick` calls this before
+    /// Runs the idle handles, then the prepare handles. `loop_turn` calls this before
     /// it polls. Returns true if an idle handle is started, so the poll must not block.
     pub(crate) fn before_poll(&self, vm: &VirtualMachine) -> bool {
         if self.idles.is_empty() && self.prepares.is_empty() {
@@ -351,7 +351,7 @@ impl UvLoop {
         !self.idles.is_empty()
     }
 
-    /// Runs the check handles. `auto_tick` calls this after it polls.
+    /// Runs the check handles. `loop_turn` calls this after it polls, or after it found no reason to.
     pub(crate) fn after_poll(&self, vm: &VirtualMachine) {
         if !self.checks.is_empty() && vm.script_allowed() {
             self.checks.walk(vm);

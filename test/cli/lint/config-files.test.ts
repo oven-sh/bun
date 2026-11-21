@@ -5046,6 +5046,194 @@ describe.concurrent("which tool's config files are used", () => {
     }
   });
 
+  describe("--config with a program by another name", () => {
+    // `categories` is a key that only an oxlint config has. Either tool reads the second one.
+    const forOxlint = `{ plugins: ["typescript"], categories: { correctness: "off" }, rules: { eqeqeq: "error" } }`;
+    const forEither = `{ rules: { eqeqeq: "error" } }`;
+    // With the second one, oxlint's defaults are on too.
+    const eqeqeq = "a.js:2:7 eqeqeq";
+    const [asESLint, asOxlint] = [[eqeqeq], ["a.js:2:13 no-debugger", eqeqeq]];
+    const fromOxlint = `import { defineConfig } from "oxlint";\nexport default defineConfig(${forEither});`;
+    const installed = {
+      "node_modules/oxlint/package.json": `{ "name": "oxlint", "version": "1.94.0", "main": "index.js" }`,
+      "node_modules/oxlint/index.js": `exports.defineConfig = config => config;`,
+    };
+
+    // Same as oxlint 1.94.0 with `-c`.
+    test.each([
+      ["mine.ts", `export default ${forOxlint};`],
+      ["mine.mts", `export default ${forOxlint};`],
+      ["mine.mjs", `export default ${forOxlint};`],
+      ["mine.js", `module.exports = ${forOxlint};`],
+      ["mine.cjs", `module.exports = ${forOxlint};`],
+      ["oxlint.config.mjs", `export default ${forEither};`],
+    ])("%s that exports an oxlint config is read as one", async (name, text) => {
+      const files = { [name]: text, "a.js": code, "a.ts": code };
+      const runs = await Promise.all([
+        lint(files, ["--config", name, "a.js", "a.ts"]),
+        lint(files, [`--config=${name}`, "a.js", "a.ts"]),
+        lint({ ...files, "bunfig.toml": `[lint]\nconfig = "${name}"\n` }, ["a.js", "a.ts"]),
+      ]);
+      for (const { problems, exitCode } of runs) {
+        expect(problems.filter(it => it.endsWith(" eqeqeq"))).toEqual(["a.js:2:7 eqeqeq", "a.ts:2:7 eqeqeq"]);
+        expect(exitCode).toBe(1);
+      }
+    });
+
+    test.each<[string, Record<string, string>, string[], string[]]>([
+      ["a key that only oxlint has", { "mine.mjs": `export default ${forOxlint};` }, [], [eqeqeq]],
+      [
+        "oxlint's $schema",
+        { "mine.mjs": `export default { $schema: "./node_modules/oxlint/configuration_schema.json", rules: {} };` },
+        [],
+        ["a.js:2:13 no-debugger"],
+      ],
+      ["that key, whatever --flavor", { "mine.mjs": `export default ${forOxlint};` }, ["--flavor=eslint"], [eqeqeq]],
+      ["a function that returns it", { "mine.mjs": `export default () => (${forOxlint});` }, [], [eqeqeq]],
+      [
+        "--flavor=oxlint for an object that either reads",
+        { "mine.mjs": `export default ${forEither};` },
+        ["--flavor=oxlint"],
+        asOxlint,
+      ],
+      [
+        "[lint] flavor for such an object",
+        { "mine.mjs": `export default ${forEither};`, "bunfig.toml": `[lint]\nflavor = "oxlint"\n` },
+        [],
+        asOxlint,
+      ],
+      ["an import of oxlint, which is not installed", { "mine.mjs": fromOxlint }, [], asOxlint],
+      ["an import of oxlint, which is installed", { "mine.mjs": fromOxlint, ...installed }, [], asOxlint],
+      [
+        "a file it imports that imports oxlint",
+        { "mine.mjs": `export { default } from "./base.ts";`, "base.ts": fromOxlint },
+        [],
+        asOxlint,
+      ],
+      [
+        "require() of oxlint",
+        { "mine.cjs": `module.exports = require("oxlint").defineConfig(${forEither});`, ...installed },
+        [],
+        asOxlint,
+      ],
+    ])("what it exports is an oxlint config: %s", async (_, files, args, expected) => {
+      const { problems, exitCode } = await lint({ ...files, "a.js": code }, [
+        "-c",
+        Object.keys(files)[0],
+        ...args,
+        "a.js",
+      ]);
+      expect(problems).toEqual(expected);
+      expect(exitCode).toBe(expected.includes(eqeqeq) ? 1 : 0);
+    });
+
+    test.each<[string, Record<string, string>, string[]]>([
+      ["an object that either reads", { "mine.mjs": `export default ${forEither};` }, []],
+      ["an import of oxlint with --flavor=eslint", { "mine.mjs": fromOxlint }, ["--flavor=eslint"]],
+      ["an array, whatever --flavor", { "mine.mjs": `export default [${forEither}];` }, ["--flavor=oxlint"]],
+      [
+        "an array, whatever [lint] flavor",
+        { "mine.mjs": `export default [${forEither}];`, "bunfig.toml": `[lint]\nflavor = "oxlint"\n` },
+        [],
+      ],
+      [
+        "an array in a file that imports oxlint",
+        { "mine.mjs": `import "oxlint";\nexport default [${forEither}];` },
+        [],
+      ],
+      [
+        "an import of eslint-plugin-oxlint",
+        {
+          "mine.mjs": `import "eslint-plugin-oxlint";\nexport default ${forEither};`,
+          "node_modules/eslint-plugin-oxlint/package.json": `{ "main": "index.js" }`,
+          "node_modules/eslint-plugin-oxlint/index.js": ``,
+        },
+        [],
+      ],
+    ])("what it exports is an ESLint config: %s", async (_, files, args) => {
+      const { problems, exitCode } = await lint({ ...files, "a.js": code }, ["-c", "mine.mjs", ...args, "a.js"]);
+      expect(problems).toEqual(asESLint);
+      expect(exitCode).toBe(1);
+    });
+
+    test("it is checked, printed and combined with flags like an oxlint.config.ts", async () => {
+      const text = `export default ${forOxlint};`;
+      const files = { "mine.ts": text, "oxlint.config.ts": text, "a.js": code };
+      const rejected =
+        "error: --ext .js is an ESLint flag and has no effect here\n  This run uses mine.ts, an oxlint config.";
+      const [printed, printedByName, withOxlintFlag, withESLintFlag] = await Promise.all([
+        lint(files, ["-c", "mine.ts", "--print-config", "a.js"]),
+        lint(files, ["-c", "oxlint.config.ts", "--print-config", "a.js"]),
+        lint(files, ["-c", "mine.ts", "--import-plugin", "a.js"]),
+        lint(files, ["-c", "mine.ts", "--ext", ".js", "a.js"]),
+      ]);
+      expect(printed.stdout).toBe(printedByName.stdout);
+      expect(printed.stdout).toContain('"categories"');
+      expect(withOxlintFlag.problems).toEqual([eqeqeq]);
+      expect(withESLintFlag.stderr).toContain(rejected);
+      expect(withESLintFlag.exitCode).toBe(2);
+    });
+
+    test("oxlint's flags are accepted for a file outside the working directory too", async () => {
+      const files = { "app/mine.mjs": `export default ${forOxlint};`, "app/a.js": code, "other/b.js": code };
+      const args = ["-c", "mine.mjs", "--import-plugin", "a.js", "../other/b.js"];
+      const { problems, stderr, exitCode } = await lint(files, args, { cwd: "app" });
+      expect(stderr).not.toContain("has no effect here");
+      expect(problems).toEqual(["app/a.js:2:7 eqeqeq", "other/b.js:2:7 eqeqeq"]);
+      expect(exitCode).toBe(1);
+    });
+
+    // Same as oxlint 1.94.0.
+    test.each([
+      [`["./base.json"]`, "`extends[0]` must be a config object (strings/paths are not supported)."],
+      [`[[{}]]`, "`extends[0]` must be a config object (strings/paths are not supported)."],
+      [`"./base.json"`, "`extends` must be an array of config objects (strings/paths are not supported)."],
+      [`{}`, "`extends` must be an array of config objects (strings/paths are not supported)."],
+    ])("`extends` rejects paths, and it fails as oxlint does: %s", async (extended, message) => {
+      const { problems, stdout, exitCode } = await lint(
+        {
+          "mine.ts": `export default { categories: {}, extends: ${extended} };`,
+          "base.json": JSON.stringify({ rules: { eqeqeq: "error" } }),
+          "a.js": code,
+        },
+        ["-c", "mine.ts", "a.js"],
+      );
+      expect(problems).toEqual([]);
+      expect(stdout).toContain(message);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a file that can't be loaded fails as the tool does whose file it is", async () => {
+      const files = {
+        "oxlint.config.ts": `throw new Error("from the config");`,
+        "mine.ts": `throw new Error("from the config");`,
+        "a.js": code,
+      };
+      const [named, other] = await Promise.all([
+        lint(files, ["-c", "oxlint.config.ts", "a.js"]),
+        lint(files, ["-c", "mine.ts", "a.js"]),
+      ]);
+      // Same as oxlint 1.94.0.
+      expect(named.stdout).toContain("Cannot load the configuration file <dir>/oxlint.config.ts");
+      expect(named.exitCode).toBe(1);
+      // Nothing says whose this one is.
+      expect(other.stderr).toContain("Cannot load the configuration file <dir>/mine.ts");
+      expect(other.exitCode).toBe(2);
+    });
+
+    test.each([
+      ["mine.mjs", `export default ${forOxlint};`],
+      ["mine.js", `module.exports = [${forEither}];`],
+      ["plain.json", `{ "rules": { "eqeqeq": "error" } }`],
+    ])("with dependencies on both tools, -c %s isn't said to be missing", async (name, text) => {
+      const dependencies = { devDependencies: { eslint: "*", oxlint: "*" } };
+      const files = { [name]: text, "package.json": JSON.stringify(dependencies), "a.js": code };
+      const { problems, stderr } = await lint(files, ["-c", name, "a.js"]);
+      expect(problems).toContain(eqeqeq);
+      expect(stderr).not.toContain("No config file found");
+    });
+  });
+
   test("an eslint.config.js wins over a dependency on oxlint", async () => {
     const files = {
       "eslint.config.js": both["eslint.config.js"],
@@ -5240,11 +5428,12 @@ describe.concurrent("which tool's config files are used", () => {
       "packages/own/b.js:2:7 eqeqeq",
       "packages/silent/c.js:1:1 no-var",
     ]);
+    // It fails as oxlint does, as a vite.config.ts that lookup finds and that can't be loaded.
     const withConfigFlag = await lint(files, ["-c", "packages/silent/vite.config.ts", "a.js"]);
-    expect(withConfigFlag.stderr).toContain(
+    expect(withConfigFlag.stdout).toContain(
       "Expected a `lint` field in the default export of <dir>/packages/silent/vite.config.ts",
     );
-    expect(withConfigFlag.exitCode).not.toBe(0);
+    expect(withConfigFlag.exitCode).toBe(1);
     // If there's an oxlint config file, it's used and the vite.config.ts files aren't.
     const withFile = await lint({ ...files, ".oxlintrc.json": oxlintrc({ "no-debugger": "error" }) }, [
       "a.js",

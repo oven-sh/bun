@@ -232,8 +232,20 @@ function serializeConfigObject(given, index) {
   return out;
 }
 
+// For a file whose name does not say whose it is: true if what it exports is an oxlint config. ESLint reads one object too,
+// so a key that only oxlint has decides, then `--flavor`, which `given.byExport` has, then whether the file has loaded oxlint,
+// as for `defineConfig`.
+function isForOxlint(exported) {
+  if (exported === null || typeof exported !== "object" || Array.isArray(exported)) return false;
+  if (["categories", "jsPlugins", "options"].some(key => exported[key] !== undefined)) return true;
+  if (typeof exported.$schema === "string" && exported.$schema.includes("oxlint")) return true;
+  if (given.byExport !== "") return given.byExport === "oxlint";
+  return require.cache[cacheKeys.oxlint] !== undefined;
+}
+
 const isOfVite = require("node:path").basename(path).startsWith("vite.config.");
-const isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config.");
+// `given.byExport`: only for a file by another name, for which `isForOxlint` decides once the file has run.
+let isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config.");
 // In a function: for an `await` at the top level that never settles Bun waits forever. This way the process ends when nothing is left to
 // wait for, as node does.
 (async () => {
@@ -243,6 +255,7 @@ const isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config
   exported = await exported;
   // Vite+: what `vp lint` reads.
   if (isOfVite) exported = exported?.lint ?? null;
+  if (given.byExport !== undefined) isOfOxlint ||= isForOxlint(exported);
   const compat = Object.keys(require.cache).find(file => /[\\/]@eslint[\\/]compat[\\/]dist[\\/]/.test(file));
   if (compat !== undefined) fixupPluginRules = (await import(pathToFileURL(compat).href)).fixupPluginRules ?? null;
   [exported].flat(Infinity).forEach((object, index) => {
@@ -255,5 +268,5 @@ const isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config
   if (Array.isArray(exported)) config = exported.flat(Infinity).map(serializeConfigObject);
   else if (exported !== undefined) config = serializeConfigObject(exported, 0);
 
-  finish(config, stringify);
+  finish(config, stringify, given.byExport === undefined ? undefined : isOfOxlint);
 })();

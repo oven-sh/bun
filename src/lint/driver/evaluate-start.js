@@ -24,10 +24,13 @@ if (typeof $Bun_lazy === "function") $Bun_lazy.onFirst = () => writeAll(marker);
 for (const it of given.commandLine) process.argv.push(it);
 
 // Who has removed the packages of oxlint, oxfmt and Vite+ still has `import { defineConfig } from "oxlint"` in the file.
+// `cacheKeys`: the key each has in `require.cache` once the file has loaded it. The stand-in has the name as its key.
+const cacheKeys = {};
 for (const name of ["oxlint", "oxfmt", "vite-plus"]) {
   try {
-    Bun.resolveSync(name, resolve(path, ".."));
+    cacheKeys[name] = Bun.resolveSync(name, resolve(path, ".."));
   } catch {
+    cacheKeys[name] = name;
     const exports = { defineConfig: config => config };
     Bun.plugin({
       name: `${name}, which is not installed`,
@@ -36,7 +39,8 @@ for (const name of ["oxlint", "oxfmt", "vite-plus"]) {
   }
 }
 
-function finish(config, stringify = JSON.stringify) {
+// `isForOxlint`: evaluate-eslint.js, for `given.byExport`.
+function finish(config, stringify = JSON.stringify, isForOxlint) {
   // Exits explicitly, because a timer, watcher or server that the config left behind would keep the process alive forever.
   // The result has been written by then, so the exit code is 0 whatever the config did to `process.exitCode`.
   // `--doctor` reports which packages the config needs in order to load.
@@ -47,7 +51,7 @@ function finish(config, stringify = JSON.stringify) {
   const isLarge = file => /[\\/]typescript[\\/]lib[\\/]typescript\.js$/.test(file) && require.cache[file]?.paths;
   const large = Object.keys(require.cache).filter(isLarge);
   // `process.stdout` takes long to load. What the config has left in it is written after the last marker, if at all.
-  writeAll(marker + stringify({ config, modules, large }) + marker);
+  writeAll(marker + stringify({ config, modules, large, isForOxlint }) + marker);
   process.exit(0);
 }
 

@@ -470,7 +470,12 @@ impl TLSSocket {
             None
         };
         let store = shared_store.as_deref().or(ctx_store);
-        let Some(lookup) = store.and_then(boringssl::IssuerLookup::new) else {
+        let peer = if is_server_ssl {
+            boringssl::TlsPeer::Client
+        } else {
+            boringssl::TlsPeer::Server
+        };
+        let Some(lookup) = store.and_then(|store| boringssl::IssuerLookup::new(store, peer)) else {
             return Ok(first_obj);
         };
         let mut last_found: Option<boringssl::OwnedX509> = None;

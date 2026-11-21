@@ -36,6 +36,11 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  patches: [
+    // X509_verify_cert never backtracks, so an unusable copy of a trusted CA hid a valid one.
+    "patches/boringssl/prefer-usable-trusted-issuer.patch",
+  ],
+
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
     // uses gas .S that clang assembles.

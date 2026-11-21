@@ -2553,7 +2553,7 @@ pub(crate) fn create_shell_interpreter<'a>(
     }
     // SAFETY: the payload of `this_value`.
     let interp = unsafe { this_value.payload_ptr().as_ref() };
-    interp.this_value.set(JsRef::init_weak(js_value));
+    this_value.set_js_ref_weak();
     interp.keep_alive.ref_(global.bun_vm().loop_ctx());
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(this_value)

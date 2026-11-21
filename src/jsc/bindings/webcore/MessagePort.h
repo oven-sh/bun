@@ -48,8 +48,6 @@ class JSValue;
 
 namespace WebCore {
 
-class WebCoreOpaqueRoot;
-
 struct StructuredSerializeOptions;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MessagePort);
@@ -165,7 +163,5 @@ private:
     static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
     void updateKeepAlive() { m_keepAlive.setActive(m_isRefd && (m_protectedThis || m_messageEventCount > 0)); }
 };
-
-WebCoreOpaqueRoot root(MessagePort*);
 
 } // namespace WebCore

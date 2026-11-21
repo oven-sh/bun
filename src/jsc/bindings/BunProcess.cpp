@@ -401,17 +401,6 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, thrown);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(JSValue::decode(thisValue));
-    if (value)
-        thisObject->putDirect(vm, propertyName, JSValue::decode(value), 0);
-
-    return true;
-}
-
 extern "C" BunString Bun__resolveEmbeddedNodeFile(const BunString*);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);

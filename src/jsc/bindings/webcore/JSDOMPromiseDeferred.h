@@ -113,12 +113,9 @@ public:
         reject(*lexicalGlobalObject, value_js, rejectAsHandled);
     }
 
-    void reject(RejectAsHandled = RejectAsHandled::No);
-    void reject(std::nullptr_t, RejectAsHandled = RejectAsHandled::No);
     WEBCORE_EXPORT void reject(Exception, RejectAsHandled = RejectAsHandled::No);
     WEBCORE_EXPORT void reject(JSC::JSValue, RejectAsHandled = RejectAsHandled::No);
     WEBCORE_EXPORT void reject(ExceptionCode, const String& = {}, RejectAsHandled = RejectAsHandled::No);
-    void reject(const JSC::PrivateName&, RejectAsHandled = RejectAsHandled::No);
 
     template<typename Callback>
     void resolveWithCallback(Callback callback)

@@ -11937,52 +11937,63 @@ describe.concurrent("a script, file or executable named lint", () => {
 
   // `"lint:check": "bun lint ."` beside `"lint": "bun lint --fix ."` fixed the file and exited with 0.
   describe("bun lint in another script of the package", () => {
-    const bun = `"${bunExe().replaceAll("\\", "/")}"`;
     const issue = { lint: "bun lint --fix .", "lint:check": "bun lint ." };
-    const check = { "lint:check": `${bun} lint .` };
-    const quoted = { lint: `${bun} lint --fix .`, ...check };
-    const runCheck = ["run", "lint:check"];
+    // With `--bun`, the `bun` of the scripts is this one.
+    const runCheck = ["--bun", "run", "lint:check"];
+    const lintHere = ["--bun", "lint", "."];
     const source = "export function f() {\n\tlet x = 1;\n\treturn x;\n}\n";
-    type Variables = (own: string, other: string) => Record<string, string>;
+    type Variables = (own: string, other: string, linked: string) => Record<string, string>;
+    type Row = [string, Record<string, string>, string[], Variables];
     const none: Variables = () => ({});
     const ofNpm: Variables = own => ({ npm_lifecycle_event: "lint:check", npm_package_json: own });
 
     /** Runs `bun ...cmd` in a package with `scripts`. The `lint` script ran if `a.ts` is fixed. */
-    async function inPackage(
-      scripts: Record<string, string>,
-      cmd: string[],
-      variables: Variables,
-      before?: (dir: string) => void,
-    ) {
+    async function inPackage(scripts: Record<string, string>, cmd: string[], variables: Variables, more: object = {}) {
       using dir = tempDir("bun-lint-sibling", {
-        "package.json": JSON.stringify({ name: "sibling", scripts }),
-        ".oxlintrc.json": JSON.stringify({ rules: { "prefer-const": "error" } }),
-        "a.ts": source,
+        "package/package.json": JSON.stringify({ name: "sibling", scripts, ...more }),
+        "package/.oxlintrc.json": JSON.stringify({ rules: { "prefer-const": "error" } }),
+        "package/a.ts": source,
         "other/package.json": "{}",
       });
-      before?.(String(dir));
-      const [own, other] = [join(String(dir), "package.json"), join(String(dir), "other", "package.json")];
+      const cwd = join(String(dir), "package");
+      const linked = join(String(dir), "linked");
+      if (!isWindows) symlinkSync(cwd, linked);
+      const files = [
+        join(cwd, "package.json"),
+        join(String(dir), "other", "package.json"),
+        join(linked, "package.json"),
+      ];
       await using proc = spawn({
         cmd: [bunExe(), ...cmd],
-        env: { ...env, ...variables(own, other) },
-        cwd: String(dir),
+        env: { ...env, ...variables(files[0], files[1], files[2]) },
+        cwd,
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      return { stdout, ranTheScript: readFileSync(join(String(dir), "a.ts"), "utf8") !== source, exitCode };
+      return { stdout, ranTheScript: readFileSync(join(cwd, "a.ts"), "utf8") !== source, exitCode };
     }
 
-    test.each<[string, Record<string, string>, string[], Variables]>([
-      ["from bun run", quoted, runCheck, none],
-      ["from npm or a pnpm that names the package", quoted, ["lint", "."], ofNpm],
+    test.each<Row>([
+      ["from bun run", issue, runCheck, none],
+      ["from npm or a pnpm that says where the package is", issue, lintHere, ofNpm],
+      ...(isWindows
+        ? []
+        : [
+            [
+              "from npm, which reached the package through a link",
+              issue,
+              lintHere,
+              (_, __, linked) => ({ npm_lifecycle_event: "lint:check", npm_package_json: linked }),
+            ] as Row,
+          ]),
       [
-        "from yarn 1, which only names it",
-        quoted,
-        ["lint", "."],
+        "from yarn 1 or an older pnpm, which only name the package",
+        issue,
+        lintHere,
         () => ({ npm_lifecycle_event: "lint:check", npm_package_name: "sibling" }),
       ],
-      ["from a runner that doesn't", quoted, ["lint", "."], () => ({ npm_lifecycle_event: "lint:check" })],
+      ["when arguments are passed on to the other script", issue, [...runCheck, "--quiet"], none],
     ])(
       "with arguments, is the linter if the lint script starts with bun lint: %s",
       async (_, scripts, cmd, variables) => {
@@ -11992,54 +12003,88 @@ describe.concurrent("a script, file or executable named lint", () => {
       },
     );
 
-    // `bun run` puts `node_modules/.bin` first in `PATH`. On Windows, that needs a launcher that an install creates.
-    test.skipIf(isWindows)("is the linter with the scripts as the issue has them, and `bun` from PATH", async () => {
-      const { stdout, ...result } = await inPackage(issue, runCheck, none, dir => {
-        mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true });
-        symlinkSync(bunExe(), join(dir, "node_modules", ".bin", "bun"));
+    // `bun pm pack` puts `node_modules/.bin` in `PATH`. On Windows, that needs a launcher that an install creates.
+    test.skipIf(isWindows)("is the linter in a prepack script that bun pm pack runs", async () => {
+      using dir = tempDir("bun-lint-sibling", {
+        "package.json": JSON.stringify({
+          name: "packed",
+          version: "1.0.0",
+          scripts: { ...issue, prepack: "bun lint ." },
+        }),
+        ".oxlintrc.json": JSON.stringify({ rules: { "prefer-const": "error" } }),
+        "a.ts": source,
       });
+      mkdirSync(join(String(dir), "node_modules", ".bin"), { recursive: true });
+      symlinkSync(bunExe(), join(String(dir), "node_modules", ".bin", "bun"));
+      const cmd = [bunExe(), "pm", "pack", "--dry-run"];
+      await using proc = spawn({ cmd, env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stdout).toContain("prefer-const");
-      expect(result).toEqual({ ranTheScript: false, exitCode: 1 });
+      expect(readFileSync(join(String(dir), "a.ts"), "utf8")).toBe(source);
+      expect(exitCode).toBe(1);
     });
 
-    test.each<[string, Record<string, string>, string[], Variables]>([
-      ["no script is running", quoted, ["lint", "."], none],
+    test.each<Row>([
+      ["no script is running", issue, lintHere, none],
       // Nothing is added to the script, so it runs as it is written.
-      ["bun lint has no arguments", { ...quoted, "lint:check": `${bun} lint` }, runCheck, none],
+      ["bun lint has no arguments", { ...issue, "lint:check": "bun lint" }, runCheck, none],
+      // Such a script is another name for the `lint` script.
       [
-        "yarn 1 runs a script of another package",
-        quoted,
-        ["lint", "."],
-        () => ({ npm_lifecycle_event: "lint:check", npm_package_name: "another" }),
+        "the other script is bun lint, and is run with arguments",
+        { ...issue, "lint:check": "bun lint" },
+        [...runCheck, "."],
+        none,
       ],
+      ["the arguments come after --", { ...issue, "lint:check": "bun lint -- ." }, runCheck, none],
       [
         "a script of another package is running",
-        quoted,
-        ["lint", "."],
+        issue,
+        lintHere,
         (_, other) => ({ npm_lifecycle_event: "lint:check", npm_package_json: other }),
       ],
+      [
+        "yarn 1 or an older pnpm runs a script of another package",
+        issue,
+        lintHere,
+        () => ({ npm_lifecycle_event: "lint:check", npm_package_name: "another" }),
+      ],
+      ["nothing says which package has the script", issue, lintHere, () => ({ npm_lifecycle_event: "lint:check" })],
       // `bunx`, `npx` and `yarn exec` set the variable to what is no script of the package.
-      ...["bunx", "npx", "exec"].map((event): [string, Record<string, string>, string[], Variables] => [
+      ...["bunx", "npx", "exec"].map((event): Row => [
         `${event} is running`,
-        quoted,
-        ["lint", "."],
+        issue,
+        lintHere,
         own => ({ npm_lifecycle_event: event, npm_package_json: own }),
       ]),
-      ["the package has a prelint script", { prelint: "echo before", ...quoted }, runCheck, none],
-      ["the package has a postlint script", { postlint: "echo after", ...quoted }, runCheck, none],
-      ["the other script calls bun run lint", { ...quoted, "lint:check": `${bun} run lint` }, runCheck, none],
-      // These start the script without saying which one it is.
-      ["from bun --filter", quoted, ["--filter", "sibling", "lint:check"], none],
-      ["from bun run --parallel", quoted, ["run", "--parallel", "lint:check"], none],
-      ["from bun run --sequential", quoted, ["run", "--sequential", "lint:check"], none],
+      ["the package has a prelint script", { prelint: "echo before", ...issue }, runCheck, none],
+      ["the package has a postlint script", { postlint: "echo after", ...issue }, runCheck, none],
+      ["the other script calls bun run lint", { ...issue, "lint:check": "bun run lint ." }, runCheck, none],
     ])("runs the lint script: %s", async (_, scripts, cmd, variables) => {
       const { stdout, ...result } = await inPackage(scripts, cmd, variables);
       expect(stdout).not.toContain("prefer-const");
       expect(result).toEqual({ ranTheScript: true, exitCode: 0 });
     });
 
+    // A limit, not a rule: these don't say which script they run, so the scripts they start take what they inherit.
+    // Once they say it, each row is the linter.
+    test.each<[string, string[], Record<string, string>, boolean]>([
+      ["bun --filter from a terminal", ["--bun", "--filter", "sibling", "lint:check"], {}, true],
+      ["bun run --parallel from a terminal", ["--bun", "run", "--parallel", "lint:check"], {}, true],
+      ["bun run --sequential from a terminal", ["--bun", "run", "--sequential", "lint:check"], {}, true],
+      [
+        "bun run --parallel from a script of the package",
+        ["--bun", "run", "all"],
+        { all: "bun run --parallel lint:check" },
+        false,
+      ],
+    ])("%s", async (_, cmd, more, ranTheScript) => {
+      const { stdout, ...result } = await inPackage({ ...issue, ...more }, cmd, none);
+      expect(stdout.includes("prefer-const")).toBe(!ranTheScript);
+      expect(result).toEqual({ ranTheScript, exitCode: ranTheScript ? 0 : 1 });
+    });
+
     test("runs a lint script that is another tool", async () => {
-      const result = await inPackage({ lint: "echo eslint", ci: `${bun} lint .` }, ["run", "ci"], none);
+      const result = await inPackage({ lint: "echo eslint", ci: "bun lint ." }, ["--bun", "run", "ci"], none);
       expect(result).toEqual({ stdout: "eslint .\n", ranTheScript: false, exitCode: 0 });
     });
 
@@ -12050,10 +12095,8 @@ describe.concurrent("a script, file or executable named lint", () => {
         ["bun lint --fix .", "the linter"],
         ["\n\tbun  lint --fix . && echo done", "the linter"],
         ["bun lint; echo done", "the linter"],
-        [`"bun" lint`, "the linter"],
-        [`${bun} lint --fix .`, "the linter"],
-        [bunExe().includes(" ") || isWindows ? "bun lint" : `${bunExe()} lint`, "the linter"],
         ["bun.exe lint", isWindows ? "the linter" : "the script"],
+        ["BUN lint", isWindows ? "the linter" : "the script"],
         ["eslint .", "the script"],
         ["next lint", "the script"],
         ["echo lint", "the script"],
@@ -12063,7 +12106,7 @@ describe.concurrent("a script, file or executable named lint", () => {
         ["bun\nlint", "the script"],
         ["bunx lint", "the script"],
         ["./tools/bun lint", "the script"],
-        [`"./tools/bun" lint`, "the script"],
+        [`"bun" lint`, "the script"],
         ["cd . && bun lint", "the script"],
         ["NO_COLOR=1 bun lint", "the script"],
         // What is between the two is the script's own, and `bun lint .` would run without it.
@@ -12071,8 +12114,6 @@ describe.concurrent("a script, file or executable named lint", () => {
         ["bun --config=ci.toml lint", "the script"],
         ["bun --cwd . lint", "the script"],
         ["bun --filter web lint", "the script"],
-        [`"bun lint`, "the script"],
-        [`"bun"x lint`, "the script"],
         ["(bun lint)", "the script"],
       ];
       const results = await Promise.all(
@@ -12082,7 +12123,7 @@ describe.concurrent("a script, file or executable named lint", () => {
           });
           await using proc = spawn({
             cmd: [bunExe(), "lint", "--help"],
-            env: { ...env, ...ofNpm(join(String(dir), "package.json"), "") },
+            env: { ...env, ...ofNpm(join(String(dir), "package.json"), "", "") },
             cwd: String(dir),
             stdout: "pipe",
             stderr: "pipe",

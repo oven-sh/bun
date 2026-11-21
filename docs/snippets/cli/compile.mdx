@@ -4,7 +4,7 @@
 bun compile [flags] [entry point]
 ```
 
-`bun compile` takes every flag of [`bun build`](/bundler#cli-usage), and these. If `package.json` has a `"compile"` script, it runs that script instead. Not with arguments in another script of that package if the `"compile"` script starts with `bun compile`: there it is the command, with the flags and the entry point of that call.
+`bun compile` takes every flag of [`bun build`](/bundler#cli-usage), and these. If `package.json` has a `"compile"` script, it runs that script instead. There is one exception. If the `"compile"` script starts with `bun compile`, and another script of that package calls `bun compile` with arguments, Bun runs the command with those arguments and does not add them to the `"compile"` script.
 
 The entry point is a file, or the name of a command-line tool of an installed package, such as `rollup`.
 

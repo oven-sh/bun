@@ -310,15 +310,18 @@ Already have a `.prettierrc` or an `.oxfmtrc.json`? `bun fmt` reads it and print
 
 If `package.json` has a `fmt` script, `bun fmt` runs that script. Inside the script, `bun fmt` is the formatter. If `package.json` has `"fmt"` in it but can't be parsed, as in the middle of a merge, `bun fmt` can't tell whether that is a script: it formats nothing and exits with code 2.
 
-If the `fmt` script starts with `bun fmt`, as `"fmt": "bun fmt --write ."` does, `bun fmt` with arguments is also the formatter in the other scripts of that package, when `bun run`, npm, pnpm or yarn runs them. So it is in what those scripts start, such as a Makefile or a Git hook. The arguments are not added to the `fmt` script: `"fmt:check": "bun fmt --check ."` runs `bun fmt --check .`, which writes nothing. To add them to the `fmt` script, call `bun run fmt`.
+Bun treats a `fmt` script that starts with `bun fmt` as the formatter with other flags: `"fmt": "bun fmt --write ."`. When another script of that package calls `bun fmt` with arguments, Bun runs the formatter with those arguments. Bun does not add them to the `fmt` script. So `"fmt:check": "bun fmt --check ."` checks the files and writes nothing.
 
-`bun fmt` still runs the `fmt` script in these cases:
+This applies when `bun run`, npm, pnpm or yarn runs the other script. It also applies to what that script starts, such as a Makefile or a Git hook. To add arguments to the `fmt` script, call `bun run fmt`.
 
-- It has no arguments. `"ci": "bun fmt"` runs the `fmt` script as it is written.
-- The `fmt` script has a word before `bun`, or between `bun` and `fmt`, as in `cd web && bun fmt` and `bun --config=ci.toml fmt`.
-- The package has a `prefmt` or `postfmt` script. They run with it.
-- `--filter`, `--workspaces`, `--parallel`, `--sequential` or `node --run` started the other script.
-- `bunx` or `npx` started the program that calls `bun fmt`.
+`bun fmt` runs the `fmt` script in these cases:
+
+- The call has no arguments. `"ci": "bun fmt"` runs the `fmt` script as you wrote it, `--write` included. To check and write nothing there, use `bun fmt --no-script --check`.
+- The `fmt` script has a word before `bun`, or between `bun` and `fmt`: `cd web && bun fmt`, `bun --config=ci.toml fmt`.
+- The package has a `prefmt` or `postfmt` script. Bun runs them with the `fmt` script.
+- A script of another package makes the call: `cd packages/web && bun fmt .` in a script of the workspace root.
+- You start the other script from a terminal or a CI step with `--filter`, `--workspaces`, `--parallel` or `--sequential`, or with `node --run`. These do not tell `bun fmt` which script runs.
+- `bunx` or `npx` starts the program that calls `bun fmt`.
 - You call `bun fmt` from a terminal, or from a CI step, a Makefile or a Git hook that no package script started.
 
 Writing a tool that calls Bun in projects you don't control? Pass `--no-script`: `bun fmt --no-script` is always the formatter.

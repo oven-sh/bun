@@ -364,7 +364,7 @@ describe.concurrent("bun compile in a project that has its own compile", () => {
 
   // Such a `compile` script is the command with other arguments.
   test("in another script, it is the command if the compile script starts with bun compile", async () => {
-    const command = [`"${bunExe().replaceAll("\\", "/")}"`, "compile", ...withoutCompiler].join(" ");
+    const command = ["bun", "compile", ...withoutCompiler].join(" ");
     using dir = tempDir("compile-script-sibling", {
       ...files,
       "package.json": JSON.stringify({
@@ -375,7 +375,8 @@ describe.concurrent("bun compile in a project that has its own compile", () => {
         },
       }),
     });
-    const built = await bun(String(dir), "run", "compile:other");
+    // With `--bun`, the `bun` of the scripts is this one.
+    const built = await bun(String(dir), "--bun", "run", "compile:other");
     expect(built.stdout).not.toContain("the script ran");
     expect(built.exitCode).toBe(0);
     expect(existsSync(executable(String(dir), "from-the-script"))).toBe(false);

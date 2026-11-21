@@ -618,7 +618,6 @@ impl RewriterPipe {
             return Err(cx.global().throw_value(err));
         }
 
-        response_js_value.ensure_still_alive();
         Ok(response_js_value)
     }
 

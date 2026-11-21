@@ -144,8 +144,8 @@ impl NetworkSink {
         VirtualMachine::get().context_of(self.context)
     }
 
-    /// Runs no JS, and the reply, which gets `this`, never comes inside this call.
-    fn send(&self, this: RefPtr<Self>, request: Request) {
+    /// Runs no JS, and the reply never comes inside this call.
+    fn send(self: &RefPtr<Self>, request: Request) {
         let target = &self.target;
         let query = request.query();
         let mut options = Options {
@@ -168,7 +168,7 @@ impl NetworkSink {
             Request::Abort(_) => VirtualMachine::get().root_context(),
             _ => self.context(),
         };
-        let callback = Callback::Sink(this, request);
+        let callback = Callback::Sink(self.clone(), request);
         let sent = execute_simple_s3_request(&target.credentials, context, options, callback);
         debug_assert!(sent.is_ok());
     }
@@ -178,10 +178,9 @@ impl NetworkSink {
         if self.abort_handle.context_stopped() {
             return;
         }
-        while let Some(request) = self.upload.with_mut(Upload::next_request)
-            && let Some(this) = self.self_ref()
-        {
-            self.send(this, request);
+        let Some(this) = self.self_ref() else { return };
+        while let Some(request) = self.upload.with_mut(Upload::next_request) {
+            this.send(request);
         }
     }
 
@@ -212,7 +211,7 @@ impl NetworkSink {
         let (result, abort) = match step {
             Step::Nothing => return Ok(()),
             Step::Send(request) => {
-                self.send(self.clone(), request);
+                self.send(request);
                 return Ok(());
             }
             Step::Drained(flushed) => {
@@ -231,7 +230,7 @@ impl NetworkSink {
         // Whoever still holds a ref may hold it for as long as the collector likes.
         self.poll_ref.unref(bun_io::js_vm_ctx());
         if let Some(abort) = abort {
-            self.send(self.clone(), abort);
+            self.send(abort);
         }
         settled
     }

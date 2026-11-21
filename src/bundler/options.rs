@@ -1227,6 +1227,7 @@ pub enum CompileMode {
     None,
     Executable,
     StandaloneHtml,
+    HtmlRoute,
 }
 
 impl CompileMode {

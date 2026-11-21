@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // tsconfig "jsx": "react-jsx" selects the production automatic runtime (jsx/jsxs),
 // "react-jsxdev" selects the development runtime (jsxDEV), matching TypeScript/esbuild.
@@ -69,8 +70,204 @@ describe("tsconfig compilerOptions.jsx", () => {
     }
   });
 
-  // The Solid.js JSX transform was removed in 88538b7c2c. The parser only knows
-  // the classic and automatic runtimes, so "solid-js" must not select anything else.
+  test.concurrent.each([
+    ["bunfig", { "bunfig.toml": 'jsx = "preserve"' }],
+    ["pragma", { "pragma.jsx": "/** @jsxRuntime preserve */\nconsole.log(<div />);" }],
+    ["flag", {}],
+  ] as const)("bun run rejects preserve from %s", async (source, files) => {
+    using dir = tempDir("jsx-run-preserve", { "m.jsx": "console.log(<div />);", ...files });
+    const entry = source === "pragma" ? "pragma.jsx" : "m.jsx";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...(source === "flag" ? ["--jsx-runtime=preserve"] : []), entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Cannot preserve JSX in a file that Bun runs");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent.each([
+    ["static import", 'import { element } from "dep";'],
+    ["dynamic import", 'const { element } = await import("dep");'],
+  ])("bun run keeps explicit preserve in an AOT dependency (%s)", async (_, importStatement) => {
+    using dir = tempDir("jsx-run-preserve-aot-package", {
+      "entry.ts": `${importStatement}\nconsole.log(element);`,
+      "node_modules/dep/package.json": JSON.stringify({
+        name: "dep",
+        exports: { ".": { aot: "./index.aot.tsx", default: "./index.js" } },
+        compilerOptions: { jsx: "react", jsxFactory: "h" },
+      }),
+      "node_modules/dep/index.aot.tsx": "function h(tag: string) { return tag; }\nexport const element = <div />;",
+      "node_modules/dep/index.js": 'export const element = "fallback";',
+    });
+
+    async function run(...flags: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--conditions=aot", ...flags, "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const classic = await run();
+    expect(classic).toMatchObject({ stdout: "div\n", exitCode: 0 });
+
+    const preserved = await run("--jsx-runtime=preserve");
+    expect(preserved).toMatchObject({ stdout: "", exitCode: 1 });
+    expect(preserved.stderr).toContain("Cannot preserve JSX in a file that Bun runs");
+    expect(preserved.stderr.replaceAll("\\", "/")).toContain("node_modules/dep/index.aot.tsx:2:24");
+  });
+
+  test.concurrent.each(["bunfig", "pragma", "flag"])(
+    "bun run allows plain JavaScript with preserve from %s",
+    async source => {
+      using dir = tempDir("jsx-run-plain", {
+        "m.js": `${source === "pragma" ? "/** @jsxRuntime preserve */" : ""} console.log("<div/>");`,
+        ...(source === "bunfig" ? { "bunfig.toml": 'jsx = "preserve"' } : {}),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...(source === "flag" ? ["--jsx-runtime=preserve"] : []), "m.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("<div/>\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent.each([false, true])("CLI JSX options keep production defaults with empty bunfig=%s", async bunfig => {
+    using dir = tempDir("jsx-cli-default", {
+      "m.jsx": "console.log(<div/>);",
+      ...(bunfig ? { "bunfig.toml": "" } : {}),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "m.jsx", "--jsx-import-source=shim", "--external=shim*"],
+      cwd: String(dir),
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain('"shim/jsx-runtime"');
+    expect(stdout).not.toContain("jsx-dev-runtime");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // "preserve" is selected with --jsx-runtime, Bun.build or bunfig, never from
+  // tsconfig: `bun run` executes the output, and tsconfigs written for other
+  // toolchains (Next.js) ask for it.
+  test.concurrent.each([
+    [undefined, "dev jsxDEV"],
+    ["production", "prod jsx"],
+  ] as const)('"preserve" in tsconfig is ignored with NODE_ENV=%s', async (NODE_ENV, runStdout) => {
+    using dir = tempDir("jsx-tsconfig-preserve", {
+      ...shimFiles,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "preserve", jsxImportSource: "shim" } }),
+    });
+    const env = { ...bunEnv, NODE_ENV, BUN_ENV: undefined };
+
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "m.jsx"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: runStdout, stderr: "", exitCode: 0 });
+    }
+
+    const build = async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "m.jsx", "--external", "shim*"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const withPreserve = await build();
+    await Bun.write(
+      join(String(dir), "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { jsxImportSource: "shim" } }),
+    );
+    const withoutJsxMode = await build();
+    expect(withPreserve).toEqual(withoutJsxMode);
+    expect(withPreserve.stdout).toMatch(/"shim\/jsx(-dev)?-runtime"/);
+    expect(withPreserve.stderr).toBe("");
+    expect(withPreserve.exitCode).toBe(0);
+  });
+
+  describe.each([
+    ["react-jsx", "shim/jsx-runtime"],
+    ["react-jsxdev", "shim/jsx-dev-runtime"],
+  ])("CLI runtime %s", (runtime, importSource) => {
+    test.concurrent.each([
+      [undefined, undefined],
+      ["production", undefined],
+      ["development", undefined],
+      [undefined, "production"],
+      [undefined, "development"],
+      ["development", "production"],
+      ["production", "development"],
+    ] as const)("selects the runtime with NODE_ENV=%s, BUN_ENV=%s", async (NODE_ENV, BUN_ENV) => {
+      const mode = BUN_ENV ?? NODE_ENV;
+      const expectedSource =
+        mode === "production" ? "shim/jsx-runtime" : mode === "development" ? "shim/jsx-dev-runtime" : importSource;
+      using dir = tempDir("jsx-cli-runtime", shimFiles);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "m.jsx", `--jsx-runtime=${runtime}`, "--jsx-import-source=shim", "--external=shim*"],
+        env: { ...bunEnv, NODE_ENV, BUN_ENV },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain(`"${expectedSource}"`);
+      expect(stdout).not.toContain(expectedSource === "shim/jsx-runtime" ? "jsx-dev-runtime" : '"shim/jsx-runtime"');
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test.concurrent("--jsx-side-effects preserves the bunfig JSX runtime", async () => {
+    using dir = tempDir("jsx-side-effects-bunfig", {
+      ...shimFiles,
+      "bunfig.toml": 'jsx = "react-jsxDEV"\njsxImportSource = "shim"',
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "m.jsx", "--jsx-side-effects", "--external", "shim*"],
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain('"shim/jsx-dev-runtime"');
+    expect(stdout).toContain('jsxDEV("div"');
+    expect(stdout).not.toContain("@__PURE__");
+    expect(exitCode).toBe(0);
+  });
+
+  // The Solid.js JSX transform was removed in 88538b7c2c.
+  // jsxImportSource "solid-js" must not select a framework-specific runtime.
   test.concurrent('jsxImportSource "solid-js" uses the automatic runtime', async () => {
     using dir = tempDir("jsx-tsconfig-solid", {
       "tsconfig.json": JSON.stringify({
@@ -93,20 +290,33 @@ describe("tsconfig compilerOptions.jsx", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/3528
-  test.each(["react-jsx", "preserve"])(
-    'Bun.Transpiler with jsx "%s" and jsxImportSource "solid-js" uses the automatic runtime',
-    jsx => {
-      const transpiler = new Bun.Transpiler({
-        loader: "tsx",
-        autoImportJSX: true,
-        tsconfig: { compilerOptions: { jsx, jsxImportSource: "solid-js" } },
-      });
-      const out = transpiler.transformSync(`export default <div>hi</div>;`);
-      expect(out).toMatch(/^import \{ jsx(DEV)? as \w+ \} from "solid-js\/jsx(-dev)?-runtime";\n/);
-      expect(out).toMatch(/\nexport default jsx(DEV)?_\w+\("div"/);
-      expect(out).not.toContain("React.createElement");
-    },
-  );
+  test('Bun.Transpiler with jsx "react-jsx" and jsxImportSource "solid-js" uses the automatic runtime', () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "tsx",
+      autoImportJSX: true,
+      tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "solid-js" } },
+    });
+    const out = transpiler.transformSync(`export default <div>hi</div>;`);
+    expect(out).toMatch(/^import \{ jsx as (\w+) \} from "solid-js\/jsx-runtime";\nexport default \1\("div"/);
+    expect(out).not.toContain("React.createElement");
+  });
+
+  test('Bun.Transpiler ignores tsconfig jsx "preserve" and keeps JSX for the pragma', () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "tsx",
+      autoImportJSX: true,
+      tsconfig: { compilerOptions: { jsx: "preserve", jsxImportSource: "solid-js" } },
+    });
+    const out = transpiler.transformSync(`export default <div>hi</div>;`);
+    expect(out).toMatch(/^import \{ jsx(DEV)? as \w+ \} from "solid-js\/jsx(-dev)?-runtime";\n/);
+
+    const preserved = transpiler.transformSync(`/* @jsxRuntime preserve */\nexport default <div>hi</div>;`);
+    expect(preserved).toContain(`export default <div>hi</div>;`);
+    expect(preserved).not.toMatch(/\/jsx(?:-dev)?-runtime\b/);
+    expect(transpiler.scanImports(`/* @jsxRuntime preserve */\nexport default <div>hi</div>;`)).toEqual([]);
+    const afterPragma = transpiler.transformSync(`export default <div>hi</div>;`);
+    expect(afterPragma).toMatch(/^import \{ jsx(DEV)? as \w+ \} from "solid-js\/jsx(-dev)?-runtime";\n/);
+  });
 });
 
 describe("removed solid jsx runtime", () => {
@@ -124,7 +334,9 @@ describe("removed solid jsx runtime", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
-    expect(stderr).toContain("Invalid jsx runtime, only 'react', 'react-jsx', and 'react-jsxDEV' are supported");
+    expect(stderr).toContain(
+      "Invalid jsx runtime, expected one of: 'automatic', 'classic', 'preserve', 'react', 'react-jsx', or 'react-jsxdev'",
+    );
     expect(exitCode).toBe(1);
   });
 
@@ -141,7 +353,9 @@ describe("removed solid jsx runtime", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
-    expect(stderr).toContain('Invalid --jsx-runtime: "solid", expected "automatic" or "classic"');
+    expect(stderr).toContain(
+      `Invalid --jsx-runtime: "solid", expected one of: 'automatic', 'classic', 'preserve', 'react', 'react-jsx', or 'react-jsxdev'`,
+    );
     expect(exitCode).toBe(1);
   });
 });

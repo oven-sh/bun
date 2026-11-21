@@ -2154,7 +2154,13 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 }
 
                 // SAFETY: `transpiler.log` was swapped to non-null `args.log` above.
-                if unsafe { (*(*transpiler).log).errors > 0 } {
+                let log = unsafe { &mut *(*transpiler).log };
+                let runnable = bun_bundler::transpiler::require_runnable_js(
+                    &parse_result.ast,
+                    &parse_result.source,
+                    log,
+                );
+                if runnable.is_err() || log.has_errors() {
                     arena_guard.2 = false;
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).

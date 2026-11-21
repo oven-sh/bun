@@ -291,7 +291,9 @@ impl TSConfigJSON {
             out.import_source = self.jsx.import_source.clone();
         }
 
-        if self.jsx_flags.contains(JsxField::Runtime) {
+        if self.jsx_flags.contains(JsxField::Runtime)
+            && out.runtime != options::jsx::Runtime::Preserve
+        {
             out.runtime = self.jsx.runtime;
         }
 
@@ -300,6 +302,21 @@ impl TSConfigJSON {
         }
 
         out
+    }
+
+    /// Apply the AOT package's JSX settings while honoring explicit preserve mode.
+    pub fn merge_aot_package_jsx(&self, current: &options::jsx::Pragma) -> options::jsx::Pragma {
+        use options::jsx::{Pragma, Runtime};
+
+        let runtime = match current.runtime {
+            Runtime::Preserve => Runtime::Preserve,
+            _ => Runtime::default(),
+        };
+        self.merge_jsx(Pragma {
+            development: current.development,
+            runtime,
+            ..Default::default()
+        })
     }
 
     /// Support ${configDir}, but avoid allocating when possible.
@@ -532,8 +549,14 @@ impl TSConfigJSON {
                     // match (`ascii_lowercase_buf` returns `None` when it
                     // can't fit).
                     if let Some((str_lower, len)) = strings::ascii_lowercase_buf::<12>(str) {
-                        // - We don't support "preserve" yet
-                        if let Some(runtime) = options::jsx::RUNTIME_MAP.get(&str_lower[..len]) {
+                        // "preserve" is selected with `--jsx-runtime`, `Bun.build`
+                        // or bunfig, never from tsconfig: `bun run` executes the
+                        // output, and tsconfigs written for other toolchains
+                        // (Next.js) ask for it.
+                        if let Some(runtime) = options::jsx::RUNTIME_MAP
+                            .get(&str_lower[..len])
+                            .filter(|runtime| runtime.runtime != options::jsx::Runtime::Preserve)
+                        {
                             result.jsx.runtime = runtime.runtime;
                             result.jsx_flags.insert(JsxField::Runtime);
 

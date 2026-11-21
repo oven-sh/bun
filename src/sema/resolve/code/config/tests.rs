@@ -617,6 +617,7 @@ fn pragmas_override_one_member_each() {
         });
         let pragmas = JsxPragmas {
             classic,
+            preserve: false,
             is_development: None,
             factory,
             fragment_factory,
@@ -626,6 +627,31 @@ fn pragmas_override_one_member_each() {
         assert_eq!(render_jsx(&once), expected, "{classic:?} {texts:?}");
         assert_eq!(once.with_pragmas(&pragmas, &atoms).as_ref(), Some(&once));
     }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn preserve_runtime_obeys_pragmas() {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    let classic = JsxSettings {
+        runtime: JsxRuntime::Classic,
+        ..JsxSettings::default()
+    };
+    let preserve = JsxPragmas {
+        preserve: true,
+        ..JsxPragmas::default()
+    };
+    let settings = classic.with_pragmas(&preserve, &atoms).unwrap();
+    assert_eq!(settings.runtime, JsxRuntime::Preserve);
+
+    let import_source = JsxPragmas {
+        import_source: atoms.intern(b"preact"),
+        ..JsxPragmas::default()
+    };
+    let settings = settings.with_pragmas(&import_source, &atoms).unwrap();
+    assert_eq!(settings.runtime, JsxRuntime::Preserve);
+    assert_eq!(settings.import_source, b"preact");
 }
 
 #[test]

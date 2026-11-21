@@ -1921,10 +1921,7 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(own) = self.aot_package_config(path.text()) {
-                result.jsx = own.merge_jsx(options::jsx::Pragma {
-                    development: result.jsx.development,
-                    ..Default::default()
-                });
+                result.jsx = own.merge_aot_package_jsx(&result.jsx);
                 (result.flags).set_emit_decorator_metadata(own.emit_decorator_metadata);
                 (result.flags).set_experimental_decorators(own.experimental_decorators);
                 (result.flags).set_use_define_for_class_fields(
@@ -6830,10 +6827,8 @@ impl<'a> Resolver<'a> {
         self.opts.tsconfig_override_json.clone()
     }
 
-    /// The `compilerOptions` that decide how the TypeScript file at `path` becomes JavaScript, if it is in a package with
-    /// the "aot" condition and this resolver reads that condition: those of the package's own `package.json`. No
-    /// `tsconfig.json` and no flag does, so the package answers alike in every program that installs it.
-    /// `None`: another file, or a file of the package that the program runs in.
+    /// Return the manifest's `compilerOptions` for a TypeScript dependency in an AOT package.
+    /// Both the resolver and the package must opt into the `aot` condition.
     pub fn aot_package_config(&mut self, path: &[u8]) -> Option<Arc<TSConfigJSON>> {
         if !is_typescript_path(path) || !self.opts.conditions.import.contains_key(b"aot") {
             return None;

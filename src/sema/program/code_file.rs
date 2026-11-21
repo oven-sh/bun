@@ -434,11 +434,11 @@ fn analyze<'s, 'r>(
     let file_jsx = jsx.as_ref().unwrap_or(&settings.jsx);
     let root = |names: &[Vec<u8>]| match file_jsx.runtime {
         JsxRuntime::Classic => names.first().map(|name| atoms.intern(name)),
-        JsxRuntime::Automatic => None,
+        JsxRuntime::Automatic | JsxRuntime::Preserve => None,
     };
     let written = |names: &[Vec<u8>]| match file_jsx.runtime {
         JsxRuntime::Classic => Some(atoms.intern(&names.join(&b'.'))),
-        JsxRuntime::Automatic => None,
+        JsxRuntime::Automatic | JsxRuntime::Preserve => None,
     };
     let runtime = RuntimeBindOptions {
         jsx_factory_root: root(&file_jsx.factory),
@@ -586,7 +586,7 @@ fn analyze_with_host<'s>(
 
 fn jsx_mode_of(jsx: &JsxSettings, atoms: &Interner<'_>) -> JsxMode {
     match jsx.runtime {
-        JsxRuntime::Classic => JsxMode::Classic,
+        JsxRuntime::Classic | JsxRuntime::Preserve => JsxMode::Classic,
         JsxRuntime::Automatic => JsxMode::Automatic(AutomaticJsx {
             runtime_specifier: atoms.intern(&jsx.runtime_specifier()),
             package_specifier: atoms.intern(&jsx.import_source),

@@ -108,6 +108,8 @@ pub fn parse_only_text<R>(
     parser.parse_only(f).ok()
 }
 
+const BUN_PRAGMA: &[u8] = b"// @bun";
+
 pub struct Parser<'a> {
     pub(crate) options: Options<'a>,
     pub(crate) lexer: js_lexer::Lexer<'a>,
@@ -279,6 +281,14 @@ impl<'a> Options<'a> {
 
     pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash, did_use_jsx: bool) {
         debug_assert!(!self.bundle);
+
+        // Some `.js` dependencies omit the rest of the JSX settings from the key.
+        hasher.update(&[u8::from(
+            self.jsx.runtime == options::JSX::Runtime::Preserve,
+        )]);
+        if self.jsx.parse && self.jsx.side_effects {
+            hasher.update(b"jsx_side_effects");
+        }
 
         if did_use_jsx {
             if self.jsx.parse {
@@ -620,11 +630,23 @@ impl<'a> Parser<'a> {
         // Symbol use counts are unavailable
         // So we say "did we parse any JSX?"
         // if yes, just automatically add the import so that .bun knows to include the file.
-        if p.options.jsx.parse && p.needs_jsx_import {
+        p.apply_jsx_import_source_pragma();
+        let pragma_runtime = p.jsx_runtime_pragma();
+        let jsx_runtime = pragma_runtime.map_or(p.options.jsx.runtime, |runtime| runtime.runtime);
+        let jsx_development = pragma_runtime
+            .and_then(|runtime| runtime.development)
+            .unwrap_or(p.options.jsx.development);
+        let needs_jsx_runtime_import = jsx_runtime != options::JSX::Runtime::Preserve;
+        if p.options.jsx.parse && p.needs_jsx_import && needs_jsx_runtime_import {
             // `add_import_record` requires `&'a [u8]`, but borrowing
             // `p.options` would conflict with `&mut p`, so copy into the arena.
             let arena = p.arena;
-            let import_source: &'a [u8] = arena.alloc_slice_copy(p.options.jsx.import_source());
+            let import_source = if jsx_development {
+                p.options.jsx.import_source.development.as_ref()
+            } else {
+                p.options.jsx.import_source.production.as_ref()
+            };
+            let import_source: &'a [u8] = arena.alloc_slice_copy(import_source);
             let classic_import_source: &'a [u8] =
                 arena.alloc_slice_copy(&p.options.jsx.classic_import_source);
             let _ = p.add_import_record(
@@ -2348,9 +2370,7 @@ impl<'a> Parser<'a> {
                 },
             );
 
-            if i > 0 && wrap_mode == WrapMode::BunCommonjs {
-                p.generate_runtime_require_stmt(&runtime_imports[0..i], &mut before)?;
-            } else if i > 0 {
+            if i > 0 {
                 let imports: Vec<(&'static [u8], js_ast::Ref)> = runtime_imports[0..i]
                     .iter()
                     .map(|&key| {
@@ -2358,16 +2378,25 @@ impl<'a> Parser<'a> {
                         (RuntimeImports::ALL[key as usize], symbol)
                     })
                     .collect();
-                p.generate_import_stmt(
-                    RuntimeImports::NAME,
-                    &imports,
-                    &mut before,
-                    None,
-                    b"import_",
-                    true,
-                    js_ast::PartTag::Runtime,
-                )
-                .expect("unreachable");
+                if wrap_mode == WrapMode::BunCommonjs {
+                    p.generate_require_stmt(
+                        RuntimeImports::NAME,
+                        &imports,
+                        &mut before,
+                        true,
+                        js_ast::PartTag::Runtime,
+                    )?;
+                } else {
+                    p.generate_import_stmt(
+                        RuntimeImports::NAME,
+                        &imports,
+                        &mut before,
+                        None,
+                        b"import_",
+                        true,
+                        js_ast::PartTag::Runtime,
+                    )?;
+                }
             }
         }
 
@@ -2391,30 +2420,32 @@ impl<'a> Parser<'a> {
             let runtime_imports = with_symbols(p.jsx_imports.runtime_import_names(&mut buf));
             let source_imports = with_symbols(p.jsx_imports.source_import_names());
 
-            if !runtime_imports.is_empty() {
-                p.generate_import_stmt(
-                    import_source,
-                    &runtime_imports,
-                    &mut before,
-                    None,
-                    b"",
-                    false,
-                    js_ast::PartTag::JsxImport,
-                )
-                .expect("unreachable");
-            }
-
-            if !source_imports.is_empty() {
-                p.generate_import_stmt(
-                    package_name,
-                    &source_imports,
-                    &mut before,
-                    None,
-                    b"",
-                    false,
-                    js_ast::PartTag::JsxImport,
-                )
-                .expect("unreachable");
+            for (import_path, imports) in [
+                (import_source, runtime_imports),
+                (package_name, source_imports),
+            ] {
+                if imports.is_empty() {
+                    continue;
+                }
+                if wrap_mode == WrapMode::BunCommonjs {
+                    p.generate_require_stmt(
+                        import_path,
+                        &imports,
+                        &mut before,
+                        false,
+                        js_ast::PartTag::JsxImport,
+                    )?;
+                } else {
+                    p.generate_import_stmt(
+                        import_path,
+                        &imports,
+                        &mut before,
+                        None,
+                        b"",
+                        false,
+                        js_ast::PartTag::JsxImport,
+                    )?;
+                }
             }
         }
 
@@ -2656,43 +2687,21 @@ impl<'a> Parser<'a> {
         Ok(crate::Result::Ast(ast))
     }
 
-    // associated fn (was `&self` reading `self.lexer.source.contents`)
-    // because `_parse` consumes `self` by value and destructures it before this
-    // call site; the source contents are passed explicitly.
-    // called from gated `_parse` body above
+    /// Find the already-bundled marker at the start of a file or just after its hashbang.
+    pub fn bun_pragma_start(contents: &[u8], has_hashbang: bool) -> Option<usize> {
+        let start = if has_hashbang {
+            strings::index_of_char(contents, b'\n')? as usize + 1
+        } else {
+            0
+        };
+        contents[start..].starts_with(BUN_PRAGMA).then_some(start)
+    }
+
     fn has_bun_pragma(contents: &[u8], has_hashbang: bool) -> Option<crate::AlreadyBundled> {
-        const BUN_PRAGMA: &[u8] = b"// @bun";
-        let end = contents.len();
-
-        // pragmas may appear after a hashbang comment
-        //
-        //   ```js
-        //   #!/usr/bin/env bun
-        //   // @bun
-        //   const myCode = 1;
-        //   ```
-        let mut cursor: usize = 0;
-        if has_hashbang {
-            while contents[cursor] != b'\n' {
-                cursor += 1;
-                if cursor >= end {
-                    return None;
-                }
-            }
-
-            // eat the last newline
-            // NOTE: in windows, \n comes after \r so no extra work needs to be done
-            cursor += 1;
-        }
-
-        if !contents[cursor..].starts_with(BUN_PRAGMA) {
-            return None;
-        }
-        cursor += BUN_PRAGMA.len();
-
+        let mut cursor = Self::bun_pragma_start(contents, has_hashbang)? + BUN_PRAGMA.len();
         let mut state = PragmaState::default();
 
-        while cursor < end {
+        while cursor < contents.len() {
             match contents[cursor] {
                 b'\n' => break,
                 b'@' => {

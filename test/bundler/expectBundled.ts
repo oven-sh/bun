@@ -79,38 +79,47 @@ export function decodeSourceMappingsLine(line: string) {
 
 let currentFile: string | undefined;
 
-function errorOrWarnParser(isError = true) {
-  const prefix = isError ? "error: " : "warn: ";
-  return function (text: string) {
-    var i = 0;
-    var list: [message: string, fileLine: string][] = [];
-    while (i < text.length) {
-      let errorLineI = text.indexOf(prefix, i);
-      if (errorLineI === -1) {
-        return list;
-      }
-      const message = text.slice(errorLineI + prefix.length, text.indexOf("\n", errorLineI + 1));
-      i = errorLineI + 1;
-      const fileLineI = text.indexOf(" at ", errorLineI + message.length);
-
-      let fileLine = "";
-      if (fileLineI !== -1) {
-        const fileLineEnd = text.indexOf("\n", fileLineI + 1);
-        fileLine = text.slice(fileLineI + "\n    at ".length, fileLineEnd);
-        i = fileLineEnd;
-      }
-      list.push([message, fileLine]);
-
-      if (i === -1) {
-        break;
-      }
+function errorParser(text: string) {
+  const prefix = "error: ";
+  var i = 0;
+  var list: [message: string, fileLine: string][] = [];
+  while (i < text.length) {
+    let errorLineI = text.indexOf(prefix, i);
+    if (errorLineI === -1) {
+      return list;
     }
-    return list;
-  };
+    const message = text.slice(errorLineI + prefix.length, text.indexOf("\n", errorLineI + 1));
+    i = errorLineI + 1;
+    const fileLineI = text.indexOf(" at ", errorLineI + message.length);
+
+    let fileLine = "";
+    if (fileLineI !== -1) {
+      const fileLineEnd = text.indexOf("\n", fileLineI + 1);
+      fileLine = text.slice(fileLineI + "\n    at ".length, fileLineEnd);
+      i = fileLineEnd;
+    }
+    list.push([message, fileLine]);
+
+    if (i === -1) {
+      break;
+    }
+  }
+  return list;
 }
 
-const errorParser = errorOrWarnParser(true);
-const warnParser = errorOrWarnParser(false);
+function warnParser(text: string, root: string): ErrorMeta[] {
+  const diagnostics = text.split(/^(?=(?:error|warn|note|debug|verbose): )/m);
+  return diagnostics.flatMap(diagnostic => {
+    const header = /^warn: (.*)/.exec(diagnostic);
+    if (!header) return [];
+    const [, error] = header;
+    const location = /^ {3}at (.+):(\d+):(\d+)$/m.exec(diagnostic);
+    if (!location) return [{ error, file: "<bun>" }];
+    const [, filename, line, col] = location;
+    const file = "/" + path.relative(root, path.resolve(root, filename)).replaceAll(path.sep, "/");
+    return [{ error, file, line, col }];
+  });
+}
 
 type BunTestExports = typeof import("bun:test");
 export function testForFile(file: string): BunTestExports {
@@ -234,7 +243,7 @@ export interface BundlerTestInput {
   deprecatedNamespaceObjectSetters?: boolean;
   inject?: string[];
   jsx?: {
-    runtime?: "automatic" | "classic";
+    runtime?: "automatic" | "classic" | "preserve";
     importSource?: string; // for automatic
     factory?: string; // for classic
     fragment?: string; // for classic
@@ -437,7 +446,7 @@ export interface BundlerTestRunOptions {
   runtime?: "bun" | "node";
 
   setCwd?: boolean;
-  /** Expect a certain non-zero exit code */
+  /** Expect the process to exit with this exact status. */
   exitCode?: number;
   /** Run a function with stdout and stderr. Use expect to assert exact outputs */
   validate?: (ctx: { stdout: string; stderr: string }) => void;
@@ -617,6 +626,7 @@ function expectBundled(
     !bundleWarnings &&
     bundling &&
     !ESBUILD &&
+    jsx.runtime !== "preserve" &&
     format === "esm" &&
     entryPoints.length === 1 &&
     (Array.isArray(run) ? run : [run]).every(({ file, bunArgs, runtime }) => !file && !bunArgs && runtime !== "node")
@@ -694,6 +704,10 @@ function expectBundled(
   }
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
+  }
+  const esbuildFormat = format === "internal_bake_dev" ? undefined : format;
+  if (ESBUILD && esbuildFormat === undefined) {
+    throw new UnsupportedOptionError("internal_bake_dev format not implemented in esbuild");
   }
   if (ESBUILD && dotenv) {
     throw new UnsupportedOptionError("dotenv not implemented in esbuild");
@@ -839,6 +853,63 @@ function expectBundled(
       ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
       : null;
 
+    const checkWarnings = (allWarnings: ErrorMeta[]) => {
+      const expectedWarnings = bundleWarnings
+        ? Object.entries(bundleWarnings).flatMap(([file, v]) => v.map(error => ({ file, error })))
+        : null;
+
+      for (const err of allWarnings) {
+        warningReference[err.file] ??= [];
+        warningReference[err.file].push(err);
+      }
+      if (DEBUG && allWarnings.length) {
+        console.log("REFERENCE WARNINGS OBJECT");
+        console.log("bundleWarnings: {");
+        for (const [file, errs] of Object.entries(warningReference)) {
+          console.log('  "' + file + '": [');
+          for (const err of errs as any) {
+            console.log("    `" + err.error + "`,");
+          }
+          console.log("  ],");
+        }
+        console.log("},");
+      }
+
+      if (allWarnings.length > 0 && !expectedWarnings) {
+        throw new Error("Warnings were thrown while bundling:\n" + allWarnings.map(formatError).join("\n"));
+      }
+      if (!expectedWarnings) return;
+
+      const matches = new Map<number, ErrorMeta>();
+      // Reassign an earlier warning when only it also matches a narrower expectation.
+      const matchWarning = (warning: ErrorMeta, seen: Set<number>): boolean => {
+        for (const [i, expected] of expectedWarnings.entries()) {
+          if (seen.has(i) || warning.file !== expected.file || !warning.error.includes(expected.error)) continue;
+          seen.add(i);
+          const previous = matches.get(i);
+          if (previous && !matchWarning(previous, seen)) continue;
+          matches.set(i, warning);
+          return true;
+        }
+        return false;
+      };
+      const unexpectedWarnings = allWarnings.filter(warning => !matchWarning(warning, new Set()));
+      const warningsLeft = expectedWarnings.filter((_, i) => !matches.has(i));
+
+      if (unexpectedWarnings.length) {
+        throw new Error(
+          "Unexpected warnings reported while bundling:\n" +
+            [...unexpectedWarnings].map(formatError).join("\n") +
+            "\n\nExpected warnings:\n" +
+            expectedWarnings.map(formatError).join("\n"),
+        );
+      }
+
+      if (warningsLeft.length) {
+        throw new Error("Warnings were expected while bundling:\n" + warningsLeft.map(formatError).join("\n"));
+      }
+    };
+
     // Helper to add compile boolean flags
     const compileFlag = (prop: string, trueFlag: string, falseFlag: string): string[] => {
       if (compile && typeof compile === "object" && Object.prototype.hasOwnProperty.call(compile, prop)) {
@@ -925,7 +996,6 @@ function expectBundled(
               emitDCEAnnotations && `--emit-dce-annotations`,
               deprecatedNamespaceObjectSetters === false && `--no-deprecated-namespace-object-setters`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
-              // jsx.preserve && "--jsx=preserve",
               // legalComments && `--legal-comments=${legalComments}`,
               // treeShaking === false && `--no-tree-shaking`, // ??
               keepNames && `--keep-names`,
@@ -940,7 +1010,7 @@ function expectBundled(
               ESBUILD_PATH,
               bundling && "--bundle",
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
-              `--format=${format}`,
+              `--format=${esbuildFormat}`,
               `--platform=${target === "bun" ? "node" : target}`,
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
@@ -951,8 +1021,7 @@ function expectBundled(
               conditions && `--conditions=${conditions.join(",")}`,
               inject && inject.map(x => `--inject:${path.join(root, x)}`),
               define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
-              `--jsx=${jsx.runtime === "classic" ? "transform" : "automatic"}`,
-              // jsx.preserve && "--jsx=preserve",
+              `--jsx=${jsx.runtime === "preserve" ? "preserve" : jsx.runtime === "classic" ? "transform" : "automatic"}`,
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
               jsx.sideEffects && `--jsx-side-effects`,
@@ -1065,6 +1134,11 @@ function expectBundled(
       const stdout = Buffer.from(stdoutBytes);
       const stderr = Buffer.from(stderrBytes);
       const success = exitCode === 0;
+      const checkCliWarnings = () => {
+        if (ESBUILD) return;
+        const warningText = Bun.stripANSI(stderr.toUnixString());
+        checkWarnings(warnParser(warningText, root));
+      };
       if (buildProc.signalCode) {
         throw new Error(
           `[${id}] 'bun build' subprocess killed by ${buildProc.signalCode}\n` +
@@ -1161,6 +1235,7 @@ function expectBundled(
               throw new Error("Errors were expected while bundling:\n" + errorsLeft.map(formatError).join("\n"));
             }
 
+            if (bundleWarnings) checkCliWarnings();
             return testRef(id, opts);
           }
           if (allErrors.length === 0) {
@@ -1175,67 +1250,7 @@ function expectBundled(
         throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
       }
 
-      // Check for warnings
-      if (!ESBUILD) {
-        const warningText = stderr!.toUnixString();
-        const allWarnings = warnParser(warningText)
-          .map(([error, source]) => {
-            if (!source) return;
-            const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
-            const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
-            return { error, file, line, col };
-          })
-          .filter(Boolean) as ErrorMeta[];
-        const expectedWarnings = bundleWarnings
-          ? Object.entries(bundleWarnings).flatMap(([file, v]) => v.map(error => ({ file, error })))
-          : null;
-
-        for (const err of allWarnings) {
-          warningReference[err.file] ??= [];
-          warningReference[err.file].push(err);
-        }
-        if (DEBUG && allWarnings.length) {
-          console.log("REFERENCE WARNINGS OBJECT");
-          console.log("bundleWarnings: {");
-          for (const [file, errs] of Object.entries(warningReference)) {
-            console.log('  "' + file + '": [');
-            for (const err of errs as any) {
-              console.log("    `" + err.error + "`,");
-            }
-            console.log("  ],");
-          }
-          console.log("},");
-        }
-
-        if (allWarnings.length > 0 && !expectedWarnings) {
-          throw new Error("Warnings were thrown while bundling:\n" + allWarnings.map(formatError).join("\n"));
-        } else if (expectedWarnings) {
-          const warningsLeft = [...expectedWarnings];
-          let unexpectedWarnings: ErrorMeta[] = [];
-
-          for (const error of allWarnings) {
-            const i = warningsLeft.findIndex(item => error.file === item.file && error.error.includes(item.error));
-            if (i === -1) {
-              unexpectedWarnings.push(error);
-            } else {
-              warningsLeft.splice(i, 1);
-            }
-          }
-
-          if (unexpectedWarnings.length) {
-            throw new Error(
-              "Unexpected warnings reported while bundling:\n" +
-                [...unexpectedWarnings].map(formatError).join("\n") +
-                "\n\nExpected warnings:\n" +
-                expectedWarnings.map(formatError).join("\n"),
-            );
-          }
-
-          if (warningsLeft.length) {
-            throw new Error("Warnings were expected while bundling:\n" + warningsLeft.map(formatError).join("\n"));
-          }
-        }
-      }
+      checkCliWarnings();
     } else {
       const pluginArray = typeof plugins === "function" ? [{ name: "plugin", setup: plugins }] : plugins;
       if (!ESBUILD) {
@@ -1387,6 +1402,28 @@ for (const [key, blob] of build.outputs) {
           writeFileSync(metafile, JSON.stringify((build as any).metafile, null, 2));
         }
 
+        const logToErrorMeta = (error: BuildOutput["logs"][number]): ErrorMeta => {
+          const position = error.position;
+
+          const filename = position?.file
+            ? position.namespace === "file"
+              ? "/" + path.relative(root, position.file).replaceAll(path.sep, "/")
+              : `${position.namespace}:${position.file.replace(root, "").replaceAll(path.sep, "/")}`
+            : "<bun>";
+
+          return {
+            file: filename,
+            error: error.message ?? String(error),
+            col: position?.column != null ? String(position.column) : undefined,
+            line: position?.line != null ? String(position.line) : undefined,
+          };
+        };
+
+        const checkApiWarnings = () => {
+          if (!bundleWarnings) return;
+          const warnings = build.logs.filter(x => x.level === "warn").map(logToErrorMeta);
+          checkWarnings(warnings);
+        };
         const buildLogs = build.logs.filter(x => x.level === "error");
         if (buildLogs.length) {
           const allErrors: ErrorMeta[] = [];
@@ -1396,28 +1433,7 @@ for (const [key, blob] of build.outputs) {
               throw error;
             }
 
-            // undocuemnted types
-            const position = error.position as {
-              lineText: string;
-              file: string;
-              namespace: string;
-              line: number;
-              column: number;
-              offset: number;
-            };
-
-            const filename = position?.file
-              ? position.namespace === "file"
-                ? "/" + path.relative(root, position.file).replaceAll(path.sep, "/")
-                : `${position.namespace}:${position.file.replace(root, "").replaceAll(path.sep, "/")}`
-              : "<bun>";
-
-            allErrors.push({
-              file: filename,
-              error: str,
-              col: position?.column !== undefined ? String(position.column) : undefined,
-              line: position?.line !== undefined ? String(position.line) : undefined,
-            });
+            allErrors.push(logToErrorMeta(error));
           }
 
           if (DEBUG && allErrors.length) {
@@ -1464,6 +1480,7 @@ for (const [key, blob] of build.outputs) {
               throw new Error("Errors were expected while bundling:\n" + errorsLeft.map(formatError).join("\n"));
             }
 
+            checkApiWarnings();
             return testRef(id, opts);
           }
 
@@ -1471,12 +1488,21 @@ for (const [key, blob] of build.outputs) {
         } else if (expectedErrors && expectedErrors.length > 0) {
           throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
         }
+        checkApiWarnings();
       } else {
         await esbuild.build({
           bundle: true,
+          platform: target === "bun" ? "node" : target,
+          format: esbuildFormat,
+          splitting,
           entryPoints: [...entryPaths, ...(entryPointsRaw ?? [])],
+          external,
           ...(useOutFile ? { outfile: outfile! } : { outdir: outdir! }),
           plugins: pluginArray as any,
+          jsx: jsx.runtime === "preserve" ? "preserve" : undefined,
+          minifyIdentifiers,
+          minifySyntax,
+          minifyWhitespace,
         });
       }
     }
@@ -1918,12 +1944,8 @@ for (const [key, blob] of build.outputs) {
               }
             }
           }
-        } else if (!success) {
-          if (run.exitCode) {
-            expect([exitCode, signalCode]).toEqual([run.exitCode, undefined]);
-          } else {
-            throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
-          }
+        } else if (!success && run.exitCode === undefined) {
+          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
         }
 
         if (run.validate) {
@@ -1973,6 +1995,10 @@ for (const [key, blob] of build.outputs) {
           }
           expect(result).toContain(expected);
         }
+
+        if (run.exitCode !== undefined) {
+          expect(exitCode).toBe(run.exitCode);
+        }
       }
     }
 
@@ -1985,7 +2011,8 @@ for (const [key, blob] of build.outputs) {
 /** An executable has one entry point. */
 function splitByEntryPoint(id: string, opts: BundlerTestInput): [id: string, opts: BundlerTestInput][] | undefined {
   const { entryPoints = [], run, outdir = "/out" } = opts;
-  if (!COMPILES_AHEAD_OF_TIME || entryPoints.length < 2 || !Array.isArray(run)) return undefined;
+  if (!COMPILES_AHEAD_OF_TIME || opts.jsx?.runtime === "preserve" || entryPoints.length < 2 || !Array.isArray(run))
+    return undefined;
   const parts: [string, BundlerTestInput][] = [];
   for (const { file, ...rest } of run) {
     const entryPoint = entryPoints.find(

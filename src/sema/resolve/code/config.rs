@@ -13,6 +13,7 @@ const CONFIG_FILE_NAMES: [&[u8]; 2] = [b"tsconfig.json", b"jsconfig.json"];
 pub enum JsxRuntime {
     Automatic,
     Classic,
+    Preserve,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -37,6 +38,15 @@ impl Default for JsxSettings {
 }
 
 impl JsxSettings {
+    pub fn runtime_with_pragmas(&self, pragmas: &JsxPragmas) -> JsxRuntime {
+        match (pragmas.preserve, pragmas.classic) {
+            (true, _) => JsxRuntime::Preserve,
+            (_, Some(true)) => JsxRuntime::Classic,
+            (_, Some(false)) => JsxRuntime::Automatic,
+            _ => self.runtime,
+        }
+    }
+
     pub fn runtime_specifier(&self) -> Vec<u8> {
         let subpath: &[u8] = match self.is_development {
             true => b"/jsx-dev-runtime",
@@ -50,12 +60,8 @@ impl JsxSettings {
             return None;
         }
         let text = |atom: Atom| atom.is_some().then(|| atoms.bytes(atom));
-        let runtime = pragmas.classic.map(|is_classic| match is_classic {
-            true => JsxRuntime::Classic,
-            false => JsxRuntime::Automatic,
-        });
         let fields = JsxFields {
-            runtime,
+            runtime: Some(self.runtime_with_pragmas(pragmas)),
             is_development: pragmas.is_development,
             factory: text(pragmas.factory).and_then(split_members),
             fragment: text(pragmas.fragment_factory).and_then(split_members),
@@ -352,16 +358,8 @@ impl<'h> Resolver<'h> {
         let is_development = (options.forced_jsx_development)
             .or(stated.jsx.is_development)
             .unwrap_or(options.jsx.is_development);
-        let settings = self.session.keep(TranspileSettings {
-            jsx: JsxSettings {
-                is_development,
-                ..stated.jsx.apply_to(&JsxSettings::default())
-            },
-            experimental_decorators: stated.experimental_decorators,
-            emits_decorator_metadata: stated.emits_decorator_metadata,
-            use_define_for_class_fields: stated.use_define_for_class_fields,
-            bun_run_assigns_class_fields: self.bun_run_assigns_class_fields(),
-        });
+        let settings =
+            self.create_settings_with_jsx(&stated, &JsxSettings::default(), is_development);
         *by_directory.insert_ref(self.keep(directory), settings)
     }
 
@@ -444,12 +442,22 @@ impl<'h> Resolver<'h> {
     }
 
     fn create_settings(&self, config: &ParsedConfig) -> &'h TranspileSettings {
-        let session: &'h Session = self.session;
-        session.keep(TranspileSettings {
-            jsx: JsxSettings {
-                is_development: self.is_jsx_development(),
-                ..config.jsx.apply_to(&self.code_options().jsx)
-            },
+        self.create_settings_with_jsx(config, &self.code_options().jsx, self.is_jsx_development())
+    }
+
+    fn create_settings_with_jsx(
+        &self,
+        config: &ParsedConfig,
+        defaults: &JsxSettings,
+        is_development: bool,
+    ) -> &'h TranspileSettings {
+        let mut jsx = config.jsx.apply_to(defaults);
+        if self.code_options().jsx.runtime == JsxRuntime::Preserve {
+            jsx.runtime = JsxRuntime::Preserve;
+        }
+        jsx.is_development = is_development;
+        self.session.keep(TranspileSettings {
+            jsx,
             experimental_decorators: config.experimental_decorators,
             emits_decorator_metadata: config.emits_decorator_metadata,
             use_define_for_class_fields: config.use_define_for_class_fields,

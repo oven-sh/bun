@@ -2912,6 +2912,8 @@ struct PropertyAccess {
     name: bun_ast::StoreStr,
     count: u32,
     is_call_target: bool,
+    is_jsx_tag: bool,
+    needs_capital_for_jsx: bool,
 }
 
 /// What following an import to its export needs.
@@ -3757,6 +3759,8 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
                         name,
                         count: prop_use.count_estimate,
                         is_call_target: prop_use.is_call_target,
+                        is_jsx_tag: prop_use.is_jsx_tag,
+                        needs_capital_for_jsx: prop_use.needs_capital_for_jsx,
                     });
                 }
             }
@@ -3958,7 +3962,10 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         cycle_detector: &mut Vec<ImportTracker>,
         source_index: crate::IndexInt,
         member_resolutions: &mut ImportMemberResolutions,
-    ) {
+        jsx_imports: &mut Vec<(Ref, Ref)>,
+    ) -> Result<(), bun_alloc::AllocError> {
+        let has_preserved_jsx = self.graph.ast.items_flags()[source_index as usize]
+            .contains(AstFlags::HAS_PRESERVED_JSX);
         let meta = self.graph.meta.split_mut();
         let imports_to_bind = &mut meta.imports_to_bind[source_index as usize];
         let mut matcher = ImportMatcher {
@@ -3991,6 +3998,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 
         // Items of `ns.name()` left unbound, each with its `ns`.
         let mut method_call_items: HashMap<Ref, Ref> = HashMap::default();
+        let mut missing_jsx_imports = Vec::new();
         for &i in &order {
             let i = i as usize;
             let (import_ref, named_import) = (keys[i], &values[i]);
@@ -4018,13 +4026,15 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 &mut re_exports,
             );
 
-            if is_call_item
+            let kind = if is_call_item
                 && !matcher.binds_call_item(source_index, import_ref, named_import, &result)
             {
-                continue;
-            }
+                MatchImportKind::Ignore
+            } else {
+                result.kind
+            };
 
-            match result.kind {
+            match kind {
                 MatchImportKind::Normal
                     if matcher.method_call_item_needs_this(import_ref, named_import, &result) =>
                 {
@@ -4097,6 +4107,19 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 }
                 MatchImportKind::Ignore => {}
             }
+
+            if has_preserved_jsx {
+                let symbol = matcher.symbol_mut(import_ref);
+                if symbol.import_used_in_jsx_tag()
+                    || symbol.must_start_with_capital_letter_for_jsx()
+                {
+                    if symbol.import_item_status == ImportItemStatus::Missing {
+                        missing_jsx_imports.push(import_ref);
+                    } else {
+                        jsx_imports.push((import_ref, import_ref));
+                    }
+                }
+            }
         }
 
         let (accesses, keeps_this) = matcher.resolve_import_property_accesses(
@@ -4138,7 +4161,82 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             &accesses,
             &keeps_this,
             member_resolutions,
+            jsx_imports,
         );
+        if !missing_jsx_imports.is_empty() {
+            self.bind_missing_jsx_imports(source_index, &missing_jsx_imports)?;
+        }
+        Ok(())
+    }
+
+    /// Bind missing exports used as tags to an undefined local with a JSX component name.
+    fn bind_missing_jsx_imports(
+        &mut self,
+        source_index: crate::IndexInt,
+        imports: &[Ref],
+    ) -> Result<(), bun_alloc::AllocError> {
+        let imports_to_bind =
+            &mut self.graph.meta.items_imports_to_bind_mut()[source_index as usize];
+        imports_to_bind.ensure_total_capacity(imports_to_bind.len() + imports.len())?;
+
+        let missing = self.graph.generate_new_symbol(
+            source_index,
+            bun_ast::symbol::Kind::Other,
+            b"JSXMissing",
+        );
+        self.graph
+            .symbols
+            .get_mut(missing)
+            .unwrap()
+            .set_must_start_with_capital_letter_for_jsx(true);
+
+        let arena = self.graph.arena();
+        let loc = Loc::EMPTY;
+        let decl = G::Decl {
+            binding: Binding::alloc(arena, bun_ast::B::Identifier { r#ref: missing }, loc),
+            value: None,
+        };
+        let stmt = Stmt::allocate(
+            arena,
+            S::Local {
+                kind: S::Kind::KVar,
+                decls: G::DeclList::init_one(decl),
+                ..Default::default()
+            },
+            loc,
+        );
+        self.graph.add_part_to_file(
+            source_index,
+            Part {
+                stmts: bun_ast::StoreSlice::new(arena.alloc_slice_copy(&[stmt])),
+                declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
+                    ref_: missing,
+                    is_top_level: true,
+                }])?,
+                can_be_removed_if_unused: true,
+                ..Default::default()
+            },
+        )?;
+
+        let imports_to_bind =
+            &mut self.graph.meta.items_imports_to_bind_mut()[source_index as usize];
+        for &ref_ in imports {
+            imports_to_bind.put(
+                ref_,
+                crate::ImportData {
+                    data: ImportTracker {
+                        source_index: Index::init(source_index),
+                        import_ref: missing,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )?;
+            let symbol = self.graph.symbols.get_mut(ref_).unwrap();
+            symbol.import_item_status = ImportItemStatus::Generated;
+            symbol.namespace_alias = None;
+        }
+        Ok(())
     }
 
     /// `import X from './a'; X.foo` where `X` resolved to the namespace of an
@@ -4155,6 +4253,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         accesses: &[PropertyAccess],
         keeps_this: &[(Ref, bun_ast::StoreStr)],
         member_resolutions: &ImportMemberResolutions,
+        jsx_imports: &mut Vec<(Ref, Ref)>,
     ) {
         let id = source_index as usize;
         let ast = self.graph.ast.split_mut();
@@ -4186,6 +4285,17 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 else {
                     continue;
                 };
+
+                if access.is_jsx_tag {
+                    jsx_imports.push((base, resolved.r#ref));
+                    if access.needs_capital_for_jsx {
+                        self.graph
+                            .symbols
+                            .get_mut(resolved.r#ref)
+                            .unwrap()
+                            .set_must_start_with_capital_letter_for_jsx(true);
+                    }
+                }
 
                 if !bound_bases.contains(&base) {
                     // First bound member of `base` in this part: depend on this

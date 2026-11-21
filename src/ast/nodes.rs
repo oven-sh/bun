@@ -1068,6 +1068,10 @@ pub struct PropertyUse {
     pub count_estimate: u32,
     /// Some read is called, as `X.name()` or a template tag, with `X` as `this`.
     pub is_call_target: bool,
+    /// Some read appears in a preserved JSX tag.
+    pub is_jsx_tag: bool,
+    /// Some read is the entire tag, so a bound export needs a component name.
+    pub needs_capital_for_jsx: bool,
 }
 
 impl Default for Part {

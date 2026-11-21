@@ -434,10 +434,19 @@ impl MinifyRenamer {
             sorted.sort_unstable_by(|a, b| SlotAndCount::less_than(*a, *b));
 
             let mut next_name: isize = 0;
+            let mut skipped_lowercase = std::collections::VecDeque::new();
 
             for data in sorted.iter() {
-                name_minifier.number_to_minified_name(&mut name_buf, next_name)?;
-                next_name += 1;
+                let needs_capital = slots[data.slot as usize].needs_capital_for_jsx;
+                let mut name_index =
+                    if !needs_capital && let Some(index) = skipped_lowercase.pop_front() {
+                        index
+                    } else {
+                        let index = next_name;
+                        next_name += 1;
+                        index
+                    };
+                name_minifier.number_to_minified_name(&mut name_buf, name_index)?;
 
                 // Make sure we never generate a reserved name. We only have to worry
                 // about collisions with reserved identifiers for normal symbols, and we
@@ -445,19 +454,17 @@ impl MinifyRenamer {
                 // not have to worry about either for private names because they start
                 // with a "#" character.
                 match ns {
-                    symbol::SlotNamespace::Default => {
-                        while self.reserved_names.contains_key(name_buf.as_slice()) {
-                            name_minifier.number_to_minified_name(&mut name_buf, next_name)?;
-                            next_name += 1;
-                        }
-
-                        if slots[data.slot as usize].needs_capital_for_jsx {
-                            while name_buf[0] >= b'a' && name_buf[0] <= b'z' {
-                                name_minifier.number_to_minified_name(&mut name_buf, next_name)?;
-                                next_name += 1;
+                    symbol::SlotNamespace::Default => loop {
+                        if !self.reserved_names.contains_key(name_buf.as_slice()) {
+                            if !needs_capital || !name_buf[0].is_ascii_lowercase() {
+                                break;
                             }
+                            skipped_lowercase.push_back(name_index);
                         }
-                    }
+                        name_index = next_name;
+                        next_name += 1;
+                        name_minifier.number_to_minified_name(&mut name_buf, name_index)?;
+                    },
                     symbol::SlotNamespace::Label => {
                         while js_lexer::keyword(name_buf.as_slice()).is_some() {
                             name_minifier.number_to_minified_name(&mut name_buf, next_name)?;
@@ -642,8 +649,20 @@ trait NameScopes {
 
     /// Takes `name` for `owner` in the current scope if free, else the first
     /// free `name2`, `name3`, …. `None`: `name` itself was free.
-    fn find_unused_name(&mut self, input_name: NameStr, owner: Ref) -> Option<NameStr> {
-        let owned_name = valid_identifier_for(input_name.slice());
+    fn find_unused_name(
+        &mut self,
+        input_name: NameStr,
+        owner: Ref,
+        needs_capital_for_jsx: bool,
+    ) -> Option<NameStr> {
+        let mut owned_name = valid_identifier_for(input_name.slice());
+        let name = owned_name.as_deref().unwrap_or_else(|| input_name.slice());
+        if needs_capital_for_jsx && name.first().is_some_and(u8::is_ascii_lowercase) {
+            // Capitalizing linked lowercase exports; JSX would otherwise treat them as intrinsic tags.
+            let mut name = owned_name.unwrap_or_else(|| input_name.slice().into());
+            name[0].make_ascii_uppercase();
+            owned_name = Some(name);
+        }
         let normalized = owned_name.is_some();
         let name: &[u8] = owned_name.as_deref().unwrap_or_else(|| input_name.slice());
 
@@ -901,8 +920,9 @@ impl<'a> NumberRenamer<'a> {
         }
 
         let original_name = symbol.original_name;
+        let needs_capital_for_jsx = symbol.must_start_with_capital_letter_for_jsx();
         let name = self
-            .find_unused_name(original_name, ref_)
+            .find_unused_name(original_name, ref_, needs_capital_for_jsx)
             .unwrap_or(original_name);
         store_name(&mut self.names[row], ref_.inner_index(), name);
     }
@@ -1168,8 +1188,9 @@ impl<'r> NestedRenamer<'r> {
             return;
         }
         let original_name = symbol.original_name;
+        let needs_capital_for_jsx = symbol.must_start_with_capital_letter_for_jsx();
         let name = self
-            .find_unused_name(original_name, ref_)
+            .find_unused_name(original_name, ref_, needs_capital_for_jsx)
             .unwrap_or(original_name);
         self.names[ref_.inner_index() as usize] = name;
     }

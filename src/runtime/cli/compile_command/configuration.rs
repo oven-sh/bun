@@ -519,8 +519,8 @@ fn finish(
         unsafe { (*this_transpiler.env).map.put(b"NODE_ENV", b"production")? };
     }
 
-    this_transpiler.configure_defines()?;
     this_transpiler.configure_linker();
+    this_transpiler.configure_defines()?;
 
     this_transpiler.options.compile_target_builtins = options::CompileTargetBuiltins::Host;
 

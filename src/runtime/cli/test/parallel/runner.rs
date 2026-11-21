@@ -392,7 +392,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Argv> {
         ] {
             argv.option(name, unless_empty(value).map(BStr::new));
         }
-        argv.option("--jsx-runtime", Some(jsx_runtime_tag_name(jsx.runtime)));
+        argv.option("--jsx-runtime", jsx_runtime_flag(jsx));
         argv.flag("--jsx-side-effects", jsx.side_effects);
     }
     argv.flag("--coverage", opts.coverage.enabled);
@@ -403,13 +403,14 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Argv> {
     Ok(argv)
 }
 
-/// Local shim for `@tagName(jsx.runtime)`.
-fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'static str {
+fn jsx_runtime_flag(jsx: &bun_options_types::schema::api::Jsx) -> Option<&'static str> {
     use bun_options_types::schema::api::JsxRuntime as J;
-    match r {
-        J::Automatic => "automatic",
-        J::Classic => "classic",
-        J::_none => "_none",
+    match jsx.runtime {
+        J::_none => None,
+        J::Classic => Some("classic"),
+        J::Preserve => Some("preserve"),
+        J::Automatic if jsx.development => Some("react-jsxdev"),
+        J::Automatic => Some("react-jsx"),
     }
 }
 

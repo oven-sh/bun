@@ -792,6 +792,16 @@ impl TranspilerJob {
             return;
         };
 
+        let runnable = bun_bundler::transpiler::require_runnable_js(
+            &parse_result.ast,
+            &parse_result.source,
+            log_clone_guard.1,
+        );
+        if runnable.is_err() {
+            this.parse_error = Some(crate::CrateError::ParseError);
+            return;
+        }
+
         // SAFETY: leaf scalar field read; see `vm` note above. Inlined
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
         // `&VirtualMachine`.

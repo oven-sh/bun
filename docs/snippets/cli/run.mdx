@@ -248,7 +248,9 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--jsx-runtime" type="string" default="automatic">
-  <code>automatic</code> (default) or <code>classic</code>
+  <code>automatic</code> (default), <code>classic</code>, <code>preserve</code>, <code>react</code>,{" "}
+  <code>react-jsx</code>, or <code>react-jsxdev</code>. In <code>preserve</code> mode, Bun reports an error if a file it
+  runs still contains JSX. Use <code>bun build --jsx-runtime=preserve</code> to emit JSX for another tool to transform.
 </ParamField>
 
 <ParamField path="--jsx-side-effects" type="boolean">

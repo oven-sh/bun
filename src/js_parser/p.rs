@@ -161,7 +161,6 @@ pub(crate) struct ParserSnapshot<'a> {
     log_warnings: u32,
     allow_in: bool,
     allow_private_identifiers: bool,
-    has_classic_runtime_warned: bool,
     has_non_local_export_declare_inside_namespace: bool,
     should_fold_typescript_constant_expressions: bool,
     fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -495,18 +494,20 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
+    /// `import { "not-a-name" as Local }`: the linker may turn `Local` into a computed property access.
+    pub(crate) string_named_import_items: RefMap,
     /// See `Ast::export_default_alias_of_import`.
     pub(crate) export_default_alias_of_import: Ref,
     pub(crate) named_imports: bun_ast::ast_result::NamedImports,
     pub(crate) named_exports: bun_ast::ast_result::NamedExports,
 
-    // When we're only scanning the imports
-    // If they're using the automatic JSX runtime
-    // We won't know that we need to import JSX robustly because we don't track
-    // symbol counts. Instead, we ask:
-    // "Did we parse anything that looked like JSX"?
-    // If yes, then automatically add the JSX import.
+    // When only scanning imports, symbol counts cannot reveal whether JSX needs
+    // a runtime import. Record whether JSX was parsed; the scan result applies
+    // the effective per-file runtime before adding synthetic imports.
     pub(crate) needs_jsx_import: NeedsJSXType,
+    pub(crate) preserved_jsx: crate::visit::PreservedJsx<'a>,
+    /// Preserved tag bindings to name once all source references have been resolved.
+    jsx_tag_temps_without_renamer: List<'a, Ref>,
 
     // The parser does two passes and we need to pass the scope tree information
     // from the first pass to the second pass. That's done by tracking the calls
@@ -2351,20 +2352,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `var { a, b } = require("bun:wrap")`. An import statement can't stand in the function that wraps a CommonJS module.
+    /// Bind helper exports with `require` inside a CommonJS wrapper.
     #[optimize(size)]
     #[inline(never)]
-    pub(crate) fn generate_runtime_require_stmt(
+    pub(crate) fn generate_require_stmt(
         &mut self,
-        imports: &[u8],
+        import_path: &'a [u8],
+        imports: &[(&'static [u8], Ref)],
         parts: &mut ListManaged<'a, js_ast::Part>,
+        is_internal: bool,
+        tag: bun_ast::PartTag,
     ) -> Result<(), crate::Error> {
-        let import_record_id = self.add_import_record(
-            ImportKind::Require,
-            bun_ast::Loc::EMPTY,
-            RuntimeImports::NAME,
-        );
-        {
+        let import_record_id =
+            self.add_import_record(ImportKind::Require, bun_ast::Loc::EMPTY, import_path);
+        if is_internal {
             let record = &mut self.import_records.items_mut()[import_record_id as usize];
             record.path.namespace = b"runtime";
             record.flags.insert(bun_ast::ImportRecordFlags::IS_INTERNAL);
@@ -2372,19 +2373,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
         declared_symbols.ensure_total_capacity(imports.len())?;
         let mut properties = BumpVec::<B::Property>::with_capacity_in(imports.len(), self.arena);
-        for &import in imports {
-            let r = self
-                .runtime_imports
-                .get(import as usize)
-                .expect("unreachable");
+        for &(name, binding_ref) in imports {
             let key = self.new_expr(
                 E::String {
-                    data: RuntimeImports::ALL[import as usize].into(),
+                    data: name.into(),
                     ..Default::default()
                 },
                 bun_ast::Loc::EMPTY,
             );
-            let value = self.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
+            let value = self.b(B::Identifier { r#ref: binding_ref }, bun_ast::Loc::EMPTY);
             properties.push(B::Property {
                 flags: bun_ast::flags::PROPERTY_NONE,
                 key,
@@ -2392,7 +2389,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 default_value: None,
             });
             declared_symbols.append_assume_capacity(DeclaredSymbol {
-                ref_: r,
+                ref_: binding_ref,
                 is_top_level: true,
             });
         }
@@ -2428,7 +2425,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmts: self.arena.alloc_slice_fill_with(1, |_| stmt).into(),
             declared_symbols,
             import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_id),
-            tag: bun_ast::PartTag::Runtime,
+            tag,
             ..Default::default()
         });
         Ok(())
@@ -3256,6 +3253,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    pub(crate) fn apply_jsx_import_source_pragma(&mut self) {
+        let Some(import_source) = self.lexer.jsx_pragma.jsx_import_source() else {
+            return;
+        };
+        let text = import_source.text.slice();
+        self.options.jsx.classic_import_source = text.to_vec().into();
+        self.options.jsx.package_name = self.options.jsx.classic_import_source.clone();
+        self.options.jsx.set_import_source();
+    }
+
+    pub(crate) fn jsx_runtime_pragma(&self) -> Option<options::JSX::RuntimeDevelopmentPair> {
+        let runtime = self.lexer.jsx_pragma.jsx_runtime()?;
+        options::JSX::RUNTIME_MAP.get(runtime.text.slice()).copied()
+    }
+
     pub(crate) fn prepare_for_visit_pass(&mut self) -> Result<(), crate::Error> {
         {
             // Compact `scopes_in_order` (parse pass leaves None holes from
@@ -3314,24 +3326,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if let Some(import_source) = self.lexer.jsx_pragma.jsx_import_source() {
-            // SAFETY: Span.text is `ArenaStr` valid for 'a.
-            let text = import_source.text.slice();
-            self.options.jsx.classic_import_source = text.to_vec().into();
-            self.options.jsx.package_name = self.options.jsx.classic_import_source.clone();
-            self.options.jsx.set_import_source();
-        }
+        self.apply_jsx_import_source_pragma();
 
         if let Some(runtime) = self.lexer.jsx_pragma.jsx_runtime() {
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
             let text = runtime.text.slice();
-            if let Some(jsx_runtime) = options::JSX::RUNTIME_MAP.get(text) {
+            if let Some(jsx_runtime) = self.jsx_runtime_pragma() {
                 self.options.jsx.runtime = jsx_runtime.runtime;
                 if let Some(dev) = jsx_runtime.development {
                     self.options.jsx.development = dev;
                 }
             } else {
-                // make this a warning instead of an error because we don't support "preserve" right now
                 self.log().add_range_warning_fmt(
                     Some(self.source),
                     runtime.range,
@@ -4391,6 +4396,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.is_import_item.insert(r#ref, ());
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
+            if !bun_core::identifier::is_identifier(alias) {
+                self.string_named_import_items.insert(r#ref, ());
+            }
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
 
             if self.options.features.inject_jest_globals
@@ -8248,7 +8256,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             log_warnings: log.warnings,
             allow_in: self.allow_in,
             allow_private_identifiers: self.allow_private_identifiers,
-            has_classic_runtime_warned: self.has_classic_runtime_warned,
             has_non_local_export_declare_inside_namespace: self
                 .has_non_local_export_declare_inside_namespace,
             should_fold_typescript_constant_expressions: self
@@ -8282,7 +8289,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.allow_in = snapshot.allow_in;
         self.allow_private_identifiers = snapshot.allow_private_identifiers;
-        self.has_classic_runtime_warned = snapshot.has_classic_runtime_warned;
         self.has_non_local_export_declare_inside_namespace =
             snapshot.has_non_local_export_declare_inside_namespace;
         self.should_fold_typescript_constant_expressions =
@@ -8368,6 +8374,43 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ref_ = self.new_symbol(js_ast::symbol::Kind::Other, name);
         self.declare_temp_var(ref_);
         ref_
+    }
+
+    pub(crate) fn generate_jsx_tag_temp(&mut self, scoped: bool) -> Ref {
+        let ref_ = if scoped {
+            self.generate_temp_ref(Some(b"JSXTag"))
+        } else {
+            self.generate_temp_var(b"JSXTag")
+        };
+        if !self.will_use_renamer() {
+            self.jsx_tag_temps_without_renamer.push(ref_);
+        }
+        ref_
+    }
+
+    fn name_jsx_tag_temps(&mut self) {
+        if self.jsx_tag_temps_without_renamer.is_empty() {
+            return;
+        }
+        let mut occupied = HashMap::<&[u8], ()>::new();
+        for symbol in self.symbols.iter() {
+            let name = symbol.original_name.slice();
+            if name.starts_with(b"JSXTag$") {
+                occupied.insert(name, ());
+            }
+        }
+        let mut suffix = 0;
+        for ref_ in self.jsx_tag_temps_without_renamer.iter() {
+            let name = loop {
+                suffix += 1;
+                let name = bun_alloc::arena_format!(in self.arena, "JSXTag${suffix}");
+                let name = name.into_bump_str().as_bytes();
+                if !occupied.contains_key(name) {
+                    break name;
+                }
+            };
+            self.symbols[ref_.inner_index() as usize].original_name = name.into();
+        }
     }
 
     /// Nested scopes are renamed from `Scope::generated`, a file's top level from `Part::declared_symbols`.
@@ -9326,6 +9369,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // into the `Ast` and leave the parser-side slot empty — a pointer move,
         // no realloc/memcpy. `Ast.{symbols,parts,import_records}` are now
         // `ArenaVec<'a, T>` so the move is type-checked.
+        self.name_jsx_tag_temps();
         let symbols = core::mem::replace(&mut self.symbols, BumpVec::new_in(arena));
         let parts_list = core::mem::replace(parts, BumpVec::new_in(arena));
         let import_records = self.import_records.move_to_baby_list(arena);
@@ -9376,6 +9420,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             import_meta_ref: self.import_meta_ref,
             depends_on_more_than_source: self.depends_on_more_than_source(),
             has_deferred_requires: self.has_deferred_requires,
+            first_preserved_jsx: self.preserved_jsx.elements.iter().find_map(|loc| *loc),
 
             symbols,
             parts: parts_list,
@@ -9653,6 +9698,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             module_scope: scope,
             scopes_in_order: scope_order,
             needs_jsx_import: false,
+            preserved_jsx: crate::visit::PreservedJsx::new(arena),
+            jsx_tag_temps_without_renamer: BumpVec::new_in(arena),
             lexer,
 
             commonjs_named_exports_deoptimized,
@@ -9746,6 +9793,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             esm_export_keyword: bun_ast::Range::NONE,
             enclosing_class_keyword: bun_ast::Range::NONE,
             import_items_for_namespace: Default::default(),
+            string_named_import_items: Default::default(),
             is_import_item: Default::default(),
             export_default_alias_of_import: Ref::NONE,
             scope_order_to_visit: &[],

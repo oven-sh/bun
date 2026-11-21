@@ -456,6 +456,39 @@ export default function () {
     expect(exitCode).toBe(1);
   });
 
+  test.concurrent.each([false, true])("prerendering checks for retained JSX (has JSX=%s)", async hasJsx => {
+    using dir = tempDir("bake-production-preserve-jsx", {
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+      "server.ts": `
+        export function prerender(meta) {
+          return { files: { "index.html": meta.pageModule.default() } };
+        }
+      `,
+      "routes/index.tsx": [
+        "/** @jsxRuntime preserve */",
+        hasJsx ? "const element = <div />;" : 'const element = "ok";',
+        "export default () => String(element);",
+      ].join("\n"),
+    });
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts --outdir ./dist`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    const page = Bun.file(path.join(String(dir), "dist", "index.html"));
+    if (hasJsx) {
+      expect(stderr.toString()).toContain("Cannot preserve JSX when building a Bake app");
+      expect(normalizePath(stderr.toString())).toContain("routes/index.tsx:2:17");
+      expect(await page.exists()).toBe(false);
+      expect(exitCode).toBe(1);
+      return;
+    }
+    expect(await page.text()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
+
   test("builds a framework without server components and keeps its client entry point", async () => {
     using dir = tempDir("bake-production-custom-framework", {
       "client.ts": `console.log("client loaded");`,

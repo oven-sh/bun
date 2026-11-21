@@ -1,6 +1,5 @@
 #![warn(unused_must_use)]
 use crate::p::P;
-use bun_alloc::Arena as Bump;
 use bun_ast::e::CallUnwrap;
 use bun_ast::symbol;
 use bun_ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
@@ -579,9 +578,12 @@ impl SideEffects {
         }
     }
 
-    fn should_keep_stmts_in_dead_control_flow(stmts: bun_ast::StmtNodeList, bump: &Bump) -> bool {
+    fn should_keep_stmts_in_dead_control_flow(
+        stmts: bun_ast::StmtNodeList,
+        on_strip_syntax: &mut impl FnMut(Stmt),
+    ) -> bool {
         for child in stmts.slice() {
-            if Self::should_keep_stmt_in_dead_control_flow(*child, bump) {
+            if Self::should_keep_stmt_in_dead_control_flow(*child, on_strip_syntax) {
                 return true;
             }
         }
@@ -600,8 +602,13 @@ impl SideEffects {
     /// We can't trim the entire branch as dead or calling foo() will incorrectly
     /// assign to a global variable instead.
     ///
+    /// Call `on_strip_syntax` when a declaration is reduced to hoisted bindings.
+    ///
     /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
-    pub(crate) fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
+    pub(crate) fn should_keep_stmt_in_dead_control_flow(
+        stmt: Stmt,
+        on_strip_syntax: &mut impl FnMut(Stmt),
+    ) -> bool {
         match stmt.data {
             // Omit these statements entirely
             StmtData::SEmpty(_)
@@ -633,6 +640,7 @@ impl SideEffects {
                         binding: prev_binding,
                         value: None,
                     };
+                    on_strip_syntax(stmt);
                     return true;
                 }
 
@@ -650,24 +658,31 @@ impl SideEffects {
                 }
 
                 local.decls = bun_alloc::AstAlloc::vec_from_iter(decls);
+                on_strip_syntax(stmt);
                 true
             }
 
             StmtData::SBlock(block) => {
-                Self::should_keep_stmts_in_dead_control_flow(block.stmts, bump)
+                Self::should_keep_stmts_in_dead_control_flow(block.stmts, on_strip_syntax)
             }
 
             StmtData::STry(try_stmt) => {
-                if Self::should_keep_stmts_in_dead_control_flow(try_stmt.body, bump) {
+                if Self::should_keep_stmts_in_dead_control_flow(try_stmt.body, on_strip_syntax) {
                     return true;
                 }
                 if let Some(catch_stmt) = &try_stmt.catch {
-                    if Self::should_keep_stmts_in_dead_control_flow(catch_stmt.body, bump) {
+                    if Self::should_keep_stmts_in_dead_control_flow(
+                        catch_stmt.body,
+                        on_strip_syntax,
+                    ) {
                         return true;
                     }
                 }
                 if let Some(finally_stmt) = &try_stmt.finally {
-                    if Self::should_keep_stmts_in_dead_control_flow(finally_stmt.stmts, bump) {
+                    if Self::should_keep_stmts_in_dead_control_flow(
+                        finally_stmt.stmts,
+                        on_strip_syntax,
+                    ) {
                         return true;
                     }
                 }
@@ -675,44 +690,44 @@ impl SideEffects {
             }
 
             StmtData::SIf(if_) => {
-                if Self::should_keep_stmt_in_dead_control_flow(if_.yes, bump) {
+                if Self::should_keep_stmt_in_dead_control_flow(if_.yes, on_strip_syntax) {
                     return true;
                 }
                 match if_.no {
-                    Some(no) => Self::should_keep_stmt_in_dead_control_flow(no, bump),
+                    Some(no) => Self::should_keep_stmt_in_dead_control_flow(no, on_strip_syntax),
                     None => false,
                 }
             }
 
             StmtData::SWhile(while_) => {
-                Self::should_keep_stmt_in_dead_control_flow(while_.body, bump)
+                Self::should_keep_stmt_in_dead_control_flow(while_.body, on_strip_syntax)
             }
 
             StmtData::SDoWhile(do_while) => {
-                Self::should_keep_stmt_in_dead_control_flow(do_while.body, bump)
+                Self::should_keep_stmt_in_dead_control_flow(do_while.body, on_strip_syntax)
             }
 
             StmtData::SFor(for_) => {
                 if let Some(init_) = for_.init {
-                    if Self::should_keep_stmt_in_dead_control_flow(init_, bump) {
+                    if Self::should_keep_stmt_in_dead_control_flow(init_, on_strip_syntax) {
                         return true;
                     }
                 }
-                Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
+                Self::should_keep_stmt_in_dead_control_flow(for_.body, on_strip_syntax)
             }
 
             StmtData::SForIn(for_) => {
-                Self::should_keep_stmt_in_dead_control_flow(for_.init, bump)
-                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
+                Self::should_keep_stmt_in_dead_control_flow(for_.init, on_strip_syntax)
+                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, on_strip_syntax)
             }
 
             StmtData::SForOf(for_) => {
-                Self::should_keep_stmt_in_dead_control_flow(for_.init, bump)
-                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
+                Self::should_keep_stmt_in_dead_control_flow(for_.init, on_strip_syntax)
+                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, on_strip_syntax)
             }
 
             StmtData::SLabel(label) => {
-                Self::should_keep_stmt_in_dead_control_flow(label.stmt, bump)
+                Self::should_keep_stmt_in_dead_control_flow(label.stmt, on_strip_syntax)
             }
 
             _ => true,

@@ -438,6 +438,10 @@ To build an IIFE bundle, set `format` to `"iife"`. Bun wraps the bundle in an im
 
 Configures how JSX is compiled.
 
+Set `runtime: "preserve"` to keep JSX syntax for another compiler without adding JSX runtime imports. Explicit preserve mode takes precedence over `tsconfig.json` JSX settings. Executable, bytecode, and standalone HTML builds require files without preserved JSX. If linking fixes a component binding to a name that JSX cannot represent, Bun reports a build error.
+
+In preserve mode, Bun emits braced `key` shorthand such as `{item.key}` as a spread prop. When an explicit `key` follows that spread, a downstream automatic JSX transform may use its `createElement` path to respect the order of the properties.
+
 **Classic runtime example** (uses `factory` and `fragment`):
 
 <CodeGroup>
@@ -1807,7 +1811,7 @@ class BuildMessage {
   name: string;
   position?: Position;
   message: string;
-  level: "error" | "warning" | "info" | "debug" | "verbose";
+  level: "error" | "warn" | "note" | "debug" | "verbose";
 }
 
 class ResolveMessage extends BuildMessage {
@@ -1861,7 +1865,7 @@ interface BuildConfig {
    * JSX configuration object for controlling JSX transform behavior
    */
   jsx?: {
-    runtime?: "automatic" | "classic";
+    runtime?: "automatic" | "classic" | "preserve" | "react" | "react-jsx" | "react-jsxdev";
     importSource?: string;
     factory?: string;
     fragment?: string;
@@ -2054,7 +2058,7 @@ declare class ResolveMessage {
     | "at_conditional"
     | "url"
     | "internal";
-  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+  readonly level: "error" | "warn" | "note" | "debug" | "verbose";
 
   toString(): string;
 }

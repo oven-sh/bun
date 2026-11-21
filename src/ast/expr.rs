@@ -1923,6 +1923,7 @@ impl Data {
                     key_prop_index: el.key_prop_index,
                     flags: el.flags,
                     close_tag_loc: el.close_tag_loc,
+                    close_tag_start_loc: el.close_tag_start_loc,
                 });
                 Ok(Data::EJsxElement(StoreRef::from_bump(item)))
             }

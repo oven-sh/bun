@@ -330,8 +330,7 @@ const STATUS_CODES = {
   511: "Network Authentication Required",
 };
 
-// The reason phrase that a response handle writes when it is given no statusMessage, for each status code where
-// src/runtime/server/HTTPStatusText.rs has the text above.
+// What a response handle writes when it is given no statusMessage: the texts that HTTPStatusText.rs shares with STATUS_CODES.
 const nativeStatusTexts = { __proto__: null, ...STATUS_CODES, 101: undefined, 509: undefined };
 
 function hasServerResponseFinished(self, chunk, callback, fromEnd) {

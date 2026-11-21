@@ -4204,11 +4204,7 @@ function callWriteHeadIfObservable(self, headerState, fromEnd?) {
   return false;
 }
 
-// Node's _implicitHeader() is writeHead(statusCode), which stores the default statusMessage:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L427
-// The chunk is checked first, as the handle will check it (NodeHTTPResponse.bind.ts): a store in front of a refused chunk
-// would stay for the next try, which may have another status code.
-// Returns true if it stored.
+// Node's _implicitHeader() stores it through writeHead(). Nothing is stored for a chunk that the handle will refuse.
 function storeDefaultStatusMessage(res, chunk) {
   if (
     typeof chunk !== "string" &&
@@ -4225,8 +4221,7 @@ function storeDefaultStatusMessage(res, chunk) {
   return true;
 }
 
-// Without a statusMessage the handle writes its own status line for the status code and reads no text. It is given none
-// where the text is the one that it writes by itself.
+// A handle that is given no statusMessage writes its own text for the status code, from a static status line.
 function statusMessageForHandle(statusCode, statusMessage) {
   return statusMessage === nativeStatusTexts[statusCode] ? undefined : statusMessage;
 }

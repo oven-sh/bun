@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f549ac6f6e9767c4880e1a5b0454f8d3399b05039fee00d4d8dafa6a2894c86f.
+// Written against that file with the SHA-256 dfda9c3d184a8a42d78166f56a13be9a421c10bdeda44cd821ad6536615a6b66.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -3698,8 +3698,7 @@ function statusMessageToSend(res: $Node.ServerResponse, statusCode: number): str
   return statusMessageForHandle(statusCode, res[kSnapshotStatusMessage] ?? res.statusMessage);
 }
 
-// Without a statusMessage the handle writes its own status line for the status code and reads no text. It is given none
-// where the text is the one that it writes by itself.
+// A handle that is given no statusMessage writes its own text for the status code, from a static status line.
 function statusMessageForHandle(statusCode: number, statusMessage: string | undefined): string | undefined {
   return statusMessage === nativeStatusTexts[statusCode] ? undefined : statusMessage;
 }
@@ -6799,11 +6798,7 @@ function updateHasBody(response: $Node.ServerResponse, statusCode: number) {
   // status writeHead() picks.
 }
 
-// Node's _implicitHeader() is writeHead(statusCode), which stores the default statusMessage:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L427
-// The chunk is checked first, as the handle will check it (NodeHTTPResponse.bind.ts): a store in front of a refused chunk
-// would stay for the next try, which may have another status code.
-// Returns true if it stored.
+// Node's _implicitHeader() stores it through writeHead(). Nothing is stored for a chunk that the handle will refuse.
 function storeDefaultStatusMessage(res: $Node.ServerResponse, chunk: unknown): boolean {
   if (
     typeof chunk !== "string" &&

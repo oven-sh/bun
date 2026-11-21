@@ -413,8 +413,7 @@ rejectNonStandardBodyWrites: statusCode = 304, write(chunk), statusCode = 500, e
   },
 );
 
-// `nativeStatusTexts` in src/js/internal/http.ts is STATUS_CODES without the status codes that differ here: for those the
-// handle is given the text of the response. A status code that is added to one table alone belongs there too.
+// `nativeStatusTexts` in src/js/internal/http.ts is STATUS_CODES without the status codes that differ here.
 test("the reason phrases that the native handle writes by itself are those of STATUS_CODES, but for three status codes", async () => {
   const source = await Bun.file(join(import.meta.dir, "../../../../src/runtime/server/HTTPStatusText.rs")).text();
   const native: Record<string, string | undefined> = Object.fromEntries(

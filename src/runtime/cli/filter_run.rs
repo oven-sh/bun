@@ -203,10 +203,10 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(unix)]
         for (reader, pipe) in [(&handle.stdout, stdout_pipe), (&handle.stderr, stderr_pipe)] {
-            if let Some(fd) = pipe.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(fd);
+            if let Some(pipe) = pipe {
+                let _ = bun_sys::set_nonblocking(pipe.fd());
                 let event_loop = handle.output.shared.event_loop.as_event_loop_ctx();
-                let _ = reader.start(event_loop, fd, true)?;
+                let _ = reader.start(event_loop, pipe.into(), true)?;
             }
         }
         #[cfg(not(unix))]

@@ -146,7 +146,8 @@ pub(crate) use self::windows_impl::WriteFileWindows;
 mod windows_impl {
     use super::*;
     use crate::dispatch::fold;
-    use bun_io::{self as aio, IntrusiveUvFs as _, JsKeepAlive};
+    use crate::server::file_response_stream::StreamFd;
+    use bun_io::{IntrusiveUvFs as _, JsKeepAlive};
     // `bun_jsc::EventLoop` is a *module* (namespace re-export); the struct
     // lives one level deeper.
     use bun_jsc::event_loop::EventLoop;
@@ -165,13 +166,11 @@ mod windows_impl {
         pub(crate) context: bun_jsc::ContextId,
         pub(crate) mkdirp_if_not_exists: bool,
 
-        pub(crate) fd: uv::uv_file,
+        pub(crate) fd: StreamFd,
         pub(crate) err: Option<sys::Error>,
         pub(crate) total_written: usize,
         pub(crate) event_loop: &'static EventLoop,
         _keep_alive: JsKeepAlive,
-
-        pub(crate) owned_fd: bool,
     }
 
     bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
@@ -225,11 +224,10 @@ mod windows_impl {
                 mkdirp_if_not_exists: mkdirp,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 event_loop,
-                fd: -1,
+                fd: StreamFd::borrowed(Fd::INVALID),
                 err: None,
                 total_written: 0,
                 _keep_alive: JsKeepAlive::active(),
-                owned_fd: false,
             });
             write_file.io_request.loop_ = event_loop.uv_loop();
 
@@ -237,7 +235,7 @@ mod windows_impl {
             let PathOrFileDescriptor::Fd(fd) = &store.data.as_file().pathlike else {
                 return write_file.open();
             };
-            write_file.fd = fd.uv();
+            write_file.fd = StreamFd::borrowed(Fd::from_uv(fd.uv()));
 
             write_file.do_write_loop()
         }
@@ -247,7 +245,7 @@ mod windows_impl {
             store.data.as_file().pathlike.path().slice()
         }
 
-        fn open(mut self: Box<Self>) -> jsc::JsResult<()> {
+        fn open(self: Box<Self>) -> jsc::JsResult<()> {
             let Ok(posix_path) = sys::to_posix_path(self.path()) else {
                 return self.throw(sys::Error {
                     errno: sys::E::NAMETOOLONG as _,
@@ -255,7 +253,6 @@ mod windows_impl {
                     ..Default::default()
                 });
             };
-            self.owned_fd = true;
             let loop_ = self.event_loop.uv_loop();
             let this = bun_core::heap::into_raw(self);
             // SAFETY: the VM's loop outlives the request, libuv copies the NUL-terminated path
@@ -310,7 +307,7 @@ mod windows_impl {
                 return;
             }
 
-            this.fd = i32::try_from(rc.int()).expect("int cast");
+            this.fd = sys::File::from_fd(Fd::from_uv(rc.to_fd())).into();
 
             fold(this.do_write_loop());
         }
@@ -404,7 +401,7 @@ mod windows_impl {
             };
             self.io_request.deinit();
 
-            let (loop_, fd) = (self.event_loop.uv_loop(), self.fd);
+            let (loop_, fd) = (self.event_loop.uv_loop(), self.fd.get().uv());
             let this = bun_core::heap::into_raw(self);
             // SAFETY: the VM's loop outlives the request, libuv copies `buf` before it returns, and
             // it has `this`, whose blob keeps the bytes, until `on_write_complete`.
@@ -432,14 +429,6 @@ mod windows_impl {
             };
             // SAFETY: libuv keeps nothing of a request that it refuses.
             unsafe { bun_core::heap::take(this) }.throw(err)
-        }
-    }
-
-    impl Drop for WriteFileWindows {
-        fn drop(&mut self) {
-            if self.fd > 0 && self.owned_fd {
-                aio::Closer::close(Fd::from_uv(self.fd), self.io_request.loop_);
-            }
         }
     }
 }

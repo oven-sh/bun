@@ -572,7 +572,7 @@ pub mod waker {
 // `pipes::PipeHandle::close` has no upward dep on bun_io (T3).
 
 pub mod closer {
-    use bun_sys::Fd;
+    use bun_sys::File;
 
     // ── POSIX ────────────────────────────────────────────────────────────────
 
@@ -582,7 +582,7 @@ pub mod closer {
     #[cfg(not(windows))]
     #[repr(C)]
     pub struct Closer {
-        pub(crate) fd: Fd,
+        file: File,
         task: WorkPoolTask,
     }
 
@@ -591,18 +591,16 @@ pub mod closer {
     #[cfg(not(windows))]
     impl bun_threading::work_pool::OwnedTask for Closer {
         fn run(self: Box<Self>) {
-            use bun_sys::FdExt;
-            self.fd.close();
+            drop(self.file);
         }
     }
 
     #[cfg(not(windows))]
     impl Closer {
         /// `_compat`: for signature compatibility with the Windows version.
-        pub fn close(fd: Fd, _compat: ()) {
-            debug_assert!(fd.is_valid());
+        pub fn close(file: File, _compat: ()) {
             WorkPool::schedule_owned(Box::new(Closer {
-                fd,
+                file,
                 task: WorkPoolTask {
                     node: Default::default(),
                     callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
@@ -623,7 +621,8 @@ pub mod closer {
 
     #[cfg(windows)]
     impl Closer {
-        pub fn close(fd: Fd, loop_: *mut uv::Loop) {
+        pub fn close(file: File, loop_: *mut uv::Loop) {
+            let fd = file.into_raw();
             let req = bun_ptr::AliasableBox::from(bun_core::boxed_zeroed::<uv::fs_t>());
             // SAFETY: `req` stays put until `on_close` takes it.
             let rc = unsafe { uv::uv_fs_close(loop_, req.as_ptr(), fd.uv(), Some(Self::on_close)) };
@@ -640,7 +639,7 @@ pub mod closer {
             bun_sys::syslog!(
                 "uv_fs_close({}) = {}",
                 // SAFETY: `uv_fs_close` populated the `fd` arm of the union.
-                Fd::from_uv(unsafe { req.file_fd() }),
+                bun_sys::Fd::from_uv(unsafe { req.file_fd() }),
                 req.result
             );
 

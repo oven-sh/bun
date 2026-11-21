@@ -45,11 +45,15 @@ const MIRI_CRATES = [
   "bun_hash",
   "bun_base64",
   "bun_bundler",
+  "bun_cares_sys",
   "bun_clap",
   "bun_dispatch",
   "bun_errno",
   "bun_event_loop",
+  "bun_highway",
   "bun_http_types",
+  "bun_icu_data",
+  "bun_jpeg",
   "bun_md",
   "bun_pod",
   "bun_ptr",
@@ -62,9 +66,11 @@ const MIRI_CRATES = [
 ];
 
 // Crates of which Miri runs only the unit tests under these paths. The rest of
-// their tests start other programs, or would take hours to interpret.
+// their tests start other programs, call vendored C, or would take hours to interpret.
 const MIRI_UNIT_TESTS: Record<string, string[]> = {
   bun_aot: ["ir::parallel"],
+  bun_core: ["c_str_list", "util::tests"],
+  bun_io: ["max_buf"],
 };
 
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {

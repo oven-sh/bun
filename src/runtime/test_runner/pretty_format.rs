@@ -1,5 +1,6 @@
 use crate::test_runner::expect::JSValueTestExt;
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 
 use bun_collections::HashMap;
 use bun_core::fmt as bun_fmt;
@@ -289,11 +290,12 @@ pub(crate) mod visited {
         }
     }
 
-    // `ObjectPool<T, ..>` requires `T: ObjectPoolType` — `INIT` allocates an empty map,
+    // `ObjectPool<T, ..>` requires `T: ObjectPoolType` — `init` makes an empty map,
     // `reset` clears retaining capacity (handled by callers via `.clear()`).
     impl bun_collections::pool::ObjectPoolType for Map {
-        const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
-            Some(|| Ok(Map::default()));
+        fn init() -> Self {
+            Map::default()
+        }
         #[inline]
         fn reset(&mut self) {
             self.0.clear();
@@ -312,7 +314,7 @@ pub(crate) struct Formatter<'a> {
     pub(crate) remaining_values: &'a [JSValue],
     pub(crate) map: visited::Map,
     /// Lazily acquired from `visited::Pool`; released back in `Drop`.
-    pub(crate) map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
+    pub(crate) map_node: ManuallyDrop<Option<Box<visited::PoolNode>>>,
     pub global_this: &'a JSGlobalObject,
     pub(crate) indent: u32,
     pub(crate) quote_strings: bool,
@@ -348,7 +350,7 @@ impl<'a> Formatter<'a> {
         Self {
             remaining_values: &[],
             map: visited::Map::default(),
-            map_node: None,
+            map_node: ManuallyDrop::new(None),
             global_this: global,
             indent: 0,
             quote_strings: false,
@@ -399,16 +401,9 @@ impl<'a> Formatter<'a> {
 impl Drop for Formatter<'_> {
     fn drop(&mut self) {
         if let Some(mut node) = self.map_node.take() {
-            // SAFETY: `node` came from `visited::Pool::get_node()` and is
-            // exclusively owned for this `Formatter`'s lifetime; its `data` was
-            // initialized by `Map::INIT`, so `assume_init_mut` observes a valid
-            // `Map`.
-            unsafe {
-                let data = node.as_mut().data.assume_init_mut();
-                *data = core::mem::take(&mut self.map);
-                data.clear();
-                visited::Pool::release(node.as_ptr());
-            }
+            node.data = core::mem::take(&mut self.map);
+            node.data.clear();
+            visited::Pool::release(node);
         }
     }
 }
@@ -1096,23 +1091,11 @@ impl<'a> Formatter<'a> {
 
         if FORMAT.can_have_circular_references() {
             if self.map_node.is_none() {
-                // `visited::Pool::get()` returns an RAII `PoolGuard` that
-                // would release on scope exit; instead the raw node is stashed on
-                // `self` and released from `JestPrettyFormat::format`'s tail, so
-                // take the raw node directly. `data` is initialized by
-                // `Map::INIT` (see `visited::Map: ObjectPoolType`).
-                let node = core::ptr::NonNull::new(visited::Pool::get_node())
-                    .expect("ObjectPool::get_node never returns null");
-                self.map_node = Some(node);
-                // Take the map here and swap it back into
-                // `node.data` at release time (see JestPrettyFormat::format tail),
-                // so the pooled allocation is retained across uses.
-                // SAFETY: see above.
-                unsafe {
-                    let data = (*node.as_ptr()).data.assume_init_mut();
-                    data.clear();
-                    self.map = core::mem::take(data);
-                }
+                // `Drop` puts the map back, so the pooled allocation is retained across uses.
+                let mut node = visited::Pool::get_node();
+                node.data.clear();
+                self.map = core::mem::take(&mut node.data);
+                self.map_node = ManuallyDrop::new(Some(node));
             }
 
             let entry = self.map.get_or_put(value).expect("unreachable");
@@ -1627,7 +1610,7 @@ impl<'a> Formatter<'a> {
                             return Err(JsError::Thrown);
                         }
                         return Ok(());
-                    } else if bun_jsc::DOMFormData::from_js(value).is_some() {
+                    } else if bun_jsc::DOMFormData::from_js(&value).is_some() {
                         if let Some(to_json_function) = value
                             .get(self.global_this, "toJSON")?
                             .filter(|f| f.is_callable())
@@ -1651,12 +1634,12 @@ impl<'a> Formatter<'a> {
                     } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
                         self.add_for_new_line(
                             b"Timeout(# ) ".len()
-                                + bun_fmt::digit_count(timer.internals.id),
+                                + bun_fmt::digit_count(timer.id),
                         );
-                        if timer.internals.flags.get().kind() == crate::timer::Kind::SetInterval {
+                        if timer.repeats() {
                             self.add_for_new_line(
                                 b"repeats ".len()
-                                    + bun_fmt::digit_count(timer.internals.id),
+                                    + bun_fmt::digit_count(timer.id),
                             );
                             writer.print(format_args!(
                                 "{}Timeout{} {}(#{}{}{}{}, repeats){}",
@@ -1664,7 +1647,7 @@ impl<'a> Formatter<'a> {
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                                timer.internals.id,
+                                timer.id,
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
@@ -1676,7 +1659,7 @@ impl<'a> Formatter<'a> {
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                                timer.internals.id,
+                                timer.id,
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
@@ -1689,7 +1672,7 @@ impl<'a> Formatter<'a> {
                     {
                         self.add_for_new_line(
                             b"Immediate(# ) ".len()
-                                + bun_fmt::digit_count(immediate.internals.id),
+                                + bun_fmt::digit_count(immediate.id),
                         );
                         writer.print(format_args!(
                             "{}Immediate{} {}(#{}{}{}{}){}",
@@ -1697,7 +1680,7 @@ impl<'a> Formatter<'a> {
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                            immediate.internals.id,
+                            immediate.id,
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
@@ -2989,7 +2972,7 @@ impl JestPrettyFormat {
             *this.amf_quote_strings() = original_quote_strings;
         } else if let Some(instance) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
             let printed = expect::ExpectCustomAsymmetricMatcher::custom_print(
-                instance, value, this.amf_global_this(), &mut *writer.ctx, true,
+                &instance, value, this.amf_global_this(), &mut *writer.ctx, true,
             )
             .expect("unreachable");
             if !printed {
@@ -3301,9 +3284,9 @@ pub(crate) fn write_name_of_matcher(global: &JSGlobalObject, value: JSValue, out
             name(matcher.flags, "StringMatching", "StringNotMatching")
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
             name(matcher.flags, "NumberCloseTo", "NumberNotCloseTo")
-        } else if value.as_class_ref::<expect::ExpectAny>().is_some() {
+        } else if value.is::<expect::ExpectAny>() {
             "Any"
-        } else if value.as_class_ref::<expect::ExpectAnything>().is_some() {
+        } else if value.is::<expect::ExpectAnything>() {
             "Anything"
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
             let Some(matcher_fn) = js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(value) else { return Ok(false) };
@@ -3357,7 +3340,7 @@ fn deep_merge_array(global: &JSGlobalObject, target: JSValue, source: JSValue, f
 }
 
 fn is_any_or_anything(value: JSValue) -> bool {
-    value.as_class_ref::<expect::ExpectAny>().is_some() || value.as_class_ref::<expect::ExpectAnything>().is_some()
+    value.is::<expect::ExpectAny>() || value.is::<expect::ExpectAnything>()
 }
 
 fn is_text(global: &JSGlobalObject, value: JSValue, text: &[u8]) -> JsResult<bool> {
@@ -4289,14 +4272,14 @@ impl Formatter<'_> {
                 }
             }
             out.push(b'>');
-        } else if value.as_class_ref::<expect::ExpectAny>().is_some() {
+        } else if value.is::<expect::ExpectAny>() {
             let Some(constructor) = js_ExpectAny::constructor_value_get_cached(value) else { return Ok(false) };
             out.extend_from_slice(b"Any<");
             let name = constructor.get_class_name(global)?;
             let name = name.to_utf8();
             out.extend_from_slice(if name.slice().is_empty() { b"<anonymous>" } else { name.slice() });
             out.push(b'>');
-        } else if value.as_class_ref::<expect::ExpectAnything>().is_some() {
+        } else if value.is::<expect::ExpectAnything>() {
             out.extend_from_slice(b"Anything");
         } else {
             return Ok(false);
@@ -4665,9 +4648,7 @@ impl JestPrettyFormat {
         }
 
         let utils_value = expect::ExpectMatcherUtils::singleton(global);
-        let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(()) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
+        let Some(utils) = expect::ExpectMatcherUtils::from_js(&utils_value) else { return Ok(()) };
 
         let is_of_file = expect::Expect::is_called_by_test_file(global);
         let serializers = JSValue::create_empty_array(global, 0)?;
@@ -4691,10 +4672,8 @@ impl JestPrettyFormat {
     #[optimize(size)]
     fn serializers(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
         let utils_value = expect::ExpectMatcherUtils::singleton(global);
-        let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(None) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
-        let file = super::jest::Jest::file_generation(global);
+        let Some(utils) = expect::ExpectMatcherUtils::from_js(&utils_value) else { return Ok(None) };
+        let file = super::jest::Jest::file_generation();
         let is_same_file = utils.serializers_file.replace(file) == file;
         let Some(serializers) = js_ExpectMatcherUtils::snapshot_serializers_get_cached(utils_value) else {
             return Ok(None);

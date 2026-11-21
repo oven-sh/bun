@@ -13,6 +13,7 @@ use crate::link::{
     self, LinkInput, LinkProject, LinkUnit, Linked, LinkedFunctions, ProgramModule,
     run_steps_beside,
 };
+use crate::load::contents::load_names::is_object_handed_on;
 use crate::load::runtime_roots::{StartOfRun, builtins_used_at_start};
 use crate::load::{ProgramFile, ProjectId};
 use crate::module_keys::{path_without_form, stamp_of_file};
@@ -208,6 +209,13 @@ impl Build<'_> {
                             .method_that_hands_out_global_object_may_come_out;
                         let used_at_start =
                             used_at_start.chain(comes_out.then_some(BuiltinId::GlobalThis));
+                        let gives_loader = runs_tests
+                            && is_object_handed_on(
+                                application.loaded.files(),
+                                BuiltinId::NodeModule,
+                            );
+                        let used_at_start =
+                            used_at_start.chain(gives_loader.then_some(BuiltinId::NodeModule));
                         program.builtins_used_at_start = used_at_start
                             .map(|builtin| BuiltinUsedAtStart { builtin })
                             .collect();
@@ -271,8 +279,13 @@ impl Build<'_> {
                         }
                         debug_assert_eq!(entry_points.len(), program.entries.len());
                         steps.end("link stage: built-ins that are replaced, names, stamps");
-                        let listed_modules = (self.options.lists_modules)
-                            .then(|| collect_module_list(&loaded, &bound, &modules, runs_tests));
+                        let listed_modules = (self.options.lists_modules).then(|| {
+                            let mut listed =
+                                collect_module_list(&loaded, &bound, &modules, runs_tests);
+                            let embedded = self.provider.list_files_embedded_implicitly();
+                            listed.add_embedded_files(&embedded, &self.options.load.project_root);
+                            listed
+                        });
                         steps.end("link stage: list of modules");
                         (entry_points, folders, listed_modules)
                     },

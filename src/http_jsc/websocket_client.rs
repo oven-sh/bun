@@ -191,7 +191,7 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) send_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
 
     pub(crate) global_this: GlobalRef,
-    pub(crate) poll_ref: Cell<KeepAlive>,
+    pub(crate) poll_ref: KeepAlive,
 
     pub(crate) header_fragment: Cell<Option<u8>>,
 
@@ -277,9 +277,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub(crate) fn clear_data(&self) {
         log!("clearData");
-        let mut poll_ref = self.poll_ref.take();
-        poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
-        self.poll_ref.set(poll_ref);
+        self.poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
         self.clear_receive_buffers(true);
         self.clear_send_buffers(true);
         self.initial_data.set(None);
@@ -292,7 +290,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Detach the tunnel first so its shutdown callbacks cannot re-enter this path.
         if let Transport::Tunnel(tunnel) = self.transport.replace(Transport::Socket) {
             tunnel.clear_connected_web_socket();
-            WebSocketProxyTunnel::shutdown(tunnel.this_ptr());
+            WebSocketProxyTunnel::shutdown(&tunnel);
             drop(tunnel);
             // Release the I/O-layer ref taken in init_with_tunnel() — the
             // tunnel was this struct's socket-equivalent owner. In the
@@ -485,14 +483,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         let result = match self.deflate.borrow_mut().as_mut() {
             None => Err(ErrorCode::UnexpectedRsv1),
             Some(deflate) => deflate
-                .decompress(
-                    rare.libdeflate_decompressor(),
-                    data,
-                    &mut decompressed,
-                    self.max_payload_length(),
-                )
+                .decompress(data, &mut decompressed, self.max_payload_length())
                 .map_err(|err| match err {
-                    websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
+                    websocket_deflate::Error::Corrupt => ErrorCode::InvalidCompressedData,
                     websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
                     websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
                 }),
@@ -958,7 +951,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             let mut unmask = self.unmask.get();
             let mut receive_buffer = self.receive_buffer.borrow_mut();
             let writable = bun_core::handle_oom(receive_buffer.writable_with_size(chunk.len()));
-            unmask.copy(&mut writable[..chunk.len()], chunk);
+            unmask.copy(writable, chunk);
             receive_buffer.update(chunk.len());
             self.unmask.set(unmask);
         }
@@ -1388,13 +1381,11 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
         let ctx = Self::vm_loop_ctx(&self.global_this);
-        let mut poll_ref = self.poll_ref.take();
         if keep_alive {
-            poll_ref.r#ref(ctx);
+            self.poll_ref.r#ref(ctx);
         } else {
-            poll_ref.unref(ctx);
+            self.poll_ref.unref(ctx);
         }
-        self.poll_ref.set(poll_ref);
     }
 
     /// In tunnel mode this is the proxy's address.
@@ -1587,7 +1578,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             receive_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             send_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             global_this: GlobalRef::from(global_this),
-            poll_ref: Cell::new(KeepAlive::init()),
+            poll_ref: KeepAlive::init(),
             header_fragment: Cell::new(None),
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
@@ -1624,11 +1615,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         ws.io_ref.set(Some(io_ref));
         bun_core::handle_oom(ws.send_buffer.borrow_mut().ensure_total_capacity(2048));
         bun_core::handle_oom(ws.receive_buffer.borrow_mut().ensure_total_capacity(2048));
-        {
-            let mut poll_ref = ws.poll_ref.take();
-            poll_ref.r#ref(Self::vm_loop_ctx(global_this));
-            ws.poll_ref.set(poll_ref);
-        }
+        ws.poll_ref.r#ref(Self::vm_loop_ctx(global_this));
 
         ws.initial_data
             .set(buffered_data.filter(|b| !b.0.is_empty()));
@@ -1830,8 +1817,6 @@ impl<const SSL: bool> WebSocket<SSL> {
 impl<const SSL: bool> Drop for WebSocket<SSL> {
     fn drop(&mut self) {
         self.clear_data();
-        // deflate already dropped in clear_data; this is defensive
-        self.deflate.replace(None);
         bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, self);
     }
 }
@@ -2249,7 +2234,7 @@ impl Mask {
             bun_core::hint::cold();
             return;
         }
-        bun_highway::fill_with_skip_mask(*mask_buf, &mut output[..input.len()], input, skip_mask);
+        bun_highway::fill_with_skip_mask(*mask_buf, output, input, skip_mask);
     }
 
     /// In-place variant for when output and input alias the same buffer

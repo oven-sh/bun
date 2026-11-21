@@ -1,6 +1,8 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import { bunEnv, bunExe, tls as certs, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
+import { join } from "node:path";
 
 const skip = !fault.available() || isWindows;
 
@@ -188,6 +190,54 @@ describe.skipIf(skip)("fetch() under injected syscall faults (http)", () => {
     expect(JSON.parse(stdout.trim() || "{}")).toMatchObject({ ok: true, length: body.length });
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(0);
+  });
+
+  test("send → 0 until an early gzip response is being read still delivers the body", async () => {
+    // Over 512 KiB once inflated, so the client holds it until it has a consumer.
+    const length = 1024 * 1024;
+    const gzip = Bun.gzipSync(Buffer.alloc(length));
+    const head = `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ${gzip.length}\r\n\r\n`;
+    using server = Bun.listen({
+      port: 0,
+      hostname: "127.0.0.1",
+      socket: {
+        open: socket => void socket.write(Buffer.concat([Buffer.from(head), gzip])),
+        data() {},
+      },
+    });
+    using dir = tempDir("fetch-early-gzip", {});
+    const fifo = join(String(dir), "ca.pem");
+    mkfifo(fifo);
+    const fixture = /* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const url = "http://127.0.0.1:${server.port}/";
+      fault.set({ syscall: "send", action: "zero", repeat: -1 });
+      const res = await fetch(url, { method: "POST", body: new ReadableStream({ pull() {} }) });
+
+      // The HTTP thread blocks on caFile, then sends the request head before it hears of the consumer.
+      const fifo = ${JSON.stringify(fifo)};
+      const blocker = fetch("https://127.0.0.1:${server.port}/", { tls: { caFile: fifo } }).catch(e => e.code);
+      const writer = await Promise.race([
+        require("fs").promises.open(fifo, "w"),
+        blocker.then(code => Promise.reject(new Error(code))),
+      ]);
+      fault.clear();
+      const body = res.arrayBuffer();
+      await writer.close();
+
+      console.log(JSON.stringify({
+        length: (await body).byteLength,
+        blocker: await blocker,
+        next: (await (await fetch(url)).arrayBuffer()).byteLength,
+      }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe", stdout: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ length, blocker: "FailedToOpenSocket", next: length }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

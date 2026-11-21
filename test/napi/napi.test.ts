@@ -436,6 +436,21 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_create_string_utf16", () => {
+    it("reads from an odd address", async () => {
+      const output = await checkSameOutput("test_napi_create_string_utf16_unaligned", []);
+      expect(output.split(/\r?\n/)).toEqual(["odd", "odd address"]);
+    });
+  });
+
+  describe("napi_get_boolean", () => {
+    // Node returns no boolean for these.
+    it("treats any non-zero byte as true", async () => {
+      const output = await runOn(bunExe(), "test_napi_get_boolean_bytes", []);
+      expect(output.match(/^\d+: \d/gm)).toEqual(["0: 0", "1: 1", "2: 1", "128: 1", "255: 1"]);
+    });
+  });
+
   describe("napi_create_external_buffer", () => {
     it("handles empty/null data without throwing", async () => {
       const result = await checkSameOutput("test_napi_create_external_buffer_empty", []);
@@ -782,6 +797,31 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         "resolved to undefined",
       ]);
     });
+    it("completes in the next file of bun test --isolate", async () => {
+      const prelude = `
+        import { expect, test } from "bun:test";
+        const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
+      `;
+      using dir = tempDir("napi-isolate-async-work", {
+        "a.test.ts": `${prelude} test("queue", () => addon.queue_held_async_work());`,
+        "b.test.ts": `${prelude}
+          test("complete", async () => {
+            while (addon.release_held_async_work() === -1) await new Promise(setImmediate);
+            expect(addon.release_held_async_work()).toBe(0);
+          });
+        `,
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 2 pass");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("napi_threadsafe_function", () => {
@@ -888,6 +928,28 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       );
     });
 
+    it.each([
+      [["unref on a thread"], false],
+      [["unref", "ref on a thread"], true],
+      [["unref on a thread", "ref on a thread"], true],
+      [["unref on a thread", "ref"], true],
+      [["unref", "ref on a thread", "unref"], false],
+    ])("%j keeps the process alive: %p", async (calls, keptAlive) => {
+      const result = await checkSameOutput("test_threadsafe_function_ref_and_unref", calls);
+      expect(result.split(/\r?\n/)).toEqual([...calls.map(call => `${call}: 0`), ...(keptAlive ? ["kept alive"] : [])]);
+    });
+
+    it("lets the process exit after an unref on a thread when nothing wakes the loop", async () => {
+      const env = { BUN_GC_TIMER_DISABLE: "1" };
+      expect(await checkSameOutput("test_threadsafe_function_unref_before_poll", [], env)).toBe("0");
+    });
+
+    // Node races with its main loop here.
+    it("lets the process exit after an unref from another worker", async () => {
+      const result = await runOn(bunExe(), "test_threadsafe_function_unref_from_worker", []);
+      expect(result.match(/^resolved.+\w/gm)).toEqual(["resolved to 0"]);
+    });
+
     // After napi_tsfn_abort nothing queued runs any more: each item goes back
     // to call_js with a null env and js_callback (the documented "free this"
     // signal), then the function finalizes.
@@ -907,7 +969,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     // An addon's own threads outlive the worker that created the threadsafe
     // function (next-swc's tokio pool does this): the last call and the last
     // release land after the worker's VM, and its event loop, are gone.
-    // MIMALLOC_PURGE_DELAY=0 makes a stale event-loop pointer fault instead of
+    // MIMALLOC_PURGE_DELAY=0 makes a stale pointer into the worker's VM fault instead of
     // reading recycled memory that still happens to look intact.
     it("survives the last call and release after the creating worker is gone", async () => {
       // Both threadsafe functions are finalized at worker teardown; a later call

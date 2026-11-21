@@ -1,6 +1,8 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
 
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_core::Fd;
 
 use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, us_bun_verify_error_t};
@@ -22,7 +24,7 @@ bun_opaque::opaque_ffi! { pub struct us_socket_t; }
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 /// Which of the three codes a close uses decides whether the close callback
 /// has run by the time `close()` returns. Only `failure` guarantees that: for
-/// the other two, `us_internal_ssl_close` (crypto/openssl.c) keeps a TLS
+/// the other two, `us_internal_ssl_close` (crypto/openssl.cpp) keeps a TLS
 /// socket open while it still owns the loop's ciphertext spill, i.e. when the
 /// last batch flush hit a full kernel buffer, and finishes the close from the
 /// next writable event or the peer's FIN, which a peer that stopped reading
@@ -68,9 +70,25 @@ pub enum QueuedInput {
 /// Layout-compatible with `struct us_iovec_t` in libusockets.h (== POSIX iovec).
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct UsIoVec {
-    pub base: *const core::ffi::c_void,
-    pub len: usize,
+pub struct UsIoVec<'a> {
+    base: *const u8,
+    len: usize,
+    _marker: PhantomData<&'a [u8]>,
+}
+
+impl<'a> UsIoVec<'a> {
+    pub fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            base: bytes.as_ptr(),
+            len: bytes.len(),
+            _marker: PhantomData,
+        }
+    }
+
+    pub(crate) fn as_slice(self) -> &'a [u8] {
+        // SAFETY: these are the parts of the slice that `new` took.
+        unsafe { core::slice::from_raw_parts(self.base, self.len) }
+    }
 }
 
 impl us_socket_t {
@@ -82,6 +100,12 @@ impl us_socket_t {
     pub fn resume(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_resume({:p})", self);
         c::us_socket_resume(self);
+    }
+
+    #[cfg(not(windows))]
+    pub(crate) fn read_now(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_read_now({:p})", self);
+        c::us_socket_read_now(self);
     }
 
     pub fn close(&mut self, code: CloseCode) {
@@ -208,10 +232,10 @@ impl us_socket_t {
         c::us_socket_get_tos(self)
     }
 
-    /// Resume a handshake suspended by an asynchronous SNICallback. `ctx`
-    /// carries an owned SSL_CTX reference that the call consumes (may be
-    /// null = fall through to the default context); `error` aborts instead.
-    pub(crate) fn sni_resolve(&mut self, ctx: *mut SslCtx, error: bool) {
+    /// `None` falls through to the default context; `error` aborts instead.
+    pub(crate) fn sni_resolve(&mut self, ctx: Option<OwnedSslCtx>, error: bool) {
+        // C frees the reference.
+        let ctx = ctx.map_or(ptr::null_mut(), OwnedSslCtx::into_raw);
         c::us_socket_sni_resolve(self, ctx, error as c_int);
     }
 
@@ -415,10 +439,9 @@ impl us_socket_t {
     /// sends on platforms without it). Same closed/shutdown gating and
     /// partial-write poll handling as `raw_write`. Plain-TCP only by contract:
     /// raw writes bypass TLS framing.
-    pub(crate) fn raw_writev(&mut self, iov: &[UsIoVec]) -> i32 {
+    pub(crate) fn raw_writev(&mut self, iov: &[UsIoVec<'_>]) -> i32 {
         bun_core::scoped_log!(uws, "us_socket_raw_writev({:p}, {})", self, iov.len());
-        // SAFETY: iov entries reference memory owned by the caller for the
-        // duration of this call; the C side only reads them synchronously.
+        // SAFETY: the C side only reads the entries, and their bytes, during the call.
         unsafe {
             c::us_socket_raw_writev(
                 self,
@@ -564,7 +587,7 @@ mod c {
         ) -> i32;
         pub(super) fn us_socket_raw_writev(
             s: *mut us_socket_t,
-            iov: *const super::UsIoVec,
+            iov: *const super::UsIoVec<'_>,
             count: i32,
         ) -> i32;
         pub(super) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32)
@@ -573,6 +596,8 @@ mod c {
 
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
+        #[cfg(not(windows))]
+        pub(super) safe fn us_socket_read_now(s: &mut us_socket_t);
         pub(super) fn us_socket_close(
             s: *mut us_socket_t,
             code: CloseCode,

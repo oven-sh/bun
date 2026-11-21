@@ -3,9 +3,8 @@
 //!
 //! jsc/runtime crate cycle: the low-tier `bun_jsc::VirtualMachine.timer` is a
 //! `()` placeholder, so this module resolves the timer heap through
-//! [`crate::jsc_hooks::runtime_state_of`] instead.
+//! [`crate::jsc_hooks::runtime_state_ptr_of`] instead.
 
-use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
@@ -15,7 +14,7 @@ use bun_core::{Timespec, TimespecMockMode};
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::webcore::script_execution_context::Identifier as ScriptExecutionContextIdentifier;
 
-use super::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use super::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;
 
@@ -145,7 +144,7 @@ impl WTFTimer {
 
         // SAFETY: `t.vm` owns this timer's heap; `wtf_arm` is safe from any thread.
         unsafe {
-            let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
+            let state = crate::jsc_hooks::runtime_state_ptr_of(t.vm.as_ptr());
             (*state)
                 .timer
                 .wtf_arm(ptr::addr_of_mut!((*this).event_loop_timer), &interval);
@@ -175,7 +174,7 @@ impl WTFTimer {
             // SAFETY: `t.vm` owns this timer's heap; `wtf_disarm` is safe from
             // any thread and is a no-op for a node that is no longer linked.
             unsafe {
-                let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
+                let state = crate::jsc_hooks::runtime_state_ptr_of(t.vm.as_ptr());
                 (*state).timer.wtf_disarm(&t.event_loop_timer);
             }
         }
@@ -234,14 +233,7 @@ unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut
         Box::new(WTFTimer {
             vm: NonNull::from(vm),
             imminent: bun_ptr::BackRef::new(&el.imminent_gc_timer),
-            event_loop_timer: EventLoopTimer {
-                next: Cell::new(ElTimespec {
-                    sec: i64::MAX,
-                    nsec: 0,
-                }),
-                state: Cell::new(EventLoopTimerState::CANCELLED),
-                ..EventLoopTimer::init_paused(EventLoopTimerTag::WTFTimer)
-            },
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::WTFTimer),
             run_loop_timer: NonNull::new_unchecked(run_loop_timer),
             script_execution_context_id: ScriptExecutionContextIdentifier(
                 vm.initial_script_execution_context_identifier as u32,

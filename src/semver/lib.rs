@@ -886,7 +886,7 @@ pub mod semver_string {
         }
 
         // SlicedString is not supported due to inline strings.
-        pub fn append_without_pool<T: BuilderStringType>(&mut self, slice_: &[u8], hash: u64) -> T {
+        fn append_without_pool<T: BuilderStringType>(&mut self, slice_: &[u8], hash: u64) -> T {
             if String::can_inline(slice_) {
                 return T::from_init(self.allocated_slice(), slice_, hash);
             }

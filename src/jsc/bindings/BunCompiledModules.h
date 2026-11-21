@@ -29,7 +29,6 @@ class JSCommonJSModule;
 enum class ErrorCode : uint16_t;
 
 extern const JSC::AOT::ModuleHost compiledModuleHost;
-bool decompressSource(std::span<uint8_t> text, std::span<const uint8_t> compressed);
 
 // On this thread. A Worker that starts from source text runs no compiled program.
 inline bool hasCompiledModules() { return !!JSC::AOT::Image::current(); }
@@ -43,7 +42,7 @@ std::optional<bool> isHiddenFromRequireCache(const WTF::String& key);
 // The attributes select the form of the file, if the executable has it. Null: the import has no attributes.
 JSC::JSPromise* importCompiledModule(Zig::GlobalObject*, const WTF::String& key, const JSC::ScriptFetchParameters* attributes, int64_t referrerAsyncOrder);
 // These three return null or false for a request with import attributes.
-JSC::JSPromise* compiledModuleSource(Zig::GlobalObject*, const WTF::String& key, const JSC::ScriptFetchParameters* attributes);
+JSC::JSPromise* compiledModuleSource(Zig::GlobalObject*, const WTF::String& key, const JSC::ScriptFetchParameters* attributes, const WTF::String& importer);
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path, bool hasImportAttributes);
 // The host function that require() calls for an ES module, if the path names a compiled one.
 JSC::JSObject* loaderOfCompiledESModule(Zig::GlobalObject*, const WTF::String& path, bool hasImportAttributes);

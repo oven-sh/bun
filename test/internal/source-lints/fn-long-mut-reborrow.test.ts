@@ -25,8 +25,7 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //     `unsafe { (*ptr).prep() }` (DEAD).
 //   - Convert the type's touched state to `Cell`/`JsCell` and its methods to
 //     `&self` (REENTRANT) — exemplars: `src/runtime/ipc.rs` (SendQueue),
-//     `src/runtime/socket/UpgradedDuplex.rs`, `src/io/PipeReader.rs`'s raw
-//     `read`/`on_poll` entry chain.
+//     `src/runtime/socket/UpgradedDuplex.rs`, `src/io/PipeReader.rs`.
 //
 // Sibling guards: frozen-nonnull-reborrow.test.ts, unsound-erased-box.test.ts.
 
@@ -65,8 +64,9 @@ const BANNED =
 const EXCLUSIVE_VM =
   /&\s*(?:'\w+\s+)?mut\s+(?:(?:\w+::)*VirtualMachine(?:Ref)?\b|\*(?:\w+::)*get_mut_ptr\(|\*(?:jsc_)?vm(?:_ptr|_instance)?\b(?!\s*[.(]))/g;
 const VM_IMPL = /^impl(?:<[^>]*>)? (?:[\w:]+ for )?(?:\w+::)*VirtualMachine \{\n(?:(?!\}).*\n)*\}/gm;
+// `Drop::drop` has no other signature. The VM is `!Unpin`, so that borrow does not claim to be unique.
 const EXCLUSIVE_SELF =
-  /^ {4}(?:pub(?:\(\w+\))? )?(?:(?:const|unsafe|extern "C") )*fn \w+(?:<.*>)?\(\s*&(?:'\w+ )?mut self\b|&(?:'\w+ )?mut Self\b(?!::)/gm;
+  /^ {4}(?:pub(?:\(\w+\))? )?(?:(?:const|unsafe|extern "C") )*fn (?!drop\()\w+(?:<.*>)?\(\s*&(?:'\w+ )?mut self\b|&(?:'\w+ )?mut Self\b(?!::)/gm;
 
 // Documented, ratcheted exceptions: files allowed to keep exactly N of the
 // shape, with a stated reason. Empty by design — the whole tree is at zero.

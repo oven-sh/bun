@@ -5,7 +5,7 @@ use bun_core::{Global, Output, env_var};
 use bun_core::{note, print_errorln};
 #[cfg(not(windows))]
 use bun_paths::{platform, resolve_path};
-use bun_sys::{self, E, File};
+use bun_sys::{self, E, Fd, File};
 
 use crate::shell_completions::{Shell, ShellCompletionsExt as _};
 
@@ -87,7 +87,7 @@ impl InstallCompletionsCommand {
 
         // Symlinks aren't always allowed, so `bunx.exe` is a hard link to `bun.exe` that's
         // recreated every time.
-        let image_path: &[u16] = windows::exe_path_w();
+        let image_path = windows::exe_path_w();
         let last_sep =
             strings::last_index_of_char_t(image_path, u16::from(b'\\')).expect("unreachable");
         let image_dirname = &image_path[..last_sep + 1];
@@ -118,7 +118,7 @@ impl InstallCompletionsCommand {
         let bunx_path = WStr::from_slice_with_nul(&bunx_path_with_z[..]);
         let _ = windows::DeleteFileBun(bunx_path.as_slice(), windows::DeleteFileOptions::default());
 
-        if windows::CreateHardLinkW(bunx_path.as_ptr(), image_path.as_ptr(), None) == 0 {
+        if windows::CreateHardLinkW(bunx_path, image_path).is_err() {
             // if hard link fails, use a cmd script
             const SCRIPT: &[u8] = b"@%~dp0bun.exe x %*\n";
 
@@ -173,8 +173,8 @@ impl InstallCompletionsCommand {
     }
 
     /// Exits, unless the write fails on something else than a closed pipe.
-    fn write_and_exit(stdout: &File, completions: &[u8]) -> Result<(), crate::Error> {
-        match stdout.write_all(completions) {
+    fn write_and_exit(stdout: Fd, completions: &[u8]) -> Result<(), crate::Error> {
+        match File::borrow(&stdout).write_all(completions) {
             Err(err) if err.get_errno() != E::EPIPE => Err(err.into()),
             _ => Global::exit(0),
         }
@@ -186,7 +186,7 @@ impl InstallCompletionsCommand {
 
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
 
-        let stdout = File::stdout();
+        let stdout = Fd::stdout();
 
         let shell = env_var::SHELL
             .platform_get()
@@ -196,10 +196,10 @@ impl InstallCompletionsCommand {
             Ok(len) => len,
             Err(_) => {
                 // don't fail on this if we don't actually need to
-                if fail_exit_code == 1 && !bun_sys::isatty(stdout.handle) {
+                if fail_exit_code == 1 && !bun_sys::isatty(stdout) {
                     let completions = shell.completions();
                     if !completions.is_empty() {
-                        return Self::write_and_exit(&stdout, completions);
+                        return Self::write_and_exit(stdout, completions);
                     }
                 }
 
@@ -238,14 +238,12 @@ impl InstallCompletionsCommand {
                 Shell::Bash => b"bun.completion.bash",
             };
 
-            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false)
-                && !bun_sys::isatty(stdout.handle)
-            {
-                return Self::write_and_exit(&stdout, shell.completions());
+            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) && !bun_sys::isatty(stdout) {
+                return Self::write_and_exit(stdout, shell.completions());
             }
 
             let mut completions_dir: &[u8];
-            let output_dir: bun_sys::Fd = 'found: {
+            let output_dir = bun_sys::Dir::from_fd('found: {
                 let argv = bun_core::argv();
                 for (i, arg) in argv.iter().enumerate() {
                     if arg == b"completions" {
@@ -428,11 +426,11 @@ impl InstallCompletionsCommand {
                     "Please either pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
                 );
                 Global::exit(fail_exit_code);
-            };
+            });
 
             debug_assert!(!completions_dir.is_empty());
 
-            let output_file: File = match File::create(output_dir, filename, true) {
+            let output_file: File = match File::create(&output_dir, filename, true) {
                 Ok(f) => f,
                 Err(err) => {
                     pretty_errorln!(
@@ -453,7 +451,7 @@ impl InstallCompletionsCommand {
                 Global::exit(fail_exit_code);
             }
 
-            let _ = bun_sys::close(output_dir);
+            drop(output_dir);
 
             // Check if they need to load the zsh completions file into their .zshrc
             if shell == Shell::Zsh {
@@ -475,9 +473,8 @@ impl InstallCompletionsCommand {
                             let len = dir.len() + name.len();
                             zshrc_filepath[..dir.len()].copy_from_slice(dir);
                             zshrc_filepath[dir.len()..len].copy_from_slice(name);
-                            zshrc_filepath[len] = 0;
                             if let Ok(f) = bun_sys::open_file_absolute_z(
-                                bun_core::ZStr::from_buf(&zshrc_filepath[..], len),
+                                bun_core::ZStr::nul_terminate(&mut zshrc_filepath, len),
                                 bun_sys::OpenFlags::READ_WRITE,
                             ) {
                                 break 'zshrc f;

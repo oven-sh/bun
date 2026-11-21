@@ -170,6 +170,7 @@ pub(crate) fn write_at_exit(
         return;
     };
     if graph.compiled_program().is_some() {
+        crate::compiled_program::finish_order_recording();
         return;
     }
     if WRITTEN.swap(true, core::sync::atomic::Ordering::Relaxed) {
@@ -377,30 +378,19 @@ fn write_replacing(path: &[u8], text: &[u8]) -> bun_sys::Maybe<()> {
             bun_sys::Tag::open,
         ));
     }
-    let dir = bun_core::ZBox::from_bytes(bun_paths::dirname(&final_path).unwrap_or(b"."));
     let name = bun_core::ZBox::from_bytes(bun_paths::basename(&final_path));
-    let dir_fd = bun_sys::openat(
-        bun_core::Fd::cwd(),
-        &dir,
-        bun_sys::O::DIRECTORY | bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
-        0,
-    )?;
-    let _close_dir = bun_sys::CloseOnDrop::new(dir_fd);
+    let dir = bun_sys::Dir::open(bun_paths::dirname(&final_path).unwrap_or(b"."))?;
 
     let mut tmpname_buf = bun_paths::path_buffer_pool::get();
     let tmpname: &bun_core::ZStr =
         bun_resolver::fs::FileSystem::tmpname(b".order", &mut tmpname_buf[..], u64::from(pid))
             .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))?;
-    let tmpfile = bun_sys::Tmpfile::create_with_mode(dir_fd, tmpname, 0o600)?;
-    let _close = bun_sys::CloseOnDrop::new(tmpfile.fd);
+    let tmpfile = bun_sys::Tmpfile::create_with_mode(dir.fd(), tmpname, 0o600)?;
+    tmpfile.file.write_all(text)?;
     // Not `Tmpfile::finish`: that removes an empty directory that is in the way.
-    let result = bun_sys::File::borrow(&tmpfile.fd)
-        .write_all(text)
-        .and_then(|()| bun_sys::renameat(dir_fd, tmpname, dir_fd, &name));
-    if result.is_err() {
-        let _ = bun_sys::unlinkat(dir_fd, tmpname);
-    }
-    result
+    bun_sys::renameat(&dir, tmpname, &dir, &name)?;
+    tmpfile.keep();
+    Ok(())
 }
 
 /// `bun:internal-for-testing`: what an order file calls the code of `text` (a `"module"` or `"script"` whose other chunks'

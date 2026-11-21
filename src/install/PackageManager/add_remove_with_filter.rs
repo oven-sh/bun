@@ -90,7 +90,8 @@ pub(crate) struct WorkspaceMembers {
 pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceMembers {
     let root_path = root_package_json_path();
 
-    let entry = package_json_entry_or_crash(manager, &root_path);
+    let log = manager.log_mut();
+    let entry = package_json_entry_or_crash(manager, log, &root_path);
     let (root_expr, root_source) = (entry.root, entry.source.clone());
     let name_expr = root_expr.get(b"name");
     let root_name: Box<[u8]> = name_expr
@@ -109,7 +110,7 @@ pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceM
         MissingWorkspace::Error,
     ) {
         if log.has_errors() {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
         } else {
             Output::err_generic(
                 "failed to load workspaces from package.json \"{}\": {}",
@@ -322,13 +323,13 @@ pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [
         b""
     };
     // Use the parsed path, not the literal: `file:/../lib` and `file://../lib` both mean `../lib`.
-    let (prefix, path): (&'static [u8], &[u8]) = match request.version.tag {
-        dependency::Tag::Folder => (file_prefix, request.version.folder().slice(buf)),
-        dependency::Tag::Tarball => match &request.version.tarball().uri {
+    let (prefix, path): (&'static [u8], &[u8]) = match &request.version.value {
+        dependency::Value::Folder(folder) => (file_prefix, folder.slice(buf)),
+        dependency::Value::Tarball(tarball) => match &tarball.uri {
             dependency::URI::Local(path) => (file_prefix, path.slice(buf)),
             dependency::URI::Remote(_) => return None,
         },
-        dependency::Tag::Symlink => (b"link:", literal.strip_prefix(b"link:")?),
+        dependency::Value::Symlink(_) => (b"link:", literal.strip_prefix(b"link:")?),
         _ => return None,
     };
     let is_path = if prefix == b"link:" {

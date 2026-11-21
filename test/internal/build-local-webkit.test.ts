@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 
 import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
@@ -17,6 +17,7 @@ import {
   webkitAotFile,
   webkitEngineSources,
   webkitJSCPath,
+  webkitSha256Sums,
   webkitTestAotPath,
   type WebKitAotFile,
 } from "../../scripts/build/deps/webkit.ts";
@@ -24,6 +25,7 @@ import { BuildError } from "../../scripts/build/error.ts";
 import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { getProfile } from "../../scripts/build/profiles.ts";
 import { registerAllRules } from "../../scripts/build/rules.ts";
+import { quote } from "../../scripts/build/shell.ts";
 import {
   depSource,
   resolveDep,
@@ -109,23 +111,20 @@ describe("which builds compile WebKit", () => {
     expect(prebuiltHasProgramObjects(cfg)).toBe(false);
     writeFileSync(join(source.destDir!, objects("testaot")), "");
     expect(prebuiltHasProgramObjects(cfg)).toBe(true);
-    // The ICU of the tarball keeps its data compressed. The objects of jsc hold what reads it; testaot gets it here, with
-    // zstd's decoder compiled for it alone: the objects of zstd that bun links want bun's run time in a hardened build.
+    // The ICU of the tarball keeps its data compressed. The objects hold what reads it, which only has a weak reference.
     expect(
-      jscPrograms(cfg).map(({ name, sources, cSources, libs, sourcesFrom }) => [
+      jscPrograms(cfg).map(({ name, sources, libs, ldflags }) => [
         name,
-        [...sources, ...(cSources ?? [])].map(s => relative(buildDir, s)),
+        sources.map(s => relative(buildDir, s)),
         libs,
-        sourcesFrom,
+        ldflags.at(-1),
       ]),
     ).toEqual(
       ["jsc", "testaot"].map(name => [
         name,
-        ["OutOfMemory.cpp", ...(name === "testaot" ? ["ICUData.cpp", "ZstdDecoder.c"] : [])].map(file =>
-          join("deps", "WebKit", "programs", name, file),
-        ),
+        [join("deps", "WebKit", "programs", name, "OutOfMemory.cpp")],
         [join(source.destDir!, objects(name))],
-        name === "testaot" ? ["zstd"] : undefined,
+        "-Wl,--undefined=bun_icu_maybe_decompress",
       ]),
     );
     expect(webkit.provides(cfg).files).toEqual(expect.arrayContaining([objects("jsc"), objects("testaot")]));
@@ -766,6 +765,32 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       for (const source of program.sources) cxx(n, cfg, source, { flags: program.cxxflags });
     }
   });
+
+  test("the programs that use the ICU of a prebuilt WebKit read its data with Bun's decoder", () => {
+    using local = checkOut({}, checkout);
+    const { cfg, short } = local;
+    const saved = process.env.BUN_ICU_ROOT;
+    try {
+      process.env.BUN_ICU_ROOT = join("/somewhere", "icu");
+      const reading = jscPrograms(cfg).filter(program => program.rustCrates !== undefined);
+      expect(
+        reading.map(({ name, sources, rustCrates }) => [
+          name,
+          sources.map(short).filter(source => source.endsWith("ICUData.cpp")),
+          rustCrates,
+        ]),
+      ).toEqual(
+        ["jsc", "testaot"].map(name => [
+          name,
+          [`B/programs/${name}/ICUData.cpp`],
+          ["bun_icu_data", "bun_global_allocator"],
+        ]),
+      );
+    } finally {
+      if (saved === undefined) delete process.env.BUN_ICU_ROOT;
+      else process.env.BUN_ICU_ROOT = saved;
+    }
+  });
 });
 
 describe("DirectBuild groups and steps", () => {
@@ -779,10 +804,10 @@ describe("DirectBuild groups and steps", () => {
     });
     const root = String(dir);
     const buildDir = join(root, "build");
-    const cfg = linux({ buildDir, asan: false, localDeps: `zstd=${join(root, "src")}` });
-    const out = join(buildDir, "deps", "zstd");
+    const cfg = linux({ buildDir, asan: false, localDeps: `cares=${join(root, "src")}` });
+    const out = join(buildDir, "deps", "cares");
     const dep: Dependency = {
-      name: "zstd",
+      name: "cares",
       source: () => ({ kind: "github-archive", repo: "x/y", commit: "0" }),
       build: () => ({
         kind: "direct",
@@ -822,9 +847,9 @@ describe("DirectBuild groups and steps", () => {
     const rel = (p: string) => relative(buildDir, p);
 
     // The tool's object is not bun's; the generated header is order-only for consumers.
-    expect(resolved.objects.map(rel)).toEqual(["obj/vendor/zstd/a.cpp.o", "obj/vendor/zstd/b.c.o"]);
+    expect(resolved.objects.map(rel)).toEqual(["obj/vendor/cares/a.cpp.o", "obj/vendor/cares/b.c.o"]);
     expect(resolved.libs).toEqual(["/outside/libicu.a"]);
-    expect(resolved.generatedHeaders.map(rel)).toEqual(["deps/zstd/gen.h"]);
+    expect(resolved.generatedHeaders.map(rel)).toEqual(["deps/cares/gen.h"]);
     expect(resolved.outputs).toEqual([]);
 
     const lines = n
@@ -838,17 +863,19 @@ describe("DirectBuild groups and steps", () => {
       for (let i = at + 1; lines[i]?.startsWith("  "); i++) vars.push(lines[i]!.trim());
       return { line: lines[at]!.replace(/ \| \S+(?=: )/, ""), vars: vars.join("\n") };
     };
-    expect(edge("deps/zstd/gen.h").line).toBe("build deps/zstd/gen.h: dep_gen deps/zstd/bin/tool");
-    expect(edge("deps/zstd/gen.h").vars).toContain(`opts = --cwd=${out} --env=K=V --stdout=${join(out, "gen.h")}`);
-    expect(edge("deps/zstd/gen.h").vars).toContain("cmd = ruby gen.rb");
-    expect(edge("deps/zstd/bin/tool").line).toStartWith("build deps/zstd/bin/tool: link obj/vendor/zstd/tool.cpp.o |");
-    expect(edge("deps/zstd/.lib-ready").line).toBe("build deps/zstd/.lib-ready: phony deps/zstd/gen.h");
-    expect(edge("pch/prefix.h.hxx.pch").line).toEndWith("|| pch/.dir deps/zstd/.lib-ready");
-    expect(edge("obj/vendor/zstd/a.cpp.o").line).toContain(": cxx_pch ");
-    expect(edge("obj/vendor/zstd/a.cpp.o").line).toEndWith("|| obj/.dir deps/zstd/.lib-ready");
-    expect(edge("obj/vendor/zstd/a.cpp.o").vars).toContain("-DLIB -std=c++23");
-    expect(edge("obj/vendor/zstd/b.c.o").vars).toStartWith("cflags = -x c++ ");
-    expect(edge("lib").line).toBe("build lib: phony obj/vendor/zstd/a.cpp.o obj/vendor/zstd/b.c.o");
+    expect(edge("deps/cares/gen.h").line).toBe("build deps/cares/gen.h: dep_gen deps/cares/bin/tool");
+    expect(edge("deps/cares/gen.h").vars).toContain(`opts = --cwd=${out} --env=K=V --stdout=${join(out, "gen.h")}`);
+    expect(edge("deps/cares/gen.h").vars).toContain("cmd = ruby gen.rb");
+    expect(edge("deps/cares/bin/tool").line).toStartWith(
+      "build deps/cares/bin/tool: link obj/vendor/cares/tool.cpp.o |",
+    );
+    expect(edge("deps/cares/.lib-ready").line).toBe("build deps/cares/.lib-ready: phony deps/cares/gen.h");
+    expect(edge("pch/prefix.h.hxx.pch").line).toEndWith("|| pch/.dir deps/cares/.lib-ready");
+    expect(edge("obj/vendor/cares/a.cpp.o").line).toContain(": cxx_pch ");
+    expect(edge("obj/vendor/cares/a.cpp.o").line).toEndWith("|| obj/.dir deps/cares/.lib-ready");
+    expect(edge("obj/vendor/cares/a.cpp.o").vars).toContain("-DLIB -std=c++23");
+    expect(edge("obj/vendor/cares/b.c.o").vars).toStartWith("cflags = -x c++ ");
+    expect(edge("lib").line).toBe("build lib: phony obj/vendor/cares/a.cpp.o obj/vendor/cares/b.c.o");
   });
 });
 
@@ -873,16 +900,25 @@ describe("Provides.files", () => {
     expect(resolved.outputs).toEqual(resolved.libs);
   });
 
+  test("come from a fetch that is given the pins, and runs again when they change", () => {
+    using g = graph();
+    resolveDep(g.n, g.cfg, webkit, new Map<DepName, ResolvedDep>());
+    const fetch = readManifest(g.n.toString()).edges.find(edge => edge.rule === "dep_fetch_prebuilt")!;
+    expect(fetch.implicitInputs.map(input => resolve(g.cfg.buildDir, input))).toContain(webkitSha256Sums);
+    expect(fetch.implicitOutputs.some(output => basename(output) === ".sha256")).toBe(true);
+    expect(fetch.bindings.sha256sums).toBe(quote(webkitSha256Sums, g.cfg.host.os === "windows"));
+  });
+
   test("are only for a prebuilt source", () => {
     using g = graph();
     const dep: Dependency = {
-      name: "zstd",
+      name: "cares",
       source: () => ({ kind: "github-archive", repo: "x/y", commit: "0" }),
       build: () => ({ kind: "direct", sources: [] }),
       provides: () => ({ libs: [], includes: [], files: ["COPYING"] }),
     };
     expect(() => resolveDep(g.n, g.cfg, dep, new Map<DepName, ResolvedDep>())).toThrow(
-      "zstd: Provides.files is for a prebuilt source",
+      "cares: Provides.files is for a prebuilt source",
     );
   });
 });

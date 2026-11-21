@@ -97,7 +97,7 @@ use crate::atom::{Atom, Atoms, known};
 use crate::bind::{AssignmentKind, AssignmentTarget, Bound, ModuleInstanceState, SymFlags};
 use crate::hir::{self, *};
 use crate::local::MaybeLocal;
-use crate::program::{FileId, Files, ModuleCell, Sym};
+use crate::program::{FileId, Files, ModuleCell, ModuleTrees, Sym};
 use crate::session::{Arena, ArenaBox, Session};
 use crate::session::{ArenaVec, vec_from_iter_in};
 use crate::table::{At, Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect};
@@ -293,7 +293,7 @@ pub struct Program<'s> {
     exporting_modules_stopped_at: std::sync::atomic::AtomicU32,
     #[cfg(any(test, feature = "test_support"))]
     modules_searched_for_exports: std::sync::atomic::AtomicUsize,
-    aot_symbols: std::sync::OnceLock<aot::ProgramSymbols>,
+    aot_symbols: aot::ProgramSymbols,
     aot_store_indexes: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::StoreIndex<'s>>]>,
     aot_written_stores: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::WrittenStores<'s>>]>,
     aot_prototype_links: std::sync::OnceLock<&'s [aot::LinksOfFile<'s>]>,
@@ -601,44 +601,54 @@ type Rechecked = (
     FxHashMap<(FileId, PropId), TypeId>,
 );
 
-/// For each file: whether it is a leaf, and how many nodes of each kind it has.
-pub type NodeCounts = Vec<(bool, [usize; 10])>;
+/// What a `Program` reads from the trees of all files, before the first task.
+pub struct ProgramInputs {
+    /// For each file: whether it is a leaf, and how many nodes of each kind it has.
+    node_counts: Vec<(bool, [usize; 10])>,
+    aot_symbols: aot::ProgramSymbols,
+}
 
-impl<'s> Program<'s> {
-    pub fn new(session: &'s Session, files: &'s Files<'s>) -> Program<'s> {
-        Program::with_node_counts(session, files, &Program::count_nodes(files))
-    }
-
-    /// While every file still has its tree.
-    pub fn count_nodes(files: &Files<'_>) -> NodeCounts {
+impl ProgramInputs {
+    pub fn read(files: &Files<'_>) -> ProgramInputs {
         // The counts are read in one pass because the modules are far apart in memory.
         let counts = files.modules.iter().map(|m| {
+            let ModuleTrees { hir, bound, .. } = m.trees();
             let counts = [
-                m.hir.exprs.len(),
-                m.hir.types.len(),
-                m.hir.fns.len(),
-                m.hir.pats.len(),
-                m.hir.props.len(),
-                m.hir.params.len(),
-                m.hir.enum_members.len(),
-                m.bound.scopes.len(),
-                m.hir.type_params.len(),
-                m.bound.symbols.len(),
+                hir.exprs.len(),
+                hir.types.len(),
+                hir.fns.len(),
+                hir.pats.len(),
+                hir.props.len(),
+                hir.params.len(),
+                hir.enum_members.len(),
+                bound.scopes.len(),
+                hir.type_params.len(),
+                bound.symbols.len(),
             ];
             (m.is_leaf, counts)
         });
-        counts.collect()
+        ProgramInputs {
+            node_counts: counts.collect(),
+            aot_symbols: aot::ProgramSymbols::resolve(files),
+        }
+    }
+}
+
+impl<'s> Program<'s> {
+    pub fn new(session: &'s Session, files: &'s Files<'s>) -> Program<'s> {
+        Program::with_inputs(session, files, &ProgramInputs::read(files))
     }
 
     #[allow(
-        clippy::large_stack_frames,
+        clippy::large_unopt_stack_frames,
         reason = "every table is made here and moved into the program, each with its chunks' addresses in line; runs once per program, close to the bottom of the stack"
     )]
-    pub fn with_node_counts(
+    pub fn with_inputs(
         session: &'s Session,
         files: &'s Files<'s>,
-        counts: &NodeCounts,
+        inputs: &ProgramInputs,
     ) -> Program<'s> {
+        let counts = &inputs.node_counts;
         // Nothing that mentions a leaf file's node is published, so the shared part has no capacity
         // for those nodes, and `Bases::at` returns `None` for them.
         let bases = |kind: usize| {
@@ -689,7 +699,7 @@ impl<'s> Program<'s> {
             exporting_modules_stopped_at: std::sync::atomic::AtomicU32::new(u32::MAX),
             #[cfg(any(test, feature = "test_support"))]
             modules_searched_for_exports: Default::default(),
-            aot_symbols: Default::default(),
+            aot_symbols: inputs.aot_symbols,
             aot_store_indexes: Default::default(),
             aot_written_stores: Default::default(),
             aot_prototype_links: Default::default(),
@@ -868,7 +878,7 @@ impl<'s> Program<'s> {
             left_frame: None,
             files: self.files,
             modules: &self.files.modules,
-            visited_module: std::cell::Cell::new((FileId(u32::MAX), None)),
+            visited_trees: std::cell::Cell::new((FileId(u32::MAX), None)),
             variance_type_parameter: Atom::NONE,
             auto_array_type: self.auto_array_type,
             stack: Vec::new(),
@@ -1841,7 +1851,7 @@ impl RecentSymbolTypes {
 pub struct Checker<'p, 's> {
     files: &'p Files<'s>,
     modules: &'s [ModuleCell<'s>],
-    visited_module: std::cell::Cell<(FileId, Option<&'s crate::program::Module<'s>>)>,
+    visited_trees: std::cell::Cell<(FileId, Option<&'s ModuleTrees<'s>>)>,
     pub p: &'p Program<'s>,
     /// The arena of the thread that runs the task. It's for the records the task creates, which may
     /// be published. Everything else that a task allocates is on the regular heap.
@@ -2712,32 +2722,32 @@ impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── access ─────────────────────────────
 
     #[inline]
-    fn module(&self, file: FileId) -> &'s crate::program::Module<'s> {
-        match self.visited_module.get() {
-            (visited, Some(module)) if visited == file => module,
-            _ => self.look_up_module(file),
+    fn module_trees(&self, file: FileId) -> &'s ModuleTrees<'s> {
+        match self.visited_trees.get() {
+            (visited, Some(trees)) if visited == file => trees,
+            _ => self.look_up_trees(file),
         }
     }
 
     #[inline(never)]
-    fn look_up_module(&self, file: FileId) -> &'s crate::program::Module<'s> {
-        &self.modules[file.idx()]
+    fn look_up_trees(&self, file: FileId) -> &'s ModuleTrees<'s> {
+        self.modules[file.idx()].trees()
     }
 
     /// Call where `task` begins to visit `file`.
-    fn note_visited_module(&self, file: FileId) {
-        self.visited_module
-            .set((file, Some(self.look_up_module(file))));
+    fn note_visited_trees(&self, file: FileId) {
+        self.visited_trees
+            .set((file, Some(self.look_up_trees(file))));
     }
 
     #[inline]
     pub fn hir(&self, file: FileId) -> &'p hir::File<'s> {
-        &self.module(file).hir
+        &self.module_trees(file).hir
     }
 
     #[inline]
     pub fn bound(&self, file: FileId) -> &'p Bound<'s> {
-        &self.module(file).bound
+        &self.module_trees(file).bound
     }
 
     #[inline]

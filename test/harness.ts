@@ -738,17 +738,20 @@ export function tempDirWithFiles(
   return base;
 }
 
+// On Windows a process that was just killed can hold the folder for a moment: a child that a job
+// object ends after its parent, for one. The folder is busy then. A program in it that has not quite ended may not be removed.
+const isHeldByEndingProcess = (error: any) => isWindows && (error?.code === "EBUSY" || error?.code === "EPERM");
+
 class DisposableString extends String {
   [Symbol.dispose]() {
-    // On Windows a process that was just killed can hold the folder for a moment: a child that a job
-    // object ends after its parent, for one. `rmSync` does not act on `maxRetries`.
+    // `rmSync` does not act on `maxRetries`.
     const deadline = Date.now() + 5000;
     while (true) {
       try {
         fs.rmSync(this + "", { recursive: true, force: true });
         return;
       } catch (error: any) {
-        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        if (!isHeldByEndingProcess(error) || Date.now() > deadline) throw error;
         sleepSync(50);
       }
     }
@@ -759,7 +762,7 @@ class DisposableString extends String {
       try {
         return await fs.promises.rm(this + "", { recursive: true, force: true });
       } catch (error: any) {
-        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        if (!isHeldByEndingProcess(error) || Date.now() > deadline) throw error;
         await Bun.sleep(50);
       }
     }
@@ -2210,6 +2213,24 @@ Object.defineProperty(globalThis, "gc", {
 export function waitForFileToExist(path: string, interval_ms: number) {
   while (!fs.existsSync(path)) {
     sleepSync(interval_ms);
+  }
+}
+
+/** Linux only. `state` is the third field of `/proc/<pid>/task/<tid>/stat`: "T" is stopped, "Z" is a zombie. */
+export async function untilEveryThreadIs(state: string, pid: number) {
+  const states = () =>
+    fs.readdirSync(`/proc/${pid}/task`).map(tid => {
+      try {
+        const stat = fs.readFileSync(`/proc/${pid}/task/${tid}/stat`, "utf8");
+        return stat[stat.lastIndexOf(")") + 2];
+      } catch {
+        return "X";
+      }
+    });
+  const deadline = performance.now() + 30_000;
+  while (states().some(other => other !== state)) {
+    if (performance.now() > deadline) throw new Error(`threads of ${pid}: ${states()}`);
+    await Bun.sleep(1);
   }
 }
 

@@ -250,7 +250,7 @@ impl Handlers {
         if let Some(listener) = self.listener() {
             if matches!(listener.listener.get(), ListenerType::None) {
                 listener.abort_handle.leave();
-                listener.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+                listener.poll_ref.unref(bun_io::js_vm_ctx());
                 listener.this_value.with_mut(|r| r.downgrade());
                 listener
                     .strong_data

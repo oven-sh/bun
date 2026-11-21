@@ -64,6 +64,10 @@ test("what a child has used is kept where a child is started, and there alone", 
   expect(await keptBy("a method is called on a value that native code hands over")).not.toContain(ofChildren);
 }, 600_000);
 
+test("Bun.cron keeps URL, which it makes of a file:// string", async () => {
+  expect(await featuresKeptBy(`await Bun.cron(process.argv[2], "@daily", "t");`)).toContain("URL and URLSearchParams");
+}, 600_000);
+
 test("a class that the program names is kept without an instance", async () => {
   expect(await keptBy("a class is named beside it")).toContain("Bun.Glob (glob)");
 }, 600_000);

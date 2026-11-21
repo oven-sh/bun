@@ -1,64 +1,64 @@
 // Property decorators define accessors, or nothing, under names that constructors store: births do not wait for such a field.
 const said = [];
 const __decorate = (decorators, target, key) => { for (const decorator of decorators) decorator(target, key); };
-const observable = (target, key) => {
+const underscored = (target, key) => {
   const hidden = "_" + key;
   Object.defineProperty(target, key, { get() { return this[hidden]; }, set(value) { this[hidden] = value; }, configurable: true, enumerable: true });
 };
-const columns = [];
-const column = (target, key) => { columns.push(key); };
+const lists = [];
+const listed = (target, key) => { lists.push(key); };
 class Watched {
-  constructor(kind, pos) {
-    this.pos = pos;
-    this.kind = kind;
-    this.flags = 0;
-    this.parent = undefined;
+  constructor(wood, legs) {
+    this.below = undefined;
+    this.nails = 0;
+    this.wood = wood;
+    this.legs = legs;
   }
-  getStart() {
-    return this.pos;
+  feet() {
+    return this.legs;
   }
 }
-__decorate([observable], Watched.prototype, "flags", void 0);
+__decorate([underscored], Watched.prototype, "nails", void 0);
 class Plain {
-  constructor(kind, pos) {
-    this.pos = pos;
-    this.kind = kind;
-    this.flags = 0;
-    this.parent = undefined;
+  constructor(wood, legs) {
+    this.below = undefined;
+    this.nails = 0;
+    this.wood = wood;
+    this.legs = legs;
   }
-  getStart() {
-    return this.pos;
+  feet() {
+    return this.legs;
   }
 }
-__decorate([column], Plain.prototype, "flags", void 0);
-__decorate([column], Plain.prototype, "kind", void 0);
-class Element {
+__decorate([listed], Plain.prototype, "nails", void 0);
+__decorate([listed], Plain.prototype, "wood", void 0);
+class Basket {
   constructor() {
-    this.updates = 0;
+    this.counts = 0;
   }
-  requestUpdate() {
-    this.updates++;
+  recount() {
+    this.counts++;
   }
-  static define(key) {
-    const hidden = "__" + key;
-    Object.defineProperty(this.prototype, key, { get() { return this[hidden]; }, set(value) { this[hidden] = value; this.requestUpdate(); }, configurable: true, enumerable: true });
+  static weave(key) {
+    const inside = "kept " + key;
+    Object.defineProperty(this.prototype, key, { enumerable: true, configurable: true, set(value) { this.recount(); this[inside] = value; }, get() { return this[inside]; } });
   }
 }
-const property = (target, key) => target.constructor.define(key);
-class Button extends Element {
-  constructor(kind, pos) {
+const woven = (target, key) => target.constructor.weave(key);
+class Hamper extends Basket {
+  constructor(wood, legs) {
     super();
-    this.pos = pos;
-    this.kind = kind;
-    this.flags = 0;
-    this.parent = undefined;
+    this.below = undefined;
+    this.nails = 0;
+    this.wood = wood;
+    this.legs = legs;
   }
-  getStart() {
-    return this.pos + this.updates;
+  feet() {
+    return this.legs + this.counts;
   }
 }
-__decorate([property], Button.prototype, "flags", void 0);
-__decorate([property], Button.prototype, "kind", void 0);
+__decorate([woven], Hamper.prototype, "nails", void 0);
+__decorate([woven], Hamper.prototype, "wood", void 0);
 let Late = class Late {
   constructor(value) {
     this.value = value;
@@ -66,12 +66,12 @@ let Late = class Late {
   }
 };
 __decorate([], Late.prototype, "value", void 0);
-const makers = { Watched: kind => new Watched(kind, 1), Plain: kind => new Plain(kind, 1), Button: kind => new Button(kind, 1) };
-function depth(node) {
+const makers = { Watched: wood => new Watched(wood, 1), Plain: wood => new Plain(wood, 1), Hamper: wood => new Hamper(wood, 1) };
+function depth(stool) {
   let sum = 0;
-  while (node) {
-    sum += node.kind + node.flags + node.getStart();
-    node = node.parent;
+  while (stool) {
+    sum += stool.wood + stool.nails + stool.feet();
+    stool = stool.below;
   }
   return sum;
 }
@@ -80,14 +80,14 @@ for (const [name, make] of Object.entries(makers)) {
   for (let i = 0; i < 300; i++) {
     let last;
     for (let k = 0; k < 4; k++) {
-      const node = make(k);
-      node.parent = last;
-      if (i & 1) node.flags = k;
-      last = node;
+      const stool = make(k);
+      stool.below = last;
+      if (i & 1) stool.nails = k;
+      last = stool;
     }
     sum += depth(last);
   }
-  said.push(name, sum, Object.keys(make(1)).join(), JSON.stringify(make(2)), "flags" in make(1), Object.hasOwn(make(1), "flags"));
+  said.push(name, sum, Object.keys(make(1)).join(), JSON.stringify(make(2)), "nails" in make(1), Object.hasOwn(make(1), "nails"));
 }
 const late = () => {
   let sum = 0;
@@ -98,26 +98,26 @@ const late = () => {
   return sum + Object.keys(new Late(1)).join();
 };
 said.push(late());
-__decorate([observable], Late.prototype, "value", void 0);
+__decorate([underscored], Late.prototype, "value", void 0);
 said.push(late());
 delete Late.prototype.value;
 said.push(late());
 Object.defineProperty(Late.prototype, "other", { value: 2, writable: false, configurable: true });
 "use strict";
-said.push((() => { try { return late(); } catch (error) { return error.constructor.name; } })(), columns.join());
+said.push((() => { try { return late(); } catch (error) { return error.constructor.name; } })(), lists.join());
 const own = new Plain(1, 2);
-Object.defineProperty(own, "flags", { get() { return 11; }, configurable: true });
+Object.defineProperty(own, "nails", { get() { return 11; }, configurable: true });
 said.push(depth(own), Object.keys(own).join());
-delete own.flags;
-said.push(Object.keys(own).join(), own.flags);
-own.flags = 4;
+delete own.nails;
+said.push(Object.keys(own).join(), own.nails);
+own.nails = 4;
 said.push(Object.keys(own).join(), depth(own));
 class Heir extends Watched {
   constructor() {
     super(4, 5);
-    this.flags = 9;
+    this.nails = 9;
     this.more = 1;
   }
 }
-said.push(Object.keys(new Heir()).join(), depth(new Heir()), Reflect.construct(Watched, [1, 2], Heir).flags);
+said.push(Object.keys(new Heir()).join(), depth(new Heir()), Reflect.construct(Watched, [1, 2], Heir).nails);
 console.log(said.join("\n"));

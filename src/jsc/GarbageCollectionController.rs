@@ -46,15 +46,13 @@ impl Default for GarbageCollectionController {
 }
 
 impl GarbageCollectionController {
-    /// Remove `t` from the heap if linked, set its deadline to `now + ms`, and
-    /// insert. JS-thread only. Real time, not the mocked clock: GC pacing is
+    /// JS-thread only. Real time, not the mocked clock: GC pacing is
     /// Bun's, not the test's.
     fn arm(vm: &VirtualMachine, t: &EventLoopTimer, ms: i32) {
-        vm.timer_remove(t);
         t.next
             .set(Timespec::now(TimespecMockMode::ForceRealTime).add_ms(i64::from(ms)));
-        // SAFETY: `t` is the embedded node of the per-VM controller, unlinked above and
-        // address-stable until `deinit` removes it.
+        // SAFETY: `t` is the embedded node of the per-VM controller, pending or fired, and
+        // address-stable until teardown removes it.
         unsafe { vm.timer_insert(t) };
     }
 
@@ -68,8 +66,7 @@ impl GarbageCollectionController {
     }
 
     pub(crate) fn init(&self, vm: &VirtualMachine) {
-        // SAFETY: uws::Loop::get() returns the live process-global loop.
-        let actual = unsafe { &*uws::Loop::get() };
+        let actual = uws::Loop::get();
         actual.internal_loop_data.jsc_vm.set(vm.jsc_vm.get().cast());
 
         self.gc_timer_interval.set(
@@ -138,16 +135,6 @@ impl GarbageCollectionController {
         (full, next.map(|due| due - quiet))
     }
 
-    /// Idempotent. Must run before JSC teardown: `~RunLoop::Timer` frees the
-    /// `WTFTimer` nodes sharing the heap, so an unlink afterwards walks freed
-    /// siblings.
-    pub(crate) fn deinit(&self) {
-        self.disabled.set(true);
-        if VirtualMachine::is_loaded() {
-            VirtualMachine::get().timer_remove(&self.gc_repeating_timer);
-        }
-    }
-
     /// Arms the idle timer on first call; kept at the event-loop call sites so the first deadline is in the poll that follows.
     #[inline]
     pub(crate) fn process_gc_timer(&self) {
@@ -176,7 +163,6 @@ impl GarbageCollectionController {
     /// # Safety
     /// `self` is the controller of `vm`, and its timer was just popped from the heap.
     pub unsafe fn on_gc_repeating_timer(&self, vm: &VirtualMachine) {
-        self.gc_repeating_timer.state.set(TimerState::FIRED);
         if self.disabled.get() {
             return;
         }
@@ -215,11 +201,5 @@ impl GarbageCollectionController {
             None => self.repeat_interval(),
         };
         Self::arm(vm, &self.gc_repeating_timer, interval);
-    }
-}
-
-impl Drop for GarbageCollectionController {
-    fn drop(&mut self) {
-        self.deinit();
     }
 }

@@ -2,13 +2,12 @@
 
 use bun_core::ZStr;
 
-/// Every page from `pointer` to the end of `mapped_length` stays mapped until `drop`. The kernel can give
+/// Every page of `pages` stays mapped until `drop`. The kernel can give
 /// an address that is unmapped, even briefly, to another thread, and `drop` would unmap that thread's memory.
 pub struct MappedFile {
+    pages: bun_sys::Mmap,
     file: bun_sys::File,
-    pointer: *mut u8,
     length: usize,
-    mapped_length: usize,
     /// `move_down` moves pages of this size whole: a multiple of the system's.
     #[cfg(not(windows))]
     page: usize,
@@ -22,38 +21,30 @@ impl MappedFile {
     /// `room` is told the size of the file and says how many bytes `grow` can add behind its end.
     #[cfg(not(windows))]
     pub fn open_with_room(path: &ZStr, room: impl FnOnce(usize) -> usize) -> Option<MappedFile> {
+        use bun_sys::{Fd, Mmap};
         let file = bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0).ok()?;
         let length = file.get_end_pos().ok().filter(|length| *length > 0)?;
         let room = room(length);
         let access = libc::PROT_READ | libc::PROT_WRITE;
-        let mapped_length = match room {
-            0 => length,
-            _ => length
-                .next_multiple_of(MappedFile::page_size())
-                .checked_add(room)?,
-        };
-        let mut address: *mut u8 = core::ptr::null_mut();
-        if room > 0 {
+        let pages = if room == 0 {
+            Mmap::new(length, access, libc::MAP_PRIVATE, file.handle(), 0).ok()?
+        } else {
+            let size = (length.next_multiple_of(MappedFile::page_size())).checked_add(room)?;
             let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
-            // SAFETY: the kernel chooses the address.
-            let pages = unsafe { libc::mmap(address.cast(), mapped_length, access, flags, -1, 0) };
-            if pages == libc::MAP_FAILED {
-                return None;
+            let pages = Mmap::new(size, access, flags, Fd::from_native(-1), 0).ok()?;
+            // An error leaks them: it can leave a gap where the file was to be mapped.
+            let pages = pages.into_raw();
+            let (start, flags) = (pages.as_ptr().cast(), libc::MAP_PRIVATE | libc::MAP_FIXED);
+            // SAFETY: the pages of the first `length` bytes lie in `pages`, to which nothing else refers.
+            unsafe {
+                bun_sys::mmap(start, length, access, flags, file.handle(), 0).ok()?;
+                Mmap::from_raw(pages)
             }
-            address = pages.cast();
-        }
-        let flags = libc::MAP_PRIVATE | if room > 0 { libc::MAP_FIXED } else { 0 };
-        let Ok(pointer) = bun_sys::mmap(address, length, access, flags, file.handle(), 0) else {
-            if room > 0 {
-                let _ = bun_sys::munmap(address, mapped_length);
-            }
-            return None;
         };
         Some(MappedFile {
+            pages,
             file,
-            pointer,
             length,
-            mapped_length,
             page: MappedFile::page_size(),
         })
     }
@@ -65,17 +56,17 @@ impl MappedFile {
 
     /// The longest that `grow` can make it.
     pub fn capacity(&self) -> usize {
-        self.mapped_length
+        self.pages.size()
     }
 
     pub fn addresses(&self) -> core::ops::Range<usize> {
-        self.pointer as usize..self.pointer as usize + self.length
+        self.pages.as_ptr() as usize..self.pages.as_ptr() as usize + self.length
     }
 
     pub fn bytes_and_file(&mut self) -> (&mut [u8], &bun_sys::File) {
         // SAFETY: the mapping holds `length` writable bytes until `drop`, and nothing else refers to them.
         (
-            unsafe { core::slice::from_raw_parts_mut(self.pointer, self.length) },
+            unsafe { core::slice::from_raw_parts_mut(self.pages.as_ptr(), self.length) },
             &self.file,
         )
     }
@@ -88,18 +79,12 @@ impl MappedFile {
     }
 }
 
-impl Drop for MappedFile {
-    fn drop(&mut self) {
-        let _ = bun_sys::munmap(self.pointer, self.mapped_length);
-    }
-}
-
 impl core::ops::Deref for MappedFile {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
         // SAFETY: the mapping holds `length` readable bytes until `drop`.
-        unsafe { core::slice::from_raw_parts(self.pointer, self.length) }
+        unsafe { core::slice::from_raw_parts(self.pages.as_ptr(), self.length) }
     }
 }
 
@@ -117,9 +102,9 @@ impl MappedFile {
     }
 
     fn map_zero_pages(&mut self, start: usize, end: usize) {
-        assert!(start < end && end <= self.mapped_length.next_multiple_of(MappedFile::page_size()));
+        assert!(start < end && end <= self.capacity().next_multiple_of(MappedFile::page_size()));
         // SAFETY: the addresses belong to this mapping, and no reference to its bytes is alive.
-        unsafe { MappedFile::map_zero_pages_at(self.pointer.add(start), end - start) };
+        unsafe { MappedFile::map_zero_pages_at(self.pages.as_ptr().add(start), end - start) };
     }
 
     /// # Safety
@@ -180,7 +165,7 @@ impl MappedFile {
         const VM_INHERIT_COPY: libc::vm_inherit_t = 1;
         const COPIES_ON_WRITE: libc::boolean_t = 1;
         let task = bun_sys::c::mach_task_self();
-        let mut address = self.pointer as u64 + target as u64;
+        let mut address = self.pages.as_ptr() as u64 + target as u64;
         let (mut current, mut maximum) = (0, 0);
         // SAFETY: both ranges lie in this mapping, and no reference to its bytes is alive. What was mapped at the target is dropped, which the caller allows.
         let result = unsafe {
@@ -191,7 +176,7 @@ impl MappedFile {
                 0,
                 VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
                 task,
-                self.pointer as u64 + source as u64,
+                self.pages.as_ptr() as u64 + source as u64,
                 COPIES_ON_WRITE,
                 &mut current,
                 &mut maximum,
@@ -205,7 +190,12 @@ impl MappedFile {
     #[cfg(target_os = "linux")]
     fn remap_pages(&mut self, source: usize, target: usize, size: usize) -> bool {
         // SAFETY: both ranges lie in this mapping.
-        let (from, to) = unsafe { (self.pointer.add(source), self.pointer.add(target)) };
+        let (from, to) = unsafe {
+            (
+                self.pages.as_ptr().add(source),
+                self.pages.as_ptr().add(target),
+            )
+        };
         // MREMAP_FIXED unmaps the target before it looks at the source, so only a move that can't fail uses it.
         // Linux before 5.13 refuses MREMAP_DONTUNMAP for the pages of a file.
         let flags = libc::MREMAP_MAYMOVE | libc::MREMAP_DONTUNMAP;
@@ -425,8 +415,12 @@ impl MappedFile {
             self.map_zero_pages(target + copied, target + copied + size);
             // SAFETY: both ranges lie in this mapping. `size` is at most the distance between them, so they don't overlap.
             unsafe {
-                let from = self.pointer.add(source + copied);
-                core::ptr::copy_nonoverlapping(from, self.pointer.add(target + copied), size);
+                let from = self.pages.as_ptr().add(source + copied);
+                core::ptr::copy_nonoverlapping(
+                    from,
+                    self.pages.as_ptr().add(target + copied),
+                    size,
+                );
             }
             self.map_zero_pages(source + copied, source + copied + size);
             copied += size;
@@ -642,12 +636,12 @@ pub(crate) mod tests {
 
         fn has_unmapped_page(mapped: &MappedFile) -> bool {
             let page = MappedFile::page_size();
-            let mut residency = vec![0u8; mapped.mapped_length.div_ceil(page)];
+            let mut residency = vec![0u8; mapped.capacity().div_ceil(page)];
             // SAFETY: `residency` has a byte for every page, and mincore() reads none of them.
             let result = unsafe {
                 libc::mincore(
-                    mapped.pointer.cast(),
-                    mapped.mapped_length,
+                    mapped.pages.as_ptr().cast(),
+                    mapped.capacity(),
                     residency.as_mut_ptr().cast(),
                 )
             };

@@ -278,22 +278,6 @@ impl ScopedAstAlloc {
             prev: swap_state(Some(state)),
         }
     }
-
-    /// Uninstall the scope's state and return it **without** bulk-freeing it,
-    /// restoring the previous occupant exactly as `drop` would. For callers
-    /// that hand the parsed AST to an async consumer: small `AstVec`s live in
-    /// the state's inline chunk, so the returned box must be kept alive until
-    /// the consumer is done with the AST.
-    #[inline]
-    pub fn take_state(self) -> Option<Box<AstAllocState>> {
-        let mut this = core::mem::ManuallyDrop::new(self);
-        let installed = swap_state(this.prev.take());
-        debug_assert!(
-            installed.is_some(),
-            "ScopedAstAlloc state was uninstalled by someone else"
-        );
-        installed
-    }
 }
 impl Drop for ScopedAstAlloc {
     #[inline]
@@ -383,7 +367,7 @@ fn heap_alloc(layout: Layout) -> *mut u8 {
 //   block + `memcpy` rather than `mi_realloc`: when no state is installed we
 //   cannot tell whether `ptr` is a global-fallback `mi_malloc` block head or a
 //   bump-chunk interior pointer from a since-exited AST scope on another
-//   thread (`BundleV2::clone_ast` does exactly this), so passing it to
+//   thread (`BundleV2::create_linker_graph` does exactly this), so passing it to
 //   `mi_realloc` would be unsound. The old block is abandoned (same leak
 //   semantics as `deallocate` — and under a state it, like every other block,
 //   is reclaimed when the owner resets the state).
@@ -495,6 +479,9 @@ unsafe impl Allocator for AstAlloc {
         Ok(NonNull::slice_from_raw_parts(ptr, new.size()))
     }
 }
+
+// `Vec::{drain, splice, extract_if}` require it of any allocator but `Global`.
+impl core::alloc::AllocatorNightly for AstAlloc {}
 
 // ── AstVec construction helpers ──────────────────────────────────────────
 // `Vec<T, A>` has no `Default` / `From<&[T]>` for non-`Global` `A`, so the

@@ -62,7 +62,7 @@ impl DevServer {
     /// that has no parameter.
     pub(super) fn report_pages_hidden_by_server_routes(&self) {
         let Some(server) = self.server else { return };
-        let keys = self.server_graph.bundled_files.keys();
+        let keys = self.graphs.server.bundled_files.keys();
         for (route_path, route_index) in self.router.static_routes.iter() {
             if !server.has_route(route_path) {
                 continue;
@@ -84,7 +84,7 @@ impl DevServer {
         if !self.router.type_ptr_const(route.r#type).client_pages {
             return ClientPageFiles::default();
         }
-        let keys = self.server_graph.bundled_files.keys();
+        let keys = self.graphs.server.bundled_files.keys();
         let path = |id: OpaqueFileId| -> Box<[u8]> {
             Box::from(&*keys[from_opaque_file_id::<{ bake::Side::Server }>(id).get() as usize])
         };
@@ -103,22 +103,14 @@ impl DevServer {
     }
 }
 
-/// What `FrameworkRouter::scan_all` needs of the `DevServer`, whose `router` it borrows meanwhile.
-pub(super) struct DevRouteScan<'a> {
-    pub(super) root: &'a [u8],
-    pub(super) server_graph: &'a mut IncrementalGraph<{ bake::Side::Server }>,
-    pub(super) route_lookup:
-        &'a mut ArrayHashMap<incremental_graph::ServerFileIndex, RouteIndexAndRecurseFlag>,
-}
-
-impl router::InsertionHandler for DevRouteScan<'_> {
+impl router::InsertionHandler for Graphs {
     fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
         associated_route: router::RouteIndex,
         file_kind: router::FileKind,
     ) -> Result<OpaqueFileId, AllocError> {
-        let index = self.server_graph.insert_stale_extra(
+        let index = self.insert_stale_extra::<{ Side::Server }>(
             abs_path,
             bake::Graph::Server,
             incremental_graph::RouteKind::Route,
@@ -156,9 +148,9 @@ impl router::InsertionHandler for DevRouteScan<'_> {
         bun_core::pretty_errorln!(
             "  - <blue>{}<r>",
             bstr::BStr::new(relative_path(
-                self.root,
+                &self.root,
                 &mut *buf,
-                &self.server_graph.bundled_files.keys()
+                &self.server.bundled_files.keys()
                     [from_opaque_file_id::<{ bake::Side::Server }>(other_id).get() as usize]
             ))
         );
@@ -195,11 +187,11 @@ impl DevServer {
         relative_path_buf: &'a mut PathBuffer,
         path: &'a [u8],
     ) -> &'a [u8] {
-        relative_path(&self.root, relative_path_buf, path)
+        relative_path(&self.graphs.root, relative_path_buf, path)
     }
 }
 
-/// `DevServer::relative_path`, given `DevServer::root`.
+/// `DevServer::relative_path`, given `Graphs::root`.
 pub(super) fn relative_path<'a>(
     root: &[u8],
     relative_path_buf: &'a mut PathBuffer,

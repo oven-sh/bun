@@ -952,7 +952,9 @@ describe("functions", () => {
   it("promisePtr and nativePromiseContext give the pointer in the context of a promise reaction", () => {
     expect(bindgen.readPromisePtr(bindgen.promisePtrContext)).toBe(42);
     const cell = bindgen.makeNativePromiseContext();
+    const alive = bindgen.TestRefCounted.alive();
     expect(bindgen.readNativePromiseContext(cell)).toBe(42);
+    expect(bindgen.TestRefCounted.alive()).toBe(alive - 1);
     expect(bindgen.readNativePromiseContext(cell)).toBeNull();
   });
 
@@ -1598,6 +1600,8 @@ describe("unions", () => {
       "reference is never chosen",
     );
     expect(() => b.union({ one: b.blob, other: b.blob })).toThrow("other is never chosen");
+    expect(() => b.union({ one: b.url, other: b.url })).toThrow("other is never chosen");
+    b.union({ text: b.string, url: b.url, file: b.blob });
     expect(() => b.union({ none: b.null, flag: b.bool }).nullable).toThrow("already takes undefined");
     b.union({ text: b.string, boxed: b.string.utf8 });
   });

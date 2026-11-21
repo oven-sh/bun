@@ -49,12 +49,6 @@ impl GlobalRef {
     pub fn new(global: &JSGlobalObject) -> Self {
         Self(bun_ptr::BackRef::new(global))
     }
-
-    /// Raw FFI pointer (mut, matching `JSGlobalObject::as_ptr`).
-    #[inline(always)]
-    pub fn as_ptr(self) -> *mut JSGlobalObject {
-        self.0.as_ptr()
-    }
 }
 
 impl core::ops::Deref for GlobalRef {
@@ -807,19 +801,13 @@ impl JSGlobalObject {
         }
     }
 
-    pub fn throw_sys_error(&self, opts: &SysErrOptions, message: Arguments<'_>) -> JsError {
+    pub fn throw_sys_error(&self, code: NodeErrorCode, message: Arguments<'_>) -> JsError {
         let err = self.create_error_instance(message);
         err.put(
             self,
             b"code",
-            EncodedSlice::latin1(<&'static str>::from(opts.code).as_bytes()).to_js(self),
+            EncodedSlice::latin1(<&'static str>::from(code).as_bytes()).to_js(self),
         );
-        if let Some(name) = opts.name {
-            err.put(self, b"name", EncodedSlice::latin1(name).to_js(self));
-        }
-        if let Some(errno) = opts.errno {
-            err.put(self, b"errno", JSValue::from(errno));
-        }
         self.throw_value(err)
     }
 
@@ -1250,11 +1238,8 @@ impl JSGlobalObject {
         }
     }
 
-    pub(crate) fn create_for_test_isolation(
-        old_global: &JSGlobalObject,
-        console: *mut c_void,
-    ) -> *mut JSGlobalObject {
-        Zig__GlobalObject__createForTestIsolation(old_global, console)
+    pub(crate) fn create_for_test_isolation(old_global: &JSGlobalObject) -> *mut JSGlobalObject {
+        Zig__GlobalObject__createForTestIsolation(old_global)
     }
 
     pub fn to_type_error(&self, code: JscError, args: Arguments<'_>) -> JSValue {
@@ -1275,14 +1260,6 @@ impl JSGlobalObject {
 // `bun_jsc::GregorianDateTime` and `bun_jsc::js_global_object::GregorianDateTime`
 // see one nominal type (the previous local duplicate diverged from lib.rs).
 pub use crate::GregorianDateTime;
-
-// No `Default` derive — `code` has no default (only `errno`/`name` are
-// optional). Callers must always supply `code`.
-pub struct SysErrOptions {
-    pub code: NodeErrorCode,
-    pub errno: Option<i32>,
-    pub name: Option<&'static [u8]>,
-}
 
 // Unified with the crate-root definitions (lib.rs) — re-exported here so
 // `bun_jsc::js_global_object::{IntegerRange, ValidateObjectOpts}` keep
@@ -1538,11 +1515,9 @@ unsafe extern "C" {
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `console` is an opaque pointer C++
-    // stores into the new global (never dereferenced as Rust data here).
+    // ABI-identical to non-null `*const`).
     safe fn Zig__GlobalObject__createForTestIsolation(
         old_global: &JSGlobalObject,
-        console: *mut c_void,
     ) -> *mut JSGlobalObject;
 }
 

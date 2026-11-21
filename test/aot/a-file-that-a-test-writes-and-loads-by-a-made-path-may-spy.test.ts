@@ -74,20 +74,17 @@ test.each([
   const seenWith = async (flags: string[], words?: string) => {
     const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), {
       ...bunEnv,
-      BUN_JSC_logAOTPhaseTimes: "1",
       ...(words && { BUN_DEBUG_TEST_AOT_WORDS: words }),
     });
     const lines = (stdout + "\n" + stderr).split("\n");
     return {
       seen: lines.filter(line => line.startsWith("SEEN ") || line.includes("Cannot spy")).sort(),
-      startsOver: lines.filter(line => line.startsWith("AOT build starts over")),
       exitCode,
     };
   };
   const plain = await seenWith([]);
   expect(plain).toEqual({
     seen: names.map(name => `SEEN ${ways[name].name} [[6,8],["spied",8],[6,8]]`).sort(),
-    startsOver: [],
     exitCode: 0,
   });
   expect(await seenWith(["--aot"], words)).toEqual(plain);

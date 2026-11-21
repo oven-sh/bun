@@ -30,7 +30,7 @@ use bun_standalone_graph::{
     CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput,
     CompiledProgramInput, with_executable_image,
 };
-use bun_sys::{Fd, FdExt};
+use bun_sys::{Fd, File};
 use bun_trim::TrimPlan;
 
 use super::{
@@ -800,9 +800,8 @@ fn holds_path_below(paths: &std::collections::BTreeSet<Vec<u8>>, folder: &[u8]) 
 
 /// The files and the folders below `folder` on the disk of the build, by their paths from it. `None`: it cannot be listed, or holds what is neither.
 fn list_below(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
-    let directory = bun_sys::open_dir_for_iteration(Fd::cwd(), folder).ok()?;
-    let _close = scopeguard::guard(directory, |descriptor| descriptor.close());
-    let mut walker = bun_sys::walker_skippable::walk(directory, &[], &[]).ok()?;
+    let directory = File::from_fd(bun_sys::open_dir_for_iteration(Fd::cwd(), folder).ok()?);
+    let mut walker = bun_sys::walker_skippable::walk(directory.fd(), &[], &[]).ok()?;
     walker.resolve_unknown_entry_types = true;
     let (mut files, mut folders) = (Vec::new(), Vec::new());
     while let Some(entry) = walker.next().ok()? {
@@ -825,9 +824,8 @@ fn list_below(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
 
 /// The same for what lies in `folder` itself.
 fn list_in(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
-    let directory = bun_sys::open_dir_for_iteration(Fd::cwd(), folder).ok()?;
-    let _close = scopeguard::guard(directory, |descriptor| descriptor.close());
-    let mut entries = bun_sys::dir_iterator::iterate(directory);
+    let directory = File::from_fd(bun_sys::open_dir_for_iteration(Fd::cwd(), folder).ok()?);
+    let mut entries = bun_sys::dir_iterator::iterate(directory.fd());
     let (mut files, mut folders) = (Vec::new(), Vec::new());
     while let Some(entry) = entries.next().ok()? {
         let name = entry.name.slice_u8().to_vec();

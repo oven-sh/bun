@@ -427,11 +427,11 @@ impl Eq for SeenDeclKey<'_> {}
 /// A [@supports](https://drafts.csswg.org/css-conditional-3/#at-supports) rule.
 pub struct SupportsRule<'bump, R> {
     /// The supports condition.
-    pub condition: SupportsCondition<'bump>,
+    pub(crate) condition: SupportsCondition<'bump>,
     /// The rules within the `@supports` rule.
-    pub rules: CssRuleList<'bump, R>,
+    pub(crate) rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<'bump, R> SupportsRule<'bump, R> {
@@ -469,13 +469,21 @@ impl<'bump, R> SupportsRule<'bump, R> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
-        dest.write_str(b"@supports ")?;
-        self.condition.to_css(dest)?;
-        dest.block(|d| {
-            d.newline()?;
-            self.rules.to_css(d, ctx)
-        })
+        block_to_css(&self.condition, dest, |d| self.rules.to_css(d, ctx))
     }
+}
+
+pub(crate) fn block_to_css<'p>(
+    condition: &SupportsCondition,
+    dest: &mut Printer<'p>,
+    body: impl FnOnce(&mut Printer<'p>) -> core::result::Result<(), PrintErr>,
+) -> core::result::Result<(), PrintErr> {
+    dest.write_str(b"@supports ")?;
+    condition.to_css(dest)?;
+    dest.block(|d| {
+        d.newline()?;
+        body(d)
+    })
 }
 
 impl<'bump, R> SupportsRule<'bump, R> {

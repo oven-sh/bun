@@ -408,6 +408,47 @@ fn a_message_about_a_type_that_its_file_does_not_import_reads_no_tree_that_is_go
     assert_eq!(codes, [2345]);
 }
 
+fn codes_reported_by_a_renewed_checker() -> Option<Vec<u32>> {
+    let files = [
+        (
+            "main.ts",
+            "/// <reference path=\"./bun.d.ts\" />\n\
+             import \"./a\";\nimport \"./far\";\nimport \"./late\";\n",
+        ),
+        (
+            "bun.d.ts",
+            "declare module \"bun\" { type int32 = number; }\n",
+        ),
+        ("a.ts", "export const first = [1].join();\n"),
+        ("far.ts", "export const far = [1, 2, 3].join();\n"),
+        // A contextual signature asks for `ProgramSymbols`.
+        (
+            "late.ts",
+            "export const f: (a: number) => void = a => { const s: string = a; };\n",
+        ),
+    ];
+    with_program(&files, &["./main.ts"], 1, |program| {
+        let [far, late] = ["far.ts", "late.ts"].map(|path| program.file(path));
+        let files = program.files();
+        let _watch = let_trees_go_behind(files, &[far, late]);
+        // SAFETY: no task has begun.
+        unsafe { (program.loaded).renew_checker(&|count, each| (0..count).for_each(each)) };
+        {
+            let _task = ReadingTask::begin();
+            files.note_commit(far);
+        }
+        wait_until_tree_is_gone(files, far)?;
+        let report = check_and_let_trees_go(program, vec![late], LOWERING_PASS);
+        Some(codes_reported(&report, late))
+    })
+}
+
+#[test]
+fn a_renewed_checker_reads_no_tree_that_is_gone() {
+    let codes = ask_until_answered(codes_reported_by_a_renewed_checker);
+    assert_eq!(codes, [2322]);
+}
+
 #[test]
 fn last_call_counts() {
     let files = [

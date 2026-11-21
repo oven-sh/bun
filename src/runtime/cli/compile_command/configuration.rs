@@ -228,7 +228,6 @@ pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error>
         .is_some_and(|aot| aot.missing_tsconfig_override.is_some());
 
     let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
-    // In the arena: the build takes `&'a mut Transpiler<'a>`, which no stack local satisfies.
     let this_transpiler: &'static mut Transpiler<'static> =
         arena.alloc(Transpiler::init(arena, ctx.log, ctx.args.clone(), None)?);
     if reads_no_configuration {
@@ -567,7 +566,7 @@ fn finish(
 pub(super) fn request_from_context<'r>(
     ctx: &'r mut ContextData,
     configuration: Configuration,
-    event_loop: &'r mut AnyEventLoop,
+    event_loop: &'r AnyEventLoop,
     product: CompileProduct<'r>,
     root_dir: Fd,
     origin: RequestOrigin,
@@ -686,8 +685,7 @@ pub(super) fn output_location(
         let mut zbuf = bun_paths::path_buffer_pool::get();
         let n = outfile.len().min(zbuf.0.len() - 1);
         zbuf.0[..n].copy_from_slice(&outfile[..n]);
-        zbuf.0[n] = 0;
-        let z = bun_core::ZStr::from_buf(&zbuf.0[..], n);
+        let z = bun_core::ZStr::nul_terminate(&mut zbuf, n);
         if bun_sys::directory_exists_at(root_dir.fd, z).unwrap_or(false) {
             outfile = b"index";
         }

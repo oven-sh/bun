@@ -62,6 +62,9 @@ export { objectType as object } from "./bindgen-lib-internal.ts";
 
 /** An array, as a `JsLocal<'a, JSArray>`: `b.array(T)` converts its elements. */
 export { jsArrayType as jsArray } from "./bindgen-lib-internal.ts";
+
+/** A `URL`, as a `JsLocal<'a, DOMURL>`. */
+export { urlType as url } from "./bindgen-lib-internal.ts";
 export { class_ as class };
 
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
@@ -89,7 +92,7 @@ export const blob = new RefType(
 /** The context of a promise reaction that `JSValue::then` was given: a `*mut` of the type at `rustPath`. */
 export const promisePtr = (rustPath: string) => new PromisePtrType(rustPath);
 
-/** The context of a promise reaction that is a `NativePromiseContext` cell: what `take` hands back, an `Option<NonNull<..>>` of the type at `rustPath`. */
+/** The context of a promise reaction that is a `NativePromiseContext` cell: what `take` hands back, an `Option<RefPtr<..>>` of the type at `rustPath`. */
 export const nativePromiseContext = (rustPath: string) => new NativePromiseContextType(rustPath);
 
 /** `null` or `undefined`, as an alternative of a union. */

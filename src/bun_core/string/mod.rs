@@ -11,8 +11,6 @@ pub use crate::w;
 pub mod escape_reg_exp;
 #[path = "HashedString.rs"]
 pub mod hashed_string;
-#[path = "SmolStr.rs"]
-pub mod smol_str;
 #[path = "StringBuilder.rs"]
 pub mod string_builder;
 #[path = "StringJoiner.rs"]
@@ -536,17 +534,9 @@ impl String {
             },
         }
     }
-    /// `WTF::RefPtr(ptr)` — wrap a raw `*mut WTFStringImplStruct` someone else
-    /// keeps alive, taking a **new** ref for the returned `String`.
-    #[inline]
-    pub fn retain_wtf_impl(wtf: WTFStringImpl) -> Self {
-        let s = Self::adopt_wtf_impl(wtf);
-        s.ref_();
-        s
-    }
     /// Extract the raw `*mut WTFStringImplStruct`
     /// from a WTF-backed string, transferring ownership of the +1 ref to the caller. Returns
-    /// null for non-WTF tags. Used by SQL data-cell paths that hand the impl pointer to C++.
+    /// null for non-WTF tags.
     #[inline]
     pub fn leak_wtf_impl(self) -> WTFStringImpl {
         let this = core::mem::ManuallyDrop::new(self);
@@ -556,6 +546,12 @@ impl String {
         } else {
             core::ptr::null_mut()
         }
+    }
+    /// The `WTF::StringImpl` of a WTF-backed string, with this string's ref on it.
+    pub fn into_wtf(self) -> Option<crate::WTFString> {
+        let wtf = self.leak_wtf_impl();
+        // SAFETY: non-null, and `leak_wtf_impl` has given up the ref.
+        (!wtf.is_null()).then(|| unsafe { crate::WTFString::adopt(wtf) })
     }
     /// An isolated copy of a WTF-backed impl (+1, `clone()` for other tags),
     /// for handing the value to one other thread; not for sharing one impl
@@ -1419,10 +1415,7 @@ impl<'a> EncodedSlice<'a> {
         if self.is_16bit() {
             return strings::eql_comptime_utf16(self.utf16_slice(), ascii);
         }
-        if self.len != ascii.len() {
-            return false;
-        }
-        strings::eql_comptime_ignore_len(self.slice(), ascii)
+        self.slice() == ascii
     }
 
     /// Encoding-aware ASCII prefix check.
@@ -1464,8 +1457,7 @@ impl<'a> EncodedSlice<'a> {
         if written >= buf.len() {
             return Err(crate::CrateError::NoSpaceLeft);
         }
-        buf[written] = 0;
-        Ok(ZStr::from_buf(&buf[..], written))
+        Ok(ZStr::nul_terminate(buf, written))
     }
 
     /// Re-wrap a sub-range of the underlying storage, preserving the
@@ -1689,7 +1681,6 @@ pub use crate::StringPointer;
 
 pub use hashed_string::HashedString;
 pub use mutable_string::MutableString;
-pub use smol_str::SmolStr;
 pub use string_builder::StringBuilder;
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -425,7 +425,7 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
             .map_or(invalid_package_id, |id| id as PackageID)
     };
     (edited.iter())
-        .map(|e| e.target.name_hash.map_or(0, &id_of))
+        .map(|e| e.target.name_hash.map_or(0, id_of))
         .collect()
 }
 
@@ -458,9 +458,7 @@ fn sync_lockfile(
     let parsed = match parse_edited(manager, &mut scratch, edited) {
         Ok(parsed) => parsed,
         Err(err) => {
-            let _ = scratch
-                .log
-                .print(std::ptr::from_mut(Output::error_writer()));
+            let _ = scratch.log.print(Output::error_writer());
             return Err(err);
         }
     };
@@ -484,7 +482,7 @@ fn sync_lockfile(
     // Explains why an override is gone: the workspaces no longer agree on the literal that its
     // `$name` refers to.
     if overrides_changed && !manager.options.log_level.is_silent() {
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        let _ = log.print(Output::error_writer());
     }
     let mut rewritten: Vec<DependencyID> = Vec::new();
     for (i, pkg) in &parsed {
@@ -502,7 +500,7 @@ fn sync_lockfile(
             let lbuf = manager.lockfile.buffers.string_bytes.as_slice();
             let row_deps = row.get(manager.lockfile.buffers.dependencies.as_slice());
             // Zero-length while every scratch dep so far matched the row at its own index.
-            let mut claimed = DynamicBitSet::default();
+            let mut claimed: DynamicBitSet = DynamicBitSet::default();
             let mut changed = Vec::new();
             for (si, s) in scratch_deps.iter().enumerate() {
                 let same_index = si < row_deps.len()

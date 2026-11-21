@@ -1160,11 +1160,10 @@ impl ByteRangeMapping {
     fn set_object_braces_executable(&mut self, text: &[u8], already_bundled: bool) {
         if already_bundled {
             // JSC compiles a `// @bun` file as written, so the original positions are in `text`.
-            if let Some(blob) = print_for_coverage(self.source_url.slice(), text) {
-                InternalSourceMap {
-                    data: blob.list.as_ptr(),
-                }
-                .for_each_object_brace(|brace| self.set_executable(brace.original));
+            if let Some(blob) = print_for_coverage(self.source_url.slice(), text)
+                && let Some(map) = InternalSourceMap::new(&blob.list)
+            {
+                map.for_each_object_brace(|brace| self.set_executable(brace.original));
             }
         } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get()
             .source_mappings
@@ -1209,7 +1208,7 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableStrin
     );
     let chunk = core::cell::Cell::new(None);
     // ASCII_ONLY = true: the chunk is an `InternalSourceMap`, not VLQ text.
-    bun_js_printer::print_ast::<_, true, true>(
+    bun_js_printer::print_ast::<true, true>(
         &mut bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
         &arena,
         &ast,
@@ -1217,7 +1216,7 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableStrin
         &source,
         bun_js_printer::Options {
             code_coverage: true,
-            source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&chunk)),
+            source_map_handler: Some(&chunk),
             ..Default::default()
         },
     )

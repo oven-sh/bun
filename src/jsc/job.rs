@@ -338,13 +338,13 @@ impl<C: JobContext> Job<C> {
         unsafe { WorkPool::schedule(&raw mut (*job).task) };
     }
 
-    /// JS thread: as [`schedule`](Self::schedule) for work that is done, queued where its [`Completion`] would post it.
+    /// JS thread: as [`schedule`](Self::schedule) for work that is done already. It completes after this turn of the loop.
     pub fn schedule_finished(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
         let job = Self::new(cx, off, js, None);
-        // SAFETY: no other thread was handed the job, so nothing else touches its node.
-        let node = unsafe { (*job).concurrent_task.from(job) };
-        // No wake-up: this thread is not parked, and it looks at the queue before it parks.
-        cx.vm().event_loop().post(NonNull::from(node));
+        let event_loop = cx.vm().event_loop();
+        event_loop.enqueue_task_after_yield(bun_event_loop::Task::init(job));
+        // The loop also runs script on its way into a poll, after it has chosen how long to wait.
+        event_loop.wakeup();
     }
 
     /// `ticket`: for the other thread, if the job goes to one.

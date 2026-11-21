@@ -5,7 +5,7 @@
 // without waiting.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { release } from "node:os";
 
 const files = {
@@ -70,11 +70,13 @@ const prelude = `
   // The first async calls go to the pool: they leave the names in the kernel's cache and classify the mount.
   const warm = async () => { for (const name of ["file.txt", "missing.txt"]) await fsp.stat(name).catch(() => {}); };
   // After a call that the kernel could not answer, the JS thread may not ask for some time.
-  // Resolves once it asks again and has forgotten that call. Gives up where it never answers.
+  // Resolves once it asks again and has forgotten that call.
   const asking = async () => {
-    for (let i = 0; canAnswer && i < 2100; i++) {
+    const deadline = performance.now() + 20000;
+    while (canAnswer) {
       await nextTurn();
       if ((await counted(() => fsp.stat("."))).hits === 1) break;
+      if (performance.now() > deadline) throw new Error("no answer from the kernel's caches in 20 s");
     }
     await nextTurn();
   };
@@ -82,7 +84,7 @@ const prelude = `
   // under way, and that call goes to the pool. So: the first of a few rounds that \`wanted\` accepts.
   const countedUntil = async (wanted, f) => {
     let round;
-    for (let i = 0; i < (canAnswer ? 10 : 1); i++) {
+    for (let i = 0; i < (canAnswer ? 3 : 1); i++) {
       await asking();
       round = await counted(() => f(i));
       if (wanted(round)) break;
@@ -237,7 +239,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     30_000,
   );
 
-  test.concurrent("an absolute path is answered on the mounts of the root and of the working directory", async () => {
+  test.concurrent("an absolute path is answered on the mount of the root directory only", async () => {
     using dir = tempDir("fs-cached", files);
     const cwd = String(dir);
     const result = await run(
@@ -249,7 +251,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         const calls = {
           root: async () => [(await fsp.stat("/")).ino, (await fsp.lstat("/")).ino],
           inTemp: async () => [(await fsp.stat(file)).size, (await fsp.lstat(file)).size],
-          // The pool answers for a file on any other mount.
+          // The walk may not leave the mount it starts on: the pool answers for another one.
           proc: async () => [(await fsp.stat("/proc/self/status")).isFile()],
           dev: async () => [(await fsp.stat("/dev/null")).isCharacterDevice()],
         };
@@ -271,8 +273,9 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     if (answersFromCache("/")) {
       const counts = (name: string) => ({ hits: result[name].hits, misses: result[name].misses });
       expect(counts("root")).toEqual({ hits: 2, misses: 0 });
-      // The temporary directory is the working directory: whatever mount it is on is known.
-      if (answersFromCache(cwd)) expect(counts("inTemp")).toEqual({ hits: 2, misses: 0 });
+      // The kernel also refuses the walk at a directory that is a mount point in another mount
+      // namespace only, as /tmp is where systemd gives a service a /tmp of its own.
+      if (mountOf(cwd).point === "/") expect([0, 2]).toContain(counts("inTemp").hits);
       else expect(counts("inTemp").hits).toBe(0);
       expect(counts("proc")).toEqual({ hits: 0, misses: 1 });
       if (mountOf("/dev/null").point !== "/") expect(counts("dev")).toEqual({ hits: 0, misses: 1 });
@@ -349,28 +352,24 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     }
   });
 
-  test.concurrent("settles from the loop: after the caller, before the immediates, in the order asked", async () => {
-    using dir = tempDir("fs-cached", files);
-    const cwd = String(dir);
-    const canAnswer = answersFromCache(cwd);
-    const contexts = ["fs callback", "promise reaction", "timer", "immediate", "socket"];
-    const result = await run(
-      cwd,
-      `
+  test.concurrent(
+    "settles from the loop: after the caller's microtasks and nextTicks, in the order asked",
+    async () => {
+      using dir = tempDir("fs-cached", files);
+      const cwd = String(dir);
+      const canAnswer = answersFromCache(cwd);
+      const contexts = ["fs callback", "promise reaction", "timer", "immediate", "socket"];
+      const result = await run(
+        cwd,
+        `
       const net = require("node:net");
-      let rounds = 0;
       const order = () => new Promise(resolve => {
         const log = [];
         const before = getCounters().fs_cached_hit;
-        const done = () => { if (log.length === 7) resolve({ log, hits }); };
+        const done = () => { if (log.length === 5) resolve({ log, hits }); };
         fsp.stat("file.txt").then(() => { log.push("stat"); done(); });
         fs.lstat("file.txt", () => { log.push("lstat"); done(); });
         const hits = getCounters().fs_cached_hit - before;
-        // A job of the pool that is asked for later is done later, however long the caller goes on.
-        const made = "made-" + rounds++;
-        fs.mkdir(made, () => { log.push("mkdir"); done(); });
-        while (!fs.existsSync(made)) {}
-        setImmediate(() => { log.push("immediate"); done(); });
         process.nextTick(() => { log.push("nextTick"); done(); });
         queueMicrotask(() => { log.push("microtask"); done(); });
         log.push("sync");
@@ -390,7 +389,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         };
         const results = {};
         for (const [name, enter] of Object.entries(contexts)) {
-          for (let round = 0; round < 10 && (${canAnswer} ? results[name]?.hits !== 2 : round < 1); round++) {
+          for (let round = 0; round < 3 && (${canAnswer} ? results[name]?.hits !== 2 : round < 1); round++) {
             await asking();
             results[name] = await new Promise(resolve => enter(() => order().then(resolve)));
           }
@@ -400,71 +399,44 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         console.log(JSON.stringify(results));
       })();
       `,
-    );
-    for (const context of contexts) {
-      const { log, hits } = result[context];
-      // A promise reaction is a microtask itself: the microtask queue empties before the nextTick queue.
-      const start =
-        context === "promise reaction" ? ["sync", "microtask", "nextTick"] : ["sync", "nextTick", "microtask"];
-      // Never before the caller is done, whoever answers.
-      expect({ context, start: log.slice(0, 3) }).toEqual({ context, start });
-      if (canAnswer) {
-        // Answered on the JS thread, the two come from the loop's queue, where the pool would
-        // have put them had it been done at once: in front of what the pool did after them, and
-        // of the immediate.
-        expect({ context, hits, fs: log.filter(entry => entry !== "immediate") }).toEqual({
-          context,
-          hits: 2,
-          fs: [...start, "stat", "lstat", "mkdir"],
-        });
-        expect({ context, isAfterBoth: log.indexOf("immediate") > log.indexOf("lstat") }).toEqual({
-          context,
-          isAfterBoth: true,
-        });
+      );
+      for (const context of contexts) {
+        const { log, hits } = result[context];
+        // A promise reaction is a microtask itself: the microtask queue empties before the nextTick queue.
+        const start =
+          context === "promise reaction" ? ["sync", "microtask", "nextTick"] : ["sync", "nextTick", "microtask"];
+        // Never before the caller is done, whoever answers.
+        expect({ context, start: log.slice(0, 3) }).toEqual({ context, start });
+        // Answered on the JS thread, the two still come from the loop's queue, one behind the other.
+        if (canAnswer) expect({ context, hits, log }).toEqual({ context, hits: 2, log: [...start, "stat", "lstat"] });
       }
-    }
-  });
+    },
+  );
 
-  test.concurrent("at the top level, comes before the first immediate", async () => {
-    // The first script of a process cannot get an answer from the cache, no mount is classified
-    // yet: the first script of a worker can.
+  test.concurrent("a rejection waits for the turn to end: a catch attached in a setImmediate is in time", async () => {
     using dir = tempDir("fs-cached", files);
     const cwd = String(dir);
-    const canAnswer = answersFromCache(cwd);
     const result = await run(
       cwd,
       `
-      const { Worker } = require("node:worker_threads");
-      const topLevel = \`
-        const fs = require("node:fs");
-        const { getCounters } = require("bun:internal-for-testing");
-        const log = [];
-        const before = getCounters().fs_cached_hit;
-        fs.stat("file.txt", (err, stats) => {
-          log.push("fs-cb:" + (err === null) + ":" + stats.isFile());
-          process.nextTick(() => log.push("tick-from-fs-cb"));
-        });
-        const hits = getCounters().fs_cached_hit - before;
-        setImmediate(() => {
-          log.push("setImmediate");
-          require("node:worker_threads").parentPort.postMessage({ log, hits });
-        });
-      \`;
       (async () => {
         await warm();
-        let result;
-        for (let attempt = 0; attempt < 10 && (${canAnswer} ? result?.hits !== 1 : attempt < 1); attempt++) {
-          const worker = new Worker(topLevel, { eval: true });
-          result = await new Promise((resolve, reject) => { worker.once("message", resolve); worker.once("error", reject); });
-          await worker.terminate();
+        let caught = 0, hits = 0;
+        for (let round = 0; round < 20; round++) {
+          await asking();
+          await new Promise(resolve => fs.readFile("sub/inner.txt", () => {
+            const before = getCounters().fs_cached_hit;
+            const missing = fsp.stat("missing.txt");
+            hits += getCounters().fs_cached_hit - before;
+            setImmediate(() => missing.catch(() => { caught++; resolve(); }));
+          }));
         }
-        console.log(JSON.stringify(result));
+        console.log(JSON.stringify({ caught, isAnswered: hits > 0 }));
       })();
       `,
     );
-    if (canAnswer) {
-      expect(result).toEqual({ log: ["fs-cb:true:true", "tick-from-fs-cb", "setImmediate"], hits: 1 });
-    }
+    // An unhandled rejection ends the process: `run` throws for it.
+    expect(result).toEqual({ caught: 20, isAnswered: answersFromCache(cwd) && remembersMissingNames(cwd) });
   });
 
   test.concurrent("a chain of awaited calls lets timers, immediates and I/O run", async () => {
@@ -528,7 +500,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         // Answers in front of a job for the pool hold that job up: such goes are asked less
         // and less often too.
         const crowded = await countedUntil(
-          round => round.hits === 64,
+          round => round.hits === 112,
           async () => { for (let i = 0; i < 8; i++) await Promise.all([stats(16), fsp.readFile("file.txt")]); },
         );
         // One answer in front of it does not.
@@ -536,7 +508,14 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
           round => round.hits === 8,
           async () => { for (let i = 0; i < 8; i++) await Promise.all([stats(1), fsp.readFile("file.txt")]); },
         );
-        console.log(JSON.stringify({ wide: wide.result, unknown, persistent, alternating, crowded, one }));
+        // An answer would overtake a job that went to the pool before it in the same go.
+        await asking();
+        const behind = await counted(async () => { for (let i = 0; i < 8; i++) await Promise.all([fsp.readFile("file.txt"), stats(1)]); });
+        // After many that the kernel could not answer, it still finds out that it can answer again.
+        await asking();
+        for (let i = 0; i < 300; i++) await size("never-d-" + i);
+        const recovered = await counted(async () => { for (let i = 0; i < 200; i++) { await size("file.txt"); await size("never-e-" + i); } });
+        console.log(JSON.stringify({ wide: wide.result, unknown, persistent, alternating, crowded, one, behind, recovered }));
       })();
       `,
     );
@@ -549,6 +528,8 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         alternating: [result.alternating.hits, result.alternating.misses],
         crowded: [result.crowded.hits, result.crowded.misses],
         one: [result.one.hits, result.one.misses],
+        behind: [result.behind.hits, result.behind.misses],
+        recovered: result.recovered.hits >= 60,
       }).toEqual({
         wide: [
           [PER_GO, 0],
@@ -556,12 +537,14 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
           [3, 0],
         ],
         unknown: [2, 1],
-        // The 1st, 2nd, 4th, 8th, ... 128th of the 200.
-        persistent: [0, 8],
+        // Four in a row, then 1 that is not asked about, four, then 3 that are not, four, then 7, ...
+        persistent: [0, 28],
         alternating: [20, 20],
-        // The 1st, 2nd, 4th and 8th of the 8 goes.
-        crowded: [64, 0],
+        // All of the 8 goes but the 5th.
+        crowded: [112, 0],
         one: [8, 0],
+        behind: [0, 0],
+        recovered: true,
       });
     }
   });
@@ -606,7 +589,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
       (async () => {
         await warm();
         let result;
-        for (let attempt = 0; attempt < 10 && (${canAnswer} ? result?.queued !== 8 : attempt < 1); attempt++) {
+        for (let attempt = 0; attempt < 3 && (${canAnswer} ? result?.queued !== 8 : attempt < 1); attempt++) {
           const worker = new Worker(queueAndExit, { eval: true });
           const [queued, exitCode] = await Promise.all([
             new Promise(resolve => worker.once("message", resolve)),
@@ -673,6 +656,49 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     }
   });
 
+  test.concurrent("descriptors that wait for a busy pool are few", async () => {
+    using dir = tempDir("fs-cached", files);
+    const cwd = String(dir);
+    const result = await run(
+      cwd,
+      `
+      (async () => {
+        // A pool thread closes the descriptor of a file this large.
+        fs.writeFileSync("large.bin", Buffer.alloc(2 << 20, 1));
+        await warm();
+        await fsp.stat("large.bin");
+        await asking();
+        // Both threads of the pool wait for a writer.
+        require("node:child_process").execFileSync("mkfifo", ["fifo-a", "fifo-b"]);
+        const readers = [fsp.readFile("fifo-a", "utf8"), fsp.readFile("fifo-b", "utf8")];
+        await nextTurn();
+        const descriptors = () => fs.readdirSync("/proc/self/fd").length;
+        const before = { descriptors: descriptors(), hits: getCounters().fs_cached_hit };
+        const stats = [];
+        for (let go = 0; go < 4; go++) {
+          for (let i = 0; i < 30; i++) stats.push(fsp.stat("large.bin"));
+          await nextTurn();
+        }
+        const waiting = { descriptors: descriptors() - before.descriptors, hits: getCounters().fs_cached_hit - before.hits };
+        fs.writeFileSync("fifo-a", "a");
+        fs.writeFileSync("fifo-b", "b");
+        const sizes = new Set((await Promise.all(stats)).map(stats => stats.size));
+        const read = await Promise.all(readers);
+        for (let i = 0; i < 200 && descriptors() !== before.descriptors; i++) await nextTurn();
+        console.log(JSON.stringify({ waiting, sizes: [...sizes], read, left: descriptors() - before.descriptors }));
+      })();
+      `,
+      { UV_THREADPOOL_SIZE: "2" },
+    );
+    expect({ sizes: result.sizes, read: result.read, left: result.left }).toEqual({
+      sizes: [2 << 20],
+      read: ["a", "b"],
+      left: 0,
+    });
+    // 64 wait at most: after that the pool answers, when it gets to it.
+    if (answersFromCache(cwd)) expect(result.waiting).toEqual({ descriptors: 64, hits: 64 });
+  });
+
   test.concurrent("a chdir behind the runtime's back is noticed", async () => {
     using dir = tempDir("fs-cached", files);
     const cwd = String(dir);
@@ -706,16 +732,15 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     }
   });
 
-  test.concurrent("a macro that leaves an answer queued still exits", async () => {
+  test.concurrent("a macro's calls are the pool's, also the one it leaves behind", async () => {
     using dir = tempDir("fs-cached-macro", {
       "macro.ts": `
         import fs from "node:fs";
         import { getCounters } from "bun:internal-for-testing";
         export async function leftover() {
-          for (let i = 0; i < 2000 && getCounters().fs_cached_hit === 0; i++) await fs.promises.stat(".");
-          const before = getCounters().fs_cached_hit;
+          for (let i = 0; i < 8; i++) await fs.promises.stat(".");
           fs.stat(".", () => console.log("settled"));
-          return getCounters().fs_cached_hit - before;
+          return getCounters().fs_cached_hit;
         }
       `,
       "index.ts": `
@@ -735,7 +760,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     // A debug build also logs the macro call to stdout.
     const lines = stdout.split("\n").filter(line => line === "settled" || line.startsWith("answered: "));
     expect({ lines, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-      lines: ["settled", answersFromCache(cwd) ? "answered: 1" : expect.stringMatching(/^answered: [01]$/)],
+      lines: ["settled", "answered: 0"],
       stderr: "",
       exitCode: 0,
     });
@@ -842,7 +867,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
 
   // systemd mounts over /tmp, /home and /usr for its services, each in a mount namespace of its
   // own. The kernel then refuses, in every namespace, a cached walk through them that may not
-  // cross mounts: the JS thread walks again without that limit and checks where it ended.
+  // cross mounts: those paths are the pool's.
   const canUnshareMounts =
     isLinux &&
     Bun.spawnSync({
@@ -878,46 +903,16 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         await warm();
         const sizes = async () => [(await fsp.stat("sub/inner.txt")).size, (await fsp.lstat(${JSON.stringify(cwd + "/sub/inner.txt")})).size];
         await sizes();
-        console.log(JSON.stringify(await countedUntil(round => round.hits === 2, sizes)));
+        await asking();
+        console.log(JSON.stringify(await counted(sizes)));
       })();
       `,
     );
     // This namespace has no mount there: the file is the one of the temporary directory.
     expect(result.result).toEqual([5, 5]);
-    if (answersFromCache("/") && answersFromCache(cwd)) {
-      expect({ hits: result.hits, misses: result.misses }).toEqual({ hits: 2, misses: 0 });
-    }
+    if (answersFromCache(cwd))
+      expect({ hits: result.hits, isAsked: result.misses >= 1 }).toEqual({ hits: 0, isAsked: true });
   });
-
-  const canUseShm = isLinux && existsSync("/dev/shm") && mountOf("/dev/shm").point === "/dev/shm";
-  test.skipIf(!canUseShm)(
-    "an absolute path to the mount of the working directory, which is not that of the root",
-    async () => {
-      // `tempDir` has no directory on another mount than the temporary directory's.
-      const cwd = mkdtempSync("/dev/shm/bun-fs-cached-");
-      try {
-        writeFileSync(cwd + "/file.txt", "hello");
-        const result = await run(
-          cwd,
-          `
-        (async () => {
-          await warm();
-          const file = ${JSON.stringify(cwd + "/file.txt")};
-          const sizes = async () => [(await fsp.stat(file)).size, (await fsp.lstat(file)).size];
-          await sizes();
-          console.log(JSON.stringify(await countedUntil(round => round.hits === 2, sizes)));
-        })();
-        `,
-        );
-        expect(result.result).toEqual([5, 5]);
-        if (answersFromCache("/") && answersFromCache(cwd)) {
-          expect({ hits: result.hits, misses: result.misses }).toEqual({ hits: 2, misses: 0 });
-        }
-      } finally {
-        rmSync(cwd, { recursive: true, force: true });
-      }
-    },
-  );
 
   // In a compiled executable the module graph answers for some paths, and for a path that the
   // disk does not have it looks on the disk itself: those are never the JS thread's.
@@ -994,7 +989,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
 
         const program = async (env: Record<string, string>) => {
           await using proc = Bun.spawn({
-            cmd: [cwd + "/program", cwd + "/file.txt"],
+            cmd: [cwd + "/program", "file.txt"],
             env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH: "1", ...env },
             cwd,
             stdout: "pipe",
@@ -1023,7 +1018,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
           source: 0,
           besideSource: 0,
         });
-        if (answersFromCache("/") && answersFromCache(cwd)) {
+        if (answersFromCache(cwd)) {
           expect({ ...hits(answered), disk: hits(answered).disk > 0 }).toMatchObject({
             disk: true,
             inExecutable: 0,

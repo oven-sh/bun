@@ -20,7 +20,7 @@ pub enum Symlink {
 pub enum NoStat {
     /// The kernel remembers that the path has no entry.
     NotFound,
-    /// The kernel was asked and cannot tell without a wait: not cached, on another mount, or behind a symlink it must read.
+    /// The kernel was asked and cannot tell without a wait: not cached, a mount point on the way, or a symlink it must read.
     Unknown,
     /// The kernel was not asked: the walk would not start on a mount that answers from memory.
     NotAsked,
@@ -63,7 +63,7 @@ pub fn stat(
         Some(b'/') => (&ROOT, 0),
         _ => (&CWD, CWD_GENERATION.load(Ordering::SeqCst)),
     };
-    let Mount::InMemory(mut mount) = start.load(generation) else {
+    let Mount::InMemory(mount) = start.load(generation) else {
         return Err(NoStat::NotAsked);
     };
     let file = match open(path, symlink, ResolveFlags::CACHED | ResolveFlags::NO_XDEV) {
@@ -74,36 +74,15 @@ pub fn stat(
             AVAILABILITY.store(UNAVAILABLE, Ordering::Relaxed);
             return Err(NoStat::Unknown);
         }
-        Err(libc::EAGAIN | libc::EXDEV) => {
-            // Not cached, or a mount point on the way, which refuses the walk even if it is one of another namespace only.
-            let file = match open(path, symlink, ResolveFlags::CACHED) {
-                Ok(fd) => CloseOnDrop::new(fd),
-                Err(libc::ENOENT) => return Err(NoStat::NotFound),
-                Err(_) => return Err(NoStat::Unknown),
-            };
-            let in_memory = |mount| {
-                let mount = Mount::InMemory(mount);
-                ROOT.load(0) == mount || CWD.load(CWD_GENERATION.load(Ordering::SeqCst)) == mount
-            };
-            match mount_of(file.fd()).filter(|mount| in_memory(*mount)) {
-                Some(on_mount) => mount = on_mount,
-                None => {
-                    // Of a filesystem that was not classified: not this thread's to close.
-                    close_elsewhere(file.into_raw());
-                    return Err(NoStat::Unknown);
-                }
-            }
-            file
-        }
         Err(_) => return Err(NoStat::Unknown),
     };
     let Some((stat, on_mount)) = crate::fstatx_in_memory(file.fd(), mask) else {
+        close_elsewhere(file.into_raw());
         return Err(NoStat::Unknown);
     };
     if on_mount != u64::from(mount) {
         // The root or the working directory changed behind this module (`chroot`, a native `chdir`).
-        ROOT.forget();
-        CWD.forget();
+        start.forget();
         close_elsewhere(file.into_raw());
         return Err(NoStat::Unknown);
     }
@@ -126,7 +105,7 @@ enum Mount {
 }
 
 /// The mount of a directory that walks start at, in one word: bits 0-1 kind of [`Mount`], 2-33 id, 34-63 generation.
-struct Start(AtomicU64);
+struct Start(AtomicU64, AtomicU8);
 
 const GENERATION_BITS: u32 = 30;
 
@@ -154,15 +133,34 @@ impl Start {
             generation << 34 | u64::from(id) << 2 | kind,
             Ordering::SeqCst,
         );
+        self.1.store(0, Ordering::Relaxed);
     }
 
     fn forget(&self) {
         self.0.store(0, Ordering::SeqCst);
     }
+
+    /// Classifies the mount of `directory` if that is still to do. Three calls in a row that cannot tell make it `Other`.
+    fn learn(&self, generation: impl Fn() -> u32, directory: &ZStr, root: Option<Mount>) {
+        let before = generation();
+        if self.load(before) != Mount::Unknown {
+            return;
+        }
+        let classified = classify(directory, root);
+        if generation() != before {
+            return;
+        }
+        match classified {
+            Ok(mount) => self.store(before, mount),
+            Err(Unclassified::Translated) => AVAILABILITY.store(UNAVAILABLE, Ordering::Relaxed),
+            Err(Unclassified::ThisTime) if self.1.fetch_add(1, Ordering::Relaxed) < 2 => {}
+            Err(Unclassified::ThisTime) => self.store(before, Mount::Other),
+        }
+    }
 }
 
-static ROOT: Start = Start(AtomicU64::new(0));
-static CWD: Start = Start(AtomicU64::new(0));
+static ROOT: Start = Start(AtomicU64::new(0), AtomicU8::new(0));
+static CWD: Start = Start(AtomicU64::new(0), AtomicU8::new(0));
 /// Counts the changes of the working directory: what [`CWD`] learned before one is void.
 static CWD_GENERATION: AtomicU32 = AtomicU32::new(0);
 
@@ -178,6 +176,7 @@ static LEARNING: AtomicBool = AtomicBool::new(false);
 #[inline]
 pub fn learn_mounts() {
     let learned = match AVAILABILITY.load(Ordering::Relaxed) {
+        _ if !crate::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) => true,
         UNAVAILABLE => true,
         AVAILABLE => {
             ROOT.load(0) != Mount::Unknown
@@ -203,17 +202,9 @@ fn learn() {
         }
         AVAILABILITY.store(AVAILABLE, Ordering::Relaxed);
     }
-    if ROOT.load(0) == Mount::Unknown
-        && let Some(mount) = classify(bun_core::zstr!("/"), None)
-    {
-        ROOT.store(0, mount);
-    }
-    let generation = CWD_GENERATION.load(Ordering::SeqCst);
-    if CWD.load(generation) == Mount::Unknown
-        && let Some(mount) = classify(bun_core::zstr!("."), Some(ROOT.load(0)))
-    {
-        CWD.store(generation, mount);
-    }
+    ROOT.learn(|| 0, bun_core::zstr!("/"), None);
+    let generation = || CWD_GENERATION.load(Ordering::SeqCst);
+    CWD.learn(generation, bun_core::zstr!("."), Some(ROOT.load(0)));
 }
 
 /// An error that says nothing about the kernel or the directory: the next caller asks again.
@@ -261,18 +252,43 @@ fn kernel_honours_resolve_cached() -> Option<bool> {
     }
 }
 
-/// `None`: could not tell this time. `root`: the mount of the root directory, which stays mounted.
-fn classify(directory: &ZStr, root: Option<Mount>) -> Option<Mount> {
+enum Unclassified {
+    ThisTime,
+    /// PRoot rewrites the path for `openat` and not for `openat2`: what the kernel answers is not this process's tree.
+    Translated,
+}
+
+/// `root`: the mount of the root directory, which stays mounted while it is this process's root.
+fn classify(directory: &ZStr, root: Option<Mount>) -> Result<Mount, Unclassified> {
+    let this_time = |errno| match is_transient(errno) {
+        true => Err(Unclassified::ThisTime),
+        false => Ok(Mount::Other),
+    };
     let plain = match crate::open(directory, O::PATH | O::DIRECTORY | O::CLOEXEC, 0) {
         Ok(fd) => CloseOnDrop::new(fd),
-        Err(err) => return (!is_transient(i32::from(err.errno))).then_some(Mount::Other),
+        Err(err) => return this_time(i32::from(err.errno)),
     };
-    let Some(mount) = mount_of(plain.fd()) else {
-        return Some(Mount::Other);
+    let resolve = ResolveFlags::CACHED | ResolveFlags::NO_XDEV;
+    let cached = match open(directory, Symlink::Follow, resolve) {
+        Ok(fd) => CloseOnDrop::new(fd),
+        Err(errno) => return this_time(errno),
+    };
+    let mask = crate::STATX_MASK_FOR_STATS;
+    let (Some(plain), Some(cached)) = (
+        crate::fstatx_in_memory(plain.fd(), mask),
+        crate::fstatx_in_memory(cached.fd(), mask),
+    ) else {
+        return Err(Unclassified::ThisTime);
+    };
+    if (cached.1, cached.0.dev, cached.0.ino) != (plain.1, plain.0.dev, plain.0.ino) {
+        return Err(Unclassified::Translated);
+    }
+    let Ok(mount) = u32::try_from(plain.1) else {
+        return Ok(Mount::Other);
     };
     if root != Some(Mount::InMemory(mount)) {
         let Ok(table) = crate::File::read_from(Fd::cwd(), b"/proc/self/mountinfo") else {
-            return Some(Mount::Other);
+            return Ok(Mount::Other);
         };
         let filesystem = filesystem_of(&table, mount).unwrap_or_default();
         bun_core::scoped_log!(
@@ -283,45 +299,10 @@ fn classify(directory: &ZStr, root: Option<Mount>) -> Option<Mount> {
             bstr::BStr::new(filesystem)
         );
         if !answers_from_memory(filesystem) {
-            return Some(Mount::Other);
+            return Ok(Mount::Other);
         }
     }
-    // PRoot rewrites the path for `openat` and not for `openat2`: then these are two directories.
-    let cached = match open(
-        directory,
-        Symlink::Follow,
-        ResolveFlags::CACHED | ResolveFlags::NO_XDEV,
-    ) {
-        Ok(fd) => CloseOnDrop::new(fd),
-        Err(errno) => return (!is_transient(errno)).then_some(Mount::Other),
-    };
-    let (plain, cached) = (
-        crate::fstatx_in_memory(plain.fd(), crate::STATX_MASK_FOR_STATS)?,
-        crate::fstatx_in_memory(cached.fd(), crate::STATX_MASK_FOR_STATS)?,
-    );
-    let same = plain.1 == u64::from(mount)
-        && cached.1 == plain.1
-        && (cached.0.dev, cached.0.ino) == (plain.0.dev, plain.0.ino);
-    Some(if same {
-        Mount::InMemory(mount)
-    } else {
-        Mount::Other
-    })
-}
-
-/// The mount id of a descriptor, from procfs: its filesystem is not asked (`name_to_handle_at` can copy up on overlayfs).
-fn mount_of(fd: Fd) -> Option<u32> {
-    use std::io::Write as _;
-    let mut path = [0u8; 40];
-    let mut rest = &mut path[..39];
-    write!(rest, "/proc/self/fdinfo/{}", fd.native()).ok()?;
-    let length = 39 - rest.len();
-    let path = ZStr::from_slice_with_nul(&path[..=length]);
-    let fdinfo = CloseOnDrop::new(crate::open(path, O::RDONLY | O::CLOEXEC, 0).ok()?);
-    let mut text = [0u8; 256];
-    let length = crate::read(fdinfo.fd(), &mut text).ok()?;
-    split(&text[..length], b'\n')
-        .find_map(|line| parse_id(line.strip_prefix(b"mnt_id:")?.trim_ascii()))
+    Ok(Mount::InMemory(mount))
 }
 
 /// The lines of a text of procfs, or the fields of one of its lines.

@@ -2160,9 +2160,14 @@ mod _async_tasks {
         answers: core::cell::Cell<u16>,
         /// The kernel could not answer one of them, or a pool job came behind `CROWD` answers: the rest is the pool's.
         regretted: core::cell::Cell<bool>,
-        regretted_in_a_row: core::cell::Cell<u8>,
+        /// Regretted goes in a row since the last go that was skipped or forgiven, up to `PROBES`.
+        regrets: core::cell::Cell<u8>,
+        /// How many times in a row `PROBES` goes were all regretted.
+        depth: core::cell::Cell<u8>,
         /// How many goes from now on do not ask.
         skips: core::cell::Cell<u16>,
+        /// The last go in which a `node:fs` job went to the pool: an answer to a later call would overtake it.
+        pool_go: core::cell::Cell<u64>,
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -2174,8 +2179,10 @@ mod _async_tasks {
                 asks: core::cell::Cell::new(false),
                 answers: core::cell::Cell::new(0),
                 regretted: core::cell::Cell::new(false),
-                regretted_in_a_row: core::cell::Cell::new(0),
+                regrets: core::cell::Cell::new(0),
+                depth: core::cell::Cell::new(0),
                 skips: core::cell::Cell::new(0),
+                pool_go: core::cell::Cell::new(u64::MAX),
             }
         }
     }
@@ -2186,15 +2193,17 @@ mod _async_tasks {
         const PER_GO: u16 = 32;
         /// A pool job behind this many answers of its go was held up by them: the go is regretted.
         const CROWD: u16 = 2;
-        /// At most `(1 << MAX_DOUBLINGS) - 1` goes in a row do not ask.
-        const MAX_DOUBLINGS: u8 = 10;
+        /// This many regretted goes in a row are followed by `2^depth - 1` goes that do not ask.
+        const PROBES: u8 = 4;
+        const MAX_DEPTH: u8 = 10;
 
         /// Whether an operation that arrives in the go `go` is asked.
         fn admits(&self, go: u64) -> bool {
             if self.go.get() != go {
                 let was_wide = self.width.get() > Self::PER_GO;
                 if self.answers.get() > 0 && !self.regretted.get() {
-                    self.regretted_in_a_row.set(0);
+                    self.regrets.set(0);
+                    self.depth.set(0);
                 }
                 let skipped = self.skips.get() > 0;
                 if skipped {
@@ -2207,7 +2216,10 @@ mod _async_tasks {
                 self.regretted.set(false);
             }
             self.width.set(self.width.get().saturating_add(1));
-            self.asks.get() && !self.regretted.get() && self.width.get() <= Self::PER_GO
+            self.asks.get()
+                && !self.regretted.get()
+                && self.width.get() <= Self::PER_GO
+                && self.pool_go.get() != go
         }
 
         /// The kernel answered an operation that [`admits`](Self::admits) let through.
@@ -2215,16 +2227,20 @@ mod _async_tasks {
             self.answers.set(self.answers.get() + 1);
         }
 
-        /// It could not answer one: the n-th regretted go in a row is followed by `2^(n-1) - 1` goes that do not ask.
+        /// It could not answer one.
         fn missed(&self) {
-            let in_a_row = (self.regretted_in_a_row.get() + 1).min(Self::MAX_DOUBLINGS + 1);
-            self.regretted_in_a_row.set(in_a_row);
             self.regretted.set(true);
-            self.skips.set((1 << (in_a_row - 1)) - 1);
+            self.regrets.set(self.regrets.get() + 1);
+            if self.regrets.get() == Self::PROBES {
+                self.regrets.set(0);
+                self.depth.set((self.depth.get() + 1).min(Self::MAX_DEPTH));
+                self.skips.set((1 << self.depth.get()) - 1);
+            }
         }
 
-        /// A job goes to the pool in the go `go`.
+        /// A `node:fs` job goes to the pool in the go `go`.
         fn pool_job(&self, go: u64) {
+            self.pool_go.set(go);
             if self.go.get() == go && self.answers.get() >= Self::CROWD && !self.regretted.get() {
                 self.missed();
             }
@@ -2241,7 +2257,8 @@ mod _async_tasks {
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
         use bun_jsc::counters::Field;
-        if !sys::cached::is_available() {
+        // A macro's loop does not run again for what the macro leaves behind.
+        if !sys::cached::is_available() || vm.current_loop_kind() != bun_jsc::LoopKind::Regular {
             return None;
         }
         let gate = &crate::jsc_hooks::runtime_state_of(vm).fs_cached_answers;

@@ -1334,8 +1334,8 @@ impl EventLoop {
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        // `Job::schedule_finished` queues a task without a wake-up: with one queued, do not park.
-        let park_seconds = if self.has_pending_tasks() { 0 } else { 1 };
+        // `auto_tick` does not run in this mode: what yielded to a poll becomes runnable here.
+        let park_seconds = if self.promote_yield_tasks() { 0 } else { 1 };
         loop_.tick_with_timeout(
             Some(&bun_core::Timespec {
                 sec: park_seconds,

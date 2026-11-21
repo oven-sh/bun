@@ -4,9 +4,11 @@
 //   bun fs-promises-cached.mjs            time per call (mitata)
 //   bun fs-promises-cached.mjs --usage    CPU time and context switches per call, whole process
 //
-// The files are in a temporary directory that becomes the working directory, and the paths
-// are relative: an absolute path is answered only on the mount of the root directory.
-// BUN_FEATURE_FLAG_DISABLE_ASYNC_FS_FAST_PATH=1 gives the thread pool's numbers.
+// The files are in a temporary directory that becomes the working directory, and most paths
+// are relative: an absolute path is answered only on the mount of the root directory, and not
+// through a directory that is a mount point in any mount namespace (/tmp under systemd).
+// BUN_FEATURE_FLAG_DISABLE_ASYNC_FS_FAST_PATH=1 gives the thread pool's numbers, and
+// BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1 adds how many calls the JS thread answered.
 import { existsSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { lstat, readFile, stat } from "node:fs/promises";
 import fs from "node:fs";
@@ -35,6 +37,7 @@ const single = {
   "await stat(file)": () => stat("file.txt"),
   "await lstat(symlink)": () => lstat("link"),
   "await stat(file of 2 MiB)": () => stat("large.bin"),
+  "await stat(absolute path of file)": () => stat(join(dir, "file.txt")),
   "await stat(missing)": () => missing("missing.txt"),
   "fs.stat(file, callback)": () => statCallback("file.txt"),
   ...(typeof Bun !== "undefined" && { "await Bun.file(file).stat()": () => Bun.file("file.txt").stat() }),
@@ -53,6 +56,7 @@ const batches = {
   "stat(file), one never seen last": width => many(width, (_, i) => (i === width - 1 ? neverSeen() : stat("file.txt"))),
   "stat(file) then readFile, half each": width =>
     many(width, (_, i) => (i < width / 2 ? stat("file.txt") : readFile("file.txt"))),
+  "stat(file of 2 MiB)": width => many(width, () => stat("large.bin")),
 };
 
 // Calls that nothing awaits together: `width` of them are under way at any time.
@@ -72,8 +76,14 @@ const stream = (width, total) =>
   });
 
 if (process.argv.includes("--usage")) {
+  let answered = () => null;
+  try {
+    const { getCounters } = await import("bun:internal-for-testing");
+    answered = () => getCounters().fs_cached_hit;
+  } catch {}
   const usage = async (name, calls, work) => {
     await work();
+    const hits = answered();
     const before = process.resourceUsage();
     const started = performance.now();
     await work();
@@ -86,7 +96,8 @@ if (process.argv.includes("--usage")) {
       before.voluntaryContextSwitches -
       before.involuntaryContextSwitches;
     console.log(
-      `${name.padEnd(52)} ${((wall * 1000) / calls).toFixed(2).padStart(8)} us  ${(cpu / calls).toFixed(2).padStart(8)} us CPU  ${(switches / calls).toFixed(2).padStart(6)} switches`,
+      `${name.padEnd(52)} ${((wall * 1000) / calls).toFixed(2).padStart(8)} us  ${(cpu / calls).toFixed(2).padStart(8)} us CPU  ${(switches / calls).toFixed(2).padStart(6)} switches` +
+        (hits === null ? "" : `  ${(((answered() - hits) / calls) * 100).toFixed(0).padStart(3)}% answered`),
     );
   };
   const CALLS = Number(process.env.CALLS) || 50_000;

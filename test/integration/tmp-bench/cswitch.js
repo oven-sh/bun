@@ -169,12 +169,13 @@ function sequence(list, run, hz) {
     (on = e), (woken = "");
   }
   console.log(`cond sw ${run.name}, ${run.what}: ${ms(run.t1 - run.t0)} ms, ${words.length} switches`);
-  for (let i = 0; i < Math.min(words.length, 84); i += 4) console.log("cond sw   " + words.slice(i, i + 4).join(" "));
+  for (let i = 0; i < Math.min(words.length, 56); i += 4) console.log("cond sw   " + words.slice(i, i + 4).join(" "));
 }
 if (mode === "--ops") {
   const k = k32(), nt = require("bun:ffi").dlopen("ntdll.dll", { NtQueryInformationThread: { args: ["i64", "u32", "ptr", "u32", "ptr"], returns: "i32" } }).symbols;
   const info = new Int32Array(12), priority = () => (nt.NtQueryInformationThread(-2n, 0, info, 48, null), info[10]), [kind, state] = args[0].split(" "), file = os.tmpdir() + "/sw-" + process.pid;
-  const op = { open: async () => (await fs.promises.open(file)).close(), text: () => Bun.file(file).text(), write: () => Bun.write(file, Buffer.alloc(300000)), lookup: () => require("dns").promises.lookup("localhost") }[kind];
+  const op = { open: async () => (await fs.promises.open(file)).close(), text: () => Bun.file(file).text(), write: () => Bun.write(file, Buffer.alloc(300000)), lookup: () => require("dns").promises.lookup("localhost"),
+    writer: async () => { const s = Bun.file(file).writer(); s.write("x"); await s.end(); }, shell: () => Bun.$`echo hi > ${file}`, sleep: () => Bun.sleep(1), fetch: () => fetch(process.env.AT).then(r => r.text()) }[kind];
   const burn = ms => { for (const end = performance.now() + ms; performance.now() < end; ); };
   fs.writeFileSync(file, "x");
   if (state === "decayed") await op(), burn(450);
@@ -274,11 +275,13 @@ if (mode === "--ops") {
     );
   try {
     Bun.sleepSync(500);
+    const far = isOps && Bun.spawn([burner, "-e", `require("bun:ffi").dlopen("kernel32.dll", { SetProcessAffinityMask: { args: ["i64", "u64"], returns: "i32" } }).symbols.SetProcessAffinityMask(-1n, 1n); require("os").setPriority(-14); require("fs").writeFileSync(${JSON.stringify(dir + "\\at")}, Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("x") }).url.href)`]);
+    if (far) (burners.push(far), Bun.sleepSync(1000), (process.env.AT = fs.readFileSync(dir + "\\at", "utf8")));
     if (isOps) console.log(`cond ops on ${isOne ? "one cpu" : "all cpus"}: priority at the start, then ms and priority after each call`);
-    for (const what of isOps ? ["open cold", "open late", "open decayed", "open idle", "text cold", "write cold", "lookup cold"] : []) {
+    for (const what of isOps ? ["open cold", "open idle", "lookup cold", "writer cold", "shell cold", "fetch cold", "fetch decayed", "sleep cold", "sleep decayed"] : []) {
       for (let round = 0; round < (what.endsWith("idle") ? 1 : rounds); round++)
         for (const [exe, variant] of columns) {
-          const out = Bun.spawnSync([exe, __filename, "--ops", what], { timeout: 40000, stdin: "ignore", stderr: "inherit" }).stdout.toString();
+          const out = Bun.spawnSync([exe, __filename, "--ops", what], { env: { ...process.env }, timeout: 20000, stdin: "ignore", stderr: "inherit" }).stdout.toString();
           if (out) runs.push({ name: variant || "as is", what, ...JSON.parse(out) });
         }
       for (const [, variant] of columns) console.log(`cond   ${what}, ${variant || "as is"}: ${runs.filter(it => it.what === what && it.name === (variant || "as is")).map(it => it.seen).join(" | ")} (${runs[0]?.cpus} cpus)`);
@@ -319,7 +322,7 @@ if (mode === "--ops") {
       b.subarray(0, 88).toString("hex"),
     );
     if (isOps) {
-      if (isOne) for (const what of ["open cold", "open decayed"]) for (const [, variant] of columns) sequence(list, runs.find(it => it.what === what && it.name === (variant || "as is")), hz);
+      if (isOne) for (const what of ["open cold", "writer cold", "sleep cold"]) for (const [, variant] of columns) sequence(list, runs.find(it => it.what === what && it.name === (variant || "as is")), hz);
     } else if (isOne)
       for (const [, variant] of columns) {
         const mine = runs.filter(it => it.name === (variant || "as is")).sort((x, y) => x.t1 - x.t0 - (y.t1 - y.t0));

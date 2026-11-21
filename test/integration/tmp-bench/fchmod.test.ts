@@ -2,7 +2,7 @@ import { bench } from "./run";
 bench(
   "cond.js",
   "4",
-  "fs.read,promises,Bun.file,Bun.write,FileSink,createReadStream,dns,open + close one,fs.watch",
+  "fs.read,promises,Bun.file,Bun.write,FileSink,createReadStream,dns,open + close one,open + close,worker burst,fs.watch",
   "before;",
   "3",
 );

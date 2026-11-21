@@ -578,6 +578,37 @@ const cases = {
       "stdin": "for await (const c of process.stdin);",
     }).map(([name, code]) => [`first ${name} of a process`, ["/s", 1, repeatSync(300, () => Bun.spawnSync([process.execPath, "-e", code], { stdin: Buffer.from("x") }))]]),
   ),
+  "worker burst of messages": [
+    "msg/s",
+    1,
+    async () => {
+      const N = 200000, w = new Worker(`data:text/javascript,let n = 0; onmessage = () => ++n % ${N} || postMessage(n); postMessage(0)`), next = () => new Promise(r => (w.onmessage = r));
+      await next(), await Bun.sleep(300);
+      for (const end = now() + 450; now() < end; );
+      const t = now(), done = next();
+      for (let i = 0; i < N; i++) w.postMessage(i);
+      await done;
+      return N / ((now() - t) / 1000);
+    },
+  ],
+  "fs.read, 5000 at once": [
+    "op/s",
+    1,
+    async tmp => {
+      const fd = fs.openSync(small(tmp)), b = Buffer.alloc(64), t = now();
+      for (let round = 0; round < 8; round++) await Promise.all(Array.from({ length: 5000 }, () => new Promise(r => fs.read(fd, b, 0, 64, 0, r))));
+      return 40000 / ((now() - t) / 1000);
+    },
+  ],
+  "open + close, 2000 at once": [
+    "op/s",
+    1,
+    async tmp => {
+      const f = small(tmp), t = now();
+      for (let round = 0; round < 5; round++) await Promise.all(Array.from({ length: 2000 }, () => new Promise(r => fs.open(f, (e, fd) => fs.close(fd, r)))));
+      return 10000 / ((now() - t) / 1000);
+    },
+  ],
   "named pipe ping-pong, 100 KiB": ["msg/s", 1, largePingPong(100 * 1024)],
   "named pipe ping-pong, 300 KiB": ["msg/s", 1, largePingPong(300 * 1024)],
   "named pipe stream": [

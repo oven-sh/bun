@@ -58,7 +58,7 @@ if (mode === "--burn") {
 } else {
   const [fresh, condition, only, variants, rounds = 3, seconds = SECONDS] = args;
   process.env.SECONDS = seconds;
-  const columns = [[mode, "old"], ...variants.split(";").map(v => [fresh, v])];
+  const columns = [[mode, "old"], ...variants.split(";").map(v => [v === "before" ? process.env.BEFORE_BUN : fresh, v])];
   const isShared = condition === "shared" || condition === "low";
   const burners = (
     isShared

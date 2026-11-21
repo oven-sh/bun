@@ -27,11 +27,11 @@ export function bench(script: string, ...args: string[]) {
       let before = process.env.BEFORE_BUN;
       if (!before) {
         const at = {
-          x64: "01a1fcab-3969-4648-92da-71c9de38c128/artifacts/01a1fcb8-494f-4da5-9088-4e8e73685e3c",
-          arm64: "01a1fcab-396a-4877-a72d-eca049ba1086/artifacts/01a1fcb2-b290-4760-81f2-8ff0759260ec",
+          x64: "01a1fcf3-e72b-4642-92b3-6a449e336cf7/artifacts/01a1fd01-b1f8-4ade-8975-028a72914e09",
+          arm64: "01a1fcf3-e72d-4bb8-8627-b5e29808c6fa/artifacts/01a1fcfb-d57d-4bdf-b703-44947d0a2a97",
         }[process.arch];
         const zip = join(String(dir), "before.zip");
-        await Bun.write(zip, await fetch(`https://buildkite.com/organizations/bun/pipelines/bun/builds/143416/jobs/${at}`));
+        await Bun.write(zip, await fetch(`https://buildkite.com/organizations/bun/pipelines/bun/builds/143428/jobs/${at}`));
         before = await unzip(zip, "before");
         if (!existsSync(before)) before = now;
       }

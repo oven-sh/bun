@@ -23,7 +23,7 @@ else if (mode === "--case") cases[args[0]]().then(it => (console.log(it.join(" "
 else {
   const [fresh, condition, only, variants, rounds = 15] = args, dir = fs.mkdtempSync(require("os").tmpdir() + "\\fair-");
   const copy = (from, name) => (fs.mkdirSync(`${dir}\\${name}`), fs.copyFileSync(from, `${dir}\\${name}\\bun.exe`), `${dir}\\${name}\\bun.exe`);
-  const [a, b, n, burner] = [copy(mode, "a"), copy(mode, "b"), copy(fresh, "n"), copy(mode, "burner")], columns = [[a, "old"], [b, "old again"], ...variants.split(";").map(v => [n, v])];
+  const [a, b, n, burner] = [copy(mode, "a"), copy(mode, "b"), copy(fresh, "n"), copy(mode, "burner")], columns = [[a, "old"], [b, "old again"], ...variants.split(";").map(v => [v === "before" ? copy(process.env.BEFORE_BUN, "before") : n, v])];
   for (const exe of [a, b, n]) for (let i = 0; i < 3; i++) Bun.spawnSync([exe, "-e", "1"]);
   const burners = condition === "busy" ? require("os").cpus().map(() => Bun.spawn([burner, "-e", "const end = Date.now() + 1500000; while (Date.now() < end);"], { stdio: ["ignore", "ignore", "ignore"] })) : [];
   Bun.sleepSync(500);

@@ -162,9 +162,9 @@ impl Worker {
                 )),
             );
             for (reader, file) in [(&this.out, stdout), (&this.err, stderr)] {
-                if let Some(fd) = file.map(bun_sys::File::into_raw) {
+                if let Some(file) = file {
                     let _ = reader
-                        .start(this.event_loop.as_event_loop_ctx(), fd, true)
+                        .start(this.event_loop.as_event_loop_ctx(), file.into(), true)
                         .map_err(|_| crate::Error::PipeStartFailed)?;
                 }
             }

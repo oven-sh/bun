@@ -37,7 +37,7 @@ bun_core::declare_scope!(WebSocketProxyTunnel, visible);
 
 use super::websocket_upgrade_client::{HttpUpgradeClient, HttpsUpgradeClient};
 
-/// The upgrade client (either transport), which ends the cycle in `clear_data` (`detach_upgrade_client`).
+/// The upgrade client (either transport), until its `WebSocketProxy` drops.
 #[derive(Clone)]
 pub enum UpgradeClientRef {
     Http(RefPtr<HttpUpgradeClient>),
@@ -131,7 +131,7 @@ pub struct WebSocketProxyTunnel {
     ref_count: Cell<u32>,
     /// Reference to the upgrade client (WebSocketUpgradeClient) - used during handshake phase
     upgrade_client: Cell<Option<UpgradeClientRef>>,
-    /// The connected client, which ends the cycle in `clear_data` (`clear_connected_web_socket`).
+    /// The connected client, until it drops its `Attached` in `clear_data`.
     connected_websocket: Cell<Option<RefPtr<WebSocketClient>>>,
     /// SSL wrapper for TLS inside tunnel; set once in `start()`.
     wrapper: OnceCell<SslWrapper>,
@@ -373,18 +373,21 @@ impl ssl_wrapper::Handler for &WebSocketProxyTunnel {
     }
 }
 
-impl WebSocketProxyTunnel {
-    fn upgrade_client(&self) -> Option<UpgradeClientRef> {
-        self.upgrade_client.with_taken(|client| client.clone())
-    }
-
-    /// Clear the connected WebSocket reference. Called before tunnel shutdown so the
+impl bun_ptr::Detach for WebSocketProxyTunnel {
+    /// Clear the connected WebSocket reference before tunnel shutdown so the
     /// tunnel's onClose callback doesn't call into a client that already finished.
     ///
     /// Can be reached from inside an SSLWrapper callback while the driving
     /// frame holds `&SslWrapper`; the `Cell` write covers only this field.
-    pub(crate) fn clear_connected_web_socket(&self) {
+    fn detach(&self) {
         self.connected_websocket.set(None);
+        self.shutdown();
+    }
+}
+
+impl WebSocketProxyTunnel {
+    fn upgrade_client(&self) -> Option<UpgradeClientRef> {
+        self.upgrade_client.with_taken(|client| client.clone())
     }
 
     /// Clear the upgrade client reference. Called before tunnel shutdown during
@@ -469,8 +472,8 @@ impl WebSocketProxyTunnel {
         Err(crate::Error::ConnectionClosed)
     }
 
-    /// Gracefully shutdown the TLS connection
-    pub(crate) fn shutdown(self: RefPtr<Self>) {
+    /// Gracefully shutdown the TLS connection. The caller holds a ref.
+    pub(crate) fn shutdown(&self) {
         if let Some(w) = self.wrapper.get() {
             let _ = w.shutdown(&mut &*self, true); // Fast shutdown
         }

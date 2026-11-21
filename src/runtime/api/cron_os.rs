@@ -8,6 +8,8 @@ use bun_core::{CStringList, EncodedSlice, ZBox, strings};
 use bun_cron::{Registration, Title};
 use bun_io::{BufferedReader, IoEvent, JsKeepAlive, Owner, PollTag, ReadResult};
 use bun_jsc::bindgen::JsScope;
+use bun_jsc::bun_string_jsc::to_jsdomurl;
+use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
@@ -23,12 +25,15 @@ use scopeguard::ScopeGuard;
 #[cfg(not(windows))]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, ProcessHandle, SpawnOptions, Status, Stdio};
+use crate::generated_bindgen::cron::CronPath;
 use crate::jsc_hooks::runtime_state;
+use crate::node::PathLike;
+use crate::node::types::PathLikeExt as _;
 use backend::Step;
 
 pub(crate) fn register(
     cx: &mut JsScope<'_>,
-    path: &[u8],
+    path: CronPath<'_>,
     schedule: &[u8],
     title: &[u8],
 ) -> JsResult<JSValue> {
@@ -36,7 +41,15 @@ pub(crate) fn register(
     let invalid = |message: &str| global.throw_invalid_arguments(format_args!("{message}"));
     let title = parse_title(global, title)?;
     let schedule = super::cron::parse_expression(global, schedule)?;
-    let script = resolve_script(global, path).ok_or_else(|| invalid("Failed to resolve path"))?;
+    let script = match path {
+        CronPath::Text(text) if text.starts_with(b"file://") => {
+            let url = to_jsdomurl(&bun_core::String::clone_utf8(text), global)?;
+            resolve_script(global, path_of_url(global, url)?.slice())
+        }
+        CronPath::Text(text) => resolve_script(global, text),
+        CronPath::Url(url) => resolve_script(global, path_of_url(global, url.to_js())?.slice()),
+    };
+    let script = script.ok_or_else(|| invalid("Failed to resolve path"))?;
 
     // The path goes into a crontab line, in single quotes.
     if let Some(byte) = strings::index_of_any(&script, b"'%\n\r").and_then(|i| script.get(i)) {
@@ -50,9 +63,9 @@ pub(crate) fn register(
         return Err(global.throw(format_args!("Failed to get bun executable path")));
     };
     let exe = exe.as_bytes();
-    if strings::contains_any(exe, b"'%") {
+    if strings::contains_any(exe, b"'%\n\r") {
         return Err(global.throw_invalid_arguments(format_args!(
-            "Bun executable path '{}' contains characters (' or %) that cannot be safely embedded in a crontab entry",
+            "Bun executable path '{}' contains characters (', % or a line break) that cannot be safely embedded in a crontab entry",
             BStr::new(exe)
         )));
     }
@@ -78,6 +91,12 @@ fn parse_title(global: &JSGlobalObject, title: &[u8]) -> JsResult<Title> {
             "Cron title must contain only alphanumeric characters, hyphens, and underscores"
         ))
     })
+}
+
+/// With the checks and the errors of `node:fs`.
+fn path_of_url(global: &JSGlobalObject, url: JSValue) -> JsResult<PathLike<'static>> {
+    let mut arguments = ArgumentsSlice::init(global.bun_vm(), core::slice::from_ref(&url));
+    PathLike::from_js_required(global, &mut arguments, "path")
 }
 
 /// Relative to the file that called.
@@ -258,10 +277,10 @@ impl OsJob {
 
         let mut child = Child::OutputEnded(Ok(Vec::new()));
         #[cfg(unix)]
-        if let Some(stdout) = spawned.stdout.take().map(File::into_raw) {
+        if let Some(stdout) = spawned.stdout.take() {
             use bun_io::PosixFlags;
             (self.output).update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
-            let read = (self.output.start(bun_io::js_vm_ctx(), stdout, true))
+            let read = (self.output.start(bun_io::js_vm_ctx(), stdout.into(), true))
                 .map_err(|_| "Failed to start reading stdout")?;
             child = (self.take_output(read)).map_or(Child::Running, Child::OutputEnded);
         }
@@ -484,10 +503,13 @@ mod backend {
         let dir = format!("{}/Library/LaunchAgents", BStr::new(home));
         (Fd::cwd().make_path(dir.as_bytes()))
             .map_err(|_| "Failed to create ~/Library/LaunchAgents directory")?;
+        let mut logs = bun_paths::path_buffer_pool::get();
+        let logs = sys::darwin_user_temp_dir(&mut logs)
+            .ok_or("Failed to find a private temporary directory for the logs")?;
         let plist = write_file(
             plist_path(home, &job.title).as_bytes(),
             (sys::O::TRUNC, 0o644),
-            bun_cron::launchd::plist(job).as_bytes(),
+            bun_cron::launchd::plist(job, logs).as_bytes(),
             ["Failed to create plist file", "Failed to write plist"],
         )?;
         Ok(bootout(&job.title, Step::BootoutOld(plist)))

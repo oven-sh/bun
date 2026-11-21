@@ -64,7 +64,7 @@ struct PoolStats {
 // no `T: Sync` bounds are written in this file.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-struct Sync(u32);
+struct Sync(u64);
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -88,12 +88,17 @@ impl Sync {
     //   unused:   bool bit  28
     //   notified: bool bit  29
     //   state:    u2   bits 30..32
-    const IDLE_MASK: u32 = 0x3FFF;
+    //   summoned: u14  bits 32..46
+    //
+    // `idle + summoned` threads are idle in `wait()`. `schedule_all_at_once` has claimed `summoned` of them.
+    const IDLE_MASK: u64 = 0x3FFF;
     const SPAWNED_SHIFT: u32 = 14;
-    const SPAWNED_MASK: u32 = 0x3FFF << Self::SPAWNED_SHIFT;
-    const NOTIFIED_BIT: u32 = 1 << 29;
+    const SPAWNED_MASK: u64 = 0x3FFF << Self::SPAWNED_SHIFT;
+    const NOTIFIED_BIT: u64 = 1 << 29;
     const STATE_SHIFT: u32 = 30;
-    const STATE_MASK: u32 = 0b11 << Self::STATE_SHIFT;
+    const STATE_MASK: u64 = 0b11 << Self::STATE_SHIFT;
+    const SUMMONED_SHIFT: u32 = 32;
+    const SUMMONED_MASK: u64 = 0x3FFF << Self::SUMMONED_SHIFT;
 
     const fn zero() -> Self {
         Sync(0)
@@ -105,7 +110,7 @@ impl Sync {
     }
     #[inline]
     fn set_idle(&mut self, v: u16) {
-        self.0 = (self.0 & !Self::IDLE_MASK) | (v as u32 & Self::IDLE_MASK);
+        self.0 = (self.0 & !Self::IDLE_MASK) | (v as u64 & Self::IDLE_MASK);
     }
     #[inline]
     fn spawned(self) -> u16 {
@@ -113,7 +118,20 @@ impl Sync {
     }
     #[inline]
     fn set_spawned(&mut self, v: u16) {
-        self.0 = (self.0 & !Self::SPAWNED_MASK) | ((v as u32 & 0x3FFF) << Self::SPAWNED_SHIFT);
+        self.0 = (self.0 & !Self::SPAWNED_MASK) | ((v as u64 & 0x3FFF) << Self::SPAWNED_SHIFT);
+    }
+    #[inline]
+    fn summoned(self) -> u16 {
+        ((self.0 & Self::SUMMONED_MASK) >> Self::SUMMONED_SHIFT) as u16
+    }
+    #[inline]
+    fn set_summoned(&mut self, v: u16) {
+        self.0 = (self.0 & !Self::SUMMONED_MASK) | ((v as u64 & 0x3FFF) << Self::SUMMONED_SHIFT);
+    }
+    /// The idle threads, without the one that may have been signaled and isn't awake yet.
+    #[inline]
+    fn idle_and_unsignaled(self) -> usize {
+        usize::from(self.idle()).saturating_sub(usize::from(self.state() == SyncState::Signaled))
     }
     #[inline]
     fn notified(self) -> bool {
@@ -139,17 +157,17 @@ impl Sync {
     }
     #[inline]
     fn set_state(&mut self, s: SyncState) {
-        self.0 = (self.0 & !Self::STATE_MASK) | ((s as u32) << Self::STATE_SHIFT);
+        self.0 = (self.0 & !Self::STATE_MASK) | ((s as u64) << Self::STATE_SHIFT);
     }
 }
 
 /// Atomic wrapper over the packed `Sync` word.
 #[repr(transparent)]
-struct AtomicSync(AtomicU32);
+struct AtomicSync(AtomicU64);
 
 impl AtomicSync {
     const fn new(v: Sync) -> Self {
-        AtomicSync(AtomicU32::new(v.0))
+        AtomicSync(AtomicU64::new(v.0))
     }
     #[inline]
     fn load(&self, order: Ordering) -> Sync {
@@ -517,6 +535,26 @@ impl Batch {
     }
 }
 
+impl Batch {
+    /// Removes the first `count` tasks, and returns them.
+    fn split_off_first(&mut self, count: usize) -> Batch {
+        if count >= self.len {
+            return core::mem::take(self);
+        }
+        let mut first = Batch::default();
+        for _ in 0..count {
+            let task = self.head.expect("`len` counts it");
+            // SAFETY: a task of this batch, which isn't queued.
+            let next = unsafe { (*Task::node_of(task).as_ptr()).next };
+            self.head = NonNull::new(Task::from_node(next));
+            self.len -= 1;
+            let task: *mut Task = task.as_ptr();
+            first.push(Batch::from(task));
+        }
+        first
+    }
+}
+
 impl ThreadPool {
     /// Loop over an array of tasks and invoke `run_fn` on each one in a different thread.
     /// **Blocks the calling thread** until all tasks are completed.
@@ -556,6 +594,11 @@ impl ThreadPool {
             values.iter().copied().enumerate().rev(),
             on_calling_thread,
         );
+    }
+
+    /// See `limit_threads`
+    pub fn allowed_threads(&self) -> usize {
+        self.allowed_threads.load(Ordering::Relaxed) as usize
     }
 
     /// The most threads that this pool starts.
@@ -653,7 +696,7 @@ impl ThreadPool {
         for runner_task in tasks.iter_mut() {
             batch.push(Batch::from(&raw mut runner_task.task.task));
         }
-        self.schedule(batch);
+        self.schedule_all_at_once(batch);
         on_calling_thread();
         group.wait();
         // `tasks` drops here after all worker threads have finished touching it.
@@ -707,6 +750,118 @@ impl ThreadPool {
     /// Schedule a batch of tasks to be executed by some thread on the thread pool.
     pub fn schedule(&self, batch: Batch) {
         self.schedule_impl(batch, false);
+    }
+
+    /// Like `schedule`, but the calling thread wakes or starts a thread for each task, as far as there are threads.
+    /// With `schedule` each thread that wakes up wakes the next, so the last of `n` begins `n` wake-ups late.
+    /// Only in a pool `without_spare_threads`: the tasks of the others are too short to pay for a thread each.
+    pub fn schedule_all_at_once(&self, mut batch: Batch) {
+        if batch.len < 2 || self.keeps_spare_thread_awake {
+            return self.schedule(batch);
+        }
+        let allowed = self.allowed_threads.load(Ordering::Relaxed) as usize;
+        let mut sync = self.sync.load(Ordering::Relaxed);
+        let to_spawn = loop {
+            let without_idle_thread = batch.len.saturating_sub(sync.idle_and_unsignaled());
+            let to_spawn = (allowed.min(Sync::IDLE_MASK as usize))
+                .saturating_sub(usize::from(sync.spawned()))
+                .min(without_idle_thread)
+                .min(usize::from(bun_core::get_thread_count()));
+            if to_spawn == 0 || sync.state() == SyncState::Shutdown {
+                break 0;
+            }
+            let mut new_sync = sync;
+            new_sync.set_spawned(sync.spawned() + to_spawn as u16);
+            match (self.sync).cmpxchg_weak(sync, new_sync, Ordering::Relaxed, Ordering::Relaxed) {
+                Some(current) => sync = current,
+                None => break to_spawn,
+            }
+        };
+        let for_new_threads = batch.split_off_first(to_spawn);
+        self.schedule_for_idle_threads(&batch);
+        self.spawn_for_each(for_new_threads);
+    }
+
+    fn schedule_for_idle_threads(&self, batch: &Batch) {
+        let (Some(head), Some(tail)) = (batch.head, batch.tail) else {
+            return;
+        };
+        self.run_queue.push(&node::List {
+            head: Task::node_of(head),
+            tail: Task::node_of(tail),
+        });
+        let mut sync = self.sync.load(Ordering::Relaxed);
+        let summoned = loop {
+            let summoned = batch.len.min(sync.idle_and_unsignaled()) as u16;
+            if summoned == 0 {
+                break 0;
+            }
+            let mut new_sync = sync;
+            new_sync.set_idle(sync.idle() - summoned);
+            new_sync.set_summoned(sync.summoned() + summoned);
+            // Release: pairs with the Acquire of the thread that answers in `wait()`, which then sees the tasks.
+            match (self.sync).cmpxchg_weak(sync, new_sync, Ordering::Release, Ordering::Relaxed) {
+                Some(current) => sync = current,
+                None => break summoned,
+            }
+        };
+        if summoned > 0 {
+            self.idle_event.wake(u32::from(summoned));
+        }
+        if usize::from(summoned) < batch.len {
+            self.force_spawn();
+        }
+    }
+
+    /// Starts a thread for each task, which runs that task first. `spawned` already counts these threads.
+    fn spawn_for_each(&self, mut batch: Batch) {
+        struct FirstTask(NonNull<Task>);
+        // SAFETY: as `Task`.
+        unsafe impl Send for FirstTask {}
+
+        // Linux looks harder for an idle core for a thread that wakes up than for one that is new, which can wait behind
+        // a busy one for the rest of its time slice. So the new threads sleep until all of them are there.
+        let are_all_spawned = std::sync::Arc::new(AtomicU32::new(0));
+        scopeguard::defer! {
+            are_all_spawned.store(1, Ordering::Release);
+            Futex::wake(&are_all_spawned, u32::MAX);
+        }
+        while batch.len > 0 {
+            let first = batch.split_off_first(1);
+            let task = FirstTask(first.head.expect("one task"));
+            let pool = bun_ptr::BackRef::new(self);
+            let gate = std::sync::Arc::clone(&are_all_spawned);
+            let spawned = std::thread::Builder::new()
+                .stack_size(self.stack_size as usize)
+                .spawn(move || {
+                    let task = task;
+                    while gate.load(Ordering::Acquire) == 0 {
+                        Futex::wait_forever(&gate, 0);
+                    }
+                    drop(gate);
+                    Thread::run(pool, Some(task.0))
+                });
+            if let Err(err) = spawned {
+                batch.push(first);
+                self.unregister_refused(batch.len, &err);
+                self.schedule(batch);
+                // `notified` can be from when these threads were counted, and then nobody answers it.
+                return self.notify_slow(false);
+            }
+        }
+    }
+
+    /// `spawned` counts `count` threads that the OS hasn't started.
+    #[cold]
+    fn unregister_refused(&self, count: usize, err: &std::io::Error) {
+        for _ in 0..count {
+            // SAFETY: `&self` keeps the pool live; `None` makes `unregister` return right after the decrement.
+            unsafe { Self::unregister(self, None) };
+        }
+        // The threads there are take the tasks. With none they would wait forever.
+        if !self.has_workers() && EXITS_WITHOUT_ANY_THREAD.load(Ordering::Relaxed) {
+            exit_spawn_failed(err);
+        }
     }
 
     /// This function should only be called from threads that are part of the thread pool.
@@ -827,7 +982,7 @@ impl ThreadPool {
     /// https://www.youtube.com/watch?v=ys3qcbO5KWw
     pub fn warm(&self, count: u16) {
         // Thread counts are 14-bit fields in `Sync`; truncate to 14 bits.
-        let target = count.min((self.max_threads & Sync::IDLE_MASK) as u16);
+        let target = count.min((u64::from(self.max_threads) & Sync::IDLE_MASK) as u16);
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.spawned() < target {
             let mut new_sync = sync;
@@ -845,7 +1000,7 @@ impl ThreadPool {
             let pool = bun_ptr::BackRef::new(self);
             match std::thread::Builder::new()
                 .stack_size(stack_size)
-                .spawn(move || Thread::run(pool))
+                .spawn(move || Thread::run(pool, None))
             {
                 Ok(_handle) => {
                     // Dropping JoinHandle detaches the thread.
@@ -921,23 +1076,12 @@ impl ThreadPool {
                             let pool = bun_ptr::BackRef::new(self);
                             match std::thread::Builder::new()
                                 .stack_size(stack_size)
-                                .spawn(move || Thread::run(pool))
+                                .spawn(move || Thread::run(pool, None))
                             {
                                 Ok(_handle) => {
                                     // detach by dropping
                                 }
-                                Err(err) => {
-                                    // The threads there are take the task. With none it would wait forever.
-                                    if new_sync.spawned() == 1
-                                        && EXITS_WITHOUT_ANY_THREAD.load(Ordering::Relaxed)
-                                    {
-                                        exit_spawn_failed(&err);
-                                    }
-                                    // SAFETY: `&self` keeps the pool live; `None` makes
-                                    // `unregister` return right after undoing the `spawned`
-                                    // increment CAS'd above (no per-thread wait past notify).
-                                    return unsafe { Self::unregister(self, None) };
-                                }
+                                Err(err) => self.unregister_refused(1, &err),
                             }
                             return;
                         }
@@ -949,7 +1093,7 @@ impl ThreadPool {
     }
 
     #[inline(never)]
-    fn wait(&self, _is_waking: bool) -> Result<bool, WaitError> {
+    fn wait(&self, _is_waking: bool) -> Result<Woken, WaitError> {
         let mut is_idle = false;
         let mut is_waking = _is_waking;
         let mut sync = self.sync.load(Ordering::Relaxed);
@@ -962,8 +1106,20 @@ impl ThreadPool {
                 debug_assert!(sync.state() == SyncState::Waking);
             }
 
+            if is_idle && sync.summoned() > 0 {
+                let mut new_sync = sync;
+                new_sync.set_summoned(sync.summoned() - 1);
+                sync = match self.sync.cmpxchg_weak(
+                    sync,
+                    new_sync,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Some(cur) => cur,
+                    None => return Ok(Woken::Summoned),
+                };
             // Consume a notification made by notify().
-            if sync.notified() {
+            } else if sync.notified() {
                 let mut new_sync = sync;
                 new_sync.set_notified(false);
                 if is_idle {
@@ -983,7 +1139,8 @@ impl ThreadPool {
                 ) {
                     Some(cur) => cur,
                     None => {
-                        return Ok(is_waking || (sync.state() == SyncState::Signaled));
+                        let is_waking = is_waking || (sync.state() == SyncState::Signaled);
+                        return Ok(Woken::Notified { is_waking });
                     }
                 };
             } else if !is_idle {
@@ -1015,7 +1172,12 @@ impl ThreadPool {
                 // BackRef invariant (pointee outlives holder) holds for the
                 // `&self` `drain_idle_events` calls in `Event::wait`.
                 let current = NonNull::new(Thread::current()).map(bun_ptr::BackRef::from);
-                self.idle_event.wait(current.as_deref());
+                // A thread that was woken for a notification may have answered a summons instead, and the other way round.
+                let is_wanted = || {
+                    let sync = self.sync.load(Ordering::Relaxed);
+                    sync.summoned() > 0 || sync.notified()
+                };
+                self.idle_event.wait(current.as_deref(), &is_wanted);
                 sync = self.sync.load(Ordering::Relaxed);
             }
         }
@@ -1030,6 +1192,7 @@ impl ThreadPool {
             new_sync.set_notified(true);
             new_sync.set_state(SyncState::Shutdown);
             new_sync.set_idle(0);
+            new_sync.set_summoned(0);
 
             // Full barrier to synchronize with both wait() and notify()
             sync = match self
@@ -1040,7 +1203,7 @@ impl ThreadPool {
                 None => {
                     // Wake up any threads sleeping on the idle_event.
                     // TODO: I/O polling notification here.
-                    if sync.idle() > 0 {
+                    if sync.idle() > 0 || sync.summoned() > 0 {
                         self.idle_event.shutdown();
                     }
                     return sync;
@@ -1079,7 +1242,7 @@ impl ThreadPool {
         let Some(thread) = maybe_thread else {
             return;
         };
-        thread.join_event.wait(None);
+        thread.join_event.wait(None, &|| false);
 
         // After receiving the shutdown signal, shutdown the next thread in the pool.
         // We have to do that without touching the thread pool itself since its memory is invalidated by now.
@@ -1096,7 +1259,7 @@ impl ThreadPool {
     /// For a pool that had threads at `shutdown()`.
     fn join(&self) {
         // Also if `spawned` is 0 by now: the last thread uses `join_event` after its decrement.
-        self.join_event.wait(None);
+        self.join_event.wait(None, &|| false);
 
         // Acquire: what each thread did to the pool before its decrement happens before the drop.
         let sync = self.sync.load(Ordering::Acquire);
@@ -1113,6 +1276,15 @@ impl ThreadPool {
         // `notify()` call.
         bun_ptr::BackRef::from(thread).join_event.notify();
     }
+}
+
+/// Why `ThreadPool::wait` returned.
+enum Woken {
+    Notified {
+        is_waking: bool,
+    },
+    /// One task of the pool's queue is for this thread, and the others have threads of their own.
+    Summoned,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -1242,7 +1414,7 @@ impl Thread {
     }
 
     /// Thread entry point which runs a worker for the ThreadPool
-    fn run(thread_pool: bun_ptr::BackRef<ThreadPool>) {
+    fn run(thread_pool: bun_ptr::BackRef<ThreadPool>, mut first_task: Option<NonNull<Task>>) {
         // No args, no preconditions; marks this OS thread as a mimalloc
         // threadpool worker so deferred frees are processed eagerly. `safe fn`
         // (Rust 2024) discharges the link-time proof so no `unsafe` block.
@@ -1303,8 +1475,17 @@ impl Thread {
         let mut is_waking = false;
         loop {
             let wait_start = if stats { now_ns() } else { 0 };
-            is_waking = match pool.wait(is_waking) {
-                Ok(w) => w,
+            let mut own = first_task.take().map(Task::node_of);
+            let woken = match own {
+                Some(_) => Ok(Woken::Notified { is_waking: false }),
+                None => pool.wait(is_waking),
+            };
+            is_waking = match woken {
+                Ok(Woken::Notified { is_waking }) => is_waking,
+                Ok(Woken::Summoned) => {
+                    own = pool.run_queue.pop_one();
+                    false
+                }
                 Err(_) => {
                     // `shutdown()` raced `wake_for_idle_events()`: the bundler
                     // pushes per-worker `drop_task`s into `idle_queue`, wakes
@@ -1324,7 +1505,11 @@ impl Thread {
                     .fetch_add(now_ns().wrapping_sub(wait_start), Ordering::Relaxed);
             }
 
-            while let Some(result) = self_.pop(pool) {
+            let not_stolen = |node| node::Stole {
+                node,
+                pushed: false,
+            };
+            while let Some(result) = own.take().map(not_stolen).or_else(|| self_.pop(pool)) {
                 if result.pushed || is_waking {
                     pool.notify(is_waking);
                 }
@@ -1463,8 +1648,10 @@ impl Event {
     ///
     /// `worker` has its idle queue drained before each sleep: `wake_all()` wakes every
     /// waiter without handing out a notification, so they all come back here.
+    ///
+    /// Also returns once `is_over` is true. Whoever makes it true calls `wake()` afterwards.
     #[inline(never)]
-    fn wait(&self, worker: Option<&Thread>) {
+    fn wait(&self, worker: Option<&Thread>, is_over: &dyn Fn() -> bool) {
         let mut acquire_with: u32 = Self::EMPTY;
         let mut word = self.state.load(Ordering::Relaxed);
         let mut is_idle: bool = false;
@@ -1522,6 +1709,9 @@ impl Event {
                 if worker.drain_idle_events() != 0 {
                     // What the tasks freed is there for the fallback sweep below to give back.
                     has_swept = false;
+                }
+                if is_over() {
+                    return;
                 }
             }
 
@@ -1602,9 +1792,14 @@ impl Event {
     /// Wakes every waiter to look at its idle queue. Posts no notification: each of them
     /// goes back to waiting.
     fn wake_all(&self) {
+        self.wake(u32::MAX);
+    }
+
+    /// `wake_all` for at most `count` of the waiters that are asleep.
+    fn wake(&self, count: u32) {
         // Release: pairs with the fence in `wait`.
         self.state.fetch_add(Self::EPOCH_ONE, Ordering::Release);
-        Futex::wake(&self.state, u32::MAX);
+        Futex::wake(&self.state, count);
     }
 }
 
@@ -1740,6 +1935,17 @@ pub mod node {
                         });
                     }
                     Err(cur) => stack = cur,
+                }
+            }
+        }
+
+        /// Waits for another consumer, which holds the queue for a few hundred instructions.
+        pub(super) fn pop_one(&self) -> Option<NonNull<Node>> {
+            loop {
+                match self.try_acquire_consumer() {
+                    Ok(mut consumer) => return consumer.pop().and_then(NonNull::new),
+                    Err(ConsumerError::Empty) => return None,
+                    Err(ConsumerError::Contended) => core::hint::spin_loop(),
                 }
             }
         }

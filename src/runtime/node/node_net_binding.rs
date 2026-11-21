@@ -6,11 +6,10 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_io::JsKeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{self as jsc, JSValue, JsCell, JsResult, WrapperGuard};
-use bun_ptr::RefPtr;
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_uws as uws;
 
-use crate::generated_bindgen::socket_body::{SocketHandle, js_TCPSocket, js_TLSSocket};
+use crate::generated_bindgen::socket_body::SocketHandle;
 use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags};
 
 static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
@@ -51,10 +50,8 @@ pub(crate) fn set_default_auto_select_family_attempt_timeout(value: u32) -> u32 
 pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue {
     // Only `socket`, `ref_count`, `protos`, `handlers` are
     // specified; the rest take their struct defaults.
-    fn make<'a, const SSL: bool>(
-        wrap: impl FnOnce(RefPtr<NewSocket<SSL>>) -> WrapperGuard<'a, NewSocket<SSL>>,
-    ) -> JSValue {
-        let socket = wrap(RefPtr::new(NewSocket::<SSL> {
+    fn make<const SSL: bool>(global: &JSGlobalObject) -> JSValue {
+        let socket = bun_ptr::RefPtr::new(NewSocket::<SSL> {
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             ref_count: bun_ptr::RefCount::init(),
             protos: JsCell::new(None),
@@ -76,17 +73,15 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
             twin: Cell::new(None),
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
-        }));
+        });
         // Weak while idle: `_handle` owns it, and `this_value_for_connect` pins each attempt.
-        let value = socket.to_js();
-        socket.this_value.set(jsc::JsRef::init_weak(value));
-        value
+        socket.to_js(global, false)
     }
 
     if !is_ssl {
-        make(|socket| js_TCPSocket::wrap(socket, cx.global()))
+        make::<false>(cx.global())
     } else {
-        make(|socket| js_TLSSocket::wrap(socket, cx.global()))
+        make::<true>(cx.global())
     }
 }
 

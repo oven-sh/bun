@@ -22,7 +22,7 @@ use bun_threading::{Guarded, UnboundedQueue};
 use crate::generated_bindgen::node_fs_stat_watcher::js_StatWatcher as js;
 use crate::node::stat::{StatsBig, StatsSmall};
 use crate::node::types::PathLikeExt;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 
 bun_output::declare_scope!(StatWatcher, visible);
 
@@ -176,10 +176,7 @@ impl StatWatcherScheduler {
 
         // if the interval is 0 means that we stop the timer
         if interval == 0 {
-            // if the timer is active we need to remove it
-            if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-                timer_all.remove(&self.event_loop_timer);
-            }
+            timer_all.remove(&self.event_loop_timer);
             return;
         }
 
@@ -193,12 +190,9 @@ impl StatWatcherScheduler {
     }
 
     pub(crate) fn timer_callback(self: RefPtr<Self>) {
-        let has_been_cleared = self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
-            || self.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running;
-
-        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
-
-        if has_been_cleared || self.is_shutdown.load(Ordering::Relaxed) {
+        if self.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running
+            || self.is_shutdown.load(Ordering::Relaxed)
+        {
             return;
         }
 
@@ -357,7 +351,7 @@ pub(crate) struct StatWatcher {
     // gives safe `&JSGlobalObject` projection (Deref) at every read site.
     global_this: BackRef<JSGlobalObject>,
 
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
 
     poll_ref: JsKeepAlive,
 
@@ -477,7 +471,6 @@ impl StatWatcher {
     /// The scheduler holds its own ref; `closed` tells it to drop it.
     pub(crate) fn finalize(&self) {
         log!("Finalize\n");
-        self.this_value.with_mut(|r| r.finalize());
         self.closed.store(true, Ordering::Relaxed);
     }
 
@@ -647,9 +640,9 @@ impl StatWatcher {
             this.poll_ref.ref_(this.ctx.loop_ctx());
         }
 
-        let js_this = js::to_js(this.clone(), &args.global_this);
-        this.this_value
-            .set(JsRef::init_strong(js_this, &args.global_this));
+        let wrapper = js::wrap(this.clone(), &args.global_this);
+        wrapper.set_js_ref_strong(&args.global_this);
+        let js_this = wrapper.to_js();
         js::listener_set_cached(js_this, &args.global_this, args.listener);
         // SAFETY: heap-allocated; `close()` disarms it before any drop.
         unsafe { bun_jsc::AbortHandle::arm_owner(this.as_ptr(), vm.context_of(args.context)) };

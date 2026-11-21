@@ -92,8 +92,7 @@ enum Transport {
     /// `self.tcp`. Every transport is reset to this once the connection closes, with `tcp` detached.
     Socket,
     /// wss:// through an HTTP proxy. The tunnel handles TLS, so this is only used with SSL=false.
-    /// Holds one ref, released in `clear_data`.
-    Tunnel(RefPtr<WebSocketProxyTunnel>),
+    Tunnel(bun_ptr::Attached<WebSocketProxyTunnel>),
     /// A JS stream. Writes go through C++, which always accepts the whole buffer.
     /// Reads arrive through `feed`. C++ holds the only ref on this client.
     Stream,
@@ -270,10 +269,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.message_is_compressed.set(false);
         self.deflate.replace(None);
         drop(self.secure.take());
-        // Detach the tunnel first so its shutdown callbacks cannot re-enter this path.
         if let Transport::Tunnel(tunnel) = self.transport.replace(Transport::Socket) {
-            tunnel.clear_connected_web_socket();
-            tunnel.shutdown();
+            drop(tunnel);
             // Release the I/O-layer ref taken in init_with_tunnel() — the
             // tunnel was this struct's socket-equivalent owner. In the
             // non-tunnel path this same ref is released by handle_close()
@@ -1095,7 +1092,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         match self.transport.get() {
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
             Transport::Socket => usize::try_from(self.tcp.get().write(bytes)).ok(),
-            Transport::Tunnel(tunnel) => match tunnel.clone().write(bytes) {
+            Transport::Tunnel(tunnel) => match RefPtr::clone(tunnel).write(bytes) {
                 Ok(wrote) => Some(wrote),
                 // Like a socket, a tunnel that refuses a write took 0 bytes: `handle_tunnel_writable` follows
                 // (a renegotiation ended) or `handle_tunnel_close` (a read failed, its data comes first).
@@ -1295,7 +1292,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.sent_fin.set(true);
         match self.transport.get() {
             Transport::Socket => self.tcp.get().shutdown(),
-            Transport::Tunnel(tunnel) => tunnel.clone().end(),
+            Transport::Tunnel(tunnel) => RefPtr::clone(tunnel).end(),
             Transport::Stream => {
                 if let Some(ws) = self.cpp_websocket() {
                     ws.stream_end();
@@ -1662,7 +1659,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             deflate_params,
             None,
             &[],
-            Transport::Tunnel(tunnel),
+            Transport::Tunnel(tunnel.into()),
             options,
         );
 

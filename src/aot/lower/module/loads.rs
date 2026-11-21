@@ -485,7 +485,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         module: ModuleRef,
         options: Option<ValueId>,
     ) -> ValueId {
-        let module = self.file.inputs.modules.facade(module).unwrap_or(module);
+        let modules = self.file.inputs.modules;
+        // Nothing is known of the namespace that a call with options gives.
+        let options = match options {
+            None if modules.may_typed_form_answer_import(module) => Some(self.builder.undefined()),
+            _ => options,
+        };
+        let module = modules.facade(module).unwrap_or(module);
         let module = self.file.fragment.declare_module(module);
         let referrer = self.file.module_id();
         self.builder.import_module(module, options, referrer)
@@ -2559,7 +2565,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         for spelled in candidates.spelled_modules {
             let answer_for_candidate =
-                self.emit_resolve_of_name(spelled.spelling, None, spelled.module, is_url);
+                self.emit_path_found_at_build(spelled.spelling, None, spelled.module, is_url);
             let is_candidate = self.builder.strict_eq(text, answer_for_candidate);
             let candidate = self.create_block();
             let mut other = self.create_block();
@@ -2776,6 +2782,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         module: ModuleRef,
         is_url: bool,
     ) -> ValueId {
+        let is_path = bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name));
+        if is_path && !is_url && self.file.has_source_path_of(module) {
+            let specifier = self.emit_name_as_given(name, given);
+            let referrer = self.file.module_id();
+            return self
+                .builder
+                .resolve_dynamic(specifier, referrer, false, false);
+        }
+        self.emit_path_found_at_build(name, given, module, is_url)
+    }
+
+    fn emit_path_found_at_build(
+        &mut self,
+        name: Atom,
+        given: Option<ValueId>,
+        module: ModuleRef,
+        is_url: bool,
+    ) -> ValueId {
         if !is_url && let Some(asked) = self.file.builtin_name_as_asked(name, module) {
             let asked = asked.to_vec();
             let asked = self.file.intern_bytes(&asked);
@@ -2783,7 +2807,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         if !is_url
             && let ModuleRef::File(file) = module
-            && !bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name))
             && let Some(path) = self.file.inputs.sources.source_path(file)
         {
             return self.emit_text(&path);

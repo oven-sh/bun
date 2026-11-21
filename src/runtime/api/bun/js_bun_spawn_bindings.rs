@@ -1131,12 +1131,12 @@ fn spawn_maybe_sync(
 
     // Use the isolated loop for spawnSync operations
     //
-    // `to_process` closes what is left in the result.
+    // `to_process_handle` closes what is left in the result.
     let spawned_stdin = spawned.stdin.take();
     let spawned_stdout = spawned.stdout.take();
     let spawned_stderr = spawned.stderr.take();
     let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
-    let process = spawned.to_process(loop_handle);
+    let process = spawned.to_process_handle(loop_handle);
 
     #[cfg(unix)]
     let posix_ipc_fd = if !is_sync && maybe_ipc_mode.is_some() {
@@ -1259,11 +1259,6 @@ fn spawn_maybe_sync(
                 .kill_and_reap(&mut bun_core::ffi::zeroed::<Rusage>());
             #[cfg(windows)]
             let _ = subprocess.try_kill(SignalCode::SIGKILL);
-            subprocess.process().detach();
-            if let Some(ipc_data) = subprocess.ipc_data.take() {
-                // Nothing else holds it yet (no socket wired, no task scheduled).
-                ipc_data.detach();
-            }
             return Err(err);
         }
     }
@@ -1306,10 +1301,7 @@ fn spawn_maybe_sync(
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
-    // SAFETY: `subprocess_ptr` is live, and `finalize()` detaches the handler before it is freed.
-    subprocess.process().set_exit_handler(unsafe {
-        bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Subprocess, subprocess_ptr)
-    });
+    subprocess.process.set_exit_owner(&subprocess_ref);
 
     promise_for_stream.ensure_still_alive();
     subprocess.update_flags(|f| {
@@ -1351,8 +1343,9 @@ fn spawn_maybe_sync(
     let (out, _sync_wrapper) = if is_sync {
         (JSValue::ZERO, Some(SyncWrapper(subprocess_ref)))
     } else {
-        let out = Subprocess::js::to_js(subprocess_ref, cx.global());
-        subprocess.this_value.with_mut(|v| v.set_weak(out));
+        let wrapper = Subprocess::js::wrap(subprocess_ref, cx.global());
+        wrapper.set_js_ref_weak();
+        let out = wrapper.to_js();
         // Immediately upgrade to strong if there's pending activity to prevent premature GC
         subprocess.update_has_pending_activity();
         (out, None)
@@ -1595,8 +1588,8 @@ fn spawn_maybe_sync(
                 // comparable with `now`.
                 if abort_signal_timeout.event_loop_timer.state.get()
                     == crate::timer::EventLoopTimerState::ACTIVE
-                    && abort_signal_timeout.event_loop_timer.in_heap.get()
-                        == crate::timer::InHeap::Regular
+                    && abort_signal_timeout.event_loop_timer.clock.get()
+                        == crate::timer::Clock::Real
                 {
                     let next_ts = abort_signal_timeout.event_loop_timer.next.get();
                     if user_timespec.eql(&Timespec::EPOCH)

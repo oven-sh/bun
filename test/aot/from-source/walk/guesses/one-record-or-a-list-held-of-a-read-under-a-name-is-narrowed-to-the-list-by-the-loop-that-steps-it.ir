@@ -1,15 +1,15 @@
 # -- source: main.js
-# function Kept(fn) { this.fn = fn; }
-# function Emitter() { this.events = {}; }
-# Emitter.prototype.on = function (name, fn) { var kept = new Kept(fn); if (!this.events[name]) this.events[name] = kept; else if (!this.events[name].fn) this.events[name].push(kept); else this.events[name] = [this.events[name], kept]; return this; };
-# Emitter.prototype.emit = function (name, a) { var l = this.events[name]; if (!l) return false; if (l.fn) return l.fn(a), true; for (var i = 0; i < l.length; i++) l[i].fn(a); return true; };
-# var e = new Emitter(), total = 0;
-# e.on("one", function (n) { total += n; }); e.on("two", function (n) { total += n; }); e.on("two", function (n) { total -= n >> 1; });
-# function turn(t) { total = t & 7; for (var i = 0; i < 16; i++) { e.emit("one", i); e.emit("two", i); } return total & 1023; }
-# print(turn(1)); print(turn(2));
+# function Guest(seats) { this.seats = seats; }
+# function Inn() { this.rooms = {}; }
+# Inn.prototype.lets = function (room, seats) { var there = this.rooms[room], list = Array.isArray(there) ? there : there ? [there] : []; list.unshift(new Guest(seats)); this.rooms[room] = list[1] ? list : list[0]; return list.length; };
+# Inn.prototype.counts = function (room, most) { var there = this.rooms[room], free = most; if (there === undefined) return -1; if (there.seats > 0) return most - there.seats; for (var at = there.length - 1; at >= 0; at--) free -= there[at].seats; return free; };
+# var inn = new Inn();
+# inn.lets("east", 2); inn.lets("west", 1); inn.lets("west", 3); inn.lets("west", 4);
+# function night(turn) { var sum = turn; for (var i = 0; i < 16; i++) sum = sum * 2 + inn.counts("east", i) - inn.counts("west", 9) & 1023; return sum; }
+# print(night(1)); print(night(2));
 # -- end of source
 # Under a name lies one record or a list of them, and Link holds both of the read. One question cannot tell the two, and asked for both at once it tells nothing. The loop asks the value for its length and its elements under an index: that use lies within what is held, so it narrows it: the value is asked in front of the turns whether it is a list.
-# f5 = emit
+# f5 = counts
 # RUN(HELD): link held accesses mechanisms=all
 # HELD: read f5 v{{*}} proven=undefined|L0|Array
 # The turns are built twice behind that one question, typed and as written.

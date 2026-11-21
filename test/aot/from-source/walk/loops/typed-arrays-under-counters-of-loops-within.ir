@@ -1,14 +1,14 @@
 # -- source: typed-arrays-under-counters-of-loops-within.js
 # globalThis.held = new Map();
-# function sum(bytes, length, position) { let s = 0, t = 0, n = 0; while (length !== 0) { n = length > 20 ? 20 : length; length -= n; do { s = (s + bytes[position++]) | 0; t = (t + s) | 0; } while (--n); s %= 65521; t %= 65521; } return s ^ (t << 16); }
-# globalThis.held.set("sum", sum);
-# const found = globalThis.held.get("sum");
+# function tells(beads, count, at) { let rows = 0, most = 0; while (count > 0) { let sum = 0; for (let left = count & 7 || 8; left > 0; left--) { sum = sum * 2 + (beads[at] ^ left) | 0; at++; count--; } if (sum > most) most = sum; rows++; } return most * 100 + rows; }
+# globalThis.held.set("tells", tells);
+# const found = globalThis.held.get("tells");
 # print(found(new Uint8Array(60).fill(3), 50, 4), found(new Array(60).fill(3), 50, 4), found(new Uint16Array(60).fill(3), 50, "4"), found(new Uint8Array(60).fill(3), 50, 4.5));
 # -- end of source
 # The counter of the loop within goes on from the counter of the loop around it, whose start nobody knows: the outer loop is versioned for typed arrays, and its preheader asks whether the start is a number.
-# f1 = sum
+# f1 = tells
 # RUN(BYTES): walk f1:Body mechanisms=all
 # BYTES: = GetTypedArrayElement
 # RUN(ANSWERS): run-in-shell mechanisms=all
-# ANSWERS: 250675350 250675350 250675350 0
+# ANSWERS: 198007 198007 198007 179307
 # ANSWERS-NEXT: exited with 0

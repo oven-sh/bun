@@ -1204,17 +1204,17 @@ impl GitSubprocess {
             (&self.stdout, spawned.stdout.take(), spawned.memfds[1]),
             (&self.stderr, spawned.stderr.take(), spawned.memfds[2]),
         ] {
-            let Some(fd) = file.map(bun_sys::File::into_raw) else {
+            let Some(file) = file else {
                 continue;
             };
             if is_memfd {
-                reader.start_memfd(fd);
+                reader.start_memfd(file);
                 continue;
             }
-            let _ = bun_sys::set_nonblocking(fd);
+            let _ = bun_sys::set_nonblocking(file.fd());
             self.remaining_fds.set(self.remaining_fds.get() + 1);
             reader.update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
-            let result = reader.start(self.event_loop.as_event_loop_ctx(), fd, true)?;
+            let result = reader.start(self.event_loop.as_event_loop_ctx(), file.into(), true)?;
             self.note_read_result(result);
         }
         #[cfg(windows)]

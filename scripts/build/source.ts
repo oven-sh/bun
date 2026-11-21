@@ -22,7 +22,7 @@ import { ar, cc, cxx, link, nasm, pch, type PrecompiledHeader } from "./compile.
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeSourceIdentity, fetchCliPath } from "./fetch-cli.ts";
-import { computeDepFlags, computeTargetLinkFlags, safeStackFlags } from "./flags.ts";
+import { computeDepFlags, computeTargetLinkFlags } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
@@ -137,6 +137,12 @@ export type Source =
        * affect which tarball you need).
        */
       identity: string;
+      /**
+       * Absolute path of the file that pins the download's sha256 (format:
+       * `pinnedSha256` in download.ts). The fetch fails if it has no line for
+       * `url`, or if the download hashes to something else.
+       */
+      sha256sums?: string;
       /**
        * Paths to delete (relative to destDir) after extraction. WebKit
        * deletes `include/unicode` on macOS (conflicts with system ICU
@@ -443,8 +449,7 @@ export type DepName =
   | "nodejs"
   | "rust-argon2"
   | "sqlite"
-  | "tinycc"
-  | "zstd";
+  | "tinycc";
 
 /**
  * A vendored dependency definition. Lives in scripts/build/deps/<name>.ts.
@@ -579,7 +584,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // $rm_paths: space-separated paths (relative to dest) to delete after
   // extraction. Trailing positional args to fetch-cli, may be empty.
   n.rule("dep_fetch_prebuilt", {
-    command: `${stream} ${cfg.jsRuntime} ${fetchCli} prebuilt $name $url $dest $identity $rm_paths`,
+    command: `${stream} ${cfg.jsRuntime} ${fetchCli} prebuilt $name $url $dest $identity $sha256sums $rm_paths`,
     description: "fetch $name (prebuilt)",
     restat: true,
     pool: "dep",
@@ -981,17 +986,19 @@ function emitPrebuilt(
   // prunes downstream when fetch was a no-op).
   n.build({
     outputs: [stamp],
-    implicitOutputs: [...libs, ...files],
+    // .sha256: a checkout with no pin for this version can have filled the shared cache since.
+    implicitOutputs: [...libs, ...files, ...(source.sha256sums !== undefined ? [resolve(destDir, ".sha256")] : [])],
     rule: "dep_fetch_prebuilt",
     inputs: [],
-    // Only fetch-cli.ts. download.ts has a lot of shared helpers — editing
+    // Not download.ts: it has a lot of shared helpers — editing
     // those shouldn't re-download a multi-hundred-MB WebKit tarball.
-    implicitInputs: [fetchCliPath],
+    implicitInputs: [fetchCliPath, ...(source.sha256sums !== undefined ? [source.sha256sums] : [])],
     vars: {
       name,
       url: source.url,
       dest: destDir,
       identity: source.identity,
+      sha256sums: source.sha256sums !== undefined ? quote(source.sha256sums, cfg.host.os === "windows") : "-",
       // Space-separated relative paths. No quoting needed — paths are
       // under our control (include/node/openssl etc.), no spaces.
       rm_paths: (source.rmAfterExtract ?? []).join(" "),
@@ -1248,14 +1255,7 @@ function emitDirect(
 
   const incFlags = (spec.includes ?? []).map(i => `-I${q(resolve(srcDir, i))}`);
   const defFlags = Object.entries(spec.defines ?? {}).map(([k, v]) => defineFlag(k, v));
-  const libFlags = [
-    ...baseFlags,
-    ...picFlags(cfg, spec.pic),
-    ...incFlags,
-    ...defFlags,
-    ...(spec.cflags ?? []),
-    ...safeStackFlags(cfg, name),
-  ];
+  const libFlags = [...baseFlags, ...picFlags(cfg, spec.pic), ...incFlags, ...defFlags, ...(spec.cflags ?? [])];
 
   // Sources must exist before compile attempts. sourceStamp (or the fetch
   // .ref) is order-only: we don't want every .o recompiling when the stamp

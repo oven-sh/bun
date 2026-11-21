@@ -8,7 +8,7 @@ use bun_io::max_buf;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSValue, JsResult};
-use bun_ptr::{ParentRef, RefCount, RefPtr};
+use bun_ptr::{Attached, Detach, ParentRef, RefCount, RefPtr};
 
 use super::readable::Readable;
 use super::{StdioResult, Subprocess};
@@ -21,7 +21,7 @@ pub(crate) struct PipeReader {
     // Backref to owning Subprocess; cleared when `Readable::Pipe` lets go of this reader.
     // `ParentRef` encapsulates the single unsafe deref behind a safe `Deref`/`get()`;
     // the Subprocess owns this PipeReader (via `Readable::Pipe`) and is guaranteed
-    // live whenever `process.is_some()` — see `on_read_result`/`finalize` ordering.
+    // live whenever `process.is_some()`.
     // `'static` erases the borrow-checker lifetime (Subprocess is heap-pinned).
     process: Cell<Option<ParentRef<Subprocess<'static>>>>,
     event_loop: bun_io::EventLoopCtx,
@@ -44,7 +44,7 @@ impl PipeReader {
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
         limit: Option<&max_buf::OwnerRef>,
-    ) -> RefPtr<PipeReader> {
+    ) -> Attached<PipeReader> {
         let mut reader = BufferedReader::init();
         if let Some(limit) = limit {
             reader.set_maxbuf(limit.for_reader());
@@ -65,7 +65,7 @@ impl PipeReader {
         if let StdioResult::Buffer(pipe) = result {
             this.reader.set_source(bun_io::Source::Pipe(pipe));
         }
-        this
+        this.into()
     }
 
     /// # Safety
@@ -116,8 +116,8 @@ impl PipeReader {
                 f.set(PosixFlags::IS_PAUSED, lazy);
                 f.insert(PosixFlags::SOCKET | PosixFlags::NONBLOCKING);
             });
-            let fd = self.stdio_result.take().unwrap().into_raw();
-            let started = self.reader.start(self.event_loop, fd, true);
+            let file = self.stdio_result.take().unwrap();
+            let started = self.reader.start(self.event_loop, file.into(), true);
             self.on_read_result(started.unwrap_or_else(ReadResult::Err));
         }
     }
@@ -166,20 +166,20 @@ impl PipeReader {
 
     pub(crate) fn to_js(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         let stream = ReadableStream::from_pipe(cx, &self.reader);
-        self.detach();
         self.start_ref.set(None);
         stream
     }
 
+    #[cfg(unix)]
     pub(crate) fn finalize(&self) {
-        self.detach();
-        #[cfg(unix)]
         if self.start_ref.take().is_some() {
             self.reader.deinit();
         }
     }
+}
 
-    pub(crate) fn detach(&self) {
+impl Detach for PipeReader {
+    fn detach(&self) {
         self.process.set(None);
     }
 }

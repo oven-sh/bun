@@ -1,44 +1,44 @@
-// A variable of a function that is initialized with a constant once is that constant in the closures made behind it: a minified UMD file keeps its names so. What is made before, stored again or skipped is not.
+// A variable of a function that is initialized with a constant once is that constant in the closures made behind it: a file made smaller keeps its names so. What is made before, stored again or skipped is not.
 "use strict";
 const log = [];
-!(function (root, factory) {
-  root.built = factory();
+(function (shop, make) {
+  shop.made = make();
 })(log, function () {
-  var first = "year",
-    second = "month",
-    scale = 1e3,
-    nothing = void 0,
-    mark = "$isDay",
-    last = "日";
-  var Day = (function () {
-    function Day(value) {
-      this[first] = value;
-      this[mark] = !0;
+  var aisle = "aisle",
+    shelf = "shelf",
+    grams = 1e3,
+    none = void 0,
+    sign = "#crate",
+    lid = "箱";
+  var Crate = (function () {
+    function Crate(kilos) {
+      this[sign] = !0;
+      this[aisle] = kilos;
     }
-    var prototype = Day.prototype;
-    prototype.get = function (unit) {
-      switch (unit) {
-        case first:
-          return this[first] * scale;
-        case second:
-          return (this[first] % 12) + 0.5;
-        case last:
-          return last;
-        default:
-          return nothing;
-      }
-    };
-    prototype.fields = function () {
+    var above = Crate.prototype;
+    above.names = function () {
       const keys = [];
       for (const key in this) if (Object.hasOwn(this, key)) keys.push(key);
       return keys.join();
     };
-    return Day;
+    above.tell = function (what) {
+      switch (what) {
+        case lid:
+          return lid;
+        case shelf:
+          return (this[aisle] % 9) + 0.25;
+        case aisle:
+          return this[aisle] * grams;
+        default:
+          return none;
+      }
+    };
+    return Crate;
   })();
-  return Day;
+  return Crate;
 });
-const day = new log.built(2026);
-log.push(day.get("year"), day.get("month"), day.get("日"), day.get("week"), day.fields(), day.$isDay);
+const crate = new log.made(417);
+log.push(crate.names(), crate.tell("箱"), crate.tell("aisle"), crate.tell("shelf"), crate.tell("cellar"), crate["#crate"]);
 
 function hoisted() {
   const early = read();
@@ -92,5 +92,5 @@ function* steps() {
 }
 const [half, quarter] = steps();
 log.push(half(), quarter);
-delete log.built;
+delete log.made;
 console.log(log.join("\n"));

@@ -346,7 +346,7 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
 pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
 pub use self::js_array::JSArray;
-pub use self::js_ref::{JsCellRefExt, JsRef};
+pub use self::js_ref::{HasJsRef, JsCellRefExt, JsRef};
 pub use self::string_builder::StringBuilder;
 pub use self::uuid::{UUID, UUID5, UUID7};
 
@@ -522,13 +522,31 @@ pub fn initialize(options: InitializeOptions) {
     };
 }
 
-/// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
-/// first VM, which freezes JSC's options.
-pub fn expect_vm_per_thread() {
+/// The process evaluates a configuration for `bun lint` or `bun fmt`. After [`initialize`], and before the first VM.
+pub fn expect_configuration() {
     // SAFETY: nothing changes the environment during the call, which is made before the first VM.
     unsafe {
         let env = bun_sys::environ();
-        JSC__useOptionsForVMPerThread(env.as_ptr().cast(), env.len());
+        JSC__useOptionsForConfiguration(env.as_ptr().cast(), env.len());
+    }
+}
+
+/// In place of [`expect_vm_per_thread`]
+pub fn expect_few_lint_vms() {
+    // SAFETY: nothing changes the environment during the call, which is made before the first VM.
+    unsafe {
+        let env = bun_sys::environ();
+        JSC__useOptionsForFewLintVMs(env.as_ptr().cast(), env.len());
+    }
+}
+
+/// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
+/// first VM, which freezes JSC's options.
+pub fn expect_vm_per_thread(are_short_lived: bool) {
+    // SAFETY: nothing changes the environment during the call, which is made before the first VM.
+    unsafe {
+        let env = bun_sys::environ();
+        JSC__useOptionsForVMPerThread(env.as_ptr().cast(), env.len(), are_short_lived);
     }
 }
 
@@ -671,7 +689,7 @@ pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef, PendingAbortSignal};
 pub use script_execution_context::{
-    AbortCause, AbortHandle, AbortHandleOwner, ContextId, ContextTimer, ScriptExecutionContext,
+    AbortCause, AbortHandle, AbortHandleOwner, ContextId, ScriptExecutionContext, ScriptTimer,
     StopReason,
 };
 
@@ -907,7 +925,7 @@ impl Drop for EnsureStillAlive {
 }
 
 /// What a JS wrapper owns. Keeps the wrapper visible to the conservative stack scan until dropped. No root on the heap.
-pub struct WrapperGuard<'a, T> {
+pub struct WrapperGuard<'a, T, const MAPPED: bool = false> {
     native: core::ptr::NonNull<T>,
     wrapper: EnsureStillAlive,
     /// Borrows the value that was cast.
@@ -915,7 +933,7 @@ pub struct WrapperGuard<'a, T> {
 }
 impl<'a, T> WrapperGuard<'a, T> {
     /// # Safety
-    /// `native` is null, or points to the struct that `wrapper` holds or to a part of it, valid and only shared until `wrapper` is collected.
+    /// `native` is null, or points to the struct that `wrapper` holds or to a part of it that is not `HasJsRef`, valid and only shared until `wrapper` is collected.
     #[doc(hidden)]
     pub unsafe fn new(wrapper: &'a JSValue, native: *mut T) -> Option<Self> {
         // SAFETY: forwarded.
@@ -931,9 +949,10 @@ impl<'a, T> WrapperGuard<'a, T> {
             _value: core::marker::PhantomData,
         }
     }
-
+}
+impl<'a, T, const MAPPED: bool> WrapperGuard<'a, T, MAPPED> {
     /// As [`core::cell::Ref::map`].
-    pub fn map<U>(this: Self, f: impl FnOnce(&T) -> &U) -> WrapperGuard<'a, U>
+    pub fn map<U>(this: Self, f: impl FnOnce(&T) -> &U) -> WrapperGuard<'a, U, true>
     where
         T: 'a,
     {
@@ -953,7 +972,7 @@ impl<'a, T> WrapperGuard<'a, T> {
         self.native.as_ptr()
     }
 }
-impl<T> core::ops::Deref for WrapperGuard<'_, T> {
+impl<T, const MAPPED: bool> core::ops::Deref for WrapperGuard<'_, T, MAPPED> {
     type Target = T;
     fn deref(&self) -> &T {
         // SAFETY: the contract of `new`. `map` keeps a borrow of such a struct.
@@ -1475,7 +1494,13 @@ unsafe extern "C" {
         locks_builtins: bool,
         is_compiler: bool,
     );
-    fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
+    fn JSC__useOptionsForConfiguration(env: *const *const c_char, count: usize);
+    fn JSC__useOptionsForFewLintVMs(env: *const *const c_char, count: usize);
+    fn JSC__useOptionsForVMPerThread(
+        env: *const *const c_char,
+        count: usize,
+        are_short_lived: bool,
+    );
 }
 
 #[path = "generated_bindgen.rs"]

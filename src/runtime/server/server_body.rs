@@ -407,7 +407,7 @@ impl RespLike for uws_sys::h3::Response {
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
         uws_sys::h3::Response::on_timeout(
             self,
-            |_: &mut c_void, _: &mut uws_sys::h3::Response| on_timeout_for_idle_warn(),
+            |_: *mut c_void, _: &mut uws_sys::h3::Response| on_timeout_for_idle_warn(),
             ud,
         );
     }
@@ -438,7 +438,7 @@ impl RespLike for uws_sys::h2::Response {
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
         uws_sys::h2::Response::on_timeout(
             self,
-            |_: &mut c_void, _: &mut uws_sys::h2::Response| on_timeout_for_idle_warn(),
+            |_: *mut c_void, _: &mut uws_sys::h2::Response| on_timeout_for_idle_warn(),
             ud,
         );
     }
@@ -448,7 +448,7 @@ impl RespLike for uws_sys::h2::Response {
     }
 }
 
-/// Answer a request that arrived after `finalize()` set the wrapper's
+/// Answer a request that arrived after the finalizer set the wrapper's
 /// `JsRef` to `Finalized` (idle keep-alive sockets aren't counted in
 /// `pending_requests`, so `self` can outlive the wrapper between the
 /// finalizer and the next-tick `schedule_deinit`). 503 instead of
@@ -2250,7 +2250,6 @@ where
 
     pub(crate) fn finalize(self: &RefPtr<Self>) {
         httplog!("finalize");
-        self.js_value.with_mut(|js_value| js_value.finalize());
         // HTTP/3 connections are not counted, so a drained server can have a request pending.
         self.hold_open_ref();
         self.deinit_if_we_can();

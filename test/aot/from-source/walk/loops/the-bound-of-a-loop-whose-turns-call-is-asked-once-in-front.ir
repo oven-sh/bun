@@ -1,15 +1,15 @@
 # -- source: main.cjs
 # "use strict";
-# const nothing = { weight: 0 };
-# function size(holder) { const n = holder.count; if (holder.rest) return n + holder.more - 1; return n; }
-# function pick(holder, at) { if (holder.hook) holder.hook(at); const n = holder.items.length - (holder.rest ? 1 : 0); if (at < n) return holder.items[at]; if (holder.rest) { const last = holder.items[n]; const behind = at - n; if (last.many) { if (behind < last.many.length) return last.many[behind]; return last.many.length ? last.many[last.many.length - 1] : undefined; } return last; } return undefined; }
-# function each(first, second, visit, bad) { const a = size(first), b = size(second); const least = second.rest ? b - 1 : b; const n = first.rest ? least : Math.min(a, least); for (let i = 0; i < n; i++) { const x = pick(first, i) || nothing; if (x.weight === 2) continue; const y = pick(second, i) || nothing; visit(x, y); if (x.weight === 5) break; if (y.weight === bad + 1) return 1000 + i; } return 3000; }
-# let sum = 0; function add(x, y) { sum = (sum * 31 + x.weight * 3 + y.weight) % 1000003; }
-# function f(first, second, bad) { return each(first, second, add, bad) + ":" + sum; }
-# const entry = [f], data = JSON.parse('[{"rest":true,"more":1,"count":5,"hook":null,"items":[{"weight":1},{"weight":2},{"weight":3}]},{"rest":false,"more":1,"count":3,"hook":null,"items":[{"weight":4},{"weight":5},{"weight":6}]}]');
+# const empty = { liters: 0 };
+# function reach(well) { let deep = well.rope; if (well.bends > 2) deep -= well.bends; return deep; }
+# function draws(well, day) { if (well.shut) well.shut(day); let left = well.buckets.length; while (left > 0) { left--; const bucket = well.buckets[left]; if (bucket.day === day) return bucket; if (bucket.days !== null && bucket.days.length > day) return bucket.days[day]; } return day < well.rope ? null : undefined; }
+# function week(near, far, pours, dry) { const a = reach(near), b = reach(far); const n = near.bends > 0 ? b : Math.max(a, b - 2); let spilled = 0; for (let day = 0; day < n; day++) { const one = draws(near, day) || empty; if (one.liters > 6) { spilled++; continue; } const other = draws(far, day) || empty; pours(one, other); if (other.liters === dry) return 500 + day; } return spilled; }
+# let sum = 0; function tub(one, other) { sum = (sum * 7 + one.liters * 2 - other.liters) % 100003; }
+# function f(near, far, dry) { return week(near, far, tub, dry) + ":" + sum; }
+# const entry = [f], data = JSON.parse('[{"rope":5,"bends":1,"shut":null,"buckets":[{"day":1,"days":null,"liters":4},{"day":9,"days":[{"liters":2},{"liters":3},{"liters":8}],"liters":0}]},{"rope":6,"bends":3,"shut":null,"buckets":[{"day":0,"days":null,"liters":5},{"day":2,"days":null,"liters":1}]}]');
 # console.log(entry[0](data[0], data[1], 99));
 # -- end of source
-# The bound is a local that no turn stores: the least of two results of calls, a number as far as anybody knows. The turns call a function that is not copied, so a copy that counts on quiet turns is left in every turn. The loop is built twice all the same, with the calls staying in the typed copy.
+# The bound is a local that no turn stores: one of two results of calls or the larger of both, a number as far as anybody knows. The turns call a function that is not copied, so a copy that counts on quiet turns is left in every turn. The loop is built twice all the same, with the calls staying in the typed copy.
 # RUN: walk f3 mechanisms=all
 # The bound is asked once, in front of the loop.
 # CHECK: TypeTest {{*}} testedType=i32

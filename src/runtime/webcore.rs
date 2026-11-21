@@ -249,6 +249,10 @@ pub(crate) mod wasm_streaming;
 pub(crate) mod text_decoder;
 pub(crate) use text_decoder::TextDecoder;
 
+#[path = "webcore/URLPattern.rs"]
+pub(crate) mod url_pattern;
+pub(crate) use url_pattern::URLPattern;
+
 #[path = "webcore/fetch.rs"]
 pub(crate) mod fetch;
 

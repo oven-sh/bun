@@ -13,14 +13,13 @@ use super::PostgresSQLStatement;
 use super::command_tag_jsc::CommandTagJsc;
 use super::error_jsc::postgres_error_to_js;
 use super::postgres_request as PostgresRequest;
+use super::postgres_sql_connection::Seat;
 use super::postgres_sql_statement::{ResultDescription, describe};
 use bun_sql::postgres::CommandTag;
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
 use bun_sql::postgres::pipeline::Protocol;
 use bun_sql::postgres::postgres_types::ResultFormats;
 use bun_sql::shared::SQLQueryResultMode as PostgresSQLQueryResultMode;
-
-bun_core::declare_scope!(Postgres, visible);
 
 pub(crate) use crate::generated_bindgen::postgres_sql_query::js_PostgresSQLQuery as js;
 
@@ -47,7 +46,7 @@ pub struct PostgresSQLQuery {
 
 enum Place {
     New,
-    Queued(RefPtr<PostgresSQLConnection>),
+    Queued(Seat),
     Ended,
 }
 
@@ -65,9 +64,9 @@ pub enum CopyStream {
 
 impl PostgresSQLQuery {
     #[inline]
-    pub(crate) fn connection(&self) -> Option<RefPtr<PostgresSQLConnection>> {
+    pub(crate) fn seat(&self) -> Option<Seat> {
         match self.place.get() {
-            Place::Queued(connection) => Some(connection.clone()),
+            Place::Queued(seat) => Some(seat.clone()),
             Place::New | Place::Ended => None,
         }
     }
@@ -88,11 +87,6 @@ impl PostgresSQLQuery {
             js::target_set_cached(this_value, global_object, JSValue::ZERO);
         }
         Some(target)
-    }
-
-    pub fn finalize(&self) {
-        bun_core::scoped_log!(Postgres, "PostgresSQLQuery finalize");
-        self.this_value.with_mut(|r| r.finalize());
     }
 
     /// In the place of the rows, until `ReadyForQuery`.
@@ -257,7 +251,7 @@ impl PostgresSQLQuery {
         });
         let this = js::wrap(this, global_this);
         let this_value = this.to_js();
-        this.this_value.set(JsRef::init_weak(this_value));
+        this.set_js_ref_weak();
 
         js::binding_set_cached(this_value, global_this, values);
         js::pending_value_set_cached(this_value, global_this, pending_value);
@@ -351,8 +345,8 @@ impl PostgresSQLQuery {
             )));
         }
 
-        connection.enqueue(self, &declared, protocol);
-        self.place.set(Place::Queued(connection.clone()));
+        let seat = connection.enqueue(self, &declared, protocol);
+        self.place.set(Place::Queued(seat));
         // Request is enqueued: keep the event loop alive until the server responds.
         connection.poll_ref.ref_(bun_io::js_vm_ctx());
         self.this_value.with_mut(|r| r.upgrade(global_object));
@@ -366,8 +360,8 @@ impl PostgresSQLQuery {
     }
 
     pub fn cancel(&self, _: &mut JsScope<'_>) {
-        match self.connection() {
-            Some(connection) => connection.cancel(self),
+        match self.seat() {
+            Some(seat) => seat.cancel(),
             // `run` refuses it from here on.
             None => self.place.set(Place::Ended),
         }

@@ -65,7 +65,7 @@ pub(crate) struct FSWatcher {
     poll_ref: KeepAlive,
     global_this: GlobalRef,
     /// The JS wrapper, held strong while the watcher is open so that the listener stays callable.
-    js_this: JsCell<JsRef>,
+    pub(crate) js_this: JsCell<JsRef>,
     // pub(super): read directly by `win_watcher::PathWatcher::emit`.
     pub(super) encoding: Encoding,
 
@@ -602,7 +602,7 @@ impl FSWatcher {
         }
 
         let this = js::wrap(self, global);
-        this.js_this.set(JsRef::init_strong(this.to_js(), global));
+        this.set_js_ref_strong(global);
         js::listener_set_cached(this.to_js(), global, listener);
         this
     }

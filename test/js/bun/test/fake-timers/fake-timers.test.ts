@@ -2,7 +2,7 @@ import { RedisClient, SQL } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { vi as bunVi, jest, setSystemTime } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -929,6 +929,66 @@ describe("timer controls called from inside a timer callback", () => {
     expect(performance.now()).toBe(105);
     vi.useRealTimers();
   });
+
+  test("an interval that a nested run cleared is not armed again", () => {
+    vi.useFakeTimers();
+    const interval: any = setInterval(() => {
+      interval.refresh();
+      interval._onTimeout = null;
+      vi.advanceTimersByTime(10);
+    }, 10);
+    vi.advanceTimersByTime(10);
+    expect({ timers: vi.getTimerCount(), hasRef: interval.hasRef(), destroyed: interval._destroyed }).toEqual({
+      timers: 0,
+      hasRef: false,
+      destroyed: true,
+    });
+  });
+
+  test("an interval that a nested run ended and the outer run arms again survives a collection", () => {
+    vi.useFakeTimers();
+    let fires = 0;
+    setInterval(function (this: any) {
+      if (++fires === 2) this._repeat = null;
+      if (fires !== 1) return;
+      this.refresh();
+      vi.advanceTimersByTime(10);
+      this._repeat = 10;
+    }, 10);
+    const rooted = heapStats().protectedObjectTypeCounts.Timeout;
+    vi.advanceTimersByTime(10);
+    Bun.gc(true);
+    expect(vi.getTimerCount()).toBe(1);
+    expect(heapStats().protectedObjectTypeCounts.Timeout).toBe(rooted);
+    vi.advanceTimersToNextTimer();
+    expect(fires).toBe(3);
+  });
+
+  test.concurrent("a timeout with _repeat fires again in its own callback", async () => {
+    const script = `
+      const { jest } = Bun.jest();
+      jest.useFakeTimers();
+      let fires = 0;
+      const t = setTimeout(() => { if (++fires === 1) { t.refresh(); jest.advanceTimersByTime(10); } }, 10);
+      t._repeat = 10;
+      jest.advanceTimersByTime(10);
+      console.log("fires:", fires, "timers:", jest.getTimerCount(), "destroyed:", t._destroyed);
+      jest.useRealTimers();`;
+    const stdout = "fires: 2 timers: 1 destroyed: false\n";
+    expect(await run(["-e", script])).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
+  });
+});
+
+// 35 s in a debug build. The order itself is also a unit test in EventLoopTimer.rs.
+test.skipIf(isDebug || isASAN)("equal deadlines keep their order across 2 ** 23 timers armed in between", () => {
+  vi.useFakeTimers();
+  const order: string[] = [];
+  setTimeout(() => order.push("first"), 1000);
+  const other = setTimeout(() => {}, 5000);
+  for (let i = 0; i < 2 ** 23; i++) other.refresh();
+  setTimeout(() => order.push("second"), 1000);
+  vi.advanceTimersByTime(1000);
+  expect(order).toEqual(["first", "second"]);
 });
 
 test("useRealTimers() called from a timer callback isn't undone when the advance completes", () => {
@@ -2528,6 +2588,17 @@ describe("a faked setImmediate", () => {
     await oneLoopTurn();
     await oneLoopTurn();
     expect(fired).not.toHaveBeenCalled();
+  });
+
+  test("ref() in its callback takes the ref", () => {
+    vi.useFakeTimers({ toFake: ["setImmediate"] });
+    let hasRef;
+    const immediate = setImmediate(() => {
+      hasRef = { afterUnref: immediate.unref().hasRef(), afterRef: immediate.ref().hasRef() };
+    });
+    vi.runAllTimers();
+    expect(hasRef).toEqual({ afterUnref: false, afterRef: true });
+    expect(immediate.hasRef()).toBe(false);
   });
 
   test("useRealTimers() and clearAllTimers() drop it", () => {

@@ -2405,13 +2405,13 @@ where
         req: &mut Ctx::Req,
         response_value: JSValue,
     ) {
-        let Some(ctx) = Ctx::respond(ctx, self, request.0.to_js(), response_value) else {
+        let Some(ctx) = Ctx::respond(ctx, self, request.to_js(), response_value) else {
             return;
         };
 
         // The request is asynchronous, and all information from `req` must be copied
         // since the provided uws.Request will be re-used for future requests (stack allocated).
-        ctx.to_async(req, &request.0);
+        ctx.to_async(req, request);
     }
 
     fn on_request_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
@@ -2435,7 +2435,7 @@ where
         let global = self.global_this();
         let request = DispatchedRequest(request.wrap(global));
         let response_value =
-            match on_request_fn.call(global, js_value, &[request.0.to_js(), js_value]) {
+            match on_request_fn.call(global, js_value, &[request.to_js(), js_value]) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),
             };
@@ -2785,21 +2785,21 @@ where
 
         let global = this.global();
         let request = DispatchedRequest(request.wrap(&global));
-        let args = [request.0.to_js(), server_js];
+        let args = [request.to_js(), server_js];
 
         let response_value = match this.config.get().on_request.call(&global, server_js, &args) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };
 
-        let Some(ctx) = ServerRequestContext::respond(ctx, this, request.0.to_js(), response_value)
+        let Some(ctx) = ServerRequestContext::respond(ctx, this, request.to_js(), response_value)
         else {
             return;
         };
 
         ctx.to_async(
             std::ptr::from_mut::<uws::Request>(req).cast::<c_void>(),
-            &request.0,
+            &request,
         );
     }
 

@@ -816,7 +816,7 @@ go with it.
 
 ### The receiver
 
-Every member takes `&self`, a setter too, and mutable state is in `Cell` and `JsCell`. The struct implements
+Every member takes `&self` (or `self: &RefPtr<Self>` if the class is `refCounted`), a setter too, and mutable state is in `Cell` and `JsCell`. The struct implements
 `bun_jsc::JsClass`, so `value.as_class_ref::<Glob>()` works, and `js_Glob::from_js(&value)` is the struct if `value`
 is an instance. Both return a `WrapperGuard<'_, Glob>`, which borrows `value`, derefs to the struct and keeps the object
 visible to the GC's stack scan until it is dropped. `JsLocal::as_class_ref` does the same for an argument, with the

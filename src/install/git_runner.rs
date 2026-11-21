@@ -797,7 +797,7 @@ impl GitSubprocess {
             _ => unreachable!("not a git task"),
         };
         manager.running_git_tasks.fetch_add(1, Ordering::Relaxed);
-        let runner = RefPtr::new(GitSubprocess {
+        let this = RefPtr::new(GitSubprocess {
             ref_count: Cell::new(1),
             owner: Cell::new(None),
             manager: BackRef::new_mut(manager),
@@ -817,12 +817,11 @@ impl GitSubprocess {
             remaining_fds: Cell::new(0),
         });
         for kind in [Kind::Stdout, Kind::Stderr] {
-            let owner = Owner::with_kind(PollTag::InstallGit, kind, runner.as_ptr().cast());
+            let owner = Owner::with_kind(PollTag::InstallGit, kind, this.as_ptr().cast());
             // SAFETY: `owner` points to the heap allocation that holds this reader.
-            unsafe { runner.reader(kind).set_owner(owner) };
+            unsafe { this.reader(kind).set_owner(owner) };
         }
-        let this = runner.clone();
-        this.owner.set(Some(runner));
+        this.owner.set(Some(this.clone()));
         let result = if this.manager().has_git_env() {
             this.begin()
         } else {

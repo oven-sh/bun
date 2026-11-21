@@ -293,7 +293,7 @@ pub(crate) trait AutoFlush: bun_ptr::AnyRefCounted {
     /// Connected, without backpressure, and with something to write.
     fn can_flush(&self) -> bool;
     /// Returns what it left in `auto_flush_registered`: whether to run again after the next turn.
-    fn on_auto_flush(&self) -> bool;
+    fn on_auto_flush(self: bun_ptr::RefPtr<Self>) -> bool;
 
     fn register_auto_flusher(&self) {
         extern "C" fn run<T: AutoFlush>(ctx: *mut c_void) -> bool {

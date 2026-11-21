@@ -39,20 +39,19 @@ pub(crate) trait SocketEvents<const SSL: bool>: AnyRefCounted {
     const HAS_ON_END: bool = true;
 
     fn on_open(self: RefPtr<Self>, _s: NewSocketHandler<SSL>) {}
-    fn on_data(self: RefPtr<Self>, _s: NewSocketHandler<SSL>, _data: &[u8]) {}
-    fn on_writable(self: RefPtr<Self>, _s: NewSocketHandler<SSL>) {}
-    fn on_close(self: RefPtr<Self>, _s: NewSocketHandler<SSL>, _code: i32, _reason: *mut c_void) {}
+    fn on_data(self: RefPtr<Self>, s: NewSocketHandler<SSL>, data: &[u8]);
+    fn on_writable(self: RefPtr<Self>, s: NewSocketHandler<SSL>);
+    fn on_close(self: RefPtr<Self>, code: i32);
     fn on_timeout(self: RefPtr<Self>, _s: NewSocketHandler<SSL>) {}
     fn on_long_timeout(self: RefPtr<Self>, _s: NewSocketHandler<SSL>) {}
     fn on_end(self: RefPtr<Self>, _s: NewSocketHandler<SSL>) {}
     fn on_connect_error(self: RefPtr<Self>, _s: NewSocketHandler<SSL>, _code: i32) {}
     fn on_handshake(
         self: RefPtr<Self>,
-        _s: NewSocketHandler<SSL>,
-        _ok: i32,
-        _err: bun_uws::us_bun_verify_error_t,
-    ) {
-    }
+        s: NewSocketHandler<SSL>,
+        ok: i32,
+        err: us_bun_verify_error_t,
+    );
 }
 
 pub(crate) struct RefPtrHandler<T, const SSL: bool>(core::marker::PhantomData<T>);
@@ -86,13 +85,9 @@ where
         let Some(this) = ext.owner() else { return };
         this.on_writable(wrap::<SSL>(s));
     }
-    fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+    fn on_close(ext: &mut Self::Ext, _: *mut us_socket_t, code: i32, _: Option<*mut c_void>) {
         let Some(this) = ext.owner() else { return };
-        this.on_close(
-            wrap::<SSL>(s),
-            code,
-            reason.unwrap_or(core::ptr::null_mut()),
-        );
+        this.on_close(code);
     }
     fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = ext.owner() else { return };
@@ -141,8 +136,8 @@ where
     fn on_writable(self: RefPtr<Self>, s: NewSocketHandler<SSL>) {
         self.handle_writable(s);
     }
-    fn on_close(self: RefPtr<Self>, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) {
-        self.handle_close(s, code, reason);
+    fn on_close(self: RefPtr<Self>, code: i32) {
+        self.handle_close(code);
     }
     fn on_timeout(self: RefPtr<Self>, s: NewSocketHandler<SSL>) {
         self.handle_timeout(s);
@@ -177,8 +172,8 @@ impl<const SSL: bool> SocketEvents<SSL> for websocket_client::WebSocket<SSL> {
     fn on_writable(self: RefPtr<Self>, s: NewSocketHandler<SSL>) {
         self.handle_writable(s);
     }
-    fn on_close(self: RefPtr<Self>, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) {
-        self.handle_close(s, code, reason);
+    fn on_close(self: RefPtr<Self>, _: i32) {
+        self.handle_close();
     }
     fn on_timeout(self: RefPtr<Self>, s: NewSocketHandler<SSL>) {
         self.handle_timeout(s);
@@ -211,8 +206,8 @@ macro_rules! impl_sql_socket_events {
             fn on_writable(self: RefPtr<Self>, s: NewSocketHandler<SSL>) {
                 <$Handler>::on_writable(&self, s);
             }
-            fn on_close(self: RefPtr<Self>, s: NewSocketHandler<SSL>, _: i32, _: *mut c_void) {
-                <$Handler>::on_close(&self, s);
+            fn on_close(self: RefPtr<Self>, _: i32) {
+                <$Handler>::on_close(&self);
             }
             fn on_end(self: RefPtr<Self>, s: NewSocketHandler<SSL>) {
                 <$Handler>::on_end(&self, s);
@@ -262,7 +257,7 @@ impl<const SSL: bool> VHandler for BunSocket<SSL> {
     const HAS_ON_HANDSHAKE: bool = true;
 
     fn on_open_no_ext(s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
-        if let Some(ns) = NativeRef::<SSL>::of(s).get() {
+        if let Some(ns) = NativeRef::<SSL>::of(s).cloned() {
             fold(ns.on_open(wrap(s)));
         }
     }
@@ -283,12 +278,12 @@ impl<const SSL: bool> VHandler for BunSocket<SSL> {
         }
     }
     fn on_timeout_no_ext(s: *mut us_socket_t) {
-        if let Some(ns) = NativeRef::<SSL>::of(s).get() {
+        if let Some(ns) = NativeRef::<SSL>::of(s).cloned() {
             fold(ns.on_timeout(wrap(s)));
         }
     }
     fn on_end_no_ext(s: *mut us_socket_t) {
-        if let Some(ns) = NativeRef::<SSL>::of(s).get() {
+        if let Some(ns) = NativeRef::<SSL>::of(s).cloned() {
             fold(ns.on_end(wrap(s)));
         }
     }
@@ -306,7 +301,7 @@ impl<const SSL: bool> VHandler for BunSocket<SSL> {
         }
     }
     fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
-        if let Some(ns) = NativeRef::<SSL>::of(s).get() {
+        if let Some(ns) = NativeRef::<SSL>::of(s).cloned() {
             fold(ns.on_handshake(wrap(s), ok as i32, err));
         }
     }

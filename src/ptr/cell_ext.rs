@@ -48,10 +48,11 @@ pub trait RefPtrCellExt<T: AnyRefCounted> {
 
 impl<T: AnyRefCounted> RefPtrCellExt<T> for Cell<Option<RefPtr<T>>> {
     fn cloned(&self) -> Option<RefPtr<T>> {
-        // SAFETY: a shared `Cell` lends no reference to its value, and this one ends before the count is touched.
-        let ptr = unsafe { &*self.as_ptr() }.as_ref()?.as_ptr();
+        let value = self.take();
+        let ptr = value.as_ref().map(RefPtr::as_ptr);
+        self.put_back(value);
         // SAFETY: the cell holds a ref.
-        Some(unsafe { RefPtr::init_ref(ptr) })
+        Some(unsafe { RefPtr::init_ref(ptr?) })
     }
 }
 

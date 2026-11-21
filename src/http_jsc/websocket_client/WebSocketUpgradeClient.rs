@@ -20,7 +20,7 @@
 //! - WebSocket Handshake: https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers#the_websocket_handshake
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
 use core::ptr;
 use std::borrow::Cow;
 use std::io::Write as _;
@@ -618,7 +618,7 @@ where
         }
     }
 
-    pub fn handle_close(self: RefPtr<Self>, _: Socket<SSL>, code: c_int, _: *mut c_void) {
+    pub fn handle_close(self: RefPtr<Self>, code: c_int) {
         log!("onClose");
         bun_jsc::mark_binding!();
         self.clear_data();

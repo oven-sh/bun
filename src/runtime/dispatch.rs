@@ -1440,7 +1440,7 @@ pub(crate) unsafe fn fire_timer(
             (container: *mut Valkey = owner!(Valkey, timer)) -> JsResult<()> {
                 // SAFETY: per fn contract.
                 unsafe { (*container).timer.take_fire_ref() }
-                    .map_or(Ok(()), |client| client.on_connection_timeout())
+                    .map_or(Ok(()), Valkey::on_connection_timeout)
             }
         ),
         EventLoopTimerTag::ValkeyConnectionReconnect => in_features!(

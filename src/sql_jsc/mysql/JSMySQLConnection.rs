@@ -185,7 +185,7 @@ impl AutoFlush for JSMySQLConnection {
             && (!self.write_buffer.get().is_empty() || self.queue.is_waiting_to_write())
     }
 
-    fn on_auto_flush(&self) -> bool {
+    fn on_auto_flush(self: RefPtr<Self>) -> bool {
         // With backpressure, onWritable drains.
         if !self.has_backpressure.get() {
             self.drain_internal();
@@ -959,7 +959,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub fn on_close(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {
+    pub fn on_close(this: &JSMySQLConnection) {
         this.socket_ref.set(None);
         // usockets frees this socket at end-of-tick; drop the stored pointer
         // now so nothing (timer callbacks, close) dereferences it after

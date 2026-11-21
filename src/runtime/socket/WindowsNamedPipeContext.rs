@@ -327,12 +327,11 @@ impl WindowsNamedPipeContext {
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
 
         // SAFETY: initialised above with a count of 1, heap-pinned; disarmed when freed.
-        let self_ref = unsafe {
+        let this = unsafe {
             bun_jsc::AbortHandle::arm_owner(this, cx.context());
             RefPtr::from_raw(this)
         };
-        let this = self_ref.clone();
-        this.self_ref.set(Some(self_ref));
+        this.self_ref.set(Some(this.clone()));
         this
     }
 

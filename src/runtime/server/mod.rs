@@ -378,7 +378,14 @@ type ServerDispatch<const SSL: bool, const DEBUG: bool> =
     request_context::Dispatch<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 
 /// A `Request` while the uWS callback that lent it a `uws::Request` is on the stack.
-pub(crate) struct DispatchedRequest<'a>(pub(crate) jsc::WrapperGuard<'a, Request>);
+pub(crate) struct DispatchedRequest<'a>(pub(super) jsc::WrapperGuard<'a, Request>);
+
+impl<'a> core::ops::Deref for DispatchedRequest<'a> {
+    type Target = jsc::WrapperGuard<'a, Request>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl DispatchedRequest<'_> {
     /// `call` makes the wrapper, stores it in its second argument and returns what the handler returned.
@@ -398,7 +405,7 @@ impl DispatchedRequest<'_> {
 
 impl Drop for DispatchedRequest<'_> {
     fn drop(&mut self) {
-        self.0.request_context.get().detach_request();
+        self.request_context.get().detach_request();
     }
 }
 
@@ -420,12 +427,12 @@ impl DispatchedRequest<'_> {
         // future requests (stack allocated).
         dispatch.to_async(
             std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
-            &self.0,
+            &self,
         );
 
         SavedRequest {
-            js_request: jsc::Strong::create(self.0.to_js(), global),
-            request: bun_ptr::BackRef::new(&*self.0),
+            js_request: jsc::Strong::create(self.to_js(), global),
+            request: bun_ptr::BackRef::new(&self),
             ctx,
             response: any_response_from::<SSL>(resp),
         }
@@ -995,7 +1002,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // The conservative GC scan reaches the heap allocation as well as the
         // stack, so a small Vec is sound.
         let mut args: Vec<JSValue> = Vec::with_capacity(ARG_COUNT + 1);
-        args.push(request.0.to_js());
+        args.push(request.to_js());
         args.extend_from_slice(&extra_args);
 
         let _entered = self.vm().enter_event_loop_scope_without_checkpoint();
@@ -1004,7 +1011,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Err(err) => global.take_exception(err),
         };
 
-        let Some(ctx) = ServerRequestContext::respond(ctx, self, request.0.to_js(), response_value)
+        let Some(ctx) = ServerRequestContext::respond(ctx, self, request.to_js(), response_value)
         else {
             return;
         };
@@ -1017,7 +1024,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     std::ptr::from_ref::<uws::Request>(r)
                         .cast_mut()
                         .cast::<c_void>(),
-                    &request.0,
+                    &request,
                 );
             }
             SavedRequestUnion::Saved(_) => {} // info already copied
@@ -1035,7 +1042,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         req: &mut uws_sys::Request,
         response_value: JSValue,
     ) {
-        let Some(ctx) = ServerRequestContext::respond(ctx, self, request.0.to_js(), response_value)
+        let Some(ctx) = ServerRequestContext::respond(ctx, self, request.to_js(), response_value)
         else {
             return;
         };
@@ -1045,7 +1052,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // requests (stack allocated).
         ctx.to_async(
             std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
-            &request.0,
+            request,
         );
     }
 
@@ -1073,8 +1080,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let global = self.global_this();
         let request = DispatchedRequest(request.wrap(global));
-        let response_value = match on_request.call(global, js_value, &[request.0.to_js(), js_value])
-        {
+        let response_value = match on_request.call(global, js_value, &[request.to_js(), js_value]) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };

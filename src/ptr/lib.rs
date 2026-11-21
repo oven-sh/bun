@@ -547,8 +547,7 @@ impl<T> Default for DetachablePtr<T> {
 // `RefCount::deref`). Consumers must deref as `&*p` and route mutation
 // through `Cell` / `JsCell` / `UnsafeCell` interior-mutability fields.
 //
-// Blanket-implemented for counted types only, so that on a `RefPtr<T>` it is
-// the address of the `T`, not of the handle.
+// For counted types only, so that on a `RefPtr<T>` it is the address of the `T`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// `&self` → `*mut Self` with shared provenance, for C-callback / scopeguard

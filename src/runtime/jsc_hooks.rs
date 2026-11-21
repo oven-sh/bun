@@ -71,10 +71,10 @@ pub(crate) struct RuntimeState {
     /// `RareData.ssl_ctx_cache` — concrete digest-keyed weak `SSL_CTX*` cache.
     /// Same cycle-break story as `sql_rare`.
     pub(crate) ssl_ctx_cache: crate::api::SSLContextCache::SSLContextCache,
-    /// `RareData.global_dns_data` — per-VM resolver + c-ares channel.
+    /// Per-VM resolver + c-ares channel.
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; released when this box
     /// drops in [`deinit_runtime_state`].
-    pub(crate) global_dns_data: core::cell::OnceCell<bun_ptr::RefPtr<crate::dns_jsc::Resolver>>,
+    pub(crate) dns_resolver: core::cell::OnceCell<bun_ptr::RefPtr<crate::dns_jsc::Resolver>>,
     /// `vm.body_value_pool` — pooled storage for `Body.Value`
     /// (`Request.body` payloads).
     /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
@@ -163,9 +163,9 @@ fn try_timer_all() -> Option<&'static timer::All> {
 /// re-enter [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
 /// from this cell is live, so a `&mut` accessor would alias.
 #[inline]
-pub(crate) fn global_dns_data()
+pub(crate) fn dns_resolver()
 -> &'static core::cell::OnceCell<bun_ptr::RefPtr<crate::dns_jsc::Resolver>> {
-    &runtime_state().global_dns_data
+    &runtime_state().dns_resolver
 }
 
 /// [`RuntimeState::stat_watcher_scheduler`] of `vm`.
@@ -296,7 +296,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         timer: timer::All::init(),
         sql_rare: Default::default(),
         ssl_ctx_cache: Default::default(),
-        global_dns_data: core::cell::OnceCell::new(),
+        dns_resolver: core::cell::OnceCell::new(),
         body_value_pool: {
             // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the
             // ~100 KB pool in a stack temporary before moving it into the box (see
@@ -1386,7 +1386,7 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
         return SweepResult::Idle;
     };
     let mut result = SweepResult::Idle;
-    if let Some(resolver) = state.global_dns_data.get() {
+    if let Some(resolver) = state.dns_resolver.get() {
         result = result.and(resolver.close_channel_for_terminate());
         #[cfg(windows)]
         resolver.cancel_pending_uv_requests_for_teardown();

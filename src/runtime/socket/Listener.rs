@@ -643,7 +643,7 @@ impl Listener {
         debug_assert!(SSL == listener.ssl);
 
         let socket = uws::NewSocketHandler::<SSL>::from(accepted);
-        let this_socket = RefPtr::new(NewSocket::<SSL> {
+        let s = RefPtr::new(NewSocket::<SSL> {
             ref_count: bun_ptr::RefCount::init(),
             handlers: JsCell::new(Some(Rc::clone(&listener.handlers))),
             socket: Cell::new(socket),
@@ -665,7 +665,6 @@ impl Listener {
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         });
-        let s = this_socket.clone();
         // Each accepted socket holds the event loop on its own (same as a
         // client socket after `connect_finish`), so `conn.unref()` works and
         // `server.unref()`/`server.close()` don't tear out live connections'
@@ -676,7 +675,7 @@ impl Listener {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
         }
-        *NativeRef::of(accepted) = NativeRef::new(this_socket);
+        *NativeRef::of(accepted) = NativeRef::new(s.clone());
         uws_sys::us_socket_t::opaque_mut(accepted).set_kind(if SSL {
             uws_sys::SocketKind::BunSocketTls
         } else {
@@ -1060,39 +1059,38 @@ impl Listener {
                             latest_session: JsCell::new(None),
                         })
                     };
-                    let tls_ref = tls.clone();
-                    tls_ref.reset_client_tls_flags(crate::socket::resolve_reject_unauthorized(
+                    tls.reset_client_tls_flags(crate::socket::resolve_reject_unauthorized(
                         vm,
                         ssl_taken.as_ref(),
                         false,
                     ));
-                    tls_ref.update_flags(|f| {
+                    tls.update_flags(|f| {
                         f.set(
                             SocketFlags::PAUSE_ON_CONNECT,
                             socket_config.pause_on_connect,
                         )
                     });
                     TLSSocket::data_set_cached(
-                        tls_ref.this_value_for_connect(cx.global()),
+                        tls.this_value_for_connect(cx.global()),
                         cx.global(),
                         default_data,
                     );
-                    tls_ref.poll_ref.ref_(bun_io::js_vm_ctx());
+                    tls.poll_ref.ref_(bun_io::js_vm_ctx());
 
                     let ctx_for_pipe = owned_ssl_ctx.take();
                     // Note: re-borrow connection from the socket field — `connection`
                     // was moved into `tls` above.
                     // On `Err`, the context already ran `handle_connect_error`.
-                    match tls_ref.connection.get().as_ref().unwrap() {
+                    match tls.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => {
                             if let Ok(named_pipe) = WindowsNamedPipeContext::connect(
                                 cx,
                                 &buf[..pipe_name_len.unwrap()],
                                 ssl_taken.take(),
                                 ctx_for_pipe,
-                                OwnedSocket::Tls(tls),
+                                OwnedSocket::Tls(tls.clone()),
                             ) {
-                                tls_ref.socket.set(uws::NewSocketHandler {
+                                tls.socket.set(uws::NewSocketHandler {
                                     socket: uws::InternalSocket::Pipe(named_pipe.cast()),
                                 });
                             }
@@ -1102,7 +1100,7 @@ impl Listener {
                             *fd,
                             ssl_taken.take(),
                             ctx_for_pipe,
-                            OwnedSocket::Tls(tls),
+                            OwnedSocket::Tls(tls.clone()),
                         ),
                         _ => unreachable!(),
                     }
@@ -1146,31 +1144,30 @@ impl Listener {
                             latest_session: JsCell::new(None),
                         })
                     };
-                    let tcp_ref = tcp.clone();
-                    tcp_ref.update_flags(|f| {
+                    tcp.update_flags(|f| {
                         f.set(
                             SocketFlags::PAUSE_ON_CONNECT,
                             socket_config.pause_on_connect,
                         )
                     });
                     TCPSocket::data_set_cached(
-                        tcp_ref.this_value_for_connect(cx.global()),
+                        tcp.this_value_for_connect(cx.global()),
                         cx.global(),
                         default_data,
                     );
-                    tcp_ref.poll_ref.ref_(bun_io::js_vm_ctx());
+                    tcp.poll_ref.ref_(bun_io::js_vm_ctx());
 
                     // On `Err`, the context already ran `handle_connect_error`.
-                    match tcp_ref.connection.get().as_ref().unwrap() {
+                    match tcp.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => {
                             if let Ok(named_pipe) = WindowsNamedPipeContext::connect(
                                 cx,
                                 &buf[..pipe_name_len.unwrap()],
                                 None,
                                 None,
-                                OwnedSocket::Tcp(tcp),
+                                OwnedSocket::Tcp(tcp.clone()),
                             ) {
-                                tcp_ref.socket.set(uws::NewSocketHandler {
+                                tcp.socket.set(uws::NewSocketHandler {
                                     socket: uws::InternalSocket::Pipe(named_pipe.cast()),
                                 });
                             }
@@ -1180,7 +1177,7 @@ impl Listener {
                             *fd,
                             None,
                             None,
-                            OwnedSocket::Tcp(tcp),
+                            OwnedSocket::Tcp(tcp.clone()),
                         ),
                         _ => unreachable!(),
                     }
@@ -1821,7 +1818,7 @@ fn dispatch_server_name(
     if s_ref.kind() != uws_sys::SocketKind::BunSocketTls {
         return core::ptr::null_mut();
     }
-    let Some(tls) = s_ref.ext::<NativeRef<true>>().get() else {
+    let Some(tls) = s_ref.ext::<NativeRef<true>>().cloned() else {
         return core::ptr::null_mut();
     };
     // An idle socket can drop its Handlers while the us_socket_t lives on;

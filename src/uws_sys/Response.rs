@@ -1047,8 +1047,8 @@ impl AnyResponse {
         }
     }
 
-    /// The registrant keeps a ref on `this` until it clears the handler, which gets a ref of its own.
-    pub fn on_aborted_this<U: AnyRefCounted + 'static, H>(self, _handler: H, this: &RefPtr<U>)
+    /// The registrant keeps a ref on `owner` until it clears the handler, which gets a ref of its own.
+    pub fn on_aborted_ref<U: AnyRefCounted + 'static, H>(self, _handler: H, owner: &RefPtr<U>)
     where
         H: Fn(RefPtr<U>, AnyResponse) + Copy + 'static,
     {
@@ -1057,7 +1057,7 @@ impl AnyResponse {
                 // SAFETY: `u` is the pointer registered below; the registrant holds a ref on it until the handler is cleared.
                 thunk::zst::<H>()(unsafe { RefPtr::init_ref(u) }, any)
             },
-            this.as_ptr(),
+            owner.as_ptr(),
         )
     }
 

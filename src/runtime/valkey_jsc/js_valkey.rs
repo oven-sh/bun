@@ -643,7 +643,7 @@ impl JSValkeyClient {
         self.timer.arm(self, ms, || self.clone());
     }
 
-    pub(crate) fn on_connection_timeout(&self) -> JsResult<()> {
+    pub(crate) fn on_connection_timeout(self: RefPtr<Self>) -> JsResult<()> {
         let ms = self.client.get().timeout_ms();
         if ms == 0 {
             return Ok(());

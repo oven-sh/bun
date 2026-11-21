@@ -299,7 +299,7 @@ impl AutoFlush for PostgresSQLConnection {
             && self.write_buffer.get().len() > 0
     }
 
-    fn on_auto_flush(&self) -> bool {
+    fn on_auto_flush(self: RefPtr<Self>) -> bool {
         // With backpressure, onWritable drains.
         if !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
             self.drain_internal();
@@ -993,7 +993,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.on_handshake(success, ssl_error);
     }
 
-    pub fn on_close(this: &PostgresSQLConnection, _socket: SocketType<SSL>) {
+    pub fn on_close(this: &PostgresSQLConnection) {
         // usockets frees this socket at end-of-tick; drop the stored pointer
         // now so nothing (timer callbacks, ref()) dereferences it
         // after the free.

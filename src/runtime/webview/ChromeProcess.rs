@@ -37,8 +37,7 @@ use bun_ptr::{AliasableBox, CellExt as _};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{
-    self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, ProcessHandle, SpawnOptions,
-    Status, Stdio,
+    self, EventLoopHandle, ProcessExit, ProcessExitKind, ProcessHandle, SpawnOptions, Status, Stdio,
 };
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
@@ -664,7 +663,7 @@ impl Endpoints {
         let process = &chrome.process;
         // SAFETY: `chrome` owns `process`, whose `Drop` detaches the handler.
         let handler = unsafe { ProcessExit::new(ProcessExitKind::ChromeProcess, chrome.as_ptr()) };
-        Process::set_exit_handler(process, handler);
+        process.set_exit_handler(handler);
         if let Err(e) = process.watch() {
             scoped_log!(Chrome, "watch failed: {}", e);
             return Err(crate::Error::WatchFailed);
@@ -772,7 +771,7 @@ impl Endpoints {
 
         // SAFETY: `chrome` owns `process`, whose `Drop` detaches the handler.
         let handler = unsafe { ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr) };
-        Process::set_exit_handler(process, handler);
+        process.set_exit_handler(handler);
         process.disable_keeping_event_loop_alive();
         PID.store(process.pid, Ordering::Relaxed);
         unreaped().with_taken(|unreaped| unreaped.push(chrome));

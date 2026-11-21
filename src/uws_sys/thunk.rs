@@ -124,7 +124,7 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 /// every `&mut ExtSlot<T>` reachable from safe code was materialised by the
 /// `vtable::Trampolines` layer from C-allocated socket ext memory (via
 /// `(*s).ext::<ExtSlot<T>>()`), and `calloc`-zero is `None`. That makes
-/// [`Self::owner_ref`] sound as a *safe* fn — the one `unsafe`
+/// its accessors sound as *safe* fns — the `unsafe`
 /// inside discharges the invariant for every call site.
 #[repr(transparent)]
 pub struct ExtSlot<T>(Option<NonNull<T>>);

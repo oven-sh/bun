@@ -399,9 +399,6 @@ impl WebSocketProxyTunnel {
     }
 
     /// Called when the socket becomes writable - flush buffered encrypted data
-    ///
-    /// Owns a ref because `flush()` and `handle_tunnel_writable()`
-    /// can reach a close path that drops a ref on the tunnel.
     pub(crate) fn on_writable(self: RefPtr<Self>) {
         // Flush the SSL state machine
         if let Some(w) = self.wrapper.get() {
@@ -443,10 +440,6 @@ impl WebSocketProxyTunnel {
     }
 
     /// Feed encrypted data from the network to the SSL wrapper for decryption
-    ///
-    /// Owns a ref because `receive_data()` synchronously dispatches
-    /// `on_data`/`on_handshake`/`on_close`, which can reach a
-    /// close path that drops a ref on the tunnel.
     pub(crate) fn receive(self: RefPtr<Self>, data: &[u8]) {
         if let Some(w) = self.wrapper.get() {
             w.receive_data(&mut &*self, data);
@@ -460,8 +453,6 @@ impl WebSocketProxyTunnel {
     }
 
     /// Write application data through the tunnel (will be encrypted)
-    ///
-    /// Owns a ref because `write_data()` may fire `on_handshake`/`on_close`.
     #[cold]
     pub(crate) fn write(self: RefPtr<Self>, data: &[u8]) -> crate::Result<usize> {
         if let Some(w) = self.wrapper.get() {
@@ -481,8 +472,6 @@ impl WebSocketProxyTunnel {
 
     /// Half-close the TLS session inside the tunnel. Sends our close_notify and keeps reading
     /// until the peer's arrives, which fires `on_close`. The proxy connection stays open.
-    ///
-    /// Owns a ref because `shutdown()` may fire `on_close`.
     pub(crate) fn end(self: RefPtr<Self>) {
         if let Some(w) = self.wrapper.get() {
             let _ = w.shutdown(&mut &*self, false);

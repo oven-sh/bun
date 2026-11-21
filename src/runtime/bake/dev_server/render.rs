@@ -229,9 +229,8 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
-                let blob = response.clone();
-                route_bundle.data.html_mut().cached_response = Some(response);
-                blob
+                route_bundle.data.html_mut().cached_response = Some(response.clone());
+                response
             }
         };
         blob.on_with_method(method, resp);
@@ -434,7 +433,7 @@ impl DevServer {
                 })),
             });
             // `script_requests` keeps `deferred` alive until the response removes this handler.
-            resp.on_aborted_this(
+            resp.on_aborted_ref(
                 |deferred: bun_ptr::RefPtr<DeferredScriptRequest>, _: AnyResponse| {
                     deferred.response.set(None)
                 },
@@ -479,9 +478,9 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
-                let client_bundle = bundle.clone();
-                self.route_bundles[bundle_index.get() as usize].client_bundle = Some(bundle);
-                client_bundle
+                self.route_bundles[bundle_index.get() as usize].client_bundle =
+                    Some(bundle.clone());
+                bundle
             }
         };
         self.source_maps.add_weak_ref(source_map_id);

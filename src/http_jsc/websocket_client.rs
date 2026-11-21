@@ -8,7 +8,6 @@
 //! This is only used **after** the websocket handshaking step is completed.
 
 use core::cell::{Cell, RefCell};
-use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 use core::net::IpAddr;
 
@@ -414,12 +413,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.tcp.set(tcp);
     }
 
-    pub fn handle_close(
-        self: RefPtr<Self>,
-        _socket: Socket<SSL>,
-        _code: c_int,
-        _reason: *mut c_void,
-    ) {
+    pub fn handle_close(self: RefPtr<Self>) {
         log!("onClose");
         self.detach_tcp();
         self.parse_initial_data();

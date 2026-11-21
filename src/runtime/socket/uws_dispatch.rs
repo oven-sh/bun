@@ -244,7 +244,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_session(
     if s_ref.kind() != SocketKind::BunSocketTls {
         return;
     }
-    let Some(tls) = s_ref.ext::<NativeRef<true>>().get() else {
+    let Some(tls) = s_ref.ext::<NativeRef<true>>().cloned() else {
         return;
     };
     // A negative length from the C side means there is nothing to deliver;
@@ -341,7 +341,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_keylog(
     if s_ref.kind() != SocketKind::BunSocketTls {
         return;
     }
-    let Some(tls) = s_ref.ext::<NativeRef<true>>().get() else {
+    let Some(tls) = s_ref.ext::<NativeRef<true>>().cloned() else {
         return;
     };
     // A negative length from the C side means there is nothing to deliver;

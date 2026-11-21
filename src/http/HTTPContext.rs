@@ -393,10 +393,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 Self::run_on_socket(request, socket, slot, body);
                 None
             }
-            Err(tagged) => {
-                bun_core::hint::cold();
-                Some(tagged)
-            }
+            Err(tagged) => Some(tagged),
         }
     }
 

@@ -70,7 +70,7 @@ type Sockaddr = netc::sockaddr;
 
 #[inline]
 fn global_resolver(global_this: &JSGlobalObject) -> &'static RefPtr<Resolver> {
-    crate::jsc_hooks::global_dns_data().get_or_init(|| {
+    crate::jsc_hooks::dns_resolver().get_or_init(|| {
         let options = c_ares::ChannelOptions::default();
         // The VM-global resolver serves every context of the realm.
         RefPtr::new(Resolver::setup(global_this.bun_vm(), None, options))
@@ -1636,7 +1636,7 @@ bun_jsc::impl_abort_handle_owner!(Resolver, abort_handle, |this, _cause| {
 
 #[cfg(windows)]
 pub(crate) struct UvDnsPoll {
-    // BACKREF — stored mut because the poll callback's guard may free `*this`.
+    // BACKREF — stored mut because the poll callback's ref may free `*this`.
     pub parent: *mut Resolver,
     pub socket: c_ares::ares_socket_t,
     /// Number of `on_dns_poll_uv` calls for this handle on the stack. libuv
@@ -1850,7 +1850,11 @@ impl Resolver {
         let Some(query) = query else {
             return promise;
         };
-        let answers = send(query);
+        self.request_sent(send(query));
+        promise
+    }
+
+    fn request_sent(self: &RefPtr<Self>, answers: c_ares::Answers<PendingQuery>) {
         if self.channel.has_active_queries() {
             self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
         } else {
@@ -1859,7 +1863,6 @@ impl Resolver {
             self.add_timer(None, 0);
         }
         answers.for_each(PendingQuery::complete_cares);
-        promise
     }
 
     fn request_completed(self: &RefPtr<Self>, answers: c_ares::Answers<PendingQuery>) {

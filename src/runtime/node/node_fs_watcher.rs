@@ -313,7 +313,7 @@ impl core::fmt::Display for StringOrBytesToDecode {
 impl FSWatchTaskWindows {
     /// this runs on JS Context Thread
     pub(crate) fn run(&mut self) -> JsResult<()> {
-        let ctx: &FSWatcher = &self.ctx;
+        let ctx = &self.ctx;
         match &mut self.event {
             Event::Rename(path) => Self::run_path::<{ EventType::Rename }>(ctx, path),
             Event::Change(path) => Self::run_path::<{ EventType::Change }>(ctx, path),
@@ -607,7 +607,7 @@ impl FSWatcher {
         this
     }
 
-    pub(crate) fn emit_if_aborted(&self) {
+    pub(crate) fn emit_if_aborted(self: &RefPtr<Self>) {
         let reason = match self.signal.get() {
             Some(s) if s.aborted() => Some(s.js_reason(&self.global_this)),
             _ => None,
@@ -624,7 +624,7 @@ impl FSWatcher {
     /// `Cell::get()` after the callback observes that write because
     /// `UnsafeCell` suppresses `noalias` on `&Self`; the trailing
     /// `self.close()` then no-ops.
-    pub(crate) fn emit_abort(&self, err: JSValue) {
+    pub(crate) fn emit_abort(self: &RefPtr<Self>, err: JSValue) {
         if self.closed.get() {
             return;
         }
@@ -878,7 +878,7 @@ impl FSWatcher {
         let vm_ref = args.global_this.bun_vm();
         let is_aborted = args.signal.as_ref().is_some_and(|s| s.aborted());
 
-        let ctx_ref = RefPtr::new(FSWatcher {
+        let watcher = RefPtr::new(FSWatcher {
             ctx: bun_ptr::BackRef::new(vm_ref),
             #[cfg(not(windows))]
             handle: vm_ref.handle(),
@@ -899,9 +899,9 @@ impl FSWatcher {
             ref_count: ThreadSafeRefCount::init(),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FSWatcher>(),
         });
-        let ctx = ctx_ref.as_ptr();
+        let ctx = watcher.as_ptr();
 
-        ctx_ref.path_watcher.set(if !is_aborted {
+        watcher.path_watcher.set(if !is_aborted {
             // The two backends take different arities (the Windows
             // backend dropped the callback parameters — only one valid
             // value each), so the call is cfg-split.
@@ -919,7 +919,7 @@ impl FSWatcher {
             match r {
                 Ok(r) => Some(r),
                 Err(err) => {
-                    ctx_ref.detach();
+                    watcher.detach();
                     return Err(bun_sys::Error {
                         errno: err.errno,
                         syscall: bun_sys::Tag::watch,
@@ -932,9 +932,9 @@ impl FSWatcher {
             None
         });
         let listener = args.listener.with_async_context_if_needed(args.global_this);
-        let ctx_ref = ctx_ref.init_js(args.global_this, listener);
+        let watcher = watcher.init_js(args.global_this, listener);
         // SAFETY: `ctx` is heap-allocated; `detach()` disarms it before it is finalized.
         unsafe { bun_jsc::AbortHandle::arm_owner(ctx, args.context) };
-        Ok(ctx_ref.js_this.get_or_undefined())
+        Ok(watcher.js_this.get_or_undefined())
     }
 }

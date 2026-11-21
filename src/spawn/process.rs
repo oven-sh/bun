@@ -177,8 +177,7 @@ impl ProcessHandle {
     where
         T: crate::ProcessExitOwner + bun_ptr::AnyRefCounted,
     {
-        // SAFETY: `owner` is live now and, per the
-        // type-level contract, for every dispatch.
+        // SAFETY: `owner` is live now and, per the type-level contract, for every dispatch.
         let h = unsafe { ProcessExit::of(owner.as_ptr()) };
         self.0.set_exit_handler(h);
     }

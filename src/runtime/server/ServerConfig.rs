@@ -342,16 +342,16 @@ pub(crate) fn apply_static_route<const SSL: bool, T: StaticRouteLike>(
     // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
     // handler route: uWS keeps the last registration for the same method and path.
     if !path_has_user_head_route && serves_head(&method) {
-        app.method_this(Method::HEAD, path, T::on_head_request, entry);
+        app.method_ref(Method::HEAD, path, T::on_head_request, entry);
     }
     match method {
         http_method::Optional::Any => {
-            app.any_this(path, T::on_request, entry);
+            app.any_ref(path, T::on_request, entry);
         }
         http_method::Optional::Method(m) => {
             let mut iter = m.iter();
             while let Some(method_) = iter.next() {
-                app.method_this(method_, path, T::on_request, entry);
+                app.method_ref(method_, path, T::on_request, entry);
             }
         }
     }
@@ -370,11 +370,11 @@ fn serves_head(method: &http_method::Optional) -> bool {
 /// The route-registration surface shared by `uws::h2::App` and
 /// `uws::h3::App`; both hand the handler type-erased `AnyRequest`/`AnyResponse`.
 pub(crate) trait MuxApp {
-    fn method_this<U, H>(&mut self, m: Method, p: &[u8], h: H, this: &RefPtr<U>)
+    fn method_ref<U, H>(&mut self, m: Method, p: &[u8], h: H, owner: &RefPtr<U>)
     where
         U: AnyRefCounted + 'static,
         H: Fn(RefPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
-    fn any_this<U, H>(&mut self, p: &[u8], h: H, this: &RefPtr<U>)
+    fn any_ref<U, H>(&mut self, p: &[u8], h: H, owner: &RefPtr<U>)
     where
         U: AnyRefCounted + 'static,
         H: Fn(RefPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
@@ -384,20 +384,20 @@ macro_rules! impl_mux_app {
     ($app:ty) => {
         impl MuxApp for $app {
             #[inline]
-            fn method_this<U, H>(&mut self, m: Method, p: &[u8], h: H, this: &RefPtr<U>)
+            fn method_ref<U, H>(&mut self, m: Method, p: &[u8], h: H, owner: &RefPtr<U>)
             where
                 U: AnyRefCounted + 'static,
                 H: Fn(RefPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
             {
-                <$app>::method_this(self, m, p, h, this)
+                <$app>::method_ref(self, m, p, h, owner)
             }
             #[inline]
-            fn any_this<U, H>(&mut self, p: &[u8], h: H, this: &RefPtr<U>)
+            fn any_ref<U, H>(&mut self, p: &[u8], h: H, owner: &RefPtr<U>)
             where
                 U: AnyRefCounted + 'static,
                 H: Fn(RefPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
             {
-                <$app>::any_this(self, p, h, this)
+                <$app>::any_ref(self, p, h, owner)
             }
         }
     };
@@ -416,14 +416,14 @@ pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
     entry.set_server(server);
 
     if !path_has_user_head_route && serves_head(&method) {
-        app.method_this(Method::HEAD, path, T::on_head_request, entry);
+        app.method_ref(Method::HEAD, path, T::on_head_request, entry);
     }
     match method {
-        http_method::Optional::Any => app.any_this(path, T::on_request, entry),
+        http_method::Optional::Any => app.any_ref(path, T::on_request, entry),
         http_method::Optional::Method(m) => {
             let mut iter = m.iter();
             while let Some(method_) = iter.next() {
-                app.method_this(method_, path, T::on_request, entry);
+                app.method_ref(method_, path, T::on_request, entry);
             }
         }
     }

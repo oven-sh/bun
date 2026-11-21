@@ -242,7 +242,7 @@ impl Route {
                         is_response_pending: Cell::new(true),
                     };
                     self.pending_responses.with_mut(|v| v.push(pending));
-                    resp.on_aborted_this(Self::on_pending_response_aborted, &self);
+                    resp.on_aborted_ref(Self::on_pending_response_aborted, &self);
                     req.set_yield(false);
                 }
                 State::Err(_log) => {

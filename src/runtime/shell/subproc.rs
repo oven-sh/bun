@@ -7,7 +7,7 @@ use std::rc::Rc;
 use crate::api::bun::process::SpawnResultExt as _;
 #[cfg(windows)]
 use crate::api::bun::process::WindowsOptions;
-use crate::api::bun::process::{self as bun_process, Process, SpawnOptions, Status};
+use crate::api::bun::process::{self as bun_process, SpawnOptions, Status};
 use crate::api::bun::subprocess as JscSubprocess;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
@@ -582,10 +582,9 @@ impl ShellSubprocess {
         // below are scoped so no borrow of the Subprocess spans the
         // re-entrant `watch`/`start`/`read_all` calls.
         unsafe {
-            Process::set_exit_handler(
-                (*subprocess).proc(),
-                bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess),
-            );
+            let handler =
+                bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess);
+            (*subprocess).proc().set_exit_handler(handler);
         }
         if let Some(id) = cmd_parent.interp.context.get() {
             // Freed already (the graph was collected): `interrupted()` ends the script.

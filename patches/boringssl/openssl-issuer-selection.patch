@@ -55,6 +55,20 @@
  
    // The following is a cache of trusted certs
    UniquePtr<STACK_OF(X509_OBJECT)> objs;  // Cache of all objects
+@@ -466,10 +479,9 @@ struct x509_store_ctx_st {
+   int error_depth;
+   int error;
+   X509 *current_cert;
+-  // With X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: the time error of the last
+-  // trust anchor a lookup skipped, so a chain that then fails as untrusted can
+-  // be reported as that instead. Zero if none was skipped.
+-  int ignored_anchor_error;
++  // Whether X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS made a lookup skip a
++  // certificate.
++  bool ignored_anchor;
+ 
+   CRYPTO_EX_DATA ex_data;
+ } /* X509_STORE_CTX */;
 --- a/crypto/x509/v3_purp.cc
 +++ b/crypto/x509/v3_purp.cc
 @@ -258,6 +258,16 @@ int X509_supported_extension(const X509_EXTENSION *ex) {
@@ -267,7 +281,31 @@
  }
  
  UniquePtr<X509> get_trusted_issuer(X509_STORE_CTX *ctx, const X509 *x) {
-@@ -997,11 +999,9 @@ int check_chain_signatures_and_time(X509_STORE_CTX *ctx, bool trusted) {
+@@ -172,13 +174,6 @@ UniquePtr<X509> get_trusted_issuer(X509_STORE_CTX *ctx, const X509 *x) {
+   return UniquePtr<X509>(issuer);
+ }
+ 
+-// untrusted_chain_error picks the error for a chain that reached no usable
+-// trust anchor: if one was passed over only because it is outside its validity
+-// period, say that rather than that no issuer exists.
+-int untrusted_chain_error(const X509_STORE_CTX *ctx, int err) {
+-  return ctx->ignored_anchor_error != 0 ? ctx->ignored_anchor_error : err;
+-}
+-
+ // check_lone_untrusted_leaf runs once the verify callback has suppressed the
+ // error for a chain that reached no trust anchor. If no issuer was found for
+ // the target certificate at all, it reports
+@@ -189,8 +184,7 @@ int check_lone_untrusted_leaf(X509_STORE_CTX *ctx) {
+       X509_check_issued(ctx->cert, ctx->cert) == X509_V_OK) {
+     return 1;
+   }
+-  ctx->error =
+-      untrusted_chain_error(ctx, X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE);
++  ctx->error = X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE;
+   return call_verify_cb_at_depth(0, ctx, /*depth=*/0);
+ }
+ 
+@@ -997,11 +991,9 @@ int check_chain_signatures_and_time(X509_STORE_CTX *ctx, bool trusted) {
  
  }  // namespace
  
@@ -276,46 +314,39 @@
 -  if (!(ctx->param->flags & X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS) ||
 -      (ctx->param->flags & X509_V_FLAG_NO_CHECK_TIME)) {
 -    return 1;
-+static int cert_time_error(const X509_STORE_CTX *ctx, const X509 *x509) {
++static bool cert_in_time(const X509_STORE_CTX *ctx, const X509 *x509) {
 +  if (ctx->param->flags & X509_V_FLAG_NO_CHECK_TIME) {
-+    return X509_V_OK;
++    return true;
    }
    int64_t ptime = (ctx->param->flags & X509_V_FLAG_USE_CHECK_TIME)
                        ? ctx->param->check_time
-@@ -1013,14 +1013,40 @@ int bssl::x509_verify_trusted_cert_in_time(X509_STORE_CTX *ctx,
+@@ -1012,15 +1004,32 @@ int bssl::x509_verify_trusted_cert_in_time(X509_STORE_CTX *ctx,
+                : X509_cmp_time_posix(t, ptime);
    };
    // As `check_cert_time`: notBefore must compare earlier, notAfter later.
-   if (cmp(X509_get0_notBefore(x509)) >= 0) {
+-  if (cmp(X509_get0_notBefore(x509)) >= 0) {
 -    ctx->ignored_anchor_error = X509_V_ERR_CERT_NOT_YET_VALID;
 -    return 0;
-+    return X509_V_ERR_CERT_NOT_YET_VALID;
-   }
-   if (cmp(X509_get0_notAfter(x509)) <= 0) {
--    ctx->ignored_anchor_error = X509_V_ERR_CERT_HAS_EXPIRED;
--    return 0;
-+    return X509_V_ERR_CERT_HAS_EXPIRED;
-   }
--  return 1;
-+  return X509_V_OK;
++  return cmp(X509_get0_notBefore(x509)) < 0 &&
++         cmp(X509_get0_notAfter(x509)) > 0;
 +}
 +
 +int bssl::x509_verify_trusted_cert_in_time(X509_STORE_CTX *ctx,
 +                                           const X509 *x509) {
-+  if (!(ctx->param->flags & X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS)) {
++  if (!(ctx->param->flags & X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS) ||
++      cert_in_time(ctx, x509)) {
 +    return 1;
-+  }
-+  int err = cert_time_error(ctx, x509);
-+  // As `x509_consider_issuer`, keep the one that expires last.
-+  if (err != X509_V_OK &&
-+      ctx->ignored_anchor_error != X509_V_ERR_CERT_NOT_YET_VALID) {
-+    ctx->ignored_anchor_error = err;
-+  }
-+  return err == X509_V_OK;
+   }
+-  if (cmp(X509_get0_notAfter(x509)) <= 0) {
+-    ctx->ignored_anchor_error = X509_V_ERR_CERT_HAS_EXPIRED;
+-    return 0;
++  ctx->ignored_anchor = true;
++  return 0;
 +}
 +
 +bool bssl::x509_consider_issuer(const X509_STORE_CTX *ctx, X509 *candidate,
 +                                X509 **best) {
-+  const bool in_time = cert_time_error(ctx, candidate) == X509_V_OK;
++  const bool in_time = cert_in_time(ctx, candidate);
 +  int64_t best_not_after;
 +  if (in_time || *best == nullptr ||
 +      (ASN1_TIME_to_posix_nonstandard(X509_get0_notAfter(*best),
@@ -323,11 +354,84 @@
 +       X509_cmp_time_posix_nonstandard(X509_get0_notAfter(candidate),
 +                                       best_not_after) > 0)) {
 +    *best = candidate;
-+  }
+   }
+-  return 1;
 +  return in_time;
  }
  
  // Given a possible certificate and issuer check them
+@@ -1121,7 +1130,7 @@ int X509_verify_cert(X509_STORE_CTX *ctx) {
+     }
+ 
+     // Add certificates to the path until we reach a trust anchor, or fail.
+-    bool have_store_cert = false;
++    bool have_store_cert = false, is_loop = false;
+     for (;;) {
+       if (static_cast<int>(sk_X509_num(ctx->chain)) >= max_chain) {
+         break;
+@@ -1142,10 +1151,16 @@ int X509_verify_cert(X509_STORE_CTX *ctx) {
+       // Prioritize looking for issuers in the store.
+       if (UniquePtr<X509> issuer = get_trusted_issuer(ctx, last);
+           issuer != nullptr) {
++        is_loop =
++            have_store_cert && sk_X509_find(ctx->chain, nullptr, issuer.get());
+         if (!PushToStack(ctx->chain, std::move(issuer))) {
+           ctx->error = X509_V_ERR_OUT_OF_MEM;
+           return 0;
+         }
++        if (is_loop) {
++          // The same issuers would follow again until the chain is too long.
++          break;
++        }
+         have_store_cert = true;
+         // Certificates from the store are candidates to be trust anchors.
+         trust = check_trust(ctx, /*allow_partial_chain=*/true);
+@@ -1193,27 +1208,36 @@ int X509_verify_cert(X509_STORE_CTX *ctx) {
+       trust = X509_TRUST_TRUSTED;
+     }
+ 
++    if (trust == X509_TRUST_UNTRUSTED && ctx->ignored_anchor) {
++      // There is no path around what was ignored, so fail on the path through
++      // it.
++      sk_X509_pop_free(ctx->chain, X509_free);
++      ctx->chain = nullptr;
++      ctx->ignored_anchor = false;
++      const unsigned long flags = param->flags;
++      ctx->param->flags &= ~X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS;
++      ok = X509_verify_cert(ctx);
++      ctx->param->flags = flags;
++      return ok;
++    }
++
+     // `X509_TRUST_REJECTED` should have returned early.
+     assert(trust == X509_TRUST_UNTRUSTED || X509_TRUST_TRUSTED);
+     if (trust == X509_TRUST_UNTRUSTED) {
+-      if (static_cast<int>(sk_X509_num(ctx->chain)) >= max_chain) {
++      if (is_loop || static_cast<int>(sk_X509_num(ctx->chain)) >= max_chain) {
+         ctx->error = X509_V_ERR_CERT_CHAIN_TOO_LONG;
+       } else if (have_store_cert) {
+-        ctx->error =
+-            untrusted_chain_error(ctx, X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
++        ctx->error = X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT;
+       } else {
+         int is_self_signed;
+         if (!cert_self_signed(sk_X509_last(ctx->chain), &is_self_signed)) {
+           ctx->error = X509_V_ERR_INVALID_EXTENSION;
+         } else if (!is_self_signed) {
+-          ctx->error = untrusted_chain_error(
+-              ctx, X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY);
++          ctx->error = X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY;
+         } else if (sk_X509_num(ctx->chain) == 1) {
+-          ctx->error = untrusted_chain_error(
+-              ctx, X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT);
++          ctx->error = X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT;
+         } else {
+-          ctx->error =
+-              untrusted_chain_error(ctx, X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN);
++          ctx->error = X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN;
+         }
+       }
+       if (!call_verify_cb_at_depth(0, ctx, sk_X509_num(ctx->chain) - 1)) {
 --- a/include/openssl/x509.h
 +++ b/include/openssl/x509.h
 @@ -215,9 +215,9 @@ OPENSSL_EXPORT void X509_get0_uids(const X509 *x509,
@@ -343,7 +447,22 @@
  #define EXFLAG_SS 0x2000
  
  // X509_get_extension_flags decodes a set of extensions from `x509` and returns
-@@ -4673,8 +4673,9 @@ OPENSSL_EXPORT int X509_supported_extension(const X509_EXTENSION *ex);
+@@ -3379,11 +3379,9 @@ OPENSSL_EXPORT int X509_VERIFY_PARAM_set1(X509_VERIFY_PARAM *to,
+ // whose validity period does not cover the verification time as if it were
+ // not there, so it can neither anchor a chain nor shadow a currently-valid
+ // certificate for the same issuer supplied by the peer or elsewhere in the
+-// store. A chain that reaches no usable anchor after such a certificate was
+-// passed over still reports `X509_V_ERR_CERT_HAS_EXPIRED` (or
+-// `X509_V_ERR_CERT_NOT_YET_VALID`) rather than an unknown-issuer error.
+-// Untrusted (peer) certificates are unaffected. Has no effect with
+-// `X509_V_FLAG_NO_CHECK_TIME`.
++// store. If that leaves no path to a trust anchor, the chain is built again
++// without this flag, and its errors are reported. Untrusted (peer) certificates
++// are unaffected. Has no effect with `X509_V_FLAG_NO_CHECK_TIME`.
+ //
+ // The value is kept away from the bits upstream allocates next.
+ #define X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS 0x40000000
+@@ -4673,8 +4671,9 @@ OPENSSL_EXPORT int X509_supported_extension(const X509_EXTENSION *ex);
  OPENSSL_EXPORT int X509_check_ca(const X509 *x509);
  
  // X509_check_issued checks if `issuer` and `subject`'s name, authority key
@@ -355,7 +474,7 @@
  //
  // This function does not check the signature on `subject`. Rather, it is
  // intended to prune the set of possible issuer certificates during
-@@ -4760,6 +4761,9 @@ OPENSSL_EXPORT int X509_check_ip_asc(const X509 *x509, const char *ipasc,
+@@ -4760,6 +4759,9 @@ OPENSSL_EXPORT int X509_check_ip_asc(const X509 *x509, const char *ipasc,
  // must release `*out_issuer` with `X509_free` when done. If none was found, it
  // returns zero and leaves `*out_issuer` unchanged.
  //

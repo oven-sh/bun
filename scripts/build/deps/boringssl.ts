@@ -37,7 +37,7 @@ export const boringssl: Dependency = {
   }),
 
   patches: [
-    // Among certificates with one subject, choose the issuer that OpenSSL, and so Node.js, chooses.
+    // Choose the issuer, and report the error, that OpenSSL, and so Node.js, does.
     "patches/boringssl/openssl-issuer-selection.patch",
   ],
 

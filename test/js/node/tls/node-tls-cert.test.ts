@@ -928,8 +928,8 @@ describe("expired or not-yet-valid CA in the trust set", () => {
     ["expired trusted intermediate is not an anchor", ["leaf"], ["root", "int-expired"], "CERT_HAS_EXPIRED"],
     ["not-yet-valid trusted intermediate is not an anchor", ["leaf"], ["root", "int-future"], "CERT_NOT_YET_VALID"],
     ["valid trusted intermediate is (server sends leaf only)", ["leaf"], ["root", "int-valid"], "authorized"],
-    // pinning only an expired intermediate fails closed (was UNABLE_TO_GET_ISSUER_CERT: through it, then no root)
-    ["ca = only the expired intermediate", ["leaf", "int-valid"], ["int-expired"], "CERT_HAS_EXPIRED"],
+    // pinning only an expired intermediate fails closed, as in Node.js: through it, then no root
+    ["ca = only the expired intermediate", ["leaf", "int-valid"], ["int-expired"], "UNABLE_TO_GET_ISSUER_CERT"],
     [
       "ca = only the expired intermediate, partial chains allowed, server sends it",
       ["leaf", "int-expired"],
@@ -1377,6 +1377,39 @@ describe("several certificates match one issuer", () => {
     ]);
   });
 
+  it("with no anchor but through a CA that is out of date, the error is of the path through it", async () => {
+    const [ended, notBegun] = ["a validity that ended", "a validity that has not begun"];
+    const ofIntermediate = (defect: string) => copy(defect, "usual", "intermediate");
+    const crossSigned = copy("an unknown issuer");
+    expect({
+      passedOverBefore: await verify(leaf, [ofIntermediate(notBegun), intermediate, copy(ended)]),
+      passedOverAndNoRoot: await verify(leaf, [ofIntermediate(ended), intermediate]),
+      passedOverAndUnknownRoot: await verify(chain, [copy(ended), crossSigned]),
+      twoTrusted: await verify(chain, [ofIntermediate(ended), copy(notBegun)]),
+      oneTrustedOneSent: await verify(leaf + ofIntermediate(ended), [copy(notBegun)]),
+      unknownRoot: await verify(chain, [ofIntermediate(ended), crossSigned]),
+      sentCrossSigned: await verify(chain + crossSigned, [copy(ended)]),
+      sentNotCA: await verify(chain + copy("CA:FALSE"), [copy(ended)]),
+      anotherKey: await verify(chain, [
+        mint("root", "root", ca, { to: "2021", subjectKey: otherKey, signer: otherKey }),
+      ]),
+      crl: await verify(chain, [copy(ended)], { crl: [crlOf("root"), crlOf("intermediate")] }),
+      loop: await verify(chain, [mint("root", "other", ca), mint("other", "root", ca, { to: "2021" })]),
+    }).toEqual({
+      passedOverBefore: "CERT_HAS_EXPIRED",
+      passedOverAndNoRoot: "UNABLE_TO_GET_ISSUER_CERT",
+      passedOverAndUnknownRoot: "UNABLE_TO_GET_ISSUER_CERT",
+      twoTrusted: "CERT_HAS_EXPIRED",
+      oneTrustedOneSent: "CERT_HAS_EXPIRED",
+      unknownRoot: "CERT_HAS_EXPIRED",
+      sentCrossSigned: "CERT_HAS_EXPIRED",
+      sentNotCA: "CERT_HAS_EXPIRED",
+      anotherKey: "CERT_SIGNATURE_FAILURE",
+      crl: "CERT_HAS_EXPIRED",
+      loop: "CERT_HAS_EXPIRED",
+    });
+  });
+
   it("the same goes for the certificates a server sends", async () => {
     const otherType = mint("intermediate", "root", ca, { subjectKey: ed25519Key });
     expect({
@@ -1629,6 +1662,14 @@ describe("several certificates match one issuer", () => {
       });
     });
 
+    it("HTTP/3 refuses a root that is out of date", async () => {
+      const expired = (name: string) => ({ NODE_EXTRA_CA_CERTS: [mint(name, name, ca, { to: "2021" })] });
+      expect(await run([], { expired }, "http3.mjs")).toEqual({
+        outcomes: { expired: "HTTP3HandshakeFailed" },
+        exitCode: 0,
+      });
+    });
+
     // Elsewhere the system store is not made of files.
     it.each(isLinux ? ["--use-openssl-ca", "--use-system-ca"] : ["--use-openssl-ca"])(
       "NODE_EXTRA_CA_CERTS comes last with %s",
@@ -1646,6 +1687,50 @@ describe("several certificates match one issuer", () => {
       };
       expect(await run(["--use-openssl-ca"], cases)).toEqual({ outcomes: { broken: authorized }, exitCode: 0 });
     });
+
+    async function sentWith(...extra: string[]) {
+      using dir = tempDir("auto-chain", { "extra.pem": extra.join("") });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const tls = require("node:tls");
+          const server = tls.createServer(${JSON.stringify({ key, cert: leaf })}).listen(0, "127.0.0.1", () => {
+            const options = { ca: ${JSON.stringify(unrelated[0])}, rejectUnauthorized: false };
+            const socket = tls.connect(server.address().port, "127.0.0.1", options, () => {
+              let count = 0;
+              for (let cert = socket.getPeerX509Certificate(); cert; cert = cert.issuerCertificate) count++;
+              console.log(count);
+              process.exit(0);
+            });
+          });`,
+        ],
+        env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(String(dir), "extra.pem") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    it("a server completes its chain with a CA that is out of date if there is no other", async () => {
+      expect(await sentWith(copy("a validity that ended", "usual", "intermediate"), root)).toEqual({
+        stdout: "3\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.each(["2021", "2120"])(
+      "a server goes round CAs that certify each other until %s only once, unlike in Node.js",
+      async to => {
+        expect(await sentWith(intermediate, mint("root", "other", ca, { to }), mint("other", "root", ca))).toEqual({
+          stdout: "5\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
 
     it("a plain copy does not lift the trust settings of a certificate, unlike in Node.js", async () => {
       const rejected = (pem: string) =>

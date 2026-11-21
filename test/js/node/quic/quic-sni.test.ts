@@ -232,6 +232,32 @@ test("an expired intermediate in `ca` does not shadow the valid one the server s
   expect(info.validationErrorCode).toBeUndefined();
 });
 
+// Unlike node:tls, node:quic stops at the first error, and dates are checked from the root down.
+test("with no anchor but through a CA that is out of date, the error is the first of the path through it", async () => {
+  const read = (name: string) =>
+    readFileSync(join(import.meta.dir, "..", "tls", "fixtures", "expired-intermediate", name));
+  const identity = {
+    keys: [createPrivateKey(read("leaf.key"))],
+    certs: [Buffer.concat([read("leaf.pem"), read("int-valid.pem")])],
+  };
+  await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });
+  async function validationErrorCode(...ca: string[]) {
+    const session = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      ca: ca.map(read),
+    } as SessionOptions);
+    const info = await session.opened;
+    await session.close();
+    return info.validationErrorCode;
+  }
+  expect([
+    await validationErrorCode("int-future.pem", "root-expired.pem"),
+    await validationErrorCode("int-expired.pem"),
+  ]).toEqual(["CERT_HAS_EXPIRED", "UNABLE_TO_GET_ISSUER_CERT"]);
+});
+
 test("the first of two copies of a root in `ca` is the one that counts", async () => {
   const read = (name: string) => readFileSync(join(import.meta.dir, "..", "tls", "fixtures", "trust-anchor", name));
   const identity = {

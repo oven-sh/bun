@@ -71,4 +71,6 @@ echo 'console.log(await Promise.resolve("hello"))' | bun --input-type=module
 
 The same flag applies to code passed with `-e`. The `module-typescript` and `commonjs-typescript` values also accept TypeScript syntax.
 
-An empty stdin source exits successfully. An explicit empty `-e ''` or `-p ''` takes precedence over stdin; `-p ''` prints `undefined`. Unlike Node.js 26.12.1, Bun does not read stdin for an empty `-p` argument.
+An empty stdin source exits successfully. An explicit empty `-e ''` takes precedence over stdin. An empty `-p ''` reads stdin, evaluates it, and prints the result.
+
+Bun supports printing module stdin input; Node.js 26.12.1 rejects it with `ERR_EVAL_ESM_CANNOT_PRINT`.

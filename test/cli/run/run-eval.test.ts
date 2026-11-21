@@ -454,9 +454,9 @@ test.concurrent.each(["module", "commonjs"])("--input-type %s accepts empty stdi
 });
 
 for (const inputType of [undefined, "module", "commonjs"]) {
-  test.concurrent.each(["-e", "-p"])(`empty %s ignores stdin (input-type=${inputType})`, async flag => {
+  test.concurrent(`empty -e ignores stdin (input-type=${inputType})`, async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), ...(inputType ? [`--input-type=${inputType}`] : []), flag, ""],
+      cmd: [bunExe(), ...(inputType ? [`--input-type=${inputType}`] : []), "-e", ""],
       env: bunEnv,
       stdin: "pipe",
       // Bound a regression that waits for EOF; leave the pipe open until the process exits.
@@ -465,12 +465,31 @@ for (const inputType of [undefined, "module", "commonjs"]) {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: flag === "-p" ? "undefined\n" : "",
-      stderr: "",
-      exitCode: 0,
-    });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     expect(proc.signalCode).toBeNull();
+  });
+
+  test.concurrent.each([
+    { name: "expression", source: 'console.log("stdin ran"); 6 * 7', stdout: "stdin ran\n42\n", throws: false },
+    { name: "throw", source: 'throw new Error("stdin executed")', stdout: "", throws: true },
+    { name: "empty", source: "", stdout: "undefined\n", throws: false },
+  ])(`empty -p reads and prints stdin: $name (input-type=${inputType})`, async ({ source, stdout, throws }) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...(inputType ? [`--input-type=${inputType}`] : []), "-p", ""],
+      env: bunEnv,
+      stdin: Buffer.from(source),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [actualStdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(actualStdout).toBe(stdout);
+    if (throws) {
+      expect(stderr).toContain("stdin executed");
+      expect(stderr).toContain("[stdin]");
+      expect(exitCode).toBe(1);
+    } else {
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    }
   });
 }
 

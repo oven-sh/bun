@@ -1311,14 +1311,19 @@ pub(crate) mod command {
             return run_command::RunCommand::exec_node_repl(ctx);
         }
 
-        if tag == Tag::AutoCommand && ctx.runtime_options.eval.has_source() {
+        if tag == Tag::AutoCommand
+            && ctx.runtime_options.eval.has_source()
+            && !(ctx.runtime_options.eval.eval_and_print
+                && ctx.runtime_options.eval.script.is_empty())
+        {
             lint_command::read_program_from_stdin(ctx);
             return run_command::RunCommand::exec_eval(ctx);
         }
 
         if tag == Tag::AutoCommand
             && ctx.positionals.is_empty()
-            && ctx.runtime_options.input_type != bun_options_types::context::RuntimeInputType::Auto
+            && (ctx.runtime_options.input_type != bun_options_types::context::RuntimeInputType::Auto
+                || ctx.runtime_options.eval.eval_and_print)
         {
             if !run_command::RunCommand::exec_stdin(ctx, false)? {
                 Global::exit(1);

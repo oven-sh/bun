@@ -210,8 +210,6 @@ test("closeIdleConnections() leaves a connection that has sent part of a request
   for (const socket of [fresh, partial, barrier]) socket.on("error", () => {});
   try {
     const freshClosed = once(fresh, "close");
-    // An empty line starts no message. With it, TCP_DEFER_ACCEPT on Linux does not hold the accept back for 1 s.
-    fresh.write("\r\n");
     partial.write("GET / HTTP/1.1\r\nHost: x\r\n");
     // The partial head was written first, so the server has read it when it answers this.
     barrier.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");

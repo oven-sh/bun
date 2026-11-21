@@ -1273,9 +1273,11 @@ public:
     }
 
     /* HTTP clients always send first (the request, or ClientHello for TLS), so defer
-     * accept() until data arrives and dispatch the read immediately after accept. */
-    static int tcpListenOptions(int options) {
-        return options | LIBUS_LISTEN_DEFER_ACCEPT;
+     * accept() until data arrives and dispatch the read immediately after accept.
+     * Not for node:http: its 'connection' event, getConnections(), maxConnections and
+     * closeAllConnections() must see a connection that has sent nothing (#49375). */
+    int tcpListenOptions(int options) const {
+        return isNodeHttp() ? options : options | LIBUS_LISTEN_DEFER_ACCEPT;
     }
 
     static us_listen_socket_t *unrefListenSocket(us_listen_socket_t *socket) {

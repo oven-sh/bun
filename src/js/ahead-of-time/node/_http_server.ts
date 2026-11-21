@@ -3662,7 +3662,8 @@ const ServerResponsePrototype: object = ServerResponse.prototype;
 // functions of an object that stands in the place of a response, which keep the state on their receiver.
 let responseOfNobody: $Node.ServerResponse | undefined;
 function adoptResponse(res: $Node.ServerResponse): void {
-  const nobody = (responseOfNobody ??= new ServerResponse(new IncomingMessage(null)));
+  // It is not constructed, so that no setter of the program hears of it.
+  const nobody = (responseOfNobody ??= Object.create(ServerResponsePrototype) as $Node.ServerResponse);
   const exchange = makeExchange(nobody, null, noResponseEvents, null);
   exchange.flags = ExchangeFlags.has_pending_callbacks | ExchangeFlags.has_stand_in;
   res.$exchange = exchange;

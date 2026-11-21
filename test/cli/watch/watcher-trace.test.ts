@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 test("BUN_WATCHER_TRACE creates trace file with watch events", async () => {
@@ -148,6 +148,59 @@ test("BUN_WATCHER_TRACE with --watch flag", async () => {
 
   expect(foundScriptEvent).toBe(true);
 }, 10000);
+
+// On Linux a watch of a directory can also report a write to a file in it. `--hot` does not ask
+// for that: a watched file reports its own writes, and `--hot` takes a file that its directory
+// names off the watchlist. `--watch` starts a new process for each change and keeps the events.
+test.concurrent.skipIf(!isLinux).each([
+  ["--hot gets no event", "--hot", {}, false],
+  [
+    "--hot with BUN_FEATURE_FLAG_FORCE_WATCH_DIRECTORY_WRITES gets an event",
+    "--hot",
+    { BUN_FEATURE_FLAG_FORCE_WATCH_DIRECTORY_WRITES: "1" },
+    true,
+  ],
+  ["--watch gets an event", "--watch", {}, true],
+])("%s for a write to a file that nothing imports", async (_, flag, env, reported) => {
+  using dir = tempDir("watcher-trace-not-imported", {
+    "src/script.js": `console.log("run", 0);`,
+    "src/notes.txt": "",
+  });
+  const src = join(String(dir), "src");
+  // Outside the watched folder, so the trace file is not such a file itself.
+  const traceFile = join(String(dir), "trace.log");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), flag, "script.js"],
+    env: { ...bunEnv, ...env, BUN_WATCHER_TRACE: traceFile },
+    cwd: src,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  async function printed(text: string) {
+    while (!stdout.includes(text)) {
+      const { value, done } = await reader.read();
+      if (done) return stdout;
+      stdout += decoder.decode(value, { stream: true });
+    }
+    return true;
+  }
+  expect(await printed("run 0")).toBe(true);
+
+  for (let i = 0; i < 5; i++) writeFileSync(join(src, "notes.txt"), `${i}`);
+  // The watcher takes events in order and logs each batch before it reloads,
+  // so the trace is complete for the writes above when the next run prints.
+  writeFileSync(join(src, "script.js"), `console.log("run", 1);`);
+  expect(await printed("run 1")).toBe(true);
+
+  const trace = readFileSync(traceFile, "utf8");
+  expect(trace).toContain("script.js");
+  expect(trace.includes("notes.txt")).toBe(reported);
+});
 
 test("BUN_WATCHER_TRACE with empty path does not create trace", async () => {
   using dir = tempDir("watcher-trace-empty", {

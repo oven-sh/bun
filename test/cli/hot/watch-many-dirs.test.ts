@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, tempDir } from "harness";
-import { mkdirSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readlinkSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("--hot with many directories", () => {
@@ -99,6 +99,54 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     30000,
   ); // 30 second timeout
 
+  // On Linux only a save by rename takes a file off the watchlist, and the reload puts it back.
+  // A run prints the lowest version among the modules, so a run for an earlier round does not count.
+  test.skipIf(!isLinux || (isCI && isASAN))("reloads 129 modules that are replaced by rename at once", async () => {
+    await using tmpdir = tempDir("hot-many-dirs-rename", {});
+    const rounds = 3;
+    const modules = Array.from({ length: 129 }, (_, i) => `dir-${i.toString().padStart(4, "0")}`);
+    for (const name of modules) {
+      mkdirSync(join(tmpdir, name));
+      writeFileSync(join(tmpdir, name, "index.js"), `export const version = 0;`);
+    }
+    writeFileSync(
+      join(tmpdir, "entry.js"),
+      `
+${modules.map((name, i) => `import * as dir${i} from './${name}/index.js';`).join("\n")}
+const version = Math.min(${modules.map((_, i) => `dir${i}.version`).join(", ")});
+console.log("Loaded at version " + version);
+if (version === ${rounds}) process.exit(0);
+`,
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "entry.js"],
+      cwd: tmpdir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const iter = forEachLine(proc.stdout);
+    const loadedAt = async (version: number) => {
+      while (true) {
+        const { value: line, done } = await iter.next();
+        if (done) throw new Error(`--hot exited before version ${version} (exit ${proc.exitCode})`);
+        if (line === `Loaded at version ${version}`) return;
+      }
+    };
+
+    await loadedAt(0);
+    for (let round = 1; round <= rounds; round++) {
+      for (const name of modules) {
+        const file = join(tmpdir, name, "index.js");
+        writeFileSync(file + ".tmp", `export const version = ${round};`);
+        renameSync(file + ".tmp", file);
+      }
+      await loadedAt(round);
+    }
+    expect(await proc.exited).toBe(0);
+  });
+
   // The watchlist owns one descriptor per watched file, closed only when the
   // entry is evicted or the watcher shuts down. Re-transpiles during a reload
   // open the file by path and must not stack additional descriptors on top of
@@ -183,11 +231,11 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     60000,
   );
 
-  // Editing dep.js raises an inotify event on lib/, which makes the reloader
-  // evict dep's watchlist entry; the reload then re-adds it with a fresh heap
-  // copy of the path. Eviction used to discard the evicted entry's copy
-  // without freeing it, so every edit leaked one path, which LSan reports when
-  // the process exits (the same check CI's ASAN lane applies to every test
+  // Replacing dep.js by rename raises an inotify event on lib/, which makes the
+  // reloader evict dep's watchlist entry; the reload then re-adds it with a
+  // fresh heap copy of the path. Eviction used to discard the evicted entry's
+  // copy without freeing it, so every edit leaked one path, which LSan reports
+  // when the process exits (the same check CI's ASAN lane applies to every test
   // process). logLevel=debug makes the reloader log each eviction, so a reload
   // cycle that stopped evicting cannot pass this vacuously.
   test.skipIf(!isLinux || !isASAN)("evicting watchlist entries does not leak their paths", async () => {
@@ -230,7 +278,8 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
 
     await waitForLine("RELOAD 0");
     for (let i = 1; i <= edits; i++) {
-      writeFileSync(join(dir, "lib", "dep.js"), `export const value = ${i};`);
+      writeFileSync(join(dir, "lib", "dep.js.tmp"), `export const value = ${i};`);
+      renameSync(join(dir, "lib", "dep.js.tmp"), join(dir, "lib", "dep.js"));
       await waitForLine(`RELOAD ${i}`);
     }
     const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);

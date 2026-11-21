@@ -32,6 +32,8 @@ pub struct INotifyWatcher {
     eventfd: CloseOnDrop,
     /// nanoseconds
     pub(crate) coalesce_interval: isize,
+    /// `WatcherContext::watches_directory_writes` of the consumer, or the feature flag.
+    directory_writes: bool,
 }
 
 pub(crate) type EventListIndex = c_int;
@@ -93,14 +95,16 @@ impl INotifyWatcher {
 
     pub(crate) fn watch_dir(&self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
         use bun_sys::linux::IN;
-        let watch_dir_mask = IN::EXCL_UNLINK
+        let mut watch_dir_mask = IN::EXCL_UNLINK
             | IN::DELETE
             | IN::DELETE_SELF
             | IN::CREATE
             | IN::MOVE_SELF
             | IN::ONLYDIR
-            | IN::MOVED_TO
-            | IN::MODIFY;
+            | IN::MOVED_TO;
+        if self.directory_writes {
+            watch_dir_mask |= IN::MODIFY;
+        }
         let rc = bun_sys::linux::inotify_add_watch(self.fd.fd().native(), pathname, watch_dir_mask);
         bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd.fd(), rc);
         if rc < 0 {
@@ -132,7 +136,15 @@ impl INotifyWatcher {
                 .get()
                 .and_then(|v| isize::try_from(v).ok())
                 .unwrap_or(100_000),
+            directory_writes: true,
         })
+    }
+
+    pub(crate) fn with_directory_writes(mut self, directory_writes: bool) -> Self {
+        self.directory_writes = directory_writes
+            || env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_WATCH_DIRECTORY_WRITES.get()
+                == Some(true);
+        self
     }
 
     /// For an event, or for [`Watcher::wake`].

@@ -70,8 +70,10 @@ impl Expect {
                 "<b>Matcher error<r>: <green>expected<r> value must be a non-null object\n"
             );
         }
-        let (matched, shown) = received.jest_deep_match(expected, m.global, m.not())?;
-        if m.passes(matched) { m.pass() } else { m.fail_diff(expected, shown) }
+        // `.not` shows only the pattern, so it asks for no rows.
+        let rows_when = if m.not() { None } else { Some(false) };
+        let (matched, rows) = received.jest_deep_match(expected, m.global, rows_when)?;
+        if m.passes(matched) { m.pass() } else { m.fail_diff_with_rows(expected, received, rows) }
     }
 
     pub(crate) fn to_have_property(

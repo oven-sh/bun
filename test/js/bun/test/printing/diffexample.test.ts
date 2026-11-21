@@ -952,6 +952,63 @@ test("prints a React 19 element as JSX, without the fiber in its _owner", () => 
 `);
 });
 
+test.each(["react.element", "react.transitional.element"])(
+  "prints the only child of a %s, whatever its kind",
+  symbol => {
+    const cell = (children: unknown) => ({ $$typeof: Symbol.for(symbol), type: "td", key: null, props: { children } });
+    const messageOf = (received: unknown, expected: unknown) => {
+      try {
+        expect(received).toEqual(expected);
+      } catch (e) {
+        return cleanAnsiEscapes((e as Error).message);
+      }
+      return "";
+    };
+    expect(messageOf(cell(1), cell(2))).toContain(`
+  <td>
+-   2
++   1
+  </td>
+`);
+    expect(messageOf(cell({ a: 1 }), cell({ a: 2 }))).toContain(`
+  <td>
+    {
+-     "a": 2,
++     "a": 1,
+    }
+  </td>
+`);
+    expect(messageOf(cell(true), cell(false))).toContain(`
+- <td />
++ <td>
++   true
++ </td>
+`);
+    expect(messageOf(cell(1), cell(null))).toContain(`
+- <td />
++ <td>
++   1
++ </td>
+`);
+
+    // `toBe` prints each value with the formatter of `console.log`.
+    const toBeMessage = (received: unknown, expected: unknown) => {
+      try {
+        expect(received).toBe(expected);
+      } catch (e) {
+        return cleanAnsiEscapes((e as Error).message);
+      }
+      return "";
+    };
+    expect(toBeMessage(cell(1), cell(2))).toBe(
+      "expect(received).toBe(expected)\n\nExpected: <td>\n  2\n</td>\nReceived: <td>\n  1\n</td>\n",
+    );
+    expect(toBeMessage(1, cell(expect.stringContaining("a")))).toBe(
+      "expect(received).toBe(expected)\n\nExpected: <td>\n  StringContaining a\n</td>\nReceived: 1\n",
+    );
+  },
+);
+
 test("stops printing deeper once a value has printed 1,000,000 characters", () => {
   // Each level has the next one three times, so printed in full it would have 3 ** 40 leaves.
   let value: object = { leaf: true };

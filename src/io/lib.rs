@@ -477,7 +477,7 @@ impl IoRequestLoop {
             let epoll_fd = sys::File::from_fd(Fd::from_native(raw));
 
             {
-                // No data: `tick_epoll` skips an event without a `Poll`.
+                // No data: no `Poll` has the ticket 0.
                 let mut epoll: linux::epoll_event = bun_core::ffi::zeroed();
                 epoll.events =
                     linux::EPOLL_IN | linux::EPOLL_ET | linux::EPOLL_ERR | linux::EPOLL_HUP;
@@ -613,6 +613,7 @@ impl IoRequestLoop {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn tick_epoll(&self) {
+        let mut tickets = Tickets::default();
         loop {
             // Process pending requests
             {
@@ -632,6 +633,7 @@ impl IoRequestLoop {
                             match readable.poll.register_for_epoll(
                                 Flags::PollReadable,
                                 readable.tag,
+                                &mut tickets,
                                 watcher_fd,
                                 true,
                                 readable.fd,
@@ -646,6 +648,7 @@ impl IoRequestLoop {
                             match writable.poll.register_for_epoll(
                                 Flags::PollWritable,
                                 writable.tag,
+                                &mut tickets,
                                 watcher_fd,
                                 true,
                                 writable.fd,
@@ -662,12 +665,8 @@ impl IoRequestLoop {
                                 close.fd,
                                 close.poll.flags.contains(Flags::Registered)
                             );
-                            // Only remove from the interest list if it was previously registered.
-                            // Otherwise, epoll gets confused.
-                            // This state can happen if polling for readable/writable previously failed.
-                            if close.poll.flags.contains(Flags::WasEverRegistered) {
-                                close.poll.unregister_with_fd(watcher_fd, close.fd);
-                            }
+                            close.poll.unregister(close.fd);
+                            tickets.armed.remove(&close.poll.ticket);
                             (close.on_done)(close.ctx);
                         }
                     }
@@ -700,12 +699,10 @@ impl IoRequestLoop {
             }
 
             for event in current_events {
-                let pollable = Pollable::from(event.u64);
-                // Null for the waker, which is edge-triggered: no need to read its counter.
-                let Some(poll) = core::ptr::NonNull::new(pollable.poll()) else {
-                    continue;
-                };
-                Poll::on_update_epoll(poll, pollable.tag(), *event);
+                // None for the waker too, which is edge-triggered: no need to read its counter.
+                if let Some((poll, tag)) = tickets.armed.remove(&{ event.u64 }) {
+                    Poll::on_update_epoll(poll, tag, *event);
+                }
             }
         }
     }
@@ -844,22 +841,6 @@ impl Request {
             scheduled: false,
         }
     }
-
-    /// Atomic-ordered store of `callback`.
-    ///
-    /// The io thread reads `callback` after popping `self` from the MPSC
-    /// queue (which already provides acquire on `next`); this SeqCst fence
-    /// guarantees the callback write is visible to that read even when the
-    /// store happens on a different thread than the one that scheduled the
-    /// request. Rust has no `AtomicFnPtr`, so we lower to a volatile write
-    /// followed by a full fence.
-    #[inline]
-    pub fn store_callback_seq_cst(&mut self, cb: for<'a> fn(&'a mut Request) -> Action<'a>) {
-        // SAFETY: `callback` is a plain pointer-sized field on `self`;
-        // volatile write prevents the compiler from reordering or eliding it.
-        unsafe { core::ptr::write_volatile(&raw mut self.callback, cb) };
-        core::sync::atomic::fence(Ordering::SeqCst);
-    }
 }
 
 /// For types that embed an intrusive `io_request: uv::fs_t` and recover the parent in
@@ -960,20 +941,20 @@ pub enum PollableTag {
 
 /// §Dispatch (PORTING.md): `bun.ptr.TaggedPointer` should normally be split
 /// into `(tag: u8, ptr: *mut ())`. Here the value must round-trip through a
-/// single `u64` (`epoll_event.data.u64` / `kevent.udata`), so we keep the
+/// single `u64` (`kevent.udata`), so we keep the
 /// packed addr:49 + tag:15 layout locally.
-#[cfg(not(windows))]
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
 #[derive(Clone, Copy)]
 struct Pollable {
     value: u64,
 }
 
-#[cfg(not(windows))]
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
 const POLLABLE_ADDR_BITS: u64 = 49;
-#[cfg(not(windows))]
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
 const POLLABLE_ADDR_MASK: u64 = (1u64 << POLLABLE_ADDR_BITS) - 1;
 
-#[cfg(not(windows))]
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
 impl Pollable {
     fn init(t: PollableTag, p: *mut Poll) -> Pollable {
         let addr = p as usize as u64;
@@ -1022,6 +1003,8 @@ static GENERATION_NUMBER_MONOTONIC: core::sync::atomic::AtomicU64 =
 #[cfg(not(windows))]
 pub struct Poll {
     pub flags: FlagsSet,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    ticket: u64,
     #[cfg(all(target_os = "macos", debug_assertions))]
     pub(crate) generation_number: GenerationNumberInt,
 }
@@ -1031,10 +1014,21 @@ impl Default for Poll {
     fn default() -> Self {
         Self {
             flags: FlagsSet::empty(),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            ticket: 0,
             #[cfg(all(target_os = "macos", debug_assertions))]
             generation_number: 0,
         }
     }
+}
+
+/// What epoll has in place of an address. An entry outlives its `Poll` if script closes the
+/// descriptor while a duplicate is open: it can no longer be removed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[derive(Default)]
+struct Tickets {
+    last: u64,
+    armed: std::collections::BTreeMap<u64, (core::ptr::NonNull<Poll>, PollableTag)>,
 }
 
 #[cfg(not(windows))]
@@ -1184,12 +1178,16 @@ impl Poll {
         }
     }
 
+    /// The thread that has the job. epoll keeps a one-shot entry that has fired.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn unregister_with_fd(&mut self, watcher_fd: Fd, fd: Fd) {
+    pub fn unregister(&mut self, fd: Fd) {
+        let (true, Some(io)) = (self.flags.remove(Flags::WasEverRegistered), LOOP.get()) else {
+            return;
+        };
         // SAFETY: valid fds; null event is allowed for CTL_DEL on Linux ≥ 2.6.9.
         unsafe {
             libc::epoll_ctl(
-                watcher_fd.native(),
+                io.pollfd().native(),
                 linux::EPOLL_CTL_DEL,
                 fd.native(),
                 core::ptr::null_mut(),
@@ -1277,10 +1275,11 @@ impl Poll {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     // `enumset::EnumSetType` cannot be a const generic, so `flag` is a runtime
     // arg. The `match` below preserves the exhaustiveness check.
-    pub(crate) fn register_for_epoll(
+    fn register_for_epoll(
         &mut self,
         flag: Flags,
         tag: PollableTag,
+        tickets: &mut Tickets,
         watcher_fd: Fd,
         one_shot: bool,
         fd: Fd,
@@ -1309,9 +1308,11 @@ impl Poll {
             _ => unreachable!(),
         };
 
+        tickets.last += 1;
+        self.ticket = tickets.last;
         let mut event = linux::epoll_event {
             events: flags,
-            u64: Pollable::init(tag, std::ptr::from_mut::<Poll>(self)).ptr(),
+            u64: self.ticket,
         };
 
         let op: i32 = if self.flags.contains(Flags::WasEverRegistered)
@@ -1334,6 +1335,8 @@ impl Poll {
 
         let errno = sys::get_errno(ctl);
         if errno != E::SUCCESS {
+            // Not left to the pool: the next job on the descriptor may be faster.
+            self.unregister(fd);
             return Err(sys::Error::from_code(errno, sys::Tag::epoll_ctl));
         }
         // Only mark if it successfully registered.
@@ -1355,6 +1358,7 @@ impl Poll {
             _ => unreachable!(),
         });
         self.flags.remove(Flags::NeedsRearm);
+        tickets.armed.insert(self.ticket, (self.into(), tag));
 
         Ok(())
     }

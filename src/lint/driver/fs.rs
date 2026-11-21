@@ -1,11 +1,11 @@
 //! File system helpers.
 
 use crate::paths;
-use bun_core::ZStr;
+use bun_core::{ZBox, ZStr};
 use bun_paths::resolve_path::z;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, path_buffer_pool};
 use bun_sema::util::FxHashSet;
-use bun_sys::{EntryKind, Fd, File, O};
+use bun_sys::{EntryKind, Fd, File, O, Tmpfile};
 use bun_threading::Guarded;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -318,14 +318,6 @@ fn rename(from: &[u8], to: &[u8]) -> bun_sys::Result<()> {
     })
 }
 
-fn remove(path: &[u8]) {
-    let path = paths::to_native(path.to_vec());
-    let _ = bun_sys::unlinkat(
-        Fd::cwd(),
-        null_terminated(&path, &mut path_buffer_pool::get()),
-    );
-}
-
 /// Returns a file's extended attributes: tags, ACL, security label. A file renamed over it doesn't inherit them. `None`
 /// if they can't be read.
 #[cfg(unix)]
@@ -346,39 +338,39 @@ struct Before {
 fn replace(real: &[u8], text: &[u8], old: &Before) -> bun_sys::Result<bool> {
     let before = &old.stat;
     let directory = &real[..real.len() - paths::basename(real).len()];
-    let temporary = [directory, temporary_name().as_bytes()].concat();
+    let name = [directory, temporary_name().as_bytes(), b"\0"].concat();
     let mode = before.st_mode as bun_sys::Mode & 0o7777;
-    let Ok(file) = File::openat(
+    let Ok(temporary) = Tmpfile::open(
         Fd::cwd(),
-        &temporary,
+        ZBox::from_vec_with_nul(name),
         O::RDWR | O::CREAT | O::EXCL | O::CLOEXEC,
         mode,
     ) else {
         return Ok(false);
     };
-    let write_result = file.stat().and_then(|created| {
-        if (created.st_uid, created.st_gid) != (before.st_uid, before.st_gid) {
+    let file = &temporary.file;
+    let created = file.stat()?;
+    if (created.st_uid, created.st_gid) != (before.st_uid, before.st_gid) {
+        return Ok(false);
+    }
+    // The directory gives a new file its label and default ACL, normally the same ones it gave the old file.
+    #[cfg(unix)]
+    {
+        if old.attributes.is_none() || attributes(file) != old.attributes {
             return Ok(false);
         }
-        // The directory gives a new file its label and default ACL, normally the same ones it gave the old file.
-        #[cfg(unix)]
-        {
-            if old.attributes.is_none() || attributes(&file) != old.attributes {
-                return Ok(false);
-            }
-        }
-        // Restore the bits that `umask` cleared.
-        if cfg!(unix) && created.st_mode as bun_sys::Mode & 0o7777 != mode {
-            bun_sys::fchmod(file.handle(), mode)?;
-        }
-        file.write_all(text).map(|()| true)
-    });
-    drop(file);
-    let is_replaced = matches!(write_result, Ok(true)) && rename(&temporary, real).is_ok();
-    if !is_replaced {
-        remove(&temporary);
     }
-    write_result.map(|_| is_replaced)
+    // Restore the bits that `umask` cleared.
+    if cfg!(unix) && created.st_mode as bun_sys::Mode & 0o7777 != mode {
+        bun_sys::fchmod(file.handle(), mode)?;
+    }
+    file.write_all(text)?;
+    let temporary = temporary.close();
+    if rename(&temporary, real).is_err() {
+        return Ok(false);
+    }
+    temporary.keep();
+    Ok(true)
 }
 
 /// Writes `text` at offset 0 of `file`. On failure, returns the error and the number of bytes already written.

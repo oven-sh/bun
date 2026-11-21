@@ -12,6 +12,7 @@ import {
   isPosix,
   isWindows,
   tempDir,
+  unprivilegedSpawnOptions,
 } from "harness";
 import {
   chmodSync,
@@ -2176,6 +2177,29 @@ export function inOther() {
     expect(appStdout).toBe("default outfile\n");
     expect(appStderr).toBe("");
     expect(appExitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/14020. Only macOS clones the executable, mode included.
+  test.skipIf(!isMacOS)("compile from a read-only executable leaves no temporary file", async () => {
+    using dir = tempDir("build-compile-read-only", { "cwd/app.js": `console.log("read-only");` });
+    const cwd = join(String(dir), "cwd");
+    const readOnly = join(String(dir), "bun");
+    cpSync(bunExe(), readOnly, { dereference: true });
+    chmodSync(readOnly, 0o555);
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--compile-executable-path=${readOnly}`, "app.js"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(readdirSync(cwd).sort()).toEqual(["app", "app.js"]);
+    expect(exitCode).toBe(0);
   });
 
   test("compile with embedded resources uses correct module prefix", async () => {

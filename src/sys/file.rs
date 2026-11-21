@@ -345,17 +345,6 @@ impl File {
             })
         }
     }
-    /// `File.closeAndMoveTo` — atomically rename `src` → `dest` (cwd-relative),
-    /// closing the handle after the rename so `move_file_z_with_handle`'s
-    /// EXDEV fallback (fstat/lseek/copy on `from_handle`) sees a live handle.
-    /// (On Windows the rename goes through `rename_at_w` →
-    /// `NtSetInformationFile`, which opens its own source handle, so keeping
-    /// `self` open across the call is fine and avoids passing a closed handle
-    /// into the EXDEV fallback.)
-    pub fn close_and_move_to(self, src: &ZStr, dest: &ZStr) -> Maybe<()> {
-        let cwd = Fd::cwd();
-        move_file_z_with_handle(self.handle, cwd, src, cwd, dest)
-    }
     /// `bun.sys.File.getPath` — `getFdPath(self.handle, buf)`.
     #[inline]
     pub fn get_path<'a>(&self, buf: &'a mut bun_paths::PathBuffer) -> Maybe<&'a [u8]> {

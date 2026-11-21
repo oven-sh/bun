@@ -807,9 +807,8 @@ fn create_unnamed_file(contents: &[u8]) -> Maybe<FD> {
         .concat(),
     );
     let flags = sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL;
-    let reopened = fill_and_reopen(&sys::File::open(&path, flags, 0o600)?, contents, &path);
-    let _ = sys::unlink(&path);
-    reopened
+    let named = sys::Tmpfile::open(FD::cwd(), path, flags, 0o600)?;
+    fill_and_reopen(&named.file, contents, named.name())
 }
 
 /// `open()` of an embedded path that is not on disk.

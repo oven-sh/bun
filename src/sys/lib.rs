@@ -783,7 +783,7 @@ pub use signal_code::SignalCode;
 #[cfg(unix)]
 pub mod beneath;
 pub mod tmp;
-pub use tmp::Tmpfile;
+pub use tmp::{DeleteTreeOnDrop, Tmpfile, UnlinkOnDrop};
 // `windows/mod.rs` is `#![cfg(windows)]`-gated internally; on POSIX this
 // declares an empty module so `bun_sys::windows::*` paths still resolve under
 // `#[cfg(windows)]` arms in dependents.
@@ -7108,8 +7108,7 @@ pub unsafe fn environ<'a>() -> &'a [bun_core::CStrRef<'a>] {
 
 // ── moveFileZWithHandle ──
 
-/// `renameat`; on EISDIR removes the dest dir and retries; on EXDEV falls back
-/// to copy-then-unlink. Port of `bun.sys.moveFileZWithHandle`.
+/// `renameat`, or copy-then-unlink on EXDEV. Replaces an empty directory.
 pub fn move_file_z_with_handle(
     from_handle: Fd,
     from_dir: Fd,
@@ -7117,22 +7116,21 @@ pub fn move_file_z_with_handle(
     to_dir: Fd,
     destination: &ZStr,
 ) -> Maybe<()> {
-    match renameat(from_dir, filename, to_dir, destination) {
-        Ok(()) => Ok(()),
-        Err(e) if e.get_errno() == E::EISDIR => {
-            #[cfg(unix)]
-            // SAFETY: destination is NUL-terminated.
-            let _ = unsafe {
-                libc::unlinkat(to_dir.native(), destination.as_ptr(), libc::AT_REMOVEDIR)
-            };
-            renameat(from_dir, filename, to_dir, destination)
-        }
+    let attempt = || match renameat(from_dir, filename, to_dir, destination) {
         Err(e) if e.get_errno() == E::EXDEV => {
             copy_file_z_slow_with_handle(from_handle, to_dir, destination)?;
             let _ = unlinkat(from_dir, filename);
             Ok(())
         }
-        Err(e) => Err(e),
+        renamed => renamed,
+    };
+    match attempt() {
+        // Windows also reports a directory as `EPERM`.
+        Err(e) if e.get_errno() == E::EISDIR || (cfg!(windows) && e.get_errno() == E::EPERM) => {
+            let _ = rmdirat(to_dir, destination);
+            attempt()
+        }
+        moved => moved,
     }
 }
 
@@ -8534,83 +8532,30 @@ pub(crate) fn copy_file_z_slow_with_handle(
     let st = fstat(in_handle)?;
     // Unlink dest first — fixes ETXTBUSY on Linux.
     let _ = unlinkat(to_dir, destination);
-    let dst = CloseOnDrop::new(openat(
+    let dst = Tmpfile::open(
         to_dir,
         destination,
         O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
         0o644,
-    )?);
+    )?;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Preallocation is best-effort.
-        let _ = safe_libc::fallocate(dst.fd().native(), 0, 0, st.st_size);
+        let _ = safe_libc::fallocate(dst.file.fd().native(), 0, 0, st.st_size);
     }
     let _ = lseek(in_handle, 0, libc::SEEK_SET);
-    let r = copy_file(in_handle, dst.fd());
-    // Only stamp mode/owner on success; on copy error the
-    // partially-written dest keeps its openat() defaults.
+    copy_file(in_handle, dst.file.fd())?;
     #[cfg(unix)]
-    if r.is_ok() {
-        let _ = safe_libc::fchmod(dst.fd().native(), st.st_mode);
-        let _ = safe_libc::fchown(dst.fd().native(), st.st_uid, st.st_gid);
+    {
+        let _ = safe_libc::fchmod(dst.file.fd().native(), st.st_mode);
+        let _ = safe_libc::fchown(dst.file.fd().native(), st.st_uid, st.st_gid);
     }
-    r
-}
-/// `renameatZ` alias (bun_install reaches for it as the NUL-terminated form).
-#[inline]
-pub fn renameat_z(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
-    let from_dir = from_dir.as_fd();
-    let to_dir = to_dir.as_fd();
-    renameat(from_dir, from, to_dir, to)
+    dst.keep();
+    Ok(())
 }
 
-/// Option struct for [`renameat_concurrently`];
-/// callers can build it inline.
-#[derive(Default, Clone, Copy)]
-pub struct RenameatConcurrentlyOptions {
-    pub move_fallback: bool,
-}
-/// Alias: `bun_install` call sites spell this `RenameOptions`.
-pub type RenameOptions = RenameatConcurrentlyOptions;
-
-/// `moveFileZSlowMaybe`. Thin wrapper
-/// (`renameatConcurrently` falls back through here).
-#[inline]
-pub(crate) fn move_file_z_slow_maybe(
-    from_dir: Fd,
-    filename: &ZStr,
-    to_dir: Fd,
-    destination: &ZStr,
-) -> Maybe<()> {
-    move_file_z_slow(from_dir, filename, to_dir, destination)
-}
-
-/// `renameatConcurrently`. Tries an atomic NOREPLACE rename,
-/// then EXCHANGE, then a racy delete-tree + rename. With `move_fallback` set,
-/// an EXDEV result falls through to a slow open/copy.
+/// Tries an atomic NOREPLACE rename, then EXCHANGE, then a racy delete-tree + rename.
 /// After an EXCHANGE, `from` holds the tree that was at `to`.
-pub fn renameat_concurrently(
-    from_dir_fd: Fd,
-    from: &ZStr,
-    to_dir_fd: Fd,
-    to: &ZStr,
-    opts: RenameatConcurrentlyOptions,
-) -> Maybe<()> {
-    match renameat_concurrently_without_fallback(from_dir_fd, from, to_dir_fd, to) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            if opts.move_fallback && e.get_errno() == E::EXDEV {
-                bun_core::output::debug_warn(
-                    "renameatConcurrently() failed with E.XDEV, falling back to moveFileZSlowMaybe()",
-                );
-                return move_file_z_slow_maybe(from_dir_fd, from, to_dir_fd, to);
-            }
-            Err(e)
-        }
-    }
-}
-
-/// `renameatConcurrentlyWithoutFallback`.
 pub(crate) fn renameat_concurrently_without_fallback(
     from_dir_fd: Fd,
     from: &ZStr,
@@ -8870,14 +8815,11 @@ mod owned_handle_tests {
         let to_dir = open_dir_at(root, b"to").expect("open to");
 
         // The dest `to/sub` exists, so the rename must `delete_tree` it first.
-        renameat_concurrently(
+        renameat_concurrently_without_fallback(
             root,
             bun_core::zstr!("from/sub"),
             to_dir,
             bun_core::zstr!("sub"),
-            RenameatConcurrentlyOptions {
-                move_fallback: true,
-            },
         )
         .expect("rename");
 

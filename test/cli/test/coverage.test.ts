@@ -57,6 +57,29 @@ export class Y {
   );
 });
 
+// https://github.com/oven-sh/bun/issues/17501
+test.each([
+  ["an older one", "an older report"],
+  ["an empty directory", {}],
+])("the lcov report takes the place of %s", async (_, older) => {
+  using dir = tempDir("cov-replace", {
+    "demo.ts": `export function demo() {}\n`,
+    "demo.test.ts": `import { test } from "bun:test";\nimport { demo } from "./demo";\ntest("demo", demo);\n`,
+    "coverage/lcov.info": older,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(readdirSync(path.join(String(dir), "coverage"))).toEqual(["lcov.info"]);
+  expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8")).toContain("SF:demo.ts\n");
+  expect(exitCode).toBe(0);
+});
+
 // https://github.com/oven-sh/bun/issues/17502
 describe("--coverage-reporter without --coverage turns coverage on", () => {
   const files = {

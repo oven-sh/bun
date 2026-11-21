@@ -35,6 +35,9 @@ using us_x509_stack_ptr = us_unique_ptr<STACK_OF(X509), us_x509_stack_free>;
 
 STACK_OF(X509) *us_get_root_extra_cert_instances();
 X509_LAZY_CERT_SET *us_get_bundled_root_cert_set();
+// The embedded copy of the bundled root with exactly these bytes, or NULL. Every bundled root parses
+// (node-tls-internals.test.ts reads each one).
+const uint8_t *us_find_bundled_root_cert(const uint8_t *der, size_t len);
 
 // The OS trust store. Platforms that hand us DER (Linux and other Unix) index it lazily; those whose trust evaluation
 // needs the parsed certificate (macOS) or that are not yet converted (Windows) hand back parsed X509s. Either may be

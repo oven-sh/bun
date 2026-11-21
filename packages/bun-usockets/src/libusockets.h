@@ -567,6 +567,8 @@ void us_ssl_ctx_enable_http2_alpn(struct ssl_ctx_st *ssl_ctx, int allow_http1);
 /* 1 iff the completed handshake on `s` negotiated ALPN "h2". */
 int us_socket_alpn_is_h2(us_socket_r s);
 long us_ssl_ctx_live_count(void);
+/* How many certificates of `ca` options were parsed whole to validate them. For tests. */
+long us_ssl_ca_certs_parsed(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */
 int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);

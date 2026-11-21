@@ -32,3 +32,4 @@ export const SecureContext = b.class({
 });
 
 export const liveCount = b.fn({ returns: b.f64 });
+export const caCertsParsed = b.fn({ returns: b.f64 });

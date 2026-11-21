@@ -636,6 +636,7 @@ Server.prototype[setSecureContextSymbol] = function (options) {
     normalizePemKeyOption,
     processPfxOptions,
     secureProtocolToVersionRange,
+    SSL_OP_CIPHER_SERVER_PREFERENCE,
     stripTls13CipherNames,
     tlsStringToProtocolVersion,
   } = require("internal/tls");
@@ -649,11 +650,14 @@ Server.prototype[setSecureContextSymbol] = function (options) {
   }
   const ciphers = tlsOptions.ciphers ? stripTls13CipherNames(tlsOptions.ciphers) : undefined;
   const range = secureProtocolToVersionRange(tlsOptions.secureProtocol);
+  let secureOptions = tlsOptions.secureOptions || 0;
+  if (tlsOptions.honorCipherOrder !== false) secureOptions |= SSL_OP_CIPHER_SERVER_PREFERENCE;
   const next = {
     ...tlsOptions,
     key: normalizePemKeyOption(tlsOptions.key, tlsOptions.passphrase),
     ca,
     ciphers: ciphers?.cipherList || undefined,
+    secureOptions,
     minVersion: range ? range[0] : tlsStringToProtocolVersion(ciphers?.tls13Only ? "TLSv1.3" : tlsOptions.minVersion),
     maxVersion: range ? range[1] : tlsStringToProtocolVersion(tlsOptions.maxVersion),
     serverName: tlsOptions.servername,

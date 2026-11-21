@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 aa6dc3051398b0f947268ebd62151e178739e433f70ca3d3bbfe3254d42084e1.
+// Written against that file with the SHA-256 e6bd1d2a9c5cc8a88797f828c6dc2724584daf5ce9dd3a0ae0e93558ba190957.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -1080,6 +1080,7 @@ Server.prototype[setSecureContextSymbol] = function (this: $Node.HttpServer, opt
     normalizePemKeyOption,
     processPfxOptions,
     secureProtocolToVersionRange,
+    SSL_OP_CIPHER_SERVER_PREFERENCE,
     stripTls13CipherNames,
     tlsStringToProtocolVersion,
   } = require("internal/tls");
@@ -1093,11 +1094,14 @@ Server.prototype[setSecureContextSymbol] = function (this: $Node.HttpServer, opt
   }
   const ciphers = tlsOptions.ciphers ? stripTls13CipherNames(tlsOptions.ciphers) : undefined;
   const range = secureProtocolToVersionRange(tlsOptions.secureProtocol);
+  let secureOptions = tlsOptions.secureOptions || 0;
+  if (tlsOptions.honorCipherOrder !== false) secureOptions |= SSL_OP_CIPHER_SERVER_PREFERENCE;
   const next: $Node.HttpServerTLSOptions = {
     ...tlsOptions,
     key: normalizePemKeyOption(tlsOptions.key, tlsOptions.passphrase),
     ca,
     ciphers: ciphers?.cipherList || undefined,
+    secureOptions,
     minVersion: range ? range[0] : tlsStringToProtocolVersion(ciphers?.tls13Only ? "TLSv1.3" : tlsOptions.minVersion),
     maxVersion: range ? range[1] : tlsStringToProtocolVersion(tlsOptions.maxVersion),
     serverName: tlsOptions.servername,

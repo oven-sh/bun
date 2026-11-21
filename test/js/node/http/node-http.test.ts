@@ -1699,6 +1699,42 @@ describe("node https server", async () => {
     }
   });
 
+  it("setSecureContext preserves the requested cipher order", async () => {
+    const key = nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem"));
+    const cert = nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-cert.pem"));
+    const ciphers = "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384";
+    for (const honorCipherOrder of [undefined, false]) {
+      const options = { key, cert, ciphers, honorCipherOrder };
+      const server = createHttpsServer(options);
+      const url = await listen(server, "https");
+      try {
+        for (const update of [false, true]) {
+          if (update) server.setSecureContext(options);
+          const socket = tlsConnect({
+            host: "127.0.0.1",
+            port: Number(url.port),
+            minVersion: "TLSv1.2",
+            maxVersion: "TLSv1.2",
+            ciphers: "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",
+            rejectUnauthorized: false,
+          });
+          try {
+            await once(socket, "secureConnect");
+            expect(socket.getCipher().standardName).toBe(
+              honorCipherOrder === false
+                ? "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+                : "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+            );
+          } finally {
+            socket.destroy();
+          }
+        }
+      } finally {
+        server.close();
+      }
+    }
+  });
+
   it("preserves static ALPN protocols after setSecureContext", async () => {
     const replacement = {
       key: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem")),

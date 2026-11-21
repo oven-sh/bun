@@ -312,6 +312,10 @@ fn is_diff_header<T: Unit>(line: &[T]) -> bool {
     strip(line, GIT_HEADER).is_some() || index_name(line).is_some()
 }
 
+fn is_rule<T: Unit>(line: &[T]) -> bool {
+    strip(line, &[b'='; 67]).is_some()
+}
+
 /// The name that `text` starts with in quotes, and what follows it.
 fn unquote<T: Unit>(text: &[T]) -> Option<(Name, &[T])> {
     let mut rest = strip(text, b"\"")?;
@@ -492,14 +496,18 @@ impl<'a, T: Unit> Parser<'a, T> {
 
     fn file(&mut self) -> Result<FilePatch, ParseError> {
         let mut file = FilePatch::default();
-        let mut has_diff_header = false;
+        let (mut has_diff_header, mut is_after_rule) = (false, false);
         while let Some(line) = self.peek()
             && !is_file_header(line)
             && !is_hunk_header(line)
         {
-            if is_diff_header(line) && core::mem::replace(&mut has_diff_header, true) {
+            // `svn diff --git` writes `Index:`, the rule and `diff --git`.
+            let is_svn_git = is_after_rule && !file.is_git && strip(line, GIT_HEADER).is_some();
+            if is_diff_header(line) && core::mem::replace(&mut has_diff_header, true) && !is_svn_git
+            {
                 return Ok(file);
             }
+            is_after_rule = is_rule(line);
             if file.is_git {
                 file.read_git_extended_header(line);
             } else if let Some(names) = strip(line, GIT_HEADER) {
@@ -532,7 +540,7 @@ impl<'a, T: Unit> Parser<'a, T> {
         while let Some(line) = self.peek()
             && !is_diff_header(line)
             && !is_file_header(line)
-            && strip(line, &[b'='; 67]).is_none()
+            && !is_rule(line)
         {
             if is_hunk_header(line) {
                 file.hunks.push(self.hunk(line)?);

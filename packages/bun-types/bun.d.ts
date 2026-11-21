@@ -6199,7 +6199,7 @@ declare module "bun" {
      * @param patch A unified diff, or hunks from {@link hunks} or {@link parsePatch}
      * @returns The patched text, or `undefined` if a hunk does not match
      * @throws SyntaxError if `patch` is a malformed unified diff
-     * @throws TypeError if `patch` changes several files or a binary file
+     * @throws TypeError if `patch` changes several files, or is a binary patch from `git diff`
      */
     function applyPatch(source: string, patch: string | Pick<Hunk, "oldStart" | "lines">[]): string | undefined;
   }

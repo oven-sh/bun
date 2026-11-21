@@ -135,6 +135,6 @@ Changes, hunks and parsed patches have the same shape as in [`diff`](https://git
 Differences:
 
 - `createPatch` does not write the `Index:` and `===` lines, and returns `""` for equal texts.
-- `applyPatch` returns `undefined` instead of `false`. It rejects a hunk that only fits outside the source or before the previous hunk. It throws for a binary patch.
-- `parsePatch` throws for a malformed `@@` line, accepts the `-- ` signature of `git format-patch`, and sets `isBinary` for `GIT binary patch`.
+- `applyPatch` returns `undefined` instead of `false`. It rejects a hunk that only fits outside the source or before the previous hunk. It throws for a binary patch from `git diff`.
+- `parsePatch` throws for a malformed `@@` line, accepts the `-- ` signature of `git format-patch`, sets `isBinary` for `GIT binary patch`, and returns one entry for each file of `svn diff --git`.
 - The only options are the ones on this page. `timeout`, `callback`, `comparator`, `fuzzFactor` and the `ignore*` options are not supported.

@@ -1055,7 +1055,7 @@ pub fn diff_lines(a: &[u8], b: &[u8]) -> Vec<Hunk> {
     let uniq = interner.lines.len();
     drop(interner);
 
-    let mut hunks = diff_shared_tokens(&ta, &tb, uniq, search_bounded);
+    let mut hunks = diff_shared_tokens(&ta, &tb, uniq, &search_bounded);
     for h in &mut hunks {
         *h = Hunk {
             a_lo: offs_a[h.a_lo] as usize,
@@ -1076,7 +1076,7 @@ fn diff_shared_tokens(
     ta: &[u32],
     tb: &[u32],
     uniq: usize,
-    search: impl FnOnce(&[u32], &[u32], &mut [bool], &mut [bool]),
+    search: &dyn Fn(&[u32], &[u32], &mut [bool], &mut [bool]),
 ) -> Vec<Hunk> {
     let (na, nb) = (ta.len(), tb.len());
     let mut occurs = vec![[false; 2]; uniq];

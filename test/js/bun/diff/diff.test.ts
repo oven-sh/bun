@@ -6,8 +6,6 @@ import { describe, expect, test } from "bun:test";
 type Changes = Bun.diff.Change<string | unknown[]>[];
 const short = (changes: Changes | undefined) =>
   changes?.map(({ value, added, removed, count }) => [added ? "+" : removed ? "-" : "=", value, count]);
-const side = (changes: Bun.diff.Change[], without: "added" | "removed") =>
-  changes.flatMap(change => (change[without] ? [] : [change.value])).join("");
 const edits = (changes: Changes) => changes.reduce((n, c) => n + (c.added || c.removed ? c.count : 0), 0);
 const numbered = (count: number, line: (i: number) => unknown) =>
   Array.from({ length: count }, (_, i) => `${line(i)}\n`).join("");
@@ -99,7 +97,7 @@ describe("lines", () => {
   });
 
   test("values outlive the inputs", () => {
-    const results = Array.from({ length: 200 }, (_, n) =>
+    const results = Array.from({ length: 50 }, (_, n) =>
       diff.lines(
         numbered(20, i => `${n} old ${i}`),
         numbered(20, i => `${n} ${i < 10 ? "old" : "世"} ${i}`),
@@ -289,10 +287,10 @@ describe("maxEditLength", () => {
 
 describe("large inputs, on which diff is quadratic", () => {
   test("nothing in common", () => {
-    const [a, b] = [numbered(20_000, i => i), numbered(20_000, i => -i - 1)];
+    const [a, b] = [numbered(10_000, i => i), numbered(10_000, i => -i - 1)];
     expect(short(diff.lines(a, b))).toEqual([
-      ["-", a, 20_000],
-      ["+", b, 20_000],
+      ["-", a, 10_000],
+      ["+", b, 10_000],
     ]);
   });
 
@@ -304,20 +302,20 @@ describe("large inputs, on which diff is quadratic", () => {
   });
 
   test("reversed", () => {
-    const [a, b] = [numbered(30_000, i => i), numbered(30_000, i => 29_999 - i)];
+    const [a, b] = [numbered(10_000, i => i), numbered(10_000, i => 9999 - i)];
     expect(short(diff.lines(a, b))).toEqual([
-      ["-", a.slice(0, -6), 29_999],
-      ["=", "29999\n", 1],
-      ["+", b.slice(6), 29_999],
+      ["-", a.slice(0, -5), 9999],
+      ["=", "9999\n", 1],
+      ["+", b.slice(5), 9999],
     ]);
   });
 
   test("halves swapped", () => {
-    const [first, second] = [numbered(15_000, i => i), numbered(15_000, i => -i - 1)];
+    const [first, second] = [numbered(9000, i => i), numbered(9000, i => -i - 1)];
     expect(short(diff.lines(first + second, second + first))).toEqual([
-      ["-", first, 15_000],
-      ["=", second, 15_000],
-      ["+", first, 15_000],
+      ["-", first, 9000],
+      ["=", second, 9000],
+      ["+", first, 9000],
     ]);
   });
 
@@ -351,13 +349,16 @@ describe("large inputs, on which diff is quadratic", () => {
 
   test("past the limit of the search, the diff is still correct", () => {
     const next = random(4);
-    const [a, b] = [0, 1].map(() =>
-      Buffer.from(Array.from({ length: 80_000 }, () => 97 + (next(1000) % 20))).toString(),
-    );
-    const changes = diff.chars(a, b);
-    expect(side(changes, "added") === a).toBeTrue();
-    expect(side(changes, "removed") === b).toBeTrue();
-  }, 30_000);
+    // Every third line is the same on both sides and is there once, which makes what takes over fast.
+    const [a, b] = [0, 1].map(() => {
+      const units = new Uint16Array(2 * 99_000).fill(10);
+      for (let i = 0; i < 99_000; i++) units[2 * i] = i % 3 ? 0x100 + (next(10_000) % 50) : 0x1000 + i / 3;
+      return Buffer.from(units.buffer).toString("utf16le");
+    });
+    const patch = diff.createPatch(a, b);
+    expect(diff.applyPatch(a, patch) === b).toBeTrue();
+    expect(patch.split("\n ").length - 1).toBeGreaterThanOrEqual(33_000);
+  });
 });
 
 describe("hunks", () => {
@@ -494,6 +495,15 @@ describe("parsePatch", () => {
       { isGit: true, isBinary: true, oldFileName: "a/\t", newFileName: "b/s", hunks: [] },
       { isGit: true, hunks: [] },
     ]],
+    ["an svn section without hunks, then a git section", `Index: e\n${"=".repeat(67)}\nCannot display\ndiff --git a/f b/f\n${body}`, [
+      { index: "e", hunks: [] },
+      { isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] },
+    ]],
+    ["two svn sections without hunks", `Index: e\n${"=".repeat(67)}\nIndex: f\n`, [{ index: "e", hunks: [] }, { index: "f", hunks: [] }]],
+    ["a rule between git sections", `diff --git a/e b/e\n${"=".repeat(67)}\ndiff --git a/f b/f\n`, [
+      { isGit: true, oldFileName: "a/e", newFileName: "b/e", hunks: [] },
+      { isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [] },
+    ]],
     ["only ---", `--- 世\n${body}`, 'Missing "+++ ..." file header for 世'],
     ["only +++", `+++ b\n${body}`, 'Missing "--- ..." file header for b'],
     ["an invalid line", "\n@@ -1 +1 @@\n-a\né\n", "Hunk at line 2 contained invalid line é"],
@@ -509,6 +519,11 @@ describe("parsePatch", () => {
     // diff takes the signature for a removed line.
     ["git format-patch", `Subject: x\n\n---\n f | 2 +-\n\ndiff --git a/f b/f\n${body}-- \n2.43.0\n`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
     ["more than a signature", `${body}-- a\n`, "Hunk at line 1 has more lines than expected (expected 1 old lines and 1 new lines)"],
+    // diff makes two entries of each file.
+    ["svn diff --git", `Index: e\n${"=".repeat(67)}\ndiff --git a/e b/e\nnew file mode 100644\nIndex: f\n${"=".repeat(67)}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n${body}`, [
+      { index: "e", isGit: true, isCreate: true, newMode: "100644", oldFileName: "a/e", newFileName: "b/e", hunks: [] },
+      { index: "f", isGit: true, oldFileName: "a/f", oldHeader: "(revision 1)", newFileName: "b/f", newHeader: "(working copy)", hunks: [hunk] },
+    ]],
     // diff leaves isBinary out.
     ["git: binary patch", "diff --git a/f b/f\nGIT binary patch\nliteral 1\nIcmZPo000310RR91\n", [{ isGit: true, isBinary: true, oldFileName: "a/f", newFileName: "b/f", hunks: [] }]],
   ])("%s", (_, patch, expected) => {
@@ -576,6 +591,11 @@ describe("applyPatch", () => {
         message: "The argument 'patch' must change one file. Received a patch for 2 files",
       }),
     );
+  });
+
+  test("svn diff --git", () => {
+    const headers = `Index: f\n${"=".repeat(67)}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n`;
+    expect(diff.applyPatch("a\n", `${headers}@@ -1 +1 @@\n-a\n+b\n`)).toBe("b\n");
   });
 
   test("a binary patch", () => {

@@ -208,7 +208,7 @@ pub fn diff_ids(a: &[u32], b: &[u32], distinct: usize, max_edits: usize) -> Opti
         a,
         b,
         distinct,
-        |shared_a, shared_b, changed_a, changed_b| {
+        &|shared_a, shared_b, changed_a, changed_b| {
             let unshared = (a.len() - shared_a.len()) + (b.len() - shared_b.len());
             let max_edits = max_edits.saturating_sub(unshared);
             mark(
@@ -417,6 +417,8 @@ fn search(a: &[u32], b: &[u32], max_edits: usize, mut work: Work<'_>) -> Search 
     }
 }
 
+// Inlined, its inner loop runs out of registers.
+#[inline(never)]
 fn search_within(a: &[u32], b: &[u32], pairs: usize, work: &mut Work<'_>) -> Search {
     let (n, m) = (a.len() as isize, b.len() as isize);
     let goal = n - m;
@@ -424,9 +426,7 @@ fn search_within(a: &[u32], b: &[u32], pairs: usize, work: &mut Work<'_>) -> Sea
     let origin = (max_edits - goal) / 2 + 1;
     // By diagonal k = x - y: one more than the furthest x, so that 0 loses to every path.
     let mut furthest = vec![0u32; max_edits as usize + 3];
-    // By round: its first diagonal, and where its bits start.
-    let mut rounds: Vec<(isize, usize)> = Vec::new();
-    let mut bits: Vec<u64> = Vec::new();
+    let mut trace = Trace::default();
 
     let start = u32::common_prefix(a, b) as isize;
     if start == n && start == m {
@@ -440,16 +440,16 @@ fn search_within(a: &[u32], b: &[u32], pairs: usize, work: &mut Work<'_>) -> Sea
     for d in 1..=max_edits {
         let lo = (-d).max(goal - (max_edits - d)).max(lowest);
         let hi = d.min(goal + (max_edits - d)).min(highest);
-        rounds.push((lo, bits.len()));
+        let bits_before = trace.bits;
         let steps = (hi - lo) as usize / 2 + 1;
         let (before, from_lo) = furthest.split_at_mut((origin + lo) as usize);
         let mut below = before[before.len() - 1];
         let mut k = lo;
         'round: for diagonals in from_lo.as_chunks_mut::<2>().0[..steps].chunks_mut(64) {
             let mut word = 0u64;
-            for (bit, [here, above]) in diagonals.iter_mut().enumerate() {
+            for [here, above] in diagonals.iter_mut() {
                 let is_insertion = below < *above;
-                word |= u64::from(is_insertion) << bit;
+                word = word << 1 | u64::from(is_insertion);
                 let mut x = if is_insertion { *above - 1 } else { below } as usize;
                 let mut y = (x as isize - k) as usize;
                 below = *above;
@@ -459,17 +459,21 @@ fn search_within(a: &[u32], b: &[u32], pairs: usize, work: &mut Work<'_>) -> Sea
                         k += 2;
                         continue;
                     }
-                    let matches = 1 + u32::common_prefix(&a[x + 1..], &b[y + 1..]);
-                    (x, y) = (x + matches, y + matches);
-                    if !work.spend(matches as isize) {
+                    let from = x;
+                    (x, y) = (x + 1, y + 1);
+                    while x < a.len() && y < b.len() && a[x] == b[y] {
+                        (x, y) = (x + 1, y + 1);
+                    }
+                    if !work.spend((x - from) as isize) {
                         return Search::OutOfWork;
                     }
                 }
                 *here = x as u32 + 1;
                 if x == a.len() {
-                    bits.push(word);
+                    trace.push(word, (k - lo) as usize / 2 % 64 + 1);
                     if y == b.len() {
-                        return Search::Found(backtrack(&rounds, &bits, k));
+                        trace.end_round(lo, bits_before);
+                        return Search::Found(trace.backtrack(k));
                     }
                     highest = k - 1;
                     break 'round;
@@ -479,8 +483,9 @@ fn search_within(a: &[u32], b: &[u32], pairs: usize, work: &mut Work<'_>) -> Sea
                 }
                 k += 2;
             }
-            bits.push(word);
+            trace.push(word, diagonals.len());
         }
+        trace.end_round(lo, bits_before);
         if !work.spend((k - lo) / 2 + 1) {
             return Search::OutOfWork;
         }
@@ -488,12 +493,46 @@ fn search_within(a: &[u32], b: &[u32], pairs: usize, work: &mut Work<'_>) -> Sea
     Search::TooFar
 }
 
-fn backtrack(rounds: &[(isize, usize)], bits: &[u64], mut k: isize) -> Script {
-    let step = |&(lo, first_word): &(isize, usize)| {
-        let index = (k - lo) as usize / 2;
-        let is_insertion = bits[first_word + index / 64] >> (index % 64) & 1 == 1;
-        k += if is_insertion { 1 } else { -1 };
-        is_insertion
-    };
-    Script(rounds.iter().rev().map(step).collect())
+/// For each step of [`search_within`], whether it is an insertion. There can be a round for each token.
+#[derive(Default)]
+struct Trace {
+    /// From the highest bit of each.
+    words: Vec<u64>,
+    bits: usize,
+    /// The first diagonal, and the number of bits.
+    rounds: Vec<(i32, u32)>,
+}
+
+impl Trace {
+    /// The lowest `count` bits of `word`, 1 to 64.
+    fn push(&mut self, word: u64, count: usize) {
+        let (word, used) = (word << (64 - count), self.bits % 64);
+        self.bits += count;
+        match self.words.last_mut() {
+            Some(last) if used > 0 => {
+                *last |= word >> used;
+                if used + count > 64 {
+                    self.words.push(word << (64 - used));
+                }
+            }
+            _ => self.words.push(word),
+        }
+    }
+
+    fn end_round(&mut self, lo: isize, bits_before: usize) {
+        let count = self.bits - bits_before;
+        self.rounds.push((lo as i32, count as u32));
+    }
+
+    fn backtrack(&self, mut k: isize) -> Script {
+        let mut start = self.bits;
+        let step = |&(lo, count): &(i32, u32)| {
+            start -= count as usize;
+            let at = start + (k - lo as isize) as usize / 2;
+            let is_insertion = self.words[at / 64] << (at % 64) >> 63 == 1;
+            k += if is_insertion { 1 } else { -1 };
+            is_insertion
+        };
+        Script(self.rounds.iter().rev().map(step).collect())
+    }
 }

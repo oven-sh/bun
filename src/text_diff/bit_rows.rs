@@ -52,6 +52,26 @@ impl Row {
             at /= 64;
         }
     }
+
+    /// `mask` has a 1 for each match.
+    fn advance(&mut self, mask: &[u64]) {
+        let mut carry = false;
+        let mut next = |bits: u64, mask: u64| {
+            let sum;
+            (sum, carry) = (!bits).carrying_add(!bits & mask, carry);
+            !sum & (bits | mask)
+        };
+        // Within a pair, the carry stays in the flag of the processor.
+        let (mask_pairs, last_mask) = mask[..self.bits.len()].as_chunks::<2>();
+        let (pairs, last) = self.bits.as_chunks_mut::<2>();
+        for (bits, mask) in pairs.iter_mut().zip(mask_pairs) {
+            *bits = [next(bits[0], mask[0]), next(bits[1], mask[1])];
+        }
+        if let ([bits], [mask]) = (last, last_mask) {
+            *bits = next(*bits, *mask);
+        }
+        self.summaries.iter_mut().for_each(|it| it.fill(u64::MAX));
+    }
 }
 
 /// The first 1 of `bits` from `from` on.
@@ -127,14 +147,7 @@ impl Matches {
             if LOG {
                 log.extend_from_slice(&row.bits);
             }
-            let mask = &self.masks[usize::from(frequent) * self.words..];
-            let mut carry = false;
-            for (bits, &mask) in row.bits.iter_mut().zip(mask) {
-                let sum;
-                (sum, carry) = (!*bits).carrying_add(!*bits & mask, carry);
-                *bits = !sum & (*bits | mask);
-            }
-            row.summaries.iter_mut().for_each(|it| it.fill(u64::MAX));
+            row.advance(&self.masks[usize::from(frequent) * self.words..]);
             return;
         }
         // The first match in a run of 0s takes the 1 that ends the run.

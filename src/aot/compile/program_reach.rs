@@ -3600,6 +3600,10 @@ impl Reacher<'_, '_, '_> {
             for &name in awaited.into_iter().flatten() {
                 self.reach_export(ModuleRef::File(found.0), name);
             }
+            // Only code that runs stands in for data, so this waits for the body.
+            if walk.input.graph.answers_for_typed_form(found.0) {
+                self.look_at_all_of(ModuleRef::File(found.0));
+            }
         }
         let entered = walk.module_units(found);
         let module = entered.module;

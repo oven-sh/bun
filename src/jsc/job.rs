@@ -205,6 +205,11 @@ pub trait JobContext: Sized + 'static {
     /// handed over to use and drop normally.
     fn then(off: Self::OffThread, js: Self::Js, cx: &JsThread<'_>) -> JsResult<()>;
 
+    /// JS thread, before [`then`](Self::then): whether the job completes after this turn of the loop instead. Asked again then.
+    fn completes_later(_off: &mut Self::OffThread, _cx: &JsThread<'_>) -> bool {
+        false
+    }
+
     /// JS thread, the VM's stop phase (possibly more than once): make a job
     /// that is waiting on something *external* — not computing — finish soon,
     /// so the VM's wait for it is short. Runs concurrently with wherever the
@@ -425,6 +430,12 @@ impl<C: JobContext> Job<C> {
     /// # Safety
     /// As [`take`](Self::take).
     unsafe fn complete(this: *mut Self, cx: &JsThread<'_>) -> JsResult<()> {
+        // SAFETY: fn contract: a live job that only this thread touches now.
+        if C::completes_later(unsafe { &mut (*this).off }, cx) {
+            let event_loop = cx.vm().event_loop();
+            event_loop.enqueue_task_for_next_turn(bun_event_loop::Task::init(this));
+            return Ok(());
+        }
         // SAFETY: fn contract.
         let (off, js) = unsafe { Self::take(this, cx.vm()) };
         C::then(off, js, cx)

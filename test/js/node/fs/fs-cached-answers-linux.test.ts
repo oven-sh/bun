@@ -440,6 +440,38 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     expect(result).toEqual({ caught: 20, isAnswered: answersFromCache(cwd) && remembersMissingNames(cwd) });
   });
 
+  test.concurrent("a later call that the pool answers completes behind an answer", async () => {
+    using dir = tempDir("fs-cached", files);
+    const cwd = String(dir);
+    const result = await run(
+      cwd,
+      `
+      (async () => {
+        await warm();
+        const orders = new Set();
+        for (let round = 0; round < 10; round++) {
+          await asking();
+          // From a callback of the pool: the loop takes what the pool has finished before it ends the turn.
+          const { log, hits } = await new Promise(resolve => fs.readFile("sub/inner.txt", () => {
+            const log = [];
+            const before = getCounters().fs_cached_hit;
+            const done = () => { if (log.length === 2) resolve({ log, hits }); };
+            fs.stat("file.txt", () => { log.push("stat"); done(); });
+            fs.access("file.txt", () => { log.push("access"); done(); });
+            const hits = getCounters().fs_cached_hit - before;
+            // The pool is done with the second call before this callback returns.
+            for (const end = performance.now() + 5; performance.now() < end; );
+          }));
+          // Where the pool answers both, either can be first.
+          if (hits === 1) orders.add(log.join(", "));
+        }
+        console.log(JSON.stringify([...orders]));
+      })();
+      `,
+    );
+    expect(result).toEqual(answersFromCache(cwd) ? ["stat, access"] : []);
+  });
+
   test.concurrent("a chain of awaited calls lets timers, immediates and I/O run", async () => {
     using dir = tempDir("fs-cached", files);
     const cwd = String(dir);

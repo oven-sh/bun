@@ -1901,6 +1901,18 @@ mod _async_tasks {
     pub(crate) struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
         pub(crate) result: Maybe<R>,
         pub args: ThreadIsolated<A>,
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        turn: Turn,
+    }
+
+    /// Where an operation stands among the answers that the JS thread queued for the end of their turn.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[derive(Clone, Copy)]
+    enum Turn {
+        /// One of those answers.
+        Answer,
+        /// It went to the pool when this many of them had been queued: it completes behind them.
+        Behind(u64),
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
     // thread for hand-off (`ret::*`); `ThreadIsolated<A>` is Send by its contract.
@@ -2048,9 +2060,30 @@ mod _async_tasks {
             Some(done)
         }
 
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        fn completes_later(this: &mut Self, cx: &bun_jsc::JsThread<'_>) -> bool {
+            let Turn::Behind(answers) = this.turn else {
+                return false;
+            };
+            let gate = &crate::jsc_hooks::runtime_state_of(cx.global().bun_vm()).fs_cached_answers;
+            if !gate.is_early_behind(answers) {
+                return false;
+            }
+            this.turn = Turn::Behind(0);
+            true
+        }
+
         fn then(this: Self, js: AsyncFSJs, cx: &bun_jsc::JsThread<'_>) -> bun_jsc::JsResult<()> {
-            let Self { result, mut args } = this;
             let global_object = cx.global();
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if matches!(this.turn, Turn::Answer) {
+                crate::jsc_hooks::runtime_state_of(global_object.bun_vm())
+                    .fs_cached_answers
+                    .answer_completed();
+            }
+            let Self {
+                result, mut args, ..
+            } = this;
             let _dispatch = js.tracker.dispatch(global_object);
 
             move_waiting_descriptors();
@@ -2130,16 +2163,12 @@ mod _async_tasks {
             if <Op<{ F }> as NodeFSDispatch<R, A>>::ANSWERS_FROM_CACHE
                 && let Some(result) = answer_from_cache::<R, A, F>(cx.global().bun_vm(), &args)
             {
-                bun_jsc::Job::<Self>::schedule_finished(cx, Self { args, result }, js);
+                let turn = Turn::Answer;
+                bun_jsc::Job::<Self>::schedule_finished(cx, Self { args, result, turn }, js);
                 return value;
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            if sys::cached::is_available() {
-                let vm = cx.global().bun_vm();
-                crate::jsc_hooks::runtime_state_of(vm)
-                    .fs_cached_answers
-                    .pool_job(vm.event_loop().iteration_number());
-            }
+            let turn = Turn::Behind(pool_job_behind(cx.global().bun_vm()));
             bun_jsc::Job::<Self>::schedule(
                 cx,
                 Self {
@@ -2147,6 +2176,8 @@ mod _async_tasks {
                     // Sentinel — overwritten by `run` before any read. `Maybe<R>`
                     // may be niche-optimised; never construct an all-zero `Result`.
                     result: Err(sys::Error::default()),
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
+                    turn,
                 },
                 js,
             );
@@ -2174,6 +2205,9 @@ mod _async_tasks {
         skips: core::cell::Cell<u16>,
         /// The last go in which a `node:fs` job went to the pool: an answer to a later call would overtake it.
         pool_go: core::cell::Cell<u64>,
+        /// How many answers were queued for the end of their turn, and how many of them have completed.
+        queued: core::cell::Cell<u64>,
+        completed: core::cell::Cell<u64>,
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -2189,6 +2223,8 @@ mod _async_tasks {
                 depth: core::cell::Cell::new(0),
                 skips: core::cell::Cell::new(0),
                 pool_go: core::cell::Cell::new(u64::MAX),
+                queued: core::cell::Cell::new(0),
+                completed: core::cell::Cell::new(0),
             }
         }
     }
@@ -2228,9 +2264,19 @@ mod _async_tasks {
                 && self.pool_go.get() != go
         }
 
-        /// The kernel answered an operation that [`admits`](Self::admits) let through.
+        /// The kernel answered an operation that [`admits`](Self::admits) let through: the answer is queued.
         fn answered(&self) {
             self.answers.set(self.answers.get() + 1);
+            self.queued.set(self.queued.get() + 1);
+        }
+
+        fn answer_completed(&self) {
+            self.completed.set(self.completed.get() + 1);
+        }
+
+        /// Whether a job that went to the pool behind `answers` queued answers is back before one of them.
+        fn is_early_behind(&self, answers: u64) -> bool {
+            self.completed.get() < answers
         }
 
         /// A pool thread closes the descriptor of the answer in progress: such an answer takes two places of its go.
@@ -2249,13 +2295,26 @@ mod _async_tasks {
             }
         }
 
-        /// A `node:fs` job goes to the pool in the go `go`.
-        fn pool_job(&self, go: u64) {
+        /// A `node:fs` job goes to the pool in the go `go`. Returns how many answers were queued before it.
+        fn pool_job(&self, go: u64) -> u64 {
             self.pool_go.set(go);
             if self.go.get() == go && self.answers.get() >= Self::CROWD && !self.regretted.get() {
                 self.missed();
             }
+            self.queued.get()
         }
+    }
+
+    /// Tells the VM's gate of a `node:fs` job for the pool. Returns how many queued answers it completes behind.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn pool_job_behind(vm: &'static VirtualMachine) -> u64 {
+        // A macro's loop does not run the answers that the VM's loop has queued.
+        if !sys::cached::is_available() || vm.current_loop_kind() != bun_jsc::LoopKind::Regular {
+            return 0;
+        }
+        crate::jsc_hooks::runtime_state_of(vm)
+            .fs_cached_answers
+            .pool_job(vm.event_loop().iteration_number())
     }
 
     /// The answer to an operation with a `cached =` column, if the kernel holds it and the VM's gate lets it ask.

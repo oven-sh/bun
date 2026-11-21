@@ -1198,8 +1198,8 @@ impl BlobExt for Blob {
             #[cfg(windows)]
             {
                 let pathlike = &store.data.as_file().pathlike;
-                let fd: Fd = if let PathOrFileDescriptor::Fd(fd) = pathlike {
-                    *fd
+                let file = if let PathOrFileDescriptor::Fd(fd) = pathlike {
+                    bun_sys::MaybeOwnedFile::Borrowed(*fd)
                 } else {
                     let mut file_path = bun_paths::path_buffer_pool::get();
                     let path = pathlike.path().slice_z(&mut file_path);
@@ -1222,7 +1222,7 @@ impl BlobExt for Blob {
                     match result {
                         bun_sys::Result::Ok(result) => {
                             node::fs::note_opened_for_write(path.as_bytes(), true);
-                            result
+                            bun_sys::File::from_fd(result).into()
                         }
                         bun_sys::Result::Err(err) => {
                             return Ok(JSPromise::rejected_promise(
@@ -1236,11 +1236,11 @@ impl BlobExt for Blob {
 
                 let is_stdout_or_stderr = matches!(pathlike, PathOrFileDescriptor::Fd(_))
                     && matches!(
-                        fd.stdio_tag(),
+                        file.fd().stdio_tag(),
                         Some(bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
                     );
                 let sink = webcore::FileSink::init(
-                    fd,
+                    file.fd(),
                     jsc::EventLoopHandle::init(
                         self.global_this()
                             .expect("Blob.global_this set at construction")
@@ -1248,8 +1248,7 @@ impl BlobExt for Blob {
                             .event_loop_ptr(),
                     ),
                 );
-                let owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
-                let started = sink.start_writer(owns_fd, is_stdout_or_stderr);
+                let started = sink.start_writer(file, is_stdout_or_stderr);
                 if let bun_sys::Result::Err(err) = started {
                     return Ok(
                         JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
@@ -1389,8 +1388,8 @@ impl BlobExt for Blob {
         #[cfg(windows)]
         {
             let pathlike = &store.data.as_file().pathlike;
-            let fd: Fd = match pathlike {
-                PathOrFileDescriptor::Fd(fd) => *fd,
+            let file = match pathlike {
+                PathOrFileDescriptor::Fd(fd) => bun_sys::MaybeOwnedFile::Borrowed(*fd),
                 PathOrFileDescriptor::Path(p) => {
                     let mut file_path = bun_paths::path_buffer_pool::get();
                     let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
@@ -1400,7 +1399,7 @@ impl BlobExt for Blob {
                     match bun_sys::open(p.slice_z(&mut file_path), flags, WRITE_PERMISSIONS) {
                         bun_sys::Result::Ok(result) => {
                             node::fs::note_opened_for_write(p.slice(), false);
-                            result
+                            bun_sys::File::from_fd(result).into()
                         }
                         bun_sys::Result::Err(err) => {
                             return Err(global_this
@@ -1412,12 +1411,12 @@ impl BlobExt for Blob {
 
             let is_stdout_or_stderr = matches!(pathlike, PathOrFileDescriptor::Fd(_))
                 && matches!(
-                    fd.stdio_tag(),
+                    file.fd().stdio_tag(),
                     Some(bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
                 );
 
             let sink = webcore::FileSink::init(
-                fd,
+                file.fd(),
                 jsc::EventLoopHandle::init(
                     self.global_this()
                         .expect("Blob.global_this set at construction")
@@ -1426,8 +1425,7 @@ impl BlobExt for Blob {
                 ),
             );
             // `to_js` gives init's ref to the wrapper; an early return drops it.
-            let owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_));
-            let start_result = sink.start_writer(owns_fd, is_stdout_or_stderr);
+            let start_result = sink.start_writer(file, is_stdout_or_stderr);
             if let bun_sys::Result::Err(err) = start_result {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }

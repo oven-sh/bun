@@ -355,7 +355,7 @@ pub(crate) struct StatWatcher {
     // gives safe `&JSGlobalObject` projection (Deref) at every read site.
     global_this: BackRef<JSGlobalObject>,
 
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
 
     poll_ref: JsKeepAlive,
 
@@ -475,7 +475,6 @@ impl StatWatcher {
     /// The scheduler holds its own ref; `closed` tells it to drop it.
     pub(crate) fn finalize(&self) {
         log!("Finalize\n");
-        self.this_value.with_mut(|r| r.finalize());
         self.closed.store(true, Ordering::Relaxed);
     }
 
@@ -644,9 +643,9 @@ impl StatWatcher {
             this.poll_ref.ref_(this.ctx.loop_ctx());
         }
 
-        let js_this = js::to_js(this.clone(), &args.global_this);
-        this.this_value
-            .set(JsRef::init_strong(js_this, &args.global_this));
+        let wrapper = js::wrap(this.clone(), &args.global_this);
+        wrapper.set_js_ref_strong(&args.global_this);
+        let js_this = wrapper.to_js();
         js::listener_set_cached(js_this, &args.global_this, args.listener);
         // SAFETY: heap-allocated; `close()` disarms it before any drop.
         unsafe { bun_jsc::AbortHandle::arm_owner(this.as_ptr(), vm.context_of(args.context)) };

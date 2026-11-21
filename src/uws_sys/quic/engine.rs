@@ -49,6 +49,7 @@ pub(super) struct Engine {
 
 pub(super) struct Socket {
     /// While it is open.
+    udp: Cell<Option<udp::OwnedSocket>>,
     binding: Cell<Option<Binding>>,
     local: Cell<SocketAddr>,
     pub(super) owner: BackRef<dyn Application>,
@@ -231,6 +232,7 @@ impl Engine {
         flags: c_int,
     ) -> Option<Rc<Socket>> {
         let socket = Rc::new(Socket {
+            udp: Cell::new(None),
             binding: Cell::new(None),
             local: Cell::new((Ipv4Addr::UNSPECIFIED, 0).into()),
             owner: BackRef::new(owner),
@@ -239,11 +241,9 @@ impl Engine {
         let user = Rc::as_ptr(&socket).cast_mut().cast();
         let udp = udp::Socket::create(
             self.loop_, on_data, on_drain, on_close, None, host, port, flags, None, user,
-        );
-        if udp.is_null() {
-            return None;
-        }
-        let binding = Binding::new(udp);
+        )?;
+        let binding = Binding::new(udp.as_ptr());
+        socket.udp.set(Some(udp));
         socket.binding.set(Some(binding));
         socket.local.set(binding.address);
         self.sockets.borrow_mut().push(Rc::clone(&socket));
@@ -266,9 +266,7 @@ impl Socket {
     }
 
     pub(super) fn close(&self) {
-        if let Some(binding) = self.binding.get() {
-            udp::Socket::opaque_mut(binding.socket).close();
-        }
+        self.udp.set(None);
     }
 }
 
@@ -297,7 +295,9 @@ extern "C" fn on_drain(udp: *mut udp::Socket) {
 }
 
 extern "C" fn on_close(udp: *mut udp::Socket) {
-    Socket::of(udp).binding.set(None);
+    let socket = Socket::of(udp);
+    let _ = socket.udp.take().map(udp::OwnedSocket::into_raw);
+    socket.binding.set(None);
     on_drain(udp);
 }
 

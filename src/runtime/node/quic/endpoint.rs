@@ -144,11 +144,12 @@ pub(crate) struct QuicEndpoint {
     pub(super) closing: Cell<bool>,
     closed: Cell<bool>,
 
+    socket: Cell<Option<uws::udp::OwnedSocket>>,
     binding: Cell<Option<Binding>>,
     bind_address: SocketAddr,
     local_addr: Cell<Option<SocketAddr>>,
     poll_ref: KeepAlive,
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
 
     /// For both roles — Node allows that.
     quic: RefCell<bun_quic::Endpoint>,
@@ -297,6 +298,7 @@ extern "C" fn on_drain(_socket: *mut uws::udp::Socket) {
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     for endpoint in registered_endpoints() {
         if endpoint.binding.get().is_some_and(|it| it.socket == socket) {
+            let _ = endpoint.socket.take().map(uws::udp::OwnedSocket::into_raw);
             endpoint.binding.set(None);
             endpoint.closing.set(true);
             endpoint.close_context.set(CLOSECONTEXT_RECEIVE_FAILURE);
@@ -667,6 +669,7 @@ impl QuicEndpoint {
             stats: null_mut(),
             closing: Cell::new(false),
             closed: Cell::new(false),
+            socket: Cell::new(None),
             binding: Cell::new(None),
             bind_address,
             local_addr: Cell::new(None),
@@ -795,7 +798,11 @@ impl QuicEndpoint {
     }
 
     /// Returns `Ok(false)` when the bind fails: Node does not throw here.
-    fn ensure_bound(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<bool> {
+    fn ensure_bound(
+        &self,
+        global: &JSGlobalObject,
+        this_value: JsWrapper<'_, Self>,
+    ) -> JsResult<bool> {
         if self.local_addr.get().is_some() {
             return Ok(true);
         }
@@ -816,15 +823,15 @@ impl QuicEndpoint {
             Some(&mut err),
             core::ptr::from_ref(self).cast_mut().cast::<c_void>(),
         );
-        if socket.is_null() {
-            self.this_value
-                .with_mut(|r| r.set_strong(this_value, global));
+        let Some(socket) = socket else {
+            this_value.set_js_ref_strong(global);
             self.finish_close();
             self.pending_endpoint_close.set(false);
             self.deliver_endpoint_close(global, CLOSECONTEXT_BIND_FAILURE, err);
             return Ok(false);
-        }
-        let binding = Binding::new(socket);
+        };
+        let binding = Binding::new(socket.as_ptr());
+        self.socket.set(Some(socket));
         self.binding.set(Some(binding));
         self.local_addr.set(Some(binding.address));
         let driver = Rc::new(LoopDriver(BackRef::new(self)));
@@ -835,8 +842,7 @@ impl QuicEndpoint {
             s.bound = 1;
             s.receiving = 1;
         });
-        self.this_value
-            .with_mut(|r| r.set_strong(this_value, global));
+        this_value.set_js_ref_strong(global);
         self.update_keepalive();
         ENDPOINT_REGISTRY.with_borrow_mut(|v| v.push(BackRef::new(self)));
         Ok(true)
@@ -1147,9 +1153,8 @@ impl QuicEndpoint {
         self.driver.set(None);
         self.event_loop_timer.disarm();
         ENDPOINT_REGISTRY.with_borrow_mut(|v| v.retain(|it| !core::ptr::eq(it.get(), self)));
-        if let Some(binding) = self.binding.take() {
-            uws::udp::Socket::opaque_mut(binding.socket).close();
-        }
+        self.binding.set(None);
+        self.socket.set(None);
         true
     }
 
@@ -1235,7 +1240,7 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        if !self.ensure_bound(global, this_value.to_js())? {
+        if !self.ensure_bound(global, this_value)? {
             return Ok(());
         }
         if self.server.get().is_none() {
@@ -1299,7 +1304,7 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        if !self.ensure_bound(global, this_value.to_js())? {
+        if !self.ensure_bound(global, this_value)? {
             return Ok(JSValue::UNDEFINED);
         }
         let address = address.to_js();
@@ -1449,8 +1454,7 @@ impl QuicEndpoint {
             s.listening = 0;
         });
         if self.this_value.get().is_empty() {
-            self.this_value
-                .with_mut(|r| r.set_strong(this_value.to_js(), cx.global()));
+            this_value.set_js_ref_strong(cx.global());
         }
         if self.is_drained() {
             self.finish_close();

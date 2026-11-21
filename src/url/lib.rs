@@ -44,32 +44,43 @@ use route_param::List as ParamsList;
 // stay in tier-6 `bun_jsc` as extension methods — they need JSValue/JSGlobalObject.
 // Everything else is a thin extern-"C" wrapper around WTF::URL and is JSC-agnostic.
 pub mod whatwg {
-    use core::ptr::NonNull;
+    use core::marker::PhantomData;
+    use core::mem::MaybeUninit;
+
+    use bun_core::EncodedSlice;
 
     use super::BunString as String;
     use super::strings;
 
-    bun_opaque::opaque_ffi! {
-        /// Opaque handle to a heap-allocated `WTF::URL` (C++); owned via
-        /// [`Parsed`].
-        pub struct URL;
-    }
+    /// A `WTF::URL`, owned via [`Parsed`]: a ref on a string and offsets into it, so it moves as bytes.
+    #[repr(C)]
+    pub struct URL(MaybeUninit<[u64; 5]>, PhantomData<*mut ()>);
 
     // Getters take `&URL` (C++ never mutates on read). String inputs are
     // `const BunString*`; string returns are +1 (`Bun::toStringRef`), declared
-    // as owning `String`. `URL__deinit` frees the allocation, so it stays
+    // as owning `String`. `URL__deinit` releases the string, so it stays
     // `unsafe fn`. `URL__getHrefFromJS` lives in `bun_jsc::URLJsc`.
     unsafe extern "C" {
-        safe fn URL__fromString(str: &String) -> Option<NonNull<URL>>;
-        safe fn URL__protocol(url: &URL) -> String;
+        fn URL__fromString(storage: *mut URL, str: &String, base: Option<&URL>) -> bool;
+        safe fn URL__protocol(url: &URL) -> EncodedSlice<'_>;
         safe fn URL__href(url: &URL) -> String;
         safe fn URL__username(url: &URL) -> String;
         safe fn URL__password(url: &URL) -> String;
-        safe fn URL__host(url: &URL) -> String;
+        safe fn URL__encodedUsername(url: &URL) -> EncodedSlice<'_>;
+        safe fn URL__encodedPassword(url: &URL) -> EncodedSlice<'_>;
+        safe fn URL__host(url: &URL) -> EncodedSlice<'_>;
         safe fn URL__hostname(url: &URL) -> String;
         safe fn URL__port(url: &URL) -> u32;
-        safe fn URL__pathname(url: &URL) -> String;
-        safe fn URL__fragmentIdentifier(url: &URL) -> String;
+        safe fn URL__pathname(url: &URL) -> EncodedSlice<'_>;
+        safe fn URL__query(url: &URL) -> EncodedSlice<'_>;
+        safe fn URL__fragmentIdentifier(url: &URL) -> EncodedSlice<'_>;
+        safe fn URL__hasOpaquePath(url: &URL) -> bool;
+        safe fn URL__setUsername(url: &mut URL, value: &EncodedSlice<'_>);
+        safe fn URL__setPassword(url: &mut URL, value: &EncodedSlice<'_>);
+        safe fn URL__setHost(url: &mut URL, value: &EncodedSlice<'_>) -> bool;
+        safe fn URL__setPathname(url: &mut URL, value: &EncodedSlice<'_>);
+        safe fn URL__setQuery(url: &mut URL, value: &EncodedSlice<'_>);
+        safe fn URL__setFragmentIdentifier(url: &mut URL, value: &EncodedSlice<'_>);
         fn URL__deinit(url: *mut URL);
         safe fn URL__getHref(input: &String) -> String;
         safe fn URL__getFileURLString(input: &String) -> String;
@@ -109,29 +120,45 @@ pub mod whatwg {
         Some(&slice[..len])
     }
 
+    /// A part that is borrowed is ASCII, in 8-bit or in 16-bit code units.
     impl URL {
         /// The URL fragment (the part after `#`), excluding the leading '#'.
-        pub fn fragment_identifier(&self) -> String {
+        pub fn fragment_identifier(&self) -> EncodedSlice<'_> {
             URL__fragmentIdentifier(self)
         }
-        pub fn protocol(&self) -> String {
+        /// Without the leading '?'.
+        pub fn query(&self) -> EncodedSlice<'_> {
+            URL__query(self)
+        }
+        pub fn protocol(&self) -> EncodedSlice<'_> {
             URL__protocol(self)
         }
         pub fn href(&self) -> String {
             URL__href(self)
         }
+        /// Percent-decoded.
         pub fn username(&self) -> String {
             URL__username(self)
         }
+        /// Percent-decoded.
         pub fn password(&self) -> String {
             URL__password(self)
+        }
+        pub fn encoded_username(&self) -> EncodedSlice<'_> {
+            URL__encodedUsername(self)
+        }
+        pub fn encoded_password(&self) -> EncodedSlice<'_> {
+            URL__encodedPassword(self)
+        }
+        pub fn has_opaque_path(&self) -> bool {
+            URL__hasOpaquePath(self)
         }
         /// The host WITHOUT the port (JS `hostname`).
         ///
         /// ```text
         /// URL("http://example.com:8080").host() => "example.com"
         /// ```
-        pub fn host(&self) -> String {
+        pub fn host(&self) -> EncodedSlice<'_> {
             URL__host(self)
         }
         /// The host WITH the port (JS `host`).
@@ -146,35 +173,63 @@ pub mod whatwg {
         pub fn port(&self) -> u32 {
             URL__port(self)
         }
-        pub fn pathname(&self) -> String {
+        pub fn pathname(&self) -> EncodedSlice<'_> {
             URL__pathname(self)
         }
     }
 
-    /// A `URL` this handle owns; `Drop` frees it.
-    pub struct Parsed(NonNull<URL>);
+    /// An owned `URL`.
+    pub struct Parsed(URL);
 
     impl Parsed {
         pub fn from_string(str: &String) -> Option<Self> {
-            URL__fromString(str).map(Self)
+            Self::from_string_with_base(str, None)
         }
         pub fn from_utf8(input: &[u8]) -> Option<Self> {
             Self::from_string(&bun_core::StringView::borrow_utf8(input))
+        }
+        /// `new URL(str, base)`.
+        pub fn from_string_with_base(str: &String, base: Option<&URL>) -> Option<Self> {
+            let mut url = URL(MaybeUninit::uninit(), PhantomData);
+            // SAFETY: `url` has the size and alignment of a `WTF::URL`, and holds none yet.
+            unsafe { URL__fromString(&raw mut url, str, base) }.then(|| Self(url))
+        }
+    }
+
+    /// A setter takes Latin-1 or UTF-16 and parses the URL again. If that fails, every part is empty.
+    impl Parsed {
+        pub fn set_username(&mut self, value: EncodedSlice<'_>) {
+            URL__setUsername(&mut self.0, &value)
+        }
+        pub fn set_password(&mut self, value: EncodedSlice<'_>) {
+            URL__setPassword(&mut self.0, &value)
+        }
+        /// False if `value` is no host.
+        pub fn set_host(&mut self, value: EncodedSlice<'_>) -> bool {
+            URL__setHost(&mut self.0, &value)
+        }
+        pub fn set_pathname(&mut self, value: EncodedSlice<'_>) {
+            URL__setPathname(&mut self.0, &value)
+        }
+        pub fn set_query(&mut self, value: EncodedSlice<'_>) {
+            URL__setQuery(&mut self.0, &value)
+        }
+        pub fn set_fragment_identifier(&mut self, value: EncodedSlice<'_>) {
+            URL__setFragmentIdentifier(&mut self.0, &value)
         }
     }
 
     impl core::ops::Deref for Parsed {
         type Target = URL;
         fn deref(&self) -> &URL {
-            // SAFETY: `self.0` is a live heap `WTF::URL` that only `Drop` frees.
-            unsafe { self.0.as_ref() }
+            &self.0
         }
     }
 
     impl Drop for Parsed {
         fn drop(&mut self) {
-            // SAFETY: this handle is the only owner of the `WTF::URL`, so it is deleted once.
-            unsafe { URL__deinit(self.0.as_ptr()) }
+            // SAFETY: a `Parsed` is only made around a `WTF::URL` that was constructed, and is its only owner.
+            unsafe { URL__deinit(&raw mut self.0) }
         }
     }
 }

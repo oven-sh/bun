@@ -1321,11 +1321,61 @@ pub struct Map {
     pub map: HashTable,
 }
 
+/// The environment variable Windows PowerShell uses to search for modules.
+///
+/// `bun upgrade` spawns Windows PowerShell 5.1 (`powershell.exe`) to
+/// `Expand-Archive` the downloaded release zip. The child must not inherit
+/// the caller's `PSModulePath`: when bun is launched from PowerShell 7
+/// (`pwsh`), that variable lists PS7's `Modules` directories ahead of 5.1's,
+/// and 5.1 then resolves `Microsoft.PowerShell.Archive` to PS7's bundled
+/// version, whose 3-argument `ExtractToDirectory` overload only exists on
+/// .NET Core — extraction fails and the upgrade aborts with ENOENT while
+/// verifying the unpacked binary (oven-sh/bun#49334).
+pub const PS_MODULE_PATH: &[u8] = b"PSModulePath";
+
+/// `true` if `key` is [`PS_MODULE_PATH`] in any ASCII casing — Windows
+/// environment variable names are case-insensitive, so `psmodulepath` is the
+/// same variable.
+#[inline]
+pub fn is_ps_module_path_var(key: &[u8]) -> bool {
+    strings::eql_case_insensitive_ascii_check_length(key, PS_MODULE_PATH)
+}
+
+/// Pure environment filter for a spawned Windows PowerShell child process:
+/// every `(key, value)` pair except `PSModulePath` in any casing. With the
+/// variable absent from the child's environment, Windows PowerShell 5.1 falls
+/// back to its built-in default module path.
+///
+/// Deliberately cross-platform (no `cfg(windows)`) so it is unit-testable on
+/// any OS.
+pub fn sanitize_env_for_windows_powershell<'a, I>(env: I) -> Vec<(&'a [u8], &'a [u8])>
+where
+    I: IntoIterator<Item = (&'a [u8], &'a [u8])>,
+{
+    env.into_iter()
+        .filter(|(key, _)| !is_ps_module_path_var(key))
+        .collect()
+}
+
 impl Map {
     /// Builds a NULL-terminated `K=V\0` envp array.
     pub fn to_envp(&self) -> CStringList {
         let entries = (self.map.iter()).map(|(key, value)| [&**key, b"=", &value.value]);
         CStringList::from_parts(entries)
+    }
+
+    /// Like [`Map::to_envp`], but omits `PSModulePath` (any ASCII casing): the
+    /// environment to hand to a spawned Windows PowerShell child process, so a
+    /// 5.1 child never inherits a PowerShell 7 module path from the caller
+    /// (oven-sh/bun#49334). See [`PS_MODULE_PATH`].
+    pub fn to_envp_for_windows_powershell_child(&self) -> CStringList {
+        let pairs: Vec<(&[u8], &[u8])> = self
+            .map
+            .iter()
+            .map(|(key, value)| (&**key, &value.value[..]))
+            .collect();
+        let entries = sanitize_env_for_windows_powershell(pairs);
+        CStringList::from_parts(entries.into_iter().map(|(key, value)| [key, b"=", value]))
     }
 
     /// Build a heap-allocated Windows environment block suitable for
@@ -1516,4 +1566,107 @@ pub fn instance() -> Option<*mut Loader> {
 #[inline]
 pub fn set_instance(loader: *mut Loader) {
     INSTANCE.store(loader, Ordering::Release);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_env_for_windows_powershell_drops_psmodulepath_in_any_casing() {
+        let env: Vec<(&[u8], &[u8])> = vec![
+            (b"PATH", b"C:\\Windows"),
+            (
+                b"PSModulePath",
+                b"C:\\Program Files\\PowerShell\\7\\Modules;C:\\Users\\x\\Documents\\PowerShell\\Modules",
+            ),
+            (b"psmodulepath", b"lowercase"),
+            (b"PsModulePath", b"mixed"),
+            (b"PSMODULEPATH", b"upper"),
+            (b"PSModulePathExtra", b"not the variable - longer name must survive"),
+            (b"HOME", b"C:\\Users\\x"),
+        ];
+        let out = sanitize_env_for_windows_powershell(env);
+        assert_eq!(
+            out,
+            vec![
+                (&b"PATH"[..], &b"C:\\Windows"[..]),
+                (
+                    &b"PSModulePathExtra"[..],
+                    &b"not the variable - longer name must survive"[..]
+                ),
+                (&b"HOME"[..], &b"C:\\Users\\x"[..]),
+            ]
+        );
+        assert!(out.iter().all(|(k, _)| !is_ps_module_path_var(k)));
+    }
+
+    #[test]
+    fn sanitize_env_for_windows_powershell_passes_through_env_without_psmodulepath() {
+        let env: Vec<(&[u8], &[u8])> = vec![(b"PATH", b"/usr/bin"), (b"HOME", b"/home/x")];
+        assert_eq!(sanitize_env_for_windows_powershell(env.clone()), env);
+        assert!(sanitize_env_for_windows_powershell(Vec::<(&[u8], &[u8])>::new()).is_empty());
+    }
+
+    #[test]
+    fn is_ps_module_path_var_matches_only_the_exact_name_case_insensitively() {
+        assert!(is_ps_module_path_var(b"PSModulePath"));
+        assert!(is_ps_module_path_var(b"psmodulepath"));
+        assert!(is_ps_module_path_var(b"PsModulePath"));
+        assert!(!is_ps_module_path_var(b"PSModulePathExtra"));
+        assert!(!is_ps_module_path_var(b"PSModulePat"));
+        assert!(!is_ps_module_path_var(b"PATH"));
+        assert!(!is_ps_module_path_var(b""));
+    }
+
+    #[test]
+    fn map_to_envp_for_windows_powershell_child_omits_psmodulepath() {
+        // Regression test for oven-sh/bun#49334: on Linux the map is
+        // case-sensitive, so insert several casings to prove the filter is
+        // case-insensitive on every platform (on Windows the map itself is
+        // case-insensitive and would collapse them to one entry).
+        let mut map = Map {
+            map: HashTable::default(),
+        };
+        map.put(
+            b"PSModulePath",
+            b"C:\\Program Files\\PowerShell\\7\\Modules",
+        )
+        .unwrap();
+        map.put(b"psmodulepath", b"C:\\lower").unwrap();
+        map.put(b"PATH", b"C:\\Windows").unwrap();
+        map.put(b"HOME", b"C:\\Users\\x").unwrap();
+
+        let envp = map.to_envp_for_windows_powershell_child();
+        let entries: Vec<&[u8]> = envp
+            .unterminated()
+            .iter()
+            .map(|entry| entry.unwrap().to_cstr().to_bytes())
+            .collect();
+
+        assert_eq!(entries.len(), 2);
+        for entry in &entries {
+            let key = &entry[..entry.iter().position(|b| *b == b'=').unwrap()];
+            assert!(
+                !is_ps_module_path_var(key),
+                "child env still has {:?}",
+                entry
+            );
+        }
+        assert!(entries.contains(&&b"PATH=C:\\Windows"[..]));
+        assert!(entries.contains(&&b"HOME=C:\\Users\\x"[..]));
+
+        // The unsanitized envp still carries the variable.
+        let full = map.to_envp();
+        let full_entries: Vec<&[u8]> = full
+            .unterminated()
+            .iter()
+            .map(|entry| entry.unwrap().to_cstr().to_bytes())
+            .collect();
+        assert!(
+            full_entries
+                .iter()
+                .any(|e| is_ps_module_path_var(&e[..e.iter().position(|b| *b == b'=').unwrap()]))
+        );
+    }
 }

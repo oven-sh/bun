@@ -22,6 +22,12 @@ pub fn tune(index: usize, default: u64) -> u64 {
     VALUES[index].unwrap_or(default)
 }
 
+thread_local! {
+    /// Temporary.
+    pub static TMP_DRAINED_AT: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+    pub static TMP_IS_OVERDUE: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
 /// Enough for two other threads to wake up, one after the other, and answer.
 const AWAKE_NS: u64 = 75_000;
 const BUSY_NS: u64 = 150_000;

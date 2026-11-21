@@ -17,7 +17,7 @@ if (process.argv[2] === "--write") {
   const [old, fresh, mask, variants] = process.argv.slice(2);
   require("bun:ffi").dlopen("kernel32.dll", { SetProcessAffinityMask: { args: ["i64", "u64"], returns: "i32" } }).symbols.SetProcessAffinityMask(-1n, BigInt(mask));
   for (const size of [65536, 48 << 20]) for (const variant of variants.split(";")) {
-    const seen = Array.from({ length: +(process.env.ROUNDS ?? 5) }, () => Bun.spawnSync([variant === "old" ? old : fresh, __filename, "--read", size], { env: { ...process.env, BUN_TMP_TUNE: variant === "old" ? "" : variant, BUN_TMP_QUOTA: variant.match(/Q=(\d+)/)?.[1] ?? "" }, timeout: 30000, stdin: "ignore" }).stdout.toString().trim()).sort((a, b) => parseInt(a) - parseInt(b));
+    const seen = Array.from({ length: +(process.env.ROUNDS ?? 5) }, () => Bun.spawnSync([variant === "old" ? old : fresh, __filename, "--read", size], { env: { ...process.env, BUN_TMP_TUNE: variant === "old" ? "" : variant }, timeout: 30000, stdin: "ignore" }).stdout.toString().trim()).sort((a, b) => parseInt(a) - parseInt(b));
     console.log(`stall turns ${size} ${variant || "as is"}: ${seen.map(it => parseInt(it)).join(" ")}; the median: ${seen[seen.length >> 1]}`);
   }
 }

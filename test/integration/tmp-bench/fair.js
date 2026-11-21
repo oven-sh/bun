@@ -9,7 +9,10 @@ const roles = {
 const cases = {
   async stream() { const t = now(), p = spawn("spew"); let first; for await (const c of p.stdout) first ??= now(); return [first - t, now() - first]; },
   async buffered() { const t = now(); await spawn("spew").stdout.bytes(); return [0, now() - t]; },
-  async stdin() { const b = Buffer.alloc(TOTAL), t = now(), r = spawn("drain", { stdin: b }).stdout.getReader(); await r.read(); const first = now(); while (!(await r.read()).done); return [first - t, now() - first]; },
+  async stdin(total = TOTAL) { const b = Buffer.alloc(total), t = now(), r = spawn("drain", { stdin: b }).stdout.getReader(); await r.read(); const first = now(); while (!(await r.read()).done); return [first - t, now() - first]; },
+  stdin48: () => cases.stdin(48 * MB),
+  stdin70: () => cases.stdin(70 * MB),
+  stdin256: () => cases.stdin(256 * MB),
   async start() { const t = now(); for (let i = 0; i < 5; i++) await Bun.spawn([process.execPath, "-e", "1"]).exited; return [0, (now() - t) / 5]; },
   async fetch16() { const t = now(), p = spawn("serve"), url = `http://127.0.0.1:${parseInt(Buffer.from((await p.stdout.getReader().read()).value))}/`, first = now(); let left = 600; await Promise.all(Array.from({ length: 16 }, async () => { while (left-- > 0) await (await fetch(url)).text(); })); const end = now(); p.kill(); return [first - t, end - first]; },
   async stat() { const t = now(); for (let i = 0; i < 300; i++) await fs.promises.stat(__filename); return [0, now() - t]; },
@@ -29,7 +32,7 @@ else {
     const seen = columns.map(() => []);
     for (let round = 0; round < rounds; round++) for (let turn = 0; turn < columns.length; turn++) {
       const i = (turn + round) % columns.length;
-      seen[i].push(Bun.spawnSync([columns[i][0], __filename, "--case", name], { env: { ...process.env, BUN_TMP_TUNE: i > 1 ? columns[i][1] : "", BUN_TMP_QUOTA: columns[i][1].match(/Q=(\d+)/)?.[1] ?? "" }, timeout: 40000, stdin: "ignore" }).stdout.toString().trim().split(" ").map(Number));
+      seen[i].push(Bun.spawnSync([columns[i][0], __filename, "--case", name], { env: { ...process.env, BUN_TMP_TUNE: i > 1 ? columns[i][1] : "" }, timeout: 40000, stdin: "ignore" }).stdout.toString().trim().split(" ").map(Number));
     }
     const at = (l, k, q) => l.map(it => it[k]).sort((x, y) => x - y)[Math.floor(q * (l.length - 1) + 0.5)]?.toFixed(0);
     console.log("cond", name.padEnd(9), seen.map((l, i) => `${columns[i][1] || "as is"}: ${at(l, 0, 0.5)}+${at(l, 1, 0.5)} (${at(l, 1, 0.25)}-${at(l, 1, 0.75)})`).join(" | "));

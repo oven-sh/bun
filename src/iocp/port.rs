@@ -286,8 +286,13 @@ impl Port {
         }
         let mut is_at_once = true;
         let start = if tune(6, 0) == 1 { now_ns() } else { 0 };
+        let is_overdue = bun_threading::spin::TMP_IS_OVERDUE.take();
         if timeout_ns == Some(0) || self.has_work() {
-            self.fill_batch(Timeout::Now);
+            let has_work = self.has_work();
+            if !self.fill_batch(Timeout::Now) && !has_work && is_overdue {
+                std::thread::yield_now();
+                self.fill_batch(Timeout::Now);
+            }
         } else {
             self.shared.is_parked.store(true, Ordering::SeqCst);
             is_at_once = self.park(timeout_ns, only_receives);

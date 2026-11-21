@@ -1945,6 +1945,35 @@ it.skipIf(isWindows)(
 );
 
 describe("read/write optional arguments (Node 24)", () => {
+  for (const style of ["options", "buffer and options"] as const) {
+    for (const length of [0, 4]) {
+      it(`FileHandle.read protects its descriptor from ${style} getters with length ${length}`, async () => {
+        using dir = tempDir("fs-read-getter-close", { data: "abcdefgh" });
+        const handle = await promises.open(join(String(dir), "data"), "r");
+        const buffer = Buffer.alloc(4);
+        let closing: Promise<void> | undefined;
+        const options = {
+          buffer,
+          get offset() {
+            closing = handle.close();
+            return 0;
+          },
+          length,
+          position: 0,
+        };
+        try {
+          const result = await (style === "options" ? handle.read(options) : handle.read(buffer, options));
+          expect(result.bytesRead).toBe(length);
+          expect(result.buffer).toBe(buffer);
+          expect(buffer.toString()).toBe(length ? "abcd" : "\0\0\0\0");
+        } finally {
+          await (closing ?? handle.close());
+        }
+        expect(handle.fd).toBe(-1);
+      });
+    }
+  }
+
   const rangeError = (name: string, range: string, received: string | number) => ({
     name: "RangeError",
     code: "ERR_OUT_OF_RANGE",

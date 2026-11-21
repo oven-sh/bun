@@ -15,6 +15,8 @@ pub(crate) enum Step {
     Done,
     /// Call again when the descriptor is ready.
     Wait,
+    /// Call again now, unless the job was cancelled.
+    Again,
 }
 
 pub(crate) trait FdOp: Send + Sized + 'static {
@@ -72,11 +74,17 @@ impl<Op: FdOp> FdJob<Op> {
         Job::<Self>::schedule(cx, Self { op, key }, (js, canceller));
     }
 
-    fn advance(job: Running<Self>, wait: FdWait, step: Result<Step, Box<SystemError>>) {
-        let outcome = match step {
-            Ok(Step::Done) => Ok(()),
-            Ok(Step::Wait) => return wait.park(|woken| Self::resume(job, woken)),
-            Err(err) => Err(err),
+    fn advance(mut job: Running<Self>, wait: FdWait, mut step: Result<Step, Box<SystemError>>) {
+        let outcome = loop {
+            step = match step {
+                Ok(Step::Done) => break Ok(()),
+                Ok(Step::Wait) => return wait.park(|woken| Self::resume(job, woken)),
+                Ok(Step::Again) => match wait.check_cancelled() {
+                    Ok(()) => job.off().op.step(wait.fd(), false),
+                    Err(err) => break Err(err.into()),
+                },
+                Err(err) => break Err(err),
+            };
         };
         drop(wait);
         job.finish(outcome);

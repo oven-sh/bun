@@ -17,7 +17,7 @@ use tests::{WorkPool, epoll_ctl};
 
 use crate::Waker;
 
-bun_core::define_scoped_log!(log, Loop, visible);
+bun_core::define_scoped_log!(log, FdWait, hidden);
 
 #[derive(Clone, Copy)]
 pub enum Interest {
@@ -153,7 +153,7 @@ impl FdWait {
     }
 
     /// The job is here, so only a tombstone can have its slot.
-    fn check_cancelled(&self) -> sys::Result<()> {
+    pub fn check_cancelled(&self) -> sys::Result<()> {
         match TOMBSTONES.load(Ordering::SeqCst) != 0 && self.key.slots().contains_key(&self.key) {
             true => Err(self.interest.cancelled()),
             false => Ok(()),
@@ -275,17 +275,18 @@ impl IoThread {
         // The kernel may take its time. Only this thread gives the descriptor to the pool to close.
         drop(slots);
         if let Err(err) = self.add(wait.entry, number, interest, key) {
-            self.fire(key, Err(err));
+            self.fire(key, |_, _| Err(err));
         }
     }
 
     /// The kernel reported `key`.
-    fn fire(&mut self, key: Key, outcome: sys::Result<()>) {
+    fn fire(&mut self, key: Key, outcome: impl FnOnce(Fd, Interest) -> sys::Result<()>) {
         let mut slots = key.slots();
         match slots.remove(&key) {
             Some(Slot::Armed(armed)) => {
                 drop(slots);
                 let (wait, resume) = self.unpark(key, armed);
+                let outcome = outcome(wait.fd(), wait.interest);
                 wait.wake(outcome, resume);
             }
             Some(Slot::Cancelled) => drop(slots.insert(key, Slot::Cancelled)),
@@ -495,14 +496,27 @@ impl Poller {
                 e => bun_core::Output::panic(format_args!("epoll_wait: {:?}", e)),
             }
             for event in &events[..rc as usize] {
-                // EPOLLERR carries no errno, and reading SO_ERROR would clear it on the caller's socket.
-                let outcome = match event.events & EPOLL::ERR {
-                    0 => Ok(()),
-                    _ => Err(sys::Error::from_code(E::SUCCESS, sys::Tag::epoll_ctl)),
-                };
-                thread.fire(Key(event.u64), outcome);
+                thread.fire(Key(event.u64), |fd, interest| {
+                    match event.events & EPOLL::ERR {
+                        0 => Ok(()),
+                        _ => Err(pending_error(fd, interest)),
+                    }
+                });
             }
         }
+    }
+}
+
+/// EPOLLERR carries no errno, and reading SO_ERROR would clear it on the caller's socket.
+#[cfg(any(all(not(test), target_os = "linux"), target_os = "android"))]
+#[cold]
+fn pending_error(fd: Fd, interest: Interest) -> sys::Error {
+    if matches!(interest, Interest::Writable)
+        && sys::fstat(fd).is_ok_and(|stat| sys::S::ISFIFO(stat.st_mode as _))
+    {
+        sys::Error::from_code(E::EPIPE, sys::Tag::write)
+    } else {
+        sys::Error::from_code(E::SUCCESS, sys::Tag::epoll_ctl)
     }
 }
 
@@ -617,7 +631,7 @@ impl Poller {
                     0 => Ok(()),
                     _ => Err(sys::Error::from_code_int(event.data as _, sys::Tag::kevent)),
                 };
-                thread.fire(Key(event.udata as u64), outcome);
+                thread.fire(Key(event.udata as u64), |_, _| outcome);
             }
         }
     }
@@ -712,7 +726,7 @@ mod tests {
     }
 
     fn fire(key: Key, outcome: sys::Result<()>) {
-        on_io_thread(|thread| thread.fire(key, outcome));
+        on_io_thread(|thread| thread.fire(key, |_, _| outcome));
     }
 
     fn ready(key: Key) {
@@ -775,11 +789,14 @@ mod tests {
 
         let (wait, mut canceller) = new(1001);
         let key = wait.key;
+        assert!(wait.check_cancelled().is_ok());
         let ended = park(wait, 2);
         fire(key, Ok(()));
         canceller.cancel();
         ready(key);
         assert_eq!(all(ended), [E::ECANCELED]);
+        let fd = JobFd::Borrowed(Fd::from_native(1001));
+        assert!((FdWait::new(key, Interest::Readable, fd).check_cancelled()).is_err());
         drop(canceller);
         assert!(!key.slots().contains_key(&key));
     }

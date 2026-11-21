@@ -1,7 +1,10 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tls as tlsCert } from "harness";
+import { once } from "node:events";
+import http from "node:http";
 import net from "node:net";
+import tls from "node:tls";
 
 describe("path parameters", () => {
   let server: Server<undefined>;
@@ -958,7 +961,7 @@ it("route precedence for mix of method-specific routes and any routes", async ()
   );
 });
 
-it("routes absolute-form request targets by path and derives request.url from the Host header", async () => {
+it("routes absolute-form request targets by path and keeps their query in request.url", async () => {
   const seen: { matched: string; url: string }[] = [];
   await using server = Bun.serve({
     port: 0,
@@ -987,7 +990,7 @@ it("routes absolute-form request targets by path and derives request.url from th
       socket: {
         open(socket) {
           socket.write(
-            `GET https://spoofed.example/admin/secret HTTP/1.1\r\nHost: ${hostHeader}\r\nConnection: close\r\n\r\n`,
+            `GET https://${hostHeader}/admin/secret HTTP/1.1\r\nHost: ${hostHeader}\r\nConnection: close\r\n\r\n`,
           );
         },
         data(socket, chunk) {
@@ -1009,8 +1012,7 @@ it("routes absolute-form request targets by path and derives request.url from th
   expect(seen).toHaveLength(1);
   expect(seen[0].matched).toBe("route");
 
-  // request.url is derived from the Host header, not from the authority in the request line.
-  expect(seen[0].url).not.toContain("spoofed.example");
+  // The scheme of request.url comes from the listener, not from the request line.
   const url = new URL(seen[0].url);
   expect(url.protocol).toBe("http:");
   expect(url.host).toBe(hostHeader);
@@ -1024,7 +1026,7 @@ it("routes absolute-form request targets by path and derives request.url from th
   expect(seen[0].matched).toBe("route");
   expect(new URL(seen[0].url).pathname).toBe("/admin/secret");
 
-  for (const target of ["http://spoofed.example?a=b", "http://spoofed.example?redirect=/elsewhere"]) {
+  for (const target of [`http://${hostHeader}?a=b`, `http://${hostHeader}?redirect=/elsewhere`]) {
     seen.length = 0;
     const rawResponse = await new Promise<string>((resolve, reject) => {
       let received = "";
@@ -1051,12 +1053,186 @@ it("routes absolute-form request targets by path and derives request.url from th
     expect(rawResponse).toContain("fallback");
     expect(seen).toHaveLength(1);
     expect(seen[0].matched).toBe("fallback");
-    expect(seen[0].url).not.toContain("spoofed.example");
     const rawUrl = new URL(seen[0].url);
     expect(rawUrl.host).toBe(hostHeader);
     expect(rawUrl.pathname).toBe("/");
     expect(rawUrl.search).toBe(new URL(target).search);
   }
+});
+
+describe.concurrent("absolute-form request target and the Host header", () => {
+  function exchange(port: number, request: string, secure = false): Promise<string> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const chunks: Buffer[] = [];
+    const socket = secure
+      ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+      : net.connect(port, "127.0.0.1");
+    socket.on("data", chunk => chunks.push(chunk as Buffer));
+    socket.on("error", reject);
+    socket.on("close", () => resolve(Buffer.concat(chunks).toString("latin1")));
+    socket.write(request);
+    return promise;
+  }
+
+  function serve(seen: string[], secure = false) {
+    return Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: secure ? tlsCert : undefined,
+      routes: {
+        "/static": new Response("static"),
+        "/route": req => {
+          seen.push(req.url);
+          return new Response("route");
+        },
+      },
+      fetch(req, server) {
+        seen.push(req.url);
+        if (server.upgrade(req)) return;
+        return new Response("fetch");
+      },
+      websocket: { message() {} },
+    });
+  }
+
+  const get = (target: string, host: string) => `GET ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`;
+  const badRequest = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
+
+  test.each([
+    ["http://a.example/x", "a.example", "http://a.example/x"],
+    ["http://a.example", "a.example", "http://a.example/"],
+    ["http://a.example?b.example/", "a.example", "http://a.example/?b.example/"],
+    ["http://a.example/b.example", "a.example", "http://a.example/b.example"],
+    ["http://a.example:8080/x", "a.example:8080", "http://a.example:8080/x"],
+    ["HTTP://A.Example/x", "a.eXAMPLE", "http://a.example/x"],
+    ["http://a.example:80/x", "a.example", "http://a.example/x"],
+    ["http://a.example/x", "a.example:80", "http://a.example/x"],
+    ["https://a.example:443/x", "a.example", "http://a.example/x"],
+    ["https://a.example/x", "a.example:443", "http://a.example:443/x"],
+    ["http://[::1]:80/x", "[::1]", "http://[::1]/x"],
+    ["http://[::80]/x", "[::80]:80", "http://[::80]/x"],
+    ["/http://b.example/x", "a.example", "http://a.example/http://b.example/x"],
+  ])("accepts %s with Host: %s", async (target, host, url) => {
+    const seen: string[] = [];
+    await using server = serve(seen);
+    expect(await exchange(server.port!, get(target, host))).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(seen).toEqual([url]);
+  });
+
+  test.each([
+    ["http://target.example/path?q=1", "header.example:8080"],
+    ["https://b.example/x", "a.example"],
+    ["HTTP://b.example/x", "a.example"],
+    ["http://b.example/route", "a.example"],
+    ["http://b.example/static", "a.example"],
+    ["http://b.example", "a.example"],
+    ["http://b.example?a.example/", "a.example"],
+    ["http://a.example.b/x", "a.example"],
+    ["http://a.example/x", "a.example.b"],
+    ["http://a.example./x", "a.example"],
+    ["http://a.example:8080/x", "a.example"],
+    ["http://a.example/x", "a.example:8080"],
+    ["http://a.example:8080/x", "a.example:8081"],
+    ["http://a.example:443/x", "a.example"],
+    ["http://a.example/x", "a.example:443"],
+    ["https://a.example:80/x", "a.example"],
+    ["https://a.example/x", "a.example:80"],
+    ["http://a.example:80:80/x", "a.example:80"],
+    ["http://user@a.example/x", "a.example"],
+    ["http://a.example@b.example/x", "a.example"],
+    ["http://a.example#@b.example/x", "a.example"],
+    ["http://a.example\\@b.example/x", "a.example"],
+    ["http:///x", "a.example"],
+    ["http://a.example/x", ""],
+    ["http://[::1]/x", "[::2]"],
+    ["http://a.example/x", "a.example\r\nHost: b.example"],
+    ["http://a.example/x", "b.example\r\nHost: a.example"],
+    ["http://user@a.example/x", "user@a.example"],
+    ["http://a.example#/route", "a.example#"],
+    ["http://a.example\\/route", "a.example\\"],
+    ["http:///route", ""],
+    ["http://:80/route", ":80"],
+  ])("rejects %s with Host: %j", async (target, host) => {
+    const seen: string[] = [];
+    await using server = serve(seen);
+    expect(await exchange(server.port!, get(target, host))).toBe(badRequest);
+    expect(seen).toEqual([]);
+  });
+
+  test.each([
+    ["POST", "POST http://b.example/x HTTP/1.1\r\nHost: a.example\r\nContent-Length: 2\r\n\r\nhi"],
+    ["CONNECT", "CONNECT http://b.example/x HTTP/1.1\r\nHost: a.example\r\n\r\n"],
+    ["HTTP/1.0", "GET http://b.example/x HTTP/1.0\r\nHost: a.example\r\n\r\n"],
+    ["HTTP/1.0 without Host", "GET http://b.example#/route HTTP/1.0\r\n\r\n"],
+    [
+      "WebSocket upgrade",
+      "GET http://b.example/x HTTP/1.1\r\nHost: a.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+        "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    ],
+  ])("rejects a bad authority: %s", async (_label, request) => {
+    const seen: string[] = [];
+    await using server = serve(seen);
+    expect(await exchange(server.port!, request)).toBe(badRequest);
+    expect(seen).toEqual([]);
+  });
+
+  test("rejects a mismatch over TLS", async () => {
+    const seen: string[] = [];
+    await using server = serve(seen, true);
+    expect(await exchange(server.port!, get("https://b.example/x", "a.example"), true)).toBe(badRequest);
+    expect(await exchange(server.port!, get("https://a.example/x", "a.example"), true)).toStartWith(
+      "HTTP/1.1 200 OK\r\n",
+    );
+    expect(seen).toEqual(["https://a.example/x"]);
+  });
+
+  test("answers the requests pipelined before a mismatch", async () => {
+    const seen: string[] = [];
+    await using server = serve(seen);
+    const response = await exchange(
+      server.port!,
+      "GET http://a.example/first HTTP/1.1\r\nHost: a.example\r\n\r\n" + get("http://b.example/second", "a.example"),
+    );
+    expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(response).toEndWith("fetch" + badRequest);
+    expect(seen).toEqual(["http://a.example/first"]);
+  });
+
+  test.each([
+    ["HTTP/1.0 request without Host", "GET http://b.example/x HTTP/1.0\r\n\r\n", "/x"],
+    [
+      "authority-form CONNECT",
+      "CONNECT b.example:443 HTTP/1.1\r\nHost: a.example\r\nConnection: close\r\n\r\n",
+      "b.example:443",
+    ],
+  ])("accepts an %s", async (_label, request, url) => {
+    const seen: string[] = [];
+    await using server = serve(seen);
+    expect(await exchange(server.port!, request)).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(seen).toEqual([url]);
+  });
+
+  test.each(["a.example", "a.example:80", "a.example:8080", "[::1]:8080", "user:pass@a.example"])(
+    "accepts fetch() of http://%s/x through it as a proxy",
+    async authority => {
+      const seen: string[] = [];
+      await using server = serve(seen);
+      const response = await fetch(`http://${authority}/x`, { proxy: { url: server.url.href, respectNoProxy: false } });
+      expect(await response.text()).toBe("fetch");
+      expect(seen).toEqual([`http://${new URL(`http://${authority}`).host}/x`]);
+    },
+  );
+
+  test("node:http passes a mismatch to the listener", async () => {
+    await using server = http.createServer((req, res) => {
+      res.setHeader("Content-Length", Buffer.byteLength(`${req.url} ${req.headers.host}`));
+      res.end(`${req.url} ${req.headers.host}`);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const response = await exchange((server.address() as net.AddressInfo).port, get("http://b.example/x", "a.example"));
+    expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(response).toEndWith("\r\n\r\nhttp://b.example/x a.example");
+  });
 });
 
 describe.concurrent("false route with no fetch handler", () => {

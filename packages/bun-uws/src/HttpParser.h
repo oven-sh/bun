@@ -517,25 +517,64 @@ struct HttpResponseData;
             return headers->value;
         }
 
+        static size_t absoluteFormSchemeLength(std::string_view url)
+        {
+            if (url.length() && url[0] != '/') {
+                if (url.length() >= 7 && strncasecmp(url.data(), "http://", 7) == 0) {
+                    return 7;
+                }
+                if (url.length() >= 8 && strncasecmp(url.data(), "https://", 8) == 0) {
+                    return 8;
+                }
+            }
+            return 0;
+        }
+
         std::string_view getUrlForRouting()
         {
             std::string_view url = getUrl();
-            if (url.length() && url[0] != '/') {
-                size_t schemeLength = 0;
-                if (url.length() >= 7 && strncasecmp(url.data(), "http://", 7) == 0) {
-                    schemeLength = 7;
-                } else if (url.length() >= 8 && strncasecmp(url.data(), "https://", 8) == 0) {
-                    schemeLength = 8;
+            if (size_t schemeLength = absoluteFormSchemeLength(url)) {
+                size_t pathStart = url.find('/', schemeLength);
+                if (pathStart == std::string_view::npos) {
+                    return "/";
                 }
-                if (schemeLength) {
-                    size_t pathStart = url.find('/', schemeLength);
-                    if (pathStart == std::string_view::npos) {
-                        return "/";
-                    }
-                    return url.substr(pathStart);
-                }
+                return url.substr(pathStart);
             }
             return url;
+        }
+
+        /* getUrlForRouting() and request.url drop the authority of an absolute-form target, so it has to be
+         * a bare host[:port] (RFC 9110 4.2.1, 4.2.4) and the one that Host names (RFC 9112 3.2). */
+        bool hasValidTargetAuthority()
+        {
+            std::string_view url = getUrl();
+            size_t schemeLength = absoluteFormSchemeLength(url);
+            if (!schemeLength) [[likely]] {
+                return true;
+            }
+
+            const std::string_view defaultPort = schemeLength == 7 ? ":80" : ":443";
+            auto withoutDefaultPort = [defaultPort](std::string_view hostAndPort) {
+                if (hostAndPort.ends_with(defaultPort)) {
+                    hostAndPort.remove_suffix(defaultPort.length());
+                }
+                return hostAndPort;
+            };
+
+            std::string_view authority = url.substr(schemeLength);
+            authority = withoutDefaultPort(authority.substr(0, authority.find('/')));
+            if (authority.empty() || authority.find_first_of("@#\\") != std::string_view::npos) {
+                return false;
+            }
+            for (Header *h = headers; (++h)->key.length();) {
+                if (h->key.length() == 4 && !strncasecmp(h->key.data(), "host", 4)) {
+                    std::string_view host = withoutDefaultPort(h->value);
+                    if (host.length() != authority.length() || strncasecmp(host.data(), authority.data(), host.length())) {
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
 
         /* Hack: this should be getMethod */
@@ -1454,6 +1493,11 @@ struct HttpResponseData;
             /* Parse query */
             const char *querySeparatorPtr = (const char *) memchr(req->headers->value.data(), '?', req->headers->value.length());
             req->querySeparator = (unsigned int) ((querySeparatorPtr ? querySeparatorPtr : req->headers->value.data() + req->headers->value.length()) - req->headers->value.data());
+
+            /* node:http hands the raw target to the listener, so it has no host to choose. */
+            if (!IsNodeHttp && !req->hasValidTargetAuthority()) [[unlikely]] {
+                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
+            }
 
             // lets check if content len is valid before calling requestHandler
             if(contentLengthStringLen) {

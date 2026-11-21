@@ -41,6 +41,12 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
     false
 }
 
+/// Not every [`Accessor`] makes a syscall that says so, or lets the walk go on after it.
+#[cold]
+fn name_too_long(path: &[u8]) -> SysError {
+    SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open).with_path(path)
+}
+
 #[cfg(windows)]
 pub(crate) fn statat_windows(fd: Syscall::Fd, path: &ZStr) -> Maybe<Stat> {
     let dir = Syscall::get_fd_path_owned(fd)?;
@@ -389,6 +395,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         };
 
         let root_path = &root_work_item.path;
+        if root_path.len() >= MAX_PATH_BYTES {
+            return Ok(Err(name_too_long(root_path)));
+        }
         let cwd_fd = match A::open(&Path::from(root_path))? {
             Err(err) => return Ok(Err(err.with_path(root_path))),
             Ok(fd) => fd,
@@ -420,6 +429,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // mutating `iter_state` in place would overlap the `self.walker` borrow).
         let mut dir_path = Path::new();
         if !ROOT || self.walker.absolute {
+            if work_item_path.len() >= MAX_PATH_BYTES {
+                return Ok(Err(name_too_long(work_item_path)));
+            }
             dir_path.set(work_item_path);
         }
 
@@ -625,6 +637,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             // NUL in `.len()`; drop it (see `work_item_logical_path`) so the
                             // NUL re-written at `[len]` below isn't left embedded in the path.
                             let work_item_path: &[u8] = work_item_logical_path(&work_item.path);
+                            if work_item_path.len() >= MAX_PATH_BYTES {
+                                return Ok(Err(name_too_long(work_item_path)));
+                            }
                             let mut symlink_full_path = Path::from(work_item_path);
                             // Note: reshaped for borrowck — entry_name is a sub-slice
                             // of symlink_full_path; capture range and re-slice later.
@@ -666,9 +681,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         if err.get_errno() == E::ENOTDIR {
                                             break 'brk None;
                                         }
-                                        if self.walker.error_on_broken_symlinks
-                                            || symlink_full_path_z.len() >= MAX_PATH_BYTES
-                                        {
+                                        if self.walker.error_on_broken_symlinks {
                                             return Ok(Err(
                                                 err.with_path(symlink_full_path_z.as_bytes())
                                             ));
@@ -1261,11 +1274,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             component_idx += 1;
         }
 
-        // `./` alone opens nothing that would say so.
         if dir_path.len() >= MAX_PATH_BYTES {
-            return Err(
-                SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open).with_path(dir_path)
-            );
+            return Err(name_too_long(dir_path));
         }
         Ok(component_idx)
     }
@@ -1633,9 +1643,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         if self.absolute {
             return dupe_matched::<SENTINEL>(&bun_paths::Path::join(&[dir, name]));
         }
-        // `dir` stays as the pattern spells it.
+        // Both stay as the pattern spells them: `name` can be `.`.
         let mut path = bun_paths::Path::from(dir);
-        path.push(name);
+        if !name.is_empty() {
+            path.push_trailing_sep();
+            path.extend_from_slice(name);
+        }
         dupe_matched::<SENTINEL>(&path)
     }
 

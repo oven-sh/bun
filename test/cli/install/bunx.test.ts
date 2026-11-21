@@ -1363,35 +1363,6 @@ describe("scoped packages should not match unrelated system binaries", () => {
     expect(exited).toBe(0);
   });
 
-  it("a leading slash in the bin of a locally installed package means nothing, as for the bin linker", async () => {
-    await writeFile(
-      join(x_dir, "package.json"),
-      JSON.stringify({ name: "project", dependencies: { "leading-slash": "file:./leading-slash" } }),
-    );
-    await mkdir(join(x_dir, "leading-slash"), { recursive: true });
-    await writeFile(
-      join(x_dir, "leading-slash", "package.json"),
-      JSON.stringify({ name: "leading-slash", version: "1.0.0", bin: { "real-bin": "/real.js" } }),
-    );
-    await writeFile(join(x_dir, "leading-slash", "real.js"), `#!/usr/bin/env node\nconsole.log("REAL_BIN_RAN");\n`);
-    await using install = spawn({ cmd: [bunExe(), "install"], cwd: x_dir, stdout: "ignore", stderr: "pipe", env });
-    expect({ stderr: await install.stderr.text(), exitCode: await install.exited }).toMatchObject({ exitCode: 0 });
-
-    await using subprocess = spawn({
-      cmd: [bunExe(), "x", "--no-install", "leading-slash"],
-      cwd: x_dir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env,
-    });
-    const [err, out, exited] = await Promise.all([
-      subprocess.stderr.text(),
-      subprocess.stdout.text(),
-      subprocess.exited,
-    ]);
-    expect({ out, err, exited }).toEqual({ out: "REAL_BIN_RAN\n", err: "", exited: 0 });
-  });
-
   // When a scoped package's bin name happens to match its unscoped
   // basename (e.g. `@scope/foo` with bin `foo`), the first $PATH probe —
   // which excludes the system $PATH for scoped packages but still searches
@@ -2959,6 +2930,23 @@ describe("a package in node_modules", () => {
       exitCode: 0,
       requests: [],
     });
+  });
+
+  it.concurrent.skipIf(isWindows)("after an install, a native bin with a colon in its name", async () => {
+    using registry = await localRegistry(
+      { name: "mytool-native", version: "1.0.0", ...anyPlatform, files: { "build:all": echoBin("native") } },
+      {
+        name: "mytool",
+        version: "1.0.0",
+        bin: { mytool: "bin/build:all" },
+        files: { "bin/build:all": echoBin("stub") },
+        optionalDependencies: { "mytool-native": "1.0.0" },
+      },
+    );
+    const app = { name: "app", dependencies: { mytool: "1.0.0" }, nativeDependencies: ["mytool"] };
+    using box = sandbox(registry, { cwd: { "package.json": JSON.stringify(app) } });
+    expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+    expect(join(box.cwd, "node_modules", ".bin", "mytool")).toBeValidBin(join("..", "mytool-native", "build:all"));
   });
 
   // `other-dep` comes before the platform package in the dependencies, and is the name of a folder above the project

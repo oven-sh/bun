@@ -1,6 +1,6 @@
 use core::sync::atomic::Ordering;
 
-use crate::resolvers::folder_resolver::is_root_above_project;
+use crate::resolvers::folder_resolver::is_whole_file_system;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
@@ -1779,9 +1779,9 @@ impl<'a> PackageInstaller<'a> {
                     return self.fail(is_pending_package_install, log_level);
                 }
                 if !is_workspace
-                    && bin::bin_target_escapes_package_dir(folder)
-                    && (is_root_above_project(folder)
+                    && (is_whole_file_system(folder)
                         || (is_transitive
+                            && bin::bin_target_escapes_package_dir(folder)
                             && !self.lockfile().is_trusted_folder_dependency(dependency_id)))
                 {
                     if log_level != Options::LogLevel::Silent {

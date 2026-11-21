@@ -139,6 +139,7 @@ use ::bun_core::{FeatureFlags, Generation, StackCheck};
 use bun_ast::Msg;
 use bun_collections::BoundedArray;
 use bun_dotenv::env_loader as DotEnv;
+use bun_paths::portable::from_portable_rooted;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, StackPath};
 use bun_perf::system_timer::Timer;
 use bun_ptr::Interned;
@@ -295,15 +296,31 @@ macro_rules! bufs {
 /// `MAX_PATH_BYTES` and a NUL: a file is looked up in its directory's listing, so the path need not fit a syscall.
 type AbsPath = StackPath<{ MAX_PATH_BYTES + 1 }>;
 
-/// Resolves `parts` against the working directory. `x/` keeps its separator, because it can only be a directory.
+/// `x/` is not tried with an extension. On Windows that takes `x\`.
+fn ends_with_sep(parts: &[&[u8]]) -> bool {
+    let last = parts.iter().rfind(|part| !part.is_empty());
+    last.is_some_and(|last| last.ends_with(&[SEP]))
+}
+
+/// `Path::resolve`, but `x/` (`x\` on Windows) keeps its separator if only empty parts follow.
+pub fn resolve_keeping_sep(parts: &[&[u8]]) -> bun_paths::Path {
+    let mut path = bun_paths::Path::resolve(parts);
+    if ends_with_sep(parts) {
+        path.push_trailing_sep();
+    }
+    path
+}
+
+/// [`resolve_keeping_sep`] against the working directory.
 fn abs_path_in<'b>(path: &'b mut AbsPath, parts: &[&[u8]]) -> Option<&'b mut AbsPath> {
     path.clear();
     if !bun_paths::is_fully_qualified(parts.first()?) {
         path.set(bun_core::top_level_dir()).ok()?;
     }
     path.resolve_in_place(parts).ok()?;
-    let last = parts.iter().rfind(|part| !part.is_empty())?;
-    path.copy_trailing_sep_from(last).ok()?;
+    if ends_with_sep(parts) {
+        path.push_trailing_sep().ok()?;
+    }
     Some(path)
 }
 
@@ -326,15 +343,31 @@ pub fn path_of_specifier(specifier: &[u8], kind: ast::ImportKind) -> Cow<'_, [u8
         crate::package_json::Package::parse_name(specifier)
             .is_some_and(|name| !strings::contains_char(name, b'\\'))
     };
-    match bun_paths::from_portable(specifier) {
-        Cow::Owned(path) if kind.is_from_css() || names_package() => Cow::Owned(path),
+    match from_portable_rooted(specifier) {
+        Cow::Owned(path)
+            if kind.is_from_css() || specifier.starts_with(b"..\\") || names_package() =>
+        {
+            Cow::Owned(path)
+        }
         _ => Cow::Borrowed(specifier),
     }
 }
 
+/// What follows `node_modules/`. `a\b` is no package, so this is the only way to it.
+pub(crate) fn path_in_node_modules(
+    specifier: &[u8],
+    kind: ast::ImportKind,
+    is_from_imports: bool,
+) -> Cow<'_, [u8]> {
+    match is_from_imports || !(kind.is_common_js() || kind.is_entry_point()) {
+        true => from_portable_rooted(specifier),
+        false => Cow::Borrowed(specifier),
+    }
+}
+
 /// TypeScript reads `\` as `/` in what it appends to `baseUrl` and `paths`. An entry point is not its to read.
-fn path_for_tsconfig(text: &[u8], kind: ast::ImportKind) -> Cow<'_, [u8]> {
-    if cfg!(windows) || kind.is_entry_point() {
+fn path_for_tsconfig(text: &[u8], as_written: bool) -> Cow<'_, [u8]> {
+    if cfg!(windows) || as_written {
         return Cow::Borrowed(text);
     }
     strings::replace_char(text, b'\\', b'/')
@@ -941,7 +974,7 @@ impl<'a> Resolver<'a> {
         if tsconfig.paths.count() == 0 {
             return MatchStatus::NotFound;
         }
-        self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
+        self.match_tsconfig_paths(&tsconfig, import_path, kind, kind.is_entry_point(), out)
     }
 
     pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
@@ -1240,7 +1273,7 @@ impl<'a> Resolver<'a> {
             return None;
         }
         let specifier: &[u8] = &path_of_specifier(specifier, kind);
-        let path: &[u8] = &bun_paths::Path::resolve(&[source_dir, specifier]);
+        let path: &[u8] = &resolve_keeping_sep(&[source_dir, specifier]);
         let search = crate::compiled_program::ExtensionSearch {
             extensions: self.opts.ext_order_slice(self.extension_order),
             extra_extensions: &self.opts.extra_cjs_extensions,
@@ -2040,7 +2073,13 @@ impl<'a> Resolver<'a> {
                     if tsconfig.paths.count() > 0 {
                         let mut res = MatchResult::default();
                         if self
-                            .match_tsconfig_paths(&tsconfig, import_path, kind, &mut res)
+                            .match_tsconfig_paths(
+                                &tsconfig,
+                                import_path,
+                                kind,
+                                kind.is_entry_point(),
+                                &mut res,
+                            )
                             .is_success()
                         {
                             // We don't set the directory fd here because it might remap an entirely different directory
@@ -2087,6 +2126,11 @@ impl<'a> Resolver<'a> {
                 && let Some(with_drive) =
                     abs_path_in(bufs!(node_modules_check), &[source_dir, import_path])
             {
+                if Self::import_path_names_directory(import_path)
+                    && with_drive.push_trailing_sep().is_err()
+                {
+                    return ResultUnion::NotFound;
+                }
                 import_path = with_drive;
             }
             let mut entry = MatchResult::default();
@@ -2682,6 +2726,10 @@ impl<'a> Resolver<'a> {
     /// CACHE KEY RULES:
     /// A cache key must use native slashes, and must NOT end with a trailing slash.
     /// But drive roots MUST have a trailing slash ('/' and 'C:\')
+    /// UNC paths, even if the root, must not have the trailing slash.
+    ///
+    /// The helper function bun_paths::without_trailing_sep can be used
+    /// to remove the trailing slash from a path
     pub(crate) fn assert_valid_cache_key(path: &[u8]) {
         if cfg!(debug_assertions) {
             if path != bun_paths::without_trailing_sep(path) {
@@ -2701,6 +2749,7 @@ impl<'a> Resolver<'a> {
     /// [`Self::bust_dir_cache`] without a resolver: both caches are process-wide.
     pub fn bust_dir_cache_in(fs: &mut Fs::file_system::RealFS, path: &[u8]) -> bool {
         let path = bun_paths::without_trailing_sep(path);
+        Self::assert_valid_cache_key(path);
         let first_bust = fs.bust_entries_cache(path);
         // SAFETY: the never-freed singleton of `dir_cache_mut`. Other threads can hold it too:
         // `remove` touches nothing of the map before it takes the map's mutex.
@@ -2772,10 +2821,12 @@ impl<'a> Resolver<'a> {
         // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
 
         if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir_info) {
+            let as_written = kind.is_entry_point() && !forbid_imports;
+
             // Try path substitutions first
             if tsconfig.paths.count() > 0 {
                 if self
-                    .match_tsconfig_paths(&tsconfig, import_path, kind, out)
+                    .match_tsconfig_paths(&tsconfig, import_path, kind, as_written, out)
                     .is_success()
                 {
                     if let Some(d) = self.debug_logs.as_mut() {
@@ -2790,7 +2841,7 @@ impl<'a> Resolver<'a> {
                 let base: &[u8] = &tsconfig.base_url;
                 if let Some(abs) = abs_path_in(
                     bufs!(load_as_file_or_directory_via_tsconfig_base_path),
-                    &[base, &path_for_tsconfig(import_path, kind)],
+                    &[base, &path_for_tsconfig(import_path, as_written)],
                 ) {
                     if self.load_as_file_or_directory(abs, kind, out).is_success() {
                         if let Some(d) = self.debug_logs.as_mut() {
@@ -2848,7 +2899,7 @@ impl<'a> Resolver<'a> {
         }
 
         let esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
-        let as_path: &[u8] = &path_of_specifier(import_path, kind);
+        let as_path: &[u8] = &path_in_node_modules(import_path, kind, forbid_imports);
 
         let source_dir_info = dir_info;
         let mut any_node_modules_folder = false;
@@ -3561,7 +3612,10 @@ impl<'a> Resolver<'a> {
 
                             let Some(abs_path) = abs_path_in(
                                 bufs!(node_modules_check),
-                                &[pkg_dir_info.abs_path, &path_of_specifier(esm.subpath, kind)],
+                                &[
+                                    pkg_dir_info.abs_path,
+                                    &path_in_node_modules(esm.subpath, kind, forbid_imports),
+                                ],
                             ) else {
                                 if let Some(d) = self.debug_logs.as_mut() {
                                     d.decrease_indent();
@@ -3612,6 +3666,8 @@ impl<'a> Resolver<'a> {
         debug_assert!(self.package_manager.is_some());
 
         let dir_path = bun_paths::without_trailing_sep(dir_path_maybe_trail_slash);
+
+        Self::assert_valid_cache_key(dir_path);
         let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
@@ -4253,7 +4309,7 @@ impl<'a> Resolver<'a> {
         // `baseUrl` can be longer than a path buffer. Joins against it are checked, so a long one never matches.
         let in_file_dir = |path: &[u8]| -> Box<[u8]> {
             let parts = [bun_core::top_level_dir(), file_dir, path];
-            bun_paths::Path::resolve(&parts).as_bytes().into()
+            resolve_keeping_sep(&parts).as_bytes().into()
         };
         if result.has_base_url() {
             // this might leak
@@ -4400,9 +4456,11 @@ impl<'a> Resolver<'a> {
             return Ok(None);
         }
 
+        let path_without_trailing_slash = bun_paths::without_trailing_sep(input_path);
+        Self::assert_valid_cache_key(path_without_trailing_slash);
         let top_result = self
             .dir_cache_mut()
-            .get_or_put(bun_paths::without_trailing_sep(input_path))?;
+            .get_or_put(path_without_trailing_slash)?;
         if top_result.status != allocators::ItemStatus::Unknown {
             return Ok(self
                 .dir_cache_mut()
@@ -4870,6 +4928,7 @@ impl<'a> Resolver<'a> {
         tsconfig: &TSConfigJSON,
         path: &[u8],
         kind: ast::ImportKind,
+        as_written: bool,
         out: &mut MatchResult,
     ) -> MatchStatus {
         if let Some(debug) = self.debug_logs.as_mut() {
@@ -4940,7 +4999,7 @@ impl<'a> Resolver<'a> {
             // Swap out the "*" in the original path for whatever the "*" matched
             let matched_text =
                 &path[longest_match.prefix.len()..path.len() - longest_match.suffix.len()];
-            let matched_text: &[u8] = &path_for_tsconfig(matched_text, kind);
+            let matched_text: &[u8] = &path_for_tsconfig(matched_text, as_written);
 
             for original_path in longest_match.original_paths.iter() {
                 if self.is_type_only_tsconfig_path(original_path) {
@@ -5158,8 +5217,9 @@ impl<'a> Resolver<'a> {
         }
 
         // Normalize the path so we can compare against it without getting confused by "./"
-        let cleaned = bun_paths::Path::resolve(&[input_path]);
-        let cleaned = bun_paths::without_leading_sep(&cleaned);
+        let mut cleaned = bun_paths::Path::new();
+        cleaned.push_inside(input_path);
+        let cleaned: &[u8] = &cleaned;
 
         if cleaned.len() == 1 && cleaned[0] == b'.' {
             // No bundler supports remapping ".", so we don't either
@@ -5875,7 +5935,8 @@ impl<'a> Resolver<'a> {
             dec_ret!(None);
         }
 
-        let base = bun_paths::basename(path);
+        // The name of a share is not an entry of the share.
+        let base = bun_paths::components(path).next_back().unwrap_or_default();
 
         // Try the plain path without any extensions
         if let Some(debug) = self.debug_logs.as_mut() {
@@ -6424,8 +6485,7 @@ impl<'a> Resolver<'a> {
             // With `current`, a chain of up to 64 configs.
             let mut parent_configs: BoundedArray<Box<TSConfigJSON>, 63> = BoundedArray::default();
             while !current.extends.is_empty() {
-                let extended =
-                    bun_paths::Path::resolve(&[&current.abs_path, b"..", &current.extends]);
+                let extended = resolve_keeping_sep(&[&current.abs_path, b"..", &current.extends]);
                 let parent_config_maybe = match self.parse_tsconfig(&extended, FD::INVALID) {
                     Ok(v) => v,
                     Err(err) => {

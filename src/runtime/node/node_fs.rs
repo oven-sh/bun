@@ -1037,6 +1037,12 @@ impl CpPendingDirs {
     }
 }
 
+/// `a/` for `a/b`. Unlike `a`, it can only be a directory.
+fn up_to_last_sep(path: &[OSPathChar]) -> &[OSPathChar] {
+    let sep = path.iter().rposition(|&unit| paths::is_sep(unit));
+    &path[..sep.map_or(0, |sep| sep + 1)]
+}
+
 #[cold]
 fn cp_name_too_long(path: &[u8]) -> sys::Error {
     sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::copyfile).with_path(&path_to_show(path))
@@ -5711,7 +5717,8 @@ impl NodeFS {
             return Ok(true);
         }
 
-        Ok(sys::exists_os_path(&path.os_path_kernel32(), false)
+        let os_path = path.os_path_kernel32(sys::Tag::access);
+        Ok(os_path.is_ok_and(|it| sys::exists_os_path(&it, false))
             || (graph_may_answer_for(path.slice())
                 && (graph_after_disk(path.slice()).is_some_and(holds_path)
                     || is_source_path(path.slice()))))
@@ -5970,7 +5977,7 @@ impl NodeFS {
         if let Some(error) = folder_creation_error(args.path.slice()) {
             return Err(error);
         }
-        let path: &OSPathSliceZ = &args.path.os_path_kernel32();
+        let path: &OSPathSliceZ = &args.path.os_path_kernel32(sys::Tag::mkdir)?;
         if args.always_return_none {
             self.mkdir_recursive_os_path_impl::<Ctx, false>(ctx, path, args.mode)
         } else {
@@ -6040,25 +6047,46 @@ impl NodeFS {
         }
 
         let mut parent = OSPath::new();
-        let mut first_created = None;
-        sys::mkdir_recursive_with(paths::dirname(path).unwrap_or_default(), |dir| {
-            parent.set(dir);
-            let Err(err) = mkdir_os_path(&parent, mode) else {
-                first_created.get_or_insert(dir.len());
-                ctx.on_create_dir(&parent);
-                return Ok(());
-            };
-            // Below a file Windows says `ENOENT`.
-            if cfg!(windows)
-                && err.get_errno() == E::EEXIST
-                && matches!(directory_exists_at_os_path(FD::INVALID, &parent), Ok(false))
-            {
-                let err = sys::Error::from_code(E::ENOTDIR, sys::Tag::mkdir);
-                return Err(err.with_path(&path_to_show(path)));
+        let is_sep_at = |&at: &usize| paths::is_sep(path[at]);
+        let after_root = paths::root(&path[..]).len().max(1);
+
+        // iterate backwards until creating the directory works successfully
+        let mut first_match = 0;
+        for end in (after_root..path.len()).rev().filter(is_sep_at) {
+            parent.set(&path[..end]);
+            match mkdir_os_path(&parent, mode) {
+                Ok(()) => ctx.on_create_dir(&parent),
+                Err(err) => match err.get_errno() {
+                    E::ENOENT => continue,
+                    // On Windows, this may happen if trying to mkdir replacing a file
+                    E::EEXIST
+                        if cfg!(windows)
+                            && matches!(
+                                directory_exists_at_os_path(FD::INVALID, &parent),
+                                Ok(false)
+                            ) =>
+                    {
+                        let err = sys::Error::from_code(E::ENOTDIR, sys::Tag::mkdir);
+                        return Err(err.with_path(&path_to_show(path)));
+                    }
+                    // Handle race condition
+                    E::EEXIST => {}
+                    _ => return Err(err.with_path(&path_to_show(&parent))),
+                },
             }
-            let names_path = first_created.is_some() || err.get_errno() == E::ENOENT;
-            Err(err.with_path(&path_to_show(if names_path { path } else { dir })))
-        })?;
+            first_match = end;
+            break;
+        }
+
+        // after we find one that works, we go forward _after_ the first working directory
+        for end in (after_root.max(first_match + 1)..path.len()).filter(is_sep_at) {
+            parent.set(&path[..end]);
+            match mkdir_os_path(&parent, mode) {
+                Ok(()) => ctx.on_create_dir(&parent),
+                Err(err) if err.get_errno() == E::EEXIST => {}
+                Err(err) => return Err(err.with_path(&path_to_show(path))),
+            }
+        }
 
         if let Err(err) = mkdir_os_path(path, mode)
             && err.get_errno() != E::EEXIST
@@ -6070,10 +6098,8 @@ impl NodeFS {
         if !RETURN_PATH {
             return Ok(StringOrUndefined::None);
         }
-        // `a/` for `a//b`, as in Node.
-        let below = first_created.map(|len| bun_paths::without_leading_sep(&path[len..]));
         Ok(StringOrUndefined::String(BunString::create_from_os_path(
-            &path[..path.len() - below.map_or(0, |below| below.len() + 1)],
+            &path[..first_match],
         )))
     }
 
@@ -6498,12 +6524,13 @@ impl NodeFS {
     fn readdir_with_entries<T: ReaddirEntry>(
         args: &args::Readdir,
         fd: FD,
+        basename: &ZStr,
         entries: &mut Vec<T>,
     ) -> Maybe<()> {
         // On Windows, String and Dirent results are made from the UTF-16 names.
         #[cfg(windows)]
         if T::IS_U16 {
-            return Self::readdir_with_entries_u16::<T>(args, fd, entries);
+            return Self::readdir_with_entries_u16::<T>(args, fd, basename, entries);
         }
 
         let mut dirent_path = BunString::DEAD;
@@ -6518,7 +6545,10 @@ impl NodeFS {
 
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
-                    args.path.as_written(),
+                    match &args.path {
+                        PathLike::Joined(path) => &path.written,
+                        _ => basename,
+                    },
                     encoding_to_node(args.encoding),
                 );
             }
@@ -6546,6 +6576,7 @@ impl NodeFS {
     fn readdir_with_entries_u16<T: ReaddirEntry>(
         args: &args::Readdir,
         fd: FD,
+        basename: &ZStr,
         entries: &mut Vec<T>,
     ) -> Maybe<()> {
         let mut dirent_path = BunString::DEAD;
@@ -6561,7 +6592,7 @@ impl NodeFS {
 
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
-                    args.path.as_written(),
+                    &path_to_show(basename),
                     encoding_to_node(args.encoding),
                 );
             }
@@ -6898,7 +6929,7 @@ impl NodeFS {
         };
 
         let mut entries: Vec<T> = Vec::new();
-        Self::readdir_with_entries::<T>(args, dir.fd(), &mut entries)?;
+        Self::readdir_with_entries::<T>(args, dir.fd(), path, &mut entries)?;
         Ok(T::into_readdir(entries))
     }
 
@@ -7838,6 +7869,9 @@ impl NodeFS {
             let processed_target: &ZStr = if resolved_link_type == ResolvedLinkType::Junction {
                 target = absolute_target();
                 target.make_long_path();
+                if target_path.ends_with(b"\\") {
+                    target.push_trailing_sep();
+                }
                 &target
             } else if paths::is_absolute(target_path) {
                 // This normalizes slashes and adds the long path prefix
@@ -8314,7 +8348,9 @@ impl NodeFS {
             return Syscall::symlink(link_target, dest);
         };
         let cwd = &cwd_buf[..cwd_len];
-        Syscall::symlink(&Path::resolve(&[cwd, src_dir, link_target]), dest)
+        let mut resolved = Path::resolve(&[cwd, src_dir, link_target]);
+        resolved.copy_trailing_sep_from(link_target);
+        Syscall::symlink(&resolved, dest)
     }
 
     /// This is `copyFile`, but it copies symlinks as-is
@@ -8736,10 +8772,7 @@ impl NodeFS {
             if stat_ & sys::c::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
                 let mut result = windows::CopyFileW(src, dest, mode.shouldnt_overwrite());
                 if result == Err(windows::Win32Error::PATH_NOT_FOUND) {
-                    let _ = sys::make_path::make_path(
-                        &sys::Dir::cwd(),
-                        paths::dirname(dest.as_slice()).unwrap_or_default(),
-                    );
+                    let _ = sys::make_path::make_path(&sys::Dir::cwd(), up_to_last_sep(dest));
                     result = windows::CopyFileW(src, dest, mode.shouldnt_overwrite());
                 }
                 if let Err(err) = result {
@@ -8812,7 +8845,7 @@ impl NodeFS {
                 if err.get_errno() == E::ENOENT {
                     // Create the parent directory if it doesn't exist
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {
-                        path: PathLike::borrowed(paths::dirname_or_root(dest)),
+                        path: PathLike::borrowed(up_to_last_sep(dest)),
                         recursive: true,
                         ..Default::default()
                     });

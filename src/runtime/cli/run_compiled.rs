@@ -109,7 +109,7 @@ pub(crate) fn set_stand_in(path: &[u8], text: &[u8]) {
 }
 
 fn key_of_stand_in(path: &[u8]) -> Vec<u8> {
-    bun_paths::to_portable(path).into_owned()
+    FileMap::key(path).into_owned()
 }
 
 // No file of the run spells what the runner does for `--globals=vitest`: `Jest::define_vitest_globals()` stores the names on `globalThis` before any file runs. This file
@@ -136,9 +136,9 @@ pub(crate) fn files_in_memory() -> Option<&'static FileMap> {
 
 /// `\` is `/` in what is imported, and not in an entry point.
 pub(crate) fn entry_points_of_preloads(ctx: &ContextData) -> impl Iterator<Item = Box<[u8]>> {
-    (ctx.preloads.iter()).map(|name| match bun_paths::is_package_path(name) {
-        true => name.clone(),
-        false => bun_paths::from_portable(name).into(),
+    (ctx.preloads.iter()).map(|name| match name.starts_with(b".") {
+        true => bun_resolver::path_of_specifier(name, bun_ast::ImportKind::Stmt).into(),
+        false => name.clone(),
     })
 }
 

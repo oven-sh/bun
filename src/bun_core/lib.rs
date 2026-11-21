@@ -2155,10 +2155,10 @@ pub(crate) mod strings_impl {
         }
     }
 
-    /// For URLs. A path has `bun_paths::without_trailing_sep`.
+    /// Removes `/` and `\` on every platform. A native path has `bun_paths::without_trailing_sep`.
     pub fn without_trailing_slash(s: &[u8]) -> &[u8] {
         let mut e = s.len();
-        while e > 1 && s[e - 1] == b'/' {
+        while e > 1 && (s[e - 1] == b'/' || s[e - 1] == b'\\') {
             e -= 1;
         }
         &s[..e]

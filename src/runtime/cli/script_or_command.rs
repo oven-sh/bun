@@ -3,8 +3,8 @@
 //! `node_modules/.bin/lint`. With `--no-script` they are the commands whatever the project has.
 //! A `package.json` that names the script and can't be parsed stops `bun lint` and `bun fmt`, which can write files.
 
+use bun_core::strings::without_trailing_slash;
 use bun_core::{Global, UnwrapOrOom, env_var};
-use bun_paths::without_trailing_sep;
 
 use super::check_command::working_directory;
 
@@ -242,7 +242,7 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
         None => working_directory(),
     };
     let nearest = nearest_package_json(&cwd);
-    let dir = (nearest.as_ref()).map_or_else(|| without_trailing_sep(&cwd), |it| it.0);
+    let dir = without_trailing_slash(nearest.as_ref().map_or(&cwd, |it| it.0));
     // In that script, and in what it runs, it is the command: `"lint": "bun lint"`.
     let running = env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get();
     if running
@@ -395,7 +395,7 @@ pub(super) fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Ve
     loop {
         let path = below(dir, b"package.json");
         if let Some(contents) = read_package_json(&path) {
-            let dir = without_trailing_sep(dir);
+            let dir = bun_paths::without_trailing_sep(dir);
             return Some((dir, path.to_vec(), contents));
         }
         dir = bun_paths::dirname(dir)?;
@@ -447,10 +447,12 @@ fn package_of_inherited_script(command: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     match env_var::npm_package_json::get() {
-        Some(of) => Some(without_trailing_sep(bun_paths::dirname_or_root(of)).to_vec()),
+        Some(of) => Some(without_trailing_slash(bun_paths::dirname_or_root(of)).to_vec()),
         None if env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get().is_some() => None,
         None if env_var::BUN_INTERNAL_CHECK_SCRIPTS::get().is_some() => None,
-        None => Some(nearest_package_json(&working_directory())?.0.to_vec()),
+        None => {
+            Some(without_trailing_slash(nearest_package_json(&working_directory())?.0).to_vec())
+        }
     }
 }
 
@@ -459,7 +461,7 @@ pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir
     use std::io::Write;
     let key = b"BUN_INTERNAL_SCRIPTS_OF_COMMANDS";
     // As `runs` finds it, wherever in the package the script is started.
-    let dir = nearest_package_json(dir).map_or_else(|| without_trailing_sep(dir), |it| it.0);
+    let dir = without_trailing_slash(nearest_package_json(dir).map_or(dir, |it| it.0));
     let mut running = env.get(key).unwrap_or_default().to_vec();
     let mut note = |command: &[u8], dir: &[u8]| {
         if !running_package_scripts(&running).any(|it| it == (command, dir)) {

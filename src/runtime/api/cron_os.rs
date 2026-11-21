@@ -418,7 +418,7 @@ fn write_temp_file(
     let name = FileSystem::tmpname(suffix.as_bytes(), &mut buf.0, bun_core::fast_random())
         .map_err(|_| "Out of memory")?;
     let dir = bun_resolver::fs::RealFS::platform_temp_dir();
-    let path = Path::resolve(&[dir, name.as_bytes()]);
+    let path = Path::resolve(&[bun_core::top_level_dir(), dir, name.as_bytes()]);
     write_file(&path, (sys::O::EXCL, 0o600), contents, errors)
 }
 
@@ -504,10 +504,8 @@ mod backend {
     }
 
     pub(super) fn register(job: &Registration<'_>) -> Result<Command, Failure> {
-        let home = HOME
-            .get_not_empty()
-            .ok_or("HOME environment variable not set")?;
-        (Fd::cwd().make_path(&Path::from_parts(&[home, b"Library/LaunchAgents"])))
+        let home = HOME.get().ok_or("HOME environment variable not set")?;
+        (Fd::cwd().make_path(&[home, b"/Library/LaunchAgents"].concat()))
             .map_err(|_| "Failed to create ~/Library/LaunchAgents directory")?;
         let mut logs = bun_paths::path_buffer_pool::get();
         let logs = sys::darwin_user_temp_dir(&mut logs)
@@ -527,7 +525,7 @@ mod backend {
 
     fn plist_path(home: &[u8], title: &Title) -> Path {
         let mut path = Path::from(home);
-        path.push_fmt(format_args!("Library/LaunchAgents/bun.cron.{title}.plist"));
+        write!(path, "/Library/LaunchAgents/bun.cron.{title}.plist");
         path
     }
 
@@ -559,7 +557,7 @@ mod backend {
                 }
                 Step::Bootstrap => Ok(None),
                 Step::Bootout(title) => {
-                    let home = HOME.get_not_empty().ok_or("HOME not set")?;
+                    let home = HOME.get().ok_or("HOME not set")?;
                     let _ = sys::unlink(&plist_path(home, &title));
                     Ok(None)
                 }

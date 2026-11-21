@@ -238,6 +238,14 @@ fn generate_files(
     let top_level_dir = FileSystem::instance().top_level_dir();
     let normalized_name = path::Path::relative(top_level_dir, entry_point).into_portable();
     let normalized_name = &normalized_name[0..normalized_name.len() - extension.len()];
+    // The templates put it in JSON, in HTML and in imports as it is.
+    if strings::contains_char(normalized_name, b'\\') {
+        Output::err_generic(
+            "cannot generate a project for a path with a backslash: {}",
+            (bun_core::fmt::quote(entry_point),),
+        );
+        Global::crash();
+    }
 
     let mut max_filename_len: usize = 0;
     let mut created: Vec<(&TemplateFile, Vec<u8>)> = Vec::new();

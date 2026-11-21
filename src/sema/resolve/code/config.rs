@@ -5,6 +5,7 @@ use crate::atom::{Atom, Interner};
 use crate::hir::JsxPragmas;
 use crate::resolve::{basename, parent_directory};
 use bun_core::identifier::is_identifier;
+use bun_paths::portable::from_portable_specifier;
 use std::sync::OnceLock;
 
 const MAX_EXTENDED_CONFIGS: usize = 64;
@@ -181,7 +182,8 @@ impl JsxFields {
             is_development: emit.and_then(|emit| emit.1),
             factory: identifiers(b"jsxFactory"),
             fragment: identifiers(b"jsxFragmentFactory"),
-            import_source: string_entry(options, b"jsxImportSource").map(<[u8]>::to_vec),
+            import_source: string_entry(options, b"jsxImportSource")
+                .map(|text| from_portable_specifier(text).into_owned()),
         }
     }
 

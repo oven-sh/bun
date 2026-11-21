@@ -423,7 +423,7 @@ describe("bun", () => {
       test.concurrent.each([
         ["empty", ""],
         ["too long", "/" + Buffer.alloc(5000, "a").toString()],
-      ])("uses the .zshrc in $HOME when $ZDOTDIR is %s", async (_, ZDOTDIR) => {
+      ])("leaves the .zshrc of the cwd alone when $ZDOTDIR is %s", async (_, ZDOTDIR) => {
         using dir = tempDir("completions-zdotdir", { "home/.bun/.keep": "", "home/.zshrc": "", "cwd/.zshrc": "" });
         const HOME = join(String(dir), "home");
 

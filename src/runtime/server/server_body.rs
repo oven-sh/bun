@@ -612,7 +612,8 @@ impl AnyRoute {
 
         let abs_path = Path::resolve(&[FileSystem::get().top_level_dir(), path_slice]);
         let mut route_path = Path::from(b"/");
-        route_path.push_inside(&Path::relative(cwd, &abs_path));
+        let relative_path = Path::relative(cwd, &abs_path);
+        route_path.push_inside(&strings::replace_char(&relative_path, b'\\', b'/'));
         let is_index_route = path.path().slice() == index_path;
 
         let Some(headers_js) = argument.get(init_ctx.global, b"headers")? else {

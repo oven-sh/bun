@@ -1,6 +1,6 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isDebug, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -2074,4 +2074,34 @@ test.concurrent.skipIf(isWindows).each([
   });
   const { stdout, stderr, exitCode } = await runServeFixture(join(String(dir), cwd));
   expect({ stdout, exitCode }, stderr).toEqual({ stdout: `${id} ${id}`, exitCode: 0 });
+});
+
+test.concurrent.skipIf(isWindows).each([
+  ["c\\", "script"],
+  [".\\c\\", "script"],
+  ["\\c\\", "script"],
+  ["c\\..\\", "asset"],
+  ["..\\", "asset"],
+  ["c\\d/", "asset"],
+])("a bundled server with chunks whose names start with %s serves the %s", async (prefix, file) => {
+  using dir = tempDir("html-naming-backslash", {
+    "index.html": `<script type="module" src="./main.js"></script>`,
+    "main.js": `import asset from "./asset.bin"; console.log(asset);`,
+    "asset.bin": "",
+    "server.ts": `
+        import page from "./index.html";
+        using server = Bun.serve({ port: 0, routes: { "/": page } });
+        const [, src] = (await (await fetch(server.url)).text()).match(/src="([^"]+)"/);
+        const script = new URL(src, server.url);
+        const [, asset] = (await (await fetch(script)).text()).match(/"([^"]+\\.bin)"/);
+        console.log((await fetch(new URL(${file === "asset" ? "asset" : "script"}, script))).status);
+      `,
+  });
+  await Bun.build({
+    entrypoints: [join(String(dir), "server.ts")],
+    outdir: join(String(dir), "out"),
+    target: "bun",
+    naming: { entry: "serve.[ext]", chunk: prefix + "[name]-[hash].[ext]" },
+  });
+  expect(await bunRun(join(String(dir), "out", "serve.js"))).toSpawn("200");
 });

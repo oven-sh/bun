@@ -6827,9 +6827,7 @@ impl<'p, 's> Checker<'p, 's> {
         allowed_endings: &[Ending],
     ) -> Vec<u8> {
         let root_dirs = &self.files().options.root_dirs;
-        let relative = |from: &[u8], to: &[u8]| {
-            get_relative_path_from_directory(from, to, self.files().is_case_sensitive)
-        };
+        let relative = |from: &[u8], to: &[u8]| get_relative_path_from_directory(from, to, true);
         // `getPathsRelativeToRootDirs`
         let relative_to_root_dirs = |path: &[u8]| -> Vec<Vec<u8>> {
             root_dirs
@@ -6870,11 +6868,7 @@ impl<'p, 's> Checker<'p, 's> {
         for (key, values) in paths {
             for pattern_text in values {
                 let normalized = join(base_directory, pattern_text);
-                let pattern = get_relative_path_from_directory(
-                    base_directory,
-                    &normalized,
-                    self.files().is_case_sensitive,
-                );
+                let pattern = get_relative_path_from_directory(base_directory, &normalized, true);
                 let mut candidates: Vec<Vec<u8>> = allowed_endings
                     .iter()
                     .map(|&ending| self.process_ending(relative_to_base_url, &[ending]))

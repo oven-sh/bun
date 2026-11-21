@@ -328,6 +328,20 @@ describe.concurrent("bun run", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.skipIf(isWindows)("--cwd reads backslashes as Windows does if nothing has that name", async () => {
+    using dir = tempDir("bun-run-cwd-backslash", { "a/b/.keep": "", "c/d/e/.keep": "", "c\\d/.keep": "" });
+    for (const [written, expected] of [
+      ["a\\b", "a/b"],
+      ["c\\d", "c\\d"],
+      ["a\\b/..", "a"],
+      ["c\\d/e", "c/d/e"],
+      [join(String(dir), "a/b").replaceAll("/", "\\"), "a/b"],
+    ]) {
+      const { stdout } = await $`${bunExe()} --cwd ${written} -p "process.cwd()"`.cwd(String(dir)).env(bunEnv).quiet();
+      expect(stdout.toString()).toBe(join(String(dir), expected) + "\n");
+    }
+  });
+
   // https://github.com/oven-sh/bun/issues/29273
   // `C:` is the current directory of drive C, it is not the root `C:\`.
   it.skipIf(!isWindows)("runs a script of a package.json in the root of a drive", async () => {

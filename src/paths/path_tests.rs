@@ -555,7 +555,10 @@ mod model {
 
     fn prevent_new_volume<S: PathStyle>(before: &Parsed, mut path: String) -> String {
         if before.kind == VolumeKind::None && parse::<S>(&path).kind != VolumeKind::None {
-            path.insert_str(before.root.len(), &format!(".{}", sep::<S>()));
+            match path.chars().take(2).all(is_sep::<S>) {
+                true => path.insert_str(2, &sep::<S>()),
+                false => path.insert_str(before.root.len(), &format!(".{}", sep::<S>())),
+            }
         }
         path
     }
@@ -709,10 +712,7 @@ mod model {
         let needs_sep = !path.is_empty() && !path.ends_with(is_sep::<S>);
         let sep = if needs_sep { sep::<S>() } else { String::new() };
         let pushed = format!("{path}{sep}{}", normalize_seps::<S>(rest));
-        match path.len() {
-            0 | 1 => prevent_new_volume::<S>(&parse::<S>(path), pushed),
-            _ => pushed,
-        }
+        prevent_new_volume::<S>(&parse::<S>(path), pushed)
     }
 
     fn push_inside<S: PathStyle>(path: &str, part: &str) -> String {
@@ -741,17 +741,24 @@ mod model {
         if !S::WIN32 || path.is_empty() {
             return path.into();
         }
+        let is_nt = prefix == r"\??\";
+        if !is_nt && parse::<S>(path).kind == VolumeKind::Device && !path.starts_with(r"\??") {
+            return normalize_seps::<S>(path);
+        }
         let mut path = join::<S>(&[path]);
         let parsed = parse::<S>(&path);
         if path.len() > parsed.root.len() && path.ends_with(is_sep::<S>) {
             path.pop();
         }
-        match (parsed.kind, parsed.is_absolute(), prefix == r"\??\") {
+        match (parsed.kind, parsed.is_absolute(), is_nt) {
             (VolumeKind::Drive, true, _) | (VolumeKind::None, true, true) => {
                 format!("{prefix}{path}")
             }
             (VolumeKind::Unc, ..) => format!(r"{prefix}UNC{}", &path[1..]),
-            (VolumeKind::Device, _, is_nt) if is_nt || &path[2..3] == "?" => {
+            (VolumeKind::Device, ..) => {
+                if path.as_bytes().get(5) == Some(&b':') {
+                    path[4..5].make_ascii_uppercase();
+                }
                 format!("{}{}", &prefix[..3], &path[3..])
             }
             _ => path,
@@ -977,18 +984,18 @@ fn check_style_getters<S: PathStyle, U: Unit>(path: &str, dir: &str) {
         "{path:?}"
     );
 
-    let trimmed = model::without_trailing_sep::<S>(path, parsed.root.len());
-    assert_eq!(
-        S::without_trailing_sep(&units),
-        U::encode(trimmed),
-        "{path:?}"
-    );
+    let min_len = match parsed.kind {
+        VolumeKind::Unc => 0,
+        _ => parsed.root.len(),
+    };
+    let trimmed = |path| U::encode(model::without_trailing_sep::<S>(path, min_len));
+    assert_eq!(S::without_trailing_sep(&units), trimmed(path), "{path:?}");
 
     let has_parent = names.len() > usize::from(!parsed.is_absolute());
     assert_eq!(
         S::dirname(&units).map(S::without_trailing_sep),
         has_parent
-            .then(|| U::encode(model::parent::<S>(path)))
+            .then(|| trimmed(model::parent::<S>(path)))
             .as_deref(),
         "{path:?}"
     );
@@ -1187,6 +1194,21 @@ fn windows_ops_preserve_win32_path_type() {
 }
 
 #[test]
+fn pushing_onto_two_separators_forms_no_volume() {
+    for op in [
+        Op::Push("s/h".into()),
+        Op::PushFmt("s".into(), "/h".into()),
+        Op::PushInside("?/C:".into()),
+        Op::SetBasename("s".into()),
+    ] {
+        assert_eq!(
+            Windows::volume(actual::<Windows>("//", &op).as_bytes()),
+            b""
+        );
+    }
+}
+
+#[test]
 fn namespace_prefix_round_trips() {
     let mut random = Random(0xA076_1D64_78BD_642F);
     for _ in 0..ROUNDS {
@@ -1197,7 +1219,10 @@ fn namespace_prefix_round_trips() {
             (r"\\s\h\a", Op::MakeLongPath),
             (r"\\s\h", Op::MakeNtPath),
         ] {
-            let trim = |path: &str| text(Windows::without_trailing_sep(path.as_bytes())).to_owned();
+            let trim = |path: &str| {
+                let root_len = Windows::root(path.as_bytes()).len();
+                model::without_trailing_sep::<Windows>(path, root_len).to_owned()
+            };
             let joined = actual::<Windows>(base, &Op::Join(rest.clone()));
             let prefixed = actual::<Windows>(&joined, &add);
             let prefixed_first =
@@ -1344,6 +1369,18 @@ fn long_path_matches_node() {
 }
 
 #[test]
+fn only_nt_normalizes_a_device_path() {
+    for (path, long, nt) in [
+        (r"\\?\c:\a\..\b\", r"\\?\c:\a\..\b\", r"\??\C:\b"),
+        ("//./pipe/a/", r"\\.\pipe\a\", r"\??\pipe\a"),
+        (r"\??\c:\a\..\b", r"\\?\C:\b", r"\??\C:\b"),
+    ] {
+        assert_eq!(actual::<Windows>(path, &Op::MakeLongPath), long);
+        assert_eq!(actual::<Windows>(path, &Op::MakeNtPath), nt);
+    }
+}
+
+#[test]
 fn differs_from_node() {
     for (all, expected) in [
         (&[r"c:\a", "b"][..], r"C:\a\b"),
@@ -1357,8 +1394,18 @@ fn differs_from_node() {
         (&[r"C:\a", r"\??\D:\b"], r"\??\D:\b"),
         (&[r"\a", r"..\??\C:\b"], r"\.\??\C:\b"),
         (&[r"C:\a", r"\\server"], r"\\server\"),
+        (&[r"C:\a", "1:b"], r"1:\b"),
     ] {
         assert_eq!(actual::<Windows>("", &Op::Resolve(owned(all))), expected);
+    }
+    for (all, expected) in [
+        (&["c:/a", "b"][..], r"C:\a\b"),
+        (&["//server"], r"\\server\"),
+        (&["1:/a/../.."], r"1:\"),
+        (&["a", "C:"], r"a\C:"),
+        (&[r"\\.\pipe\..\x"], r"\\.\pipe\x"),
+    ] {
+        assert_eq!(actual::<Windows>("", &Op::Join(owned(all))), expected);
     }
     let across_shares = Op::Relative(r"\\s\a\x".into(), r"\\s\b\y".into());
     assert_eq!(actual::<Windows>("", &across_shares), r"\\s\b\y");
@@ -1470,7 +1517,8 @@ fn push_inside_stays_inside() {
 }
 
 #[test]
-fn portable_text_is_read_like_any_platform_would() {
+fn portable_text_has_two_separators() {
+    const WIN: bool = cfg!(windows);
     for (path, is_absolute, climbs_out, has_dot_dot) in [
         ("a/b", false, false, false),
         ("a/../b", false, false, true),
@@ -1478,13 +1526,17 @@ fn portable_text_is_read_like_any_platform_would() {
         ("a../..b", false, false, false),
         ("../a", false, true, true),
         (r"..\a", false, true, true),
-        (r"a\b/../..", false, true, true),
+        (r"a\b/../..", false, !WIN, true),
         (r"a/..\..", false, true, true),
-        ("C:a", false, true, false),
-        ("C:..", false, true, true),
+        ("..\0a", false, true, false),
+        ("C:a", false, WIN, false),
+        ("C:..", false, WIN, WIN),
         ("/a", true, true, false),
-        (r"\a", true, true, false),
-        (r"C:\a", true, true, false),
+        ("//a/../b", true, true, true),
+        ("//../b", true, true, true),
+        (r"\a", true, WIN, false),
+        (r"\..\a", true, true, true),
+        (r"C:\a", true, WIN, false),
         ("", false, false, false),
     ] {
         let bytes = path.as_bytes();
@@ -1511,21 +1563,56 @@ fn add_current_drive_completes_only_a_rooted_path() {
     }
     let mut rooted = Path::from(b"/a");
     rooted.add_current_drive();
-    assert!(rooted.ends_with(b"/a") && crate::is_fully_qualified(&rooted));
+    assert!(rooted.ends_with(&[crate::SEP, b'a']) && crate::is_fully_qualified(&rooted));
+
+    let mut full = StackPath::<4>::from(b"/ab").unwrap();
+    assert_eq!(full.add_current_drive().is_err(), cfg!(windows));
+    assert_eq!(full.as_bytes(), b"/ab");
 }
 
 #[test]
 #[cfg(unix)]
-fn from_portable_keeps_absolute_posix_paths() {
+fn from_portable_does_not_change_what_is_absolute() {
     for (path, expected) in [
         (r".\a\b", "./a/b"),
         (r"a/b\", "a/b/"),
-        (r"\a", "/a"),
+        (r"\a", "./a"),
+        (r"\\s\h", ".//s/h"),
+        (r"\", "./"),
         (r"C:\a", "C:/a"),
         (r"/home/DOMAIN\user", r"/home/DOMAIN\user"),
         ("", ""),
     ] {
         assert_eq!(text(&crate::from_portable(path.as_bytes())), expected);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn from_portable_rooted_reads_a_leading_backslash_as_the_root() {
+    for (path, expected) in [
+        (r".\a\b", "./a/b"),
+        (r"\a\b", "/a/b"),
+        (r"/home/DOMAIN\user", r"/home/DOMAIN\user"),
+    ] {
+        let rooted = crate::portable::from_portable_rooted(path.as_bytes());
+        assert_eq!(text(&rooted), expected);
+    }
+}
+
+#[test]
+fn share_is_a_root_without_its_separator() {
+    for (path, expected) in [
+        (r"\\s\h\", r"\\s\h"),
+        (r"//s/h//", r"//s/h"),
+        (r"C:\\", r"C:\"),
+        (r"\\?\C:\", r"\\?\C:\"),
+        (r"\\", r"\"),
+    ] {
+        assert_eq!(
+            text(Windows::without_trailing_sep(path.as_bytes())),
+            expected
+        );
     }
 }
 

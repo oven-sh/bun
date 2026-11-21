@@ -59,6 +59,33 @@ describe("Bun.build", () => {
     expect(await outputs[0].text()).toContain("console.log(1);");
   });
 
+  test("process.chdir() during a build does not change the paths between outputs", async () => {
+    const files: Record<string, string> = { "a/.keep": "", "b/c/d/.keep": "" };
+    for (let i = 0; i < 100; i++) files[`src/lazy${i}.js`] = `export default ${i};`;
+    for (let page = 0; page < 20; page++) {
+      files[`src/pages/p${page}.js`] = Array.from({ length: 100 }, (_, i) => `import("../lazy${i}.js");`).join("\n");
+    }
+    files["build.js"] = `
+      const root = import.meta.dir;
+      const entrypoints = Array.from({ length: 20 }, (_, page) => root + "/src/pages/p" + page + ".js");
+      const specifiers = new Set();
+      for (let round = 0; round < ${isDebug ? 2 : 20}; round++) {
+        let done = false;
+        const build = Bun.build({ entrypoints, root: root + "/src", splitting: true, naming: { chunk: "chunks/[name].js" } });
+        build.finally(() => (done = true));
+        while (!done) {
+          for (let i = 0; i < 50; i++) process.chdir(root + (i % 2 ? "/a" : "/b/c/d"));
+          await new Promise(setImmediate);
+        }
+        for (const output of (await build).outputs)
+          for (const [, directory] of (await output.text()).matchAll(/import\\("(.*\\/)/g)) specifiers.add(directory);
+      }
+      console.log(...specifiers);
+    `;
+    using dir = tempDir("bun-build-api-chdir", files);
+    expect(await bunRun(join(String(dir), "build.js"))).toSpawn("../chunks/");
+  });
+
   test("a file imported by its default type and with { type: 'file' } is one output", async () => {
     using dir = tempDir("bun-build-api-file-twice", {
       "entry.ts": `

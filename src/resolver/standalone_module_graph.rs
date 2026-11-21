@@ -158,7 +158,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
             let on_build_machine = match bun_paths::is_absolute(specifier) {
                 true => Path::from(specifier),
                 false if crate::compiled_program::is_relative_specifier(specifier) => {
-                    Path::resolve(&[source_dir, specifier])
+                    crate::resolve_keeping_sep(&[source_dir, specifier])
                 }
                 false => return None,
             };

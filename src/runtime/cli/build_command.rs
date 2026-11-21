@@ -874,9 +874,12 @@ impl BuildCommand {
             let mut max_path_len: usize = 0;
             let mut size_padding: usize = 0;
 
+            let is_narrow = summary_ignores_dot_slash(output_files);
+
             for f in output_files.iter() {
+                let padding = 2 + usize::from(f.dest_path.starts_with(b"./") && !is_narrow);
                 max_path_len =
-                    max_path_len.max(strings::trim_prefix(&f.dest_path, b"./").len() + 2);
+                    max_path_len.max(strings::trim_prefix(&f.dest_path, b"./").len() + padding);
                 size_padding = size_padding.max(bun_fmt::count(format_args!(
                     "{}",
                     bun_fmt::size(f.size, Default::default())
@@ -1270,6 +1273,22 @@ impl BuildCommand {
             ctx.debug.hot_reload == HotReload::Watch,
         );
     }
+}
+
+/// Otherwise the column of names is one wider.
+fn summary_ignores_dot_slash(outputs: &[options::OutputFile]) -> bool {
+    let paths = || outputs.iter().map(|f| &f.dest_path[..]);
+    if outputs.len() <= 8 {
+        return paths().all(|path| path.starts_with(b"./"));
+    }
+    let (first, mut index) = (&outputs[0].dest_path, 0);
+    let shortest = paths().map(<[u8]>::len).min().unwrap_or(0);
+    paths().skip(1).any(|other| {
+        while index + 1 < shortest && first[index] == other[index] {
+            index += 1;
+        }
+        index > 0 && bun_paths::is_sep(first[index])
+    })
 }
 
 pub(crate) fn compile_outfile(outfile: &[u8]) -> &[u8] {

@@ -21,6 +21,10 @@ use bun_install::npm;
 use bun_paths::{Path, from_portable};
 use bun_semver::{self as Semver, String as SemverString};
 
+fn is_tarball(file: &[u8]) -> bool {
+    file.ends_with(b".tgz") || file.ends_with(b".tar.gz")
+}
+
 #[derive(Default)]
 pub(crate) struct YarnLock<'a> {
     pub(crate) entries: Vec<Entry<'a>>,
@@ -174,7 +178,13 @@ impl<'a> Entry<'a> {
     }
 
     pub(crate) fn file_path_from_spec(spec: &[u8]) -> Box<[u8]> {
-        let mut path: &[u8] = &from_portable(spec.strip_prefix(b"file:").unwrap_or(spec));
+        let written = spec.strip_prefix(b"file:").unwrap_or(spec);
+        let converted = from_portable(written);
+        // A tarball is stored as package.json spells it.
+        let mut path = match is_tarball(written) {
+            true => written,
+            false => &converted,
+        };
         while let Some(rest) = path.strip_prefix(b"./") {
             path = rest;
         }
@@ -648,7 +658,7 @@ pub(crate) fn migrate_yarn_lockfile(
                     sbuf!(this).append(base_name)?,
                 ));
             } else if let Some(file) = entry.file.as_deref() {
-                if file.ends_with(b".tgz") || file.ends_with(b".tar.gz") {
+                if is_tarball(file) {
                     break 'blk Resolution::init(ResolutionValue::LocalTarball(
                         sbuf!(this).append(file)?,
                     ));

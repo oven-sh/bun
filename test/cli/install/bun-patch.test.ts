@@ -3830,6 +3830,23 @@ describe.concurrent("--patches-dir with an absolute path", () => {
     });
   });
 
+  // Windows does not rename to a relative name with `..`.
+  test.skipIf(isWindows)("the project's path and ..: package.json gets a relative path", async () => {
+    await using project = await installedProject({ dependencies: { "basic-1": "1.0.0" } });
+    using outside = tempDir("bun-patch-sibling", {});
+    const fromProject = relative(project.dir, String(outside));
+    expect(await commitTo(project.dir, project.env, `${project.dir}/${fromProject}`)).toEqual({
+      "basic-1@1.0.0": `${fromProject}/basic-1@1.0.0.patch`,
+    });
+  });
+
+  test.skipIf(isWindows)("a backslash is part of the folder's name", async () => {
+    await using project = await installedProject({ dependencies: { "basic-1": "1.0.0" } });
+    expect(await commitTo(project.dir, project.env, "my\\patches")).toEqual({
+      "basic-1@1.0.0": "my\\patches/basic-1@1.0.0.patch",
+    });
+  });
+
   // Git Bash gives "$PWD/my/patches" with `/`, and PowerShell completes a folder to `.\patches`.
   // package.json got the absolute path, a key with a `\` that no other system reads, or nothing.
   test.skipIf(!isWindows).each([

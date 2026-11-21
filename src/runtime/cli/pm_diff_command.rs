@@ -2190,8 +2190,12 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
             }
             for (name, path) in &mut pairs {
                 *name = bun_paths::basename(name).to_vec();
-                let in_package = crate::cli::pack_command::path_in_package(path);
-                *path = strings::trim_right(&in_package, b"/").to_vec();
+                let mut normal = bun_paths::Path::from(b"/");
+                normal.push_inside(&strings::replace_char(path, b'\\', b'/'));
+                if path.ends_with(b"/") {
+                    normal.push_trailing_sep();
+                }
+                *path = normal.to_vec();
             }
         }
         b"directories" => pairs.retain(|(name, _)| name == b"bin"),

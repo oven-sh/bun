@@ -156,8 +156,8 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     }
 
     /// `local_tarball` is as package.json spells it.
-    pub(crate) fn local_tarball_path<'a>(&'a self, buf: &'a [u8]) -> Cow<'a, [u8]> {
-        bun_paths::from_portable(self.local_tarball().slice(buf))
+    fn local_tarball_path<'a>(&'a self, buf: &'a [u8]) -> Cow<'a, [u8]> {
+        bun_paths::portable::from_portable_rooted(self.local_tarball().slice(buf))
     }
 
     pub(crate) fn can_enqueue_install_task(&self) -> bool {

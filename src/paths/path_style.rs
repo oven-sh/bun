@@ -70,7 +70,12 @@ pub trait PathStyle: Sized {
         if !Self::has_trailing_sep(path) {
             return path;
         }
-        &path[..len_without_trailing_sep::<Self>(path, Root::parse::<Self>(path).len)]
+        let root = Root::parse::<Self>(path);
+        let min_len = match root.kind {
+            VolumeKind::Unc => root.volume_len,
+            _ => root.len,
+        };
+        &path[..len_without_trailing_sep::<Self>(path, min_len)]
     }
 
     #[inline]

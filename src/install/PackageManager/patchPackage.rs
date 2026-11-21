@@ -5,8 +5,8 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
-use bun_paths::{OSPath, ParentEqual, Path, dirname_or_root, from_portable, is_parent_or_equal};
-use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
+use bun_paths::{OSPath, ParentEqual, Path, dirname_or_root, is_parent_or_equal, to_portable};
+use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _, existing_spelling};
 
 use crate::bin;
 use crate::bun_fs::FileSystem;
@@ -88,14 +88,14 @@ impl PatchCommitResult {
         if !self.removes_patch || !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
             return;
         }
-        let path = Path::from(&from_portable(&self.patchfile_path));
+        let path = Path::from(&existing_spelling(Fd::cwd(), &self.patchfile_path));
         let lockfile = &manager.lockfile;
         let real = resolve_links(&path).ok();
         let own_key = string_hash(&self.patch_key);
         let is_shared = real.is_some()
             && (lockfile.patched_dependencies.iter()).any(|(key, other)| {
-                *key != own_key
-                    && resolve_links(&from_portable(lockfile.str(&other.path))).ok() == real
+                let other = existing_spelling(Fd::cwd(), lockfile.str(&other.path));
+                *key != own_key && resolve_links(&other).ok() == real
             });
         let (outcome, why) = if is_shared {
             ("kept", ", used by another package")
@@ -628,21 +628,15 @@ pub fn do_patch_commit(
         Global::crash();
     }
 
-    // package.json is shared with other machines, so the path is spelled with `/`.
-    let mut path_in_patches_dir =
-        Path::join(&[&from_portable(typed_patches_dir), &patch_filename]).into_portable();
-    // For the same reason, an absolute path into the project is made relative to its root.
-    let project = FileSystem::get().top_level_dir();
-    if is_parent_or_equal(&bun_paths::to_portable(project), &path_in_patches_dir)
-        == ParentEqual::Parent
-    {
-        let relative = Path::relative(project, &path_in_patches_dir).into_portable();
-        // In a relative path in package.json, `\` is a separator.
-        if !strings::contains_char(&relative, b'\\') {
-            path_in_patches_dir = relative;
-        }
+    // package.json is shared with other machines, so an absolute path to a directory inside the
+    // project is written relative to the project root.
+    let mut patches_dir = Path::from(typed_patches_dir).into_portable();
+    let project = to_portable(FileSystem::get().top_level_dir());
+    if is_parent_or_equal(&project, &patches_dir) != ParentEqual::Unrelated {
+        patches_dir = Path::relative(&project, &patches_dir);
     }
-    let path_in_patches_dir = path_in_patches_dir.to_zbox();
+    let path_in_patches_dir =
+        (Path::join(&[&patches_dir, &patch_filename]).into_portable()).to_zbox();
 
     if manager.options.dry_run {
         bun_core::prettyln!(

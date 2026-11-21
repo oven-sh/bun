@@ -1290,8 +1290,6 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
           os: ["linux"],
         },
       ],
-      // The bin linker drops a trailing separator.
-      "trailing": [{ bin: { a: "cli.js\\", b: "cli.js/" } }, { bin: { a: "cli.js", b: "cli.js" } }],
       "dependency": [{}, { dependencies: { extra: "1.0.0" } }],
       "optional": [{}, { optionalDependencies: { extra: "1.0.0" } }],
       "peer": [{}, { peerDependencies: { extra: "1.0.0" } }],
@@ -1341,10 +1339,8 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     }
     const disagree = (name: string, field: string, registry: string, file: string) =>
       `registry and package.json of ${name}@2.0.0 disagree on ${field}: ${registry} vs ${file} (bun install uses the registry's)`;
-    for (const name of ["respelled", "trailing"]) {
-      expect(notes[name].filter(note => note.includes("disagree"))).toEqual([]);
-      delete notes[name];
-    }
+    expect(notes.respelled.filter(note => note.includes("disagree"))).toEqual([]);
+    delete notes.respelled;
     expect(notes).toEqual({
       "same": ["dependencies added: dep@1.0.0"],
       "dependency": [

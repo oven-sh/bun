@@ -724,3 +724,21 @@ test("a long source line that is cut inside a character is printed as valid UTF-
   expect(new TextDecoder("utf-8", { fatal: true }).decode(stderr)).toContain("error: boom");
   expect(exitCode).toBe(1);
 });
+
+test.concurrent.each(["relative", "rooted"])("a %s source with backslashes in an external map", async kind => {
+  using dir = tempDir("inspect-error-source-backslashes", {
+    "src/o.ts": '// original\nthrow new Error("from the source");\n',
+    "out/o.js": '// @bun\nthrow new Error("x");\n//# sourceMappingURL=o.js.map\n',
+  });
+  const original = `${dir}/src/o.ts`.replaceAll("\\", "/");
+  const source = (kind === "relative" ? "../src/o.ts" : original.replace(/^[a-z]:/i, "")).replaceAll("/", "\\");
+  const map = { version: 3, sources: [source], sourcesContent: [null], names: [], mappings: ";AACA,MAAM" };
+  await Bun.write(`${dir}/out/o.js.map`, JSON.stringify(map));
+
+  await using proc = Bun.spawn({ cmd: [bunExe(), "out/o.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain('2 | throw new Error("from the source");');
+  expect(stderr.replaceAll("\\", "/")).toContain(`at ${original}:2:7`);
+  expect(exitCode).toBe(1);
+});

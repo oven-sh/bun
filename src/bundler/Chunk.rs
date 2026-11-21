@@ -1,6 +1,7 @@
 use crate::mal_prelude::*;
 use core::fmt;
 use core::num::NonZeroU32;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -573,7 +574,9 @@ impl IntermediateOutput {
                 }
 
                 let mut count: usize = 0;
-                let mut from_chunk_dir = bun_paths::dirname_or_root(&chunk.final_rel_path);
+                let chunk_dir =
+                    chunk.as_referenced(bun_paths::dirname_or_root(&chunk.final_rel_path));
+                let mut from_chunk_dir: &[u8] = &chunk_dir;
                 if from_chunk_dir == b"." {
                     from_chunk_dir = b"";
                 }
@@ -585,12 +588,13 @@ impl IntermediateOutput {
                     || reference_path_style == ReferencePathStyle::OutdirRelative
                     || !import_prefix.is_empty();
                 let reference_to = |file_path: &[u8]| {
+                    let file_path: &[u8] = &chunk.as_referenced(file_path);
                     let path = if use_outdir_relative_path {
                         Path::from(file_path)
                     } else {
                         Path::relative(from_chunk_dir, file_path)
                     };
-                    chunk.content.escape_reference(path.into_portable())
+                    chunk.escape_reference(path.into_portable())
                 };
 
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
@@ -1317,6 +1321,32 @@ pub struct CrossChunkImportItem {
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
 
 impl Chunk<'_> {
+    /// `Bun.serve` has `/` for `\` in the route of an output.
+    fn as_referenced<'a>(&self, output: &'a [u8]) -> Cow<'a, [u8]> {
+        match (self.flags).contains(Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD) {
+            true => {
+                let mut route = strings::replace_char(output, b'\\', b'/');
+                if let Cow::Owned(converted) = &mut route {
+                    converted.dedup_by(|next, last| (*next, *last) == (b'/', b'/'));
+                }
+                route
+            }
+            false => Cow::Borrowed(output),
+        }
+    }
+
+    /// `path` is printed as a JavaScript or JSON string, or as a URL.
+    fn escape_reference(&self, path: Path) -> Path {
+        if !strings::contains_char(&path, b'\\') {
+            return path;
+        }
+        let backslash: &[u8] = match self.content.is_javascript() {
+            true => b"\\u005C",
+            false => b"%5C",
+        };
+        Path::from(&strings::replace_owned(&path, b"\\", backslash))
+    }
+
     /// Fills `order` with the indices of `imports_from_other_chunks`, in the order to import them.
     /// `evaluation_rank[other]` is the position of `other` in the importing
     /// chunk's `reached_chunks_in_order` (`u32::MAX` when the walk did not
@@ -1378,21 +1408,6 @@ impl<'a> Content<'a> {
     #[inline]
     pub(crate) fn is_javascript(&self) -> bool {
         matches!(self, Content::Javascript(_))
-    }
-    /// `path` is printed between double quotes, as a JavaScript string or as a URL.
-    fn escape_reference(&self, path: Path) -> Path {
-        if !strings::contains_any(&path, b"\\\"") {
-            return path;
-        }
-        let mut escaped = Path::new();
-        for byte in path.as_bytes() {
-            match byte {
-                b'\\' | b'"' if self.is_javascript() => write!(escaped, "\\x{byte:02X}"),
-                b'\\' | b'"' => write!(escaped, "%{byte:02X}"),
-                _ => escaped.extend_from_slice(core::slice::from_ref(byte)),
-            }
-        }
-        escaped
     }
     bun_core::enum_unwrap!(pub Content, Javascript => fn javascript / javascript_mut -> JavaScriptChunk);
 

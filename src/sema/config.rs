@@ -1007,6 +1007,9 @@ pub fn load_overriding(
 /// Returns the project that's checked when there's no configuration file: only `files`, or everything under `dir` if
 /// `files` is empty, with `compiler` as `compilerOptions`.
 pub fn without_config(host: &dyn Host, dir: &[u8], compiler: Json, files: Vec<Vec<u8>>) -> Project {
+    // In a configuration file, `\` is a separator.
+    let has_backslash = files.iter().any(|it| strings::contains_char(it, b'\\'));
+    let as_given = has_backslash.then(|| files.clone());
     let raw = Raw {
         compiler: compiler.into_object().unwrap_or_default(),
         files: List {
@@ -1017,7 +1020,12 @@ pub fn without_config(host: &dyn Host, dir: &[u8], compiler: Json, files: Vec<Ve
         },
         ..Raw::default()
     };
-    project_from_raw(host, &Session::new(), b"", dir, raw, Vec::new())
+    let mut project = project_from_raw(host, &Session::new(), b"", dir, raw, Vec::new());
+    if let Some(files) = as_given {
+        project.options.files.clone_from(&files);
+        project.files = files;
+    }
+    project
 }
 
 /// `getProjectReferences`. `None` is nil.

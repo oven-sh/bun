@@ -462,7 +462,11 @@ impl ShellMvBatchedTask {
         no_clobber: bool,
     ) -> Result<(), bun_sys::Error> {
         let base = bun_paths::basename(src.as_bytes());
-        Self::do_rename(cwd, src, target_fd, &Path::join(&[base]), no_clobber)
+        let path_in_dir = match base {
+            b"" | b"." | b".." => Path::new(),
+            name => Path::join(&[name]),
+        };
+        Self::do_rename(cwd, src, target_fd, &path_in_dir, no_clobber)
             .map_err(|e| e.with_path(&Path::join(&[target, base])))
     }
 

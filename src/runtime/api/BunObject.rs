@@ -17,7 +17,8 @@ pub(crate) fn get_public_path_with_asset_prefix(
     use bun_paths::Path;
 
     let relative;
-    let relative_path: &[u8] = if strings::has_prefix(to, dir) {
+    let is_below_dir = strings::has_prefix(to, dir);
+    let relative_path: &[u8] = if is_below_dir {
         bun_paths::without_trailing_sep(&to[dir.len()..])
     } else {
         relative = Path::relative(dir, to).into_portable();
@@ -27,7 +28,11 @@ pub(crate) fn get_public_path_with_asset_prefix(
         out.extend_from_slice(strings::trim_left(relative_path, b"/"));
         return;
     }
-    if strings::has_prefix(relative_path, b"..") || strings::has_prefix(relative_path, b"./") {
+    let is_on_another_volume = !is_below_dir && bun_paths::is_absolute(relative_path);
+    if is_on_another_volume
+        || strings::has_prefix(relative_path, b"..")
+        || strings::has_prefix(relative_path, b"./")
+    {
         let resolved;
         let abs_path: &[u8] = if bun_paths::is_absolute(to) {
             to

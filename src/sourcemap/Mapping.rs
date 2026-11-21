@@ -5,6 +5,7 @@ use bun_ast::Loc;
 use bun_collections::MultiArrayList;
 use bun_core::{self, Utf8Bytes};
 use bun_core::{declare_scope, scoped_log};
+use bun_paths::portable::from_portable_rooted;
 use bun_semver::String as SemverString;
 
 use crate::vlq::decode as decode_vlq;
@@ -364,8 +365,10 @@ impl Lookup {
 
 /// `source` is an entry of the `sources` of the map for `generated_file`.
 fn path_of_source(generated_file: &[u8], source: &[u8]) -> bun_paths::Path {
-    let source = bun_paths::from_portable(source);
-    bun_paths::Path::resolve(&[bun_paths::dirname_or_root(generated_file), &source])
+    let dir = bun_paths::dirname_or_root(generated_file);
+    let mut path = bun_paths::Path::resolve(&[dir, &from_portable_rooted(source)]);
+    path.copy_trailing_sep_from(source);
+    path
 }
 
 impl Mapping {

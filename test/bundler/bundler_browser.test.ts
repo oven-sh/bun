@@ -411,6 +411,23 @@ describe("bundler", () => {
       stdout: "shim shim",
     },
   });
+  itBundled("browser/BrowserFieldRemapsSpecifierThatClimbsOut", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": /* js */ `
+        import a from "q/../../a";
+        console.log(a);
+      `,
+      "/package.json": /* json */ `{ "browser": { "./a.js": "./shim.js" } }`,
+      "/a.js": /* js */ `export default "original";`,
+      "/shim.js": /* js */ `export default "shim";`,
+      "/node_modules/q/index.js": ``,
+    },
+    target: "browser",
+    run: {
+      stdout: "shim",
+    },
+  });
   itBundled("browser/BrowserFieldDisabledBuiltinStillPolyfillsOutsideScope", {
     // A browser:{events:false} in one package must not leak into a sibling package.
     files: {

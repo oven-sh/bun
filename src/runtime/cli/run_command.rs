@@ -1849,8 +1849,11 @@ impl RunCommand {
 
         if let Some(package_json) = root_dir_info.enclosing_package_json {
             if root_dir_info.package_json.is_none() {
-                // no trailing slash
-                package_json_dir = paths::dirname_or_root(package_json.source.path.text);
+                // nothing for `/`
+                package_json_dir = match paths::dirname_or_root(package_json.source.path.text) {
+                    b"/" => b"",
+                    dir => paths::without_trailing_sep(dir),
+                };
             }
         }
 
@@ -2404,8 +2407,9 @@ impl RunCommand {
                         temp_script_buffer.extend_from_slice(b"\x00pre");
                         temp_script_buffer.extend_from_slice(target_name);
 
-                        let package_json_dir =
-                            paths::dirname_or_root(package_json.source.path.text);
+                        let package_json_dir = paths::without_trailing_sep(paths::dirname_or_root(
+                            package_json.source.path.text,
+                        ));
                         bun_core::scoped_log!(
                             RUN_LOG,
                             "Running in dir `{}`",

@@ -17,6 +17,8 @@ import {
   bunExe,
   bunRun,
   type DirectoryTree,
+  isASAN,
+  isDebug,
   isLinux,
   isMacOS,
   isRoot,
@@ -2699,35 +2701,26 @@ describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("in a directory name
   });
 });
 
-test.concurrent.skipIf(isWindows).each(["require", "import"])(
-  '%s() with a backslash does not get past "exports"',
-  async load => {
-    using dir = tempDir("resolve-backslash-exports", {
-      "node_modules/pk/package.json": JSON.stringify({
-        name: "pk",
-        exports: { ".": "./index.js", "./open": "./o.js" },
-      }),
-      "node_modules/pk/index.js": `module.exports = "index";`,
-      "node_modules/pk/o.js": `module.exports = "open";`,
-      "node_modules/pk/secret.js": `module.exports = "secret";`,
-      "entry.cjs": String.raw`
-      (async () => {
-        for (const specifier of ["pk/secret.js", "pk\\secret.js", "pk\\.\\secret.js"]) {
-          try {
-            await ${load}(specifier);
-            console.log("loaded");
-          } catch {
-            console.log("refused");
-          }
+test.concurrent.skipIf(isWindows)('require() with a backslash does not get past "exports"', async () => {
+  using dir = tempDir("resolve-backslash-exports", {
+    "node_modules/pk/package.json": JSON.stringify({ name: "pk", exports: { ".": "./index.js" } }),
+    "node_modules/pk/index.js": `module.exports = "index";`,
+    "node_modules/pk/secret.js": `module.exports = "secret";`,
+    "entry.cjs": String.raw`
+      for (const specifier of ["pk/secret.js", "pk\\secret.js", "pk\\.\\secret.js"]) {
+        try {
+          require(specifier);
+          console.log("loaded");
+        } catch {
+          console.log("refused");
         }
-      })();
+      }
     `,
-    });
-    expect(await bunRun(join(String(dir), "entry.cjs"))).toSpawn("refused\nrefused\nrefused");
-  },
-);
+  });
+  expect(await bunRun(join(String(dir), "entry.cjs"))).toSpawn("refused\nrefused\nrefused");
+});
 
-// What Node does, and TypeScript for `paths` and `baseUrl`. An absolute specifier is a path in Bun.
+// What Node does, and TypeScript for `paths` and `baseUrl`. Node refuses to import `plain\a.js`. An absolute specifier is a path in Bun.
 describe.concurrent.skipIf(isWindows)("a backslash in a specifier", () => {
   const rows = [
     // specifier, the file if `\` is `/`, the file if it is part of a name, import, require
@@ -2735,8 +2728,8 @@ describe.concurrent.skipIf(isWindows)("a backslash in a specifier", () => {
     ["./a\\..\\c.js", "c.js", "a\\..\\c.js", "separator", "literal"],
     ["<dir>/a\\b.js", "a/b.js", "a\\b.js", "literal", "literal"],
     ["plain/a\\b.js", "node_modules/plain/a/b.js", "node_modules/plain/a\\b.js", "separator", "literal"],
-    ["plain\\a.js", "node_modules/plain/a.js", "node_modules/plain\\a.js", "literal", "literal"],
-    ["@s/p\\a.js", "node_modules/@s/p/a.js", "node_modules/@s/p\\a.js", "literal", "literal"],
+    ["plain\\a.js", "node_modules/plain/a.js", "node_modules/plain\\a.js", "separator", "literal"],
+    ["@s/p\\a.js", "node_modules/@s/p/a.js", "node_modules/@s/p\\a.js", "separator", "literal"],
     ["ex/exact\\key", "node_modules/ex/exact/key.js", "node_modules/ex/exact\\key.js", undefined, undefined],
     ["ex/f/a\\b", "node_modules/ex/f/a/b.js", "node_modules/ex/f/a\\b.js", "separator", "separator"],
     ["#l/a\\b", "l/a/b.js", "l/a\\b.js", "separator", "separator"],
@@ -2805,41 +2798,68 @@ describe.concurrent.skipIf(isWindows)("a backslash in a specifier", () => {
   });
 });
 
-test.concurrent.each(["require", "import"])('%s() of a package that "imports" names with backslashes', async load => {
+test.concurrent.each(["require", "import"])('%s() of a path that "imports" writes with backslashes', async load => {
   using dir = tempDir("resolve-backslash-imports", {
-    "package.json": ({ root }) =>
-      JSON.stringify({
-        imports: {
-          "#file": "plain/a\\b.js",
-          "#pattern/*": "plain\\a\\*.js",
-          "#scoped": "@scope\\pk",
-          "#secret": "@scope\\pk\\secret.js",
-          "#here": ".\\plain\\a\\b.js",
-          "#up": "..\\up.js",
-          "#rooted": join(root, "up.js").replace(/^\w:/, "").replaceAll("/", "\\"),
-        },
-      }),
-    "up.js": `module.exports = "up";`,
+    "package.json": JSON.stringify({
+      imports: {
+        "#file": "plain/a\\b.js",
+        "#pattern/*": "plain\\a\\*.js",
+        "#scoped": "@scope\\pk",
+        "#util": ".\\util",
+        "#here": ".\\src\\here.js",
+        "#here/*": ".\\src\\*.js",
+        "#alias": "@/u\\x.js",
+        "#exported/*": "*\\index.js",
+      },
+    }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "src/*": ["aliased/*"], "@/*": ["aliased/*"] } },
+    }),
+    "util.js": `module.exports = "util";`,
+    "src/here.js": `module.exports = "here";`,
+    "aliased/here.js": `module.exports = "aliased";`,
+    "aliased/u/x.js": `module.exports = "alias";`,
+    "node_modules/ex/package.json": JSON.stringify({ name: "ex", exports: { "./*": "./dist/*" } }),
+    "node_modules/ex/dist/a/index.js": `module.exports = "exported";`,
     "node_modules/plain/a/b.js": `module.exports = "plain";`,
-    "node_modules/@scope/pk/package.json": JSON.stringify({ name: "@scope/pk", main: "secret.js", exports: "./e.js" }),
-    "node_modules/@scope/pk/e.js": `module.exports = "exported";`,
-    "node_modules/@scope/pk/secret.js": `module.exports = "secret";`,
+    "node_modules/@scope/pk/package.json": JSON.stringify({ name: "@scope/pk", main: "main.js" }),
+    "node_modules/@scope/pk/main.js": `module.exports = "scoped";`,
     "entry.cjs": `
       (async () => {
-        for (const specifier of ["#file", "#pattern/b", "#scoped", "#secret", "#here", "#up", "#rooted"]) {
-          try {
-            const loaded = await ${load}(specifier);
-            console.log(loaded.default ?? loaded);
-          } catch {
-            console.log("refused");
-          }
+        for (const specifier of ["#file", "#pattern/b", "#scoped", "#util", "#here", "#here/here", "#alias", "#exported/ex/a"]) {
+          const loaded = await ${load}(specifier);
+          console.log(loaded.default ?? loaded);
         }
       })();
     `,
   });
   expect(await bunRun(join(String(dir), "entry.cjs"))).toSpawn(
-    "plain\nplain\nexported\nrefused\nrefused\nrefused\nrefused",
+    "plain\nplain\nscoped\nutil\nhere\nhere\nalias\nexported",
   );
+});
+
+test.concurrent.each([
+  ["#a", ".\\src\\a.js", "#a"],
+  ["#a", "src\\a.js", "#a"],
+  ["#a", "@src\\a", "#a"],
+  ["#a", "x/../src\\a.js", "#a"],
+  ["#a/*", "*", "#a/src\\a.js"],
+])('auto-install does not ask for what "imports" makes of %s: %s', async (key, target, specifier) => {
+  const requests: string[] = [];
+  using registry = Bun.serve({
+    port: 0,
+    fetch(request) {
+      requests.push(new URL(request.url).pathname);
+      return new Response(null, { status: 404 });
+    },
+  });
+  using dir = autoInstallTempDir("resolve-backslash-imports-install", {
+    "package.json": JSON.stringify({ imports: { [key]: target } }),
+    "entry.js": `await import(${JSON.stringify(specifier)}).catch(() => console.log("not found"));`,
+  });
+  const env = { BUN_CONFIG_REGISTRY: registry.url.href, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") };
+  expect(await bunRun(join(String(dir), "entry.js"), env)).toSpawn("not found");
+  expect(requests).toEqual([]);
 });
 
 test.concurrent.skipIf(isWindows).each([
@@ -2886,5 +2906,120 @@ test.concurrent.skipIf(isWindows).each([{ baseUrl: "." }, { paths: { "*": ["./*"
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: `console.log("literal");\n`, stderr: "", exitCode: 0 });
+  },
+);
+
+test.concurrent("an import that starts with ..\\ finds the file in the parent directory", async () => {
+  using dir = tempDir("resolve-backslash-parent", {
+    "node_modules/.keep": "",
+    "lib/y.js": `export default "y";`,
+    "src/entry.js": String.raw`import y from "..\\lib\\y.js"; console.log(y);`,
+  });
+  expect(await bunRun(join(String(dir), "src", "entry.js"))).toSpawn("y");
+});
+
+test.concurrent.skipIf(isWindows).each([
+  [{ compilerOptions: { baseUrl: "./src/", paths: { "@": [""] } } }, "index"],
+  [{ extends: "./base.json/", compilerOptions: { baseUrl: "./fallback" } }, "fallback"],
+  [{ extends: "\\base.json" }, "sibling"],
+  [{ compilerOptions: { baseUrl: ".", paths: { "@*": ["\\src\\index.js"] } } }, "index"],
+])("tsconfig.json %j", async (tsconfig, expected) => {
+  using dir = tempDir("resolve-tsconfig-spelling", {
+    "tsconfig.json": JSON.stringify(tsconfig),
+    "base.json": JSON.stringify({ compilerOptions: { paths: { "@": ["./src.js"] } } }),
+    "src.js": `export default "sibling";`,
+    "src/index.js": `export default "index";`,
+    "fallback/@.js": `export default "fallback";`,
+    "fallback/src.js": `export default "extended";`,
+    "entry.js": `import which from "@"; console.log(which);`,
+  });
+  expect(await bunRun(join(String(dir), "entry.js"))).toSpawn(expected);
+});
+
+test.concurrent.each([
+  ["pkg\\jsx", "node_modules/pkg/jsx"],
+  [".\\lib\\jsx", "lib/jsx"],
+  ["key\\jsx", "aliased"],
+])("jsxImportSource %s is %s", async (jsxImportSource, folder) => {
+  const paths = { "key\\jsx/*": ["./aliased/*"] };
+  using dir = tempDir("resolve-tsconfig-jsx-import-source", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource, paths } }),
+    [`${folder}/jsx-runtime.js`]: `export const jsx = () => "jsx";`,
+    "entry.jsx": `console.log(<a />);`,
+  });
+  expect(await bunRun(join(String(dir), "entry.jsx"))).toSpawn("jsx");
+});
+
+test.concurrent.each([
+  ["bunfig.toml", String.raw`preload = ['lib\pre.js']`],
+  ["bunfig.toml", String.raw`jsxImportSource = 'lib\jsx'`],
+  ["tsconfig.json", JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "@lib\\jsx" } })],
+])("auto-install does not ask for what %s names with %s", async (file, text) => {
+  const requests: string[] = [];
+  using registry = Bun.serve({
+    port: 0,
+    fetch(request) {
+      requests.push(new URL(request.url).pathname);
+      return new Response(null, { status: 404 });
+    },
+  });
+  using dir = autoInstallTempDir("resolve-backslash-config-install", {
+    [file]: text,
+    "entry.jsx": `console.log(<a />);`,
+  });
+  const env = { BUN_CONFIG_REGISTRY: registry.url.href, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") };
+  const { exitCode } = await bunRun(join(String(dir), "entry.jsx"), env);
+  expect({ requests, exitCode }).toEqual({ requests: [], exitCode: 1 });
+});
+
+// A build with assertions refuses an empty `baseUrl`.
+test.concurrent.skipIf(isDebug || isASAN)("an empty baseUrl is the directory of tsconfig.json", async () => {
+  using dir = tempDir("resolve-tsconfig-empty-base-url", {
+    "src.js": `export default "sibling";`,
+    "src/tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: "", paths: { "@": [""] } } }),
+    "src/index.js": `export default "index";`,
+    "src/entry.js": `import which from "@"; console.log(which);`,
+  });
+  expect(await bunRun(join(String(dir), "src", "entry.js"))).toSpawn("index");
+});
+
+test.concurrent.each(["/./", "//"])("finds a worker that is created later and written with %s", async separator => {
+  using dir = tempDir("resolve-worker-spelling", {
+    "w/old.js": `postMessage("old");`,
+    "entry.js": `
+      const start = name =>
+        new Promise((resolve, reject) => {
+          const worker = new Worker(import.meta.dir + ${JSON.stringify(separator)} + "w/" + name);
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = event => reject(event.message);
+        });
+      console.log(await start("old.js"));
+      await Bun.write(import.meta.dir + "/w/new.js", 'postMessage("new");');
+      console.log(await start("new.js"));
+      process.exit(0);
+    `,
+  });
+  expect(await bunRun(join(String(dir), "entry.js"))).toSpawn("old\nnew");
+});
+
+test.concurrent(
+  "finds a worker in a directory that is created later and written with a separator at the end",
+  async () => {
+    using dir = tempDir("resolve-worker-directory", {
+      "entry.js": `
+      const directory = require("path").join(import.meta.dir, "w/");
+      const start = () =>
+        new Promise(resolve => {
+          const worker = new Worker(directory);
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = () => resolve("missing");
+        });
+      console.log(await start());
+      await Bun.write(directory + "index.js", 'postMessage("found");');
+      console.log(await start());
+      process.exit(0);
+    `,
+    });
+    expect(await bunRun(join(String(dir), "entry.js"))).toSpawn("missing\nfound");
   },
 );

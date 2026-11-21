@@ -629,8 +629,15 @@ impl Resolver<'_> {
             };
             let mut add = |resolver: &Self, key: &[u8], target: &[u8], is_base_url: bool| {
                 let parts = [resolver.fs_ref().top_level_dir(), base_url, target];
-                let target = bun_paths::Path::resolve(&parts);
-                let target = to_relative_specifier(place.source_path, &target);
+                let target = crate::resolve_keeping_sep(&parts);
+                let names_folder = bun_paths::has_trailing_sep(&target);
+                let mut target = to_relative_specifier(place.source_path, &target);
+                if let Some(target) = &mut target
+                    && names_folder
+                    && !target.ends_with(b"/")
+                {
+                    target.push(b'/');
+                }
                 aliases.extend(target.map(|target| PathAlias {
                     folder: folder.clone(),
                     key: key.to_vec(),

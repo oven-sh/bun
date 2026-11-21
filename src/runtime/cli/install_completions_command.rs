@@ -40,13 +40,13 @@ impl InstallCompletionsCommand {
         }
 
         for (dir, bin_dir) in [
-            (env_var::BUN_INSTALL.get_not_empty(), "bin"),
-            (env_var::HOME.get_not_empty(), ".bun/bin"),
-            (env_var::HOME.get_not_empty(), ".local/bin"),
+            (env_var::BUN_INSTALL.get(), "bin"),
+            (env_var::HOME.get(), ".bun/bin"),
+            (env_var::HOME.get(), ".local/bin"),
         ] {
             let Some(dir) = dir else { continue };
-            let link_path =
-                Path::from_parts(&[dir, bin_dir.as_bytes(), Self::BUNX_NAME.as_bytes()]);
+            link_path.set(dir);
+            write!(link_path, "/{bin_dir}/{}", Self::BUNX_NAME);
             if bun_sys::symlink(exe, &link_path).is_ok() {
                 return Ok(());
             }
@@ -413,13 +413,15 @@ impl InstallCompletionsCommand {
                     let dot_zshrc: File = 'zshrc: {
                         // https://zsh.sourceforge.io/Intro/intro_3.html
                         for (dir, name) in [
-                            (env_var::ZDOTDIR.get_not_empty(), b".zshrc".as_slice()),
-                            (env_var::HOME.get_not_empty(), b".zshrc".as_slice()),
-                            (env_var::HOME.get_not_empty(), b".zshenv".as_slice()),
+                            (env_var::ZDOTDIR.get(), b"/.zshrc".as_slice()),
+                            (env_var::HOME.get(), b"/.zshrc".as_slice()),
+                            (env_var::HOME.get(), b"/.zshenv".as_slice()),
                         ] {
                             let Some(dir) = dir else { continue };
+                            let mut zshrc_filepath = Path::from(dir);
+                            zshrc_filepath.extend_from_slice(name);
                             if let Ok(f) = bun_sys::open_file_absolute_z(
-                                &Path::from_parts(&[dir, name]),
+                                &zshrc_filepath,
                                 bun_sys::OpenFlags::READ_WRITE,
                             ) {
                                 break 'zshrc f;

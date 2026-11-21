@@ -216,7 +216,7 @@ strings::to_utf16_alloc(...)             // encoding conversions
 
 Never use `std::path`. Build paths with `bun_paths::Path`. It has the syntax and the separator of the
 platform it runs on. It is NUL-terminated and derefs to `ZStr` (then `[u8]`), so `&path` goes straight
-into `bun_sys`. No input makes it panic.
+into `bun_sys`. No content or length makes it panic.
 
 ```rust
 use bun_paths::Path;
@@ -239,36 +239,47 @@ write!(path, "-{hash:x}");                            // no separator; `push_fmt
 | `OSPath`       | heap         | with `OSPathSlice`, which is UTF-16 on Windows |
 | `StackPath<N>` | inline array | signal handlers, statics that must not move    |
 
-They have the same methods. `StackPath` returns `Result<T, NameTooLong>`, is unchanged on `Err`, and
-allocates only to normalize or transcode input that might not fit. The others grow, and the syscall returns
-`ENAMETOOLONG`. Call `check_len()` where no syscall would say so, as with `exists`. They allocate 256
-units or more: to store many paths, store `to_vec()` or `to_zbox()`.
+They have the same methods, but `into_portable` and `add_current_drive` are not for `OSPath`. `StackPath`
+returns `Result<T, NameTooLong>` and is unchanged on `Err`. `from`, `set`, `extend_from_slice`, `prepend`
+and `write!` never allocate on it for `&[u8]`. The rest can. The others grow, and the
+syscall returns `ENAMETOOLONG`. Call `check_len()` where no syscall would say so, as with `exists`. They
+allocate 256 units or more: to store many paths, store `to_vec()` or `to_zbox()`.
 
 - `from`, `set`, `extend_from_slice` and `prepend` copy as is.
-- `push` and `from_parts` add one separator. `..` is kept, and an absolute part does not replace the path.
-- `push_inside` resolves `.` and `..`, and `..` cannot leave the path it is pushed onto.
-- `join`, `resolve` and `relative` are Node's, except that `resolve` does not fall back to the cwd.
-  `resolve_in_place` uses the path as the first part.
-- `push_scoped` and `save` restore the length when the guard drops.
+- `push` and `from_parts` add one separator, and trim the part's outer separators, a leading `./` and a
+  lone `.`. On an empty path a root and a lone `.` stay. `..` is kept, and an absolute part does not
+  replace the path.
+- `push_inside` resolves `.` and `..`, and `..` cannot leave the path it is pushed onto. It does not look
+  for a NUL.
+- `join`, `resolve` and `relative` are like Node's, but `resolve` does not fall back to the cwd, and on
+  Windows they read roots as Win32 does. `resolve` drops a trailing separator: `copy_trailing_sep_from`
+  puts it back, and `bun_resolver::resolve_keeping_sep` keeps only the platform's own. `resolve_in_place` uses the path as the first part. `bun_node_path` is `node:path`.
+- `push_scoped` and `save` truncate when the guard drops. Only append through the guard.
 - Arguments can be `&[u8]` or `&[u16]` and are transcoded (WTF-8/WTF-16), except for `relative` and
   `prepend`.
 
 To inspect a slice use `bun_paths::{dirname, basename, extension, stem, components, ancestors,
-strip_prefix, climbs_out, without_trailing_sep}`. `strip_prefix(path, dir)` compares whole components:
-`/ab` is not in `/a`.
+strip_prefix, climbs_out, without_trailing_sep}`. `strip_prefix(path, dir)` ends at a component: `/ab`
+is not in `/a`. It does not normalize. A share is `\\s\h\` (`dirname`, `join`, `resolve`) or `\\s\h` (the
+cwd, `without_trailing_sep`): two directories are equal if `strip_prefix(a, b) == Some(b"")`.
 
 On POSIX `\` is part of a name. Only text that moves between platforms (package.json, tsconfig.json,
 lockfiles, bundles, hashes, URLs) needs a conversion, once, where it is read or written:
 
 | Text                                        | Call                                               |
 | ------------------------------------------- | -------------------------------------------------- |
-| argv, environment, JS APIs, syscall results | nothing                                            |
-| read from a file                            | `from_portable(text)`                              |
+| argv, environment, JS APIs, syscall results | nothing, unless it is written to such a file       |
+| read from a file                            | `from_portable(text)`: `\a` is `./a`               |
+| the same, where `\a` starts at the root     | `portable::from_portable_rooted(text)`: it is `/a` |
+| a glob                                      | nothing: `\` escapes                               |
 | written to a file, hashed, used as a URL    | `path.into_portable()`, `to_portable(slice)`       |
 | portable, and shown or compared with a path | `to_native(slice)`                                 |
 | untrusted, has to stay inside a directory   | reject `portable::climbs_out(text)`                |
 | an import specifier                         | `bun_resolver::path_of_specifier(specifier, kind)` |
-| typed or read: lockfile rows, `--cwd`       | `bun_sys::existing_spelling(dir, path)`            |
+| an import specifier, read from a file       | `portable::from_portable_specifier(text)`          |
+| either a real name or portable text         | `bun_sys::existing_spelling(dir, path)`            |
+
+`portable::climbs_out` goes with `from_portable`, not with `from_portable_rooted`. On Windows reject `:` too.
 
 For a buffer that the OS fills, use `path_buffer_pool::get()` or `w_path_buffer_pool::get()`, not the
 stack: a `PathBuffer` is 96 KB on Windows.

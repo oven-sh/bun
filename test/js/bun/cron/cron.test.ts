@@ -783,6 +783,18 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
     });
   });
 
+  test.each(["tmp", ".", "./-r"])("crontab gets an absolute path when TMPDIR is %s", async TMPDIR => {
+    const fixture = `require("fs").mkdirSync("-r"); await Bun.cron.remove("t");`;
+    const BEFORE_INSTALL = `case "$1" in /*) ;; *) exit 1;; esac`;
+    expect(await run(fixture, { TMPDIR, BEFORE_INSTALL })).toEqual({
+      stdout: "",
+      stderr: "",
+      table: kept,
+      tempFiles: 0,
+      exitCode: 0,
+    });
+  });
+
   // Across file systems this copies the executable, which is over 1 GB in a debug build.
   test.serial("a line break in the path of the executable throws", async () => {
     const { stdout, ...rest } = await run(`

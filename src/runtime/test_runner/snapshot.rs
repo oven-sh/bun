@@ -599,7 +599,13 @@ impl Snapshots {
             return FileOutcome::NoTest(Error::NoTest);
         };
 
-        let mut resolved = Path::resolve(&[bun_paths::dirname_or_root(test_file.path), path]);
+        // A test is shared with other machines, and so is what it appends to `__dirname` or to a directory above.
+        let test_dir = bun_paths::dirname_or_root(test_file.path);
+        let converted = match bun_paths::ancestors(test_dir).find(|dir| path.starts_with(dir)) {
+            Some(dir) => [dir, &strings::replace_char(&path[dir.len()..], b'\\', bun_paths::SEP)].concat().into(),
+            None => bun_paths::from_portable(path),
+        };
+        let mut resolved = Path::resolve(&[test_dir, &converted]);
         resolved.copy_trailing_sep_from(path);
         let path: &[u8] = &resolved;
         if path == snapshot_file_path(test_file).as_bytes() {

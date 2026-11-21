@@ -186,7 +186,10 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     let working_directory = bun_paths::without_trailing_sep(working_directory);
     let assets_by_absolute_paths = assets
         .iter()
-        .map(|asset| paths::absolute_path(working_directory, asset))
+        .map(|asset| {
+            let path = paths::absolute_path(working_directory, asset);
+            bun_paths::without_trailing_sep(&path).to_vec()
+        })
         .collect();
     // `options::root_directory` widens a root that nobody wrote to the assets below the working directory.
     let root_directory = &options.paths.root_directory[..];

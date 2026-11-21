@@ -16,6 +16,8 @@ pub enum Error {
     UnknownEncoding,
     #[error("WriteFailed")]
     WriteFailed,
+    #[error("MaxPathExceeded")]
+    MaxPathExceeded,
     #[error("MissingData")]
     MissingData,
     #[error("InvalidHash")]
@@ -92,6 +94,7 @@ impl Error {
             Self::InvalidModuleType => "InvalidModuleType",
             Self::UnknownEncoding => "UnknownEncoding",
             Self::WriteFailed => "WriteFailed",
+            Self::MaxPathExceeded => "MaxPathExceeded",
             Self::MissingData => "MissingData",
             Self::InvalidHash => "InvalidHash",
             Self::InvalidSourceMap => "InvalidSourceMap",

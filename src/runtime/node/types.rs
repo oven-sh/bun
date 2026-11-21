@@ -742,8 +742,8 @@ pub(crate) trait PathLikeExt {
     fn os_path(&self) -> Result<OSPath, NameTooLong>
     where
         Self: Sized;
-    /// On Windows it is normalized, and can be longer than `MAX_PATH`.
-    fn os_path_kernel32(&self) -> OSPath
+    /// On Windows it is normalized unless it names a device, and `C:\a` can be longer than `MAX_PATH`.
+    fn os_path_kernel32(&self, syscall: bun_sys::Tag) -> bun_sys::Maybe<OSPath>
     where
         Self: Sized;
     fn from_js(
@@ -819,9 +819,13 @@ impl PathLikeExt for PathLike<'_> {
         let sliced = self.slice();
         buf.set(sliced);
         if cfg!(windows) && bun_paths::is_absolute(sliced) {
-            match bun_paths::has_leading_sep(sliced) {
-                true => buf.add_current_drive(),
-                false => buf.make_long_path(),
+            if bun_paths::has_leading_sep(sliced) {
+                buf.add_current_drive();
+            } else {
+                buf.make_long_path();
+                if sliced.ends_with(b"\\") {
+                    buf.push_trailing_sep();
+                }
             }
         }
         buf
@@ -835,15 +839,32 @@ impl PathLikeExt for PathLike<'_> {
     }
 
     #[inline]
-    fn os_path_kernel32(&self) -> OSPath {
-        if cfg!(not(windows)) {
-            return OSPath::from(self.slice());
+    fn os_path_kernel32(&self, syscall: bun_sys::Tag) -> bun_sys::Maybe<OSPath> {
+        let sliced = self.slice();
+        #[cfg(not(windows))]
+        {
+            let _ = syscall;
+            Ok(OSPath::from(sliced))
         }
-        let mut with_drive = Path::from(self.slice());
-        with_drive.add_current_drive();
-        let mut path = OSPath::from(with_drive.as_bytes());
-        path.make_long_path();
-        path
+        #[cfg(windows)]
+        {
+            let is_device = matches!(
+                *sliced,
+                [b'/' | b'\\', b'/' | b'\\', b'.' | b'?', b'/' | b'\\', ..]
+            );
+            let mut path = match is_device || sliced.is_empty() {
+                true => Path::from(sliced),
+                false => Path::join(&[sliced]),
+            };
+            let keeps_sep = is_device
+                || bun_paths::root(&path).len() == path.len()
+                || bun_paths::has_leading_sep(sliced) && sliced.ends_with(b"\\");
+            if !keeps_sep {
+                path.truncate(bun_paths::without_trailing_sep(&path).len());
+            }
+            path.add_current_drive();
+            bun_sys::long_path(&path, syscall).map_err(|err| err.with_path(sliced))
+        }
     }
 
     fn from_js(

@@ -284,9 +284,19 @@ impl<'a> Transpiler<'a> {
                 // Bust directory cache and try again
                 let top_level_dir = Fs::FileSystem::get().top_level_dir();
                 let buster_name = bun_paths::Path::resolve(&[top_level_dir, entry_point, b".."]);
+                let mut busted = self.resolver.bust_dir_cache(&buster_name);
+                // `load_as_file` caches the listing under the entry point's own spelling.
+                if bun_paths::is_absolute(entry_point) {
+                    let as_spelled = bun_paths::dirname_or_root(entry_point);
+                    busted |= self.resolver.bust_dir_cache(as_spelled);
+                    if bun_paths::has_trailing_sep(entry_point) {
+                        let directory = bun_paths::Path::resolve(&[top_level_dir, entry_point]);
+                        busted |= self.resolver.bust_dir_cache(&directory);
+                    }
+                }
 
                 // Only re-query if we previously had something cached.
-                if self.resolver.bust_dir_cache(&buster_name) {
+                if busted {
                     if let Ok(result) = self._resolve_entry_point(entry_point, dot_slash) {
                         return self.reject_unbundleable_entry_point(result, entry_point);
                     }
@@ -2282,17 +2292,19 @@ impl<'a> Transpiler<'a> {
 
     fn normalize_entry_point_path(_entry: &[u8]) -> &'static [u8] {
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
-        let mut entry = bun_paths::Path::resolve(&[top_level_dir, _entry]);
-        entry.copy_trailing_sep_from(_entry);
+        let absolute = bun_resolver::resolve_keeping_sep(&[top_level_dir, _entry]);
 
         // If the absolutized path does not exist on disk, return the original
         // input unchanged so bare specifiers (`react`) and URLs are left alone.
-        if !bun_sys::exists_z(&entry) {
+        if !bun_sys::exists_z(&absolute) {
             return crate::linker::dupe(_entry);
         }
 
-        let mut entry = bun_paths::Path::relative(top_level_dir, &entry);
-        entry.copy_trailing_sep_from(_entry);
+        let mut entry = bun_paths::Path::relative(top_level_dir, &absolute);
+        // `src/` can be `src.js`, and `js/` cannot be `js.js`.
+        if entry.len() <= 2 && entry.as_bytes() != b".." {
+            entry.copy_trailing_sep_from(&absolute);
+        }
 
         if !entry.starts_with(b"./") {
             // Entry point paths without a leading "./" are interpreted as package

@@ -4,12 +4,12 @@ use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::Store;
 use bun_archive::tar;
-use bun_core::{self, Output, Utf8Bytes, ZBox};
+use bun_core::{self, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult};
 use bun_jsc::{StringJsc as _, SysErrorJsc};
-use bun_paths::{Path, portable};
+use bun_paths::{OSPathChar, Path, from_portable, portable};
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
 use bun_sys::{self, Fd, FdDirExt as _, Mode};
@@ -1025,7 +1025,9 @@ fn compress_gzip(data: &[u8], level: bun_deflate::Level) -> Result<Vec<u8>, Comp
 
 /// Check if a path is safe (no absolute paths or path traversal)
 pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
-    !pathname.is_empty() && !portable::climbs_out(pathname) && !portable::has_dot_dot(pathname)
+    pathname.first().is_some_and(|&c| !portable::is_sep(c))
+        && pathname.get(1) != Some(&b':')
+        && !portable::has_dot_dot(pathname)
 }
 
 /// One pattern of the `glob` option.
@@ -1115,6 +1117,13 @@ fn extract_to_disk_filtered(
         let Some(destination) = bun_archive::entry_destination(name) else {
             continue;
         };
+        if name.first() == Some(&(b'/' as OSPathChar)) {
+            let name = Path::from(name);
+            let below_root = from_portable(strings::trim_left(&name, b"/\\"));
+            if bun_paths::climbs_out(&below_root) {
+                continue;
+            }
+        }
         let pathname_z = &Path::from(&destination).into_portable();
         let pathname = pathname_z.as_bytes();
 

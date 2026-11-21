@@ -614,7 +614,7 @@ impl RuntimeTranspilerCache {
 
         let top = FileSystem::get().top_level_dir();
 
-        if let Some(dir) = env_var::XDG_CACHE_HOME.get_not_empty() {
+        if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
             return Some(Path::resolve(&[top, dir, b"bun/@t@"]));
         }
 
@@ -624,7 +624,7 @@ impl RuntimeTranspilerCache {
         } else {
             b".bun/install/cache/@t@"
         };
-        let home = env_var::HOME.get_not_empty()?;
+        let home = env_var::HOME.get()?;
         Some(Path::resolve(&[top, home, cache_subdir]))
     }
 

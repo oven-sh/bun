@@ -303,7 +303,7 @@ impl TSConfigJSON {
         out
     }
 
-    /// Reads a path, which can have ${configDir} in it.
+    /// Support ${configDir}, but avoid allocating when possible.
     ///
     /// https://github.com/microsoft/TypeScript/issues/57485
     ///
@@ -316,11 +316,10 @@ impl TSConfigJSON {
     // We convert it to an absolute path during module resolution, so we shouldn't need to do that here.
     // https://github.com/microsoft/TypeScript/blob/ef802b1e4ddaf8d6e61d6005614dd796520448f8/src/compiler/commandLineParser.ts#L3243-L3245
     fn str_replacing_templates(
-        input: &[u8],
+        input: Box<[u8]>,
         source: &bun_ast::Source,
     ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
         const TEMPLATE: &[u8] = b"${configDir}";
-        let input = from_portable(input);
         let mut remaining: &[u8] = &input;
         let mut string_builder = bun_core::StringBuilder {
             len: 0,
@@ -336,8 +335,9 @@ impl TSConfigJSON {
             remaining = &remaining[index + TEMPLATE.len()..];
         }
 
+        // If we didn't find any template variables, return the original string without allocating.
         if remaining.len() == input.len() {
-            return Ok(input.into());
+            return Ok(input);
         }
 
         string_builder.count_z(remaining);
@@ -477,10 +477,12 @@ impl TSConfigJSON {
             // Parse "baseUrl"
             if let Some(base_url_prop) = base_url_v {
                 if let Some(base_url) = base_url_prop.as_str() {
-                    result.base_url = match Self::str_replacing_templates(base_url, source) {
-                        Ok(v) => v,
-                        Err(_) => return Ok(None),
-                    };
+                    let base_url = portable::from_portable_rooted(base_url);
+                    result.base_url =
+                        match Self::str_replacing_templates(Box::from(base_url), source) {
+                            Ok(v) => v,
+                            Err(_) => return Ok(None),
+                        };
                     has_base_url = true;
                 }
             }
@@ -549,7 +551,8 @@ impl TSConfigJSON {
             // Parse "jsxImportSource"
             if let Some(jsx_prop) = jsx_import_source_v {
                 if let Some(str) = jsx_prop.as_str() {
-                    result.jsx.package_name = str.to_vec().into();
+                    result.jsx.package_name =
+                        portable::from_portable_specifier(str).into_owned().into();
                     result.jsx.set_import_source();
                     result.jsx_flags.insert(JsxField::ImportSource);
                 }
@@ -667,11 +670,18 @@ impl TSConfigJSON {
                                         });
                                         if let Some(str_) = item.as_str() {
                                             let item_loc = this_item_loc;
-                                            let str =
-                                                match Self::str_replacing_templates(str_, source) {
-                                                    Ok(v) => v,
-                                                    Err(_) => return Ok(None),
-                                                };
+                                            // For a pattern, `\a` is below `baseUrl`.
+                                            let str_ = match strings::contains_char(key, b'*') {
+                                                true => from_portable(str_),
+                                                false => portable::from_portable_rooted(str_),
+                                            };
+                                            let str = match Self::str_replacing_templates(
+                                                Box::from(str_),
+                                                source,
+                                            ) {
+                                                Ok(v) => v,
+                                                Err(_) => return Ok(None),
+                                            };
                                             // errdefer allocator.free(str) — handled by Drop.
                                             if Self::is_valid_tsconfig_path_pattern(
                                                 &str, log, source, item_loc,

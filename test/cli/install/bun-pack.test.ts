@@ -4602,6 +4602,23 @@ describe.concurrent(".gitignore/.npmignore", () => {
 });
 
 describe.concurrent("bins", () => {
+  test.each([
+    [{ files: ["nothing"], bin: "/../secret.txt" }, []],
+    [{ files: ["/../secret.txt"] }, []],
+    [{ files: ["**/*", "!secret.txt\\"] }, ["package/cli.js"]],
+    [{ files: ["cli.js\\"] }, ["package/cli.js"]],
+  ])("%j", async (fields, packed) => {
+    using dir = tempDir("pack-manifest-paths", {
+      "package.json": JSON.stringify({ name: "p", version: "1.0.0", ...fields }),
+      "secret.txt": "",
+      "cli.js": "",
+    });
+
+    const { exitCode } = await runPack(dir);
+    expect(tarballEntries(join(dir, "p-1.0.0.tgz")).sort()).toEqual([...packed, "package/package.json"]);
+    expect(exitCode).toBe(0);
+  });
+
   test('a backslash separates in "bin" and "files"', async () => {
     using dir = tempDir("pack-backslash-manifest", {
       "package.json": JSON.stringify({

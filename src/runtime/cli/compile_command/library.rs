@@ -26,6 +26,7 @@ const EXTERNAL_PACKAGE_FIELDS: [&[u8]; 3] = [
 pub(super) enum LibraryError {
     OutdirHoldsProject { outdir: Vec<u8> },
     EntryPointInsideOutdir { entry_point: Vec<u8> },
+    BackslashInEntryPoint { entry_point: Vec<u8> },
     UnparsablePackageJson { path: Vec<u8> },
     NoEntryPoint { directory: Vec<u8> },
 }
@@ -43,6 +44,11 @@ impl LibraryError {
                 b"the entry point ",
                 entry_point,
                 b" is inside --outdir, where it would be overwritten. Choose another --outdir",
+            ]),
+            Self::BackslashInEntryPoint { entry_point } => write(&[
+                b"the entry point ",
+                entry_point,
+                b" has a backslash in its name, which is a separator in package.json",
             ]),
             Self::UnparsablePackageJson { path } => write(&[path, b" could not be parsed"]),
             Self::NoEntryPoint { directory } => write(&[
@@ -153,6 +159,14 @@ fn find_external_packages(
         |entry_point: &[u8]| is_inside(&outdir, &absolute_path(working_directory, entry_point));
     if let Some(entry_point) = entry_points.iter().find(|it| is_overwritten(it)) {
         return Err(LibraryError::EntryPointInsideOutdir {
+            entry_point: entry_point.to_vec(),
+        });
+    }
+    let has_backslash = |entry_point: &[u8]| {
+        bun_core::strings::contains_char(bun_paths::basename(entry_point), b'\\')
+    };
+    if let Some(entry_point) = entry_points.iter().find(|it| has_backslash(it)) {
+        return Err(LibraryError::BackslashInEntryPoint {
             entry_point: entry_point.to_vec(),
         });
     }

@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use bun_paths::basename;
 use bun_sema::atom::{Interner, known};
 use bun_sema::bind::{BindOptions, RuntimeBindOptions};
 use bun_sema::file_analysis::{FileInputs, analyze_file};
@@ -7,7 +8,7 @@ use bun_sema::fold::FoldOptions;
 use bun_sema::hir::{File, FileKind, find_transpiled_mark};
 use bun_sema::import_sites::{ImportSpecifier, JsxMode};
 use bun_sema::module_format::DeclaredModuleType;
-use bun_sema::resolve::{ScriptKind, basename, is_declaration_file_name};
+use bun_sema::resolve::{ScriptKind, is_declaration_file_name};
 use bun_sema::session::Session;
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 

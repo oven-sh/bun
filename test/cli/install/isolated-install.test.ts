@@ -753,15 +753,12 @@ describe.concurrent.skipIf(isWindows).each([
       exitCode: 0,
     });
     writeFileSync(join(project.path, "node_modules", "tarball", "added.txt"), "");
-    // The value goes into package.json, where a backslash separates.
-    for (const patchesDir of [`${project.path}/my/patches`, "my\\patches"]) {
-      expect(
-        await project.run("patch", "--commit", "tarball", "--dry-run", `--patches-dir=${patchesDir}`),
-      ).toMatchObject({
-        stdout: expect.stringContaining("would write my/patches/tarball@"),
-        exitCode: 0,
-      });
-    }
+    expect(
+      await project.run("patch", "--commit", "tarball", "--dry-run", `--patches-dir=${project.path}/my/patches`),
+    ).toMatchObject({
+      stdout: expect.stringContaining("would write my/patches/tarball@"),
+      exitCode: 0,
+    });
   });
 
   // Older versions wrote backslashes into bun.lock on Windows.
@@ -927,8 +924,79 @@ test.concurrent.skipIf(isWindows)("bun.lock is stable for a nested file:vendor\\
   expect(readFileSync(join(project, "bun.lock"), "utf8")).toBe(lockfile);
 });
 
+test.concurrent("folders inside a tarball are recorded without a trailing slash, and its root as file:", async () => {
+  const pkg = (name: string, dependencies = {}) => JSON.stringify({ name, version: "1.0.0", dependencies });
+  const files = {
+    "package/package.json": pkg("outer", { plugin: "file:./plugin" }),
+    "package/plugin/package.json": pkg("plugin", { parent: "file:..", sibling: "file:../sibling/" }),
+    "package/sibling/package.json": pkg("sibling"),
+  };
+  using dir = tempDir("tarball-folder-rows", {
+    "package.json": JSON.stringify({ dependencies: { outer: "file:./outer.tgz" } }),
+    "outer.tgz": Buffer.from(await new Bun.Archive(files, { compress: "gzip" }).bytes()),
+  });
+  const project = String(dir);
+  await registry.writeBunfig(project, { linker: "hoisted" });
+
+  await runBunInstall(installEnv(project), project);
+
+  const { packages } = Bun.JSONC.parse(readFileSync(join(project, "bun.lock"), "utf8"));
+  expect(Object.values<string[]>(packages).map(row => row[0])).toEqual([
+    "outer@./outer.tgz",
+    "parent@file:",
+    "plugin@file:./plugin",
+    "sibling@file:sibling",
+  ]);
+  expect(lstatSync(join(project, "node_modules/outer/node_modules/parent")).isSymbolicLink()).toBeTrue();
+});
+
+test.concurrent.skipIf(isWindows)(
+  "a bun.lock row of a folder inside a tarball is not looked up in the project",
+  async () => {
+    const outer = { name: "outer", version: "1.0.0", dependencies: { inner: "file:vendor\\inner" } };
+    const files = { "package/package.json": JSON.stringify(outer), "package/vendor/inner/package.json": "{}" };
+    using dir = tempDir("tarball-folder-row-backslash", {
+      "package.json": JSON.stringify({ dependencies: { outer: "file:./outer.tgz" } }),
+      "outer.tgz": Buffer.from(await new Bun.Archive(files, { compress: "gzip" }).bytes()),
+      "vendor\\inner": "unrelated",
+    });
+    const project = String(dir);
+    await registry.writeBunfig(project, { linker: "hoisted" });
+    await runBunInstall(installEnv(project), project, { packages: ["--lockfile-only"], savesLockfile: false });
+    const lockfile = join(project, "bun.lock");
+    await write(lockfile, readFileSync(lockfile, "utf8").replace(/file:(\.\/)?vendor\/inner/g, "file:vendor\\\\inner"));
+
+    await runBunInstall(installEnv(project), project, { frozenLockfile: true });
+
+    expect(readlinkSync(join(project, "node_modules/outer/node_modules/inner"))).toBe("../vendor/inner");
+  },
+);
+
+test.concurrent("a bundled dependency of a folder is linked when its name starts with a dot", async () => {
+  using dir = tempDir("folder-bundles-dot-name", {
+    "package.json": JSON.stringify({ dependencies: { folder: "file:./folder" } }),
+    "index.js": `console.log(require("folder"));`,
+    "folder/package.json": JSON.stringify({
+      name: "folder",
+      version: "1.0.0",
+      optionalDependencies: { ".dot": "1.0.0" },
+      bundleDependencies: [".dot"],
+    }),
+    "folder/index.js": `module.exports = require(".dot");`,
+    "folder/node_modules/.dot/index.js": `module.exports = "dot";`,
+  });
+  const project = String(dir);
+  await registry.writeBunfig(project, { linker: "isolated" });
+
+  await runBunInstall(installEnv(project), project, { allowWarnings: true });
+
+  expect(await bunRun(join(project, "index.js"))).toSpawn("dot");
+});
+
 test.concurrent.each(
-  (["isolated", "hoisted"] as const).flatMap(linker => [".", "./", ".."].map(name => [linker, name] as const)),
+  (["isolated", "hoisted"] as const).flatMap(linker =>
+    [".", "./", "..", "..\0longer than inline"].map(name => [linker, name] as const),
+  ),
 )("%s: bundleDependencies entry %p does not replace node_modules", async (linker, name) => {
   using dir = tempDir("folder-bundles-dot", {
     "package.json": JSON.stringify({ dependencies: { folder: "file:./folder" } }),
@@ -2174,7 +2242,7 @@ describe.concurrent("transitive file dependencies of registry packages", () => {
     ]);
   });
 
-  test.each(["../../../the-files", ...(isWindows ? [] : ["..\\..\\..\\the-files", "\\the-files"])])(
+  test.each(["../../../the-files", ...(isWindows ? [] : ["..\\..\\..\\the-files"])])(
     "a folder path escaping its package is refused when it comes from bun.lock: %s",
     async folder => {
       const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

@@ -2447,21 +2447,27 @@ describe("the trusted set", () => {
   });
 
   // `C:` is the current directory of that drive, not `C:\`.
-  test.concurrent("a dependency's script gets the entries of PATH with their trailing separators", async () => {
-    const printPath = `${bunExe()} -e 'await Bun.write("path.txt", String(process.env.PATH))'`;
-    using ctx = await project("hoisted", {
-      "package.json": { name: "foo", dependencies: { native: "file:./native" }, trustedDependencies: ["native"] },
-      "native/package.json": { name: "native", version: "1.0.0", scripts: { postinstall: printPath } },
-    });
-    const entries = [parse(ctx.packageDir).root, ctx.packageDir + sep];
+  test.concurrent(
+    "a dependency's script gets the entries of PATH without a trailing separator, but for a root",
+    async () => {
+      const printPath = `${bunExe()} -e 'await Bun.write("path.txt", String(process.env.PATH))'`;
+      using ctx = await project("hoisted", {
+        "package.json": { name: "foo", dependencies: { native: "file:./native" }, trustedDependencies: ["native"] },
+        "native/package.json": { name: "native", version: "1.0.0", scripts: { postinstall: printPath } },
+      });
+      const { root } = parse(ctx.packageDir);
+      const extra = join(ctx.packageDir, "extra");
 
-    const { err, exitCode } = await bun(ctx, ["install"], { PATH: [ctx.env.PATH, ...entries].join(delimiter) });
+      const { err, exitCode } = await bun(ctx, ["install"], {
+        PATH: [ctx.env.PATH, root, extra + sep].join(delimiter),
+      });
 
-    expect(err).not.toContain("error:");
-    const path = await textOf(ctx.packageDir, "node_modules", "native", "path.txt");
-    expect(path!.split(delimiter)).toEqual(expect.arrayContaining(entries));
-    expect(exitCode).toBe(0);
-  });
+      expect(err).not.toContain("error:");
+      const path = await textOf(ctx.packageDir, "node_modules", "native", "path.txt");
+      expect(path!.split(delimiter)).toEqual(expect.arrayContaining([root, extra]));
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // A working directory keeps the case it was typed in, and `bun run` writes PATH from it.
   test.concurrent.skipIf(!isWindows)(

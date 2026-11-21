@@ -39,7 +39,7 @@ fn node_module_paths_list(in_str: &BunString, use_dirname: bool) -> Vec<BunStrin
     };
     let full_path = Path::resolve(&[top_level_dir, base_path]);
     bun_paths::ancestors(&full_path)
-        .filter(|dir| bun_paths::basename(dir) != b"node_modules")
+        .filter(|dir| bun_paths::components(dir).next_back() != Some(b"node_modules"))
         .map(|dir| BunString::clone_utf8(&Path::from_parts(&[dir, b"node_modules"])))
         .collect()
 }

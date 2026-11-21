@@ -1028,8 +1028,9 @@ pub mod bv2_impl {
                     };
                     let specifier = bun_resolver::path_of_specifier(specifier, kind);
                     let parts = [base, source_file, b"..", &specifier];
-                    let joined = bun_paths::Path::resolve(&parts).into_portable();
-                    let (key, _) = self.map.get_key_value(joined.as_bytes())?;
+                    let mut joined = bun_paths::Path::resolve(&parts);
+                    joined.copy_trailing_sep_from(&specifier);
+                    let (key, _) = self.map.get_key_value(joined.into_portable().as_bytes())?;
                     Some(Self::result_for_key(dupe(key.as_ref())))
                 }
 

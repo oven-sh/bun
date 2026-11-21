@@ -16,6 +16,7 @@ use bun_ast::{E, Expr, ExprTag, expr::Data as ExprData};
 use bun_parsers::json as json_parser;
 use bun_parsers::toml::TOML;
 use bun_paths::from_portable;
+use bun_paths::portable::from_portable_specifier;
 
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
@@ -44,15 +45,11 @@ fn estring_to_path(s: &E::EString, bump: &Bump) -> Box<[u8]> {
     from_portable(s.string(bump).expect("OOM")).into()
 }
 
-/// For what is imported: a `data:` URL and a query are not paths.
 fn estring_to_specifier(s: &E::EString, bump: &Bump) -> Box<[u8]> {
     let text = s.string(bump).expect("OOM");
-    let end_of_path = match text.starts_with(b"data:") {
-        true => 0,
-        false => bun_core::strings::index_of_char_usize(text, b'?').unwrap_or(text.len()),
-    };
-    let (path, rest) = text.split_at(end_of_path);
-    [&from_portable(path), rest].concat().into()
+    let query = bun_core::strings::index_of_char_usize(text, b'?').unwrap_or(text.len());
+    let (path, query) = text.split_at(query);
+    [&from_portable_specifier(path), query].concat().into()
 }
 
 /// Macro-remap parsing (the `PackageJSON.parseMacrosJSON` shape),
@@ -124,7 +121,7 @@ fn parse_macros_json(
                 continue;
             };
             let remap_value_str = match &remap_value.data {
-                ExprData::EString(s) if s.len() > 0 => estring_to_owned(s, bump),
+                ExprData::EString(s) if s.len() > 0 => estring_to_specifier(s, bump),
                 _ => {
                     log.add_warning_fmt(
                         Some(json_source),
@@ -1079,13 +1076,13 @@ impl<'a> Parser<'a, '_> {
                     let mut names: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                     for item in items {
                         self.expect_string(item)?;
-                        let name = item.as_string(self.bump).unwrap_or(b"");
-                        let is_path =
-                            !name.starts_with(b"data:") && !bun_glob::detect_glob_syntax(name);
-                        names.push(match is_path {
-                            true => from_portable(name).into(),
-                            false => name.into(),
-                        });
+                        names.push(estring_to_owned(
+                            item.data
+                                .e_string()
+                                .expect("infallible: variant checked")
+                                .get(),
+                            self.bump,
+                        ));
                     }
                     self.ctx.args.entry_points = names;
                 }
@@ -1170,7 +1167,7 @@ impl<'a> Parser<'a, '_> {
         }
         if let Some(expr) = json.get(b"jsxImportSource") {
             if let Some(value) = expr.as_string(self.bump) {
-                jsx_import_source = Box::<[u8]>::from(value);
+                jsx_import_source = from_portable_specifier(value).into();
             }
         }
         if let Some(expr) = json.get(b"jsxFragment") {

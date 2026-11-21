@@ -6,7 +6,8 @@ use crate::bun_fs::FileSystem;
 use bun_collections::DynamicBitSet;
 use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
-use bun_paths::Path;
+use bun_paths::portable::from_portable_rooted;
+use bun_paths::{Path, from_portable};
 use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPool;
@@ -2878,15 +2879,14 @@ fn enqueue_local_tarball(
     // can be reallocated concurrently by the main thread while processing
     // other dependencies (e.g. `appendPackage` / `StringBuilder.allocate`
     // in `Package.fromNPM`).
-    let on_disk = resolution.local_tarball_path(&this.lockfile.buffers.string_bytes);
     let (tarball_path, normalize) =
         match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
-            None => (stored_string(&on_disk), true),
+            None => (stored_string(&from_portable_rooted(path)), true),
             Some(base_dir) => (
                 stored_string(&Path::resolve(&[
                     FileSystem::get().top_level_dir(),
                     base_dir,
-                    &on_disk,
+                    &from_portable(path),
                 ])),
                 false,
             ),
@@ -3734,13 +3734,13 @@ fn get_or_put_resolved_package(
 
         &dependency::Value::Folder(folder) => {
             let res: FolderResolutionValue = 'res: {
+                let folder_path =
+                    declared_path(&this.lockfile, dependency_id, folder, version_was_replaced);
+                let escapes = crate::bin::bin_target_escapes_package_dir(&folder_path);
                 // A rule of the root package.json wrote the path: read like a root `file:` row.
                 let from_root_rule = version_was_replaced
                     && !behavior.is_bundled()
-                    && (!crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
-                        || this.lockfile.is_trusted_folder_dependency(dependency_id));
-                let folder_path =
-                    declared_path(&this.lockfile, dependency_id, folder, version_was_replaced);
+                    && (!escapes || this.lockfile.is_trusted_folder_dependency(dependency_id));
                 if from_root_rule || this.lockfile.is_workspace_dependency(dependency_id) {
                     break 'res resolve_project_folder(this, version, &folder_path);
                 }
@@ -3750,10 +3750,7 @@ fn get_or_put_resolved_package(
 
                 // transitive folder dependencies do not have their dependencies resolved
                 // Nothing installs a bundled one: the linkers and `bun patch` refuse its path.
-                if !behavior.is_bundled()
-                    && crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
-                    && !path_is_top_level_relative
-                {
+                if !behavior.is_bundled() && escapes && !path_is_top_level_relative {
                     break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
                 }
 
@@ -3830,7 +3827,7 @@ fn get_or_put_resolved_package(
                 *symlink,
                 version_was_replaced,
             );
-            let base = if dependency::is_link_path(&path) {
+            let base = if dependency::is_link_path(this.lockfile.str(symlink)) {
                 GlobalOrRelative::Relative(dependency::version::Tag::Symlink)
             } else {
                 if let Err(why) = try_global_link_dir(this) {
@@ -3903,7 +3900,10 @@ fn declared_path(
     version_was_replaced: bool,
 ) -> Path {
     let path = lockfile.str(&path);
-    match bun_paths::from_portable(path) {
+    if cfg!(windows) {
+        return Path::from(path).into_portable();
+    }
+    match from_portable(path) {
         Cow::Owned(converted)
             if version_was_replaced || !lockfile.is_dependency_of_local_package(dependency_id) =>
         {

@@ -8,7 +8,7 @@ use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
-use bun_paths::{NameTooLong, Path};
+use bun_paths::Path;
 
 /// Network policy for this install.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -34,6 +34,8 @@ pub struct Options {
 
     pub(crate) global_bin_dir: bun_sys::Fd,
     pub(crate) explicit_global_directory: &'static [u8],
+    /// The workspace root, which `bun link` does not move to.
+    pub(crate) root_above_link: Option<&'static [u8]>,
     /// destination directory to link bins into
     // must be a variable due to global installs and bunx
     pub bin_path: &'static ZStr,
@@ -133,6 +135,7 @@ impl Default for Options {
             global: false,
             global_bin_dir: bun_sys::Fd::INVALID,
             explicit_global_directory: b"",
+            root_above_link: None,
             bin_path: bun_paths::path_literal!("node_modules/.bin"),
             did_override_default_scope: false,
             registry_from_command_line: false,
@@ -273,13 +276,13 @@ impl Options {
         self.log_level != LogLevel::Silent && self.do_.contains(Do::SUMMARY)
     }
 
-    /// What a relative `$BUN_INSTALL` is resolved against. With `--global`, the project itself is found through it.
+    /// What a relative `$BUN_INSTALL` starts at. With `--global`, the project itself is found through it.
     pub fn env_base_dir(&self) -> &'static [u8] {
         let fs = bun_paths::fs::FileSystem::instance();
         if self.global {
             fs.initial_top_level_dir()
         } else {
-            fs.top_level_dir()
+            self.root_above_link.unwrap_or_else(|| fs.top_level_dir())
         }
     }
 
@@ -627,38 +630,23 @@ fn make_open_dir(path: &[u8]) -> crate::Result<bun_sys::Fd> {
         .map_err(Into::into)
 }
 
-/// Resolves `<dir>/<subdir>`. `dir` comes from the environment and can have any length.
-pub(crate) fn resolve_env_dir(
-    base_dir: &[u8],
-    dir: &[u8],
-    subdir: &[u8],
-) -> Result<Path, NameTooLong> {
-    Path::resolve(&[base_dir, &expand_home(dir), subdir]).check_len()
+/// Opens `<dir>/<subdir>`. `dir` comes from the environment and can have any length.
+fn make_open_dir_under(base_dir: &[u8], dir: &[u8], subdir: &[u8]) -> crate::Result<bun_sys::Fd> {
+    make_open_dir(&Path::resolve(&[base_dir, &expand_home(dir), subdir]).check_len()?)
 }
 
-/// The two differ when a symlink comes before a `..`.
-pub fn env_dir_resolved_and_as_written(base_dir: &[u8], dir: &[u8]) -> [Box<[u8]>; 2] {
-    let dir = expand_home(dir);
-    let resolved = Path::resolve(&[base_dir, &dir]);
-    if cfg!(windows) || bun_paths::is_absolute(&dir) {
-        return [resolved.as_bytes().into(), dir];
-    }
-    let as_written = Path::from_parts(&[base_dir, &dir]);
-    [resolved, as_written].map(|path| path.as_bytes().into())
-}
-
-/// Unlike [`resolve_env_dir`], opens a fully qualified `dir` as it is written.
-fn make_open_env_dir(base_dir: &[u8], dir: &[u8]) -> crate::Result<bun_sys::Fd> {
-    let as_written = expand_home(dir);
-    if bun_paths::is_fully_qualified(&as_written) {
-        return make_open_dir(&as_written);
-    }
-    make_open_dir(&Path::resolve(&[base_dir, &as_written]))
+pub(crate) fn has_relative_env_dir() -> bool {
+    let dirs = [
+        env_var::BUN_INSTALL.get_not_empty(),
+        env_var::XDG_CACHE_HOME.get_not_empty(),
+        env_var::HOME.get_not_empty(),
+    ];
+    (dirs.into_iter().flatten()).any(|dir| !bun_paths::is_absolute(&expand_home(dir)))
 }
 
 pub fn open_global_dir(base_dir: &[u8], explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
-    if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get_not_empty() {
-        return make_open_env_dir(base_dir, home_dir);
+    if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
+        return make_open_dir(&expand_home(home_dir));
     }
 
     if !explicit_global_dir.is_empty() {
@@ -666,18 +654,14 @@ pub fn open_global_dir(base_dir: &[u8], explicit_global_dir: &[u8]) -> crate::Re
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get_not_empty() {
-        return make_open_dir(&resolve_env_dir(base_dir, home_dir, b"install/global")?);
+        return make_open_dir_under(base_dir, home_dir, b"install/global");
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
         .get_not_empty()
         .or_else(|| env_var::HOME.get_not_empty())
     {
-        return make_open_dir(&resolve_env_dir(
-            base_dir,
-            home_dir,
-            b".bun/install/global",
-        )?);
+        return make_open_dir_under(base_dir, home_dir, b".bun/install/global");
     }
 
     Err(crate::Error::NoGlobalDirectoryFound)
@@ -687,8 +671,8 @@ pub(crate) fn open_global_bin_dir(
     base_dir: &[u8],
     opts_: Option<&Api::BunInstall>,
 ) -> crate::Result<bun_sys::Fd> {
-    if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get_not_empty() {
-        return make_open_env_dir(base_dir, home_dir);
+    if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
+        return make_open_dir(&expand_home(home_dir));
     }
 
     if let Some(home_dir) = opts_
@@ -699,14 +683,14 @@ pub(crate) fn open_global_bin_dir(
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get_not_empty() {
-        return make_open_dir(&resolve_env_dir(base_dir, home_dir, b"bin")?);
+        return make_open_dir_under(base_dir, home_dir, b"bin");
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
         .get_not_empty()
         .or_else(|| env_var::HOME.get_not_empty())
     {
-        return make_open_dir(&resolve_env_dir(base_dir, home_dir, b".bun/bin")?);
+        return make_open_dir_under(base_dir, home_dir, b".bun/bin");
     }
 
     Err(crate::Error::MissingGlobalBinDirectoryTrySettingBUNINSTALL)
@@ -722,7 +706,7 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
 
 /// Expands a leading `~/` in a path from an environment variable, because the shell often has not
 /// done so. A relative path is returned unchanged.
-fn expand_home(path: &[u8]) -> Box<[u8]> {
+pub(crate) fn expand_home(path: &[u8]) -> Box<[u8]> {
     Api::BunInstall::resolve_path(b"", path)
 }
 

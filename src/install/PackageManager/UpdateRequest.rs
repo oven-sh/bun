@@ -175,10 +175,10 @@ impl UpdateRequest {
         // remove
         'outer: for positional in positionals {
             let mut input: Vec<u8> = strings::trim(positional, b" \n\r\t").to_vec();
-            if cfg!(windows) {
+            if cfg!(windows) || !input.starts_with(b"/") {
                 input = strings::replace_owned(&input, b"\\\\", b"/");
-                bun_paths::to_portable_in_place(&mut input);
             }
+            bun_paths::to_portable_in_place(&mut input);
             match subcommand {
                 Subcommand::Link | Subcommand::Unlink => {
                     if !input.starts_with(b"link:") {

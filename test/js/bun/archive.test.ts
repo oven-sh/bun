@@ -996,21 +996,24 @@ describe("Bun.Archive", () => {
       );
     });
 
-    describe.skipIf(isWindows).each([undefined, { glob: "**" }])("extract(path, %j)", options => {
-      test.each(["\\..\\..\\up.txt", "/../../up.txt"])(
-        "`..` behind the leading slash of %j stays inside",
-        async name => {
-          using dir = tempDir("archive-leading-slash", {});
-          const out = join(String(dir), "a", "b", "out");
-          expect(await new Bun.Archive({ [name]: "up" }).extract(out, options)).toBe(1);
-          expect(readdirSync(String(dir), { recursive: true }).map(String).sort()).toEqual([
-            "a",
-            "a/b",
-            "a/b/out",
-            "a/b/out/up.txt",
-          ]);
-        },
+    test.skipIf(isWindows).each([
+      ["\\..\\..\\up.txt", undefined, 1],
+      ["\\..\\..\\up.txt", { glob: "**" }, 1],
+      ["/../../up.txt", undefined, 1],
+      ["/../../up.txt", { glob: "**" }, 0],
+    ])("`..` behind the leading slash of %j stays inside with %j", async (name, options, count) => {
+      using dir = tempDir("archive-leading-slash", {});
+      const out = join(String(dir), "a", "b", "out");
+      expect(await new Bun.Archive({ [name]: "up" }).extract(out, options)).toBe(count);
+      expect(readdirSync(String(dir), { recursive: true }).map(String).sort()).toEqual(
+        ["a", "a/b", "a/b/out", "a/b/out/up.txt"].slice(0, 3 + count),
       );
+    });
+
+    test.skipIf(isWindows)("a character outside of ASCII and a colon is not a drive", async () => {
+      using dir = tempDir("archive-colon", {});
+      const archive = new Bun.Archive({ "注:説明.txt": "1", "é:/inner.txt": "2" });
+      expect(await archive.extract(String(dir), { glob: "**/*.txt" })).toBe(2);
     });
 
     test("skips tar entries whose pathname exceeds the platform path limit", async () => {

@@ -702,6 +702,16 @@ it("src is relative to dir when no origin is given", () => {
   }
 });
 
+it.skipIf(isWindows)("src of a link to a file outside of dir", () => {
+  using dir = tempDir("fsr-src-outside", { "other/a.tsx": "export default 1;", "pages/.keep": "" });
+  fs.symlinkSync("../other/a.tsx", `${dir}/pages/a.tsx`);
+  const src = (origin?: string) =>
+    new Bun.FileSystemRouter({ dir: `${dir}/pages`, style: "nextjs", origin }).match("/a")!.src;
+
+  expect(src("https://example.com")).toBe(`https://example.com/abs:${dir}/other/a.tsx`);
+  expect(src()).toBe("../other/a.tsx");
+});
+
 // The 0xFF byte is not valid UTF-8, so the JS string gets U+FFFD in its place.
 it.skipIf(isWindows || isMacOS)("src replaces invalid UTF-8 in the route path with U+FFFD", () => {
   using dir = tempDir("fsr-src-byte-ff", {});

@@ -235,7 +235,7 @@ impl ShellRmTask {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             err: bun_threading::Guarded::new(None),
             join_style: JoinStyle::from_path(root_path),
-            was_on_disk: is_on_disk_at(cwd, root_path),
+            was_on_disk: !root_path.is_empty() && is_on_disk_at(cwd, root_path),
             task: ShellTask::new(interp),
         });
         // SAFETY: both freshly allocated. Stay on raw pointers: once
@@ -356,6 +356,11 @@ impl ShellRmTask {
     fn remove_or_open(&self, dir_task: *mut DirTask, path: &ZStr) -> Maybe<Option<File>> {
         // SAFETY: `dir_task` is live; this thread owns it.
         let is_operand = unsafe { (*dir_task).parent_task.is_null() };
+        // NT opens the working directory for an empty name.
+        if cfg!(windows) && path.is_empty() {
+            let missing = bun_sys::Error::from_code(E::ENOENT, bun_sys::Tag::unlink);
+            return self.forgive(dir_task, path, &missing).map(|()| None);
+        }
         if is_operand && let Unlinked::Done = self.remove_entry_file(dir_task, path)? {
             return Ok(None);
         }

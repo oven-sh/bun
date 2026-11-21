@@ -1192,12 +1192,19 @@ pub(crate) fn non_empty_bin(json: &Expr) -> Option<bun_ast::expr::Query> {
     })
 }
 
-/// As npm reads a path in package.json: it starts at the package's root, and `..` stops there.
+/// A path in package.json starts at the package's root. `..` stops there, unless it follows a leading `/`.
 pub(crate) fn path_in_package(written: &[u8]) -> ZBox {
-    let written = path::from_portable(strings::trim_left(written, b"/\\"));
+    let below_root = path::from_portable(strings::trim_left(written, b"/\\"));
+    let joined = Path::join(&[b".", &below_root]);
     let mut path = Path::from(b"/");
-    path.push_inside(&written);
-    path.copy_trailing_sep_from(&written);
+    if written.starts_with(b"/") && path::climbs_out(&joined) {
+        path.extend_from_slice(without_trailing_sep(&joined));
+    } else {
+        path.push_inside(&below_root);
+    }
+    if written.ends_with(b"/") {
+        path.push_trailing_sep();
+    }
     ZBox::from_bytes(&path.into_portable()[1..])
 }
 
@@ -1219,7 +1226,7 @@ pub(crate) fn bin_subpath(value: &[u8], ty: BinType) -> Option<ZBox> {
 
 /// A NUL ends the path that the OS gets, so a path that has one counts as outside.
 pub(crate) fn is_package_root_or_outside(p: &[u8]) -> bool {
-    p.is_empty() || path::portable::climbs_out(p) || strings::contains_char(p, 0)
+    p.is_empty() || path::portable::is_absolute(p) || path::portable::climbs_out(p)
 }
 
 /// `Unknown` if `bin_path` is missing or a parent component is not a real directory.
@@ -1648,7 +1655,8 @@ pub(crate) fn pack(
         Global::crash();
     }
 
-    let abs_workspace_path = path::dirname_or_root(abs_package_json_path.as_bytes());
+    let abs_workspace_path =
+        path::without_trailing_sep(path::dirname_or_root(abs_package_json_path.as_bytes()));
     let script_env = &mut ctx.manager.env_mut().map;
     script_env.put(b"npm_command", b"pack")?;
     // `configure_env_for_run` described the workspace root's package.json, not the one packed.

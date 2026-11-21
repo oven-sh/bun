@@ -354,9 +354,8 @@ fn get_temporary_directory_run(
 fn ensure_cache_directory(this: &mut PackageManager) -> sys::Maybe<&'static CacheDirectory> {
     if this.options.enable.contains(Enable::CACHE) {
         let configured = this.options.cache_directory;
-        let env_base_dir = this.options.env_base_dir();
         if let Ok(CacheDir { path, .. }) =
-            fetch_cache_directory_path(this.env_mut(), env_base_dir, Some(configured))
+            fetch_cache_directory_path(this.env_mut(), Some(configured))
             && let Ok(handle) = Dir::cwd().make_open_path(&path, Default::default())
         {
             let path = ZBox::from_vec(path);
@@ -386,28 +385,34 @@ pub fn node_can_import_from(dir: &[u8]) -> bool {
 /// An empty variable counts as unset, because it would resolve to the project directory.
 pub fn fetch_cache_directory_path(
     env: &mut DotEnvLoader,
-    env_base_dir: &[u8],
     configured: Option<&[u8]>,
 ) -> sys::Maybe<CacheDir> {
     const CWD_FALLBACK: &[u8] = b"node_modules/.bun-cache";
-    let variable = |name: &[u8]| env.get(name).filter(|dir| !dir.is_empty());
-    let cache_dir =
-        variable(b"BUN_INSTALL_CACHE_DIR").or_else(|| configured.filter(|dir| !dir.is_empty()));
+    let variable = |name: &[u8]| {
+        env.get(name)
+            .filter(|dir| !dir.is_empty())
+            .map(options::expand_home)
+    };
+    let from_env = variable(b"BUN_INSTALL_CACHE_DIR");
+    let bun_install = variable(b"BUN_INSTALL");
     let home = env_var::XDG_CACHE_HOME
         .get_not_empty()
-        .or_else(|| env_var::HOME.get_not_empty());
-    let top_level_dir = FileSystem::get().top_level_dir();
-    let (base_dir, dir, subdir): (_, _, &[u8]) = if let Some(dir) = cache_dir {
-        (top_level_dir, dir, b"")
-    } else if let Some(dir) = variable(b"BUN_INSTALL") {
-        (env_base_dir, dir, b"install/cache")
-    } else if let Some(dir) = home {
-        (env_base_dir, dir, b".bun/install/cache")
+        .or_else(|| env_var::HOME.get_not_empty())
+        .map(options::expand_home);
+    let (dir, subdir): (_, &[u8]) = if let Some(dir) = from_env.as_deref() {
+        (dir, b"")
+    } else if let Some(dir) = configured.filter(|dir| !dir.is_empty()) {
+        (dir, b"")
+    } else if let Some(dir) = bun_install.as_deref() {
+        (dir, b"install/cache/")
+    } else if let Some(dir) = home.as_deref() {
+        (dir, b".bun/install/cache/")
     } else {
-        (top_level_dir, CWD_FALLBACK, b"")
+        (CWD_FALLBACK, b"")
     };
 
-    let Ok(abs) = options::resolve_env_dir(base_dir, dir, subdir) else {
+    let parts = [FileSystem::get().top_level_dir(), dir, subdir];
+    let Ok(abs) = bun_resolver::resolve_keeping_sep(&parts).check_len() else {
         return Err(sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open).with_path(dir));
     };
     Ok(CacheDir {
@@ -1276,6 +1281,12 @@ pub fn save_lockfile(
         this.progress.start(ProgressStrings::save(), 0);
 
         this.progress.refresh();
+    }
+
+    if this.lockfile.converted_rows.take().is_some() {
+        let packages_len = packages_len_before_install.min(this.lockfile.packages.len());
+        this.lockfile.meta_hash =
+            (this.lockfile.generate_meta_hash(false, packages_len)).unwrap_or_default();
     }
 
     let wrote = this.lockfile.save_to_disk(load_result, &this.options);

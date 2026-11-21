@@ -140,13 +140,17 @@ impl Symlinker<'_> {
                 // libuv adds a trailing slash to junctions.
                 current_link = bun_paths::without_trailing_sep(current_link);
 
-                if !self.is_absolute && strings::eql_long(current_link, self.target) {
+                let is_current = |target: &[u8]| {
+                    strings::eql_long(current_link, bun_paths::without_trailing_sep(target))
+                };
+
+                if !self.is_absolute && is_current(self.target) {
                     return Ok(false);
                 }
 
                 #[cfg(windows)]
                 {
-                    if strings::eql_long(current_link, self.fallback_junction_target) {
+                    if is_current(self.fallback_junction_target) {
                         return Ok(false);
                     }
                 }

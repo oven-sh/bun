@@ -135,7 +135,7 @@ pub fn without_leading_sep<C: PathChar>(path: &[C]) -> &[C] {
     Host::without_leading_sep(path)
 }
 
-/// Removes all of them, but a root keeps its separator.
+/// Removes all of them, but a root keeps its own. `\\server\share` needs none.
 #[inline]
 pub fn without_trailing_sep<C: PathUnit>(path: &[C]) -> &[C] {
     Host::without_trailing_sep(path)
@@ -166,7 +166,7 @@ pub fn is_absolute<C: PathUnit>(path: &[C]) -> bool {
 
 /// False for `\a` on Windows, which depends on the current drive.
 #[inline]
-pub fn is_fully_qualified(path: &[u8]) -> bool {
+pub fn is_fully_qualified<C: PathUnit>(path: &[C]) -> bool {
     Host::is_fully_qualified(path)
 }
 
@@ -182,7 +182,7 @@ pub fn dirname<C: PathUnit>(path: &[C]) -> Option<&[C]> {
     Host::dirname(path)
 }
 
-/// [`dirname`], but a root is its own parent, and a single component has an empty one.
+/// [`dirname`], but a root is its own parent. Empty for `a`, and `C:` for `C:a`.
 #[inline]
 pub fn dirname_or_root(path: &[u8]) -> &[u8] {
     Host::dirname_or_root(path)
@@ -206,7 +206,7 @@ pub fn stem(path: &[u8]) -> &[u8] {
     Host::stem(path)
 }
 
-/// `path` relative to `dir`: empty if they are equal, `None` if `path` is outside of it.
+/// `path` relative to `dir`: empty if they are equal, `None` if `path` is outside of it. Both have to be normalized.
 #[inline]
 pub fn strip_prefix<'a>(path: &'a [u8], dir: &[u8]) -> Option<&'a [u8]> {
     Host::strip_prefix(path, dir)
@@ -218,7 +218,7 @@ pub fn components(path: &[u8]) -> impl DoubleEndedIterator<Item = &[u8]> {
     Host::components(path)
 }
 
-/// `path`, then each parent up to the root or the first component, without trailing separators.
+/// `path`, then each parent up to the root or the first component. Only a root ends with a separator.
 #[inline]
 pub fn ancestors<C: PathUnit>(path: &[C]) -> impl Iterator<Item = &[C]> {
     Host::ancestors(path)

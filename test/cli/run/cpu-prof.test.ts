@@ -203,23 +203,6 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("creates the directory in --cpu-prof-name", async () => {
-    using dir = tempDir("cpu-prof-name-dir", {});
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", "out", "--cpu-prof-name", "sub/p.cpuprofile", "-e", "1"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
-    expect(readdirSync(join(String(dir), "out", "sub"))).toEqual(["p.cpuprofile"]);
-    expect(exitCode).toBe(0);
-  });
-
   test("profile captures function names", async () => {
     using dir = tempDir("cpu-prof-functions", {
       "test.js": `

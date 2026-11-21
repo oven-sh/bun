@@ -31,7 +31,7 @@ impl EnvPath {
     }
 
     pub fn append(&mut self, input: &[u8]) -> Result<(), AllocError> {
-        let trimmed = trim_path_delimiters(input);
+        let trimmed = crate::without_trailing_sep(trim_path_delimiters(input));
 
         if trimmed.is_empty() {
             return Ok(());

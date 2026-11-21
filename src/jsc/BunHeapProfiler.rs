@@ -44,9 +44,10 @@ pub(crate) fn generate_and_write_profile(
         ".heapprofile"
     };
     let path = build_output_path(config.dir, config.name, "Heap", extension)
-        .map_err(|err| Error::Sys(err.into()))?;
+        .map_err(|_| Error::MaxPathExceeded)?;
 
-    write_file_creating_dir(&path, profile_slice.slice()).map_err(|_| Error::WriteFailed)?;
+    let dir = bun_paths::dirname_or_root(&path);
+    write_file_creating_dir(&path, dir, profile_slice.slice()).map_err(|_| Error::WriteFailed)?;
 
     // Print where the markdown profile was written; node parity for the
     // .heapprofile format is silence on success.

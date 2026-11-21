@@ -123,7 +123,7 @@ impl DevServer {
         }
 
         let joined = Path::resolve(&[dirname_or_root(import_source), specifier]);
-        let dir = dirname_or_root(&joined);
+        let dir = bun_paths::without_trailing_sep(dirname_or_root(&joined));
 
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a

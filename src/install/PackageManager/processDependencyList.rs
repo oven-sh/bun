@@ -372,8 +372,11 @@ impl PackageManager {
         if bun_paths::is_absolute(folder) {
             return Ok(row);
         }
-        let mut literal = Path::join(&[base, folder]).into_portable();
-        literal.prepend(b"file:");
+        let joined = Path::join(&[base, folder]).into_portable();
+        let literal = match bun_paths::without_trailing_sep(&joined) {
+            b"." => b"file:".to_vec(),
+            joined => [b"file:", joined].concat(),
+        };
         let literal = self.lockfile.string_buf().append(&literal)?;
         let sliced = literal.sliced(self.lockfile.buffers.string_bytes.as_slice());
         let version = dependency::parse_with_tag(

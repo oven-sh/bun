@@ -2518,6 +2518,25 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.skipIf(isWindows)("does not look below a/b for a root that a\\b lacks", async () => {
+    using dir = tempDir("scanner-backslash-root", {
+      "a\\b": { "bunfig.toml": `[test]\nroot = "tests"\n` },
+      "a": { "b": { "tests": { "exists.test.ts": existsTest } } },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: join(String(dir), "a\\b"),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Failed to scan non-existent root directory");
+    expect(exitCode).toBe(1);
+  });
+
   // The directory walk joins parent + entry name for every directory it
   // descends into and every candidate test file.
   for (const [config, files] of [

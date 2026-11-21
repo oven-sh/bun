@@ -3036,6 +3036,10 @@ mod draft {
             let Some(path_env) = env_var::PATH::get() else {
                 return;
             };
+            let mut cwd_buf = bun_core::PathBuffer::ZEROED;
+            if bun_core::getcwd(&mut cwd_buf).is_err() {
+                return;
+            }
             // No heap: this can run in a signal handler.
             let mut curl = bun_paths::StackPath::<{ bun_paths::MAX_PATH_BYTES }>::new();
             if !bun_core::strings::tokenize(path_env, b":").any(|dir| {

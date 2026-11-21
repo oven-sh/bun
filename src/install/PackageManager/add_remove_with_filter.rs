@@ -9,7 +9,7 @@ use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, strings};
 use bun_install::dependency;
 use bun_install::{Lockfile, PackageID, PackageNameHash};
-use bun_paths::{Path, from_portable, portable};
+use bun_paths::{Path, dirname_or_root, from_portable, portable, strip_prefix};
 use bun_sys::{Fd, File};
 
 use super::add_catalog;
@@ -382,7 +382,7 @@ pub(super) fn respell_local_paths(
             bun_paths::fs::FileSystem::instance().initial_top_level_dir(),
             None,
         )
-    } else if bun_paths::dirname_or_root(&package_json_path) == original_cwd {
+    } else if strip_prefix(dirname_or_root(&package_json_path), original_cwd) == Some(b"") {
         return updates;
     } else {
         (original_cwd, Some(&*package_json_path))

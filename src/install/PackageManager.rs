@@ -1793,7 +1793,7 @@ impl<'a> PackageJsonWalk<'a> {
     fn next(&mut self, flags: i32) -> Option<(&'a [u8], bun_sys::Maybe<bun_sys::File>)> {
         loop {
             let dir = self.next_dir?;
-            self.next_dir = bun_paths::dirname(dir);
+            self.next_dir = bun_paths::dirname(dir).map(without_trailing_sep);
             self.path.set(dir);
             self.path.push(b"package.json");
             let opened = bun_sys::File::openat(
@@ -1977,7 +1977,7 @@ fn find_workspace_root_above<'a>(
             let child_path = Path::relative(root_dir, child_cwd).into_portable();
             if let Some((_, entry)) = (workspace_names.keys().iter())
                 .zip(workspace_names.values())
-                .find(|(dir, _)| bun_paths::strip_prefix(&child_path, dir) == Some(b""))
+                .find(|(dir, _)| ***dir == **child_path)
             {
                 let name_hash = Semver::string::Builder::string_hash(&entry.name);
                 return Ok(Some((parent, json_file, name_hash)));
@@ -2166,6 +2166,7 @@ pub fn init(
     let mut original_package_json_path = package_json_in(&original_cwd_clone);
     let original_cwd: &[u8] = &original_cwd_clone;
 
+    let mut root_above_link = None;
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
     let mut workspace_package_json_cache = WorkspacePackageJSONCache {
         map: Default::default(),
@@ -2301,6 +2302,11 @@ pub fn init(
                 }
                 break 'root_package_json_file Some(json_file);
             }
+        } else if package_manager_options::has_relative_env_dir()
+            && let Ok(Some((root, ..))) =
+                find_workspace_root(&mut walk, child_cwd, &mut bun_ast::Log::init(), None, None)
+        {
+            root_above_link = Some(fs.dirname_store().append(root)?);
         }
 
         // Intern via DirnameStore so the slice is process-lifetime.
@@ -2386,6 +2392,7 @@ pub fn init(
     }
 
     let options = Options {
+        root_above_link,
         global: cli.global,
         ..Default::default()
     };
@@ -2665,19 +2672,19 @@ fn init_with_runtime_once(
     // `bun_install` was loaded from the directory the process started in. `top_level_dir` is not
     // used for that, because `process.chdir()` changes it.
     let start_dir = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
-    let start_dir_trimmed = without_trailing_sep(start_dir);
+    let is_start_dir = |dir: &[u8]| bun_paths::strip_prefix(dir, start_dir) == Some(b"");
     // A folder nearer to the importing file overrides the ones above it, as for .npmrc. So the
     // folders below the start directory are kept apart: they override `bun_install`. If the start
     // directory is not one of the project's folders, all of them do.
     let mut root_bunfig: Option<Box<Api::BunInstall>> = None;
     let mut nearer_bunfig: Option<Box<Api::BunInstall>> = None;
-    let mut merged = if settings_dirs.contains(&start_dir_trimmed) {
+    let mut merged = if settings_dirs.iter().any(|dir| is_start_dir(dir)) {
         &mut root_bunfig
     } else {
         &mut nearer_bunfig
     };
     for &dir in &settings_dirs {
-        if dir == start_dir_trimmed {
+        if is_start_dir(dir) {
             merged = &mut nearer_bunfig;
             continue;
         }
@@ -2710,8 +2717,8 @@ fn init_with_runtime_once(
         return Err(bun_resolver::Error::SecurityScannerConfigured.into());
     }
     // The .npmrc in the start directory is read too, like the bunfig.toml there.
-    let npmrcs: Vec<Path> = (Some(start_dir_trimmed).into_iter())
-        .filter(|dir| !settings_dirs.contains(dir))
+    let npmrcs: Vec<Path> = (Some(start_dir).into_iter())
+        .filter(|_| !settings_dirs.iter().any(|dir| is_start_dir(dir)))
         .chain(settings_dirs.iter().copied())
         .map(|dir| Path::resolve(&[dir, b".npmrc"]))
         .collect();

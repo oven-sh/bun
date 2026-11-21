@@ -250,7 +250,7 @@ impl Framework {
 /// Returns `None` if the result is too long for `Resolver::read_dir_info`.
 pub(crate) fn resolve_dir_option(dir: &[u8]) -> Option<Vec<u8>> {
     let resolved = Path::resolve(&[bun_resolver::fs::FileSystem::get().top_level_dir(), dir]);
-    (resolved.len() < bun_paths::MAX_PATH_BYTES - 1).then(|| resolved.to_vec())
+    Some(resolved.check_len().ok()?.to_vec())
 }
 
 impl Framework {

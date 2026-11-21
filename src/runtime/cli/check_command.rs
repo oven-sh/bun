@@ -642,6 +642,11 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         return true;
     };
     let mut in_memory = (entry_points.iter()).filter_map(|it| Some((it.path, it.text?)));
+    let mut on_disk = paths.clone();
+    on_disk.retain(|path| !in_memory.clone().any(|it| it.0 == &path[..]));
+    if !on_disk.is_empty() && !can_check(&cwd, &on_disk) {
+        return false;
+    }
     let provided = Provided {
         already_read: already_read(&cwd, &mut in_memory),
         before_read,
@@ -653,7 +658,15 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         script_kinds_by_extension: &by_extension,
         conditions: args.map_or(&[][..], |args| &args.conditions[..]),
     };
-    check_and_report(entries, provided)
+    check_and_report(&Paths::EntryPoints(entries), provided)
+}
+
+fn can_check(cwd: &[u8], entry_points: &[Vec<u8>]) -> bool {
+    let mut log = bun_ast::Log::init();
+    let can_check = check_entry_point_dirs(cwd, entry_points, &mut log);
+    let _ = log.print(Output::error_writer());
+    Output::flush();
+    can_check
 }
 
 fn script_kind_of(loader: bun_ast::Loader) -> Option<ScriptKind> {
@@ -703,12 +716,12 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
 /// may start with a byte order mark.
 fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
     use bun_core::strings::without_utf8_bom;
+    use bun_sema_driver::host::{from_native, is_below_backslash};
     sources
-        .map(|(path, text)| {
-            let path = Path::resolve(&[cwd, path]);
-            let text = without_utf8_bom(text).to_vec();
-            (bun_sema_driver::host::from_native(&path), text)
-        })
+        .map(|(path, text)| (Path::resolve(&[cwd, path]), text))
+        // The checker would take `a\b/c.ts` for `a/b/c.ts`.
+        .filter(|(path, _)| !is_below_backslash(path) || !bun_sys::exists_z(path))
+        .map(|(path, text)| (from_native(&path), without_utf8_bom(text).to_vec()))
         .collect()
 }
 
@@ -930,7 +943,8 @@ pub(crate) fn check_project_before(before_read: Option<BeforeRead>) -> bool {
         before_read,
         ..Default::default()
     };
-    check_and_report(Entries::default(), provided)
+    can_check(&working_directory(), &[])
+        && check_and_report(&Paths::EntryPoints(Entries::default()), provided)
 }
 
 /// `bun`'s `--tsconfig-override`. The runtime resolves with this tsconfig instead of any other.
@@ -943,16 +957,9 @@ fn tsconfig_override() -> Option<&'static [u8]> {
 
 /// Returns true if there are no errors.
 #[inline(never)]
-fn check_and_report(entries: Entries, provided: Provided) -> bool {
+fn check_and_report(paths: &Paths, provided: Provided) -> bool {
     bun_removable_features::removable_definition!(Check, check_and_report);
     let cwd = working_directory();
-    let mut log = bun_ast::Log::init();
-    if !check_entry_point_dirs(&cwd, entries.paths, &mut log) {
-        let _ = log.print(Output::error_writer());
-        Output::flush();
-        return false;
-    }
-    let paths = &Paths::EntryPoints(entries);
     let then = |report| report;
     let report = run(&cwd, tsconfig_override(), paths, &[], 0, provided, then);
     if report.diagnostics.is_empty() && report.incomplete.is_empty() {

@@ -513,13 +513,15 @@ fn owner_dir(params: &Params<'_>) -> Option<Vec<u8>> {
 /// Joins the paths the way the folder resolver stores them: `.` and `..` resolved, with `/`
 /// separators on every platform.
 fn join_folder(base: &[u8], path: &[u8]) -> Vec<u8> {
-    let path = from_portable(path);
-    if bun_paths::is_absolute(&path) {
-        return path.into_owned();
+    join_tarball(&from_portable(base), &from_portable(path))
+}
+
+/// The row of a tarball keeps the `\` that package.json has.
+fn join_tarball(base: &[u8], path: &[u8]) -> Vec<u8> {
+    if bun_paths::is_absolute(path) {
+        return path.to_vec();
     }
-    Path::join(&[&from_portable(base), &path])
-        .into_portable()
-        .to_vec()
+    Path::join(&[base, path]).into_portable().to_vec()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -948,7 +950,8 @@ pub(crate) fn migrate_yarn_berry_lockfile(
                     sbuf!(this).append(&dependency::link_path_for_lockfile(&joined))?,
                 )
             } else if Dependency::is_tarball(&joined) {
-                Resolution::init(TaggedValue::LocalTarball(sbuf!(this).append(&joined)?))
+                let tarball = join_tarball(&base, path);
+                Resolution::init(TaggedValue::LocalTarball(sbuf!(this).append(&tarball)?))
             } else {
                 if protocol == b"portal:" && !silent {
                     bun_core::warn!(

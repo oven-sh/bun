@@ -4,10 +4,10 @@ use std::sync::OnceLock;
 
 use bun_ast::ImportKind;
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
-use bun_paths::{Path, is_sep};
+use bun_paths::{Path, SEP, is_sep};
 
 use crate::package_json::{Package, split_at_star};
-use crate::resolver::{Resolver, path_of_specifier};
+use crate::resolver::{Resolver, path_in_node_modules};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ImageFile {
@@ -1352,9 +1352,9 @@ impl CompiledProgram {
             true => ImportKind::Require,
             false => ImportKind::Stmt,
         };
-        let as_path: &[u8] = &path_of_specifier(specifier, kind);
+        let as_path: &[u8] = &path_in_node_modules(specifier, kind, false);
         let how = HowNamed {
-            names_directory: bun_paths::has_trailing_sep(as_path),
+            names_directory: as_path.ends_with(&[SEP]),
             is_require,
         };
         let package = find_name_of_package_with_exports(specifier);

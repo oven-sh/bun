@@ -148,11 +148,16 @@ extern "C" fn BakeProdResolve(
 
     debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
 
-    // dirname semantics: returns None for the root / no-parent.
-    let after_scheme = &referrer.slice()[5..];
-    let dir = bun_paths::dirname(after_scheme).unwrap_or(after_scheme);
-
-    let key = bun_paths::Path::resolve(&[dir, specifier.slice()]).into_portable();
+    // A key is the path of a URL, so nothing in it is a drive or a share.
+    let specifier = specifier.slice();
+    let importer = match specifier.starts_with(b"/") {
+        true => b"",
+        false => &referrer.slice()["bake:".len()..],
+    };
+    let mut key = Path::from(b"/");
+    key.push_inside(&Path::join(&[b".", importer, b"..", specifier]));
+    key.copy_trailing_sep_from(specifier);
+    let key = key.into_portable();
     BunString::create_format(format_args!("bake:{}", BStr::new(key.as_bytes())))
 }
 

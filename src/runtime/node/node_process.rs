@@ -565,6 +565,7 @@ mod _impl {
             return ChdirTarget::OnDisk(to);
         }
         path.resolve_in_place(&[current.unwrap_or(b"/"), to.as_bytes()]);
+        path.copy_trailing_sep_from(to);
         if path.len() >= bun_paths::MAX_PATH_BYTES {
             return ChdirTarget::InExecutable(Err(bun_sys::E::ENAMETOOLONG));
         }

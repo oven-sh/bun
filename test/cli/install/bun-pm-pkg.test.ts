@@ -1433,7 +1433,7 @@ describe.concurrent("bun pm pkg", () => {
           "w\\d/package.json": JSON.stringify({
             name: "p",
             version: "1.0.0",
-            bin: { slash: "bin/real.js", backslash: "bin\\real.js", missing: "bin\\missing.js" },
+            bin: { slash: "bin/real.js", backslash: "bin\\real.js", end: "bin/real.js\\", missing: "bin\\missing.js" },
           }),
           "w\\d/bin/real.js": "",
         });
@@ -1444,18 +1444,19 @@ describe.concurrent("bun pm pkg", () => {
       },
     );
 
-    it('a leading slash in "bin" means nothing, as for the bin linker', async () => {
-      using dir = tempDir("pm-pkg-bin-leading-slash", {
-        "package.json": JSON.stringify({
+    it('looks for a "bin" where its path leads', async () => {
+      using dir = tempDir("pm-pkg-bin-outside", {
+        "p/package.json": JSON.stringify({
           name: "p",
           version: "1.0.0",
-          bin: { slash: "/bin/real.js", backslash: "\\bin\\real.js", missing: "/bin/missing.js" },
+          bin: { above: "../shared/real.js", absolute: "/pm-pkg-bin/real.js" },
         }),
-        "bin/real.js": "",
+        "p/pm-pkg-bin/real.js": "",
+        "shared/real.js": "",
       });
 
-      const { error, code } = await runPmPkg(["fix"], String(dir), false);
-      expect(error).toBe("warn: No bin file found at /bin/missing.js\n");
+      const { error, code } = await runPmPkg(["fix"], join(dir, "p"), false);
+      expect(error).toBe("warn: No bin file found at /pm-pkg-bin/real.js\n");
       expect(code).toBe(0);
     });
 

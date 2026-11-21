@@ -57,8 +57,7 @@ impl ShellWork for ShellMkdirTask {
             false => Path::join(&[&self.cwd_path, &self.filepath]),
         };
 
-        // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
-        // enforce; past it, `PathLike::slice_z` yields "" and mkdir reports ENOENT.
+        // `NodeFS` expects the `Valid::path_too_long` bound its JS callers enforce.
         if filepath.len() >= bun_paths::MAX_PATH_BYTES {
             self.err = Some(
                 bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::mkdir)

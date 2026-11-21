@@ -3,7 +3,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
-  bunRun,
   isArm64,
   isASAN,
   isDebug,
@@ -30,7 +29,6 @@ import {
 import { builtinModules } from "node:module";
 import { isAbsolute, join, sep } from "path";
 import { isHardened, locksEnvironment } from "../aot/hardened";
-import { copyWithoutDebugInformation as executablePath } from "../aot/harness/without-debug-information";
 
 // harness.ts takes the variable out of bunEnv where the environment is locked. An executable that is not compiled ahead of time reads it there too.
 const envWithInternals = { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" };
@@ -67,25 +65,22 @@ describe("Bun.build compile", () => {
     expect(exists).toBe(true);
   });
 
-  test.concurrent.each(["./index.js", "../index.js", ".."])(
-    "without outfile, entry point %s is written to outdir/index",
-    async entrypoint => {
-      const options = {
-        entrypoints: [entrypoint],
-        outdir: "out/dist",
-        compile: executablePath ? { executablePath } : true,
-      };
-      using dir = tempDir("build-compile-default-name", {
-        "index.js": "",
-        "app/index.js": "",
-        "app/build.js": `console.log((await Bun.build(${JSON.stringify(options)})).outputs[0].path);`,
-      });
-      const file = isWindows ? "index.exe" : "index";
-
-      expect(await bunRun(join(String(dir), "app", "build.js"))).toSpawn(join(String(dir), "app", "out", "dist", file));
-      expect(readdirSync(join(String(dir), "app", "out", "dist"))).toEqual([file]);
-    },
-  );
+  test.concurrent.each([
+    ["..", {}, "app/src/out/dist"],
+    // On POSIX the name is that of the directory, which `/` does not have.
+    ...(isWindows ? [["/index.js", { "/index.js": "" }, "app/src/out/dist/index"] as const] : []),
+  ])("names the executable of the entry point %s without an outfile", async (entry, files, expected) => {
+    using dir = tempDir("build-compile-default-name", { "app/index.js": "", "app/src/out": {} });
+    const options = { entrypoints: [entry], files, outdir: "out/dist", compile: true };
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-p", `(await Bun.build(${JSON.stringify(options)})).outputs[0].path`],
+      cwd: join(String(dir), "app", "src"),
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    expect(await proc.stdout.text()).toBe(join(String(dir), expected) + (isWindows ? ".exe\n" : "\n"));
+    expect(await proc.exited).toBe(0);
+  });
 
   test.concurrent.each([
     ["whole", (tgz: Uint8Array) => tgz, "InvalidElfFile", ["not an executable"]],

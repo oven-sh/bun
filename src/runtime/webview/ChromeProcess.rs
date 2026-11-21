@@ -380,9 +380,6 @@ fn find_playwright_shell() -> Option<ZBox> {
     #[cfg(not(any(windows, target_os = "macos")))]
     let (root, cache_subpath): (&[u8], &[u8]) = (env_var::HOME.get()?, b".cache/ms-playwright");
 
-    if root.is_empty() {
-        return None;
-    }
     let cache_dir = Path::join(&[root, cache_subpath]);
 
     let dir = File::from_fd(bun_sys::open_dir_absolute(&cache_dir[..]).ok()?);

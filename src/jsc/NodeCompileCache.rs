@@ -389,7 +389,7 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
                 };
             }
         };
-        resolved = bun_paths::Path::resolve(&[&cwd_buf[..cwd_len], dir]);
+        resolved = bun_resolver::resolve_keeping_sep(&[&cwd_buf[..cwd_len], dir]);
         &resolved
     };
     if abs.len() + 1 + tag.len() + 2 > MAX_PATH_BYTES {

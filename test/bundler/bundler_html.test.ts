@@ -816,6 +816,38 @@ body {
     },
   });
 
+  for (const [name, src] of Object.entries({
+    "one-letter-directory": "d\\app.js",
+    "trailing-slash": "lib.d/",
+  })) {
+    itBundled(`html/script-src-${name}`, {
+      outdir: "out/",
+      files: {
+        "/pages/index.html": `<script src="${src}"></script>`,
+        "/pages/d/app.js": "console.log('found')",
+        "/pages/lib.d/index.js": "console.log('found')",
+        "/pages/lib.d.js": "console.log('sibling')",
+      },
+      entryPoints: ["/pages/index.html"],
+      onAfterBundle(api) {
+        const src = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+        expect(api.readFile("out/" + src![1])).toContain("found");
+      },
+    });
+  }
+
+  itBundled("html/backslash-before-a-query-with-a-colon", {
+    outdir: "out/",
+    files: {
+      "/pages/index.html": `<img src="/pages\\pic.png?t=1:2">`,
+      "/pages/pic.png": "png",
+    },
+    entryPoints: ["/pages/index.html"],
+    onAfterBundle(api) {
+      expect(api.readFile("out/index.html")).toMatch(/src="\.\/pic-\w+\.png/);
+    },
+  });
+
   // Test absolute paths in HTML
   itBundled("html/absolute-paths", {
     outdir: "out/",

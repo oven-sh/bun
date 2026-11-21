@@ -169,9 +169,7 @@ impl DependencyExt for Dependency {
     ) {
         builder.count(self.name.slice(name_buf));
         builder.count(self.version.literal.slice(version_buf));
-        if let Value::Workspace(path) | Value::Folder(path) | Value::Symlink(path) =
-            &self.version.value
-        {
+        if let Some((path, _)) = path_unlike_literal(&self.version, version_buf) {
             builder.count(path.slice(version_buf));
         }
     }
@@ -204,18 +202,10 @@ impl DependencyExt for Dependency {
         let new_literal = builder.append_string(self.version.literal.slice(version_buf));
         let new_name = builder.append_string(self.name.slice(name_buf));
 
-        // `Package::parse` links a range to a workspace and rebases a path, and keeps the literal.
-        let mut append = |path: &String| builder.append_string(path.slice(version_buf));
-        let path = match &self.version.value {
-            Value::Workspace(path) => Some(Value::Workspace(append(path))),
-            Value::Folder(path) => Some(Value::Folder(append(path))),
-            Value::Symlink(path) => Some(Value::Symlink(append(path))),
-            _ => None,
-        };
-        let version = if let Some(value) = path {
+        let version = if let Some((path, value)) = path_unlike_literal(&self.version, version_buf) {
             Version {
                 literal: new_literal,
-                value,
+                value: value(builder.append_string(path.slice(version_buf))),
             }
         } else {
             let out_slice = builder.string_bytes();
@@ -631,6 +621,25 @@ pub(crate) fn fallback_package_name(location: &[u8]) -> &[u8] {
         name
     } else {
         b"unnamed-package"
+    }
+}
+
+/// `Package::parse` links a range to a workspace and reads `\` as `/`, and keeps the literal.
+fn path_unlike_literal<'a>(
+    version: &'a Version,
+    buf: &[u8],
+) -> Option<(&'a String, fn(String) -> Value)> {
+    let was_converted = |path: &String| {
+        let (literal, path) = (version.literal.slice(buf), path.slice(buf));
+        !cfg!(windows)
+            && strings::contains_char(literal, b'\\')
+            && !(strings::contains_char(path, b'\\') && strings::contains(literal, path))
+    };
+    match &version.value {
+        Value::Workspace(path) => Some((path, Value::Workspace)),
+        Value::Folder(path) if was_converted(path) => Some((path, Value::Folder)),
+        Value::Symlink(path) if was_converted(path) => Some((path, Value::Symlink)),
+        _ => None,
     }
 }
 

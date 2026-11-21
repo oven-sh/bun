@@ -186,6 +186,8 @@ test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .
 test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > the fixture runs
 test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > twoClasses
 test/js/bun/util/inspect-error.test.js: AggregateError whose errors cannot be walked > the error a second load of a module that failed to build rejects with
+test/js/bun/util/inspect-error.test.js: a relative source with backslashes in an external map
+test/js/bun/util/inspect-error.test.js: a rooted source with backslashes in an external map
 test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > a `cause` getter that loads the throwing file again
 test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > external map whose original source is unavailable
 test/js/node/v8/capture-stack-trace.test.js: CallFrame.p.getFunction does not expose the module loader reaction
@@ -442,3 +444,9 @@ test/js/bun/resolve/resolve.test.ts: in a directory named a\b > runs from anothe
 test/js/bun/resolve/resolve.test.ts: a backslash is part of a name: createRequire()
 test/js/bun/resolve/resolve.test.ts: in a directory named a\ > resolves after process.chdir() into it and back
 test/js/bun/resolve/resolve.test.ts: in a directory named a\b > resolves after process.chdir() into it and back
+# These start a Worker from a file that the program writes.
+test/js/bun/resolve/resolve.test.ts: finds a worker in a directory that is created later and written with a separator at the end
+test/js/bun/resolve/resolve.test.ts: finds a worker that is created later and written with /./
+test/js/bun/resolve/resolve.test.ts: finds a worker that is created later and written with //
+# The type checker reads a leading backslash as the root.
+test/js/bun/resolve/resolve.test.ts: tsconfig.json {"extends":"\\base.json"}

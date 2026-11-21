@@ -143,6 +143,8 @@ pub struct Lockfile {
     pub(crate) text_lockfile_version: bun_lock::Version,
 
     pub(crate) meta_hash: MetaHash,
+    /// `hashed_rows` after and before `convert_windows_paths`, line for line, while the file has the old spelling.
+    pub(crate) converted_rows: Option<Box<[Vec<u8>; 2]>>,
 
     pub packages: PackageList,
     pub buffers: Buffers,
@@ -703,43 +705,75 @@ impl Lockfile {
         })
     }
 
-    /// Older versions wrote `\` on Windows. `dir` is the project.
+    /// Older versions wrote `\`. `dir` is the project.
     fn convert_windows_paths(&mut self, dir: Fd) -> Result<(), AllocError> {
-        let mut string_buf = SemverStringBuf {
-            bytes: &mut self.buffers.string_bytes,
-            pool: &mut self.string_pool,
-        };
-        let mut convert = |stored: SemverString| {
-            let path = stored.slice(string_buf.bytes);
-            let spelling = if cfg!(windows) {
-                bun_paths::to_portable(path)
-            } else {
-                sys::existing_spelling(dir, path)
-            };
-            match spelling {
-                Cow::Borrowed(_) => Ok(stored),
-                Cow::Owned(converted) => string_buf.append(&converted),
-            }
-        };
-        for resolution in self.packages.items_resolution_mut() {
-            *resolution = Resolution::init(match resolution.tag {
-                ResolutionTag::Folder => TaggedValue::Folder(convert(*resolution.folder())?),
-                ResolutionTag::Symlink => TaggedValue::Symlink(convert(*resolution.symlink())?),
-                ResolutionTag::Workspace => {
-                    TaggedValue::Workspace(convert(*resolution.workspace())?)
+        let packages_len = self.packages.len();
+        let mut as_stored = None;
+        // An install resolves the members again, so the hash has `/` for them.
+        for is_member in [true, false] {
+            for id in 0..packages_len {
+                let resolution = self.packages.items_resolution()[id];
+                let (stored, tagged): (_, fn(_) -> _) = match (resolution.tag, is_member) {
+                    (ResolutionTag::Workspace, true) => {
+                        (*resolution.workspace(), TaggedValue::Workspace)
+                    }
+                    (ResolutionTag::Folder, false) => (*resolution.folder(), TaggedValue::Folder),
+                    (ResolutionTag::Symlink, false) => {
+                        (*resolution.symlink(), TaggedValue::Symlink)
+                    }
+                    _ => continue,
+                };
+                if !strings::contains_char(self.str(&stored), b'\\') {
+                    continue;
                 }
-                _ => continue,
-            });
+                let is_in_project = resolution.tag != ResolutionTag::Folder
+                    || self.is_trusted_folder_package(id as PackageID);
+                let dir = is_in_project.then_some(dir);
+                let Some(path) = self.convert_windows_path(dir, stored)? else {
+                    continue;
+                };
+                if !is_member && as_stored.is_none() {
+                    let order = self.hash_order(packages_len);
+                    as_stored = Some((self.hashed_rows(&order), order));
+                }
+                self.packages.items_resolution_mut()[id] = Resolution::init(tagged(path));
+            }
         }
-        for path in self.workspace_paths.values_mut() {
-            *path = convert(*path)?;
+        self.converted_rows =
+            as_stored.map(|(rows, order)| Box::new([self.hashed_rows(&order), rows]));
+        for i in 0..self.workspace_paths.count() {
+            let stored = self.workspace_paths.values()[i];
+            if let Some(path) = self.convert_windows_path(Some(dir), stored)? {
+                self.workspace_paths.values_mut()[i] = path;
+            }
         }
-        for dependency in &mut self.buffers.dependencies {
-            if let dependency::Value::Workspace(path) = &mut dependency.version.value {
-                *path = convert(*path)?;
+        for id in 0..self.buffers.dependencies.len() {
+            if let dependency::Value::Workspace(stored) =
+                self.buffers.dependencies[id].version.value
+                && let Some(path) = self.convert_windows_path(Some(dir), stored)?
+            {
+                self.buffers.dependencies[id].version.value = dependency::Value::Workspace(path);
             }
         }
         Ok(())
+    }
+
+    /// `None` if `stored` stays, as it does when `dir` has something of that name.
+    fn convert_windows_path(
+        &mut self,
+        dir: Option<Fd>,
+        stored: SemverString,
+    ) -> Result<Option<SemverString>, AllocError> {
+        let path = self.str(&stored);
+        let spelling = match dir {
+            _ if cfg!(windows) => bun_paths::to_portable(path),
+            Some(dir) => sys::existing_spelling(dir, path),
+            None => bun_paths::from_portable(path),
+        };
+        match spelling {
+            Cow::Borrowed(_) => Ok(None),
+            Cow::Owned(converted) => self.string_buf().append(&converted).map(Some),
+        }
     }
 
     /// The stored literal is relative to the package. `Package::parse` also rebases the
@@ -1178,10 +1212,11 @@ impl Lockfile {
             })
             .iter()
             .filter(move |dependency| {
+                let name = dependency.name.slice(buf);
                 dependency.behavior.is_bundled()
-                    && crate::package_installer::alias_is_safe_install_target(
-                        dependency.name.slice(buf),
-                    )
+                    && !bun_paths::portable::has_dot_dot(name)
+                    && !strings::contains_char(name, 0)
+                    && bun_paths::components(name).any(|part| part != b".")
             })
     }
 
@@ -1403,6 +1438,7 @@ impl Lockfile {
         new.trusted_dependencies = old_trusted_dependencies;
         new.scripts = old_scripts;
         new.meta_hash = old.meta_hash;
+        new.converted_rows = old.converted_rows.take();
         // Carry the on-disk format version over from the lockfile we loaded so a
         // re-save preserves it (a fresh `new` defaults to the current version).
         new.text_lockfile_version = old.text_lockfile_version;
@@ -2051,6 +2087,11 @@ impl Lockfile {
                 break 'bytes writer_buf;
             }
 
+            // Only an install has the scripts to hash the new spelling with.
+            if self.converted_rows.take().is_some() {
+                self.meta_hash = ZERO_HASH;
+            }
+
             let mut bytes: Vec<u8> = Vec::new();
 
             let mut total_size: usize = 0;
@@ -2247,6 +2288,7 @@ impl Lockfile {
             catalogs: CatalogMap::default(),
             package_extensions: Default::default(),
             meta_hash: ZERO_HASH,
+            converted_rows: None,
             patched_dependencies: PatchedDependenciesMap::default(),
             saved_config_version: None,
             loaded_package_count: 0,
@@ -3417,6 +3459,53 @@ impl Lockfile {
         Ok(!strings::eql_long(&previous_meta_hash, &self.meta_hash))
     }
 
+    fn hash_order(&self, packages_len: usize) -> Vec<PackageID> {
+        let mut alphabetized_names: Vec<PackageID> = (1..packages_len as PackageID).collect();
+        let alphabetizer = package::Alphabetizer::<u64> {
+            names: self.packages.items_name().into(),
+            buf: self.buffers.string_bytes.as_slice().into(),
+            resolutions: self.packages.items_resolution().into(),
+        };
+        index_sort::sort_indices_unstable(&mut alphabetized_names, &mut |a, b| {
+            alphabetizer.order(a, b)
+        });
+        alphabetized_names
+    }
+
+    fn hashed_rows(&self, order: &[PackageID]) -> Vec<u8> {
+        let names = self.packages.items_name();
+        let resolutions = self.packages.items_resolution();
+        let bytes = self.buffers.string_bytes.as_slice();
+        let mut rows = Vec::new();
+        for &i in order {
+            let _ = writeln!(
+                rows,
+                "{}@{}",
+                bstr::BStr::new(names[i as usize].slice(bytes)),
+                resolutions[i as usize].fmt(bytes, PathSep::Any)
+            );
+        }
+        rows
+    }
+
+    /// `rows` in the spelling and the order of the file, if it has them all. It can have more.
+    fn rows_as_stored(&self, rows: &[u8]) -> Option<Vec<u8>> {
+        let [converted, as_stored] = self.converted_rows.as_deref()?;
+        let mut missing = StringHashMap::<usize>::default();
+        for row in strings::split(rows, b"\n") {
+            *missing.get_or_put_value(row, 0).unwrap_or_oom() += 1;
+        }
+        let mut found = Vec::new();
+        for (row, stored) in strings::split(converted, b"\n").zip(strings::split(as_stored, b"\n"))
+        {
+            if let Some(count @ 1..) = missing.get_mut(row) {
+                *count -= 1;
+                found.push(stored);
+            }
+        }
+        (missing.values().all(|count| *count == 0)).then(|| found.join(&b'\n'))
+    }
+
     pub(crate) fn generate_meta_hash(
         &self,
         print_name_version_string: bool,
@@ -3427,24 +3516,13 @@ impl Lockfile {
         }
 
         let mut string_builder = bun_core::StringBuilder::default();
-        let names: &[SemverString] = &self.packages.items_name()[..packages_len];
-        let resolutions: &[Resolution] = &self.packages.items_resolution()[..packages_len];
-        let bytes = self.buffers.string_bytes.as_slice();
-        let mut alphabetized_names: Vec<PackageID> = vec![0; packages_len.saturating_sub(1)];
+        let rows = self.hashed_rows(&self.hash_order(packages_len));
+        let rows = self.rows_as_stored(&rows).unwrap_or(rows);
 
         const HASH_PREFIX: &[u8] =
             b"\n-- BEGIN SHA512/256(`${alphabetize(name)}@${order(version)}`) --\n";
         const HASH_SUFFIX: &[u8] = b"-- END HASH--\n";
-        string_builder.cap += HASH_PREFIX.len() + HASH_SUFFIX.len();
-        for i in 1..packages_len {
-            alphabetized_names[i - 1] = i as PackageID;
-            // posix path separators because we only use posix in the lockfile
-            string_builder.fmt_count(format_args!(
-                "{}@{}\n",
-                bstr::BStr::new(names[i].slice(bytes)),
-                resolutions[i].fmt(bytes, PathSep::Posix)
-            ));
-        }
+        string_builder.cap += HASH_PREFIX.len() + rows.len() + HASH_SUFFIX.len();
 
         const SCRIPTS_BEGIN: &[u8] = b"\n-- BEGIN SCRIPTS --\n";
         const SCRIPTS_END: &[u8] = b"\n-- END SCRIPTS --\n";
@@ -3468,27 +3546,9 @@ impl Lockfile {
             string_builder.count(SCRIPTS_END);
         }
 
-        {
-            let alphabetizer = package::Alphabetizer::<u64> {
-                names: names.into(),
-                buf: bytes.into(),
-                resolutions: resolutions.into(),
-            };
-            index_sort::sort_indices_unstable(&mut alphabetized_names, &mut |a, b| {
-                alphabetizer.order(a, b)
-            });
-        }
-
         string_builder.allocate().expect("unreachable");
         let _ = string_builder.append(HASH_PREFIX);
-
-        for &i in alphabetized_names.iter() {
-            let _ = string_builder.fmt(format_args!(
-                "{}@{}\n",
-                bstr::BStr::new(names[i as usize].slice(bytes)),
-                resolutions[i as usize].fmt(bytes, PathSep::Any)
-            ));
-        }
+        let _ = string_builder.append(&rows);
 
         if has_scripts {
             let _ = string_builder.append(SCRIPTS_BEGIN);

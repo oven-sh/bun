@@ -5,6 +5,8 @@
 //! `bun_clap::parse_param!` proc-macro (compile-time spec parsing) plus a
 //! const-fn slice concat (`bun_clap::concat_params!`).
 
+use std::borrow::Cow;
+
 use bun_options_types::LoaderExt as _;
 
 use bstr::BStr;
@@ -21,6 +23,7 @@ use bun_options_types::context::{
     Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment, TestGlobals,
 };
 use bun_options_types::schema::api;
+use bun_paths::portable::from_portable_rooted;
 use bun_removable_features::{Feature, RuntimeRequirement, is_removed};
 
 use super::startup_options::{RequirementRow, RowName};
@@ -42,6 +45,14 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
 /// Whether `bun test` takes the argument for a path. One such argument makes paths of all.
 pub(crate) fn reads_as_path_of_tests(argument: &[u8]) -> bool {
     !bun_paths::is_package_path(argument) && !matches!(argument, b"." | b"..")
+}
+
+/// [`bun_sys::existing_spelling`], but `\a` is `/a`.
+pub(crate) fn existing_spelling_rooted(path: &[u8]) -> Cow<'_, [u8]> {
+    match bun_sys::existing_spelling(bun_sys::Fd::cwd(), path) {
+        Cow::Owned(_) if path.starts_with(b"\\") => from_portable_rooted(path),
+        spelling => spelling,
+    }
 }
 
 /// `bun test --files-from <list>`. Every line is a path, never a filter. A list
@@ -1249,8 +1260,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.original_cwd = Some(Box::from(original_cwd));
             original_cwd
         };
-        let spelling = bun_sys::existing_spelling(bun_sys::Fd::cwd(), cwd_arg);
-        let out_z = bun_paths::Path::resolve(&[base, &spelling]);
+        let out_z = bun_paths::Path::resolve(&[base, &existing_spelling_rooted(cwd_arg)]);
         if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
             Output::err(
                 err,
@@ -1351,6 +1361,17 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if may_refuse_options {
             let named_file = args.option(b"--config").filter(|file| !file.is_empty());
             startup_options::reject_unusable_bunfig_settings(ctx, named_file);
+        }
+    }
+
+    // So far these are `[bundle] entryPoints`. An AOT build expands patterns, in which `\` escapes.
+    for name in &mut ctx.args.entry_points {
+        let path: Box<[u8]> = bun_paths::from_portable(name).into();
+        let is_pattern = compile_options::is_aot_requested(cmd, &args)
+            && bun_glob::detect_glob_syntax(name)
+            && !bun_sys::exists_z(&bun_paths::Path::join(&[&path]));
+        if !is_pattern && !name.starts_with(b"data:") {
+            *name = path;
         }
     }
 

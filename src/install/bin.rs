@@ -572,11 +572,8 @@ impl<'a> NamesIterator<'a> {
         }
         if self.dir_iterator.is_none() {
             let package_name = self.package_name.slice(self.string_buffer);
-            let Some(target) = bin_target_in_package(self.bin.dir().slice(self.string_buffer))
-            else {
-                return Ok(None);
-            };
-            let bin_dir = bin_target_path(package_name, &target);
+            let target = path::from_portable(self.bin.dir().slice(self.string_buffer));
+            let bin_dir = Path::join(&[package_name, &target]);
             let child_dir = sys::Dir::borrow(&self.destination_node_modules)
                 .open_at(&bin_dir)
                 .map_err(Error::from)?;
@@ -626,11 +623,9 @@ impl<'a> NamesIterator<'a> {
             _ => return Ok(None),
         };
 
-        let base = strings::tokenize_any(name.slice(self.string_buffer), b"/\\").last();
-        Ok(Some(strings::copy(
-            &mut self.buf[..],
-            base.unwrap_or_default(),
-        )))
+        let base = path::basename(name.slice(self.string_buffer));
+        let base = base.strip_prefix(b".\\").unwrap_or(base);
+        Ok(Some(strings::copy(&mut self.buf[..], base)))
     }
 }
 
@@ -774,7 +769,7 @@ pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     if cfg!(windows) && strings::contains_char(target, b':') {
         return true;
     }
-    path::portable::climbs_out(target) || strings::contains_char(target, 0)
+    path::portable::climbs_out(target)
 }
 
 /// The OS stops reading a path at a NUL byte, so `..\0x` would open `..`.
@@ -782,11 +777,10 @@ pub(crate) fn path_climbs_out(path: &[u8]) -> bool {
     path::climbs_out(path) || strings::contains_char(path, 0)
 }
 
-/// A `bin` or `directories.bin` value, relative to the package. As in npm, a leading separator means nothing.
+/// The path that a `bin` or `directories.bin` value means, if it is one to link.
 pub fn bin_target_in_package(target: &[u8]) -> Option<Cow<'_, [u8]>> {
-    let target = strings::trim_left(target, b"/\\");
-    (!target.is_empty() && !bin_target_escapes_package_dir(target))
-        .then(|| path::from_portable(target))
+    let target = path::from_portable(target);
+    (!target.is_empty() && !bin_target_escapes_package_dir(&target)).then_some(target)
 }
 
 fn bin_target_needs_resolved_containment_check(target: &[u8]) -> bool {
@@ -1457,7 +1451,7 @@ impl<'a> Linker<'a> {
         let at_root = if in_subdir { target_basename } else { b"" };
         for candidate in [target, bin_name, at_root, &exe_name] {
             if !candidate.is_empty()
-                && !bin_target_escapes_package_dir(candidate)
+                && !path_climbs_out(candidate)
                 && let abs_target = bin_target_path(package_dir, candidate)
                 && sys::exists_z(&abs_target)
             {
@@ -1597,9 +1591,10 @@ impl<'a> Linker<'a> {
                 }
             }
             Tag::Dir => {
-                let Some(target) = bin_target_in_package(bin.dir().slice(string_buf)) else {
+                let target = path::from_portable(bin.dir().slice(string_buf));
+                if target.is_empty() {
                     return Ok(());
-                };
+                }
                 let abs_target_dir = bin_target_path(&package_dir, &target);
                 let target_dir = sys::Dir::from_fd(sys::open_dir_absolute(&abs_target_dir)?);
 
@@ -1899,6 +1894,13 @@ fn for_each_bin_name(
     let bin = lockfile.packages.items_bin()[package_id as usize];
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let dir = match bin.tag {
+        Tag::Dir
+            if bin_target_escapes_package_dir(&path::from_portable(
+                bin.dir().slice(string_buf),
+            )) =>
+        {
+            return;
+        }
         Tag::Dir => match sys::Dir::open(node_modules) {
             Ok(dir) => Some(dir),
             Err(_) => return,

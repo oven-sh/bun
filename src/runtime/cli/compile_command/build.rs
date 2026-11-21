@@ -294,7 +294,7 @@ fn write_product(
             root_from_executable: root_from_executable.as_deref(),
             // The program holds `__dirname` or the like, so it tells the folder itself, and asks for its own modules by paths below it.
             root_on_build_machine: (build.holds_source_paths && !options.runs_in_place)
-                .then(|| trim_trailing_separators(&build.root_directory)),
+                .then(|| bun_paths::without_trailing_sep(&build.root_directory)),
             assets_named_at_root: &assets_named_at_root,
             refused_data: &build.refused_data,
             files_for_file_system_alone: &files_for_file_system_alone,

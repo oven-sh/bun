@@ -486,6 +486,22 @@ describe.concurrent("import.meta.glob", () => {
     });
   });
 
+  test('escapes in a pattern that goes through "imports"', async () => {
+    using dir = tempDir("import-meta-glob-imports", {
+      "package.json": JSON.stringify({ imports: { "#pages/*": "./pages/*" } }),
+      "pages/[id]/a.ts": "",
+      "pages/i/b.ts": "",
+      "entry.ts": String.raw`
+        console.log(...Object.keys(import.meta.glob("#pages/\\[id\\]/*.ts")));
+        console.log(...Object.keys(import.meta.glob(["#pages/**/*.ts", "!#pages/\\[id\\]/*.ts"])));`,
+    });
+    expect(await run(String(dir), ["entry.ts"])).toEqual({
+      stdout: "/pages/[id]/a.ts\n/pages/i/b.ts\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.skipIf(isWindows)("in a module whose directory is /", async () => {
     using dir = tempDir("import-meta-glob-root", {
       "modules/a.ts": `export default "a";`,

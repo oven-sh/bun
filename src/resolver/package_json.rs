@@ -7,6 +7,7 @@ use bun_core::Output;
 use bun_core::StackCheck;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
+use bun_paths::portable::from_portable_rooted;
 use bun_paths::{MAX_PATH_BYTES, NODE_MODULES_NEEDLE, Path, PathBuffer, from_portable};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
@@ -556,7 +557,7 @@ impl PackageJSON {
                     if !str.is_empty() {
                         package_json
                             .main_fields
-                            .put(main, from_portable(str).into())
+                            .put(main, from_portable_rooted(str).into())
                             .expect("unreachable");
                     }
                 }
@@ -594,15 +595,18 @@ impl PackageJSON {
                         // import of "foo", but that's actually not a bug. Or arguably it's a
                         // bug in Browserify but we have to replicate this bug because packages
                         // do this in the wild.
-                        let key = Path::resolve(&[&from_portable(prop.key.slice())]);
-                        let key = bun_paths::without_leading_sep(&key);
+                        let key = Path::join(&[b".", &with_slashes(prop.key.slice())]);
+                        let key = match bun_paths::without_trailing_sep(&key) {
+                            b"." => b"",
+                            key => key,
+                        };
 
                         match &prop.value {
                             js_ast::E::JsonValue::String(str) => {
                                 // If this is a string, it's a replacement package
                                 package_json
                                     .browser_map
-                                    .put(key, from_portable(str.slice()).into())
+                                    .put(key, from_portable_rooted(str.slice()).into())
                                     .expect("unreachable");
                             }
                             js_ast::E::JsonValue::Boolean(boolean) => {
@@ -1781,7 +1785,7 @@ impl<'a> ESModule<'a> {
                             return self.resolve_target::<true>(
                                 package_url,
                                 target,
-                                &with_slashes(subpath),
+                                subpath,
                                 is_imports,
                             );
                         }
@@ -1799,7 +1803,6 @@ impl<'a> ESModule<'a> {
                                 bstr::BStr::new(subpath)
                             ));
                         }
-                        let subpath: &[u8] = &with_slashes(subpath);
                         let mut result =
                             self.resolve_target::<false>(package_url, target, subpath, is_imports);
                         if result.status == Status::Exact
@@ -1960,17 +1963,15 @@ impl<'a> ESModule<'a> {
                         ));
                     }
 
-                    let package: &[u8] = &with_slashes(str);
                     if internal
-                        && !strings::has_prefix(package, b"./")
-                        && !strings::has_prefix(package, b"../")
-                        && !strings::has_prefix(package, b"/")
+                        && !strings::has_prefix(str, b"../")
+                        && !strings::has_prefix(str, b"/")
                     {
                         if PATTERN {
                             // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
-                            let len = replacement_size(package, b"*", subpath);
+                            let len = replacement_size(str, b"*", subpath);
                             invalid_specifier_if_too_long!(len);
-                            let _ = replace(package, b"*", subpath, &mut resolve_target_buf.0);
+                            let _ = replace(str, b"*", subpath, &mut resolve_target_buf.0);
                             let result = &resolve_target_buf.0[0..len];
                             if let Some(log) = self.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
@@ -1991,7 +1992,12 @@ impl<'a> ESModule<'a> {
                             // (e.g. `@myproject/resolver`) that we hand back to
                             // package-resolve. Per the Node.js packages spec these
                             // are URL-like specifiers and must keep forward slashes.
-                            let result: &[u8] = &Path::join(&[package, subpath]).into_portable();
+                            let mut joined = bun_paths::path_buffer_pool::get();
+                            let result = bun_node_path::join_posix_t(
+                                &[str, subpath],
+                                &mut resolve_target_buf.0,
+                                &mut joined.0,
+                            );
                             if let Some(log) = self.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "Resolved \".{}\" to \".{}\"",
@@ -2033,6 +2039,7 @@ impl<'a> ESModule<'a> {
 
                 // Let resolvedTarget be the URL resolution of the concatenation of packageURL and target.
                 let str: &[u8] = &from_portable(str);
+                let subpath: &[u8] = &with_slashes(subpath);
                 let resolved_target: &[u8] = &Path::join(&[package_url, str]);
 
                 // If target split on "/" or "\" contains any ".", ".." or "node_modules"

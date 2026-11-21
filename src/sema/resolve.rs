@@ -1255,7 +1255,8 @@ impl Options {
             .unwrap_or(&JsxEmit::None);
         // `GetJSXImplicitImportBase`, for a file without pragmas.
         let import_source = word(b"jsxImportSource").filter(|source| !source.is_empty());
-        options.jsx_import_source = import_source.unwrap_or(b"react").to_vec();
+        options.jsx_import_source =
+            bun_paths::portable::from_portable_specifier(import_source.unwrap_or(b"react")).into();
         let runtime: &[u8] = match options.jsx {
             JsxEmit::ReactJsxDev => b"/jsx-dev-runtime",
             JsxEmit::ReactJsx => b"/jsx-runtime",

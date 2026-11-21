@@ -1663,6 +1663,21 @@ describe.concurrent.skipIf(isWindows)("workspace paths longer than the path buff
     expect(exitCode).toBe(0);
   });
 
+  test("reports a directory below ** that is too deep and still runs the members", async () => {
+    using root = tempDir("filter-deep-tree", {
+      ...workspace,
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/**"] }),
+    });
+    const deep = makeDirectoryOfLength(join(String(root), "packages"), MAX_PATH_BYTES - 2);
+    expect(spawnSync({ cmd: ["mkdir", "-p", "below/it"], cwd: deep }).exitCode).toBe(0);
+
+    const { stdout, stderr, exitCode } = await runFilter(String(root));
+    spawnSync({ cmd: ["rm", "-r", "below"], cwd: deep });
+    expect(stderr).toContain("ENAMETOOLONG");
+    expect(stdout).toContain("ok present: ok-ran");
+    expect(exitCode).toBe(0);
+  });
+
   test("finds the workspace root above a cwd whose own package.json path is too long", async () => {
     using root = tempDir("filter-long-cwd", workspace);
     const cwd = makeDirectoryOfLength(String(root), MAX_PATH_BYTES - "/package.json".length);

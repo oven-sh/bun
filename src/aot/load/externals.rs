@@ -62,7 +62,9 @@ fn matches_path(
         CodeImportKind::EntryPoint | CodeImportKind::Require => specifier,
     };
     let mut path = Path::resolve(&[directory, specifier]);
-    path.copy_trailing_sep_from(specifier);
+    if specifier.ends_with(&[bun_paths::SEP]) {
+        path.push_trailing_sep();
+    }
     contains(paths, &path)
 }
 

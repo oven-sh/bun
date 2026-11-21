@@ -119,7 +119,7 @@ impl<'a, U: PathUnit, S: PathStyle> EditBuf<'a, U, S> {
         S::to_native_in_place(&mut self.as_mut_slice()[start..]);
     }
 
-    /// Inserts `./` if collapsing exposed a volume: `a\..\C:\b` becomes `.\C:\b`.
+    /// Inserts `./` if collapsing exposed a volume: `a\..\C:\b` becomes `.\C:\b`. `\\` gets a third separator.
     #[inline(always)]
     fn prevent_new_volume(&mut self, before: Root) {
         if S::WIN32
@@ -127,10 +127,13 @@ impl<'a, U: PathUnit, S: PathStyle> EditBuf<'a, U, S> {
             && Root::parse::<S>(self.as_slice()).kind != VolumeKind::None
         {
             core::hint::cold_path();
-            self.splice(
-                before.len..before.len,
-                &[U::from_u8(b'.'), U::from_u8(S::SEP)],
-            );
+            let (dot, sep) = (U::from_u8(b'.'), U::from_u8(S::SEP));
+            match self.as_slice() {
+                [first, second, ..] if S::is_sep(*first) && S::is_sep(*second) => {
+                    self.splice(2..2, &[sep]);
+                }
+                _ => self.splice(before.len..before.len, &[dot, sep]),
+            }
         }
     }
 }
@@ -207,7 +210,7 @@ fn skip_leading_seps_and_dots<S: PathStyle, C: PathUnit>(mut path: &[C]) -> &[C]
     }
 }
 
-/// `part` can only form a volume if `path` is empty or a lone separator.
+/// `part` can only form a volume if `path` is empty, or one or two separators.
 #[inline(always)]
 fn root_to_preserve<S: PathStyle>(path: &[impl PathUnit], part: &[impl PathUnit]) -> Option<Root> {
     if !S::WIN32 {
@@ -215,7 +218,9 @@ fn root_to_preserve<S: PathStyle>(path: &[impl PathUnit], part: &[impl PathUnit]
     }
     match path {
         [] => Some(Root::parse::<S>(part)),
-        [only] if S::is_sep(*only) => Some(Root::without_volume(true)),
+        [_] | [_, _] if path.iter().all(|&unit| S::is_sep(unit)) => {
+            Some(Root::without_volume(true))
+        }
         _ => None,
     }
 }
@@ -620,14 +625,17 @@ pub(crate) struct Unresolved<'a, U> {
 }
 
 impl<'a, U: PathUnit> Unresolved<'a, U> {
+    /// Reads the top-level directory once, because `process.chdir()` on another thread changes it.
     #[inline(always)]
-    pub(crate) fn new<S: PathStyle>(path: &'a [U]) -> Self {
-        let base = if Root::parse::<S>(path).is_fully_qualified::<S>() {
-            b""
-        } else {
-            crate::fs::top_level_dir()
-        };
-        Self { base, path }
+    pub(crate) fn pair<S: PathStyle>(from: &'a [U], to: &'a [U]) -> [Self; 2] {
+        let mut top_level_dir = None;
+        [from, to].map(|path| Self {
+            base: match S::is_fully_qualified(path) {
+                true => b"",
+                false => top_level_dir.get_or_insert_with(crate::fs::top_level_dir),
+            },
+            path,
+        })
     }
 
     #[inline(always)]
@@ -748,11 +756,15 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
 // ── `\\?\` and `\??\` ──
 
 impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
-    /// Normalizes first, because Win32 does not normalize what follows `prefix`.
+    /// Normalizes what gets `prefix`, because Win32 does not normalize what follows it.
     pub(crate) fn add_namespace_prefix(&mut self, prefix: [u8; 4]) {
-        let root = self.normalize_to_slashes(Root::parse::<S>(self.as_slice()));
-        self.finish_normalize(root, false);
+        let root = Root::parse::<S>(self.as_slice());
         let is_nt = prefix == NT_PATH_PREFIX;
+        if !is_nt && root.kind == VolumeKind::Device && S::is_sep(self.as_slice()[1]) {
+            return self.convert_seps(0);
+        }
+        let root = self.normalize_to_slashes(root);
+        self.finish_normalize(root, false);
         let prefix = prefix.map(U::from_u8);
         match root.kind {
             VolumeKind::Drive if root.is_absolute() => self.splice(0..0, &prefix),
@@ -760,12 +772,18 @@ impl<U: PathUnit, S: PathStyle> EditBuf<'_, U, S> {
                 self.splice(0..1, U::lit(b"UNC"));
                 self.splice(0..0, &prefix);
             }
-            VolumeKind::Device if is_nt || root.has_nt_prefix(self.as_slice()) => {
-                self.as_mut_slice()[..3].copy_from_slice(&prefix[..3]);
+            VolumeKind::Device => {
+                let path = self.as_mut_slice();
+                path[..3].copy_from_slice(&prefix[..3]);
+                if let [_, _, _, _, drive, colon, ..] = path
+                    && colon.eq_ascii(b':')
+                {
+                    *drive = drive.to_ascii_upper();
+                }
             }
             // Prefix `\a` too, so that NT fails the lookup instead of opening `\Device\..`.
             VolumeKind::None if is_nt && root.is_absolute() => self.splice(0..0, &prefix),
-            VolumeKind::Drive | VolumeKind::Device | VolumeKind::None => {}
+            VolumeKind::Drive | VolumeKind::None => {}
         }
     }
 

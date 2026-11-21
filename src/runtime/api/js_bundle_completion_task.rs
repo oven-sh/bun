@@ -22,6 +22,7 @@ use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
 use bun_paths::{self as paths};
 use bun_ptr::BackRef;
+use bun_resolver::resolve_keeping_sep;
 use bun_standalone_graph::StandaloneModuleGraph::{
     CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions,
     target_base_public_path, to_executable,
@@ -219,7 +220,10 @@ fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
     let outdir_slice = &config.outdir.list;
     let outfile_slice = &compile.outfile.list;
-    let mut joined = paths::Path::resolve(&[top_level_dir, outdir_slice, outfile_slice]);
+    let mut joined = match outdir_slice.is_empty() && paths::is_absolute(outfile_slice) {
+        true => paths::Path::from(outfile_slice),
+        false => resolve_keeping_sep(&[top_level_dir, outdir_slice, outfile_slice]),
+    };
     if compile.compile_target.os == OperatingSystem::Windows && !joined.ends_with(b".exe") {
         joined.extend_from_slice(b".exe");
     }
@@ -1156,7 +1160,7 @@ impl JSBundleCompletionTask {
                     false => config.dir.list.as_slice(),
                 };
                 let path = config.tsconfig_override.list.as_slice();
-                paths::Path::resolve(&[cwd, path]).as_bytes().into()
+                resolve_keeping_sep(&[cwd, path]).as_bytes().into()
             }),
             ..Default::default()
         }

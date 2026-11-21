@@ -16,10 +16,12 @@ pub(crate) fn describe(error: &bun_sys::Error) -> Vec<u8> {
 /// to the system unchanged, which limits it to 260 characters unless it's in the namespaced form that Node uses for
 /// every path.
 fn for_libuv(path: &[u8]) -> Path {
-    match cfg!(windows) && path.len() >= 240 {
+    let path = match cfg!(windows) && path.len() >= 240 {
         true => Path::from(&paths::namespaced(path)),
         false => Path::from(path),
-    }
+    };
+    // Callers take ENOENT, and not ENAMETOOLONG, to mean that nothing is there.
+    path.check_len().unwrap_or_default()
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

@@ -599,7 +599,8 @@ impl PublishCommand {
             return Ok(());
         }
 
-        let abs_workspace_path = path::dirname_or_root(abs_package_json_path.as_bytes());
+        let abs_workspace_path =
+            path::without_trailing_sep(path::dirname_or_root(abs_package_json_path.as_bytes()));
         let script_env = manager.env_mut();
         // `pack()` left the last three describing the package it packed last.
         let variables: [(&[u8], &[u8]); 4] = [

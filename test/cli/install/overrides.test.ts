@@ -1368,7 +1368,7 @@ describe("an entry is resolved again after other packages of the same install", 
     const lock = await lockfile(dir);
 
     const { stderr, exitCode } = await bun(dir, "install");
-    expect(stderr).toBe('error: package.json not found for "file:missing" dependency "missing"');
+    expect(stderr).toBe('error: package.json not found for "file:./missing" dependency "missing"');
     expect(await lockfile(dir)).toBe(lock);
     expect(exitCode).toBe(1);
   });

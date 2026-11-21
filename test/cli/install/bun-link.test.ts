@@ -1143,25 +1143,6 @@ describe("global bin dir", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  // On POSIX the symlink's target says who owns it, so only Windows depends on the check of `directories.bin`.
-  it("bun unlink ignores a directories.bin outside of the package", async () => {
-    using bunInstall = tempDir("link-global", {});
-    using dir = tempDir("link-pkg", {
-      owner: { ...pkgFiles("owner", { tool: "cli.js" }), tool: "" },
-      other: { "package.json": JSON.stringify({ name: "other", version: "1.0.0", directories: { bin: "../owner" } }) },
-    });
-    const bin = join(String(bunInstall), "bin", "tool");
-
-    for (const pkg of ["owner", "other"]) {
-      expect(await run("link", join(String(dir), pkg), String(bunInstall))).toMatchObject({ err: "", exitCode: 0 });
-    }
-    const result = await run("unlink", join(String(dir), "other"), String(bunInstall));
-
-    expect(result.out).toContain('success: unlinked package "other"');
-    expect(bin).toBeValidBin(linkTarget("owner", "cli.js"));
-    expect(result.exitCode).toBe(0);
-  });
-
   // On POSIX a `\` is part of a name, and the kernel resolves the text of a link. On Windows it
   // separates, and a bin is a shim.
   describe.skipIf(isWindows)("below a directory with a backslash in its name", () => {

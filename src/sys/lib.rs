@@ -3877,18 +3877,29 @@ mod windows_impl {
             ..Default::default()
         };
         // `NtCreateFile` does not resolve `..` in a name relative to a directory handle.
-        let made = if !bun_paths::is_absolute(path) && bun_paths::climbs_out(path) {
+        let made = if bun_paths::root(path).is_empty() && bun_paths::climbs_out(path) {
             super::open_dir_at_windows_a(dir, path.as_bytes(), options)
         } else {
             super::open_dir_at_windows_nt_path(dir, &super::nt_path(path, Tag::mkdir)?, options)
         };
         made.map(super::File::from_fd).map(drop)
     }
+    /// For a call that removes or replaces what `path` names. `a\.` and `a\b\..` are not the entry `a`.
+    fn nt_path_of_entry(path: &ZStr, syscall: Tag) -> Maybe<bun_paths::OSPath> {
+        match bun_paths::basename(path) {
+            b"." | b".." => Err(Error::from_code(E::ENOENT, syscall)),
+            _ => super::nt_path(path, syscall),
+        }
+    }
     pub fn renameat(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
         let from_dir = from_dir.as_fd();
         let to_dir = to_dir.as_fd();
-        let from_w = super::nt_path(from, Tag::rename)?;
-        let to_w = super::nt_path(to, Tag::rename)?;
+        let from_w = match bun_paths::is_absolute(from) {
+            true => super::nt_path(from, Tag::rename)?,
+            // Opening it normalizes it.
+            false => super::win32_path(from, Tag::rename)?,
+        };
+        let to_w = nt_path_of_entry(to, Tag::rename)?;
         super::windows::rename_at_w(from_dir, &from_w, to_dir, &to_w, true)
     }
     pub(crate) fn renameat2(
@@ -3909,7 +3920,7 @@ mod windows_impl {
         // AT_REMOVEDIR on Windows = 0x200.
         const AT_REMOVEDIR: i32 = 0x200;
         super::windows::DeleteFileBun(
-            &super::nt_path(path, Tag::unlink)?,
+            &nt_path_of_entry(path, Tag::unlink)?,
             super::windows::DeleteFileOptions {
                 dir: if dir.is_valid() {
                     Some(dir.native())
@@ -3932,9 +3943,10 @@ mod windows_impl {
         mkdir_recursive_at_mode(dir, sub, 0o777)
     }
     pub fn mkdir_recursive_at_mode(dir: Fd, sub: &[u8], mode: Mode) -> Maybe<()> {
-        // `NtCreateFile` does not take `.` for a name.
+        // `NtCreateFile` does not take `.` or `C:..` for a name.
         let sub = bun_paths::Path::join(&[sub]);
-        if bun_paths::components(&sub).all(|name| name == b".") {
+        let has_root = !bun_paths::root(&sub).is_empty();
+        if bun_paths::components(&sub).all(|name| name == b"." || (has_root && name == b"..")) {
             return Ok(());
         }
         super::mkdir_recursive_with(sub.as_bytes(), |p| {
@@ -5538,14 +5550,12 @@ pub fn symlink_running_executable(target: &ZStr, dest: &ZStr) -> Maybe<()> {
 /// Best-effort recursive delete of an absolute
 /// path. Routes through `Dir::delete_tree` on the parent directory.
 pub fn delete_tree_absolute(path: &[u8]) -> Maybe<()> {
-    let parent = bun_paths::dirname_or_root(path);
-    let base = bun_paths::basename(path);
-    if parent.is_empty() || base.is_empty() {
+    let Some(parent) = bun_paths::dirname(path) else {
         // Nothing sensible to do (root or empty); silent success.
         return Ok(());
-    }
+    };
     let dir = open_dir_absolute(parent).map(Dir::from_fd)?;
-    dir.delete_tree(base)
+    dir.delete_tree(bun_paths::basename(path))
 }
 /// Windows variant skips `DELETE` access; on POSIX identical.
 pub fn open_dir_absolute_not_for_deleting_or_renaming(path: &[u8]) -> Maybe<Fd> {
@@ -5737,7 +5747,7 @@ pub fn normalize_path_windows_opts(
             // `NtCreateFile` does not open a device path. The callers know it by this prefix.
             out.set(w!("\\\\.\\"));
             out.extend_from_slice(rest);
-        } else if opts.add_nt_prefix {
+        } else if opts.add_nt_prefix && bun_paths::is_fully_qualified(path) {
             out.set(path);
             out.make_nt_path();
         } else {
@@ -6047,10 +6057,23 @@ pub fn win32_path<C: bun_paths::PathUnit>(path: &[C], syscall: Tag) -> Maybe<bun
     })
 }
 
-/// `path` for kernel32, which may be longer than `MAX_PATH`.
+/// [`win32_path`], but `C:\a` may be longer than `MAX_PATH`.
 #[cfg(windows)]
 pub fn long_path<C: bun_paths::PathUnit>(path: &[C], syscall: Tag) -> Maybe<bun_paths::OSPath> {
-    os_path_with(path, syscall, bun_paths::OSPath::make_long_path)
+    os_path_with(path, syscall, |wide| {
+        let is_on_drive = bun_paths::is_absolute(path) && !bun_paths::has_leading_sep(path);
+        if is_on_drive || wide.starts_with(bun_core::w!("\\??\\")) {
+            let drive = wide[0];
+            wide.make_long_path();
+            wide.copy_trailing_sep_from(path);
+            if is_on_drive {
+                // A link stores its target, so `c:` has to read back as `c:`.
+                wide.as_mut_slice()["\\\\?\\".len()] = drive;
+            }
+        } else {
+            bun_paths::to_native_in_place(wide.as_mut_slice());
+        }
+    })
 }
 
 /// `path` for ntdll. A relative one stays relative.
@@ -6285,8 +6308,13 @@ pub enum ExistsAtType {
 }
 /// `path` is NT-prefixed. Like `GetFileAttributesW`, does not follow a final reparse point.
 #[cfg(windows)]
-fn nt_query_attributes_at(dir: Fd, path: &[u16]) -> Maybe<u32> {
+fn nt_query_attributes_at(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
     use bun_windows_sys::externs as w;
+    // Trim leading `.\` — NtQueryAttributesFile expects relative paths
+    // without it.
+    if path.len() > 2 && path[0] == b'.' as u16 && path[1] == b'\\' as u16 {
+        path = &path[2..];
+    }
     let path_len_bytes = (path.len() * 2) as u16;
     let mut nt_name = w::UNICODE_STRING {
         Length: path_len_bytes,
@@ -6388,7 +6416,7 @@ pub fn get_fcntl_flags(fd: Fd) -> Maybe<FcntlInt> {
 }
 #[cfg(windows)]
 pub fn get_fcntl_flags(_fd: Fd) -> Maybe<FcntlInt> {
-    Err(Error::from_code(E::ENOSYS, Tag::fcntl))
+    Err(Error::from_code_int(libc::ENOSYS, Tag::fcntl))
 }
 #[inline]
 pub fn set_nonblocking(fd: Fd) -> Maybe<()> {
@@ -8065,8 +8093,8 @@ mod win_symlink_impl {
     ) -> Maybe<()> {
         if !WindowsSymlinkOptions::has_failed_to_create_symlink() {
             match symlink_w(
-                &super::long_path(dest, Tag::symlink)?,
-                &super::long_path(target, Tag::symlink)?,
+                &super::long_path(bun_paths::without_trailing_sep(dest), Tag::symlink)?,
+                &super::long_path(bun_paths::without_trailing_sep(target), Tag::symlink)?,
                 WindowsSymlinkOptions { directory: true },
             ) {
                 Ok(()) => return Ok(()),
@@ -8175,15 +8203,23 @@ pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
 pub fn exists(path: &[u8]) -> bool {
     exists_z(&bun_paths::Path::from(path))
 }
-/// `path` if `dir` has something of that name, or else `path` as Windows would read it, with `/` for each `\`.
+/// `path` if `dir` has something of that name, or else with `/` for each `\`. `\a` is `./a`.
 pub fn existing_spelling(dir: Fd, path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    if cfg!(windows)
-        || !bun_core::strings::contains_char(path, b'\\')
-        || exists_at(dir, &bun_paths::Path::join(&[path]))
-    {
+    use bun_core::strings;
+    let last = strings::last_index_of_char(path, b'\\').filter(|_| cfg!(not(windows)));
+    let Some(last) = last else {
+        return path.into();
+    };
+    // A `..` behind that name cancels it, so ask for the name too.
+    let end = strings::index_of_char_usize(&path[last..], b'/').map_or(path.len(), |at| last + at);
+    let exists = |path: &[u8]| exists_at(dir, &bun_paths::Path::join(&[path]));
+    if exists(&path[..end]) && exists(path) {
         return path.into();
     }
-    bun_core::strings::replace_char(path, b'\\', b'/')
+    match bun_paths::is_absolute(path) {
+        true => strings::replace_char(path, b'\\', b'/'),
+        false => bun_paths::from_portable(path),
+    }
 }
 /// `moveFileZ`. Routes through
 /// [`renameat_concurrently_without_fallback`] (renameat2 NOREPLACE → EXCHANGE →
@@ -8449,10 +8485,10 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
     if let Some(v) = bun_core::getenv_z(bun_core::zstr!("BUN_INSTALL_CACHE_DIR")) {
         return v.to_vec();
     }
-    if let Some(home) = bun_core::getenv_z(bun_core::zstr!("HOME"))
-        && !home.is_empty()
-    {
-        return bun_paths::Path::from_parts(&[home, b".bun/install/cache"]).to_vec();
+    if let Some(home) = bun_core::getenv_z(bun_core::zstr!("HOME")) {
+        let mut p = home.to_vec();
+        p.extend_from_slice(b"/.bun/install/cache");
+        return p;
     }
     b".bun-cache".to_vec()
 }
@@ -8584,6 +8620,43 @@ mod owned_handle_tests {
         let _ = close(to_dir);
         let _ = close(root);
         let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
+    }
+}
+
+#[cfg(test)]
+mod mkdir_recursive_tests {
+    use super::*;
+
+    #[test]
+    fn stops_below_a_dangling_link() {
+        let mut calls = 0;
+        let result = mkdir_recursive_with(b"/t/dangling/x", |path| {
+            calls += 1;
+            assert!(calls < 100);
+            let errno = match path {
+                b"/t/dangling/x" => E::ENOENT,
+                _ => E::EEXIST,
+            };
+            Err(Error::from_code(errno, Tag::mkdir))
+        });
+        assert_eq!(result.unwrap_err().get_errno(), E::ENOENT);
+    }
+
+    #[test]
+    fn makes_the_parents_first() {
+        let mut made = vec![b"/t".to_vec()];
+        let result = mkdir_recursive_with(b"/t/a/b/", |path| {
+            if !made
+                .iter()
+                .any(|it| Some(&it[..]) == bun_paths::dirname(path))
+            {
+                return Err(Error::from_code(E::ENOENT, Tag::mkdir));
+            }
+            made.push(path.to_vec());
+            Ok(())
+        });
+        assert!(result.is_ok());
+        assert_eq!(made, [&b"/t"[..], b"/t/a", b"/t/a/b"]);
     }
 }
 

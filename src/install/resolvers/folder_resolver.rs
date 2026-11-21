@@ -153,11 +153,21 @@ fn normalize_package_json_path(
     Some(Paths { abs, rel })
 }
 
-/// A `file:` folder is copied, and this one would take the whole file system.
-pub(crate) fn is_root_above_project(folder: &[u8]) -> bool {
+/// A `file:` folder is copied, and `/` or `C:\` would take the whole file system.
+fn is_root_above_project(folder: &[u8]) -> bool {
     let project = FileSystem::get().top_level_dir();
     let abs = Path::resolve(&[project, folder]);
-    abs.dirname().is_none() && Path::relative(project, &abs).starts_with(b"..")
+    let is_share = abs.starts_with(br"\\");
+    abs.dirname().is_none() && !is_share && Path::relative(project, &abs).starts_with(b"..")
+}
+
+/// For the row of a lockfile. `.` is the project, and on Windows a repository can be the root of a drive.
+pub(crate) fn is_whole_file_system(folder: &[u8]) -> bool {
+    // The OS stops at a NUL.
+    let folder = strings::split_once_char(folder, 0).map_or(folder, |(opened, _)| opened);
+    cfg!(not(windows))
+        && !matches!(folder, b"" | b".")
+        && Path::resolve(&[FileSystem::get().top_level_dir(), folder]).as_bytes() == b"/"
 }
 
 fn read_package_json_from_disk(
@@ -357,15 +367,7 @@ pub(crate) fn get_or_put(
         }
         GlobalOrRelative::Relative(dependency::version::Tag::Folder) => {
             if is_root_above_project(rel) {
-                manager.log_mut().add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "refusing to install the root of the file system from \"file:{}\"",
-                        bun_core::fmt::escape_control_chars(rel),
-                    ),
-                );
-                return FolderResolution::Err(crate::Error::InstallFailed);
+                return FolderResolution::Err(crate::Error::MissingPackageJSON);
             }
             (ResolutionTag::Folder, rel, Features::FOLDER)
         }

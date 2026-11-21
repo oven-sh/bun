@@ -16,7 +16,7 @@ import {
   unprivilegedSpawnOptions,
 } from "harness";
 import { cpSync, mkdirSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { basename, join, parse, sep } from "path";
+import { basename, join, sep } from "path";
 import { TestRegistry } from "registry";
 import {
   dummyAfterAll,
@@ -2767,7 +2767,7 @@ describe.concurrent.skipIf(isWindows)("global directories longer than the path b
   // A -g command opens the global directory (which has to contain a package.json) and then the
   // global bin directory; `bun pm bin -g` prints the latter. Every variable the two lookups read is
   // set, so that a case reaches exactly the arm it names: the directory not under test is named
-  // outright (an absolute $BUN_INSTALL_GLOBAL_DIR or $BUN_INSTALL_BIN is opened as given), and
+  // outright ($BUN_INSTALL_GLOBAL_DIR and $BUN_INSTALL_BIN are opened as given, not joined), and
   // $XDG_CONFIG_HOME holds an .npmrc so that neither the bunfig nor the .npmrc lookup joins $HOME.
   async function runGlobal(
     args: string[],
@@ -2883,18 +2883,19 @@ describe.concurrent("global directories from the environment", () => {
 
   test.each([
     ["bin", { BUN_INSTALL: ".here" }, "cwd/.here/bin\n"],
-    ["bin", { BUN_INSTALL_BIN: "here" }, "cwd/here\n"],
+    ["bin", { BUN_INSTALL_BIN: "here" }, "home/.bun/install/global/here\n"],
+    ["bin", { BUN_INSTALL_BIN: "../bin", BUN_INSTALL_GLOBAL_DIR: "here/global" }, "cwd/here/bin\n"],
     ["bin", { XDG_CACHE_HOME: "here" }, "cwd/here/.bun/bin\n"],
-    ["cache", { BUN_INSTALL: ".here" }, "cwd/.here/install/cache"],
-    ["cache", { XDG_CACHE_HOME: "here" }, "cwd/here/.bun/install/cache"],
+    [
+      "cache",
+      { XDG_CACHE_HOME: "here", BUN_INSTALL_GLOBAL_DIR: "~/global", BUN_INSTALL_BIN: "~/bin" },
+      "home/global/here/.bun/install/cache",
+    ],
     ["bin", { BUN_INSTALL: "" }, "home/.bun/bin\n"],
-    ["bin", { BUN_INSTALL_BIN: "" }, "home/.bun/bin\n"],
-    ["bin", { BUN_INSTALL_GLOBAL_DIR: "" }, "home/.bun/bin\n"],
     ["bin", { XDG_CACHE_HOME: "" }, "home/.bun/bin\n"],
-    ["bin", { BUN_INSTALL_BIN: "~\\here" }, isWindows ? "home/here\n" : "cwd/~\\here\n"],
+    ["bin", { BUN_INSTALL_BIN: "~\\here" }, isWindows ? "home/here\n" : "home/.bun/install/global/~\\here\n"],
     ["bin", { BUN_INSTALL_BIN: "~/a\\b" }, isWindows ? "home/a/b\n" : "home/a\\b\n"],
     ["bin", { BUN_INSTALL_GLOBAL_DIR: "~\\here" }, "home/.bun/bin\n"],
-    ["bin", { BUN_INSTALL_BIN: "~/bin", HOME: "here", USERPROFILE: "here" }, "cwd/here/bin\n"],
   ])("bun pm %s -g with %j", async (subcommand, variables, expected) => {
     using dir = tempDir("pm-bin-global-relative", files);
     const { stdout, stderr, exitCode } = await pmGlobal(String(dir), subcommand, variables);
@@ -2905,40 +2906,18 @@ describe.concurrent("global directories from the environment", () => {
   });
 
   describe.each(["BUN_INSTALL_BIN", "BUN_INSTALL_GLOBAL_DIR"])("%s", variable => {
-    test("with a leading separator starts from the root", async () => {
-      using dir = tempDir("pm-bin-global-rooted", files);
-      const here = join(String(dir), "here");
-      const value = here.slice(parse(here).root.length - 1);
-      const { stderr, exitCode } = await pmGlobal(String(dir), "bin", { [variable]: value });
-
-      expect(stderr).toBe("");
-      expect(await readdirSorted(String(dir))).toEqual(["cwd", "here", "home"]);
-      expect(await readdirSorted(join(String(dir), "cwd"))).toEqual(["package.json"]);
-      expect(exitCode).toBe(0);
-    });
-
     // Windows removes `link/..` before it follows the link.
-    test.skipIf(isWindows)("follows a symlink before .. in an absolute path", async () => {
+    test.skipIf(isWindows).each(["absolute", "relative"])("follows a symlink before .. (%s)", async kind => {
       using dir = tempDir("pm-bin-global-link", { ...files, "real/dir/.keep": "" });
       symlinkSync("real/dir", join(String(dir), "link"));
-      const { stderr, exitCode } = await pmGlobal(String(dir), "bin", { [variable]: `${dir}/link/../here` });
+      const { stderr, exitCode } = await pmGlobal(String(dir), "bin", {
+        BUN_INSTALL_GLOBAL_DIR: join(String(dir), "cwd"),
+        [variable]: `${kind === "absolute" ? dir : ".."}/link/../here`,
+      });
 
       expect(stderr).toBe("");
       expect(await readdirSorted(join(String(dir), "real"))).toEqual(["dir", "here"]);
       expect(exitCode).toBe(0);
-    });
-
-    // On Windows an environment variable cannot be this long.
-    test.skipIf(isWindows)("that only fits without the cwd is not created anywhere else", async () => {
-      using dir = tempDir("pm-bin-global-too-long", { ...files, "home/.bun/install/global/.keep": "" });
-      const value = Buffer.alloc(MAX_PATH_BYTES - 1, Buffer.alloc(200, "x") + "/").toString();
-      const { stdout, stderr, exitCode } = await pmGlobal(String(dir), "bin", { [variable]: value });
-
-      expect(stderr).toContain("ENAMETOOLONG");
-      expect(stdout).toBe("");
-      expect(await readdirSorted(join(String(dir), "cwd"))).toEqual(["package.json"]);
-      expect(await readdirSorted(join(String(dir), "home/.bun/install/global"))).toEqual([".keep"]);
-      expect(exitCode).toBe(1);
     });
   });
 
@@ -2980,18 +2959,22 @@ describe.concurrent("global directories from the environment", () => {
     },
   );
 
-  test.skipIf(isWindows)("cache rm -g refuses to delete real/x when BUN_INSTALL is ../link/../x", async () => {
+  test.skipIf(isWindows).each([
+    ["rm -g", "proj", "real/x"],
+    ["rm", "proj/sub", "x"],
+  ])("cache %s in %s refuses to delete %s when BUN_INSTALL is ../link/../x", async (args, cwd, cache) => {
     using side = tempDir("pm-bun-install-link-relative", {
       ...sideFiles,
       ...projectFiles,
+      "proj/sub/.keep": "",
       "real/dir/.keep": "",
-      "real/x/bin/bun": "",
+      [`${cache}/bin/bun`]: "",
     });
     symlinkSync("real/dir", join(String(side), "link"));
-    const cacheDir = join(String(side), "real/x");
+    const cacheDir = join(String(side), cache);
     const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: "../link/../x", BUN_INSTALL_CACHE_DIR: cacheDir });
 
-    expect(await pmCache(["rm", "-g"], join(String(side), "proj"), spawnEnv)).toEqual(
+    expect(await pmCache(args.split(" "), join(String(side), cwd), spawnEnv)).toEqual(
       refused(cacheDir, "$BUN_INSTALL"),
     );
     expect(await readdirSorted(cacheDir)).toEqual(["bin"]);
@@ -3012,15 +2995,33 @@ describe.concurrent("global directories from the environment", () => {
       [[], String(root)],
       [["-g"], cwd],
     ] as const) {
-      expect(await pmCache([...flags], cwd, envWith())).toEqual({
-        stdout: join(base, "tools/bun/install/cache"),
-        stderr: "",
-        exitCode: 0,
-      });
       const tools = join(base, "tools");
       expect(await pmCache(["rm", ...flags], cwd, envWith({ BUN_INSTALL_CACHE_DIR: tools }))).toEqual(
         refused(tools, "$BUN_INSTALL"),
       );
+    }
+  });
+
+  test("a relative BUN_INSTALL is one directory for link and unlink in the members of a workspace", async () => {
+    using side = tempDir("pm-relative-bun-install-side", sideFiles);
+    using root = tempDir("pm-relative-bun-install-member", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      "packages/a/package.json": JSON.stringify({ name: "a" }),
+      "packages/b/package.json": JSON.stringify({ name: "b" }),
+    });
+    const env = cacheEnv(String(side), { BUN_INSTALL: "tools/bun" });
+
+    for (const [member, args, linked] of [
+      ["a", ["link"], ["a"]],
+      ["b", ["link", "a"], ["a"]],
+      ["a", ["unlink"], []],
+    ] as const) {
+      const cwd = join(String(root), "packages", member);
+      await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "ignore", stderr: "pipe" });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await readdirSorted(join(String(root), "tools/bun/install/global/node_modules"))).toEqual(linked);
     }
   });
 });

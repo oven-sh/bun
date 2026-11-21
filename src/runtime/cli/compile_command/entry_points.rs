@@ -121,7 +121,8 @@ impl EntryPointError {
                     b"\". Choose one:",
                 ]);
                 for (name, written) in entries {
-                    write(&[b"\n  bun compile ", written, b" --outfile ", name]);
+                    let path = from_portable(written);
+                    write(&[b"\n  bun compile ", &path, b" --outfile ", name]);
                 }
             }
         }

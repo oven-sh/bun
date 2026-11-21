@@ -4229,7 +4229,9 @@ pub(crate) fn resolve_embedded_file(input_path: &[u8], extname: &[u8]) -> Option
     // instead of being followed.
     let tmpdir = Fs::FileSystem::get().tmpdir().ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
-    let in_tmpdir = |name: &[u8]| bun_paths::Path::resolve(&[Fs::RealFS::tmpdir_path(), name]);
+    let in_tmpdir = |name: &[u8]| {
+        bun_paths::Path::resolve(&[bun_core::top_level_dir(), Fs::RealFS::tmpdir_path(), name])
+    };
     if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
         let size_ok = st.st_size as usize == file_contents.len();
         #[cfg(unix)]

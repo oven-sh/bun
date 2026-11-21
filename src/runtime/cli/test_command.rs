@@ -2953,7 +2953,7 @@ impl TestCommand {
             } else {
                 root
             };
-            let scanned = scanner.scan(dir_to_scan);
+            let scanned = scanner.scan(if root.is_empty() { top_level_dir } else { root });
             match scanned {
                 Ok(()) => {}
                 Err(scanner::ScanError::OutOfMemory) => bun::out_of_memory(),

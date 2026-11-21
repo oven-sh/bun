@@ -1545,7 +1545,7 @@ impl FFI {
                 Err(_) => {
                     // if that fails, try resolving the filepath relative to the current working directory
                     let cwd = Fs::FileSystem::get().top_level_dir();
-                    match open(&bun_paths::Path::resolve(&[cwd, name])) {
+                    match open(&bun_resolver::resolve_keeping_sep(&[cwd, name])) {
                         Ok(d) => break 'brk d,
                         Err(_) => {
                             // Then, if that fails, report an error with the library name and system error

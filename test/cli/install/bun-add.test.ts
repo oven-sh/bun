@@ -3041,6 +3041,17 @@ describe("a relative local path typed from a directory below package.json", () =
     expect(exitCode).toBe(0);
   });
 
+  it("doubled backslashes in a relative path are written as slashes", async () => {
+    await makeNestedCwd();
+    await mkdir(join(package_dir, "v", "lib"), { recursive: true });
+    await writeFile(join(package_dir, "v", "lib", "package.json"), JSON.stringify({ name: "lib", version: "3.0.0" }));
+
+    const { stderr, exitCode } = await run(package_dir, "add", ".\\\\v\\\\lib");
+    expect(stderr).not.toContain("error:");
+    expect((await file(join(package_dir, "package.json")).json()).dependencies).toEqual({ lib: "./v/lib" });
+    expect(exitCode).toBe(0);
+  });
+
   it.skipIf(isWindows).each(["a\\b", "a\\\\b"])("an absolute path through a directory named %s", async name => {
     const cwd = await makeNestedCwd();
     const lib = join(add_dir, name);

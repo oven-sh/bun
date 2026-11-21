@@ -1589,7 +1589,11 @@ pub mod rescle {
 
         // Allocate UTF-16 strings (global mimalloc; allocator param dropped)
 
-        let icon_path = icon.map(|icon| bun_paths::OSPath::join(&[icon]));
+        let icon_path = icon.map(|icon| {
+            let mut path = bun_paths::OSPath::from(bun_paths::without_trailing_sep(icon));
+            bun_paths::to_native_in_place(path.as_mut_slice());
+            path
+        });
         let icon_w: Option<&bun_core::WStr> = icon_path.as_deref();
 
         let title_w = title

@@ -338,7 +338,7 @@ test.concurrent.skipIf(isWindows)("workspace globs match directories with a back
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
 });
 
-test.concurrent.each(["packages\\a", "packages\\*", ".\\packages\\a\\"])(
+test.concurrent.each(["packages\\a", ".\\packages\\a\\", ...(isWindows ? [] : ["\\packages\\a"])])(
   'a backslash separates in "workspaces": %s',
   async entry => {
     using ctx = await setupTest();
@@ -355,6 +355,29 @@ test.concurrent.each(["packages\\a", "packages\\*", ".\\packages\\a\\"])(
     ]);
   },
 );
+
+test.concurrent.skipIf(isWindows).each([
+  [["apps/\\[x\\]/*"], ["apps/[x]/p"]],
+  [["apps/*/*", "!apps/\\[x\\]/*"], ["apps/x/p"]],
+  [["apps\\[x]\\p"], ["apps/[x]/p"]],
+])('a backslash escapes glob syntax in "workspaces": %j', async (workspaces, members) => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces, dependencies: { "no-deps": "1.0.0" } }),
+    ),
+    write(join(packageDir, "apps", "[x]", "p", "package.json"), JSON.stringify({ name: "brackets" })),
+    write(join(packageDir, "apps", "x", "p", "package.json"), JSON.stringify({ name: "plain" })),
+  ]);
+
+  await runBunInstall(env, packageDir);
+  expect(Object.keys(Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()).workspaces)).toEqual([
+    "",
+    ...members,
+  ]);
+});
 
 test.concurrent.each([
   { dependencies: { x: "workspace:packages\\a" } },
@@ -437,35 +460,57 @@ exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
     });
     const [stderr, exitCode] = await runIn(String(dir), "/app");
 
-    expect(stderr).toContain(`error: refusing to install the root of the file system from "file:.."`);
+    expect(stderr).toContain(`error: package.json not found for "file:.." dependency "fs-root"`);
     expect(await readdirSorted(join(String(dir), "app"))).toEqual(["package.json"]);
     expect(exitCode).toBe(1);
   });
 
   test.concurrent.each([
-    ["hoisted", ".."],
-    ["hoisted", "/"],
-    ["isolated", ".."],
-    ["isolated", "/"],
-  ])("%s linker: a bun.lock row file:%s that resolves to / is refused", async (linker, folder) => {
-    const dependencies = { "fs-root": `file:${folder}` };
-    using dir = tempDir("fs-root-row", {
-      "package.json": JSON.stringify({ name: "fs-root", version: "1.0.0" }),
-      "app/package.json": JSON.stringify({ name: "app", dependencies }),
-      "app/bun.lock": JSON.stringify({
-        lockfileVersion: 1,
-        workspaces: { "": { name: "app", dependencies } },
-        packages: { "fs-root": [`fs-root@file:${folder}`, {}] },
-      }),
-      "home/secret.txt": "secret",
+    ["devDependencies", ["install", "--production"]],
+    ["optionalDependencies", ["install"]],
+  ])("file:.. that resolves to / is skipped in %s", async (group, args) => {
+    using dir = tempDir("fs-root-omitted", {
+      "app/package.json": JSON.stringify({ name: "app", dependencies: { a: "file:a" }, [group]: { lib: "file:.." } }),
+      "app/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+      "home/.keep": "",
       "proc/.keep": "",
       "tmp/.keep": "",
     });
-    const [stderr, exitCode] = await runIn(String(dir), "/app", ["install", "--frozen-lockfile", "--linker", linker]);
+    const [stderr, exitCode] = await runIn(String(dir), "/app", args);
 
-    expect(stderr).toContain(`error: refusing to install dependency fs-root with unsafe folder path "${folder}"`);
-    expect([...new Bun.Glob("**/secret.txt").scanSync({ cwd: join(String(dir), "app"), dot: true })]).toEqual([]);
-    expect(exitCode).toBe(1);
+    expect(stderr).not.toContain("error:");
+    expect(await readdirSorted(join(String(dir), "app", "node_modules"))).toEqual(["a"]);
+    expect(exitCode).toBe(0);
+  });
+
+  describe.each(["hoisted", "isolated"])("%s linker", linker => {
+    test.concurrent.each([
+      ["/a/b", "../.."],
+      ["/a/b", "..\\.."],
+      ["/a/b", "x\\..\\..\\.."],
+      ["/a/b", "..\\..\0not-inline"],
+      ["/", "..\\.."],
+      ["/", ".\\"],
+    ])("in %s a bun.lock row file:%j is refused", async (cwd, folder) => {
+      const dependencies = { "fs-root": "file:../.." };
+      using dir = tempDir("fs-root-row", {
+        [join(".", cwd, "package.json")]: JSON.stringify({ name: "app", dependencies }),
+        [join(".", cwd, "bun.lock")]: JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: { "": { name: "app", dependencies } },
+          packages: { "fs-root": [`fs-root@file:${folder}`, {}] },
+        }),
+        "home/secret.txt": "secret",
+        "proc/.keep": "",
+        "tmp/.keep": "",
+      });
+      const [stderr, exitCode] = await runIn(String(dir), cwd, ["install", "--frozen-lockfile", "--linker", linker]);
+
+      expect(stderr).toContain("error: refusing to install dependency fs-root with unsafe folder path");
+      const copies = new Bun.Glob("node_modules/**/secret.txt").scanSync({ cwd: join(String(dir), cwd), dot: true });
+      expect([...copies]).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
   });
 
   test.concurrent("file:. in a project at / is the project", async () => {

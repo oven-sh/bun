@@ -604,8 +604,10 @@ impl FolderLink {
             return NOWHERE;
         };
         // The install backends skip `node_modules`, so a target inside one is not in the copy.
-        let in_folder = path_below(root, real)
-            .is_some_and(|rest| !path::components(rest).any(|part| part == b"node_modules"));
+        let in_folder = path_below(root, real).is_some_and(|rest| {
+            // Windows keeps no link, so nothing has to be there.
+            cfg!(windows) || !path::components(rest).any(|part| part == b"node_modules")
+        });
 
         // A symlink is kept only if both its resolved target and its literal text stay in the
         // folder. The text alone is not enough, because it can pass through another symlink.

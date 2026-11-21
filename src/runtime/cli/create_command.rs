@@ -148,6 +148,9 @@ const BUN_CREATE_DIR: &[u8] = b".bun-create";
 
 /// `name`, joined onto a template dir, stays inside it, whether or not `\` is a separator.
 fn names_path_inside_dir(name: &[u8]) -> bool {
+    if !bun_paths::volume(name).is_empty() && bun_paths::is_absolute(name) {
+        return true;
+    }
     let name = strings::trim_left(&name[bun_paths::volume(name).len()..], b"/\\");
     let is_inside =
         |name: &[u8]| !bun_paths::climbs_out(name) && Path::resolve(&[name]).as_bytes() != b".";

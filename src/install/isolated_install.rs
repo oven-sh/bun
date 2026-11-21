@@ -26,7 +26,7 @@ use crate::lockfile::package::PackageColumns as _;
 use std::io::Write as _;
 use std::sync::atomic::Ordering;
 
-use crate::resolvers::folder_resolver::is_root_above_project;
+use crate::resolvers::folder_resolver::is_whole_file_system;
 use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_collections::linear_fifo::DynamicBuffer;
@@ -2263,11 +2263,10 @@ pub(crate) fn install_isolated_packages(
                     // linked by the packages containing it (`Installer::symlink_dependencies`)
                     let nested = entry_nested_folder[entry_id.get() as usize];
                     let folder = pkg_res.folder().slice(string_buf);
-                    // The resolver rejects these, so only an edited or old lockfile gets here.
-                    let refused = crate::bin::bin_target_escapes_package_dir(folder)
-                        && (nested
-                            || !lockfile_ro.is_trusted_folder_package(pkg_id)
-                            || is_root_above_project(folder));
+                    // The resolver rejects most of these, so they come from an edited or old lockfile.
+                    let refused = is_whole_file_system(folder)
+                        || (crate::bin::bin_target_escapes_package_dir(folder)
+                            && (nested || !lockfile_ro.is_trusted_folder_package(pkg_id)));
                     if nested || refused {
                         let state = if refused {
                             Output::err_generic(

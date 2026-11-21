@@ -379,6 +379,12 @@ pub(crate) mod js_bundler {
         Ok(())
     }
 
+    /// `/`, and on Windows `a/`. `bun build` takes the directory above.
+    fn is_own_root_dir(entry_point: &[u8]) -> bool {
+        let has_name = !bun_paths::without_leading_sep(entry_point).is_empty();
+        bun_paths::has_trailing_sep(entry_point) && has_name == cfg!(windows)
+    }
+
     fn asks_for_aot(global_this: &JSGlobalObject, config: JSValue) -> JsResult<bool> {
         let Some(compile) = config.get_truthy(global_this, "compile")? else {
             return Ok(false);
@@ -1378,7 +1384,10 @@ pub(crate) mod js_bundler {
                         }
                     }
 
-                    break 'brk Utf8Bytes::Borrowed(options::default_root_dir(entry_points));
+                    break 'brk Utf8Bytes::Borrowed(match entry_points {
+                        [dir] if is_own_root_dir(dir) => bun_paths::without_trailing_sep(dir),
+                        _ => options::default_root_dir(entry_points),
+                    });
                 };
 
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
@@ -1741,12 +1750,18 @@ pub(crate) mod js_bundler {
                             Some([first, ..]) => first,
                             Some([]) | None => entry_point,
                         };
-                        let mut outfile = bun_paths::stem(entry_point);
-                        if matches!(outfile, b"index" | b"bun") {
-                            outfile = (bun_paths::dirname(entry_point))
-                                .map_or(outfile, bun_paths::basename);
-                        }
-                        let outfile = crate::cli::build_command::compile_outfile(outfile);
+                        let outfile = match bun_paths::stem(entry_point) {
+                            _ if bun_paths::basename(entry_point) == b".." => b".",
+                            name @ (b"index" | b"bun") => match bun_paths::dirname(entry_point) {
+                                _ if is_own_root_dir(entry_point) => {
+                                    bun_paths::basename(entry_point)
+                                }
+                                // No drive: a key of `files`.
+                                Some([b'/' | b'\\']) if cfg!(windows) => name,
+                                dir => dir.map_or(name, bun_paths::basename),
+                            },
+                            name => name,
+                        };
 
                         // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
                         if outfile == b"bun" || outfile == b"bunx" {

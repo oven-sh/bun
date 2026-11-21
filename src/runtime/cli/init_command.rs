@@ -503,7 +503,7 @@ impl InitCommand {
                     .or_else(|| package_json_expr.get(b"main"))
                 {
                     if let Some(str_) = name.as_utf8_string_literal() {
-                        fields.entry_point = bun_paths::from_portable(str_).into_owned();
+                        fields.entry_point = str_.to_vec();
                     }
                 }
 
@@ -868,17 +868,18 @@ impl InitCommand {
                     Output::flush();
                 }
 
-                if !fields.entry_point.is_empty()
+                let entry_point = bun_paths::from_portable(&fields.entry_point);
+                if !entry_point.is_empty()
                     && is_safe_entry_point_path(&fields.entry_point)
-                    && !exists(&fields.entry_point)
+                    && !exists(&entry_point)
                 {
-                    if let Some(dirname) = bun_paths::dirname(&fields.entry_point) {
+                    if let Some(dirname) = bun_paths::dirname(&entry_point) {
                         if dirname != b"." {
                             let _ = bun_sys::Dir::cwd().make_path(dirname);
                         }
                     }
 
-                    let mut ep_z = fields.entry_point.clone();
+                    let mut ep_z = entry_point.into_owned();
                     ep_z.push(0);
                     let ep_zstr = ZStr::from_slice_with_nul(&ep_z[..]);
                     // SAFETY: ep_z[len-1] == 0 written above

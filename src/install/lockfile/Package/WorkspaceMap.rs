@@ -12,7 +12,7 @@ use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces};
 use crate::package_manager::workspace_package_json_cache::{
     GetJSONOptions, WorkspacePackageJSONCache,
 };
-use crate::package_manager::workspace_selection::{NegatedWorkspaces, workspaces_entry};
+use crate::package_manager::workspace_selection::NegatedWorkspaces;
 
 bun_output::declare_scope!(Lockfile, hidden);
 
@@ -74,12 +74,14 @@ impl WorkspaceMap {
     pub(crate) fn mark_self_contained<'l>(&mut self, list: &[&'l [u8]]) -> Vec<&'l [u8]> {
         let keys: Vec<Box<[u8]>> = self.map.keys().to_vec();
         let mut matched = vec![false; list.len()];
-        for (item, matched) in list.iter().zip(&mut matched) {
-            let item: &[u8] = &Path::resolve(&[&workspaces_entry(item)]).into_portable();
-            for (key, entry) in keys.iter().zip(self.map.values_mut()) {
-                if item == &**key || item == &*entry.name {
+        for (i, entry) in self.map.values_mut().iter_mut().enumerate() {
+            let path = strings::without_trailing_slash(&keys[i]);
+            for (j, item) in list.iter().enumerate() {
+                let item = strings::without_trailing_slash(item);
+                let item = item.strip_prefix(b"./").unwrap_or(item);
+                if item == path || item == &*entry.name {
                     entry.hoisting_limits = true;
-                    *matched = true;
+                    matched[j] = true;
                 }
             }
         }
@@ -363,18 +365,18 @@ impl WorkspaceMap {
                 return Err(crate::Error::InvalidPackageJSON);
             };
 
-            if negated.take(input_path) {
-                continue;
-            }
-            let entry: &[u8] = &workspaces_entry(input_path);
-            if matches!(entry, b"" | b"." | b"./") {
-                continue;
-            }
-            if glob::detect_glob_syntax(entry) {
-                workspace_globs.push(entry.into());
+            if matches!(input_path, b"" | b"." | b"./" | b".\\") {
                 continue;
             }
 
+            if glob::detect_glob_syntax(input_path) {
+                if !negated.take(input_path) {
+                    workspace_globs.push(input_path.into());
+                }
+                continue;
+            }
+
+            let entry: &[u8] = &path::from_portable(input_path);
             let mut dir = Path::new();
             let processed = match Path::resolve(&[root_dir, entry, b"package.json"]).check_len() {
                 Ok(abs_package_json_path) => {
@@ -598,16 +600,14 @@ impl WorkspaceMap {
             let Some(input_path) = arr.item_str(i, &scratch) else {
                 return false;
             };
-            if negated.take(input_path) {
-                continue;
-            }
-            let entry: &[u8] = &workspaces_entry(input_path);
-            if glob::detect_glob_syntax(entry) {
-                matched = matched || glob_lists(entry, dir, abs_dir);
+            if glob::detect_glob_syntax(input_path) {
+                if !negated.take(input_path) {
+                    matched = matched || glob_lists(input_path, dir, abs_dir);
+                }
                 continue;
             }
             // A workspace listed by its exact path is a member even if a negated pattern matches.
-            let abs = Path::resolve(&[root_dir, entry]);
+            let abs = Path::resolve(&[root_dir, &path::from_portable(input_path)]);
             if Path::relative(root_dir, &abs).into_portable().as_bytes() == dir {
                 return true;
             }

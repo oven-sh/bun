@@ -14,6 +14,8 @@ use bun_resolver::fs::{
 };
 use bun_sys::{Dir, Fd};
 
+use crate::cli::Arguments::existing_spelling_rooted;
+
 declare_scope!(jest, hidden);
 
 pub(crate) struct Scanner<'a> {
@@ -108,7 +110,9 @@ impl<'a> Scanner<'a> {
 
     #[optimize(size)]
     pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
-        let mut path = Path::resolve(&[self.top_level_dir(), path_literal]);
+        // One of several paths that is not found is no error.
+        let spelling = existing_spelling_rooted(path_literal);
+        let mut path = Path::resolve(&[self.top_level_dir(), &spelling]);
         path.copy_trailing_sep_from(path_literal);
         if path.len() > bun_paths::MAX_PATH_BYTES {
             return Err(ScanError::DoesNotExist);

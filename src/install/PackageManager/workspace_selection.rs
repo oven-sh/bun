@@ -1,11 +1,10 @@
-use std::borrow::Cow;
 use std::collections::VecDeque;
 
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_glob::Prepared;
-use bun_paths::{MAX_PATH_BYTES, Path, from_portable, to_portable, without_trailing_sep};
+use bun_paths::{MAX_PATH_BYTES, Path, to_portable};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::Behavior;
@@ -71,15 +70,6 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
     (remain, negated)
 }
 
-/// As in npm, `\` in a `workspaces` array is a separator and not an escape.
-pub fn workspaces_entry(entry: &[u8]) -> Cow<'_, [u8]> {
-    if cfg!(windows) {
-        to_portable(entry)
-    } else {
-        from_portable(entry)
-    }
-}
-
 /// The `!` entries of a `workspaces` array. `bun install` and `bun run --filter` apply the same
 /// rule.
 #[derive(Default)]
@@ -91,11 +81,11 @@ impl NegatedWorkspaces {
     pub fn take(&mut self, entry: &[u8]) -> bool {
         let (glob, negated) = strip_negations(entry);
         if negated {
-            let mut remain: &[u8] = &workspaces_entry(glob);
+            let mut remain: &[u8] = &to_portable(glob);
             while let Some(rest) = remain.strip_prefix(b"./") {
                 remain = rest;
             }
-            self.0.push(without_trailing_sep(remain).into());
+            self.0.push(strings::without_trailing_slash(remain).into());
         }
         negated
     }
@@ -114,10 +104,7 @@ impl NegatedWorkspaces {
 }
 
 pub fn abs_posix_dir(base: &[u8], path: &[u8]) -> Box<[u8]> {
-    Path::resolve(&[base, path])
-        .into_portable()
-        .as_bytes()
-        .into()
+    bun_paths::without_trailing_sep(&Path::resolve(&[base, path]).into_portable()).into()
 }
 
 /// Accepted shapes: `!`* then `...`/`...^` prefix and/or `...`/`^...` suffix around `*`, `{dir}`, `./path` or a name glob.

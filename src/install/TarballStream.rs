@@ -588,7 +588,7 @@ impl Extraction {
         let destination = if self.npm_mode {
             bun_archive::npm_entry_destination(entry)?
         } else {
-            bun_archive::entry_destination(rest)
+            bun_archive::unrooted_entry_destination(rest)
         };
         let Some(path) = destination else {
             bun_core::warn!(

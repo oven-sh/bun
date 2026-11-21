@@ -342,9 +342,11 @@ impl PmPkgCommand {
                 let bin_path = str.slice8();
                 let pkg_dir = bun_paths::dirname(&pkg.path).unwrap_or(cwd);
 
-                if !bun_install::bin::bin_target_in_package(bin_path)
-                    .is_some_and(|target| bun_sys::exists_z(&Path::resolve(&[pkg_dir, &target])))
-                {
+                let target = bun_paths::from_portable(bin_path);
+                let mut full_path = Path::resolve(&[pkg_dir, &target]);
+                full_path.copy_trailing_sep_from(bin_path);
+
+                if !bun_sys::exists_z(&full_path) {
                     bun_core::warn!(
                         "No bin file found at {}",
                         bun_core::fmt::EscapeControlChars(bstr::BStr::new(bin_path))

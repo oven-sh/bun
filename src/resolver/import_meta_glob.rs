@@ -90,8 +90,7 @@ impl Resolver<'_> {
         glob: &[u8],
     ) -> Option<GlobInDir> {
         let package_json = dir_info.package_json_for_module_type?;
-        // On Windows the target is joined with `\`, which is an escape in a glob. Hide the glob's own
-        // escapes behind `ESCAPE` while resolving, so only the separators become `/`.
+        // Hides the glob's escapes while resolving, so that only the separators become `/`.
         const ESCAPE: u8 = 1;
         let swap = |bytes: &[u8], from: u8, to: u8| -> Vec<u8> {
             let swapped = bytes
@@ -99,11 +98,7 @@ impl Resolver<'_> {
                 .map(|&byte| if byte == from { to } else { byte });
             swapped.collect()
         };
-        let specifier = if cfg!(windows) {
-            swap(glob, b'\\', ESCAPE)
-        } else {
-            glob.to_vec()
-        };
+        let specifier = swap(glob, b'\\', ESCAPE);
         let resolution = ESModule {
             conditions: &self.opts.conditions.import,
             debug_logs: None,
@@ -115,11 +110,7 @@ impl Resolver<'_> {
             Status::Exact | Status::ExactEndsWithStar | Status::Inexact
         )
         .then(|| {
-            let path = if cfg!(windows) {
-                swap(&swap(&resolution.path, b'\\', b'/'), ESCAPE, b'\\')
-            } else {
-                resolution.path.to_vec()
-            };
+            let path = swap(&bun_paths::to_portable(&resolution.path), ESCAPE, b'\\');
             (
                 package_json.source.path.name().dir.to_vec(),
                 bun_paths::without_leading_sep(&path).to_vec(),

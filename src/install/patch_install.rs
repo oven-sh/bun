@@ -1,6 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 
 use bstr::BStr;
+use std::borrow::Cow;
 
 use bun_ast::{Loc, Log, Range, Source};
 use bun_core::ZBox;
@@ -106,10 +107,16 @@ pub struct InstallContext {
 
 /// A relative path in `patchedDependencies` is resolved against the project directory.
 fn resolve_patchfile_path(project_dir: &[u8], patchfile_path: &[u8]) -> path::Path {
-    let patchfile_path = path::from_portable(patchfile_path);
-    let mut resolved = path::Path::resolve(&[project_dir, &patchfile_path]);
-    resolved.copy_trailing_sep_from(&patchfile_path);
-    resolved
+    let resolve = |spelling: &[u8]| {
+        let mut resolved = path::Path::resolve(&[project_dir, spelling]);
+        resolved.copy_trailing_sep_from(spelling);
+        resolved
+    };
+    let as_written = resolve(patchfile_path);
+    match path::from_portable(patchfile_path) {
+        Cow::Owned(converted) if !sys::exists_z(&as_written) => resolve(&converted),
+        _ => as_written,
+    }
 }
 
 /// Returns `None` after logging a parse error. `log` copies the lines it quotes from `source`, so

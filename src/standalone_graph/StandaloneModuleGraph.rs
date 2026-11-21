@@ -3320,11 +3320,15 @@ pub fn to_executable(
         };
         let dest_path: &[u8] = &path::Path::resolve(&[cwd_path, outfile]);
 
-        let temp_w = bun_sys::win32_path(temp_path, bun_sys::Tag::rename)?;
-        let dest_w = bun_sys::win32_path(dest_path, bun_sys::Tag::rename)?;
+        let temp_w = bun_sys::win32_path(temp_path, bun_sys::Tag::rename);
+        let dest_w = bun_sys::win32_path(dest_path, bun_sys::Tag::rename);
 
         // Close the file handle before moving (Windows requires this)
         drop(injected.file);
+
+        let remove_temp = |_: &bun_sys::Error| _ = Syscall::unlink(&injected.temp_path);
+        let temp_w = temp_w.inspect_err(remove_temp)?;
+        let dest_w = dest_w.inspect_err(remove_temp)?;
 
         use bun_sys::windows::{self, Win32ErrorExt as _};
         if let Err(err) = windows::MoveFileExW(

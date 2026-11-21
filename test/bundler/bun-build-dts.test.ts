@@ -119,6 +119,14 @@ describe.concurrent("bun build --dts", () => {
     expect(built.exitCode).toBe(1);
   });
 
+  test.skipIf(isWindows).each(["src/link.ts", "src/a\\b.ts"])("--check of %s without a tsconfig.json", async entry => {
+    using dir = tempDir("build-check-backslash", { "src/a\\b.ts": `export const a: number = "";\n` });
+    symlinkSync("a\\b.ts", join(String(dir), "src", "link.ts"));
+    const built = await bun(String(dir), "build", entry, "--outdir", "out", "--check");
+    expect(built.stderr).toContain("TS2322");
+    expect(built.exitCode).toBe(1);
+  });
+
   test.each([
     ["says nothing", undefined, true],
     ["says something else", { strict: true }, true],

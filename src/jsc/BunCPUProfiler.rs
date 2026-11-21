@@ -73,7 +73,8 @@ pub(crate) fn write_sampling_profiler_report(
 
     let path = build_output_path(directory, b"", "SamplingProfile", ".txt")?;
 
-    write_file_creating_dir(&path, report.slice()).map_err(|_| ProfilerError::WriteFailed)
+    write_file_creating_dir(&path, directory, report.slice())
+        .map_err(|_| ProfilerError::WriteFailed)
 }
 
 pub(crate) fn stop_and_write_profile(
@@ -117,18 +118,23 @@ fn write_profile_to_file(
     }
     let path = build_output_path(config.dir, &name, "CPU", extension)?;
 
-    write_file_creating_dir(&path, profile_slice.slice()).map_err(|_| ProfilerError::WriteFailed)
+    write_file_creating_dir(&path, config.dir, profile_slice.slice())
+        .map_err(|_| ProfilerError::WriteFailed)
 }
 
-/// Writes `contents` to `path`. On ENOENT, EPERM or EACCES it creates the directory and retries once.
-pub(crate) fn write_file_creating_dir(path: &Path, contents: &[u8]) -> bun_sys::Maybe<()> {
+/// Writes `contents` to `path`. On ENOENT, EPERM or EACCES it creates `dir` and retries once.
+pub(crate) fn write_file_creating_dir(
+    path: &Path,
+    dir: &[u8],
+    contents: &[u8],
+) -> bun_sys::Maybe<()> {
     let result = bun_sys::File::write_file(Fd::cwd(), path, contents);
     if let Err(err) = &result
         && matches!(
             err.get_errno(),
             Errno::ENOENT | Errno::EPERM | Errno::EACCES
         )
-        && let Some(dir) = path.dirname()
+        && !dir.is_empty()
     {
         let _ = bun_sys::Dir::cwd().make_path(dir);
         return bun_sys::File::write_file(Fd::cwd(), path, contents);

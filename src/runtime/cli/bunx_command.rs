@@ -231,8 +231,7 @@ impl Options {
                 } else if let Some(file) = Self::flag_value(argv, &mut i, "--env-file") {
                     ctx.args.env_files.push(Box::<[u8]>::from(file));
                 } else if let Some(dir) = Self::flag_value(argv, &mut i, "--cwd") {
-                    let spelling = bun_sys::existing_spelling(Fd::cwd(), dir);
-                    if let Err(err) = bun_sys::chdir(&ZBox::from_bytes(&spelling)) {
+                    if let Err(err) = bun_sys::chdir(&ZBox::from_bytes(dir)) {
                         Output::err(
                             err,
                             "Could not change directory to \"{}\"",
@@ -410,8 +409,7 @@ impl BunxCommand {
                     {
                         let bin_name = bun_install::dependency::unscoped_package_name(name);
                         if Self::is_safe_bin_name(bin_name) {
-                            let target = from_portable(strings::trim_left(target, b"/\\"));
-                            return Ok(package_bin(bin_name, &target));
+                            return Ok(package_bin(bin_name, &from_portable(target)));
                         }
                     }
                 }
@@ -481,7 +479,7 @@ impl BunxCommand {
             if cfg!(windows) {
                 return Ok(entry.map_or(InProject::Absent, InProject::Run));
             }
-            let file_path = Path::from_parts(&[package_dir.as_bytes(), &bin.file]).to_vec();
+            let file_path = [package_dir.as_bytes(), b"/", &*bin.file].concat();
             let file = bun_which::which(b"", b"", &file_path).map(|file| file.to_zbox());
 
             let mut real_dir = bun_paths::path_buffer_pool::get();
@@ -691,8 +689,7 @@ impl BunxCommand {
         use bun_install::package_manager_real::{fetch_cache_directory_path, node_can_import_from};
         let uid = bun_sys::c::getuid();
         let root_name = cache_root_name();
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
-        let install_cache = fetch_cache_directory_path(env, top_level_dir, configured)
+        let install_cache = fetch_cache_directory_path(env, configured)
             .ok()
             .filter(|dir| !dir.is_cwd_fallback && node_can_import_from(&dir.path));
         // `$TMPDIR` can be relative. It is made absolute because the install runs in a different

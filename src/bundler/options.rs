@@ -39,14 +39,48 @@ mod bun_http {
 /// `bun.StringSet` (re-exported for `BundleOptions.bundler_feature_flags`).
 pub use bun_collections::StringSet;
 
-/// The deepest directory that holds all of `entry_points`.
+/// The root of a build that names none. Outputs are named from it, so another answer moves them.
 pub fn default_root_dir(entry_points: &[Box<[u8]>]) -> &[u8] {
-    let dirs = entry_points.iter().map(|it| bun_paths::dirname_or_root(it));
-    match bun_paths::common_ancestor(dirs) {
-        None | Some([]) => b".",
+    let root = match entry_points {
+        [] if cfg!(windows) => None,
+        [] => return b"",
+        [only] => bun_paths::dirname(only),
+        [first, rest @ ..] => shared_root_dir(first, rest),
+    };
+    match root {
+        None => b".",
         // No drive, so nothing to open. `/a.js` is what a plugin's entry point looks like.
         Some([b'/' | b'\\']) if cfg!(windows) => b".",
-        Some(common) => common,
+        Some(root) => root,
+    }
+}
+
+/// Compares the entry points as they are written, so it is not always a directory that holds them all.
+fn shared_root_dir<'a>(first: &'a [u8], rest: &'a [Box<[u8]>]) -> Option<&'a [u8]> {
+    let all = || core::iter::once(first).chain(rest.iter().map(|it| &it[..]));
+    let shortest = all().map(<[u8]>::len).min()?;
+    let shared_len = |other: &[u8]| {
+        (first[..shortest].iter().zip(other))
+            .take_while(|(a, b)| a == b)
+            .count()
+    };
+    let shared = all().map(shared_len).min()?;
+    let is_many = rest.len() >= 8;
+    if shortest == 0 || (is_many && shortest == 1 && shared == 1) {
+        return Some(bun_paths::SEP_STR.as_bytes());
+    }
+    // Nine or more nearly always get the working directory, and builds depend on that.
+    if is_many {
+        let start = &first[..shortest];
+        let is_dir = shared_len(&rest[0]) == shortest && bun_paths::has_trailing_sep(start);
+        return is_dir.then_some(start);
+    }
+    let sep = first[..shared]
+        .iter()
+        .rposition(|&c| bun_paths::is_sep(c))?;
+    match all().find(|it| bun_paths::has_leading_sep(&it[shared..])) {
+        Some(it) => Some(&it[..=shared]),
+        None => Some(&first[..=sep]),
     }
 }
 
@@ -148,14 +182,13 @@ pub(crate) fn init_external_modules(
         } else if bun_paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
         } else {
-            // `import` reads `\` as `/`, and `require()` does not.
+            // On POSIX `import` reads `\` as `/`, and `require()` does not.
             let mut imported = path.to_vec();
             let below_cwd = bun_paths::strip_prefix(path, cwd).unwrap_or(path);
             let start = path.len() - below_cwd.len();
-            strings::replace_char_in_place(&mut imported[start..], b'\\', b'/');
+            strings::replace_char_in_place(&mut imported[start..], b'\\', bun_paths::SEP);
             for spelling in [path, &imported] {
-                let mut normalized = bun_paths::Path::resolve(&[cwd, spelling]);
-                normalized.copy_trailing_sep_from(spelling);
+                let normalized = bun_resolver::resolve_keeping_sep(&[cwd, spelling]);
                 result.abs_paths.insert(&normalized).expect("unreachable");
             }
         }

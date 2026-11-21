@@ -17,6 +17,7 @@ use bun_sema_driver::Libs;
 use bun_sema_driver::host::{check_entry_point_dirs, from_argument, from_native, to_native};
 
 use super::paths::{absolute_path, relative_path, report_long_path};
+use super::services::is_at_or_below;
 use crate::bun_fs::PathName;
 use crate::bundle_v2::FileMap;
 use crate::options::{
@@ -432,9 +433,14 @@ fn common_entry_directory(working_directory: &[u8], entry_points: &[Vec<u8>]) ->
         .iter()
         .map(|entry| absolute_path(working_directory, entry))
         .collect();
-    let directories = paths.iter().map(|path| bun_paths::dirname_or_root(path));
-    let common = bun_paths::common_ancestor(directories);
-    bun_paths::without_trailing_sep(common.unwrap_or(working_directory)).to_vec()
+    let Some((first, rest)) = paths.split_first() else {
+        return bun_paths::without_trailing_sep(working_directory).to_vec();
+    };
+    // A later entry point can be a folder.
+    let directories = core::iter::once(bun_paths::dirname_or_root(first));
+    let common = bun_paths::common_ancestor(directories.chain(rest.iter().map(|path| &path[..])));
+    let common = common.unwrap_or_else(|| bun_paths::root(working_directory));
+    bun_paths::without_trailing_sep(common).to_vec()
 }
 
 fn widen_out_of_packages(directory: &[u8]) -> &[u8] {
@@ -453,7 +459,8 @@ fn widen_to_assets(
     assets: &[Box<[u8]>],
 ) -> Vec<u8> {
     let working_directory = absolute_path(working_directory, b"");
-    let is_inside = |path: &[u8]| bun_paths::strip_prefix(path, &working_directory).is_some();
+    let is_inside =
+        |path: &[u8]| is_at_or_below(path, bun_paths::without_trailing_sep(&working_directory));
     if !is_inside(&entry_directory) {
         return entry_directory;
     }
@@ -464,7 +471,7 @@ fn widen_to_assets(
     let inside: Vec<Vec<u8>> = inside.collect();
     let folders = inside.iter().filter_map(|path| bun_paths::dirname(path));
     let common = bun_paths::common_ancestor(folders.chain([&entry_directory[..]]));
-    common.unwrap_or(&working_directory).to_vec()
+    bun_paths::without_trailing_sep(common.unwrap_or(&working_directory)).to_vec()
 }
 
 /// `bun run` starts a file under its real path, and so `node_modules/.bin/tool` finds what lies beside the file that the link names.

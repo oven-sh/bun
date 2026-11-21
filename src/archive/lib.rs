@@ -204,6 +204,10 @@ const MAX_OS_PATH: usize = if cfg!(windows) {
 
 /// Where the entry `name` is extracted. Both slashes separate, and `..` stops at the destination. Empty for an entry to skip, `None` for a name that is too long.
 pub fn entry_destination(name: &[OSPathChar]) -> Option<OSPath> {
+    destination_keeping(b'/', name)
+}
+
+fn destination_keeping(trailing_sep: u8, name: &[OSPathChar]) -> Option<OSPath> {
     if name.len() >= MAX_OS_PATH {
         return None;
     }
@@ -218,8 +222,17 @@ pub fn entry_destination(name: &[OSPathChar]) -> Option<OSPath> {
             path.clear();
         }
     }
-    if name.last() == Some(&(b'/' as OSPathChar)) {
+    if name.last() == Some(&(trailing_sep as OSPathChar)) {
         path.push_trailing_sep();
+    }
+    Some(path)
+}
+
+/// [`entry_destination`], but on Windows a name that has a root is skipped.
+pub fn unrooted_entry_destination(name: &[OSPathChar]) -> Option<OSPath> {
+    let mut path = destination_keeping(SEP, name)?;
+    if cfg!(windows) && !bun_paths::root(name).is_empty() {
+        path.clear();
     }
     Some(path)
 }
@@ -427,7 +440,7 @@ impl Archiver {
 
         while let Some(entry) = reader.next_entry()? {
             let name = skip_path_components(os_path(entry, &mut os_path_buf)?, DEPTH_TO_SKIP);
-            let Some(destination) = name.and_then(entry_destination) else {
+            let Some(destination) = name.and_then(unrooted_entry_destination) else {
                 continue;
             };
             if destination.is_empty() {
@@ -534,7 +547,7 @@ impl Archiver {
                 debug_assert_eq!(options.depth_to_skip, 1);
                 npm_entry_destination(entry)?
             } else {
-                entry_destination(pathname)
+                unrooted_entry_destination(pathname)
             };
             let Some(path) = destination else {
                 if options.log {

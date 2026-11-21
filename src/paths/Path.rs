@@ -15,7 +15,7 @@ use crate::{NameTooLong, OSPathChar, PathChar};
 
 /// The default. On the heap. Grows to any length, so the syscall reports `ENAMETOOLONG`.
 pub type Path = GenericPath<HeapBackend>;
-/// In an inline `[u8; N]`, NUL included. `NameTooLong` if a result does not fit. Allocates only to normalize or transcode input that might not.
+/// In an inline `[u8; N]`, NUL included. `NameTooLong` if a result does not fit. Can allocate to find that out.
 pub type StackPath<const N: usize> = GenericPath<StackBackend<N>>;
 /// [`Path`] in the encoding that syscalls take. For names that go from one syscall to the next.
 pub type OSPath = GenericPath<HeapBackend<OSPathChar>>;
@@ -87,19 +87,19 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
         Self::build_with(|new| new.try_push(crate::fs::top_level_dir()))
     }
 
-    /// Node's `path.join`.
+    /// Like Node's `path.join`. On Windows all three read roots as Win32 does, and write `C:` for a leading `c:`.
     #[inline]
     pub fn join<C: PathUnit>(parts: &[&[C]]) -> B::Output<Self> {
         Self::build_with(|new| new.try_join(parts))
     }
 
-    /// Node's `path.resolve`, but the result stays relative if no part is absolute.
+    /// Like Node's `path.resolve`, but the result stays relative if no part is absolute.
     #[inline]
     pub fn resolve<C: PathUnit>(parts: &[&[C]]) -> B::Output<Self> {
         Self::build_with(|new| new.try_resolve(parts))
     }
 
-    /// Node's `path.relative`, against the top-level directory. Returns `to` if it is on another drive or share.
+    /// Like Node's `path.relative`, against the top-level directory. Returns `to` if it is on another drive or share.
     #[inline]
     pub fn relative(from: &[B::Unit], to: &[B::Unit]) -> B::Output<Self> {
         Self::build_with(|new| new.try_relative(from, to))
@@ -130,7 +130,7 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
         S::basename(self.as_slice())
     }
 
-    /// `Err` if no syscall takes a path this long. For where no syscall is there to say so.
+    /// `Err` if the path does not fit a `PathBuffer`, or a `WPathBuffer`. For where no syscall is there to refuse it.
     #[inline]
     pub fn check_len(self) -> Result<Self, NameTooLong> {
         match self.len < B::Unit::PATH_MAX {
@@ -261,13 +261,13 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
         B::output(self.try_resolve(parts))
     }
 
-    /// Normalizes to `\\?\C:\a` or `\\?\UNC\server\share\a`, which lifts `MAX_PATH`. Drops a trailing separator. No-op on POSIX.
+    /// Normalizes, drops a trailing separator, and lifts `MAX_PATH` with `\\?\` for `C:\a` or a share. Keeps `\\?\a` and `\\.\a`. No-op on POSIX.
     #[inline]
     pub fn make_long_path(&mut self) -> B::Output<()> {
         self.add_namespace_prefix(LONG_PATH_PREFIX)
     }
 
-    /// [`Self::make_long_path`] for `ntdll`: `\??\C:\a` or `\??\UNC\server\share\a`.
+    /// Normalizes for `ntdll`, which takes `\??\C:\a` or `\??\UNC\server\share\a`. A relative path gets no prefix. No-op on POSIX.
     #[inline]
     pub fn make_nt_path(&mut self) -> B::Output<()> {
         self.add_namespace_prefix(NT_PATH_PREFIX)
@@ -299,7 +299,11 @@ impl<B: PathBackend<Unit = u8>> GenericPath<B> {
         if cfg!(windows) && Root::parse::<Host>(self.as_slice()) == Root::without_volume(true) {
             let mut buf = crate::path_buffer_pool::get();
             if let Ok(cwd) = bun_core::getcwd(&mut buf) {
-                return self.prepend(Host::volume(cwd.as_bytes()));
+                let volume = Host::volume(cwd.as_bytes());
+                return B::output(self.edit(self.len + volume.len(), |buf| {
+                    buf.splice(0..1, &[Host::SEP]);
+                    buf.splice(0..0, volume);
+                }));
             }
         }
         B::output(Ok(()))
@@ -445,7 +449,7 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
             let max_len = relative.max_len::<S>();
             return self.edit_or_retry_on_heap(max_len, |buf| buf.write_relative(&relative));
         }
-        let (from, to) = (Unresolved::new::<S>(from), Unresolved::new::<S>(to));
+        let [from, to] = Unresolved::pair::<S>(from, to);
         self.edit_or_retry_on_heap(max_relative_len(from, to), |buf| {
             buf.resolve_and_write_relative(from, to);
         })

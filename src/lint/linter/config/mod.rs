@@ -1100,8 +1100,7 @@ impl Config {
                 let is_elsewhere = is_outside || self.started.is_some();
                 is_ignored = match &object.ignore_lines {
                     Some(lines) => lines.is_ignored(relative, is_ignored, reads_for_exceptions),
-                    // These reach outside the base path, like oxlint's `node_modules`. A project can itself be in a
-                    // `node_modules`, with its config file elsewhere.
+                    // A project can itself be in a `node_modules` that these ignore, with its config file elsewhere.
                     None if is_elsewhere && self.contains_start(relative) => is_ignored,
                     None => is_ignored_by(ignores, parts, is_ignored),
                 };
@@ -1131,8 +1130,7 @@ impl Config {
         self.started = Some(self.relative(working_directory)).filter(|it| !it.is_empty());
     }
 
-    /// True if `relative`, which [`Config::relative`] returned, is a directory that is or contains the working
-    /// directory, or the base path if that's where the run started.
+    /// True if `relative`, from [`Config::relative`], is a directory at or above where the run started.
     fn contains_start(&self, relative: &[u8]) -> bool {
         let Some(directory) = relative.strip_suffix(b"/") else {
             return false;
@@ -1235,13 +1233,9 @@ impl Config {
         self.is_ignored_globally_with(&parts, None, dotfiles, reads_for_exceptions)
     }
 
-    /// True if the patterns ignore `directory`, which is absolute, given that they don't ignore its parents. Unlike
-    /// [`Config::is_directory_ignored`], this stays true if a `!` line could match something inside: oxlint reads such
-    /// a directory, but only for the files that the line keeps. And it's false outside the base path, where the
-    /// patterns say nothing.
+    /// [`Config::is_directory_ignored_in`], but true even if a `!` line could match something inside `directory`.
     pub fn leaves_out_directory(&self, directory: &[u8]) -> bool {
-        !self.is_outside(directory)
-            && self.is_directory_ignored_with(directory, Dotfiles::AsConfigured, false)
+        self.is_directory_ignored_with(directory, Dotfiles::AsConfigured, false)
     }
 
     /// True if a file inside the base path is ignored. Assumes the containing directory isn't.

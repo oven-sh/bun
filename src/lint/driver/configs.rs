@@ -288,8 +288,7 @@ pub(crate) const VITE_CONFIG_NAMES: [&[u8]; 6] = [
     b"vite.config.cjs",
 ];
 
-/// The names of directories that never contain a project's own files: Git's, Jujutsu's, and the one for installed
-/// packages.
+/// Directory names that never hold a project's own files: Git's, Jujutsu's, and the one for installed packages.
 const WITHOUT_PROJECT_FILES: [&[u8]; 3] = [b".git", b".jj", b"node_modules"];
 
 /// The error for a [`VITE_CONFIG_NAMES`] file passed with `--config` that has no `lint` field. A file found by lookup
@@ -2687,12 +2686,9 @@ impl<'l> Loader<'l> {
             || (self.named.lock().iter()).any(|it| paths::is_at_or_inside(it, directory))
     }
 
-    /// The configuration around a directory that is at or above `directory` and is [`WITHOUT_PROJECT_FILES`], if that
-    /// configuration is Bun's or oxlint's and leaves the directory out. No configuration file inside applies then. A
-    /// configuration file is a program, or refers to programs, and the ones in there aren't the project's. ESLint's
-    /// lookup has no such rule. Directories that contain the working directory don't count: a project can itself be
-    /// in a `node_modules`.
+    /// The Bun or oxlint config that ignores a [`WITHOUT_PROJECT_FILES`] directory at or above `directory`, if any.
     fn around_left_out(&self, directory: &[u8]) -> Result<Option<Arc<Loaded>>, Fatal> {
+        // A project can itself be in a `node_modules`, so the directories around the working directory don't count.
         let below = paths::below_shared(self.cwd(), directory);
         let mut end = directory.len() - below.len();
         // The outermost one first, because a configuration that leaves out a directory has no say about what's inside.

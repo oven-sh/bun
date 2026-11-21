@@ -216,8 +216,7 @@ pub fn inside_as<'p>(style: Style, directory: &[u8], path: &'p [u8]) -> Option<&
     }
 }
 
-/// The part of `path` below the innermost directory that contains both `path` and `other`. Empty if `path` is `other`
-/// or contains it. Both must be resolved.
+/// The part of `path` below the innermost directory that also contains `other`. Both must be resolved.
 pub fn below_shared<'p>(other: &[u8], path: &'p [u8]) -> &'p [u8] {
     if let Some(rest) = inside(other, path) {
         return rest;

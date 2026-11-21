@@ -45,8 +45,8 @@ impl IgnoreLines {
     }
 
     /// True if `path` is ignored. `path` is relative to the directory that the lines belong to, and ends with a slash
-    /// if it's a directory. `is_ignored` is the verdict so far, which is kept if no line matches. With
-    /// `reads_for_exceptions`, a directory that the lines ignore isn't if a `!` line could match something inside it.
+    /// if it's a directory. `is_ignored` is the verdict so far, which is kept if no line matches.
+    /// With `reads_for_exceptions`, an ignored directory isn't if a `!` line could match something inside it.
     pub(super) fn is_ignored(
         &self,
         path: &[u8],
@@ -58,8 +58,7 @@ impl IgnoreLines {
             None => (path, false),
         };
         let verdict = match self.is_oxlint && self.rules.has_exceptions() {
-            // What's ignored before these lines is ignored by its own name, like `node_modules`. A `!` line only
-            // brings it back if it matches that name, not a directory above it.
+            // A `!` line only brings back what's ignored by default, like `node_modules`, if it matches that path.
             true if is_ignored => self.rules.verdict(path, is_directory),
             // This lets a `!` line un-ignore a file inside an ignored directory, which isn't possible in a
             // `.gitignore`.

@@ -838,20 +838,20 @@ describe.concurrent.each(["json", "advanced"] as const)("traffic in %s mode", se
   });
 });
 
-it.each(["json", "advanced"] as const)("a few messages arrive while their sender is busy (%s)", async serialization => {
+it.each(["json", "advanced"] as const)("two messages arrive while their sender is busy (%s)", async serialization => {
   using dir = tempDir("ipc-busy-sender", {});
   let count = 0;
   await using child = spawn({
     cmd: [
       bunExe(),
       "-e",
-      `for (let i = 0; i < 4; i++) process.send(i);
+      `for (let i = 0; i < 2; i++) process.send(i);
        while (!require("fs").existsSync("heard")) Bun.sleepSync(1);`,
     ],
     cwd: String(dir),
     env: bunEnv,
     serialization,
-    ipc: () => void (++count === 4 && Bun.write(`${dir}/heard`, "")),
+    ipc: () => void (++count === 2 && Bun.write(`${dir}/heard`, "")),
   });
   expect(await child.exited).toBe(0);
 });

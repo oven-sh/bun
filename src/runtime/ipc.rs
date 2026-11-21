@@ -1724,7 +1724,7 @@ impl SendQueue {
     /// The rest of a burst of messages goes out in large writes. The last one follows when the microtasks run out.
     #[cfg(windows)]
     fn is_in_burst(&self) -> bool {
-        const WRITTEN_SINGLY: u32 = 5;
+        const WRITTEN_SINGLY: u32 = 3;
         const LARGE_WRITE: usize = 64 * 1024;
         let vm = VirtualMachine::get();
         if vm.is_inside_deferred_task_queue.get() || vm.is_shutting_down() || !self.socket_is_open()
@@ -1733,8 +1733,7 @@ impl SendQueue {
         }
         AutoFlusher::register_deferred_microtask_with_type(self, vm);
         self.windows.messages_written.update(|count| count + 1);
-        self.windows.messages_written.get()
-            > bun_threading::spin::tune(7, WRITTEN_SINGLY.into()) as u32
+        self.windows.messages_written.get() > WRITTEN_SINGLY
             && matches!(&self.queue.get()[..], [only]
                 if only.handle.is_none() && only.data.list.len() < LARGE_WRITE)
     }

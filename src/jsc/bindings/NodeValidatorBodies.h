@@ -319,12 +319,10 @@ template<typename Arguments> ALWAYS_INLINE JSC::EncodedJSValue validateBuffer(JS
     JSValue buffer = arguments.at(0);
     JSValue name = arguments.at(1);
 
-    if (!buffer.isUndefined()) {
-        if (!buffer.isCell() || JSC::typedArrayType(buffer.asCell()->type()) == NotTypedArray) {
-            auto nameStr = name.isUndefined() ? String("buffer"_s) : name.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, nameStr, "Buffer, TypedArray, or DataView"_s, buffer);
-        }
+    if (!buffer.isCell() || JSC::typedArrayType(buffer.asCell()->type()) == NotTypedArray) {
+        auto nameStr = name.isUndefined() ? String("buffer"_s) : name.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, nameStr, "Buffer, TypedArray, or DataView"_s, buffer);
     }
     return JSValue::encode(jsUndefined());
 }

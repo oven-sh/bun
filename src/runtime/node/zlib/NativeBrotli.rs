@@ -233,7 +233,7 @@ mod _impl {
         fn init(&mut self, dictionary: &[u8]) -> Result<(), Error> {
             // Mirrors node's Init(): free the previous instance and dictionary
             // before building new ones. `init` is JS-reachable twice on one
-            // handle, and ResetStream() lands here with no dictionary.
+            // handle, and `reset()` lands here when the handle has no instance.
             self.state = None;
             let (state, message) = match self.mode {
                 NodeMode::BROTLI_ENCODE => (
@@ -261,11 +261,15 @@ mod _impl {
     }
 
     impl CompressionContext for Context {
+        /// https://github.com/nodejs/node/blob/v26.12.1/src/node_zlib.cc#L1579-L1693
         fn reset(&mut self) -> Result<(), Error> {
-            // Matches node's `BrotliContext::ResetStream()`, which calls `Init()`
-            // with its default (empty) dictionary — a reset drops the dictionary.
-            // `init` frees the previous state and dictionary itself.
-            self.init(&[])
+            match &mut self.state {
+                Some(State::Encoder(encoder)) => encoder.reset_session(),
+                Some(State::Decoder(decoder)) => decoder.reset_session(),
+                // Node's `ResetStream()` makes an instance here, too.
+                None => return self.init(&[]),
+            }
+            Ok(())
         }
 
         fn flush_value_is_valid(flush: u32) -> bool {

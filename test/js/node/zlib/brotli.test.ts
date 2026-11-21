@@ -1986,9 +1986,51 @@ describe("reset()", () => {
     return engine;
   }
 
-  it("makes the encoder forget its input, parameters and dictionary", () => {
-    const engine = zlib.createBrotliCompress({ params: { [QUALITY]: 5, [LGWIN]: 10 }, dictionary: input });
-    expect(drive(resetAfter(engine, samples), [[FINISH, input]], 1024)).toEqual(compressed);
+  /** For `drive` to leave the stream open. */
+  const leftOpen = ({ _handle, _writeState }) => ({ _handle, _writeState, close() {} });
+
+  it.each([
+    ["parameters", { params: { [QUALITY]: 5, [LGWIN]: 10 } }],
+    ["dictionary", { dictionary: input }],
+    ["parameters and dictionary", { params: { [QUALITY]: 5, [LGWIN]: 10 }, dictionary: input }],
+  ])("makes the encoder forget its input, but not its %s", (_, options) => {
+    const engine = resetAfter(zlib.createBrotliCompress(options), samples);
+    expect(drive(engine, [[FINISH, input]], 1024)).toEqual(zlib.brotliCompressSync(input, options));
+  });
+
+  it("starts every stream of the encoder with its parameters and dictionary", () => {
+    const options = { params: { [QUALITY]: 5, [LGWIN]: 10 }, dictionary: input };
+    const engine = zlib.createBrotliCompress(options);
+    const streams = [];
+    for (const resets of [0, 1, 2]) {
+      for (let i = 0; i < resets; i++) engine._handle.reset();
+      streams.push(drive(leftOpen(engine), [[FINISH, input]], 1024));
+    }
+    engine.close();
+    expect(streams).toEqual(Array(3).fill(zlib.brotliCompressSync(input, options)));
+  });
+
+  it("keeps what the second init() of the encoder was given", () => {
+    const engine = bare(ENCODE, { [QUALITY]: 0 }, input);
+    const params = Object.assign(new Uint32Array(STREAM_OFFSET + 1).fill(-1), { [QUALITY]: 5 });
+    engine._handle.init(params, engine._writeState, () => {}, undefined);
+    engine._handle.reset();
+    const expected = zlib.brotliCompressSync(input, { params: { [QUALITY]: 5 } });
+    expect(drive(engine, [[FINISH, input]], 1024)).toEqual(expected);
+  });
+
+  // As in Node, where `ResetStream()` then makes an instance with no parameters and no dictionary.
+  it("gives an encoder whose init() threw a stream with the defaults", () => {
+    const handle = new Handle(ENCODE);
+    const params = new Uint32Array(STREAM_OFFSET + 1).fill(-1);
+    expect(() => handle.init(params, new Uint32Array(2), () => {}, "dictionary")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    handle.reset();
+    const out = Buffer.alloc(compressed.length + 1);
+    handle.writeSync(FINISH, input, 0, input.length, out, 0, out.length);
+    handle.close();
+    expect(out).toEqual(Buffer.concat([compressed, Buffer.alloc(1)]));
   });
 
   it("makes the decoder forget its input", () => {
@@ -1996,13 +2038,34 @@ describe("reset()", () => {
     expect(drive(engine, [[FINISH, compressed]], 1024)).toEqual(input);
   });
 
-  it.each([
-    ["parameters", "WINDOW_BITS", { params: { [LARGE_WINDOW]: 1 } }, { params: { [DECODER_LARGE_WINDOW]: 1 } }],
+  describe.each([
+    ["large window", "WINDOW_BITS", { params: { [LARGE_WINDOW]: 1 } }, { params: { [DECODER_LARGE_WINDOW]: 1 } }],
     ["dictionary", "DICTIONARY", { dictionary: input }, { dictionary: input }],
-  ])("makes the decoder forget its %s", (_, error, forEncoder, forDecoder) => {
-    const engine = resetAfter(zlib.createBrotliDecompress(forDecoder), Buffer.alloc(0));
-    const steps = [[FINISH, zlib.brotliCompressSync(input, forEncoder)]];
-    expect(drive(engine, steps, 1024).code).toBe(`ERR__ERROR_FORMAT_${error}`);
+  ])("with a stream that needs a %s", (_, error, forEncoder, forDecoder) => {
+    const stream = zlib.brotliCompressSync(input, forEncoder);
+
+    it("keeps it in a decoder that was made with one", () => {
+      const engine = resetAfter(zlib.createBrotliDecompress(forDecoder), stream.subarray(0, stream.length >> 1));
+      expect(drive(engine, [[FINISH, stream]], 1024)).toEqual(input);
+    });
+
+    it("gives none to a decoder that was made without", () => {
+      const engine = resetAfter(zlib.createBrotliDecompress(), compressed.subarray(0, 200));
+      expect(drive(engine, [[FINISH, stream]], 1024).code).toBe(`ERR__ERROR_FORMAT_${error}`);
+    });
+  });
+
+  it("starts every stream of the decoder with its parameters and dictionary", () => {
+    const engine = zlib.createBrotliDecompress({ params: { [DECODER_LARGE_WINDOW]: 1 }, dictionary: input });
+    const streams = [];
+    // The header of the first one says that its window is not a large one.
+    for (const params of [{}, { [LARGE_WINDOW]: 1 }, {}]) {
+      const stream = zlib.brotliCompressSync(input, { params, dictionary: input });
+      streams.push(drive(leftOpen(engine), [[FINISH, stream]], 1024));
+      engine.reset();
+    }
+    engine.close();
+    expect(streams).toEqual(Array(3).fill(input));
   });
 
   it("keeps the error of the decoder", () => {

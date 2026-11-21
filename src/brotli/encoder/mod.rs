@@ -96,6 +96,11 @@ impl Encoder {
         self.stream.is_none() && self.requested.set(key, value)
     }
 
+    /// Forgets the stream in progress and an error, but not the parameters and the dictionary.
+    pub fn reset_session(&mut self) {
+        self.stream = None;
+    }
+
     /// Advances `input` by what it consumed.
     #[inline(never)]
     pub fn compress(

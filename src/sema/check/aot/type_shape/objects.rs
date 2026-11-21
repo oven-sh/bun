@@ -1,6 +1,6 @@
 use super::{AnythingReason, FunctionSignatures, ShapeKind, TypeShape};
 use crate::atom::known;
-use crate::check::aot::answers::GaveUp;
+use crate::check::aot::answers::{ClassRef, GaveUp};
 use crate::check::aot::builtin_types::Denotation;
 use crate::check::aot::queries::Queries;
 use crate::program::Sym;
@@ -39,6 +39,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }));
         }
         if let Some(class) = self.compiled_class(target) {
+            if self.is_class_of_copied_factory(class) {
+                return Ok(TypeShape::undeclared(ShapeKind::Anything(
+                    AnythingReason::Any,
+                )));
+            }
             let trust = self.file_trust(class.file);
             return Ok(TypeShape::declared(ShapeKind::Class(class), trust));
         }
@@ -50,6 +55,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Some(base) if base.builtin_denotation() == Some(Denotation::Exact) => Ok(base),
             Some(_) | None => Ok(own),
         }
+    }
+
+    /// Written types name the class that the factory declares. The program creates those of its copies.
+    fn is_class_of_copied_factory(&self, class: ClassRef) -> bool {
+        let hir = self.c.hir(class.file);
+        !hir.is_js && hir.is_in_factory_with_copies(hir[class.class].start)
     }
 
     fn own_type_arguments(&mut self, ty: TypeId, target: Sym) -> Result<&'c [TypeId], GaveUp> {
@@ -74,6 +85,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
             Origin::ClassStatic(symbol) => {
                 if let Some(class) = self.compiled_class(symbol) {
+                    if self.is_class_of_copied_factory(class) {
+                        return TypeShape::undeclared(ShapeKind::Anything(AnythingReason::Any));
+                    }
                     let trust = self.file_trust(class.file);
                     return TypeShape::declared(ShapeKind::ClassConstructor(class), trust);
                 }

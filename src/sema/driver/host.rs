@@ -17,8 +17,8 @@ use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
     CachedConfig, FileStamp, Host, ModuleDetection, ParseOptions, Paths, ScriptKind, ancestors,
-    case_insensitive_hash, inside, is_declaration_file_name, is_same_path, join, root_length,
-    to_file_name_lower_case, to_path, typescript_path,
+    case_insensitive_hash, inside, is_declaration_file_name, is_plainly_normalized, is_same_path,
+    join, root_length, to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
@@ -64,6 +64,13 @@ fn to_syscall_path(path: &[u8]) -> Option<&[u8]> {
     is_representable.then_some(native)
 }
 
+/// Opening a named pipe waits for a writer, and some devices never end.
+pub fn is_regular_file(path: &[u8]) -> bool {
+    let mut buffer = path_buffer_pool::get();
+    let stat = to_syscall_path(path).and_then(|it| bun_sys::stat(z(it, &mut buffer)).ok());
+    stat.is_some_and(|it| bun_sys::is_regular_file(it.st_mode as bun_sys::Mode))
+}
+
 /// A drive's root is `/C:`. The system treats `C:` as the working directory on that drive, so it needs `/C:/`. The same
 /// goes for every root except `/`.
 fn with_root(path: &[u8]) -> Cow<'_, [u8]> {
@@ -75,7 +82,18 @@ fn with_root(path: &[u8]) -> Cow<'_, [u8]> {
 
 /// Converts a native path to the checker's path format. It must be absolute.
 pub fn from_native(path: &[u8]) -> Vec<u8> {
-    let path = join(b"/", bun_paths::string_paths::without_nt_prefix(path));
+    match name_with_backslash(path) {
+        Some((directory, name)) => inside(&from_native(directory), name),
+        None => from_native_with_separators(path),
+    }
+}
+
+/// `from_native`, where every `\` is a separator.
+fn from_native_with_separators(path: &[u8]) -> Vec<u8> {
+    let path = match !cfg!(windows) && is_plainly_normalized(path) {
+        true => path.to_vec(),
+        false => join(b"/", bun_paths::string_paths::without_nt_prefix(path)),
+    };
     // A POSIX path's root is `/`, even if its first name looks like a drive or a URL. See `root_length`.
     match !cfg!(windows) && root_length(&path) > 1 && !path.starts_with(b"//") {
         true => [b"/\0", &path[..]].concat(),
@@ -83,13 +101,36 @@ pub fn from_native(path: &[u8]) -> Vec<u8> {
     }
 }
 
+/// The directory and the name of the file at `path`, if the name has a `\`, which is a separator on Windows alone. The
+/// checker joins the paths of directories with `\` as a separator everywhere, but it takes a file's name as it is.
+fn name_with_backslash(path: &[u8]) -> Option<(&[u8], &[u8])> {
+    let at = last_index_of_char(path, b'/').map_or(0, |at| at + 1);
+    let name = &path[at..];
+    (!cfg!(windows) && contains_char(name, b'\\')).then(|| (&path[..at], name))
+}
+
+/// True if the checker can't find the file at `path`, a native path, because a directory's name has a `\`.
+pub fn is_below_backslash(path: &[u8]) -> bool {
+    let directory = &path[..last_index_of_char(path, b'/').unwrap_or(0)];
+    !cfg!(windows) && contains_char(directory, b'\\')
+}
+
 /// Converts a command-line path, which is relative to `cwd`. Where `/` is the file system root, a path that begins with
 /// it is a native path.
 pub fn from_argument(cwd: &[u8], path: &[u8]) -> Vec<u8> {
     match !cfg!(windows) && path.starts_with(b"/") {
-        true => from_native(path),
+        true => from_native_with_separators(path),
         false => join(cwd, path),
     }
+}
+
+/// `from_argument`, for a path that names a file. `tsc` reads every `\` as a separator, so a name that has one only counts
+/// if there is such a file.
+pub(crate) fn file_from_argument(host: &dyn Host, cwd: &[u8], path: &[u8]) -> Vec<u8> {
+    let named = name_with_backslash(path).filter(|_| !is_below_backslash(path));
+    let named = named.map(|(directory, name)| inside(&from_argument(cwd, directory), name));
+    let named = named.filter(|it| host.is_file(it));
+    named.unwrap_or_else(|| from_argument(cwd, path))
 }
 
 #[derive(Copy, Clone)]
@@ -252,7 +293,7 @@ pub struct Disk {
     /// and configuration files.
     reader_limit: Option<bun_threading::Semaphore>,
     /// `Host::io_pool`
-    io_pool: Option<bun_threading::io_thread_pool::Ref>,
+    io_pool: Option<&'static bun_threading::ThreadPool>,
     /// Readers that aren't in use, least recently used first.
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
     idle_buffers: bun_threading::Guarded<Vec<Vec<u8>>>,
@@ -396,6 +437,7 @@ fn read_file(directory: Fd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>
     let size = file.get_end_pos().ok()?.max(count);
     let mut all = Vec::new();
     all.try_reserve_exact(size.saturating_add(16)).ok()?;
+    bun_sema::util::prefault(all.spare_capacity_mut());
     all.extend_from_slice(&buffer[..count]);
     file.read_to_end_into(&mut all).ok()?;
     Some(all)
@@ -543,7 +585,7 @@ impl Disk {
             }),
             // The bundler's condition, plus the same threshold for this check's own threads.
             io_pool: (threads > 3 && bun_threading::io_thread_pool::uses_io_pool())
-                .then(|| bun_threading::io_thread_pool::acquire().into()),
+                .then(bun_threading::io_thread_pool::get),
             idle_readers: bun_threading::Guarded::new(Vec::new()),
             idle_buffers: bun_threading::Guarded::new(Vec::new()),
             unreadable: bun_threading::Guarded::new(Vec::new()),
@@ -558,9 +600,7 @@ impl Disk {
     /// As on a system where the threads that read files are not the threads that parse them.
     #[cfg(test)]
     pub(crate) fn with_reader_threads(mut self) -> Self {
-        if self.io_pool.is_none() {
-            self.io_pool = Some(bun_threading::io_thread_pool::acquire().into());
-        }
+        self.io_pool = Some(bun_threading::io_thread_pool::get());
         self
     }
 
@@ -809,14 +849,6 @@ impl Disk {
     }
 }
 
-impl Drop for Disk {
-    fn drop(&mut self) {
-        if self.io_pool.is_some() {
-            bun_threading::io_thread_pool::release();
-        }
-    }
-}
-
 /// True if `name` looks like the alternate name that NTFS and FAT give an entry whose own name isn't 8.3: `PROGRA~1`
 /// for `Program Files`, `RUNNER~1` for `runneradmin`. The entry can be opened by that name, but no listing has it.
 fn looks_like_short_name(name: &[u8]) -> bool {
@@ -856,12 +888,10 @@ fn list(path: &[u8]) -> Directory {
         // The entry kind from the directory listing avoids a system call per file.
         let is_link = match entry.kind {
             EntryKind::SymLink => true,
-            EntryKind::Unknown => {
-                match bun_sys::lstatat(directory.fd(), z(name, &mut path_buffer_pool::get())) {
-                    Ok(found) => bun_sys::kind_from_mode(found.st_mode as _) == EntryKind::SymLink,
-                    Err(_) => continue,
-                }
-            }
+            EntryKind::Unknown => match bun_sys::lstatat(directory.fd(), entry.name.as_zstr()) {
+                Ok(found) => bun_sys::kind_from_mode(found.st_mode as _) == EntryKind::SymLink,
+                Err(_) => continue,
+            },
             _ => false,
         };
         let is_dir = match entry.kind {
@@ -1561,7 +1591,11 @@ impl Host for Disk {
         atoms: &Interner<'s>,
         options: ParseOptions,
     ) -> hir::File<'s> {
-        bun_sema_parser::summarize(
+        let summarize = match options.keeps_comments {
+            true => bun_sema_parser::summarize,
+            false => bun_sema_parser::summarize_without_comments,
+        };
+        summarize(
             arena,
             path,
             self.script_kind(path),
@@ -1613,7 +1647,7 @@ impl Host for Disk {
         // The I/O threads serve one load at a time.
         match *self.shares.lock() {
             Some(_) => None,
-            None => self.io_pool.as_deref(),
+            None => self.io_pool,
         }
     }
     fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {

@@ -5,7 +5,7 @@ use bun_sema::hir::{
 use bun_sema::program::{CompiledModule, FileId};
 use smallvec::{SmallVec, smallvec};
 
-use super::constructor::find_fields_at_birth;
+use super::constructor::find_initial_fields;
 use super::{
     ClassElement, ClassPlan, ClassText, ClassTransform, FieldSemantics, FieldValue,
     FieldsInConstructor, InitializerCall, InjectionPoint, KeyThatHoldsDecorators,
@@ -37,6 +37,11 @@ pub(in crate::lower) fn decorators_of<'h>(
 
 pub(in crate::lower) fn has_decorators(hir: &hir::File<'_>, modifiers: Span<ModifierId>) -> bool {
     decorators_of(hir, modifiers).next().is_some()
+}
+
+/// The slot is undefined until the decorators have run, and what they run may read it.
+pub(in crate::lower) fn is_filled_by_decorators(hir: &hir::File<'_>, slot: ClassSlot) -> bool {
+    matches!(slot, ClassSlot::PrivateMethod(member) if has_decorators(hir, hir[member].modifiers))
 }
 
 pub(in crate::lower) fn is_declaration_only(hir: &hir::File<'_>, member: MemberId) -> bool {
@@ -448,7 +453,7 @@ pub(in crate::lower) fn find_fields_evaluated_in_constructor<'t, 's>(
     let mut defined: SmallVec<[MemberId; 4]> = with_value.collect();
     let is_at_birth = |constructor| {
         !is_derived_class(hir, class)
-            && find_fields_at_birth(get_text(), &plan, constructor).is_some()
+            && find_initial_fields(get_text(), &plan, constructor).is_some()
     };
     if !defined.is_empty() && !plan.constructor.is_some_and(is_at_birth) {
         defined.clear();

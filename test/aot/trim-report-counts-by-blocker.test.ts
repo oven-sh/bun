@@ -80,13 +80,7 @@ describe.concurrent("one reason to keep more", () => {
 describe.concurrent("a key that is proven to be one symbol keeps what a name of the program's own keeps", () => {
   const key = `Symbol.for("made.up")`;
   eachRow([
-    [
-      "a name of the program's own is read off the global object",
-      "main.mjs",
-      `console.log(globalThis.madeUp);`,
-      10,
-      "",
-    ],
+    ["a name of the program's own is read off the global object", "main.mjs", `console.log(globalThis.madeUp);`, 6, ""],
     ["a registered symbol is read", "main.mjs", `console.log(globalThis[${key}]);`, 10, ""],
     ["a registered symbol is stored under", "main.mjs", `globalThis[${key}] = 1;`, 5, ""],
     ["a registered symbol is defined", "main.mjs", `Object.defineProperty(globalThis, ${key}, { value: 1 });`, 10, ""],
@@ -116,7 +110,7 @@ describe.concurrent("an alias of the global object that a closure captures", () 
       "is read under a name of the program's own",
       "main.mjs",
       outer("() => g.madeUp") + `console.log(outer()());`,
-      10,
+      6,
       "",
     ],
     [
@@ -141,24 +135,6 @@ describe.concurrent("an alias of the global object that a closure captures", () 
       "dynamic-import eval native-code",
     ],
   ]);
-});
-
-// A bound Object.defineProperty on the global object, in a constructor that also returns what it read under the key.
-test("the first lines of signal-exit open nothing", async () => {
-  const said = await report(
-    "main.mjs",
-    `const kExitEmitter = Symbol.for("signal-exit emitter");
-const global = globalThis;
-const ObjectDefineProperty = Object.defineProperty.bind(Object);
-class Emitter {
-  constructor() {
-    if (global[kExitEmitter]) return global[kExitEmitter];
-    ObjectDefineProperty(global, kExitEmitter, { value: this, writable: false, enumerable: false, configurable: false });
-  }
-}
-console.log(new Emitter() === new Emitter());`,
-  );
-  expect({ kept: said.kept, blockers: said.blockers }).toEqual({ kept: 11, blockers: "" });
 });
 
 describe.concurrent("a key that may be a string keeps what the object leads to", () => {

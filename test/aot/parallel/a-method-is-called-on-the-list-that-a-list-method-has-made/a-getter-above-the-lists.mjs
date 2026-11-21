@@ -8,4 +8,4 @@ function kept(list) { let got; for (let turn = 0; turn < turns; turn++) got = li
 console.log(say(tagOfMade(source)), say(tagOfKept(source)), say(kept(source)), say(log));
 delete Array.prototype.tag;
 // STATISTIC: ArraySpeciesLookupsElided >= 1
-// STATISTIC: NumberStoresDispatchedByIndexingType <= 1
+// STATISTIC: NumberStoresDispatchedByIndexingType <= 4

@@ -27,7 +27,7 @@
 # arrives is another shape than was believed. The builds of that row are given up as a try is, and every fresh object leaves in front of them; no purchase of the loop around is lost.
 # RUN: compile LoopVersioningAttemptsFailed WalkLoopsVersioned mechanisms=all
 # CHECK: statistic LoopVersioningAttemptsFailed 0
-# CHECK: statistic WalkLoopsVersioned 7
+# CHECK: statistic WalkLoopsVersioned 12
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: number 3 number 6 2 6 {"n":6} {"n":6,"late":2} 3,5,5
 # SHELL-NEXT: exited with 0

@@ -53,8 +53,8 @@ const WELL_KNOWN_DIRS: &[&[u8]] = &[
 ];
 
 struct Loader {
-    /// One owned `CRYPTO_BUFFER` per distinct certificate, in discovery order.
-    certs: Vec<*mut boringssl::CRYPTO_BUFFER>,
+    /// One per distinct certificate, in discovery order.
+    certs: Vec<boringssl::OwnedCryptoBuffer>,
     /// `(st_dev, st_ino)` of every file already read and every directory already walked.
     seen: bun_collections::HashMap<(u64, u64), ()>,
     /// SHA-256 of every DER encoding already in `certs`.
@@ -67,59 +67,25 @@ impl Loader {
     /// CERTIFICATE that is not shaped like one ends the file. Nothing is parsed here: `PEM_bytes_read_bio` is that
     /// loop minus the ASN.1 parse, and the certificates go into an `X509_LAZY_CERT_SET`.
     fn load_pem(&mut self, pem: &[u8]) {
-        // SAFETY: `pem` outlives `bio`; BoringSSL only reads from it.
-        let bio = unsafe { boringssl::BIO_new_mem_buf(pem.as_ptr().cast(), pem.len() as isize) };
-        if bio.is_null() {
+        let Some(bio) = boringssl::MemBio::new(pem) else {
             return;
-        }
-        loop {
-            let mut der: *mut u8 = ptr::null_mut();
-            let mut der_len: c_long = 0;
-            let mut name: *mut c_char = ptr::null_mut();
-            // SAFETY: out-pointers are valid; `bio` is live; no password callback data.
-            let ok = unsafe {
-                boringssl::PEM_bytes_read_bio(
-                    &raw mut der,
-                    &raw mut der_len,
-                    &raw mut name,
-                    c"CERTIFICATE".as_ptr(),
-                    bio,
-                    Some(no_password),
-                    ptr::null_mut(),
-                )
-            };
-            if ok == 0 {
-                break;
-            }
-            // SAFETY: on success BoringSSL hands us ownership of `name` and `der` (`der_len` bytes).
-            unsafe { boringssl::OPENSSL_free(name.cast()) };
+        };
+        while let Some(der) = next_certificate(&bio) {
             let mut digest = [0u8; 32];
-            // SAFETY: `der` points at `der_len` readable bytes; `digest` has room for SHA-256.
-            unsafe { boringssl::SHA256(der, der_len as usize, digest.as_mut_ptr()) };
-            let mut ok = true;
-            if !self.ders.contains_key(&digest) {
-                // SAFETY: `der` points at `der_len` readable bytes.
-                ok = unsafe { boringssl::X509_LAZY_CERT_SET_can_index(der, der_len as usize) } != 0;
-                if ok {
-                    // SAFETY: `der` points at `der_len` readable bytes; CRYPTO_BUFFER_new copies them.
-                    let buf = unsafe {
-                        boringssl::CRYPTO_BUFFER_new(der, der_len as usize, ptr::null_mut())
-                    };
-                    ok = !buf.is_null();
-                    if ok {
-                        self.certs.push(buf);
-                        self.ders.insert(digest, ());
-                    }
-                }
+            bun_sha_hmac::sha::hashers::SHA256::hash(&der, &mut digest);
+            if self.ders.contains_key(&digest) {
+                continue;
             }
-            // SAFETY: ours to free (see above).
-            unsafe { boringssl::OPENSSL_free(der.cast()) };
-            if !ok {
+            // SAFETY: it only reads `der`.
+            if unsafe { boringssl::X509_LAZY_CERT_SET_can_index(der.as_ptr(), der.len()) } == 0 {
                 break;
             }
+            let Some(buf) = boringssl::OwnedCryptoBuffer::new(&der) else {
+                break;
+            };
+            self.certs.push(buf);
+            self.ders.insert(digest, ());
         }
-        // SAFETY: `bio` came from BIO_new_mem_buf above.
-        unsafe { boringssl::BIO_free(bio) };
         boringssl::ERR_clear_error();
     }
 
@@ -185,6 +151,24 @@ impl Loader {
     }
 }
 
+fn next_certificate(bio: &boringssl::MemBio<'_>) -> Option<boringssl::OpensslBytes> {
+    let mut der: *mut u8 = ptr::null_mut();
+    let mut der_len: c_long = 0;
+    // SAFETY: `bio` is live. BoringSSL allocates `der_len` bytes or leaves `der` null.
+    unsafe {
+        boringssl::PEM_bytes_read_bio(
+            &raw mut der,
+            &raw mut der_len,
+            ptr::null_mut(),
+            c"CERTIFICATE".as_ptr(),
+            bio.as_ptr(),
+            Some(no_password),
+            ptr::null_mut(),
+        );
+        boringssl::OpensslBytes::from_raw(der, der_len as usize)
+    }
+}
+
 /// Never answers, so an encrypted PEM block fails instead of prompting the terminal.
 extern "C" fn no_password(
     _buf: *mut c_char,
@@ -242,15 +226,9 @@ extern "C" fn us_load_system_certificates_posix() -> *mut boringssl::X509_LAZY_C
         }
     }
 
-    let set = if loader.certs.is_empty() {
-        ptr::null_mut()
-    } else {
-        // SAFETY: `certs` holds live buffers; the set takes its own reference to each.
-        unsafe { boringssl::X509_LAZY_CERT_SET_new(loader.certs.as_ptr(), loader.certs.len()) }
-    };
-    for buf in loader.certs {
-        // SAFETY: drop our reference; the set (if any) keeps its own.
-        unsafe { boringssl::CRYPTO_BUFFER_free(buf) };
+    if loader.certs.is_empty() {
+        return ptr::null_mut();
     }
-    set
+    // SAFETY: `certs` holds live buffers; the set takes its own reference to each.
+    unsafe { boringssl::X509_LAZY_CERT_SET_new(loader.certs.as_ptr().cast(), loader.certs.len()) }
 }

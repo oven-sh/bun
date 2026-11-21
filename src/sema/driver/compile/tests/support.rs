@@ -396,6 +396,7 @@ fn try_load<R>(
         progress: None,
         left_out_bodies: None,
         discards_first_visits: false,
+        order: 1,
     };
     match load_program(&session, host, &request) {
         Ok(loaded) => then(Ok(&TestProgram {

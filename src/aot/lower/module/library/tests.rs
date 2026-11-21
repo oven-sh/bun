@@ -140,6 +140,7 @@ fn lower_library_file_for(
         obfuscates: false,
         counts_executions: false,
         runs_tests: false,
+        divides_small_files: false,
     };
     let mut lowered = lower_program(&files, options);
     assert_eq!(lowered.len(), 2, "the entry point and the library file");

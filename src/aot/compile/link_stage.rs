@@ -5,7 +5,7 @@ use crate::builtins::{BuiltinId, table};
 use crate::emit::FunctionsWithoutCode;
 use crate::ir::generated::{
     BuiltinUsedAtStart, ModuleFlags, ModuleKind, NameClass, OpenedName, ReplaceableBuiltin,
-    SourceStamp,
+    SourceStamp, WebAssemblyModule,
 };
 use crate::ir::parallel::map_each;
 use crate::ir::{Id, ModuleId, StringId};
@@ -13,7 +13,8 @@ use crate::link::{
     self, LinkInput, LinkProject, LinkUnit, Linked, LinkedFunctions, ProgramModule,
     run_steps_beside,
 };
-use crate::load::runtime_roots::builtins_used_at_start;
+use crate::load::contents::load_names::is_object_handed_on;
+use crate::load::runtime_roots::{StartOfRun, builtins_used_at_start};
 use crate::load::{ProgramFile, ProjectId};
 use crate::module_keys::{path_without_form, stamp_of_file};
 use crate::modules::Shape;
@@ -73,6 +74,15 @@ impl Build<'_> {
                 return Err(Stage::LinkAndEmit);
             }
         };
+        for (file, bytes) in core::mem::take(&mut self.adjacent_web_assembly) {
+            let project = ProjectId::Application;
+            let named_by = Some(ProgramFile { project, file });
+            if let Some(index) = modules.iter().position(|it| it.file() == named_by) {
+                let module = ModuleId::new(index);
+                let modules = &mut program.web_assembly_modules;
+                modules.push(WebAssemblyModule { module, bytes });
+            }
+        }
         let (mut with_names, mut with_value, mut facades) = (0, 0, 0);
         for &module in &modules {
             let (project, own) = match module {
@@ -107,7 +117,15 @@ impl Build<'_> {
                 "source texts",
                 "functions without code, what the link stage adds to the program",
             ],
-            || collect_source_texts(&views, &modules, &erased_ranges_by_file, &in_parallel),
+            || {
+                collect_source_texts(
+                    &views,
+                    &modules,
+                    &erased_ranges_by_file,
+                    runs_tests,
+                    &in_parallel,
+                )
+            },
             || {
                 let mut steps = StepClock::new(Stage::LinkAndEmit);
                 run_steps_beside(
@@ -180,12 +198,24 @@ impl Build<'_> {
                                 );
                             }
                         }
-                        let used_at_start = builtins_used_at_start(self.options.aot).into_iter();
+                        let start = StartOfRun {
+                            keeps_code_without_names: loaded.keeps_library_code_without_names,
+                            stays_in_compiled_files: self.stays_in_compiled_files,
+                        };
+                        let used_at_start =
+                            builtins_used_at_start(self.options.aot, start).into_iter();
                         let comes_out = loaded
                             .contents
                             .method_that_hands_out_global_object_may_come_out;
                         let used_at_start =
                             used_at_start.chain(comes_out.then_some(BuiltinId::GlobalThis));
+                        let gives_loader = runs_tests
+                            && is_object_handed_on(
+                                application.loaded.files(),
+                                BuiltinId::NodeModule,
+                            );
+                        let used_at_start =
+                            used_at_start.chain(gives_loader.then_some(BuiltinId::NodeModule));
                         program.builtins_used_at_start = used_at_start
                             .map(|builtin| BuiltinUsedAtStart { builtin })
                             .collect();
@@ -249,8 +279,13 @@ impl Build<'_> {
                         }
                         debug_assert_eq!(entry_points.len(), program.entries.len());
                         steps.end("link stage: built-ins that are replaced, names, stamps");
-                        let listed_modules = (self.options.lists_modules)
-                            .then(|| collect_module_list(&loaded, &bound, &modules, runs_tests));
+                        let listed_modules = (self.options.lists_modules).then(|| {
+                            let mut listed =
+                                collect_module_list(&loaded, &bound, &modules, runs_tests);
+                            let embedded = self.provider.list_files_embedded_implicitly();
+                            listed.add_embedded_files(&embedded, &self.options.load.project_root);
+                            listed
+                        });
                         steps.end("link stage: list of modules");
                         (entry_points, folders, listed_modules)
                     },

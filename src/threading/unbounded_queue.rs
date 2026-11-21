@@ -42,12 +42,6 @@ impl<T> Link<T> {
     pub fn is_null(&self) -> bool {
         self.0.load(Ordering::Relaxed).is_null()
     }
-    /// Reset to null with Relaxed ordering — used when re-queueing a popped
-    /// node so a stale link is not observed by the next push's debug walk.
-    #[inline]
-    pub fn clear(&self) {
-        self.0.store(ptr::null_mut(), Ordering::Relaxed);
-    }
 }
 
 /// Shorthand for the common [`Node`] case: `T` embeds a [`Link<Self>`] field.

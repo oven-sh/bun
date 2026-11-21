@@ -216,8 +216,8 @@ export default b.declarations(
   extendAll(["FileSystemRouter", ...runtimeTranspilerFeatures], "Bun.FileSystemRouter"),
   extendAll(["FileSystemRouter"], "%MatchedRoute%"),
 
-  extendAll(["Cron", "ChildProcess"], "Bun.cron"),
-  extendAll(["Cron"], "%CronJob%"),
+  extendAll(["Cron", "ChildProcess", "Url"], "Bun.cron"),
+  extendAll(["Cron"], "%CronJob%", "%CronTick%"),
 
   extendAll(["Secrets"], ...withMembers("Bun.secrets", "delete", "get", "set")),
 

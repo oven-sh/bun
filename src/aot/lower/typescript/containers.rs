@@ -24,9 +24,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let locals = bound.scopes[bound.symbol_scope(binding).idx()].locals;
         let local = bound.lookup(locals, name).unwrap_or(binding);
         let declarations = &bound.symbol(local).decls;
-        let first = declarations.iter().find(|&&it| self.produces_code(it));
-        let exported = bound.export_symbol_of_value_symbol_if_exported(binding);
-        let is_exported = bound.symbol(exported).decls.contains(&declaration);
+        let hir = self.file.hir;
+        let first = bound.first_declaration(hir, local, |it| self.produces_code(it));
+        let exported = bound.exported_value(binding);
+        let is_exported = bound.is_exported_by_container(declaration);
         let merged = if is_exported { exported } else { binding };
         let is_stored_by_code = [binding, merged].into_iter().any(|variable| {
             !bound.stores_to(variable).is_empty() || bound.is_visible_to_eval(variable)
@@ -36,11 +37,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             merged,
             name,
             is_single_declaration: declarations.len() == 1
+                && !bound.has_refused_declarations(local)
                 && bound.symbol(exported).decls.len() == 1
                 && !is_stored_by_code
                 && !self.is_inside_name_with_two_tables(bound.symbol_scope(binding))
                 && !(is_exported && self.is_member_of_container(exported)),
-            ends_dead_zone: has_dead_zone && first == Some(&declaration),
+            ends_dead_zone: has_dead_zone && first == Some(declaration),
         }
     }
 
@@ -75,7 +77,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let bound = self.file.bound;
         let locals = bound.scopes[bound.symbol_scope(binding).idx()].locals;
         let local = bound.lookup(locals, name).unwrap_or(binding);
-        let exported = bound.export_symbol_of_value_symbol_if_exported(binding);
+        let exported = bound.exported_value(binding);
         let has_two = local != exported && {
             let listed: FxHashSet<Decl> = bound.symbol(exported).decls.iter().copied().collect();
             let mut declarations = bound.symbol(local).decls.iter();

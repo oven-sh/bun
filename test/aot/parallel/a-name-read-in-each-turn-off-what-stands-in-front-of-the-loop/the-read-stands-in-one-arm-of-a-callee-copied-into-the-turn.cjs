@@ -1,4 +1,4 @@
-// STATISTIC: SiteCachedReadsHoisted = 0
+// STATISTIC: SiteCachedReadsHoisted = 1
 // STATISTIC: SiteCachedReadsEmitted >= 1
 "use strict";
 const holders = JSON.parse('[{"port":5},null]'), flags = JSON.parse("[true,false]");

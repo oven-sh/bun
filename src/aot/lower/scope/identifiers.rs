@@ -151,6 +151,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) {
         let local = self.scopes.find_local(BindingRef::Symbol(symbol));
         let local = local.expect("find_tested_local found the local");
+        if self.file.bound.is_stable_binding(symbol) {
+            return self
+                .builder
+                .narrow_stable_variable(local.variable, narrowed, value);
+        }
         self.builder
             .write_narrowed_variable(local.variable, narrowed, value);
     }

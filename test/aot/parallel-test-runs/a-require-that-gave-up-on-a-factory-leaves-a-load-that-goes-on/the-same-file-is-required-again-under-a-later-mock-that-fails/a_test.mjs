@@ -1,5 +1,7 @@
 import { test, vi } from "bun:test";
-const rest = time => new Promise(done => setTimeout(done, time));
+// Runs the event loop that many times: jobs, unhandled rejections and immediates run each time, and no clock decides.
+const spinEventLoop = async (count = 20) => { while (count-- > 0) await new Promise(done => setImmediate(done)); };
+const firstGate = Promise.withResolvers(), secondGate = Promise.withResolvers();
 const asked = load => {
   try {
     return String(load().seen);
@@ -14,22 +16,24 @@ test("t", async () => {
     asked(() => require("./spool.mjs")),
   );
   vi.doMock("./thread.mjs", async () => {
-    await rest(5);
+    await firstGate.promise;
     return { width: "mocked" };
   });
   console.log(
     "SAID reel",
     asked(() => require("./reel.mjs")),
   );
-  await rest(20);
+  firstGate.resolve();
+  await spinEventLoop();
   vi.doMock("./thread.mjs", async () => {
-    await rest(5);
+    await secondGate.promise;
     throw new Error("the third factory");
   });
   console.log(
     "SAID spool again",
     asked(() => require("./spool.mjs")),
   );
-  await rest(60);
+  secondGate.resolve();
+  await spinEventLoop();
   console.log("SAID the end");
 });

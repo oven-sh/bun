@@ -9,10 +9,10 @@
 # console.log(base.a, base.b, below.a, below.c);
 # -- end of source
 # RUN: link fields mechanisms=all
-# CHECK: field L0.0 "a" proven=i32 writers-known filled
-# CHECK: field L0.1 "b" proven=i32 writers-known written-at-construction-alone filled
-# CHECK: field L1.1 "a" proven=i32 writers-known filled
-# CHECK: field L1.2 "b" proven=i32 writers-known written-at-construction-alone filled
+# CHECK: field L0.0 "a" proven=int[0, 2147483647] writers-known filled
+# CHECK: field L0.1 "b" proven=int[0, 2147483647] writers-known written-at-construction-alone filled
+# CHECK: field L1.1 "a" proven=int[0, 2147483647] writers-known filled
+# CHECK: field L1.2 "b" proven=int[0, 2147483647] writers-known written-at-construction-alone filled
 # RUN(HELD): link held fields mechanisms=all
 # HELD: field L0.0 "a" proven=i32 writers-known filled
 # HELD: field L1.1 "a" proven=i32 writers-known filled

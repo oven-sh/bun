@@ -4,7 +4,7 @@ interface P { x: number; y: number; z: number }
 const out: string[] = [];
 let calls = 0;
 function show(v: any): string { return typeof v === "bigint" ? v + "n" : Object.is(v, -0) ? "-0" : typeof v === "object" && v !== null ? "o" : typeof v === "symbol" ? "symbol" : String(v); }
-function adds(ps: P[]): void { for (const p of ps) { p.x += p.y; p.y -= p.z; } }
+function adds(ps: P[]): void { for (const p of ps) { p.x = p.y + p.x; p.y = p.z - p.y; } }
 function same(ps: P[]): void { for (const p of ps) { p.x = p.y + p.y; p.z = p.x - p.x; } }
 function constants(ps: P[]): void { for (const p of ps) { p.x = p.x + 1; p.y = 10 - p.y; p.z = p.z - 0.5; } }
 function three(ps: P[]): void { for (const p of ps) { p.z = p.x + p.y + p.z; p.x = p.z - p.y - p.x; } }

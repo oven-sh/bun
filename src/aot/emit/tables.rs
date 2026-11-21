@@ -2,8 +2,9 @@ use super::layout::{Source, Task};
 use crate::ir::generated::String as StringRecord;
 use crate::ir::generated::{
     AmbiguousExport, BuiltinUsedAtStart, Data, DeclaredRecord, Entry, EvalScope, ExpectedResult,
-    Layout, Module, ModuleFailure, OpenedName, ProgramList, PropertyKey, ReplaceableBuiltin,
-    RuntimeFunctionEntry, SourceStamp, TypeSite, Variable, WebAssemblyModule,
+    Layout, Module, ModuleFailure, ModuleInstance, ModuleLink, OpenedName, ProgramList,
+    PropertyKey, ReplaceableBuiltin, RuntimeFunctionEntry, SourceStamp, TypeSite, Variable,
+    WebAssemblyModule,
 };
 use crate::ir::{Id, ListCounts, Program, SectionWriter, StringId, StringTable, Types};
 use core::ops::Range;
@@ -99,6 +100,8 @@ record_table!(
     AmbiguousExport,
     SourceStamp,
     DeclaredRecord,
+    ModuleInstance,
+    ModuleLink,
     EvalScope,
     Data,
     Entry,
@@ -132,6 +135,8 @@ pub(super) fn create_table_tasks<'p, 'o>(program: &'p Program) -> Vec<Task<'p, '
             }
             ProgramList::SourceStamps => add_table(&mut tasks, list, &program.source_stamps),
             ProgramList::DeclaredRecords => add_table(&mut tasks, list, &program.declared_records),
+            ProgramList::ModuleInstances => add_table(&mut tasks, list, &program.module_instances),
+            ProgramList::ModuleLinks => add_table(&mut tasks, list, &program.module_links),
             ProgramList::EvalScopes => add_table(&mut tasks, list, &program.eval_scopes),
             ProgramList::Data => add_table(&mut tasks, list, &program.data),
             ProgramList::Entries => add_table(&mut tasks, list, &program.entries),

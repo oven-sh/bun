@@ -358,6 +358,7 @@ mod tests {
             obfuscates: false,
             counts_executions: false,
             runs_tests: false,
+            divides_small_files: false,
         };
         let lowered = lower_program(files, options);
         let count = lowered.iter().find_map(|(_, lowered)| {

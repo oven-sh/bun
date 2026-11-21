@@ -4,7 +4,7 @@
 //! (https://github.com/microsoft/typescript-go, Copyright Microsoft Corporation, Apache License 2.0). Comments cite the
 //! upstream function each piece of code corresponds to.
 
-#![feature(allocator_api)]
+#![feature(allocator_ext)]
 #![feature(thread_local)]
 #![feature(rust_cold_cc)]
 

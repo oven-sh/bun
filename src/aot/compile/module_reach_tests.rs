@@ -1200,7 +1200,7 @@ fn unread_import_goes_where_its_name_is_bound() {
 }
 
 #[test]
-fn unread_import_of_an_entry_point_stays() {
+fn unread_entry_point_import_is_kept() {
     let mut files = UNREAD_NAME_OF_AN_INDEX;
     files[3].1 = "export const w = 1; export const z = 2;";
     files[1].0 = "main.mjs";

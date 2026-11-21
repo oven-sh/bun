@@ -6,7 +6,7 @@
 #   size: number;
 #   constructor(name: string, size: number) { this.name = name; this.size = size; }
 # }
-# function weigh(part: Part, depth: number): number { if (depth > 0) return weigh(part, depth - 1); return part.size * 2 + part.name.length; }
+# function weigh(part: Part, depth: number): number { if (depth > 0) return weigh(part, -depth); return part.size * 2 + part.name.length; }
 # function total(parts: Part[]): number {
 #   let sum = 0;
 #   for (const part of parts) {

@@ -38,18 +38,7 @@ export function everydayMocks(part: number, parts: number) {
   const stretch = Math.ceil(cases.length / parts);
   for (const { name, files } of cases.slice((part - 1) * stretch, part * stretch)) {
     test(name, async () => {
-      const [plain, again, compiled] = await Promise.all([
-        outcomeOf(files, ""),
-        outcomeOf(files, ""),
-        outcomeOf(files, wordsOfAll, "--aot"),
-      ]);
-      // A case in which `bun test` does not say the same twice specifies nothing.
-      if (!Bun.deepEquals(plain, again)) {
-        console.error(
-          `THE REFERENCE WAVERED: ${name}: plain Bun said ${JSON.stringify(plain)}, then ${JSON.stringify(again)}`,
-        );
-        return;
-      }
+      const [plain, compiled] = await Promise.all([outcomeOf(files, ""), outcomeOf(files, wordsOfAll, "--aot")]);
       expect(plain.printed).toHaveLength(1);
       const secondTest = stillWrong.find(([names]) => names.test(name))?.[1];
       expect(compiled).toEqual(

@@ -22,7 +22,7 @@ use bun_threading::Guarded;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 pub(crate) use self::engine_records::package_with_slow_code;
-pub(crate) use self::front_end::{describe_first_fold_error, syntax_errors_of};
+pub(crate) use self::front_end::{describe_first_fold_error, module_name, syntax_errors_of};
 use self::ignore_comments::IgnoreComment;
 pub(crate) use self::ignore_comments::IgnoreCommentOptions;
 pub use self::shared::{InternalError, Severity};
@@ -113,6 +113,12 @@ impl DiagnosticBuffer {
 
     pub fn push(&mut self, diagnostic: Diagnostic) {
         self.diagnostics.push(diagnostic);
+    }
+
+    pub(crate) fn leave_out_errors(&mut self, is_refused: impl Fn(FileId) -> bool) {
+        self.diagnostics.retain(|it| {
+            it.severity != Severity::Error || !it.span.is_some_and(|span| is_refused(span.file))
+        });
     }
 
     pub(crate) fn add_int32_flow(&mut self, flow: Int32Flow) {
@@ -217,10 +223,14 @@ impl LoadMessages {
     pub(crate) fn with_log<R>(&self, call: impl FnOnce(&mut Log) -> R) -> R {
         let mut log = Log::init();
         let result = call(&mut log);
+        self.say(&mut log);
+        result
+    }
+
+    pub(crate) fn say(&self, log: &mut Log) {
         if !log.msgs.is_empty() || log.warnings != 0 || log.errors != 0 {
             log.append_to(&mut self.lists.lock().log);
         }
-        result
     }
 }
 
@@ -315,6 +325,7 @@ pub(crate) struct Diagnostics {
     int32_flows: FxHashMap<(Vec<u8>, u32), Int32Flow>,
     ignore_comments: Vec<IgnoreComment>,
     withheld: Vec<Entry>,
+    /// The engine has run and nothing failed, so every warning of the build is here.
     pub(crate) has_run_to_end: bool,
     should_list_silenced: bool,
 }

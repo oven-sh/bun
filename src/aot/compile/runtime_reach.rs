@@ -26,10 +26,10 @@ use crate::builtins::{
     BuiltinNames, FileFacts, ImportTargets, Intrinsic, Platforms, ResolveInput, Resolved,
     RuntimeFunction, RuntimeModule, RuntimeUses, SourceDialect, resolve_within,
 };
-use crate::ir::{InParallel, for_each_mut};
+use crate::ir::{InParallel, filter_each, for_each_mut};
 use crate::load::Sources;
 use crate::load::contents::load_names::find_library_modules_that_unknown_names_may_stand_for;
-use crate::load::runtime_roots::uses_of_what_start_reads;
+use crate::load::runtime_roots::{find_roads_by_module_objects, uses_of_what_start_reads};
 use crate::load::sources::{ParsedSource, SourceKind, parsed_source};
 use crate::lower::{LeftOutDeclarations, collect_library_functions};
 use crate::modules::{Candidates, ModuleGraph, ModuleRef, SiteAnswer};
@@ -165,27 +165,45 @@ pub(crate) struct KeptCodeInput<'a, 's> {
     pub runs_tests: bool,
 }
 
+fn text_of_function(application: &Files<'_>, file: FileId, function: FnId) -> Option<Range<u32>> {
+    let hir = application.hir(file);
+    let end = match application.bound(file).fns[function.idx()].owner {
+        FnOwner::Expr(expression) => hir[expression].end,
+        FnOwner::Stmt(statement) => hir[statement].loc.end,
+        FnOwner::Member(member) => hir[member].loc.end,
+        FnOwner::Type(_) | FnOwner::None => return None,
+    };
+    let start = match hir[function].kind {
+        FnKind::Arrow => hir[function].text_start,
+        _ => hir[function].anchor,
+    };
+    Some(start..end)
+}
+
+fn find_texts_of_inner_modules(input: &KeptCodeInput<'_, '_>, file: FileId) -> Vec<Range<u32>> {
+    let callbacks = input.graph.inner_modules(file).iter();
+    let mut texts: Vec<Range<u32>> = callbacks
+        .filter_map(|&callback| text_of_function(input.application, file, callback))
+        .collect();
+    texts.shared_sort_unstable_by_key(|text| text.start);
+    texts
+}
+
 fn find_texts_left_out(input: &KeptCodeInput<'_, '_>) -> FxHashMap<FileId, Vec<Range<u32>>> {
     let mut texts: FxHashMap<FileId, Vec<Range<u32>>> = FxHashMap::default();
     for &FunctionRef { file, function } in input.left_out_functions {
         let hir = input.application.hir(file);
-        let end = match input.application.bound(file).fns[function.idx()].owner {
-            FnOwner::Expr(expression) => hir[expression].end,
-            FnOwner::Stmt(statement) => hir[statement].loc.end,
-            FnOwner::Member(member) => hir[member].loc.end,
-            FnOwner::Type(_) | FnOwner::None => continue,
-        };
+        let text = text_of_function(input.application, file, function);
         let mut modifiers =
             (hir[function].params.iter()).flat_map(|it| hir.param_modifiers(it).iter());
         if modifiers.any(|it| matches!(hir[it].kind, ModifierKind::Decorator(_))) {
             continue;
         }
-        let start = match hir[function].kind {
-            FnKind::Arrow => hir[function].text_start,
-            _ => hir[function].anchor,
-        };
-        texts.entry(file).or_default().push(start..end);
+        if let Some(text) = text {
+            texts.entry(file).or_default().push(text);
+        }
     }
+    let mut inner_modules: FxHashMap<FileId, Vec<Range<u32>>> = FxHashMap::default();
     for (file, declarator) in input.left_out_declarations.declarators_left_out() {
         let hir = input.application.hir(file);
         let kind = hir[declarator].kind;
@@ -197,7 +215,22 @@ fn find_texts_left_out(input: &KeptCodeInput<'_, '_>) -> FxHashMap<FileId, Vec<R
         };
         if !matches!(hir[initializer].kind, ExprKind::Class(_)) {
             let text = hir[initializer].pos..hir[initializer].end;
-            texts.entry(file).or_default().push(text);
+            let inner_modules = inner_modules
+                .entry(file)
+                .or_insert_with(|| find_texts_of_inner_modules(input, file));
+            let first = inner_modules.partition_point(|inner| inner.start < text.start);
+            let left_out = texts.entry(file).or_default();
+            let mut start = text.start;
+            for inner in &inner_modules[first..] {
+                if inner.end > text.end {
+                    break;
+                }
+                if start <= inner.start {
+                    left_out.push(start..inner.start);
+                    start = inner.end;
+                }
+            }
+            left_out.push(start..text.end);
         }
     }
     texts
@@ -262,6 +295,9 @@ fn resolve_kept_code(
     }
     if source.builtins.is_told_that_tests_lay_names_above() {
         resolved.note_that_tests_lay_names_above();
+    }
+    if source.builtins.are_receivers_exposed() {
+        resolved.expose_receivers();
     }
     resolved.uses().clone()
 }
@@ -1254,7 +1290,7 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     fn run(&mut self, in_parallel: InParallel<'_>) {
-        self.reach_roots();
+        self.reach_roots(in_parallel);
         while !self.pending.is_empty() {
             self.visit_pending_regions(in_parallel);
         }
@@ -1382,7 +1418,7 @@ impl<'a, 's> Walk<'a, 's> {
         read_by_name
     }
 
-    fn reach_roots(&mut self) {
+    fn reach_roots(&mut self, in_parallel: InParallel<'_>) {
         self.reads_imports_by_name = match self.input.application {
             Application::Bound { files, graph } => !loads_modules_by_computed_names(files, graph),
             Application::Asks(_) => false,
@@ -1391,7 +1427,9 @@ impl<'a, 's> Walk<'a, 's> {
             self.reach_uses(&RuntimeUses::of_unseen_code(self.input.platform));
         }
         match self.input.application {
-            Application::Bound { files, graph } => self.reach_what_application_asks(files, graph),
+            Application::Bound { files, graph } => {
+                self.reach_what_application_asks(files, graph, in_parallel);
+            }
             Application::Asks(uses) => self.reach_uses(uses),
         }
         if self.input.can_load_code_at_run_time
@@ -1410,14 +1448,19 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    fn reach_what_application_asks(&mut self, application: &Files<'_>, graph: &ModuleGraph) {
+    fn reach_what_application_asks(
+        &mut self,
+        application: &Files<'_>,
+        graph: &ModuleGraph,
+        in_parallel: InParallel<'_>,
+    ) {
         let input = self.input;
         let used_at_start = uses_of_what_start_reads(input.used_at_start, input.platform);
         self.reach_uses(&used_at_start);
-        let files = application.compiled_files().iter();
         let mut asks = used_at_start.asks;
         let mut bound_by_no_site: Vec<RuntimeModule> = Vec::new();
-        for &file in files.filter(|&&file| !asks_nothing_of_library(application, graph, file)) {
+        let asks_library = |file: FileId| !asks_nothing_of_library(application, graph, file);
+        for file in filter_each(application.compiled_files(), in_parallel, &asks_library) {
             let read_by_name = self.reach_named_imports(application, graph, file);
             let compiled = application.compiled(file);
             let answers = compiled.map_or(&[][..], |it| it.code_answers);
@@ -1441,9 +1484,12 @@ impl<'a, 's> Walk<'a, 's> {
             }
         }
         if !(self.input.holds_what_unseen_code_finds || self.input.can_load_code_at_run_time) {
+            asks.roads_to_namespaces |= find_roads_by_module_objects(application);
             self.reach_uses(&RuntimeUses::of_asks(&asks, self.input.platform));
         }
-        for module in find_library_modules_that_unknown_names_may_stand_for(application) {
+        let modules =
+            find_library_modules_that_unknown_names_may_stand_for(application, in_parallel);
+        for module in modules {
             self.reach_every_export(ModuleRef::Runtime(module));
             bound_by_no_site.push(module);
         }

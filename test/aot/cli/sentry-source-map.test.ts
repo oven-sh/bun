@@ -1,7 +1,8 @@
 // docs/compiler/debugging.mdx, "Use with Sentry": an executable built with --minify --sourcemap=external reports errors through
-// the stock @sentry/bun SDK, and the map beside the executable leads from the event back to the sources. Nothing is sent: the
-// transport prints the envelopes. The SDK is installed into the temporary folder, so that no other test sees its packages. An
-// executable without an external map reports the paths of its sources. Either way the SDK counts a frame of the program as "in app".
+// the @sentry/bun SDK, and the map beside the executable leads from the event back to the sources. Nothing is sent: the transport
+// prints the envelopes. Nothing is installed: the package in the temporary folder stands for the SDK and reads stacks and debug IDs
+// as @sentry/core and @sentry/node do. An executable without an external map reports the paths of its sources. Either way the SDK
+// counts a frame of the program as "in app".
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
@@ -15,8 +16,97 @@ const env = { ...bunEnv, NO_COLOR: "1" };
 const buildLimit = 300_000;
 const frameFile = "./compiled.js";
 
+const sdk = {
+  "node_modules/@sentry/bun/package.json": JSON.stringify({
+    name: "@sentry/bun",
+    version: "0.0.0",
+    main: "index.js",
+    types: "index.d.ts",
+  }),
+  "node_modules/@sentry/bun/index.d.ts": `export interface Request { body: string | Uint8Array }
+export interface Transport { send(envelope: string): Promise<unknown>; flush(timeout: number): Promise<boolean> }
+export function createTransport(options: object, send: (request: Request) => Promise<{ statusCode: number }>): Transport;
+export function init(options: { dsn: string; transport: (options: object) => Transport }): void;
+export function captureException(error: unknown): string;
+export function flush(timeout?: number): Promise<boolean>;
+`,
+  // nodeStackLineParser() and filenameIsInApp() of @sentry/core, its getFilenameToDebugIdMap(), and the two integrations of @sentry/node.
+  "node_modules/@sentry/bun/index.js": `let transport;
+const isInApp = (file, isNative) => {
+  const isInternal = isNative || (file && !file.startsWith("/") && !/^[A-Z]:/.test(file) && !file.startsWith(".") && !/^[a-zA-Z]([a-zA-Z0-9.\\-+])*:\\/\\//.test(file));
+  return !isInternal && file !== undefined && !file.includes("node_modules/");
+};
+const parseLine = line => {
+  const match = /^\\s*[-]{4,}$/.test(line) ? null : /at (?:async )?(?:(.+?)\\s+\\()?(?:(.+):(\\d+):(\\d+)?|([^)]+))\\)?/.exec(line);
+  if (!match) return undefined;
+  let file = match[2]?.startsWith("file://") ? match[2].slice(7) : match[2];
+  const isNative = match[5] === "native";
+  if (file && /\\/[A-Z]:/.test(file)) file = file.slice(1);
+  if (!file && match[5] && !isNative) file = match[5];
+  return {
+    filename: file && decodeURI(file),
+    function: match[1] || "?",
+    lineno: match[3] && Number(match[3]),
+    colno: match[4] && Number(match[4]),
+    in_app: isInApp(file || "", isNative),
+  };
+};
+const parseStack = stack => stack.split("\\n").map(parseLine).filter(Boolean).reverse();
+const imagesOf = frames => {
+  const files = new Map();
+  for (const [stack, id] of Object.entries(globalThis._sentryDebugIds ?? {})) {
+    const named = parseStack(stack).findLast(frame => frame.filename);
+    if (named) files.set(named.filename, id);
+  }
+  const images = [];
+  for (const file of new Set(frames.map(frame => frame.filename))) {
+    if (files.has(file)) images.push({ type: "sourcemap", code_file: file, debug_id: files.get(file) });
+  }
+  return images;
+};
+const capture = (error, mechanism) => {
+  const frames = parseStack(error.stack ?? "");
+  const images = imagesOf(frames);
+  const event = {
+    exception: { values: [{ type: error.name, value: error.message, mechanism, stacktrace: { frames } }] },
+    ...(images.length && { debug_meta: { images } }),
+  };
+  return transport.send([{}, { type: "event" }, event].map(it => JSON.stringify(it)).join("\\n"));
+};
+exports.createTransport = (options, send) => {
+  const pending = new Set();
+  return {
+    send(body) {
+      const sent = send({ body }).finally(() => pending.delete(sent));
+      pending.add(sent);
+      return sent;
+    },
+    flush: async () => (await Promise.all(pending), true),
+  };
+};
+exports.init = options => {
+  transport = options.transport(options);
+  process.on("uncaughtException", async error => {
+    console.error(error);
+    await capture(error, { type: "auto.node.onuncaughtexception", handled: false });
+    process.exit(1);
+  });
+  process.on("unhandledRejection", reason => {
+    console.warn("This error originated either by throwing inside of an async function without a catch block.");
+    capture(reason, { type: "auto.node.onunhandledrejection", handled: false });
+  });
+};
+exports.captureException = error => {
+  capture(error, { type: "generic", handled: true });
+  return "";
+};
+exports.flush = timeout => transport.flush(timeout);
+`,
+};
+
 const program = {
-  "package.json": JSON.stringify({ name: "app", private: true, dependencies: { "@sentry/bun": "11.9.0" } }),
+  ...sdk,
+  "package.json": JSON.stringify({ name: "app", private: true, dependencies: { "@sentry/bun": "0.0.0" } }),
   "app.ts": `import * as Sentry from "@sentry/bun";
 import { chargeCustomer, chargeCustomerLater } from "./billing/charge-customer";
 
@@ -113,14 +203,6 @@ interface SourceMap {
   names: string[];
   mappings: string;
   x_facebook_sources: [FunctionMap][];
-}
-
-async function installSDK(folder: string) {
-  const install = await spawned([bunExe(), "install", "--ignore-scripts"], folder, env);
-  expect({ stderr: install.stderr, exitCode: install.exitCode }).toEqual({
-    stderr: expect.not.stringMatching(/^error\b/m),
-    exitCode: 0,
-  });
 }
 
 async function build(folder: string) {
@@ -267,14 +349,13 @@ const cases = [
   },
 ];
 
-describe("--sourcemap=external with @sentry/bun", () => {
+describe("--sourcemap=external with a Sentry SDK", () => {
   test(
     "events name the map by its debug ID, the map restores files, lines, columns and names, and the executable has no written name",
     () =>
       slot(async () => {
         using dir = tempDir("aot-sentry-source-map", program);
         const folder = String(dir);
-        await installSDK(folder);
         const { executable, buildID, map } = await build(folder);
 
         const debugID = buildID.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
@@ -324,7 +405,6 @@ describe("--sourcemap=external with @sentry/bun", () => {
       slot(async () => {
         using dir = tempDir("aot-sentry", program);
         const folder = String(dir);
-        await installSDK(folder);
         built(await spawned([bunExe(), "compile", "app.ts", "--outfile", "dist/app"], folder, env));
         const executable = join(folder, "dist", isWindows ? "app.exe" : "app");
         for (const { argument, exitCode, frames } of cases) {

@@ -1,0 +1,13 @@
+# f1 = sum
+# -- source: main.ts
+# // @ts-nocheck
+# function sum(keys, n) { let s = 0; for (let k = 0; k < n; k++) { const x = keys[k % 3]; const o = { [x]: 1, z: 2 }; s += o.a ?? o.b ?? o.c; } return s; }
+# print(sum(["a", "b", "c"], 9));
+# -- end of source
+# The names that the program reads off the literal are in its cell. The iteration tells them apart, and each arm finishes the literal in a known order of keys.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: SwitchString
+# CHECK: PutSlotOrAdd {{*}}orderWordAfter
+# CHECK: GetSlotOrUndefined
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 9

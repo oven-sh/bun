@@ -10,7 +10,7 @@
 // # STAYS: layout L3 changes=[ChangesPrototype] stays-with-compiled-code
 // # STAYS: layout L4 changes=[ChangesPrototype] stays-with-compiled-code
 // # RUN(FIELDS): link fields mechanisms=all
-// # FIELDS: field L3.0 "id" proven=number writers-known written-at-construction-alone filled
+// # FIELDS: field L3.0 "id" proven=int[0, 9007199254740992] writers-known written-at-construction-alone filled
 // # FIELDS: field L4.1 "cutName" proven=string writers-known written-at-construction-alone filled
 // # RUN(WALK): walk f2 mechanisms=all
 // # WALK-NOT: form=Generic

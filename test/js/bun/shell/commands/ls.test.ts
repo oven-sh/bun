@@ -1,6 +1,8 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isPosix, isRoot, tempDir, tempDirWithFiles } from "harness";
+import { isLinux, isPosix, isRoot, tempDir, tempDirWithFiles } from "harness";
+import { chmodSync } from "node:fs";
+import { join } from "node:path";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -259,6 +261,23 @@ describe.concurrent("bunshell ls", () => {
         .stdout(s => expect(sortedLsOutput(s)).toEqual(["dir1", "dir2"]))
         .run();
     });
+  });
+
+  // BSD systems refuse the sticky bit on a file.
+  test.if(isLinux)("-l shows the setuid, setgid and sticky bits", async () => {
+    const expected = {
+      "4755": "-rwsr-xr-x",
+      "2755": "-rwxr-sr-x",
+      "1755": "-rwxr-xr-t",
+      "7644": "-rwSr-Sr-T",
+    };
+    using dir = tempDir("ls-modes", Object.fromEntries(Object.keys(expected).map(mode => [mode, ""])));
+    const seen = {};
+    for (const mode in expected) {
+      chmodSync(join(String(dir), mode), parseInt(mode, 8));
+      seen[mode] = (await $`ls -l ${mode}`.cwd(String(dir)).text()).slice(0, 10);
+    }
+    expect(seen).toEqual(expected);
   });
 
   describe("errors", () => {

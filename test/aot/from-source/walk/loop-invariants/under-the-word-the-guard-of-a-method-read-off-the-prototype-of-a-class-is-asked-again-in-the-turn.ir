@@ -3,7 +3,7 @@
 # class Below extends Base { own() { return 1; } }
 # function replace(seed) {
 #   let work = seed;
-#   for (let k = 0; k < 2; k++) work = (work + k) | 0;
+#   for (let k = 0; k < 2; k++) { work = (work + k) | 0; work = (work * 5 + 1) | 0; work = (work ^ 9) | 0; work = (work * 3 + k) | 0; work = (work ^ 5) | 0; work = (work - k) | 0; }
 #   Base.prototype.m = function (x) { return "new" + x; };
 #   return work;
 # }
@@ -23,7 +23,7 @@
 # that the option --aot-harden=proof-checks stands for) those guards are asked again in front of it, and the process ends where they do not hold. The walk builds a second version of the loop, which holds the call of
 # `replace`: it asks the guard in the front through which a turn that ran other code comes round, and its turns lean on that. THE TEST OF THE CHECK WAS BUILT BY build(), WHICH ANSWERED IT WITH THAT VERY TEST IN FRONT OF THE TURNS: the check in the turn asked a
 # word that had been computed once, so it could never fail there: it asked what the walk believed already. It goes through buildTestOfCheck() like every other check of what is remembered: THE TEST STANDS IN THE TURN.
-# `ask` calls itself so that no caller copies it in: a copy with written numbers has another loop.
+# `ask` calls itself so that no caller copies it in: a copy with written numbers has another loop. The loop of `replace` is too large to be copied into a loop.
 # RUN(INTURN): walk f2 mechanisms=all testing=CheckProofsAtRunTime
 # INTURN: isLoopHead=true
 # INTURN: isLoopHead=true

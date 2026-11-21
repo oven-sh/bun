@@ -87,6 +87,7 @@ pub fn parse_option_words<'a>(
             "entry-points-run-again" => aot.entry_points_run_again = true,
             "runs-in-place" => aot.runs_in_place = true,
             "discards-first-visits" => aot.discards_first_visits = true,
+            "last-file-first" => aot.check_order = u32::MAX,
             "runs-tests" => {
                 aot.runs_tests = true;
                 aot.runs_in_place = true;

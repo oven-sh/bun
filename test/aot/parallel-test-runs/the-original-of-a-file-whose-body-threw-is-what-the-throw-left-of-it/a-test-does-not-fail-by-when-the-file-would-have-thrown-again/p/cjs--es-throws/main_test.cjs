@@ -1,4 +1,6 @@
 const { jest, mock, test, vi } = require("bun:test");
+// Runs the event loop that many times: jobs, unhandled rejections and immediates run each time, and no clock decides.
+const spinEventLoop = async (count = 20) => { while (count-- > 0) await new Promise(done => setImmediate(done)); };
 const say = (tag, value) => {
   const short = each => (each === null || (typeof each !== "object" && typeof each !== "function") ? String(each) : typeof each === "function" ? "function" : "{" + Object.keys(each).join() + "}");
   if (value === null || (typeof value !== "object" && typeof value !== "function")) return console.log(tag, typeof value, String(value));
@@ -27,7 +29,7 @@ test("cjs--es-throws", async () => {
   jest.doMock("./lib.mjs", async real => { console.log("THE FIRST FACTORY BEGINS"); let came; try { came = await real(); } catch (error) { console.log("THE REAL FILE THREW", error.name); throw error; } return { ...came, a: "1 in the test" }; });
   console.log("1 mocks-by-jest-doMock-with-over-the-real-file");
   });
-  await new Promise(done => setTimeout(done, 40));
+  await spinEventLoop();
   console.log("WAITED");
   await attempt("2 loads-a-file-that-mocks-with-more-names", async () => {
   undo.push(() => vi.doUnmock("./lib.mjs"));

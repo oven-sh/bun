@@ -22,13 +22,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub(in crate::check::aot) fn compute_object_origin(&mut self, ty: TypeId) -> ObjectOrigin {
-        let (ty, data) = match self.c.data(ty) {
-            TypeData::ThisParam(symbol) => {
-                let declared = self.c.declared_type(*symbol);
-                (declared, self.c.data(declared))
-            }
-            data => (ty, data),
-        };
+        let ty = self.resolve_object_type(ty);
+        let data = self.c.data(ty);
         if let TypeData::Ref { target, .. } = data {
             return ObjectOrigin::Symbol(self.files().canonical(*target));
         }
@@ -137,7 +132,7 @@ impl Walk {
         if queries.c.is_stack_low() {
             return Err(GaveUp::Unresolved);
         }
-        let ty = queries.declared_type_of_this(ty);
+        let ty = queries.resolve_object_type(ty);
         match self.visits.get(&ty) {
             Some(&Visit::Pending { index }) => {
                 self.lowest_reference = lower_reference(self.lowest_reference, Some(index));

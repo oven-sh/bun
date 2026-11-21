@@ -1,257 +1,154 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
-use core::ptr::NonNull;
+use core::cell::Cell;
 
-use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
 use bun_core::Timespec;
+use bun_ptr::CellExt as _;
 
 use crate::test_runner::bun_test::{
-    self, BunTest, BunTestPtr, DescribeScope, HandleUncaughtExceptionResult,
-    RefDataValue, StepResult,
+    BunTest, BunTestPtr, HandleUncaughtExceptionResult, RefDataValue, ScopeId, StepResult,
 };
 use crate::test_runner::bun_test::debug::group;
-use crate::test_runner::jest::Jest;
 
 pub(crate) struct Collection {
-    /// set to true after collection phase ends
-    pub(crate) locked: bool,
-    pub(crate) describe_callback_queue: Vec<QueuedDescribe>,
-    pub(crate) current_scope_callback_queue: Vec<QueuedDescribe>,
-    // The two queues above are self-referential — their `NonNull<DescribeScope>` fields point
-    // into the tree rooted at `root_scope`. They are stored as raw `NonNull` (not `&`) so that
-    // `active_scope_mut()` may hand out `&mut DescribeScope` to the same nodes without
-    // invalidating any live shared-reference tags under Stacked Borrows.
+    describe_callback_queue: Cell<Vec<QueuedDescribe>>,
+    current_scope_callback_queue: Cell<Vec<QueuedDescribe>>,
 
-    pub(crate) root_scope: Box<DescribeScope>,
-    pub(crate) active_scope: NonNull<DescribeScope>,
+    pub(crate) active_scope: Cell<ScopeId>,
 
-    pub(crate) filter_buffer: Vec<u8>,
+    pub(crate) filter_buffer: Cell<Vec<u8>>,
 }
 
-pub(crate) struct QueuedDescribe {
-    callback: DeprecatedStrong, // jsc.Strong.Deprecated
-    /// Raw cursor into `Collection.root_scope`'s tree. Stored as `NonNull` (not `&DescribeScope`)
-    /// because `Collection::active_scope_mut()` hands out `&mut` to the same node while these
-    /// queue entries are live; a `&` here would be invalidated by that `&mut` (Stacked Borrows).
-    /// The pointee is a `Box<DescribeScope>` inside `TestScheduleEntry::Describe`, so its address
-    /// is stable for the lifetime of the owning `Collection`.
-    active_scope: NonNull<DescribeScope>,
-    /// See `active_scope` — same invariants. Derived from the `&mut DescribeScope` returned by
-    /// `append_describe`, so it carries write-capable provenance (later assigned to
-    /// `Collection.active_scope` and mutated through).
-    new_scope: NonNull<DescribeScope>,
+struct QueuedDescribe {
+    callback: ProtectedJSValue,
+    active_scope: ScopeId,
+    new_scope: ScopeId,
 }
-// `Strong: Drop` covers cleanup — no explicit Drop needed.
 
 impl Collection {
-    /// `hook_scope` (`BunTestRoot::hook_scope`) becomes the parent of the file's root scope.
-    pub(crate) fn init(hook_scope: *mut DescribeScope) -> Collection {
-        let _g = group::begin();
-
-        let only = if let Some(runner) = Jest::runner() {
-            if runner.only { bun_test::Only::Contains } else { bun_test::Only::No }
-        } else {
-            bun_test::Only::No
-        };
-
-        let mut root_scope = DescribeScope::create(bun_test::BaseScope {
-            parent: Some(hook_scope),
-            name: None,
-            concurrent: false,
-            mode: bun_test::ScopeMode::Normal,
-            only,
-            has_callback: false,
-            test_id_for_debugger: 0,
-            line_no: 0,
-        });
-
-        let active_scope = NonNull::from(&mut *root_scope);
-
+    pub(crate) fn init() -> Collection {
         Collection {
-            locked: false,
-            describe_callback_queue: Vec::new(),
-            current_scope_callback_queue: Vec::new(),
-            root_scope,
-            active_scope,
-            filter_buffer: Vec::new(),
+            describe_callback_queue: Cell::default(),
+            current_scope_callback_queue: Cell::default(),
+            active_scope: Cell::new(ScopeId::ROOT),
+            filter_buffer: Cell::default(),
         }
     }
 
-    // Cleanup is covered by field Drop (Box, Vec<QueuedDescribe>, Vec<u8>).
-    // No explicit `impl Drop for Collection` needed.
-
-    /// Immutable view of the currently-active describe scope.
-    ///
-    /// SAFETY: `active_scope` is initialized to `root_scope` in `init()` and is only ever
-    /// reassigned to nodes inside `root_scope`'s tree (via `append_describe` children or
-    /// restored from a `RefDataValue::Collection` snapshot). The tree is owned by
-    /// `self.root_scope: Box<_>` and nodes are never freed for the lifetime of `Collection`,
-    /// so the pointer is always valid while `self` is.
-    #[inline]
-    pub(crate) fn active_scope(&self) -> &DescribeScope {
-        // SAFETY: `active_scope` always points into `self.root_scope`'s owned tree; see doc comment above.
-        unsafe { self.active_scope.as_ref() }
-    }
-
-    /// Mutable view of the currently-active describe scope.
-    ///
-    /// SAFETY: see `active_scope()` for validity. The returned `&mut` reborrows from `&mut self`,
-    /// so borrowck prevents simultaneous access to `self.root_scope` while it is live. The
-    /// self-referential queues (`describe_callback_queue` / `current_scope_callback_queue`) hold
-    /// only raw `NonNull<DescribeScope>` to the same nodes, never `&DescribeScope`, so creating
-    /// this `&mut` does not invalidate any outstanding shared-reference tags. `active_scope` is
-    /// always assigned from a `&mut`-derived `NonNull` (root in `init()`, `new_scope` in
-    /// `step()`), so it carries write-capable provenance.
-    #[inline]
-    pub(crate) fn active_scope_mut(&mut self) -> &mut DescribeScope {
-        // SAFETY: `active_scope` always points into `self.root_scope`'s owned tree with write provenance; see doc comment above.
-        unsafe { self.active_scope.as_mut() }
-    }
-
     pub(crate) fn enqueue_describe_callback(
-        &mut self,
-        new_scope: &mut DescribeScope,
+        buntest: &BunTest,
+        new_scope: ScopeId,
         callback: Option<JSValue>,
     ) -> JsResult<()> {
         let _g = group::begin();
 
-        debug_assert!(!self.locked);
-
         if let Some(cb) = callback {
             group::log(format_args!(
                 "enqueueDescribeCallback / {} / in scope: {}",
-                bstr::BStr::new(new_scope.base.name.as_deref().unwrap_or(b"(unnamed)")),
-                bstr::BStr::new(self.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)")),
+                bstr::BStr::new(buntest.scope(new_scope).base.name.as_deref().unwrap_or(b"(unnamed)")),
+                bstr::BStr::new(buntest.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)")),
             ));
 
-            // Store raw NonNull cursors (not `&`) so later `active_scope_mut()` calls on the same
-            // node do not invalidate them. Both pointees live in `root_scope`'s Box-allocated tree
-            // and outlive every QueuedDescribe stored in `self`. `new_scope` is `&mut`, so the
-            // resulting NonNull carries write-capable provenance (later assigned to
-            // `self.active_scope` in `step()` and mutated through).
-            self.current_scope_callback_queue.push(QueuedDescribe {
-                active_scope: self.active_scope,
-                callback: DeprecatedStrong::init(cb),
-                new_scope: NonNull::from(new_scope),
-            });
+            let queued = QueuedDescribe {
+                active_scope: buntest.collection.active_scope.get(),
+                callback: cb.protected(),
+                new_scope,
+            };
+            buntest.collection.current_scope_callback_queue.with_taken(|queue| queue.push(queued));
         }
         Ok(())
     }
 
-    pub(crate) fn run_one_completed(
-        &mut self,
-        _: &JSGlobalObject,
-        _: Option<JSValue>,
-        data: &RefDataValue,
-    ) -> JsResult<()> {
+    fn run_one_completed(buntest: &BunTest, data: &RefDataValue) {
         let _g = group::begin();
 
-        let prev_scope: NonNull<DescribeScope> = match data {
+        let prev_scope: ScopeId = match data {
             RefDataValue::Collection { active_scope } => *active_scope,
             _ => {
                 debug_assert!(false); // this probably can't happen
-                self.active_scope
+                buntest.collection.active_scope.get()
             }
         };
 
         group::log(format_args!(
             "collection:runOneCompleted reset scope back from {}",
-            bstr::BStr::new(self.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
+            bstr::BStr::new(buntest.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
         ));
-        self.active_scope = prev_scope;
+        buntest.collection.active_scope.set(prev_scope);
         group::log(format_args!(
             "collection:runOneCompleted reset scope back to {}",
-            bstr::BStr::new(self.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
+            bstr::BStr::new(buntest.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
         ));
-        Ok(())
+    }
+
+    fn take_next_callback(buntest: &BunTest) -> Option<QueuedDescribe> {
+        let this = &buntest.collection;
+        this.describe_callback_queue.with_taken(|queue| {
+            // append queued callbacks, in reverse order because items will be pop()ed from the end
+            this.current_scope_callback_queue.with_taken(|current| {
+                // if there was an error in the describe callback, don't run any describe callbacks in this scope
+                queue.extend(current.drain(..).rev().filter(|item| !buntest.scope(item.new_scope).failed.get()));
+            });
+            // do not execute callbacks that came from a failed describe scope
+            core::iter::from_fn(|| queue.pop()).find(|item| !buntest.scope(item.active_scope).failed.get())
+        })
     }
 
     pub(crate) fn step(
-        buntest_strong: &BunTestPtr,
+        buntest: &BunTestPtr,
         global_this: &JSGlobalObject,
         data: &RefDataValue,
     ) -> JsResult<StepResult> {
         let _g = group::begin();
-        let buntest = buntest_strong.get();
-        let this = &mut buntest.collection;
 
         if !matches!(data, RefDataValue::Start) {
-            this.run_one_completed(global_this, None, data)?;
+            Self::run_one_completed(buntest, data);
         }
 
-        // append queued callbacks, in reverse order because items will be pop()ed from the end
-        // drain(..).rev() moves each item out exactly once and leaves capacity intact.
-        for item in this.current_scope_callback_queue.drain(..).rev() {
-            // SAFETY: `new_scope` points into `root_scope`'s Box-allocated tree, which outlives
-            // every queued item; short-lived read, no aliasing `&mut` is live here.
-            if unsafe { item.new_scope.as_ref() }.failed {
-                // if there was an error in the describe callback, don't run any describe callbacks in this scope
-                drop(item); // Strong released here
-            } else {
-                this.describe_callback_queue.push(item);
-            }
+        let Some(first) = Self::take_next_callback(buntest) else {
+            return Ok(StepResult::Complete);
+        };
+
+        group::log(format_args!(
+            "collection:runOne set scope from {}",
+            bstr::BStr::new(buntest.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
+        ));
+        buntest.collection.active_scope.set(first.new_scope);
+        group::log(format_args!(
+            "collection:runOne set scope to {}",
+            bstr::BStr::new(buntest.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
+        ));
+
+        if let Some(cfg_data) = BunTest::run_test_callback(
+            buntest,
+            global_this,
+            first.callback.value(),
+            &[],
+            false,
+            RefDataValue::Collection { active_scope: first.active_scope },
+            &Timespec::EPOCH,
+        ) {
+            // the result is available immediately; queue
+            buntest.add_result(cfg_data);
         }
-        // `drain(..)` retains the queue's capacity.
 
-        while !this.describe_callback_queue.is_empty() {
-            group::log(format_args!("runOne -> call next"));
-            let first = this.describe_callback_queue.pop().unwrap();
-            // `first` cleanup handled by Drop at end of loop body / continue.
-
-            // SAFETY: `active_scope` points into `root_scope`'s Box-allocated tree, which outlives
-            // every queued item; short-lived read, no aliasing `&mut` is live here.
-            if unsafe { first.active_scope.as_ref() }.failed {
-                continue; // do not execute callbacks that came from a failed describe scope
-            }
-
-            let callback = &first.callback;
-            let previous_scope = first.active_scope;
-            let new_scope = first.new_scope;
-
-            group::log(format_args!(
-                "collection:runOne set scope from {}",
-                bstr::BStr::new(this.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
-            ));
-            // `new_scope` was constructed from the `&mut DescribeScope` returned by
-            // `append_describe`, so it carries write-capable provenance for `active_scope_mut()`.
-            this.active_scope = new_scope;
-            group::log(format_args!(
-                "collection:runOne set scope to {}",
-                bstr::BStr::new(this.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
-            ));
-
-            if let Some(cfg_data) = BunTest::run_test_callback(
-                buntest_strong,
-                global_this,
-                callback.get(),
-                &[],
-                false,
-                RefDataValue::Collection { active_scope: previous_scope },
-                &Timespec::EPOCH,
-            ) {
-                // the result is available immediately; queue
-                // Re-derive after re-entrant call per BunTestCell::get aliasing contract.
-                buntest_strong.get().add_result(cfg_data);
-            }
-
-            return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
-        }
-        Ok(StepResult::Complete)
+        Ok(StepResult::Waiting { timeout: Timespec::EPOCH })
     }
 
     pub(crate) fn handle_uncaught_exception(
-        &mut self,
+        buntest: &BunTest,
         data: &RefDataValue,
     ) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
 
         // The error didn't come from a describe() callback, so don't fail whichever scope happens to be active.
         if !matches!(data, RefDataValue::Collection { .. })
-            || core::ptr::eq(self.active_scope.as_ptr(), &raw const *self.root_scope)
+            || buntest.collection.active_scope.get() == ScopeId::ROOT
         {
             return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
         }
-        self.active_scope_mut().failed = true;
+        buntest.active_scope().failed.set(true);
 
         HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe // unhandled because it needs to exit with code 1
     }

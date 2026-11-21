@@ -6,6 +6,7 @@
 #include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
 #include <stdio.h>
+#include "root_certs_header.h"
 
 // Security framework types and constants - dynamically loaded
 typedef struct OpaqueSecCertificateRef* SecCertificateRef;
@@ -43,11 +44,18 @@ enum class TrustStatus {
     UNSPECIFIED
 };
 
+struct CFReleaser {
+    void (*release)(CFTypeRef);
+    void operator()(CFTypeRef ref) const { release(ref); }
+};
+template <typename T> using CFPtr = std::unique_ptr<std::remove_pointer_t<T>, CFReleaser>;
+
 // Dynamic Security framework loader
 class SecurityFramework {
 public:
-    void* handle;
-    void* cf_handle;
+    // First, so that they are closed last.
+    us_unique_ptr<void, dlclose> cf_library;
+    us_unique_ptr<void, dlclose> library;
 
     // Core Foundation constants
     CFStringRef kSecClass;
@@ -69,10 +77,10 @@ public:
     // time. Since this loader resolves symbols via dlsym, those four keys must
     // be constructed at runtime with CFStringCreateWithCString. kSecPolicyOid
     // and kSecPolicyAppleSSL *are* exported and can be dlsym'd as usual.
-    CFStringRef kSecTrustSettingsApplication;
-    CFStringRef kSecTrustSettingsPolicy;
-    CFStringRef kSecTrustSettingsPolicyString;
-    CFStringRef kSecTrustSettingsResult;
+    CFPtr<CFStringRef> kSecTrustSettingsApplication;
+    CFPtr<CFStringRef> kSecTrustSettingsPolicy;
+    CFPtr<CFStringRef> kSecTrustSettingsPolicyString;
+    CFPtr<CFStringRef> kSecTrustSettingsResult;
     CFStringRef kSecPolicyOid;
     CFStringRef kSecPolicyAppleSSL;
 
@@ -101,14 +109,11 @@ public:
     OSStatus (*SecTrustSetNetworkFetchAllowed)(SecTrustRef trust, Boolean allowFetch);
     OSStatus (*SecTrustSettingsCopyTrustSettings)(SecCertificateRef certRef, SecTrustSettingsDomain domain, CFArrayRef *trustSettings);
 
-    SecurityFramework() : handle(nullptr), cf_handle(nullptr),
-                         kSecClass(nullptr), kSecClassCertificate(nullptr),
+    SecurityFramework() : kSecClass(nullptr), kSecClassCertificate(nullptr),
                          kSecMatchLimit(nullptr), kSecMatchLimitAll(nullptr),
                          kSecReturnRef(nullptr), kCFBooleanTrue(nullptr),
                          kCFAllocatorDefault(nullptr), kCFTypeArrayCallBacks(nullptr),
                          kCFTypeDictionaryKeyCallBacks(nullptr), kCFTypeDictionaryValueCallBacks(nullptr),
-                         kSecTrustSettingsApplication(nullptr), kSecTrustSettingsPolicy(nullptr),
-                         kSecTrustSettingsPolicyString(nullptr), kSecTrustSettingsResult(nullptr),
                          kSecPolicyOid(nullptr), kSecPolicyAppleSSL(nullptr),
                          CFArrayCreateMutable(nullptr), CFArraySetValueAtIndex(nullptr),
                          CFArrayGetValueAtIndex(nullptr), CFArrayGetCount(nullptr), CFRelease(nullptr),
@@ -120,68 +125,26 @@ public:
                          SecPolicyCopyProperties(nullptr), SecTrustEvaluateWithError(nullptr),
                          SecTrustSetNetworkFetchAllowed(nullptr), SecTrustSettingsCopyTrustSettings(nullptr) {}
 
-    ~SecurityFramework() {
-        // Release runtime-created CFStrings before tearing down CF.
-        if (CFRelease) {
-            if (kSecTrustSettingsApplication) CFRelease(kSecTrustSettingsApplication);
-            if (kSecTrustSettingsPolicy) CFRelease(kSecTrustSettingsPolicy);
-            if (kSecTrustSettingsPolicyString) CFRelease(kSecTrustSettingsPolicyString);
-            if (kSecTrustSettingsResult) CFRelease(kSecTrustSettingsResult);
-        }
-        if (handle) {
-            dlclose(handle);
-        }
-        if (cf_handle) {
-            dlclose(cf_handle);
-        }
-    }
+    template <typename T> CFPtr<T> adopt(T ref) const { return {ref, {CFRelease}}; }
 
     bool load() {
-        if (handle && cf_handle) return true; // Already loaded
-
         // Load CoreFoundation framework
-        cf_handle = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_LAZY | RTLD_LOCAL);
-        if (!cf_handle) {
+        cf_library.reset(dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_LAZY | RTLD_LOCAL));
+        if (!cf_library) {
             fprintf(stderr, "Failed to load CoreFoundation framework: %s\n", dlerror());
             return false;
         }
 
         // Load Security framework
-        handle = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY | RTLD_LOCAL);
-        if (!handle) {
+        library.reset(dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY | RTLD_LOCAL));
+        if (!library) {
             fprintf(stderr, "Failed to load Security framework: %s\n", dlerror());
-            dlclose(cf_handle);
-            cf_handle = nullptr;
             return false;
         }
 
         // Load function pointers first — load_constants() needs
         // CFStringCreateWithCString to materialize the kSecTrustSettings* keys.
-        if (!load_functions()) {
-            if (handle) {
-                dlclose(handle);
-                handle = nullptr;
-            }
-            if (cf_handle) {
-                dlclose(cf_handle);
-                cf_handle = nullptr;
-            }
-            return false;
-        }
-
-        if (!load_constants()) {
-            if (handle) {
-                dlclose(handle);
-                handle = nullptr;
-            }
-            if (cf_handle) {
-                dlclose(cf_handle);
-                cf_handle = nullptr;
-            }
-            return false;
-        }
-
-        return true;
+        return load_functions() && load_constants();
     }
 
 private:
@@ -195,13 +158,16 @@ private:
     // The kSecTrustSettings* dictionary keys are `#define ... CFSTR("...")`
     // macros in SecTrustSettings.h, not exported data symbols, so they must be
     // built at runtime instead of dlsym'd.
-    bool make_string_constant(const char* str, CFStringRef* out) {
-        *out = CFStringCreateWithCString(kCFAllocatorDefault, str, kCFStringEncodingASCII);
+    bool make_string_constant(const char* str, CFPtr<CFStringRef>* out) {
+        *out = adopt(CFStringCreateWithCString(kCFAllocatorDefault, str, kCFStringEncodingASCII));
         if (!*out) { fprintf(stderr, "DEBUG: failed to create CFString %s\n", str); return false; }
         return true;
     }
 
     bool load_constants() {
+        void* handle = library.get();
+        void* cf_handle = cf_library.get();
+
         // Load Security framework constants
         if (!load_string_constant(handle, "kSecClass", &kSecClass)) return false;
         if (!load_string_constant(handle, "kSecClassCertificate", &kSecClassCertificate)) return false;
@@ -242,6 +208,9 @@ private:
     }
 
     bool load_functions() {
+        void* handle = library.get();
+        void* cf_handle = cf_library.get();
+
         // Load CoreFoundation functions
         CFArrayCreateMutable = (CFMutableArrayRef (*)(CFAllocatorRef, CFIndex, const CFArrayCallBacks*))dlsym(cf_handle, "CFArrayCreateMutable");
         CFArraySetValueAtIndex = (void (*)(CFMutableArrayRef, CFIndex, const void*))dlsym(cf_handle, "CFArraySetValueAtIndex");
@@ -286,18 +255,9 @@ static std::atomic<SecurityFramework*> g_security_framework{nullptr};
 static SecurityFramework* get_security_framework() {
     SecurityFramework* framework = g_security_framework.load();
     if (!framework) {
-        SecurityFramework* new_framework = new SecurityFramework();
-        if (new_framework->load()) {
-            SecurityFramework* expected = nullptr;
-            if (g_security_framework.compare_exchange_strong(expected, new_framework)) {
-                framework = new_framework;
-            } else {
-                delete new_framework;
-                framework = expected;
-            }
-        } else {
-            delete new_framework;
-            framework = nullptr;
+        auto new_framework = std::make_unique<SecurityFramework>();
+        if (new_framework->load() && g_security_framework.compare_exchange_strong(framework, new_framework.get())) {
+            framework = new_framework.release();
         }
     }
     return framework;
@@ -327,36 +287,25 @@ static bool is_certificate_self_issued(X509* cert) {
 //    intermediates. We're only interested in whether *this* cert is a trust anchor,
 //    not in completing an arbitrary chain.
 static bool is_certificate_trust_valid(SecurityFramework* security, SecCertificateRef cert_ref) {
-    CFMutableArrayRef subj_certs = security->CFArrayCreateMutable(nullptr, 1, security->kCFTypeArrayCallBacks);
+    auto subj_certs = security->adopt(security->CFArrayCreateMutable(nullptr, 1, security->kCFTypeArrayCallBacks));
     if (!subj_certs) return false;
 
-    security->CFArraySetValueAtIndex(subj_certs, 0, cert_ref);
+    security->CFArraySetValueAtIndex(subj_certs.get(), 0, cert_ref);
 
-    SecPolicyRef policy = security->SecPolicyCreateBasicX509();
-    if (!policy) {
-        security->CFRelease(subj_certs);
-        return false;
-    }
+    auto policy = security->adopt(security->SecPolicyCreateBasicX509());
+    if (!policy) return false;
 
-    SecTrustRef sec_trust = nullptr;
+    SecTrustRef out = nullptr;
     // SecTrustCreateWithCertificates accepts a single SecPolicyRef in place of
     // an array (matches Node.js's IsCertificateTrustValid).
-    OSStatus ortn = security->SecTrustCreateWithCertificates(subj_certs, (CFArrayRef)policy, &sec_trust);
+    OSStatus ortn = security->SecTrustCreateWithCertificates(subj_certs.get(), (CFArrayRef)policy.get(), &out);
+    auto sec_trust = security->adopt(out);
+    if (ortn != errSecSuccess || !sec_trust) return false;
 
-    bool result = false;
-    if (ortn == errSecSuccess && sec_trust) {
-        if (security->SecTrustSetNetworkFetchAllowed) {
-            security->SecTrustSetNetworkFetchAllowed(sec_trust, false);
-        }
-        result = security->SecTrustEvaluateWithError(sec_trust, nullptr);
+    if (security->SecTrustSetNetworkFetchAllowed) {
+        security->SecTrustSetNetworkFetchAllowed(sec_trust.get(), false);
     }
-
-    // Cleanup
-    if (sec_trust) security->CFRelease(sec_trust);
-    security->CFRelease(policy);
-    security->CFRelease(subj_certs);
-
-    return result;
+    return security->SecTrustEvaluateWithError(sec_trust.get(), nullptr);
 }
 
 // Parse a single trust-settings dictionary entry. Mirrors Node.js's
@@ -364,31 +313,30 @@ static bool is_certificate_trust_valid(SecurityFramework* security, SecCertifica
 // loosely based on Chromium's net/cert/internal/trust_store_mac.cc.
 static TrustStatus is_trust_dictionary_trusted_for_policy(SecurityFramework* security, CFDictionaryRef trust_dict, bool is_self_issued) {
     // Trust settings may be scoped to a single application — not supported, skip.
-    if (security->CFDictionaryContainsKey(trust_dict, security->kSecTrustSettingsApplication)) {
+    if (security->CFDictionaryContainsKey(trust_dict, security->kSecTrustSettingsApplication.get())) {
         return TrustStatus::UNSPECIFIED;
     }
 
     // Trust settings may be scoped using policy-specific constraints
     // (e.g. SSL trust scoped to a hostname). Not supported, skip.
-    if (security->CFDictionaryContainsKey(trust_dict, security->kSecTrustSettingsPolicyString)) {
+    if (security->CFDictionaryContainsKey(trust_dict, security->kSecTrustSettingsPolicyString.get())) {
         return TrustStatus::UNSPECIFIED;
     }
 
     // If scoped to a specific policy via kSecTrustSettingsPolicy, only honor
     // entries whose policy OID is kSecPolicyAppleSSL. Absent that key, the
     // entry applies to all policies.
-    if (security->CFDictionaryContainsKey(trust_dict, security->kSecTrustSettingsPolicy)) {
-        SecPolicyRef policy_ref = (SecPolicyRef)security->CFDictionaryGetValue(trust_dict, security->kSecTrustSettingsPolicy);
+    if (security->CFDictionaryContainsKey(trust_dict, security->kSecTrustSettingsPolicy.get())) {
+        SecPolicyRef policy_ref = (SecPolicyRef)security->CFDictionaryGetValue(trust_dict, security->kSecTrustSettingsPolicy.get());
         if (!policy_ref) {
             return TrustStatus::UNSPECIFIED;
         }
-        CFDictionaryRef policy_dict = security->SecPolicyCopyProperties(policy_ref);
+        auto policy_dict = security->adopt(security->SecPolicyCopyProperties(policy_ref));
         if (!policy_dict) {
             return TrustStatus::UNSPECIFIED;
         }
-        CFStringRef policy_oid = (CFStringRef)security->CFDictionaryGetValue(policy_dict, security->kSecPolicyOid);
+        CFStringRef policy_oid = (CFStringRef)security->CFDictionaryGetValue(policy_dict.get(), security->kSecPolicyOid);
         bool is_ssl = policy_oid && security->CFEqual(policy_oid, security->kSecPolicyAppleSSL);
-        security->CFRelease(policy_dict);
         if (!is_ssl) {
             return TrustStatus::UNSPECIFIED;
         }
@@ -397,8 +345,8 @@ static TrustStatus is_trust_dictionary_trusted_for_policy(SecurityFramework* sec
     // kSecTrustSettingsResult defaults to kSecTrustSettingsResultTrustRoot when
     // absent (per Apple's SecTrustSettings.h docs).
     int trust_settings_result = kSecTrustSettingsResultTrustRoot;
-    if (security->CFDictionaryContainsKey(trust_dict, security->kSecTrustSettingsResult)) {
-        CFNumberRef result_ref = (CFNumberRef)security->CFDictionaryGetValue(trust_dict, security->kSecTrustSettingsResult);
+    if (security->CFDictionaryContainsKey(trust_dict, security->kSecTrustSettingsResult.get())) {
+        CFNumberRef result_ref = (CFNumberRef)security->CFDictionaryGetValue(trust_dict, security->kSecTrustSettingsResult.get());
         if (!result_ref || !security->CFNumberGetValue(result_ref, kCFNumberIntType, &trust_settings_result)) {
             return TrustStatus::UNSPECIFIED;
         }
@@ -459,16 +407,16 @@ static bool is_certificate_trusted_for_policy(SecurityFramework* security, X509*
     bool is_self_issued = is_certificate_self_issued(cert);
 
     for (const auto& trust_domain : {kSecTrustSettingsDomainUser, kSecTrustSettingsDomainAdmin, kSecTrustSettingsDomainSystem}) {
-        CFArrayRef trust_settings = nullptr;
-        OSStatus err = security->SecTrustSettingsCopyTrustSettings(cert_ref, trust_domain, &trust_settings);
+        CFArrayRef out = nullptr;
+        OSStatus err = security->SecTrustSettingsCopyTrustSettings(cert_ref, trust_domain, &out);
+        auto trust_settings = security->adopt(out);
 
         if (err != errSecSuccess && err != errSecItemNotFound) {
             continue;
         }
 
         if (err == errSecSuccess && trust_settings) {
-            TrustStatus result = is_trust_settings_trusted_for_policy(security, trust_settings, is_self_issued);
-            security->CFRelease(trust_settings);
+            TrustStatus result = is_trust_settings_trusted_for_policy(security, trust_settings.get(), is_self_issued);
 
             if (result == TrustStatus::TRUSTED) {
                 return true;
@@ -512,55 +460,49 @@ extern "C" void us_load_system_certificates_macos(STACK_OF(X509) **system_certs)
         security->kCFBooleanTrue,
     };
 
-    CFDictionaryRef search = security->CFDictionaryCreate(
+    auto search = security->adopt(security->CFDictionaryCreate(
         security->kCFAllocatorDefault,
         search_keys,
         search_values,
         3,
         security->kCFTypeDictionaryKeyCallBacks,
         security->kCFTypeDictionaryValueCallBacks
-    );
+    ));
 
     if (!search) {
         return;
     }
 
-    CFArrayRef certificates = nullptr;
-    OSStatus status = security->SecItemCopyMatching(search, (CFTypeRef*)&certificates);
-    security->CFRelease(search);
+    CFArrayRef out = nullptr;
+    OSStatus status = security->SecItemCopyMatching(search.get(), (CFTypeRef*)&out);
+    auto certificates = security->adopt(out);
 
     if (status != errSecSuccess || !certificates) {
         return;
     }
 
-    CFIndex count = security->CFArrayGetCount(certificates);
+    CFIndex count = security->CFArrayGetCount(certificates.get());
 
     for (CFIndex i = 0; i < count; ++i) {
-        SecCertificateRef cert_ref = (SecCertificateRef)security->CFArrayGetValueAtIndex(certificates, i);
+        SecCertificateRef cert_ref = (SecCertificateRef)security->CFArrayGetValueAtIndex(certificates.get(), i);
         if (!cert_ref) continue;
 
         // Get certificate data
-        CFDataRef cert_data = security->SecCertificateCopyData(cert_ref);
+        auto cert_data = security->adopt(security->SecCertificateCopyData(cert_ref));
         if (!cert_data) continue;
 
         // Convert to X509
-        const unsigned char* data_ptr = security->CFDataGetBytePtr(cert_data);
-        long data_len = security->CFDataGetLength(cert_data);
-        X509* x509_cert = d2i_X509(nullptr, &data_ptr, data_len);
-        security->CFRelease(cert_data);
-
+        const unsigned char* data_ptr = security->CFDataGetBytePtr(cert_data.get());
+        long data_len = security->CFDataGetLength(cert_data.get());
+        us_unique_ptr<X509, X509_free> x509_cert{d2i_X509(nullptr, &data_ptr, data_len)};
         if (!x509_cert) continue;
 
         // Only consider CA certificates
-        if (X509_check_ca(x509_cert) == 1 &&
-            is_certificate_trusted_for_policy(security, x509_cert, cert_ref)) {
-            sk_X509_push(*system_certs, x509_cert);
-        } else {
-            X509_free(x509_cert);
+        if (X509_check_ca(x509_cert.get()) == 1 &&
+            is_certificate_trusted_for_policy(security, x509_cert.get(), cert_ref)) {
+            sk_X509_push(*system_certs, x509_cert.release());
         }
     }
-
-    security->CFRelease(certificates);
 }
 
 #endif // __APPLE__

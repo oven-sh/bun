@@ -8,15 +8,14 @@
 # f1 = bare, f2 = other, L1 = Options. Only Object.defineProperty() gives "host" a value. Its slot is planned as read-only, not enumerable and not configurable, and the structure of L1 lists it that way.
 # A store that finds the property absent creates a plain data property. A store that finds it present must check whether it is writable.
 # RUN: verify-code mechanisms=all
-# CHECK: {{*}}f2 Body b0 v4 (PutSlotOrAdd): a store writes a field that only definitions may write: L1.field0 "host"
+# CHECK: {{*}}f2 Body b0 v3 (PutSlotOrAdd): a store writes a field that only definitions may write: L1.field0 "host"
 # -- code
 # code f2:Body {
 #   v0: "defined" @JSValue = String string="defined"
 #   b0(v1: int[0, 2147483647] @Int32) entry=0:
-#     v2: int[0, 2147483647] @OptionalInt64 = Box v1
-#     v3: L1 @Cell = NewObject -, v2 layout=L1 fields=[1] traits=[mayCollect, mayTouchMemory]
-#     v4 @Void = PutSlotOrAdd v3, v0 key="host" receivers=[L1] level=Proven traits=[mayWriteObservableState, mayTouchMemory]
-#     v5: L1 @JSValue = Box v3
-#     Return v5
+#     v2: L1 @Cell = NewObject -, v1 layout=L1 fields=[1] traits=[mayCollect, mayTouchMemory]
+#     v3 @Void = PutSlotOrAdd v2, v0 key="host" receivers=[L1] level=Proven traits=[mayWriteObservableState, mayTouchMemory]
+#     v4: L1 @JSValue = Box v2
+#     Return v4
 # }
 # -- end of code

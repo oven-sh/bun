@@ -9,17 +9,17 @@ use bun_alloc::Arena; // bumpalo::Bump re-export (CSS is an AST/arena crate)
 use bun_wyhash::Wyhash;
 
 /// A value for the [composes](https://github.com/css-modules/css-modules/#dependencies) property from CSS modules.
-pub struct Composes {
+pub struct Composes<'bump> {
     /// A list of class names to compose.
-    pub names: CustomIdentList,
+    pub names: CustomIdentList<'bump>,
     /// Where the class names are composed from.
     pub from: Option<Specifier>,
     /// The source location of the `composes` property.
     pub loc: bun_ast::Loc,
 }
 
-impl Composes {
-    pub fn parse(input: &mut Parser) -> css::Result<Composes> {
+impl<'bump> Composes<'bump> {
+    pub fn parse(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Composes<'bump>> {
         let loc = input.position();
         let mut names = CustomIdentList::default();
         while let Ok(name) = input.try_parse(Self::parse_one_ident) {
@@ -63,10 +63,10 @@ impl Composes {
         Ok(())
     }
 
-    fn parse_one_ident(input: &mut Parser) -> css::Result<CustomIdent> {
+    fn parse_one_ident(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, CustomIdent<'bump>> {
         let name: CustomIdent = CustomIdent::parse(input)?;
 
-        if bun_core::eql_case_insensitive_ascii_check_length(name.v(), b"from") {
+        if bun_core::eql_case_insensitive_ascii_check_length(name.v, b"from") {
             return Err(input.new_error_for_next_token());
         }
 
@@ -74,7 +74,7 @@ impl Composes {
     }
 
     pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
-        // `CustomIdent` is `Copy` (arena-ptr payload), so an element-wise copy
+        // `CustomIdent` is `Copy`, so an element-wise copy
         // into a fresh `SmallList` is the deep clone.
         let mut names = CustomIdentList::default();
         for name in self.names.slice() {
@@ -92,7 +92,7 @@ impl Composes {
             return false;
         }
         for (a, b) in lhs.names.slice().iter().zip(rhs.names.slice().iter()) {
-            if a.v() != b.v() {
+            if a.v != b.v {
                 return false;
             }
         }
@@ -137,7 +137,7 @@ impl Specifier {
         }
     }
 
-    pub fn parse(input: &mut Parser) -> css::Result<Specifier> {
+    pub fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Specifier> {
         input.skip_whitespace();
         let start_position = input.position();
         if let Ok(file) = input.try_parse(|i| i.expect_url_or_string()) {

@@ -1574,7 +1574,7 @@ fn what_a_file_of_the_product_writes_on_a_built_in_opens_nothing_and_a_text_goes
 }
 
 #[test]
-fn statements_ask_where_a_plugin_a_loader_or_a_copy_may_come_before_them() {
+fn statements_check_for_earlier_replacements() {
     let binds = |files: &[(&str, &str)], listed: (usize, usize), runs_in_several_realms: bool| {
         let mut project = project_of_run(files, listed);
         project.aot.runs_in_several_realms = runs_in_several_realms;

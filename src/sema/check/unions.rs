@@ -3244,7 +3244,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `slices.BinarySearchFunc(types, t, CompareTypes)`. Only a type and itself compare equal.
-    fn binary_search_types(&self, types: &[TypeId], t: TypeId) -> Result<usize, usize> {
+    pub(super) fn binary_search_types(&self, types: &[TypeId], t: TypeId) -> Result<usize, usize> {
         types.binary_search_by(|&member| self.compare_types(member, t))
     }
 

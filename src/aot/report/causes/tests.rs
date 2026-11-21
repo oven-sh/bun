@@ -2,7 +2,7 @@ use bstr::BString;
 
 use super::*;
 use crate::engine::testing::ResultRecords;
-use crate::engine::{AccessCountRecord, SourceLocation};
+use crate::engine::{AccessCountRecord, SourceLocation, TextRange};
 use crate::ir::generated::KnowledgeLevel;
 use crate::ir::ids::ABSENT_WORD;
 use crate::report::testing::{
@@ -48,6 +48,8 @@ fn access(module: u32, offset: u32, level: KnowledgeLevel, cause: UnprovenCause)
             KnowledgeLevel::Proven => AccessCost::Free,
         },
         loop_depth: 0,
+        origin: ABSENT_WORD,
+        has_other_origins: 0,
     }
 }
 
@@ -90,7 +92,7 @@ fn origin_of(module: ModuleId) -> ModuleOrigin {
 }
 
 fn collect(records: &[AccessRecord]) -> Vec<Cause> {
-    collect_causes(records, &origin_of)
+    collect_causes(records, &[], &origin_of)
 }
 
 fn ranked(records: &[AccessRecord]) -> Vec<(Option<Position>, OriginCounts)> {
@@ -112,12 +114,17 @@ fn expected_cause(position: Option<Position>, accesses: OriginCounts) -> Cause {
     Cause {
         cause: UnprovenCause::UnknownObject,
         position,
+        origin: None,
+        uses: Vec::new(),
+        shared: 0,
+        freed: accesses,
+        freed_in_loops: OriginCounts::default(),
         function: None,
         layouts: Vec::new(),
         accesses,
         calls: OriginCounts::default(),
         operators: OriginCounts::default(),
-        in_loops: 0,
+        in_loops: OriginCounts::default(),
         cost: counts(
             accesses.program * COST_BY_NAME,
             accesses.dependencies * COST_BY_NAME,
@@ -299,7 +306,8 @@ fn cost_sums_every_operation_and_separately_those_in_loops() {
         in_loop(access(PROGRAM, 100, tested, cause)),
     ];
     let expected = Cause {
-        in_loops: 2,
+        in_loops: counts(2, 0),
+        freed_in_loops: counts(2, 0),
         cost: counts(2 * COST_BY_NAME + COST_TESTED, 0),
         cost_in_loops: counts(COST_BY_NAME + COST_TESTED, 0),
         ..expected_cause(at(PROGRAM, 100), counts(3, 0))
@@ -380,6 +388,163 @@ fn what_the_program_cannot_fix_ranks_last() {
         [
             (UnprovenCause::UnknownObject, at(PROGRAM, 200)),
             (UnprovenCause::Unknown, at(PROGRAM, 100)),
+        ]
+    );
+}
+
+fn array_argument(location: SourceLocation, entry: SourceLocation) -> TypeOriginRecord {
+    TypeOriginRecord {
+        reason: TypeOriginReason::ArrayArgument,
+        location,
+        entry,
+        name: TextRange {
+            offset: 0,
+            length: 0,
+        },
+        builtin: ABSENT_WORD,
+    }
+}
+
+fn with_origin(record: AccessRecord, origin: u32) -> AccessRecord {
+    AccessRecord { origin, ..record }
+}
+
+#[test]
+fn operations_with_one_origin_share_its_cause() {
+    let origins = [array_argument(
+        location(PROGRAM, LINE_1_COLUMN_5),
+        location(PROGRAM, LINE_2_COLUMN_14),
+    )];
+    let read = in_loop(with_origin(unknown_object(PROGRAM, 100), 0));
+    let operator = AccessRecord {
+        kind: AccessKind::Arithmetic,
+        ..with_origin(by_name(PROGRAM, 100, UnprovenCause::Untracked), 0)
+    };
+    let shared = AccessRecord {
+        has_other_origins: 1,
+        ..with_origin(unknown_object(PROGRAM, 200), 0)
+    };
+    let causes = collect_causes(&[operator, read, shared], &origins, &origin_of);
+    assert_eq!(causes.len(), 1);
+    let cause = &causes[0];
+    assert_eq!(cause.cause, UnprovenCause::UnknownObject);
+    assert_eq!(cause.position, at(PROGRAM, LINE_1_COLUMN_5));
+    assert_eq!(
+        cause.uses,
+        [at(PROGRAM, 100), at(PROGRAM, 200)].map(Option::unwrap)
+    );
+    assert_eq!((cause.accesses.program, cause.operators.program), (2, 1));
+    assert_eq!((cause.in_loops.program, cause.shared), (1, 1));
+    assert_eq!((cause.freed.program, cause.freed_in_loops.program), (2, 1));
+}
+
+#[test]
+fn origin_without_position_keeps_cause_at_operation() {
+    let nowhere = array_argument(NO_LOCATION, NO_LOCATION);
+    let in_runtime = array_argument(location(RUNTIME, 0), NO_LOCATION);
+    let untracked = TypeOriginRecord {
+        reason: TypeOriginReason::Untracked,
+        ..array_argument(location(PROGRAM, 0), NO_LOCATION)
+    };
+    for origin in [nowhere, in_runtime, untracked] {
+        let records = [with_origin(unknown_object(PROGRAM, 100), 0)];
+        let causes = collect_causes(&records, &[origin], &origin_of);
+        let found: Vec<_> = causes
+            .iter()
+            .map(|it| (it.position, &it.uses[..]))
+            .collect();
+        assert_eq!(found, [(at(PROGRAM, 100), &[][..])], "{:?}", origin.reason);
+    }
+}
+
+#[test]
+fn origin_with_most_operations_comes_first() {
+    let origins = [
+        array_argument(location(PROGRAM, 10), NO_LOCATION),
+        array_argument(location(PROGRAM, 20), NO_LOCATION),
+    ];
+    let tested = |offset| {
+        in_loop(access(
+            PROGRAM,
+            offset,
+            KnowledgeLevel::Expected,
+            UnprovenCause::UnknownObject,
+        ))
+    };
+    let mut records = vec![in_loop(with_origin(unknown_object(PROGRAM, 100), 0))];
+    records.extend((200..203).map(|offset| with_origin(tested(offset), 1)));
+    let causes = collect_causes(&records, &origins, &origin_of);
+    let found: Vec<_> = causes
+        .iter()
+        .map(|it| (it.position, it.in_loops.program))
+        .collect();
+    assert_eq!(found, [(at(PROGRAM, 20), 3), (at(PROGRAM, 10), 1)]);
+}
+
+#[test]
+fn operations_with_other_causes_do_not_affect_rank() {
+    let origins = [
+        array_argument(location(PROGRAM, 10), NO_LOCATION),
+        array_argument(location(PROGRAM, 20), NO_LOCATION),
+    ];
+    let shared = |offset| AccessRecord {
+        has_other_origins: 1,
+        ..in_loop(with_origin(unknown_object(PROGRAM, offset), 0))
+    };
+    let mut records: Vec<AccessRecord> = (100..110).map(shared).collect();
+    records.push(with_origin(unknown_object(PROGRAM, 200), 1));
+    let causes = collect_causes(&records, &origins, &origin_of);
+    let found: Vec<_> = causes.iter().map(|it| it.position).collect();
+    assert_eq!(found, [at(PROGRAM, 20), at(PROGRAM, 10)]);
+}
+
+#[test]
+fn entries_without_fix_come_last() {
+    let element = TypeOriginRecord {
+        reason: TypeOriginReason::CheckedElement,
+        ..array_argument(NO_LOCATION, NO_LOCATION)
+    };
+    let origins = [array_argument(location(PROGRAM, 10), NO_LOCATION), element];
+    let records = [
+        in_loop(with_origin(unknown_object(PROGRAM, 100), 1)),
+        with_origin(unknown_object(PROGRAM, 200), 0),
+    ];
+    let causes = collect_causes(&records, &origins, &origin_of);
+    let found: Vec<_> = causes.iter().map(|it| it.position).collect();
+    assert_eq!(found, [at(PROGRAM, 10), at(PROGRAM, 100)]);
+}
+
+#[test]
+fn origin_text_names_reason_and_use() {
+    let origins = [array_argument(
+        location(PROGRAM, LINE_1_COLUMN_5),
+        location(PROGRAM, LINE_2_COLUMN_14),
+    )];
+    let records = [in_loop(with_origin(
+        unknown_object(PROGRAM, LINE_2_COLUMN_14),
+        0,
+    ))];
+    let access_counts = [module_counts(PROGRAM, [1, 0, 0, 0])];
+    let entries = text_entries(ResultRecords {
+        type_origins: &origins,
+        access_counts: &access_counts,
+        ..accesses(&records)
+    });
+    let wording = origin_wording(TypeOriginReason::ArrayArgument).expect("a wording");
+    assert_eq!(entries[1].position, at(PROGRAM, LINE_1_COLUMN_5));
+    assert_eq!(
+        text_of(&entries[1]),
+        BString::from([&b"1. unknown-object: "[..], &wording.message(b"")].concat())
+    );
+    assert_eq!(
+        note_texts(&entries[1]),
+        [
+            "1 of 1 untyped access".to_owned(),
+            "1 of these runs in a loop".to_owned(),
+            "it comes in at src/a.ts:2:14".to_owned(),
+            "used at src/a.ts:2:14".to_owned(),
+            format!("fix: {}", wording.fix),
+            "https://bun.com/docs/compiler/explain#unknown-object".to_owned(),
         ]
     );
 }
@@ -560,8 +725,9 @@ fn json_has_numbers_then_every_member_of_a_cause() {
         r#""rank":1,"reason":"unknown-callee","file":"src/a.ts","line":2,"column":14"#,
         r#""inDependency":false,"source":"let second = first.size;""#,
         &format!(r#""message":"{}","fix":"{}""#, wording.message, wording.fix),
-        r#""url":"https://bun.com/docs/compiler/explain#unknown-callee""#,
+        r#""url":"https://bun.com/docs/compiler/explain#unknown-callee","why":"","uses":[]"#,
         r#""accesses":2,"dependencyAccesses":0,"calls":1,"operators":1,"inLoops":2"#,
+        r#""withOtherCauses":0"#,
         r#""function":"double","types":["Item","Order"]"#,
     ]
     .join(",");

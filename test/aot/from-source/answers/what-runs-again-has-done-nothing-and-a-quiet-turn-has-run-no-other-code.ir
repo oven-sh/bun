@@ -19,7 +19,7 @@
 # class Barrel { volume: number; constructor(n: number) { this.volume = n * 2; } }
 # class Sealed extends Crate { seal: number; constructor(n: number) { super(count(n)); this.seal = n + 2; } }
 # function fill(amount: number): number { let kept = 0; for (let i = 0; i < amount; i++) { if (i === 3) Object.setPrototypeOf(Sealed, Barrel); kept += new Sealed(i).seal; } return kept; }
-# function atItsLength(n: number): number[] { const a: number[] = []; for (let i = 0; i < n; i++) a[a.length] = i; return a; }
+# function atItsLength(n: number): number[] { const a: number[] = []; a.push(9); for (let i = 0; i < n; i++) a[a.length] = i; return a; }
 # if (pick === 0) {
 #   print(kernel(numbers, -1), turns);
 #   print(kernel(numbers, 5), turns);
@@ -61,7 +61,7 @@
 # An iteration in which no other code ran is a quiet iteration. Its back edge skips the block before the loop header that reads for quiet iterations, where the length of the array was read.
 # In a default build with the fault injected, the program prints 3 and nothing else.
 # RUN(QUIET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all globalThis.pick = 2;
-# QUIET: 0,1,2,3
+# QUIET: 9,0,1,2,3
 # QUIET-NEXT: exited with 0
 # RUN(LOUD): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:RestartMark/all/RunsOtherCode mechanisms=all globalThis.pick = 2;
 # LOUD: a loop iteration skips the loads that were hoisted for iterations without side effects, so the compiler's state says that no other code ran in it, but an operation that may run other code has run since it began

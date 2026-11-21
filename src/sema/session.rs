@@ -52,6 +52,11 @@ pub fn give_back_free_memory() {
     bun_alloc::mimalloc::mi_on_thread_idle();
 }
 
+/// Makes mimalloc return freed pages right away instead of caching them for reuse.
+pub fn stop_keeping_free_pages() {
+    bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::purge_delay, 0);
+}
+
 /// Starts at 1.
 static NEXT_SESSION_NUMBER: AtomicU64 = AtomicU64::new(1);
 
@@ -143,7 +148,7 @@ impl Session {
         let are_tasks = self.are_readers_tasks.load(Ordering::Relaxed);
         if are_tasks {
             // SAFETY: caller contract. `forget_blocks_of` is called when the session ends.
-            unsafe { crate::program::free_behind_tasks(self.number, block) };
+            unsafe { crate::program::free_after_tasks(self.number, block) };
         }
         are_tasks
     }
@@ -227,8 +232,7 @@ impl Session {
                 _ => kept.push(vec![value]),
             });
         }
-        // Make mimalloc return freed pages right away instead of caching them for reuse.
-        bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::purge_delay, 0);
+        stop_keeping_free_pages();
         let (runs, count) = (kept.len(), kept.len() + arenas.len());
         let (kept, arenas) = (Guarded::new(kept), Guarded::new(arenas));
         in_parallel(count, &|index| {

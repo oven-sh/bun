@@ -197,6 +197,17 @@ static size_t decodeWithReplacement(std::span<const uint8_t> bytes, std::span<ch
     return unit - output.data();
 }
 
+template<typename CharacterType>
+static JSC::JSString* tryCreateString(JSC::VM& vm, std::span<const CharacterType> characters)
+{
+    std::span<CharacterType> copy;
+    RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(characters.size(), copy);
+    if (!impl) [[unlikely]]
+        return nullptr;
+    memcpy(copy.data(), characters.data(), characters.size_bytes());
+    return JSC::jsString(vm, String(impl.releaseNonNull()));
+}
+
 static JSC::JSString* tryDecodeUTF8(JSC::VM& vm, std::span<const uint8_t> bytes, bool replacesInvalidBytes)
 {
     constexpr size_t maxStackDecodedBytes = 256;
@@ -205,14 +216,14 @@ static JSC::JSString* tryDecodeUTF8(JSC::VM& vm, std::span<const uint8_t> bytes,
     if (bytes.size() > String::MaxLength)
         return nullptr;
     if (WTF::charactersAreAllASCII(byteCast<Latin1Character>(bytes)))
-        return JSC::jsString(vm, String(byteCast<Latin1Character>(bytes)));
+        return tryCreateString(vm, byteCast<Latin1Character>(bytes));
     if (bytes.size() <= maxStackDecodedBytes) {
         std::array<char16_t, maxStackDecodedBytes> output;
         bool hasInvalidByte = false;
         size_t length = decodeWithReplacement(bytes, output, hasInvalidByte);
         if (hasInvalidByte && !replacesInvalidBytes)
             return nullptr;
-        return JSC::jsString(vm, String(std::span { output }.first(length)));
+        return tryCreateString(vm, std::span<const char16_t> { output }.first(length));
     }
     auto* characters = reinterpret_cast<const char*>(bytes.data());
     if (!simdutf::validate_utf8(characters, bytes.size()))

@@ -15,6 +15,8 @@ For publicly accessible Constructor and Prototype, create 3 classes:
 
 No public constructor? Only Prototype and class needed.
 
+A wrapper around a ref-counted C++ object derives from `JSDOMInterface` and uses `JSDOMPrototype` and `JSDOMConstructor` instead (see `src/jsc/bindings/webcore/JSAbortController.{h,cpp}`).
+
 ## Iso Subspaces
 
 Classes with C++ fields need subspaces in:

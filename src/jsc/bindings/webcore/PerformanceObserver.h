@@ -46,7 +46,7 @@ public:
     struct Init {
         std::optional<Vector<String>> entryTypes;
         std::optional<String> type;
-        bool buffered;
+        bool buffered { false };
     };
 
     static Ref<PerformanceObserver> create(ScriptExecutionContext& context, Ref<PerformanceObserverCallback>&& callback)

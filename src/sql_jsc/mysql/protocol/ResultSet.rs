@@ -1,4 +1,4 @@
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::jsc::JSGlobalObject;
 use crate::mysql::my_sql_value::DateTime;
 use bun_core::parse_int;
 
@@ -6,20 +6,15 @@ use bun_sql::mysql::protocol::ColumnDefinition41;
 use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::encode_int::decode_length_int;
-use bun_sql::mysql::protocol::stack_reader::PacketReader;
-use bun_sql::shared::Data;
-use bun_sql::shared::SQLQueryResultMode;
+use bun_sql::mysql::protocol::packet_reader::PacketReader;
 
-use crate::shared::CachedStructure;
-use crate::shared::sql_data_cell::{Flags as SQLDataCellFlags, SQLDataCell};
+use crate::shared::sql_data_cell::SQLDataCell;
 
 use super::decode_binary_value::{self, decode_binary_value};
 
 bun_core::declare_scope!(MySQLResultSet, visible);
 
 pub(crate) struct Row<'a> {
-    pub values: Box<[SQLDataCell]>,
-    // `columns` is borrowed from the connection's column-definition buffer; see deinit note below.
     pub columns: &'a [ColumnDefinition41],
     pub binary: bool,
     pub raw: bool,
@@ -28,108 +23,76 @@ pub(crate) struct Row<'a> {
 }
 
 impl<'a> Row<'a> {
-    pub(crate) fn to_js(
-        &mut self,
-        global_object: &JSGlobalObject,
-        array: JSValue,
-        structure: JSValue,
-        flags: SQLDataCellFlags,
-        result_mode: SQLQueryResultMode,
-        // Passed by ref because CachedStructure is non-Copy (owns Strong + Box).
-        cached_structure: Option<&CachedStructure>,
-    ) -> crate::jsc::JsResult<JSValue> {
-        SQLDataCell::to_js_object(
-            global_object,
-            array,
-            structure,
-            self.values.as_mut(),
-            flags,
-            result_mode as u8,
-            cached_structure,
-        )
-    }
-
-    fn parse_value_and_set_cell(
-        &self,
-        cell: &mut SQLDataCell,
-        column: &ColumnDefinition41,
-        value: &Data,
-    ) {
+    fn parse_value(&self, column: &ColumnDefinition41, value: &[u8]) -> SQLDataCell {
         bun_core::scoped_log!(
             MySQLResultSet,
-            "parseValueAndSetCell: {} {}",
+            "parseValue: {} {}",
             <&'static str>::from(column.column_type),
-            bstr::BStr::new(value.slice())
+            bstr::BStr::new(value)
         );
         use bun_sql::mysql::protocol::FieldType::*;
         match column.column_type {
             MYSQL_TYPE_FLOAT | MYSQL_TYPE_DOUBLE => {
-                let val: f64 = bun_core::parse_double(value.slice()).unwrap_or(f64::NAN);
-                *cell = SQLDataCell::float8(val);
+                let val: f64 = bun_core::parse_double(value).unwrap_or(f64::NAN);
+                SQLDataCell::float8(val)
             }
             // YEAR arrives as a bare ASCII integer in the text protocol; parse it
             // like SHORT so `.simple()` returns the same JS number as the binary path.
             MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT | MYSQL_TYPE_YEAR => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    let val: u16 = parse_int::<u16>(value.slice(), 10).unwrap_or(0);
-                    *cell = SQLDataCell::uint4(val as u32);
+                    let val: u16 = parse_int::<u16>(value, 10).unwrap_or(0);
+                    SQLDataCell::uint4(val as u32)
                 } else {
-                    let val: i16 = parse_int::<i16>(value.slice(), 10).unwrap_or(0);
-                    *cell = SQLDataCell::int4(val as i32);
+                    let val: i16 = parse_int::<i16>(value, 10).unwrap_or(0);
+                    SQLDataCell::int4(val as i32)
                 }
             }
             MYSQL_TYPE_LONG => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    let val: u32 = parse_int::<u32>(value.slice(), 10).unwrap_or(0);
-                    *cell = SQLDataCell::uint4(val);
+                    let val: u32 = parse_int::<u32>(value, 10).unwrap_or(0);
+                    SQLDataCell::uint4(val)
                 } else {
-                    let val: i32 = parse_int::<i32>(value.slice(), 10).unwrap_or(i32::MIN);
-                    *cell = SQLDataCell::int4(val);
+                    let val: i32 = parse_int::<i32>(value, 10).unwrap_or(i32::MIN);
+                    SQLDataCell::int4(val)
                 }
             }
             MYSQL_TYPE_INT24 => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    let val: u32 = parse_int::<u32>(value.slice(), 10).unwrap_or(0);
-                    *cell = SQLDataCell::uint4(val);
+                    let val: u32 = parse_int::<u32>(value, 10).unwrap_or(0);
+                    SQLDataCell::uint4(val)
                 } else {
                     // -8_388_608 is the minimum value of a signed 24-bit int
-                    let val: i32 = parse_int::<i32>(value.slice(), 10).unwrap_or(-8_388_608);
-                    *cell = SQLDataCell::int4(val);
+                    let val: i32 = parse_int::<i32>(value, 10).unwrap_or(-8_388_608);
+                    SQLDataCell::int4(val)
                 }
             }
             MYSQL_TYPE_LONGLONG => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    let val: u64 = parse_int::<u64>(value.slice(), 10).unwrap_or(0);
+                    let val: u64 = parse_int::<u64>(value, 10).unwrap_or(0);
                     if val <= u32::MAX as u64 {
-                        *cell = SQLDataCell::uint4(u32::try_from(val).expect("int cast"));
-                        return;
+                        return SQLDataCell::uint4(u32::try_from(val).expect("int cast"));
                     }
                     if self.bigint {
-                        *cell = SQLDataCell::uint8(val);
-                        return;
+                        return SQLDataCell::uint8(val);
                     }
                 } else {
-                    let val: i64 = parse_int::<i64>(value.slice(), 10).unwrap_or(0);
+                    let val: i64 = parse_int::<i64>(value, 10).unwrap_or(0);
                     if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
-                        *cell = SQLDataCell::int4(i32::try_from(val).expect("int cast"));
-                        return;
+                        return SQLDataCell::int4(i32::try_from(val).expect("int cast"));
                     }
                     if self.bigint {
-                        *cell = SQLDataCell::int8(val);
-                        return;
+                        return SQLDataCell::int8(val);
                     }
                 }
 
-                *cell = SQLDataCell::string(value.slice());
+                SQLDataCell::string(value)
             }
-            MYSQL_TYPE_JSON => {
-                *cell = SQLDataCell::json(value.slice());
-            }
+            MYSQL_TYPE_JSON => SQLDataCell::json(value),
 
             MYSQL_TYPE_TIME => {
                 // lets handle TIME special case as string
                 // -838:59:50 to 838:59:59 is valid
-                *cell = SQLDataCell::string(value.slice());
+                SQLDataCell::string(value)
             }
             MYSQL_TYPE_DATE | MYSQL_TYPE_DATETIME | MYSQL_TYPE_TIMESTAMP => {
                 // MySQL's DATE/DATETIME/TIMESTAMP text has no timezone, so parse
@@ -138,26 +101,23 @@ impl<'a> Row<'a> {
                 // read "2024-06-15 12:00:00" as local time and make the text and
                 // binary protocols disagree on non-UTC hosts. Zero/invalid dates
                 // fall through to NaN (Invalid Date).
-                let date = match DateTime::from_text(value.slice()) {
+                let date = match DateTime::from_text(value) {
                     Some(dt) => dt.to_js_timestamp(self.global_object).unwrap_or(f64::NAN),
                     None => f64::NAN,
                 };
-                *cell = SQLDataCell::date(date);
+                SQLDataCell::date(date)
             }
             // NEWDECIMAL is always sent as an ASCII decimal string regardless of the
             // column's BINARY flag / charset. Computed decimals (SUM/AVG/arithmetic/CAST)
             // carry the BINARY flag and charset 63, so the catch-all arm's binary-charset
             // heuristic would wrongly return them as a Buffer.
-            MYSQL_TYPE_NEWDECIMAL => {
-                *cell = SQLDataCell::string(value.slice());
-            }
+            MYSQL_TYPE_NEWDECIMAL => SQLDataCell::string(value),
             MYSQL_TYPE_BIT => {
                 // BIT(1) is a special case, it's a boolean
                 if column.column_length == 1 {
-                    let slice = value.slice();
-                    *cell = SQLDataCell::bool(!slice.is_empty() && slice[0] == 1);
+                    SQLDataCell::bool(value.first() == Some(&1))
                 } else {
-                    *cell = SQLDataCell::raw(value);
+                    SQLDataCell::raw(value)
                 }
             }
             _ => {
@@ -168,54 +128,44 @@ impl<'a> Row<'a> {
                 if column.flags.contains(ColumnFlags::BINARY)
                     && column.character_set == decode_binary_value::BINARY_CHARSET
                 {
-                    *cell = SQLDataCell::raw(value);
+                    SQLDataCell::raw(value)
                 } else {
-                    *cell = SQLDataCell::string(value.slice());
+                    SQLDataCell::string(value)
                 }
             }
         }
     }
 
-    fn decode_text(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
-        let mut cells = Cells::new(self.columns.len());
+    fn decode_text(&self, reader: PacketReader<'_>) -> Result<Vec<SQLDataCell>, AnyMySQLError> {
+        let mut cells = Vec::with_capacity(self.columns.len());
 
-        for (index, value) in cells.0.iter_mut().enumerate() {
-            if let Some(result) = decode_length_int(reader.peek()) {
-                let column = &self.columns[index];
-                // The NULL marker is the single literal byte 0xfb. A 251-byte
-                // value is length-encoded as `0xfc 0xfb 0x00` and also decodes
-                // to value 251, so the marker must be distinguished by its
-                // 1-byte encoding or row decoding desynchronizes.
-                if result.bytes_read == 1 && result.value == 0xfb {
-                    // NULL value
-                    reader.skip(result.bytes_read);
-                    // this dont matter if is raw because we will sent as null too like in postgres
-                    *value = SQLDataCell::null();
-                } else {
-                    if self.raw {
-                        let data = reader.encode_len_string()?;
-                        *value = SQLDataCell::raw(&data);
-                    } else {
-                        reader.skip(result.bytes_read);
-                        let string_data =
-                            reader.read(usize::try_from(result.value).expect("int cast"))?;
-                        self.parse_value_and_set_cell(value, column, &string_data);
-                    }
-                }
-                value.set_column(
-                    u32::try_from(index).expect("int cast"),
-                    &column.name_or_index,
-                );
-            } else {
+        for (index, column) in self.columns.iter().enumerate() {
+            let Some(result) = decode_length_int(reader.peek()) else {
                 return Err(AnyMySQLError::InvalidResultRow);
-            }
+            };
+            // The NULL marker is the byte 0xfb alone: a length of 251 is `0xfc 0xfb 0x00`.
+            let mut value = if result.bytes_read == 1 && result.value == 0xfb {
+                reader.skip(result.bytes_read);
+                // this dont matter if is raw because we will sent as null too like in postgres
+                SQLDataCell::null()
+            } else if self.raw {
+                SQLDataCell::raw(reader.encode_len_string()?)
+            } else {
+                reader.skip(result.bytes_read);
+                let string_data = reader.read(usize::try_from(result.value).expect("int cast"))?;
+                self.parse_value(column, string_data)
+            };
+            value.set_column(
+                u32::try_from(index).expect("int cast"),
+                &column.name_or_index,
+            );
+            cells.push(value);
         }
 
-        self.values = core::mem::take(&mut cells.0);
-        Ok(())
+        Ok(cells)
     }
 
-    fn decode_binary(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+    fn decode_binary(&self, reader: PacketReader<'_>) -> Result<Vec<SQLDataCell>, AnyMySQLError> {
         // Header
         let _ = reader.int::<u8>()?;
 
@@ -223,69 +173,35 @@ impl<'a> Row<'a> {
         let bitmap_bytes = (self.columns.len() + 7 + 2) / 8;
         let null_bitmap = reader.read(bitmap_bytes)?;
 
-        let mut cells = Cells::new(self.columns.len());
+        let mut cells = Vec::with_capacity(self.columns.len());
         // Skip first 2 bits of null bitmap (reserved)
         let bitmap_offset: usize = 2;
 
-        for (i, value) in cells.0.iter_mut().enumerate() {
+        for (i, column) in self.columns.iter().enumerate() {
             let byte_pos = (bitmap_offset + i) >> 3;
             let bit_pos = ((bitmap_offset + i) & 7) as u8;
-            let is_null = (null_bitmap.slice()[byte_pos] & (1u8 << bit_pos)) != 0;
+            let is_null = (null_bitmap[byte_pos] & (1u8 << bit_pos)) != 0;
 
-            let column = &self.columns[i];
-            if is_null {
-                *value = SQLDataCell::null();
+            let mut value = if is_null {
+                SQLDataCell::null()
             } else {
-                *value =
-                    decode_binary_value(self.global_object, column, self.raw, self.bigint, reader)
-                        .map_err(|e| match e {
-                            crate::Error::MySqlProtocol(e) => e,
-                            other => other
-                                .name()
-                                .parse()
-                                .unwrap_or(AnyMySQLError::InvalidBinaryValue),
-                        })?;
-            }
+                decode_binary_value(self.global_object, column, self.raw, self.bigint, reader)?
+            };
             value.set_column(u32::try_from(i).expect("int cast"), &column.name_or_index);
+            cells.push(value);
         }
 
-        self.values = core::mem::take(&mut cells.0);
-        Ok(())
+        Ok(cells)
     }
 
-    pub(crate) fn decode(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+    pub(crate) fn decode(
+        &self,
+        reader: PacketReader<'_>,
+    ) -> Result<Vec<SQLDataCell>, AnyMySQLError> {
         if self.binary {
             self.decode_binary(reader)
         } else {
             self.decode_text(reader)
         }
-    }
-}
-
-struct Cells(Box<[SQLDataCell]>);
-
-impl Cells {
-    fn new(len: usize) -> Cells {
-        Cells(vec![SQLDataCell::null(); len].into_boxed_slice())
-    }
-}
-
-impl Drop for Cells {
-    fn drop(&mut self) {
-        for value in self.0.iter_mut() {
-            value.deinit();
-        }
-    }
-}
-
-impl<'a> Drop for Row<'a> {
-    fn drop(&mut self) {
-        for value in self.values.iter_mut() {
-            // SQLDataCell deliberately has no `impl Drop` — it is an FFI struct
-            // whose ownership is normally transferred to C++ — so the cells
-            // still owned by this row must be freed manually here.
-            value.deinit();
-        }
-        // self.columns is intentionally left out.
     }
 }

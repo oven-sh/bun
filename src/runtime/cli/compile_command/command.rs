@@ -52,7 +52,6 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
     ctx.args.target = Some(api::Target::Bun);
     compile_options::check_build_conflicts(&ctx, origin);
     compile_options::note_options_without_effect(&ctx);
-    ctx.bundler_options.bytecode = false;
     ctx.bundler_options.output_format = Format::Esm;
     ctx.bundler_options.compile_target = CompileTarget::default();
 
@@ -78,18 +77,18 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
     );
     let metafile_path = ctx.bundler_options.metafile.clone();
     let metafile_markdown_path = ctx.bundler_options.metafile_md.clone();
-    let mut event_loop = AnyEventLoop::init();
+    let event_loop = AnyEventLoop::init();
     let mut request = request_from_context(
         ctx,
         configuration,
-        &mut event_loop,
+        &event_loop,
         CompileProduct::Executable {
             outfile: &location.outfile,
         },
         location.root_dir.fd,
         origin,
     );
-    let result = compile_to_executable(&mut request).and_then(|outcome| {
+    let result = compile_to_executable(&mut request).and_then(move |outcome| {
         write_metafiles(&outcome, &metafile_path, &metafile_markdown_path)?;
         Ok(outcome)
     });
@@ -127,11 +126,11 @@ pub(crate) fn compile_from_context(
         (preload.on_loaded)();
     }
     let configuration = configuration::configure(&mut *ctx)?;
-    let mut event_loop = AnyEventLoop::init();
+    let event_loop = AnyEventLoop::init();
     let mut request = request_from_context(
         ctx,
         configuration,
-        &mut event_loop,
+        &event_loop,
         product,
         Fd::cwd(),
         RequestOrigin::BuildFlag,

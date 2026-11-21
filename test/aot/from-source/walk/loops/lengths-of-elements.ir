@@ -1,0 +1,21 @@
+# f1 = total
+# f2 = nested
+# -- source: main.mjs
+# const rows = JSON.parse('[[1,2,3],"ab",[4],{"length":2},"",[5]]'), odd = JSON.parse('[[1],null]'), d = JSON.parse('{"rows":[[1,2],[3],[]]}');
+# function total(rows) { let sum = 0; for (let x = 0; x < rows.length; x++) sum += rows[x].length; return sum; }
+# function nested(d) { let sum = 0; for (let k = 0; k < 3; k++) for (let x = 0; x < d.rows.length; x++) sum += d.rows[x].length; return sum; }
+# print(total(rows), nested(d));
+# try { total(odd); } catch (error) { print(error instanceof TypeError); }
+# -- end of source
+# Arrays, strings and records tell their length in the loop. Anything else starts the iteration again in the generic version.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetArrayLength
+# CHECK: testedType=string
+# CHECK: = GetStringLength
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="length"
+# RUN(NESTED): walk f2:Body mechanisms=all
+# NESTED: = GetValueAtSiteOrAbsent {{*}} key="rows"
+# NESTED: = GetStringLength
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 9 9
+# ANSWERS-NEXT: true

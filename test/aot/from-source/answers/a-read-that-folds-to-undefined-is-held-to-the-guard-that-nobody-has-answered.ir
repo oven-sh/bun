@@ -8,7 +8,7 @@
 # function look(weight: number) { const parcel = new Parcel(weight); return parcel.fragile; }
 # const looks = id(look);
 # print(looks(1));
-# (Parcel.prototype as any).fragile = true;
+# id(Parcel.prototype).fragile = true;
 # print(looks(2));
 # -- end of source
 # LIBRARY: own

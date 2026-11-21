@@ -1,17 +1,15 @@
 # -- source: main.js
-# function find(list, wanted) {
-#   let i = list.length - 1;
-#   do {
-#     if (list[i] === wanted) break;
-#   } while (--i >= 0);
-#   console.log(i, Object.is(i, -1));
-#   return String(i);
+# const thirds = new Map();
+# for (const x of JSON.parse("[0,1,-1,5,-2147483648,2147483647]")) {
+#   let i = x | 0;
+#   if (--i >= 0) continue;
+#   thirds.set(i, i / 3);
 # }
-# console.log(find(JSON.parse("[28,56,25]"), 30));
+# console.log(String([...thirds]));
 # -- end of source
-# f1 = find. `--i >= 0` is an overflow-checked sum: the machine layer adds in 32 bits and branches on the flags. On the failing edge the branch sign-extends the sum in its register,
-# so a zero extension of the low half needs code there. The injected fault says that it needs none, and the program would print NaN for -1.
+# f0 = the module's body. `--i >= 0` is an overflow-checked sum: the machine layer adds in 32 bits and branches on the flags. On the failing edge the branch sign-extends the sum in its register,
+# so a zero extension of the low half needs code there: `i` is a key, boxed where it fits, and the whole sum is divided. The injected fault says that it needs none, and the program would print NaN for -1.
 # The allocation checker marks the widened register and stops the build.
-# REQUIRES: x86_64
-# DIAGNOSTIC: UpperHalfNotClear f1
-# RUN: emit f1 mechanisms=all testing=AssumeClearUpperHalves
+# REQUIRES: x86_64 as-written
+# DIAGNOSTIC: UpperHalfNotClear f0
+# RUN: emit f0 mechanisms=all testing=AssumeClearUpperHalves

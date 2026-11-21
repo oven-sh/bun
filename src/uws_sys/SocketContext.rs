@@ -37,6 +37,7 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     use bun_windows_sys as fs;
     use bun_windows_sys::FILETIME;
+    use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
     // Spec parity: `bun.sys.stat` on Windows is libuv `uv_fs_stat`, which opens
     // via `CreateFileW` *without* `FILE_FLAG_OPEN_REPARSE_POINT` and therefore
     // follows symlinks to the target. `GetFileAttributesExW` does NOT follow
@@ -57,7 +58,7 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // only (metadata). FILE_FLAG_BACKUP_SEMANTICS lets this succeed on dirs;
     // omitting FILE_FLAG_OPEN_REPARSE_POINT makes CreateFileW follow symlinks.
     let h = unsafe {
-        fs::CreateFileW(
+        HandleOrInvalid::from_raw_handle(fs::CreateFileW(
             wbuf.as_ptr(),
             0,
             fs::FILE_SHARE_READ | fs::FILE_SHARE_WRITE | fs::FILE_SHARE_DELETE,
@@ -65,17 +66,12 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
             fs::OPEN_EXISTING,
             fs::FILE_FLAG_BACKUP_SEMANTICS,
             ptr::null_mut(),
-        )
+        ))
     };
-    if h == fs::INVALID_HANDLE_VALUE {
-        return None;
-    }
+    let h = OwnedHandle::try_from(h).ok()?;
     let mut data: fs::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
     // SAFETY: `h` is a valid open handle; `data` is a valid out-ptr.
-    let ok = unsafe { fs::GetFileInformationByHandle(h, &raw mut data) };
-    // SAFETY: `h` is a valid open handle from CreateFileW above.
-    unsafe { fs::CloseHandle(h) };
-    if ok == 0 {
+    if unsafe { fs::GetFileInformationByHandle(h.as_raw_handle(), &raw mut data) } == 0 {
         return None;
     }
     let ft: FILETIME = data.ftLastWriteTime;
@@ -160,8 +156,7 @@ impl Default for BunSocketContextOptions {
 }
 
 impl BunSocketContextOptions {
-    /// Build a BoringSSL `SSL_CTX` from these options. The passphrase is freed
-    /// inside this call once private-key load completes. The verify mode follows
+    /// Build a BoringSSL `SSL_CTX` from these options. The verify mode follows
     /// `request_cert`/`reject_unauthorized` only; see `us_ssl_ctx_from_options`.
     pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<OwnedSslCtx> {
         // SAFETY: FFI call; `self` is `#[repr(C)]` and passed by value, `err` is a valid out-param.

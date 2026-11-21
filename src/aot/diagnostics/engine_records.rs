@@ -29,6 +29,8 @@ pub(super) fn package_name_in(path: &[u8]) -> Option<&[u8]> {
     Some(&name[..slashes.nth(parts - 1)?])
 }
 
+/// The package of a diagnostic that only says that code in a package is slower than it could be. Nothing fails, and the
+/// user can't edit the package. So the build counts these by package, and `--explain` lists them.
 pub(crate) fn package_with_slow_code<'t>(
     record: &UserDiagnosticRecord,
     texts: &'t SourceTexts,
@@ -86,9 +88,15 @@ impl Diagnostics {
         );
     }
 
-    pub(crate) fn add_worker_start_without_name(&mut self, witness: &Witness, texts: &SourceTexts) {
+    pub(crate) fn add_worker_start_without_name(
+        &mut self,
+        witness: &Witness,
+        names_left_out: &[u8],
+        texts: &SourceTexts,
+    ) {
         if witness.function_id().is_some() {
-            self.add_at_witness(Code::WorkerStartedFromUnknownValue, &[], witness, texts);
+            let code = Code::WorkerStartedFromUnknownValue;
+            self.add_at_witness(code, &[names_left_out], witness, texts);
         }
     }
 

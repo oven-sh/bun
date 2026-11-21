@@ -1,0 +1,22 @@
+# import { heapSize } from "bun:jsc"; heapSize();
+# The loader fills the variable out of the object of a module of native code, under a name that the tables list. That member alone is let go, and no event hangs under it: the other members of the object, some of which evaluate text, are nobody's.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: image
+# CHECK: flags
+# CHECK-NOT: AdmitsUnknownJavaScript
+# RUN(CLOSED): image mechanisms=none
+# CLOSED: flags
+# CLOSED-NOT: AdmitsUnknownJavaScript
+
+module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="bun:jsc" displayPath="bun:jsc" kind=Runtime flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunJsc syntheticExports=[{name="heapSize" variable=g0 isKnownMember=true}]
+entry module=m0
+variable g0 name="heapSize" module=m1 declared={type=anything}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="heapSize"
+    v2 = Call v1 calleeName="heapSize"
+    v3 = Undefined
+    Return v3
+}

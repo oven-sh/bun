@@ -8,7 +8,7 @@ use bun_core::ffi::FfiSlice;
 use bun_exe_format::identity::{HostDescription, IdentityError, find_process_identity};
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_resolver::StandaloneModuleGraph;
-use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram};
+use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram, compare_source_paths};
 
 use crate::virtual_machine::standalone_module_graph;
 use crate::{JSGlobalObject, JSValue};
@@ -183,8 +183,9 @@ fn find_without_plugins(
     unsafe extern "C" {
         safe fn Bun__AOT__setPluginsSilent(are_silent: bool);
     }
-    // SAFETY: the VM of this thread is live, and nothing else holds its resolver's options here.
-    let options = unsafe { &mut (*global.bun_vm_ptr()).transpiler.resolver.opts };
+    let transpiler = global.bun_vm().transpiler.as_ptr();
+    // SAFETY: nothing else holds the resolver's options here.
+    let options = unsafe { &mut (*transpiler).resolver.opts };
     let installs = core::mem::replace(
         &mut options.global_cache,
         bun_resolver::GlobalCache::disable,
@@ -199,7 +200,7 @@ fn find_without_plugins(
     );
     Bun__AOT__setPluginsSilent(false);
     // SAFETY: as above.
-    unsafe { (*global.bun_vm_ptr()).transpiler.resolver.opts.global_cache = installs };
+    unsafe { (*transpiler).resolver.opts.global_cache = installs };
     match found {
         Ok(Ok(found)) => Some(found),
         _ => None,
@@ -358,6 +359,14 @@ pub fn module_key(entry: &'static CompiledEntryPoint) -> &'static [u8] {
 
 pub fn entry_module_key<'a>(path: &'a [u8]) -> &'a [u8] {
     standalone_module_graph().map_or(path, |graph| entry_module_key_in(graph, path))
+}
+
+/// The key of the module that a program names by the name of a file of the executable. `None`: another module lies at that path, and the resolver finds it. The file of an entry point `part.cjs` is called `part.js`.
+pub(crate) fn key_of_named_file(name: &'static [u8]) -> Option<&'static [u8]> {
+    let key = entry_module_key(name);
+    let is_other_module =
+        || compiled_program().is_some_and(|program| program.holds_module_at(name));
+    (compare_source_paths(key, name).is_eq() || !is_other_module()).then_some(key)
 }
 
 fn module_key_in(
@@ -619,12 +628,11 @@ pub fn entry_point_is_commonjs(global: &JSGlobalObject) -> bool {
 
 #[cfg(target_os = "linux")]
 mod write_execute {
-    const PR_SET_MDWE: libc::c_int = 65;
-    const PR_GET_MDWE: libc::c_int = 66;
+    use bun_sys::linux::{PrctlOp, prctl};
+
     const PR_MDWE_REFUSE_EXEC_GAIN: libc::c_ulong = 1;
     #[cfg(not(bun_hardened))]
     const PR_MDWE_NO_INHERIT: libc::c_ulong = 2;
-    const UNUSED: libc::c_ulong = 0;
 
     static IS_FILTERED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
@@ -679,8 +687,7 @@ mod write_execute {
     }
 
     fn is_denied_by_the_kernel() -> bool {
-        // SAFETY: the request takes and returns integers only.
-        let bits = unsafe { libc::prctl(PR_GET_MDWE, UNUSED, UNUSED, UNUSED, UNUSED) };
+        let bits = prctl(PrctlOp::GET_MDWE, 0);
         bits > 0 && bits as libc::c_ulong & PR_MDWE_REFUSE_EXEC_GAIN != 0
     }
 
@@ -722,18 +729,12 @@ mod write_execute {
     #[cfg(bun_hardened)]
     fn gain_no_new_privileges() -> Result<(), Failure> {
         let call = "prctl(PR_SET_NO_NEW_PRIVS)";
-        let yes: libc::c_ulong = 1;
-        // SAFETY: the requests take and return integers only.
-        let (set, in_force) = unsafe {
-            let set = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, yes, UNUSED, UNUSED, UNUSED);
-            let errno = last_errno();
-            let read = libc::prctl(libc::PR_GET_NO_NEW_PRIVS, UNUSED, UNUSED, UNUSED, UNUSED);
-            ((set, errno), read == 1)
-        };
-        match (in_force, set) {
+        let set = prctl(PrctlOp::SET_NO_NEW_PRIVS, 1);
+        let errno = last_errno();
+        match (prctl(PrctlOp::GET_NO_NEW_PRIVS, 0) == 1, set) {
             (true, _) => Ok(()),
-            (false, (0, _)) => Err(Failure::NotInForce { call }),
-            (false, (_, errno)) => Err(Failure::Failed { call, errno }),
+            (false, 0) => Err(Failure::NotInForce { call }),
+            (false, _) => Err(Failure::Failed { call, errno }),
         }
     }
 
@@ -791,10 +792,6 @@ mod write_execute {
         let version = (version.next().flatten(), version.next().flatten());
         // glibc 2.34 moved libutil, librt and the services `files` and `dns` into libc.so.6.
         let is_merged = version >= (Some(2), Some(34));
-        // pthread_exit() unwinds with it, and only a reload calls that.
-        if !is_removed(Feature::HotReload) {
-            load(c"libgcc_s.so.1");
-        }
         if !is_merged && !is_removed(Feature::Terminal) {
             load(c"libutil.so.1");
         }
@@ -852,8 +849,7 @@ mod write_execute {
             return;
         }
         let bits = PR_MDWE_REFUSE_EXEC_GAIN | PR_MDWE_NO_INHERIT;
-        // SAFETY: the request takes and returns integers only.
-        unsafe { libc::prctl(PR_SET_MDWE, bits, UNUSED, UNUSED, UNUSED) };
+        prctl(PrctlOp::SET_MDWE, bits);
     }
 
     /// Child processes inherit it. Whoever started this process may have set it already.
@@ -872,9 +868,7 @@ mod write_execute {
             return Ok(());
         }
         let call = "prctl(PR_SET_MDWE), which Linux has since 6.3,";
-        let bits = PR_MDWE_REFUSE_EXEC_GAIN;
-        // SAFETY: the request takes and returns integers only.
-        let set = unsafe { libc::prctl(PR_SET_MDWE, bits, UNUSED, UNUSED, UNUSED) };
+        let set = prctl(PrctlOp::SET_MDWE, PR_MDWE_REFUSE_EXEC_GAIN);
         let errno = last_errno();
         if is_denied_by_the_kernel() {
             return Ok(());
@@ -943,11 +937,11 @@ fn sentence_of_variables_never_read(names: &[&[u8]]) -> Option<String> {
 /// A setting that would be ignored is not lost without a word. By its name alone: so is one with an empty value.
 #[cfg(bun_locked_environment)]
 pub fn refuse_variables_that_are_never_read() {
-    let names: Vec<&[u8]> = bun_sys::environ()
+    // SAFETY: at startup, and nothing here changes the environment.
+    let names: Vec<&[u8]> = unsafe { bun_sys::environ() }
         .iter()
-        .filter_map(|&entry| {
-            // SAFETY: an entry of the environment ends with a NUL and lives as long as the process.
-            let entry = unsafe { core::ffi::CStr::from_ptr(entry) };
+        .filter_map(|entry| {
+            let entry = entry.to_cstr();
             let bytes = entry.to_bytes();
             let end = bun_core::strings::index_of_char_usize(bytes, b'=').unwrap_or(bytes.len());
             let name = &bytes[..end];
@@ -1038,7 +1032,7 @@ pub extern "C" fn Bun__AOT__isLoadedSynchronously(
 ) -> bool {
     let vm = global.bun_vm();
     vm.is_test_entry_point(path)
-        || !vm.transpiler_store.enabled
+        || !vm.transpiler_store.enabled.get()
         || crate::node_compile_cache::is_enabled()
 }
 
@@ -1048,8 +1042,8 @@ pub extern "C" fn Bun__AOT__setResolvesForCodeFromDisk(
     global: &JSGlobalObject,
     value: bool,
 ) -> bool {
-    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-    core::mem::replace(&mut resolver.resolves_for_code_from_disk, value)
+    (global.bun_vm().transpiler)
+        .with_mut(|t| core::mem::replace(&mut t.resolver.resolves_for_code_from_disk, value))
 }
 
 /// BunCompiledModules.cpp
@@ -1096,6 +1090,7 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
             Err(error) => exit_with(identity_error_sentence(error)),
         };
         let _ = IDENTITY.set(identity);
+        bun_crash_handler::keep_own_segments();
         use_image_on_this_thread(program);
         Bun__AOT__takePagesForTablesOfFirstThread();
         #[cfg(not(bun_hardened))]
@@ -1117,6 +1112,8 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         if is_verbose {
             settings_for_debugging::print_image_summary(program.image.len());
         }
+        #[cfg(not(bun_locked_environment))]
+        settings_for_debugging::record_order();
         bun_analytics::features::aot.fetch_add(1, Ordering::Relaxed);
     });
 }
@@ -1128,6 +1125,8 @@ mod settings_for_debugging {
 
     unsafe extern "C" {
         safe fn Bun__AOT__setVerbose(is_verbose: bool);
+        fn Bun__AOT__startOrderRecording(path: *const core::ffi::c_char) -> super::Bytes;
+        safe fn Bun__AOT__recordsOrder() -> bool;
     }
 
     pub(super) fn image_summary(
@@ -1144,11 +1143,43 @@ mod settings_for_debugging {
         bun_core::Output::flush();
     }
 
+    pub(super) fn record_order() {
+        if !Bun__AOT__recordsOrder() {
+            return;
+        }
+        let Some(path) = bun_core::env_var::BUN_AOT_ORDER_OUT.get_not_empty() else {
+            return;
+        };
+        let pid = std::process::id().to_string();
+        let path = bun_core::strings::replace_owned(path, b"%p", pid.as_bytes());
+        let Ok(path) = std::ffi::CString::new(path) else {
+            return;
+        };
+        // SAFETY: `path` ends with a NUL and outlives the call. The sentence is a literal.
+        let failure = unsafe { Bun__AOT__startOrderRecording(path.as_ptr()) };
+        if failure.len != 0 {
+            // SAFETY: as above.
+            let sentence = unsafe { core::slice::from_raw_parts(failure.ptr, failure.len) };
+            bun_core::Output::err_generic(
+                "BUN_AOT_ORDER_OUT: nothing is recorded: {}",
+                (bstr::BStr::new(sentence),),
+            );
+            bun_core::Output::flush();
+        }
+    }
+
     pub(super) fn set_verbose() -> bool {
         let is_verbose = bun_core::env_var::BUN_AOT_VERBOSE.get().unwrap_or(false);
         Bun__AOT__setVerbose(is_verbose);
         is_verbose
     }
+}
+
+pub(crate) fn finish_order_recording() {
+    unsafe extern "C" {
+        safe fn Bun__AOT__finishOrderRecording();
+    }
+    Bun__AOT__finishOrderRecording();
 }
 
 fn identity_error_sentence(error: IdentityError) -> &'static str {

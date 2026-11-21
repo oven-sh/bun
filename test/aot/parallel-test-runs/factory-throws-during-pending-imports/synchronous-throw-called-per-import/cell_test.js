@@ -1,7 +1,6 @@
 import { test, mock, vi } from "bun:test";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-setTimeout(() => { console.log("SAID still waiting"); process.exit(4); }, 3000).unref();
 const rounds = async n => { for (let i = 0; i < n; i++) await new Promise(resolve => setImmediate(resolve)); };
 const turns = async n => { for (let i = 0; i < n; i++) await null; };
 const word = it => it.status === "rejected" ? "threw " + String(it.reason && it.reason.message !== undefined ? it.reason.message : it.reason) : "came " + (it.value.seen ? it.value.seen() : it.value.value);

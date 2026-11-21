@@ -88,26 +88,26 @@ const spots: Record<string, Spot> = {
     ],
   },
   "a-throw": { body: [["weigh(1, 2);"], ["weigh(1, 2);", 'throw new Error("thrown");']] },
-  "a-throw-behind-an-await": { body: [["await rest(5);"], ["await rest(5);", 'throw new Error("behind an await");']] },
+  "a-throw-behind-an-await": { body: [["await spinEventLoop(1);"], ["await spinEventLoop(1);", 'throw new Error("behind an await");']] },
   "a-rejection-that-is-handed-back": {
     body: [["return Promise.resolve(weigh(1, 2));"], ['return Promise.reject(new Error("handed back"));']],
   },
   "a-rejection-nobody-awaits": {
     body: [
-      ["void Promise.resolve(weigh(1, 2));", "await rest(20);"],
-      ['void Promise.reject(new Error("nobody awaits it"));', "await rest(20);"],
+      ["void Promise.resolve(weigh(1, 2));", "await spinEventLoop();"],
+      ['void Promise.reject(new Error("nobody awaits it"));', "await spinEventLoop();"],
     ],
   },
   "a-throw-in-a-timer": {
     body: [
-      ["setTimeout(() => weigh(1, 2), 5);", "await rest(30);"],
-      ["setTimeout(() => {", '  throw new Error("in a timer");', "}, 5);", "await rest(30);"],
+      ["const timer = Promise.withResolvers();", "setTimeout(() => {", "  timer.resolve();", "  weigh(1, 2);", "}, 5);", "await timer.promise;", "await spinEventLoop();"],
+      ["const timer = Promise.withResolvers();", "setTimeout(() => {", "  timer.resolve();", '  throw new Error("in a timer");', "}, 5);", "await timer.promise;", "await spinEventLoop();"],
     ],
   },
   "a-throw-in-a-microtask": {
     body: [
-      ["queueMicrotask(() => weigh(1, 2));", "await rest(10);"],
-      ["queueMicrotask(() => {", '  throw new Error("in a microtask");', "});", "await rest(10);"],
+      ["queueMicrotask(() => weigh(1, 2));", "await spinEventLoop();"],
+      ["queueMicrotask(() => {", '  throw new Error("in a microtask");', "});", "await spinEventLoop();"],
     ],
   },
   "a-throw-before-each": {
@@ -128,8 +128,8 @@ const spots: Record<string, Spot> = {
   },
   "a-rejection-before-each": {
     top: [
-      "beforeEach(async () => {\n  await rest(2);\n});",
-      'beforeEach(async () => {\n  await rest(2);\n  throw new Error("before each, late");\n});',
+      "beforeEach(async () => {\n  await spinEventLoop(1);\n});",
+      'beforeEach(async () => {\n  await spinEventLoop(1);\n  throw new Error("before each, late");\n});',
     ],
     body: [["weigh(1, 2);"], ["weigh(1, 2);"]],
   },
@@ -174,19 +174,19 @@ const spots: Record<string, Spot> = {
   },
   "done-is-never-called": {
     whole: [
-      ['test("the first", done => {', "  setTimeout(done, 5);", "}, 300);"],
+      ['test("the first", done => {', "  setTimeout(done, 5);", "}, 60_000);"],
       ['test("the first", done => {', "  setTimeout(() => {}, 5);", "}, 300);"],
     ],
   },
   "done-is-called-with-an-error": {
     whole: [
-      ['test("the first", done => {', "  setTimeout(() => done(), 5);", "}, 2000);"],
-      ['test("the first", done => {', '  setTimeout(() => done(new Error("told to done")), 5);', "}, 2000);"],
+      ['test("the first", done => {', "  setTimeout(() => done(), 5);", "}, 60_000);"],
+      ['test("the first", done => {', '  setTimeout(() => done(new Error("told to done")), 5);', "}, 60_000);"],
     ],
   },
   "a-test-that-does-not-end-in-time": {
     whole: [
-      ['test("the first", async () => {', "  await rest(5);", "}, 300);"],
+      ['test("the first", async () => {', "  await spinEventLoop(1);", "}, 60_000);"],
       ['test("the first", async () => {', "  await new Promise(() => {});", "}, 300);"],
     ],
   },
@@ -214,7 +214,7 @@ const spots: Record<string, Spot> = {
       ['vi.doMock("./crate.mjs", async () => ({ lid: 1 }));', 'expect((await import("./crate.mjs")).lid).toBe(1);'],
       [
         'vi.doMock("./crate.mjs", async () => {',
-        "  await rest(2);",
+        "  await spinEventLoop(1);",
         '  throw new Error("the factory rejects");',
         "});",
         'expect((await import("./crate.mjs")).lid).toBe(1);',
@@ -224,27 +224,27 @@ const spots: Record<string, Spot> = {
   "a-factory-that-throws-and-nobody-awaits": {
     files: { "crate.mjs": "export const lid = 0;\n" },
     body: [
-      ['mock.module("./crate.mjs", () => ({ lid: 1 }));', 'void import("./crate.mjs");', "await rest(30);"],
+      ['mock.module("./crate.mjs", () => ({ lid: 1 }));', 'void import("./crate.mjs");', "await spinEventLoop();"],
       [
         'mock.module("./crate.mjs", () => {',
         '  throw new Error("the factory throws");',
         "});",
         'void import("./crate.mjs");',
-        "await rest(30);",
+        "await spinEventLoop();",
       ],
     ],
   },
   "a-factory-that-rejects-and-nobody-awaits": {
     files: { "crate.mjs": "export const lid = 0;\n" },
     body: [
-      ['vi.doMock("./crate.mjs", async () => ({ lid: 1 }));', 'void import("./crate.mjs");', "await rest(30);"],
+      ['vi.doMock("./crate.mjs", async () => ({ lid: 1 }));', 'void import("./crate.mjs");', "await spinEventLoop();"],
       [
         'vi.doMock("./crate.mjs", async () => {',
-        "  await rest(2);",
+        "  await spinEventLoop(1);",
         '  throw new Error("the factory rejects");',
         "});",
         'void import("./crate.mjs");',
-        "await rest(30);",
+        "await spinEventLoop();",
       ],
     ],
   },
@@ -262,11 +262,11 @@ const spots: Record<string, Spot> = {
         "});",
         'asked(() => require("./line.mjs"));',
         'vi.doMock("./reel.mjs", async () => {',
-        "  await rest(10);",
+        "  await spinEventLoop(1);",
         '  return { width: "late" };',
         "});",
         'asked(() => require("./rod.mjs"));',
-        "await rest(40);",
+        "await spinEventLoop();",
       ],
       [
         'vi.doMock("./reel.mjs", async () => {',
@@ -274,11 +274,11 @@ const spots: Record<string, Spot> = {
         "});",
         'asked(() => require("./line.mjs"));',
         'vi.doMock("./reel.mjs", async () => {',
-        "  await rest(10);",
+        "  await spinEventLoop(1);",
         '  throw new Error("late");',
         "});",
         'asked(() => require("./rod.mjs"));',
-        "await rest(40);",
+        "await spinEventLoop();",
       ],
     ],
   },
@@ -304,7 +304,10 @@ export function everydayFailingTests(): (EverydayMockCase & { fails: boolean })[
             "everyday.test.js": lines(
               'import { afterAll, afterEach, beforeAll, beforeEach, expect, jest, mock, spyOn, test, vi } from "bun:test";',
               besideTop,
-              "const rest = time => new Promise(done => setTimeout(done, time));",
+              "// Runs the event loop that many times: jobs, unhandled rejections and immediates run each time, and no clock decides.",
+              "const spinEventLoop = async (count = 20) => {",
+              "  while (count-- > 0) await new Promise(done => setImmediate(done));",
+              "};",
               'console.log("SAID the file runs");',
               top?.[at] ?? "",
               // Where the first test is written whole, what stands beside it is done in a test in front.

@@ -291,8 +291,23 @@ Agent.prototype.createConnection = function createConnection(this: $Node.Agent, 
   $assert(false, `Unexpected proxy protocol ${proxyProtocol}`);
 };
 
+// The name that getName() made last. Every request asks for it several times and looks sockets up under it.
+const cachedName: { host: string | undefined; port: unknown; name: string } = {
+  host: undefined,
+  port: undefined,
+  name: "",
+};
 Agent.prototype.getName = function getName(this: $Node.Agent, options: $Node.ClientRequestOptions = kEmptyObject) {
   const { host, port, localAddress, family, socketPath } = options;
+  const isCacheable =
+    typeof host === "string" &&
+    (typeof port === "number" || typeof port === "string" || port === undefined) &&
+    !localAddress &&
+    family !== 4 &&
+    family !== 6 &&
+    !socketPath;
+  if (isCacheable && host === cachedName.host && port === cachedName.port) return cachedName.name;
+
   let name = host || "localhost";
 
   name += ":";
@@ -306,6 +321,11 @@ Agent.prototype.getName = function getName(this: $Node.Agent, options: $Node.Cli
 
   if (socketPath) name += `:${socketPath}`;
 
+  if (isCacheable) {
+    cachedName.host = host;
+    cachedName.port = port;
+    cachedName.name = name;
+  }
   return name;
 };
 

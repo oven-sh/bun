@@ -19,6 +19,7 @@ declare module \"vitest\" {
 
 pub(crate) const GLOBALS_THAT_NOTHING_DECLARES_PATH: &[u8] = b"/$bun/types/globals.d.ts";
 
+// Each global of the run time, of type `any`. It counts for a name that nothing else declares: `self`, `onerror`.
 pub(crate) fn globals_that_nothing_declares() -> &'static [u8] {
     static TEXT: OnceLock<Vec<u8>> = OnceLock::new();
     TEXT.get_or_init(|| {
@@ -41,6 +42,8 @@ pub(crate) fn globals_that_nothing_declares() -> &'static [u8] {
     })
 }
 
+/// The module "bun" of a project that has not installed Bun's types. `tsc` finds no such module, and `any` in place of what
+/// is imported from it. `int32` is a promise to the build, so a value that breaks it is an error there too.
 pub(crate) const PROMISED_TYPES_PATH: &[u8] = b"/$bun/types/promised.d.ts";
 pub(crate) const PROMISED_TYPES: &[u8] = b"declare module \"bun\" {
   export type int32 = number;
@@ -71,6 +74,7 @@ pub(crate) fn read(path: &[u8]) -> Option<Vec<u8>> {
     Archive::read(&name_in_archive(path)?)
 }
 
+/// Every file of the packages, with its path.
 pub(crate) fn read_all() -> impl Iterator<Item = (Vec<u8>, Vec<u8>)> {
     Archive::names_that_begin_with(IN_ARCHIVE).filter_map(|name| {
         let path = [PACKAGES, &name[IN_ARCHIVE.len()..]].concat();

@@ -112,6 +112,7 @@ export function textOf(feature: FeatureName): string {
 
 export function saysFeatureWasRemoved(stderr: string, feature: FeatureName): boolean {
   if (stderr.includes(`--trim removed ${textOf(feature)} from this executable`)) return true;
+  if (stderr.includes(`This executable doesn't include ${textOf(feature)}, but the program needs it`)) return true;
   // One of Bun's own modules may catch the error and put its message into one of its own: util.inspect into an AssertionError, inspector.open() into the line that Node prints.
   if (stderr.includes(`rror: ${textOf(feature)} was removed by --trim because your code never uses it by name.`))
     return true;

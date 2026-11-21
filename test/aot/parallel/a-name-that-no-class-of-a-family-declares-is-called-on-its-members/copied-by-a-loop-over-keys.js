@@ -1,5 +1,5 @@
 // STATISTIC: SharedCallsWithDormantMembers >= 1
-// STATISTIC: SharedCallsWithActivatedMembers = 0
+// STATISTIC: SharedCallsWithActivatedMembers >= 1
 class Base { tag() { return 0; } }
 class A extends Base { a() { return "a"; } }
 class B extends Base { b() { return "b"; } }

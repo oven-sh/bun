@@ -32,6 +32,35 @@ pub fn map_each<T: Send, R: Send>(
     slots.into_iter().map(take).collect()
 }
 
+pub fn filter_each<T: Copy + Send + Sync>(
+    items: &[T],
+    in_parallel: InParallel<'_>,
+    is_wanted: &(dyn Fn(T) -> bool + Sync),
+) -> Vec<T> {
+    collect_from_each(items, in_parallel, &|item, wanted| {
+        if is_wanted(item) {
+            wanted.push(item);
+        }
+    })
+}
+
+pub fn collect_from_each<T: Copy + Send + Sync, R: Send>(
+    items: &[T],
+    in_parallel: InParallel<'_>,
+    collect: &(dyn Fn(T, &mut Vec<R>) + Sync),
+) -> Vec<R> {
+    const CHUNK_LEN: usize = 256;
+    let chunks: Vec<&[T]> = items.chunks(CHUNK_LEN).collect();
+    let collected = map_each(chunks, in_parallel, &|chunk| {
+        let mut collected = Vec::new();
+        for &item in chunk {
+            collect(item, &mut collected);
+        }
+        collected
+    });
+    collected.into_iter().flatten().collect()
+}
+
 pub fn extend_from_boxes<T: Send>(
     list: &mut Vec<T>,
     boxes: Vec<Box<T>>,
@@ -125,6 +154,20 @@ mod tests {
             assert_eq!(dropped.load(Ordering::Relaxed), 3);
         });
         assert_eq!(dropped.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn filter_each_keeps_the_order_whatever_the_order_of_the_tasks() {
+        let in_reverse = |count: usize, work: &(dyn Fn(usize) + Sync)| {
+            (0..count).rev().for_each(work);
+        };
+        let items: Vec<u32> = (0..1000).collect();
+        let ways: [InParallel<'_>; 2] = [&run_serially, &in_reverse];
+        for in_parallel in ways {
+            let multiples = filter_each(&items, in_parallel, &|item| item % 300 == 0);
+            assert_eq!(multiples, [0, 300, 600, 900]);
+            assert!(filter_each(&[], in_parallel, &|_: u32| true).is_empty());
+        }
     }
 
     #[test]

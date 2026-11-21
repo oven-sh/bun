@@ -1,3 +1,4 @@
+# LIBRARY: own
 # -- source: an-element-whose-every-user-reckons-reads-nan-for-a-hole.ts
 # declare function sink(value: unknown): void;
 # function moments(d: number[]): number { let s = 0, q = 0; for (let i = 0; i < d.length; i++) { const v = d[i]; s += v; q += v * v; } return s + q * 3; }

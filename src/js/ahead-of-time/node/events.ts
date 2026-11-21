@@ -544,14 +544,14 @@ const emitWithRejectionCapture = function emit(this: $Node.EventEmitter, type: $
   return true;
 };
 
-// Only an emitter that captures rejections has an own `emit`. Compiled ahead of time, a store that names the property makes room for it in
-// every emitter, and every call of `emit` asks whether it is there.
-function storeUnderName(emitter: $Node.EventEmitter, name: string, method: unknown) {
-  (emitter as any)[name] = method;
+// Only an emitter that captures rejections has an own `emit`. Compiled ahead of time, a store that names the property of an emitter makes
+// room for it in every emitter, and a store under an unknown name may replace the prototype of every emitter.
+function storeEmit(object: any, method: unknown) {
+  object.emit = method;
 }
 function storeEmitWithRejectionCapture(emitter: $Node.EventEmitter) {
   if (IS_COMPILED_AHEAD_OF_TIME) {
-    storeUnderName(emitter, "emit", emitWithRejectionCapture);
+    storeEmit(emitter, emitWithRejectionCapture);
   } else {
     emitter.emit = emitWithRejectionCapture;
   }

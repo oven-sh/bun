@@ -1,13 +1,13 @@
 // answers: without-library
 // # What comes round a loop is shown by induction: the parameter of the head is taken as what it is claimed to be, and where what its edges are then shown to hand over keeps within the claim, nobody is asked. `swaps`: two
-// # parameters that change places, each a number or a text: its result is asked nothing. Where the claim rests on a belief that no edge shows (`at = at.inner`, `s = at.tag`: what Link says of a field), the claim is NOT taken:
-// # the check behind the loop still asks in full: it takes nothing for known but that the word may be absent.
+// # parameters that change places, each a number or a text: its result is asked nothing. What a field gives (`at = at.inner`, `s = at.tag`) is what the stores into its slot are held to, but for the empty word: the check behind
+// # the loop stays and asks for that word alone.
 // # f4 = deepest, f5 = tags, f6 = swaps
 // # RUN(FORM): walk f4 f5 f6 mechanisms=all
 // # FORM-LABEL: code f4:Body
-// # FORM: CheckProof {{*}}checkedType=null|L0 typeWithoutProof=absent|anything source=ResultOfCall
+// # FORM: CheckProof {{*}}checkedType=null|L0 typeWithoutProof=null|absent|L0 source=ResultOfCall
 // # FORM-LABEL: code f5:Body
-// # FORM: CheckProof {{*}}checkedType=number|string typeWithoutProof=absent|anything source=ResultOfCall
+// # FORM: CheckProof {{*}}checkedType=number|string typeWithoutProof=number|string|absent source=ResultOfCall
 // # FORM-LABEL: code f6:Body
 // # FORM-NOT: CheckProof
 // # At the end the shell runs the same text itself: every answer is the same.

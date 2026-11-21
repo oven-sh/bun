@@ -934,6 +934,32 @@ test("strips leading and trailing whitespace from a response field value", async
   }
 });
 
+test("a gzip body that waits for its consumer ends at its Content-Length, with the stream still open", async () => {
+  const size = 768 * 1024;
+  const wire = gzipSync(Buffer.alloc(size));
+  const origin = await listen(
+    async (session: any) => {
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 5 },
+      onheaders(this: any) {
+        this.sendHeaders({ ":status": "200", "content-encoding": "gzip", "content-length": String(wire.length) });
+        this.writer.writeSync(wire);
+      },
+    },
+  );
+  try {
+    const res = await fetch(`https://127.0.0.1:${origin.address!.port}/`, h3);
+    expect((await res.bytes()).length).toBe(size);
+  } finally {
+    // Not close(): it waits for the session that fetch() keeps in its pool.
+    await origin.destroy();
+  }
+});
+
 test("a response header set over the size limit fails that request and no other on the connection", async () => {
   const held = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
@@ -1061,7 +1087,7 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
 
 // Same retry, but the reconnect fails inside `connect()` itself. A QUIC
 // connect to a resolved hostname probes each address with a throwaway UDP
-// `connect(2)` (quic.c, us_quic_connect_result) and gives up when no entry is
+// `connect(2)` (quic.cpp, us_quic_connect_result) and gives up when no entry is
 // reachable. The shim lets the first probe through and refuses every later
 // one, so the handshake failure below retries onto a connect that fails
 // before it returns. On that path the request must be failed once, by the

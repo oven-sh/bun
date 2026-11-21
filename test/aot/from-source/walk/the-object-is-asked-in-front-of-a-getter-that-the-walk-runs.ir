@@ -5,7 +5,7 @@
 # function read(meter: Meter) { return meter.size; }
 # const reads = id(read);
 # print(reads(new Meter()));
-# Object.defineProperty(Meter.prototype, "size", { get() { return 9; }, configurable: true });
+# Object.defineProperty(id(Meter.prototype), "size", { get() { return 9; }, configurable: true });
 # print(reads(new Meter()));
 # -- end of source
 # LIBRARY: own

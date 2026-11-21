@@ -122,7 +122,7 @@ impl Environment {
 
     pub(crate) fn load_entry_point(
         &mut self,
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         path: &[u8],
     ) -> crate::Result<*mut JSInternalPromise> {
         if !core::mem::replace(&mut self.is_entered, true) {
@@ -152,7 +152,7 @@ impl Environment {
     #[optimize(size)]
     fn enter(
         &mut self,
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         path: &[u8],
     ) -> crate::Result<Option<*mut JSInternalPromise>> {
         let kind = match &self.comment {
@@ -174,8 +174,8 @@ impl Environment {
         };
 
         // Without --isolate preloads run only once, so run them in the project's environment, not the first file's.
-        if !vm.test_isolation_enabled
-            && !vm.preload.is_empty()
+        if !vm.test_isolation_enabled.get()
+            && !vm.preload.get().is_empty()
             && (kind != self.project || self.options.is_some())
         {
             let project = match setup(vm, self.project, None, path, false) {
@@ -185,8 +185,7 @@ impl Environment {
             vm.set_main(Some(path));
             let _ = vm.ensure_debugger(true);
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-            // SAFETY: `vm` is the live per-thread VM.
-            let rejected_preload = unsafe { (hooks.load_preloads)(vm) }?;
+            let rejected_preload = (hooks.load_preloads)(vm)?;
             if let Some(project) = project {
                 teardown(vm, &project);
             }
@@ -204,7 +203,7 @@ impl Environment {
     }
 
     #[optimize(size)]
-    pub(crate) fn teardown(&mut self, vm: &mut VirtualMachine) {
+    pub(crate) fn teardown(&mut self, vm: &VirtualMachine) {
         if let Some(function) = self.teardown.take() {
             teardown(vm, &function);
         }
@@ -212,7 +211,7 @@ impl Environment {
 }
 
 pub(crate) fn is_in_preload() -> bool {
-    VirtualMachine::get().is_in_preload
+    VirtualMachine::get().is_in_preload.get()
 }
 
 fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {
@@ -236,9 +235,8 @@ fn setup(
     path: &[u8],
     is_from_comment: bool,
 ) -> JsResult<Option<Strong>> {
-    let is_left =
-        Jest::runner().is_some_and(|runner| core::mem::take(&mut runner.environment_is_left));
-    if kind == TestEnvironment::Node && !is_left && !vm.test_isolation_state.shares_global {
+    let is_left = Jest::runner().is_some_and(|runner| runner.environment_is_left.take());
+    if kind == TestEnvironment::Node && !is_left && !vm.test_isolation_state.shares_global.get() {
         return Ok(None);
     }
     let global = vm.global();
@@ -252,9 +250,9 @@ fn setup(
                 None => JSValue::UNDEFINED,
             },
             bun_string_jsc::create_utf8_for_js(global, path)?,
-            JSValue::from(!vm.test_isolation_enabled),
+            JSValue::from(!vm.test_isolation_enabled.get()),
             JSValue::from(is_from_comment),
-            JSValue::from(vm.test_isolation_state.shares_global),
+            JSValue::from(vm.test_isolation_state.shares_global.get()),
         ],
     )?;
     if teardown.is_string() {
@@ -269,7 +267,7 @@ fn setup(
 }
 
 #[optimize(size)]
-fn teardown(vm: &mut VirtualMachine, function: &Strong) {
+fn teardown(vm: &VirtualMachine, function: &Strong) {
     let global = vm.global();
     let error = match function
         .get()
@@ -278,7 +276,7 @@ fn teardown(vm: &mut VirtualMachine, function: &Strong) {
         Ok(result) => {
             let Some(promise) = result.as_any_promise() else {
                 if let (true, Some(runner)) = (result == JSValue::TRUE, Jest::runner()) {
-                    runner.environment_is_left = true;
+                    runner.environment_is_left.set(true);
                 }
                 return;
             };
@@ -287,7 +285,7 @@ fn teardown(vm: &mut VirtualMachine, function: &Strong) {
             // Same time limit as a hook. No timer is armed for it, so it's only checked when the event loop wakes up.
             let timeout = Jest::runner().map_or(0, |runner| runner.default_timeout_ms);
             let deadline = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, timeout.into());
-            let waited = vm.event_loop_ref().wait_at_top_level(|| {
+            let waited = vm.event_loop().wait_at_top_level(|| {
                 promise.status() != js_promise::Status::Pending
                     || (timeout != 0
                         && Timespec::now(TimespecMockMode::ForceRealTime).greater(&deadline))

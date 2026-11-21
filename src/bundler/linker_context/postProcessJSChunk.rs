@@ -70,7 +70,7 @@ fn module_preload_registration(
     write!(
         &mut code,
         "{}(import.meta.url,[",
-        bstr::BStr::new(chunk.renamer.as_renamer().name_for_symbol(chunks_ref))
+        bstr::BStr::new(c.renamer_for_chunk(chunk).name_for_symbol(chunks_ref))
     )
     .unwrap();
     for (i, &chunk_index) in reached.iter().enumerate() {
@@ -107,7 +107,7 @@ pub(crate) fn post_process_js_chunk(
 ) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.postProcessJSChunk");
 
-    let c: &mut LinkerContext = ctx.c();
+    let c = ctx.c;
     debug_assert!(matches!(
         chunk.content,
         crate::chunk::Content::Javascript(_)
@@ -120,21 +120,13 @@ pub(crate) fn post_process_js_chunk(
     // embedded `Vec<Property>`/`Vec<Expr>` buffers leak from the global heap.
     let _ast_alloc_heap = js_ast::StoreAstAllocHeap::new();
 
-    // The renamer is
-    // not used after this function, so it is reset to `None` before returning
-    // (success path below). `ChunkRenamer`'s variants free their owned storage
-    // via Drop; the `symbols` view inside is `ManuallyDrop` (non-owning), so
-    // graph storage is never freed.
-
     let arena = Arena::new();
 
     // Also generate the cross-chunk binding code
     let mut cross_chunk_prefix: PrintResult;
     let mut cross_chunk_suffix: PrintResult;
 
-    let runtime_input_file =
-        c.graph.files.items_input_file()[Index::RUNTIME.value() as usize].get() as usize;
-    let runtime_scope: &Scope = &c.graph.ast.items_module_scope()[runtime_input_file];
+    let runtime_scope: &Scope = &c.graph.ast.items_module_scope()[Index::RUNTIME.get() as usize];
     let runtime_members = &runtime_scope.members;
     let to_common_js_ref = c
         .graph
@@ -165,7 +157,6 @@ pub(crate) fn post_process_js_chunk(
         ModuleInfo::create(loader.is_type_script())
     });
 
-    // SAFETY: worker.arena is set in Worker::init() before any task runs.
     let worker_arena: &Arena = worker.arena();
 
     // An ESM entry point already ends in an `export { }` clause
@@ -232,19 +223,10 @@ pub(crate) fn post_process_js_chunk(
             });
         }
 
-        // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>` —
-        // the storage retains ownership of every Drop field (`named_imports`,
-        // `parts`, `top_level_symbols_to_parts`, …), so the gathered struct
-        // must NOT run Drop. `to_ast` consumes by value, so unwrap, convert,
-        // and re-wrap the result (which carries the same heap pointers).
-        let ast_view = core::mem::ManuallyDrop::new(
-            core::mem::ManuallyDrop::into_inner(
-                c.graph.ast.get(chunk.entry_point.source_index() as usize),
-            )
-            .to_ast(),
-        );
+        let ast = c.graph.ast.get(chunk.entry_point.source_index() as usize);
+        let ast_view = ast.as_printer_view();
         let source = c.get_source(chunk.entry_point.source_index());
-        let target = c.resolver().opts.target;
+        let target = c.resolver.opts.target;
 
         let prefix_stmts = bun_ast::StoreSlice::new_mut(
             chunk
@@ -277,7 +259,7 @@ pub(crate) fn post_process_js_chunk(
                 stmts: prefix_stmts,
                 ..Default::default()
             }],
-            chunk.renamer.as_renamer(),
+            c.renamer_for_chunk(chunk),
         );
         if let Some(mi) = module_info.as_deref_mut() {
             // One result per entry of `parts_in_chunk_in_order`, in that order.
@@ -305,7 +287,7 @@ pub(crate) fn post_process_js_chunk(
                 stmts: suffix_stmts,
                 ..Default::default()
             }],
-            chunk.renamer.as_renamer(),
+            c.renamer_for_chunk(chunk),
         );
     }
 
@@ -350,7 +332,7 @@ pub(crate) fn post_process_js_chunk(
                 chunk.entry_point.source_index(),
                 worker_arena,
                 &arena,
-                chunk.renamer.as_renamer(),
+                c.renamer_for_chunk(chunk),
                 module_info.as_deref_mut(),
                 cross_chunk_exports,
             );
@@ -469,14 +451,31 @@ pub(crate) fn post_process_js_chunk(
         newline_before_comment = true;
     }
 
-    // Add the top-level directive if present (but omit "use strict" in ES
-    // modules because all ES modules are automatically in strict mode)
-    if chunk.is_entry_point() && !output_format.is_always_strict_mode() {
-        let flags = c.graph.ast.items_flags()[chunk.entry_point.source_index() as usize];
+    // Add the top-level directives if present (but omit "use strict" in ES
+    // modules because all ES modules are automatically in strict mode).
+    // The dev server gives every module its own closure, and the prologue goes there.
+    if chunk.is_entry_point() && output_format != options::OutputFormat::InternalBakeDev {
+        let directives = c.graph.ast.items_directives()[chunk.entry_point.source_index() as usize];
 
-        if flags.contains(crate::bundled_ast::Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE) {
-            j.push_static(b"\"use strict\";\n");
-            line_offset.advance(b"\"use strict\";\n");
+        for stmt in directives.slice() {
+            let js_ast::StmtData::SDirective(directive) = stmt.data else {
+                continue;
+            };
+            let directive = directive.value.slice();
+            if directive == b"use strict" && output_format.is_always_strict_mode() {
+                continue;
+            }
+            let mut buf = MutableString::init_empty();
+            // The printer escapes string literals ASCII-only for the bun target.
+            bun_core::handle_oom(js_printer::quote_for_json(directive, &mut buf, is_bun));
+            bun_core::handle_oom(buf.append_slice(if c.options.minify_whitespace {
+                b";".as_slice()
+            } else {
+                b";\n".as_slice()
+            }));
+            let quoted = buf.take_slice();
+            line_offset.advance(&quoted);
+            j.push_owned(quoted.into_boxed_slice());
             newline_before_comment = true;
         }
     }
@@ -768,9 +767,9 @@ pub(crate) fn post_process_js_chunk(
     // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
     // (slots pre-sized in generateChunksInParallel, filled in place by the print
     // workers before post-processing, never reassigned afterwards), `c.options`
-    // banner/footer (`&'static`), graph/parse-graph data (hashbangs, source paths,
+    // banner/footer (the bundle's options), graph/parse-graph data (hashbangs, source paths,
     // HMR runtime), or `'static` literals; `watcher.input` is `chunk.unique_key`
-    // (`&'static`). All of these outlive the joiner stored in
+    // (bundle arena). All of these outlive the joiner stored in
     // `chunk.intermediate_output`, which is only read while the chunk and the
     // linker graph are alive.
     let mut j = unsafe { j.detach_lifetime() };
@@ -780,7 +779,7 @@ pub(crate) fn post_process_js_chunk(
 
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk, worker_arena);
+    chunk.isolated_hash = c.generate_isolated_hash(chunk);
     chunk
         .flags
         .set(crate::chunk::Flags::IS_EXECUTABLE, is_executable);
@@ -790,15 +789,11 @@ pub(crate) fn post_process_js_chunk(
             chunk.intermediate_output,
             crate::chunk::IntermediateOutput::Pieces(_)
         );
-        // Copy the `ParentRef` out (not `c.resolver()`) so the arg borrows the
-        // local, not `c`, avoiding the split-borrow with
-        // `c.generate_source_map_for_chunk(&mut self, …)`.
-        let resolver = c.resolver.expect("resolver set in load()");
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
             &compile_results_for_source_map,
-            &resolver.opts.output_dir,
+            &c.resolver.opts.output_dir,
             can_have_shifts,
         )?;
     }
@@ -823,9 +818,6 @@ pub(crate) fn generate_entry_point_tail_js(
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     let mut stmts: Vec<Stmt> = Vec::new();
-    // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>`; the
-    // storage retains ownership of every Drop field, so neither this
-    // `BundledAst` nor the `ast_view: Ast` derived from it below may run Drop.
     let ast = c.graph.ast.get(source_index as usize);
 
     match c.options.output_format {
@@ -951,15 +943,11 @@ pub(crate) fn generate_entry_point_tail_js(
 
                             // Exports of imports need EImportIdentifier in case they need to be re-
                             // written to a property access later on
-                            // SAFETY: symbol::Map::get returns a non-null `*mut Symbol` for a valid ref.
-                            if unsafe {
-                                (*c.graph
-                                    .symbols
-                                    .get(resolved_export_data.import_ref)
-                                    .unwrap())
+                            if c.graph
+                                .symbol(resolved_export_data.import_ref)
                                 .namespace_alias
                                 .is_some()
-                            } {
+                            {
                                 let temp_ref = cjs_export_copies[i];
 
                                 // Create both a local variable and an export clause for that variable.
@@ -1260,9 +1248,7 @@ pub(crate) fn generate_entry_point_tail_js(
 
         to_esm_ref,
         to_commonjs_ref: to_common_js_ref,
-        require_or_import_meta_for_source_callback: Some(
-            js_printer::RequireOrImportMetaCallback::init(c),
-        ),
+        require_or_import_meta_source: Some(c),
 
         minify_whitespace: c.options.minify_whitespace,
         print_dce_annotations: c.options.emit_dce_annotations,
@@ -1273,16 +1259,14 @@ pub(crate) fn generate_entry_point_tail_js(
         ..Default::default()
     };
 
-    let ast_view = core::mem::ManuallyDrop::new(core::mem::ManuallyDrop::into_inner(ast).to_ast());
-
     CompileResult::Javascript {
         result: js_printer::print::<false>(
             arena,
-            c.resolver().opts.target,
-            &ast_view,
+            c.resolver.opts.target,
+            &ast.as_printer_view(),
             c.get_source(source_index),
             print_options,
-            ast_view.import_records.as_slice(),
+            ast.import_records.as_slice(),
             &[Part {
                 stmts: bun_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
                 ..Default::default()

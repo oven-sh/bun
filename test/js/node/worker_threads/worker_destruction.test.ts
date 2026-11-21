@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isWindows } from "harness";
 import { join } from "path";
 
 describe("Worker destruction", () => {
@@ -69,5 +69,51 @@ describe("Worker destruction", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("worker exit 0\n");
     expect(exitCode).toBe(0);
+  });
+
+  describe.skipIf(!isASAN || isWindows)("a Worker frees what its thread and its realms allocated", () => {
+    test.concurrent.each([
+      ["event names", `new AbortController().signal.addEventListener("abort", () => {});`],
+      ["crypto.subtle with a pending promise", `crypto.subtle.digest("SHA-256", new Uint8Array(1)); process.exit();`],
+      ["a ShadowRealm", `new ShadowRealm().evaluate("1");`],
+      [
+        "a spy that was not restored",
+        `const key = "key" + Math.random(); require("bun:test").spyOn({ [key]() {} }, key);`,
+      ],
+      [
+        "request trailers",
+        `const server = require("http").createServer((req, res) => req.resume().on("end", () => res.end()));
+         server.listen(0, "127.0.0.1", () => {
+           require("net")
+             .connect(server.address().port, "127.0.0.1")
+             .end("POST / HTTP/1.1\\r\\nHost: a\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n0\\r\\nx: " + Buffer.alloc(100, "a") + "\\r\\n\\r\\n")
+             .resume()
+             .on("close", () => server.close());
+         });`,
+      ],
+    ])("%s", async (_, code) => {
+      // leaksan.supp hides what is allocated while a module is evaluated, so the code runs from an immediate.
+      const worker = `setImmediate(() => { ${code} });`;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `new Worker(URL.createObjectURL(new Blob([${JSON.stringify(worker)}])))
+             .addEventListener("close", ({ code }) => console.log("worker exit " + code));`,
+        ],
+        env: {
+          ...bunEnv,
+          // Makes WTF allocate with the system malloc, which LeakSanitizer tracks.
+          Malloc: "1",
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "worker exit 0\n", stderr: "", exitCode: 0 });
+    });
   });
 });

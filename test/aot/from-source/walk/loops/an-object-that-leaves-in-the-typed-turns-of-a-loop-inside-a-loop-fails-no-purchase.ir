@@ -25,7 +25,7 @@
 # up as a try is, and every fresh object leaves in front of them. Once the walk failed there instead: the try of the loop around took that for a failure inside it, and its own purchases were lost with it.
 # RUN: compile LoopVersioningAttemptsFailed WalkLoopsVersioned mechanisms=all
 # CHECK: statistic LoopVersioningAttemptsFailed 0
-# CHECK: statistic WalkLoopsVersioned 7
+# CHECK: statistic WalkLoopsVersioned 12
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: number 3 number 6 6 {"n":6} {"n":6} 3,5,5
 # SHELL-NEXT: exited with 0

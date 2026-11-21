@@ -29,16 +29,10 @@
 
 #include "JSDOMConvertBufferSource.h"
 
-#include "JSDOMGlobalObject.h"
-
 #include <JavaScriptCore/ArrayBuffer.h>
 
 #include <JavaScriptCore/JSArrayBuffer.h>
-
-static inline WebCore::JSDOMGlobalObject* getDefaultGlobal(JSC::JSGlobalObject* lexicalGlobalObject)
-{
-    return defaultGlobalObject(lexicalGlobalObject);
-}
+#include <JavaScriptCore/WeakInlines.h>
 
 namespace WebCore {
 
@@ -51,12 +45,12 @@ WebCoreTypedArrayController::~WebCoreTypedArrayController() = default;
 
 JSC::JSArrayBuffer* WebCoreTypedArrayController::toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer& buffer)
 {
-    return uncheckedDowncast<JSC::JSArrayBuffer>(WebCore::toJS(lexicalGlobalObject, getDefaultGlobal(globalObject), buffer));
+    return uncheckedDowncast<JSC::JSArrayBuffer>(WebCore::toJS(lexicalGlobalObject, globalObject, buffer));
 }
 
-void WebCoreTypedArrayController::registerWrapper(JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer& native, JSC::JSArrayBuffer& wrapper)
+void WebCoreTypedArrayController::registerWrapper(JSC::JSGlobalObject*, JSC::ArrayBuffer& native, JSC::JSArrayBuffer& wrapper)
 {
-    cacheWrapper(static_cast<JSVMClientData*>(JSC::getVM(globalObject).clientData)->normalWorld(), &native, &wrapper);
+    native.m_wrapper = JSC::Weak<JSC::JSArrayBuffer>(&wrapper, &m_owner);
 }
 
 bool WebCoreTypedArrayController::isAtomicsWaitAllowedOnCurrentThread()
@@ -72,10 +66,11 @@ bool WebCoreTypedArrayController::JSArrayBufferOwner::isReachableFromOpaqueRoots
     return visitor.containsOpaqueRoot(wrapper.impl());
 }
 
-void WebCoreTypedArrayController::JSArrayBufferOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult WebCoreTypedArrayController::JSArrayBufferOwner::finalize(JSC::Handle<JSC::Unknown> handle, void*)
 {
     auto& wrapper = *static_cast<JSC::JSArrayBuffer*>(handle.slot()->asCell());
-    uncacheWrapper(*static_cast<DOMWrapperWorld*>(context), wrapper.impl(), &wrapper);
+    weakClear(wrapper.impl()->m_wrapper, &wrapper);
+    return FinalizeResult::KeepImpl;
 }
 
 } // namespace WebCore

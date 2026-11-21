@@ -16,6 +16,6 @@
 # declare function id<T>(value: T): T;
 # function word(view: DataView, from: number): number { let sum = 0; for (let i = 0; i < 2; i++) { const at = (from | 0) + i; if (-1 < at) sum += view.getInt32(at, true); } return sum; }
 # const view = new DataView(new ArrayBuffer(16));
-# for (let i = 0; i !== 16; i++) view.setUint8(i, i);
+# view.setUint8(0, 0); view.setUint8(1, 1); view.setUint8(2, 2); view.setUint8(3, 3);
 # print(word(view, id(-1)));
 # -- end of source

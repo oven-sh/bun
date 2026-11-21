@@ -62,7 +62,7 @@ export function writeNumberLoops(next: () => number, isTyped: boolean, print = "
     `let sum${number} = 0;`,
     `const state${any} = { count: ${small()}, last: ${constant()}, more: "m" };`,
     `function show(value${any})${any} {`,
-    '  return Object.is(value, -0) ? "-0" : typeof value === "object" && value !== null ? "[" + Array.prototype.map.call(value, show).join() + "]" : String(value);',
+    '  return Object.is(value, -0) ? "-0" : typeof value === "object" && value !== null ? "[" + Array.prototype.map.call(value.length > 99 ? Object.entries(value) : value, show).join() + "]" : String(value);',
     "}",
   ];
   let nameCount = 0;

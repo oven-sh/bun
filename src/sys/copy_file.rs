@@ -11,7 +11,7 @@ use crate::Fd;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 use crate::Tag;
 #[cfg(not(windows))]
-use bun_core::vec::UninitBuf;
+use {bun_core::vec::BorrowedBuf, core::mem::MaybeUninit};
 
 // `declare_scope!` uses the ident as both static name AND tag string, but
 // `copy_file` would shadow `pub fn copy_file()` below. Hand-expand with the
@@ -91,19 +91,9 @@ pub fn copy_file_with_state(
     let _ = copy_file_state;
     #[cfg(target_os = "macos")]
     {
-        unsafe extern "C" {
-            // safe: by-value `c_int` fds + `u32` flags; bad fd → `EBADF`/
-            // `EOPNOTSUPP`, never UB. `state` is `Option<NonNull<c_void>>`
-            // (FFI-safe via the null-pointer niche → ABI-identical to a
-            // nullable `copyfile_state_t`); we never allocate a state.
-            safe fn fcopyfile(
-                from: libc::c_int,
-                to: libc::c_int,
-                state: Option<core::ptr::NonNull<core::ffi::c_void>>,
-                flags: u32,
-            ) -> libc::c_int;
-        }
-        let rc = fcopyfile(in_.native(), out.native(), None, libc::COPYFILE_DATA);
+        let state = core::ptr::null_mut();
+        // SAFETY: a null `copyfile_state_t` is documented as "use defaults".
+        let rc = unsafe { libc::fcopyfile(in_.native(), out.native(), state, libc::COPYFILE_DATA) };
 
         match crate::get_errno(rc) {
             E::SUCCESS => return Ok(()),
@@ -209,15 +199,8 @@ pub fn copy_file_with_state(
 
     #[cfg(windows)]
     {
-        // SAFETY: FFI call; in_/out are NUL-terminated WStr, pointers valid for duration of call
-        let rc = unsafe { crate::windows::CopyFileW(in_.as_ptr(), out.as_ptr(), 0) };
-        if rc == 0 {
-            return Err(crate::Error::from_win32(
-                crate::windows::Win32Error::get(),
-                Tag::copyfile,
-            ));
-        }
-        return Ok(());
+        return crate::windows::CopyFileW(in_, out, false)
+            .map_err(|err| crate::Error::from_win32(err, Tag::copyfile));
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
@@ -419,35 +402,18 @@ pub(crate) fn copy_file_range(
 
 #[cfg(not(windows))]
 pub(crate) fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Result<usize> {
-    let mut stack_buf = UninitBuf::<{ 8 * 4096 }>::uninit();
-    // SAFETY: `read` below is the only writer of `buf`; only `buf[..amt_read]` is read back.
-    let buf = unsafe { stack_buf.as_bytes_mut() };
-    let adjusted_count = buf.len().min(len);
-    match crate::read(Fd::from_native(in_ as _), &mut buf[0..adjusted_count]) {
-        Ok(amt_read) => {
-            let mut amt_written: usize = 0;
-            if amt_read == 0 {
-                return Ok(0);
-            }
-
-            while amt_written < amt_read {
-                {
-                    let wrote =
-                        crate::write(Fd::from_native(out as _), &buf[amt_written..amt_read])?;
-                    if wrote == 0 {
-                        return Ok(amt_written);
-                    }
-
-                    amt_written += wrote;
-                }
-            }
-            if amt_read == 0 {
-                return Ok(0);
-            }
-            Ok(amt_read)
+    let mut stack_buf = [const { MaybeUninit::uninit() }; 8 * 4096];
+    let adjusted_count = stack_buf.len().min(len);
+    let mut buf = BorrowedBuf::from(&mut stack_buf[..adjusted_count]);
+    let amt_read = crate::read_buf(Fd::from_native(in_ as _), buf.unfilled())?;
+    let mut remain = buf.filled();
+    while !remain.is_empty() {
+        match crate::write(Fd::from_native(out as _), remain)? {
+            0 => break,
+            wrote => remain = &remain[wrote..],
         }
-        Err(err) => Err(err),
     }
+    Ok(amt_read - remain.len())
 }
 
 /// Same probe as `bun_analytics::generate_header::generate_platform::kernel_version()`,

@@ -308,13 +308,13 @@ pub mod ffi {
     ///
     /// # Safety
     /// `p` must be non-null and point to a NUL-terminated u16 sequence
-    /// readable up to and including the terminator.
+    /// readable up to and including the terminator. It can be unaligned.
     #[inline(always)]
     pub unsafe fn wcslen(p: *const u16) -> usize {
         debug_assert!(!p.is_null(), "ffi::wcslen: null pointer");
         let mut n = 0usize;
         // SAFETY: caller contract — non-null, NUL-terminated.
-        while unsafe { *p.add(n) } != 0 {
+        while unsafe { p.add(n).read_unaligned() } != 0 {
             n += 1;
         }
         n
@@ -324,7 +324,7 @@ pub mod ffi {
     /// as a `&[u16]`. Dominant shape at call sites.
     ///
     /// # Safety
-    /// Same contract as [`wcslen`]; the returned borrow must not outlive the
+    /// Same contract as [`wcslen`], and `p` is aligned; the returned borrow must not outlive the
     /// allocation backing `p`.
     #[inline(always)]
     pub unsafe fn wstr_units<'a>(p: *const u16) -> &'a [u16] {

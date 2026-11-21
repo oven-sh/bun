@@ -493,6 +493,7 @@ fn imported_require_is_found_by_its_names() {
     };
     let mut imported: Vec<ImportedRequire> =
         (0..1000).map(|at| entry(at / 10, at % 10, at)).collect();
+    // The same names once more: the first is found, with the table and without it.
     imported.push(entry(3, 4, 5000));
     let places = ImportedRequire::hash_by_names(&imported);
     for places in [&places[..], &[]] {
@@ -517,7 +518,7 @@ fn block_of<'a>(numbers: &[u64], arena: &'a Arena) -> (ListBlock<'a>, usize) {
 }
 
 #[test]
-fn freed_block_is_laid_again() {
+fn freed_block_is_reused() {
     let session = Session::new();
     let arena = session.arena();
     let (_before, _) = block_of(&[1; 64], arena);
@@ -536,7 +537,7 @@ fn freed_block_is_laid_again() {
 }
 
 #[test]
-fn blocks_keep_what_they_hold() {
+fn blocks_keep_contents() {
     let session = Session::new();
     let arena = session.arena();
     let mut held: Vec<(ListBlock<'_>, Fixed<'_, u64>, u64)> = Vec::new();

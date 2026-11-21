@@ -9,5 +9,7 @@
 # A copying constructor is handed its own instances through a list that Link has lost: none is seen to arrive, and not every caller of a constructor that instances name is known. In a loop the guess
 # stands all the same: it holds here at every turn, and where it fails the constructor is walked in line once more. Outside loops, where a failing guess leaves the copy for the slow version, it is dropped.
 # RUN: walk f2 mechanisms=all
-# CHECK: GetSlot {{*}} key="wide" receivers=[L0] level=Expected
-# CHECK: GetSlot {{*}} key="tall" receivers=[L0] level=Expected
+# One test of the shape answers for both reads of the constructor, which stand at 60 and 83.
+# CHECK: = ShapeTest {{*}}layouts=[L0] {{*}}@60:
+# CHECK: = GetSlot {{*}} key="wide" receivers=[L0] {{*}}@60:
+# CHECK: = GetSlot {{*}} key="tall" receivers=[L0] {{*}}@83:

@@ -35,7 +35,7 @@ pub struct Config {
     pub max_threads: usize,
     pub stack_size: usize,
     pub on_thread_start: fn(),
-    /// See [`once_on_new_thread`].
+    /// See [`on_new_thread`].
     pub has_new_threads: bool,
 }
 
@@ -58,21 +58,27 @@ pub fn has_new_thread() -> bool {
     NEW_THREADS.load(Ordering::SeqCst) > 0
 }
 
-/// A thread is new until `attempt` has succeeded on it.
-pub fn once_on_new_thread(attempt: impl FnOnce() -> bool) -> bool {
-    let has_succeeded = IS_NEW.get() && attempt();
-    if has_succeeded {
-        stop_being_new();
+const MAX_SUCCESSES: u8 = 8;
+
+/// A thread is new until it sleeps after `attempt` has succeeded on it, or until `MAX_SUCCESSES`.
+pub fn on_new_thread(attempt: impl FnOnce() -> bool) -> bool {
+    let has_succeeded = SUCCESSES_LEFT.get() > 0 && attempt();
+    match (has_succeeded, SUCCESSES_LEFT.get()) {
+        (false, _) => {}
+        (true, ..=1) => stop_being_new(),
+        (true, left) => SUCCESSES_LEFT.set(left - 1),
     }
     has_succeeded
 }
 
 fn stop_being_new() {
-    NEW_THREADS.fetch_sub(IS_NEW.take().into(), Ordering::SeqCst);
+    if SUCCESSES_LEFT.take() > 0 {
+        NEW_THREADS.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 thread_local! {
-    static IS_NEW: Cell<bool> = const { Cell::new(false) };
+    static SUCCESSES_LEFT: Cell<u8> = const { Cell::new(0) };
     static POOL: Cell<*const FifoPool> = const { Cell::new(ptr::null()) };
     static AFTER: Cell<*mut Task> = const { Cell::new(ptr::null_mut()) };
 }
@@ -162,7 +168,7 @@ impl FifoPool {
 
         (self.config.on_thread_start)();
         POOL.set(self);
-        IS_NEW.set(self.config.has_new_threads);
+        SUCCESSES_LEFT.set(MAX_SUCCESSES * u8::from(self.config.has_new_threads));
         let mut state = self.state.lock();
         loop {
             while let Some(Queued(task)) = state.tasks.pop_front() {
@@ -188,6 +194,9 @@ impl FifoPool {
                 }
                 state = self.state.lock();
                 state.is_spinning = false;
+            }
+            if state.tasks.is_empty() && SUCCESSES_LEFT.get() < MAX_SUCCESSES {
+                stop_being_new();
             }
             if state.tasks.is_empty()
                 && self.queued.timed_wait_guarded(&mut state, IDLE_NS).is_err()

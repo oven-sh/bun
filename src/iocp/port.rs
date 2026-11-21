@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_threading::fifo_pool::{has_new_thread, once_on_new_thread};
+use bun_threading::fifo_pool::{has_new_thread, on_new_thread};
 use bun_threading::spin::{Spin, has_other_cpu};
 use bun_threading::{Condition, Guarded};
 use bun_windows_sys::Win32Error;
@@ -59,9 +59,9 @@ impl Shared {
         }
     }
 
-    /// On busy CPUs a thread takes long to start, and whoever waits for long loses a raised priority.
+    /// On busy CPUs the first tasks of a thread take long, and whoever waits for long loses a raised priority.
     fn notify(&self, key: usize) {
-        if !once_on_new_thread(|| self.bell.ring(key)) {
+        if !on_new_thread(|| self.bell.ring(key)) {
             sys::post(&self.handle, key, 0);
         }
     }

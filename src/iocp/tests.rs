@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use std::time::Instant;
 
 use bun_sys::windows::{self as w, NTSTATUS, PipeDirection, PipeMode};
-use bun_threading::fifo_pool::{Config, FifoPool, has_new_thread, once_on_new_thread};
+use bun_threading::fifo_pool::{Config, FifoPool, has_new_thread, on_new_thread};
 use bun_threading::spin::has_other_cpu;
 
 use crate::blocking::{self, Cancel};
@@ -622,33 +622,41 @@ fn a_wake_waits_for_memory() {
 
 type Spawn = fn(Box<dyn FnOnce() + Send>);
 const ON_NEW_THREAD: Spawn = |run| new_pool().go(run);
-const AFTER_A_FAILURE: Spawn = |run| {
-    let pool = new_pool();
-    pool.go(|| assert!(!once_on_new_thread(|| false)));
-    pool.go(run);
-};
-const AFTER_A_SUCCESS: Spawn = |run| {
-    let pool = new_pool();
-    pool.go(|| assert!(once_on_new_thread(|| true)));
-    pool.go(run);
-};
-const ON_OTHER_POOL: Spawn = blocking::spawn;
+const AFTER_FAILURES: Spawn = |run| after_attempts(9, false, run);
+const AFTER_A_SUCCESS: Spawn = |run| after_attempts(1, true, run);
+const BEFORE_THE_LAST_SUCCESS: Spawn = |run| after_attempts(7, true, run);
+const AFTER_THE_LAST_SUCCESS: Spawn = |run| after_attempts(8, true, run);
+const ON_OTHER_POOL: Spawn = |run| pool_with(false).go(run);
 const ON_NO_POOL: Spawn = |run| drop(std::thread::spawn(run));
 
+fn after_attempts(count: usize, result: bool, run: Box<dyn FnOnce() + Send>) {
+    let pool = new_pool();
+    pool.go(move || {
+        pool.go(run);
+        for _ in 0..count {
+            on_new_thread(|| result);
+        }
+    });
+}
+
 fn new_pool() -> &'static FifoPool {
+    pool_with(true)
+}
+
+fn pool_with(has_new_threads: bool) -> &'static FifoPool {
     Box::leak(Box::new(FifoPool::new(Config {
         name: "Test",
         max_threads: 1,
         stack_size: 256 * 1024,
         on_thread_start: || {},
-        has_new_threads: true,
+        has_new_threads,
     })))
 }
 
 /// Until it is dropped.
 fn keep_a_thread_new() -> mpsc::Sender<()> {
     let (kept, is_kept) = mpsc::channel();
-    new_pool().go(move || assert!(once_on_new_thread(|| is_kept.recv().is_err())));
+    new_pool().go(move || assert!(on_new_thread(|| is_kept.recv().is_err())));
     kept
 }
 
@@ -689,8 +697,10 @@ fn a_thread_that_sleeps_is_woken_by_an_event() {
     let without = usize::from(!has_wait_packets());
     for (spawn, posted) in [
         (ON_NEW_THREAD, without),
-        (AFTER_A_FAILURE, without),
-        (AFTER_A_SUCCESS, 1),
+        (AFTER_FAILURES, without),
+        (AFTER_A_SUCCESS, without),
+        (BEFORE_THE_LAST_SUCCESS, without),
+        (AFTER_THE_LAST_SUCCESS, 1),
         (ON_OTHER_POOL, 1),
         (ON_NO_POOL, 1),
         (ON_NEW_THREAD, without),
@@ -808,8 +818,37 @@ fn no_event_is_made_without_a_new_thread() {
     assert!(has_new_thread());
     drop((refused, kept));
 
-    let port = Port::new().unwrap();
-    run_until(&Port::new().unwrap(), || !has_new_thread());
+    let (port, other) = (Port::new().unwrap(), Port::new().unwrap());
+    let start = Instant::now();
+    run_until(&other, || !has_new_thread());
+
+    let (pool, (tell, told)) = (new_pool(), mpsc::channel());
+    let is_new = || told.recv_timeout(Duration::from_secs(5)).unwrap();
+    for (count, result, expected) in [(1, false, true), (7, true, true), (1, true, false)] {
+        let tell = tell.clone();
+        pool.go(move || {
+            let attempts = Cell::new(0);
+            for _ in 0..count {
+                on_new_thread(|| (attempts.update(|it| it + 1), result).1);
+            }
+            tell.send((attempts.get() == count, has_new_thread()))
+                .unwrap();
+        });
+        assert_eq!(is_new(), (expected, expected));
+        turn(&other, Duration::from_millis(20));
+        run_until(&other, || has_new_thread() != result);
+    }
+    let ask = move || {
+        tell.send((on_new_thread(|| true), has_new_thread()))
+            .unwrap()
+    };
+    after_attempts(8, true, Box::new(ask));
+    assert_eq!(is_new(), (false, false));
+    assert!(
+        start.elapsed() < Duration::from_secs(9),
+        "threads have ended"
+    );
+
     let (request, remote) = Request::remote(&port, |()| {});
     blocking::spawn(|| {
         std::thread::sleep(Duration::from_millis(20));

@@ -9455,7 +9455,7 @@ describe.skipIf(!isWindows)("on Windows", () => {
   });
 });
 
-it.skipIf(!isWindows)("the first call ends with a higher priority than a timer", async () => {
+it.skipIf(!isWindows)("the first calls end with a higher priority than a timer", async () => {
   const run = async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -9465,7 +9465,11 @@ it.skipIf(!isWindows)("the first call ends with a higher priority than a timer",
          import { openSync, read } from "node:fs";
          import { promisify } from "node:util";
          const query = { args: ["i64", "u32", "ptr", "u32", "ptr"], returns: "i32" };
-         const ntdll = dlopen("ntdll.dll", { NtQueryInformationThread: query, NtQueryInformationProcess: query }).symbols;
+         const ntdll = dlopen("ntdll.dll", {
+           NtQueryInformationThread: query,
+           NtQueryInformationProcess: query,
+           NtSetInformationThread: { args: ["i64", "u32", "ptr", "u32"], returns: "i32" },
+         }).symbols;
          const basic = new Int32Array(12);
          const base = (ntdll.NtQueryInformationProcess(-1n, 0, basic, basic.byteLength, null), basic[6]);
          const priority = () => (ntdll.NtQueryInformationThread(-2n, 0, basic, basic.byteLength, null), basic[10]);
@@ -9474,12 +9478,17 @@ it.skipIf(!isWindows)("the first call ends with a higher priority than a timer",
            await wait();
            return priority();
          };
-         const [fd, buffer] = [openSync(process.execPath), Buffer.alloc(8 << 20)];
+         const [fd, buffers] = [openSync(process.execPath), [Buffer.alloc(8 << 20), Buffer.alloc(32 << 20)]];
          await Bun.sleep(1);
          const timer = await after(() => Bun.sleep(5));
-         console.log((await after(() => promisify(read)(fd, buffer))) > timer);`,
+         let calls;
+         const first = await after(() => (calls = buffers.map(it => promisify(read)(fd, it)))[0]);
+         ntdll.NtSetInformationThread(-2n, 2, new Int32Array([base]), 4);
+         const between = priority();
+         await calls[1];
+         console.log(first > timer, between === base, priority() > timer);`,
       ],
-      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1", UV_THREADPOOL_SIZE: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -9487,5 +9496,5 @@ it.skipIf(!isWindows)("the first call ends with a higher priority than a timer",
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     return stdout;
   };
-  expect((await Promise.all([run(), run(), run()])).sort().slice(1)).toEqual(["true\n", "true\n"]);
+  expect((await Promise.all([run(), run(), run()])).sort().slice(1)).toEqual(["true true true\n", "true true true\n"]);
 });

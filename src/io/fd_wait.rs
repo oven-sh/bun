@@ -1,15 +1,17 @@
 //! One thread waits on its own epoll or kqueue for the pipes, sockets and ttys of all work pool jobs.
 
 use core::ops::DerefMut;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::ptr::NonNull;
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::collections::{BTreeMap, btree_map};
 
+use bun_core::heap;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::linux::EPOLL;
 use bun_sys::{self as sys, E, Fd, FdExt as _};
-use bun_threading::Guarded;
 #[cfg(not(all(test, target_os = "linux")))]
 use bun_threading::WorkPool;
+use bun_threading::{Guarded, Link, Linked, UnboundedQueue};
 #[cfg(all(test, target_os = "linux"))]
 use tests::{WorkPool, epoll_ctl};
 
@@ -104,8 +106,12 @@ impl Canceller {
 /// Owns a `Slot::Cancelled`.
 pub struct Tombstone(Key);
 
+/// Keeps the pool off the table, which the IO thread writes at each wait.
+static TOMBSTONES: AtomicUsize = AtomicUsize::new(0);
+
 impl Tombstone {
     fn place(key: Key) -> Self {
+        TOMBSTONES.fetch_add(1, Ordering::SeqCst);
         let previous = key.slots().insert(key, Slot::Cancelled);
         if let Some(Slot::Armed(armed)) = previous {
             armed.poller.request(Request::Disarm(key, armed));
@@ -117,6 +123,7 @@ impl Tombstone {
 impl Drop for Tombstone {
     fn drop(&mut self) {
         self.0.slots().remove(&self.0);
+        TOMBSTONES.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -147,7 +154,7 @@ impl FdWait {
 
     /// The job is here, so only a tombstone can have its slot.
     fn check_cancelled(&self) -> sys::Result<()> {
-        match self.key.slots().contains_key(&self.key) {
+        match TOMBSTONES.load(Ordering::SeqCst) != 0 && self.key.slots().contains_key(&self.key) {
             true => Err(self.interest.cancelled()),
             false => Ok(()),
         }
@@ -155,8 +162,7 @@ impl FdWait {
 
     /// Pool thread. `resume` is called once, on the pool. The descriptor is closed before an `Err`.
     pub fn park(self, resume: impl FnOnce(sys::Result<Self>) + Send + 'static) {
-        let poller = IO.lock().poller();
-        match poller.and_then(|poller| self.check_cancelled().map(|()| poller)) {
+        match Poller::running().and_then(|poller| self.check_cancelled().map(|()| poller)) {
             Ok(poller) => poller.request(Request::Arm(self, Box::new(resume))),
             // On this thread: the pool may have no other.
             Err(err) => {
@@ -178,7 +184,7 @@ type Resume = Box<dyn FnOnce(sys::Result<FdWait>) + Send>;
 
 /// What the table has of a job that waits.
 struct Armed {
-    poller: Poller,
+    poller: &'static Poller,
     interest: Interest,
     fd: JobFd,
     resume: Resume,
@@ -198,53 +204,51 @@ enum Request {
     Disarm(Key, Armed),
 }
 
-type Queue = Vec<Request>;
+/// Arming from the pool costs a busy pipe a third of its speed: the job then wakes too late.
+struct Queue<T: Send>(UnboundedQueue<Queued<T>>);
 
-enum Thread {
-    /// Until the first wait.
-    Missing,
-    NotSpawned(Poller),
-    Running(Poller),
+struct Queued<T> {
+    next: Link<Self>,
+    item: T,
 }
 
-struct Io {
-    thread: Thread,
-    /// Arming from the pool costs a busy pipe a third of its speed: the job then wakes too late.
-    queue: Queue,
+// SAFETY: always the same field.
+unsafe impl<T> Linked for Queued<T> {
+    #[inline]
+    unsafe fn link(item: *mut Self) -> *const Link<Self> {
+        // SAFETY: fn contract.
+        unsafe { &raw const (*item).next }
+    }
 }
 
-static IO: Guarded<Io> = Guarded::new(Io {
-    thread: Thread::Missing,
-    queue: Queue::new(),
-});
+impl<T: Send> Queue<T> {
+    fn push(&self, item: T) {
+        let next = Link::new();
+        self.0.push(heap::alloc_nn(Queued { next, item }));
+    }
 
-impl Io {
-    /// If starting fails, the next call retries.
-    fn poller(&mut self) -> sys::Result<Poller> {
-        let poller = match self.thread {
-            Thread::Missing => Poller::new()?,
-            Thread::NotSpawned(poller) => poller,
-            Thread::Running(poller) => return Ok(poller),
-        };
-        self.thread = Thread::NotSpawned(poller);
-        poller.spawn()?;
-        self.thread = Thread::Running(poller);
-        Ok(poller)
+    /// IO thread.
+    fn take(&self) -> impl Iterator<Item = T> {
+        let mut batch = self.0.pop_batch().iterator();
+        core::iter::from_fn(move || {
+            let queued = NonNull::new(batch.next())?;
+            // SAFETY: `push` allocated it, and a batch yields it once.
+            Some(unsafe { heap::take(queued.as_ptr()) }.item)
+        })
     }
 }
 
 /// Never closed.
-#[derive(Clone, Copy)]
 struct Poller {
     /// The epoll or kqueue.
     watcher: Fd,
-    waker: &'static Waker,
+    waker: Waker,
+    queue: Queue<Request>,
 }
 
 impl IoThread {
-    fn run_queue(&mut self, requests: &mut Queue) {
-        core::mem::swap(requests, &mut IO.lock().queue);
-        for request in requests.drain(..) {
+    fn run_queue(&mut self) {
+        for request in self.poller.queue.take() {
             match request {
                 Request::Arm(wait, resume) => self.arm(wait, resume),
                 Request::Disarm(key, armed) => {
@@ -309,9 +313,30 @@ impl IoThread {
     }
 }
 
+static RUNNING: bun_core::Once<&'static Poller> = bun_core::Once::new();
+
 impl Poller {
+    fn running() -> sys::Result<&'static Self> {
+        RUNNING.get().copied().map_or_else(Self::start, Ok)
+    }
+
+    /// If it fails, the next call retries.
     #[cold]
-    fn new() -> sys::Result<Self> {
+    fn start() -> sys::Result<&'static Self> {
+        static MADE: Guarded<Option<&'static Poller>> = Guarded::new(None);
+        let mut made = MADE.lock();
+        if let Some(running) = RUNNING.get() {
+            return Ok(running);
+        }
+        let poller = match *made {
+            Some(poller) => poller,
+            None => made.insert(Self::new()?),
+        };
+        poller.spawn()?;
+        Ok(RUNNING.get_or_init(|| poller))
+    }
+
+    fn new() -> sys::Result<&'static Self> {
         let waker = Waker::init().map_err(|err| {
             let errno = match err {
                 crate::Error::Sys(errno) => errno,
@@ -320,23 +345,25 @@ impl Poller {
             sys::Error::from_code(errno, sys::Tag::open)
         })?;
         let watcher = Self::watch(&waker)?;
-        let waker = Box::leak(Box::new(waker));
-        Ok(Self { watcher, waker })
+        Ok(Box::leak(Box::new(Self {
+            watcher,
+            waker,
+            queue: Queue(UnboundedQueue::default()),
+        })))
     }
 
-    fn request(self, request: Request) {
-        IO.lock().queue.push(request);
+    fn request(&self, request: Request) {
+        self.queue.push(request);
         self.wake();
     }
 
     #[cfg(not(all(test, target_os = "linux")))]
-    fn wake(self) {
+    fn wake(&self) {
         self.waker.wake();
     }
 
     #[cfg(not(all(test, target_os = "linux")))]
-    #[cold]
-    fn spawn(self) -> sys::Result<()> {
+    fn spawn(&'static self) -> sys::Result<()> {
         std::thread::Builder::new()
             .stack_size(1024 * 1024 * 2)
             .spawn(move || {
@@ -357,7 +384,7 @@ impl Poller {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 struct IoThread {
-    poller: Poller,
+    poller: &'static Poller,
     /// Of the armed jobs, and of those that wait to be disarmed.
     entries: BTreeMap<Key, Entry>,
 }
@@ -365,7 +392,7 @@ struct IoThread {
 /// epoll keeps a one-shot entry that has fired. A second job on the descriptor gets EEXIST, and so
 /// has none to remove.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-struct Entry(Poller, Fd);
+struct Entry(&'static Poller, Fd);
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl Drop for Entry {
@@ -376,7 +403,7 @@ impl Drop for Entry {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl IoThread {
-    fn new(poller: Poller) -> Self {
+    fn new(poller: &'static Poller) -> Self {
         let entries = BTreeMap::new();
         Self { poller, entries }
     }
@@ -442,17 +469,17 @@ fn epoll_ctl(epoll: Fd, op: i32, fd: Fd, events: u32, key: Key) -> sys::Result<(
 
 #[cfg(any(all(not(test), target_os = "linux"), target_os = "android"))]
 impl Poller {
-    fn remove(self, fd: Fd) {
+    fn remove(&self, fd: Fd) {
         let (epoll, no_event) = (self.watcher.native(), core::ptr::null_mut());
         // SAFETY: CTL_DEL does not read the event.
         unsafe { libc::epoll_ctl(epoll, libc::EPOLL_CTL_DEL, fd.native(), no_event) };
     }
 
-    fn wait(self) {
+    fn wait(&'static self) {
         let mut events: [libc::epoll_event; 256] = [bun_core::ffi::zeroed(); 256];
-        let (mut thread, mut requests) = (IoThread::new(self), Queue::new());
+        let mut thread = IoThread::new(self);
         loop {
-            thread.run_queue(&mut requests);
+            thread.run_queue();
             // SAFETY: `events` is writable for its length.
             let rc = unsafe {
                 libc::epoll_wait(
@@ -488,7 +515,7 @@ type KEvent = libc::kevent64_s;
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 struct IoThread {
-    poller: Poller,
+    poller: &'static Poller,
     /// Applied by the next wait, which reports a failure as an event.
     changes: Vec<KEvent>,
 }
@@ -572,13 +599,12 @@ impl Poller {
         Ok(kqueue.into_raw())
     }
 
-    fn wait(self) {
+    fn wait(&'static self) {
         let mut events = Vec::new();
-        let mut requests = Queue::new();
         loop {
             let (poller, changes) = (self, Vec::new());
             let mut thread = IoThread { poller, changes };
-            thread.run_queue(&mut requests);
+            thread.run_queue();
             // Room for a failure of each change.
             events.resize(thread.changes.len().max(256), bun_core::ffi::zeroed());
             events.shrink_to_fit();
@@ -611,7 +637,7 @@ mod tests {
     static IO_THREAD: Guarded<Option<IoThread>> = Guarded::new(None);
 
     fn on_io_thread(run: impl FnOnce(&mut IoThread)) {
-        let poller = IO.lock().poller().ok().unwrap();
+        let poller = Poller::running().ok().unwrap();
         run(IO_THREAD
             .lock()
             .get_or_insert_with(|| IoThread::new(poller)));
@@ -619,7 +645,7 @@ mod tests {
 
     /// Does what the IO thread would.
     fn tick() {
-        on_io_thread(|thread| thread.run_queue(&mut Vec::new()));
+        on_io_thread(|thread| thread.run_queue());
         WorkPool::run();
     }
 
@@ -632,18 +658,18 @@ mod tests {
     }
 
     impl Poller {
-        pub(super) fn spawn(self) -> sys::Result<()> {
+        pub(super) fn spawn(&self) -> sys::Result<()> {
             Ok(())
         }
 
-        pub(super) fn wake(self) {
+        pub(super) fn wake(&self) {
             self.waker.wake();
             if !IS_BUSY.get() {
                 tick();
             }
         }
 
-        pub(super) fn remove(self, fd: Fd) {
+        pub(super) fn remove(&self, fd: Fd) {
             ENTRIES.lock().remove(&fd.native());
         }
     }

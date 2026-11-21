@@ -1,2 +1,2 @@
-import { test } from "bun:test";
-test("unused", () => {});
+import { bench } from "./run";
+bench("cond.js", "all", "16 begin", "before;", "7");

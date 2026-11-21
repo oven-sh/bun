@@ -44,7 +44,7 @@ if (!isMainThread) {
     const test = require("fs").readFileSync(require("path").join(__dirname, "../../js/node/fs/fs.test.ts"), "utf8"), code = /`(import \{ dlopen \} from "bun:ffi";\s+import \{ openSync, read \}[\s\S]*?> timer\);)`/.exec(test)[1];
     for (const [name, exe] of Object.entries({ old: process.argv[2], before: process.env.BEFORE_BUN, new: process.argv[3] })) {
       const seen = {}, t = performance.now();
-      for (let i = 0; i < N_RUNS; i++) { const out = Bun.spawnSync([exe, "-e", code], { env: { ...process.env, BUN_GC_TIMER_DISABLE: "1" }, stderr: "inherit" }).stdout.toString().trim(); seen[out] = (seen[out] ?? 0) + 1; }
+      for (let i = 0; i < N_RUNS; i++) { const out = Bun.spawnSync([exe, "-e", code], { env: { ...process.env, BUN_GC_TIMER_DISABLE: "1", UV_THREADPOOL_SIZE: "1" }, stderr: "inherit" }).stdout.toString().trim(); seen[out] = (seen[out] ?? 0) + 1; }
       console.log(`cond boost the test, ${name}: ${JSON.stringify(seen)}, ${((performance.now() - t) / N_RUNS).toFixed(0)} ms each`);
     }
     process.exit(0);

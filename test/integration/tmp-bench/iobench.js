@@ -611,6 +611,26 @@ const cases = {
       ],
     ]),
   ),
+  ...Object.fromEntries(
+    [[8, "late"], [8, "worst"], [16, "late"], [16, "worst"]].map(([count, what]) => [
+      `${count} begin to read: ${what}`,
+      [
+        "ms",
+        0,
+        async tmp => {
+          const f = path.join(tmp, "begin.bin");
+          fs.writeFileSync(f, Buffer.alloc(4 * MB));
+          const code = `const fs = require("fs"), burn = ms => { for (const end = performance.now() + ms; performance.now() < end; ); }; onmessage = async () => { const fd = fs.openSync(${JSON.stringify(f)}), b = Buffer.alloc(4 << 20); burn(300); for (;;) { await new Promise(r => fs.read(fd, b, 0, b.length, 0, r)); burn(10); } }; postMessage(0);`;
+          const all = await Promise.all(Array.from({ length: count }, () => new Promise(r => { const w = new Worker("data:text/javascript," + encodeURIComponent(code)); w.onmessage = () => r(w); })));
+          for (const w of all) w.postMessage(0);
+          const t = now();
+          let turns = 0, worst = 0;
+          for (let last = t; now() - t < 3000; last = now()) await Bun.sleep(25), turns++, (worst = Math.max(worst, now() - last));
+          return what === "late" ? (now() - t) / turns - 25 : worst;
+        },
+      ],
+    ]),
+  ),
   "fs.write, 5000 at once": [
     "op/s",
     1,

@@ -24,7 +24,17 @@ export function bench(script: string, ...args: string[]) {
         const shipped = join(import.meta.dir, "../../../release", name + ".zip");
         if (existsSync(shipped)) now = await unzip(shipped, "new");
       }
-      const before = now;
+      let before = process.env.BEFORE_BUN;
+      if (!before) {
+        const at = {
+          x64: "01a1fd4c-0a3e-4338-ab37-39f3c34b1f51/artifacts/01a1fd58-ef36-4078-883c-19bd9a2cd780",
+          arm64: "01a1fd4c-0a40-44ee-b4d3-0c180e35c59b/artifacts/01a1fd53-b412-4ae2-8413-8111912151c2",
+        }[process.arch];
+        const zip = join(String(dir), "before.zip");
+        await Bun.write(zip, await fetch(`https://buildkite.com/organizations/bun/pipelines/bun/builds/143437/jobs/${at}`));
+        before = await unzip(zip, "before");
+        if (!existsSync(before)) before = now;
+      }
       console.log("old", old, "before", before, "new", now);
       await Bun.spawn(
         [

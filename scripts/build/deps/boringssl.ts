@@ -36,6 +36,11 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  patches: [
+    // Choose the issuer, and report the error, that OpenSSL, and so Node.js, does.
+    "patches/boringssl/openssl-issuer-selection.patch",
+  ],
+
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
     // uses gas .S that clang assembles.

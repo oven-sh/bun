@@ -1,0 +1,486 @@
+--- a/crypto/x509/internal.h
++++ b/crypto/x509/internal.h
+@@ -90,6 +90,12 @@ DECLARE_ASN1_ITEM(X509_NAME_ENTRY)
+ int x509_verify_trusted_cert_in_time(X509_STORE_CTX *ctx,
+                                      const X509 *x509);
+ 
++// x509_consider_issuer chooses among matching issuers as OpenSSL does. It
++// returns true, with `candidate` in `*best`, if `candidate` is in its validity
++// period. Otherwise it returns false and keeps the one that expires last.
++bool x509_consider_issuer(const X509_STORE_CTX *ctx, X509 *candidate,
++                          X509 **best);
++
+ // x509_name_canon_from_der parses a DER-encoded Name from `cbs` and sets `out`
+ // to its canonical form, as `X509_NAME_cmp` would compare it, without
+ // constructing an `X509_NAME`. It returns one on success and zero on error.
+@@ -330,6 +336,9 @@ struct x509_object_st {
+     X509_CRL *crl;
+     EVP_PKEY *pkey;
+   } data;
++  // order counts the objects of a store from one, as they were added. It is
++  // zero in an object that is only searched for.
++  size_t order = 0;
+ } /* X509_OBJECT */;
+ 
+ BSSL_NAMESPACE_BEGIN
+@@ -387,15 +396,18 @@ class X509LazyCertSet : public x509_lazy_cert_set_st,
+   }
+ 
+   // AddMatchesToStore parses every certificate whose subject is `name` and adds
+-  // it to `store`. It returns false on error; no match is not an error.
+-  bool AddMatchesToStore(X509Store *store, const X509_NAME *name);
++  // it to `store`. It returns false on error; no match, or one that does not
++  // parse, is not an error. `parsed`, if not null, saves parsing a certificate
++  // with the same encoding.
++  bool AddMatchesToStore(X509Store *store, const X509_NAME *name,
++                         const X509 *parsed);
+ 
+  private:
+   friend RefCounted;
+   ~X509LazyCertSet();
+ 
+   Array<X509LazyCert> certs_;
+-  // by_subject_ holds indices into `certs_` sorted by `canon`.
++  // by_subject_ holds indices into `certs_` sorted by `canon`, then by value.
+   Array<size_t> by_subject_;
+ };
+ 
+@@ -408,7 +420,8 @@ class X509Store : public x509_store_st, public RefCounted<X509Store> {
+ 
+   // MaterializeLazy adds any not-yet-parsed lazily trusted certificates with
+   // subject `name` to `objs`. It must be called without `objs_lock` held.
+-  void MaterializeLazy(int type, const X509_NAME *name);
++  void MaterializeLazy(int type, const X509_NAME *name,
++                       const X509 *parsed = nullptr);
+ 
+   // The following is a cache of trusted certs
+   UniquePtr<STACK_OF(X509_OBJECT)> objs;  // Cache of all objects
+@@ -466,10 +479,9 @@ struct x509_store_ctx_st {
+   int error_depth;
+   int error;
+   X509 *current_cert;
+-  // With X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: the time error of the last
+-  // trust anchor a lookup skipped, so a chain that then fails as untrusted can
+-  // be reported as that instead. Zero if none was skipped.
+-  int ignored_anchor_error;
++  // Whether X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS made a lookup skip a
++  // certificate.
++  bool ignored_anchor;
+ 
+   CRYPTO_EX_DATA ex_data;
+ } /* X509_STORE_CTX */;
+--- a/crypto/x509/v3_purp.cc
++++ b/crypto/x509/v3_purp.cc
+@@ -258,6 +258,16 @@ int X509_supported_extension(const X509_EXTENSION *ex) {
+          nid == NID_pe_mtcCertificationAuthority_SHA256;
+ }
+ 
++// sig_alg_reject returns whether `subject` was signed with another type of key
++// than that of `issuer`. See `check_sig_alg_match` in OpenSSL.
++static bool sig_alg_reject(const X509 *issuer, const X509 *subject) {
++  int sig_nid = X509_get_signature_nid(subject), pkey_nid;
++  int issuer_nid = OBJ_obj2nid(FromOpaque(issuer)->key.algor->algorithm);
++  return OBJ_find_sigid_algs(sig_nid, nullptr, &pkey_nid) &&
++         issuer_nid != pkey_nid &&
++         !(sig_nid == NID_rsassaPss && issuer_nid == NID_rsassaPss);
++}
++
+ int bssl::x509v3_cache_extensions(const X509 *x) {
+   BASIC_CONSTRAINTS *bs;
+   ASN1_BIT_STRING *usage;
+@@ -392,7 +402,7 @@ int bssl::x509v3_cache_extensions(const X509 *x) {
+     impl->ex_flags |= EXFLAG_SI;
+     // If SKID matches AKID also indicate self signed
+     if (X509_check_akid(x, impl->akid.get()) == X509_V_OK &&
+-        !ku_reject(x, X509v3_KU_KEY_CERT_SIGN)) {
++        !sig_alg_reject(x, x) && !ku_reject(x, X509v3_KU_KEY_CERT_SIGN)) {
+       impl->ex_flags |= EXFLAG_SS;
+     }
+   }
+@@ -450,6 +460,10 @@ int X509_check_issued(const X509 *issuer, const X509 *subject) {
+     }
+   }
+ 
++  if (sig_alg_reject(issuer, subject)) {
++    return X509_V_ERR_CERT_SIGNATURE_FAILURE;
++  }
++
+   if (ku_reject(issuer, X509v3_KU_KEY_CERT_SIGN)) {
+     return X509_V_ERR_KEYUSAGE_NO_CERTSIGN;
+   }
+--- a/crypto/x509/x509_lu.cc
++++ b/crypto/x509/x509_lu.cc
+@@ -96,7 +96,12 @@ int x509_object_cmp(const X509_OBJECT *a, const X509_OBJECT *b) {
+ 
+ int x509_object_cmp_sk(const X509_OBJECT *const *a,
+                        const X509_OBJECT *const *b) {
+-  return x509_object_cmp(*a, *b);
++  // Path building takes the first match, and sorting is not stable.
++  int ret = x509_object_cmp(*a, *b);
++  if (ret != 0 || (*a)->order == 0 || (*b)->order == 0) {
++    return ret;
++  }
++  return ((*a)->order > (*b)->order) - ((*a)->order < (*b)->order);
+ }
+ 
+ int X509_OBJECT_up_ref_count(X509_OBJECT *a) {
+@@ -243,6 +248,7 @@ int x509_store_add(X509Store *ctx, const void *x, int is_crl) {
+   int added = 0;
+   // Duplicates are silently ignored
+   if (!X509_OBJECT_retrieve_match(ctx->objs.get(), obj)) {
++    obj->order = sk_X509_OBJECT_num(ctx->objs.get()) + 1;
+     ret = added = (sk_X509_OBJECT_push(ctx->objs.get(), obj) != 0);
+   }
+ 
+@@ -361,6 +367,10 @@ int X509_STORE_CTX_get_by_subject(X509_STORE_CTX *vs, int type,
+ }
+ 
+ int X509_STORE_add_cert(X509_STORE *ctx, const X509 *x) {
++  if (x != nullptr) {
++    // The lazy certificates were added first.
++    FromOpaque(ctx)->MaterializeLazy(X509_LU_X509, X509_get_subject_name(x), x);
++  }
+   return x509_store_add(FromOpaque(ctx), x, /*is_crl=*/0);
+ }
+ 
+@@ -557,7 +567,8 @@ bool X509LazyCertSet::Init(CRYPTO_BUFFER *const *certs, size_t num) {
+     by_subject_[i] = i;
+   }
+   std::sort(by_subject_.begin(), by_subject_.end(), [&](size_t a, size_t b) {
+-    return x509_canon_cmp(certs_[a].canon, certs_[b].canon) < 0;
++    int ret = x509_canon_cmp(certs_[a].canon, certs_[b].canon);
++    return ret != 0 ? ret < 0 : a < b;
+   });
+   return true;
+ }
+@@ -583,8 +594,8 @@ X509 *X509LazyCertSet::Get(size_t idx) {
+   return expected;
+ }
+ 
+-bool X509LazyCertSet::AddMatchesToStore(X509Store *store,
+-                                        const X509_NAME *name) {
++bool X509LazyCertSet::AddMatchesToStore(X509Store *store, const X509_NAME *name,
++                                        const X509 *parsed) {
+   const X509NameCache *cache = x509_name_get_cache(name);
+   if (cache == nullptr) {
+     return false;
+@@ -605,16 +616,30 @@ bool X509LazyCertSet::AddMatchesToStore(X509Store *store,
+     if (x509_canon_cmp(certs_[idx].canon, canon) != 0) {
+       break;
+     }
+-    X509 *x509 = Get(idx);
+-    if (x509 == nullptr ||
+-        !x509_store_add(store, x509, /*is_crl=*/0)) {
++    const CRYPTO_BUFFER *a = GetDER(idx);
++    const CRYPTO_BUFFER *b = parsed ? FromOpaque(parsed)->buf.get() : nullptr;
++    const bool is_parsed =
++        b != nullptr && Span(CRYPTO_BUFFER_data(a), CRYPTO_BUFFER_len(a)) ==
++                            Span(CRYPTO_BUFFER_data(b), CRYPTO_BUFFER_len(b));
++    const X509 *x509 = is_parsed ? parsed : Get(idx);
++    if (x509 == nullptr) {
++      // Only skip a certificate for what is wrong with it.
++      while (uint32_t err = ERR_get_error()) {
++        if (ERR_GET_REASON(err) == ERR_R_MALLOC_FAILURE) {
++          return false;
++        }
++      }
++      continue;
++    }
++    if (!x509_store_add(store, x509, /*is_crl=*/0)) {
+       return false;
+     }
+   }
+   return true;
+ }
+ 
+-void X509Store::MaterializeLazy(int type, const X509_NAME *name) {
++void X509Store::MaterializeLazy(int type, const X509_NAME *name,
++                                const X509 *parsed) {
+   if (type != X509_LU_X509) {
+     return;
+   }
+@@ -641,9 +666,8 @@ void X509Store::MaterializeLazy(int type, const X509_NAME *name) {
+   for (size_t i = 0; i < num; i++) {
+     X509LazyCertSet *set =
+         i < kInline ? inline_sets[i].get() : more_sets[i - kInline].get();
+-    if (!set->AddMatchesToStore(this, name)) {
+-      // An anchor that fails to parse is treated as absent, as a lookup method
+-      // that fails is.
++    if (!set->AddMatchesToStore(this, name, parsed)) {
++      // The anchors are treated as absent, as when a lookup method fails.
+       ERR_clear_error();
+     }
+   }
+@@ -743,12 +767,15 @@ int X509_STORE_CTX_get1_issuer(X509 **out_issuer, X509_STORE_CTX *ctx,
+     return 0;
+   }
+   // If certificate matches all OK
++  X509 *best = nullptr;
+   if (x509_check_issued_with_callback(ctx, x, obj.data.x509) &&
+-      x509_verify_trusted_cert_in_time(ctx, obj.data.x509)) {
++      x509_verify_trusted_cert_in_time(ctx, obj.data.x509) &&
++      x509_consider_issuer(ctx, obj.data.x509, &best)) {
+     *out_issuer = obj.data.x509;
+     return 1;
+   }
+   X509_OBJECT_free_contents(&obj);
++  best = nullptr;
+ 
+   // Else find index of first cert accepted by
+   // `x509_check_issued_with_callback`.
+@@ -764,20 +791,23 @@ int X509_STORE_CTX_get1_issuer(X509 **out_issuer, X509_STORE_CTX *ctx,
+       // This works because the objects are sorted by type, then subject
+       // name, using `x509_object_cmp`.
+       if (pobj->type != X509_LU_X509) {
+-        return 0;
++        break;
+       }
+       if (X509_NAME_cmp(xn, X509_get_subject_name(pobj->data.x509))) {
+-        return 0;
++        break;
+       }
+       if (x509_check_issued_with_callback(ctx, x, pobj->data.x509) &&
+-          x509_verify_trusted_cert_in_time(ctx, pobj->data.x509)) {
+-        *out_issuer = pobj->data.x509;
+-        X509_OBJECT_up_ref_count(pobj);
+-        return 1;
++          x509_verify_trusted_cert_in_time(ctx, pobj->data.x509) &&
++          x509_consider_issuer(ctx, pobj->data.x509, &best)) {
++        break;
+       }
+     }
+   }
+-  return 0;
++  if (best == nullptr) {
++    return 0;
++  }
++  *out_issuer = X509_dup_ref(best);
++  return 1;
+ }
+ 
+ int X509_STORE_set_flags(X509_STORE *ctx, unsigned long flags) {
+--- a/crypto/x509/x509_vfy.cc
++++ b/crypto/x509/x509_vfy.cc
+@@ -148,14 +148,16 @@ UniquePtr<X509> lookup_cert_match(X509_STORE_CTX *ctx, const X509 *x) {
+ // Given a STACK_OF(X509) find the issuer of cert (if any)
+ X509 *find_issuer(X509_STORE_CTX *ctx, const STACK_OF(X509) *sk,
+                   const X509 *x) {
++  X509 *best = nullptr;
+   for (X509 *issuer : sk) {
+     if (x509_check_issued_with_callback(ctx, x, issuer) &&
+         (sk != ctx->trusted_stack ||
+-         x509_verify_trusted_cert_in_time(ctx, issuer))) {
+-      return issuer;
++         x509_verify_trusted_cert_in_time(ctx, issuer)) &&
++        x509_consider_issuer(ctx, issuer, &best)) {
++      break;
+     }
+   }
+-  return nullptr;
++  return best;
+ }
+ 
+ UniquePtr<X509> get_trusted_issuer(X509_STORE_CTX *ctx, const X509 *x) {
+@@ -172,13 +174,6 @@ UniquePtr<X509> get_trusted_issuer(X509_STORE_CTX *ctx, const X509 *x) {
+   return UniquePtr<X509>(issuer);
+ }
+ 
+-// untrusted_chain_error picks the error for a chain that reached no usable
+-// trust anchor: if one was passed over only because it is outside its validity
+-// period, say that rather than that no issuer exists.
+-int untrusted_chain_error(const X509_STORE_CTX *ctx, int err) {
+-  return ctx->ignored_anchor_error != 0 ? ctx->ignored_anchor_error : err;
+-}
+-
+ // check_lone_untrusted_leaf runs once the verify callback has suppressed the
+ // error for a chain that reached no trust anchor. If no issuer was found for
+ // the target certificate at all, it reports
+@@ -189,8 +184,7 @@ int check_lone_untrusted_leaf(X509_STORE_CTX *ctx) {
+       X509_check_issued(ctx->cert, ctx->cert) == X509_V_OK) {
+     return 1;
+   }
+-  ctx->error =
+-      untrusted_chain_error(ctx, X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE);
++  ctx->error = X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE;
+   return call_verify_cb_at_depth(0, ctx, /*depth=*/0);
+ }
+ 
+@@ -997,11 +991,9 @@ int check_chain_signatures_and_time(X509_STORE_CTX *ctx, bool trusted) {
+ 
+ }  // namespace
+ 
+-int bssl::x509_verify_trusted_cert_in_time(X509_STORE_CTX *ctx,
+-                                           const X509 *x509) {
+-  if (!(ctx->param->flags & X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS) ||
+-      (ctx->param->flags & X509_V_FLAG_NO_CHECK_TIME)) {
+-    return 1;
++static bool cert_in_time(const X509_STORE_CTX *ctx, const X509 *x509) {
++  if (ctx->param->flags & X509_V_FLAG_NO_CHECK_TIME) {
++    return true;
+   }
+   int64_t ptime = (ctx->param->flags & X509_V_FLAG_USE_CHECK_TIME)
+                       ? ctx->param->check_time
+@@ -1012,15 +1004,32 @@ int bssl::x509_verify_trusted_cert_in_time(X509_STORE_CTX *ctx,
+                : X509_cmp_time_posix(t, ptime);
+   };
+   // As `check_cert_time`: notBefore must compare earlier, notAfter later.
+-  if (cmp(X509_get0_notBefore(x509)) >= 0) {
+-    ctx->ignored_anchor_error = X509_V_ERR_CERT_NOT_YET_VALID;
+-    return 0;
++  return cmp(X509_get0_notBefore(x509)) < 0 &&
++         cmp(X509_get0_notAfter(x509)) > 0;
++}
++
++int bssl::x509_verify_trusted_cert_in_time(X509_STORE_CTX *ctx,
++                                           const X509 *x509) {
++  if (!(ctx->param->flags & X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS) ||
++      cert_in_time(ctx, x509)) {
++    return 1;
+   }
+-  if (cmp(X509_get0_notAfter(x509)) <= 0) {
+-    ctx->ignored_anchor_error = X509_V_ERR_CERT_HAS_EXPIRED;
+-    return 0;
++  ctx->ignored_anchor = true;
++  return 0;
++}
++
++bool bssl::x509_consider_issuer(const X509_STORE_CTX *ctx, X509 *candidate,
++                                X509 **best) {
++  const bool in_time = cert_in_time(ctx, candidate);
++  int64_t best_not_after;
++  if (in_time || *best == nullptr ||
++      (ASN1_TIME_to_posix_nonstandard(X509_get0_notAfter(*best),
++                                      &best_not_after) &&
++       X509_cmp_time_posix_nonstandard(X509_get0_notAfter(candidate),
++                                       best_not_after) > 0)) {
++    *best = candidate;
+   }
+-  return 1;
++  return in_time;
+ }
+ 
+ // Given a possible certificate and issuer check them
+@@ -1121,7 +1130,7 @@ int X509_verify_cert(X509_STORE_CTX *ctx) {
+     }
+ 
+     // Add certificates to the path until we reach a trust anchor, or fail.
+-    bool have_store_cert = false;
++    bool have_store_cert = false, is_loop = false;
+     for (;;) {
+       if (static_cast<int>(sk_X509_num(ctx->chain)) >= max_chain) {
+         break;
+@@ -1142,10 +1151,16 @@ int X509_verify_cert(X509_STORE_CTX *ctx) {
+       // Prioritize looking for issuers in the store.
+       if (UniquePtr<X509> issuer = get_trusted_issuer(ctx, last);
+           issuer != nullptr) {
++        is_loop =
++            have_store_cert && sk_X509_find(ctx->chain, nullptr, issuer.get());
+         if (!PushToStack(ctx->chain, std::move(issuer))) {
+           ctx->error = X509_V_ERR_OUT_OF_MEM;
+           return 0;
+         }
++        if (is_loop) {
++          // The same issuers would follow again until the chain is too long.
++          break;
++        }
+         have_store_cert = true;
+         // Certificates from the store are candidates to be trust anchors.
+         trust = check_trust(ctx, /*allow_partial_chain=*/true);
+@@ -1193,27 +1208,36 @@ int X509_verify_cert(X509_STORE_CTX *ctx) {
+       trust = X509_TRUST_TRUSTED;
+     }
+ 
++    if (trust == X509_TRUST_UNTRUSTED && ctx->ignored_anchor) {
++      // There is no path around what was ignored, so fail on the path through
++      // it.
++      sk_X509_pop_free(ctx->chain, X509_free);
++      ctx->chain = nullptr;
++      ctx->ignored_anchor = false;
++      const unsigned long flags = param->flags;
++      ctx->param->flags &= ~X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS;
++      ok = X509_verify_cert(ctx);
++      ctx->param->flags = flags;
++      return ok;
++    }
++
+     // `X509_TRUST_REJECTED` should have returned early.
+     assert(trust == X509_TRUST_UNTRUSTED || X509_TRUST_TRUSTED);
+     if (trust == X509_TRUST_UNTRUSTED) {
+-      if (static_cast<int>(sk_X509_num(ctx->chain)) >= max_chain) {
++      if (is_loop || static_cast<int>(sk_X509_num(ctx->chain)) >= max_chain) {
+         ctx->error = X509_V_ERR_CERT_CHAIN_TOO_LONG;
+       } else if (have_store_cert) {
+-        ctx->error =
+-            untrusted_chain_error(ctx, X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
++        ctx->error = X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT;
+       } else {
+         int is_self_signed;
+         if (!cert_self_signed(sk_X509_last(ctx->chain), &is_self_signed)) {
+           ctx->error = X509_V_ERR_INVALID_EXTENSION;
+         } else if (!is_self_signed) {
+-          ctx->error = untrusted_chain_error(
+-              ctx, X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY);
++          ctx->error = X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY;
+         } else if (sk_X509_num(ctx->chain) == 1) {
+-          ctx->error = untrusted_chain_error(
+-              ctx, X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT);
++          ctx->error = X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT;
+         } else {
+-          ctx->error =
+-              untrusted_chain_error(ctx, X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN);
++          ctx->error = X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN;
+         }
+       }
+       if (!call_verify_cb_at_depth(0, ctx, sk_X509_num(ctx->chain) - 1)) {
+--- a/include/openssl/x509.h
++++ b/include/openssl/x509.h
+@@ -215,9 +215,9 @@ OPENSSL_EXPORT void X509_get0_uids(const X509 *x509,
+ // should not be accepted.
+ #define EXFLAG_CRITICAL 0x200
+ // EXFLAG_SS indicates the certificate is likely self-signed. That is, if it is
+-// self-issued, its authority key identifier (if any) matches itself, and its
+-// key usage extension (if any) allows certificate signatures. The signature
+-// itself is not checked in computing this bit.
++// self-issued, its authority key identifier (if any) and signature algorithm
++// match itself, and its key usage extension (if any) allows certificate
++// signatures. The signature itself is not checked in computing this bit.
+ #define EXFLAG_SS 0x2000
+ 
+ // X509_get_extension_flags decodes a set of extensions from `x509` and returns
+@@ -3379,11 +3379,9 @@ OPENSSL_EXPORT int X509_VERIFY_PARAM_set1(X509_VERIFY_PARAM *to,
+ // whose validity period does not cover the verification time as if it were
+ // not there, so it can neither anchor a chain nor shadow a currently-valid
+ // certificate for the same issuer supplied by the peer or elsewhere in the
+-// store. A chain that reaches no usable anchor after such a certificate was
+-// passed over still reports `X509_V_ERR_CERT_HAS_EXPIRED` (or
+-// `X509_V_ERR_CERT_NOT_YET_VALID`) rather than an unknown-issuer error.
+-// Untrusted (peer) certificates are unaffected. Has no effect with
+-// `X509_V_FLAG_NO_CHECK_TIME`.
++// store. If that leaves no path to a trust anchor, the chain is built again
++// without this flag, and its errors are reported. Untrusted (peer) certificates
++// are unaffected. Has no effect with `X509_V_FLAG_NO_CHECK_TIME`.
+ //
+ // The value is kept away from the bits upstream allocates next.
+ #define X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS 0x40000000
+@@ -4673,8 +4671,9 @@ OPENSSL_EXPORT int X509_supported_extension(const X509_EXTENSION *ex);
+ OPENSSL_EXPORT int X509_check_ca(const X509 *x509);
+ 
+ // X509_check_issued checks if `issuer` and `subject`'s name, authority key
+-// identifier, and key usage fields allow `issuer` to have issued `subject`. It
+-// returns `X509_V_OK` on success and an `X509_V_ERR_*` value otherwise.
++// identifier, algorithm, and key usage fields allow `issuer` to have issued
++// `subject`. It returns `X509_V_OK` on success and an `X509_V_ERR_*` value
++// otherwise.
+ //
+ // This function does not check the signature on `subject`. Rather, it is
+ // intended to prune the set of possible issuer certificates during
+@@ -4760,6 +4759,9 @@ OPENSSL_EXPORT int X509_check_ip_asc(const X509 *x509, const char *ipasc,
+ // must release `*out_issuer` with `X509_free` when done. If none was found, it
+ // returns zero and leaves `*out_issuer` unchanged.
+ //
++// Of several candidates, it returns the first added to the store that is in its
++// validity period, or else the one that expires last.
++//
+ // This function only searches for trusted issuers. It does not consider
+ // untrusted intermediates passed in to `X509_STORE_CTX_init`.
+ OPENSSL_EXPORT int X509_STORE_CTX_get1_issuer(X509 **out_issuer,

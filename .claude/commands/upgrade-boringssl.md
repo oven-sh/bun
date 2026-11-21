@@ -19,6 +19,8 @@ git log --oneline $(git merge-base HEAD upstream/main)..HEAD   # our patches
 git merge upstream/main
 ```
 
+Before the merge, commit Bun's `patches/boringssl/*.patch` to the fork. The build applies them on top of the pin. `openssl-issuer-selection.patch` changes four expectations in `x509_test.cc`. In `IgnoreExpiredTrustAnchors`, the two rows that trust an expired certificate before a valid one verify without the flag too. In `SignatureVerification`, the two `bad_key_type` issuers give `X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY`.
+
 Resolve conflicts **preserving the fork's additions**. Most conflicts are upstream's periodic `|...|` → `` `...` `` doc-comment restyle landing adjacent to a line we added — keep our line + upstream's comment style. For `include/openssl/nid.h`, keep upstream's new NIDs **and** ours (our NID numbers are from OpenSSL's range and don't collide with BoringSSL's sequential allocation).
 
 ### 2. Verify the merged tree builds
@@ -45,6 +47,7 @@ NEW_SHA=$(git rev-parse HEAD)
 In the bun repo:
 
 - `scripts/build/deps/boringssl.ts` — set `BORINGSSL_COMMIT` to `$NEW_SHA`.
+- `patches/boringssl/*.patch` — delete each file that step 1 committed to the fork, and its entry in `boringssl.ts`.
 - `src/js/node/tls.ts` — three hand-maintained mirrors of BoringSSL tables must be re-derived from the new pin (a test pins the current set, but cannot see upstream additions on its own): `SUPPORTED_ECDH_GROUPS` ← `ssl/ssl_key_share.cc` `kNamedGroups` (every `name` and non-empty `alias`), `_VALID_CIPHERS_SET` ← `ssl/ssl_cipher.cc` `kCiphers`, `CIPHER_LIST_SELECTORS` ← `ssl/ssl_cipher.cc` `kCipherAliases`.
 - Regenerate the source lists (the file's header comment has the exact one-liner). Only `gen/sources.json` is authoritative — diff old vs new and apply the delta:
 

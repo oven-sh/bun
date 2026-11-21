@@ -110,7 +110,7 @@ pub struct Process {
     status: OnceCell<Status>,
     #[cfg(unix)]
     poller: JsCell<Poller>,
-    /// Until it has exited.
+    /// Until its exit is reported.
     #[cfg(windows)]
     handle: JsCell<Option<OwnedHandle>>,
     #[cfg(windows)]
@@ -238,6 +238,9 @@ impl Process {
         debug_assert!(!matches!(status, Status::Running));
         let exit_handler = this.exit_handler.get();
         let _ = this.status.set(status.clone());
+        // Open until the handler has returned.
+        #[cfg(windows)]
+        let _handle = this.handle.take();
         this.detach();
         call_exit_handler(exit_handler, status, rusage);
     }
@@ -330,25 +333,25 @@ impl Process {
         match Self::watch(this) {
             Err(err) => {
                 #[cfg(unix)]
-                {
-                    if err.get_errno() == bun_sys::E::ESRCH {
-                        // Not blocking on macOS, so a child that is still exiting goes to `reap_on_thread`.
-                        return Ok(Self::wait_posix(this, cfg!(not(target_os = "macos"))));
-                    }
-                    let mut rusage = rusage_zeroed();
-                    if let Some(status) = Self::kill_and_reap(this, &mut rusage) {
-                        Self::on_exit(this, status, &rusage);
-                        return Ok(true);
-                    }
-                    // The pid may be another process's from here on, and `kill` leaves alone what is not watched.
-                    this.close();
+                if err.get_errno() == bun_sys::E::ESRCH {
+                    // Not blocking on macOS, so a child that is still exiting goes to `reap_on_thread`.
+                    return Ok(Self::wait_posix(this, cfg!(not(target_os = "macos"))));
                 }
+                let mut rusage = rusage_zeroed();
+                if let Some(status) = Self::kill_and_reap(this, &mut rusage) {
+                    Self::on_exit(this, status, &rusage);
+                    return Ok(true);
+                }
+                // The pid may be another process's from here on, and `kill` leaves alone what is not watched.
+                #[cfg(unix)]
+                this.close();
                 Err(err)
             }
             Ok(()) => Ok(false),
         }
     }
 
+    /// On `Err` it is left running.
     pub fn watch(this: ThisPtr<Self>) -> bun_sys::Result<()> {
         #[cfg(windows)]
         return Self::watch_windows(this);
@@ -678,7 +681,6 @@ impl Process {
 
 #[cfg(windows)]
 impl Process {
-    /// On `Err` the process is ended.
     fn watch_windows(this: ThisPtr<Self>) -> bun_sys::Result<()> {
         let Some(handle) = this.handle.get() else {
             return Ok(());
@@ -693,7 +695,6 @@ impl Process {
             let on_exit = move || Self::report_exit(process.this_ptr());
             let port = this.event_loop.loop_().port();
             let Ok(exit) = Request::wait(port, handle.as_handle(), on_exit) else {
-                let _ = windows_process::kill(handle.as_raw_handle(), 9);
                 let (errno, tag) = (bun_sys::E::ENOMEM, bun_sys::Tag::uv_spawn);
                 return Err(bun_sys::Error::from_code(errno, tag));
             };
@@ -713,27 +714,37 @@ impl Process {
         if w::kernel32::WaitForSingleObject(handle, timeout) == 0 {
             Self::report_exit(this);
         } else if let Err(err) = Self::watch_windows(this) {
-            Self::on_exit(this, Status::Err(err), &rusage_zeroed());
+            let mut rusage = rusage_zeroed();
+            let status = Self::kill_and_reap(this, &mut rusage).unwrap_or(Status::Err(err));
+            Self::on_exit(this, status, &rusage);
         }
     }
 
     /// May free `this`.
     fn report_exit(this: ThisPtr<Self>) {
-        // Open until the handler has returned.
-        let Some(handle) = this.handle.take() else {
+        let Some(handle) = this.os_handle() else {
             return;
         };
-        let status = match this.signal.get() {
-            0 => exit_status(handle.as_raw_handle()),
-            signal => Status::Signaled(signal),
-        };
-        Self::on_exit(this, status, &process_rusage(handle.as_raw_handle()));
+        Self::on_exit(this, this.final_status(handle), &process_rusage(handle));
     }
 
-    /// There is nothing to reap.
-    pub fn kill_and_reap(this: ThisPtr<Self>, _: &mut Rusage) -> Option<Status> {
-        let _ = this.kill(9);
-        None
+    fn final_status(&self, handle: w::HANDLE) -> Status {
+        match self.signal.get() {
+            0 => exit_status(handle),
+            signal => Status::Signaled(signal),
+        }
+    }
+
+    /// As on POSIX, but there is nothing to reap.
+    pub fn kill_and_reap(this: ThisPtr<Self>, rusage: &mut Rusage) -> Option<Status> {
+        let handle = this.os_handle()?;
+        if this.signal.get() == 0 {
+            // `None` if this is what ends it, or if it is still there.
+            windows_process::kill(handle, 9).err()?;
+            windows_process::kill(handle, 0).err()?;
+        }
+        *rusage = process_rusage(handle);
+        Some(this.final_status(handle)).filter(|status| !matches!(status, Status::Err(_)))
     }
 
     fn set_hold(&self, value: bool) {
@@ -742,7 +753,7 @@ impl Process {
         }
     }
 
-    /// `None` once it has exited.
+    /// `None` once its exit is reported.
     pub fn rusage(&self) -> Option<Rusage> {
         self.os_handle().map(process_rusage)
     }

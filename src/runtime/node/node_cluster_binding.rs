@@ -118,6 +118,9 @@ pub(crate) fn send_helper_primary<'a>(
         message.put(global, b"$hasHandle", JSValue::TRUE);
         #[cfg(windows)]
         {
+            if subprocess.has_exited() {
+                return Ok(None);
+            }
             let peer_pid = subprocess.pid() as u32;
             native_handle = crate::ipc::Handle::export(native_fd, peer_pid, handle, false);
             if native_handle.is_none() {

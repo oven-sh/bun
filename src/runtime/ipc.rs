@@ -1404,6 +1404,7 @@ impl SendQueue {
                         #[cfg(windows)]
                         if let Some(Handle { socket, .. }) = &mut item.handle
                             && !self.pending_close.get()
+                            && !self.windows.try_close_after_write.get()
                             && let Some(again) = ExportedSocket::new(socket.fd, socket.peer_pid)
                         {
                             *socket = again;

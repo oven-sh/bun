@@ -526,14 +526,8 @@ impl Subprocess<'_> {
     }
 
     fn close_process(&self) {
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            return;
-        }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            self.process().close();
-        }
+        #[cfg(any(target_os = "linux", target_os = "android", windows))]
+        self.process().close();
     }
 
     pub(crate) fn on_stdin_destroyed(&self) {
@@ -1098,8 +1092,6 @@ pub(crate) mod testing_apis {
             return Ok(false);
         };
 
-        // Mirror what the real error path does (onStreamRead on Windows,
-        // read() on Posix) so the teardown exercised is identical.
         let fake_err = bun_sys::Error::from_code(bun_sys::Errno::EBADF, bun_sys::Tag::read);
         PipeReader::inject_error(&pipe, fake_err);
         Ok(true)

@@ -5181,11 +5181,12 @@ declare module "bun" {
      * also accepted. A list with an unknown name is an error. The handshake
      * fails when the peer supports none of the groups.
      *
-     * The default, which `"auto"` also selects, is `X25519MLKEM768`, `X25519`,
-     * `P-256` and `P-384`. `X25519MLKEM768` is a post-quantum hybrid group. Its
-     * key share makes a client's first handshake message about 1500 bytes,
-     * which is more than one TCP segment on most networks. If a server or a
-     * network device resets such connections, pass a list without that group.
+     * The default is `X25519MLKEM768`, `X25519`, `P-256` and `P-384`. `"auto"`
+     * is the same as not setting the option. `X25519MLKEM768` is a
+     * post-quantum hybrid group. Its key share makes a client's first
+     * handshake message about 1500 bytes, which is more than one TCP segment
+     * on most networks. If a server or a network device resets such
+     * connections, pass a list without that group.
      */
     ecdhCurve?: string | undefined;
   }

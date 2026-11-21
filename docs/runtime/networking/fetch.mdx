@@ -303,7 +303,7 @@ await fetch("https://example.com", {
 });
 ```
 
-`ecdhCurve` is one group name or a colon-separated list in order of preference. `"auto"` selects the default list. Bun keeps a separate connection pool for each `ecdhCurve` value.
+`ecdhCurve` is one group name or a colon-separated list in order of preference. `"auto"` is the same as not setting `ecdhCurve`. Bun keeps a separate connection pool for each list.
 
 ### Request options
 

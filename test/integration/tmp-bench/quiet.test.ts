@@ -1,2 +1,2 @@
-import { bench } from "./run";
-bench("boost.js");
+import { test } from "bun:test";
+test("unused", () => {});

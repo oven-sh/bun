@@ -1,2 +1,2 @@
-import { bench } from "./run";
-bench("cond.js", "all", "tcp ,http ,worker ping-pong", "before;", "3");
+import { test } from "bun:test";
+test("unused", () => {});

@@ -1,2 +1,8 @@
 import { bench } from "./run";
-bench("cond.js", "4", "tcp ping-pong k=1$,k=64,http ,tcp stream,tcp 500,worker ping-pong", "before;", "3");
+bench(
+  "cond.js",
+  "12",
+  "at once,Bun.file.stream,FileSink,createReadStream,dns,bursts,Bun.write file",
+  ";BUN_TMP_RING=1;BUN_TMP_RING=2;BUN_TMP_RING=01;BUN_TMP_RING=21",
+  "3",
+);

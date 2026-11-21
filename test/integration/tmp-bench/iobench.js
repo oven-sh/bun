@@ -591,6 +591,37 @@ const cases = {
       return N / ((now() - t) / 1000);
     },
   ],
+  ...Object.fromEntries(
+    ["late timers", "reads"].map(what => [
+      `8 workers that read and compute: ${what}`,
+      [
+        what === "reads" ? "/s" : "ms",
+        +(what === "reads"),
+        async tmp => {
+          const n = new Int32Array(new SharedArrayBuffer(4)), f = path.join(tmp, "eight.bin");
+          fs.writeFileSync(f, Buffer.alloc(4 * MB));
+          const code = `onmessage = async e => { const h = await require("fs").promises.open(${JSON.stringify(f)}), b = Buffer.alloc(4 << 20); postMessage(0); for (;;) { await h.read(b, 0, b.length, 0); for (const end = performance.now() + 10; performance.now() < end; ); Atomics.add(e.data, 0, 1); } }`;
+          await Promise.all(Array.from({ length: 8 }, () => new Promise(r => { const w = new Worker("data:text/javascript," + encodeURIComponent(code)); w.onmessage = r, w.postMessage(n); })));
+          await Bun.sleep(500);
+          const t = now(), first = n[0];
+          let turns = 0;
+          while (now() - t < 3000) await Bun.sleep(25), turns++;
+          return what === "reads" ? (n[0] - first) / ((now() - t) / 1000) : (now() - t) / turns - 25;
+        },
+      ],
+    ]),
+  ),
+  "fs.write, 5000 at once": [
+    "op/s",
+    1,
+    async tmp => {
+      const fd = fs.openSync(path.join(tmp, "many.bin"), "w"), b = Buffer.alloc(64), t = now();
+      for (let round = 0; round < 8; round++) await Promise.all(Array.from({ length: 5000 }, () => new Promise(r => fs.write(fd, b, r))));
+      return 40000 / ((now() - t) / 1000);
+    },
+  ],
+  "Bun.write 512 KB, for longer": ["/s", 1, async tmp => { const b = Buffer.alloc(512 * 1024); return repeat(5000, 1, () => Bun.write(path.join(tmp, "out.bin"), b))(tmp); }],
+  "fs.read 4 MB one by one": ["/s", 1, async tmp => { const f = path.join(tmp, "four.bin"), b = Buffer.alloc(4 * MB); fs.writeFileSync(f, b); const fd = fs.openSync(f); return repeat(1500, 1, () => new Promise(r => fs.read(fd, b, 0, b.length, 0, r)))(tmp); }],
   "fs.read, 5000 at once": [
     "op/s",
     1,

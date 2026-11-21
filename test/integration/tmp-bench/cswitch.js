@@ -72,6 +72,11 @@ function report(list, runs, burners, hz) {
     ms = t => (t * 1000) / hz,
     sums = {};
   runs.sort((x, y) => x.t0 - y.t0);
+  for (const run of runs.filter(it => !it.writer)) {
+    const mine = new Set(list.filter(e => e.pid === run.pid).map(e => e.thread)), on = [], ran = new Map();
+    for (const e of list) if (e.to !== undefined) (e.t >= run.t0 && e.t <= run.t1 && mine.has(e.from) && e.from !== run.reader && on[e.cpu] && ran.set(e.from, (ran.get(e.from) ?? 0) + e.t - on[e.cpu]), (on[e.cpu] = e.t));
+    run.writer = [...ran].sort((x, y) => y[1] - x[1])[0]?.[0];
+  }
   let i = 0,
     off = {};
   for (const e of list) {
@@ -131,7 +136,7 @@ function report(list, runs, burners, hz) {
       const rows = Object.entries(table).sort(([, x], [, y]) => y.asleep + y.queued - x.asleep - x.queued),
         all = key => f(rows.reduce((s, [, r]) => s + r[key], 0));
       console.log(`cond sw   ${thread}`, all("n"), all("asleep"), all("queued"), all("long"), all("moved"), " in all");
-      for (const [key, r] of rows.slice(0, thread === "reader" ? 6 : 1))
+      for (const [key, r] of rows.slice(0, 6))
         console.log(`cond sw   ${thread}`, f(r.n), f(r.asleep), f(r.queued), f(r.long), f(r.moved), "", key);
     }
   }
@@ -185,8 +190,16 @@ if (mode === "--ops") {
   burn(50);
   const t0 = qpc(k.QueryPerformanceCounter), seen = ["@" + priority()];
   for (let i = 0; i < 4; i++) { const t = performance.now(); await op(); seen.push(`${(performance.now() - t).toFixed(0)}@${priority()}`); }
+  if (state === "long") { const t = performance.now(); let n = 0; for (; performance.now() - t < 1500; n++) await op(); seen.push(`then ${n} in ${(performance.now() - t).toFixed(0)}`); }
   console.log(JSON.stringify({ t0, t1: qpc(k.QueryPerformanceCounter), pid: process.pid, reader: k.GetCurrentThreadId(), seen: seen.join(" "), cpus: navigator.hardwareConcurrency }));
   process.exit(0);
+} else if (mode === "--writes") {
+  const k = k32(), file = os.tmpdir() + "/sw-" + process.pid, b = Buffer.alloc(512 * 1024);
+  await Bun.write(file, b);
+  const t0 = qpc(k.QueryPerformanceCounter);
+  for (let i = 0; i < 800; i++) await Bun.write(file, b);
+  console.log(JSON.stringify({ t0, t1: qpc(k.QueryPerformanceCounter), chunks: 800, pid: process.pid, reader: k.GetCurrentThreadId() }));
+  fs.rmSync(file);
 } else if (mode === "--turns") {
   const k = k32(), file = os.tmpdir() + "/sw-" + process.pid, t0 = qpc(k.QueryPerformanceCounter);
   const busy = setInterval(() => { for (const end = performance.now() + 50; performance.now() < end; ); }, 1);
@@ -278,10 +291,10 @@ if (mode === "--ops") {
     const far = isOps && Bun.spawn([burner, "-e", `require("bun:ffi").dlopen("kernel32.dll", { SetProcessAffinityMask: { args: ["i64", "u64"], returns: "i32" } }).symbols.SetProcessAffinityMask(-1n, 1n); require("os").setPriority(-14); require("fs").writeFileSync(${JSON.stringify(dir + "\\at")}, Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("x") }).url.href)`]);
     if (far) (burners.push(far), Bun.sleepSync(1000), (process.env.AT = fs.readFileSync(dir + "\\at", "utf8")));
     if (isOps) console.log(`cond ops on ${isOne ? "one cpu" : "all cpus"}: priority at the start, then ms and priority after each call`);
-    for (const what of isOps ? ["open cold", "open idle", "lookup cold", "writer cold", "shell cold", "fetch cold", "fetch decayed", "sleep cold", "sleep decayed"] : []) {
+    for (const what of isOps ? ["open long", "writer long", "sleep long"] : []) {
       for (let round = 0; round < (what.endsWith("idle") ? 1 : rounds); round++)
         for (const [exe, variant] of columns) {
-          const out = Bun.spawnSync([exe, __filename, "--ops", what], { env: { ...process.env }, timeout: 20000, stdin: "ignore", stderr: "inherit" }).stdout.toString();
+          const out = Bun.spawnSync([exe, __filename, "--ops", what], { env: { ...process.env, BUN_TMP_RING: exe === a ? "" : variant }, timeout: 20000, stdin: "ignore", stderr: "inherit" }).stdout.toString();
           if (out) runs.push({ name: variant || "as is", what, ...JSON.parse(out) });
         }
       for (const [, variant] of columns) console.log(`cond   ${what}, ${variant || "as is"}: ${runs.filter(it => it.what === what && it.name === (variant || "as is")).map(it => it.seen).join(" | ")} (${runs[0]?.cpus} cpus)`);
@@ -289,8 +302,8 @@ if (mode === "--ops") {
     for (let round = 0; round < (isOps ? 0 : rounds); round++)
       for (let turn = 0; turn < columns.length; turn++) {
         const [exe, variant] = columns[(turn + round) % columns.length],
-          out = Bun.spawnSync([exe, __filename, isOne ? "--turns" : "--read"], {
-            env: { ...process.env, BUN_TMP_TUNE: exe === a ? "" : variant },
+          out = Bun.spawnSync([exe, __filename, isOne ? "--turns" : condition === "writes" ? "--writes" : "--read"], {
+            env: { ...process.env, BUN_TMP_RING: exe === a ? "" : variant },
             timeout: 40000,
             stdin: "ignore",
           }).stdout.toString();
@@ -322,7 +335,7 @@ if (mode === "--ops") {
       b.subarray(0, 88).toString("hex"),
     );
     if (isOps) {
-      if (isOne) for (const what of ["open cold", "writer cold", "sleep cold"]) for (const [, variant] of columns) sequence(list, runs.find(it => it.what === what && it.name === (variant || "as is")), hz);
+      if (isOne) for (const what of []) for (const [, variant] of columns) sequence(list, runs.find(it => it.what === what && it.name === (variant || "as is")), hz);
     } else if (isOne)
       for (const [, variant] of columns) {
         const mine = runs.filter(it => it.name === (variant || "as is")).sort((x, y) => x.t1 - x.t0 - (y.t1 - y.t0));

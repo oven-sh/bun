@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("cond.js", "busy", "tcp ,http ,worker ping-pong", "before;", "3");
+bench("cswitch.js", "writes", ";2;01", "7");

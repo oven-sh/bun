@@ -1402,11 +1402,20 @@ fn bbr_starts_up_until_the_bandwidth_stops_growing() {
 
 #[test]
 fn bbr_forgets_rounds_without_growth_that_are_long_ago() {
-    for (limited, is_over) in [(7, true), (8, false)] {
+    for (before, limited, lost, rtt, is_over) in [
+        (3, 7, 1, 12_500, true),
+        (3, 8, 1, 12_500, false),
+        (3, 11, 1, 12_501, true),
+        (3, 12, 1, 12_501, false),
+        (2, 20, 5, 12_501, false),
+        (2, 20, 6, 12_501, true),
+    ] {
         let mut sender = Sender::new(Algorithm::Bbr);
-        sender.rounds_of(60, 3, millis(10));
-        for _ in 0..limited {
-            sender.run_dry().rounds_of(60, 1, millis(10));
+        sender.rounds_of(60, before, millis(10));
+        for round in 0..limited {
+            let (lost, rtt) = if round == 2 { (lost, rtt) } else { (0, 10_000) };
+            sender.run_dry().send(60).wait(micros(rtt));
+            sender.feedback(0, 30).feedback(lost, usize::MAX);
         }
         sender.rounds_of(60, 2, millis(10));
         assert_eq!(sender.pacing_rate() < 100 * 100 * SEGMENT, is_over);

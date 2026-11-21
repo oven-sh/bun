@@ -1,14 +1,14 @@
 //! Configuration diagnostics that don't depend on the program: 5051 5052 5053 5059 5061 5062 5063 5066 5067 5069 5074 5089 5090 5091
-//! 5095 5096 5102 5108 5109 5110 6266 6304 6379 18035.
+//! 5095 5096 5102 5108 5109 5110 5116 6266 6304 6379 18035.
 //!
-//! A port of `verifyCompilerOptions` (TypeScript 7.0.2, compiler/program.go) without the checks that depend on output paths.
+//! A port of `verifyCompilerOptions` (TypeScript 7.1, compiler/program.go) without the checks that depend on output paths.
 
 use crate::check::spans::{line_end, unescaped_identifier};
 use crate::config::{
-    Project, resolve_config_file_name_of_project_reference, starts_with_config_dir_template,
+    Project, is_network_path_value, resolve_config_file_name_of_project_reference,
+    starts_with_config_dir_template,
 };
 use crate::json::{Json, TsConfigSourceFile};
-use crate::program::COMPARE_PATHS_CASE_SENSITIVE;
 use crate::resolve::{
     JsxEmit, ModuleKind, Options, combine_paths, displayed_path, ensure_path_is_non_module_name,
     get_relative_path_from_directory, get_root_length, path_is_relative, to_path,
@@ -174,9 +174,19 @@ pub enum ConfigLocation {
     /// `CreateDiagnosticAtReferenceSyntax`: at an element of `references`. No location if the index
     /// is out of range.
     Reference(usize),
+    /// `createDiagnosticAtProjectReferenceProperty`: at the value of a property of an element of `references`, or at
+    /// the element if it has no such property. No location if the element isn't an object.
+    ReferenceProperty(usize, &'static [u8]),
     /// `GetOptionsSyntaxByArrayElementValue`: at the string in the array that is the option's value.
     /// No location if the array doesn't contain it.
     Element(&'static [u8], Vec<u8>),
+    /// `getContentMappersKeySyntax`: at the property name `contentMappers`.
+    ContentMappersKey,
+    /// `getContentMapperSyntax`: at the value of a property of an element of `contentMappers`, or at the element if
+    /// the name is `""` or the element has no such property.
+    ContentMapper(usize, &'static [u8]),
+    /// `getContentMapperExtensionSyntax`: at the string in the `extensions` of an element of `contentMappers`.
+    ContentMapperExtension(usize, Vec<u8>),
 }
 
 /// A diagnostic about the options.
@@ -213,6 +223,48 @@ pub fn spans_of_top_elements(
     spans
 }
 
+/// `getContentMapperSyntax`: returns the value of the property `sub_key` of the element of `contentMappers` at `index`.
+/// Falls back to the element, and then to the value of `contentMappers`.
+fn content_mapper_syntax(
+    file: &TsConfigSourceFile,
+    index: usize,
+    sub_key: &[u8],
+) -> Option<crate::hir::ExprId> {
+    let root = file.object_literal_expression()?;
+    let mappers = file.initializer(file.property(root, b"contentMappers", None)?);
+    let Some(element) = file.elements(mappers).nth(index) else {
+        return Some(mappers);
+    };
+    let property = (!sub_key.is_empty())
+        .then(|| file.property(element, sub_key, None))
+        .flatten();
+    Some(property.map_or(element, |property| file.initializer(property)))
+}
+
+/// `GetContentMapperOptionDiagnosticLocation`: returns the span of the value that `path` leads to, from the `options` of
+/// the element of `contentMappers` at `index`. Stops at the last value that exists.
+pub fn content_mapper_option_span(
+    file: &TsConfigSourceFile,
+    index: usize,
+    path: &[crate::content_mapper::OptionPathSegment],
+) -> Option<(u32, u32)> {
+    use crate::content_mapper::OptionPathSegment;
+    let mut node = content_mapper_syntax(file, index, b"options")?;
+    for segment in path {
+        let next = match segment {
+            OptionPathSegment::Index(index) => file.elements(node).nth(*index),
+            OptionPathSegment::Property(name) => file
+                .property(node, name, None)
+                .map(|property| file.initializer(property)),
+        };
+        match next {
+            Some(next) => node = next,
+            None => break,
+        }
+    }
+    Some(file.span(node))
+}
+
 impl Problem {
     pub fn new(code: u32, args: &[&[u8]], at: ConfigLocation) -> Problem {
         Problem {
@@ -243,6 +295,26 @@ impl Problem {
             let list = value_of(root, b"references")?;
             return file.elements(list).nth(index).map(|e| file.span(e));
         }
+        if let ConfigLocation::ReferenceProperty(index, name) = self.at {
+            let list = value_of(root, b"references")?;
+            let reference = file.elements(list).nth(index)?;
+            let reference = Some(reference).filter(|&it| file.is_object_literal(it))?;
+            return Some(file.span(value_of(reference, name).unwrap_or(reference)));
+        }
+        if let ConfigLocation::ContentMappersKey = self.at {
+            let mappers = file.property(root, b"contentMappers", None)?;
+            return Some(file.name_span(mappers));
+        }
+        if let ConfigLocation::ContentMapper(index, sub_key) = self.at {
+            return Some(file.span(content_mapper_syntax(file, index, sub_key)?));
+        }
+        if let ConfigLocation::ContentMapperExtension(index, extension) = &self.at {
+            let list = content_mapper_syntax(file, *index, b"extensions")?;
+            let is_match =
+                |&e: &_| file.convert_property_value_to_json(e).as_str() == Some(extension);
+            let element = file.elements(list).find(is_match);
+            return Some(file.span(element.unwrap_or(list)));
+        }
         if let ConfigLocation::Top(name) | ConfigLocation::TopElement(name, _) = &self.at {
             let list = value_of(root, name)?;
             let ConfigLocation::TopElement(_, specified) = &self.at else {
@@ -272,7 +344,11 @@ impl Problem {
             | ConfigLocation::Top(_)
             | ConfigLocation::TopElement(..)
             | ConfigLocation::Reference(_)
-            | ConfigLocation::Element(..) => None,
+            | ConfigLocation::ReferenceProperty(..)
+            | ConfigLocation::Element(..)
+            | ConfigLocation::ContentMappersKey
+            | ConfigLocation::ContentMapper(..)
+            | ConfigLocation::ContentMapperExtension(..) => None,
             ConfigLocation::Key(name, other) => file
                 .property(options_object, name, Some(*other))
                 .map(name_span),
@@ -416,8 +492,8 @@ pub fn verify_compiler_options(
         let mut use_instead = Vec::new();
         if !config_path.is_empty() {
             let base_url = text(b"baseUrl");
-            let mut relative =
-                relative_from_file(config_path, base_url, COMPARE_PATHS_CASE_SENSITIVE);
+            let is_case_sensitive = options.use_case_sensitive_file_names;
+            let mut relative = relative_from_file(config_path, base_url, is_case_sensitive);
             // So `..` becomes `./..`.
             if !(relative.starts_with(b"./") || relative.starts_with(b"../")) {
                 relative.splice(0..0, *b"./");
@@ -541,6 +617,8 @@ pub fn verify_compiler_options(
                     && !starts_with_config_dir_template(substitution)
                 {
                     out.push(Problem::new(5090, &[], at()));
+                } else if is_network_path_value(substitution, &options.paths_base_dir) {
+                    out.push(Problem::new(5116, &[substitution], at()));
                 }
             }
         }

@@ -439,6 +439,7 @@ impl TreeBuilder<'_, '_> {
             name,
             name_pos,
             flags,
+            attributes: TypeNodeId::NONE,
             body,
             has_body: true,
             specifies_module: false,

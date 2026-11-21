@@ -35,8 +35,6 @@ struct ParsedAhead {
     comments: Vec<Comment>,
     comment_directives: Vec<CommentDirective>,
     ignore_comments: Vec<(u32, u32)>,
-    /// `jsdoc::tags_in` its comments.
-    tags: u8,
 }
 
 /// A field of the parser.
@@ -45,9 +43,6 @@ pub(crate) struct Ahead {
     next: u32,
     /// In the order of the text. Empty in the parser of a stretch, which gives up in a namespace that is open at `next`.
     parsed: VecDeque<ParsedAhead>,
-    /// `jsdoc::tags_in` the first `comments_read` comments of the file, and in those that were dropped.
-    pub(crate) tags: u8,
-    pub(crate) comments_read: usize,
 }
 
 impl Default for Ahead {
@@ -55,8 +50,6 @@ impl Default for Ahead {
         Ahead {
             next: u32::MAX,
             parsed: VecDeque::new(),
-            tags: 0,
-            comments_read: 0,
         }
     }
 }
@@ -116,7 +109,6 @@ impl Ahead {
         Ahead {
             next: parsed.front().map_or(u32::MAX, |it| it.from),
             parsed,
-            ..Ahead::default()
         }
     }
 
@@ -193,7 +185,9 @@ fn parse_stretch(
     let mut lx = Lexer::new(text, stops, atoms, &mut scratch.names);
     set_up_lexer(&mut lx, &options);
     lx.start_at(from.at);
-    let jsdoc = jsdoc::State::new(&options, true, 0);
+    // The checker reads no JSDoc comment of a declaration file.
+    let reads_typescript_jsdoc = false;
+    let jsdoc = jsdoc::State::new(&options, true, reads_typescript_jsdoc);
     let mut parser = Parser::<false, false>::new(lx, file, stacks, declared, options, jsdoc);
     if from.is_in_namespace {
         parser.enter_module_block();
@@ -218,7 +212,6 @@ fn parse_stretch(
         return (None, end);
     }
     let lx = parser.lx;
-    let tags = jsdoc::tags_in(text, &lx.comments);
     let parsed = Stretch::new(Box::new(parser.f), statements).map(|nodes| ParsedAhead {
         from: from.at,
         end,
@@ -230,7 +223,6 @@ fn parse_stretch(
         },
         comment_directives: lx.comment_directives,
         ignore_comments: lx.ignore_comments,
-        tags,
     });
     (parsed, end)
 }
@@ -285,21 +277,17 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             };
             if end == from {
                 self.lx.discard_trivia_from(from);
-                let unread = &self.lx.comments[self.ahead.comments_read..];
-                self.ahead.tags |= jsdoc::tags_in(self.lx.src, unread);
             }
             end = next.end;
             self.lx.comments.append(&mut next.comments);
             (self.lx.comment_directives).append(&mut next.comment_directives);
             self.lx.ignore_comments.append(&mut next.ignore_comments);
-            self.ahead.tags |= next.tags;
             stretches.push(next.nodes);
         }
         self.ahead.next = parsed.front().map_or(u32::MAX, |it| it.from.max(from + 1));
         if stretches.is_empty() {
             return Vec::new();
         }
-        self.ahead.comments_read = self.lx.comments.len();
         #[cfg(test)]
         tests::TAKEN.set(tests::TAKEN.get() + stretches.len());
         let statements =

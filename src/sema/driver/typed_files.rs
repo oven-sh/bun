@@ -800,7 +800,7 @@ impl<'a, 's> Syntax<'a, 's> {
             }
             ExprKind::Template { exprs }
             | ExprKind::Array(exprs)
-            | ExprKind::ImportCall { args: exprs } => file.ids(exprs).collect(),
+            | ExprKind::ImportCall { args: exprs, .. } => file.ids(exprs).collect(),
             ExprKind::Object(properties) => properties
                 .iter()
                 .map(|property| file[property].value)
@@ -3631,7 +3631,9 @@ impl<'a> Transfer<'_, 'a, '_> {
             .filter(|name| !nested.contains(name))
             .collect();
         let imports = file.imports.iter();
-        for import in imports.filter(|import| !import.type_only && !import.is_deferred) {
+        let is_loaded =
+            |import: &&Import| !import.type_only && import.phase == ImportPhase::Evaluation;
+        for import in imports.filter(is_loaded) {
             let named = import.named.iter().map(|specifier| file[specifier].pos);
             let default = import.default.is_some().then_some(import.default_pos);
             let namespace = import.namespace.is_some().then_some(import.namespace_pos);
@@ -4367,8 +4369,14 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
     let count = checker.p.files.modules.len();
     let paths: Vec<Option<Box<[u8]>>> = (0..count as u32)
         .map(|other| {
-            is_project_source(checker, FileId(other))
-                .then(|| checker.p.files.module(FileId(other)).file_name().into())
+            is_project_source(checker, FileId(other)).then(|| {
+                checker
+                    .p
+                    .files
+                    .module(FileId(other))
+                    .language_file_name()
+                    .into()
+            })
         })
         .collect();
     let is_source = |file: FileId| paths.get(file.idx()).cloned().flatten();

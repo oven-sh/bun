@@ -33,10 +33,14 @@ test/cli/lint/conformance/expected*.txt text eol=lf
 # Compared byte for byte with what the crate renders.
 src/cron/tests/* text eol=lf
 # Embedded in the executable, which splits them at \n.
+src/lint/linter/config/oxlint_fields.txt text eol=lf
 src/lint/linter/config/presets.txt text eol=lf
 src/lint/linter/deprecated.txt text eol=lf
 src/lint/linter/schema/schemas.txt text eol=lf
 src/lint/oxlint_help.txt text eol=lf
+src/lint/oxlint_messages.txt text eol=lf
+src/lint/plugins/n/data_names.txt text eol=lf
+src/lint/plugins/n/es_syntax_names.txt text eol=lf
 src/sema/messages.txt text eol=lf
 
 *.lockb binary diff=lockb

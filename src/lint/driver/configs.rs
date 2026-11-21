@@ -911,7 +911,7 @@ impl<'l> Loader<'l> {
             let line = [
                 b"typescript ",
                 &installed[..],
-                b" is installed, but bun lint checks types like TypeScript 7",
+                b" is installed, but bun lint checks types like TypeScript 7.1",
             ];
             self.advise(line.concat());
         }
@@ -1321,8 +1321,8 @@ impl<'l> Loader<'l> {
         }
         .map_err(|error| Fatal(error.message))?;
         let installed = installed_version(base_path, b"eslint");
-        if installed.is_some_and(|it| minor_of(&it).is_some_and(|it| it.0 < 10)) {
-            config.follow_eslint(9);
+        if let Some((major @ ..10, _)) = installed.and_then(|it| minor_of(&it)) {
+            config.follow_eslint(if major < 9 { 8 } else { 9 });
         }
         config.infer_globals(self.infers_globals_besides());
         Ok(config)
@@ -2587,6 +2587,11 @@ impl<'l> Loader<'l> {
         let mut load_plugin =
             |location: &Json, prefix: &[u8]| self.js_plugins.load_located(location, prefix);
         let named = self.named_plugins(Flavor::EslintRc)?;
+        let installed = installed_version(cwd, b"eslint");
+        let eslint_major = match installed.and_then(|it| minor_of(&it)) {
+            Some((9, _)) => 9,
+            _ => 8,
+        };
         let mut config = Config::from_legacy(
             self.linter.registry(),
             &LegacyOptions {
@@ -2598,6 +2603,7 @@ impl<'l> Loader<'l> {
                 plugins_from: plugins_from.as_deref(),
                 cascade,
                 named: &named,
+                eslint_major,
             },
             &mut files,
             &mut load,

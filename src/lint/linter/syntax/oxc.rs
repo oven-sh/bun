@@ -22,8 +22,8 @@ use crate::utils::oxlint::{can_be_script_or_module, has_module_syntax};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{ClassOwner, Parent};
 use bun_sema::hir::{
-    Diagnostic, DiagnosticKind, ExprKind, Flags, FnKind, Modifier, ModifierKind, ParamId, PatKind,
-    StmtId, StmtKind, VarDecl, VarKind, rare,
+    Diagnostic, DiagnosticKind, ExprKind, Flags, FnKind, Import, ImportPhase, Modifier,
+    ModifierKind, ParamId, PatKind, StmtId, StmtKind, VarDecl, VarKind, rare,
 };
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -372,19 +372,18 @@ fn import_phase_without_call<'a>(file: &'a File<'a>, recorded: &[Diagnostic]) ->
 
 /// `import defer a from "b"`, `import defer { a } from "b"`: only a namespace can be deferred.
 fn deferred_imports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
-    let deferred = file.hir.imports.iter().filter(|it| it.is_deferred);
+    let is_deferred = |it: &&Import| it.phase == ImportPhase::Defer;
+    let deferred = file.hir.imports.iter().filter(is_deferred);
     let rejected = deferred.filter_map(|it| {
-        // `import source a from "b"` also has `is_deferred` set.
-        let clause = file.text().get(it.clause_start as usize..)?;
-        let (message, code) = match clause.starts_with(b"defer") {
-            true if it.default.is_some() => (
+        let (message, code) = if it.default.is_some() {
+            (
                 "Default imports are not allowed in a deferred import.",
                 18058,
-            ),
-            true if it.has_named_imports => {
-                ("Named imports are not allowed in a deferred import.", 18059)
-            }
-            _ => return None,
+            )
+        } else if it.has_named_imports {
+            ("Named imports are not allowed in a deferred import.", 18059)
+        } else {
+            return None;
         };
         let keyword = Span::new(it.clause_start, it.clause_start + "defer".len() as u32);
         Some(

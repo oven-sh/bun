@@ -1811,7 +1811,7 @@ impl<'f, 'i, 'a, 's> Execution<'f, 'i, 'a, 's> {
                 }
                 Some(ways)
             }
-            ExprKind::ImportCall { args } => {
+            ExprKind::ImportCall { args, .. } => {
                 let ways = self.evaluate_all(state, hir.ids(args))?.into_iter();
                 Some(ways.map(|it| (it.0, Value::Unknown)).collect())
             }

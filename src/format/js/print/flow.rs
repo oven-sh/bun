@@ -577,6 +577,8 @@ pub(crate) fn is_shorthand_function_type(func: Func<'_>) -> bool {
         Node::Member(member) => is_function_type && !member.is_static(),
         Node::Param(param) => is_function_type && !is_function_type_param(param),
         Node::VarDecl(_) => is_function_type,
+        // The value of an indexer, `[k: K]: (A) => B`, keeps its parentheses.
+        Node::Func(owner) if owner.kind() == FnKind::IndexSignature => false,
         Node::Func(owner) => is_function_type || matches!(owner.owner(), Node::Type(_)),
         Node::Stmt(statement) => {
             statement.tag() == StmtTag::TypeAlias && !is_declared(statement.modifiers())

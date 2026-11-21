@@ -960,9 +960,10 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ["ts", "enum E { a, , b }", [" | Unexpected token |  | 12+1"]],
       ["ts", "enum E { 1n }", ["TS(2452) | An enum member cannot have a numeric name. |  | 9+2"]],
       ["ts", "enum E { ...a }", [" | Unexpected token |  | 9+3"]],
-      ["ts", "class A { #a = 1; m() { let x: typeof this.#a; return x; } }", [" | Unexpected token |  | 43+2"]],
-      ["ts", "class A { #a = 1; m() { let x: typeof this.#a.b; } }", [" | Unexpected token |  | 43+2"]],
-      ["ts", "let x: typeof a.#b;", [" | Unexpected token |  | 16+2"]],
+      // TypeScript 7.1 has private names in type queries. oxlint reports `Unexpected token` at the name.
+      ["ts", "class A { #a = 1; m() { let x: typeof this.#a; return x; } }", []],
+      ["ts", "class A { #a = 1; m() { let x: typeof this.#a.b; } }", []],
+      ["ts", "let x: typeof a.#b;", [" | Private identifier '#b' is not allowed outside class bodies |  | 16+2"]],
       ["ts", "let x: A.#b;", [" | Unexpected token |  | 9+2"]],
       ["js ts", "class A { #x; m() { super.#x; } }", [" | Private fields cannot be accessed on super |  | 20+8"]],
       ["js ts", "class A { #x; m() { super.#x(); } }", [" | Private fields cannot be accessed on super |  | 20+8"]],

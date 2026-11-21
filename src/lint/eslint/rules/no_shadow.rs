@@ -243,16 +243,23 @@ fn unwrap_expression(mut e: Expr<'_>) -> Expr<'_> {
     e
 }
 
+/// The function expression or the class that `variable` is the name of.
+fn owner_of_named_expression<'a>(variable: &Variable<'a>) -> Option<Node<'a>> {
+    match variable.definition {
+        Declaration::Fn(func) if func.kind() == FnKind::Expr => Some(func.owner()),
+        Declaration::Class(class) => Some(class.owner()),
+        _ => None,
+    }
+}
+
 /// ESLint's `isFunctionNameInitializerException`, typescript-eslint's `isOnInitializer`:
 /// `var a = function a() {}`, `var { A = foo || class A {} } = b`.
 fn is_function_name_initializer_exception<'a>(
     variable: &Variable<'a>,
     shadowed: &Variable<'a>,
 ) -> bool {
-    let owner = match variable.definition {
-        Declaration::Fn(func) if func.kind() == FnKind::Expr => func.owner(),
-        Declaration::Class(class) => class.owner(),
-        _ => return false,
+    let Some(owner) = owner_of_named_expression(variable) else {
+        return false;
     };
     let (Declaration::Var(outer) | Declaration::Param(outer)) = shadowed.definition else {
         return false;
@@ -284,7 +291,25 @@ fn is_function_name_initializer_exception<'a>(
     initializer.is_some_and(|it| unwrap_expression(e) == it)
 }
 
-/// oxlint's `is_value_import_used_only_as_type`: a value may shadow an import that the file only uses as a type.
+/// `isOnInitializer`, which ESLint had before version 10: the name of a function or class expression anywhere in the
+/// declaration of the variable it shadows, with no other scope in between, as in `const A = wrap(function A() {})`.
+fn is_on_initializer<'a>(variable: &Variable<'a>, shadowed: &Variable<'a>) -> bool {
+    let Some(owner) = owner_of_named_expression(variable) else {
+        return false;
+    };
+    let (Node::Expr(_), Declaration::Var(outer)) = (owner, shadowed.definition) else {
+        return false;
+    };
+    let declaration = Node::Pat(outer).ancestors().find_map(|it| match it {
+        Node::VarDecl(declarator) => Some(declarator.parent().span()),
+        _ => None,
+    });
+    declaration.is_some_and(|it| it.start < variable.identifier.start && variable.identifier.end < it.end)
+        && variable.scope.parent() == Some(shadowed.scope)
+}
+
+/// oxlint's `is_value_import_used_only_as_type`: a value may shadow an import that the file only uses as a type. JSX isn't a
+/// use of `React` there.
 fn oxlint_is_import_used_only_as_type<'a>(
     variable: &Variable<'a>,
     shadowed: &Variable<'a>,
@@ -293,7 +318,8 @@ fn oxlint_is_import_used_only_as_type<'a>(
     variable.is_value
         && import_of(shadowed.definition).is_some()
         && *used_only_as_type.get_or_insert_with(shadowed.symbol, || {
-            let mut references = shadowed.symbol.references().peekable();
+            let references = shadowed.symbol.references();
+            let mut references = references.filter(|it| !it.is_jsx_pragma()).peekable();
             let is_type = |it: Reference<'a>| {
                 it.is_type() && !it.is_value() || reference_contains_type_query(it)
             };
@@ -643,7 +669,12 @@ impl Checker {
                 .data("name", name);
             return;
         };
-        if is_function_name_initializer_exception(&variable, &shadowed)
+        let is_before_10 = self.dialect == Dialect::Eslint && file.language().eslint_major < 10;
+        let names_its_initializer = match is_before_10 {
+            true => is_on_initializer(&variable, &shadowed),
+            false => is_function_name_initializer_exception(&variable, &shadowed),
+        };
+        if names_its_initializer
             || (self.ignore_on_initialization && is_init_pattern_node(&variable, &shadowed))
             || self.is_in_tdz(&variable, &shadowed)
             || self.is_external_declaration_merging(&variable, &shadowed)

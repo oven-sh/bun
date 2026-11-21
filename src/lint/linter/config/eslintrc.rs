@@ -26,7 +26,7 @@ use crate::linter::{schema, write_json};
 use crate::options::Json;
 use crate::paths::{self, Style};
 use bun_core::strings;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// A config file, or something treated as one: `.eslintignore`, the command line.
 pub struct LegacyFile {
@@ -87,6 +87,8 @@ pub struct LegacyOptions<'o> {
     pub cascade: usize,
     /// The plugins listed in bunfig.toml's `plugins`. ESLint 8 has no syntax for a path or for a different prefix.
     pub named: &'o [super::NamedPlugin],
+    /// [`LanguageOptions::eslint_major`](crate::language::LanguageOptions::eslint_major): 9 if ESLint 9 reads the files.
+    pub eslint_major: u8,
 }
 
 /// `IgnorePattern`'s `DotPatterns`. ESLint treats these as `.gitignore` lines.
@@ -242,9 +244,9 @@ fn with_default(default: &Json, option: &Json) -> Json {
     }
 }
 
-/// The options that make today's rule `id` behave like ESLint 8's rule with `options`, which aren't empty. `defaults`
-/// is [`Legacy::defaults`].
-fn migrate_options(defaults: &Json, id: &[u8], options: &[Json]) -> Vec<Json> {
+/// The options that make today's rule `id` behave like ESLint 8's rule with `options`. `defaults` is
+/// [`Legacy::defaults`].
+pub(super) fn migrate_options(defaults: &Json, id: &[u8], options: &[Json]) -> Vec<Json> {
     let Some(defaults) = defaults.get(id).and_then(Json::as_array) else {
         return options.to_vec();
     };
@@ -260,6 +262,12 @@ fn migrate_options(defaults: &Json, id: &[u8], options: &[Json]) -> Vec<Json> {
             (default, option) => option.or_else(|| default.cloned()),
         })
         .collect()
+}
+
+/// [`ESLINT_8_DEFAULTS`], for an `eslint.config.js` that ESLint 8 reads.
+pub(super) fn default_options_of_eslint_8() -> &'static Json {
+    static DEFAULTS: OnceLock<Json> = OnceLock::new();
+    DEFAULTS.get_or_init(eslint_8_defaults)
 }
 
 /// An environment's `parserOptions.ecmaVersion`.
@@ -646,7 +654,12 @@ enum Definition<'r> {
 }
 
 /// `validateRuleOptions` without a source. `Ok` holds the severity, `Err` the message.
-fn validate_rule(id: &[u8], value: &Json, definition: Definition) -> Result<Severity, Vec<u8>> {
+fn validate_rule(
+    id: &[u8],
+    value: &Json,
+    definition: Definition,
+    major: u8,
+) -> Result<Severity, Vec<u8>> {
     let items: &[Json] = match value {
         Json::Array(items) => items,
         value => std::slice::from_ref(value),
@@ -678,7 +691,7 @@ fn validate_rule(id: &[u8], value: &Json, definition: Definition) -> Result<Seve
             js_plugin::Schema::None | js_plugin::Schema::Any => Ok(()),
         },
         (Definition::Native, (b"", name)) => {
-            let schema = eslint8::schema_of(name).or_else(|| schema::schema_of(id));
+            let schema = eslint8::schema_of(name, major).or_else(|| schema::schema_of(id));
             schema::validate_as_eslint_8(schema.as_ref(), options)
         }
         (Definition::Native, _) => match schema::schema_of(id) {
@@ -704,15 +717,16 @@ fn is_built_in_plugin(registry: &Registry, id: &[u8]) -> bool {
     registry.replaces_plugin(id) && crate::rule::Plugin::replaces_package(id, None)
 }
 
-/// True if ESLint 8 has no definition for the rule named `id`. `has_plugin` tells whether the elements have a plugin
+/// True if ESLint `major` has no definition for the rule named `id`. `has_plugin` tells whether the elements have a plugin
 /// with that id. `js_plugins` are the ones whose contents are known.
 fn lacks_rule(
     id: &[u8],
     has_plugin: &dyn Fn(&[u8]) -> bool,
     js_plugins: &[Arc<js_plugin::Plugin>],
+    major: u8,
 ) -> bool {
     let (prefix, name) = parse_rule_id(id);
-    let is_its_own = prefix.is_empty() && eslint8::has_rule(name);
+    let is_its_own = prefix.is_empty() && eslint8::has_rule(name, major);
     match find_js_rule(js_plugins, id) {
         Some(found) => found.is_none() && !is_its_own,
         None if prefix.is_empty() => !is_its_own,
@@ -728,10 +742,11 @@ fn definition_of<'r>(
     id: &[u8],
     has_plugin: &dyn Fn(&[u8]) -> bool,
     js_plugins: &'r [Arc<js_plugin::Plugin>],
+    major: u8,
 ) -> Definition<'r> {
     match find_js_rule(js_plugins, id).flatten() {
         Some(rule) => Definition::Js(rule),
-        None if lacks_rule(id, has_plugin, js_plugins) => Definition::Missing,
+        None if lacks_rule(id, has_plugin, js_plugins, major) => Definition::Missing,
         None => Definition::Native,
     }
 }
@@ -1150,8 +1165,8 @@ impl<'c> Legacy<'_, '_, 'c> {
                 b"eslint:all" => eslint8::ALL,
                 _ => return Err(config_missing(name, &context.name)),
             };
-            let rules =
-                eslint8::rules_with(flag).map(|it| (it.as_bytes().to_vec(), text(b"error")));
+            let rules = eslint8::rules_with(flag, self.options.eslint_major)
+                .map(|it| (it.as_bytes().to_vec(), text(b"error")));
             let mut config = object(vec![(b"rules", Json::Object(rules.collect()))]);
             return self.object_data(&mut config, &inner(Vec::new(), name));
         }
@@ -1363,10 +1378,10 @@ impl<'c> Legacy<'_, '_, 'c> {
         for &NamedPlugin { ref id, at } in &named.0 {
             let answer_text = |key: &[u8]| self.answer(at)?.get(key)?.as_str();
             if let Some(name) = answer_text(b"name").filter(|_| is_built_in_plugin(registry, id)) {
-                // The answer has the version of typescript-eslint, which isn't loaded.
+                // The answer has the version of typescript-eslint. Version 8 isn't loaded, so its name lacks it.
                 let name = match answer_text(b"version") {
-                    Some(version) => [name, b"@", version].concat(),
-                    None => name.to_vec(),
+                    Some(version) if !name.ends_with(version) => [name, b"@", version].concat(),
+                    _ => name.to_vec(),
                 };
                 self.reader.advise_about_version(id, &name);
             }
@@ -1407,6 +1422,7 @@ impl<'c> Legacy<'_, '_, 'c> {
     }
 
     fn validate_elements(&self, elements: &[Element], named: &Named) -> Result<(), ConfigError> {
+        let major = self.options.eslint_major;
         for element in elements {
             let name = &element.name[..];
             for (id, _) in element
@@ -1466,9 +1482,9 @@ impl<'c> Legacy<'_, '_, 'c> {
                 let has_plugin = |id: &[u8]| named.has(id);
                 let definition = match self.reader.formatting_rule(id) {
                     Some(_) => Definition::Missing,
-                    None => definition_of(id, &has_plugin, &self.reader.js_plugins),
+                    None => definition_of(id, &has_plugin, &self.reader.js_plugins, major),
                 };
-                validate_rule(id, value, definition)
+                validate_rule(id, value, definition, major)
                     .map_err(|message| ConfigError::new(&[name, b":\n\t", &message]))?;
             }
         }
@@ -1567,7 +1583,8 @@ impl<'c> Legacy<'_, '_, 'c> {
             let severity = Json::Number(f64::from(severity as u8));
             let value = Json::Array(std::iter::once(severity).chain(options).collect());
             // It keeps its name as written, because the error message about it shows that name.
-            if lacks_rule(id, &|id| named.has(id), &self.reader.js_plugins) {
+            let major = self.options.eslint_major;
+            if lacks_rule(id, &|id| named.has(id), &self.reader.js_plugins, major) {
                 settings.extend(RuleSetting::new(id, &value));
                 continue;
             }
@@ -1891,6 +1908,8 @@ pub(super) fn merge_rules(earlier: &mut Vec<RuleSetting>, later: &[RuleSetting])
 /// Extra data the linter needs for a file under an ESLint 8 config, beyond what a flat config expresses.
 #[derive(Debug)]
 pub struct Eslint8 {
+    /// [`LegacyOptions::eslint_major`]
+    major: u8,
     /// `configNameOfNoInlineConfig`
     name_of_no_inline_config: Vec<u8>,
     /// The plugin ids of all elements. ESLint looks for a rule in all of them, whichever files they apply to.
@@ -2042,7 +2061,7 @@ impl Eslint8 {
     /// are known.
     pub(crate) fn lacks_rule(&self, id: &[u8], js_plugins: &[Arc<js_plugin::Plugin>]) -> bool {
         let has_plugin = |id: &[u8]| self.plugins.iter().any(|it| **it == *id);
-        lacks_rule(id, &has_plugin, js_plugins)
+        lacks_rule(id, &has_plugin, js_plugins, self.major)
     }
 
     /// The variables of the plugin environment named `name`.
@@ -2091,7 +2110,8 @@ impl Eslint8 {
         if let Some(major) = self.typescript_eslint {
             migrate_setting_to_v8(major, id, &mut value);
         }
-        let severity = validate_rule(id, &value, js.map_or(Definition::Native, Definition::Js))?;
+        let definition = js.map_or(Definition::Native, Definition::Js);
+        let severity = validate_rule(id, &value, definition, self.major)?;
         let defaults = match js {
             Some(_) => &Json::Null,
             None => &self.defaults,
@@ -2117,7 +2137,9 @@ impl ResolvedConfig {
         let id = RuleId::Known(rule.entry.meta).to_vec();
         let eslint_8 = self.language.eslint_8.as_ref();
         let defaults = eslint_8.and_then(|it| it.defaults.get(&id)?.as_array());
-        matches!(rule.severity, Severity::Off) && defaults.is_some_and(|it| *it == *rule.options)
+        rule.is_only_implied()
+            || matches!(rule.severity, Severity::Off)
+                && defaults.is_some_and(|it| *it == *rule.options)
     }
 
     /// True if the config is an ESLint 8 config that has no definition for the rule that it or a comment calls `id`.
@@ -2135,7 +2157,7 @@ impl ResolvedConfig {
 /// Does what `_verifyWithoutProcessors` in ESLint's `Linter` does with a file's merged config before it parses. An
 /// environment sets the ECMAScript version and defines variables, and the config's own settings override that. `Err`
 /// means the file's parser couldn't be loaded.
-pub(super) fn resolve(language_options: &mut Json) -> Result<Eslint8, Vec<u8>> {
+pub(super) fn resolve(language_options: &mut Json, major: u8) -> Result<Eslint8, Vec<u8>> {
     let own = take(language_options, OWN).unwrap_or(Json::Null);
     if let Some(error) = own.get(b"parserError").and_then(Json::as_str) {
         return Err(error.to_vec());
@@ -2145,6 +2167,7 @@ pub(super) fn resolve(language_options: &mut Json) -> Result<Eslint8, Vec<u8>> {
     let name = own.get(b"nameOfNoInlineConfig").and_then(Json::as_str);
     let parser = language_options.get(b"parser").and_then(Json::as_str);
     let mut eslint_8 = Eslint8 {
+        major,
         name_of_no_inline_config: name.unwrap_or_default().to_vec(),
         plugins: (ids.unwrap_or_default().iter())
             .filter_map(|it| Some(it.as_str()?.into()))
@@ -2219,7 +2242,10 @@ impl Config {
     ) -> Result<Config, ConfigError> {
         // A `--rulesdir` rule with the same name as an ESLint rule inherits nothing from it.
         let replaced = options.rules.and_then(|it| it.get(b"rules")?.as_object());
-        let mut defaults = eslint_8_defaults();
+        let mut defaults = match options.eslint_major {
+            8 => eslint_8_defaults(),
+            _ => Json::Object(Vec::new()),
+        };
         if let Json::Object(entries) = &mut defaults {
             let replaced = replaced.unwrap_or_default();
             entries.retain(|it| !replaced.iter().any(|other| other.0 == it.0));
@@ -2305,6 +2331,7 @@ impl Config {
         Ok(Config {
             lints_all_named_files: !options.ignore,
             dot_patterns: Some(dot_patterns),
+            eslint_major: options.eslint_major,
             ..legacy.reader.finish(Semantics {
                 keeps_options: true,
                 accepts_all_plugins: true,

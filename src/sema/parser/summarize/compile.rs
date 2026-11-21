@@ -72,6 +72,7 @@ pub fn parse_for_compile_in<'s>(
             false => JsDoc::Ignored,
         },
         attach_comments: false,
+        is_before_typescript_7_1: false,
         compiles: true,
         reads_as_bun_run: true,
         ignores_pure_comments: options.ignores_pure_comments,

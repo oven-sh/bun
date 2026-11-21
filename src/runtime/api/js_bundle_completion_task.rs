@@ -37,6 +37,7 @@ use crate::api::js_bundler::js_bundler::{
 };
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::cli::compile_command::BundlerInputs;
+use crate::cli::content_mapper_process::KillSwitch;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
 use crate::node::types::{FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer};
 use crate::server::html_bundle;
@@ -245,9 +246,19 @@ fn executable_entry_point_name(executable_path: &[u8]) -> &[u8] {
 }
 
 /// `BundleOptions::type_check`. `Config::from_js` has thrown where the type checker is removed.
-fn check_types(checked: options::TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool {
+pub(crate) fn check_types(checked: options::TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool {
     bun_removable_features::removable_body!(Check, Abort, {
         crate::cli::check_command::check_for_bun_build(checked, log)
+    })
+}
+
+/// `check_types` for `check: { runExternalCode: true }`.
+pub(crate) fn check_types_with_external_code(
+    checked: options::TypeChecked<'_, '_>,
+    log: &mut bun_ast::Log,
+) -> bool {
+    bun_removable_features::removable_body!(Check, Abort, {
+        crate::cli::check_command::check_for_bun_build_with_external_code(checked, log)
     })
 }
 
@@ -257,6 +268,16 @@ fn check_types_and_emit_declarations(
 ) -> bool {
     bun_removable_features::removable_body!(Check, Abort, {
         crate::cli::check_command::check_and_emit_declarations(checked, log)
+    })
+}
+
+/// `check_types_and_emit_declarations` for `check: { runExternalCode: true }`.
+fn check_types_and_emit_declarations_with_external_code(
+    checked: options::TypeChecked<'_, '_>,
+    log: &mut bun_ast::Log,
+) -> bool {
+    bun_removable_features::removable_body!(Check, Abort, {
+        crate::cli::check_command::check_and_emit_declarations_with_external_code(checked, log)
     })
 }
 
@@ -857,6 +878,15 @@ bun_jsc::jsc_abi_extern! {
 
 // ─── On the bundle thread ────────────────────────────────────────────────────
 
+/// Stops the content mappers of the build of `completion`, which the bundle thread runs.
+pub(crate) fn kill_switch_of(completion: dispatch::CompletionHandle<'_>) -> KillSwitch {
+    debug_assert!(core::ptr::eq(
+        completion.cancelled,
+        &raw const bundle_thread::CANCELLED
+    ));
+    bundle_thread::content_mappers()
+}
+
 impl JSBundleCompletionTask {
     /// The set-up after `Transpiler::init`. Returns `config`, which `transpiler` borrows from then on.
     fn configure_bundler<'a>(
@@ -993,9 +1023,10 @@ impl JSBundleCompletionTask {
         transpiler.options.min_chunk_size = config.min_chunk_size;
         transpiler.options.fold_chunks = config.fold_chunks;
         transpiler.options.module_preload = config.module_preload;
-        transpiler.options.type_check = match config.dts {
-            true => Some(check_types_and_emit_declarations as options::TypeCheck),
-            false => config.check.then_some(check_types as options::TypeCheck),
+        transpiler.options.type_check = match (config.dts, config.runs_external_code) {
+            (true, true) => Some(check_types_and_emit_declarations_with_external_code),
+            (true, false) => Some(check_types_and_emit_declarations as options::TypeCheck),
+            (false, _) => config.check,
         };
         if config.dts {
             let unsupported = [

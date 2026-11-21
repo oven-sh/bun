@@ -388,11 +388,11 @@ fields! {
     Interface { type_params, extends, other_heritage, members, stmt; name, name_pos, flags }
     Alias { type_params, ty, stmt; name, name_pos, flags }
     Enum { members, stmt; name, name_pos, flags }
-    Module { body, stmt; name, name_pos, flags, has_body, specifies_module, is_erased }
+    Module { attributes, body, stmt; name, name_pos, flags, has_body, specifies_module, is_erased }
     Import {
         named, stmt, attributes;
         spec, default, default_pos, namespace, namespace_pos, clause_start, clause_end, namespace_start,
-        has_named_imports, type_only, is_deferred, mode, loaded_as
+        has_named_imports, type_only, phase, mode, loaded_as
     }
     ImportEquals { target, expression, stmt; name, name_pos, flags }
     Export { items, stmt, attributes; spec, has_module_specifier, type_only, mode }
@@ -815,7 +815,6 @@ impl Stretch {
             modifiers_of_props,
             unclosed_literals,
             stray_decorators,
-            deferred_import_calls,
             import_call_type_args,
             import_attributes,
             specifier_expressions,
@@ -832,7 +831,7 @@ impl Stretch {
             jsdoc_member_comments,
             jsdoc_param_errors,
             functions_with_param_tags,
-            unmatched_augments_tags,
+            augments_tags,
             props,
             calls,
             cases,
@@ -871,7 +870,6 @@ impl Stretch {
             modifiers_of_props,
             unclosed_literals,
             stray_decorators,
-            deferred_import_calls,
             import_call_type_args,
             import_attributes,
             specifier_expressions,
@@ -888,7 +886,7 @@ impl Stretch {
             jsdoc_member_comments,
             jsdoc_param_errors,
             functions_with_param_tags,
-            unmatched_augments_tags,
+            augments_tags,
             props,
             calls,
             cases,

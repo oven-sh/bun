@@ -179,10 +179,11 @@ fn merge_nodes_with_matching_import_flavors(
         }
         for &node in nodes.iter() {
             let declaration = model.declarations[node as usize];
-            // `getImportFlavorOfNode`
+            // `getImportFlavorOfNode`. `import source a from "a"` can't be merged with another import.
             if has_ignore_next_node(model, model.list(declaration.comments.leading))
                 || declaration.specifiers.1 == 0
                 || declaration.is_type != is_type
+                || declaration.import.is_source_phase()
                 || deleted.contains(&node)
             {
                 continue;

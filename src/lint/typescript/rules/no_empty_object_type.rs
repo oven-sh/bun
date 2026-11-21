@@ -116,6 +116,8 @@ impl NoEmptyObjectType {
             Node::Type(parent) => parent.tag() == TypeTag::Intersection,
             Node::Stmt(parent) => match parent.kind() {
                 StmtKind::TypeAlias(alias) => self.allows_name(alias.name()),
+                // `declare module "a" with {}`
+                StmtKind::Module(_) => true,
                 _ => false,
             },
             _ => false,

@@ -5,7 +5,7 @@
 //! `instantiateAliasOrInterfaceWithDefaults`, `getStaticTypeOfReferencedJsxConstructor`,
 //! `getNameFromJsxElementAttributesContainer`, `getUninstantiatedJsxSignaturesOfType`,
 //! `getIntrinsicAttributesTypeFromStringLiteralType` and
-//! `createJsxAttributesTypeFromAttributesProperty` in TypeScript 7.0.2's jsx.go.
+//! `createJsxAttributesTypeFromAttributesProperty` in TypeScript 7.1's jsx.go.
 
 use super::*;
 use crate::resolve::JsxEmit;
@@ -704,19 +704,14 @@ impl<'p, 's> Checker<'p, 's> {
         if !children.is_empty()
             && let JsxName::Name(name) = children_property_name
         {
+            // `getApparentTypeOfContextualType`: the attributes narrow a union of props types first.
+            let expected = self
+                .apparent_type_of_contextual_type_of_jsx_attributes(file, e, ContextFlags::empty())
+                .and_then(|props| self.contextual_property(props, name));
             let ty = if let [(_, only)] = children[..] {
                 only
             } else {
                 let types: Vec<TypeId> = children.iter().map(|c| c.1).collect();
-                // `getApparentTypeOfContextualType`: the attributes narrow a union of props types
-                // first.
-                let expected = self
-                    .apparent_type_of_contextual_type_of_jsx_attributes(
-                        file,
-                        e,
-                        ContextFlags::empty(),
-                    )
-                    .and_then(|props| self.contextual_property(props, name));
                 let mut is_tuple_expected = false;
                 if let Some(expected) = expected {
                     for &m in self.parts(expected) {

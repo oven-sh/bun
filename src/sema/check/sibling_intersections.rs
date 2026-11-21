@@ -174,6 +174,7 @@ impl<'a, 'p> FactsOfName<'a, 'p> {
         let member_facts = self.all.facts.get_mut(number as usize)?;
         let fact = member_facts.get_mut(position as usize)?;
         if fact.generation != self.all.generation {
+            cold_path();
             fact.generation = self.all.generation;
             (fact.instantiation_effects, fact.type_effects) = (Effects::Unknown, Effects::Unknown);
         }
@@ -230,9 +231,7 @@ struct BeforeRun {
 impl<'p, 's> Checker<'p, 's> {
     /// True if a call whose lookups all hit would count the same instantiations if it ran again now.
     pub(super) fn may_reuse_for_siblings(&self) -> bool {
-        self.instantiation_depth == 0
-            && self.index_infos_in_instantiation.is_empty()
-            && self.unresolved_members.is_empty()
+        self.instantiation_depth == 0 && self.index_infos_in_instantiation.is_empty()
     }
 
     /// `inference_disturbances`, except that other tasks' commits count only if they resolve a cycle. A task publishes
@@ -302,6 +301,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.instantiation_count = count;
         self.reliability |= reliability;
         if deepest > self.deepest_stack.get() {
+            cold_path();
             self.deepest_stack.set(deepest);
         }
         true
@@ -363,6 +363,7 @@ impl<'p, 's> Checker<'p, 's> {
         mapper: MapperId,
     ) -> PropInstantiation {
         let Some(facts) = facts.filter(|it| !it.all.is_abandoned) else {
+            cold_path();
             return self.instantiation_of_prop(prop, mapper);
         };
         if let Some(&mut fact) = facts.fact(nth)
@@ -395,6 +396,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeOfProp { ty, is_literal }
         };
         let Some(facts) = facts.filter(|it| !it.all.is_abandoned) else {
+            cold_path();
             return compute(self);
         };
         if let Some(&mut fact) = facts.fact(nth)

@@ -401,7 +401,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_instantiated_here {
             return self.instantiate_with_alias_worker(ty, mapper, alias);
         }
-        self.in_instantiation(mapper, |c| {
+        self.in_instantiation(ty, mapper, |c| {
             c.instantiate_with_alias_worker(ty, mapper, alias)
         })
     }
@@ -489,6 +489,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.types().deferred(result).is_some() {
             return result;
         }
+        cold_path();
         // `createDeferredTypeReference`, `instantiateAnonymousType`
         let is_instantiation = match (self.data(ty), self.data(result)) {
             (

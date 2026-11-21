@@ -152,6 +152,8 @@ pub struct Options {
     /// Records what a formatter needs to attach comments to nodes: `enclosing_node`, `preceding_node` and
     /// `following_node` of `hir::Comment`, and the HTML-like comments of a script.
     pub attach_comments: bool,
+    /// Accepts `a ** b as T ** c`, which TypeScript rejects since 7.1, as `Dialect::typescript_5` does.
+    pub is_before_typescript_7_1: bool,
     /// Parsing for `bun compile`.
     pub compiles: bool,
     /// The lexer reads text as `bun run` does. `compiles` implies it.
@@ -203,8 +205,8 @@ pub struct Scratch {
     /// A file that's no longer needed. The next file reuses its lists and its box. It's boxed because a `FileBuilder`
     /// is large and gets moved around a lot.
     recycled: Option<Box<FileBuilder>>,
-    /// The result of `parser::jsdoc::read_by_checker` while a TypeScript file is parsed a second time. Otherwise 0.
-    jsdoc_wanted: u8,
+    /// True while a TypeScript file is parsed a second time, to read its JSDoc comments.
+    reads_typescript_jsdoc: bool,
     /// For the next parse.
     ahead: Ahead,
     /// From the last parsed text.
@@ -253,16 +255,6 @@ pub struct Parsed {
     /// The end of the last token of [`Options::part`] (or of the text), and the end of the token after it, which is the
     /// last one scanned.
     pub end: (u32, u32),
-    /// `jsdoc::tags_in` the comments that were dropped and in the first so many of the others.
-    tags_in_first_comments: (u8, usize),
-}
-
-impl Parsed {
-    fn read_by_checker(&self, text: &[u8], is_declaration_file: bool) -> u8 {
-        let (found, first) = self.tags_in_first_comments;
-        let found = found | parser::jsdoc::tags_in(text, &self.file.comments[first..]);
-        parser::jsdoc::read_by_checker(text, found, is_declaration_file)
-    }
 }
 
 /// Parses `text` into HIR. Names are interned in `atoms`.
@@ -272,46 +264,47 @@ pub(crate) fn parse(
     atoms: &dyn Intern,
     scratch: &mut Scratch,
 ) -> Result<Parsed, Rejected> {
-    let is_declaration_file = options.is_declaration_file;
     if let Some(share) = Ahead::share_of(text, &options)
         && let Some(parsed) = parse_in_shares(text, options, atoms, scratch, share)
     {
         return Ok(parsed);
     }
-    // Which comments of a TypeScript file get read depends on all of its comments. The text says which it will most likely
-    // be, and the comments that the parse has found say whether that was right.
-    if options.reads_jsdoc && !options.is_javascript && !options.skips_function_blocks {
-        let guessed = parser::jsdoc::guess_what_checker_reads(text, is_declaration_file);
-        if guessed != 0 {
-            scratch.jsdoc_wanted = guessed;
-            let parsed = parser::run(text, options, Some(atoms), scratch);
-            scratch.jsdoc_wanted = 0;
-            if let Ok(parsed) = parsed {
-                if parsed.read_by_checker(text, is_declaration_file) == guessed {
-                    return Ok(parsed);
-                }
-                scratch.recycle(parsed.file);
+    let can_read_jsdoc =
+        options.reads_jsdoc && !options.is_javascript && !options.is_declaration_file;
+    // Whether the comments of a TypeScript file get read depends on all of its comments. The text says what it will
+    // most likely be, and the comments that the parse has found say whether that was right.
+    if can_read_jsdoc
+        && !options.skips_function_blocks
+        && parser::jsdoc::guess_is_read_by_checker(text)
+    {
+        scratch.reads_typescript_jsdoc = true;
+        let parsed = parser::run(text, options, Some(atoms), scratch);
+        scratch.reads_typescript_jsdoc = false;
+        if let Ok(parsed) = parsed {
+            if parser::jsdoc::is_read_by_checker(text, &parsed.file.comments) {
+                return Ok(parsed);
             }
+            scratch.recycle(parsed.file);
         }
     }
     let parsed = parser::run(text, options, Some(atoms), scratch)?;
     // Nobody reads the comments of a tree of which something was left out.
     let is_left_out = parsed.file.rare_syntax & bun_sema::hir::rare::LEFT_OUT != 0;
-    if !options.reads_jsdoc || options.is_javascript || is_left_out {
-        return Ok(parsed);
-    }
-    let wanted = parsed.read_by_checker(text, is_declaration_file);
-    if wanted == 0 {
+    if !can_read_jsdoc
+        || is_left_out
+        || !parser::jsdoc::is_read_by_checker(text, &parsed.file.comments)
+    {
         return Ok(parsed);
     }
     scratch.recycle(parsed.file);
-    scratch.jsdoc_wanted = wanted;
+    scratch.reads_typescript_jsdoc = true;
     let parsed = parser::run(text, options, Some(atoms), scratch);
-    scratch.jsdoc_wanted = 0;
+    scratch.reads_typescript_jsdoc = false;
     parsed
 }
 
-/// `None` if one thread has to parse the text from its start.
+/// `None` if one thread has to parse the text from its start. The text is a declaration file, whose JSDoc comments the
+/// checker doesn't read.
 fn parse_in_shares(
     text: &[u8],
     options: Options,
@@ -319,20 +312,12 @@ fn parse_in_shares(
     scratch: &mut Scratch,
     share: usize,
 ) -> Option<Parsed> {
-    if options.reads_jsdoc && parser::jsdoc::guess_what_checker_reads(text, true) != 0 {
-        return None;
-    }
     let stops = scratch.stops.find_again(text);
     scratch.ahead = Ahead::parse(text, options, atoms, stops, share);
     if scratch.ahead.is_empty() {
         return None;
     }
-    let parsed = parser::run(text, options, Some(atoms), scratch).ok()?;
-    if !options.reads_jsdoc || parsed.read_by_checker(text, true) == 0 {
-        return Some(parsed);
-    }
-    scratch.recycle(parsed.file);
-    None
+    parser::run(text, options, Some(atoms), scratch).ok()
 }
 
 /// Parses `text` into HIR with file-local atoms. `Scratch::atoms` resolves them until the next file is parsed.
@@ -382,7 +367,7 @@ mod entries_tests {
         let file = match is_short {
             true => summarize_top_level(arena, path, None, text, &atoms, false, false, false),
             false => Some(summarize(
-                arena, path, None, text, &atoms, false, false, false,
+                arena, path, None, text, &atoms, false, false, false, false,
             )),
         };
         let file = file.expect("the text has no errors");

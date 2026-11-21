@@ -84,7 +84,7 @@ impl<'s> Folder<'_, 's> {
                 }
                 self.fold_call(e, hir[call])
             }
-            ExprKind::ImportCall { args } => self.fold_import_call(args),
+            ExprKind::ImportCall { args, .. } => self.fold_import_call(args),
             ExprKind::New(call) => self.fold_construction(e, hir[call]),
             ExprKind::Array(items) => {
                 self.note_array_literal(e, items);

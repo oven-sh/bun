@@ -14,7 +14,7 @@ use crate::js::utils::array::write_array_node;
 use crate::js::utils::assignment_like::AssignmentLike;
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::object::{format_computed_or_property_key, should_preserve_quote};
-use crate::js::utils::typecast::has_comments_that_count;
+use crate::js::utils::typecast::operand_gets_parentheses_for_comments;
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
 
@@ -219,7 +219,7 @@ pub(crate) fn write_update_expression<'a>(op: UnOp, operand: Expr<'a>, f: &mut F
 /// `!a`, `typeof a`
 pub(crate) fn write_unary_expression<'a>(op: UnOp, operand: Expr<'a>, f: &mut Formatter<'a>) {
     write!(f, [op.as_str(), op.is_keyword().then_some(space())]);
-    if !f.is_quiet() && has_comments_that_count(operand, f) {
+    if !f.is_quiet() && operand_gets_parentheses_for_comments(operand, f) {
         write!(
             f,
             group(&format_args!("(", soft_block_indent(&operand), ")"))

@@ -241,34 +241,32 @@ impl<'r> Prefetch<'_, 'r> {
         most_paths: usize,
     ) {
         let mut state = self.state.lock();
+        let state = &mut *state;
         state.seen.reserve(most_paths);
-        let mut seen_before: FxHashSet<&'r [u8]> = FxHashSet::default();
         for path in code_paths {
-            let next = state.seen.len() as u32;
-            if *state.seen.entry(path).or_insert(next) != next {
-                seen_before.insert(path);
+            let next = state.unread.len() as u32;
+            let number = *state.seen.entry(path).or_insert(next);
+            if number == next {
+                state.unread.push(None);
+            } else if state.unread[number as usize].take().is_some() {
+                state.unread_count -= 1;
             }
         }
-        (state.to_read).retain(|file| !seen_before.contains(file.path) && !is_code_path(file.path));
+        for unread in &mut state.unread {
+            if unread.is_some_and(|file| is_code_path(file.path)) {
+                *unread = None;
+                state.unread_count -= 1;
+            }
+        }
     }
 
     pub(super) fn add_seed(&self, path: &'r [u8], is_lib: bool) {
         let mut state = self.state.lock();
-        let next = state.seen.len() as u32;
-        if *state.seen.entry(path).or_insert(next) == next {
-            let seed = ToLoad {
-                path,
-                is_lib,
-                package: None,
-            };
-            match is_lib {
-                true => state.to_read.push_front(seed),
-                false => state.to_read.push_back(seed),
-            }
-            if state.expects_seeds {
-                self.has_to_read.notify_one();
-                self.has_work.notify_one();
-            }
+        let before = state.unread.len();
+        state.read_next(path, is_lib, None);
+        if state.unread.len() > before && state.expects_seeds {
+            self.has_to_read.notify_one();
+            self.has_work.notify_one();
         }
     }
 }

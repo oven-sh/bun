@@ -175,6 +175,7 @@ use crate::node::node_fs_watcher::FSWatchTask;
 use crate::dns_jsc::Resolver as DNSResolver;
 use crate::server::{FileResponseStream, ServerAllConnectionsClosedTask};
 
+use crate::cli::content_mapper_process::Child as ContentMapperChild;
 use crate::cli::test::parallel::worker::Worker as TestParallelWorker;
 use crate::cli::{filter_run, multi_run};
 use bun_install::git_runner::GitSubprocess;
@@ -1046,6 +1047,18 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             [Install],
             <*mut _>::as_mut_unchecked,
             SecurityScanSubprocess<'_>,
+            |this, _, event| this.on_writer_io(event)
+        ),
+        PollTag::ContentMapperReader => io_arm!(
+            [Check],
+            <*mut _>::as_ref_unchecked,
+            ContentMapperChild,
+            |this, _, event| this.on_io(event)
+        ),
+        PollTag::ContentMapperWriter => io_arm!(
+            [Check],
+            <*mut _>::as_ref_unchecked,
+            ContentMapperChild,
             |this, _, event| this.on_writer_io(event)
         ),
         PollTag::SubprocessStdinWriter => io_arm!(

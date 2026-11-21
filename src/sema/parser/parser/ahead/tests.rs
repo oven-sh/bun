@@ -27,7 +27,7 @@ fn assert_same(shared: &Parsed, alone: &Parsed) {
     lists!(
         exprs stmts types fns members decorators diagnostics references comment_directives ignore_comments comments
         detached_semicolons body_starts modifiers_of_params modifiers_of_stmts modifiers_of_props specifier_uses
-        deferred_import_calls import_call_type_args import_attributes specifier_expressions exports_from_expressions
+        import_call_type_args import_attributes specifier_expressions exports_from_expressions
         parens non_null_ends far_names tagged_templates ids numbers pats pat_props pat_elems params type_params classes
         interfaces aliases enums enum_members modules props var_decls calls cases imports import_specs import_equals
         exports export_specs tuple_elems mapped modifiers names keyword_identifier_positions expr_flags template_parts
@@ -117,6 +117,18 @@ fn modules() {
         "import {{ a }} from \"a\";\n{}export {{ A }};\nexport default e;\nexport * as b from \"b\";\n",
         DECLARATIONS.repeat(4)
     );
+    assert!(compare(text.as_bytes(), 100) > Some(0));
+}
+
+#[test]
+fn modules_with_import_attributes() {
+    let text = r#"
+declare module "*.css" with { type: "css" } {
+    const sheet: A;
+    export default sheet;
+}
+"#
+    .repeat(16);
     assert!(compare(text.as_bytes(), 100) > Some(0));
 }
 

@@ -665,7 +665,7 @@ fn may_have_unread_type(hir: &hir::File<'_>, site: &ImportSite) -> bool {
         return false;
     };
     let has_options = match hir[call].kind {
-        ExprKind::ImportCall { args } => args.len() > 1,
+        ExprKind::ImportCall { args, .. } => args.len() > 1,
         _ => true,
     };
     has_options && type_attribute(hir, site).is_none()
@@ -700,7 +700,7 @@ fn writes_out_options_without_type(hir: &hir::File<'_>, site: &ImportSite) -> bo
     let ImportSiteKind::ImportCall(call) = site.kind else {
         return false;
     };
-    let ExprKind::ImportCall { args } = hir[call].kind else {
+    let ExprKind::ImportCall { args, .. } = hir[call].kind else {
         return false;
     };
     let Some(options) = hir.ids(args).nth(1) else {

@@ -347,6 +347,29 @@ Not checked:    other tools' configs, CI files, Git hooks
         json: 0,
       });
     });
+
+    test("names the rules if bun lint doesn't exit for every rule that is not supported", async () => {
+      // No config file applies to a.ts, so `--rule` there is not a reason to exit.
+      const files = {
+        "package.json": dependencies("oxlint"),
+        "a.ts": "export const a = 1;\n",
+        "sub/.oxlintrc.json": JSON.stringify({ plugins: [], rules: { "no-such-rule": "error" } }),
+        "sub/b.ts": "export const b = 1;\n",
+      };
+      const flags = ["--rule", "unicorn/no-such-rule:error"];
+      const [text, json, withoutNested, lint] = await Promise.all([
+        doctor(files, flags),
+        doctor(files, [...flags, "-f", "json"]),
+        lintExitCode({ ...files, "sub/.oxlintrc.json": JSON.stringify({ plugins: [] }) }, flags),
+        lintExitCode(files, flags),
+      ]);
+      expect(text.stdout).toContain(`
+        2 are not supported: no-such-rule, unicorn/no-such-rule
+            bun lint exits with code 2 because of no-such-rule. Use --allow-unsupported to make that a warning
+`);
+      expect(JSON.parse(json.stdout).rules.fails_run).toEqual(["no-such-rule"]);
+      expect({ withoutNested, lint, text: text.exitCode }).toEqual({ withoutNested: 0, lint: 2, text: 0 });
+    });
   });
 
   test("the React rules are on in a project that depends on react", async () => {
@@ -489,6 +512,19 @@ Still needed:   eslint (some files go to it)
       fails_run: failsRun,
     });
     expect({ lint, json: json.exitCode }).toEqual({ lint: exitCode, json: 0 });
+  });
+
+  test("a file that cannot be linted is an error if its config is one that ESLint would reject", async () => {
+    const files = {
+      ...withParser,
+      "eslint.config.js": `
+        const parser = { meta: { name: "my-parser" }, parse() {} };
+        export default [{ files: ["**/*.foo"], languageOptions: { parser }, rules: { eqeqeq: ["error", "sometimes"] } }];`,
+    };
+    const [report, lint] = await Promise.all([doctor(files), lintExitCode(files, ["--allow-unsupported"])]);
+    expect(report.stdout).toBe("");
+    expect(report.stderr).toContain(`Key "rules": Key "eqeqeq"`);
+    expect({ doctor: report.exitCode, lint }).toEqual({ doctor: 2, lint: 2 });
   });
 
   test("with both an ESLint and an oxlint config, says which one is used and why", async () => {

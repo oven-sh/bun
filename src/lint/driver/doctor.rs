@@ -368,7 +368,14 @@ pub(crate) fn lint(
         let Status::Matched(config) = &target.status else {
             continue;
         };
-        match target.route() {
+        let route = target.route();
+        // A run stops on this before it lints anything. ESLint only notices when it gets to the file.
+        if route != Route::Eslint
+            && let Some(error) = &config.error
+        {
+            return Err(Fatal(error.clone()));
+        }
+        match route {
             Route::Eslint => {
                 files += 1;
                 by_eslint.add(&target.path);
@@ -381,9 +388,6 @@ pub(crate) fn lint(
             Route::Native | Route::Language | Route::Processor => {
                 files += 1;
                 if seen.insert(Arc::as_ptr(config)) {
-                    if let Some(error) = &config.error {
-                        return Err(Fatal(error.clone()));
-                    }
                     rules.add(config, loader.wants_types(&target.loaded, config));
                 }
             }
@@ -578,10 +582,10 @@ pub(crate) fn lint(
     out.push(b'\n');
     let noun =
         |count: usize, one: &'static str, many: &'static str| if count == 1 { one } else { many };
-    let exits_because_of = |count: usize| {
-        let what = noun(count, "it", "them");
+    let exits_because_of = |what: &[u8]| {
         format!(
-            "bun lint exits with code 2 because of {what}. Use --allow-unsupported to make that a warning"
+            "bun lint exits with code 2 because of {}. Use --allow-unsupported to make that a warning",
+            BStr::new(what)
         )
     };
     write_count(
@@ -607,7 +611,7 @@ pub(crate) fn lint(
             );
         }
         if files_fail_on.count() > 0 {
-            let hint = exits_because_of(files_fail_on.count());
+            let hint = exits_because_of(noun(files_fail_on.count(), "it", "them").as_bytes());
             pretty!(&mut out, colors, "        <d>{}<r>\n", hint);
         }
     }
@@ -670,7 +674,11 @@ pub(crate) fn lint(
                 }
             );
             if *reason == Reason::NotSupported && !fails_on.is_empty() {
-                let hint = exits_because_of(fails_on.len());
+                // A run doesn't exit for a rule that only `--rule` sets where no config file applies.
+                let hint = match fails_on.len() == group.len() {
+                    true => exits_because_of(noun(group.len(), "it", "them").as_bytes()),
+                    false => exits_because_of(&fails_on.join(&b", "[..])),
+                };
                 pretty!(&mut out, colors, "            <d>{}<r>\n", hint);
             }
         }

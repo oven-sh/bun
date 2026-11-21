@@ -1,5 +1,5 @@
-import { realpathSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { existsSync, realpathSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -592,6 +592,61 @@ describe("net.createServer events", () => {
       }).catch(closeAndFail);
     });
   });
+
+  // Windows still reports a fatal flush as a drain.
+  it.skipIf(isWindows)(
+    "fails a write made in the 'connection' listener when the peer resets before it's flushed",
+    async () => {
+      using dir = tempDir("net-open-flush-reset", {
+        "client.js": `
+        const s = require("node:net").connect(Number(process.env.RESET_PORT), "127.0.0.1");
+        s.on("error", () => {});
+        s.once("data", () => {
+          s.resetAndDestroy();
+          require("node:fs").writeFileSync(process.env.RESET_MARKER, "");
+        });
+      `,
+      });
+      const marker = join(String(dir), "reset");
+
+      let sawReset = false;
+      let writeFailed: boolean | undefined;
+      let finished = false;
+      const errors: (string | undefined)[] = [];
+      const closed = Promise.withResolvers<boolean>();
+      const server = createServer(c => {
+        c.on("error", (err: NodeJS.ErrnoException) => errors.push(err.code));
+        c.on("finish", () => (finished = true));
+        c.on("close", closed.resolve);
+        // More than the kernel's send buffer, so the first send is short.
+        c.write(Buffer.alloc(16 * 1024 * 1024, "x"), err => (writeFailed = err != null));
+        c.end();
+        // The rest is flushed when this listener returns. Return only after the peer's reset.
+        const deadline = performance.now() + 10_000;
+        while (!(sawReset = existsSync(marker)) && performance.now() < deadline) {}
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+
+      try {
+        await using client = Bun.spawn({
+          cmd: [bunExe(), join(String(dir), "client.js")],
+          env: { ...bunEnv, RESET_PORT: String((server.address() as AddressInfo).port), RESET_MARKER: marker },
+          stdio: ["ignore", "inherit", "inherit"],
+        });
+        expect({ hadError: await closed.promise, sawReset, writeFailed, finished }).toEqual({
+          hadError: true,
+          sawReset: true,
+          writeFailed: true,
+          finished: false,
+        });
+        expect(errors).toBeOneOf([["ECONNRESET"], ["EPIPE"]]);
+        expect(await client.exited).toBe(0);
+      } finally {
+        server.close();
+      }
+    },
+  );
 
   it("#8374", async () => {
     const server = createServer();

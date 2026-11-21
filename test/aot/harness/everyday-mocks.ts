@@ -13,6 +13,9 @@ const stillWrong: [cases: RegExp, secondTest: string, what: string][] = [];
 // AOT_TEST_RUN_WORDS puts every compiled run under its words, as in test-runs-in-folders.ts.
 const wordsOfAll = process.env.AOT_TEST_RUN_WORDS ?? "";
 
+/** The last line ends with a newline, which begins no line. An empty line anywhere else is a line. */
+const linesOf = (written: string) => written.replace(/\n$/, "").split("\n");
+
 async function outcomeOf(files: Record<string, string>, words: string, ...flags: string[]) {
   using dir = tempDir("aot-everyday-mock", files);
   const env = {
@@ -24,11 +27,9 @@ async function outcomeOf(files: Record<string, string>, words: string, ...flags:
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, "./everyday.test.js"], String(dir), env);
   return {
     // Every line but the one that names the version of Bun.
-    stdout: stdout.split("\n").filter(line => line && !line.startsWith("bun test v")),
+    stdout: linesOf(stdout).filter(line => !line.startsWith("bun test v")),
     // Every line, without the times, which differ from run to run. A word that begins with TestRun makes the runner say what the build handed over.
-    stderr: stderr
-      .trimEnd()
-      .split("\n")
+    stderr: linesOf(stderr)
       .map(line => line.replace(/ \[[\d.]+m?s\]$/, ""))
       .filter(line => !(words && line.startsWith("AOT test run | "))),
     exitCode,
@@ -66,8 +67,21 @@ const warningOfAReset = (line: number, column: number) => [
   expect.stringMatching(new RegExp(`^ +at .*everyday\\.test\\.js:${line}:${column}$`)),
 ];
 
-// A list begins with a line that counts compiled files, and names one file of the project on each line below it: the files that ran from source, and those that did not run again.
-const lineOfAList = /^(\d+ compiled files? .*:|  (kettle|kitchen)\.[cm]js\b.*)$/;
+/**
+ * The lists behind the report of a compiled run, on one line: `ran from source: kettle.mjs?actual, kitchen.mjs; didn't run again: kitchen.mjs`.
+ * A list is a heading that counts compiled files, and below it as many lines as it counts, each with the name of a file in front. Whatever is no such list stays as it was written.
+ */
+function listsOf(lines: string[]) {
+  const lists: string[] = [];
+  for (let at = 0; at < lines.length;) {
+    const [, count, what] = /^(\d+) compiled files? (ran from source|didn't run again)\b.*:$/.exec(lines[at]) ?? [];
+    const files = lines.slice(at + 1, at + 1 + Number(count)).flatMap(line => /^  (\S+?)[:,] /.exec(line)?.[1] ?? []);
+    if (!what || files.length !== Number(count)) return [...lists, ...lines.slice(at)].join("; ");
+    lists.push(`${what}: ${files.sort().join(", ")}`);
+    at += 1 + files.length;
+  }
+  return lists.join("; ");
+}
 
 /** `parts` files share the cases, each a stretch of them. */
 export function everydayMocks(part: number, parts: number) {
@@ -77,6 +91,9 @@ export function everydayMocks(part: number, parts: number) {
     const text = files["everyday.test.js"].split("\n");
     const tests = text.flatMap(line => /^test\("(\w+)"/.exec(line)?.[1] ?? []);
     const reset = text.findIndex(line => line.includes("jest.resetModules();"));
+    // Behind a reset, a second test that takes the kitchen by import() or require() loads it again. `kind` is how its file ends.
+    const [, kind] = text.map(line => /(?:import|require)\("\.\/kitchen\.(\w+)"\)/.exec(line)).find(Boolean) ?? [];
+    const loadsAgain = reset >= 0 && tests.length > 1 && kind !== undefined;
     test(name, async () => {
       const [plain, compiled] = await Promise.all([outcomeOf(files, ""), outcomeOf(files, wordsOfAll, "--aot")]);
       // A specification is a whole answer: every test of the file passes, each has noted what it was served, and the run says nothing else. A run that stopped on its way,
@@ -95,12 +112,18 @@ export function everydayMocks(part: number, parts: number) {
           ? plain
           : { ...plain, stdout: [plain.stdout[0].replace(/ \. 2[ ,].*$/, " . " + secondTest)] },
       );
-      // What a compiled run alone says. In a case that never resets the modules that is nothing: the build has nothing to warn of, and every file ran compiled, so the
-      // case tested compiled code. Behind a reset a file that loads again runs from source. The build warns at the call, and nowhere else, and the run may list files of
-      // the project, and nothing else.
-      expect({ build, lists }).toEqual({
+      // What a compiled run alone says. The build warns where the test file resets the modules, and of nothing else. A file that loads again behind a reset runs from
+      // source, and the run lists it: the kitchen, and with it the kettle where the kitchen or a mock takes the real one. Some such runs also say that they did not run the
+      // kitchen again. Every other case lists nothing: all of its files ran compiled, so it tested compiled code.
+      expect({ build, lists: listsOf(lists) }).toEqual({
         build: reset < 0 ? [] : warningOfAReset(reset + 1, text[reset].indexOf("jest") + 1),
-        lists: reset < 0 ? [] : lists.map(() => expect.stringMatching(lineOfAList)),
+        lists: loadsAgain
+          ? expect.stringMatching(
+              new RegExp(
+                `^ran from source: (kettle\\.${kind}(\\?actual)?, )?kitchen\\.${kind}(; didn't run again: kitchen\\.${kind})?$`,
+              ),
+            )
+          : "",
       });
     });
   }

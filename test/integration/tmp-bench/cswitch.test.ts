@@ -1,2 +1,2 @@
-import { bench } from "./run";
-bench("cswitch.js", "ops", ";2", "3");
+import { test } from "bun:test";
+test("unused", () => {});

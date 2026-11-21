@@ -60,20 +60,11 @@ pub fn has_new_thread() -> bool {
 
 /// A thread is new until `attempt` has succeeded on it.
 pub fn once_on_new_thread(attempt: impl FnOnce() -> bool) -> bool {
-    let has_succeeded = IS_NEW.get() && (tmp(0) < 2 || AFTER.get().is_null()) && attempt();
-    if has_succeeded && tmp(0) == 0 {
+    let has_succeeded = IS_NEW.get() && attempt();
+    if has_succeeded {
         stop_being_new();
     }
     has_succeeded
-}
-
-/// Temporary: the digits of `BUN_TMP_RING`.
-#[allow(clippy::disallowed_methods)]
-fn tmp(index: usize) -> u8 {
-    static DIGITS: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new(|| {
-        std::env::var_os("BUN_TMP_RING").map_or(Vec::new(), |it| it.into_encoded_bytes())
-    });
-    DIGITS.get(index).map_or(0, |it| it - b'0')
 }
 
 fn stop_being_new() {
@@ -188,7 +179,7 @@ impl FifoPool {
             }
             let (start, limit) = (now_ns(), state.spin.limit_ns());
             state.idle_since = Some(start);
-            if limit > 0 && !state.is_spinning && tmp(1) == 0 {
+            if limit > 0 && !state.is_spinning {
                 state.is_spinning = true;
                 self.has_task.store(false, Ordering::SeqCst);
                 drop(state);

@@ -5963,10 +5963,8 @@ pub fn normalize_path_windows_opts<'a>(
             // buf.len - nt_prefix_headroom`.
             // `normalizeStringGenericTZ` performs no bounds checking of its
             // own, so reserve room for `\??\` + trailing-`\` growth + NUL
-            // before calling it. NOTE: `to_nt_path16` is NOT a substitute here
-            // — it only normalizes slashes and leaves `.`/`..` segments in
-            // place, which `NtCreateFile` rejects (e.g. `\??\C:\dir\.` →
-            // OBJECT_NAME_NOT_FOUND).
+            // before calling it. Slashes alone are insufficient: `NtCreateFile`
+            // rejects `.`/`..` segments with OBJECT_NAME_NOT_FOUND.
             if path.len() > buf.len().saturating_sub(8) {
                 return Err(too_long());
             }

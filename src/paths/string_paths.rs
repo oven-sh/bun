@@ -117,39 +117,6 @@ pub fn to_nt_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     wstr_in_buf(wbuf, total)
 }
 
-pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
-    if !crate::is_absolute_windows_t::<u16>(path) {
-        return to_w_path_normalized16(wbuf, path);
-    }
-
-    if strings::has_prefix_comptime_utf16(path, &windows::NT_OBJECT_PREFIX_U8)
-        || strings::has_prefix_comptime_utf16(path, &windows::NT_UNC_OBJECT_PREFIX_U8)
-    {
-        return to_w_path_normalized16(wbuf, path);
-    }
-
-    if strings::has_prefix_comptime_utf16(path, b"\\\\") {
-        if strings::has_prefix_comptime_utf16(&path[2..], &windows::LONG_PATH_PREFIX_U8[2..]) {
-            let prefix = windows::NT_OBJECT_PREFIX;
-            wbuf[..prefix.len()].copy_from_slice(&prefix);
-            let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], &path[4..]).len();
-            let total = n + prefix.len();
-            return wstr_in_buf(wbuf, total);
-        }
-        let prefix = windows::NT_UNC_OBJECT_PREFIX;
-        wbuf[..prefix.len()].copy_from_slice(&prefix);
-        let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], &path[2..]).len();
-        let total = n + prefix.len();
-        return wstr_in_buf(wbuf, total);
-    }
-
-    let prefix = windows::NT_OBJECT_PREFIX;
-    wbuf[..prefix.len()].copy_from_slice(&prefix);
-    let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], path).len();
-    let total = n + prefix.len();
-    wstr_in_buf(wbuf, total)
-}
-
 fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
     let plen = windows::NT_OBJECT_PREFIX.len();
     wbuf[..plen].copy_from_slice(&windows::NT_OBJECT_PREFIX);

@@ -64,7 +64,7 @@ fn append_test_files_from(list: &[u8], positionals: &mut Vec<Box<[u8]>>) {
         }
     };
     let before = positionals.len();
-    for line in strings::split(&contents, b"\n") {
+    for line in strings::split(strings::without_utf8_bom(&contents), b"\n") {
         let path = strings::trim(line, b" \t\r");
         if path.is_empty() {
             continue;

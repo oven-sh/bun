@@ -448,8 +448,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         function: FnId,
         slow_path: BlockId,
     ) {
-        let function = reference_function(self.file, home, function);
-        let is_closure = self.builder.is_closure_of(function, value);
+        // No value is a closure of a function that is never made, and nothing defines it to be named.
+        let is_closure = match is_left_out(self.file, home, function) {
+            true => self.builder.boolean(false),
+            false => {
+                let function = reference_function(self.file, home, function);
+                self.builder.is_closure_of(function, value)
+            }
+        };
         self.emit_guard(is_closure, slow_path);
     }
 

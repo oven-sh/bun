@@ -1165,7 +1165,7 @@ pub(crate) fn merge_small_chunks(
     // point's own chunk) if there is one, else the largest member. Ties break
     // on the key for determinism. A member folded into the largest-member
     // parent loses bits its files had; it still runs before they do because
-    // an entry that remains in the key precedes them and imports every chunk
+    // an entry that remains in the key precedes them and loads every chunk
     // with side effects carrying its bit (`compute_cross_chunk_dependencies`).
     // A member that can be evaluating when an entry of the class loads stays
     // out (rule 1 in the doc comment above).

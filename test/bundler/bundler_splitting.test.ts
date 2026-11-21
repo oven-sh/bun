@@ -991,7 +991,7 @@ describe("bundler", () => {
     run: { file: "/out/entry.js", stdout: "entry 41 42" },
   });
 
-  // An entry point imports every chunk its code reaches, for their side
+  // An entry point loads every chunk its code reaches, for their side
   // effects, even when it uses nothing from one — unless loading that chunk
   // runs nothing.
   itBundled("splitting/NoBareImportOfSideEffectFreeChunk", {
@@ -4678,6 +4678,557 @@ describe("bundler", () => {
       },
     });
   }
+
+  // An entry chunk has no bare import of a chunk that an import above it has already evaluated.
+
+  // The chunks an output imports, in statement order, each named by the source files in it.
+  const importedChunks = (api: BundlerTestBundleAPI, name: string) => {
+    const files = jsFilesIn(api);
+    const file = files.find(f => f === `${name}.js`) ?? files.find(f => f.startsWith(`${name}-`));
+    return [...api.readFile("/out/" + file).matchAll(/^import\s*(\{[^}]*\} from )?"\.\/([^"]+)";$/gm)].map(
+      ([, bindings, chunk]) => {
+        const sources = [...api.readFile("/out/" + chunk).matchAll(/^\/\/ (?:.*[\\/])?(\w+)\.\w+$/gm)].map(m => m[1]);
+        return (bindings ? "" : "bare ") + sources.join("+");
+      },
+    );
+  };
+
+  // first.js puts the {page1, page2} chunk ahead of leaf.js's chunk, which it imports.
+  const page = `import { a } from "./first.js"; import { b } from "./second.js"; console.log(a, b);`;
+  const pagesSharingLeaf = {
+    "/main.js": `await import("./page1.js"); await import("./page2.js"); await import("./page3.js");`,
+    "/page1.js": page,
+    "/page2.js": page,
+    "/page3.js": `import { c } from "./leaf.js"; console.log(c);`,
+    "/first.js": `console.log("first"); export const a = 1;`,
+    "/second.js": `import { c } from "./leaf.js"; console.log("second"); export const b = c + 1;`,
+    "/leaf.js": `console.log("leaf"); export const c = 2;`,
+  };
+  const pagesStdout = "leaf\nfirst\nsecond\n1 3\n1 3\n2";
+  const pageScripts = ["/page1.js", "/page2.js", "/page3.js"];
+  const pageDocuments = Object.fromEntries(
+    pageScripts.map(script => [
+      script.replace(".js", ".html"),
+      `<!DOCTYPE html><html><head><script type="module" src=".${script}"></script></head><body></body></html>`,
+    ]),
+  );
+
+  for (const target of ["bun", "node"] as const) {
+    itBundled(`splitting/RedundantBareImport/DynamicImport_${target}`, {
+      files: pagesSharingLeaf,
+      splitting: true,
+      target,
+      outdir: "/out",
+      metafile: true,
+      runtimeFiles: { "/out/package.json": `{ "type": "module" }` },
+      onAfterBundle(api) {
+        expect(["page1", "page2", "page3"].map(name => importedChunks(api, name))).toEqual([
+          ["first+second"],
+          ["first+second"],
+          ["leaf"],
+        ]);
+        const outputs = Object.values<any>(JSON.parse(api.readFile("/metafile.json")).outputs);
+        expect(outputs.find(output => output.entryPoint?.endsWith("page1.js")).imports).toEqual([
+          { path: expect.stringContaining(chunkContaining(api, '"second"')), kind: "import-statement" },
+        ]);
+      },
+      run: { file: "/out/main.js", runtime: target, stdout: pagesStdout },
+    });
+    itBundled(`splitting/RedundantBareImport/UserEntryPoint_${target}`, {
+      files: pagesSharingLeaf,
+      entryPoints: pageScripts,
+      splitting: true,
+      target,
+      outdir: "/out",
+      runtimeFiles: { "/out/package.json": `{ "type": "module" }` },
+      onAfterBundle(api) {
+        expect(importedChunks(api, "page1")).toEqual(["first+second"]);
+      },
+      run: { file: "/out/page1.js", runtime: target, stdout: "leaf\nfirst\nsecond\n1 3" },
+    });
+  }
+  itBundled("splitting/RedundantBareImport/MinifiedCLI", {
+    files: pagesSharingLeaf,
+    backend: "cli",
+    splitting: true,
+    target: "bun",
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api).filter(file => api.readFile("/out/" + file).includes('import"'))).toEqual([]);
+    },
+    run: { file: "/out/main.js", stdout: pagesStdout },
+  });
+  itBundled("splitting/RedundantBareImport/SplitRequire", {
+    files: {
+      ...pagesSharingLeaf,
+      "/main.js": `require("./page1.js"); require("./page2.js"); require("./page3.js"); export {};`,
+    },
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(importedChunks(api, "page1")).toEqual(["first+second"]);
+    },
+    run: { file: "/out/main.js", stdout: pagesStdout },
+  });
+  itBundled("splitting/RedundantBareImport/ThroughSeveralChunks", {
+    files: {
+      ...pagesSharingLeaf,
+      "/main.js": pagesSharingLeaf["/main.js"] + `await import("./page4.js");`,
+      "/page4.js": `import { d } from "./deep.js"; console.log(d);`,
+      "/leaf.js": `import { d } from "./deep.js"; console.log("leaf"); export const c = d + 1;`,
+      "/deep.js": `console.log("deep"); export const d = 1;`,
+    },
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(importedChunks(api, "page1")).toEqual(["first+second"]);
+      // Nothing above it loads deep.js.
+      expect(importedChunks(api, "page3")).toEqual(["bare deep", "leaf"]);
+    },
+    run: { file: "/out/main.js", stdout: "deep\n" + pagesStdout + "\n1" },
+  });
+  // early.js and util.js fold into page1's chunk, through which lazy.js then reaches the other two.
+  itBundled("splitting/RedundantBareImport/ThroughEntryPointChunk", {
+    files: {
+      ...pagesSharingLeaf,
+      "/page1.js": `import "./early.js"; ${page} import { util } from "./util.js"; console.log(util()); import("./lazy.js");`,
+      "/lazy.js": `import "./early.js"; import { util } from "./util.js"; console.log("lazy", util());`,
+      "/early.js": `console.log("early");`,
+      "/util.js": `import { b } from "./second.js"; export const util = () => b;`,
+    },
+    entryPoints: pageScripts,
+    entryNaming: "[name].entry-[hash].[ext]",
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(importedChunks(api, "page1.entry")).toEqual(["first+second"]);
+      expect(importedChunks(api, "lazy")).toEqual(["early+util+page1"]);
+      launchHashedEntry(api, "page1");
+    },
+    run: { file: "/out/page1.js", stdout: "leaf\nfirst\nsecond\nearly\n1 3\n3\nlazy 3" },
+  });
+  itBundled("splitting/RedundantBareImport/KeepsBindingsAndWhatNothingAboveLoads", {
+    files: {
+      ...pagesSharingLeaf,
+      "/page1.js": page + `import { c } from "./leaf.js"; console.log(c);`,
+      // The import prints nothing in second.js's chunk, which uses no binding of effect.js.
+      "/second.js": `import "./effect.js";` + pagesSharingLeaf["/second.js"],
+      "/main.js": pagesSharingLeaf["/main.js"] + `await import("./effect.js");`,
+      "/effect.js": `console.log("effect");`,
+    },
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(importedChunks(api, "page1")).toEqual(["first+second", "bare effect", "leaf"]);
+      expect(importedChunks(api, "page2")).toEqual(["first+second", "bare effect"]);
+    },
+    run: { file: "/out/main.js", stdout: "leaf\nfirst\nsecond\neffect\n1 3\n2\n1 3\n2" },
+  });
+  for (const [name, leaf] of Object.entries<Record<string, string>>({
+    Builtin: {
+      "/leaf.js": `import { sep } from "node:path/posix"; console.log("leaf"); export const c = sep.length + 1;`,
+    },
+    OptimizedBarrel: {
+      "/leaf.js": `export { c } from "barrel";`,
+      "/node_modules/barrel/package.json": JSON.stringify({ name: "barrel", main: "index.js" }),
+      "/node_modules/barrel/index.js": `console.log("leaf"); export { c } from "./c.js"; export { d } from "./never-read.js";`,
+      "/node_modules/barrel/c.js": `export const c = 2;`,
+    },
+    CommonJS: {
+      "/leaf.js": `import two from "./two.cjs"; console.log("leaf"); export const c = two;`,
+      "/two.cjs": `module.exports = 2;`,
+    },
+  })) {
+    itBundled(`splitting/RedundantBareImport/LeafImports${name}`, {
+      files: { ...pagesSharingLeaf, ...leaf },
+      backend: "api",
+      optimizeImports: ["barrel"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(importedChunks(api, "page1")).toEqual(["first+second"]);
+      },
+      run: { file: "/out/main.js", stdout: pagesStdout },
+    });
+  }
+
+  // A browser learns of leaf.js's chunk from a modulepreload link where there is one, and from the bare import otherwise.
+  itBundled("splitting/RedundantBareImport/BrowserDynamicImport", {
+    files: {
+      ...pagesSharingLeaf,
+      "/main.js": `export const routes = [() => import("./page1.js"), () => import("./page2.js"), () => import("./page3.js")];`,
+    },
+    splitting: true,
+    target: "browser",
+    outdir: "/out",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        ${preloadShim}
+        const { routes } = await import("./out/main.js");
+        const pending = routes[0]();
+        console.log("links", links.length);
+        await pending;
+      `,
+    },
+    onAfterBundle(api) {
+      expect(importedChunks(api, "page1")).toEqual(["first+second"]);
+    },
+    run: { file: "/test.js", stdout: "links 2\nleaf\nfirst\nsecond\n1 3" },
+  });
+  itBundled("splitting/RedundantBareImport/BrowserHTML", {
+    files: { ...pagesSharingLeaf, ...pageDocuments },
+    entryPoints: Object.keys(pageDocuments),
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      const html = api.readFile("/out/page1.html");
+      const script = html.match(/<script type="module" crossorigin src="\.\/([^"]+)\.js">/)![1];
+      expect(importedChunks(api, script)).toEqual(["first+second"]);
+      expect([...html.matchAll(/<link rel="modulepreload" crossorigin href="\.\/([^"]+)">/g)].map(m => m[1])).toEqual([
+        chunkContaining(api, '"second"'),
+        chunkContaining(api, '"leaf"'),
+      ]);
+    },
+  });
+  for (const [name, options] of Object.entries<Partial<BundlerTestInput>>({
+    UserEntryPoint: { entryPoints: pageScripts },
+    ModulePreloadDisabled: { modulePreload: false },
+  })) {
+    itBundled(`splitting/RedundantBareImport/KeptForBrowser${name}`, {
+      files: pagesSharingLeaf,
+      splitting: true,
+      target: "browser",
+      outdir: "/out",
+      ...options,
+      onAfterBundle(api) {
+        expect(importedChunks(api, "page1")).toEqual(["first+second", "bare leaf"]);
+      },
+    });
+  }
+  itBundled("splitting/RedundantBareImport/KeptForBrowserFilesOfServerBuild", {
+    files: {
+      "/server.js": `import html from "./index.html"; console.log(typeof html);`,
+      "/index.html": `<!DOCTYPE html><html><head><script type="module" src="./main.js"></script></head><body></body></html>`,
+      ...pagesSharingLeaf,
+    },
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(importedChunks(api, "page1")).toEqual(["first+second", "bare leaf"]);
+    },
+  });
+
+  // main.js and e.js import the chunk of p.js, which imports c.js and then l.js. Where c.js loads e.js, e.js runs
+  // with that chunk not yet at l.js. x.js and y.js only give c.js and l.js chunks of their own.
+  const entryUnderSharedChunk = {
+    "/main.js": `import "./p0.js"; import { p } from "./p.js"; console.log("main", p());`,
+    "/e.js": `import "./p0.js"; import { p } from "./p.js"; console.log("e sees", globalThis.L); globalThis.later = () => p();`,
+    "/p0.js": `console.log("p0");`,
+    "/p.js": `import { c } from "./c.js"; import { l } from "./l.js"; export const p = () => c + l;`,
+    "/l.js": `globalThis.L = "set"; console.log("l"); export const l = 1;`,
+    "/x.js": `import { c } from "./c.js"; console.log(c);`,
+    "/y.js": `import { l } from "./l.js"; console.log(l);`,
+  };
+  const c = `console.log("c"); export const c = 1;`;
+  type EntryUnderSharedChunk = Pick<BundlerTestInput, "files" | "runtimeFiles" | "banner"> & {
+    entryPoints?: string[];
+    imports: Record<string, string[]>;
+    stdout: string;
+  };
+  function itBundlesEntryUnderSharedChunk(
+    id: string,
+    { files, entryPoints = [], imports, stdout, ...options }: EntryUnderSharedChunk,
+  ) {
+    itBundled(`splitting/RedundantBareImport/${id}`, {
+      ...options,
+      files: { ...entryUnderSharedChunk, ...files },
+      entryPoints: ["/main.js", "/x.js", "/y.js", ...entryPoints],
+      external: ["pkg"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(Object.fromEntries(Object.keys(imports).map(name => [name, importedChunks(api, name)]))).toEqual(
+          imports,
+        );
+      },
+      run: { file: "/out/main.js", env, stdout },
+    });
+  }
+  const pkg = (type: "module" | "commonjs", source: string) => ({
+    "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", type, main: "index.js" }),
+    "/node_modules/pkg/index.js": source,
+  });
+
+  const requiresEByName = `require(["./e", "js"].join("."));`;
+  const usesT = `import { t } from "./t.js"; globalThis.t = () => t();`;
+  for (const [name, graph] of Object.entries<Omit<EntryUnderSharedChunk, "stdout">>({
+    SplitRequire: {
+      files: { "/c.js": `require("./e.js"); ${c}` },
+      imports: { e: ["p0+p", "bare l"], main: ["p0+p"] },
+    },
+    SplitRequireInImportedChunks: {
+      files: {
+        "/c.js": `import { load1 } from "./load1.js"; load1(); ${c}`,
+        "/load1.js": `import { load2 } from "./load2.js"; export const load1 = () => load2();`,
+        "/load2.js": `import { load3 } from "./load3.js"; export const load2 = () => load3();`,
+        "/load3.js": `export const load3 = () => require("./e.js");`,
+        "/z1.js": `export { load1 } from "./load1.js";`,
+        "/z2.js": `export { load2 } from "./load2.js";`,
+        "/z3.js": `export { load3 } from "./load3.js";`,
+      },
+      entryPoints: ["/z2.js", "/z1.js", "/z3.js"],
+      imports: { e: ["p0+p", "bare l"], main: ["p0+p"] },
+    },
+    DynamicImportInsideSplitRequire: {
+      files: { "/c.js": `require("./d.js"); ${c}`, "/d.js": `import("./e.js"); export {};` },
+      imports: { e: ["p0+p", "bare l"], main: ["p0+p"] },
+    },
+    ExternalImport: {
+      files: { "/c.js": `import "pkg"; ${c}` },
+      runtimeFiles: pkg("module", `import "../../out/e.js";`),
+      entryPoints: ["/e.js"],
+      imports: { e: ["p0+p", "bare c", "bare l"] },
+    },
+    ExternalRequire: {
+      files: { "/c.js": `require("pkg"); ${c}` },
+      runtimeFiles: pkg("commonjs", `require("../../out/e.js");`),
+      entryPoints: ["/e.js"],
+      imports: { e: ["p0+p", "bare l"] },
+    },
+    // m.js folds into the chunk of t.js. That chunk sorts ahead of c.js's, though c.js's now imports it.
+    ExternalRequireBelowFoldedChunk: {
+      files: {
+        "/main.js": `${entryUnderSharedChunk["/main.js"]} ${usesT} globalThis.go = () => [import("./lazy1.js"), import("./lazy2.js")];`,
+        "/e.js": entryUnderSharedChunk["/e.js"] + usesT,
+        "/x.js": entryUnderSharedChunk["/x.js"] + usesT,
+        "/v.js": `import { m } from "./m.js"; console.log(m); ${usesT}`,
+        "/w.js": `import { r } from "./r.js"; console.log(r);`,
+        "/lazy1.js": usesT,
+        "/lazy2.js": `import "./p0.js"; import { p } from "./p.js"; console.log(p());`,
+        "/c.js": `import { m } from "./m.js"; console.log("c"); export const c = m;`,
+        "/m.js": `export const m = 1;`,
+        "/t.js": `import { r } from "./r.js"; export const t = () => r;`,
+        "/r.js": `require("pkg"); export const r = 1;`,
+      },
+      runtimeFiles: pkg("commonjs", `require("../../out/e.js");`),
+      entryPoints: ["/e.js", "/v.js", "/w.js"],
+      imports: { e: ["p0+p", "bare l", "m+t"] },
+    },
+    // The linker does not see what loads e.js in the rest. An import of l.js in the source is what keeps it.
+    ComputedRequire: {
+      files: { "/c.js": requiresEByName + c, "/e.js": entryUnderSharedChunk["/e.js"] + `import "./l.js";` },
+      entryPoints: ["/e.js"],
+      imports: { e: ["p0+p", "bare l"], main: ["p0+p"] },
+    },
+    ComputedRequireWithImportInFileWithoutCode: {
+      files: {
+        "/c.js": requiresEByName + c,
+        "/e.js": entryUnderSharedChunk["/e.js"] + `import "./setup.js";`,
+        "/setup.js": `import "./l.js";`,
+      },
+      entryPoints: ["/e.js"],
+      imports: { e: ["p0+p", "bare l"], main: ["p0+p"] },
+    },
+    ComputedRequireWithImportInSharedChunk: {
+      files: {
+        "/c.js": requiresEByName + c,
+        "/e.js": entryUnderSharedChunk["/e.js"] + `import "./setup.js";`,
+        "/setup.js": `import "./l.js"; globalThis.ready = true;`,
+        "/z.js": `import "./setup.js";`,
+      },
+      entryPoints: ["/e.js", "/z.js"],
+      imports: { e: ["p0+p", "bare l", "bare setup"], main: ["p0+p"] },
+    },
+    SplitRequireInCallback: {
+      files: {
+        "/main.js": `import "./hook.js";` + entryUnderSharedChunk["/main.js"],
+        "/hook.js": `globalThis.hook = () => require("./e.js"); export {};`,
+        "/z.js": `import "./hook.js";`,
+        "/c.js": `globalThis.hook(); ${c}`,
+        "/e.js": entryUnderSharedChunk["/e.js"] + `import "./l.js";`,
+      },
+      entryPoints: ["/z.js"],
+      imports: { e: ["p0+p", "bare l"] },
+    },
+  })) {
+    itBundlesEntryUnderSharedChunk(`KeptForEntryLoadedBy${name}`, { ...graph, stdout: "l\ne sees set\nc\np0\nmain 2" });
+  }
+
+  // c.js awaits e.js, so e.js does not wait for the chunk of p.js. l.js is suspended until e.js's import of open.js.
+  const suspend = `await new Promise(resolve => (globalThis.resume = resolve));`;
+  for (const [name, graph] of Object.entries<Omit<EntryUnderSharedChunk, "stdout">>({
+    KeptForTopLevelAwait: {
+      files: { "/l.js": suspend + entryUnderSharedChunk["/l.js"] },
+      imports: { e: ["bare open", "p0+p", "bare c", "bare l"] },
+    },
+    KeptForAwaitOfWrappedModule: {
+      files: {
+        "/l.js": `import "./slow.js";` + entryUnderSharedChunk["/l.js"],
+        "/slow.js": suspend + "export {};",
+        // An import() in a CommonJS file gives its target a wrapper.
+        "/z.js": `module.exports = () => import("./slow.js");`,
+      },
+      entryPoints: ["/z.js"],
+      imports: { e: ["bare open", "p0+p", "bare c", "bare slow", "bare l"] },
+    },
+    KeptForAwaitInExternal: {
+      files: { "/l.js": `import "pkg";` + entryUnderSharedChunk["/l.js"] },
+      runtimeFiles: pkg("module", suspend),
+      imports: { e: ["bare open", "p0+p", "bare c", "bare l"] },
+    },
+    KeptForAwaitInBanner: {
+      files: {},
+      banner: `if (import.meta.require("fs").readFileSync(import.meta.path, "utf8").includes('"s' + 'et"')) { ${suspend} await 0; await 0; await 0; }`,
+      imports: { e: ["bare open", "p0+p", "bare c", "bare l"] },
+    },
+    // Waiting for slow.js is enough: l.js has been in line for it longer than e.js.
+    ImporterOfTopLevelAwait: {
+      files: {
+        "/l.js": `import { one } from "./slow.js"; globalThis.L = "set"; console.log("l"); export const l = one;`,
+        "/slow.js": suspend + "export const one = 1;",
+        "/z.js": `import "./slow.js";`,
+      },
+      entryPoints: ["/z.js"],
+      imports: { e: ["bare open", "p0+p", "bare c", "bare slow"] },
+    },
+  })) {
+    itBundlesEntryUnderSharedChunk(name, {
+      ...graph,
+      files: {
+        "/c.js": `await import("./e.js"); ${c}`,
+        "/e.js": `import "./open.js";` + entryUnderSharedChunk["/e.js"],
+        "/open.js": `globalThis.resume();`,
+        "/w.js": `import "./open.js";`,
+        ...graph.files,
+      },
+      entryPoints: ["/w.js", ...(graph.entryPoints ?? [])],
+      stdout: "l\ne sees set\nc\np0\nmain 2",
+    });
+  }
+
+  // Nothing here loads e.js before main.js has run.
+  const importsE = `globalThis.go = () => import("./e.js");`;
+  for (const [name, graph] of Object.entries<Omit<EntryUnderSharedChunk, "stdout">>({
+    DynamicImport: {
+      files: { "/c.js": importsE + c },
+      imports: { e: ["p0+p"] },
+    },
+    SplitRequireOfSomethingElse: {
+      files: { "/c.js": `require("./d.js"); ${importsE} ${c}`, "/d.js": `export {};` },
+      imports: { e: ["p0+p"] },
+    },
+    ExternalImport: {
+      files: { "/c.js": `import "pkg"; ${importsE} ${c}` },
+      runtimeFiles: pkg("module", ""),
+      imports: { e: ["p0+p", "bare c"] },
+    },
+    ExternalRequire: {
+      files: { "/c.js": `require("pkg"); ${importsE} ${c}` },
+      runtimeFiles: pkg("commonjs", ""),
+      imports: { e: ["p0+p"] },
+    },
+    SplitRequireWithUserEntryPoint: {
+      files: {
+        "/c.js": `require("./d.js"); globalThis.go = () => import(import.meta.dir + "/e.js"); ${c}`,
+        "/d.js": `export {};`,
+      },
+      entryPoints: ["/e.js"],
+      imports: { e: ["p0+p"] },
+    },
+    UnusedExternalRequireWithUserEntryPoint: {
+      files: {
+        "/c.js": `export const unused = () => require("pkg"); globalThis.go = () => import(import.meta.dir + "/e.js"); ${c}`,
+      },
+      entryPoints: ["/e.js"],
+      imports: { e: ["p0+p"] },
+    },
+  })) {
+    itBundlesEntryUnderSharedChunk(`After${name}`, {
+      ...graph,
+      files: { ...graph.files, "/main.js": entryUnderSharedChunk["/main.js"] + `go();` },
+      stdout: "c\nl\np0\nmain 2\ne sees set",
+    });
+  }
+
+  // d.js gets user.js evaluated while fails.js still is, so user.js does not share its error.
+  itBundled("splitting/RedundantBareImport/KeptForChunkThatThrowsInRequireCycle", {
+    files: {
+      "/main.js": /* js */ `
+        try { require("./fails.js"); } catch (error) { console.log(error.message); }
+        await import("./e.js").catch(error => console.log("e:", error.message));
+      `,
+      "/fails.js": `export const value = 1; require("./d.js"); throw new Error("failed");`,
+      "/d.js": `import "./early.js"; import { use } from "./user.js"; globalThis.d = use;`,
+      "/e.js": `import "./early.js"; import { use } from "./user.js"; import "./fails.js"; console.log("e ran", use);`,
+      "/early.js": `console.log("early");`,
+      "/user.js": `import { value } from "./fails.js"; export const use = () => value;`,
+    },
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(importedChunks(api, "e")).toEqual(["early+user", "bare fails"]);
+    },
+    run: { file: "/out/main.js", stdout: "early\nfailed\ne: failed" },
+  });
+
+  // Bun runs external CommonJS while it loads the graph. Under require() the order is that of page1's imports, as long
+  // as no chunk on the way to a package is left for another chunk to find.
+  const pagesReachingPackages = {
+    "/main.js": `globalThis.routes = () => [import("./page2.js"), import("./page3.js"), import("./page4.js")]; export {};`,
+    "/page1.js": page,
+    "/page2.js": page,
+    "/page3.js": `import { l } from "./l.js"; console.log(l);`,
+    "/page4.js": `import { q } from "./q.js"; console.log(q);`,
+    "/page5.js": `import { r } from "./r.js"; console.log(r);`,
+    "/first.js": `export const a = 1; console.log("first");`,
+    "/second.js": `import { q } from "./q.js"; import { l } from "./l.js"; export const b = q() + l;`,
+    "/q.js": `import { r } from "./r.js"; console.log("q"); export const q = () => r;`,
+    "/r.js": `import { v } from "one"; export const r = v;`,
+    "/l.js": `import { v } from "two"; export const l = v;`,
+  };
+  const packages = {
+    "/node_modules/one/index.js": `console.log("one"); exports.v = 1;`,
+    "/node_modules/two/index.js": `console.log("two"); exports.v = 2;`,
+  };
+  itBundled("splitting/RedundantBareImport/ExternalCommonJSOrderUnderSplitRequire", {
+    files: { ...pagesReachingPackages, "/main.js": `require("./page1.js");` + pagesReachingPackages["/main.js"] },
+    runtimeFiles: packages,
+    entryPoints: ["/main.js", "/page5.js"],
+    packages: "external",
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(importedChunks(api, "page1")).toEqual(["first+second", "bare r", "bare q", "bare l"]);
+      // Under import() the order is a race between transpiler threads.
+      expect(importedChunks(api, "page2")).toEqual(["first+second", "bare r", "bare l"]);
+    },
+    run: { file: "/out/main.js", stdout: "one\ntwo\nq\nfirst\n1 3" },
+  });
+  itBundled("splitting/RedundantBareImport/ExternalCommonJSOrderUnderRequireOfUserEntryPoint", {
+    files: pagesReachingPackages,
+    runtimeFiles: { ...packages, "/test.cjs": `require("./out/page1.js");` },
+    entryPoints: ["/main.js", "/page5.js", "/page1.js"],
+    packages: "external",
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(importedChunks(api, "page1")).toEqual(["first+second", "bare r", "bare q", "bare l"]);
+    },
+    run: { file: "/test.cjs", stdout: "one\ntwo\nq\nfirst\n1 3" },
+  });
 
   // N same-named cross-chunk exports must get unique aliases in O(N) total
   // (ExportRenamer::next_renamed_name). Debug/ASAN builds blow past the 15s

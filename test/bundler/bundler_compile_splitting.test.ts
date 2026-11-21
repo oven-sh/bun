@@ -656,6 +656,41 @@ describe("bundler", () => {
       });
     }
 
+    // The chunk of first.ts and second.ts imports leaf.ts's. Without bytecode, page1 would then be a level deeper than
+    // page4 and finish loading after it, were it not for its own import of leaf.ts's chunk.
+    for (const bytecode of [false, true]) {
+      const page = `import { a } from "./first.ts"; import { b } from "./second.ts"; console.log(a, b);`;
+      itBundled(`compile/splitting/RedundantBareImport-${bytecode ? "bytecode" : "source"}`, {
+        compile: true,
+        splitting: true,
+        bytecode,
+        format: "esm",
+        metafile: true,
+        files: {
+          "/entry.ts": /* js */ `
+            await Promise.all([import("./page1.ts"), import("./page4.ts")]);
+            globalThis.routes = () => [import("./page2.ts"), import("./page3.ts"), import("./page5.ts")];
+          `,
+          "/page1.ts": page,
+          "/page2.ts": page,
+          "/page3.ts": `import { c } from "./leaf.ts"; console.log(c);`,
+          "/page4.ts": `import { d } from "./other.ts"; console.log(d);`,
+          "/page5.ts": `import { d } from "./other.ts"; console.log(d);`,
+          "/first.ts": `console.log("first"); export const a = 1;`,
+          "/second.ts": `import { c } from "./leaf.ts"; console.log("second"); export const b = c + 1;`,
+          "/leaf.ts": `console.log("leaf"); export const c = 2;`,
+          "/other.ts": `console.log("other"); export const d = 4;`,
+        },
+        onAfterBundle(api) {
+          const outputs = Object.values<any>(JSON.parse(api.readFile("/metafile.json")).outputs);
+          expect(outputs.find(output => output.entryPoint?.endsWith("page1.ts")).imports).toHaveLength(
+            bytecode ? 1 : 2,
+          );
+        },
+        run: { stdout: "leaf\nfirst\nsecond\n1 3\nother\n4" },
+      });
+    }
+
     // A chunk that is only linked statically has no module namespace object.
     itBundled("compile/splitting/NamespaceObjectsOnlyForImportedChunks", {
       compile: true,

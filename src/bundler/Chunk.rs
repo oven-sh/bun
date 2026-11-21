@@ -1345,19 +1345,18 @@ pub struct CrossChunkImportItem {
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
 
 impl Chunk<'_> {
-    /// Fills `order` with the indices of `imports_from_other_chunks`, in the order to import them.
+    /// The keys of `imports_from_other_chunks`, in the order to import them.
     /// `evaluation_rank[other]` is the position of `other` in the importing
     /// chunk's `reached_chunks_in_order` (`u32::MAX` when the walk did not
     /// reach it). ESM hoists every `import` above the chunk's own code, so
     /// this order is the only part of the source evaluation order the
     /// statements can keep.
     pub(crate) fn sort_cross_chunk_imports(
-        order: &mut Vec<u32>,
         chunks: &[Self],
         imports_from_other_chunks: &mut ImportsFromOtherChunks,
         stable_source_indices: &[u32],
         evaluation_rank: &[u32],
-    ) {
+    ) -> Vec<u32> {
         for i in 0..imports_from_other_chunks.count() {
             debug_assert!({
                 let chunk_index = imports_from_other_chunks.keys()[i];
@@ -1383,13 +1382,11 @@ impl Chunk<'_> {
             });
         }
 
-        let chunk_indices = imports_from_other_chunks.keys();
-        order.clear();
-        order.extend(0..chunk_indices.len() as u32);
-        index_sort::sort_indices(order, &mut |a, b| {
-            let (a, b) = (chunk_indices[a as usize], chunk_indices[b as usize]);
+        let mut order = imports_from_other_chunks.keys().to_vec();
+        index_sort::sort_indices(&mut order, &mut |a, b| {
             (evaluation_rank[a as usize], a).cmp(&(evaluation_rank[b as usize], b))
         });
+        order
     }
 }
 

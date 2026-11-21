@@ -1262,8 +1262,7 @@ pub(crate) struct ChunkMeta {
     pub(crate) imports: ChunkMetaMap,
     pub(crate) exports: ChunkMetaMap,
     pub(crate) dynamic_imports: ArrayHashMap<crate::IndexInt, ()>,
-    /// Split `require()` targets, kept apart from `dynamic_imports`
-    /// only so the metafile labels them `require-call`.
+    /// Split `require()` targets.
     pub(crate) require_imports: ArrayHashMap<crate::IndexInt, ()>,
 }
 

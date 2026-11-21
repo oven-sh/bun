@@ -752,6 +752,7 @@ The renamed symbols are then used during final code generation to produce output
 - Sets up cross-chunk binding code
 - Handles dynamic imports across chunks
 - Manages chunk metadata for dependency resolution
+- Gives an entry point's chunk a bare `import` of each chunk with its entry bit that runs something when loaded (`inert_chunks`), except one that an `import` above it has already evaluated (`drop_redundant_bare_imports`). An import of a chunk does not vouch for what that chunk imports after something that can load the entry point in the middle of the evaluation (a split `require()` that leads back to it; for a user entry point, a `require()` of an external module). A chunk stays imported when it can be suspended at a top-level `await`, and when a file that the entry point loads imports it without using a binding: that holds the source's order where the linker cannot see what loads the entry point (`require(name)`, a callback). An entry point keeps every import when it can be `require()`d and reaches an `import` of an external module, when a browser loads it with no `<link rel=modulepreload>`, and with `--compile` but no `--bytecode`
 
 #### `findAllImportedPartsInJSOrder.rs`
 

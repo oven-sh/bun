@@ -384,6 +384,186 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_a
     }
 }
 
+/// Drops an entry chunk's bare import of a chunk that an import above it has already evaluated.
+/// `static_imports[chunk]` is what `chunk` imports, in order.
+fn drop_redundant_bare_imports(
+    c: &LinkerContext,
+    chunks: &[Chunk],
+    static_imports: &mut [Vec<u32>],
+) -> Result<(), bun_alloc::AllocError> {
+    use bun_ast::{ImportKind, ImportRecordFlags};
+
+    /// A split `require()` of a chunk that leads back to the one making the call.
+    const REQUIRES_BACK: u8 = 1 << 0;
+    const REQUIRES_EXTERNAL: u8 = 1 << 1;
+    const IMPORTS_EXTERNAL: u8 = 1 << 2;
+
+    // Loads one level of imports per round of microtasks, so depth orders two pending `import()`s.
+    if c.options.compile_mode.is_executable() && !c.options.generates_module_info() {
+        return Ok(());
+    }
+
+    // `import()` counts: made while a `require()` is loading, it is evaluated before that `require()` returns.
+    let edges: Vec<Vec<u32>> = chunks
+        .iter()
+        .zip(static_imports.iter())
+        .map(|(chunk, imports)| {
+            let lazy = chunk.cross_chunk_imports.iter();
+            let lazy = lazy.map(|import| import.chunk_index);
+            imports.iter().copied().chain(lazy).collect()
+        })
+        .collect();
+    let (component_of, _) = bun_sema::components::strongly_connected_components(&edges);
+
+    let flags = c.graph.meta.items_flags();
+    let parts = c.graph.ast.items_parts();
+    let import_records = c.graph.ast.items_import_records();
+    let top_level_awaits = c.graph.ast.items_top_level_await_keyword();
+    let mut chunk_of_file = vec![u32::MAX; c.graph.files.len()];
+    let mut is_required = vec![false; chunks.len()];
+    let mut may_await = vec![c.options.raw_text_module_syntax().top_level_await; chunks.len()];
+    // What the chunk, or a chunk it statically imports its way to, does.
+    let mut below = vec![0u8; chunks.len()];
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        if !chunk.content.is_javascript() {
+            continue;
+        }
+        for import in chunk.cross_chunk_imports.iter() {
+            if import.import_kind == ImportKind::Require {
+                is_required[import.chunk_index as usize] = true;
+                if component_of[import.chunk_index as usize] == component_of[chunk_index] {
+                    below[chunk_index] |= REQUIRES_BACK;
+                }
+            }
+        }
+        for &source_index in chunk.files_with_parts_in_chunk.keys() {
+            chunk_of_file[source_index as usize] = chunk_index as u32;
+            may_await[chunk_index] |= !top_level_awaits[source_index as usize].is_empty();
+            let parts_live = &c.graph.parts_live[source_index as usize];
+            let records = import_records[source_index as usize].as_slice();
+            for (part_index, part) in parts[source_index as usize].as_slice().iter().enumerate() {
+                if !parts_live.is_set(part_index) {
+                    continue;
+                }
+                for &i in part.import_record_indices.iter() {
+                    let record = &records[i as usize];
+                    if record.source_index.is_valid() {
+                        // `await init_x()`
+                        let other = flags[record.source_index.get() as usize];
+                        may_await[chunk_index] |=
+                            other.wrap != WrapKind::None && other.is_async_or_has_async_dependency;
+                    } else if !record.flags.intersects(
+                        ImportRecordFlags::IS_UNUSED
+                            | ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS
+                            | ImportRecordFlags::IMPORTS_CHUNK,
+                    ) {
+                        match record.kind {
+                            ImportKind::Require => below[chunk_index] |= REQUIRES_EXTERNAL,
+                            ImportKind::Stmt => {
+                                below[chunk_index] |= IMPORTS_EXTERNAL;
+                                may_await[chunk_index] = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (chunk_index, imports) in static_imports.iter().enumerate().rev() {
+            let before = below[chunk_index];
+            for &other in imports {
+                below[chunk_index] |= below[other as usize];
+            }
+            changed |= below[chunk_index] != before;
+        }
+    }
+
+    let uses_bindings = |importer: u32, other: u32| {
+        let js = chunks[importer as usize].content.javascript();
+        let items = js.imports_from_other_chunks.get(&other);
+        items.is_some_and(|items| !items.is_empty())
+    };
+    // Per chunk, the entry points whose bare import is all that is printed for an import in their source.
+    let mut imported_bare_by: Vec<AutoBitSet> = Vec::with_capacity(chunks.len());
+    for _ in chunks {
+        imported_bare_by.push(AutoBitSet::init_empty(c.graph.entry_points.len())?);
+    }
+    let file_entry_bits = c.graph.files.items_entry_bits();
+    for source_index in c.graph.reachable_files.slice() {
+        let importer = chunk_of_file[source_index.get() as usize];
+        c.for_each_file_loaded_by(source_index.get(), |other| {
+            let other = chunk_of_file[other as usize];
+            if other != u32::MAX
+                && other != importer
+                && (importer == u32::MAX || !uses_bindings(importer, other))
+            {
+                imported_bare_by[other as usize]
+                    .set_union(&file_entry_bits[source_index.get() as usize]);
+            }
+        });
+    }
+
+    let entry_point_kinds = c.graph.files.items_entry_point_kind();
+    let mut evaluated_for = vec![u32::MAX; chunks.len()];
+    let mut stack: Vec<u32> = Vec::new();
+    for (entry, chunk) in chunks.iter().enumerate() {
+        if !chunk.content.is_javascript() || !chunk.entry_point.is_entry_point() {
+            continue;
+        }
+        let is_user_entry = entry_point_kinds[chunk.entry_point.source_index() as usize]
+            == crate::EntryPoint::Kind::UserSpecified;
+        // Without `<link rel=modulepreload>`, these imports are how a browser finds every chunk in one round trip.
+        if c.chunk_side(chunk) == crate::options::Side::Client
+            && !(c.module_preload()
+                && (!is_user_entry || chunk.flags.contains(chunk::Flags::HAS_HTML_CHUNK)))
+        {
+            continue;
+        }
+        // Bun runs imported CommonJS as it loads the graph; under `require()` the graph's shape fixes the order.
+        if below[entry] & IMPORTS_EXTERNAL != 0 && (is_user_entry || is_required[entry]) {
+            continue;
+        }
+        // An external module can load a user entry point by its path.
+        let can_load_entry = |other: u32| {
+            let below = below[other as usize];
+            (below & REQUIRES_BACK != 0 && component_of[other as usize] == component_of[entry])
+                || (below & REQUIRES_EXTERNAL != 0 && is_user_entry)
+        };
+
+        let mut imports = core::mem::take(&mut static_imports[entry]);
+        imports.retain(|&import| {
+            if evaluated_for[import as usize] == entry as u32 {
+                // Bun's `import()` does not wait for a chunk that is waiting for that `import()`, so not for its imports either.
+                return may_await[import as usize]
+                    || uses_bindings(entry as u32, import)
+                    || imported_bare_by[import as usize]
+                        .is_set(chunk.entry_point.entry_point_id() as usize);
+            }
+            evaluated_for[import as usize] = entry as u32;
+            stack.push(import);
+            while let Some(importer) = stack.pop() {
+                for &other in &static_imports[importer as usize] {
+                    if evaluated_for[other as usize] != entry as u32 {
+                        evaluated_for[other as usize] = entry as u32;
+                        stack.push(other);
+                    }
+                    // The entry then runs with `importer` only this far into its imports.
+                    if can_load_entry(other) {
+                        break;
+                    }
+                }
+            }
+            true
+        });
+        static_imports[entry] = imports;
+    }
+    Ok(())
+}
+
 fn compute_cross_chunk_dependencies_with_chunk_metas(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
@@ -594,28 +774,19 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     // from the loop above to know which chunk declares each binding).
     {
         debug!("Generating cross-chunk imports");
-        let mut order: Vec<u32> = Vec::new();
+        let mut static_imports: Vec<Vec<u32>> = vec![Vec::new(); chunks.len()];
         let mut evaluation_rank: Vec<u32> = vec![u32::MAX; chunks.len()];
-        // We move the per-chunk fields we
-        // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
-        // the `chunk` borrow, hand the whole `chunks` slice to `sort_cross_chunk_imports`
-        // (which only reads `chunks[other].exports_to_other_chunks` — disjoint), then write
-        // the fields back at loop end.
         for chunk_index in 0..chunks.len() {
             if !matches!(chunks[chunk_index].content, chunk::Content::Javascript(_)) {
                 continue;
             }
+            // Moved out while `sort_cross_chunk_imports` reads the other chunks.
             let mut imports_from_other_chunks = core::mem::take(
                 &mut chunks[chunk_index]
                     .content
                     .javascript_mut()
                     .imports_from_other_chunks,
             );
-            let mut cross_chunk_imports =
-                core::mem::take(&mut chunks[chunk_index].cross_chunk_imports);
-            // `take` expresses the move-out/move-in: mutate the Vec, then
-            // write it back at loop end.
-            let mut cross_chunk_prefix_stmts = Vec::<bun_ast::Stmt>::default();
 
             let reached = &chunks[chunk_index]
                 .content
@@ -624,8 +795,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             for (rank, &other) in reached.iter().enumerate() {
                 evaluation_rank[other as usize] = rank as u32;
             }
-            Chunk::sort_cross_chunk_imports(
-                &mut order,
+            static_imports[chunk_index] = Chunk::sort_cross_chunk_imports(
                 chunks,
                 &mut imports_from_other_chunks,
                 c.graph.stable_source_indices.slice(),
@@ -634,14 +804,29 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             for &other in reached.iter() {
                 evaluation_rank[other as usize] = u32::MAX;
             }
-            for &index in &order {
+
+            chunks[chunk_index]
+                .content
+                .javascript_mut()
+                .imports_from_other_chunks = imports_from_other_chunks;
+        }
+
+        drop_redundant_bare_imports(c, chunks, &mut static_imports)?;
+
+        for (chunk, static_imports) in chunks.iter_mut().zip(&static_imports) {
+            let chunk::Content::Javascript(repr) = &mut chunk.content else {
+                continue;
+            };
+            for &other_chunk_index in static_imports {
                 match c.options.output_format {
                     OutputFormat::Esm => {
                         let import_record_index =
-                            u32::try_from(cross_chunk_imports.len() as usize).expect("int cast");
+                            u32::try_from(chunk.cross_chunk_imports.len()).expect("int cast");
 
-                        let sorted_import_items =
-                            &imports_from_other_chunks.values()[index as usize];
+                        let sorted_import_items = repr
+                            .imports_from_other_chunks
+                            .get(&other_chunk_index)
+                            .expect("infallible: `static_imports` holds keys of this map");
                         let mut clauses =
                             bun_alloc::ArenaVec::<bun_ast::ClauseItem>::with_capacity_in(
                                 sorted_import_items.len(),
@@ -659,9 +844,9 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             });
                         }
 
-                        cross_chunk_imports.push(chunk::ChunkImport {
+                        chunk.cross_chunk_imports.push(chunk::ChunkImport {
                             import_kind: bun_ast::ImportKind::Stmt,
-                            chunk_index: imports_from_other_chunks.keys()[index as usize],
+                            chunk_index: other_chunk_index,
                         });
                         let items_ptr = bun_ast::StoreSlice::new_mut(clauses.into_bump_slice_mut());
                         // Allocated directly from the arena —
@@ -672,7 +857,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             namespace_ref: Ref::NONE,
                             ..Default::default()
                         });
-                        cross_chunk_prefix_stmts.push(bun_ast::Stmt::init(
+                        repr.cross_chunk_prefix_stmts.push(bun_ast::Stmt::init(
                             bun_ast::StoreRef::from_bump(import),
                             bun_ast::Loc::EMPTY,
                         ));
@@ -680,11 +865,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     _ => {}
                 }
             }
-
-            let repr = chunks[chunk_index].content.javascript_mut();
-            repr.cross_chunk_prefix_stmts = cross_chunk_prefix_stmts;
-            repr.imports_from_other_chunks = imports_from_other_chunks;
-            chunks[chunk_index].cross_chunk_imports = cross_chunk_imports;
         }
     }
 

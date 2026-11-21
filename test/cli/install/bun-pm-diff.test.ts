@@ -1,6 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isRoot, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
-import { chmodSync, existsSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 // Two versions of one small package, packed with `bun pm pack` and served from a
@@ -338,6 +347,43 @@ diffme@1.0.0 → diffme@2.0.0
         "catalog-two": "diffme@2.0.0 → diffme@2.0.0",
         none: `diffme@${hoisted} → diffme@2.0.0`,
         root: `diffme@${hoisted} → diffme@2.0.0`,
+      });
+    },
+  );
+
+  // The lockfile lists a workspace package under its folder, so its own copy is found after its `name` changed.
+  // A workspace that was moved or copied is found under its name. A folder that the lockfile lists under neither
+  // has no copy of its own and loads the one in the root node_modules.
+  test.each(lockfiles)(
+    "one name in a workspace package that is not as it was at the install (%s)",
+    async (lockfile, bunfig) => {
+      const member = (name: string) => JSON.stringify({ name, dependencies: { diffme: "1.0.0" } });
+      using dir = tempDir("pm-diff-member-not-listed", {
+        "bunfig.toml": bunfig,
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { diffme: "2.0.0" } }),
+        "packages/one/package.json": member("one"),
+        "packages/two/package.json": member("two"),
+        "packages/three/package.json": member("three"),
+      });
+      await install(String(dir));
+      expect(existsSync(join(String(dir), lockfile))).toBe(true);
+      await Bun.write(join(String(dir), "packages/one/package.json"), member("renamed"));
+      renameSync(join(String(dir), "packages/two"), join(String(dir), "packages/moved"));
+      await Bun.write(join(String(dir), "packages/copied/package.json"), member("three"));
+      await Bun.write(join(String(dir), "packages/added/package.json"), member("added"));
+
+      expect({
+        renamed: await sides(join(String(dir), "packages/one"), "diffme"),
+        moved: await sides(join(String(dir), "packages/moved"), "diffme"),
+        copied: await sides(join(String(dir), "packages/copied"), "diffme"),
+        added: await sides(join(String(dir), "packages/added"), "diffme"),
+        root: await sides(String(dir), "diffme"),
+      }).toEqual({
+        renamed: "diffme@1.0.0 → diffme@2.0.0",
+        moved: "diffme@1.0.0 → diffme@2.0.0",
+        copied: "diffme@1.0.0 → diffme@2.0.0",
+        added: "diffme@2.0.0 → diffme@2.0.0",
+        root: "diffme@2.0.0 → diffme@2.0.0",
       });
     },
   );

@@ -121,6 +121,115 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     });
   });
 
+  // Without `--filter` the rows are those of the workspace that the command runs in, which bun.lock lists under
+  // its folder. Older versions of bun found the rows by the workspace's name alone, and took the root's when
+  // bun.lock did not have the name. The selection then went into the package.json of the root or of a sibling.
+  describe("in a workspace that bun.lock does not list as it is on disk", () => {
+    const files = {
+      "package.json": JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+      "packages/app/package.json": JSON.stringify({ name: "app", dependencies: { "a-dep": "1.0.1" } }),
+      "packages/lib/package.json": JSON.stringify({ name: "lib", dependencies: { "what-bin": "1.0.0" } }),
+    };
+    const STALE_LOCKFILE = [
+      "error: bun.lock does not match package.json, nothing to update",
+      "note: run 'bun install' first",
+    ];
+    const manifests = (dir: string, paths: string[]) =>
+      Promise.all(paths.map(path => Bun.file(join(dir, path)).text())).then(texts =>
+        Object.fromEntries(paths.map((path, i) => [path, texts[i]])),
+      );
+
+    // Installs `files`, applies `edits`, then selects the first row in `bun update --interactive` run in `cwd`.
+    // Nothing newer is in range of any row, so Space selects the row's Latest. `read` takes what a test needs
+    // from the project before it is removed.
+    async function updateFirstRow<T = undefined>(
+      edits: Record<string, string>,
+      cwd: string,
+      read?: (dir: string) => Promise<T>,
+    ) {
+      using dir = tempDir("update-interactive-unlisted", {
+        "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.registryUrl()}"\n`,
+        ...files,
+      });
+      await using install = Bun.spawn({ cmd: [bunExe(), "install"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+      expect({ stderr: await install.stderr.text(), exitCode: await install.exited }).toMatchObject({ exitCode: 0 });
+      for (const [path, text] of Object.entries(edits)) await Bun.write(join(String(dir), path), text);
+      const paths = Object.keys({ ...files, ...edits });
+      const before = await manifests(String(dir), paths);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "update", "--interactive"],
+        cwd: join(String(dir), cwd),
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.write(" \r");
+      proc.stdin.end();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const after = await manifests(String(dir), paths);
+      return {
+        rows: ["no-deps", "a-dep", "what-bin"].filter(name => stdout.includes(name)),
+        errors: stderr.split("\n").filter(line => /^(error|note):/.test(line)),
+        exitCode,
+        changed: paths.filter(path => before[path] !== after[path]),
+        read: await read?.(String(dir)),
+      };
+    }
+
+    test("added after the install: nothing is listed and no package.json changes", async () => {
+      const added = JSON.stringify({ name: "added", dependencies: { "a-dep": "1.0.1" } });
+      expect(await updateFirstRow({ "packages/added/package.json": added }, "packages/added")).toEqual({
+        rows: [],
+        errors: STALE_LOCKFILE,
+        exitCode: 1,
+        changed: [],
+      });
+    });
+
+    test("renamed to the name of a sibling: nothing is listed and no package.json changes", async () => {
+      const exchanged = {
+        "packages/app/package.json": files["packages/app/package.json"].replace(`"app"`, `"lib"`),
+        "packages/lib/package.json": files["packages/lib/package.json"].replace(`"lib"`, `"app"`),
+      };
+      expect(await updateFirstRow(exchanged, "packages/app")).toEqual({
+        rows: [],
+        errors: STALE_LOCKFILE,
+        exitCode: 1,
+        changed: [],
+      });
+    });
+
+    test("renamed: its own row is listed, updated and installed", async () => {
+      const renamed = {
+        "packages/app/package.json": files["packages/app/package.json"].replace(`"app"`, `"app-renamed"`),
+      };
+      const result = await updateFirstRow(renamed, "packages/app", async dir => ({
+        declared: (await Bun.file(join(dir, "packages/app/package.json")).json()).dependencies,
+        locked: (await Bun.file(join(dir, "bun.lock")).text()).match(/"packages\/app": \{\s+"name": "([^"]+)"/)?.[1],
+        // `undefined` if the update installed nothing there.
+        installed: await Bun.file(join(dir, "packages/app/node_modules/a-dep/package.json"))
+          .json()
+          .then(
+            json => json.version,
+            () => undefined,
+          ),
+      }));
+      expect(result).toEqual({
+        rows: ["a-dep"],
+        errors: [],
+        exitCode: 0,
+        changed: ["packages/app/package.json"],
+        read: { declared: { "a-dep": "1.0.10" }, locked: "app-renamed", installed: "1.0.10" },
+      });
+    });
+  });
+
   test("refuses to prompt when stdin is not a TTY", async () => {
     using dir = tempDir("update-interactive-no-tty", {
       "package.json": JSON.stringify({

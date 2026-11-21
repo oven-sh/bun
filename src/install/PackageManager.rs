@@ -532,7 +532,7 @@ pub struct PackageManager {
 
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
     /// could be any of the workspaces.
-    pub root_package_id: RootPackageId,
+    pub(crate) root_package_id: RootPackageId,
 
     /// The hash of the `name` in the root package.json. `workspace_paths` only has the workspaces,
     /// not the root.
@@ -696,22 +696,21 @@ pub struct PackageManager {
 }
 
 #[derive(Default)]
-pub struct RootPackageId {
+pub(crate) struct RootPackageId {
     pub(crate) id: Option<PackageID>,
 }
 
 impl RootPackageId {
-    pub fn get(
+    /// A miss is not kept: an install misses for a new workspace until the differ adds it.
+    pub(crate) fn get(
         &mut self,
         lockfile: &Lockfile,
         workspace_name_hash: Option<PackageNameHash>,
-    ) -> PackageID {
-        if let Some(id) = self.id {
-            return id;
+    ) -> Option<PackageID> {
+        if self.id.is_none() {
+            self.id = lockfile.get_workspace_package_id(workspace_name_hash);
         }
-        let id = lockfile.get_workspace_package_id(workspace_name_hash);
-        self.id = Some(id);
-        id
+        self.id
     }
 }
 
@@ -988,9 +987,125 @@ static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
 // impl PackageManager
 // ──────────────────────────────────────────────────────────────────────────
 
+/// The folder of a workspace's package.json, from the root that `init` found above it.
+fn workspace_folder_of(package_json: &ZStr) -> &[u8] {
+    let folder = resolve_path::dirname::<platform::Auto>(package_json.as_bytes());
+    let root = FileSystem::get().top_level_dir_without_trailing_slash();
+    let below = folder.strip_prefix(root).unwrap_or(folder);
+    below.strip_prefix(&[SEP]).unwrap_or(below)
+}
+
+/// What `workspace_id_of` takes when the lockfile has the workspace's name at another folder.
+#[derive(Clone, Copy)]
+enum NameElsewhere {
+    /// None. A command that reads the rows as the workspace's own cannot tell whose they are.
+    NoRows,
+    /// The rows at its folder, else the rows under its name, for a moved or copied workspace.
+    FolderThenName,
+}
+
+fn workspace_id_of(
+    by_name: &mut RootPackageId,
+    lockfile: &Lockfile,
+    name_hash: Option<PackageNameHash>,
+    package_json: &ZStr,
+    name_elsewhere: NameElsewhere,
+) -> Option<PackageID> {
+    if name_hash.is_none() {
+        return Some(0);
+    }
+    let by_name = by_name.get(lockfile, name_hash);
+    let folder = workspace_folder_of(package_json);
+    // The usual case: the name and the folder lead to the same package.
+    if by_name.is_some_and(|id| lockfile.is_workspace_at(id, folder)) {
+        return by_name;
+    }
+    match (by_name, name_elsewhere) {
+        // Only the `name` changed. Not kept in `root_package_id`: an install looks up the name.
+        (None, _) => lockfile.workspace_package_id_at(folder),
+        (Some(_), NameElsewhere::NoRows) => None,
+        (Some(_), NameElsewhere::FolderThenName) => {
+            lockfile.workspace_package_id_at(folder).or(by_name)
+        }
+    }
+}
+
 impl PackageManager {
     pub(crate) fn clear_cached_items_depending_on_lockfile_buffer(&mut self) {
         self.root_package_id.id = None;
+    }
+
+    /// The folder of the workspace that the command runs in, from the root.
+    pub(crate) fn cwd_workspace_folder(&self) -> &[u8] {
+        workspace_folder_of(&self.original_package_json_path)
+    }
+
+    /// The package that the saved lockfile has at the folder of the cwd workspace, if it has one.
+    pub fn cwd_workspace_id(&mut self) -> Option<PackageID> {
+        workspace_id_of(
+            &mut self.root_package_id,
+            &self.lockfile,
+            self.workspace_name_hash,
+            &self.original_package_json_path,
+            NameElsewhere::NoRows,
+        )
+    }
+
+    /// `cwd_workspace_id`, or the package under the workspace's name if it was moved or copied.
+    pub fn cwd_workspace_id_or_named(&mut self) -> Option<PackageID> {
+        workspace_id_of(
+            &mut self.root_package_id,
+            &self.lockfile,
+            self.workspace_name_hash,
+            &self.original_package_json_path,
+            NameElsewhere::FolderThenName,
+        )
+    }
+
+    /// `cwd_workspace_id_or_named` before the lockfile is in `self.lockfile`.
+    pub(crate) fn cwd_workspace_id_or_named_in(
+        &mut self,
+        lockfile: &Lockfile,
+    ) -> Option<PackageID> {
+        workspace_id_of(
+            &mut self.root_package_id,
+            lockfile,
+            self.workspace_name_hash,
+            &self.original_package_json_path,
+            NameElsewhere::FolderThenName,
+        )
+    }
+
+    /// `nothing` is the end of the error message, e.g. "nothing to update".
+    pub fn cwd_workspace_id_or_exit(&mut self, nothing: &str) -> PackageID {
+        match self.cwd_workspace_id() {
+            Some(id) => id,
+            None => self.exit_on_unlisted_cwd_workspace(nothing),
+        }
+    }
+
+    #[cold]
+    fn exit_on_unlisted_cwd_workspace(&mut self, nothing: &str) -> ! {
+        // What `bun install` does with this lockfile, whatever the command freezes.
+        (self.options.enable).set(package_manager_options::Enable::FROZEN_LOCKFILE, false);
+        // Exits if `bun install` would change the lockfile. Else it keeps the workspace out.
+        let kept = crate::prune::exit_unless_lockfile_matches_package_json(self, nothing).is_ok();
+        if kept && self.options.log_level != package_manager_options::LogLevel::Silent {
+            let mut folder = self.cwd_workspace_folder().to_vec();
+            resolve_path::platform_to_posix_in_place(&mut folder);
+            Output::err_generic(
+                "workspace {f} not in lockfile, {s}",
+                (bun_core::fmt::quote(&folder), nothing),
+            );
+            if self.subcommand == Subcommand::Update {
+                bun_core::note!(
+                    "run 'bun update' without flags or names here, or 'bun update \\<name\\>'"
+                );
+            } else {
+                bun_core::note!("run 'bun update' here");
+            }
+        }
+        Global::exit(1);
     }
 
     /// Reshaped for borrowck — `Lockfile::load_from_cwd` takes the manager as

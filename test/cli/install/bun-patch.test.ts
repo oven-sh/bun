@@ -10,6 +10,7 @@ import {
   readFileSync,
   readlinkSync,
   realpathSync,
+  renameSync,
   rmdirSync,
   rmSync,
   statSync,
@@ -609,6 +610,53 @@ index 0000000000000000000000000000000000000000..4932cd6395b5d79049adb4736a669e22
         await check(String(root), await runBun(subdir, env, "patch", "--commit", "node_modules/is-odd"));
         expect(await Bun.file(join(String(root), "package.json")).text()).toEndWith("}" + rootEnd);
       });
+    });
+
+    // `bun patch --commit` reads the bun.lock of the last install. For a workspace whose name it does not have,
+    // older versions of bun behaved as in the root: `patchedDependencies` went into the workspace's package.json,
+    // which an install ignores, and a path from the workspace was read from the root.
+    const member = (name: string, version = "1.0.0") => JSON.stringify({ name, version });
+    describe.each<[string, { atInstall?: string; beforePatch?: string; beforeCommit?: string }]>([
+      ["added after bun patch", { beforeCommit: member("added") }],
+      ["renamed after bun patch", { atInstall: member("listed"), beforeCommit: member("renamed") }],
+      // The root depends on a version of `no-deps` that this workspace is not, so an install does not add it.
+      ["that an install leaves out of bun.lock", { beforePatch: member("no-deps", "3.0.0") }],
+    ])("from a workspace %s", (_, { atInstall, beforePatch, beforeCommit }) => {
+      test.each(["no-deps", "node_modules/no-deps", "../../node_modules/no-deps"])(
+        "bun patch --commit %s",
+        async arg => {
+          await using project = await installedProject(
+            { workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } },
+            { files: atInstall ? { "packages/member/package.json": atInstall } : {} },
+          );
+          const { dir, env } = project;
+          const workspace = join(dir, "packages", "member");
+          if (beforePatch) await Bun.write(join(workspace, "package.json"), beforePatch);
+          await bunOk(dir, env, "patch", "no-deps");
+          await Bun.write(join(dir, "node_modules", "no-deps", "index.js"), patched);
+          if (beforeCommit) await Bun.write(join(workspace, "package.json"), beforeCommit);
+          const name = (await Bun.file(join(workspace, "package.json")).json()).name;
+          expect(await Bun.file(join(dir, "bun.lock")).text()).not.toContain(`"name": "${name}"`);
+
+          const commit = await runBun(workspace, env, "patch", "--commit", arg);
+          expect({
+            warnings: commit.stderr.split("\n").filter(line => /^(error|warn|ENOENT)/.test(line)),
+            root: (await Bun.file(join(dir, "package.json")).json()).patchedDependencies,
+            workspace: (await Bun.file(join(workspace, "package.json")).json()).patchedDependencies,
+            locked: (await Bun.file(join(dir, "bun.lock")).text()).includes(
+              '"no-deps@1.0.0": "patches/no-deps@1.0.0.patch"',
+            ),
+            exitCode: commit.exitCode,
+          }).toEqual({
+            warnings: [],
+            root: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+            workspace: undefined,
+            locked: true,
+            exitCode: 0,
+          });
+          expect(await bunOk(dir, env, "-e", "console.log(require('no-deps'))")).toBe("patched\n");
+        },
+      );
     });
   });
 
@@ -2847,6 +2895,37 @@ describe.concurrent("isolated linker: a package with no folder at its hoisted pa
     expect(await Bun.file(join(dir, "patches", "peer-deps@1.0.0.patch")).text()).toContain(
       "+module.exports = 'patched';",
     );
+  });
+
+  // bun.lock has a workspace under its folder and under its name. One of the two still leads to its entry after
+  // the `name` in its package.json changed, or after its folder moved. Older versions of bun looked for the name
+  // alone. For a name that bun.lock did not have, they compared the entry of the root, which has no changes.
+  test.each(["renamed", "moved"])("--commit <name> in a workspace that was %s after bun patch", async change => {
+    const { project } = await installPeerVariants();
+    await using _ = project;
+    const { dir, env } = project;
+    const fromRoot = suggestedFolder(await bunOk(dir, env, "patch", "peer-deps"));
+    const version = peerVersions.find(version => linkedEntry(dir, version) !== storeEntry(fromRoot))!;
+    let workspace = join(dir, "packages", `pkg-${version}`);
+
+    await bunOk(workspace, env, "patch", "peer-deps");
+    await Bun.write(join(workspace, "node_modules", "peer-deps", "index.js"), patched);
+    if (change === "moved") {
+      renameSync(workspace, join(dir, "packages", "moved"));
+      workspace = join(dir, "packages", "moved");
+    } else {
+      // The workspaces that depend on it follow the new name.
+      for (const member of [`pkg-${version}`, "consumer"]) {
+        const manifest = join(dir, "packages", member, "package.json");
+        await Bun.write(manifest, (await Bun.file(manifest).text()).replaceAll(`"pkg-${version}"`, `"renamed"`));
+      }
+    }
+
+    expect(await bunOk(workspace, env, "patch", "--commit", "peer-deps")).not.toContain("No changes detected");
+    expect(await Bun.file(join(dir, "patches", "peer-deps@1.0.0.patch")).text()).toContain(
+      "+module.exports = 'patched';",
+    );
+    expect(await Bun.file(join(workspace, "node_modules", "peer-deps", "index.js")).text()).toBe(patched);
   });
 
   test("the store entry that a workspace loads through another workspace", async () => {

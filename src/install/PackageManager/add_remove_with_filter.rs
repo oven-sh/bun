@@ -581,10 +581,7 @@ impl PendingWrite {
         self.targets
             .iter()
             .filter(|pending| pending.received.contains(&request))
-            .filter_map(|pending| {
-                let id = lockfile.get_workspace_package_id(pending.target.name_hash);
-                (pending.target.name_hash.is_none() || id != 0).then_some(id)
-            })
+            .filter_map(|pending| lockfile.get_workspace_package_id(pending.target.name_hash))
             .collect()
     }
 

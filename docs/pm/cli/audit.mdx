@@ -48,13 +48,15 @@ bun audit --prod
 bun audit --omit=optional --omit=peer
 ```
 
+In a monorepo, `--prod` and `--omit` follow the dependencies of the workspace you run the command in. The [`bunfig.toml`](/runtime/bunfig#install-optional) settings `production`, `dev`, `optional` and `peer` and the [`.npmrc`](/pm/npmrc) setting `omit` leave out a dependency type in the same way. In a [workspace that the lockfile does not list](/pm/workspaces#a-workspace-that-the-lockfile-does-not-list), `bun audit` then exits with an error. If nothing leaves out a dependency type, `bun audit` checks every package in `bun.lock` from any folder.
+
 **`--ignore <id>`** - Ignore an advisory by GHSA ID or numeric ID. Repeatable. (CVE IDs are not in the registry data and don't match.)
 
 ```bash terminal icon="terminal"
 bun audit --ignore GHSA-c2qf-rxjj-qqgw --ignore 1112918
 ```
 
-These options are CLI-only; to apply them on every run, put them in a `package.json` script.
+`--audit-level` and `--ignore` are CLI-only. To apply them on every run, put them in a `package.json` script.
 
 ### `--json`
 

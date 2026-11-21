@@ -119,6 +119,19 @@ Workspaces have a few major benefits.
 - **Bun can de-duplicate dependencies.** If `a` and `b` share a common dependency, Bun _hoists_ it to the root `node_modules` directory. This saves disk space and minimizes the "dependency hell" of multiple versions of a package installed at once.
 - **Run scripts in multiple packages.** Use the [`--filter` flag](/pm/filter) to run `package.json` scripts in several packages at once, or `--workspaces` to run scripts across all workspaces.
 
+## A workspace that the lockfile does not list
+
+`bun.lock` lists each workspace under the path of its folder, with the `"name"` from its `package.json`. These commands report on the workspace you run them in, and they find it in the lockfile that the last install saved:
+
+- [`bun pm licenses`](/pm/cli/pm#licenses), [`bun audit`](/pm/cli/audit) with a dependency type left out, and `bun update` with `--dev`, `--prod`, `--depth 0` or a name pattern. They take the dependencies of the workspace from the lockfile.
+- [`bun outdated`](/pm/cli/outdated) and [`bun update --interactive`](/pm/cli/update#--interactive). They take the dependencies from the `package.json` of the workspace and the installed versions from the lockfile.
+
+Bun looks for the workspace by its `"name"` and checks that the lockfile has that name at its folder. If you changed only the `"name"`, the commands read the entry of the folder. Bun does not compare the rest of the lockfile with `package.json` here, so exit code 0 does not mean that the two match.
+
+If the lockfile has no entry for the workspace, the command exits with code 1. For a workspace that you added or moved after the last install, the error says that `bun.lock` does not match `package.json`. Run `bun install`.
+
+`bun install` keeps one kind of workspace out of an existing lockfile: a workspace with the name of a package that the root takes from the registry in another version. For example, the root declares `"pkg-a": "1.0.0"` and `packages/pkg-a` has version `2.0.0`. The error then says that the workspace is not in the lockfile. To add it, run `bun add`, `bun remove` or `bun update` in the folder of the workspace. `bun update` there also updates the dependencies of the workspace, as in any workspace. `bun install` adds the workspace the next time a dependency of the project changes.
+
 ## Self-contained workspaces
 
 With the hoisted linker, dependencies shared by several workspaces are hoisted to the root

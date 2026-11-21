@@ -1228,6 +1228,86 @@ describe("`bun audit --omit`", () => {
     expect(fromAAll.exitCode).toBe(1);
   });
 
+  // An audit that omits a dependency group walks from the workspace that the command runs in. The group
+  // can be omitted by a flag, by bunfig.toml or by .npmrc. A workspace that the lockfile does not list has
+  // no rows to walk from, and older versions of bun walked from the root instead.
+  test.concurrent(
+    "omitting a group in a workspace added after the install is an error, not the root's audit",
+    async () => {
+      const bulkBodies: Record<string, string[]>[] = [];
+      await using server = startRegistry({ "no-deps": [adv("<1.0.1")], "a-dep": [adv("<1.0.4", 2)] }, { bulkBodies });
+      using dir = await setup(
+        server,
+        { name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } },
+        { "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { "a-dep": "1.0.2" } }) },
+      );
+      const added = join(dir, "packages", "added");
+      await write(join(added, "package.json"), JSON.stringify({ name: "added", dependencies: { "a-dep": "1.0.2" } }));
+
+      const stderr = "error: bun.lock does not match package.json, nothing to audit\nnote: run 'bun install' first\n";
+      for (const args of [["--prod"], ["--omit=dev"], ["--prod", "--json"]]) {
+        const { stdout, ...refused } = await run(added, ["audit", ...args], dir);
+        expect({ args, ...refused }).toEqual({ args, stderr, exitCode: 1 });
+        expect(normalizeBunSnapshot(stdout)).toBe(args.includes("--json") ? "" : AUDIT_HEADER.trim());
+      }
+      expect(await run(added, ["audit", "--prod", "--silent"], dir)).toEqual({ stdout: "", stderr: "", exitCode: 1 });
+      await writeBunfig(dir, server, undefined, { peer: false });
+      expect(await run(added, ["audit", "--json"], dir)).toEqual({ stdout: "", stderr, exitCode: 1 });
+      await writeBunfig(dir, server);
+      await write(join(dir, ".npmrc"), "omit=peer\n");
+      expect(await run(added, ["audit", "--json"], dir)).toEqual({ stdout: "", stderr, exitCode: 1 });
+      expect(bulkBodies).toEqual([]);
+      // The same setting in a workspace that the lockfile lists: its own packages.
+      expect((await run(join(dir, "packages", "b"), ["audit", "--json"], dir)).exitCode).toBe(1);
+      expect(bulkBodies.splice(0)).toEqual([{ "a-dep": ["1.0.2"] }]);
+
+      // With no group omitted nothing is walked: every package of the lockfile is audited, from any folder. The
+      // `(direct dependency)` line is for a dependency of the workspace that the command runs in.
+      await rm(join(dir, ".npmrc"));
+      const report = (path: string) =>
+        AUDIT_HEADER +
+        `a-dep@1.0.2\n  workspace:b > a-dep\n  high: test advisory (<1.0.4) - https://example.invalid/advisory/2\n\n` +
+        `no-deps@1.0.0\n${path}  high: test advisory (<1.0.1) - https://example.invalid/advisory/1\n\n` +
+        `2 vulnerabilities (2 high)\n\n` +
+        REPORT_FOOTER;
+      const [fromAdded, fromRoot] = [await run(added, ["audit"], dir), await run(dir, ["audit"])];
+      expect({ ...fromAdded, stdout: normalizeBunSnapshot(fromAdded.stdout) }).toEqual({
+        stdout: report(""),
+        stderr: "",
+        exitCode: 1,
+      });
+      expect(normalizeBunSnapshot(fromRoot.stdout)).toBe(report("  (direct dependency)\n"));
+      const everything = { "a-dep": ["1.0.2"], "no-deps": ["1.0.0"] };
+      expect(bulkBodies).toEqual([everything, everything]);
+    },
+  );
+
+  // The lockfile lists a workspace under its folder, so the walk starts at the rows of that folder.
+  test.concurrent("--prod in a workspace renamed after the install audits the rows of its folder", async () => {
+    const bulkBodies: Record<string, string[]>[] = [];
+    await using server = startRegistry({ "no-deps": [adv("<1.0.1")], "a-dep": [adv("<1.0.4", 2)] }, { bulkBodies });
+    using dir = await setup(
+      server,
+      { name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } },
+      { "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { "a-dep": "1.0.2" } }) },
+    );
+    const b = join(dir, "packages", "b");
+    await write(join(b, "package.json"), JSON.stringify({ name: "b-renamed", dependencies: { "a-dep": "1.0.2" } }));
+
+    const { stdout, ...rest } = await run(b, ["audit", "--prod"], dir);
+    expect({ ...rest, stdout: normalizeBunSnapshot(stdout) }).toEqual({
+      stdout:
+        AUDIT_HEADER +
+        `a-dep@1.0.2\n  (direct dependency)\n  workspace:b > a-dep\n` +
+        `  high: test advisory (<1.0.4) - https://example.invalid/advisory/2\n\n` +
+        `1 vulnerability (1 high)\n\n` +
+        REPORT_FOOTER,
+      stderr: "",
+      exitCode: 1,
+    });
+    expect(bulkBodies).toEqual([{ "a-dep": ["1.0.2"] }]);
+  });
+
   test.concurrent("--json --prod sends only production packages and prints the empty response", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", devDependencies: { "no-deps": "1.0.0" } });

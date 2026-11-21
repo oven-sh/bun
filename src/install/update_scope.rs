@@ -393,9 +393,17 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             })
             .collect()
     });
+    // The selectors read the saved lockfile, which can have this workspace under its old name.
+    let invoking = match selection {
+        Some(_) => manager.workspace_name_hash,
+        None => {
+            let id = manager.cwd_workspace_id_or_exit("nothing to update");
+            (id != 0).then(|| manager.lockfile.packages.items_name_hash()[id as usize])
+        }
+    };
     let scope = UpdateScope::new(
         selection.as_deref(),
-        manager.workspace_name_hash,
+        invoking,
         manager.options.filter_patterns.is_empty(),
         direct_only,
         None,

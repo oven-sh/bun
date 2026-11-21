@@ -239,7 +239,14 @@ pub fn install_with_manager(
                 // A lockfile from an older Bun has no entries for these workspaces. They are added the
                 // next time the dependencies change. Until then that lockfile is valid as it is.
                 let left_out = core::mem::take(&mut manager.summary.members_left_out);
-                if manager.summary.changes_dependencies() {
+                // A command that edits the package.json of one of them changes its dependencies.
+                let edits_left_out = left_out.iter().any(|&row| {
+                    let member = (maybe_root.dependencies.off + row) as usize;
+                    let name_hash = Some(lockfile.buffers.dependencies[member].name_hash);
+                    (manager.edited_package_jsons.iter())
+                        .any(|edited| edited.target.name_hash == name_hash)
+                });
+                if manager.summary.changes_dependencies() || edits_left_out {
                     manager.summary.add += left_out.len() as u32;
                     manager.summary.second_entries.clear();
                 } else {
@@ -1955,11 +1962,11 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
         .contains(crate::package_manager::options::Do::UPDATE_TO_LATEST);
     let mut workspaces = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
     match manager.update_target_workspaces.as_deref() {
-        None => workspaces.set(
-            manager
-                .root_package_id
-                .get(lockfile, manager.workspace_name_hash) as usize,
-        ),
+        None => {
+            if let Some(id) = (manager.root_package_id).get(lockfile, manager.workspace_name_hash) {
+                workspaces.set(id as usize);
+            }
+        }
         Some(targets) => {
             let buf = lockfile.buffers.string_bytes.as_slice();
             let names = packages.items_name();

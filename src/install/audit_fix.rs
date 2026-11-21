@@ -266,7 +266,7 @@ fn print_tokens(tokens: &[Box<[u8]>]) {
 pub fn exit_unless_lockfile_matches_package_json(
     manager: &mut PackageManager,
 ) -> crate::Result<()> {
-    crate::prune::exit_unless_lockfile_matches_package_json(manager, "fix").map(drop)
+    crate::prune::exit_unless_lockfile_matches_package_json(manager, "nothing to fix").map(drop)
 }
 
 pub fn exit_unless_lockfile_writable(manager: &PackageManager) {

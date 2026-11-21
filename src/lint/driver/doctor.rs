@@ -415,8 +415,12 @@ pub(crate) fn lint(
     rules
         .not_run
         .extend(rows.map(|it| (Reason::NotSupported, it)));
+    // A run exits with code 2 for each file it can't lint, too.
+    let no_files = Kinds::default();
+    let mut files_fail_on = &not_linted;
     if options.allow_unsupported {
         fails_on.clear();
+        files_fail_on = &no_files;
     }
     rules.finish();
     if rules.has_types && own.flavor != Flavor::Oxlint {
@@ -499,6 +503,7 @@ pub(crate) fn lint(
                     (b"linted", Json::Number(files as f64)),
                     (b"by_eslint", by_eslint.json()),
                     (b"not_linted", not_linted.json()),
+                    (b"fails_run", files_fail_on.json()),
                 ]),
             ),
             (
@@ -507,7 +512,7 @@ pub(crate) fn lint(
                     (b"native", texts(&rules.native)),
                     (b"javascript", Json::Object(javascript.collect())),
                     (b"not_run", Json::Array(not_run.collect())),
-                    (b"unsupported", texts(&fails_on)),
+                    (b"fails_run", texts(&fails_on)),
                 ]),
             ),
             (b"packages", packages.json()),
@@ -601,8 +606,8 @@ pub(crate) fn lint(
                 "        <d>Install eslint to lint them<r>\n"
             );
         }
-        if !options.allow_unsupported {
-            let hint = exits_because_of(not_linted.count());
+        if files_fail_on.count() > 0 {
+            let hint = exits_because_of(files_fail_on.count());
             pretty!(&mut out, colors, "        <d>{}<r>\n", hint);
         }
     }

@@ -37,6 +37,20 @@ async function doctor(files: Record<string, string>, args: string[] = []) {
   return { stdout, stderr, exitCode, isUntouched };
 }
 
+/** The exit code of `bun lint .` in a project with `files`, which the report is about. */
+async function lintExitCode(files: Record<string, string>, args: string[] = []) {
+  using dir = tempDir("bun-lint-doctor", files);
+  await using proc = spawn({
+    cmd: [bunExe(), "lint", "--no-script", "--threads", "2", ...args, "."],
+    env,
+    cwd: String(dir),
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  return await proc.exited;
+}
+
 /** Files for an installed ESLint plugin with the given `rules`. None of them reports anything. */
 function plugin(name: string, rules: string[], { isModule = false, version = "99.0.0" } = {}) {
   const object = `{ meta: { name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)} }, rules: { ${rules
@@ -134,7 +148,7 @@ Not checked:    other tools' configs, CI files, Git hooks
       const { stdout, exitCode } = await doctor(flat, ["-f", "json"]);
       expect(JSON.parse(stdout)).toEqual({
         config: { path: "eslint.config.js", kind: "eslint", nested: [], ignored: null, bunfig: null },
-        files: { linted: 3, by_eslint: {}, not_linted: {} },
+        files: { linted: 3, by_eslint: {}, not_linted: {}, fails_run: {} },
         rules: {
           native: ["eqeqeq", "no-undef", "no-var", "react-hooks/rules-of-hooks"],
           javascript: {
@@ -146,7 +160,7 @@ Not checked:    other tools' configs, CI files, Git hooks
             { rule: "no-such-rule", reason: "not_supported" },
             { rule: "indent", reason: "formatting" },
           ],
-          unsupported: ["no-such-rule"],
+          fails_run: ["no-such-rule"],
         },
         packages: {
           removable: ["eslint", "eslint-plugin-never-imported"],
@@ -263,20 +277,20 @@ Not checked:    other tools' configs, CI files, Git hooks
             bun lint exits with code 2 because of it. Use --allow-unsupported to make that a warning
         1 plugin has no rules in bun lint: jsdoc/*
 `);
-      const { not_run, unsupported } = JSON.parse(json.stdout).rules;
-      expect({ not_run, unsupported }).toEqual({
+      const { not_run, fails_run } = JSON.parse(json.stdout).rules;
+      expect({ not_run, fails_run }).toEqual({
         not_run: [
           { rule: "jsdoc/check-access", reason: "not_supported" },
           { rule: "jsdoc/*", reason: "not_supported" },
         ],
-        unsupported: ["jsdoc/check-access"],
+        fails_run: ["jsdoc/check-access"],
       });
       expect(text.stderr).toBe("");
       expect(text.exitCode).toBe(0);
       expect(json.exitCode).toBe(0);
     });
 
-    // Each row: the project, the flags, the rules with the reason `not_supported`, `rules.unsupported`, and the exit
+    // Each row: the project, the flags, the rules with the reason `not_supported`, `rules.fails_run`, and the exit
     // code of `bun lint` itself.
     test.each<[string, Record<string, string>, string[], string[], string[], number]>([
       ["a rule that is not supported", jsdoc, [], ["jsdoc/check-access", "jsdoc/*"], ["jsdoc/check-access"], 2],
@@ -314,30 +328,21 @@ Not checked:    other tools' configs, CI files, Git hooks
         ["no-such-rule"],
         2,
       ],
-    ])("%s", async (_, files, flags, notSupported, unsupported, lintExitCode) => {
-      using dir = tempDir("bun-lint-doctor", files);
-      const run = async (args: string[]) => {
-        await using proc = spawn({
-          cmd: [bunExe(), "lint", "--no-script", "--threads", "2", ...flags, ...args],
-          env,
-          cwd: String(dir),
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { stdout, exitCode };
-      };
-      const [text, json, lint] = await Promise.all([run(["--doctor"]), run(["--doctor", "-f", "json"]), run(["."])]);
+    ])("%s", async (_, files, flags, notSupported, failsRun, exitCode) => {
+      const [text, json, lint] = await Promise.all([
+        doctor(files, flags),
+        doctor(files, [...flags, "-f", "json"]),
+        lintExitCode(files, flags),
+      ]);
       const { rules } = JSON.parse(json.stdout);
       const rows = rules.not_run.filter((it: { reason: string }) => it.reason === "not_supported");
-      expect({ not_supported: rows.map((it: { rule: string }) => it.rule), unsupported: rules.unsupported }).toEqual({
+      expect({ not_supported: rows.map((it: { rule: string }) => it.rule), fails_run: rules.fails_run }).toEqual({
         not_supported: notSupported,
-        unsupported,
+        fails_run: failsRun,
       });
-      expect(text.stdout.includes("bun lint exits with code 2 because of it.")).toBe(unsupported.length > 0);
-      expect({ lint: lint.exitCode, text: text.exitCode, json: json.exitCode }).toEqual({
-        lint: lintExitCode,
+      expect(text.stdout.includes("bun lint exits with code 2 because of it.")).toBe(failsRun.length > 0);
+      expect({ lint, text: text.exitCode, json: json.exitCode }).toEqual({
+        lint: exitCode,
         text: 0,
         json: 0,
       });
@@ -372,7 +377,7 @@ Not checked:    other tools' configs, CI files, Git hooks
       native: ["@typescript-eslint/no-floating-promises"],
       javascript: {},
       not_run: [],
-      unsupported: [],
+      fails_run: [],
     });
     expect(exitCode).toBe(0);
   });
@@ -399,7 +404,7 @@ Not checked:    other tools' configs, CI files, Git hooks
         native: ["no-var"],
         javascript: { "eslint-plugin-first": ["first/a"] },
         not_run: [{ rule: "semi", reason: "formatting" }],
-        unsupported: [],
+        fails_run: [],
       });
       expect(packages.removable).toEqual(["eslint"]);
       expect(packages.needed).toEqual([{ name: "eslint-plugin-first", reason: "rules", by: null }]);
@@ -421,17 +426,19 @@ Not checked:    other tools' configs, CI files, Git hooks
     timeout,
   );
 
+  const withParser = {
+    "package.json": dependencies("eslint"),
+    "eslint.config.js": `
+      const parser = { meta: { name: "my-parser" }, parse() {} };
+      export default [{ rules: { "no-var": "error" } }, { files: ["**/*.foo"], languageOptions: { parser } }];`,
+    "a.js": "",
+    "b.foo": "",
+    "c.foo": "",
+  };
+  const eslint = { "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0" }) };
+
   test("files that need the config's custom parser go to the installed ESLint", async () => {
-    const files = {
-      "package.json": dependencies("eslint"),
-      "eslint.config.js": `
-        const parser = { meta: { name: "my-parser" }, parse() {} };
-        export default [{ rules: { "no-var": "error" } }, { files: ["**/*.foo"], languageOptions: { parser } }];`,
-      "a.js": "",
-      "b.foo": "",
-      "c.foo": "",
-    };
-    const eslint = { "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0" }) };
+    const files = withParser;
     const [installed, missing, allowed] = await Promise.all([
       doctor({ ...files, ...eslint }),
       doctor(files),
@@ -464,6 +471,24 @@ Still needed:   eslint (some files go to it)
     expect(installed.exitCode).toBe(0);
     expect(missing.exitCode).toBe(0);
     expect(allowed.exitCode).toBe(0);
+  });
+
+  // Each row: the flags, `files.fails_run`, and the exit code of `bun lint` itself.
+  test.each<[string, string[], Record<string, number>, number]>([
+    ["if eslint is not installed", [], { "*.foo": 2 }, 2],
+    ["but not with --allow-unsupported", ["--allow-unsupported"], {}, 0],
+  ])("-f json lists the files that bun lint exits with code 2 for, %s", async (_, flags, failsRun, exitCode) => {
+    const [json, lint] = await Promise.all([
+      doctor(withParser, [...flags, "-f", "json"]),
+      lintExitCode(withParser, flags),
+    ]);
+    expect(JSON.parse(json.stdout).files).toEqual({
+      linted: 2,
+      by_eslint: {},
+      not_linted: { "*.foo": 2 },
+      fails_run: failsRun,
+    });
+    expect({ lint, json: json.exitCode }).toEqual({ lint: exitCode, json: 0 });
   });
 
   test("with both an ESLint and an oxlint config, says which one is used and why", async () => {

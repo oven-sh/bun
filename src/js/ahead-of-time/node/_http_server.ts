@@ -3969,7 +3969,8 @@ const emitResponseFinish = function emitResponseFinish(this: $Node.ServerRespons
       exchange.flags &= ~ExchangeFlags.finishes_here;
       req._dump();
     }
-    finishConnection(exchange, this, req, exchange.connection!, false);
+    const connection = exchange.connection!;
+    finishConnection(exchange, this, req, connection, connection.parser, false);
     return;
   }
   // Node's resOnFinish: dump a body that nobody consumed or resumed.
@@ -5237,9 +5238,11 @@ const finishExchange = function emitResponseFinished(exchange: Exchange): void {
     return finishExchangeAmongOthers(exchange, res, req, socket, flags, isSilent);
   }
   if (isSilent && (kind === RequestKind.unseen || kind === RequestKind.consumed)) {
+    // Read in front of the stores that may be refused: what a getter of it throws is heard.
+    const parser = socket.parser;
     try {
       if (kind === RequestKind.unseen) endUnseen(req);
-      finishConnection(exchange, res, req, socket, true);
+      finishConnection(exchange, res, req, socket, parser, true);
     } catch {
       takesStores = false;
     }
@@ -5280,10 +5283,10 @@ const finishConnection = function onResponseFinishHandleSocket(
   res: $Node.ServerResponse,
   req: $Node.IncomingMessage,
   socket: $Node.HttpServerSocket,
+  parser: $Node.HttpServerParserShim | null,
   isSilent: boolean,
 ): void {
   const kind = exchange.requestKind;
-  const parser = socket.parser;
   if (kind === RequestKind.unseen) {
     if (isSilent) {
       if (parser != null && parser.incoming === req) parser.incoming = null;
@@ -5363,7 +5366,7 @@ const finishExchangeAmongOthers = function emitResponseFinished(
   queueTick1(emitCloseNT, res);
   exchange.flags |= ExchangeFlags.finishes_here | ExchangeFlags.others_wait;
   if (isSilent) {
-    finishConnection(exchange, res, req, socket, false);
+    finishConnection(exchange, res, req, socket, socket.parser, false);
     return;
   }
   try {

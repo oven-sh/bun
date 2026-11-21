@@ -75,6 +75,7 @@ impl UnicodeSet {
     }
 
     /// Requires `start <= end <= 0x10ffff`.
+    #[cfg_attr(mordant, allow(error_collapsed_to_bool))] // The flag stays set.
     pub(crate) fn add_range(&mut self, start: u32, end: u32) {
         debug_assert!(self.bmp_set.is_none() && start <= end && end <= MAX_VALUE);
         let limit = end + 1;

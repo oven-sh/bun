@@ -140,6 +140,7 @@ pub(crate) trait UString {
 }
 
 impl UString for Vec<u16> {
+    #[cfg_attr(mordant, allow(error_collapsed_to_bool))] // The flag stays set.
     fn replace_range(&mut self, start: usize, length: usize, text: &[u16]) {
         let _ = defer_oom(memory::try_splice(
             self,

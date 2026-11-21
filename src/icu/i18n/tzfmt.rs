@@ -208,6 +208,7 @@ impl TimeZoneFormat {
     }
 
     /// Appends "GMT-08:00" if `is_long`, else "GMT-8".
+    #[cfg_attr(mordant, allow(error_collapsed_to_bool))] // The flag stays set.
     fn format_offset_localized_gmt(&self, offset: i32, is_long: bool, name: &mut Vec<u16>) {
         let Some([hours, minutes, seconds]) = offset_fields(offset) else {
             return;

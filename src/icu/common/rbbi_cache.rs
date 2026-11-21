@@ -102,6 +102,7 @@ impl Segmenter {
     }
 
     /// Leaves the segment undivided if any allocation has failed in this call.
+    #[cfg_attr(mordant, allow(error_collapsed_to_bool))] // The flag stays set.
     fn populate_dictionary(&mut self, text: &[u16], (start, status): Boundary, segment: Segment) {
         if segment.end - start <= 1 {
             return;
@@ -179,6 +180,7 @@ impl Checkpoints {
             .unwrap_or(start)
     }
 
+    #[cfg_attr(mordant, allow(error_collapsed_to_bool))] // A missing checkpoint only costs time.
     fn add(&mut self, point: Boundary) {
         if self.points.last().is_none_or(|last| last.0 < point.0) {
             let _ = best_effort(|| try_push(&mut self.points, point));

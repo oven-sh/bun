@@ -70,6 +70,7 @@ impl Entries {
         !self.table.with_lock(|table| table.values().any(has_it))
     }
 
+    #[cfg_attr(mordant, allow(error_collapsed_to_bool))] // A later use sweeps again.
     fn count_use(&self, limit: usize) {
         if self.uses_until_sweep.fetch_sub(1, Relaxed) <= 0 {
             let _ = best_effort(|| self.sweep(limit));

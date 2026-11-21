@@ -59,6 +59,7 @@ pub(crate) struct DecimalFormatSymbols {
     after_currency: SmallUString,
 }
 
+#[cfg_attr(mordant, allow(error_collapsed_to_bool))] // The flag stays set.
 fn to_small_string(units: impl ExactSizeIterator<Item = u16>) -> SmallUString {
     let mut text = SmallUString::new();
     let _ = defer_oom(text.set_to_units(units));

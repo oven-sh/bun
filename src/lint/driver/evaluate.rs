@@ -1,6 +1,7 @@
 //! Runs configuration files that are programs (`eslint.config.js`, `oxlint.config.ts`). The current executable runs the
 //! file in a separate process, which prints the file's exports as JSON.
 
+use crate::cli::Tool;
 use crate::paths;
 use crate::run::{Environment, Fatal, Script, Source};
 use bun_core::strings;
@@ -87,19 +88,26 @@ pub(crate) fn evaluate_with(
     path: &[u8],
     argument: &[u8],
 ) -> Result<Json, Fatal> {
-    let finished = run(environment, source, path, argument, false);
+    let finished = run(environment, source, path, argument, None);
     (finished.map(|it| it.config)).map_err(|why| cannot_load(path, &why))
 }
 
 /// Runs [`ESLINT`] on the configuration file at `path`, whose name doesn't say whose it is. Returns what the file
 /// exports, and whether that's an oxlint config. The script decides that before it serializes the exports, which it
-/// does differently for each tool (`isForOxlint` in evaluate-eslint.js).
+/// does differently for each tool (`isForOxlint` in evaluate-eslint.js). `project` is the tool that the project uses,
+/// whose config an object is that both tools read.
 pub(crate) fn evaluate_by_export(
     environment: &Environment,
     path: &[u8],
     argument: &[u8],
+    project: Option<Tool>,
 ) -> Result<(Json, bool), Fatal> {
-    let finished = run(environment, ESLINT, path, argument, true);
+    let project: &[u8] = match project {
+        Some(Tool::Eslint) => b"eslint",
+        Some(Tool::Oxlint) => b"oxlint",
+        None => b"neither",
+    };
+    let finished = run(environment, ESLINT, path, argument, Some(project));
     (finished.map(|it| (it.config, it.is_for_oxlint))).map_err(|why| cannot_load(path, &why))
 }
 
@@ -117,7 +125,7 @@ pub(crate) fn evaluate_input(
 ) -> Result<Json, Vec<u8>> {
     // The file doesn't exist. Only its directory matters.
     let path = paths::join(directory, b"-");
-    run(environment, source, &path, input, false).map(|it| it.config)
+    run(environment, source, &path, input, None).map(|it| it.config)
 }
 
 /// What a script passes to `finish`.
@@ -134,7 +142,7 @@ fn run(
     source: Source,
     path: &[u8],
     argument: &[u8],
-    by_export: bool,
+    by_export: Option<&[u8]>,
 ) -> Result<Finished, Vec<u8>> {
     const SILENT: &[u8] = b"It exited before it exported a config.";
     let text = |it: &[u8]| Json::String(it.to_vec());
@@ -146,8 +154,8 @@ fn run(
         (b"argument".to_vec(), text(argument)),
         (b"commandLine".to_vec(), Json::Array(command_line.collect())),
     ];
-    if by_export {
-        given.push((b"byExport".to_vec(), Json::Bool(true)));
+    if let Some(by_export) = by_export {
+        given.push((b"byExport".to_vec(), text(by_export)));
     }
     let given = Json::Object(given);
     let mut head = b"const given = ".to_vec();

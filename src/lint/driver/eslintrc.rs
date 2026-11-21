@@ -211,7 +211,8 @@ pub(crate) fn is_eslintrc_name(name: &[u8]) -> bool {
     name.starts_with(b".eslintrc") || name.ends_with(b".yaml") || name.ends_with(b".yml")
 }
 
-/// True if `json`, from a `.json` file passed with `--config`, is an ESLint 8 config, as far as can be told.
+/// True if `json`, from a `.json` file passed with `--config`, is an ESLint 8 config, as far as can be told. For a
+/// program, `isForOxlint` in evaluate-eslint.js looks for the same.
 pub(crate) fn is_eslintrc_json(json: &Json) -> bool {
     // Keys that an `.oxlintrc.json` doesn't have.
     let eslintrc_only_keys: [&[u8]; 7] = [

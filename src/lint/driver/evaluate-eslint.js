@@ -232,8 +232,9 @@ function serializeConfigObject(given, index) {
   return out;
 }
 
-// The keys of a config object that only ESLint reads, in an eslint.config.js or an .eslintrc: `validate_object` in
-// linter/config/flat.rs has them, and `KEYS` in linter/config/shape.rs, which are oxlint's, does not.
+// The keys of a config object that not every tool reads. ESLint's are in `validate_object` in linter/config/flat.rs, ESLint 8's
+// in `is_eslintrc_json` in eslintrc.rs, which decides the same for a JSON file. oxlint's are those of `KEYS` in
+// linter/config/shape.rs: some only it has, the others an .eslintrc has too.
 const keysOfESLint = [
   "basePath",
   "files",
@@ -244,16 +245,31 @@ const keysOfESLint = [
   "name",
   "processor",
 ];
-const keysOfESLint8 = ["noInlineConfig", "parser", "parserOptions", "reportUnusedDisableDirectives", "root"];
+const keysOfESLint8 = [
+  "ecmaFeatures",
+  "noInlineConfig",
+  "parser",
+  "parserOptions",
+  "reportUnusedDisableDirectives",
+  "root",
+];
+const keysOfOxlint = ["$schema", "categories", "jsPlugins", "options"];
+const keysOfOxlintAndESLint8 = ["env", "extends", "globals", "ignorePatterns", "overrides"];
 
-// For a file whose name does not say whose it is: true if what it exports is an oxlint config. An array is ESLint's, and so
-// is an object with a key or with `plugins` as only ESLint reads them. Any other object is oxlint's, also one that ESLint
-// reads too, as in a JSON file by another name.
+// For a file whose name does not say whose it is: true if what it exports is an oxlint config. An array is ESLint's. A key,
+// `plugins` or a preset in `extends` as only one tool reads them makes an object that tool's. Any other object is the config
+// of the tool that the project uses, which `given.byExport` is. In a project that uses neither, it is ESLint's if ESLint 9
+// reads it, as ESLint 8 does too.
 function isForOxlint(exported) {
   if (exported === null || typeof exported !== "object" || Array.isArray(exported)) return false;
-  const { plugins } = exported;
+  const { plugins, extends: extended } = exported;
   if (plugins !== null && typeof plugins === "object" && !Array.isArray(plugins)) return false;
-  return ![...keysOfESLint, ...keysOfESLint8].some(key => key in exported);
+  if ([...keysOfESLint, ...keysOfESLint8].some(key => key in exported)) return false;
+  const isPreset = item => typeof item === "string" && /^(?:eslint|plugin):/.test(item);
+  if ([extended].flat().some(isPreset)) return false;
+  if (keysOfOxlint.some(key => key in exported)) return true;
+  if (given.byExport !== "neither") return given.byExport === "oxlint";
+  return Array.isArray(plugins) || keysOfOxlintAndESLint8.some(key => key in exported);
 }
 
 const isOfVite = require("node:path").basename(path).startsWith("vite.config.");

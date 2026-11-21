@@ -102,6 +102,10 @@ const getRuntimeDefaultResultOrderOption: () => string = $bindgen(
   "dns_internals.bind.ts",
   "getRuntimeDefaultResultOrderOption",
 );
+const setRuntimeDefaultResultOrderOption: (order: string) => void = $bindgen(
+  "dns_internals.bind.ts",
+  "setRuntimeDefaultResultOrderOption",
+);
 
 function newResolver(options: { timeout: number; tries: number }) {
   if (!newResolver.native) {
@@ -127,6 +131,7 @@ declare namespace defaultResultOrder {
 function setDefaultResultOrder(order: string) {
   validateOrder(order);
   defaultResultOrder.value = order;
+  setRuntimeDefaultResultOrderOption(order);
 }
 
 function getDefaultResultOrder() {

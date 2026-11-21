@@ -19,7 +19,7 @@ import { bunEnv, bunExe, isLinux, isMusl } from "harness";
 // each scenario runs in its own process. Every test also does a real fetch()
 // through the seeded entry, which is consumed by usockets via
 // Bun__addrinfo_getRequestResult and start_connections().
-async function run(body: string, timeoutMs = 10_000) {
+async function run(body: string, timeoutMs = 10_000, flags: string[] = []) {
   const fixture = /* js */ `
     const { dnsCacheSeed } = require("bun:internal-for-testing");
     if (typeof dnsCacheSeed !== "function") {
@@ -30,7 +30,7 @@ async function run(body: string, timeoutMs = 10_000) {
     ${body}
   `;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
+    cmd: [bunExe(), ...flags, "-e", fixture],
     env: {
       ...bunEnv,
       HTTP_PROXY: undefined,
@@ -54,6 +54,59 @@ async function run(body: string, timeoutMs = 10_000) {
 }
 
 describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
+  test("--dns-result-order controls fetch's address order", async () => {
+    const { out, stderr, exitCode, signal } = await run(
+      /* js */ `
+        using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+        const host = "dns-order-flag-" + server.port + ".test";
+        const order = dnsCacheSeed(host, ["127.0.0.1", "::1"]);
+        const body = await (await fetch("http://" + host + ":" + server.port)).text();
+        console.log(JSON.stringify({ order, body }));
+        process.exit(0);
+      `,
+      10_000,
+      ["--dns-result-order=ipv6first"],
+    );
+    expect(out).toEqual({ order: [6, 4], body: "ok" });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(signal).toBeNull();
+  });
+
+  test("dns.setDefaultResultOrder changes fetch's address order", async () => {
+    const { out, stderr, exitCode, signal } = await run(/* js */ `
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+      const { setDefaultResultOrder } = require("node:dns");
+      setDefaultResultOrder("ipv6first");
+      const host = "dns-order-api-" + server.port + ".test";
+      const order = dnsCacheSeed(host, ["127.0.0.1", "::1"]);
+      const body = await (await fetch("http://" + host + ":" + server.port)).text();
+      console.log(JSON.stringify({ order, body }));
+      process.exit(0);
+    `);
+    expect(out).toEqual({ order: [6, 4], body: "ok" });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(signal).toBeNull();
+  });
+
+  test("changing result order evicts cached addresses packed under the old order", async () => {
+    const { out, stderr, exitCode, signal } = await run(/* js */ `
+      const { setDefaultResultOrder } = require("node:dns");
+      const before = Bun.dns.getCacheStats().size;
+      dnsCacheSeed("dns-order-cache.test", ["127.0.0.1", "::1"]);
+      const seeded = Bun.dns.getCacheStats().size;
+      setDefaultResultOrder("ipv6first");
+      const after = Bun.dns.getCacheStats().size;
+      console.log(JSON.stringify({ seeded: seeded - before, evicted: seeded - after }));
+      process.exit(0);
+    `);
+    expect(out).toEqual({ seeded: 1, evicted: 1 });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(signal).toBeNull();
+  });
+
   test("fetch() through a seeded 4xAAAA + 4xA entry connects via the interleaved order", async () => {
     const { out, stderr, exitCode, signal } = await run(/* js */ `
       using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });

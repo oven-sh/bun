@@ -626,18 +626,23 @@ pub(crate) mod command {
     // stays silent on unknown flags.
     // ──────────────────
     /// The file name of argv[0] is `name`, ignoring ASCII case and a trailing `.exe` on Windows.
+    #[inline(always)]
     fn invoked_as(argv0: &[u8], name: &[u8]) -> bool {
-        let mut file_name = strings::basename(argv0);
-        if cfg!(windows) && strings::ends_with_case_insensitive_ascii(file_name, b".exe") {
-            file_name = &file_name[..file_name.len() - b".exe".len()];
+        let mut stem = argv0;
+        if cfg!(windows) && strings::ends_with_case_insensitive_ascii(stem, b".exe") {
+            stem = &stem[..stem.len() - b".exe".len()];
         }
-        file_name.eq_ignore_ascii_case(name)
+        // A start as `bun` stops at the suffix compare and never scans the path.
+        strings::ends_with_case_insensitive_ascii(stem, name)
+            && strings::basename(stem).eq_ignore_ascii_case(name)
     }
 
+    #[inline]
     fn is_bun_x(argv0: &[u8]) -> bool {
         invoked_as(argv0, b"bunx")
     }
 
+    #[inline]
     fn is_node(argv0: &[u8]) -> bool {
         invoked_as(argv0, b"node")
     }

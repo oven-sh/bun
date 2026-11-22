@@ -813,7 +813,7 @@ mod draft {
                     end_build_out_of(b"stack", &place);
                 }
                 let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
-                let addresses_in_trace: [usize; 20];
+                let addresses_in_trace: [usize; CRASH_TRACE_FRAMES];
                 let trace_address_count: usize;
 
                 {
@@ -1009,7 +1009,7 @@ mod draft {
                     }
                     crate::stopped_builds::write_where_this_thread_stopped(writer);
 
-                    let mut addr_buf: [usize; 20] = [0; 20];
+                    let mut addr_buf = [0usize; CRASH_TRACE_FRAMES];
 
                     let trace: &[usize] = {
                         let idx: usize = match seed {
@@ -1953,7 +1953,7 @@ mod draft {
         let reason = CrashReason::Panic(msg_buf.const_slice());
 
         let mut trace_str_buf = TraceStringBuf::default();
-        let addresses_in_trace: [usize; 20];
+        let addresses_in_trace: [usize; CRASH_TRACE_FRAMES];
         let trace_address_count: usize;
         {
             let _panic_guard = PANIC_MUTEX.lock();
@@ -1994,7 +1994,7 @@ mod draft {
             }
             crate::stopped_builds::write_where_this_thread_stopped(writer);
 
-            let mut addr_buf: [usize; 20] = [0; 20];
+            let mut addr_buf = [0usize; CRASH_TRACE_FRAMES];
             let idx = debug::capture_stack_trace(debug::return_address(), &mut addr_buf);
             let trace = &addr_buf[..idx.min(addr_buf.len())];
             addresses_in_trace = addr_buf;
@@ -2877,14 +2877,18 @@ mod draft {
         }
     }
 
-    /// The capacity of the buffer that a trace string is built in. It is small on Windows, which reports a stack overflow on the stack that overflowed.
-    const TRACE_STRING_CAPACITY: usize = if cfg!(windows) { 1024 } else { 2048 };
-    /// What the frames may take of the trace string. On POSIX the other half is for the header and the reason. On Windows the frames share the buffer with them.
+    /// How many frames a crash reports at most.
+    const CRASH_TRACE_FRAMES: usize = 20;
+    /// What the frames may take of the trace string. On POSIX every frame of a crash fits, each with the longest name.
     const FRAMES_CAPACITY: usize = if cfg!(windows) {
-        TRACE_STRING_CAPACITY
+        768
     } else {
-        TRACE_STRING_CAPACITY / 2
+        CRASH_TRACE_FRAMES * StackLine::MAX_ENCODED_LEN
     };
+    /// What the header and the reason have of the trace string beside the frames.
+    const HEADER_AND_REASON_CAPACITY: usize = if cfg!(windows) { 256 } else { 1024 };
+    /// The capacity of the buffer that a trace string is built in. It is 1 KB on Windows, which reports a stack overflow on the stack that overflowed.
+    const TRACE_STRING_CAPACITY: usize = FRAMES_CAPACITY + HEADER_AND_REASON_CAPACITY;
     type TraceStringBuf = BoundedArray<u8, TRACE_STRING_CAPACITY>;
 
     /// Writes `lines`, the innermost first, up to the first that does not fit in `FRAMES_CAPACITY`: a string decodes without its outermost frames.
@@ -3976,6 +3980,16 @@ mod draft {
                         .chain(unknown_frame_that_would_fit)
                 ),
                 frame(&[b'a'; MAX_OBJECT_NAME_LEN], i32::MAX).repeat(fit)
+            );
+        }
+
+        #[test]
+        #[cfg(not(windows))]
+        fn every_frame_of_a_crash_fits_with_the_longest_name() {
+            let longest = || line(object_of(&[&[b'a'; MAX_OBJECT_NAME_LEN]]), i32::MAX);
+            assert_eq!(
+                written(core::iter::repeat_with(longest).take(CRASH_TRACE_FRAMES)),
+                frame(&[b'a'; MAX_OBJECT_NAME_LEN], i32::MAX).repeat(CRASH_TRACE_FRAMES)
             );
         }
 

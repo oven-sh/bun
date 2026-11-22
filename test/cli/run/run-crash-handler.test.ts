@@ -954,6 +954,41 @@ describe.if(isLinux || isMacOS)("the uploaded trace string names the image of a 
     expect(exitCode).toBe(128 + osConstants.signals.SIGSEGV);
   });
 
+  // A library faults more calls deep than a report has frames. Its file name
+  // is of the longest kind that a frame carries, and no frame is left out for
+  // that. Under ASAN bun has no handler for a real fault.
+  test.if(!!cc && !isASAN)("in every frame of a report, each with the longest name", async () => {
+    using dir = tempDir("crash-names-every-frame", {
+      "faults deep (a library with a long file name that a crash report cuts).c": `
+        int faults_deep(int depth);
+        /* The compiler cannot see where this call goes: it stays a call, with a frame. */
+        static int (*volatile next)(int) = faults_deep;
+        int faults_deep(int depth) {
+          if (depth == 0) return *(volatile int *)0xDEADBEEF;
+          return next(depth - 1) + 1;
+        }
+      `,
+    });
+    const library = compileFixture(
+      path.join(String(dir), "faults deep (a library with a long file name that a crash report cuts).c"),
+      { flags: ["-fno-omit-frame-pointer"] },
+    );
+    const { stderr, exitCode, frames } = await uploadedCrashFrames(
+      withoutCoreDump([
+        bunExe(),
+        "-e",
+        `require("bun:ffi").dlopen(${JSON.stringify(library)}, { faults_deep: { args: ["i32"], returns: "i32" } }).symbols.faults_deep(40)`,
+      ]),
+    );
+
+    expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+    const name = path.basename(library);
+    expect(name.length).toBeGreaterThan(64);
+    const object = name.slice(0, 64).replace(/[^A-Za-z0-9._+-]/g, "_");
+    expect(frames.map(frame => frame.object)).toEqual(Array(20).fill(object));
+    expect(exitCode).toBe(128 + osConstants.signals.SIGSEGV);
+  });
+
   // A standalone executable loads a library that it holds from a file that it
   // writes, and the name of that file has the user's id. Linux alone builds
   // this one: the name is made the same way on every platform.

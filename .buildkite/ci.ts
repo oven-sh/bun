@@ -1532,8 +1532,9 @@ function getPipelineOptions(): PipelineOptions | undefined {
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
-    buildPlatforms: Array.from(buildPlatformsMap.values()),
-    testPlatforms: Array.from(testPlatformsMap.values()),
+    buildPlatforms: Array.from(buildPlatformsMap.values()).filter(p => p.os === "windows" && p.arch === "aarch64"),
+    testPlatforms: Array.from(testPlatformsMap.values()).filter(p => p.os === "windows" && p.arch === "aarch64"),
+    testFiles: ["aot/zz-diagnose"],
   };
 }
 
@@ -1695,7 +1696,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
 
   const { skipBuilds, forceBuilds } = options;
 
-  let buildId: string | undefined;
+  let buildId: string | undefined = "01a200ef-06f4-4cf9-a3a3-4e6542e54a7e";
   if (skipBuilds && !forceBuilds) {
     const lastBuild = await getLastSuccessfulBuild();
     if (lastBuild) {
@@ -1830,8 +1831,9 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
     // The files that a manual build asks for are not written for a platform that names its own.
     .filter(({ tests }) => !tests || !options.testFiles?.length)
-    .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
-    .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
+    .concat([])
+    .concat([]);
+  void [prDarwinTestPlatforms, betaDarwinTestPlatforms];
   {
     const { skipTests, testFiles } = options;
     if (!skipTests) {

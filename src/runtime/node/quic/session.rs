@@ -413,7 +413,7 @@ pub(crate) struct QuicSession {
     close_reported: Cell<bool>,
     destroyed: Cell<bool>,
     application_options_js: JsCell<Option<Strong>>,
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
     global: Cell<*const JSGlobalObject>,
 }
 
@@ -531,7 +531,7 @@ impl QuicSession {
         this.endpoint_js
             .set(Some(Strong::create(endpoint_handle, global)));
         this.is_server.set(is_server);
-        this.this_value.with_mut(|r| r.set_strong(handle, global));
+        this_value.set_js_ref_strong(global);
         this.write_stat(IDX_STATS_SESSION_CREATED_AT, now_ns());
         let _ = this.vtable;
         if let Some(conn) = conn {

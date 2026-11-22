@@ -3,6 +3,7 @@ use super::manifest::ExportsEntry;
 use super::search::{is_in_node_modules, join_unrooted};
 use super::*;
 use crate::fold::slice_in;
+use crate::resolve::parent_directory;
 
 const URL_PREFIXES: [&[u8]; 4] = [b"http://", b"https://", b"//", b"data:"];
 const HOST_SCHEMES: [&[u8]; 2] = [b"node:", b"bun:"];
@@ -100,7 +101,7 @@ impl<'h> Resolver<'h> {
             false => self.code_options().working_directory.as_slice(),
         };
         is_path(request.specifier)
-            && self.is_in_package_left_outside(request, own_folder, dirname::<Posix>(path))
+            && self.is_in_package_left_outside(request, own_folder, parent_directory(path))
     }
 
     fn is_in_package_left_outside(

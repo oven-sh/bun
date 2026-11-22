@@ -564,7 +564,8 @@ test.if(process.platform === "darwin")("the trace string is the same with a libr
       return stderr.match(/^ (\S+A0eNrLzCvLz05NUUguSizOcKoMSMzLTNbQVMhIzEvJSS0CAK\/LCxc)$/m)?.[1];
     }),
   );
-  expect({ plain: typeof plain, inserted }).toEqual({ plain: "string", inserted: plain });
+  // A trace without the frames of bun is a run of "_", one for each frame.
+  expect({ plain: plain?.includes("__________"), inserted }).toEqual({ plain: false, inserted: plain });
 });
 
 test("raise ignoring panic handler does not trigger the panic handler", async () => {

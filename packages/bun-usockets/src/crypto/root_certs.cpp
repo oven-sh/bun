@@ -74,25 +74,33 @@ extern "C" int us_no_password_callback(char *buf, int size, int rwflag, void *u)
 }
 
 extern "C" X509 *us_pem_read_ca(BIO *in, int with_trust, CRYPTO_BUFFER **out_der) {
+  // An entry can withdraw trust, so it must not pass for malformed, or for the end, because memory ran out.
+  auto check_memory = [] {
+    if (ERR_equals(ERR_peek_error(), ERR_LIB_CRYPTO, ERR_R_MALLOC_FAILURE)) Bun__outOfMemory();
+  };
   for (;;) {
+    ERR_clear_error();
     uint8_t *out = nullptr;
     long len = 0;
     if (!PEM_bytes_read_bio(&out, &len, nullptr, with_trust ? PEM_STRING_X509_TRUSTED : PEM_STRING_X509, in,
                             us_no_password_callback, nullptr)) {
+      check_memory();
       return nullptr;
     }
     us_unique_ptr<uint8_t, OPENSSL_free> block{out};
     const uint8_t *end = out;
     us_unique_ptr<X509, X509_free> cert{(with_trust ? d2i_X509_AUX : d2i_X509)(nullptr, &end, len)};
     if (cert != nullptr) {
-      if (out_der != nullptr && (*out_der = CRYPTO_BUFFER_new(out, end - out, nullptr)) == nullptr) return nullptr;
+      if (out_der != nullptr && (*out_der = CRYPTO_BUFFER_new(out, end - out, nullptr)) == nullptr) Bun__outOfMemory();
       return cert.release();
     }
+    check_memory();
+    ERR_clear_error();
     if (!X509_LAZY_CERT_SET_can_index(out, len)) {
+      check_memory();
       OPENSSL_PUT_ERROR(PEM, ERR_R_ASN1_LIB);
       return nullptr;
     }
-    ERR_clear_error();
   }
 }
 

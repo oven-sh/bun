@@ -51,6 +51,7 @@ export const tlsOptionNames = [
   "clientRenegotiationWindow",
   "crl",
   "allowPartialTrustChain",
+  "caMayBeEmpty",
   "sessionTimeout",
   "sigalgs",
   "ecdhCurve",

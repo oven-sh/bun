@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ee5ac146f5e92a0a2950d437cd7548198b4a2f79feaf5905835737dbf1d982eb.
+// Written against that file with the SHA-256 9474fa894d40d7eb648499b5f1bd49f82438cf0eb0590f4664bbaeba81289969.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"

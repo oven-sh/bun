@@ -592,6 +592,8 @@ impl Streams {
                 if now_sent < stream.send_limit && stream.mark(Flags::IN_STALLED) {
                     state.stalled.push(id);
                 }
+            } else if state.closes_when_sent {
+                state.close_if_done(id, stream);
             }
         }
     }

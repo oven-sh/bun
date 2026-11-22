@@ -355,6 +355,21 @@ fn server_closes_when_the_client_knows_that_it_goes_away() {
 }
 
 #[test]
+fn settings_are_only_worth_a_wait_after_a_request() {
+    for has_request in [false, true] {
+        let mut raw = Raw::client().config(http3).connected_with("");
+        if has_request {
+            raw.send("reset_stream 0 0 0, stop_sending 0 0");
+        }
+        raw.connection().go_away();
+        let now = raw.now;
+        raw.connection().close(now);
+        raw.process();
+        assert_eq!(raw.close.is_some(), !has_request);
+    }
+}
+
+#[test]
 fn client_lets_the_server_close() {
     let steps: [(Step, _); 2] = [
         (

@@ -821,14 +821,10 @@ test.each(["has been written", "is being written"])(
         sni: { "*": { keys: [key], certs: [cert] } },
         onheaders() {
           this.sendHeaders({ ":status": "200" });
-          this.setBody(
-            (async function* () {
-              if (how === "is being written") await goaway.promise;
-              yield Buffer.from("done");
-            })(),
-          );
-          const close = () => accepted.close({ code: 42, type: "application", reason: "why" });
-          how === "is being written" ? close() : this.closed.then(close);
+          this.writer.writeSync("done");
+          if (how === "is being written") goaway.promise.then(() => this.writer.endSync());
+          else this.writer.endSync();
+          accepted.close({ code: 42, type: "application", reason: "why" });
         },
       },
     );
@@ -850,6 +846,24 @@ test.each(["has been written", "is being written"])(
     expect(events).toEqual(["goaway"]);
   },
 );
+
+test("stream.closed waits until the end has been sent", async () => {
+  await using server = await listen(
+    session => {
+      session.onstream = async stream => {
+        await Array.fromAsync(stream);
+        stream.setBody(Buffer.alloc(200_000));
+        await stream.closed;
+        session.destroy();
+      };
+    },
+    { alpn: ["quic-test"], sni: { "*": { keys: [key], certs: [cert] } } },
+  );
+  const client = await connect(server.address!, { alpn: "quic-test", verifyPeer: "manual" } as SessionOptions);
+  const stream = await client.createBidirectionalStream({ body: "question" });
+  expect(Buffer.concat((await Array.fromAsync(stream)).flat()).length).toBe(200_000);
+  client.destroy();
+});
 
 test("streams can be read one after the other, in any order", async () => {
   const sizes = [2, 3, 4].map(megabytes => megabytes << 20);

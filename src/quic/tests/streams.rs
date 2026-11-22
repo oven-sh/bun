@@ -84,6 +84,29 @@ fn life_of_a_bidirectional_stream() {
 }
 
 #[test]
+fn is_closed_when_its_end_has_been_sent() {
+    type Step = fn(&mut Raw);
+    let steps: [(Step, _); 3] = [
+        (|it| it.advance(0), ""),
+        (|it| it.send("ack"), "0 closed"),
+        (|it| it.send("stop_sending 0 1"), "0 stopped 0x1, 0 closed"),
+    ];
+    for (step, events) in steps {
+        let raw = Raw::client().config(|it| it.closes_when_sent = true);
+        let mut raw = raw.connected();
+        raw.send("ack, fin 0 0 question");
+        raw.forget();
+        raw.peer.send(0, &[0; 60_000], true);
+        raw.advance(15);
+        raw.peer.log.retain(|it| !it.ends_with("writable"));
+        assert_eq!(raw.events(), "");
+        step(&mut raw);
+        raw.advance(15);
+        assert_eq!(raw.events(), events);
+    }
+}
+
+#[test]
 fn life_of_a_unidirectional_stream() {
     for raw in Raw::both() {
         let mut raw = raw.connected();

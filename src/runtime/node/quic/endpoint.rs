@@ -419,6 +419,7 @@ fn config_from_js(
         has_priorities: is_http3,
         sends_in_order: true,
         awaits_consumption: true,
+        closes_when_sent: true,
         ..if side.is_server() { server } else { client }
     };
     let parameters = &mut config.parameters;

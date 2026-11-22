@@ -90,6 +90,7 @@ pub(super) enum Asked {
 pub(crate) struct State {
     sends_in_order: bool,
     limits_unread_data: bool,
+    closes_when_sent: bool,
     /// What it takes to write a byte.
     min_credit: u64,
     pub(crate) events: VecDeque<Event>,
@@ -207,6 +208,7 @@ impl Streams {
             state: State {
                 sends_in_order: config.sends_in_order,
                 limits_unread_data: config.limits_unread_data,
+                closes_when_sent: config.closes_when_sent,
                 min_credit: if is_http3 { MIN_DATA_FRAME_LEN } else { 1 },
                 write_round: 1,
                 receive_limit: local.initial_max_data,
@@ -461,6 +463,10 @@ impl Table {
         self.map.values().any(|stream| stream.has_unacked_data())
     }
 
+    pub(super) fn has_had_no_request(&self) -> bool {
+        self.is_http3 && self.bidirectional.local_opened + self.bidirectional.remote_next == 0
+    }
+
     pub(super) fn has_undelivered_application_data(&self) -> bool {
         (self.map.values()).any(|stream| !stream.is_internal() && stream.has_unacked_data())
     }
@@ -622,6 +628,7 @@ impl State {
     #[inline]
     fn close_if_done(&mut self, id: StreamId, stream: &mut Stream) {
         if stream.flags.contains(Flags::READ_DONE | Flags::WRITE_DONE)
+            && !(self.closes_when_sent && stream.owes_fin())
             && !stream.flags.contains(Flags::RELEASED)
             && stream.mark(Flags::IN_CLOSING)
         {

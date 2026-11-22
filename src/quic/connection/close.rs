@@ -117,6 +117,11 @@ impl Connection {
         self.close(now);
     }
 
+    /// Whether something that the application has written is still on its way.
+    pub fn is_delivering(&self) -> bool {
+        self.streams.table.has_undelivered_application_data()
+    }
+
     /// For the end of [`Self::close`] and [`Self::go_away`].
     pub fn set_close_error(&mut self, layer: Layer, code: u64, reason: &[u8]) {
         if self.is_receiving() {
@@ -207,7 +212,7 @@ impl Connection {
         let is_busy = self.yields
             || state.has_frames()
             || self.has_datagrams()
-            || table.has_unacked_data()
+            || table.has_unacked_data() && !(is_graceful && table.has_had_no_request())
             || !is_graceful && table.has_unsettled_requests();
         if !self.is_ready || !is_busy {
             self.send_close(now);

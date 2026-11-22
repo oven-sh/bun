@@ -1462,7 +1462,8 @@ impl QuicSession {
         self.update(|conn| conn.set_close_error(layer, code, &reason));
         self.expect_end();
         self.update(Connection::note_progress);
-        if self.is_http3() && (self.is_server || self.has_opened_stream()) {
+        let is_responding = self.is_server && self.get(Connection::is_delivering) == Some(true);
+        if self.is_http3() && (is_responding || self.has_opened_stream()) {
             // RFC 9114 §5.2.
             self.update(Connection::go_away);
             self.close_after_streams.set(true);

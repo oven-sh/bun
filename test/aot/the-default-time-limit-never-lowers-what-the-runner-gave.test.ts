@@ -19,8 +19,8 @@ import {
 } from "./harness/default-timeout";
 import { test } from "./supported";
 
-// ./supported.ts raises the default where it is loaded, and bun:test takes it back behind every file. A process that runs this file behind
-// another one of the folder does not load the module again: so this file raises the default itself.
+// ./supported.ts raises the default when it is loaded, and bun:test takes it back behind every file. Without --isolate or --parallel, a
+// process that runs this file behind another one of the folder does not load the module again: so this file raises the default itself.
 raiseDefaultTimeout(120_000);
 
 // What this run is. `byRunner`: the runner gave this Bun what it gives a Bun with assertions, and then its flag holds. Any other Bun with

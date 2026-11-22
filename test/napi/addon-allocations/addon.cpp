@@ -50,8 +50,8 @@ void reportDamage(const char* owner, const char* kind)
     reportBlock(owner, kind, " does not hold the bytes that were written to it");
 }
 
-// On macOS the runtime's operator new serves the whole process, and an addon has to get a block of the system allocator
-// from it. That allocator knows the size of its own blocks and of no others.
+// On macOS the runtime's operator new serves the runtime alone, and an addon gets a block of the system allocator from
+// the C++ library's. That allocator knows the size of its own blocks and of no others.
 bool systemAllocatorOwns(const void* block)
 {
 #ifdef __APPLE__

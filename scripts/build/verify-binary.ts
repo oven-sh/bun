@@ -97,6 +97,9 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "to come only from the lists in src/ (linker.lds, symbols.txt, symbols.def, NAPI_EXTERN /",
     "BUN_EXPORT in code); a stray one is usually a vendored header's __declspec(dllexport)",
     'or visibility("default"). Fix the declaration rather than extending the list.',
+    "A `-` line is an operator delete that the macOS link was told to export and did not",
+    "(replacedOperatorDeleteSymbols in deps/mimalloc.ts): libc++.1.dylib would then release the",
+    "executable's blocks with the system allocator.",
   ],
   imports: [
     "These imports mean a toolchain feature bun builds without has crept into some object",
@@ -122,6 +125,9 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "These bits are process-wide exploit mitigations / layout guarantees (non-executable",
     "stack, no writable+executable mapping, ASLR flags). Losing one is almost always an",
     "unintended side effect of a linker-flag or toolchain change; find that change.",
+    "MH_WEAK_DEFINES is of another kind: without it dyld does not look for operator delete in the",
+    "executable (deps/mimalloc.ts). ld64.lld leaves it out where the same link compiles the",
+    "operators from bitcode; the trimmable link, which links their object, sets it.",
   ],
   size: [
     "This program is written to stay tiny (no CRT, no allocator, no formatting). A jump in size",
@@ -481,11 +487,12 @@ function verifyMachO(spec: VerifySpec): void {
     // dyld's own entry points every executable exports.
     const builtin = new Set(["__mh_execute_header", "_main"]);
     const bad = exported.filter(s => !exact.has(s) && !pat.test(s) && !builtin.has(s));
-    report(
-      "exports",
-      `${exported.length} exported symbols`,
-      bad.map(s => `+ ${s} (not in the export list)`),
-    );
+    const found = new Set(exported);
+    const absent = expect.exports.exact.filter(s => !found.has(s));
+    report("exports", `${exported.length} exported symbols`, [
+      ...bad.map(s => `+ ${s} (not in the export list)`),
+      ...absent.map(s => `- ${s} (not exported)`),
+    ]);
   }
 
   const cmds = loadCommands(priv);

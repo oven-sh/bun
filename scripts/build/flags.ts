@@ -13,7 +13,7 @@
 
 import { join } from "node:path";
 import { bunExeName, linksWithLld, type Config } from "./config.ts";
-import { overridesDarwinAllocator, replacedOperatorNewSymbols } from "./deps/mimalloc.ts";
+import { overridesDarwinAllocator, replacedOperatorDeleteSymbols } from "./deps/mimalloc.ts";
 import { quote, slash } from "./shell.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
@@ -1619,9 +1619,9 @@ export const linkerFlags: Flag[] = [
     desc: "Exported symbol list",
   },
   {
-    flag: replacedOperatorNewSymbols.map(name => `-Wl,-exported_symbol,_${name}`),
+    flag: replacedOperatorDeleteSymbols.map(name => `-Wl,-exported_symbol,_${name}`),
     when: c => overridesDarwinAllocator(c),
-    desc: "Export operator new/delete so dyld binds libc++.1.dylib to them too",
+    desc: "Export operator delete so dyld binds libc++.1.dylib to it too",
   },
   {
     // The link exports the names in the version script's `global:` block, and only those. Not `-rdynamic`: that

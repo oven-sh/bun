@@ -21,6 +21,7 @@ import { linksWithLld, type Config } from "./config.ts";
 import {
   overridesDarwinAllocator,
   replacedLibcAllocationSymbols,
+  replacedOperatorDeleteSymbols,
   replacedOperatorNewSymbols,
 } from "./deps/mimalloc.ts";
 import { definesLibcFunctions, libcFunctionsScriptPath, rustLtoInLink, versionScriptPath } from "./flags.ts";
@@ -41,7 +42,7 @@ export interface BinaryExpectations {
     /** Read at check time (they are link inputs, so an edit relinks and re-checks without a reconfigure). */
     versionScript?: string;
     symbolList?: string;
-    /** On top of what the files list. */
+    /** On top of what the files list. A Mach-O executable has to export each of them. */
     exact: string[];
     patterns: string[];
   };
@@ -327,7 +328,7 @@ function forbiddenImports(cfg: Config): string[] {
     // Everything linked into the executable allocates from mimalloc
     // (MimallocOverrideDarwin.cpp). An import of one of these is code that
     // reached the system allocator around it.
-    forbidden.push(...replacedLibcAllocationSymbols, ...replacedOperatorNewSymbols);
+    forbidden.push(...replacedLibcAllocationSymbols, ...replacedOperatorNewSymbols, ...replacedOperatorDeleteSymbols);
   }
   if (cfg.linux && cfg.abi !== "musl") {
     // …nor the function-local-static guards (musl/FreeBSD/macOS take them
@@ -576,7 +577,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         format,
         exports: {
           symbolList: src("symbols.txt"),
-          exact: overridesDarwinAllocator(cfg) ? replacedOperatorNewSymbols.map(name => `_${name}`) : [],
+          exact: overridesDarwinAllocator(cfg) ? replacedOperatorDeleteSymbols.map(name => `_${name}`) : [],
           patterns: [],
         },
         neededLibs: {
@@ -594,7 +595,8 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         ...(staticInitializers && { staticInitializers }),
         ...(forbiddenSymbols && { forbiddenSymbols }),
         macho: {
-          flags: ["PIE", "TWOLEVEL", "DYLDLINK"],
+          // dyld looks for operator delete in an executable only where its header has MH_WEAK_DEFINES.
+          flags: ["PIE", "TWOLEVEL", "DYLDLINK", ...(overridesDarwinAllocator(cfg) ? ["WEAK_DEFINES"] : [])],
           segmentMaxProt: { __TEXT: "r-x", __DATA_CONST: "rw-", __DATA: "rw-", __LINKEDIT: "r--" },
         },
       };

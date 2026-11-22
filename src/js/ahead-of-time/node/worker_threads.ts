@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/worker_threads.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4b1d2dfce35036bd4b694be3a8983426d217479f024b4892787b351a84305ca9.
+// Written against that file with the SHA-256 12ef35aa119247145a84d2ef2cdf0605e4a003e06a003d8555598cbb84a62565.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 declare const self: EventTarget & {
@@ -103,7 +103,12 @@ const {
 ];
 
 // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads instance.
-type WebWorkerConstructor = new (filename: string | URL, options: object, nodeWorker: Worker) => WebWorker;
+type WebWorkerConstructor = new (
+  filename: string | URL,
+  options: object,
+  nodeWorker: Worker,
+  evalSource?: string,
+) => WebWorker;
 
 interface NodeWorkerOptions {
   argv?: unknown[];
@@ -879,6 +884,7 @@ class Worker extends EventEmitter {
 
     this.#name = normalizeWorkerName(options.name);
 
+    let evalSource: string | undefined;
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options[builtinsGeneratorHatesEval]) {
       // node requires the source to be a string when eval is set, rather than
@@ -889,6 +895,7 @@ class Worker extends EventEmitter {
           options[builtinsGeneratorHatesEval],
           "must be false when 'filename' is not a string",
         );
+      evalSource = filename;
       // eval: the source becomes a blob: URL the worker imports as its entry point.
       // The URL must outlive the worker: revoked on constructor failure (catch below),
       // on exit (#onClose), and via urlRevokeRegistry as a GC safety net.
@@ -977,7 +984,7 @@ class Worker extends EventEmitter {
       }
       // Also the intrinsic constructor. Read here, so that importing this module is not starting a worker.
       const WebWorker = $cpp("Worker.cpp", "createNodeWorkerConstructor") as WebWorkerConstructor;
-      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
+      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this, evalSource);
       // Create the readables eagerly so the worker's writev is ack'd even when
       // worker.stdout/stderr is never touched; only captured streams ref their
       // port on first read (node's kIncrementsPortRef).

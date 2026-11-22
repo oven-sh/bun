@@ -1,0 +1,6 @@
+syntax = "proto2";
+
+message Point {
+  optional sint32 x = 1 [default = 3];
+  optional sint32 y = 2;
+}

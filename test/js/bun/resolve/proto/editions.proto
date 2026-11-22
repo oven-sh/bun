@@ -1,0 +1,28 @@
+edition = "2023";
+
+package fixture.editions;
+
+option features.utf8_validation = NONE;
+
+enum Open {
+  OPEN_ZERO = 0;
+}
+
+enum Closed {
+  option features.enum_type = CLOSED;
+  CLOSED_THREE = 3;
+}
+
+message Features {
+  int32 explicit = 1;
+  int32 implicit = 2 [features.field_presence = IMPLICIT];
+  int32 needed = 3 [features.field_presence = LEGACY_REQUIRED];
+  Features delimited = 4 [features.message_encoding = DELIMITED];
+  repeated int32 packed = 5;
+  repeated int32 expanded = 6 [features.repeated_field_encoding = EXPANDED];
+  Open open = 7;
+  Closed closed = 8;
+  string loose = 9;
+  string strict = 10 [features.utf8_validation = VERIFY];
+  int32 with_default = 11 [default = 9];
+}

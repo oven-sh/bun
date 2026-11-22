@@ -1,5 +1,6 @@
 abort-controller=function AbortController AbortSignal __esModule=namespace default
 bun:ffi CFunction CString FFIType JSCallback cc default dlopen linkSymbols native ptr read suffix toArrayBuffer toBuffer viewSource
+bun:grpc Channel GrpcError Status default route
 bun:jsc bytecodeOrderStats callerSourceOrigin codeCoverageForFile default describe describeArray deserialize drainMicrotasks edenGC estimateShallowMemoryUsageOf fullGC gcAndSweep generateHeapSnapshotForDebugging getProtectedObjects getRandomSeed heapSize heapStats isRope jscDescribe jscDescribeArray memoryUsage noFTL noInline noOSRExitFuzzing numberOfDFGCompiles optimizeNextInvocation percentAvailableMemoryInUse profile releaseWeakRefs reoptimizationRetryCount samplingProfilerStackTraces serialize setRandomSeed setTimeZone setTimezone startRemoteDebugger startSamplingProfiler totalCompileTime
 bun:sqlite Database SQLiteError Statement __esModule constants default=property
 bun:test afterAll afterEach aroundAll aroundEach beforeAll beforeEach default describe expect expectTypeOf it jest mock onTestFinished setDefaultTimeout setSystemTime spyOn test vi xdescribe xit xtest

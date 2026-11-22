@@ -2977,8 +2977,10 @@ fn add_types(
             .map(|module| (&module.path[..], &module.text[..], Some(module))),
     );
     let mut files = Vec::new();
-    for &(path, text, _) in &texts {
-        files.push(match is_typescript(path) {
+    for &(path, text, types) in &texts {
+        let is_compiled_schema =
+            path.ends_with(b".proto") && types.is_some_and(|it| *it.text == *text);
+        files.push(match is_typescript(path) || is_compiled_schema {
             true => Some(parse(&session, &atoms, path, text)?),
             false => None,
         });
@@ -4655,7 +4657,7 @@ fn inside<'a>(directory: &[u8], path: &'a [u8]) -> Option<&'a [u8]> {
 }
 
 fn emitted_declarations_path(source: &[u8]) -> Option<Vec<u8>> {
-    const EXTENSIONS: [(&[u8], &[u8]); 7] = [
+    const EXTENSIONS: [(&[u8], &[u8]); 8] = [
         (b".d.ts", b""),
         (b".d.mts", b""),
         (b".d.cts", b""),
@@ -4663,6 +4665,7 @@ fn emitted_declarations_path(source: &[u8]) -> Option<Vec<u8>> {
         (b".tsx", b".d.ts"),
         (b".mts", b".d.mts"),
         (b".cts", b".d.cts"),
+        (b".proto", b".proto.d.ts"),
     ];
     let (from, to) = EXTENSIONS.iter().find(|(from, _)| source.ends_with(from))?;
     (!to.is_empty()).then(|| [&source[..source.len() - from.len()], *to].concat())

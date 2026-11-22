@@ -23,6 +23,10 @@ pub enum Error {
     HTTP2HeaderListTooLarge,
     #[error("HTTP2StreamReset")]
     HTTP2StreamReset,
+    #[error("HTTP2Cancel")]
+    HTTP2Cancel,
+    #[error("HTTP2InadequateSecurity")]
+    HTTP2InadequateSecurity,
     #[error("HTTP2GoAway")]
     HTTP2GoAway,
     #[error("HTTP2CompressionError")]
@@ -271,6 +275,8 @@ impl Error {
             Self::HTTP2EnhanceYourCalm => "HTTP2EnhanceYourCalm",
             Self::HTTP2HeaderListTooLarge => "HTTP2HeaderListTooLarge",
             Self::HTTP2StreamReset => "HTTP2StreamReset",
+            Self::HTTP2Cancel => "HTTP2Cancel",
+            Self::HTTP2InadequateSecurity => "HTTP2InadequateSecurity",
             Self::HTTP2GoAway => "HTTP2GoAway",
             Self::HTTP2CompressionError => "HTTP2CompressionError",
             Self::UnableToEncode => "UnableToEncode",

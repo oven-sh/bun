@@ -30,6 +30,7 @@ pub struct InternalState<'a> {
     /// this can happen after await fetch(...) and the body can continue streaming when this is already None
     /// the user will receive only chunks of the body stored in decoded_body
     pub(crate) metadata: Option<HTTPResponseMetadata>,
+    pub(crate) trailers: Option<Box<crate::Headers>>,
     pub(crate) flags: InternalStateFlags,
 
     pub(crate) transfer_encoding: Encoding,
@@ -125,6 +126,7 @@ impl Default for InternalState<'_> {
         Self {
             response_parser: ResponseParser::default(),
             metadata: None,
+            trailers: None,
             flags: InternalStateFlags::new(),
             transfer_encoding: Encoding::Identity,
             encoding: Encoding::Identity,

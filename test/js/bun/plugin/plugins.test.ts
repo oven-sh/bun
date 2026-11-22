@@ -3393,7 +3393,7 @@ describe.concurrent("`contents` from a plugin is loaded like a file with the sam
       await import("ns:import").catch(error => console.log(error.message));
       try { require("ns:require"); } catch (error) { console.log(error.message); }
     `;
-      const message = `Expected loader to be one of "js", "jsx", "object", "ts", "tsx", "json", "jsonc", "json5", "toml", "yaml", "xml", "text", "md", or "css"`;
+      const message = `Expected loader to be one of "js", "jsx", "object", "ts", "tsx", "json", "jsonc", "json5", "toml", "yaml", "xml", "text", "md", "proto", or "css"`;
       expect(await run({ "entry.ts": entry }, ["entry.ts"])).toEqual({
         stdout: `${message}\n${message}\n`,
         stderr: "",
@@ -4014,7 +4014,7 @@ describe.concurrent("an invalid result from a plugin is an error", () => {
   it.each(["file", "wasm", "napi", "sqlite", "sqlite_embedded", "html", "sh", "dataurl", "base64"])(
     "contents with no loader for a module that is imported with { type: %j }",
     async type => {
-      const message = `Expected loader to be one of "js", "jsx", "object", "ts", "tsx", "json", "jsonc", "json5", "toml", "yaml", "xml", "text", "md", or "css"`;
+      const message = `Expected loader to be one of "js", "jsx", "object", "ts", "tsx", "json", "jsonc", "json5", "toml", "yaml", "xml", "text", "md", "proto", or "css"`;
       expect(
         await run(
           {

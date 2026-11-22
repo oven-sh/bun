@@ -109,6 +109,7 @@
             "pages": [
               "/runtime/networking/fetch",
               "/runtime/http/websockets",
+              "/runtime/networking/grpc",
               "/runtime/networking/tcp",
               "/runtime/networking/udp",
               "/runtime/networking/dns"

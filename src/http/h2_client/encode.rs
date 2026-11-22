@@ -121,7 +121,11 @@ pub(crate) fn write_request(
 
     let mut block = session.encoder.block(&mut encoded);
     encode_header(&mut block, b":method", request.method, Indexing::Allowed)?;
-    encode_header(&mut block, b":scheme", b"https", Indexing::Allowed)?;
+    let scheme: &[u8] = match client.url.is_https() {
+        true => b"https",
+        false => b"http",
+    };
+    encode_header(&mut block, b":scheme", scheme, Indexing::Allowed)?;
     encode_header(&mut block, b":authority", authority, Indexing::Allowed)?;
     encode_header(
         &mut block,
@@ -156,6 +160,7 @@ pub(crate) fn write_request(
                     ) {
                         continue;
                     }
+                    stream.wants_trailers = true;
                 }
                 RequestHeader::ContentLength => {
                     if has_expect_continue {

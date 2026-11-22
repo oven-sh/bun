@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package test.v1;
+
+message Message {
+  string text = 1;
+  int32 number = 2;
+  bytes blob = 3;
+}
+
+service Echo {
+  rpc Unary(Message) returns (Message);
+  rpc ServerStream(Message) returns (stream Message);
+  rpc ClientStream(stream Message) returns (Message);
+  rpc Bidi(stream Message) returns (stream Message);
+}

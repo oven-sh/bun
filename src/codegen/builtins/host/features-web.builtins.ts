@@ -169,6 +169,10 @@ export default b.declarations(
     "Response.prototype.formData",
   ),
   extendAll(["Bodies", "Headers"], "Request.prototype.headers", "Response.prototype.headers"),
+  extendAll(
+    ["Bodies", "Headers"],
+    ...nativeBindings("Bindgen", "grpc_binding.bind.ts", "acceptCall", "takeTrailers", "writeStatus"),
+  ),
   extendAll(["Bodies", ...abortSignalFeatures], "Request.prototype.signal"),
   extendAll(["Bodies", "FsStats"], "Blob.prototype.stat"),
   extendAll(["Bodies", "FileSink"], "Blob.prototype.writer", "console.write"),

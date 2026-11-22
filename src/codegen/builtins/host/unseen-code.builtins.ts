@@ -189,6 +189,7 @@ const prototypesWithoutConstructor = [
 
 const moduleNamespaces = [
   "abort-controller",
+  "bun:grpc",
   "bun:jsc",
   "bun:sqlite",
   "bun:test",

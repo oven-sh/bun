@@ -2,6 +2,7 @@
 // Env: NODE_NO_WARNINGS=1
 import default0, * as namespace0 from "abort-controller";
 import default1, * as namespace1 from "bun:ffi";
+import default72, * as namespace72 from "bun:grpc";
 import default2, * as namespace2 from "bun:jsc";
 import default3, * as namespace3 from "bun:sqlite";
 import default4, * as namespace4 from "node:_http_agent";
@@ -93,6 +94,7 @@ function describe(specifier, defaultImport, namespace, defaultMember, required, 
 
 describe("abort-controller", default0, namespace0, namespace0.default, require("abort-controller"), await import("abort-controller"));
 describe("bun:ffi", default1, namespace1, namespace1.default, require("bun:ffi"), await import("bun:ffi"));
+describe("bun:grpc", default72, namespace72, namespace72.default, require("bun:grpc"), await import("bun:grpc"));
 describe("bun:jsc", default2, namespace2, namespace2.default, require("bun:jsc"), await import("bun:jsc"));
 describe("bun:sqlite", default3, namespace3, namespace3.default, require("bun:sqlite"), await import("bun:sqlite"));
 describe("node:_http_agent", default4, namespace4, namespace4.default, require("node:_http_agent"), await import("node:_http_agent"));

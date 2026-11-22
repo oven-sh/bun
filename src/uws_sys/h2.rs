@@ -68,6 +68,13 @@ impl Response {
             c::uws_h2_res_write_header(self, key.as_ptr(), key.len(), value.as_ptr(), value.len())
         }
     }
+    /// Sent when the response ends.
+    pub fn write_trailer(&mut self, key: &[u8], value: &[u8]) {
+        // SAFETY: self is a live FFI handle; key/value ptr+len valid for read
+        unsafe {
+            c::uws_h2_res_write_trailer(self, key.as_ptr(), key.len(), value.as_ptr(), value.len())
+        }
+    }
     pub(crate) fn write_header_int(&mut self, key: &[u8], value: u64) {
         // SAFETY: self is a live FFI handle; key ptr/len valid for read
         unsafe { c::uws_h2_res_write_header_int(self, key.as_ptr(), key.len(), value) }
@@ -614,6 +621,13 @@ mod c {
         pub(super) safe fn uws_h2_res_resume(res: &mut Response);
         pub(super) fn uws_h2_res_write_status(res: *mut Response, p: *const u8, n: usize);
         pub(super) fn uws_h2_res_write_header(
+            res: *mut Response,
+            kp: *const u8,
+            kn: usize,
+            vp: *const u8,
+            vn: usize,
+        );
+        pub(super) fn uws_h2_res_write_trailer(
             res: *mut Response,
             kp: *const u8,
             kn: usize,

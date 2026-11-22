@@ -351,7 +351,9 @@ impl LoaderExt for Loader {
     fn to_mime_type(self, paths: &[&[u8]]) -> bun_http_types::MimeType::MimeType {
         use bun_http_types::MimeType;
         match self {
-            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => MimeType::JAVASCRIPT,
+            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Proto => {
+                MimeType::JAVASCRIPT
+            }
             Loader::Css => MimeType::CSS,
             Loader::Toml
             | Loader::Yaml
@@ -696,6 +698,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".xml", Loader::Xml),
     (b".md", Loader::Md),
     (b".markdown", Loader::Md),
+    (b".proto", Loader::Proto),
 ];
 
 #[cfg(all(windows, test))]
@@ -705,7 +708,7 @@ const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[(b".sh", Loader::Bunsh
 ///
 /// PERF: deliberately not a hashed map (the old `phf::Map` SipHash-ed the full
 /// key, probed a displacement table, and finished with a memcmp on every
-/// lookup). With only 23 keys bucketing into 5 distinct lengths
+/// lookup). With only 24 keys bucketing into 5 distinct lengths
 /// (3/4/5/6/9, all `.`-prefixed), a length-gated `match` is cheaper: one
 /// `usize` compare rejects every wrong-length probe, and within each bucket
 /// rustc lowers the fixed-width byte-slice arms to single u32/u64 compares (no
@@ -762,6 +765,7 @@ impl DefaultLoaders {
             6 => match ext {
                 b".jsonc" => Some(&Loader::Jsonc),
                 b".json5" => Some(&Loader::Json5),
+                b".proto" => Some(&Loader::Proto),
                 _ => None,
             },
             9 if ext == b".markdown" => Some(&Loader::Md),
@@ -1054,7 +1058,7 @@ const DEFAULT_LOADER_EXT: &[&[u8]] = &[
     b".jsx", b".json", b".js", b".mjs", b".cjs", b".css",
     // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions
     b".ts", b".tsx", b".mts", b".cts", b".toml", b".yaml", b".yml", b".wasm", b".txt", b".text",
-    b".jsonc", b".json5",
+    b".jsonc", b".json5", b".proto",
 ];
 
 // Only set it for browsers by default.
@@ -1102,6 +1106,20 @@ impl Default for ResolveFileExtensionsGroup {
             default: owned_string_list(bundle_options_defaults::EXTENSION_ORDER),
         }
     }
+}
+
+/// A schema that fails to compile imports nothing, so nothing else watches the file that has the mistake.
+pub(crate) fn read_imported_schema(
+    path: &[u8],
+    watcher: Option<&bun_watcher::Watcher>,
+) -> Option<Vec<u8>> {
+    let text = bun_protobuf::read_from_disk(path)?;
+    if let Some(watcher) = watcher
+        && !strings::contains(path, b"node_modules")
+    {
+        watcher.add_file_by_path_slow(path);
+    }
+    Some(text)
 }
 
 pub fn loaders_from_transform_options(
@@ -1804,6 +1822,10 @@ impl<'a> BundleOptions<'a> {
 
     pub fn loader(&self, ext: &[u8]) -> Loader {
         self.loaders.get(ext).copied().unwrap_or(Loader::File)
+    }
+
+    pub(crate) fn is_schema_by_name(&self, path: &[u8]) -> bool {
+        self.loader(bun_paths::extension(path)) == Loader::Proto
     }
 
     pub(crate) fn from_api(

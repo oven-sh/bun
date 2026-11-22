@@ -465,6 +465,8 @@ pub struct HTTPClientResult<'a> {
 
     /// Owns the response metadata aka headers, url and status code
     pub metadata: Option<HTTPResponseMetadata>,
+    /// With the last result of an HTTP/2 request that has `te: trailers`.
+    pub trailers: Option<Box<Headers>>,
 
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the response body
@@ -1882,11 +1884,12 @@ impl<'a> HTTPClient<'a> {
         Continue(())
     }
 
-    /// Whether to advertise "h2" in the TLS ALPN list. Restricted to request
+    /// Whether to advertise "h2" in the TLS ALPN list or, without TLS, to start
+    /// with the HTTP/2 preface (RFC 9113 §3.3). Restricted to request
     /// shapes the HTTP/2 path currently handles end-to-end (no proxy/Upgrade,
-    /// no sendfile). Enabled by `--experimental-http2-fetch`, the
-    /// `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` env var, or
-    /// `protocol: "http2"` on the fetch options.
+    /// no sendfile). Enabled by `protocol: "http2"` on the fetch options and,
+    /// for TLS only, by `--experimental-http2-fetch` or the
+    /// `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` env var.
     pub(crate) fn can_offer_h2(&self) -> bool {
         // The h2 session transmits from `attach()` without consulting the
         // `is_waiting_for_cert_check` park gate, so requests with a JS
@@ -1903,13 +1906,16 @@ impl<'a> HTTPClient<'a> {
         if self.flags.is_preconnect_only {
             return false;
         }
-        if !self.unix_socket_path.is_empty() {
-            return false;
-        }
         if matches!(
             self.state.original_request_body,
             HTTPRequestBody::Sendfile(_)
         ) {
+            return false;
+        }
+        if !self.url.is_https() {
+            return self.flags.forced_protocol == Some(Protocol::Http2);
+        }
+        if !self.unix_socket_path.is_empty() {
             return false;
         }
         self.flags.forced_protocol == Some(Protocol::Http2)
@@ -2001,21 +2007,15 @@ impl<'a> HTTPClient<'a> {
             };
             if alpn == b"h2" {
                 bun_core::scoped_log!(fetch, "ALPN negotiated h2 {}", BStr::new(self.url.href));
-                // This arm needs HttpSocket<true>, but the const-generic isn't
-                // unified here, so rebuild from the InternalSocket.
-                let tls_socket = uws::SocketTLS::from_any(socket.socket);
-                let ctx = self.get_ssl_ctx::<true>();
-                // The context's registry holds the session's ref from here on.
-                let session = h2::ClientSession::create(ctx, tls_socket, self);
-                GenHttpContext::<true>::tag_as_h2(tls_socket, session.as_ptr());
-                self.resolve_pending_h2(PendingH2Resolution::H2(session));
-                return Break(NextStep::AttachH2);
+                return self.start_h2_session::<IS_SSL>(socket);
             }
             self.flags.protocol = Protocol::Http1_1;
             self.resolve_pending_h2(PendingH2Resolution::H1);
             if self.flags.forced_protocol == Some(Protocol::Http2) {
                 return self.close_and_fail::<IS_SSL>(crate::Error::HTTP2Unsupported, socket);
             }
+        } else if self.can_offer_h2() {
+            return self.start_h2_session::<IS_SSL>(socket);
         }
 
         match self.state.request_stage {
@@ -2024,6 +2024,17 @@ impl<'a> HTTPClient<'a> {
             }
             _ => Continue(()),
         }
+    }
+
+    fn start_h2_session<const IS_SSL: bool>(
+        &mut self,
+        socket: HttpSocket<IS_SSL>,
+    ) -> ControlFlow<NextStep> {
+        // The context's registry holds the session's ref from here on.
+        let session = h2::ClientSession::create(self.get_ssl_ctx::<IS_SSL>(), socket, self);
+        GenHttpContext::<IS_SSL>::tag_as_h2(socket, session.as_ptr());
+        self.resolve_pending_h2(PendingH2Resolution::H2(session));
+        Break(NextStep::AttachH2)
     }
 
     /// Whether `on_close` sends the request again: it went out on a reused
@@ -2594,13 +2605,9 @@ impl InFlightRequest {
             return self.fail(crate::Error::AbortedBeforeConnecting);
         }
 
-        // protocol: "http2" is documented as HTTPS-only (h2c is out of scope).
-        // Every h2 consumer is gated on the SSL const-generic, so without this
-        // an http:// request would silently fall through to HTTP/1.1.
-        if !IS_SSL {
-            if self.flags.forced_protocol == Some(Protocol::Http2) {
-                return self.fail(crate::Error::HTTP2Unsupported);
-            }
+        // No ALPN says no later: the request would silently fall through to HTTP/1.1.
+        if !IS_SSL && self.flags.forced_protocol == Some(Protocol::Http2) && !self.can_offer_h2() {
+            return self.fail(crate::Error::HTTP2Unsupported);
         }
 
         if IS_SSL {
@@ -3579,10 +3586,11 @@ impl<'a> HTTPClient<'a> {
         // `pc_ptr` is a backref into the context's `pending_h2_connects` Vec,
         // set in `HTTPContext::connect`; unregister_from swaps the owning Box
         // out so we can iterate and drop it here.
-        let Some(pc) = h2::PendingConnect::unregister_from(
-            pc_ptr.as_ptr(),
-            Self::ssl_ctx_mut(self.get_ssl_ctx::<true>()),
-        ) else {
+        let pending = match self.is_https() {
+            true => &mut Self::ssl_ctx_mut(self.get_ssl_ctx::<true>()).pending_h2_connects,
+            false => &mut Self::ssl_ctx_mut(self.get_ssl_ctx::<false>()).pending_h2_connects,
+        };
+        let Some(pc) = h2::PendingConnect::unregister_from(pc_ptr.as_ptr(), pending) else {
             return;
         };
 
@@ -4034,6 +4042,7 @@ impl<'a> HTTPClient<'a> {
                 // transfer ownership of the metadata here
                 return HTTPClientResult {
                     metadata: Some(metadata),
+                    trailers: None,
                     body: &[],
                     body_owned: Vec::new(),
                     redirected: self.flags.redirected,
@@ -4055,6 +4064,7 @@ impl<'a> HTTPClient<'a> {
             body: &[],
             body_owned: Vec::new(),
             metadata: None,
+            trailers: None,
             redirected: self.flags.redirected,
             fail: self.state.fail,
             dns_error: self.state.dns_error,

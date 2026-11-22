@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package fixture.v3;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "shared/forwards.proto";
+
+enum Color {
+  option allow_alias = true;
+  COLOR_UNSPECIFIED = 0;
+  RED = 1;
+  CRIMSON = 1;
+  NEGATIVE = -7;
+}
+
+message Scalars {
+  double d = 1;
+  float f = 2;
+  int32 i32 = 3;
+  int64 i64 = 4;
+  uint32 u32 = 5;
+  uint64 u64 = 6;
+  sint32 s32 = 7;
+  sint64 s64 = 8;
+  fixed32 f32 = 9;
+  fixed64 f64 = 10;
+  sfixed32 sf32 = 11;
+  sfixed64 sf64 = 12;
+  bool b = 13;
+  string s = 14;
+  bytes by = 15;
+  Color color = 16;
+  optional int32 tracked = 17;
+  int32 highest_number = 536870911;
+}
+
+message Lists {
+  repeated int32 i32 = 1;
+  repeated sint64 s64 = 2;
+  repeated double d = 3;
+  repeated bool b = 4;
+  repeated Color color = 5;
+  repeated string s = 6;
+  repeated bytes by = 7;
+  repeated Lists child = 8;
+  repeated int32 expanded = 9 [packed = false];
+}
+
+message Maps {
+  map<string, Maps> by_string = 1;
+  map<int32, Color> by_int32 = 2;
+  map<uint64, string> by_uint64 = 3;
+  map<bool, bytes> by_bool = 4;
+  map<sfixed32, double> by_sfixed32 = 5;
+}
+
+message Choice {
+  int32 middle = 2;
+  oneof value {
+    int32 number = 1;
+    string text_value = 3;
+    Choice nested = 4;
+  }
+}
+
+message Outer {
+  message Inner {
+    enum Kind {
+      NONE = 0;
+    }
+    Kind kind = 1;
+    Outer outer = 2;
+  }
+  Inner inner = 1;
+  fixture.shared.Point point = 2;
+  .fixture.shared.Unit unit = 3;
+  google.protobuf.Timestamp at = 4;
+  google.protobuf.Value value = 5;
+  google.protobuf.Any any = 6;
+}

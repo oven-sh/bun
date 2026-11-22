@@ -1,5 +1,6 @@
 import { fileURLToPath, Loader } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
@@ -637,6 +638,117 @@ describe("bundler", async () => {
     bundleErrors: {
       "/bad.xml": ["Expected closing tag </port> but found </bad>"],
     },
+  });
+
+  const protoFiles = {
+    "/entry.ts": /* js */ `
+      import { Line, type Unused } from './line.proto';
+      import text from './line.proto' with { type: "text" };
+      import { Other } from './other.schema' with { type: "proto" };
+      const bytes = Line.encode({ from: { x: -1 }, at: { seconds: 1 } });
+      console.log(bytes.join(), Line.decode(bytes).from.x, text.slice(0, 6), Other.typeName);
+    `,
+    "/line.proto": `syntax = "proto3";
+      import "point.proto";
+      import "google/protobuf/timestamp.proto";
+      message Line { Point from = 1; google.protobuf.Timestamp at = 2; }
+      message Unused { string never_read = 1; }
+      service UnusedService { rpc NeverRead(stream Unused) returns (stream Unused); }`,
+    "/point.proto": `syntax = "proto3"; message Point { sint32 x = 1; } enum UnusedEnum { NEVER_READ = 0; }`,
+    "/other.schema": `syntax = "proto3"; import "inner.schema"; message Other { Inner inner = 1; }`,
+    "/inner.schema": `syntax = "proto3"; message Inner {}`,
+  };
+  for (const target of ["bun", "node", "browser"] as const) {
+    itBundled(`${target}/loader-proto`, {
+      target,
+      files: protoFiles,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toMatch(/neverRead|NEVER_READ|TextDecoder|\bBun\b/);
+      },
+      run: { stdout: "10,2,8,1,18,2,8,1 -1 syntax Other" },
+    });
+  }
+  itBundled("bun/loader-proto-minify-cjs", {
+    target: "bun",
+    format: "cjs",
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    files: protoFiles,
+    run: { stdout: "10,2,8,1,18,2,8,1 -1 syntax Other" },
+  });
+  itBundled("bun/loader-proto-compile", {
+    compile: true,
+    files: protoFiles,
+    run: { stdout: "10,2,8,1,18,2,8,1 -1 syntax Other" },
+  });
+
+  const protoService = {
+    "/entry.ts": /* js */ `
+      import * as schema from './a.proto';
+      console.log(schema.S.methods.get.path);
+      try {
+        const server = Bun.serve({ port: 0, http2: true, routes: schema.S.routes({ get: ({ a }) => ({ a: a + 1 }) }) });
+        console.log((await new schema.S.Client(server.url).get({ a: 1 })).a);
+        await server.stop(true);
+      } catch (error) {
+        console.log(error.message);
+      }
+    `,
+    "/a.proto": `syntax = "proto3"; message A { int32 a = 1; } service S { rpc Get(A) returns (A); }`,
+  };
+  itBundled("bun/loader-proto-service", { target: "bun", files: protoService, run: { stdout: "/S/Get\n2" } });
+  itBundled("bun/loader-proto-service-compile", { compile: true, files: protoService, run: { stdout: "/S/Get\n2" } });
+  test.concurrent.each([
+    [[], "warn: A .proto entry point is compiled to a module.", "0\n"],
+    [["--loader=.proto:file"], "", "1\n"],
+  ])("bun build --compile with a .proto entry point and %j", async (flags, warning, embedded) => {
+    using dir = tempDir("proto-entry-point", {
+      "entry.ts": `console.log(Bun.embeddedFiles.length);`,
+      "a.proto": protoService["/a.proto"],
+    });
+    const options = { cwd: String(dir), env: bunEnv, stderr: "pipe" } as const;
+    const cmd = [bunExe(), "build", "--compile", ...flags, "entry.ts", "a.proto", "--outfile=out"];
+    await using build = Bun.spawn({ cmd, ...options, stdout: "ignore" });
+    expect((await build.stderr.text()).slice(0, warning.length || undefined)).toBe(warning);
+    expect(await build.exited).toBe(0);
+    await using run = Bun.spawn({ cmd: [join(String(dir), isWindows ? "out.exe" : "out")], ...options });
+    expect(await run.stdout.text()).toBe(embedded);
+  });
+  itBundled("browser/loader-proto-service", {
+    target: "browser",
+    files: protoService,
+    run: { stdout: "/S/Get\nS.routes requires --target=bun" },
+  });
+
+  itBundled("bun/loader-proto-entry-point", {
+    target: "bun",
+    outdir: "/out",
+    files: { "/a.proto": `syntax = "proto3"; message A { int32 a = 1; }` },
+    entryPoints: ["/a.proto"],
+    outputPaths: ["/out/a.js"],
+    runtimeFiles: { "/test.js": `import { A } from "./out/a.js"; console.log(A.encode({ a: 1 }).join());` },
+    run: { file: "/test.js", stdout: "8,1" },
+  });
+
+  itBundled("bun/loader-proto-as-file", {
+    target: "bun",
+    outdir: "/out",
+    loader: { ".proto": "file" },
+    assetNaming: "[name].[ext]",
+    files: { "/entry.ts": `import path from "./a.proto"; console.log(path);`, "/a.proto": "not a schema" },
+    onAfterBundle(api) {
+      api.expectFile("/out/a.proto").toBe("not a schema");
+    },
+  });
+
+  itBundled("bun/loader-proto-error", {
+    target: "bun",
+    files: {
+      "/entry.ts": `import "./a.proto";`,
+      "/a.proto": `syntax = "proto3"; message A { Missing a = 1; }`,
+    },
+    bundleErrors: { "/a.proto": ['"Missing" is not defined'] },
   });
 
   // The CSS-modules lazy export builds its object through `E::Object::put`.

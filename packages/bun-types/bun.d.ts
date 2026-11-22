@@ -6681,6 +6681,7 @@ declare module "bun" {
     | "wasm"
     | "text"
     | "md"
+    | "proto"
     | "css"
     | "html";
 

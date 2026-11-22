@@ -8,7 +8,7 @@ use bun_sema_driver::declaration_imports::name_imported_files;
 use super::typed_files::is_typed_file;
 use crate::cli::check_command::DeclarationFile;
 
-const DECLARATION_EXTENSIONS: [(&[u8], &[u8]); 8] = [
+const DECLARATION_EXTENSIONS: [(&[u8], &[u8]); 9] = [
     (b".tsx", b".d.ts"),
     (b".ts", b".d.ts"),
     (b".mts", b".d.mts"),
@@ -17,6 +17,7 @@ const DECLARATION_EXTENSIONS: [(&[u8], &[u8]); 8] = [
     (b".js", b".d.ts"),
     (b".mjs", b".d.mts"),
     (b".cjs", b".d.cts"),
+    (b".proto", b".proto.d.ts"),
 ];
 
 #[derive(Debug, PartialEq, Eq)]

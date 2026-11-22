@@ -35,6 +35,7 @@ pub(crate) mod jsc {
 }
 
 // ─── compiling submodules ────────────────────────────────────────────────────
+pub(crate) mod grpc_binding;
 #[path = "HTTPStatusText.rs"]
 pub(crate) mod http_status_text;
 pub(crate) use http_status_text as HTTPStatusText;

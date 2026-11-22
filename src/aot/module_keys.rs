@@ -25,6 +25,7 @@ pub const DEFAULT_LOADERS: &[(&[u8], Loader)] = &[
     (b".mjs", Loader::Js),
     (b".mts", Loader::Ts),
     (b".node", Loader::Napi),
+    (b".proto", Loader::Proto),
     (b".text", Loader::Text),
     (b".toml", Loader::Toml),
     (b".ts", Loader::Ts),

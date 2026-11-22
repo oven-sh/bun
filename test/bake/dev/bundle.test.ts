@@ -32,6 +32,22 @@ devTest("import identifier doesnt get renamed", {
     await dev.fetch("/").equals("Bun, 456!");
   },
 });
+devTest("a schema is compiled again when a schema it imports changes", {
+  framework: minimalFramework,
+  files: {
+    "a.proto": `syntax = "proto2"; import "b.proto"; message A { optional B b = 1; }`,
+    "b.proto": `syntax = "proto2"; enum B { X = 1; }`,
+    "routes/index.ts": `
+      import { A } from '../a.proto';
+      export default () => new Response(String(A.decode(new Uint8Array([8, 2])).b));
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("undefined");
+    await dev.write("b.proto", `syntax = "proto2"; enum B { X = 1; Y = 2; }`);
+    await dev.fetch("/").equals("2");
+  },
+});
 devTest("symbol collision with import identifier", {
   framework: minimalFramework,
   files: {

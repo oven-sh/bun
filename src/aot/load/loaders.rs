@@ -71,6 +71,7 @@ define_host_numbers! {
     Json5 = 20,
     Md = 21,
     Xml = 22,
+    Proto = 23,
 }
 
 pub(crate) fn to_host_loader(loader: Loader, path: &[u8]) -> HostLoader {
@@ -95,7 +96,7 @@ pub(crate) fn script_kind_of(loader: Loader) -> Option<ScriptKind> {
     match loader {
         Loader::Js => Some(ScriptKind::Js),
         Loader::Jsx => Some(ScriptKind::Jsx),
-        Loader::Ts => Some(ScriptKind::Ts),
+        Loader::Ts | Loader::Proto => Some(ScriptKind::Ts),
         Loader::Tsx => Some(ScriptKind::Tsx),
         _ => None,
     }
@@ -103,7 +104,13 @@ pub(crate) fn script_kind_of(loader: Loader) -> Option<ScriptKind> {
 
 pub(crate) fn gives_data(loader: Loader) -> bool {
     match loader {
-        Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Wasm | Loader::Napi => false,
+        Loader::Jsx
+        | Loader::Js
+        | Loader::Ts
+        | Loader::Tsx
+        | Loader::Proto
+        | Loader::Wasm
+        | Loader::Napi => false,
         Loader::Bunsh
         | Loader::Md
         | Loader::Html
@@ -222,7 +229,7 @@ mod tests {
         let xml = HostLoaderKind::Loader(Loader::Xml);
         assert_eq!(host_loader_kind(BY_NAME), Some(HostLoaderKind::ByName));
         assert_eq!(host_loader_kind(HostLoader(22)), Some(xml));
-        for number in 23..=u8::MAX {
+        for number in 24..=u8::MAX {
             assert_eq!(host_loader_kind(HostLoader(number)), None);
         }
     }
@@ -285,8 +292,9 @@ mod tests {
         assert_eq!(script_kind_of(Loader::Jsx), Some(ScriptKind::Jsx));
         assert_eq!(script_kind_of(Loader::Ts), Some(ScriptKind::Ts));
         assert_eq!(script_kind_of(Loader::Tsx), Some(ScriptKind::Tsx));
+        assert_eq!(script_kind_of(Loader::Proto), Some(ScriptKind::Ts));
         let script_kinds = ALL_LOADERS.iter().copied().filter_map(script_kind_of);
-        assert_eq!(script_kinds.count(), 4);
+        assert_eq!(script_kinds.count(), 5);
     }
 
     #[test]

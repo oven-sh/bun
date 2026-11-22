@@ -201,6 +201,16 @@ impl AnyRequestContext {
         dispatch!(self, false, |_T, ctx| ctx.set_timeout(seconds))
     }
 
+    pub(crate) fn live_http2_response(self) -> Option<*mut bun_uws_sys::h2::Response> {
+        dispatch!(self, None, |_T, ctx| ctx.live_http2_response())
+    }
+
+    pub(crate) fn lift_request_stream_limit(self) {
+        dispatch!(self, (), |_T, ctx| {
+            ctx.flags.set_request_stream_is_unbounded(true)
+        })
+    }
+
     pub(crate) fn set_cookies(self, cookie_map: Option<*mut CookieMap>) {
         dispatch!(self, (), |_T, ctx| ctx.set_cookies(cookie_map))
     }

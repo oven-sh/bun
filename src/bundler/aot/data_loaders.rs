@@ -101,7 +101,7 @@ pub(crate) fn parse_data<'s>(
             },
         }),
         Loader::Html => Ok(DataModule::Page),
-        Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => {
+        Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Proto => {
             debug_assert!(false, "the host never asks for a script loader as data");
             log_diagnostic(log, Code::UnsupportedOption, &[b"a script loader as data"]);
             Err(DataFailure::Build)

@@ -131,6 +131,12 @@ void uws_h2_res_write_header(uws_h2_res_t* res, const char* key, size_t key_len,
     ((Http2Response*)res)->writeHeader(h2sv(key, key_len), h2sv(value, value_len));
 }
 
+void uws_h2_res_write_trailer(uws_h2_res_t* res, const char* key, size_t key_len,
+    const char* value, size_t value_len)
+{
+    ((Http2Response*)res)->writeTrailer(h2sv(key, key_len), h2sv(value, value_len));
+}
+
 void uws_h2_res_write_header_int(uws_h2_res_t* res, const char* key, size_t key_len, uint64_t value)
 {
     ((Http2Response*)res)->writeHeader(h2sv(key, key_len), value);

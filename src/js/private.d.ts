@@ -1442,6 +1442,7 @@ interface $BunModules {
   "@vercel/fetch": $ModuleValue<typeof import("./thirdparty/vercel_fetch")>;
   "bun:bake": $ModuleValue<typeof import("./bun/bake")>;
   "bun:ffi": $ModuleValue<typeof import("./bun/ffi")>;
+  "bun:grpc": $ModuleValue<typeof import("./bun/grpc")>;
   "bun:sql": $ModuleValue<typeof import("./bun/sql")>;
   "bun:sqlite": $ModuleValue<typeof import("./bun/sqlite")>;
   "internal/abort_listener": $ModuleValue<typeof import("./internal/abort_listener")>;

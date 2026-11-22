@@ -33,6 +33,9 @@ declare module "*.xml" {
   export = contents;
 }
 
+// `bun check` reads the schema. For `tsc`, `bun build --dts` writes a declaration file that replaces this.
+declare module "*.proto";
+
 declare module "*/bun.lock" {
   var contents: import("bun").BunLockFile;
   export = contents;

@@ -38,19 +38,7 @@ pub trait MaybeLocal {
     fn is_local(&self) -> bool;
 }
 
-impl MaybeLocal for () {
-    #[inline]
-    fn is_local(&self) -> bool {
-        false
-    }
-}
 impl MaybeLocal for bool {
-    #[inline]
-    fn is_local(&self) -> bool {
-        false
-    }
-}
-impl MaybeLocal for u8 {
     #[inline]
     fn is_local(&self) -> bool {
         false

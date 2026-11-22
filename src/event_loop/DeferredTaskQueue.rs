@@ -79,6 +79,11 @@ impl DeferredTaskQueue {
         unsafe { &mut *self.map.get() }.swap_remove(&ctx)
     }
 
+    /// For a task that keeps its entry for work that arrived while it ran.
+    pub fn count_as_posted(&self) {
+        self.posted_since_run.set(true);
+    }
+
     /// Whether the last pass may have left a task unrun. A task that only kept its entry did run.
     pub fn may_have_unrun_tasks(&self) -> bool {
         // SAFETY: a read of the length.

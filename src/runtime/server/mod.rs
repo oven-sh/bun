@@ -1827,8 +1827,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         extern "C" fn schedule_h2_drain(app: *mut c_void, _ctx: *mut c_void) {
             extern "C" fn drain(app: *mut c_void) -> bool {
                 // S012: `h2::App` is an `opaque_ffi!` ZST — safe deref.
-                // Stay registered while streams are still queued.
-                bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain()
+                let queued = bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain();
+                let vm = jsc::VirtualMachine::get();
+                // It resumes parked streams: a `pull()`, or a promise that script awaits.
+                vm.deferred_task_called_js.set(true);
+                if queued {
+                    // That script wrote to another connection.
+                    vm.event_loop().deferred_tasks.count_as_posted();
+                }
+                queued
             }
             jsc::VirtualMachine::get()
                 .event_loop()

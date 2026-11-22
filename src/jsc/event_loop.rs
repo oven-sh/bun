@@ -467,7 +467,6 @@ impl EventLoop {
             _ => unreachable!(),
         }
 
-        self.owes_checkpoint.set(false);
         {
             let _inside = vm.is_inside_deferred_task_queue.raise_for_scope();
             self.deferred_tasks.run();
@@ -477,9 +476,9 @@ impl EventLoop {
         if vm.deferred_task_called_js.take() {
             let _scope = self.enter_scope_without_checkpoint();
             global_object.drain_microtasks_and_next_ticks()?;
-            self.owes_checkpoint
-                .set(self.deferred_tasks.may_have_unrun_tasks());
         }
+        self.owes_checkpoint
+            .set(self.deferred_tasks.may_have_unrun_tasks());
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT

@@ -85,15 +85,17 @@ impl Sync {
     // Bit layout (LSB-first):
     //   idle:     u14  bits 0..14
     //   spawned:  u14  bits 14..28
-    //   unused:   bool bit  28
+    //   wants_spare: bool bit 28
     //   notified: bool bit  29
     //   state:    u2   bits 30..32
     //   summoned: u14  bits 32..46
     //
     // `idle + summoned` threads are idle in `wait()`. `schedule_all_at_once` has claimed `summoned` of them.
+    // `wants_spare`: a `schedule` sets it, and a `schedule_lone` that finds no thread notified clears it.
     const IDLE_MASK: u64 = 0x3FFF;
     const SPAWNED_SHIFT: u32 = 14;
     const SPAWNED_MASK: u64 = 0x3FFF << Self::SPAWNED_SHIFT;
+    const WANTS_SPARE_BIT: u64 = 1 << 28;
     const NOTIFIED_BIT: u64 = 1 << 29;
     const STATE_SHIFT: u32 = 30;
     const STATE_MASK: u64 = 0b11 << Self::STATE_SHIFT;
@@ -132,6 +134,18 @@ impl Sync {
     #[inline]
     fn idle_and_unsignaled(self) -> usize {
         usize::from(self.idle()).saturating_sub(usize::from(self.state() == SyncState::Signaled))
+    }
+    #[inline]
+    fn wants_spare(self) -> bool {
+        self.0 & Self::WANTS_SPARE_BIT != 0
+    }
+    #[inline]
+    fn set_wants_spare(&mut self, v: bool) {
+        if v {
+            self.0 |= Self::WANTS_SPARE_BIT;
+        } else {
+            self.0 &= !Self::WANTS_SPARE_BIT;
+        }
     }
     #[inline]
     fn notified(self) -> bool {
@@ -296,7 +310,7 @@ impl ThreadPool {
         if self.allowed_threads.fetch_max(count, Ordering::Relaxed) < count
             && self.has_waiting_task()
         {
-            self.notify_slow(false);
+            self.notify_slow(Notifier::Scheduler);
         }
     }
 
@@ -315,6 +329,18 @@ impl ThreadPool {
             thread = other.next.get();
         }
         false
+    }
+
+    /// `has_waiting_task` for the thread that woke up last, which calls it. `sync` is from after it woke up.
+    fn has_task_for_another_thread(&self, sync: Sync) -> bool {
+        // A thread is idle once its buffer and its queue are empty, and only it fills them.
+        if sync.idle() + sync.summoned() + 1 < sync.spawned() {
+            return self.has_waiting_task();
+        }
+        // SAFETY: the calling worker's own `Thread`, which is on its stack for as long as it is in the pool.
+        let own = unsafe { Thread::current().as_ref() };
+        !self.run_queue.is_empty()
+            || own.is_some_and(|own| !own.run_queue.is_empty() || !own.run_buffer.is_empty())
     }
 
     /// Dump aggregate worker idle/busy stats to stderr. No-op unless
@@ -702,7 +728,7 @@ impl ThreadPool {
         // `tasks` drops here after all worker threads have finished touching it.
     }
 
-    fn schedule_impl(&self, Batch { len, head, tail }: Batch, try_current: bool) {
+    fn schedule_impl(&self, Batch { len, head, tail }: Batch, try_current: bool, by: Notifier) {
         // Sanity check
         if len == 0 {
             return;
@@ -744,12 +770,17 @@ impl ThreadPool {
         } else {
             self.run_queue.push(&list);
         }
-        self.force_spawn();
+        self.notify(by);
     }
 
     /// Schedule a batch of tasks to be executed by some thread on the thread pool.
     pub fn schedule(&self, batch: Batch) {
-        self.schedule_impl(batch, false);
+        self.schedule_impl(batch, false, Notifier::Scheduler);
+    }
+
+    /// Like `schedule`, for a task whose scheduler has no other under way: the thread that wakes up for it wakes no spare one.
+    pub fn schedule_lone(&self, task: *mut Task) {
+        self.schedule_impl(Batch::from(task), false, Notifier::LoneScheduler);
     }
 
     /// Like `schedule`, but the calling thread wakes or starts a thread for each task, as far as there are threads.
@@ -846,7 +877,7 @@ impl ThreadPool {
                 self.unregister_refused(batch.len, &err);
                 self.schedule(batch);
                 // `notified` can be from when these threads were counted, and then nobody answers it.
-                return self.notify_slow(false);
+                return self.notify_slow(Notifier::Scheduler);
             }
         }
     }
@@ -866,7 +897,7 @@ impl ThreadPool {
 
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
-        self.schedule_impl(batch, true);
+        self.schedule_impl(batch, true, Notifier::Scheduler);
     }
 
     /// False: the OS refused the first worker (or nothing was scheduled), and what is queued never runs.
@@ -876,15 +907,14 @@ impl ThreadPool {
 
     fn force_spawn(&self) {
         // Try to notify a thread
-        let is_waking = false;
-        self.notify(is_waking);
+        self.notify(Notifier::Scheduler);
     }
 
     #[inline(always)]
-    fn notify(&self, is_waking: bool) {
+    fn notify(&self, by: Notifier) {
         // Fast path to check the Sync state to avoid calling into notify_slow().
         // If we're waking, then we need to update the state regardless
-        if !is_waking {
+        if by != Notifier::WakingThread {
             // Must be an RMW, not a load: an RMW participates in `sync`'s modification
             // order, so if we observe notified=true here, the worker's later acquire-CAS
             // that clears it synchronizes-with this release and will see the task we just
@@ -892,11 +922,16 @@ impl ThreadPool {
             // worker sees run_queue empty" → task stranded
             let sync = self.sync.fetch_or(Sync::zero(), Ordering::Release);
             if sync.notified() {
+                if by == Notifier::Scheduler && !sync.wants_spare() {
+                    // A second RMW, so that the first stays a load: `schedule` writes `sync` only after a `schedule_lone`.
+                    self.sync
+                        .fetch_or(Sync(Sync::WANTS_SPARE_BIT), Ordering::Release);
+                }
                 return;
             }
         }
 
-        self.notify_slow(is_waking);
+        self.notify_slow(by);
     }
 }
 
@@ -1017,7 +1052,8 @@ impl ThreadPool {
     }
 
     #[inline(never)]
-    fn notify_slow(&self, is_waking: bool) {
+    fn notify_slow(&self, by: Notifier) {
+        let is_waking = by == Notifier::WakingThread;
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.state() != SyncState::Shutdown {
             let can_wake = is_waking || (sync.state() == SyncState::Pending);
@@ -1028,14 +1064,19 @@ impl ThreadPool {
             // A scheduler that finds the pool "waking" only sets `notified`, and leaves the rest to the waking thread.
             let can_wake = can_wake
                 && (!is_waking
-                    || self.keeps_spare_thread_awake
+                    || (self.keeps_spare_thread_awake && sync.wants_spare())
                     || sync.notified()
-                    || self.has_waiting_task());
+                    || self.has_task_for_another_thread(sync));
 
             let can_spawn = (sync.spawned() as u32) < self.allowed_threads.load(Ordering::Relaxed);
 
             let mut new_sync = sync;
             new_sync.set_notified(true);
+            match by {
+                Notifier::Scheduler => new_sync.set_wants_spare(true),
+                Notifier::LoneScheduler => new_sync.set_wants_spare(false),
+                Notifier::WakingThread => {}
+            }
             if can_wake && sync.idle() > 0 {
                 // wake up an idle thread
                 new_sync.set_state(SyncState::Signaled);
@@ -1278,6 +1319,17 @@ impl ThreadPool {
     }
 }
 
+/// Who calls `ThreadPool::notify`.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Notifier {
+    /// `schedule`, or a thread that has taken more tasks than the one it runs next.
+    Scheduler,
+    /// `schedule_lone`.
+    LoneScheduler,
+    /// The thread that woke up last, once it has a task.
+    WakingThread,
+}
+
 /// Why `ThreadPool::wait` returned.
 enum Woken {
     Notified {
@@ -1510,8 +1562,10 @@ impl Thread {
                 pushed: false,
             };
             while let Some(result) = own.take().map(not_stolen).or_else(|| self_.pop(pool)) {
-                if result.pushed || is_waking {
-                    pool.notify(is_waking);
+                if is_waking {
+                    pool.notify(Notifier::WakingThread);
+                } else if result.pushed {
+                    pool.notify(Notifier::Scheduler);
                 }
                 is_waking = false;
 
@@ -2308,5 +2362,49 @@ pub mod node {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::mem::ManuallyDrop;
+
+    #[test]
+    fn thread_that_woke_up_looks_at_the_queues_of_the_others_only_if_one_is_awake() {
+        let pool = ManuallyDrop::new(ThreadPool::init(Config::default()));
+        let other = Thread {
+            next: Cell::new(ptr::null_mut()),
+            target: Cell::new(ptr::null_mut()),
+            join_event: Event::default(),
+            run_queue: node::Queue::default(),
+            idle_queue: node::Queue::default(),
+            run_buffer: node::Buffer::default(),
+            thread_pool: bun_ptr::BackRef::new(&*pool),
+        };
+        let (mut its_task, mut pool_task) = (Node::default(), Node::default());
+        let list_of = |task: &mut Node| node::List {
+            head: NonNull::from(&mut *task),
+            tail: NonNull::from(task),
+        };
+        assert!(other.run_buffer.push(&mut list_of(&mut its_task)).is_ok());
+        pool.threads
+            .store(ptr::from_ref(&other).cast_mut(), Ordering::Release);
+
+        let mut sync = Sync::zero();
+        sync.set_spawned(2);
+        assert!(pool.has_task_for_another_thread(sync));
+        sync.set_idle(1);
+        assert!(!pool.has_task_for_another_thread(sync));
+        sync.set_idle(0);
+        sync.set_summoned(1);
+        assert!(!pool.has_task_for_another_thread(sync));
+        // Miri warns about the cast of an integer to a pointer in `Queue::push`.
+        if !cfg!(miri) {
+            pool.run_queue.push(&list_of(&mut pool_task));
+            assert!(pool.has_task_for_another_thread(sync));
+        }
+
+        pool.threads.store(ptr::null_mut(), Ordering::Release);
     }
 }

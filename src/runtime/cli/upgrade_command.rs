@@ -939,13 +939,34 @@ impl UpgradeCommand {
                             Global::exit(1);
                         }
                     };
-                    if let Err(err) = spawn_res {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error:<r> Failed to run Expand-Archive on {} due to error {}",
-                            bstr::BStr::new(tmpname.as_bytes()),
-                            bstr::BStr::new(err.name())
-                        );
-                        Global::exit(1);
+                    let spawn_status = match spawn_res {
+                        Ok(r) => r.status,
+                        Err(err) => {
+                            bun_core::pretty_errorln!(
+                                "<r><red>error:<r> Failed to run Expand-Archive on {} due to error {}",
+                                bstr::BStr::new(tmpname.as_bytes()),
+                                bstr::BStr::new(err.name())
+                            );
+                            Global::exit(1);
+                        }
+                    };
+                    // PowerShell can spawn fine yet fail inside Expand-Archive
+                    // (e.g. the wrong Archive module loaded via an inherited
+                    // PSModulePath); report that as an unzip failure instead of
+                    // letting the verify step below die with a misleading ENOENT.
+                    match spawn_status {
+                        Status::Exited(e) if e.code == 0 => {}
+                        Status::Exited(e) => {
+                            bun_core::pretty_errorln!(
+                                "<r><red>Expand-Archive failed<r> (exit code: {})",
+                                e.code
+                            );
+                            Global::exit(1);
+                        }
+                        other => {
+                            bun_core::pretty_errorln!("<r><red>Expand-Archive failed<r> ({})", other);
+                            Global::exit(1);
+                        }
                     }
                 }
             }

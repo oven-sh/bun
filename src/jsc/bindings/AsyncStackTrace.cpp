@@ -237,7 +237,7 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
     // would desync m_stackTrace from the cached property.
     if (instance->hasMaterializedErrorInfo())
         return;
-    if (auto* existing = instance->stackTrace(); existing && !existing->isEmpty())
+    if (auto* existing = instance->stackTrace(); existing && existing->containsIf([](auto& frame) { return frame.hasLineAndColumnInfo() || frame.isWasmFrame(); }))
         return;
 
     size_t limit = globalObject->stackTraceLimit().value_or(10);

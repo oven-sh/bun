@@ -1733,11 +1733,29 @@ pub mod bv2_impl {
             /// That VM is shutting down: stop waiting for the plugins' answers and fail the build.
             pub cancelled: &'a AtomicBool,
             pub poster: &'a dyn bun_event_loop::PostToJs,
+            pub turn: &'a dyn Turn,
         }
         impl CompletionHandle<'_> {
             pub(crate) fn is_cancelled(&self) -> bool {
                 self.cancelled.load(Ordering::SeqCst)
             }
+
+            pub(crate) fn wait_for_plugins<R>(&self, wait: impl FnOnce() -> R) -> R {
+                self.turn.wait_begins();
+                let result = wait();
+                self.turn.wait_ends();
+                result
+            }
+        }
+
+        /// One `Bun.build()` works at a time. Another one may while this one waits for its plugins.
+        pub trait Turn: Sync {
+            fn wait_begins(&self);
+            /// Blocks until the build may work again.
+            fn wait_ends(&self);
+            /// On the plugins' thread, before the build is woken.
+            fn answer_sent(&self);
+            fn answer_taken(&self);
         }
     }
 
@@ -2278,6 +2296,15 @@ pub mod bv2_impl {
             // SAFETY: the loop outlives the bundle pass, and it is not part of `*self`.
             let any_loop = unsafe { any_loop.as_ref() };
             while !self.is_done() {
+                let graph = &self.graph;
+                if graph.plugin_requests == graph.pending_items + graph.deferred_pending
+                    && let (Some(completion), bun_event_loop::AnyEventLoop::Mini(mini)) =
+                        (self.completion, any_loop)
+                    && !mini.has_tasks()
+                {
+                    completion.wait_for_plugins(|| mini.wait_for_tasks());
+                    continue;
+                }
                 any_loop.tick(core::ptr::from_mut(self).cast());
             }
             bun_core::scoped_log!(
@@ -4164,6 +4191,19 @@ pub mod bv2_impl {
             Ok(additional_output_files)
         }
 
+        /// See [`dispatch::Turn::answer_sent`].
+        pub fn answer_sent(&self) {
+            if let Some(completion) = self.completion {
+                completion.turn.answer_sent();
+            }
+        }
+
+        fn answer_taken(&self) {
+            if let Some(completion) = self.completion {
+                completion.turn.answer_taken();
+            }
+        }
+
         pub fn on_load_async(&self, load: Box<jsc_api::JSBundler::Load>) {
             if let jsc_api::JSBundler::LoadOwner::Waiter { waiter, .. } = load.owner {
                 // SAFETY: `aot::plugins` frees no waiter before the build shuts down, and that waits
@@ -4171,6 +4211,7 @@ pub mod bv2_impl {
                 unsafe { waiter.as_ref() }.answer_load(load.value);
                 return;
             }
+            self.answer_sent();
             let load = bun_core::heap::into_raw(load);
             // Dispatch to the loop that *owns* `BundleV2`.
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
@@ -4205,6 +4246,7 @@ pub mod bv2_impl {
                 unsafe { waiter.as_ref() }.answer_resolve(resolve.value);
                 return;
             }
+            self.answer_sent();
             let resolve = bun_core::heap::into_raw(resolve);
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop() {
@@ -4254,6 +4296,8 @@ pub mod bv2_impl {
                 unreachable!("`on_load_async` answers a waiter");
             };
             let (source_index, path) = (parse_task.source_index, parse_task.path);
+            this.graph.plugin_requests -= 1;
+            this.answer_taken();
             if load.deferred_in == Some(this.graph.defer_epoch) {
                 // Answered while `.defer()`red and before that batch was drained (cancelled, or a plugin
                 // that did not wait): its unit is still parked in `deferred_pending`; move it back so this
@@ -4485,6 +4529,8 @@ pub mod bv2_impl {
         #[inline(never)]
         pub(crate) fn on_resolve(resolve: jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
             bun_removable_features::removable_definition!(Bundler, Self::on_resolve);
+            this.graph.plugin_requests -= 1;
+            this.answer_taken();
             debug_assert!(matches!(
                 resolve.owner,
                 jsc_api::JSBundler::ResolveOwner::Bundle
@@ -5371,6 +5417,7 @@ pub mod bv2_impl {
         }
 
         fn dispatch_resolve(&mut self, record: jsc_api::JSBundler::MiniImportRecord<'a>) {
+            self.graph.plugin_requests += 1;
             Box::new(jsc_api::JSBundler::Resolve::init(self, record)).dispatch(self);
         }
 
@@ -5391,6 +5438,7 @@ pub mod bv2_impl {
                     bstr::BStr::new(&parse.path.text)
                 );
                 let owner = jsc_api::JSBundler::LoadOwner::Bundle(parse);
+                self.graph.plugin_requests += 1;
                 Box::new(jsc_api::JSBundler::Load::init(self, owner)).dispatch(self);
                 return None;
             }
@@ -6952,6 +7000,7 @@ pub mod bv2_impl {
                 jsc_api::JSBundler::LoadOwner::Bundle(_)
             ));
             this.thread_lock.assert_locked();
+            this.answer_taken();
             load.deferred_in = Some(this.graph.defer_epoch);
             this.graph.deferred_pending += 1;
             this.decrement_scan_counter();

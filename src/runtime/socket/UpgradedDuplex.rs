@@ -146,8 +146,7 @@ impl UpgradedDuplex {
     /// stack. It frees itself from a task that it queues once the connection
     /// has closed and nothing holds it, and a callback only has to turn the
     /// event loop synchronously for queued tasks to run under that frame
-    /// (`expect().resolves` does, and so does `Bun.build` with an async
-    /// plugin `setup()`). The close can come from the program, the peer or
+    /// (`expect().resolves` does). The close can come from the program, the peer or
     /// the engine. An entry point that dispatches to a handler, to the TLS
     /// engine or to the wrapped stream holds this guard, so the free waits
     /// until the entry point is done.

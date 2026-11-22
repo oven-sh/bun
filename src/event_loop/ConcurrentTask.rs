@@ -93,6 +93,7 @@ pub mod task_tag {
         HotReloadTask,
         HTMLRewriterBackgroundPull,
         JSBundleCompletionTask,
+        StuckBuildsProbe,
         JSCDeferredWorkTask,
         NapiAsyncWork,            // napi_async_work
         NapiFinalizerTask,

@@ -1849,17 +1849,16 @@ test.concurrent.each([
   ["http", "upgrade", upgrade],
   ["http", "connect", "CONNECT x:1 HTTP/1.1\r\nHost: x\r\n\r\n"],
   ["http", "clientError", "BAD\r\n\r\n"],
-])("an %s '%s' listener can close the server and then run a build", async (protocol, event, request) => {
-  using dir = tempDir("close-then-build", {
-    "entry.js": "",
+])("an %s '%s' listener can close the server and then run the event loop", async (protocol, event, request) => {
+  using dir = tempDir("close-then-run-loop", {
     "server.js": `
+      const { runEventLoopUntil } = require("bun:internal-for-testing");
       let server = require("node:${protocol}").createServer(${JSON.stringify(protocol === "https" ? tlsCert : {})});
       server.on("${event}", (...args) => {
         args.find(arg => arg instanceof require("node:stream").Duplex).destroy();
         server.close();
         server = null;
-        // Bun.build() returns when setup() is done.
-        async function setup() {
+        async function measure() {
           for (let i = 0; i < 6; i++) {
             await new Promise(setImmediate);
             Bun.gc(true);
@@ -1869,7 +1868,7 @@ test.concurrent.each([
           const { user, system } = process.cpuUsage(before);
           console.log((user + system) / 1000 < (performance.now() - start) / 2 ? "idle" : "busy");
         }
-        Bun.build({ entrypoints: ["entry.js"], plugins: [{ name: "waits", setup }] }).then(() => console.log("built"));
+        runEventLoopUntil(measure());
         console.log("returns");
       });
       server.listen(0, "127.0.0.1", () => {
@@ -1889,5 +1888,5 @@ test.concurrent.each([
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "idle\nreturns\nbuilt\n", stderr: "", exitCode: 0 });
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "idle\nreturns\n", stderr: "", exitCode: 0 });
 });

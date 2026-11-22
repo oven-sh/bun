@@ -1,5 +1,6 @@
 import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
+import { runEventLoopUntil } from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
 import {
@@ -3993,10 +3994,10 @@ it.skipIf(!isLinux)("a paused socket gets the messages ahead of a hangup that fa
   expect(events).toEqual(["resume", "a", "close 1000"]);
 });
 
-// Bun.build() waits for an async plugin setup() by running the event loop, here from inside a handler.
 it("stop(true) survives a close handler that terminates the other sockets and runs the event loop", async () => {
   using dir = tempDir("ws-stop-nested-tick", {
     "stop.test.js": /* js */ `
+      import { runEventLoopUntil } from "bun:internal-for-testing";
       import { expect, test } from "bun:test";
 
       test("stop(true)", async () => {
@@ -4023,10 +4024,7 @@ it("stop(true) survives a close handler that terminates the other sockets and ru
               closed = true;
               for (const ws of sockets) ws.terminate();
               let waited = false;
-              Bun.build({
-                entrypoints: ["./none.js"],
-                plugins: [{ name: "nested tick", setup: () => Bun.sleep(400).then(() => void (waited = true)) }],
-              }).catch(() => {});
+              runEventLoopUntil(Bun.sleep(400).then(() => void (waited = true)));
               ranLoop = waited;
             },
           },
@@ -4060,6 +4058,7 @@ it("an upgrade after an await survives an open handler that terminates the socke
       bunExe(),
       "-e",
       `
+      import { runEventLoopUntil } from "bun:internal-for-testing";
       import { once } from "node:events";
       import net from "node:net";
       const upgraded = Promise.withResolvers();
@@ -4076,10 +4075,7 @@ it("an upgrade after an await survives an open handler that terminates the socke
           open(ws) {
             ws.terminate();
             let waited = false;
-            Bun.build({
-              entrypoints: ["./none.js"],
-              plugins: [{ name: "nested tick", setup: () => closed.then(() => void (waited = true)) }],
-            }).catch(() => {});
+            runEventLoopUntil(closed.then(() => void (waited = true)));
             ranLoop = waited;
           },
           message() {},
@@ -4110,6 +4106,7 @@ it.concurrent.each(["close", "terminate"])(
         bunExe(),
         "-e",
         `
+      import { runEventLoopUntil } from "bun:internal-for-testing";
       const opened = Promise.withResolvers();
       using server = Bun.serve({
         hostname: "127.0.0.1",
@@ -4126,11 +4123,8 @@ it.concurrent.each(["close", "terminate"])(
       ws.cork(() => {
         ws.${method}();
         let waited = false;
-        Bun.build({
-          entrypoints: ["./none.js"],
-          // One more turn, for the server's end to see the client's FIN.
-          plugins: [{ name: "nested tick", setup: () => closed.then(() => Bun.sleep(1)).then(() => void (waited = true)) }],
-        }).catch(() => {});
+        // One more turn, for the server's end to see the client's FIN.
+        runEventLoopUntil(closed.then(() => Bun.sleep(1)).then(() => void (waited = true)));
         ranLoop = waited;
       });
       console.log(ranLoop);
@@ -4200,10 +4194,7 @@ it.each(["before", "after", "around"])(
     let upgrading: Request;
     function runLoop() {
       let waited = false;
-      Bun.build({
-        entrypoints: ["./none.js"],
-        plugins: [{ name: "nested tick", setup: () => fetch(server.url).then(() => void (waited = true)) }],
-      }).catch(() => {});
+      runEventLoopUntil(fetch(server.url).then(() => void (waited = true)));
       ranLoop = waited;
     }
     using server = serve({

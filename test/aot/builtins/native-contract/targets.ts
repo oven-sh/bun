@@ -31,7 +31,7 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   [/^process\.(binding|_linkedBinding|chdir|_rawDebug|stdout|stderr)\b/, "it changes the state of the process or takes over a standard stream"],
   [/^%NodeCryptoBindingCrypto%\.scrypt/, "whatever it is passed, it computes for a thirtieth of a second"],
   [/^(alert|confirm|prompt)$/, "it waits for input"],
-  [/^Atomics\.(waitAsync|pause)$/, "it blocks the thread"],
+  [/^Atomics\.(waitAsync|pause)$|runUntilSettled/i, "it blocks the thread"],
   [/^(fetch|postMessage)$/, "it starts a thread or opens a connection"],
   [/^%ModuleRequire%/, "it loads whatever its operand names"],
   [/crash_handler_jsc|^%CrashHandlerJsc|restartProcess|jsFunctionReportUncaughtException|setSyntheticAllocationLimitForTesting/i, "it ends the process or makes it fail"],

@@ -28,7 +28,7 @@ import { connect } from "net";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
-import { setSocketOptions, sweepSocketTimers } from "bun:internal-for-testing";
+import { runEventLoopUntil, setSocketOptions, sweepSocketTimers } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import { on, once } from "node:events";
@@ -5502,13 +5502,13 @@ describe.concurrent("request body backpressure", () => {
   );
 });
 
-// Bun.build() waits for an async plugin setup() by running the event loop.
 it("a direct stream survives a pull() that ends it and runs the event loop until the connection is closed", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
+      import { runEventLoopUntil } from "bun:internal-for-testing";
       import net from "node:net";
       const pulled = Promise.withResolvers();
       using server = Bun.serve({
@@ -5523,10 +5523,7 @@ it("a direct stream survives a pull() that ends it and runs the event loop until
               controller.write("body");
               controller.end();
               let waited = false;
-              Bun.build({
-                entrypoints: ["./none.js"],
-                plugins: [{ name: "nested tick", setup: () => closed.then(() => void (waited = true)) }],
-              }).catch(() => {});
+              runEventLoopUntil(closed.then(() => void (waited = true)));
               pulled.resolve(waited);
             },
           }));
@@ -5566,10 +5563,7 @@ it.each(["http", "https"])(
           return new Response();
         }
         other.write(message("b"));
-        Bun.build({
-          entrypoints: ["./none.js"],
-          plugins: [{ name: "nested tick", setup: () => otherArrived.promise }],
-        }).catch(() => {});
+        runEventLoopUntil(otherArrived.promise);
         seen.resolve([`${requests} requests`, req.url, req.headers.get("x-name")!, await req.text()]);
         return new Response();
       },

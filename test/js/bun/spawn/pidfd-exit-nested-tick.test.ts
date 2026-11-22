@@ -7,7 +7,7 @@
 // next unrelated timer happens to wake the loop.
 //
 // The drop happens when a poll callback re-enters `us_loop_run_bun_tick`
-// (e.g. `Bun.build()` with an async plugin `setup()` → `waitForPromise` → `autoTick`), which
+// (e.g. an async macro → `waitForPromise` → `autoTick`), which
 // overwrites the shared `loop->ready_polls` / `num_ready_polls` /
 // `current_ready_poll` while the outer dispatch is still mid-iteration.
 // The outer loop resumes with the inner tick's indices and silently skips
@@ -20,7 +20,7 @@
 // Fix: register the pidfd level-triggered (no EPOLLONESHOT). A pidfd stays
 // readable from process exit until close, so a dropped ready_polls slot is
 // harmless — the next epoll_wait returns it again.
-import { createSocketPair } from "bun:internal-for-testing";
+import { createSocketPair, runEventLoopUntil } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { isLinux, isWindows } from "harness";
 import { closeSync, readSync, writeSync } from "node:fs";
@@ -56,10 +56,7 @@ test.skipIf(!isLinux)(
           // the kernel with no re-arm path.
           if (!nested) {
             nested = true;
-            Bun.build({
-              entrypoints: ["./none.js"],
-              plugins: [{ name: "nested tick", setup: () => Bun.sleep(1) }],
-            }).catch(() => {});
+            runEventLoopUntil(Bun.sleep(1));
           }
           resolve();
         },
@@ -73,13 +70,10 @@ test.skipIf(!isLinux)(
   },
 );
 
-// `Bun.build()` waits for an async plugin `setup()` by ticking the loop. True if the timer fired under the call.
+// True if the timer fired under the call.
 function tickEventLoop() {
   let ticked = false;
-  Bun.build({
-    entrypoints: ["./none.js"],
-    plugins: [{ name: "nested tick", setup: () => Bun.sleep(1).then(() => void (ticked = true)) }],
-  }).catch(() => {});
+  runEventLoopUntil(Bun.sleep(1).then(() => void (ticked = true)));
   return ticked;
 }
 

@@ -228,6 +228,15 @@ impl PosixLoop {
         unsafe { &*c::uws_get_loop() }
     }
 
+    /// [`get`](Self::get) panics if epoll/kqueue cannot be created (EMFILE).
+    pub fn try_get() -> Result<&'static ThreadLoop, bun_errno::SystemErrno> {
+        // SAFETY: as in `get`, or null.
+        unsafe { c::uws_try_get_loop().as_ref() }.ok_or_else(|| {
+            bun_errno::SystemErrno::init(bun_errno::posix::errno() as i64)
+                .unwrap_or(bun_errno::SystemErrno::EUNKNOWN)
+        })
+    }
+
     /// Packetize HTTP/3 stream writes that happened since the last
     /// process_conns. Early-returns when nothing wrote, so safe to call
     /// from drainMicrotasks without per-iteration cost.
@@ -343,6 +352,10 @@ impl WindowsLoop {
     pub fn get() -> &'static ThreadLoop {
         // SAFETY: wraps this thread's libuv loop. Never null, and freed only by `free_thread_loop`.
         unsafe { &*c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
+    }
+
+    pub fn try_get() -> Result<&'static ThreadLoop, bun_errno::SystemErrno> {
+        Ok(Self::get())
     }
 
     pub fn iteration_number(&self) -> u64 {
@@ -551,6 +564,8 @@ mod c {
         pub(super) safe fn us_loop_listens_on(loop_: &Loop, fd: c_int) -> c_int;
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut ThreadLoop;
+        #[cfg(not(windows))]
+        pub(super) safe fn uws_try_get_loop() -> *mut ThreadLoop;
         #[cfg(windows)]
         pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut ThreadLoop;
         pub(super) fn uws_loop_date_header_timer_update(loop_: &ThreadLoop);
@@ -558,7 +573,7 @@ mod c {
     }
 }
 // Raw, for callers on another thread that hold only a pointer (e.g. bun_http's
-// `HTTPThread::wakeup`, bun_io's `WindowsWaker`): `Loop` is `!Sync`.
+// `HTTPThread::wakeup`): `Loop` is `!Sync`.
 pub use c::us_wakeup_loop;
 
 /// For `bun:internal-for-testing` only.

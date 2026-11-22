@@ -1633,6 +1633,11 @@ impl VirtualMachine {
 
     /// Unlike `is_event_loop_alive`, also counts unref'd handles and timers, since they can still run JS.
     pub fn has_work_left(&self) -> bool {
+        self.has_work_left_besides(0)
+    }
+
+    /// Whether it would have without `refs` of its keep-alives.
+    pub fn has_work_left_besides(&self, refs: u32) -> bool {
         // Must be read before the queues: the waiter thread posts a child's exit, then stops counting the child.
         #[cfg(unix)]
         if bun_spawn::process::WaiterThread::is_watching() {
@@ -1644,7 +1649,7 @@ impl VirtualMachine {
         let timers =
             runtime_hooks().map_or_else(TimersLeft::default, |hooks| (hooks.timers_left)());
         timers.armed
-            || self.has_handles(timers.holds_loop_ref)
+            || self.has_handles(timers.holds_loop_ref, refs)
             || self.has_handles_off_the_loop()
             || crate::cpp::Bun__hasDeferredWorkNotKeepingEventLoopAlive(self.global())
     }
@@ -1659,7 +1664,7 @@ impl VirtualMachine {
 
     /// `num_polls` also counts plain loop refs, so subtract the entries that can't settle anything a test waits on.
     #[cfg(not(windows))]
-    fn has_handles(&self, timers_hold_loop_ref: bool) -> bool {
+    fn has_handles(&self, timers_hold_loop_ref: bool, refs: u32) -> bool {
         let rare = self.rare_data.get();
         // A `--parallel` worker's IPC group only ever holds the socket to its coordinator.
         let has_coordinator =
@@ -1670,14 +1675,14 @@ impl VirtualMachine {
             .map_or(0, |polls| polls.disarmed_count());
         let fires_nothing = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator) + disarmed;
         self.platform_loop_opt()
-            .is_some_and(|h| h.num_polls.get() > fires_nothing)
+            .is_some_and(|h| h.num_polls.get() > fires_nothing + refs as i32)
     }
 
     /// Over-reports: `uv_loop_alive` can't exclude the timers' ref or a `--parallel` worker's pipe to its coordinator.
     #[cfg(windows)]
-    fn has_handles(&self, _timers_hold_loop_ref: bool) -> bool {
+    fn has_handles(&self, _timers_hold_loop_ref: bool, refs: u32) -> bool {
         self.platform_loop_opt()
-            .is_some_and(|h| h.is_active() || h.has_active_io_handles())
+            .is_some_and(|h| h.is_active_besides(refs) || h.has_active_io_handles())
     }
 
     pub fn wakeup(&self) {

@@ -1193,7 +1193,6 @@ describe("maxConnectionsPerHost", () => {
 describe.concurrent("the event loop", () => {
   async function run(body: string) {
     using dir = tempDir("quic-event-loop", {
-      "entry.js": "export default 1;\n",
       "main.mjs": /* js */ `
         ${prelude}
         const silent = await Bun.udpSocket({ hostname: "127.0.0.1" });
@@ -1244,9 +1243,9 @@ describe.concurrent("the event loop", () => {
     expect(await run(body)).toEqual(promptly);
   });
 
-  // Bun.build() runs the event loop while it waits for an async plugin setup().
   test("keeps serving an endpoint while one of its callbacks runs the loop", async () => {
     const body = `
+      import { runEventLoopUntil } from "bun:internal-for-testing";
       const received = Promise.withResolvers();
       const server = await serve(session => {
         session.closed.catch(() => {});
@@ -1256,7 +1255,7 @@ describe.concurrent("the event loop", () => {
         onhandshake() {
           const start = performance.now();
           this.sendDatagram(Uint8Array.of(1));
-          Bun.build({ entrypoints: ["./entry.js"], plugins: [{ name: "wait", setup: () => received.promise }] });
+          runEventLoopUntil(received.promise);
           console.log(since(start));
           process.exit(0);
         },

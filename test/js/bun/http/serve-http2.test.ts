@@ -1,4 +1,4 @@
-import { setSocketOptions, sweepSocketTimers } from "bun:internal-for-testing";
+import { runEventLoopUntil, setSocketOptions, sweepSocketTimers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { randomBytes } from "crypto";
 import { bunEnv, bunExe, isLinux, tempDir, tls as tlsCert } from "harness";
@@ -1184,7 +1184,6 @@ test.concurrent.each([
   expect(exitCode).toBe(0);
 });
 
-// Bun.build() waits for an async plugin setup() by running the event loop.
 test.each([
   [false, "one read"],
   [false, "two reads"],
@@ -1202,10 +1201,7 @@ test.each([
       if (req.method === "GET") return new Response("fence");
       client.write(Buffer.concat([frame(T.DATA, 0, 1, late), frame(T.DATA, F.END_STREAM, 1, late)]));
       let waited = false;
-      Bun.build({
-        entrypoints: ["./none.js"],
-        plugins: [{ name: "nested tick", setup: () => fence().then(() => void (waited = true)) }],
-      }).catch(() => {});
+      runEventLoopUntil(fence().then(() => void (waited = true)));
       ranLoop = waited;
       return new Response(sha256(await req.bytes()));
     },

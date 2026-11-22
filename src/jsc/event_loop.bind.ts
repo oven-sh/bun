@@ -17,3 +17,4 @@ export const ActiveTasks = b.dictionary({
 });
 
 export const getActiveTasks = b.fn({ returns: ActiveTasks, capability: "heap" });
+export const runUntilSettled = b.fn({ args: { promise: b.any }, capability: "js", throws: true });

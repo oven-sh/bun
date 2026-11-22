@@ -257,8 +257,7 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
 
 // The native context of a TLS socket over a Duplex must not be freed while a
 // frame of its TLS engine is on the stack. A callback only has to turn the event
-// loop synchronously for queued tasks to run under such a frame:
-// `Bun.build` with an async plugin `setup()` does. The
+// loop synchronously for queued tasks to run under such a frame. The
 // fixture counts the live contexts, so these tests do not need ASAN to fail.
 // Serial, like the tests above: several debug subprocesses at once reach the
 // default test timeout.

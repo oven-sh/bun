@@ -845,10 +845,10 @@ describe("tls.minVersion and tls.maxVersion take node:tls's version names", () =
   });
 });
 
-// Bun.build() waits for an async plugin setup() by running the event loop, here from inside a handler.
 test("stop(true) survives a handler that closes other connections and runs the event loop", async () => {
   using dir = tempDir("serve-stop-nested-tick", {
     "stop.test.js": /* js */ `
+      import { runEventLoopUntil } from "bun:internal-for-testing";
       import { expect, test } from "bun:test";
       import tls from "node:tls";
       const { key, cert } = JSON.parse(process.env.TEST_TLS);
@@ -871,10 +871,7 @@ test("stop(true) survives a handler that closes other connections and runs the e
               // "Connection: close": the end of a response closes its connection, once the peer has answered.
               for (const controller of controllers) controller.end();
               let waited = false;
-              Bun.build({
-                entrypoints: ["./none.js"],
-                plugins: [{ name: "nested tick", setup: () => Bun.sleep(400).then(() => void (waited = true)) }],
-              }).catch(() => {});
+              runEventLoopUntil(Bun.sleep(400).then(() => void (waited = true)));
               ranLoop = waited;
             });
             return new Response(

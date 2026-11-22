@@ -153,7 +153,7 @@ use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader as Subprocess
 use crate::api::bun_terminal_body::Terminal;
 use crate::api::cron::CronJob;
 use crate::api::cron_os::OsJob;
-use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
+use crate::api::js_bundle_completion_task::{JSBundleCompletionTask, StuckBuildsProbe};
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 
 use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, TsfnRefRequest, napi_async_work};
@@ -308,6 +308,11 @@ pub(crate) fn run_task(
             [Bundler],
             |build: JSBundleCompletionTask| -> JsResult<()> { build.on_complete() }
         )?,
+        task_tag::StuckBuildsProbe => {
+            boxed_arm!(task, [Bundler], |probe: StuckBuildsProbe| -> () {
+                probe.run(VirtualMachine::get())
+            })
+        }
         task_tag::FetchTaskletPromiseSettle => boxed_arm!(
             task,
             [Fetch],
@@ -850,7 +855,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 85,
+    task_tag::COUNT == 86,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1661,6 +1666,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::FSWatchTask => release_boxed_in!([NodeFs], FSWatchTask),
         task_tag::HotReloadTask => release_boxed_in!([HotReload], hot_reloader::HotReloadTask),
         task_tag::JSBundleCompletionTask => release_boxed_in!([Bundler], JSBundleCompletionTask),
+        task_tag::StuckBuildsProbe => release_boxed_in!([Bundler], StuckBuildsProbe),
         task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
         task_tag::BundleV2PluginResolveAnswered => {
             release_boxed_in!(

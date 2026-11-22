@@ -3384,8 +3384,7 @@ it("a Bun.connect TLS socket that is done lets go of its SSL_CTX", async () => {
 
 // A socket over a Windows named pipe frees its native context from a task
 // that is queued when the socket closes. A handler can close the socket and
-// then spin the event loop before it returns (`Bun.build()` blocks on a plugin's
-// `setup()` promise and runs queued tasks), so the context is gone by the time the
+// then spin the event loop before it returns, so the context is gone by the time the
 // libuv read callback that invoked the handler gets control back. The
 // callback must keep the context alive until it is done with it.
 describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop spun inside a read callback", () => {
@@ -3393,6 +3392,7 @@ describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop 
   // from the EOF read callback, "data" from the data read callback.
   function fixture(trigger: "end" | "data") {
     return /* js */ `
+      import { runEventLoopUntil } from "bun:internal-for-testing";
       const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-${trigger}-teardown-" + Math.random().toString(36).slice(2);
       const serverOpened = Promise.withResolvers();
       const serverClosed = Promise.withResolvers();
@@ -3402,10 +3402,7 @@ describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop 
         socket.end();
         // Blocks until the promise settles. Every queued task, including the
         // one that frees the native context of this socket, runs before this returns.
-        Bun.build({
-          entrypoints: ["./none.js"],
-          plugins: [{ name: "spin", setup: () => new Promise(resolve => setImmediate(resolve)) }],
-        }).catch(() => {});
+        runEventLoopUntil(new Promise(resolve => setImmediate(resolve)));
       }
 
       using server = Bun.listen({
@@ -8002,20 +7999,16 @@ it("a view of shared memory as a tls option is refused", () => {
   }
 });
 
-// Bun.build() ticks the loop until an async plugin setup() settles, while the dispatch that called the handler is still on the stack.
 // The outer dispatch reads the closed socket again, so the inner ticks must not free it.
 describe.concurrent("a handler that closes its socket and then waits for a promise", () => {
   it("doesn't crash the dispatch that called it", async () => {
     const source = `
+      import { runEventLoopUntil } from "bun:internal-for-testing";
       import { test } from "bun:test";
 
       // JS can't observe when the loop finishes the close, so tick the loop from the handler for a short time.
       function waitInsideHandler() {
-        void Bun.build({
-          entrypoints: ["/wait.js"],
-          files: { "/wait.js": "" },
-          plugins: [{ name: "wait", setup: () => Bun.sleep(20) }],
-        });
+        runEventLoopUntil(Bun.sleep(20));
       }
 
       test("data() closes the accepted socket", async () => {

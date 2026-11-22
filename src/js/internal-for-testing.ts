@@ -1016,6 +1016,9 @@ export const getEventLoopStats: () => {
   sweepDeadline?: number;
 } = $bindgen("event_loop.bind.ts", "getActiveTasks");
 
+/** Runs the event loop under the caller until `promise` settles. Throws what it rejects with. */
+export const runEventLoopUntil: (promise: Promise<unknown>) => void = $bindgen("event_loop.bind.ts", "runUntilSettled");
+
 export const hostedGitInfo = {
   parseUrl: $bindgen("hosted_git_info_jsc.bind.ts", "parseUrl"),
   fromUrl: $bindgen("hosted_git_info_jsc.bind.ts", "fromUrl"),

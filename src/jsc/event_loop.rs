@@ -1407,6 +1407,26 @@ impl EventLoop {
     }
 }
 
+/// Testing API: the nested turns that a macro or a debugger pause takes under script.
+pub(crate) fn run_until_settled(
+    cx: &mut crate::bindgen::JsScope<'_>,
+    promise: crate::bindgen::JsLocal<'_>,
+) -> JsResult<()> {
+    let global = cx.global();
+    let Some(promise) = promise.to_js().as_any_promise() else {
+        return Err(global.throw_invalid_arguments(format_args!("Expected a promise")));
+    };
+    promise.set_handled(global.vm());
+    global
+        .bun_vm()
+        .wait_for_promise(promise)
+        .map_err(|stopped| stopped.throw(global))?;
+    match promise.status() {
+        PromiseStatus::Rejected => Err(global.throw_value(promise.result(global.vm()))),
+        _ => Ok(()),
+    }
+}
+
 /// Testing API to expose event loop state
 pub(crate) fn get_active_tasks(
     heap: &crate::bindgen::JsHeap<'_>,

@@ -142,7 +142,6 @@ test.each([
   });
   try {
     let connected = 0;
-    let built: Promise<unknown> | undefined;
     await using sql = new SQL({
       url: `mysql://u:pw@127.0.0.1:${port}/db?sslmode=verify-full`,
       max: 1,
@@ -150,7 +149,7 @@ test.each([
       tls: {
         ca: agent1.ca,
         checkServerIdentity() {
-          built = runEventLoopUntil(async () => {
+          runEventLoopUntil(async () => {
             socket.write(packet);
             // After an OK: the session setup, its OK, the query.
             for (let i = 0; i < 4; i++) await loopbackFence();
@@ -163,7 +162,6 @@ test.each([
       .unsafe("SELECT 'secret'")
       .simple()
       .catch(err => err);
-    await built;
     expect({ code: err.code, connected, received }).toEqual({
       code: "ERR_MYSQL_UNEXPECTED_PACKET",
       connected: 0,
@@ -365,7 +363,6 @@ test.each([
       secure = upgrade(rawSocket, cert, Buffer.alloc(0), bytesInsideTls.resolve);
     });
   });
-  let built: Promise<unknown> | undefined;
   try {
     await using sql = new SQL({
       url: `postgres://u:secret@127.0.0.1:${port}/db?sslmode=verify-full`,
@@ -374,9 +371,7 @@ test.each([
         ca: localhost.ca,
         checkServerIdentity() {
           secure.write(Buffer.concat(frames));
-          // Bun.build() runs the event loop until an async setup() settles.
-          const plugins = [{ name: "wait", setup: () => loopbackFence().then(loopbackFence) }];
-          built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins });
+          runEventLoopUntil(() => loopbackFence().then(loopbackFence));
           return new Error("not the server");
         },
       },
@@ -386,7 +381,6 @@ test.each([
       code: "ERR_POSTGRES_UNEXPECTED_MESSAGE",
       bytesInsideTls: 0,
     });
-    await built;
   } finally {
     server.close();
   }

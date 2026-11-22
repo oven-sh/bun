@@ -1857,13 +1857,10 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       await using origin = await http2("end of the stream");
       const { result, stderr, exitCode } = await run(
         origin,
-        `const body = new ReadableStream({
+        `import { runEventLoopUntil } from "bun:internal-for-testing";
+         const body = new ReadableStream({
            start: controller => controller.enqueue(new Uint8Array(1)),
-           // Bun.build() runs the event loop until setup() has settled.
-           cancel() {
-             const setup = async () => report(await read((await response).body));
-             Bun.build({ entrypoints: ["/x.js"], files: { "/x.js": "" }, plugins: [{ name: "wait", setup }] });
-           },
+           cancel: () => runEventLoopUntil(response.then(res => read(res.body)).then(report)),
          });
          const response = get("whole", { method: "POST", body, duplex: "half" });
          await response;
@@ -1877,13 +1874,11 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       await using origin = await http2("content-length", true);
       const { result, exitCode } = await run(
         origin,
-        `import { readFileSync, writeSync } from "node:fs";
+        `import { runEventLoopUntil } from "bun:internal-for-testing";
+         import { readFileSync, writeSync } from "node:fs";
          const body = new ReadableStream({
            start: controller => controller.enqueue(new Uint8Array(1)),
-           cancel() {
-             const setup = async () => report({ code: await bytes });
-             Bun.build({ entrypoints: ["/x.js"], files: { "/x.js": "" }, plugins: [{ name: "wait", setup }] });
-           },
+           cancel: () => runEventLoopUntil(bytes.then(code => report({ code }))),
          });
          const res = await get("damagedInOnePiece", { method: "POST", body, duplex: "half" });
          const bytes = res.bytes().catch(e => e.code);

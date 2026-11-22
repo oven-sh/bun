@@ -549,8 +549,8 @@ fn dispatch_frame(
 /// decoder purely to keep the dynamic table in sync, then discard.
 pub(crate) fn decode_discard_orphan(session: &mut ClientSession) {
     let mut scratch = Vec::new();
-    let block = &session.orphan_header_block;
-    let mut fields = session.decoder.decode(block, &mut scratch);
+    let block = session.orphan_header_block.drain(..);
+    let mut fields = session.decoder.decode(block.as_slice(), &mut scratch);
     loop {
         match fields.next() {
             Ok(Some(_)) => {}
@@ -561,7 +561,6 @@ pub(crate) fn decode_discard_orphan(session: &mut ClientSession) {
             }
         }
     }
-    session.orphan_header_block.clear();
 }
 
 /// HPACK-decode the buffered header block at parse time. Runs for every
@@ -569,7 +568,6 @@ pub(crate) fn decode_discard_orphan(session: &mut ClientSession) {
 /// HEADERS frames arrive in one read. 1xx and trailers are decoded then
 /// dropped; the final response is stored on the stream for delivery.
 pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
-    // `stream.header_block.clear()` is inlined before each return below.
     let mut status: u32 = 0;
     let mut headers = Headers::default();
     // The size cap counts a value before the trim, so whitespace is not free.
@@ -583,7 +581,8 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     let mut malformed = false;
 
     let mut scratch = Vec::new();
-    let mut fields = session.decoder.decode(&stream.header_block, &mut scratch);
+    let block = stream.header_block.drain(..);
+    let mut fields = session.decoder.decode(block.as_slice(), &mut scratch);
     loop {
         let result = match fields.next() {
             Ok(Some(field)) => field,
@@ -595,7 +594,6 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
                 // a decoding error MUST be treated as a connection error of
                 // type COMPRESSION_ERROR.
                 session.fatal_error = Some(crate::Error::HTTP2CompressionError);
-                stream.header_block.clear();
                 return;
             }
         };
@@ -633,13 +631,11 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
         untrimmed_len += result.name.len() + result.value.len();
         if untrimmed_len > LOCAL_MAX_HEADER_LIST_SIZE as usize {
             session.fatal_error = Some(crate::Error::HTTP2HeaderListTooLarge);
-            stream.header_block.clear();
             return;
         }
         headers.append(result.name, trim_response_value(result.value));
     }
-
-    stream.header_block.clear();
+    drop(block);
 
     if malformed {
         session.rst_stream(stream, wire::ErrorCode::PROTOCOL_ERROR);

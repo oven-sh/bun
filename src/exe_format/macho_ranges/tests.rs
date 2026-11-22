@@ -417,6 +417,38 @@ fn code_is_found_in_every_piece() {
 }
 
 #[test]
+fn file_offset_is_found_in_every_piece() {
+    const SLIDE: u64 = 0x7_0000 * PAGE;
+    let file_offset_of = |bytes: &[u8], addresses: AddressRange| {
+        let header = read_header(bytes).unwrap();
+        let commands = &bytes[HEADER_SIZE..][..header.sizeofcmds as usize];
+        let loaded = |address: u64| (address + SLIDE) as usize;
+        let addresses = loaded(addresses.start)..loaded(addresses.end);
+        bun_sys::macho::file_offset_of(loaded(IMAGE_BASE), header.ncmds, commands, addresses)
+    };
+    let cuts = [cut(2, 4), cut(86, 90), cut(99, 101)];
+    let original = toy();
+    let trimmed = remove_and_verify(&original, &cuts);
+    let across_two_segments = cut(94, 96);
+    let in_zero_page = AddressRange::from_size(IMAGE_BASE - PAGE, PAGE).unwrap();
+    let ends_before_start = AddressRange {
+        start: cut(1, 2).start,
+        end: cut(0, 1).start,
+    };
+    for bytes in [&original, &trimmed] {
+        for index in 0..107 {
+            let page = cut(index, index + 1);
+            let offset = file_offset_of(bytes, page);
+            let found = offset.map(|offset| &bytes[offset as usize..][..PAGE as usize]);
+            assert!(found == read_addresses(bytes, page), "{page:#x?}");
+        }
+        for addresses in [across_two_segments, in_zero_page, ends_before_start] {
+            assert_eq!(file_offset_of(bytes, addresses), None);
+        }
+    }
+}
+
+#[test]
 fn second_removal_splits_pieces() {
     let (first, second) = (cut(3, 5), cut(8, 9));
     let once = remove_and_verify(&toy(), &[first]);

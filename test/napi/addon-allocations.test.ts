@@ -84,6 +84,50 @@ describe.skipIf(isWindows || !compiler)("a native addon's allocations", () => {
   // When a thread ends is not tied to when the process does.
   const whenAThreadEnds = ["released by a thread-local destructor"];
 
+  // The places that release blocks as the process ends print a line each.
+  async function printedBy(addonFunction: string) {
+    const result = await run("operators.js", [addonFunction], { MallocDebugReport: "crash", ADDON: addon });
+    return { ...result, stdout: result.stdout.replace(/^released by .*\n/gm, "") };
+  }
+
+  // An ASAN build of the runtime has operators of ASAN's in front of both.
+  test.skipIf(!isMacOS || isASAN)(
+    "the addon calls the operator new of the C++ library and the operator delete of the runtime",
+    async () => {
+      expect(await printedBy("printImagesOfOperators")).toEqual({
+        stdout: "operator new: /usr/lib/libc++abi.dylib\noperator delete: the runtime\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    120_000,
+  );
+
+  test.skipIf(isMacOS && isASAN)(
+    "operator new tells the addon of a request that it cannot serve, as the C++ standard says",
+    async () => {
+      expect(await printedBy("askForTooMuch")).toEqual({
+        stdout: [
+          "operator new (std::nothrow): the new handler ran, then null",
+          "operator new[] (std::nothrow): the new handler ran, then null",
+          "operator new (std::nothrow) with an alignment: the new handler ran, then null",
+          "operator new[] (std::nothrow) with an alignment: the new handler ran, then null",
+          "operator new: std::bad_alloc",
+          "operator new[]: std::bad_alloc",
+          "operator new with an alignment: std::bad_alloc",
+          "operator new[] with an alignment: std::bad_alloc",
+          "std::wstring::reserve: std::bad_alloc",
+          "",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    120_000,
+  );
+
   describe.each(Object.keys(variants))("with %s", variant => {
     const { env, callsExit } = variants[variant];
 

@@ -526,7 +526,7 @@ impl EventLoop {
     }
 
     /// Reports unhandled rejections where each callback's exit was a microtask checkpoint: not beneath script.
-    fn maybe_report_rejected_promises(&self) -> Result<(), Stopped> {
+    pub fn maybe_report_rejected_promises(&self) -> Result<(), Stopped> {
         let vm = self.vm_ref();
         if self.entered_event_loop_count.get() != 0
             || vm.is_inside_deferred_task_queue.get()

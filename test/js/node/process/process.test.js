@@ -1375,7 +1375,7 @@ describe.concurrent(() => {
            console.log("beforeExit", ++count);
            if (count === 1) setImmediate(() => { Promise.reject(new Error("boom")); });
          });`,
-        { stdout: "beforeExit 1\nunhandledRejection\nbeforeExit 2\n", exitCode: 0 },
+        { stdout: "beforeExit 1\nunhandledRejection\nbeforeExit 2\n", reported: false, exitCode: 0 },
       ],
       [
         "with no handler ends the process, and 'beforeExit' is not emitted again",
@@ -1384,19 +1384,19 @@ describe.concurrent(() => {
            console.log("beforeExit", ++count);
            if (count === 1) setImmediate(() => { Promise.reject(new Error("boom")); });
          });`,
-        { stdout: "beforeExit 1\n", exitCode: 1 },
+        { stdout: "beforeExit 1\n", reported: true, exitCode: 1 },
       ],
       [
         "is too late to handle in a 'beforeExit' listener",
         `let promise;
          process.on("beforeExit", () => { console.log("beforeExit"); promise.catch(() => {}); });
          setImmediate(() => { promise = Promise.reject(new Error("boom")); });`,
-        { stdout: "", exitCode: 1 },
+        { stdout: "", reported: true, exitCode: 1 },
       ],
     ])("a rejection in an immediate %s", async (_, script, expected) => {
       await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect({ stdout, exitCode }).toEqual(expected);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, reported: stderr.includes("error: boom"), exitCode }).toEqual(expected);
     });
 
     it("works with explicit process.exit", async () => {

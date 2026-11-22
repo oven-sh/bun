@@ -920,19 +920,21 @@ test("a timer that is due, inside a plugin's setup()", async () => {
   await using proc = spawn({
     cmd: [bunExe(), "test", "late.test.js"],
     cwd: String(dir),
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
     env: bunEnv,
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   const lines = [...stderr.matchAll(/^(?:error: ## (.*) ##|\((pass|fail)\) (.*) \[)/gm)];
-  expect(lines.map(match => match[1] ?? match[2] + " " + match[3])).toEqual([
-    "pass the next immediate",
-    "a timer",
-    "fail a timer",
-    "pass a microtask of the immediate",
-    "pass a timer that is due, inside a plugin's setup()",
-  ]);
-  expect(exitCode).toBe(1);
+  expect({ lines: lines.map(match => match[1] ?? match[2] + " " + match[3]), exitCode }).toEqual({
+    lines: [
+      "pass the next immediate",
+      "a timer",
+      "fail a timer",
+      "pass a microtask of the immediate",
+      "pass a timer that is due, inside a plugin's setup()",
+    ],
+    exitCode: 1,
+  });
 });

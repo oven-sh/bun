@@ -1284,7 +1284,7 @@ it.each(["--hot", "--watch"])("%s reports a rejection in an immediate before the
     cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
     env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
     cwd: String(dir),
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
     stdin: "ignore",
   });

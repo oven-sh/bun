@@ -6,7 +6,6 @@ use bstr::BStr;
 use bun_core::Output;
 use bun_core::String as BunString;
 use bun_core::StringOrView;
-use bun_paths::strings;
 use bun_url::URL as ZigURL;
 
 use crate::exception_list;
@@ -67,16 +66,12 @@ impl ZigStackFrame<'_> {
     ///
     /// Only an absolute path is made relative. A source URL that is not a path (a
     /// `data:` or `blob:` URL, `node:fs`, the name from a `//# sourceURL=` comment)
-    /// is printed as-is, like [`SourceURLFormatter`] prints it. `relative` normalizes
-    /// its operands in fixed path buffers, so a source URL that is too long to be a
-    /// path is printed as-is too.
-    ///
-    /// The relative form lives in `relative`'s thread-local buffer until the next call.
-    pub fn relative_source_url<'a>(dir: &[u8], source_url: &'a [u8]) -> &'a [u8] {
+    /// is printed as-is, like [`SourceURLFormatter`] prints it.
+    pub fn relative_source_url(dir: &[u8], source_url: &[u8]) -> bun_paths::Path {
         if !bun_paths::is_absolute(source_url) || source_url.len() >= bun_paths::MAX_PATH_BYTES {
-            return source_url;
+            return bun_paths::Path::from(source_url);
         }
-        bun_paths::resolve_path::relative(dir, source_url)
+        bun_paths::Path::relative(dir, source_url)
     }
 
     pub fn name_formatter(&self, enable_color: bool) -> NameFormatter<'_> {
@@ -151,16 +146,11 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             write!(f, "{}", BStr::new(source_slice))?;
         } else {
             if self.enable_color {
-                let not_root = if cfg!(windows) {
-                    self.root_path.len() > b"C:\\".len()
-                } else {
-                    self.root_path.len() > b"/".len()
-                };
+                let not_root = self.root_path.len() > bun_paths::root(self.root_path).len();
                 if not_root && source_slice.starts_with(self.root_path) {
-                    let root_path = strings::without_trailing_slash(self.root_path);
-                    let relative_path = strings::without_leading_path_separator(
-                        &source_slice[self.root_path.len()..],
-                    );
+                    let root_path = bun_paths::without_trailing_sep(self.root_path);
+                    let relative_path =
+                        bun_paths::without_leading_sep(&source_slice[self.root_path.len()..]);
                     f.write_str(Output::pretty_fmt!("<d>", true))?;
                     write!(f, "{}", BStr::new(root_path))?;
                     f.write_str(bun_paths::SEP_STR)?;

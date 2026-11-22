@@ -1,10 +1,9 @@
 use core::ffi::c_int;
-use std::io::Write as _;
 
 use crate::VM;
 use bun_core::String as BunString;
-use bun_paths::{AutoAbsPathChecked, PathBuffer};
-use bun_sys::{self, Errno, Fd, FdDirExt as _};
+use bun_paths::{NameTooLong, Path};
+use bun_sys::{self, Errno, Fd};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub(crate) enum ProfilerError {
@@ -12,6 +11,12 @@ pub(crate) enum ProfilerError {
     WriteFailed,
     #[error("FilenameTooLong")]
     FilenameTooLong,
+}
+
+impl From<NameTooLong> for ProfilerError {
+    fn from(_: NameTooLong) -> Self {
+        Self::FilenameTooLong
+    }
 }
 
 pub struct CPUProfilerConfig {
@@ -66,21 +71,10 @@ pub(crate) fn write_sampling_profiler_report(
     }
     let report = report.to_utf8();
 
-    let mut filename_buf = bun_paths::path_buffer_pool::get();
-    let filename = {
-        let mut cursor = std::io::Cursor::new(&mut filename_buf[..]);
-        write_diagnostic_filename(&mut cursor, "SamplingProfile", ".txt")
-            .map_err(|_| ProfilerError::FilenameTooLong)?;
-        let len = usize::try_from(cursor.position()).expect("int cast");
-        &filename_buf[..len]
-    };
+    let path = build_output_path(directory, b"", "SamplingProfile", ".txt")?;
 
-    let mut path_buf = AutoAbsPathChecked::init_top_level_dir();
-    path_buf
-        .join(&[directory, filename])
-        .map_err(|_| ProfilerError::FilenameTooLong)?;
-
-    write_file_creating_dir(&mut path_buf, directory, report.slice())
+    write_file_creating_dir(&path, directory, report.slice())
+        .map_err(|_| ProfilerError::WriteFailed)
 }
 
 pub(crate) fn stop_and_write_profile(
@@ -116,117 +110,56 @@ fn write_profile_to_file(
 ) -> Result<(), ProfilerError> {
     let profile_slice = profile_string.to_utf8();
 
-    // dir/name are unbounded CLI input, so use the length-checked variant.
-    let mut path_buf = AutoAbsPathChecked::init_top_level_dir();
-    // (defer path_buf.deinit() — handled by Drop)
+    let extension = if is_md_format { ".md" } else { ".cpuprofile" };
+    let mut name = config.name.to_vec();
+    // Both formats would get the same custom name, so add the extension.
+    if !name.is_empty() && config.md_format && config.json_format {
+        name.extend_from_slice(extension.as_bytes());
+    }
+    let path = build_output_path(config.dir, &name, "CPU", extension)?;
 
-    build_output_path(&mut path_buf, config, is_md_format)?;
-
-    write_file_creating_dir(&mut path_buf, config.dir, profile_slice.slice())
+    write_file_creating_dir(&path, config.dir, profile_slice.slice())
+        .map_err(|_| ProfilerError::WriteFailed)
 }
 
 /// Writes `contents` to `path`. On ENOENT, EPERM or EACCES it creates `dir` and retries once.
-fn write_file_creating_dir(
-    path: &mut AutoAbsPathChecked,
+pub(crate) fn write_file_creating_dir(
+    path: &Path,
     dir: &[u8],
     contents: &[u8],
-) -> Result<(), ProfilerError> {
-    // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
-    #[cfg(windows)]
-    let mut path_buf_os = bun_paths::os_path_buffer_pool::get();
-    #[cfg(windows)]
-    let output_path_os =
-        bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, path.slice_z());
-    #[cfg(not(windows))]
-    let output_path_os = path.slice_z();
-
-    // Write the profile to disk using bun.sys.File.writeFile
-    let result = bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, contents);
-    if let Err(err) = result {
-        // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
-        let errno = err.get_errno();
-        if errno == Errno::ENOENT || errno == Errno::EPERM || errno == Errno::EACCES {
-            if !dir.is_empty() {
-                let _ = Fd::cwd().make_path(dir);
-                // Retry write
-                let retry_result =
-                    bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, contents);
-                if retry_result.is_err() {
-                    return Err(ProfilerError::WriteFailed);
-                }
-            } else {
-                return Err(ProfilerError::WriteFailed);
-            }
-        } else {
-            return Err(ProfilerError::WriteFailed);
-        }
+) -> bun_sys::Maybe<()> {
+    let result = bun_sys::File::write_file(Fd::cwd(), path, contents);
+    if let Err(err) = &result
+        && matches!(
+            err.get_errno(),
+            Errno::ENOENT | Errno::EPERM | Errno::EACCES
+        )
+        && !dir.is_empty()
+    {
+        let _ = bun_sys::Dir::cwd().make_path(dir);
+        return bun_sys::File::write_file(Fd::cwd(), path, contents);
     }
-
-    Ok(())
+    result
 }
 
-fn build_output_path(
-    path: &mut AutoAbsPathChecked,
-    config: &CPUProfilerConfig,
-    is_md_format: bool,
-) -> Result<(), ProfilerError> {
-    // Generate filename
-    let mut filename_buf = bun_paths::path_buffer_pool::get();
-
-    // If both formats are being written and a custom name was specified,
-    // we need to add the appropriate extension to disambiguate
-    let has_both_formats = config.md_format && config.json_format;
-    let filename: &[u8] = if !config.name.is_empty() {
-        'blk: {
-            if has_both_formats {
-                // Custom name with both formats - append extension based on format
-                let ext: &[u8] = if is_md_format { b".md" } else { b".cpuprofile" };
-                let mut cursor = std::io::Cursor::new(&mut filename_buf[..]);
-                cursor
-                    .write_all(config.name)
-                    .and_then(|_| cursor.write_all(ext))
-                    .map_err(|_| ProfilerError::FilenameTooLong)?;
-                let len = usize::try_from(cursor.position()).expect("int cast");
-                break 'blk &filename_buf[..len];
-            } else {
-                break 'blk config.name;
-            }
-        }
-    } else {
-        generate_default_filename(&mut filename_buf, is_md_format)?
-    };
-
-    if !config.dir.is_empty() {
-        path.join(&[config.dir])
-            .map_err(|_| ProfilerError::FilenameTooLong)?;
+/// `path.resolve(cwd, dir, name)`. An empty `name` gets Node's default file name.
+pub(crate) fn build_output_path(
+    dir: &[u8],
+    name: &[u8],
+    default_prefix: &str,
+    default_extension: &str,
+) -> Result<Path, NameTooLong> {
+    let mut path = Path::from_top_level_dir();
+    path.resolve_in_place(&[dir, name]);
+    if name.is_empty() {
+        push_diagnostic_filename(&mut path, default_prefix, default_extension);
     }
-
-    // `join` resolves an absolute --cpu-prof-name where `append` asserts on it.
-    path.join(&[filename])
-        .map_err(|_| ProfilerError::FilenameTooLong)?;
-
-    Ok(())
-}
-
-fn generate_default_filename(
-    buf: &mut PathBuffer,
-    md_format: bool,
-) -> Result<&[u8], ProfilerError> {
-    let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
-    let mut cursor = std::io::Cursor::new(&mut buf[..]);
-    write_diagnostic_filename(&mut cursor, "CPU", extension)
-        .map_err(|_| ProfilerError::FilenameTooLong)?;
-    let len = usize::try_from(cursor.position()).expect("int cast");
-    Ok(&buf[..len])
+    path.check_len()
 }
 
 /// Node's DiagnosticFilename: `<prefix>.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq><extension>`.
 /// https://github.com/nodejs/node/blob/main/src/util.cc (MakeFilename)
-pub(crate) fn write_diagnostic_filename(
-    cursor: &mut dyn std::io::Write,
-    prefix: &str,
-    extension: &str,
-) -> std::io::Result<()> {
+fn push_diagnostic_filename(path: &mut Path, prefix: &str, extension: &str) {
     let pid = std::process::id();
 
     let (year, month, day, hour, minute, second) = local_time_now();
@@ -234,10 +167,9 @@ pub(crate) fn write_diagnostic_filename(
     static SEQ: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     let seq = SEQ.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
 
-    write!(
-        cursor,
+    path.push_fmt(format_args!(
         "{prefix}.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.0.{seq:03}{extension}"
-    )
+    ));
 }
 
 #[cfg(not(windows))]
@@ -260,30 +192,14 @@ pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
 
 #[cfg(windows)]
 pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
-    #[repr(C)]
-    #[derive(Default)]
-    struct SystemTime {
-        year: u16,
-        month: u16,
-        day_of_week: u16,
-        day: u16,
-        hour: u16,
-        minute: u16,
-        second: u16,
-        milliseconds: u16,
-    }
-    unsafe extern "system" {
-        // safe: only writes the out-param (kernel32 SYSTEMTIME layout).
-        safe fn GetLocalTime(system_time: &mut SystemTime);
-    }
-    let mut st = SystemTime::default();
-    GetLocalTime(&mut st);
+    let mut st = bun_sys::windows::SYSTEMTIME::default();
+    bun_sys::windows::kernel32::GetLocalTime(&mut st);
     (
-        i32::from(st.year),
-        u32::from(st.month),
-        u32::from(st.day),
-        u32::from(st.hour),
-        u32::from(st.minute),
-        u32::from(st.second),
+        i32::from(st.wYear),
+        u32::from(st.wMonth),
+        u32::from(st.wDay),
+        u32::from(st.wHour),
+        u32::from(st.wMinute),
+        u32::from(st.wSecond),
     )
 }

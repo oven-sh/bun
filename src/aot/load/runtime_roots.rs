@@ -5,7 +5,8 @@ use bun_sema::program::{CodeAnswer, FileId, Files, HostModuleId};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashSet, SharedSort};
 
-use crate::builtins::runtime_uses::Mentions;
+use crate::builtins::resolve::{ModuleObjectOwner, ModuleObjectUse};
+use crate::builtins::runtime_uses::{Mentions, RoadsToNamespaces};
 use crate::builtins::table::{ModuleFlags, module_by_specifier, module_data, runtime_function};
 use crate::builtins::{
     AsksOfText, BuiltinId, Platforms, RuntimeFunction, RuntimeModule, RuntimeUses,
@@ -130,6 +131,26 @@ impl RootsOfFiles {
     }
 }
 
+/// `module.exports(x)` hands the module's object on, and who sees it finds `Function` by its constructor.
+pub(crate) fn find_roads_by_module_objects(application: &Files<'_>) -> RoadsToNamespaces {
+    let hands_module_object_on = |&file: &FileId| {
+        parsed_source(application, file).is_some_and(|source| {
+            source.builtins.module_object_mentions().iter().any(|it| {
+                it.object_use == ModuleObjectUse::Escaped
+                    && it.owner != ModuleObjectOwner::EntryPoint
+            })
+        })
+    };
+    match application
+        .compiled_files()
+        .iter()
+        .any(hands_module_object_on)
+    {
+        true => RoadsToNamespaces::all(),
+        false => RoadsToNamespaces::empty(),
+    }
+}
+
 pub(crate) fn collect_runtime_roots(
     application: &Files<'_>,
     contents: &ProgramContents,
@@ -170,6 +191,7 @@ pub(crate) fn collect_runtime_roots(
         lets_in_what_nobody_names |= roots.lets_in_what_nobody_names;
         lets_it_in_beside_uses_of_files |= roots.lets_it_in_beside_uses_of_files;
     }
+    asks_of_texts.roads_to_namespaces |= find_roads_by_module_objects(application);
     lets_in_what_nobody_names |= lets_it_in_beside_uses_of_files;
     named.extend(find_library_modules_that_unknown_names_may_stand_for(
         application,

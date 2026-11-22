@@ -1,4 +1,7 @@
 use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
+use core::ptr::NonNull;
+
+use bun_core::ZStr;
 
 use crate::{LIBUS_SOCKET_DESCRIPTOR, Loop};
 // `sockaddr_storage` is not in `libc` on Windows; route through the leaf
@@ -13,6 +16,26 @@ bun_opaque::opaque_ffi! {
     pub struct Socket;
 }
 
+/// Closed on drop, which runs its close callback.
+pub struct OwnedSocket(NonNull<Socket>);
+
+impl OwnedSocket {
+    pub fn as_ptr(&self) -> *mut Socket {
+        self.0.as_ptr()
+    }
+
+    /// For the close callback: the loop closes a socket that has failed.
+    pub fn into_raw(self) -> *mut Socket {
+        core::mem::ManuallyDrop::new(self).as_ptr()
+    }
+}
+
+impl Drop for OwnedSocket {
+    fn drop(&mut self) {
+        us_udp_socket_close(Socket::opaque_mut(self.as_ptr()))
+    }
+}
+
 impl Socket {
     pub fn create(
         loop_: &'static Loop,
@@ -20,22 +43,22 @@ impl Socket {
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
-        host: *const c_char,
+        host: &ZStr,
         port: c_ushort,
         options: c_int,
         err: Option<&mut c_int>,
         user_data: *mut c_void,
-    ) -> *mut Socket {
+    ) -> Option<OwnedSocket> {
         // SAFETY: thin wrapper over us_create_udp_socket; all pointer args are
         // forwarded as-is from the caller, who upholds uSockets' contract.
-        unsafe {
+        let socket = unsafe {
             us_create_udp_socket(
                 loop_,
                 data_cb,
                 drain_cb,
                 close_cb,
                 recv_error_cb,
-                host,
+                host.as_ptr(),
                 port,
                 options,
                 match err {
@@ -44,7 +67,8 @@ impl Socket {
                 },
                 user_data,
             )
-        }
+        };
+        NonNull::new(socket).map(OwnedSocket)
     }
 
     /// Adopts an already created (and usually bound) UDP socket descriptor
@@ -59,7 +83,7 @@ impl Socket {
         shared: bool,
         err: Option<&mut c_int>,
         user_data: *mut c_void,
-    ) -> *mut Socket {
+    ) -> Option<OwnedSocket> {
         #[cfg(not(windows))]
         let fd_native: LIBUS_SOCKET_DESCRIPTOR = fd;
         #[cfg(windows)]
@@ -67,7 +91,7 @@ impl Socket {
         // SAFETY: thin wrapper over us_create_udp_socket_from_fd; all pointer
         // args are forwarded as-is from the caller, who upholds uSockets'
         // contract.
-        unsafe {
+        let socket = unsafe {
             us_create_udp_socket_from_fd(
                 loop_,
                 data_cb,
@@ -79,7 +103,8 @@ impl Socket {
                 err.map_or(core::ptr::null_mut(), core::ptr::from_mut),
                 user_data,
             )
-        }
+        };
+        NonNull::new(socket).map(OwnedSocket)
     }
 
     pub fn send(
@@ -120,13 +145,9 @@ impl Socket {
         unsafe { us_udp_socket_remote_ip(self, buf, length) }
     }
 
-    pub fn close(&mut self) {
-        us_udp_socket_close(self)
-    }
-
-    pub fn connect(&mut self, hostname: *const c_char, port: c_uint) -> c_int {
-        // SAFETY: thin FFI passthrough; hostname must be NUL-terminated per uSockets.
-        unsafe { us_udp_socket_connect(self, hostname, port) }
+    pub fn connect(&mut self, hostname: &ZStr, port: c_uint) -> c_int {
+        // SAFETY: `hostname` is NUL-terminated (`ZStr`), and is only read during the call.
+        unsafe { us_udp_socket_connect(self, hostname.as_ptr(), port) }
     }
 
     pub fn disconnect(&mut self) -> c_int {
@@ -268,7 +289,7 @@ unsafe extern "C" {
 }
 
 /// Raw-descriptor helpers exposed for `internal/dgram`'s UDP wrap so it does
-/// not hand-roll socket()/bind()/setsockopt() and diverge from bsd.c's
+/// not hand-roll socket()/bind()/setsockopt() and diverge from bsd.cpp's
 /// platform gates (SO_REUSEPORT vs SO_REUSEADDR, CLOEXEC, EINTR retry).
 /// POSIX-only; the JS layer reports ENOTSUP on Windows.
 #[cfg(not(windows))]

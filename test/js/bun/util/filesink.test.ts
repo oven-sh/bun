@@ -623,6 +623,55 @@ it.skipIf(!isPosix)("close() in a worker's exit listener leaves the sink to the 
   expect(exitCode).toBe(0);
 });
 
+// A "beforeExit" listener is not inside the event loop, so the reaction runs before the write() that settles it returns.
+// Linux only: `page` has to reach the writer's CHUNK_SIZE, which is 16 KiB on Apple Silicon.
+it.concurrent.skipIf(!isLinux).each([
+  ["bytes", `Buffer.from("x")`, 1],
+  ["a latin1 string", `"\\xe9"`, 2],
+  ["a UTF-16 string", `"\\u{1F600}"`, 4],
+])("a write() of %s survives a close() by the reaction to an earlier write()", async (_, chunk, length) => {
+  using dir = tempDir("filesink-close-inside-write", {});
+  mkfifo(join(String(dir), "fifo"), 0o666);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { openSync, readSync, writeSync, constants } = require("node:fs");
+        const untilItWouldBlock = io => {
+          let total = 0;
+          try {
+            for (let n; (n = io()) > 0; ) total += n;
+          } catch (e) {
+            if (e.code !== "EAGAIN") throw e;
+          }
+          return total;
+        };
+        const page = Buffer.alloc(4096);
+        const reader = openSync("fifo", constants.O_RDONLY | constants.O_NONBLOCK);
+        const filler = openSync("fifo", constants.O_WRONLY | constants.O_NONBLOCK);
+        process.once("beforeExit", () => {
+          const sink = Bun.file("fifo").writer();
+          untilItWouldBlock(() => writeSync(filler, page));
+          sink.write(page).then(() => {
+            sink.close();
+            console.log("closed");
+          });
+          untilItWouldBlock(() => readSync(reader, page));
+          console.log("wrote", sink.write(${chunk}));
+          console.log("read", untilItWouldBlock(() => readSync(reader, page)));
+        });
+      `,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe(`closed\nwrote ${4096 + length}\nread ${4096 + length}\n`);
+  expect(exitCode).toBe(0);
+});
+
 it("start() without path/fd on an already-open writer does not crash", async () => {
   const path = join(tmpdirSync(), "filesink-restart.txt");
   const writer = Bun.file(path).writer();
@@ -695,11 +744,7 @@ it("writing after end() fails during flush does not crash", async () => {
   await 1;
 });
 
-// On Windows the libuv write completion path re-enters JS (promise resolution)
-// while a `&mut WindowsStreamingWriter` is live, so without raw-ptr laundering
-// LLVM `noalias` lets release builds cache stale `is_done`/`parent` and
-// over-deref the FileSink. Spawn a subprocess so a crash there is observable
-// here as a non-zero exit code.
+// On Windows a write completion runs JS that can end the sink. A subprocess makes a crash a non-zero exit code.
 it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({
@@ -1607,6 +1652,22 @@ describe.concurrent("start() on an open writer", () => {
     expect(result).toEqual({ target: "short", initial: "", closed: "all" });
   });
 
+  it.skipIf(!isLinux)("start({ path }) moves a writer from a regular file to a FIFO and closes the file", async () => {
+    const result = await run(`
+      const target = join(dir, "fifo");
+      Bun.spawnSync(["mkfifo", target]);
+      const reader = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const writer = Bun.file(join(dir, "initial.txt")).writer();
+      writer.start({ path: target });
+      writer.write("short");
+      await writer.end();
+      const received = fs.readSync(reader, Buffer.alloc(16));
+      fs.closeSync(reader);
+      console.log(JSON.stringify({ received, closed: await closed() }));
+    `);
+    expect(result).toEqual({ received: 5, closed: "all" });
+  });
+
   // /dev/ptmx is a TTY that opens by path with no terminal attached, and `closed()` sees it on Linux.
   it.skipIf(!isLinux)("start({ path }) moves a writer from a TTY to a regular file", async () => {
     const result = await run(`
@@ -1648,6 +1709,27 @@ describe.concurrent("start() on an open writer", () => {
       console.log(JSON.stringify({ failed, buffered, closed: await closed() }));
     `);
     expect(result).toEqual({ failed: syscall, buffered: 0, closed: "all" });
+  });
+
+  it.skipIf(isWindows)("start({ path }) to a second FIFO closes it and keeps writing to the first", async () => {
+    const result = await run(`
+      const paths = [join(dir, "a"), join(dir, "b")];
+      Bun.spawnSync(["mkfifo", ...paths]);
+      const readers = paths.map(path => fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK));
+      const writer = Bun.file(paths[0]).writer();
+      const out = {};
+      try {
+        writer.start({ path: paths[1] });
+      } catch (e) {
+        out.code = e.code;
+      }
+      writer.write("short");
+      await writer.end();
+      // Reading an empty FIFO throws EAGAIN while a write end is open.
+      out.read = readers.map(fd => fs.readSync(fd, Buffer.alloc(16)));
+      console.log(JSON.stringify(out));
+    `);
+    expect(result).toEqual({ code: isLinux ? "ENOENT" : undefined, read: [5, 0] });
   });
 
   it("start({ path }) settles a queued write and flushes it to the new path", async () => {

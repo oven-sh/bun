@@ -82,6 +82,9 @@ impl TreeWriter<'_, '_> {
                 let range = self.range_of_shape(loc, NodeShape::Member);
                 return Ok(self.add_expression_at(ExprKind::Index { obj, index, chain }, range));
             }
+            ExprData::ECall(_) if self.is_call_of_raw_template(expression) => {
+                return Ok(self.write_member_of_global(known::globalThis, b"Object", range));
+            }
             ExprData::ECall(call) => {
                 let base = self.write_chain_base(&call.target, call.optional_chain)?;
                 let close = (call.close_paren_loc, call.can_be_unwrapped_if_unused);
@@ -330,14 +333,28 @@ impl TreeWriter<'_, '_> {
         self.add_expression_at(ExprKind::Unary { op, operand }, range)
     }
 
+    fn is_call_of_raw_template(&self, expression: &Expr) -> bool {
+        let ExprData::ECall(call) = &expression.data else {
+            return false;
+        };
+        match &call.target.data {
+            ExprData::EIdentifier(E::Identifier { ref_ })
+            | ExprData::EImportIdentifier(E::ImportIdentifier { ref_ }) => {
+                self.origin_of(*ref_) == SymbolOrigin::RawTemplate
+            }
+            _ => false,
+        }
+    }
+
     fn write_template(&mut self, template: &E::Template, loc: Loc) -> Written<ExprId> {
         let tag = match &template.tag {
             Some(tag) => Some(self.write_chain_base(tag, None)?.0),
             None => None,
         };
+        let is_raw = matches!(&template.tag, Some(tag) if self.is_call_of_raw_template(tag));
         let range = match tag {
-            Some(_) => self.range_of_shape(loc, NodeShape::Call),
-            None => self.range_of(loc),
+            Some(_) if !is_raw => self.range_of_shape(loc, NodeShape::Call),
+            Some(_) | None => self.range_of(loc),
         };
         let head = self.write_template_text(&template.head, tag.is_some())?;
         let mut texts = vec![head];

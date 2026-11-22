@@ -186,6 +186,8 @@ test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .
 test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > the fixture runs
 test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > twoClasses
 test/js/bun/util/inspect-error.test.js: AggregateError whose errors cannot be walked > the error a second load of a module that failed to build rejects with
+test/js/bun/util/inspect-error.test.js: a relative source with backslashes in an external map
+test/js/bun/util/inspect-error.test.js: a rooted source with backslashes in an external map
 test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > a `cause` getter that loads the throwing file again
 test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > external map whose original source is unavailable
 test/js/node/v8/capture-stack-trace.test.js: CallFrame.p.getFunction does not expose the module loader reaction
@@ -286,6 +288,10 @@ test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode
 test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > with a recorded run > (unnamed)
 test/bundler/bun-build-compile.test.ts: Bun.build compile > a chunk whose bytecode cannot be generated keeps the embedded files
 test/bundler/bun-build-compile.test.ts: Bun.build compile > bytecode from a compiled executable is not copied into private memory
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the download goes to the cache that `bun install` uses
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the download of another platform's executable is cut short
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the download of another platform's executable is damaged
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the download of another platform's executable is whole
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (cjs, bytecode: true, minify: false, utf16: false)
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (esm, bytecode: false, minify: false, utf16: false)
 test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (esm, bytecode: true, minify: false, utf16: false)
@@ -405,3 +411,43 @@ test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake 
 test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > Bun.spawn({ timeout }) kills the child while fake timers are active
 test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > Bun.spawnSync({ timeout }) times out while fake timers are active
 test/js/bun/test/fake-timers/fake-timers.test.ts: runtime timeouts are not fake timers > child_process.spawnSync({ timeout }) times out while fake timers are active
+# --aot refuses what lies below a directory with a backslash in its name: the type checker cannot read that path.
+test/bundler/bun-build-compile.test.ts: Bun.build compile > a name with a backslash finds the embedded file before the disk
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a name with a backslash is skipped in a module that is not a file
+test/js/bun/resolve/resolve.test.ts: a backslash is part of a name: NODE_PATH
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > Bun.build
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > Bun.build({ files })
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > a file with a backslash in its own name
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > backslashes in absolute paths are part of a name
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > backslashes in import specifiers, main and tsconfig paths are separators
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > bun index.ts
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > bun run ./index.ts
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > bun test
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > cwd, import.meta.path, Bun.main and __filename keep the backslash
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > macros
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > resolves a file created after the directory was cached
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > resolves after process.chdir() out of it
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > runs from another cwd when HOME has the same name (home)
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > runs from another cwd when HOME has the same name (scratch)
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > Bun.build
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > Bun.build({ files })
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > a file with a backslash in its own name
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > backslashes in absolute paths are part of a name
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > backslashes in import specifiers, main and tsconfig paths are separators
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > bun index.ts
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > bun run ./index.ts
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > bun test
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > cwd, import.meta.path, Bun.main and __filename keep the backslash
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > macros
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > resolves a file created after the directory was cached
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > resolves after process.chdir() out of it
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > runs from another cwd when HOME has the same name (home)
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > runs from another cwd when HOME has the same name (scratch)
+# These require() a path that is computed at run time.
+test/js/bun/resolve/resolve.test.ts: a backslash is part of a name: createRequire()
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > resolves after process.chdir() into it and back
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > resolves after process.chdir() into it and back
+# These start a Worker from a file that the program writes.
+test/js/bun/resolve/resolve.test.ts: finds a worker in a directory that is created later and written with a separator at the end
+test/js/bun/resolve/resolve.test.ts: finds a worker that is created later and written with /./
+test/js/bun/resolve/resolve.test.ts: finds a worker that is created later and written with //

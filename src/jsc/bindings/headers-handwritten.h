@@ -6,7 +6,9 @@
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSType.h"
 #include <wtf/Noncopyable.h>
+#include <wtf/RefPtr.h>
 #include <wtf/Vector.h>
+#include <memory>
 #include <set>
 
 #ifndef HEADERS_HANDWRITTEN
@@ -18,6 +20,19 @@ typedef struct CppWebSocket CppWebSocket;
 namespace WTF {
 class String;
 }
+
+namespace JSC {
+class CachedBytecode;
+class SourceProvider;
+}
+
+// An opaque type of Rust's, which `std::unique_ptr<Type>` releases with `function`.
+#define BUN_DECLARE_FFI_DELETER(Type, function)             \
+    struct Type;                                            \
+    extern "C" void function(Type*);                        \
+    template<> struct std::default_delete<Type> {           \
+        void operator()(Type* ptr) const { function(ptr); } \
+    }
 
 typedef struct EncodedSlice {
     const unsigned char* ptr;
@@ -77,12 +92,6 @@ typedef struct BunString {
     enum ZeroCopyTag { ZeroCopy };
     enum NonNullTag { NonNull };
 
-    // If it's not a WTFStringImpl, this does nothing
-    inline void ref();
-
-    // If it's not a WTFStringImpl, this does nothing
-    inline void deref();
-
     // Zero copy is kind of a lie.
     // We clone it if it's non-ASCII UTF-8.
     // We don't clone it if it was marked as static
@@ -94,11 +103,9 @@ typedef struct BunString {
     // using shared static emptyString.
     WTF::String toWTFString(NonNullTag) const;
 
-    WTF::String transferToWTFString();
-
-    // Consumes this BunString and returns a JS string value. Leaves *this Dead
-    // so a Rust-side OwnedString::Drop deref becomes a no-op.
-    JSC::JSValue transferToJS(JSC::JSGlobalObject* globalObject);
+    // For a string that a call just returned. One that is kept in a variable is a Bun::OwnedString.
+    WTF::String transferToWTFString() &&;
+    JSC::JSValue transferToJS(JSC::JSGlobalObject* globalObject) &&;
 
     // This one usually will clone the raw bytes.
     WTF::String toWTFString() const;
@@ -112,22 +119,109 @@ typedef struct BunString {
 
 } BunString;
 
-typedef union ErrorableStringResult {
-    BunString value;
-    JSC::EncodedJSValue err;
-} ErrorableStringResult;
-typedef struct ErrorableString {
-    ErrorableStringResult result {};
+namespace Bun {
+
+// A BunString that releases its reference, like `bun_core::String`. An extern "C" function can take it by value but not return it.
+class TRIVIAL_ABI OwnedString : private BunString {
+    WTF_MAKE_NONCOPYABLE(OwnedString);
+
+public:
+    OwnedString()
+        : BunString {}
+    {
+    }
+    OwnedString(OwnedString&& other)
+        : BunString(other.leak())
+    {
+    }
+    OwnedString& operator=(OwnedString&& other)
+    {
+        OwnedString previous { std::exchange<BunString>(*this, other.leak()) };
+        return *this;
+    }
+    inline ~OwnedString();
+
+    static OwnedString adopt(BunString string) { return OwnedString { string }; }
+    [[nodiscard]] BunString leak() { return std::exchange<BunString>(*this, {}); }
+    const BunString& get() const { return *this; }
+
+    WTF::String transferToWTFString();
+    JSC::JSValue transferToJS(JSC::JSGlobalObject*);
+
+    using BunString::isDead;
+    using BunString::isEmpty;
+    using BunString::toWTFString;
+
+private:
+    explicit OwnedString(BunString string)
+        : BunString(string)
+    {
+    }
+};
+
+}
+
+namespace WTF {
+template<> struct VectorTraits<Bun::OwnedString> : VectorTraitsBase<false, void> {
+    static constexpr bool canMoveWithMemcpy = true;
+};
+}
+
+template<typename T>
+struct Errorable {
+    WTF_MAKE_NONCOPYABLE(Errorable);
+
+public:
+    union Result {
+        Result()
+            : value {}
+        {
+        }
+        ~Result() {}
+
+        T value;
+        JSC::EncodedJSValue err;
+    } result;
     bool success { false };
-} ErrorableString;
+
+    Errorable() = default;
+    ~Errorable()
+    {
+        if (success)
+            result.value.~T();
+    }
+};
+
+using ErrorableString = Errorable<Bun::OwnedString>;
 static_assert(sizeof(ErrorableString) == 32 && alignof(ErrorableString) == 8, "ErrorableString layout is mirrored in src/jsc/Errorable.rs");
-struct bun_ModuleInfoDeserialized;
-// Every BunString here is owned by whichever frame holds the struct (see
-// ~ErrorableResolvedSource / Rust `Drop`). Consumers that keep a string take it
-// with `transferToWTFString()`, which leaves the field empty.
+BUN_DECLARE_FFI_DELETER(bun_ModuleInfoDeserialized, zig__ModuleInfoDeserialized__deinit);
+extern "C" void ResolvedSource__freeBytecode(uint8_t* bytecode);
+class ResolvedSourceBytecode {
+    WTF_MAKE_NONCOPYABLE(ResolvedSourceBytecode);
+
+public:
+    ResolvedSourceBytecode() = default;
+    ~ResolvedSourceBytecode()
+    {
+        if (m_owned && m_bytes)
+            ResolvedSource__freeBytecode(m_bytes);
+    }
+
+    RefPtr<JSC::CachedBytecode> take();
+
+private:
+    uint8_t* m_bytes { nullptr };
+    size_t m_size { 0 };
+    // Otherwise borrowed from the standalone module graph / compile cache.
+    bool m_owned { false };
+    // The bytes outlive every VM (executable section / retired compile-cache blob): JSC may alias them.
+    bool m_persistent { false };
+    // Where this module's cache entry starts (non-zero: one payload shared by every module, JSC::BytecodeLinkEncoder).
+    uint32_t m_entryOffset { 0 };
+};
 typedef struct ResolvedSource {
-    BunString source_code;
-    BunString source_url;
+    Bun::OwnedString source_code;
+    Bun::OwnedString source_url;
     bool isCommonJSModule;
     // `bun build --compile`: StringImpl::hash() of source_code computed at build time (0 = unknown).
     uint32_t source_code_hash;
@@ -142,51 +236,15 @@ typedef struct ResolvedSource {
     bool depends_on_more_than_source;
     // JSC::SourceProvenance::Static: source_code comes from where the program is stored or from Bun itself, not from a JavaScript value.
     bool is_static;
-    // -- Bytecode cache fields --
-    // Owned (`ResolvedSource__freeBytecode`) iff `bytecode_cache_owned`; otherwise
-    // borrowed from the standalone module graph / compile cache.
-    uint8_t* bytecode_cache;
-    size_t bytecode_cache_size;
-    bool bytecode_cache_owned;
-    // The bytes outlive every VM (executable section / retired compile-cache blob): JSC may alias them.
-    bool bytecode_cache_persistent;
-    // Where this module's cache entry starts in `bytecode_cache` (non-zero: one payload shared by every module, JSC::BytecodeLinkEncoder).
-    uint32_t bytecode_cache_entry_offset;
-    // Owned; Zig::SourceProvider takes it (nulling the field).
-    bun_ModuleInfoDeserialized* module_info;
+    ResolvedSourceBytecode bytecode_cache;
+    std::unique_ptr<bun_ModuleInfoDeserialized> module_info;
     // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is
     // validated against). If empty, origin is derived from source_url.
-    BunString origin_path;
+    Bun::OwnedString origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, is_static) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136 && OBJECT_OFFSETOF(ResolvedSource, is_prelinked_module) == 77 && OBJECT_OFFSETOF(ResolvedSource, depends_on_more_than_source) == 78 && OBJECT_OFFSETOF(ResolvedSource, is_static) == 79 && OBJECT_OFFSETOF(ResolvedSource, bytecode_cache) == 80 && sizeof(ResolvedSourceBytecode) == 24 && OBJECT_OFFSETOF(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
-typedef union ErrorableResolvedSourceResult {
-    ResolvedSource value;
-    JSC::EncodedJSValue err;
-} ErrorableResolvedSourceResult;
-extern "C" void zig__ModuleInfoDeserialized__deinit(bun_ModuleInfoDeserialized* info);
-extern "C" void ResolvedSource__freeBytecode(uint8_t* bytecode);
-struct ErrorableResolvedSource {
-    WTF_MAKE_NONCOPYABLE(ErrorableResolvedSource);
-
-public:
-    ErrorableResolvedSourceResult result {};
-    bool success { false };
-
-    ErrorableResolvedSource() = default;
-    ~ErrorableResolvedSource()
-    {
-        if (!success)
-            return;
-        result.value.source_code.deref();
-        result.value.source_url.deref();
-        result.value.origin_path.deref();
-        if (result.value.bytecode_cache_owned && result.value.bytecode_cache)
-            ResolvedSource__freeBytecode(result.value.bytecode_cache);
-        if (result.value.module_info)
-            zig__ModuleInfoDeserialized__deinit(result.value.module_info);
-    }
-};
+using ErrorableResolvedSource = Errorable<ResolvedSource>;
 static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
 static_assert(JSC::CompiledEnvironmentType == 33 && JSC::ObjectType == 34 && JSC::JSFunctionType == 37 && JSC::CompiledClosureType == 38 && JSC::InternalFunctionType == 39 && JSC::Int8ArrayType == 51 && JSC::DataViewType == 63 && JSC::WebAssemblyGCObjectType == 96 && JSC::CompiledObjectType == 97 && JSC::SlimClosureType == 98 && JSC::SlimClosureWithPropertiesType == 99 && JSC::StringObjectType == 100 && JSC::DerivedStringObjectType == 101, "JSType numbers are mirrored in src/jsc/JSType.rs");
 
@@ -236,8 +294,8 @@ typedef struct ZigStackFramePosition {
 } ZigStackFramePosition;
 
 typedef struct ZigStackFrame {
-    BunString function_name;
-    BunString source_url;
+    Bun::OwnedString function_name;
+    Bun::OwnedString source_url;
     ZigStackFramePosition position;
     ZigStackFrameCode code_type;
     bool is_async;
@@ -245,9 +303,7 @@ typedef struct ZigStackFrame {
     int32_t jsc_stack_frame_index;
 
     ZigStackFrame()
-        : function_name {}
-        , source_url {}
-        , position {}
+        : position {}
         , code_type {}
         , is_async(false)
         , remapped(false)
@@ -257,25 +313,25 @@ typedef struct ZigStackFrame {
 } ZigStackFrame;
 
 typedef struct ZigStackTrace {
-    BunString* source_lines_ptr;
+    Bun::OwnedString* source_lines_ptr;
     OrdinalNumber* source_lines_numbers;
     uint8_t source_lines_len;
     uint8_t source_lines_to_collect;
     ZigStackFrame* frames_ptr;
     uint8_t frames_len;
     uint8_t frames_cap;
-    JSC::SourceProvider* referenced_source_provider;
+    RefPtr<JSC::SourceProvider> referenced_source_provider;
 } ZigStackTrace;
 
 typedef struct ZigException {
     unsigned char type;
     uint16_t runtime_type;
     int errno_;
-    BunString syscall;
-    BunString system_code;
-    BunString path;
-    BunString name;
-    BunString message;
+    Bun::OwnedString syscall;
+    Bun::OwnedString system_code;
+    Bun::OwnedString path;
+    Bun::OwnedString name;
+    Bun::OwnedString message;
     ZigStackTrace stack;
     void* exception;
     bool remapped;
@@ -360,10 +416,8 @@ BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
 BunString toString(WTF::StringImpl* wtfString);
 
-BunString toStringRef(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
-BunString toStringRef(WTF::String& wtfString);
-BunString toStringRef(const WTF::String& wtfString);
-BunString toStringRef(WTF::StringImpl* wtfString);
+OwnedString toStringRef(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
+OwnedString toStringRef(WTF::String wtfString);
 
 // This creates a detached string view, which cannot be ref/unref.
 // Be very careful using this, and ensure the memory owner does not get destroyed.
@@ -489,51 +543,21 @@ bool Bun__deepMatch(
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
 
-ALWAYS_INLINE void BunString::ref()
+inline Bun::OwnedString::~OwnedString()
 {
-    if (this->tag == BunStringTag::WTFStringImpl) {
-        this->impl.wtf->ref();
-    }
-}
-ALWAYS_INLINE void BunString::deref()
-{
-    if (this->tag == BunStringTag::WTFStringImpl) {
-        this->impl.wtf->deref();
-    }
+    if (tag == BunStringTag::WTFStringImpl)
+        impl.wtf->deref();
 }
 
-namespace Bun {
+inline WTF::String Bun::OwnedString::transferToWTFString()
+{
+    return static_cast<BunString&&>(*this).transferToWTFString();
+}
 
-// Frames built here for Bun__remapStackFramePositions, which may swap in a freshly allocated source_url; frames behind ZigStackTrace::frames_ptr are released by Rust instead.
-class OwnedZigStackFrames {
-    WTF_MAKE_NONCOPYABLE(OwnedZigStackFrames);
-
-public:
-    explicit OwnedZigStackFrames(size_t count)
-        : m_frames(count)
-    {
-    }
-
-    ~OwnedZigStackFrames()
-    {
-        for (ZigStackFrame& frame : m_frames) {
-            frame.function_name.deref();
-            frame.source_url.deref();
-        }
-    }
-
-    ZigStackFrame& operator[](size_t index) { return m_frames[index]; }
-
-    void remap(void* bunVM)
-    {
-        Bun__remapStackFramePositions(bunVM, m_frames.begin(), m_frames.size());
-    }
-
-private:
-    WTF::Vector<ZigStackFrame, 8> m_frames;
-};
-
-} // namespace Bun
+inline JSC::JSValue Bun::OwnedString::transferToJS(JSC::JSGlobalObject* globalObject)
+{
+    return static_cast<BunString&&>(*this).transferToJS(globalObject);
+}
 
 #define CLEAR_IF_EXCEPTION(scope__) (void)scope__.tryClearException();
 

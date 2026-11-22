@@ -15,11 +15,11 @@
 #include "BunClientData.h"
 #include "SqliteCallbackRoots.h"
 #include "SqliteColumnNames.h"
+#include "SqlitePtr.h"
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <wtf/HashMap.h>
 #include <wtf/RefCounted.h>
-#include <wtf/RefPtr.h>
 #include <wtf/SentinelLinkedList.h>
 #include <wtf/text/StringHash.h>
 #include <array>
@@ -32,7 +32,6 @@
 extern "C" {
 struct sqlite3;
 struct sqlite3_stmt;
-struct sqlite3_session;
 }
 
 namespace Bun {
@@ -59,9 +58,7 @@ static constexpr size_t kNodeSqliteLimitCount = 11;
 // reach into the other cell; both hold a ref to this record and communicate
 // through it instead.
 //   handle      — the native session; null once freed (by either side)
-//   dbGone      — the database freed the handle (close()/deserialize()/teardown)
-//   wrapperGone — the JS wrapper was swept without close(); the database
-//                 deletes the orphaned handle on its next entry point
+//   dbGone      — deleteTrackedSessions() freed the handle
 //   inUse       — a sqlite3session_changeset/patchset is on the C stack for
 //                 this handle (it re-enters the authorizer via its internal
 //                 SAVEPOINT/SELECT). session.close()/Symbol.dispose throw
@@ -70,9 +67,14 @@ static constexpr size_t kNodeSqliteLimitCount = 11;
 //                 reached while any record is inUse; the sweep loops ASSERT
 //                 that, rather than branching on it.
 struct NodeSqliteSessionRecord : public WTF::RefCounted<NodeSqliteSessionRecord> {
-    sqlite3_session* handle { nullptr };
+    explicit NodeSqliteSessionRecord(SqlitePtr<sqlite3_session>&& handle)
+        : handle(WTF::move(handle))
+    {
+    }
+
+    // Until it is freed the database holds a ref, so the wrapper's is never the last.
+    SqlitePtr<sqlite3_session> handle;
     bool dbGone { false };
-    bool wrapperGone { false };
     bool inUse { false };
 };
 
@@ -135,8 +137,8 @@ public:
     // or for a disposed graph. This cell can already be dead in those cases.
     void closeInternal(bool mayCallScript = true);
 
-    sqlite3* connection() const { return m_db; }
-    bool isOpen() const { return m_db != nullptr; }
+    sqlite3* connection() const { return m_db.get(); }
+    bool isOpen() const { return !!m_db; }
 
     // close() and deserialize() finalize the StatementSyncs of this connection, as Node does. Not
     // sqlite3_next_stmt(), which also returns the private statements of virtual table modules (FTS5).
@@ -144,7 +146,7 @@ public:
     void finalizeStatements(bool mayCallScript = true);
     // ~JSStatementSync() queues a statement here if its commit would call the authorizer.
     // The next outermost BusyScope finalizes it, or whatever closes the connection does.
-    void orphanStatement(sqlite3_stmt* stmt) { m_orphanedStatements.append(stmt); }
+    void orphanStatement(SqlitePtr<sqlite3_stmt>&& stmt) { m_orphanedStatements.append(WTF::move(stmt)); }
     void finalizeOrphanedStatements();
     bool allowLoadExtension() const { return m_config.allowExtension; }
     bool enableLoadExtensionIsOn() const { return m_enableLoadExtension; }
@@ -163,7 +165,7 @@ public:
     // through the shared record, never by touching this cell.
     void deleteTrackedSessions();
     // ~JSNodeSqliteSession() cannot call into SQLite (the sweep can run
-    // mid-sqlite3_step) — it just flags the record. The next BusyScope taken
+    // mid-sqlite3_step) — it just drops its ref. The next BusyScope taken
     // on this connection (every DatabaseSync, StatementSync, iterator, and
     // tag-store entry point) frees any orphaned handles; close() and
     // teardown sweep unconditionally via deleteTrackedSessions().
@@ -225,14 +227,14 @@ private:
 
     WTF::String m_location;
     DatabaseSyncOpenConfiguration m_config {};
-    sqlite3* m_db = nullptr;
+    SqlitePtr<sqlite3> m_db;
     // The handle between closeInternal() and finishDeferredClose().
-    sqlite3* m_deferredClose = nullptr;
+    SqlitePtr<sqlite3> m_deferredClose;
     unsigned m_busyDepth = 0;
     // Not roots. A cell on the list has not run its destructor: a statement's
     // unlinks it, and the database's unlinks whatever is left.
     WTF::SentinelLinkedList<JSStatementSync, WTF::BasicRawSentinelNode<JSStatementSync>> m_statements;
-    WTF::Vector<sqlite3_stmt*> m_orphanedStatements;
+    WTF::Vector<SqlitePtr<sqlite3_stmt>> m_orphanedStatements;
     // Sessions must be deleted before sqlite3_close_v2() to avoid
     // use-after-free inside the preupdate hook; track them through shared
     // records (not JS objects) so close() can sweep regardless of GC
@@ -316,7 +318,7 @@ public:
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSStatementSync* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db, sqlite3_stmt* stmt);
+    static JSStatementSync* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db, SqlitePtr<sqlite3_stmt>&& stmt);
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -329,7 +331,7 @@ public:
     static void destroy(JSC::JSCell* cell) { static_cast<JSStatementSync*>(cell)->~JSStatementSync(); }
     ~JSStatementSync();
 
-    sqlite3_stmt* statement() const { return m_stmt; }
+    sqlite3_stmt* statement() const { return m_stmt.get(); }
     sqlite3* connection() const;
     JSDatabaseSync* database() const { return m_database.get(); }
     // close() / deserialize() finalized it, or a close() is waiting for the
@@ -399,13 +401,14 @@ public:
     const WTF::Vector<int8_t>& columnOffsets() const { return m_columnOffsets; }
 
 private:
-    JSStatementSync(JSC::VM& vm, JSC::Structure* structure)
+    JSStatementSync(JSC::VM& vm, JSC::Structure* structure, SqlitePtr<sqlite3_stmt>&& stmt)
         : Base(vm, structure)
+        , m_stmt(WTF::move(stmt))
     {
     }
-    void finishCreation(JSC::VM& vm, JSDatabaseSync* db, sqlite3_stmt* stmt);
+    void finishCreation(JSC::VM& vm, JSDatabaseSync* db);
 
-    sqlite3_stmt* m_stmt = nullptr;
+    SqlitePtr<sqlite3_stmt> m_stmt;
     JSC::WriteBarrier<JSC::Structure> m_rowStructure;
     WTF::Vector<int8_t> m_columnOffsets;
     // sqlite3_stmt native heap footprint reported to JSC's GC so
@@ -598,14 +601,13 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
     static void destroy(JSC::JSCell* cell) { static_cast<JSNodeSqliteSession*>(cell)->~JSNodeSqliteSession(); }
-    ~JSNodeSqliteSession();
 
-    sqlite3_session* session() const { return m_record ? m_record->handle : nullptr; }
-    NodeSqliteSessionRecord* record() const { return m_record.get(); }
+    sqlite3_session* session() const { return m_record->handle.get(); }
+    NodeSqliteSessionRecord* record() const { return m_record.ptr(); }
     JSDatabaseSync* database() const { return m_database.get(); }
     // True once the owning database has freed this session's handle out
     // from under the wrapper — close(), close()+open(), a successful
-    // deserialize(), or VM teardown (record->dbGone) — or is currently
+    // deserialize() (record->dbGone) — or is currently
     // closed. Distinct from session() == nullptr, which also covers an
     // explicit session.close().
     bool isStale() const;
@@ -614,13 +616,14 @@ public:
     JSC::WriteBarrier<JSDatabaseSync> m_database;
 
 private:
-    JSNodeSqliteSession(JSC::VM& vm, JSC::Structure* structure)
+    JSNodeSqliteSession(JSC::VM& vm, JSC::Structure* structure, Ref<NodeSqliteSessionRecord>&& record)
         : Base(vm, structure)
+        , m_record(WTF::move(record))
     {
     }
-    void finishCreation(JSC::VM& vm, JSDatabaseSync* db, Ref<NodeSqliteSessionRecord>&& record);
+    void finishCreation(JSC::VM& vm, JSDatabaseSync* db);
 
-    RefPtr<NodeSqliteSessionRecord> m_record;
+    const Ref<NodeSqliteSessionRecord> m_record;
 };
 
 class JSNodeSqliteSessionPrototype final : public JSC::JSNonFinalObject {

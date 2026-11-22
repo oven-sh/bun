@@ -6,8 +6,7 @@ use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{Resolution, ResolutionTag, initialize_store};
-use bun_paths::resolve_path::{join_abs_string_buf_z_checked, platform};
-use bun_paths::{self, SEP_STR};
+use bun_paths::{Path, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
 
@@ -119,16 +118,8 @@ impl Scripts {
         if !self.install.is_empty() || !self.preinstall.is_empty() {
             return false;
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let binding_gyp = join_abs_string_buf_z_checked::<platform::Auto>(
-            package_dir,
-            &mut buf.0,
-            &[b"binding.gyp"],
-        );
-        if !binding_gyp.is_some_and(bun_sys::exists_z) {
-            return false;
-        }
-        gypfile.unwrap_or_else(|| read_gypfile(package_dir, &mut buf.0))
+        bun_sys::exists_z(&Path::join(&[package_dir, b"binding.gyp"]))
+            && gypfile.unwrap_or_else(|| read_gypfile(package_dir))
     }
 
     /// return: (first_index, total, entries)
@@ -219,7 +210,7 @@ impl Scripts {
     pub(crate) fn create_list(
         &self,
         lockfile_buf: &[u8],
-        cwd_: &mut bun_paths::AutoAbsPath,
+        cwd_: &[u8],
         package_name: &[u8],
         resolution_tag: ResolutionTag,
         add_node_gyp_rebuild_script: bool,
@@ -231,24 +222,19 @@ impl Scripts {
             let mut cwd_buf = bun_paths::path_buffer_pool::get();
 
             #[cfg(not(windows))]
-            let cwd: &[u8] = cwd_.slice();
+            let cwd: &[u8] = cwd_;
 
             #[cfg(windows)]
             let cwd: &[u8] = 'brk: {
                 let Ok(cwd_handle) =
-                    bun_sys::open_dir_no_renaming_or_deleting_windows(Fd::INVALID, cwd_.slice_z())
+                    bun_sys::open_dir_no_renaming_or_deleting_windows(Fd::INVALID, cwd_)
+                        .map(bun_sys::Dir::from_fd)
                 else {
-                    break 'brk cwd_.slice();
+                    break 'brk cwd_;
                 };
-                // Resolve the canonical path, then close the directory HANDLE.
-                // (`Fd` is `Copy` with no `Drop`, so without this explicit
-                // close one kernel directory HANDLE leaks per script-bearing
-                // package.)
-                let path = bun_sys::get_fd_path(cwd_handle, &mut cwd_buf);
-                let _ = bun_sys::close(cwd_handle);
-                match path {
+                match cwd_handle.get_fd_path(&mut cwd_buf) {
                     Ok(p) => p,
-                    Err(_) => cwd_.slice(),
+                    Err(_) => cwd_,
                 }
             };
 
@@ -314,7 +300,7 @@ impl Scripts {
     pub fn get_list(
         &mut self,
         log: &mut bun_ast::Log,
-        folder_path: &mut bun_paths::AutoAbsPath,
+        folder_path: &[u8],
         folder_name: &[u8],
         resolution: &Resolution,
         trusted: bool,
@@ -345,26 +331,15 @@ impl Scripts {
         &mut self,
         string_builder: &mut LockfileStringBuilder<'_>,
         log: &mut bun_ast::Log,
-        folder_path: &mut bun_paths::AutoAbsPath,
+        folder_path: &[u8],
     ) -> Result<bool, crate::Error> {
-        if folder_path.len() + "/package.json".len() >= bun_paths::MAX_PATH_BYTES {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-        }
-        let json_buf;
-        let parsed;
-        let json: Expr = {
-            // `defer save.restore()` — `save()` returns an RAII guard that
-            // restores the path length on Drop and derefs to the path.
-            let mut save = folder_path.save();
-            let _ = save.append(b"package.json");
+        let json_path = Path::from_parts(&[folder_path, b"package.json"]);
+        let json_buf = bun_sys::File::read_from(Fd::cwd(), &json_path)?;
+        let json_src = bun_ast::Source::init_path_string(json_path.as_bytes(), json_buf.as_slice());
 
-            json_buf = bun_sys::File::read_from(Fd::cwd(), save.slice_z())?;
-            let json_src = bun_ast::Source::init_path_string(save.slice(), json_buf.as_slice());
-
-            initialize_store();
-            parsed = bun_json::ParsedJson::parse_package_json(&json_src, log)?;
-            parsed.root
-        };
+        initialize_store();
+        let parsed = bun_json::ParsedJson::parse_package_json(&json_src, log)?;
+        let json: Expr = parsed.root;
 
         Scripts::parse_count(string_builder, json);
         string_builder.allocate()?;
@@ -376,7 +351,7 @@ impl Scripts {
     pub(crate) fn create_from_package_json(
         &mut self,
         log: &mut bun_ast::Log,
-        folder_path: &mut bun_paths::AutoAbsPath,
+        folder_path: &[u8],
         folder_name: &[u8],
         resolution_tag: ResolutionTag,
         allow_node_gyp: bool,
@@ -388,7 +363,7 @@ impl Scripts {
         let gypfile = self.fill_from_package_json(&mut builder, log, folder_path)?;
 
         let add_node_gyp_rebuild_script =
-            allow_node_gyp && self.wants_default_node_gyp(folder_path.slice(), Some(gypfile));
+            allow_node_gyp && self.wants_default_node_gyp(folder_path, Some(gypfile));
 
         Ok(self.create_list(
             tmp.buffers.string_bytes.as_slice(),
@@ -406,13 +381,9 @@ pub(crate) fn gypfile_from_json(json: Expr) -> bool {
 }
 
 /// An unreadable package.json keeps the default script.
-fn read_gypfile(package_dir: &[u8], buf: &mut [u8]) -> bool {
-    let Some(path) =
-        join_abs_string_buf_z_checked::<platform::Auto>(package_dir, buf, &[b"package.json"])
-    else {
-        return true;
-    };
-    let Ok(json_buf) = bun_sys::File::read_from(Fd::cwd(), path) else {
+fn read_gypfile(package_dir: &[u8]) -> bool {
+    let path = Path::join(&[package_dir, b"package.json"]);
+    let Ok(json_buf) = bun_sys::File::read_from(Fd::cwd(), &path) else {
         return true;
     };
     let json_src = bun_ast::Source::init_path_string(path.as_bytes(), json_buf.as_slice());
@@ -462,7 +433,7 @@ impl List {
             bun_core::pretty!(
                 "<d>.{s}{s} @{f}<r>\n",
                 BStr::new(SEP_STR.as_bytes()),
-                escape_control_chars(strings::without_trailing_slash(
+                escape_control_chars(bun_paths::without_trailing_sep(
                     &self.cwd.as_bytes()[i + 1..]
                 )),
                 resolution,
@@ -470,7 +441,7 @@ impl List {
         } else {
             bun_core::pretty!(
                 "<d>{s} @{f}<r>\n",
-                escape_control_chars(strings::without_trailing_slash(self.cwd.as_bytes())),
+                escape_control_chars(bun_paths::without_trailing_sep(self.cwd.as_bytes())),
                 resolution,
             );
         }

@@ -202,6 +202,13 @@ pub(crate) struct Binding {
     pub(crate) node_fs: JsCell<NodeFS>,
 }
 
+impl Drop for Binding {
+    fn drop(&mut self) {
+        let path = &self.node_fs.get().sync_error_buf;
+        bun_core::asan::unregister_root_region((&raw const *path).cast(), size_of_val(path));
+    }
+}
+
 impl Binding {
     pub(crate) fn get_dirent(&self, cx: &mut JsScope<'_>) -> JSValue {
         crate::node::Dirent::get_constructor(cx.global())
@@ -296,7 +303,7 @@ impl Binding {
         // scoped via `with_mut` so the borrow cannot outlive the call.
         match self
             .node_fs
-            .with_mut(|nfs| nfs.watch(&watch_args, Flavor::Sync))
+            .with_mut(|nfs| nfs.watch(watch_args, Flavor::Sync))
         {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(res) => Ok(res),
@@ -418,13 +425,19 @@ impl Binding {
 }
 
 pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
-    Binding {
+    let wrapper = Binding {
         node_fs: JsCell::new(NodeFS {
             vm: Some(cx.global().bun_vm()),
             ..Default::default()
         }),
     }
-    .into_js(&cx.heap)
+    .into_js(&cx.heap);
+    // SAFETY: the payload was just written, and nothing else can reach it yet.
+    let binding = unsafe { wrapper.payload_ptr().as_ref() };
+    let path = &binding.node_fs.get().sync_error_buf;
+    // LSAN does not scan the JS heap, and the VM that runs macros is never torn down.
+    bun_core::asan::register_root_region((&raw const *path).cast(), size_of_val(path));
+    wrapper
 }
 
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the
@@ -524,7 +537,7 @@ pub(crate) fn create_memfd_for_testing(
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {
+        match bun_sys::memfd_create(c"my_memfd".into(), bun_sys::MemfdFlags::NonExecutable) {
             Ok(fd) => {
                 let _ = bun_sys::ftruncate(fd, size as i64);
                 Ok(Some(fd.native() as i32))

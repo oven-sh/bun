@@ -20,7 +20,7 @@ use bun_install::npm::{self, PackageManifest};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::{PackageManager, resolution};
-use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
+use bun_sys::{Fd, dir_iterator as DirIterator};
 use bun_url::URL;
 
 use crate::cli::pm_diff_normalize as normalize;
@@ -90,16 +90,20 @@ pub(crate) fn exec(
     let args: Vec<Vec<u8>> = typed
         .iter()
         .map(|&arg| {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            match (arg.strip_prefix(b"~/"), bun_core::env_var::HOME.get()) {
-                (Some(rest), Some(home)) => {
-                    join_abs_string::<platform::Auto>(home, &[rest]).to_vec()
-                }
+            use bun_paths::Path;
+            let home = bun_core::env_var::HOME.get_not_empty();
+            let (base, typed) = match (arg.strip_prefix(b"~/"), home) {
+                (Some(rest), Some(home)) => (Path::resolve(&[original_cwd, home]), rest),
                 _ if looks_like_path(arg) && !bun_paths::is_absolute(arg) => {
-                    join_abs_string::<platform::Auto>(original_cwd, &[arg]).to_vec()
+                    (Path::from(original_cwd), arg)
                 }
-                _ => arg.to_vec(),
-            }
+                _ => return arg.to_vec(),
+            };
+            let spelling = bun_sys::typed_spelling(&base, typed, bun_paths::from_portable);
+            let mut path = Path::resolve(&[&base, &spelling]);
+            // The trailing separator is what tells a directory named `lib.tgz/` from a tarball.
+            path.copy_trailing_sep_from(arg);
+            path.to_vec()
         })
         .collect();
 
@@ -208,12 +212,7 @@ impl<'a> Filter<'a> {
 }
 
 fn looks_like_path(spec: &[u8]) -> bool {
-    spec.starts_with(b".")
-        || spec.starts_with(b"/")
-        || spec.starts_with(b"~/")
-        || (cfg!(windows)
-            && (spec.starts_with(b"\\")
-                || (spec.len() > 2 && spec[1] == b':' && matches!(spec[2], b'\\' | b'/'))))
+    spec.starts_with(b".") || spec.starts_with(b"~/") || bun_paths::is_absolute(spec)
 }
 
 fn classify(spec: &[u8]) -> Spec {
@@ -384,8 +383,7 @@ fn is_npm_name(name: &[u8]) -> bool {
 }
 
 fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
-    let mut path = original_cwd.to_vec();
-    path.extend_from_slice(b"/package.json");
+    let path = bun_paths::Path::from_parts(&[original_cwd, b"package.json"]);
     // The folder we are in, before the workspace root the manager walked up to.
     if let Ok(bytes) = bun_sys::File::read_from(Fd::cwd(), &path)
         && let Some(name) = package_json_name(&bytes)
@@ -550,14 +548,11 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         }
         let perm = (entry.perm() & 0o777) as bun_sys::Mode;
         let size = usize::try_from(entry.size().max(0)).expect("int cast");
-        let mut normalized = vec![0; entry.path().len() + 1];
-        let rel =
-            bun_archive::normalize_npm_entry_path(entry, &mut normalized)?.unwrap_or_default();
-        bun_paths::resolve_path::platform_to_posix_in_place(rel);
+        let rel = bun_paths::Path::from(&bun_archive::normalize_npm_entry_path(entry));
         if rel.is_empty() {
             continue;
         }
-        let rel = rel.to_vec();
+        let rel = rel.into_portable().to_vec();
         let mut data = Vec::new();
         if let Err(err) = reader.read_data(size, &mut data) {
             if let tar::Error::Alloc(err) = err {
@@ -667,9 +662,10 @@ fn read_dir_tree(
             }
         }
     }
-    let mut stack: Vec<(Fd, Vec<u8>)> = vec![(root_dir.into_raw(), Vec::new())];
+    let mut stack = vec![(root_dir, Vec::new())];
     while let Some((dir, prefix)) = stack.pop() {
-        let mut it = DirIterator::iterate(dir);
+        let mut it = DirIterator::iterate_owned(dir);
+        let dir = it.dir();
         loop {
             let entry = match it.next() {
                 Ok(Some(entry)) => entry,
@@ -711,7 +707,7 @@ fn read_dir_tree(
             match kind {
                 bun_sys::FileKind::Directory if own_kind == bun_sys::FileKind::SymLink => {}
                 bun_sys::FileKind::Directory => match bun_sys::open_dir_at(dir, name) {
-                    Ok(sub) => stack.push((sub, rel)),
+                    Ok(sub) => stack.push((bun_sys::Dir::from_fd(sub), rel)),
                     Err(err) => fail(err, &rel),
                 },
                 bun_sys::FileKind::File => match bun_sys::File::read_from(dir, name) {
@@ -737,7 +733,6 @@ fn read_dir_tree(
                 _ => {}
             }
         }
-        dir.close();
     }
     Ok(tree)
 }
@@ -2182,7 +2177,6 @@ fn string_pairs(e: Option<&bun_ast::Expr>, bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>
 /// Returns one of `INSTALL_FIELDS` as sorted pairs, normalized so that two spellings that install
 /// the same thing compare equal. A registry rewrites some fields when a package is published.
 fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>)> {
-    use bun_paths::resolve_path::{join_abs_string_checked, platform};
     let Some(value) = json.get(field) else {
         return Vec::new();
     };
@@ -2198,11 +2192,12 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
             }
             for (name, path) in &mut pairs {
                 *name = bun_paths::basename(name).to_vec();
-                if let Some(normal) =
-                    join_abs_string_checked::<platform::Posix>(b"/", &[path.as_slice()])
-                {
-                    *path = normal.to_vec();
+                let mut normal = bun_paths::Path::from(b"/");
+                normal.push_inside(&strings::replace_char(path, b'\\', b'/'));
+                if path.ends_with(b"/") {
+                    normal.push_trailing_sep();
                 }
+                *path = normal.to_vec();
             }
         }
         b"directories" => pairs.retain(|(name, _)| name == b"bin"),

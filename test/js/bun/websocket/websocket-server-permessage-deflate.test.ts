@@ -2,12 +2,14 @@
 // `perMessageDeflate`. The client is a raw TCP socket that does its own framing.
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, forEachLine, isASAN, tempDir } from "harness";
 import path from "node:path";
 import { constants, createInflateRaw, deflateRawSync, inflateRawSync } from "node:zlib";
-import { type Frame, RawClient } from "../../web/websocket/raw-peer";
+import { Engine } from "../../node/zlib/zlib-golden/engine";
+import { Bits, fixed, stored } from "../../node/zlib/zlib-golden/write";
+import { type Frame, RawClient, showFrame } from "../../web/websocket/raw-peer";
 
-type Compress = "shared" | "dedicated" | "3KB" | "32KB" | "256KB";
+type Compress = "shared" | "dedicated" | `${3 | 4 | 8 | 16 | 32 | 64 | 128 | 256}KB`;
 
 // Deterministic pseudo-random text: the same `n` always returns the same text.
 // When it's sent twice, the second copy needs an LZ77 distance of `n` to back-reference the first.
@@ -52,7 +54,7 @@ interface Peer {
 
 // On the message "n" the server replies with pseudoRandomText(n), compressed.
 // On "publish n" it publishes that text to every subscriber.
-function startServer(perMessageDeflate: boolean | { compress: Compress; decompress: boolean | "dedicated" }) {
+function startServer(perMessageDeflate: boolean | { compress: Compress; decompress: boolean | Compress }) {
   const server = serve({
     port: 0,
     fetch(req, server) {
@@ -132,6 +134,88 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
       } finally {
         peer.close();
       }
+    });
+
+    test.each([
+      ["3KB", 9, 1],
+      ["4KB", 9, 2],
+      ["8KB", 10, 3],
+      ["16KB", 11, 4],
+      ["32KB", 12, 5],
+      ["64KB", 13, 6],
+      ["128KB", 14, 7],
+      ["256KB", 15, 8],
+      ["shared", 15, 8],
+    ] as const)("compress: %p writes what windowBits %d and memLevel %d do", async (compress, windowBits, memLevel) => {
+      await using server = startServer({ compress, decompress: true });
+      const peer = await connect(server, "permessage-deflate");
+      try {
+        using expected = new Engine("DeflateRaw", { windowBits, memLevel });
+        // All start alike, so each short one repeats what is as far back as the one before it is long.
+        const reach = (1 << windowBits) - 262;
+        for (const n of [20000, reach, 100, reach + 1, 100]) {
+          if (compress === "shared") expected.reset();
+          const start = expected.written;
+          expected.write(Buffer.from(pseudoRandomText(n)), constants.Z_SYNC_FLUSH);
+          const { payload } = await peer.request(n);
+          expect([n, payload.equals(expected.output.subarray(start, -4))]).toEqual([n, true]);
+        }
+      } finally {
+        peer.close();
+      }
+    });
+
+    test.each([4096, 4097])(
+      'decompress: "4KB" and a client that refers to what it sent %d bytes ago',
+      async distance => {
+        await using server = startServer({ compress: "shared", decompress: "4KB" });
+        const peer = await connect(server, "permessage-deflate; client_max_window_bits");
+        try {
+          expect(peer.extensions).toBe("permessage-deflate; client_max_window_bits=12; server_no_context_takeover");
+          const textOf = (frame: Frame) => inflateWithoutContext(frame.payload).toString();
+          // No other three bytes of it are that number.
+          const first = deflateRawSync("123.".padEnd(distance, "0"), { finishFlush: constants.Z_SYNC_FLUSH });
+          expect(textOf(await peer.requestCompressed(first.subarray(0, -4)))).toBe(pseudoRandomText(123));
+          const again = stored(fixed(new Bits(), [{ length: 3, distance }], false), Buffer.alloc(0), false);
+          const reply = await peer.requestCompressed(again.end().subarray(0, -4));
+          if (distance === 4096) expect(textOf(reply)).toBe(pseudoRandomText(123));
+          else expect(showFrame(reply)).toStartWith("close 1007");
+        } finally {
+          peer.close();
+        }
+      },
+    );
+
+    // In a process of its own, as what a message is inflated into is shared, and as large as it has had to be.
+    test('decompress: "4KB" lets the first message refer to its own start', async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const server = Bun.serve({
+            port: 0,
+            fetch: (req, server) => void server.upgrade(req),
+            websocket: {
+              perMessageDeflate: { compress: "shared", decompress: "4KB" },
+              message: (ws, message) => void ws.send(String(Bun.hash.crc32(message))),
+            },
+          });
+          console.log(server.port);`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const { value: port } = await forEachLine(proc.stdout).next();
+      using client = await RawClient.upgrade(Number(port), {
+        headers: { "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits" },
+      });
+      expect(client.header("sec-websocket-extensions")).toBe(
+        "permessage-deflate; client_max_window_bits=12; server_no_context_takeover",
+      );
+      const twice = pseudoRandomText(5000) + pseudoRandomText(5000);
+      client.text(deflateRawSync(twice, { finishFlush: constants.Z_SYNC_FLUSH }).subarray(0, -4), { rsv1: true });
+      expect(showFrame((await client.nextFrame())!)).toBe(`text "${Bun.hash.crc32(twice)}"`);
     });
 
     test('compress: "3KB" keeps context takeover in both directions with a dedicated decompressor', async () => {

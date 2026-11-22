@@ -12,7 +12,9 @@ use bun_standalone_graph::StandaloneModuleGraph::ExecutableDetails;
 use super::{CompileFailure, CompileOutcome, RequestOrigin};
 
 pub(crate) fn print_log(log: &bun_ast::Log) {
-    let _ = log.print(Output::error_writer());
+    let mut text = String::new();
+    let _ = log.print(&mut text);
+    let _ = Output::error_writer().write_all(text.as_bytes());
 }
 
 /// A report names a file of the program as the lines around it do: from the working directory.
@@ -24,8 +26,8 @@ pub(crate) fn print_report_log(mut log: bun_ast::Log) {
             if let Some(location) = data.location.as_mut()
                 && bun_paths::is_absolute(&location.file)
             {
-                let shown = bun_paths::resolve_path::relative(directory, &location.file);
-                location.file = Box::from(shown);
+                let shown = bun_paths::Path::relative(directory, &location.file);
+                location.file = shown.as_bytes().into();
             }
         };
         for message in log.msgs.iter_mut() {

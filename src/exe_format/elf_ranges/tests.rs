@@ -1,6 +1,7 @@
 use bun_core::slice_to_nul;
 
 use super::*;
+use crate::cut_model::RemovableBytes;
 pub(crate) use crate::elf_program_headers::tests::toy_elf;
 use crate::elf_program_headers::tests::{
     BASE_ADDRESS, BUILD_ID_NOTE_SIZE, DATA_INDEX, DYNAMIC_INDEX, EHDR_SIZE, NOTE_HEADER_SIZE,
@@ -14,6 +15,15 @@ const SHT_DYNSYM: u32 = 11;
 
 fn toy() -> Vec<u8> {
     toy_elf(Architecture::X86_64, true)
+}
+
+pub(crate) const HEADERS_WITH_ONE_CUT: usize =
+    TOY_SEGMENT_COUNT as usize + PAYLOAD_SEGMENT_COUNT + 1;
+
+pub(crate) fn limit_header_room(elf: &mut [u8], header_count: usize) {
+    let room_size = (header_count as u64 * PHDR_SIZE) as u32;
+    elf[NOTES_OFFSET as usize + size_of::<u32>()..][..size_of::<u32>()]
+        .copy_from_slice(&room_size.to_le_bytes());
 }
 
 fn for_each_toy(check: impl Fn(&[u8])) {
@@ -446,6 +456,69 @@ fn second_call_replaces_reserved_segment() {
     let reserved_address = |elf: &[u8]| find_reserved_segment(elf).unwrap().address;
     assert_eq!(reserved_address(&twice), reserved_address(&once));
     assert_eq!(segments_of_type(&twice, PT_LOAD).len(), 5);
+}
+
+#[test]
+fn file_that_was_cut_is_cut_again_beside_its_holes() {
+    for_each_toy(|original| {
+        let holes = [text_pages(original, 1..2), text_pages(original, 3..4)];
+        let once = remove_and_verify(original, &holes);
+        let model = cut_model(&once);
+        let [before, between, behind, alone] =
+            [0..1, 2..3, 4..5, 5..6].map(|pages| text_pages(original, pages));
+        let slots = [before, between, behind, alone].map(|cut| model.slots_for(cut));
+        assert_eq!(slots, [0, -1, 0, 1]);
+
+        let twice = remove_and_verify(&once, &[between, behind]);
+        assert_retained_bytes(original, &twice, &[text_pages(original, 1..5)]);
+        let count_segments = |elf: &[u8]| segments_of_type(elf, PT_LOAD).len();
+        assert_eq!(count_segments(&twice), count_segments(&once) - 1);
+        assert_eq!(cut_model(&twice).free_slots(), model.free_slots() + 1);
+    });
+}
+
+#[test]
+fn cut_beside_an_unsplit_segment_takes_a_header() {
+    for_each_toy(|toy| {
+        let unsplit = whole_pages(toy, ".rodata", 3..4);
+        let original = edited(toy, |elf| {
+            edit_segment(elf, STACK_INDEX, |segment| {
+                segment.p_type = PT_GNU_EH_FRAME;
+                segment.p_offset = unsplit.start - BASE_ADDRESS;
+                segment.p_vaddr = unsplit.start;
+                segment.p_filesz = unsplit.len();
+            });
+        });
+        let cuts = [2..3, 4..5].map(|pages| whole_pages(&original, ".rodata", pages));
+        let model = cut_model(&original);
+        assert_eq!(cuts.map(|cut| model.slots_for(cut)), [1, 1]);
+
+        let trimmed = remove_and_verify(&original, &cuts);
+        let count_segments = |elf: &[u8]| segments_of_type(elf, PT_LOAD).len();
+        assert_eq!(count_segments(&trimmed), count_segments(&original) + 2);
+    });
+}
+
+#[test]
+fn full_table_takes_what_needs_no_header() {
+    for_each_toy(|toy| {
+        let original = edited(toy, |elf| limit_header_room(elf, HEADERS_WITH_ONE_CUT));
+        let once = remove_and_verify(&original, &[text_pages(&original, 1..2)]);
+        let model = cut_model(&once);
+        assert_eq!(model.capacity, CutCapacity::Cuts(0));
+
+        let beside = text_pages(&original, 2..3);
+        let removable = [beside, text_pages(&original, 4..5)].map(|range| RemovableBytes {
+            range,
+            is_code: true,
+            can_be_cut: true,
+            can_be_filled: true,
+        });
+        let plan = model.choose(&removable);
+        assert_eq!(plan.cuts, [beside]);
+        assert!(plan.uncut.is_some());
+        remove_and_verify(&once, &plan.cuts);
+    });
 }
 
 #[test]

@@ -9,7 +9,7 @@ off the JS thread.
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | `Image.bind.ts`                       | JS surface (codegen input)                                                                            | adding/renaming a JS method              |
 | `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery        | new options, new chainable, new terminal |
-| `codecs.rs`                           | thin wrappers over libjpeg-turbo / libwebp / `bun_png` + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
+| `codecs.rs`                           | thin wrappers over `bun_jpeg` / `bun_png` / `bun_webp` + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
 | `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                   | extending EXIF coverage                  |
 | `quantize.rs`                         | median-cut RGBA → palette for `png({palette})`                                                        | dithering, perceptual weighting          |
 | `backend_coregraphics.rs`             | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                             | macOS-specific behaviour                 |
@@ -21,12 +21,7 @@ compiles away. On macOS/Windows the backend is tried first; it returns
 a `BackendUnavailable` error for anything it can't do (palette PNG, lossless
 WebP, dlopen miss) and the static path takes over.
 
-The JPEG and WebP codecs are vendored via `scripts/build/deps/{libjpeg-turbo,libwebp}.ts`. PNG is `src/png`, in Rust, on the kernels in `src/jsc/bindings/highway_png.cpp`.
-`patches/libjpeg-turbo/` carries the 8-bit-only patch + the j12/j16 stub overlay, and
-`fatal-clears-warning.patch`: after `tj3DecompressHeader` and `tj3Decompress8`, TurboJPEG's warning
-flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a decode on that signal
-(a JPEG with junk before EOI, no EOI, or truncated scan data) and reads it through
-`tj3BunCompletedWithWarning`, which the patch adds, so a build without the patch fails to link.
+JPEG, PNG and WebP are `src/jpeg`, `src/png` and `src/webp`, in Rust, on the kernels in `src/jsc/bindings/highway_{jpeg,png,webp_decoder,webp_encoder}.cpp`.
 
 ## Adding a chainable op
 
@@ -41,7 +36,7 @@ flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a d
 
 ## Adding a format
 
-1. New `scripts/build/deps/<lib>.ts` (copy `libdeflate.ts` for the simple case).
+1. New `scripts/build/deps/<lib>.ts` (copy `brotli.ts` for the simple case).
 2. Extend `Format` + `sniff()` + `mime()` in `codecs.rs`, add a `<fmt>` module with
    `decode`/`encode` functions alongside the others.
 3. If the format carries EXIF, extend `exif.rs`.
@@ -51,11 +46,8 @@ flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a d
 
 - Pixel format is **RGBA8 everywhere** between decode and encode. Decoders are
   configured to emit it; encoders are fed it. Nothing branches on channels.
-- **Decode** output is `bun.default_allocator`-owned `[]u8`. **Encode** output
-  is `Encoded{bytes, free}` where `free` is the _codec's_ deallocator
-  (`tj3Free`/`WebPFree`/`mi_free`); `then()` hands that buffer
-  straight to JS via `ArrayBuffer.toJSWithContext(..., free)` — no dupe. New
-  codecs return `Encoded` with the right `free`, not a default_allocator slice.
+- **Decode** and **encode** return a `Vec<u8>`. `then()` hands the encoded one
+  to JS without a copy.
 - The `max_pixels` guard fires **after the header read, before the RGBA alloc**
   in every codec. New codecs must do the same.
 - `image_resize.cpp` must stay in `noUnify` (see `scripts/build/unified.ts`) —

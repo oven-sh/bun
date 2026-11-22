@@ -2,7 +2,7 @@
 //!
 //! The map holds **zero** refs on the cached `SSL_CTX*`. An `SSL_CTX` ex_data
 //! slot stores a back-pointer to the heap `Entry`; BoringSSL's `CRYPTO_EX_free`
-//! callback (registered once in `openssl.c`'s `us_ex_idx_init`) tombstones the
+//! callback (registered once in `openssl.cpp`'s `us_ex_idx_init`) tombstones the
 //! entry (`entry.ctx = null`) when the real refcount hits 0. The next
 //! `get_or_create` for that digest sees the tombstone and rebuilds.
 //!

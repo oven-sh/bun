@@ -5,8 +5,6 @@ use std::mem::replace;
 use bun_ast::import_record::is_test_module;
 use bun_core::strings;
 use bun_js_parser::Jest;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{basename, dirname};
 use bun_sema::atom::{Atom, Interner, InternerPerThread, known};
 use bun_sema::bind::{BindOptions, Binding, Bound, RuntimeBindOptions};
 use bun_sema::file_analysis::{analyze_file, bind_file};
@@ -16,7 +14,7 @@ use bun_sema::import_sites::{
     ImportSiteKind, ImportSpecifier, find_sites_by_name, find_statement_sites,
 };
 use bun_sema::program::{FileId, Files};
-use bun_sema::resolve::{ancestors, inside};
+use bun_sema::resolve::{ancestors, basename, inside, parent_directory};
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::{from_argument, from_native, to_native};
@@ -153,7 +151,7 @@ impl Manifests {
         let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
         for test_file in &options.load.test_files {
             let test_file = from_argument(&options.code.working_directory, test_file);
-            for folder in ancestors(dirname::<Posix>(&test_file)) {
+            for folder in ancestors(parent_directory(&test_file)) {
                 if !seen.insert(folder.to_vec()) {
                     break;
                 }
@@ -311,7 +309,7 @@ fn has_sites_that_need_folding(hir: &File<'_>, atoms: &Interner<'_>) -> bool {
     };
     hir.exprs.iter().any(|node| match node.kind {
         ExprKind::Ident(name) => names_loader(name),
-        ExprKind::String(text) => text.is_some() && is_test_module(atoms.bytes(text)),
+        ExprKind::String(text) => is_test_module(atoms.bytes(text)),
         ExprKind::Dot { name, .. } => names_loader(name),
         ExprKind::ImportCall { args } => !is_string(hir.ids(args).next()),
         ExprKind::Call(call) => {
@@ -504,7 +502,7 @@ fn read_what_file_writes_by(
         takes_from_test_runner: has_test_runner_name,
         ..Written::default()
     };
-    let folder = dirname::<Posix>(path);
+    let folder = parent_directory(path);
     for (specifier, exports_again) in specifiers {
         let specifier = atoms.bytes(specifier);
         written.takes_from_test_runner |= is_test_module(specifier);
@@ -516,7 +514,6 @@ fn read_what_file_writes_by(
     let sited: FxHashSet<Vec<u8>> = written.paths.iter().map(|it| it.0.clone()).collect();
     for node in hir.exprs.iter() {
         if let ExprKind::String(text) = node.kind
-            && text.is_some()
             && is_relative(atoms.bytes(text))
         {
             let path = from_argument(folder, atoms.bytes(text));
@@ -530,7 +527,7 @@ fn read_what_file_writes_by(
 
 fn find_last_word(file: &[u8]) -> &[u8] {
     match without_extension(basename(file)) {
-        b"index" => basename(dirname::<Posix>(file)),
+        b"index" => basename(parent_directory(file)),
         word => word,
     }
 }
@@ -652,7 +649,7 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
                     writers[word as usize].push(file as u32);
                 }
                 for levels in written.levels_of_index_files {
-                    let mut folders = ancestors(dirname::<Posix>(&unread[file]));
+                    let mut folders = ancestors(parent_directory(&unread[file]));
                     if let Some(folder) = folders.nth(levels as usize) {
                         let writers = writers_of_index_files.entry(inside(folder, b"index"));
                         writers.or_default().push(file as u32);

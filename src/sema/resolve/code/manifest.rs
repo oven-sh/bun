@@ -1,6 +1,7 @@
 use super::*;
 use crate::fold::slice_in;
 use crate::module_format::DeclaredModuleType;
+use crate::resolve::{basename, parent_directory};
 use bun_collections::index_sort;
 use bun_core::StackCheck;
 
@@ -107,7 +108,7 @@ impl<'h> Resolver<'h> {
         if !path.starts_with(b"/") {
             return None;
         }
-        ancestors(dirname::<Posix>(path))
+        ancestors(parent_directory(path))
             .find_map(|ancestor| self.code_manifest(ancestor)?.package())
     }
 
@@ -119,7 +120,7 @@ impl<'h> Resolver<'h> {
         if !path.starts_with(b"/") {
             return None;
         }
-        let directory = dirname::<Posix>(path);
+        let directory = parent_directory(path);
         let by_directory = &self.code_state().aot_package_directories;
         if let Some(&known) = by_directory.get_ref(directory) {
             return known;
@@ -130,7 +131,7 @@ impl<'h> Resolver<'h> {
 
     fn find_aot_package_directory(&self, directory: &[u8]) -> Option<&'h [u8]> {
         let manifest = ancestors(directory)
-            .take_while(|&ancestor| strings::basename_posix(ancestor) != b"node_modules")
+            .take_while(|&ancestor| basename(ancestor) != b"node_modules")
             .find_map(|ancestor| {
                 self.code_manifest(ancestor)
                     .filter(|it| it.exports.is_some() || it.names_aot_condition)
@@ -142,7 +143,7 @@ impl<'h> Resolver<'h> {
         if !importer.starts_with(b"/") {
             return false;
         }
-        let nearest = |file: &[u8]| self.nearest_code_manifest(dirname::<Posix>(file));
+        let nearest = |file: &[u8]| self.nearest_code_manifest(parent_directory(file));
         let Some(manifest) = nearest(importer) else {
             return false;
         };
@@ -155,7 +156,7 @@ impl<'h> Resolver<'h> {
         if !path.starts_with(b"/") {
             return DeclaredSideEffects::Unspecified;
         }
-        let directory = dirname::<Posix>(path);
+        let directory = parent_directory(path);
         let declared = match self.nearest_named_manifest(directory) {
             Some(manifest) => manifest.side_effects,
             None => DeclaredSideEffects::Unspecified,
@@ -171,12 +172,10 @@ impl<'h> Resolver<'h> {
             }
             DeclaredSideEffects::Unspecified | DeclaredSideEffects::None => false,
         };
-        let folders_below_node_modules = || {
-            ancestors(directory)
-                .take_while(|&ancestor| strings::basename_posix(ancestor) != b"node_modules")
-        };
+        let folders_below_node_modules =
+            || ancestors(directory).take_while(|&ancestor| basename(ancestor) != b"node_modules");
         let installed_package = folders_below_node_modules()
-            .filter(|&folder| !strings::basename_posix(folder).starts_with(b"@"))
+            .filter(|&folder| !basename(folder).starts_with(b"@"))
             .last()
             .filter(|_| search::is_in_node_modules(path));
         if let Some(own) = installed_package.and_then(|package| self.code_manifest(package))

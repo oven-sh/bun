@@ -1071,6 +1071,23 @@ describe.concurrent("bun pm pkg", () => {
       expect(deep.code).toBe(0);
     });
 
+    it.skipIf(isWindows)("a backslash is part of a directory name", async () => {
+      using dir = tempDir("pm-pkg-backslash", {
+        "w\\d/package.json": JSON.stringify({ name: "real" }),
+        "w/d/package.json": JSON.stringify({ name: "decoy" }),
+      });
+
+      const [inside, withCwd] = await Promise.all([
+        runPmPkg(["get", "name"], join(dir, "w\\d"), false),
+        runPmPkg(["get", "name", "--cwd", "w\\d"], dir, false),
+      ]);
+
+      expect(inside.output.trim()).toBe('"real"');
+      expect(inside.code).toBe(0);
+      expect(withCwd.output.trim()).toBe('"real"');
+      expect(withCwd.code).toBe(0);
+    });
+
     it("should handle modifications from deeply nested directories", async () => {
       using dir = tempDir("pm-pkg-nested", {
         "package.json": JSON.stringify({ name: "my-project", version: "1.0.0", scripts: { test: "jest" } }, null, 2),
@@ -1407,6 +1424,40 @@ describe.concurrent("bun pm pkg", () => {
       expect(error).not.toContain("No bin file found at ./bin/real.js");
       expect(code).toBe(0);
       expect((await readPkg(binDir)).name).toBe("bin-package");
+    });
+
+    it.skipIf(isWindows)(
+      'a backslash separates in "bin" and is part of the name of the package\'s directory',
+      async () => {
+        using dir = tempDir("pm-pkg-bin-backslash", {
+          "w\\d/package.json": JSON.stringify({
+            name: "p",
+            version: "1.0.0",
+            bin: { slash: "bin/real.js", backslash: "bin\\real.js", end: "bin/real.js\\", missing: "bin\\missing.js" },
+          }),
+          "w\\d/bin/real.js": "",
+        });
+
+        const { error, code } = await runPmPkg(["fix"], join(dir, "w\\d"), false);
+        expect(error).toBe("warn: No bin file found at bin\\missing.js\n");
+        expect(code).toBe(0);
+      },
+    );
+
+    it('looks for a "bin" where its path leads', async () => {
+      using dir = tempDir("pm-pkg-bin-outside", {
+        "p/package.json": JSON.stringify({
+          name: "p",
+          version: "1.0.0",
+          bin: { above: "../shared/real.js", absolute: "/pm-pkg-bin/real.js" },
+        }),
+        "p/pm-pkg-bin/real.js": "",
+        "shared/real.js": "",
+      });
+
+      const { error, code } = await runPmPkg(["fix"], join(dir, "p"), false);
+      expect(error).toBe("warn: No bin file found at /pm-pkg-bin/real.js\n");
+      expect(code).toBe(0);
     });
 
     it("should preserve all other package.json fields", async () => {

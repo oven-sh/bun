@@ -186,11 +186,6 @@ fn call_macro(
 
 // `bun_js_parser` cannot name `Transpiler` or JSC types, so it calls these, which are resolved at link time.
 
-#[unsafe(no_mangle)]
-fn __bun_macro_drop_source_code_printer() {
-    bun_jsc::virtual_machine::drop_source_code_printer_if_macro_owned();
-}
-
 /// Exposed for `bun_bundler::ThreadPool::Worker::drop` (which has no
 /// `bun_jsc` dependency) to sweep the per-worker macro VM. See [`collect_macro_vm_garbage`].
 ///
@@ -283,12 +278,7 @@ fn load_macro(
     specifier: &[u8],
     hash: i32,
 ) -> crate::Result<()> {
-    // Covers `configure_defines` (new-VM path) and `load_macro_entry_point`
-    // (which runs the macro module's top-level JS via `wait_for_promise`) so
-    // a top-level `Bun.Transpiler#transformSync` doesn't see
-    // `macro_guard_depth == 0` and free the printer mid-load. Drops on every
-    // exit (success, `?`, Rejected) so depth/state can't leak; the caller's
-    // own `MacroModeGuard` re-enables for the actual macro call.
+    // Covers `configure_defines` and the macro module's top-level code.
     let _mode_guard = MacroModeGuard::new(vm);
     vm.event_loop().ensure_waker();
     if is_new_vm {
@@ -519,7 +509,7 @@ impl<'a> Run<'a> {
             T::Private => {
                 self.is_top_level = false;
 
-                let mut blob_: Option<*const WebCore::Blob> = None;
+                let mut blob_ = None;
 
                 if value.js_type() == jsc::JSType::DOMWrapper {
                     // LAYERING: `Response`/`Request` (and their `BodyMixin::
@@ -531,21 +521,16 @@ impl<'a> Run<'a> {
                     let hooks = runtime_hooks().expect("RuntimeHooks not installed");
                     if let Some(body_blob) = (hooks.body_mixin_get_blob)(value, self.global)? {
                         return self.run(body_blob);
-                    } else if let Some(resp) = value.as_::<WebCore::Blob>() {
+                    } else if let Some(resp) = value.as_class_ref::<WebCore::Blob>() {
                         blob_ = Some(resp);
-                    } else if value.as_::<ResolveMessage>().is_some()
-                        || value.as_::<BuildMessage>().is_some()
-                    {
+                    } else if value.is::<ResolveMessage>() || value.is::<BuildMessage>() {
                         let _ = self.vm.uncaught_exception(self.global, value, false);
                         return Err(MacroError::MacroFailed);
                     }
                 }
 
                 if let Some(blob) = blob_ {
-                    // SAFETY: `value` owns `blob` and is live. `expr_from_blob` runs no script
-                    // and copies what it keeps.
-                    let (bytes, ct) =
-                        unsafe { ((*blob).shared_view(), (*blob).content_type_slice()) };
+                    let (bytes, ct) = (blob.shared_view(), blob.content_type_slice());
                     return expr_from_blob(bytes, self.bump, ct, self.log, self.caller.loc)
                         .map_err(|_| MacroError::MacroFailed);
                 }

@@ -644,6 +644,7 @@ impl Default for PathFormatOptions {
     }
 }
 
+/// Only Windows has two separators, so elsewhere a path is printed as is.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PathSep {
     /// Keep paths separators as is.
@@ -652,17 +653,14 @@ pub enum PathSep {
     Auto,
     /// Replace all path separators with `/`.
     Posix,
-    /// Replace all path separators with `\`.
-    Windows,
 }
 
 impl PathSep {
     fn apply(self, found: u8) -> u8 {
         match self {
-            PathSep::Windows => b'\\',
-            PathSep::Posix => b'/',
-            PathSep::Auto => crate::SEP,
-            PathSep::Any => found,
+            PathSep::Posix if cfg!(windows) => b'/',
+            PathSep::Auto if cfg!(windows) => b'\\',
+            _ => found,
         }
     }
 }
@@ -757,8 +755,7 @@ pub fn buf_print_z<'a>(
     if n >= c.buf.len() {
         return Err(core::fmt::Error);
     }
-    c.buf[n] = 0;
-    Ok(crate::ZStr::from_buf(c.buf, n))
+    Ok(crate::ZStr::nul_terminate(c.buf, n))
 }
 
 /// [`buf_print`] that panics on overflow. Use when the
@@ -767,16 +764,6 @@ pub fn buf_print_z<'a>(
 #[track_caller]
 pub fn buf_print_infallible<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
     buf_print(buf, args).expect("buf_print: buffer too small")
-}
-
-/// [`buf_print_z`] that panics on overflow.
-#[inline]
-#[track_caller]
-pub fn buf_print_z_infallible<'a>(
-    buf: &'a mut [u8],
-    args: core::fmt::Arguments<'_>,
-) -> &'a crate::ZStr {
-    buf_print_z(buf, args).expect("buf_print_z: buffer too small")
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -3453,20 +3440,17 @@ pub fn int_as_bytes<T: ::itoa::Integer>(buf: &mut [u8], value: T) -> &[u8] {
 }
 
 /// NUL-terminated decimal `u64` → ASCII into a caller-owned scratch buffer,
-/// returning a [`CStr`] borrowing the head of `buf`.
+/// returning a [`ZStr`](crate::ZStr) borrowing the head of `buf`.
 ///
 /// Used when handing an integer to a C API that wants a `*const c_char`
 /// service/port string (e.g. `getaddrinfo`, `ares_getaddrinfo`). 21 bytes
 /// covers `u64::MAX` (20 digits) + NUL; `u16`/`u32` callers widen via `as u64`.
 #[inline]
-pub fn itoa_z(buf: &mut [u8; 21], n: u64) -> &core::ffi::CStr {
+pub fn itoa_z(buf: &mut [u8; 21], n: u64) -> &crate::ZStr {
     let mut tmp = ItoaBuf::new();
     let s = tmp.format(n).as_bytes();
     buf[..s.len()].copy_from_slice(s);
-    buf[s.len()] = 0;
-    // SAFETY: itoa output is pure ASCII digits (no interior NUL); we just
-    // wrote a NUL terminator at `s.len()`.
-    unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&buf[..=s.len()]) }
+    crate::ZStr::nul_terminate(buf, s.len())
 }
 
 /// Byte length of `n` formatted with the default `{}` Display. Used by

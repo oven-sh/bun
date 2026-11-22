@@ -396,13 +396,12 @@ impl DevServer {
             }),
             heap_ref,
             event_loop,
-            false, // watching is handled separately
             Some(::core::ptr::NonNull::from(
                 bun_threading::work_pool::WorkPool::get(),
             )),
             heap_ref,
         );
-        bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
+        bv2.bun_watcher = Some(Arc::clone(&self.bun_watcher));
         bv2.asynchronous = true;
         bv2.dev_server = Some(self.bundler_handle());
 
@@ -471,18 +470,14 @@ impl DevServer {
         debug_assert!(self.current_bundle.is_none());
 
         // If there were pending requests, begin another bundle.
-        if self.next_bundle.reload_event.is_some() || self.next_bundle.requests.first().is_some() {
+        if self.next_bundle.has_reload_event || self.next_bundle.requests.first().is_some() {
             let mut entry_points = EntryPointList::empty();
 
-            let (is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {
-                // SAFETY: `HotReloadEvent::run` left `event` here without recycling it.
-                unsafe {
-                    let timer = (*event).timer;
-                    self.process_reload_events(event, &mut entry_points);
-                    (true, timer)
-                }
+            let is_reload = core::mem::take(&mut self.next_bundle.has_reload_event);
+            let timer = if is_reload {
+                self.process_reload_events(&mut entry_points)
             } else {
-                (false, Instant::now())
+                Instant::now()
             };
 
             // Note: iterate by index — `route_bundle_ptr` /

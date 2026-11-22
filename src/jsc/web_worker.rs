@@ -52,7 +52,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::JoinHandle;
 
 use bun_core::{EncodedSlice, String as BunString, Timespec, TimespecMockMode, WTFStringImpl};
-use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
+use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as TimerTag};
 use bun_io::KeepAlive;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
@@ -237,7 +237,6 @@ unsafe extern "C" {
     safe fn Bun__AOT__adoptPagesForNewThread(pages: *mut c_void);
     safe fn Bun__AOT__releaseUnusedPagesOfThread();
     safe fn Bun__AOT__didStartThread();
-    safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `run` can take the API lock and abandon
     // it with the VM — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
@@ -375,7 +374,7 @@ impl WebWorker {
         exec_argv_len: usize,
         preload_modules_ptr: *const BunString,
         preload_modules_len: usize,
-    ) -> *mut WebWorker {
+    ) -> Option<bun_ptr::RefPtr<WebWorker>> {
         jsc::mark_binding();
         log!("[{}] create", this_context_id);
 
@@ -430,7 +429,7 @@ impl WebWorker {
                 }
             };
             // preloads dropped by RAII.
-            return core::ptr::null_mut();
+            return None;
         }
 
         // The VM of the Worker is created for a program. The Worker resolves the specifier again and reports what is wrong with it.
@@ -473,7 +472,7 @@ impl WebWorker {
                     message.extend_from_slice(arg.as_bytes());
                     *error_message = BunString::clone_utf8(&message);
                     *error_is_invalid_exec_argv = true;
-                    return core::ptr::null_mut();
+                    return None;
                 }
                 let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
                 transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
@@ -493,7 +492,7 @@ impl WebWorker {
                 Ok(loader) => loader,
                 Err(_) => {
                     *error_message = BunString::static_("Out of memory");
-                    return core::ptr::null_mut();
+                    return None;
                 }
             }
         };
@@ -584,14 +583,13 @@ impl WebWorker {
                 worker_ref.thread_start.set(None);
                 worker_ref.parent_poll_ref.unref(bun_io::js_vm_ctx());
                 *error_message = BunString::static_("Failed to spawn worker thread");
-                return core::ptr::null_mut();
+                return None;
             }
         }
-        let worker = worker.into_raw();
         parent
             .child_workers
-            .with_mut(|children| children.push(worker));
-        worker
+            .with_mut(|children| children.push(worker.as_ptr()));
+        Some(worker)
     }
 
     /// Spawn the thread and hand it `thread_start`, which stays where it is unless that succeeds. Parent thread.
@@ -724,7 +722,6 @@ impl WebWorker {
     /// # Safety
     /// `self` waits for room, and `parent` is its parent.
     pub unsafe fn on_room_timer(&self, parent: &VirtualMachine) {
-        self.room_timer.state.set(TimerState::FIRED);
         if parent.is_shutting_down() || !parent.script_allowed() {
             return;
         }
@@ -889,9 +886,7 @@ impl WebWorker {
         if !self.name.is_empty() {
             bun_core::output::Source::configure_named_thread(self.name.as_zstr());
         } else {
-            bun_core::output::Source::configure_named_thread(bun_core::ZStr::from_static(
-                b"Worker\0",
-            ));
+            bun_core::output::Source::configure_named_thread(bun_core::zstr!("Worker"));
         }
 
         let exit_code = self.run(init);
@@ -994,7 +989,7 @@ impl WebWorker {
             return Ok(vm);
         }
 
-        vm.load_extra_env_and_source_code_printer();
+        vm.load_extra_env();
         Ok(vm)
     }
 
@@ -1242,14 +1237,6 @@ impl WebWorker {
             "[{}] shutdown: VirtualMachine destroyed",
             self.execution_context_id
         );
-        // This thread's C++ thread_local destructors are not guaranteed to run
-        // before the process exits, so free the HPACK scratch buffer that any
-        // http2 session on this thread allocated.
-        Bun__freeSharedHeaderBufferForThreadExit();
-        log!(
-            "[{}] shutdown: thread state freed",
-            self.execution_context_id
-        );
         exit_code
     }
 
@@ -1355,11 +1342,11 @@ fn on_unhandled_rejection(
     // A parse failure rejects with a BuildMessage, which doesn't survive structured
     // clone. Node reports a SyntaxError; build a real one from the formatted parse
     // error so the subtype reaches the parent intact.
-    if let Some(bm) = error_instance.as_::<crate::BuildMessage>() {
-        // SAFETY: as_ returned a live BuildMessage cell, read-only on the
-        // worker (JS) thread that owns it.
-        let text: &[u8] = unsafe { &(*bm).msg.data.text };
-        error_instance = EncodedSlice::utf8(text).to_syntax_error_instance(global_object);
+    if let Some(syntax_error) = error_instance
+        .as_class_ref::<crate::BuildMessage>()
+        .map(|bm| EncodedSlice::utf8(&bm.msg.data.text).to_syntax_error_instance(global_object))
+    {
+        error_instance = syntax_error;
     }
 
     let mut array: Vec<u8> = Vec::new();
@@ -1495,6 +1482,26 @@ fn resolve_entry_point_specifier<'s>(
         && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
     {
         return Ok(crate::compiled_program::module_key(entry));
+    }
+
+    // The disk does not answer to `a\b` for what the executable holds as `a/b`. A compiled program does as `bun run`.
+    if let Some(graph) = parent.standalone_module_graph
+        && let std::borrow::Cow::Owned(converted) = bun_paths::from_portable(str)
+    {
+        let file = graph.resolve(graph.base_public_path_with_default_suffix(), &converted);
+        if graph.compiled_program().is_none()
+            && let Some(file) = file
+        {
+            return Ok(file);
+        }
+        if file.is_some()
+            || resolver.resolve_embedded_entry_point(&converted).is_some()
+            || (resolver.resolve_embedded_entry_point_from_working_directory(&converted)).is_some()
+        {
+            return Err(Unresolved::Because(
+                "A backslash does not separate names on this platform",
+            ));
+        }
     }
 
     // Spec `bun.webcore.ObjectURLRegistry.isBlobURL(str)` — prefix `"blob:"`

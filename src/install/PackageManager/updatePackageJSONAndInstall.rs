@@ -7,8 +7,8 @@ use bstr::BStr;
 use crate::Error;
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
+use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_core::{ZStr, strings};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry_root, store_entry};
@@ -364,21 +364,8 @@ fn update_package_json_and_install_with_manager_with_updates(
     }
 
     // may or may not be the package json we are editing
-    let top_level_dir_without_trailing_slash =
-        strings::without_trailing_slash(FileSystem::get().top_level_dir());
-
-    let mut root_package_json_path_buf = bun_paths::path_buffer_pool::get();
-    let root_package_json_path: &ZStr = 'root_package_json_path: {
-        root_package_json_path_buf[..top_level_dir_without_trailing_slash.len()]
-            .copy_from_slice(top_level_dir_without_trailing_slash);
-        root_package_json_path_buf[top_level_dir_without_trailing_slash.len()..]
-            [..b"/package.json".len()]
-            .copy_from_slice(b"/package.json");
-        let root_package_json_path_len =
-            top_level_dir_without_trailing_slash.len() + b"/package.json".len();
-        root_package_json_path_buf[root_package_json_path_len] = 0;
-        let root_package_json_path = &root_package_json_path_buf[..root_package_json_path_len];
-
+    let root_package_json_path = manager.root_package_json_path;
+    {
         let log = manager.log_mut();
         let root = package_json_entry_or_crash(manager, log, root_package_json_path).root;
         let root_is_targeted = manager
@@ -400,13 +387,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         } else if manager.options.add_catalog.is_some() && manager.workspace_name_hash.is_some() {
             add_catalog::edit_root_entry_before_install(manager, root, root_package_json_path)?;
         }
-
-        // SAFETY: root_package_json_path_buf[root_package_json_path_len] == 0 written above
-        break 'root_package_json_path ZStr::from_buf(
-            &root_package_json_path_buf[..],
-            root_package_json_path_len,
-        );
-    };
+    }
 
     install_with_manager::install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;
 
@@ -493,10 +474,8 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
 
     crate::prune::prune_bins(&node_modules);
     if manager.options.global {
-        let mut global_node_modules =
-            strings::without_trailing_slash(FileSystem::get().top_level_dir()).to_vec();
-        global_node_modules.push(bun_paths::SEP);
-        global_node_modules.extend_from_slice(b"node_modules");
+        let mut global_node_modules = bun_paths::Path::from_top_level_dir();
+        global_node_modules.push(b"node_modules");
         crate::prune::prune_global_bins(manager.options.bin_path.as_bytes(), &global_node_modules);
         // A removed package may have owned a bin name that a remaining package also provides.
         crate::bin_real::link_free_global_bins(&manager.lockfile, manager.options.bin_path);
@@ -582,7 +561,6 @@ pub fn update_package_json_and_install_and_cli(
         if manager.options.global {
             if !manager.options.bin_path.is_empty() {
                 if let TrackInstalledBin::Basename(basename) = &manager.track_installed_bin {
-                    let mut path_buf = bun_paths::path_buffer_pool::get();
                     let needs_to_print = if let Some(path_env) = bun_core::env_var::PATH.get() {
                         // This is not perfect
                         //
@@ -605,13 +583,8 @@ pub fn update_package_json_and_install_and_cli(
                         // have a binary called "esbuild" in /tmp/TeST and you
                         // install esbuild, it will not detect that case if we naively
                         // just checked for "esbuild" in $PATH where "$PATH" is /tmp/test
-                        bun_which::which(
-                            &mut path_buf,
-                            path_env,
-                            FileSystem::get().top_level_dir(),
-                            basename,
-                        )
-                        .is_none()
+                        bun_which::which(path_env, FileSystem::get().top_level_dir(), basename)
+                            .is_none()
                     } else {
                         true
                     };
@@ -639,32 +612,6 @@ pub fn update_package_json_and_install_and_cli(
     Ok(())
 }
 
-// Formats the folder for use inside double quotes: a space is kept as it is, and a `\` is doubled
-// for a POSIX shell.
-struct ShellPathFormatter<'a> {
-    folder: &'a [u8],
-}
-
-impl fmt::Display for ShellPathFormatter<'_> {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            writer,
-            "{}",
-            bun_core::fmt::fmt_path_u8(
-                self.folder,
-                bun_core::fmt::PathFormatOptions {
-                    escape_backslashes: !cfg!(windows),
-                    path_sep: if cfg!(windows) {
-                        bun_core::fmt::PathSep::Windows
-                    } else {
-                        bun_core::fmt::PathSep::Posix
-                    },
-                },
-            ),
-        )
-    }
-}
-
 struct MoreInstructions<'a> {
     shell: ShellCompletions::Shell,
     folder: &'a [u8],
@@ -672,9 +619,18 @@ struct MoreInstructions<'a> {
 
 impl fmt::Display for MoreInstructions<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let path = ShellPathFormatter {
-            folder: self.folder,
-        };
+        // Inside the double quotes of a POSIX shell, a `\` has to be doubled.
+        let is_posix_shell = matches!(
+            self.shell,
+            ShellCompletions::Shell::Bash | ShellCompletions::Shell::Zsh
+        );
+        let path = bun_core::fmt::fmt_path_u8(
+            self.folder,
+            bun_core::fmt::PathFormatOptions {
+                escape_backslashes: cfg!(not(windows)) && is_posix_shell,
+                path_sep: bun_core::fmt::PathSep::Auto,
+            },
+        );
         match self.shell {
             ShellCompletions::Shell::Unknown => {
                 // Unfortunately really difficult to do this in one line on PowerShell.

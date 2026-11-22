@@ -42,3 +42,9 @@ unsafe extern "C" fn highway_memrmem16(
     let found = (0..len).rfind(|&at| haystack[at..].starts_with(needle));
     found.unwrap_or(usize::MAX)
 }
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_last_index_of_slash(path: *const u8, len: usize) -> usize {
+    // SAFETY: `bun_highway` passes a slice.
+    unsafe { highway_last_index_of_char(path, len, b'/') }
+}

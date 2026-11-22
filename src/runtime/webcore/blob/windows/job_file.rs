@@ -27,7 +27,7 @@ impl Target {
         match pathlike {
             PathOrFileDescriptor::Fd(fd) => Self::Lent(KeptOpen::new(*fd)),
             PathOrFileDescriptor::Path(shown) => {
-                let mut buf = bun_paths::path_buffer_pool::get();
+                let mut buf = bun_paths::Path::new();
                 let path = shown.slice_z(&mut buf).as_bytes();
                 // The job reports a bad path.
                 let verbatim = sys::windows::verbatim_path(path);
@@ -150,7 +150,7 @@ fn is_malformed(path: &[u8]) -> bool {
 }
 
 pub(super) fn make_folder_for(path: &ZStr, shown: &[u8]) -> sys::Result<()> {
-    let folder = |path| bun_core::dirname(path).unwrap_or(path);
+    let folder = |path| bun_paths::dirname(path).unwrap_or(path);
     let path = match path.as_bytes() {
         // The files of a compiled program are found by paths without the prefix.
         [b'\\', b'\\', b'?', b'\\', path @ ..] if matches!(path, [_, b':', b'\\', ..]) => path,

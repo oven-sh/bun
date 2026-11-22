@@ -6,7 +6,6 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use std::rc::Rc;
 
-use bun_core::strings::basename_windows;
 use bun_core::{Timespec, TimespecMockMode, WStr, ZStr};
 use bun_iocp::{AsyncFile, Completion, Request};
 use bun_jsc as jsc;
@@ -61,11 +60,11 @@ impl Target {
                 let long = w::long_path(path).unwrap_or_else(|_| path.to_vec());
                 (Target::Directory(long), path.to_vec())
             } else {
-                let name = basename_windows(path);
+                let name = bun_paths::basename(path);
                 let short = w::short_path(path).unwrap_or_default();
                 let target = Target::File {
                     name: name.to_vec(),
-                    short_name: basename_windows(&short).to_vec(),
+                    short_name: bun_paths::basename(&short).to_vec(),
                 };
                 match &path[..path.len() - name.len()] {
                     [] => (target, bun_core::w!(".").to_vec()),
@@ -109,14 +108,14 @@ impl Target {
 }
 
 fn has_short_name(path: &[u16]) -> bool {
-    (path.split(|&unit| bun_paths::is_sep_any_t(unit)))
+    (path.split(|&unit| bun_paths::is_sep(unit)))
         .any(|name| name.len() <= "12345678.123".len() && name.contains(&u16::from(b'~')))
 }
 
 fn long_name(directory: &[u16], name: &[u16]) -> Option<Vec<u16>> {
     let path = [directory, bun_core::w!("\\"), name, &[0]].concat();
     let long = w::long_path(WStr::from_slice_with_nul(&path)).ok()?;
-    let is_separator = |&unit: &u16| bun_paths::is_sep_any_t(unit);
+    let is_separator = |&unit: &u16| bun_paths::is_sep(unit);
     let depth = name.split(is_separator).count();
     let parent = long.rsplitn(depth + 1, is_separator).nth(depth)?;
     Some(long[parent.len() + 1..].to_vec())

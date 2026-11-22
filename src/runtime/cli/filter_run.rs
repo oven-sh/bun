@@ -18,6 +18,7 @@ use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_install::lifecycle_script_runner::ScriptArgv;
 use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
+use bun_paths::{dirname_or_root, without_trailing_sep};
 
 // The string fields below are owned boxes, except `combined` which is interned
 // in the process-lifetime CLI arena.
@@ -167,9 +168,7 @@ impl<'a> ProcessHandle<'a> {
             let envp = crate::cli::script_or_command::with_package_script(
                 &mut env,
                 &handle.output.config.script_name,
-                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                    &handle.output.config.package_json_path,
-                ),
+                without_trailing_sep(dirname_or_root(&handle.output.config.package_json_path)),
                 |env| env.map.to_envp(),
             );
             break 'brk spawn::spawn_process(
@@ -917,10 +916,7 @@ pub(crate) fn run_scripts_with_filter(
                 stdin: spawn::Stdio::Ignore,
                 stdout: spawn::Stdio::Buffer,
                 stderr: spawn::Stdio::Buffer,
-                cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                    &script.package_json_path,
-                )
-                .into(),
+                cwd: without_trailing_sep(dirname_or_root(&script.package_json_path)).into(),
                 stream: true,
                 ..Default::default()
             },

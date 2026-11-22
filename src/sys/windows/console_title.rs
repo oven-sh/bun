@@ -38,7 +38,8 @@ pub fn set(title: &[u8]) -> Result<(), Win32Error> {
         Ok(title) => title.len().min(MAX_UNITS_WRITTEN),
         Err(_) => return Err(Win32Error::INVALID_PARAMETER),
     };
-    let title = WStr::nul_terminate(&mut buf, len);
+    buf[len] = 0;
+    let title = WStr::from_buf(&buf, len);
     // SAFETY: `title` is NUL-terminated.
     check(unsafe { SetConsoleTitleW(title.as_ptr()) })
 }

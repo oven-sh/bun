@@ -1,7 +1,7 @@
 //! The program and the command line for `CreateProcessW`. None of the strings ends with a NUL.
 
 use bun_core::w;
-use bun_paths::is_sep_any_t;
+use bun_paths::portable::is_sep;
 
 const BACKSLASH: u16 = b'\\' as u16;
 const COLON: u16 = b':' as u16;
@@ -153,13 +153,13 @@ pub(crate) fn without_verbatim_prefix(path: &[u16]) -> Vec<u16> {
 
 /// `C:` or `\\server\share`
 fn root_of(absolute: &[u16]) -> &[u16] {
-    if !absolute.iter().take(2).all(|&unit| is_sep_any_t(unit)) {
+    if !absolute.iter().take(2).all(|&unit| is_sep(unit)) {
         return &absolute[..absolute.len().min(2)];
     }
     let is_verbatim_unc = absolute
         .get(2..8)
         .is_some_and(|it| eq_ignore_ascii_case(it, w!("?\\unc\\")));
-    let mut separators = (0..absolute.len()).filter(|&index| is_sep_any_t(absolute[index]));
+    let mut separators = (0..absolute.len()).filter(|&index| is_sep(absolute[index]));
     let end = separators.nth(if is_verbatim_unc { 5 } else { 3 });
     &absolute[..end.unwrap_or(absolute.len())]
 }
@@ -175,9 +175,9 @@ fn push_directory(out: &mut Vec<u16>, directory: &[u16]) {
 fn resolve_directory(cwd: &[u16], directory: &[u16]) -> Vec<u16> {
     let mut out = Vec::new();
     match *directory {
-        [first, second, _, ..] if is_sep_any_t(first) && is_sep_any_t(second) => {}
-        [first, ..] if is_sep_any_t(first) => out.extend_from_slice(root_of(cwd)),
-        [_, COLON, third, ..] if is_sep_any_t(third) => {}
+        [first, second, _, ..] if is_sep(first) && is_sep(second) => {}
+        [first, ..] if is_sep(first) => out.extend_from_slice(root_of(cwd)),
+        [_, COLON, third, ..] if is_sep(third) => {}
         [_, COLON, ref relative @ ..] => {
             if cwd
                 .get(..2)

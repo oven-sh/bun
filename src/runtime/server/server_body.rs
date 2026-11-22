@@ -36,6 +36,7 @@ use bun_jsc::{
     Node, PendingAbortSignal, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
+use bun_paths::Path;
 use bun_ptr::RefPtr;
 use bun_removable_features::{Feature, is_removed};
 use bun_resolver::fs::FileSystem;
@@ -609,22 +610,11 @@ impl AnyRoute {
             FileSystem::get().top_level_dir()
         };
 
-        let abs_path = FileSystem::get().abs(&[path_slice]);
-        let mut relative_path = FileSystem::get().relative(cwd, abs_path);
-
-        if relative_path.starts_with(b"./") {
-            relative_path = &relative_path[2..];
-        } else if relative_path.starts_with(b"../") {
-            while relative_path.starts_with(b"../") {
-                relative_path = &relative_path[3..];
-            }
-        }
+        let abs_path = Path::resolve(&[FileSystem::get().top_level_dir(), path_slice]);
+        let mut route_path = Path::from(b"/");
+        let relative_path = Path::relative(cwd, &abs_path);
+        route_path.push_inside(&strings::replace_char(&relative_path, b'\\', b'/'));
         let is_index_route = path.path().slice() == index_path;
-        let mut builder: Vec<u8> = Vec::new();
-        if !relative_path.starts_with(b"/") {
-            builder.push(b'/');
-        }
-        builder.extend_from_slice(relative_path);
 
         let Some(headers_js) = argument.get(init_ctx.global, b"headers")? else {
             return Ok(None);
@@ -642,7 +632,7 @@ impl AnyRoute {
         methods.insert(Method::HEAD);
 
         init_ctx.user_routes.push(server_config::StaticRouteEntry {
-            path: builder.into_boxed_slice(),
+            path: route_path.into_portable().as_bytes().into(),
             route,
             method: methods,
         });
@@ -695,12 +685,7 @@ impl AnyRoute {
             // and the process exits with a non-zero status code.
             if let Some(store) = blob.store.get().as_deref() {
                 if let Some(store_path) = store.get_path() {
-                    // NOTE: `sys::exists_at_type` takes `&ZStr`; the store
-                    // path is a borrowed byte slice. NUL-terminate into a path
-                    // buffer for the syscall.
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    let zpath = bun_paths::resolve_path::z(store_path, &mut buf);
-                    match sys::exists_at_type(sys::Fd::cwd(), zpath) {
+                    match sys::exists_at_type(sys::Fd::cwd(), &Path::from(store_path)) {
                         Ok(sys::ExistsAtType::Directory) => {
                             return Err(global.throw_invalid_arguments(format_args!(
                                 "Bundled file {} cannot be a directory. You may want to configure --asset-naming or `naming` when bundling.",
@@ -990,7 +975,7 @@ impl ServePlugins {
         let bunfig_folder: &[u8] = if bunfig_path.is_empty() {
             FileSystem::get().top_level_dir()
         } else {
-            bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path)
+            bun_paths::dirname_or_root(bunfig_path)
         };
 
         // NOTE: the keep-alive ref/deref pair

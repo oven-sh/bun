@@ -1,5 +1,7 @@
 //! `REPARSE_DATA_BUFFER`: a tag, the length of the data, two unused bytes, and the data.
 
+use bun_paths::portable::is_sep;
+
 use super::wide;
 
 pub(crate) const MAX_SIZE: usize = 16 * 1024;
@@ -63,7 +65,7 @@ impl LinkTarget<'_> {
 fn has_win32_prefix(path: &[u8]) -> bool {
     matches!(path, [_, b':', ..])
         || matches!(path, [a, b, ..] | [a, b'?', b'?', b, ..]
-            if bun_paths::is_sep_any(*a) && bun_paths::is_sep_any(*b))
+            if is_sep(*a) && is_sep(*b))
 }
 
 /// `data` starts with the offset and the length of the name in `names`.
@@ -155,11 +157,12 @@ pub(crate) enum JunctionError {
 
 /// `target` is `X:\…` or starts with `\\?\`.
 pub(crate) fn junction(target: &[u16]) -> Result<Vec<u8>, JunctionError> {
-    let is_separator = |&it: &u16| bun_paths::is_sep_any_t(it);
+    let is_separator = |&it: &u16| is_sep(it);
     let target = match (target.strip_prefix(bun_core::w!("\\\\?\\")), target) {
         (Some(verbatim), _) => verbatim,
         (None, [letter, 0x3A, separator, ..])
-            if bun_paths::resolve_path::is_drive_letter_t(*letter) && is_separator(separator) =>
+            if u8::try_from(*letter).is_ok_and(|it| it.is_ascii_alphabetic())
+                && is_separator(separator) =>
         {
             target
         }

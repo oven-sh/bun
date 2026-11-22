@@ -7,7 +7,7 @@ use crate::webcore::blob::{MAX_SIZE, SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_jsc::JSGlobalObject;
 use bun_jsc::{self as jsc, JSPromise, JSValue};
-use bun_paths::PathBuffer;
+use bun_paths::Path;
 use bun_ptr::RefPtr;
 use bun_sys::File;
 use bun_sys::Stat;
@@ -170,7 +170,7 @@ impl CopyFile {
         }
     }
 
-    fn open_source(&mut self, path_buf: &mut PathBuffer) -> Option<File> {
+    fn open_source(&mut self, path_buf: &mut Path) -> Option<File> {
         let path = self.source_file_store.pathlike.path().slice_z(path_buf);
         match File::open(path, OPEN_SOURCE_FLAGS, 0) {
             Ok(file) => Some(file),
@@ -181,13 +181,9 @@ impl CopyFile {
         }
     }
 
-    fn open_destination(&mut self, path_buf: &mut PathBuffer) -> Option<File> {
+    fn open_destination(&mut self) -> Option<File> {
+        let dest = &Path::from(self.destination_file_store.pathlike.path().slice());
         loop {
-            // Not `slice_z`, which makes "" of a path that does not fit.
-            let path = self.destination_file_store.pathlike.path().slice();
-            let len = path.len().min(path_buf.len() - 1);
-            path_buf[..len].copy_from_slice(&path[..len]);
-            let dest = bun_core::ZStr::nul_terminate(path_buf, len);
             let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
             let errno = match File::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                 Ok(file) => return Some(file),
@@ -448,8 +444,8 @@ impl CopyFile {
 
     #[cfg(target_os = "macos")]
     pub(crate) fn do_clonefile(&mut self) -> Result<(), crate::Error> {
-        let mut source_buf = bun_paths::path_buffer_pool::get();
-        let mut dest_buf = bun_paths::path_buffer_pool::get();
+        let mut source_buf = Path::new();
+        let mut dest_buf = Path::new();
 
         loop {
             let dest = self
@@ -507,7 +503,7 @@ impl CopyFile {
             )
         {
             'do_clonefile: {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
+                let mut path_buf = Path::new();
 
                 match bun_sys::stat(
                     self.source_file_store
@@ -581,7 +577,7 @@ impl CopyFile {
         let mut source: Option<File> = None;
         let mut destination: Option<File> = None;
         if self.source_fd == Fd::INVALID || self.destination_fd == Fd::INVALID {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let mut path_buf = Path::new();
             // Source first: if it fails, no destination file is left behind.
             if self.source_fd == Fd::INVALID {
                 let Some(file) = self.open_source(&mut path_buf) else {
@@ -590,7 +586,7 @@ impl CopyFile {
                 self.source_fd = source.insert(file).fd();
             }
             if self.destination_fd == Fd::INVALID {
-                let Some(file) = self.open_destination(&mut path_buf) else {
+                let Some(file) = self.open_destination() else {
                     return;
                 };
                 self.destination_fd = destination.insert(file).fd();

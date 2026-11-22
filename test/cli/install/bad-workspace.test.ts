@@ -712,9 +712,9 @@ describe.concurrent.skipIf(isWindows)("package.json in a sticky, shared director
 // On Windows the path buffer is longer than any path the OS accepts.
 describe.concurrent.skipIf(isWindows)("working directory close to PATH_MAX", () => {
   /** A project in a directory whose absolute path is exactly `cwdBytes` bytes long. */
-  function deepProject(cwdBytes: number) {
+  function deepProject(cwdBytes: number, files: Record<string, string> = {}) {
     const dir = tempDir("root-discovery-deep-cwd", {
-      "project/package.json": JSON.stringify({ name: "deep", version: "1.0.0" }),
+      project: { "package.json": JSON.stringify({ name: "deep", version: "1.0.0" }), ...files },
     });
     let cwd = String(dir);
     // The last name has to stay under NAME_MAX (255).
@@ -734,6 +734,32 @@ describe.concurrent.skipIf(isWindows)("working directory close to PATH_MAX", () 
       stdout: '"deep"\n',
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  describe("<cwd>/node_modules/dep does not fit", () => {
+    const cwdBytes = POSIX_PATH_BUFFER_BYTES - "/node_modules/dep".length;
+    const files = {
+      "package.json": JSON.stringify({ name: "deep", dependencies: { dep: "1.0.0" } }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "deep", dependencies: { dep: "1.0.0" } } },
+        packages: { dep: ["dep@1.0.0", "", {}, ""] },
+      }),
+      "node_modules/.bun/dep@1.0.0/node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    };
+
+    test.each([
+      ["pm ls --all", "stdout", "<cwd> node_modules\n", 0],
+      ["pm licenses", "stderr", "warn: 1 package in bun.lock is not installed and was skipped\n", 0],
+      ["pm untrusted", "stderr", "ENAMETOOLONG", 1],
+    ] as const)("bun %s", async (command, stream, printed, exitCode) => {
+      using project = deepProject(cwdBytes, files);
+
+      const result = await runBun(command.split(" "), project.cwd);
+
+      expect(result[stream].replaceAll(project.cwd, "<cwd>")).toContain(printed);
+      expect(result.exitCode).toBe(exitCode);
     });
   });
 

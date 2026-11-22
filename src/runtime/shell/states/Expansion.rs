@@ -214,7 +214,7 @@ impl Expansion {
                 let home = me.shell.get_homedir();
                 let len_before = me.current_out.len();
                 match me.current_out.first() {
-                    Some(b'/') | Some(b'\\') => {
+                    Some(&first) if bun_paths::is_sep(first) => {
                         me.current_out.splice(0..0, home.iter().copied());
                     }
                     Some(_) => me.current_out.insert(0, b'~'),
@@ -388,9 +388,8 @@ impl Expansion {
                 // would overflow the matcher's bounded brace stack and turn
                 // the whole word into a spurious no-match.
                 b'!' => {
-                    let starts_component = pattern
-                        .last()
-                        .is_none_or(|&prev| bun_core::path_sep::is_sep_native(prev));
+                    let starts_component =
+                        pattern.last().is_none_or(|&prev| bun_paths::is_sep(prev));
                     if starts_component {
                         pattern.extend_from_slice(b"{!}");
                     } else {

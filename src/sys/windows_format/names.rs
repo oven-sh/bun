@@ -2,7 +2,7 @@
 
 use bun_core::strings::{eql_case_insensitive_t, last_index_of_char_t};
 use bun_core::{WStr, w, wstr};
-use bun_paths::is_sep_any_t;
+use bun_paths::portable::is_sep;
 
 const BACKSLASH: u16 = b'\\' as u16;
 const COLON: u16 = b':' as u16;
@@ -15,8 +15,8 @@ fn is_volume(path: &[u16]) -> bool {
     let [a, b, 0x2E | 0x3F, c, device @ ..] = path else {
         return false;
     };
-    let components = device.split(|&it| is_sep_any_t(it)).count();
-    [a, b, c].into_iter().all(|&it| is_sep_any_t(it))
+    let components = device.split(|&it| is_sep(it)).count();
+    [a, b, c].into_iter().all(|&it| is_sep(it))
         && (starts_with(device, b"Volume{") && components == 1
             || starts_with(device, b"GLOBALROOT") && components == 3)
 }
@@ -24,7 +24,7 @@ fn is_volume(path: &[u16]) -> bool {
 /// The length of the Win32 path `path` without one separator at its end, unless that makes it the name of something else.
 pub(crate) fn len_without_last_separator(path: &[u16]) -> usize {
     match path {
-        [rest @ .., before, last] if is_sep_any_t(*last) && *before != COLON => {
+        [rest @ .., before, last] if is_sep(*last) && *before != COLON => {
             let len = rest.len() + 1;
             len + usize::from(is_volume(&path[..len]))
         }
@@ -66,7 +66,7 @@ fn console_device(device: &[u16]) -> Option<&'static WStr> {
 #[cfg(windows)]
 pub(crate) fn is_bare(path: &[u8]) -> bool {
     match *path {
-        [a, b, b'.' | b'?', c, ..] if [a, b, c].into_iter().all(is_sep_any_t) => true,
+        [a, b, b'.' | b'?', c, ..] if [a, b, c].into_iter().all(is_sep) => true,
         _ => !bun_core::strings::contains_any(path, b"\\/."),
     }
 }

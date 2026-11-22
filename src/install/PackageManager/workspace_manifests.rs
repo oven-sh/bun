@@ -442,8 +442,7 @@ impl WorkspaceManifests {
         if path.is_empty() {
             return None;
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let relative_directory = folder_relative_to_top_level_dir(package_dir, path, &mut buf[..])?;
+        let relative_directory: &[u8] = &folder_relative_to_top_level_dir(package_dir, path)?;
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
         self.root_dependencies
             .get(self.lockfile.buffers.dependencies.as_slice())
@@ -460,9 +459,8 @@ impl WorkspaceManifests {
     }
 
     pub fn contains_package_dir(&self, package_dir: &[u8]) -> bool {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        folder_relative_to_top_level_dir(package_dir, b".", &mut buf[..])
-            .is_some_and(|relative| relative == b".")
+        folder_relative_to_top_level_dir(package_dir, b".")
+            .is_some_and(|relative| relative.as_bytes() == b".")
             || self.workspace_name_at_path(package_dir, b".").is_some()
     }
 

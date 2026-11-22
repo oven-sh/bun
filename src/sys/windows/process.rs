@@ -229,11 +229,12 @@ pub struct Command {
 
 impl Command {
     pub fn resolve(invocation: Invocation) -> Result<Command, E> {
+        const MAX_PATH: usize = 260;
         let error = Win32Error::to_node_e;
         let cwd = invocation.cwd.map_or_else(current_directory, full_path);
         let mut cwd = cwd.map_err(error)?;
         // It fails if there is no room for a separator and a NUL, also if the directory is inherited.
-        if cwd.len() + 2 > super::MAX_PATH {
+        if cwd.len() + 2 > MAX_PATH {
             cwd = short_path(&cwd).map_err(error)?;
         }
         let entries = invocation.environment.into_iter();
@@ -260,7 +261,7 @@ impl Command {
             if program.starts_with(&super::LONG_PATH_PREFIX) && script != program {
                 return Err(E::EINVAL);
             }
-            program.resize(super::MAX_PATH, 0);
+            program.resize(MAX_PATH, 0);
             let len = super::GetSystemDirectoryW(&mut program).map_err(error)?;
             program.truncate(len);
             program.extend_from_slice(bun_core::w!("\\cmd.exe"));

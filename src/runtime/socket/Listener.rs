@@ -35,8 +35,6 @@ use bun_boringssl as boringssl;
 use bun_core::strings;
 #[cfg(windows)]
 use bun_jsc::GlobalRef;
-#[cfg(windows)]
-use bun_node_path as node_path;
 
 bun_output::define_scoped_log!(log, Listener, visible);
 
@@ -799,8 +797,7 @@ impl Listener {
         if path.is_empty() || path[0] == 0 {
             return;
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let _ = bun_sys::unlink(bun_paths::resolve_path::z(path, &mut buf));
+        let _ = bun_sys::unlink(&bun_paths::Path::from(path));
     }
 
     pub(crate) fn get_unix(&self) -> Option<&[u8]> {
@@ -1483,16 +1480,17 @@ pub(crate) fn set_secure_context(handle: Option<&Listener>, context: Option<&Sec
 
 #[cfg(windows)]
 fn is_valid_pipe_name(pipe_name: &[u8]) -> bool {
+    use bun_paths::is_sep;
     // check for valid pipe names
     // at minimum we need to have \\.\pipe\ or \\?\pipe\ + 1 char that is not a separator
     pipe_name.len() > 9
-        && node_path::is_sep_windows_t::<u8>(pipe_name[0])
-        && node_path::is_sep_windows_t::<u8>(pipe_name[1])
+        && is_sep(pipe_name[0])
+        && is_sep(pipe_name[1])
         && (pipe_name[2] == b'.' || pipe_name[2] == b'?')
-        && node_path::is_sep_windows_t::<u8>(pipe_name[3])
+        && is_sep(pipe_name[3])
         && strings::eql(&pipe_name[4..8], b"pipe")
-        && node_path::is_sep_windows_t::<u8>(pipe_name[8])
-        && !node_path::is_sep_windows_t::<u8>(pipe_name[9])
+        && is_sep(pipe_name[8])
+        && !is_sep(pipe_name[9])
 }
 
 #[cfg(windows)]

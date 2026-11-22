@@ -1,6 +1,6 @@
 use core::cmp::Ordering;
 
-use bun_paths::strings;
+use bun_core::strings;
 use bun_semver as Semver;
 use bun_semver::{SlicedString, String};
 
@@ -169,8 +169,8 @@ impl DependencyExt for Dependency {
     ) {
         builder.count(self.name.slice(name_buf));
         builder.count(self.version.literal.slice(version_buf));
-        if let Value::Workspace(workspace) = &self.version.value {
-            builder.count(workspace.slice(version_buf));
+        if let Some((path, _)) = path_unlike_literal(&self.version, version_buf) {
+            builder.count(path.slice(version_buf));
         }
     }
 
@@ -202,12 +202,10 @@ impl DependencyExt for Dependency {
         let new_literal = builder.append_string(self.version.literal.slice(version_buf));
         let new_name = builder.append_string(self.name.slice(name_buf));
 
-        // A workspace edge's path is not always its literal: `Package::parse` links an npm range
-        // (`^1`, `*`, `npm:pkg@1`) to a workspace and keeps the range as the literal.
-        let version = if let Value::Workspace(workspace) = &self.version.value {
+        let version = if let Some((path, value)) = path_unlike_literal(&self.version, version_buf) {
             Version {
                 literal: new_literal,
-                value: Value::Workspace(builder.append_string(workspace.slice(version_buf))),
+                value: value(builder.append_string(path.slice(version_buf))),
             }
         } else {
             let out_slice = builder.string_bytes();
@@ -626,6 +624,25 @@ pub(crate) fn fallback_package_name(location: &[u8]) -> &[u8] {
     }
 }
 
+/// `Package::parse` links a range to a workspace and reads `\` as `/`, and keeps the literal.
+fn path_unlike_literal<'a>(
+    version: &'a Version,
+    buf: &[u8],
+) -> Option<(&'a String, fn(String) -> Value)> {
+    let was_converted = |path: &String| {
+        let (literal, path) = (version.literal.slice(buf), path.slice(buf));
+        !cfg!(windows)
+            && strings::contains_char(literal, b'\\')
+            && !(strings::contains_char(path, b'\\') && strings::contains(literal, path))
+    };
+    match &version.value {
+        Value::Workspace(path) => Some((path, Value::Workspace)),
+        Value::Folder(path) if was_converted(path) => Some((path, Value::Folder)),
+        Value::Symlink(path) if was_converted(path) => Some((path, Value::Symlink)),
+        _ => None,
+    }
+}
+
 /// A `link:` target names a directory unless it is a package name (a `bun link` registration).
 pub(crate) fn is_link_path(target: &[u8]) -> bool {
     !target.is_empty() && !strings::is_npm_package_name(target)
@@ -790,16 +807,7 @@ impl TagExt for Tag {
             return Tag::DistTag;
         }
 
-        if strings::starts_with_windows_drive_letter_t(dependency)
-            // Platform-native separator only
-            // (`/` on POSIX, `/` or `\` on Windows).
-            && {
-                #[cfg(windows)]
-                { matches!(dependency[2], b'/' | b'\\') }
-                #[cfg(not(windows))]
-                { dependency[2] == b'/' }
-            }
-        {
+        if starts_with_drive_letter(dependency) && bun_paths::is_sep(dependency[2]) {
             if is_tarball(dependency) {
                 return Tag::Tarball;
             }
@@ -1122,7 +1130,7 @@ pub(crate) fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u
                 return None;
             }
         }
-        if strings::starts_with_windows_drive_letter_t(&dep[i..]) {
+        if starts_with_drive_letter(&dep[i..]) {
             return Some(&dep[i..]);
         }
     }
@@ -1484,7 +1492,7 @@ pub(crate) fn parse_with_tag(
                 // check for absolute windows paths
                 #[cfg(windows)]
                 {
-                    if protocol == 1 && strings::starts_with_windows_drive_letter_t(dependency) {
+                    if protocol == 1 && starts_with_drive_letter(dependency) {
                         return Some(Version {
                             literal: sliced.value(),
                             value: Value::Folder(sliced.sub(dependency).value()),
@@ -1584,4 +1592,9 @@ fn hgi_to_tag(info: &hosted_git_info::HostedGitInfo) -> Tag {
         | hosted_git_info::HostProvider::Gist
         | hosted_git_info::HostProvider::Sourcehut => Tag::Git,
     }
+}
+
+/// `C:` and at least one more byte.
+fn starts_with_drive_letter(text: &[u8]) -> bool {
+    matches!(text, [letter, b':', _, ..] if letter.is_ascii_alphabetic())
 }

@@ -6,7 +6,8 @@ use std::sync::LazyLock;
 
 use bun_core::ffi::{Zeroable, zeroed};
 use bun_core::{WStr, wstr};
-use bun_paths::w_path_buffer_pool;
+use bun_paths::WPathBuffer;
+use bun_paths::path_buffer_pool::PoolGuard;
 use bun_windows_sys::externs::{
     self as w, FILE_INFORMATION_CLASS as FileClass, FS_INFORMATION_CLASS as VolumeClass,
 };
@@ -72,7 +73,7 @@ pub(super) fn with_attributes_to_open(
 
 /// The NT name that the file calls of kernel32 make of a path.
 pub(super) enum Name {
-    Verbatim(w_path_buffer_pool::Guard, usize),
+    Verbatim(PoolGuard<WPathBuffer>, usize),
     Resolved(w::UNICODE_STRING, w::RTL_RELATIVE_NAME_U),
 }
 
@@ -84,12 +85,13 @@ unsafe fn units(string: &w::UNICODE_STRING) -> &[u16] {
 
 impl Name {
     /// The path is `buf[..len]`.
-    pub(super) fn new(mut buf: w_path_buffer_pool::Guard, len: usize) -> Result<Self, Win32Error> {
+    pub(super) fn new(mut buf: PoolGuard<WPathBuffer>, len: usize) -> Result<Self, Win32Error> {
         if len > 4 && buf.starts_with(&super::LONG_PATH_PREFIX) {
             buf[1] = b'?'.into();
             return Ok(Self::Verbatim(buf, len));
         }
-        let path = WStr::nul_terminate(&mut buf[..], len);
+        buf[len] = 0;
+        let path = WStr::from_buf(&buf[..], len);
         let (mut full, mut relative) = (zeroed(), zeroed());
         // SAFETY: `path` is NUL-terminated, and the others are null or valid out-params.
         let status = unsafe {

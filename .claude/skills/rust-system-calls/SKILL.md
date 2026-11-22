@@ -77,14 +77,13 @@ match bun_sys::unlink(path) {
 
 ## Path Buffers
 
-Use `bun_paths` for joining/normalization and the path-buffer pool to avoid 64 KB stack allocations on Windows:
+Build paths with `bun_paths::Path`. It is NUL-terminated and grows on the heap, which avoids 96 KB stack allocations on Windows:
 
 ```rust
-use bun_paths::{path_buffer_pool, resolve_path::{self, platform}};
+use bun_paths::Path;
 
-let mut buf = path_buffer_pool::get();
-let joined = resolve_path::join_string_buf::<platform::Auto>(&mut *buf, &[dir, name]);
-let file = File::openat(Fd::cwd(), joined, O::RDONLY, 0)?;
+let path = Path::from_parts(&[dir, name]);
+let file = File::open(&path, O::RDONLY, 0)?;
 ```
 
 ## Common Mistakes

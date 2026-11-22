@@ -19,8 +19,6 @@ git log --oneline $(git merge-base HEAD upstream/main)..HEAD   # our patches
 git merge upstream/main
 ```
 
-Before the merge, commit Bun's `patches/boringssl/*.patch` to the fork. The build applies them on top of the pin. `openssl-issuer-selection.patch` changes four expectations in `x509_test.cc`. In `IgnoreExpiredTrustAnchors`, the two rows that trust an expired certificate before a valid one verify without the flag too. In `SignatureVerification`, the two `bad_key_type` issuers give `X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY`.
-
 Resolve conflicts **preserving the fork's additions**. Most conflicts are upstream's periodic `|...|` → `` `...` `` doc-comment restyle landing adjacent to a line we added — keep our line + upstream's comment style. For `include/openssl/nid.h`, keep upstream's new NIDs **and** ours (our NID numbers are from OpenSSL's range and don't collide with BoringSSL's sequential allocation).
 
 ### 2. Verify the merged tree builds
@@ -29,6 +27,7 @@ Resolve conflicts **preserving the fork's additions**. Most conflicts are upstre
 cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release
 ninja -C build crypto_test ssl_test decrepit_test
 build/crypto_test && build/ssl_test && build/decrepit_test
+ninja -C build bssl_shim handshaker && (cd ssl/test/runner && go test)
 ```
 
 This catches mis-resolved conflicts before they reach Bun's CI.
@@ -47,7 +46,6 @@ NEW_SHA=$(git rev-parse HEAD)
 In the bun repo:
 
 - `scripts/build/deps/boringssl.ts` — set `BORINGSSL_COMMIT` to `$NEW_SHA`.
-- `patches/boringssl/*.patch` — delete each file that step 1 committed to the fork, and its entry in `boringssl.ts`.
 - `src/js/node/tls.ts` — three hand-maintained mirrors of BoringSSL tables must be re-derived from the new pin (a test pins the current set, but cannot see upstream additions on its own): `SUPPORTED_ECDH_GROUPS` ← `ssl/ssl_key_share.cc` `kNamedGroups` (every `name` and non-empty `alias`), `_VALID_CIPHERS_SET` ← `ssl/ssl_cipher.cc` `kCiphers`, `CIPHER_LIST_SELECTORS` ← `ssl/ssl_cipher.cc` `kCipherAliases`.
 - Regenerate the source lists (the file's header comment has the exact one-liner). Only `gen/sources.json` is authoritative — diff old vs new and apply the delta:
 
@@ -99,6 +97,8 @@ Then `bun run ci:watch` and fix anything that turns up.
 - **`X509_LAZY_CERT_SET`, `X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS`** — `crypto/x509/{x509_lu,x509_vfy,x_name}.cc`, `include/openssl/x509.h`
 - **`X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE`** (upstream no longer reports it; Node does) — `check_lone_untrusted_leaf` in `crypto/x509/x509_vfy.cc`
 - **OpenSSL's verdicts in the path builder** (attribute-certificate CRLs, revocation of trust anchors, partial chains, `keyUsage`-only anchors, auto-chaining) — `crypto/x509/{x509_vfy,v3_purp}.cc`, `ssl/ssl_x509.cc`
+- **OpenSSL's choice of issuer, purposes, trust settings, policies and error strings** (`X509IssuerSelectionTest` lists the rules, and the bugs of OpenSSL that are left out) — `crypto/x509/{x509_vfy,x509_lu,x509_trs,x509_txt,v3_purp,policy,by_dir}.cc`
+- **A wrong `keyUsage` of the peer is a verification error, not a handshake failure** — `ssl_check_peer_key_usage` and its callers in `ssl/`
 
 If upstream upstreams any of these (check `git grep` on `upstream/main` before re-applying), drop the fork's copy.
 

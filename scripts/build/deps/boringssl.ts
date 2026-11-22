@@ -24,7 +24,7 @@ import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 import { LIBC_ALLOCATION_SYMBOLS, depSourceDir } from "../source.ts";
 
-const BORINGSSL_COMMIT = "fe703e9faa3bfd22b04eb192066856557b7e015c";
+const BORINGSSL_COMMIT = "eed5ebfa129aeb251ecc85f94743d1606307e9dc";
 
 export const boringssl: Dependency = {
   name: "boringssl",
@@ -35,11 +35,6 @@ export const boringssl: Dependency = {
     repo: "oven-sh/boringssl",
     commit: BORINGSSL_COMMIT,
   }),
-
-  patches: [
-    // Choose the issuer, and report the error, that OpenSSL, and so Node.js, does.
-    "patches/boringssl/openssl-issuer-selection.patch",
-  ],
 
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)

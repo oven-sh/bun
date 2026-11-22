@@ -611,14 +611,13 @@ function newNativeSecureContext(options?: TLSOptions | null, cached = false) {
       key = normalizedKey;
       options = { ...options, key };
     }
-    if (!key || !cert || !ca) {
-      options = {
-        ...options,
-        key: key || null,
-        cert: cert || null,
-        ca: ca || null,
-      };
-    }
+    options = {
+      ...options,
+      key: key || null,
+      cert: cert || null,
+      ca: ca || null,
+      caMayBeEmpty: !!ca,
+    };
     if (options.sessionTimeout == null) {
       options = { ...options, sessionTimeout: 0 };
     }
@@ -1473,6 +1472,7 @@ function Server(this: $Node.TLSServer, options?, secureConnectionListener?): voi
         key: normalizePemKeyOption(this.key, this.passphrase),
         cert: this.cert,
         ca: this.ca,
+        caMayBeEmpty: !!this.ca,
         crl: this.crl,
         allowPartialTrustChain: this.allowPartialTrustChain,
         sessionTimeout: this.sessionTimeout ?? 0,

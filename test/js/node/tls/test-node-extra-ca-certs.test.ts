@@ -161,6 +161,13 @@ aWRnaXRzIFB0eSBMdGQwHhcNMTgwNDEwMDgwNzQ4WhcNMjgwNDA3MDgwNzQ4WjBF
       });
     });
 
+    test.concurrent.each(["", "text\n"])("but not a file that holds %j", async content => {
+      expect(await run("none.pem", { "none.pem": content }, `require("node:tls").createSecureContext();`)).toEqual({
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test.concurrent("when the load fails, not when the process exits", async () => {
       using dir = tempDir("extra-ca-warning", {});
       const stderrPath = join(String(dir), "stderr.txt");
@@ -319,7 +326,7 @@ test("NODE_EXTRA_CA_CERTS trusts a self-issued certificate whose keyUsage lacks 
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({
     "dev": { fetch: "ok", http3: "ok", tls: true },
-    "other-key": { fetch: "UNABLE_TO_VERIFY_LEAF_SIGNATURE", http3: "HTTP3HandshakeFailed", tls: false },
+    "other-key": { fetch: "DEPTH_ZERO_SELF_SIGNED_CERT", http3: "HTTP3HandshakeFailed", tls: false },
   });
   expect(exitCode).toBe(0);
 });

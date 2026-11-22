@@ -498,7 +498,7 @@ extern "C" void us_load_system_certificates_macos(STACK_OF(X509) **system_certs)
         if (!x509_cert) continue;
 
         // Only consider CA certificates
-        if (X509_check_ca(x509_cert.get()) == 1 &&
+        if (X509_check_ca(x509_cert.get()) != 0 &&
             is_certificate_trusted_for_policy(security, x509_cert.get(), cert_ref)) {
             sk_X509_push(*system_certs, x509_cert.release());
         }

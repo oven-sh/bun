@@ -157,7 +157,7 @@ describe.concurrent("connection fails before open", () => {
   });
 
   test.each([
-    ["untrusted certificate", {}, "self signed certificate", "DEPTH_ZERO_SELF_SIGNED_CERT"],
+    ["untrusted certificate", {}, "self-signed certificate", "DEPTH_ZERO_SELF_SIGNED_CERT"],
     [
       "certificate hostname mismatch",
       { tls: { ca: tls.cert, serverName: "evil.test" } },

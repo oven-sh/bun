@@ -283,6 +283,42 @@ test("the first of two copies of a root in `ca` is the one that counts", async (
   expect(await validationErrorCodes("root-not-a-ca.pem", "root.pem")).toEqual(["INVALID_CA"]);
 });
 
+test("`ca` is read as by node:tls", async () => {
+  const read = (name: string) => readFileSync(join(import.meta.dir, "..", "tls", "fixtures", "trust-anchor", name));
+  const identity = {
+    keys: [createPrivateKey(read("leaf.key"))],
+    certs: [Buffer.concat([read("leaf.pem"), read("intermediate.pem")])],
+  };
+  await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });
+  async function validationErrorCode(...ca: Buffer[]) {
+    const session = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      ca,
+    } as SessionOptions);
+    const info = await session.opened;
+    await session.close();
+    return info.validationErrorCode;
+  }
+  const withSettings = (tag: string) => {
+    const serverAuth = Buffer.from(`300c${tag}0a06082b06010505070301`, "hex");
+    const base64 = Buffer.concat([new X509Certificate(read("root.pem")).raw, serverAuth]).toString("base64");
+    return Buffer.from(`-----BEGIN TRUSTED CERTIFICATE-----\n${base64}\n-----END TRUSTED CERTIFICATE-----\n`);
+  };
+  expect({
+    trusted: await validationErrorCode(withSettings("30")),
+    rejected: await validationErrorCode(withSettings("a0")),
+    text: await validationErrorCode(Buffer.from("text")),
+    textFirst: await validationErrorCode(Buffer.from("text"), read("root.pem")),
+  }).toEqual({
+    trusted: undefined,
+    rejected: "CERT_REJECTED",
+    text: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    textFirst: undefined,
+  });
+});
+
 test("verifyPeer 'strict' and 'auto' refuse a certificate with a blocked public key", async () => {
   // Unlike agent6's, this certificate names its host, which both modes check.
   const fixtures = join(import.meta.dir, "..", "tls", "fixtures");

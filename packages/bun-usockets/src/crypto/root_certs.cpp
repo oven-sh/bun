@@ -73,6 +73,30 @@ extern "C" int us_no_password_callback(char *buf, int size, int rwflag, void *u)
   return 0;
 }
 
+extern "C" X509 *us_pem_read_ca(BIO *in, int with_trust, CRYPTO_BUFFER **out_der) {
+  for (;;) {
+    uint8_t *out = nullptr;
+    long len = 0;
+    if (!PEM_bytes_read_bio(&out, &len, nullptr, with_trust ? PEM_STRING_X509_TRUSTED : PEM_STRING_X509, in,
+                            us_no_password_callback, nullptr)) {
+      return nullptr;
+    }
+    us_unique_ptr<uint8_t, OPENSSL_free> block{out};
+    const uint8_t *end = out;
+    us_unique_ptr<X509, X509_free> cert{(with_trust ? d2i_X509_AUX : d2i_X509)(nullptr, &end, len)};
+    if (cert != nullptr) {
+      if (out_der != nullptr && (*out_der = CRYPTO_BUFFER_new(out, end - out, nullptr)) == nullptr) return nullptr;
+      return cert.release();
+    }
+    if (!X509_LAZY_CERT_SET_can_index(out, len)) {
+      OPENSSL_PUT_ERROR(PEM, ERR_R_ASN1_LIB);
+      return nullptr;
+    }
+    ERR_clear_error();
+  }
+}
+
+// As in Node, what comes before an error is kept.
 static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename) {
   BIO *in = NULL;
   us_x509_stack_ptr certs;
@@ -97,7 +121,7 @@ static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename)
     goto end;
   }
 
-  while (us_unique_ptr<X509, X509_free> x{PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL)}) {
+  while (us_unique_ptr<X509, X509_free> x{us_pem_read_ca(in, 0, NULL)}) {
     if (!sk_X509_push(certs.get(), x.get())) {
       OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
       goto end;
@@ -109,16 +133,8 @@ static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename)
   // Ignore error if its EOF/no start line found.
   if (ERR_GET_LIB(last_err) == ERR_LIB_PEM && ERR_GET_REASON(last_err) == PEM_R_NO_START_LINE) {
     ERR_clear_error();
-  } else {
-    goto end;
+    return certs.release();
   }
-
-  if (sk_X509_num(certs.get()) == 0) {
-    OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
-    goto end;
-  }
-
-  return certs.release();
 
 end:
   char error_msg[256];
@@ -126,7 +142,7 @@ end:
   BUN__warn__extra_ca_load_failed(filename, error_msg);
   ERR_clear_error();
 
-  return NULL;
+  return certs.release();
 }
 
 // The bundled Mozilla roots (embedded as DER by src/runtime/socket/bundled_root_certs.rs), indexed by subject but not
@@ -182,7 +198,7 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
 // --use-openssl-ca the store has no bundled set, so it needs the whole file.
 struct us_openssl_default_cert_file {
   X509_LAZY_CERT_SET *certs = nullptr;
-  STACK_OF(X509) *trusted = nullptr; // TRUSTED CERTIFICATE blocks carry auxiliary data the lazy set does not model
+  STACK_OF(X509) *trusted = nullptr; // TRUSTED CERTIFICATE blocks, which --use-openssl-ca leaves in their place in `certs`
   STACK_OF(X509_CRL) *crls = nullptr;
 };
 
@@ -216,8 +232,8 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
 
     const uint8_t *const *bundled_certs = nullptr;
     const size_t *bundled_lens = nullptr;
-    size_t bundled_count =
-        us_ca_store() == us_ca_store_t::openssl ? 0 : us_bundled_root_certs_der(&bundled_certs, &bundled_lens);
+    bool whole_file = us_ca_store() == us_ca_store_t::openssl;
+    size_t bundled_count = whole_file ? 0 : us_bundled_root_certs_der(&bundled_certs, &bundled_lens);
     std::unordered_set<std::string_view> bundled;
     bundled.reserve(bundled_count);
     for (size_t i = 0; i < bundled_count; i++) {
@@ -227,6 +243,11 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
     us_crypto_buffers certs;
     us_x509_stack_ptr trusted{sk_X509_new_null()};
     us_unique_ptr<STACK_OF(X509_CRL), us_x509_crl_stack_free> crls{sk_X509_CRL_new_null()};
+    auto add_lazily = [&](const uint8_t *der, size_t der_len) {
+      CRYPTO_BUFFER *buf = CRYPTO_BUFFER_new(der, der_len, nullptr);
+      if (buf != nullptr) certs.push_back(buf);
+      return buf != nullptr;
+    };
     bool ok = trusted != nullptr && crls != nullptr;
     while (ok) {
       us_pem_block block;
@@ -245,15 +266,16 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
         // encrypted private key sharing the file) are skipped, headers and all, as PEM_X509_INFO_read_bio does.
         ok = false;
       } else if (strcmp(name, PEM_STRING_X509) == 0 || strcmp(name, PEM_STRING_X509_OLD) == 0) {
-        if (!bundled.count(std::string_view(reinterpret_cast<const char *>(data), len))) {
-          CRYPTO_BUFFER *buf = CRYPTO_BUFFER_new(data, len, nullptr);
-          ok = buf != nullptr;
-          if (ok) certs.push_back(buf);
-        }
+        // What follows the certificate is ignored, as by d2i_X509.
+        CBS rest, cert;
+        CBS_init(&rest, data, len);
+        ok = CBS_get_asn1_element(&rest, &cert, CBS_ASN1_SEQUENCE) &&
+             (bundled.count(std::string_view(reinterpret_cast<const char *>(data), CBS_len(&cert))) ||
+              add_lazily(data, CBS_len(&cert)));
       } else if (strcmp(name, PEM_STRING_X509_TRUSTED) == 0) {
         us_unique_ptr<X509, X509_free> cert{d2i_X509_AUX(nullptr, &p, len)};
-        ok = cert != nullptr && sk_X509_push(trusted.get(), cert.get());
-        if (ok) cert.release();
+        ok = cert != nullptr && (whole_file ? add_lazily(data, p - data) : sk_X509_push(trusted.get(), cert.get()));
+        if (ok && !whole_file) cert.release();
       } else if (strcmp(name, PEM_STRING_X509_CRL) == 0) {
         us_unique_ptr<X509_CRL, X509_CRL_free> crl{d2i_X509_CRL(nullptr, &p, len)};
         ok = crl != nullptr && sk_X509_CRL_push(crls.get(), crl.get());

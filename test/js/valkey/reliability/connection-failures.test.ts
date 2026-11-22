@@ -2403,7 +2403,7 @@ describe("Valkey: Recovering After fail()", () => {
         name: "a certificate that is not trusted",
         secure: true,
         options: { tls: { rejectUnauthorized: true } },
-        reason: "DEPTH_ZERO_SELF_SIGNED_CERT: self signed certificate",
+        reason: "DEPTH_ZERO_SELF_SIGNED_CERT: self-signed certificate",
       },
       {
         name: "a certificate for another name",

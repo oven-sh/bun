@@ -476,7 +476,8 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   } = options;
 
   name += ":";
-  if (ca) name += poolKeyPart(ca);
+  // Unlike in Node, where a `ca` that trusts nothing gets the sockets and sessions of the default roots.
+  if (ca) name += `${poolKeyPart(ca)}` || "[]";
 
   name += ":";
   if (cert) name += poolKeyPart(cert);

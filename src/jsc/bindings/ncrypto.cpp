@@ -1069,9 +1069,7 @@ bool X509View::isCA() const
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return false;
-    // BoringSSL also answers 1 for a v1 root, where OpenSSL answers 2.
-    X509* cert = const_cast<X509*>(cert_);
-    return X509_check_ca(cert) == 1 && (X509_get_extension_flags(cert) & EXFLAG_BCONS);
+    return X509_check_ca(const_cast<X509*>(cert_)) == 1;
 }
 
 bool X509View::isIssuedBy(const X509View& issuer) const

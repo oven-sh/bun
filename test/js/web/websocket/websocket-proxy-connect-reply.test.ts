@@ -205,7 +205,7 @@ describe("101 response received through a TLS tunnel", () => {
     const { promise, resolve } = Promise.withResolvers<unknown>();
     ws.addEventListener("error", event => resolve((event as ErrorEvent).error.code));
     expect({ outcome: await greetingOrFailure(ws), code: await promise }).toEqual({
-      outcome: "TLS handshake failed: self signed certificate",
+      outcome: "TLS handshake failed: self-signed certificate",
       code: "DEPTH_ZERO_SELF_SIGNED_CERT",
     });
   });

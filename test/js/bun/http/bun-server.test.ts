@@ -556,12 +556,12 @@ describe.concurrent("Server", () => {
     {
       await expect(
         async () => await fetch(server.url, { tls: { rejectUnauthorized: true } }).then(res => res.text()),
-      ).toThrow("self signed certificate");
+      ).toThrow("self-signed certificate");
     }
 
     {
       using _ = rejectUnauthorizedScope(true);
-      await expect(async () => await fetch(server.url).then(res => res.text())).toThrow("self signed certificate");
+      await expect(async () => await fetch(server.url).then(res => res.text())).toThrow("self-signed certificate");
     }
 
     {

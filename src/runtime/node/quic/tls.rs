@@ -349,18 +349,14 @@ unsafe fn load_crl_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static 
 fn load_ca_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
     let store = ssl::SSL_CTX_get_cert_store(ctx).expect("a new SSL_CTX has a store");
     let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for CA")?;
-    let mut added = 0;
-    while let Some(cert) = bio.read_x509() {
+    // SAFETY: `bio` is live, and the encoding is not asked for.
+    while let Some(cert) = unsafe { us_pem_read_ca(bio.as_ptr(), 1, core::ptr::null_mut()) } {
         if ssl::X509_STORE_add_cert(store, &cert) != 1 {
             ssl::ERR_clear_error();
             return Err("failed to add CA certificate to trust store");
         }
-        added += 1;
     }
     ssl::ERR_clear_error();
-    if added == 0 {
-        return Err("CA PEM contained no certificates");
-    }
     Ok(())
 }
 
@@ -528,6 +524,12 @@ unsafe extern "C" {
     fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
     /// openssl.cpp: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
     fn us_ssl_ctx_reject_blocked_keys(ctx: *mut ssl::SSL_CTX);
+    /// root_certs.cpp: how every other TLS context of Bun reads `ca`.
+    fn us_pem_read_ca(
+        bio: *mut ssl::BIO,
+        with_trust: c_int,
+        out_der: *mut *mut ssl::CRYPTO_BUFFER,
+    ) -> Option<ssl::OwnedX509>;
 }
 
 /// node's `X509_V_ERR_UNSPECIFIED`, reported when a peer sent no certificate

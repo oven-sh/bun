@@ -527,6 +527,8 @@ struct us_bun_socket_context_options_t {
     unsigned int crl_count;
     /* Sets X509_V_FLAG_PARTIAL_CHAIN on the context's certificate store. */
     int allow_partial_trust_chain;
+    /* `ca` was given, and trusts nothing if it holds no certificate, as in Node. */
+    int ca_may_be_empty;
     /* Colon-separated signature algorithm list applied via
      * SSL_CTX_set1_sigalgs_list. */
     const char *sigalgs;
@@ -568,7 +570,7 @@ void us_ssl_ctx_enable_http2_alpn(struct ssl_ctx_st *ssl_ctx, int allow_http1);
 int us_socket_alpn_is_h2(us_socket_r s);
 long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
- * returns 0 when nothing could be added. */
+ * returns 0 when there is no memory. */
 int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 /* The client half of us_internal_ssl_attach, for an SSL that no us_socket_t drives. */
 void us_internal_ssl_client_verify_defaults(struct ssl_st *ssl, struct ssl_ctx_st *ctx);

@@ -168,11 +168,6 @@ JSC_DEFINE_HOST_FUNCTION(getSystemCACertificates, (JSC::JSGlobalObject * globalO
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
 }
 
-static int noPasswordCallback(char*, int, int, void*)
-{
-    return 0;
-}
-
 // One input slot for the PEM parse pass. String inputs hold their UTF-8 bytes
 // in a CString (the WTF string's backing is not guaranteed UTF-8).
 // ArrayBufferView inputs hold the view pointer so pass 2 can read
@@ -224,12 +219,12 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     });
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Pass 2: PEM_read_bio_X509 over each span. ncrypto's RAII pointers own
+    // Pass 2: us_pem_read_ca over each span. ncrypto's RAII pointers own
     // the BIO/X509 so no manual cleanup is interleaved with error checks; any
     // BoringSSL error is recorded and thrown below, after all RAII scopes exit.
     // No user JS runs in this pass (nothing here dispatches to JS), so a view's
     // backing store cannot be detached out from under the span read below.
-    WTF::Vector<WTF::String, 16> pems;
+    WTF::Vector<std::pair<std::array<uint8_t, SHA_DIGEST_LENGTH>, WTF::String>, 16> pems;
     WTF::HashSet<WTF::String> seen;
     unsigned long parseError = 0;
     bool oom = false;
@@ -254,9 +249,10 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
             oom = true;
             break;
         }
-        while (auto x509 = ncrypto::X509Pointer(PEM_read_bio_X509(bio.get(), nullptr, noPasswordCallback, nullptr))) {
+        while (auto x509 = ncrypto::X509Pointer(us_pem_read_ca(bio.get(), 0, nullptr))) {
+            std::array<uint8_t, SHA_DIGEST_LENGTH> fingerprint;
             auto out = ncrypto::BIOPointer::NewMem();
-            if (!out || PEM_write_bio_X509(out.get(), x509.get()) != 1) {
+            if (!out || PEM_write_bio_X509(out.get(), x509.get()) != 1 || X509_digest(x509.get(), EVP_sha1(), fingerprint.data(), nullptr) != 1) {
                 oom = !out;
                 parseError = out ? ERR_peek_last_error() : 0;
                 break;
@@ -264,7 +260,7 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
             BUF_MEM* mem = out;
             auto pem = WTF::String::fromUTF8(std::span { mem->data, mem->length });
             if (seen.add(pem).isNewEntry)
-                pems.append(WTF::move(pem));
+                pems.append({ fingerprint, WTF::move(pem) });
         }
         if (oom || parseError) break;
         // PEM_R_NO_START_LINE is the normal end-of-stream marker.
@@ -289,8 +285,10 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
         return {};
     }
 
+    // Node keeps them in a set ordered by X509_cmp, which in OpenSSL compares SHA-1 fingerprints.
+    std::ranges::sort(pems, {}, &decltype(pems)::ValueType::first);
     JSC::MarkedArgumentBuffer results;
-    for (auto& pem : pems) {
+    for (auto& [fingerprint, pem] : pems) {
         results.append(JSC::jsString(vm, pem));
         if (results.hasOverflowed()) {
             throwOutOfMemoryError(globalObject, scope);

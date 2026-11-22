@@ -45,7 +45,7 @@ extern SSL_CTX *us_ssl_ctx_build_raw(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
 extern int us_ssl_ctx_set_verify_signature_algorithms(SSL_CTX *ctx);
-extern int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose);
+extern int us_x509_verify_chain(X509_STORE_CTX *ctx);
 extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl);
 
 extern size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
@@ -1370,7 +1370,7 @@ static enum ssl_verify_result_t us_quic_client_verify(SSL *ssl, uint8_t *out_ale
     if (!vctx) return ssl_verify_invalid;
     if (X509_STORE_CTX_init(vctx.get(), store, leaf, chain) != 1) return ssl_verify_invalid;
     X509_STORE_CTX_set_default(vctx.get(), "ssl_server");
-    if (us_x509_verify_cert(vctx.get(), X509_PURPOSE_SSL_SERVER) != 1) return ssl_verify_invalid;
+    if (us_x509_verify_chain(vctx.get()) != 1) return ssl_verify_invalid;
     const char *hostname = qs->hostname.get();
     if (hostname && hostname[0]) {
         unsigned char addr[16];

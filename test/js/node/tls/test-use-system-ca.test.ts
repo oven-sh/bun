@@ -375,6 +375,11 @@ describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
     using dir = tempDir("default-ca-dir", { [name]: ca1 });
     expect(await connectWith({ SSL_CERT_DIR: String(dir) })).toBe(expected);
   });
+
+  test("a file in the $SSL_CERT_DIR hash directory that does not load does not hide the next one", async () => {
+    using dir = tempDir("default-ca-dir", { "468820ba.0": "not a certificate", "468820ba.1": ca1 });
+    expect(await connectWith({ SSL_CERT_DIR: String(dir) })).toBe("authorized");
+  });
 });
 
 describe.concurrent("--use-openssl-ca", () => {
@@ -452,7 +457,7 @@ describe.concurrent("--use-openssl-ca", () => {
       connect: (port: number) => `fetch("https://127.0.0.1:${port}")`,
     },
     "tls.connect": {
-      trusted: "ERR_SSL_KEY_USAGE_BIT_INCORRECT",
+      trusted: "INVALID_PURPOSE",
       connect: (port: number) => `new Promise((resolve, reject) => require("node:tls").connect({
         host: "127.0.0.1", port: ${port}, maxVersion: "TLSv1.2", checkServerIdentity() {},
       }).on("error", reject))`,

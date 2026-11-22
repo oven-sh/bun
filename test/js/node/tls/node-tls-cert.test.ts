@@ -526,7 +526,7 @@ it("Server sent their CA, wrongly, but its OK since we know the CA locally.", as
   });
 });
 
-it.todo('Confirm client support for "BEGIN TRUSTED CERTIFICATE".', async () => {
+it('Confirm client support for "BEGIN TRUSTED CERTIFICATE".', async () => {
   await connect({
     client: {
       key: clientTls.key,
@@ -543,7 +543,7 @@ it.todo('Confirm client support for "BEGIN TRUSTED CERTIFICATE".', async () => {
   });
 });
 
-it.todo('Confirm server support for "BEGIN TRUSTED CERTIFICATE".', async () => {
+it('Confirm server support for "BEGIN TRUSTED CERTIFICATE".', async () => {
   await connect({
     client: {
       key: clientTls.key,
@@ -786,7 +786,7 @@ it("tls.connect should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
   }
 });
 
-it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", async () => {
+it("tls.connect should use NODE_EXTRA_CA_CERTS up to an invalid cert", async () => {
   const mixedValidAndInvalidCertsBundlePath = join(tmpdirSync(), "mixed-valid-and-invalid-certs-bundle.pem");
   await Bun.write(mixedValidAndInvalidCertsBundlePath, `${invalidTls.cert}\n${serverTls.ca}`);
 
@@ -817,10 +817,10 @@ it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", 
     }),
   );
 
-  for (const { stderr, exitCode } of results) {
+  for (const { stderr } of results) {
     expect(stderr).toContain("Warning: Ignoring extra certs from");
-    expect(exitCode).toBe(1);
   }
+  expect(results.map(result => result.exitCode)).toEqual([1, 0]);
 });
 describe("tls ciphers should work", () => {
   [
@@ -1001,7 +1001,7 @@ describe("expired or not-yet-valid CA in the trust set", () => {
     });
   }
 
-  it("a CA with a malformed validity field is rejected when the context is created, not ignored", () => {
+  it("a CA with a malformed validity field is neither an anchor nor in the way", async () => {
     const der = Buffer.from(F["int-valid"].replace(/-----[^\n]+-----|\s/g, ""), "base64");
     // notBefore is a 13-byte UTCTime (tag 0x17, length 0x0d); corrupt one of its digits.
     const notBefore = der.indexOf(Buffer.from([0x17, 0x0d]));
@@ -1009,7 +1009,10 @@ describe("expired or not-yet-valid CA in the trust set", () => {
     const bad = Buffer.from(der);
     bad[notBefore + 2] = 0x58; // 'X'
     const pem = `-----BEGIN CERTIFICATE-----\n${bad.toString("base64")}\n-----END CERTIFICATE-----\n`;
-    expect(() => tls.createSecureContext({ ca: [F.root, pem] })).toThrow();
+    expect([
+      await connect(F.leaf, [pem], { allowPartialTrustChain: true }),
+      await connect(F.leaf + F["int-valid"], [pem, F.root]),
+    ]).toEqual(["UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "authorized"]);
   });
 });
 
@@ -1112,6 +1115,9 @@ describe("several certificates match one issuer", () => {
   const eku = (purpose: Buffer) => extension("551d25", seq(purpose));
   const unknownCritical = extension("2a0304", hex("0500"), true);
   const permitOnlyExampleCom = extension("551d1e", seq(tlv(0xa0, seq(tlv(0x82, Buffer.from("example.com"))))), true);
+  const netscapeTypes = { client: "0780", server: "0640", sslCA: "0204", mailCA: "0102" };
+  const netscapeType = (type: keyof typeof netscapeTypes, critical = false) =>
+    extension("6086480186f8420101", tlv(0x03, hex(netscapeTypes[type])), critical);
   const subjectKeyId = (id: string) => extension("551d0e", tlv(0x04, hex(id)));
   const authorityKeyId = (id: string) => extension("551d23", seq(tlv(0x80, hex(id))));
   const localhost = extension("551d11", seq(tlv(0x82, Buffer.from("localhost")), tlv(0x87, hex("7f000001"))));
@@ -1122,20 +1128,28 @@ describe("several certificates match one issuer", () => {
   const key = leafKey.privateKey.export({ type: "pkcs8", format: "pem" }) as string;
   const padding = { shorter: 1, usual: 100, longer: 200 };
   type Size = keyof typeof padding;
-  type Options = { size?: Size; subjectKey?: KeyPair; signer?: KeyPair; issuer?: string; from?: string; to?: string };
+  type Options = {
+    size?: Size;
+    subjectKey?: KeyPair;
+    signer?: KeyPair;
+    issuer?: string;
+    from?: string;
+    to?: string;
+    v1?: boolean;
+  };
 
   let serial = 0x100;
   function mint(subject: Name, issuedBy: Name, extensions: Buffer[], options: Options = {}) {
     const { size = "usual", subjectKey = caKey, signer = caKey, issuer = issuedBy } = options;
     const tbs = seq(
-      hex("a003020102"),
+      hex(options.v1 ? "" : "a003020102"),
       tlv(0x02, hex((serial++).toString(16).padStart(4, "0"))),
       algorithm(signer),
       dn(issuer),
       seq(time(`${options.from ?? "2020"}0101000000Z`), time(`${options.to ?? "2120"}0101000000Z`)),
       dn(subject),
       subjectKey.publicKey.export({ type: "spki", format: "der" }),
-      tlv(0xa3, seq(...extensions, extension("2a0305", tlv(0x04, Buffer.alloc(padding[size]))))),
+      options.v1 ? hex("") : tlv(0xa3, seq(...extensions, extension("2a0305", tlv(0x04, Buffer.alloc(padding[size]))))),
     );
     return armor("CERTIFICATE", signed(tbs, signer));
   }
@@ -1156,6 +1170,11 @@ describe("several certificates match one issuer", () => {
     return armor("X509 CRL", signed(tbs, caKey));
   }
 
+  const trustOnly = (purpose: Buffer) => seq(seq(purpose));
+  const reject = (purpose: Buffer) => seq(tlv(0xa0, purpose));
+  const withSettings = (pem: string, settings: Buffer, label = "TRUSTED CERTIFICATE") =>
+    armor(label, Buffer.concat([new X509Certificate(pem).raw, settings]));
+
   const root = mint("root", "root", ca);
   const intermediate = mint("intermediate", "root", ca);
   const leaf = leafOf("intermediate");
@@ -1172,6 +1191,7 @@ describe("several certificates match one issuer", () => {
     ["an unknown critical extension", [...ca, unknownCritical], {}, "UNSPECIFIED"],
     ["pathlen:0", [pathLen0, keyCertSign], {}, "PATH_LENGTH_EXCEEDED"],
     ["name constraints", [...ca, permitOnlyExampleCom], {}, "UNSPECIFIED"],
+    ["a Netscape type for e-mail", [netscapeType("mailCA")], {}, "INVALID_PURPOSE"],
     ["another key", ca, { subjectKey: otherKey, signer: otherKey }, "CERT_SIGNATURE_FAILURE"],
     ["an unknown issuer", ca, { issuer: "unknown" }, "UNABLE_TO_GET_ISSUER_CERT"],
   ];
@@ -1201,23 +1221,33 @@ describe("several certificates match one issuer", () => {
       socket.destroy();
     }
   }
-  async function verify(cert: string, ca: string[], options?: tls.ConnectionOptions) {
+  async function verify(cert: string, ca: string | string[], options?: tls.ConnectionOptions) {
     await using server = await serve(cert);
     return await connect(server.port, { ca, ...options });
   }
-  /** The last certificate that getPeerCertificate(true) links to. */
-  async function rootOf(cert: string, ca: string[]) {
+  async function verifyClient(cert: string, ca: string | string[]) {
+    await using server = await serve(chain, { ca, requestCert: true, rejectUnauthorized: false });
+    const accepted = once(server, "secureConnection");
+    expect(await connect(server.port, { key, cert, ca: root, maxVersion: "TLSv1.2" })).toBe("authorized");
+    const [peer] = (await accepted) as [TLSSocket];
+    return peer.authorized ? "authorized" : String(peer.authorizationError);
+  }
+  /** The certificates that getPeerCertificate(true) links. */
+  async function linked(cert: string, ca: string[]) {
     await using server = await serve(cert);
     const socket = tls.connect({ host: "127.0.0.1", port: server.port, ca, rejectUnauthorized: false });
     try {
       await once(socket, "secureConnect");
-      let last = socket.getPeerCertificate(true);
-      while (last.issuerCertificate && last.issuerCertificate !== last) last = last.issuerCertificate;
-      return armor("CERTIFICATE", last.raw);
+      const certs = new Set<tls.DetailedPeerCertificate>();
+      for (let cert = socket.getPeerCertificate(true); cert && !certs.has(cert); cert = cert.issuerCertificate) {
+        certs.add(cert);
+      }
+      return [...certs].map(cert => armor("CERTIFICATE", cert.raw));
     } finally {
       socket.destroy();
     }
   }
+  const rootOf = async (cert: string, ca: string[]) => (await linked(cert, ca)).at(-1);
 
   describe.each(["shorter", "longer"] as const)("a %s copy", size => {
     describe.each([
@@ -1287,19 +1317,10 @@ describe("several certificates match one issuer", () => {
 
     it("for the certificate of a client", async () => {
       const forServers = mint("root", "root", [...ca, eku(serverAuth)], { size });
-      async function verdict(ca: string[]) {
-        await using server = await serve(chain, { ca, requestCert: true, rejectUnauthorized: false });
-        const accepted = once(server, "secureConnection");
-        expect(await connect(server.port, { key, cert: clientChain, ca: root, maxVersion: "TLSv1.2" })).toBe(
-          "authorized",
-        );
-        const [peer] = (await accepted) as [TLSSocket];
-        return peer.authorized ? "authorized" : String(peer.authorizationError);
-      }
-      expect([await verdict([root, forServers]), await verdict([forServers, root])]).toEqual([
-        "authorized",
-        "INVALID_PURPOSE",
-      ]);
+      expect([
+        await verifyClient(clientChain, [root, forServers]),
+        await verifyClient(clientChain, [forServers, root]),
+      ]).toEqual(["authorized", "INVALID_PURPOSE"]);
     });
 
     it("that is revoked", async () => {
@@ -1496,7 +1517,25 @@ describe("several certificates match one issuer", () => {
 
   // OpenSSL takes it, though its manual asks for "a certificate with suitable key usage".
   it("a copy that may not sign certificates is passed over, unlike in Node.js", async () => {
-    expect(await verify(chain, [mint("root", "root", [isCA, digitalSignature]), root])).toBe("authorized");
+    const mayNotSign = mint("root", "root", [isCA, digitalSignature]);
+    expect(await verify(chain, [mayNotSign, root])).toBe("authorized");
+    expect(await rootOf(chain, [mayNotSign, root])).toBe(root);
+  });
+
+  it("a copy that may not sign certificates gives the error when there is no other path", async () => {
+    const mayNotSign = mint("root", "root", [isCA, digitalSignature]);
+    expect({
+      alone: await verify(chain, [mayNotSign]),
+      beforeOneThatExpired: await verify(chain, [mayNotSign, copy("a validity that ended")]),
+      beforeOneOfAnotherKey: await verify(chain, [mayNotSign, copy("another key")]),
+      sent: await verify(leaf + mint("intermediate", "root", [isCA, digitalSignature]), [root]),
+    }).toEqual({
+      alone: "UNSPECIFIED",
+      beforeOneThatExpired: "UNSPECIFIED",
+      beforeOneOfAnotherKey: "UNSPECIFIED",
+      sent: "UNSPECIFIED",
+    });
+    expect(await rootOf(chain, [copy("a validity that ended"), mayNotSign])).toBe(mayNotSign);
   });
 
   describe("a self-issued certificate", () => {
@@ -1527,6 +1566,19 @@ describe("several certificates match one issuer", () => {
       );
     });
 
+    it("that may not sign certificates is self-signed all the same", async () => {
+      const pinned = selfSigned([notCA, digitalSignature]);
+      expect({
+        unknown: await verify(pinned, [root]),
+        sameKey: await verify(pinned, [selfSigned([isCA])]),
+        linked: await linked(pinned, [pinned, selfSigned([isCA])]),
+      }).toEqual({
+        unknown: "DEPTH_ZERO_SELF_SIGNED_CERT",
+        sameKey: "DEPTH_ZERO_SELF_SIGNED_CERT",
+        linked: [pinned, pinned, pinned],
+      });
+    });
+
     it("that another key signed needs its issuer", async () => {
       const issuer = mint("self", "self", [...ca, subjectKeyId("01")]);
       const extensions = [notCA, digitalSignature, subjectKeyId("02"), authorityKeyId("01")];
@@ -1551,6 +1603,244 @@ describe("several certificates match one issuer", () => {
       const issued = selfSigned([notCA, digitalSignature], { signer: caKey });
       expect(await verify(issued, [mint("self", "self", ca)])).toBe("authorized");
     });
+  });
+
+  describe("trust settings", () => {
+    const anyPurpose = oid("551d2500");
+
+    it.each([
+      ["none", hex(""), "authorized", "authorized"],
+      ["trusted for servers", trustOnly(serverAuth), "authorized", "INVALID_PURPOSE"],
+      ["trusted for clients", trustOnly(clientAuth), "INVALID_PURPOSE", "authorized"],
+      ["trusted for anything", trustOnly(anyPurpose), "authorized", "authorized"],
+      ["rejected for servers", reject(serverAuth), "INVALID_PURPOSE", "authorized"],
+      ["rejected for clients", reject(clientAuth), "authorized", "INVALID_PURPOSE"],
+      ["rejected for anything", reject(anyPurpose), "INVALID_PURPOSE", "INVALID_PURPOSE"],
+    ])("of a root: %s", async (_, settings, server, client) => {
+      const trusted = withSettings(root, settings);
+      const secureContext = tls.createSecureContext();
+      secureContext.context.addCACert(trusted);
+      expect({
+        ca: await verify(chain, trusted),
+        plainLabel: await verify(chain, withSettings(root, settings, "CERTIFICATE")),
+        addCACert: await verify(chain, [], { secureContext }),
+        client: await verifyClient(clientChain, trusted),
+      }).toEqual({ ca: server, plainLabel: server, addCACert: server, client });
+    });
+
+    it("are those of the first copy", async () => {
+      const rejected = withSettings(root, reject(serverAuth));
+      const added = (ca: string, added: string) => {
+        const secureContext = tls.createSecureContext({ ca });
+        secureContext.context.addCACert(added);
+        return verify(chain, [], { secureContext });
+      };
+      expect([
+        await verify(chain, [root, rejected]),
+        await verify(chain, [rejected, root]),
+        await added(root, rejected),
+        await added(rejected, root),
+      ]).toEqual(["authorized", "INVALID_PURPOSE", "authorized", "INVALID_PURPOSE"]);
+    });
+
+    it("make an anchor of an intermediate, and come before extendedKeyUsage", async () => {
+      expect([
+        await verify(leaf, withSettings(intermediate, trustOnly(serverAuth))),
+        await verify(chain, withSettings(copy("extendedKeyUsage=clientAuth"), trustOnly(serverAuth))),
+        await verify(chain, withSettings(copy("CA:FALSE"), trustOnly(serverAuth))),
+      ]).toEqual(["authorized", "authorized", "INVALID_CA"]);
+    });
+
+    it("are not read from what a peer sends", async () => {
+      expect(
+        await verify(leaf + withSettings(intermediate, trustOnly(serverAuth), "CERTIFICATE"), [unrelated[0]]),
+      ).toBe("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+    });
+
+    it("that reject a CA hold when it is out of date, or may not sign", async () => {
+      const expired = copy("a validity that ended", "usual", "intermediate");
+      const mayNotSign = mint("intermediate", "root", [isCA, digitalSignature]);
+      expect([
+        await verify(chain, [root, withSettings(expired, reject(serverAuth))]),
+        await verify(chain, [root, withSettings(mayNotSign, reject(serverAuth))]),
+      ]).toEqual(["CERT_HAS_EXPIRED", "UNSPECIFIED"]);
+    });
+
+    it("that reject a leaf hold when its issuer is trusted, unlike in Node.js", async () => {
+      expect(await verify(chain, [root, withSettings(leaf, reject(serverAuth))])).toBe("CERT_REJECTED");
+    });
+
+    it("do not extend the validity of an intermediate, unlike in Node.js", async () => {
+      const expired = copy("a validity that ended", "usual", "intermediate");
+      expect(await verify(leaf, withSettings(expired, trustOnly(serverAuth)))).toBe("CERT_HAS_EXPIRED");
+    });
+
+    it("apply to fetch, and to caFile", async () => {
+      await using server = await serve(chain);
+      using dir = tempDir("trusted-ca-file", {
+        "trusted.pem": withSettings(root, trustOnly(serverAuth)),
+        "rejected.pem": withSettings(root, reject(serverAuth)),
+      });
+      const get = (tls: Bun.TLSOptions) =>
+        fetch(`https://127.0.0.1:${server.port}`, { tls, keepalive: false }).then(
+          response => response.text(),
+          error => error.code,
+        );
+      const outcomes: string[] = [];
+      for (const name of ["trusted.pem", "rejected.pem"]) {
+        const caFile = join(String(dir), name);
+        outcomes.push(await get({ ca: Bun.file(caFile) }), await get({ caFile } as Bun.TLSOptions));
+      }
+      expect(outcomes).toEqual(["authorized", "authorized", "INVALID_PURPOSE", "INVALID_PURPOSE"]);
+    });
+  });
+
+  describe("extensions", () => {
+    const policy = (n: string) => seq(oid(`2a03${n}`));
+    const policies = (...body: Buffer[]) => extension("551d20", seq(...body));
+    const requirePolicy = extension("551d24", seq(hex("800100")), true);
+    const distributionPoint = seq(seq(tlv(0xa0, tlv(0xa0, tlv(0x86, Buffer.from("http://crl.test/"))))));
+
+    it.each([
+      ["CA:FALSE with a path length", [extension("551d13", seq(hex("020100")), true)], "authorized"],
+      ["Netscape server gated cryptography", [eku(oid("6086480186f8420401"))], "authorized"],
+      ["Microsoft server gated cryptography", [eku(oid("2b0601040182370a0303"))], "authorized"],
+      ["a Netscape type for servers", [netscapeType("server")], "authorized"],
+      ["a critical Netscape type", [netscapeType("server", true)], "authorized"],
+      ["a Netscape type for clients", [netscapeType("client")], "INVALID_PURPOSE"],
+      ["critical CRL distribution points", [extension("551d1f", distributionPoint, true)], "authorized"],
+      ["a critical OCSP noCheck", [extension("2b0601050507300105", hex("0500"), true)], "authorized"],
+      ["no policy in certificatePolicies", [policies()], "authorized"],
+      ["the same policy twice", [policies(policy("01"), policy("01"))], "authorized"],
+      ["malformed certificatePolicies", [extension("551d20", hex("0500"))], "authorized"],
+      ["an empty keyUsage", [extension("551d0f", hex("030100"))], "UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
+    ])("a leaf with %s", async (_, extensions, expected) => {
+      const leaf = mint("leaf", "intermediate", [...extensions, localhost], { subjectKey: leafKey });
+      expect(await verify(leaf + intermediate, [root])).toBe(expected);
+    });
+
+    it.each([
+      ["version 1", [], { v1: true }, "authorized", "INVALID_PURPOSE"],
+      ["keyCertSign", [keyCertSign], {}, "authorized", "INVALID_CA"],
+      ["a Netscape type for CAs", [netscapeType("sslCA")], {}, "authorized", "INVALID_CA"],
+    ])("a CA without basicConstraints but %s", async (_, extensions, options, asRoot, asIntermediate) => {
+      const [top, middle] = ["root", "intermediate"].map(name => mint(name, "root", extensions, options));
+      expect({
+        asRoot: await verify(chain, [top]),
+        asIntermediate: await verify(leaf + middle, [root]),
+        ca: [top, middle].map(pem => new X509Certificate(pem).ca),
+      }).toEqual({ asRoot, asIntermediate, ca: [false, false] });
+    });
+
+    it("the policy constraints of a root do not apply", async () => {
+      expect(await verify(chain, [mint("root", "root", [...ca, requirePolicy])])).toBe("authorized");
+    });
+
+    // RFC 5280, section 4.2.1.11. OpenSSL counts the extension as handled, and does not look at it.
+    it("the policy constraints of an intermediate apply, unlike in Node.js", async () => {
+      const constrained = mint("intermediate", "root", [...ca, policies(policy("01")), requirePolicy]);
+      const under = (n: string) =>
+        mint("leaf", "intermediate", [policies(policy(n)), localhost], { subjectKey: leafKey }) + constrained;
+      expect([await verify(under("01"), [root]), await verify(under("02"), [root])]).toEqual([
+        "authorized",
+        "UNSPECIFIED",
+      ]);
+    });
+
+    describe("a leaf whose keyUsage does not allow signatures", () => {
+      const keyAgreement = extension("551d0f", hex("03020308"), true);
+      const issued = mint("leaf", "intermediate", [keyAgreement, localhost], { subjectKey: leafKey }) + intermediate;
+
+      it("can connect when it does not have to be authorized", async () => {
+        expect(await verify(issued, [root], { rejectUnauthorized: false })).toBe("authorized");
+      });
+
+      // https://github.com/openssl/openssl/issues/12721
+      it("is not authorized, unlike in Node.js", async () => {
+        expect([await verify(issued, [root]), await verifyClient(issued, [root])]).toEqual([
+          "INVALID_PURPOSE",
+          "INVALID_PURPOSE",
+        ]);
+      });
+    });
+  });
+
+  describe("an entry of `ca` that is of no use", () => {
+    const der = new X509Certificate(root).raw;
+    const missing = "UNABLE_TO_GET_ISSUER_CERT_LOCALLY";
+
+    it.each([
+      ["text", "not a certificate\n", "authorized"],
+      ["a private key", key, "authorized"],
+      ["a certificate with a malformed validity", mint("other", "other", ca, { to: "21XX" }), "authorized"],
+      ["not DER", armor("CERTIFICATE", Buffer.from("not a certificate")), missing],
+      ["not base64", "-----BEGIN CERTIFICATE-----\n!\n-----END CERTIFICATE-----\n", missing],
+      ["cut short", armor("CERTIFICATE", der.subarray(0, 100)), missing],
+      ["malformed trust settings", withSettings(unrelated[0], hex("0500")), missing],
+    ])("%s", async (_, entry, whenFirstInOneString) => {
+      await using server = await serve(chain);
+      const added = (...entries: string[]) => {
+        const secureContext = tls.createSecureContext();
+        for (const entry of entries) secureContext.context.addCACert(entry);
+        return connect(server.port, { secureContext });
+      };
+      expect({
+        alone: [await connect(server.port, { ca: entry }), await added(entry)],
+        first: [await connect(server.port, { ca: [entry, root] }), await added(entry, root)],
+        last: [await connect(server.port, { ca: [root, entry] }), await added(root, entry)],
+        firstInOneString: [await connect(server.port, { ca: entry + root }), await added(entry + root)],
+        lastInOneString: [await connect(server.port, { ca: root + entry }), await added(root + entry)],
+      }).toEqual({
+        alone: [missing, missing],
+        first: ["authorized", "authorized"],
+        last: ["authorized", "authorized"],
+        firstInOneString: [whenFirstInOneString, whenFirstInOneString],
+        lastInOneString: ["authorized", "authorized"],
+      });
+    });
+
+    it("is an error for the APIs of Bun when there is no other", async () => {
+      await using server = await serve(chain);
+      const { promise, resolve } = Promise.withResolvers<boolean>();
+      using socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: ["text", root] },
+        socket: { data() {}, handshake: socket => resolve(socket.authorized), close: () => resolve(false) },
+      });
+      expect(await promise).toBe(true);
+      expect(() =>
+        Bun.listen({ hostname: "127.0.0.1", port: 0, tls: { ca: ["text"] }, socket: { data() {} } }),
+      ).toThrow("Invalid CA");
+    });
+  });
+
+  it("setDefaultCACertificates() sorts by SHA-1 fingerprint", () => {
+    const before = tls.getCACertificates("default");
+    const fingerprints = (pems: string[]) => pems.map(pem => new X509Certificate(pem).fingerprint);
+    try {
+      tls.setDefaultCACertificates([...unrelated, unrelated[0]]);
+      expect(fingerprints(tls.getCACertificates("default"))).toEqual(fingerprints(unrelated).sort());
+    } finally {
+      tls.setDefaultCACertificates(before);
+    }
+  });
+
+  it("the messages are those of OpenSSL 3", async () => {
+    async function message(cert: string, ca: string) {
+      await using server = await serve(cert);
+      const [error] = await once(tls.connect({ host: "127.0.0.1", port: server.port, ca }), "error");
+      return error.message.split(";")[0];
+    }
+    expect([
+      await message(mint("self", "self", [], { subjectKey: leafKey, signer: leafKey }), root),
+      await message(chain + root, unrelated[0]),
+      await message(clientChain, root),
+    ]).toEqual([
+      "self-signed certificate",
+      "self-signed certificate in certificate chain",
+      "unsuitable certificate purpose",
+    ]);
   });
 
   describe.concurrent("in the default store", () => {
@@ -1681,11 +1971,30 @@ describe("several certificates match one issuer", () => {
       },
     );
 
-    it("a copy that does not parse is passed over", async () => {
-      const cases = {
-        broken: (name: string) => ({ SSL_CERT_FILE: [mint(name, name, ca, { to: "21XX" }), good(name)] }),
-      };
-      expect(await run(["--use-openssl-ca"], cases)).toEqual({ outcomes: { broken: authorized }, exitCode: 0 });
+    it.each([
+      ["NODE_EXTRA_CA_CERTS", []],
+      ["SSL_CERT_FILE", ["--use-openssl-ca"]],
+    ] as const)("a copy in %s that does not parse is passed over", async (source, args) => {
+      const broken = (name: string) => ({ [source]: [mint(name, name, ca, { to: "21XX" }), good(name)] });
+      expect(await run([...args], { broken })).toEqual({ outcomes: { broken: authorized }, exitCode: 0 });
+    });
+
+    it("what follows a plain certificate is not read as trust settings", async () => {
+      const trailing = (name: string) => [withSettings(good(name), reject(serverAuth), "CERTIFICATE")];
+      expect(
+        await run(["--use-openssl-ca"], {
+          extra: name => ({ NODE_EXTRA_CA_CERTS: trailing(name) }),
+          file: name => ({ SSL_CERT_FILE: trailing(name) }),
+        }),
+      ).toEqual({ outcomes: { extra: authorized, file: authorized }, exitCode: 0 });
+    });
+
+    it("NODE_EXTRA_CA_CERTS skips a TRUSTED CERTIFICATE", async () => {
+      const trusted = (name: string) => ({ NODE_EXTRA_CA_CERTS: [withSettings(good(name), trustOnly(serverAuth))] });
+      expect(await run([], { trusted })).toEqual({
+        outcomes: { trusted: ["UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"] },
+        exitCode: 0,
+      });
     });
 
     async function sentWith(...extra: string[]) {
@@ -1732,15 +2041,114 @@ describe("several certificates match one issuer", () => {
       },
     );
 
-    it("a plain copy does not lift the trust settings of a certificate, unlike in Node.js", async () => {
-      const rejected = (pem: string) =>
-        armor("TRUSTED CERTIFICATE", Buffer.concat([new X509Certificate(pem).raw, seq(tlv(0xa0, serverAuth))]));
-      const plainAndRejected = (name: string) => {
+    it("a TRUSTED CERTIFICATE keeps its place in SSL_CERT_FILE", async () => {
+      const both = (rejectedFirst: boolean) => (name: string) => {
         const pem = good(name);
-        return { SSL_CERT_FILE: [pem, rejected(pem)] };
+        const copies = [pem, withSettings(pem, reject(serverAuth))];
+        return { SSL_CERT_FILE: rejectedFirst ? copies.reverse() : copies };
       };
-      expect(await run(["--use-openssl-ca"], { plainAndRejected })).toEqual({
-        outcomes: { plainAndRejected: ["UNABLE_TO_GET_ISSUER_CERT", "UNABLE_TO_GET_ISSUER_CERT"] },
+      expect(await run(["--use-openssl-ca"], { last: both(false), first: both(true) })).toEqual({
+        outcomes: { last: authorized, first: notACA },
+        exitCode: 0,
+      });
+    });
+
+    it("a `ca` without certificates trusts nothing", async () => {
+      using dir = tempDir("empty-ca", { "extra.pem": root });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { once } = require("node:events"), https = require("node:https"), tls = require("node:tls");
+          const identity = ${JSON.stringify({ key, cert: chain })};
+          const client = ${JSON.stringify({ key, cert: clientChain })};
+          const outcome = (emitter, event) => once(emitter, event).then(() => "authorized", error => error.code);
+          async function listen(module, options) {
+            const server = module.createServer({ ...identity, ...options }).listen(0, "127.0.0.1");
+            await once(server, "listening");
+            return [server, { port: server.address().port, host: "127.0.0.1" }];
+          }
+          async function outcomes(address, ca) {
+            const out = [
+              await outcome(tls.connect({ ...address, ca }), "secureConnect"),
+              await outcome(https.get({ ...address, ca, agent: false }).on("socket", socket => {
+                socket.on("secureConnect", () => socket.emit("error", { code: "authorized" }));
+              }), "response"),
+            ];
+            for (const module of [tls, https]) {
+              const [server, address] = await listen(module, { ca, requestCert: true, rejectUnauthorized: false });
+              tls.connect({ ...address, ...client, rejectUnauthorized: false }).on("error", () => {});
+              const [peer] = await once(server, "secureConnection");
+              out.push(peer.authorized ? "authorized" : peer.authorizationError);
+            }
+            return [...new Set(out)].join();
+          }
+          (async () => {
+            const [, address] = await listen(https, {});
+            const values = [undefined, "", [], [""], "/path/to/ca.pem", Buffer.alloc(0)];
+            console.log((await Promise.all(values.map(ca => outcomes(address, ca)))).join("\\n"));
+            tls.setDefaultCACertificates([]);
+            console.log(await outcome(tls.connect(address), "secureConnect"));
+            process.exit(0);
+          })();`,
+        ],
+        env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(String(dir), "extra.pem") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        stdout: ["authorized", "authorized", ...Array(5).fill("UNABLE_TO_GET_ISSUER_CERT_LOCALLY")],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("nor does it get the sockets and sessions of an agent that have no `ca`, unlike in Node.js", () => {
+      const agent = new https.Agent();
+      const names = [[], [""], Buffer.alloc(0)].map(ca => agent.getName({ ca }));
+      expect(names.includes(agent.getName({}))).toBe(false);
+    });
+
+    it("the same goes for the built-in ws and node-fetch", async () => {
+      await using server = await serve(chain);
+      server.on("upgrade", (_, socket) => socket.end("HTTP/1.1 400 Bad Request\r\n\r\n"));
+      using dir = tempDir("empty-ca", { "extra.pem": root });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import fetch from "node-fetch";
+          import { once } from "node:events";
+          import { Agent } from "node:https";
+          import net from "node:net";
+          import WebSocket from "ws";
+          const url = "https://127.0.0.1:${server.port}";
+          const tunnel = net.createServer(socket => socket.on("error", () => {}).once("data", () => {
+            socket.write("HTTP/1.1 200 OK\\r\\n\\r\\n");
+            socket.pipe(net.connect(${server.port}, "127.0.0.1").on("error", () => {})).pipe(socket);
+          }));
+          await once(tunnel.listen(0, "127.0.0.1"), "listening");
+          const proxy = "http://127.0.0.1:" + tunnel.address().port;
+          const open = options => once(new WebSocket(url, options), "error").then(([error]) => error.code ?? "authorized");
+          for (const ca of [undefined, [], "text"]) {
+            const outcomes = new Set([await open({ ca, proxy })]);
+            for (const options of [{ ca }, { ca, minVersion: "TLSv1.2" }]) {
+              outcomes.add(await open(options));
+              outcomes.add(await fetch(url, { agent: new Agent(options) }).then(res => res.text(), error => error.code));
+            }
+            console.log(...outcomes);
+          }
+          process.exit(0);`,
+        ],
+        env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(String(dir), "extra.pem"), NO_PROXY: "", no_proxy: "" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        stdout: ["authorized", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"],
+        stderr: "",
         exitCode: 0,
       });
     });

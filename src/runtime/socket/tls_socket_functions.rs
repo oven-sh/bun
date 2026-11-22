@@ -486,6 +486,10 @@ impl TLSSocket {
             let obj = X509::to_js(&mut issuer, global)?;
             prev_obj.put(global, b"issuerCertificate", obj);
             prev_obj = obj;
+            // A self-signed certificate that may not sign certificates.
+            if core::ptr::eq(subject, &raw const *issuer) {
+                break;
+            }
             last_found = Some(issuer);
         }
 

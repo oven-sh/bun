@@ -426,6 +426,8 @@ function nodeClientTlsToNative(options) {
     if (value == null || value === "") continue;
     if (name === "rejectUnauthorized") {
       value = value !== false;
+    } else if (name === "ca") {
+      (tls ??= { __proto__: null }).caMayBeEmpty = !!value;
     } else if (name === "allowPartialTrustChain") {
       if (value !== true) continue;
     } else if (name === "key") {

@@ -275,9 +275,7 @@ it("Server sent their CA, wrongly, but its OK since we know the CA locally.", as
   });
 });
 
-// Known gap: "BEGIN TRUSTED CERTIFICATE" PEM blocks aren't parsed as CA input, so
-// the client cannot verify the server (UNABLE_TO_GET_ISSUER_CERT_LOCALLY).
-it.todo('Confirm client support for "BEGIN TRUSTED CERTIFICATE".', async () => {
+it('Confirm client support for "BEGIN TRUSTED CERTIFICATE".', async () => {
   await connect({
     client: {
       key: client.key,
@@ -294,10 +292,7 @@ it.todo('Confirm client support for "BEGIN TRUSTED CERTIFICATE".', async () => {
   });
 });
 
-// Known gap (same as above): "BEGIN TRUSTED CERTIFICATE" on the server side: the CA
-// never loads, so the (valid) client cert can't be verified and the server closes
-// the connection (ECONNRESET). It fails closed, but the option is a no-op.
-it.todo('Confirm server support for "BEGIN TRUSTED CERTIFICATE".', async () => {
+it('Confirm server support for "BEGIN TRUSTED CERTIFICATE".', async () => {
   await connect({
     client: {
       key: client.key,

@@ -312,11 +312,6 @@ impl SecureContext {
         }
         let pem = cert.to_js().to_utf8(global)?;
         let bytes = pem.slice();
-        if bytes.is_empty() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
-            );
-        }
         // The C side wants a NUL-terminated PEM document.
         let mut owned = bytes.to_vec();
         owned.push(0);
@@ -329,7 +324,7 @@ impl SecureContext {
             )
         };
         if ok == 0 {
-            return Err(global.throw(format_args!("Invalid CA certificate")));
+            return Err(global.throw_out_of_memory());
         }
         // Its trust set changed, so it stops sharing sessions with same-option contexts.
         let mut folded = [0u8; 32];

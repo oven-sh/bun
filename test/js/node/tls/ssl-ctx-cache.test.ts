@@ -378,13 +378,8 @@ test("setDefaultCACertificates() override applies to plain tls.connect (no expli
 test("ca: [] skips the setDefaultCACertificates override (distinct from ca: undefined)", async () => {
   // Providing any `ca` value - including an empty array - bypasses the
   // process-default override that setDefaultCACertificates() installs (the
-  // override only applies when `ca` is absent), so the connection verifies
-  // against the bundled roots instead. NOTE: this is not Node's full
-  // "ca: [] = empty trust store" semantics (an explicitly-empty list should
-  // trust NOTHING, not fall back to bundled roots) - that needs an explicit
-  // empty-CA flag through the native config and remains a follow-up. Make a
-  // fixture CA a process default first so the two cases are observably
-  // different.
+  // override only applies when `ca` is absent). Make a fixture CA a process
+  // default first so the two cases are observably different.
   const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f), "utf8");
   const prevCerts = tls.getCACertificates("default");
   tls.setDefaultCACertificates([keys("ca1-cert.pem")]);
@@ -401,8 +396,7 @@ test("ca: [] skips the setDefaultCACertificates override (distinct from ca: unde
     c1.end();
     await once(c1, "close");
 
-    // ca: [] -> the override is skipped, the bundled roots apply (which do not
-    // include ca1) -> NOT authorized.
+    // ca: [] -> the override is skipped, nothing is trusted -> NOT authorized.
     const c2 = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, servername: "agent1", ca: [] });
     await once(c2, "secureConnect");
     expect(c2.authorized).toBe(false);

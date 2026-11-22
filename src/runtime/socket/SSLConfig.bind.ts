@@ -43,6 +43,7 @@ export const TLSOptions = b.dictionary(
     clientRenegotiationWindow: b.u32.allowBigInt.default(0),
     crl: TLSOptionsFile,
     allowPartialTrustChain: b.bool.default(false),
+    caMayBeEmpty: b.bool.default(false),
     sessionTimeout: b.i32.allowBigInt.default(0),
     sigalgs: b.string.nullable,
     ecdhCurve: b.string.nullable,

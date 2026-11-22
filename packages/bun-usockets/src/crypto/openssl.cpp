@@ -833,42 +833,26 @@ static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
   return store;
 }
 
-/* The `ca` option: every CERTIFICATE block of `content` as DER into `certs`. User-supplied certificates are validated
- * with a full parse here so a bad one fails the context rather than a later handshake; the parsed object is dropped and
- * the store keeps the DER lazily. Returns the number appended, or -1 for content that is not PEM or whose first
- * certificate block does not decode or parse. As with a PEM_read_bio_X509 loop, a PEM document with no certificates
- * (Node's tests pass a private key) counts as zero, and blocks after one that fails are ignored. */
-static int us_collect_ca_pem(SSL_CTX *ctx, const char *content, STACK_OF(CRYPTO_BUFFER) *certs) {
-  if (content == NULL) return 0;
-  ERR_clear_error();
+/* The `ca` option: the certificates of `content` as DER into `certs`, up to a block that is malformed, as in Node. They
+ * are parsed to find that block; the parsed object is dropped and the store keeps the DER lazily. Returns 0 when there
+ * is no memory. */
+static int us_collect_ca_pem(const char *content, STACK_OF(CRYPTO_BUFFER) *certs) {
+  if (content == NULL) return 1;
   us_bio_ptr in{BIO_new_mem_buf(content, strlen(content))};
-  if (in == NULL) return -1;
-  int count = 0;
-  for (;;) {
-    uint8_t *out = NULL;
-    long der_len = 0;
-    if (!PEM_bytes_read_bio(&out, &der_len, NULL, PEM_STRING_X509, in.get(), SSL_CTX_get_default_passwd_cb(ctx),
-                            SSL_CTX_get_default_passwd_cb_userdata(ctx))) {
-      break;
-    }
-    us_unique_ptr<uint8_t, OPENSSL_free> der{out};
-    us_crypto_buffer_ptr buf{CRYPTO_BUFFER_new(der.get(), der_len, NULL)};
-    if (buf == NULL || !us_x509_ptr{X509_parse_from_buffer(buf.get())} || !sk_CRYPTO_BUFFER_push(certs, buf.get())) {
-      if (count == 0) count = -1;
-      break;
-    }
+  if (in == NULL) return 0;
+  CRYPTO_BUFFER *der = NULL;
+  while (us_x509_ptr{us_pem_read_ca(in.get(), 1, &der)}) {
+    us_crypto_buffer_ptr buf{der};
+    if (!sk_CRYPTO_BUFFER_push(certs, buf.get())) return 0;
     buf.release();
-    count++;
-  }
-  if (count == 0) {
-    unsigned long pem_err = ERR_peek_last_error();
-    if (!((pem_err == 0 || (ERR_GET_LIB(pem_err) == ERR_LIB_PEM && ERR_GET_REASON(pem_err) == PEM_R_NO_START_LINE)) &&
-          strstr(content, "-----BEGIN ") != NULL)) {
-      count = -1;
-    }
   }
   ERR_clear_error();
-  return count;
+  return 1;
+}
+
+/* A PEM document of something else (Node's tests pass a private key). */
+static int us_is_pem_without_certificates(const char *content) {
+  return content == NULL || (strstr(content, "-----BEGIN ") != NULL && strstr(content, "CERTIFICATE-----") == NULL);
 }
 
 static void us_crypto_buffer_stack_free(STACK_OF(CRYPTO_BUFFER) *buffers) {
@@ -896,42 +880,6 @@ static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPT
     name.release();
   }
   SSL_CTX_set0_client_CAs(ctx, names.release());
-  return 1;
-}
-
-static int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content, X509_STORE *store) {
-  ERR_clear_error();
-  int count = 0;
-  if (content == NULL) return 0;
-  us_bio_ptr in{BIO_new_mem_buf(content, strlen(content))};
-  if (in == NULL) {
-    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
-    return 0;
-  }
-
-  while (us_x509_ptr x{PEM_read_bio_X509(in.get(), NULL, SSL_CTX_get_default_passwd_cb(ctx),
-                                         SSL_CTX_get_default_passwd_cb_userdata(ctx))}) {
-    X509_STORE_add_cert(store, x.get());
-    if (!SSL_CTX_add_client_CA(ctx, x.get())) return 0;
-    count++;
-  }
-  if (count == 0) {
-    /* The PEM loop terminates with PEM_R_NO_START_LINE once there are no
-     * (more) CERTIFICATE blocks. A PEM document that contains no
-     * certificates at all - Node's test suite passes a private key here - is
-     * ignored the way Node ignores it rather than failing the whole context.
-     * Content that is not PEM at all, or a malformed certificate block, is
-     * still an error. */
-    unsigned long pem_err = ERR_peek_last_error();
-    if ((pem_err == 0 || (ERR_GET_LIB(pem_err) == ERR_LIB_PEM &&
-                          ERR_GET_REASON(pem_err) == PEM_R_NO_START_LINE)) &&
-        strstr(content, "-----BEGIN ") != NULL) {
-      ERR_clear_error();
-      return 1;
-    }
-    return 0;
-  }
-  ERR_clear_error();
   return 1;
 }
 
@@ -1175,7 +1123,7 @@ static int us_x509_store_ctx_common_name_error(X509_STORE_CTX *ctx) {
 /* What X509_verify_cert does not look for, a blocked public key (blocked_spkis.cpp) and
  * us_x509_store_ctx_common_name_error, is reported the way it reports its own errors: to the SSL's verify callback,
  * which says whether to go on. Without one, as in quic.cpp and node:quic, this returns 0 as it would. */
-static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
+int us_x509_verify_chain(X509_STORE_CTX *ctx) {
   int ok = X509_verify_cert(ctx);
   int error = us_x509_store_ctx_blocked_key_error(ctx);
   if (error == X509_V_OK && ok) error = us_x509_store_ctx_common_name_error(ctx);
@@ -1196,29 +1144,11 @@ void us_ssl_ctx_reject_blocked_keys(SSL_CTX *ctx) {
   SSL_CTX_set_cert_verify_callback(ctx, us_x509_verify_chain_cb, NULL);
 }
 
-/* A leaf that OpenSSL calls self-signed though it may not sign certificates is its only anchor when the store holds it (#44365). */
-int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
-  X509 *leaf = X509_STORE_CTX_get0_cert(ctx);
-  us_x509_stack_ptr pinned;
-  if (X509_check_issued(leaf, leaf) == X509_V_ERR_KEYUSAGE_NO_CERTSIGN && X509_check_purpose(leaf, purpose, 0) == 1) {
-    pinned.reset(X509_STORE_CTX_get1_certs(ctx, X509_get_subject_name(leaf)));
-    for (size_t i = sk_X509_num(pinned.get()); i-- > 0;) {
-      if (X509_cmp(sk_X509_value(pinned.get(), i), leaf) != 0) X509_free(sk_X509_delete(pinned.get(), i));
-    }
-  }
-  if (sk_X509_num(pinned.get()) == 0) return us_x509_verify_chain(ctx);
-  X509_VERIFY_PARAM_set_flags(X509_STORE_CTX_get0_param(ctx), X509_V_FLAG_PARTIAL_CHAIN);
-  X509_STORE_CTX_set0_trusted_stack(ctx, pinned.get());
-  int ok = us_x509_verify_chain(ctx);
-  X509_STORE_CTX_set0_trusted_stack(ctx, NULL);
-  return ok;
-}
-
 /* Verifies the chain, then asks the owner of a client for the name: a wrong name is a verify error like any other. */
 static int us_cert_verify_cb(X509_STORE_CTX *ctx, void *arg) {
   (void)arg;
   SSL *ssl = (SSL *)X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
-  int ok = us_x509_verify_cert(ctx, ssl && SSL_is_server(ssl) ? X509_PURPOSE_SSL_CLIENT : X509_PURPOSE_SSL_SERVER);
+  int ok = us_x509_verify_chain(ctx);
   if (!ssl) return ok;
   void *wrapper = us_ssl_wrapper(ssl);
   struct us_socket_t *s = wrapper ? NULL : us_ssl_socket(ssl);
@@ -1347,19 +1277,24 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
      * chains must validate exclusively against the supplied CAs. The SSL_CTX
      * already owns a fresh, empty X509_STORE from SSL_CTX_new(), so
      * SSL_CTX_load_verify_locations below populates only the user's CAs. */
-    STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
-    if (ca_list == NULL) {
+    us_bio_ptr ca_file{BIO_new_file(options.ca_file_name, "rb")};
+    bool named = false;
+    while (us_x509_ptr cert{ca_file ? us_pem_read_ca(ca_file.get(), 1, NULL) : NULL}) {
+      named = SSL_CTX_add_client_CA(ssl_context.get(), cert.get());
+      if (!named) break;
+    }
+    if (!named) {
       *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
       return NULL;
     }
-    SSL_CTX_set_client_CA_list(ssl_context.get(), ca_list);
+    ERR_clear_error();
     us_ex_idx_ensure();
     SSL_CTX_set_ex_data(ssl_context.get(), us_ctx_user_ca_ex_idx, (void *)1);
     if (SSL_CTX_load_verify_locations(ssl_context.get(), options.ca_file_name, NULL) != 1) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
       return NULL;
     }
-  } else if (options.ca && options.ca_count > 0) {
+  } else if (options.ca_may_be_empty || (options.ca && options.ca_count > 0)) {
     us_ex_idx_ensure();
     SSL_CTX_set_ex_data(ssl_context.get(), us_ctx_user_ca_ex_idx, (void *)1);
     /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
@@ -1368,7 +1303,11 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context.get());
     us_crypto_buffer_stack_ptr ca_certs{sk_CRYPTO_BUFFER_new_null()};
     for (unsigned int i = 0; ca_certs != NULL && i < options.ca_count; i++) {
-      if (us_collect_ca_pem(ssl_context.get(), options.ca[i], ca_certs.get()) < 0) ca_certs = NULL;
+      if (!us_collect_ca_pem(options.ca[i], ca_certs.get())) ca_certs = NULL;
+    }
+    for (unsigned int i = 0;
+         !options.ca_may_be_empty && sk_CRYPTO_BUFFER_num(ca_certs.get()) == 0 && i < options.ca_count; i++) {
+      if (!us_is_pem_without_certificates(options.ca[i])) ca_certs = NULL;
     }
     if (ca_certs == NULL || !us_install_ca_buffers(ssl_context.get(), cert_store, ca_certs.get())) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
@@ -1511,8 +1450,8 @@ int us_ssl_ctx_has_user_ca(SSL_CTX *ctx) {
 }
 
 /* node:tls `secureContext.context.addCACert(pem)`: append the certificates in
- * `content` to this context's trust store. Returns 0 when the content is not
- * a PEM document or contains a malformed certificate. */
+ * `content` to this context's trust store, up to a block that is malformed.
+ * Returns 0 when there is no memory. */
 int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   if (!ctx || !content) {
     return 0;
@@ -1527,7 +1466,13 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   /* A CA added after the context was built (pfx extras, addCACert) lands in
    * the store the handshake-time auto-chain walks, so a lone leaf-only cert
    * picks the intermediate up with no eager re-walk. */
-  return add_ca_cert_to_ctx_store(ctx, content, store);
+  us_bio_ptr in{BIO_new_mem_buf(content, strlen(content))};
+  if (in == NULL) return 0;
+  while (us_x509_ptr cert{us_pem_read_ca(in.get(), 1, NULL)}) {
+    if (!X509_STORE_add_cert(store, cert.get()) || !SSL_CTX_add_client_CA(ctx, cert.get())) return 0;
+  }
+  ERR_clear_error();
+  return 1;
 }
 
 /* node:tls `pfx` support: parse a PKCS#12 blob and hand back PEM-encoded

@@ -3282,20 +3282,6 @@ it("socket.ssl is assignable like Node's plain own property", async () => {
   }
 });
 
-it("rejects a `ca` option that contains no certificates at construction time", () => {
-  // Deliberately stricter than Node here: Node tolerates an unusable `ca`
-  // (zero certificates parse) and only fails later at verification with an
-  // empty trust store; Bun rejects the option itself, so a misconfigured pin
-  // can never silently fall back to any other roots.
-  let err: any;
-  try {
-    tls.createSecureContext({ ca: "\n" });
-  } catch (e) {
-    err = e;
-  }
-  expect(err?.message).toBe("Invalid CA");
-});
-
 it("a `ca` that parses to zero certificates is an empty pin set, never the default roots", async () => {
   // A key PEM passed as `ca` is tolerated (like Node) and adds nothing; the
   // resulting empty own store must fail closed instead of falling back to the

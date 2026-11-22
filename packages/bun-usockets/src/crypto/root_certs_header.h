@@ -49,6 +49,10 @@ const us_system_certs_t &us_get_root_system_certs();
 #define CPPDECL extern
 #endif
 
+// PEM_read_bio_X509, or PEM_read_bio_X509_AUX `with_trust`, that goes on past a certificate that BoringSSL is too strict
+// to parse: OpenSSL reads it. `out_der`, if not NULL, gets the encoding for an X509_LAZY_CERT_SET.
+CPPDECL X509 *us_pem_read_ca(BIO *in, int with_trust, CRYPTO_BUFFER **out_der);
+
 CPPDECL X509_STORE *us_get_default_ca_store();
 CPPDECL X509_STORE *us_get_shared_default_ca_store();
 

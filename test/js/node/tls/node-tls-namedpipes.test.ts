@@ -59,6 +59,21 @@ it.if(isWindows)("should work with named pipes and tls", async () => {
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
 });
 
+it.if(isWindows)("a server on a named pipe trusts nothing when `ca` holds no certificate", async () => {
+  await using server = createServer({ ...tls, ca: "text", requestCert: true, rejectUnauthorized: false });
+  const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+  await once(server.listen(pipeName), "listening");
+  const accepted = once(server, "secureConnection");
+  const socket = connect({ ...tls, path: pipeName, ca: tls.cert });
+  try {
+    const [peer] = await accepted;
+    expect(peer.authorizationError).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    peer.destroy();
+  } finally {
+    socket.destroy();
+  }
+});
+
 it.if(isWindows)("a write larger than 64 KiB round-trips over a TLS named pipe", async () => {
   // The TLS engine over a pipe hands the pipe all the ciphertext of one write at once.
   const payload = Buffer.alloc(1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));

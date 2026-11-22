@@ -193,6 +193,7 @@ impl SSLConfigFromJs for SSLConfig {
             || ecdh_curve.is_some()
             || generated.session_timeout != 0
             || generated.allow_partial_trust_chain
+            || generated.ca_may_be_empty
             || key_file_name.is_some()
             || cert_file_name.is_some()
             || ca_file_name.is_some()
@@ -224,6 +225,7 @@ impl SSLConfigFromJs for SSLConfig {
             secure_options: generated.secure_options,
             session_timeout: generated.session_timeout,
             allow_partial_trust_chain: generated.allow_partial_trust_chain,
+            ca_may_be_empty: generated.ca_may_be_empty,
             sigalgs,
             ecdh_curve,
             ssl_min_version: generated.ssl_min_version,

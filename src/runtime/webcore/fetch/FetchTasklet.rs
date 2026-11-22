@@ -1280,10 +1280,10 @@ impl FetchTasklet {
             }
             http::Error::Cert(http::CertError::OUT_OF_MEM) => BunString::static_("out of memory"),
             http::Error::Cert(http::CertError::DEPTH_ZERO_SELF_SIGNED_CERT) => {
-                BunString::static_("self signed certificate")
+                BunString::static_("self-signed certificate")
             }
             http::Error::Cert(http::CertError::SELF_SIGNED_CERT_IN_CHAIN) => {
-                BunString::static_("self signed certificate in certificate chain")
+                BunString::static_("self-signed certificate in certificate chain")
             }
             http::Error::Cert(http::CertError::UNABLE_TO_GET_ISSUER_CERT_LOCALLY) => {
                 BunString::static_("unable to get local issuer certificate")
@@ -1315,7 +1315,7 @@ impl FetchTasklet {
                 )
             }
             http::Error::Cert(http::CertError::INVALID_PURPOSE) => {
-                BunString::static_("unsupported certificate purpose")
+                BunString::static_("unsuitable certificate purpose")
             }
             http::Error::Cert(http::CertError::CERT_UNTRUSTED) => {
                 BunString::static_("certificate not trusted")
@@ -1363,10 +1363,10 @@ impl FetchTasklet {
                 BunString::static_("no explicit policy")
             }
             http::Error::Cert(http::CertError::DIFFERENT_CRL_SCOPE) => {
-                BunString::static_("Different CRL scope")
+                BunString::static_("different CRL scope")
             }
             http::Error::Cert(http::CertError::UNSUPPORTED_EXTENSION_FEATURE) => {
-                BunString::static_("Unsupported extension feature")
+                BunString::static_("unsupported extension feature")
             }
             http::Error::Cert(http::CertError::UNNESTED_RESOURCE) => {
                 BunString::static_("RFC 3779 resource not subset of parent's resources")
@@ -1411,16 +1411,16 @@ impl FetchTasklet {
                 BunString::static_("Suite B: cannot sign P-384 with P-256")
             }
             http::Error::Cert(http::CertError::EMAIL_MISMATCH) => {
-                BunString::static_("Email address mismatch")
+                BunString::static_("email address mismatch")
             }
             http::Error::Cert(http::CertError::IP_ADDRESS_MISMATCH) => {
                 BunString::static_("IP address mismatch")
             }
             http::Error::Cert(http::CertError::INVALID_CALL) => {
-                BunString::static_("Invalid certificate verification context")
+                BunString::static_("invalid certificate verification context")
             }
             http::Error::Cert(http::CertError::STORE_LOOKUP) => {
-                BunString::static_("Issuer certificate lookup error")
+                BunString::static_("issuer certificate lookup error")
             }
             http::Error::Cert(http::CertError::NAME_CONSTRAINTS_WITHOUT_SANS) => {
                 BunString::static_("Issuer has name constraints but leaf has no SANs")

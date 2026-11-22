@@ -740,7 +740,7 @@ describe.concurrent("fetch-tls", () => {
       );
     await createServer({ key: pem("dev-key.pem"), cert: pem("dev-cert.pem") }, async port => {
       expect(await attempt(port, pem("dev-cert.pem"))).toBe("Hello World");
-      expect(await attempt(port, pem("other-key-cert.pem"))).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+      expect(await attempt(port, pem("other-key-cert.pem"))).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
     });
     await createServer({ key: pem("expired-key.pem"), cert: pem("expired-cert.pem") }, async port => {
       expect(await attempt(port, pem("expired-cert.pem"))).toBe("CERT_HAS_EXPIRED");
@@ -1679,7 +1679,7 @@ describe.concurrent("fetch-tls", () => {
     }
   });
 
-  it("fetch should ignore NODE_EXTRA_CA_CERTS if it's contains invalid cert", async () => {
+  it("fetch should use NODE_EXTRA_CA_CERTS up to an invalid cert", async () => {
     using server = Bun.serve({
       port: 0,
       tls: validTls,
@@ -1694,7 +1694,10 @@ describe.concurrent("fetch-tls", () => {
     const mixedInvalidAndValidCertsBundlePath = join(tmpdirSync(), "mixed-invalid-and-valid-certs-bundle.pem");
     await Bun.write(mixedInvalidAndValidCertsBundlePath, `${validTls.cert}\n${invalidTls.cert}`);
 
-    for (const invalid of [mixedValidAndInvalidCertsBundlePath, mixedInvalidAndValidCertsBundlePath]) {
+    for (const [invalid, exitCode] of [
+      [mixedValidAndInvalidCertsBundlePath, 1],
+      [mixedInvalidAndValidCertsBundlePath, 0],
+    ] as const) {
       const proc = Bun.spawn({
         env: {
           ...bunEnv,
@@ -1707,10 +1710,10 @@ describe.concurrent("fetch-tls", () => {
         cmd: [bunExe(), join(import.meta.dir, "fetch.tls.extra-cert.fixture.js")],
       });
 
-      expect(await proc.exited).toBe(1);
       const stderr = await proc.stderr.text();
-      expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(stderr.includes("DEPTH_ZERO_SELF_SIGNED_CERT")).toBe(exitCode === 1);
       expect(stderr).toContain("Warning: Ignoring extra certs from");
+      expect(await proc.exited).toBe(exitCode);
     }
   });
 

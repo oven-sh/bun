@@ -29,7 +29,7 @@ describe("presign expiresIn coercion", () => {
   });
 
   test("expiresIn: 0 still throws (field-specific validation)", () => {
-    expect(() => presignExpires(0)).toThrow("expiresIn must be greather than 0");
+    expect(() => presignExpires(0)).toThrow("expiresIn must be greater than 0");
   });
 });
 

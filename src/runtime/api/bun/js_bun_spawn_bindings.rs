@@ -20,7 +20,9 @@ use bun_jsc::{JsCell, SysErrorJsc as _};
 use bun_sys::Fd;
 use bun_sys::UV_E;
 use bun_sys::{self as sys, SignalCode};
-use bun_telemetry_jsc::{Failed, Instrument, NativeSpan, Outcome, Record, SpanKind};
+use bun_telemetry_jsc::{
+    Failed, Instrument, NativeSpan, Outcome, PendingException, Record, SpanKind,
+};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 #[cfg(unix)]
@@ -1268,6 +1270,7 @@ fn spawn_maybe_sync(
             // pidfd; stdin/stdout/stderr are `.ignore` so their `closeIO` is a
             // no-op.
             drop((spawned_stdout, spawned_stderr));
+            subprocess.span.take().settle(PendingException(cx.global()));
             subprocess.finalize_streams();
             #[cfg(unix)]
             let _ = Process::kill_and_reap(

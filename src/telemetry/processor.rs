@@ -558,7 +558,9 @@ impl Processor {
         {
             let mut list = self.exporters.write();
             let replaced = list.extract_if(.., |e| !keep(e));
-            (self.retired.lock()).extend(replaced.map(|e| Arc::downgrade(&e)));
+            let mut retired = self.retired.lock();
+            retired.retain(|e| e.strong_count() != 0);
+            retired.extend(replaced.map(|e| Arc::downgrade(&e)));
             list.extend(new);
         }
         for r in self.retries.lock().iter_mut() {

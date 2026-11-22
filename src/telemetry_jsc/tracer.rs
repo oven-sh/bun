@@ -34,7 +34,7 @@ fn start(global: &JSGlobalObject, name: JSValue, under: &Option<JSValue>, how: S
         Some(state) => SpanStub::start(
             &mut state.local().rng,
             parent.ctx.as_ref(),
-            &bun_telemetry::state().sampler,
+            &bun_telemetry::sampler(),
             how.scope,
             how.kind,
             clock::or_now(how.start_ns),

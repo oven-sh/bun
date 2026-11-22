@@ -105,6 +105,7 @@ enum Exporters {
 #[optimize(size)]
 fn apply(state: &VmState, config: &Config, exporters: Vec<Arc<dyn Exporter>>, how: Exporters) {
     let processor = processor::global();
+    bun_telemetry::set_sampler(config.sampler);
     bun_telemetry::set_state(config.state());
     processor.set_config(config.batch);
     let (host_name, os_version) = __bun_os_hostname_and_release();
@@ -218,6 +219,7 @@ pub(crate) fn start<'a>(cx: &mut JsScope<'a>, options: Option<&StartOptions<'a>>
     apply(state, &config, exporters, how);
     *is_set_up = true;
     drop(is_set_up);
+    JsExporter::release_retired(state);
     state.register_with_api()
 }
 

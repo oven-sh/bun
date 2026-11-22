@@ -27,7 +27,7 @@ pub(crate) fn start_under(
     let stub = SpanStub::start(
         &mut VmState::get(global)?.local().rng,
         parent.ctx.as_ref(),
-        &bun_telemetry::state().sampler,
+        &bun_telemetry::sampler(),
         instrument.into(),
         kind,
         clock::now_unix_nanos(),

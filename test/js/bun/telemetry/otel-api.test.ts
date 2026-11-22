@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, expectRssDeltaBelow } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 async function run(script: string) {
@@ -149,6 +149,38 @@ describe("Bun.otel", () => {
     `);
     const remote = { traceId: "1".repeat(32), spanId: "2".repeat(16), traceFlags: 1, isRemote: true };
     expect(JSON.parse(stdout)).toEqual([null, false, [false, "0".repeat(32), null], 2, remote, 0]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("start() again and again keeps no memory", async () => {
+    // 32 MiB if each call keeps its own.
+    const script = `
+      process.env.OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST = Buffer.alloc(1 << 20, "h").toString();
+      let calls = 0;
+      const rss = times => {
+        while (times--) Bun.otel.start({ exporters: [], sampler: ++calls / 100 });
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      };
+      const before = rss(2);
+      console.log(JSON.stringify({ deltaMiB: (rss(32) - before) / 2 ** 20 }));`;
+    await expectRssDeltaBelow(["-e", script], { release: 12, debug: 16 });
+  });
+
+  test("start() lets go of the exporters that it replaces, though no span is recorded", async () => {
+    const { stdout, exitCode } = await run(`
+      class Exporter { export() {} }
+      const refs = [];
+      for (let i = 0; i < 200; i++) {
+        const exporter = new Exporter();
+        refs.push(new WeakRef(exporter));
+        Bun.otel.start({ exporters: [exporter] });
+      }
+      await new Promise(setImmediate);
+      Bun.gc(true);
+      console.log(refs.filter(ref => ref.deref()).length);
+    `);
+    expect(Number.parseInt(stdout)).toBeWithin(1, 20);
     expect(exitCode).toBe(0);
   });
 

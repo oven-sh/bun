@@ -250,7 +250,7 @@ pub(crate) fn with<'a>(
 
 pub(crate) fn force_flush(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    match VmState::get(global) {
+    match (bun_telemetry::configured().then(|| VmState::get(global))).flatten() {
         Some(state) => state.force_flush(global),
         None => Ok(JSPromise::resolved_promise_value(
             global,

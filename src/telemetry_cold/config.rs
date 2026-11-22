@@ -119,7 +119,7 @@ impl Default for Config {
         Config {
             service_name: None,
             resource_attributes: Vec::new(),
-            sampler: d.sampler,
+            sampler: Sampler::default(),
             instruments: InstrumentSet::ALL,
             roots: InstrumentSet::default_roots(),
             batch: BatchConfig::default(),
@@ -138,7 +138,6 @@ impl Config {
     /// The hot-path knobs `bun_telemetry::set_state` publishes.
     pub fn state(&self) -> State {
         State {
-            sampler: self.sampler,
             limits: self.limits,
             propagate_trace_context: self.propagate_trace_context,
             propagate_baggage: self.propagate_baggage,

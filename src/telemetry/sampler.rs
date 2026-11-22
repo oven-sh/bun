@@ -45,6 +45,29 @@ impl Sampler {
         (ratio * (u64::MAX as f64)) as u64
     }
 
+    /// The lowest bit of the threshold says whether it is parent-based.
+    pub(crate) const fn to_bits(self) -> u64 {
+        let (Sampler::Root(root) | Sampler::ParentBased(root)) = self;
+        let threshold = match root {
+            RootSampler::AlwaysOn => u64::MAX,
+            RootSampler::AlwaysOff => 0,
+            RootSampler::TraceIdRatio(threshold) => threshold,
+        };
+        threshold & !1 | matches!(self, Sampler::ParentBased(_)) as u64
+    }
+
+    #[inline]
+    pub(crate) fn from_bits(bits: u64) -> Sampler {
+        let root = match bits | 1 {
+            u64::MAX => RootSampler::AlwaysOn,
+            _ => RootSampler::TraceIdRatio(bits & !1),
+        };
+        match bits & 1 {
+            0 => Sampler::Root(root),
+            _ => Sampler::ParentBased(root),
+        }
+    }
+
     #[inline]
     pub fn should_sample(&self, parent: Option<&SpanContext>, trace_id: &TraceId) -> bool {
         match *self {
@@ -89,5 +112,25 @@ impl Sampler {
         } else {
             Sampler::Root(root)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bits_keep_the_decision() {
+        use RootSampler::*;
+        for (root, back) in [
+            (AlwaysOn, AlwaysOn),
+            (AlwaysOff, TraceIdRatio(0)),
+            (TraceIdRatio(u64::MAX), AlwaysOn),
+            (TraceIdRatio(1 << 63), TraceIdRatio(1 << 63)),
+        ] {
+            for of in [Sampler::Root, Sampler::ParentBased] {
+                assert_eq!(Sampler::from_bits(of(root).to_bits()), of(back));
+            }
+        }
     }
 }

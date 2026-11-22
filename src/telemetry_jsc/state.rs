@@ -3,6 +3,7 @@
 use core::cell::{Cell, OnceCell, RefCell, RefMut};
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
+use std::sync::Arc;
 
 use bun_event_loop::EventLoopTimer::{OwnedTimer, State as TimerState, Tag as TimerTag};
 use bun_event_loop::{BoxedTask, ContextId, TaskTag, task_tag};
@@ -149,6 +150,8 @@ impl VmState {
                             configure::undo_start(self);
                         }
                         JsExporter::detach_all(self);
+                        self.flush_waiters.take();
+                        self.stop_waiting_for_exports();
                     }));
                 }
                 Realm::default()
@@ -257,8 +260,16 @@ impl VmState {
         self.flush_waiters.borrow_mut().push((target, promise));
         self.flush_keep_alive.ref_(bun_io::js_vm_ctx());
         if !self.hears_of_settled_exports.replace(true) {
+            // Its retirement lets go of the promises.
+            drop(self.realm());
             let vm = self.vm.handle();
-            let wake = move || VmTask::ResolveFlushWaiters.post(&vm);
+            // A thread that is blocked gets no more than one.
+            let is_posted = Arc::new(AtomicBool::new(false));
+            let wake = move || {
+                if !is_posted.swap(true, Ordering::AcqRel) {
+                    VmTask::ResolveFlushWaiters(Arc::clone(&is_posted)).post(&vm);
+                }
+            };
             processor.on_settle(self.owner_key(), Box::new(wake));
         }
         // It enforces the export timeout.
@@ -277,12 +288,19 @@ impl VmState {
             .extract_if(.., |w| processor.settled_before(w.0))
             .collect();
         if self.flush_waiters.borrow().is_empty() {
-            self.flush_keep_alive.unref(bun_io::js_vm_ctx());
+            self.stop_waiting_for_exports();
         }
         for (_, mut promise) in ready {
             promise.resolve(self.global(), JSValue::UNDEFINED)?;
         }
         Ok(())
+    }
+
+    fn stop_waiting_for_exports(&self) {
+        self.flush_keep_alive.unref(bun_io::js_vm_ctx());
+        if self.hears_of_settled_exports.replace(false) {
+            processor::global().remove_settle_hooks(self.owner_key());
+        }
     }
 
     fn exit(&self) {
@@ -298,11 +316,10 @@ impl VmState {
             processor.flush_for_owner(self.owner_key());
         }
         JsExporter::detach_all(self);
-        processor.remove_settle_hooks(self.owner_key());
         self.has_exited.set(true);
         self.timer.disarm();
         // The loop is freed before `self`.
-        self.flush_keep_alive.unref(bun_io::js_vm_ctx());
+        self.stop_waiting_for_exports();
         if processor.has_work()
             && !self.vm.is_main_thread.get()
             && let Some(main) = VirtualMachine::main_thread_handle()
@@ -314,7 +331,7 @@ impl VmState {
 
 pub enum VmTask {
     Export(QueuedExport),
-    ResolveFlushWaiters,
+    ResolveFlushWaiters(Arc<AtomicBool>),
     RegisterWithApi,
     /// From a worker that leaves retries and deadlines behind.
     TakeOverTimer,
@@ -340,7 +357,10 @@ impl VmTask {
         };
         match self {
             VmTask::Export(export) => export.run(state),
-            VmTask::ResolveFlushWaiters => state.resolve_flush_waiters(),
+            VmTask::ResolveFlushWaiters(is_posted) => {
+                is_posted.swap(false, Ordering::AcqRel);
+                state.resolve_flush_waiters()
+            }
             VmTask::RegisterWithApi => state.register_with_api(),
             VmTask::TakeOverTimer => {
                 state.arm_timer();

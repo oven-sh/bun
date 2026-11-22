@@ -5,10 +5,13 @@ import {
   trace as apiTrace,
 } from "@opentelemetry/api";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
+import http2 from "node:http2";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 
 const spans: any[] = [];
@@ -514,18 +517,65 @@ describe("Bun.serve", () => {
 });
 
 describe("fetch", () => {
-  test("a compressed body that has arrived and that nobody reads ends the span", async () => {
-    const body = Bun.gzipSync(Buffer.alloc(8 * 1024 * 1024, "a"));
-    using server = Bun.serve({ port: 0, fetch: () => new Response(body, { headers: { "content-encoding": "gzip" } }) });
-    const response = await fetch(server.url);
-    let got: any[] = [];
-    while (!got.length) {
-      await Bun.sleep(1);
-      got = byName(await collect(), "bun.http.client");
-    }
-    expect(got.map(s => [s.status.code, s.attributes["http.response.status_code"]])).toEqual([[0, 200]]);
-    expect((await response.bytes()).length).toBe(8 * 1024 * 1024);
-    expect(byName(await collect(), "bun.http.client")).toEqual([]);
+  async function http2Origin(onStream: (stream: http2.ServerHttp2Stream, path: string) => void) {
+    const sessions: http2.ServerHttp2Session[] = [];
+    const server = http2
+      .createSecureServer(tls)
+      .on("session", session => sessions.push(session))
+      .on("stream", (stream, headers) =>
+        onStream(
+          stream.on("error", () => {}),
+          headers[":path"]!,
+        ),
+      );
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return {
+      fetch: (path: string, init?: RequestInit) =>
+        fetch(`https://127.0.0.1:${(server.address() as AddressInfo).port}${path}`, {
+          protocol: "http2",
+          tls: { rejectUnauthorized: false },
+          ...init,
+        }),
+      [Symbol.dispose]: () => (sessions.forEach(session => session.destroy()), void server.close()),
+    };
+  }
+
+  const timeout = new DOMException("The operation timed out.", "TimeoutError");
+  test.each([
+    ["is read", (r: Response) => r.bytes(), undefined],
+    ["is damaged", (r: Response) => r.bytes().catch(() => {}), "ZlibError"],
+    ["is cancelled", (r: Response) => r.body!.cancel(), undefined],
+    ["its signal times out", (_: Response, controller: AbortController) => controller.abort(timeout), undefined],
+  ] as const)("a compressed body outlasts its HTTP/2 stream and %s", async (_, use, error) => {
+    const body = Bun.gzipSync(Buffer.alloc(4 * 1024 * 1024, "a"));
+    if (error) body[body.length - 6] ^= 0xff;
+    using origin = await http2Origin((stream, path) => {
+      stream.respond({ ":status": 200, ...(path === "/held" && { "content-encoding": "gzip" }) });
+      stream.end(path === "/held" ? body : "");
+    });
+    const controller = new AbortController();
+    const response = await origin.fetch("/held", { signal: controller.signal });
+    // On the same connection, behind the end of the first stream.
+    await (await origin.fetch("/next")).text();
+    const [next, ...more] = byName(await collect(1), "bun.http.client");
+    expect([next.attributes["url.full"], more]).toEqual([expect.stringMatching(/next$/), []]);
+    await use(response, controller);
+    const got = byName(await collect(1), "bun.http.client");
+    // The time that it waited does not count, unless it is bad news that it waited for.
+    expect(got.map(s => [s.status.code, s.attributes["error.type"], s.endTime > next.endTime])).toEqual([
+      [error ? 2 : 0, error, !!error],
+    ]);
+  });
+
+  test("an upload that fails while the response is on its way is an error", async () => {
+    using origin = await http2Origin(stream => {
+      stream.respond({ ":status": 200 });
+      stream.resume();
+    });
+    const body = new ReadableStream({ start: c => (c.enqueue(99), c.close()) });
+    const error = await origin.fetch("/", { method: "POST", body, duplex: "half" }).catch(e => e);
+    const got = byName(await collect(1), "bun.http.client");
+    expect(got.map(s => [s.status.code, s.attributes["error.type"]])).toEqual([[2, error.code ?? error.name]]);
   });
 
   test("network error produces an error span", async () => {

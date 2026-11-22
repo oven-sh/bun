@@ -2329,6 +2329,10 @@ impl VirtualMachine {
         // 'close'/'error' handler runs after 'exit', and nothing can reopen what
         // a sweep just closed.
         vm.forbid_script();
+        if matches!(kind, Teardown::Worker) {
+            // What `on_exit` ran after its flush may have turned tracing on.
+            flush_telemetry(TelemetryFlush::AtExit);
+        }
         Zig__GlobalObject__prepareForDestruction(vm.global());
         // SAFETY: fn contract.
         let sweep = || unsafe {

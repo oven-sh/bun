@@ -20,7 +20,7 @@ pub mod thread;
 #[cfg(test)]
 mod native_test_shims;
 
-use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 pub use clock::MonoInstant;
 pub use limits::{DEFAULT_LIMITS, Limits};
@@ -32,8 +32,8 @@ pub use span::{Flags, SpanContext, SpanId, SpanKind, SpanStub, StatusCode, Trace
 
 /// Process-wide, immutable once set. Read on hot paths without locking via
 /// [`state()`]; replaced wholesale by [`set_state`].
+#[derive(PartialEq, Eq)]
 pub struct State {
-    pub sampler: Sampler,
     pub limits: Limits,
     pub propagate_trace_context: bool,
     pub propagate_baggage: bool,
@@ -43,6 +43,7 @@ pub struct State {
 
 /// A request header to record, stored as its attribute key
 /// `http.request.header.<name>` so the per-request path formats nothing.
+#[derive(PartialEq, Eq)]
 pub struct CapturedHeader(Box<[u8]>);
 
 impl CapturedHeader {
@@ -62,7 +63,6 @@ impl CapturedHeader {
 
 impl State {
     pub const DEFAULT: State = State {
-        sampler: Sampler::ParentBased(RootSampler::AlwaysOn),
         limits: DEFAULT_LIMITS,
         propagate_trace_context: true,
         propagate_baggage: true,
@@ -72,9 +72,8 @@ impl State {
 }
 
 static STATE: AtomicPtr<State> = AtomicPtr::new(core::ptr::null_mut());
-/// Replaced values are retired, not freed (a few hundred bytes per
-/// `Bun.otel.start()`), so `state()` can hand out `&'static`.
-static RETIRED_STATES: bun_threading::Guarded<Vec<&'static State>> =
+/// Each different value that was ever set. They are not freed, so `state()` can hand out `&'static`.
+static KNOWN_STATES: bun_threading::Guarded<Vec<&'static State>> =
     bun_threading::Guarded::new(Vec::new());
 static DEFAULT_STATE: State = State::DEFAULT;
 
@@ -95,12 +94,24 @@ pub fn configured() -> bool {
 }
 
 pub fn set_state(s: State) {
-    let new: &'static State = Box::leak(Box::new(s));
-    let old = STATE.swap(core::ptr::from_ref(new).cast_mut(), Ordering::AcqRel);
-    if !old.is_null() {
-        // SAFETY: every non-null STATE came from `Box::leak` above.
-        RETIRED_STATES.lock().push(unsafe { &*old });
-    }
+    let mut known = KNOWN_STATES.lock();
+    let new = match known.iter().find(|known| ***known == s) {
+        Some(known) => *known,
+        None => *known.push_mut(Box::leak(Box::new(s))),
+    };
+    STATE.store(core::ptr::from_ref(new).cast_mut(), Ordering::Release);
+}
+
+/// Not in [`State`]: a program may go through any number of ratios.
+static SAMPLER: AtomicU64 = AtomicU64::new(Sampler::ParentBased(RootSampler::AlwaysOn).to_bits());
+
+#[inline]
+pub fn sampler() -> Sampler {
+    Sampler::from_bits(SAMPLER.load(Ordering::Relaxed))
+}
+
+pub fn set_sampler(sampler: Sampler) {
+    SAMPLER.store(sampler.to_bits(), Ordering::Relaxed);
 }
 
 /// What one VM records with.

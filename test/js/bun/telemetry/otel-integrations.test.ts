@@ -486,6 +486,47 @@ describe("WebSocket", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("message handlers that never settle do not pile up on an open socket, and slow ones all end their span", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const spans = [], slow = [];
+        Bun.otel.start({ exporters: [{ export(b) { spans.push(...b); } }], instrumentations: ["websocket"] });
+        const server = Bun.serve({
+          port: 0,
+          fetch(req, srv) { srv.upgrade(req); },
+          websocket: {
+            message(ws, m) {
+              ws.send("");
+              return new Promise(resolve => { if (m === "slow") slow.push(resolve); });
+            },
+          },
+        });
+        const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/");
+        ws.onerror = ws.onclose = () => process.exit(1);
+        await new Promise(r => (ws.onopen = r));
+        for (const m of ["slow", "never"])
+          for (let i = 0; i < 300; i++) await new Promise(r => ((ws.onmessage = r), ws.send(m)));
+        for (const resolve of slow.splice(0)) resolve();
+        let ended;
+        do await Bun.sleep(1), await Bun.otel.forceFlush();
+        while ((ended = spans.filter(s => s.name === "websocket.message")).length < 300);
+        Bun.gc(true);
+        const alive = require("bun:jsc").heapStats().objectTypeCounts.Span;
+        console.log(JSON.stringify([ended.length, ended.every(s => s.status.code === 0), alive < 100 || alive]));
+        process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify([300, true, true]));
+    expect(exitCode).toBe(0);
+  });
+
   test("an async message handler's span covers its promise and records a late rejection", async () => {
     using dir = tempDir("otel-ws-async", {
       "index.js": `

@@ -12,8 +12,20 @@ use crate::native;
 struct Traced {
     /// Messages link to the request that was upgraded. As its children they would make a trace without an end.
     upgrade: Option<SpanContext>,
-    /// The handler returned a promise.
+    /// The handler returned a promise. The newest: an older span is left to its promise, and is collected with it.
     unsettled: Vec<HeldSpan>,
+}
+
+impl Traced {
+    const MAX_UNSETTLED: usize = 32;
+
+    fn keep(&mut self, span: HeldSpan) {
+        self.unsettled.push(span);
+        self.unsettled.retain(|span| !span.has_ended());
+        if self.unsettled.len() > Self::MAX_UNSETTLED {
+            self.unsettled.remove(0);
+        }
+    }
 }
 
 /// One word, null while tracing is off.
@@ -81,10 +93,7 @@ impl TracedSocket {
         if span.is_some() {
             removable_body_behind_value!(Telemetry, {
                 self.0.with_mut(|traced| match traced {
-                    Some(traced) => {
-                        traced.unsettled.push(span);
-                        traced.unsettled.retain(|span| !span.has_ended());
-                    }
+                    Some(traced) => traced.keep(span),
                     None => abandon(&span),
                 });
             });

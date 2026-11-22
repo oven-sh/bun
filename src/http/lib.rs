@@ -531,7 +531,7 @@ impl<'a> HTTPClientResult<'a> {
         matches!(self.fail, Some(crate::Error::Timeout))
     }
 
-    pub(crate) fn is_abort(&self) -> bool {
+    pub fn is_abort(&self) -> bool {
         matches!(
             self.fail,
             Some(crate::Error::Aborted | crate::Error::AbortedBeforeConnecting)

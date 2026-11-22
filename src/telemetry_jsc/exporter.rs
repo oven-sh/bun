@@ -676,7 +676,10 @@ impl JsExporter {
 
     pub(crate) fn release_retired(state: &VmState) {
         state.js_exporters.borrow_mut().retain(|e| {
-            !e.shared.is_retired.load(Ordering::Relaxed) || !e.shared.attempts.lock().is_empty()
+            !e.shared.is_retired.load(Ordering::Relaxed)
+                // Whoever has it is about to give it a batch.
+                || Arc::strong_count(&e.shared) > 1
+                || !e.shared.attempts.lock().is_empty()
         });
     }
 

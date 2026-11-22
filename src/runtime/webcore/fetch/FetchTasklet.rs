@@ -833,17 +833,14 @@ impl FetchTasklet {
             }
         }
 
-        if is_done && self.result.is_success() {
+        if is_done && self.result.is_success() && !self.abort_reason.has() {
             self.end_span(false, None);
         }
         let result = self.deliver_progress(vm);
-        let left_transport = self.result.left_transport;
-        // A held body that nobody reads is done when it is collected, if ever.
-        if is_done
-            || (left_transport && self.signal_store.body_receive_mode() == BodyReceiveMode::Paused)
-        {
+        if is_done {
             self.end_span(false, None);
         }
+        let left_transport = self.result.left_transport;
         drop(lock);
         // The HTTP layer will not drain the request body again.
         if is_done {
@@ -994,8 +991,10 @@ impl FetchTasklet {
         if success && self.abort_reason.has() {
             let promise = promise_value.as_any_promise().unwrap();
             let tracker = self.tracker;
+            let signal_aborted = self.signal_aborted();
             // get_abort_error consumes abort_reason and clears the signal handler.
             let mut err = self.get_abort_error().unwrap();
+            self.end_span(signal_aborted, Some(&err));
             promise_value.ensure_still_alive();
             let r = promise.reject_with_async_stack(&global_this, err.to_js(&global_this));
             drop(err);
@@ -1184,9 +1183,11 @@ impl FetchTasklet {
                 protocol_version: response.map_or("", |r| r.http_version()).as_bytes(),
             }
             .record(r);
-            let Some(fail) = self.result.fail else { return };
-            let code = fail.name().as_bytes();
+            let code = self.result.fail.map_or("", |fail| fail.name()).as_bytes();
             match rejection {
+                None if code.is_empty() => {}
+                // The whole response had arrived.
+                _ if self.is_held_body_reported && self.result.is_abort() => {}
                 Some(BodyValueError::SystemError(e) | BodyValueError::SystemTypeError(e)) => {
                     e.record(r)
                 }
@@ -2382,7 +2383,12 @@ impl FetchTasklet {
             result.body.len()
         );
 
-        if !result.has_more || result.left_transport {
+        // A held body may wait for as long as it takes to be collected. It can still turn out to be damaged.
+        let ends_span = match task_ref.result.left_transport {
+            true => !result.is_success() && !result.is_abort(),
+            false => !result.has_more || result.left_transport,
+        };
+        if ends_span {
             task_ref.span.stop_clock();
         }
 

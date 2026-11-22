@@ -1296,6 +1296,50 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("bun test --isolate: a flush that nobody waits for does not keep its file", async () => {
+    using hangs = Bun.serve({ port: 0, idleTimeout: 0, fetch: () => new Promise(() => {}) });
+    const file = (start: string) => `import { test } from "bun:test";
+      test("t", () => {
+        Bun.gc(true);
+        console.log(require("bun:jsc").heapStats().protectedObjectTypeCounts.Promise ?? 0);
+        ${start}
+        Bun.otel.span("s", () => {});
+        for (let i = 0; i < 50; i++) Bun.otel.forceFlush();
+      });`;
+    using dir = tempDir("otel-isolate-flush", {
+      "a.test.js": file(
+        `Bun.otel.start({ endpoint: ${JSON.stringify(hangs.url.href)}, batch: { timeoutMs: 600000 } });`,
+      ),
+      "b.test.js": file(""),
+      "c.test.js": file(""),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.js", "./b.test.js", "./c.test.js"],
+      cwd: String(dir),
+      env: cleanEnv,
+      stderr: "ignore",
+    });
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      if ((stdout += Buffer.from(chunk).toString()).match(/^\d+$/gm)?.length === 3) break;
+    }
+    // It waits for the collector.
+    proc.kill("SIGKILL");
+    const [a, b, c] = stdout.match(/^\d+$/gm)!.map(Number);
+    expect(Math.max(b, c) - a).toBeLessThan(10);
+  });
+
+  test("an exporter that calls start() at exit does not take the batch from the others", async () => {
+    const { stdout, exitCode } = await run(
+      `const exporter = (name, then) => ({ export(spans) { console.log(name, spans.length); then?.(); } });
+       Bun.otel.start({ exporters: [exporter("a", () => Bun.otel.start({ exporters: [exporter("c")] })), exporter("b")] });
+       Bun.otel.span("s", () => {});`,
+      {},
+    );
+    expect(stdout).toBe("a 1\nb 1\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("an uncaught error is printed the same with tracing on", async () => {
     const script = `function boom() { throw new TypeError("x"); }\nBun.otel.span("a", boom);`;
     const printed = async (env: Record<string, string>) =>

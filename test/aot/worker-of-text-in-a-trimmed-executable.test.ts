@@ -92,21 +92,25 @@ describe.skipIf(!!without("a Bun that trims")).concurrent("a Worker made from te
           trimmed.stderr,
         ) ?? [];
       const removed = removedFrom(trimmed);
+      const removedFromWhole = removedFrom(whole);
       return {
         saidOfTheTranspiler,
         saysWhy:
           /^aot: trim: blocked by dynamic-import: the program starts a Worker from code that isn't in the executable\b/m.test(
             trimmed.stderr,
           ),
-        // What the executables themselves record: --trim took features out, and the transpiler is none of them.
+        // What the executables themselves record: the trimmed one lacks all that the whole one lacks and more, and the
+        // transpiler is none of it.
         lacksTheTranspiler: removed.includes(featureNamed("RuntimeTranspiler")),
-        lacksMoreThanTheWholeOne: removed.length > removedFrom(whole).length,
+        hasWhatTheWholeOneLacks: removedFromWhole.filter(name => !removed.includes(name)),
+        lacksMoreThanTheWholeOne: removed.length > removedFromWhole.length,
       };
     };
     const keepsItAndSaysWhy = {
       saidOfTheTranspiler: "kept",
       saysWhy: true,
       lacksTheTranspiler: false,
+      hasWhatTheWholeOneLacks: [],
       lacksMoreThanTheWholeOne: true,
     };
     expect(await report("made-at-run-time.js")).toEqual(keepsItAndSaysWhy);

@@ -784,6 +784,85 @@ int eventfd(unsigned int initval, int flags) {
   });
 });
 
+// musl lists a library whose program headers lie outside of its PT_LOAD segments with a null `dlpi_phdr`. glibc keeps
+// a copy of the headers, so the preloaded library lists itself as musl would, and says so on stdout once it has failed.
+// Only a build that checks the preconditions of unsafe Rust functions stops at the null pointer.
+test.skipIf(!isLinux || !cc || !(isDebug || isASAN))(
+  "the trace string is written when the loader lists a library without program headers",
+  async () => {
+    using dir = tempDir("crash-report-no-program-headers", {
+      "library.c": /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <link.h>
+#include <stddef.h>
+#include <unistd.h>
+
+typedef int (*visitor)(struct dl_phdr_info *, size_t, void *);
+struct walk { visitor visit; void *data; };
+
+__attribute__((weak)) void napi_fatal_error(const char *, size_t, const char *, size_t);
+static int has_failed;
+
+static int without_own_headers(struct dl_phdr_info *object, size_t size, void *data) {
+  struct walk *walk = data;
+  struct dl_phdr_info listed = *object;
+  Dl_info self;
+  if (dladdr(&has_failed, &self) && (void *) object->dlpi_addr == self.dli_fbase) {
+    listed.dlpi_phdr = NULL;
+    listed.dlpi_phnum = 0;
+    if (has_failed == 1) {
+      has_failed = 2;
+      write(1, "listed without program headers\\n", 31);
+    }
+  }
+  return walk->visit(&listed, size, walk->data);
+}
+
+int dl_iterate_phdr(visitor visit, void *data) {
+  struct walk walk = { visit, data };
+  return ((int (*)(visitor, void *)) dlsym(RTLD_NEXT, "dl_iterate_phdr"))(without_own_headers, &walk);
+}
+
+void fail(void) {
+  has_failed = 1;
+  napi_fatal_error("library.c", (size_t) -1, "failed", (size_t) -1);
+}
+`,
+      "app.js": `
+        const { dlopen } = require("bun:ffi");
+        dlopen(process.argv[2], { fail: { args: [], returns: "void" } }).symbols.fail();
+      `,
+    });
+    const library = path.join(String(dir), "library.so");
+    await using compile = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", library, "library.c", "-ldl"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    expect(await compile.exited).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "app.js", library, "--debug-crash-handler-use-trace-string"],
+      cwd: String(dir),
+      env: {
+        ...noReportEnv,
+        LD_PRELOAD: [library, bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
+        BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("listed without program headers\n");
+    // "NAPI FATAL ERROR: library.c failed"
+    expect(stderr).toMatch(/A0eNrzcwzwVHBzDHH0UXANCvIPslLIyUwqSiyq1EtWSEvMzElNAQCs\/wrA\s/);
+    expect(proc.signalCode).toBe("SIGABRT");
+    expect(exitCode).not.toBe(0);
+  },
+);
+
 describe("automatic crash reporter", () => {
   for (const approach of ["panic", "segfault", "outOfMemory"]) {
     test(`${approach} should report`, async () => {

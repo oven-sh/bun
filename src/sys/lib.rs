@@ -7817,6 +7817,10 @@ pub mod elf {
             if context.address < info.dlpi_addr as usize {
                 return 0;
             }
+            // musl lists an object without program headers if none of its `PT_LOAD` segments holds them.
+            if info.dlpi_phdr.is_null() {
+                return 0;
+            }
             // SAFETY: dlpi_phdr points to dlpi_phnum entries.
             let phdrs =
                 unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };

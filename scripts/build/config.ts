@@ -170,7 +170,7 @@ export interface Config {
   /** With `fuzzilli`: only the ahead-of-time compiler reports coverage (scripts/build/fuzzilli-compiler-coverage.txt). */
   fuzzilliCompilerOnly: boolean;
   /**
-   * Compile everything with `hardeningFlags` (flags.ts), JSC and ICU included: selects the `-hardened` WebKit prebuilt.
+   * Compile everything with `hardeningFlags` (flags.ts), JSC included: selects the `-hardened` WebKit prebuilt.
    * The link makes a position-independent executable with full RELRO, eager binding and code in pages of its own.
    * Defines BUN_HARDENED for C and C++ and `bun_hardened` for Rust. Costs file size, startup time and private memory.
    * Leaves out one thing that any other build can do: an executable that it compiles ahead of time does not start where

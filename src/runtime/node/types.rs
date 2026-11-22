@@ -1,18 +1,13 @@
-use bun_paths::strings;
 use core::ffi::c_int;
 
 use crate::jsc::{self, JSGlobalObject, JSValue, JsResult};
-#[cfg(windows)]
-use bun_core::WStr;
 use bun_core::ZStr;
-use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
+use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt, strings};
 use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
-use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
+use bun_paths::{MAX_PATH_BYTES, NameTooLong, OSPath, Path};
 use bun_sys::{self, Fd, IoVec, IoVecMut, Mode, O};
 
 use crate::node::util::validators;
@@ -733,15 +728,6 @@ unsafe extern "C" {
 // `PathLikeExt` / `PathOrFdExt` extension traits.
 pub(crate) use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 
-/// Returned by [`PathLikeExt::slice_w`] / [`PathLikeExt::os_path`] /
-/// [`PathLikeExt::os_path_kernel32`] when the path's UTF-16 form would not
-/// fit a `WPathBuffer` (`strings::fits_in_wide_path_buffer`). NT caps paths
-/// at `PATH_MAX_WIDE` units, so such a path cannot exist on disk — callers
-/// map this to `false`/`ENAMETOOLONG` as appropriate instead of letting the
-/// conversion overflow (oven-sh/bun#27775).
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct NameTooLong;
-
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
 ///
 /// `thread_isolated_copy` / `slice` / `estimated_size` are
@@ -749,21 +735,15 @@ pub(crate) struct NameTooLong;
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
 /// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
 pub(crate) trait PathLikeExt {
-    /// Writes the path to the start of `buf`, or "" if it does not fit.
-    fn slice_z<'a>(&self, buf: &'a mut PathBuffer) -> &'a ZStr
+    /// Replaces `buf` with the path.
+    fn slice_z<'a>(&self, buf: &'a mut Path) -> &'a ZStr
     where
         Self: Sized;
-    #[cfg(windows)]
-    fn slice_w<'a>(&self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
+    fn os_path(&self) -> Result<OSPath, NameTooLong>
     where
         Self: Sized;
-    fn os_path<'a>(&self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
-    where
-        Self: Sized;
-    fn os_path_kernel32<'a>(
-        &self,
-        buf: &'a mut PathBuffer,
-    ) -> Result<&'a OSPathSliceZ, NameTooLong>
+    /// On Windows it is normalized unless it names a device, and `C:\a` can be longer than `MAX_PATH`.
+    fn os_path_kernel32(&self, syscall: bun_sys::Tag) -> bun_sys::Maybe<OSPath>
     where
         Self: Sized;
     fn from_js(
@@ -835,165 +815,55 @@ pub(crate) trait PathOrFdExt {
 }
 
 impl PathLikeExt for PathLike<'_> {
-    fn slice_z<'a>(&self, buf: &'a mut PathBuffer) -> &'a ZStr {
+    fn slice_z<'a>(&self, buf: &'a mut Path) -> &'a ZStr {
         let sliced = self.slice();
-
-        #[cfg(windows)]
-        {
-            // Only take the fast path for paths that can exist on NT at
-            // all (≤ ~32757 UTF-16 units). That bounds the `\\?\`-prefixed
-            // copy below in bytes too (≤ 3×32757 + 5 < MAX_PATH_BYTES);
-            // the cwd-join branch of `resolve_cwd_with_external_buf_z`
-            // prepends the cwd's filesystem root — arbitrarily long for UNC
-            // cwds — and bounds-checks internally, surfacing NameTooLong.
-            // Anything over-long falls through to the plain copy at the
-            // bottom, which fits without the prefix (or takes the too-long
-            // fallback) and fails at the syscall.
-            if bun_paths::is_absolute(sliced) && strings::fits_in_wide_path_buffer(sliced) {
-                if sliced.len() > 2
-                    && bun_paths::is_drive_letter(sliced[0])
-                    && sliced[1] == b':'
-                    && bun_paths::is_sep_any(sliced[2])
-                {
-                    // Add the long path syntax. This affects most of node:fs
-                    // Normalize the path directly into buf without an intermediate
-                    // buffer. The input (sliced) already has a drive letter, so
-                    // resolveCWDWithExternalBufZ would just memcpy it, making the
-                    // temporary allocation unnecessary.
-                    buf[0..4].copy_from_slice(&bun_sys::windows::LONG_PATH_PREFIX_U8);
-                    let n = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
-                        sliced,
-                        &mut buf[4..],
-                    )
-                    .len();
-                    return ZStr::nul_terminate(buf, 4 + n);
-                }
-                match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(
-                    buf, sliced,
-                ) {
-                    Ok(res) => return res,
-                    // The cwd root + path don't fit `buf` (UNC cwds can push
-                    // a near-MAX_PATH_BYTES path over); fall through to the
-                    // plain copy / too-long handling below.
-                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => {}
-                    Err(e) => panic!("Error while resolving path: {e:?}"),
+        buf.set(sliced);
+        if cfg!(windows) && bun_paths::is_absolute(sliced) {
+            if bun_paths::has_leading_sep(sliced) {
+                buf.add_current_drive();
+            } else {
+                buf.make_long_path();
+                if sliced.ends_with(b"\\") {
+                    buf.push_trailing_sep();
                 }
             }
         }
+        buf
+    }
 
-        if sliced.len() >= buf.len() {
-            bun_core::debug_warn!(
-                "path too long: {} bytes exceeds PathBuffer capacity of {}\n",
-                sliced.len(),
-                buf.len()
+    #[inline]
+    fn os_path(&self) -> Result<OSPath, NameTooLong> {
+        let mut path = OSPath::from(self.slice());
+        bun_paths::to_native_in_place(path.as_mut_slice());
+        path.check_len()
+    }
+
+    #[inline]
+    fn os_path_kernel32(&self, syscall: bun_sys::Tag) -> bun_sys::Maybe<OSPath> {
+        let sliced = self.slice();
+        #[cfg(not(windows))]
+        {
+            let _ = syscall;
+            Ok(OSPath::from(sliced))
+        }
+        #[cfg(windows)]
+        {
+            let is_device = matches!(
+                *sliced,
+                [b'/' | b'\\', b'/' | b'\\', b'.' | b'?', b'/' | b'\\', ..]
             );
-            return ZStr::nul_terminate(buf, 0);
-        }
-
-        buf[..sliced.len()].copy_from_slice(sliced);
-        ZStr::nul_terminate(buf, sliced.len())
-    }
-
-    #[cfg(windows)]
-    #[inline]
-    fn slice_w<'a>(&self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
-        let sliced = self.slice();
-        if !strings::fits_in_wide_path_buffer(sliced) {
-            return Err(NameTooLong);
-        }
-        Ok(strings::paths::to_w_path(buf, sliced))
-    }
-
-    #[inline]
-    fn os_path<'a>(&self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong> {
-        #[cfg(windows)]
-        {
-            return self.slice_w(buf);
-        }
-        #[cfg(not(windows))]
-        {
-            Ok(self.slice_z(buf))
-        }
-    }
-
-    #[inline]
-    fn os_path_kernel32<'a>(
-        &self,
-        buf: &'a mut PathBuffer,
-    ) -> Result<&'a OSPathSliceZ, NameTooLong> {
-        #[cfg(windows)]
-        {
-            let s = self.slice();
-            let mut b = bun_paths::path_buffer_pool::get();
-            // RAII guard puts back on Drop.
-
-            // Device paths (\\.\, \\?\) and NT object paths (\??\) should not be normalized
-            // because the "." in \\.\pipe\name would be incorrectly stripped as a "current directory" component.
-            if s.len() >= 4
-                && bun_paths::is_sep_any(s[0])
-                && bun_paths::is_sep_any(s[1])
-                && (s[2] == b'.' || s[2] == b'?')
-                && bun_paths::is_sep_any(s[3])
-            {
-                if !strings::fits_in_wide_path_buffer(s) {
-                    return Err(NameTooLong);
-                }
-                // The PathBuffer doc comment says why the buffer is aligned in practice.
-                let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
-                return Ok(strings::to_kernel32_path(buf_u16, s));
+            let mut path = match is_device || sliced.is_empty() {
+                true => Path::from(sliced),
+                false => Path::join(&[sliced]),
+            };
+            let keeps_sep = is_device
+                || bun_paths::root(&path).len() == path.len()
+                || bun_paths::has_leading_sep(sliced) && sliced.ends_with(b"\\");
+            if !keeps_sep {
+                path.truncate(bun_paths::without_trailing_sep(&path).len());
             }
-            if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
-                // Bail before the cwd resolution + normalization below write
-                // into fixed u8 buffers: UNC-shaped inputs pass through the
-                // resolver untouched and can reach `normalize_buf` at full
-                // MAX_PATH_BYTES length, whose root handling writes one past
-                // the input length.
-                if !strings::fits_in_wide_path_buffer(s) {
-                    return Err(NameTooLong);
-                }
-                // `buf` is the scratch for cwd-resolution; `b` is the pooled
-                // scratch for normalisation; final wide path lands back in `buf`.
-                let resolve = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(
-                    buf, s,
-                ) {
-                    Ok(r) => r,
-                    // The cwd root + path don't fit the resolution buffer
-                    // (UNC cwds can push a near-MAX_PATH_BYTES path over) —
-                    // such a path can't exist on NT.
-                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => return Err(NameTooLong),
-                    Err(e) => panic!("Error while resolving path: {e:?}"),
-                };
-                let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
-                    resolve,
-                    &mut b[..],
-                );
-                if !strings::fits_in_wide_path_buffer(normal) {
-                    return Err(NameTooLong);
-                }
-                // `resolve`'s borrow of `buf` ended at the line above (NLL).
-                let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
-                return Ok(strings::to_kernel32_path(buf_u16, normal));
-            }
-            // Handle "." specially since normalizeStringBuf strips it to an empty string
-            if s.len() == 1 && s[0] == b'.' {
-                let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
-                return Ok(strings::to_kernel32_path(buf_u16, b"."));
-            }
-            let normal = bun_paths::resolve_path::normalize_string_buf::<
-                true,
-                bun_paths::platform::Windows,
-                false,
-            >(s, &mut b[..]);
-            if !strings::fits_in_wide_path_buffer(normal) {
-                return Err(NameTooLong);
-            }
-            let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
-            return Ok(strings::to_kernel32_path(buf_u16, normal));
-        }
-
-        #[cfg(not(windows))]
-        {
-            Ok(self.slice_z(buf))
+            path.add_current_drive();
+            bun_sys::long_path(&path, syscall).map_err(|err| err.with_path(sliced))
         }
     }
 
@@ -1144,12 +1014,13 @@ pub(crate) enum RelativePaths {
 
 /// The system resolves a relative path against its own working directory, which is never a folder of the executable.
 fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<Vec<u8>> {
-    use bun_paths::resolve_path::{self, platform};
     let directory = bun_core::working_directory_in_executable()?;
     if path.is_empty() || bun_paths::is_absolute(path) || strings::contains_char(path, 0) {
         return None;
     }
-    Some(resolve_path::join_abs_string::<platform::Auto>(directory, &[path]).to_vec())
+    let mut joined = Path::resolve(&[directory, path]);
+    joined.copy_trailing_sep_from(path);
+    Some(joined.to_vec())
 }
 
 /// Whether `find_path_meant` may find another path than the one that is written.

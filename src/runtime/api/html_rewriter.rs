@@ -14,7 +14,7 @@ use bun_jsc::{
 use bun_collections::ByteVecExt;
 use bun_collections::smallvec::SmallVec;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
-use bun_ptr::{AsCtxPtr as _, BackRef, DetachablePtr, RefPtr};
+use bun_ptr::{AsCtxPtr as _, Attached, BackRef, Detach, DetachablePtr, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::api::native_promise_context;
@@ -364,7 +364,7 @@ impl bun_event_loop::RefTask for RewriterPipeBackgroundPull {
 pub struct RewriterPipe {
     global: GlobalRef,
     /// Its slots root the response, both streams and the handlers. Weak: other owners of the pipe outlive it.
-    cell: JsCell<JsRef>,
+    pub(crate) cell: JsCell<JsRef>,
     /// The context of the script that called `transform()`.
     script_context: bun_jsc::ContextId,
     /// What `transform()` has to return synchronously ("a string"), so no handler may suspend.
@@ -398,11 +398,6 @@ pub struct RewriterPipe {
 impl RewriterPipe {
     /// How far the output may run ahead of its reader. The same as for the request body of a `fetch()`.
     const HIGH_WATER_MARK: BlobSizeType = 16384;
-
-    /// Runs during the GC sweep. The other owners may still dispatch into the pipe afterwards.
-    pub fn finalize(&self) {
-        self.cell.with_mut(|r| r.finalize());
-    }
 
     fn ref_guard(&self) -> RefPtr<Self> {
         // SAFETY: `self` is the live heap allocation.
@@ -601,8 +596,9 @@ impl RewriterPipe {
 
         let response_js_value = Response::to_js(result, &this.global);
 
-        let cell = js_HTMLRewriterTransform::to_js(pipe, cx.global());
-        this.cell.set(JsRef::init_weak(cell));
+        let transform = js_HTMLRewriterTransform::wrap(pipe, cx.global());
+        transform.set_js_ref_weak();
+        let cell = transform.to_js();
         js_HTMLRewriterTransform::response_set_cached(cell, cx.global(), response_js_value);
         js_Response::transform_set_cached(response_js_value, cx.global(), cell);
         // This rewrite can outlive the rewriter's wrapper. Its handlers must not die with it.
@@ -1981,20 +1977,18 @@ impl EndTag {
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct AttributeIterator {
     ref_count: Cell<u32>,
-    /// Read through on every `next()`, so it follows a suspension. The element clears it before it goes.
+    /// Read through on every `next()`, so it follows a suspension.
     element: Cell<Option<BackRef<Element>>>,
     index: Cell<usize>,
 }
 
-impl AttributeIterator {
+impl Detach for AttributeIterator {
     fn detach(&self) {
         self.element.set(None);
     }
+}
 
-    pub(crate) fn finalize(&self) {
-        self.detach();
-    }
-
+impl AttributeIterator {
     pub(crate) fn next<'a>(
         &self,
         heap: &JsHeap<'a>,
@@ -2033,16 +2027,9 @@ impl AttributeIterator {
 pub(crate) struct Element {
     ref_count: Cell<u32>,
     raw: DetachablePtr<RawElement>,
-    /// The ones that still point back at this.
-    attribute_iterators: JsCell<Vec<RefPtr<AttributeIterator>>>,
+    attribute_iterators: JsCell<Vec<Attached<AttributeIterator>>>,
     /// Lends `raw`.
     pipe: Cell<Option<BackRef<RewriterPipe>>>,
-}
-
-impl Drop for Element {
-    fn drop(&mut self) {
-        self.invalidate();
-    }
 }
 
 impl Element {
@@ -2056,9 +2043,7 @@ impl Element {
     }
 
     fn detach_attribute_iterators(&self) {
-        for iter in self.attribute_iterators.take() {
-            iter.detach();
-        }
+        self.attribute_iterators.set(Vec::new());
     }
 
     fn invalidate(&self) {
@@ -2216,7 +2201,7 @@ impl Element {
             index: Cell::new(0),
         });
         self.attribute_iterators
-            .with_mut(|v| v.push(attr_iter.clone()));
+            .with_mut(|v| v.push(attr_iter.clone().into()));
         Some(js_AttributeIterator::to_js(attr_iter, global_object))
     }
 }

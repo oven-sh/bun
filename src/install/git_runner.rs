@@ -451,12 +451,8 @@ fn read_package_json(
         }
     };
 
-    let mut dir_path_buf = Path::path_buffer_pool::get();
-    let json_path = match package_dir.get_fd_path(&mut dir_path_buf) {
-        Ok(dir_path) => Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-            dir_path,
-            &[b"package.json"],
-        ),
+    let mut json_path = match bun_sys::get_fd_path_owned(package_dir.fd()) {
+        Ok(dir_path) => dir_path,
         Err(err) => {
             log.add_error_fmt(
                 None,
@@ -470,9 +466,10 @@ fn read_package_json(
             return Err(Error::InstallFailed);
         }
     };
+    json_path.push(b"package.json");
     let path = bun_resolver::fs::FileSystem::get()
         .dirname_store()
-        .append(json_path)?;
+        .append(&json_path)?;
 
     Ok(ExtractData {
         url,
@@ -504,13 +501,8 @@ impl CacheStaging {
     fn new(cache_dir: Fd, cache_dir_path: &[u8]) -> Result<Self, Error> {
         let mut tmp_name_buf = [0u8; 64];
         let tmp_name =
-            Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
-                .map_err(|_| Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-        let tmp_path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-            cache_dir_path,
-            &[tmp_name],
-        )
-        .to_vec();
+            Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())?;
+        let tmp_path = bun_paths::Path::resolve(&[cache_dir_path, tmp_name]).to_vec();
         Ok(Self {
             entry: UnfinishedEntry::new(cache_dir, tmp_name),
             tmp_path,
@@ -964,14 +956,9 @@ impl GitSubprocess {
     /// Builds `--git-dir=<bare clone>`. With `-C` instead, git would search the parent folders for
     /// a repository if this folder turned out not to be one.
     fn git_dir_arg(&self, clone_id: Task::Id) -> Vec<u8> {
-        [
-            b"--git-dir=".as_slice(),
-            Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                &self.cache_dir.path,
-                &[&bare_repo_folder_name(clone_id)],
-            ),
-        ]
-        .concat()
+        let folder_name = bare_repo_folder_name(clone_id);
+        let git_dir = bun_paths::Path::resolve(&[&self.cache_dir.path, &folder_name]);
+        [b"--git-dir=", git_dir.as_bytes()].concat()
     }
 
     /// May free `this` on `Ok`.

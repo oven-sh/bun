@@ -3409,6 +3409,8 @@ export interface ClassOptions extends ClassTableColumns {
   refCounted?: boolean;
   /** With `refCounted`: call `fn finalize(&self)` when the object is collected, before its ref is dropped. */
   finalize?: boolean;
+  /** The struct's `JsCell<JsRef>` field that refers back to the object. It is finalized when the object is collected. */
+  thisValue?: string;
   /** `false`: a class with `extends` or hand-written C++ can subclass `JSName`, and an instance of the subclass is an instance of this class. The subclass adds no fields. */
   final?: boolean;
   /** `impl bun_jsc::JsClass` is not generated: write it by hand, calling `js_Name::to_js` and `js_Name::from_js`. With `refCounted`. */
@@ -3741,6 +3743,7 @@ export class ClassType extends NamedType {
   /** No member has `mutates`, so every member takes `&self`. */
   readonly sharedThis: boolean;
   readonly finalize: boolean;
+  readonly thisValue: string | undefined;
   /** Its signatures are `Construction`s. */
   readonly construct: FunctionDefinition | null;
   readonly passStructure: boolean;
@@ -3786,6 +3789,7 @@ export class ClassType extends NamedType {
       "extends",
       "refCounted",
       "finalize",
+      "thisValue",
       "final",
       "overridesToJS",
       "forBind",
@@ -3815,6 +3819,7 @@ export class ClassType extends NamedType {
         "rustPath",
         "refCounted",
         "finalize",
+        "thisValue",
         "overridesToJS",
         "forBind",
         "prototypeBase",
@@ -3858,6 +3863,8 @@ export class ClassType extends NamedType {
       .flat()
       .some(field => "mutates" in field && field.mutates);
     assert(this.sharedThis || !this.refCounted, "a refCounted class has no mutates: every member takes &self");
+    this.thisValue = options.thisValue;
+    assert(this.sharedThis || !this.thisValue, "a class with thisValue has no mutates");
     assert(
       this.sharedThis || (!this.base && (options.final ?? true)),
       "a class that is or has a subclass has no mutates",

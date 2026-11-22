@@ -1,6 +1,5 @@
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::join_spill;
-use bun_sema::resolve::DeclaredSideEffects;
+use bun_core::strings;
+use bun_sema::resolve::{DeclaredSideEffects, join_unrooted, normalize_slashes};
 
 pub(super) fn is_declared_free_of_side_effects(
     declared: DeclaredSideEffects<'_>,
@@ -22,11 +21,14 @@ fn is_pattern(entry: &[u8]) -> bool {
 }
 
 pub(crate) fn names(directory: &[u8], entry: &[u8], path: &[u8]) -> bool {
-    let mut long_path = Vec::new();
-    let named = join_spill::<Posix>(&mut long_path, &[directory, entry]);
     match is_pattern(entry) {
-        true => bun_glob::Prepared::new(named).r#match(path).matches(),
-        false => named == path,
+        true => {
+            // Hides the escapes from the join, which reads `\` as `/`.
+            let mut named = join_unrooted(directory, &strings::replace_char(entry, b'\\', 1));
+            strings::replace_char_in_place(&mut named, 1, b'\\');
+            bun_glob::Prepared::new(&named[..]).r#match(path).matches()
+        }
+        false => join_unrooted(directory, &normalize_slashes(entry)) == path,
     }
 }
 
@@ -56,6 +58,13 @@ mod tests {
             DeclaredSideEffects::Unspecified,
             path
         ));
+    }
+
+    #[test]
+    fn backslash_escapes_in_a_pattern_and_separates_in_a_path() {
+        assert!(!is_free(&[br"./src/\[id\].js"], "src/[id].js"));
+        assert!(is_free(&[br"./src/\[id\].js"], "src/i.js"));
+        assert!(!is_free(&[br"src\a.js"], "src/a.js"));
     }
 
     #[test]

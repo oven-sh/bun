@@ -309,6 +309,158 @@ describe("an event dispatched on the global object has globalThis as its target"
       exitCode: 0,
     });
   });
+
+  // A class of a node:vm context has no global object with event wrappers of its own: JSDOMWrapperCache.cpp makes its
+  // instances in the main global object, also where the class is used inside a ShadowRealm. The first answer says that
+  // it still does. Once it does not, this test goes: the tests of `bun test --isolate` below do not need that.
+  test("an event whose wrapper another global object made", () => {
+    const seen = new ShadowRealm().evaluate(`(() => {
+      "use strict";
+      const vm = process.getBuiltinModule("node:vm");
+      const Sub = vm.runInContext("(class Sub extends Event {})", vm.createContext({ Event }));
+      const seen = [];
+      addEventListener("global-target", function (event) {
+        seen.push(
+          event.composedPath().constructor !== Array,
+          this === globalThis,
+          event.target === globalThis,
+          event.currentTarget === globalThis,
+          event.srcElement === globalThis,
+          event.composedPath()[0] === globalThis,
+        );
+      });
+      const event = new Sub("global-target");
+      dispatchEvent(event);
+      seen.push(event.target === globalThis);
+      return seen.join();
+    })()`);
+    expect(seen).toBe("true,true,true,true,true,true,true");
+  });
+
+  // With --isolate, `bun test` loads the package of a DOM environment into a global object that outlives the files. The
+  // wrapper of an event that the package makes is of that global object, and a file dispatches the event on its own.
+  const fakeHappyDOM = {
+    "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
+    "node_modules/happy-dom/index.js": `
+      const kept = [];
+      exports.Window = class Window {
+        document = {};
+        happyDOM = { cancelAsync() {} };
+        eventOfPackage = () => {
+          const event = new Event("global-target");
+          kept.push(event);
+          return event;
+        };
+        eventsOfPackage = () => kept;
+        isGlobalOfPackage = value => value === globalThis;
+      };
+    `,
+  };
+  // In two parts: `bun test` looks for the comment in the whole text of a test file, and this file is one.
+  const inHappyDOM = `// ${"@vitest"}-environment happy-dom`;
+  // EventTarget and dispatchEvent are the window's in such a file. BroadcastChannel.prototype is still below Bun's EventTarget.prototype.
+  const methodsOfBun = `const { addEventListener, removeEventListener, dispatchEvent } = Object.getPrototypeOf(BroadcastChannel.prototype);`;
+  const nameOf = `const name = value =>
+    value === null ? "null" : value === globalThis ? "globalThis" : isGlobalOfPackage(value) ? "of the package" : typeof value;`;
+
+  // What the files print, and how the run ends.
+  async function bunTest(dir, ...flags) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...flags],
+      env: { ...bunEnv, NODE_PATH: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      // The first line is the banner of `bun test`.
+      stdout: stdout.split(/\r?\n/).slice(1).filter(Boolean),
+      summary: stderr.match(/^ *\d+ (?:pass|fail)$/gm)?.map(line => line.trim()),
+      exitCode,
+    };
+  }
+
+  test.concurrent.each(["--isolate", "--parallel=2"])(
+    "an event whose wrapper the lasting global object of `bun test %s` made",
+    async flag => {
+      using dir = tempDir("global-event-target", {
+        ...fakeHappyDOM,
+        "target.test.js": `${inHappyDOM}
+          import { expect, test } from "bun:test";
+          test("target", () => {
+            expect(isGlobalOfPackage(globalThis)).toBe(false);
+            ${methodsOfBun}
+            const event = eventOfPackage();
+            const seen = [];
+            function listener(event) {
+              seen.push(this, event.target, event.currentTarget, event.srcElement, ...event.composedPath());
+            }
+            addEventListener.call(globalThis, "global-target", listener);
+            try {
+              dispatchEvent.call(globalThis, event);
+            } finally {
+              removeEventListener.call(globalThis, "global-target", listener);
+            }
+            seen.push(event.target);
+            ${nameOf}
+            console.log(JSON.stringify(seen.map(name)));
+          });
+        `,
+      });
+      expect(await bunTest(dir, flag, "target.test.js")).toEqual({
+        stdout: [JSON.stringify(Array(6).fill("globalThis"))],
+        summary: ["1 pass", "0 fail"],
+        exitCode: 0,
+      });
+    },
+  );
+
+  // A file that is done leaves its global object to the collector. An event that the package keeps has that object as
+  // its target until then, and no target after. Which object the collector takes first is not told, so the last file
+  // asks until one is gone.
+  test.concurrent("an event that outlives the global object that it was dispatched on", async () => {
+    const dispatches = `${inHappyDOM}
+      import { expect, test } from "bun:test";
+      test("dispatch", () => {
+        ${methodsOfBun}
+        const event = eventOfPackage();
+        dispatchEvent.call(globalThis, event);
+        expect(event.target === globalThis).toBe(true);
+      });
+    `;
+    using dir = tempDir("global-event-target", {
+      ...fakeHappyDOM,
+      ...Object.fromEntries(["a", "b", "c", "d", "e", "f"].map(name => [`${name}.test.js`, dispatches])),
+      "z.test.js": `${inHappyDOM}
+        import { test } from "bun:test";
+        test("read", async () => {
+          const events = eventsOfPackage();
+          let gone;
+          for (let round = 0; round < 50 && !gone; round++) {
+            Bun.gc(true);
+            await new Promise(resolve => setImmediate(resolve));
+            gone = events.find(event => event.target === null);
+          }
+          ${nameOf}
+          const seen = { kept: events.length, gone: gone ? [gone.target, gone.srcElement].map(name) : "none" };
+          // No event answers the global object of the package, or of this file.
+          seen.others = [...new Set(events.map(event => name(event.target)))].filter(kind => kind !== "null" && kind !== "object");
+          if (gone) {
+            ${methodsOfBun}
+            dispatchEvent.call(globalThis, gone);
+            seen.again = [gone.target, gone.srcElement].map(name);
+          }
+          console.log(JSON.stringify(seen));
+        });
+      `,
+    });
+    expect(await bunTest(dir, "--isolate")).toEqual({
+      stdout: [JSON.stringify({ kept: 6, gone: ["null", "null"], others: [], again: ["globalThis", "globalThis"] })],
+      summary: ["7 pass", "0 fail"],
+      exitCode: 0,
+    });
+  });
 });
 
 // Assigning onmessage/onerror through a receiver that is not the global object

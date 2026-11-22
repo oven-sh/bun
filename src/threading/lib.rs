@@ -27,7 +27,7 @@ pub mod wait_group;
 
 pub use condition::{Condition, Condvar};
 /// `Futex` re-exported as a capitalized module alias so callers can write
-/// `Futex::wait`, `Futex::wake`, `Futex::Deadline`.
+/// `Futex::wait`, `Futex::wake`.
 pub use futex as Futex;
 pub use guarded::Guarded;
 pub use mutex::{Mutex, MutexGuard};

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, githubTarball, isDebug, nodeModulesPackages, tempDir } from "harness";
+import { bunEnv, bunExe, githubTarball, isDebug, isWindows, nodeModulesPackages, tempDir } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 import npmMetadata from "./yarn/npm-metadata.json";
@@ -3727,6 +3727,8 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
     ["link:./vendor/t", '"t@link:./vendor/t":\n  version "0.0.0"\n  uid ""\n'],
     ["file:./vendor/t", '"t@file:./vendor/t":\n  version "1.0.0"\n'],
     ["./vendor/t", 't@./vendor/t:\n  version "1.0.0"\n'],
+    ["file:vendor\\t", '"t@file:vendor/t":\n  version "1.0.0"\n'],
+    ...(isWindows ? [] : [["file:.\\vendor\\t\\", '"t@file:.\\vendor\\t\\":\n  version "1.0.0"\n']]),
   ])("the bins of %s are linked and recorded", async (range, entry) => {
     using server = await serve([]);
     const project = () =>
@@ -3748,6 +3750,21 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
     const ci = await bun(String(frozen), server.url, "install", "--frozen-lockfile");
     expect(errors(ci.stderr)).toEqual([]);
     expect(bins(String(frozen))).toEqual(["t"]);
+    expect(ci.exitCode).toBe(0);
+  });
+
+  // The lockfile stores up to 8 bytes inline and anything longer in its string buffer.
+  test.each(["ui", "library"])("link:./%s/ with a trailing slash installs", async name => {
+    using server = await serve([]);
+    using dir = tempDir("yarn-migration-link-slash", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { t: `link:./${name}/` } }),
+      [`${name}/package.json`]: JSON.stringify({ name: "t", version: "1.0.0" }),
+      "yarn.lock": header + `"t@link:./${name}/":\n  version "0.0.0"\n`,
+    });
+
+    const ci = await bun(String(dir), server.url, "install", "--frozen-lockfile");
+    expect(errors(ci.stderr)).toEqual([]);
+    expect(readJson(String(dir), "node_modules", "t", "package.json").version).toBe("1.0.0");
     expect(ci.exitCode).toBe(0);
   });
 

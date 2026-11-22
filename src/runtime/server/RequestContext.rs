@@ -4254,7 +4254,7 @@ impl BodyFile {
         let (fd, opened) = match pathlike {
             PathOrFileDescriptor::Fd(fd) => (*fd, None),
             PathOrFileDescriptor::Path(path) => {
-                let mut file_buf = bun_paths::path_buffer_pool::get();
+                let mut file_buf = bun_paths::Path::new();
                 let file = bun_sys::File::open(
                     path.slice_z(&mut file_buf),
                     bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC,

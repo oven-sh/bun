@@ -93,7 +93,6 @@ unsafe extern "C" {
 
 impl Lazy {
     pub(crate) fn open_file_blob(file: &mut blob::store::File) -> sys::Result<OpenedFileBlob> {
-        let mut file_buf = bun_paths::path_buffer_pool::get();
         #[cfg(unix)]
         let mut is_nonblocking = false;
 
@@ -136,7 +135,7 @@ impl Lazy {
             }
             PathOrFileDescriptor::Path(path) => {
                 match sys::File::open(
-                    bun_paths::resolve_path::z(path.slice(), &mut file_buf),
+                    &bun_paths::Path::from(path.slice()),
                     sys::O::RDONLY | sys::O::NONBLOCK | sys::O::CLOEXEC,
                     0,
                 ) {

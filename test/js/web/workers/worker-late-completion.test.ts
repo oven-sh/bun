@@ -191,7 +191,7 @@ const ROWS: Row[] = [
   {
     name: "Bun.build",
     worker: `Bun.build({ entrypoints: [require("node:path").join(workerData.dir, "entry.ts")] });`,
-    ticket: "js_bundle_completion_task.rs",
+    ticket: "bundle_thread.rs",
     files: { "entry.ts": `export default 1;\n` },
   },
   // ── weak posters (no ticket): delivered while draining, or refused ───────

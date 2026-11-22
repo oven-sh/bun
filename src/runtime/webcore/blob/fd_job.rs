@@ -273,7 +273,7 @@ pub(super) fn open(
         PathOrFileDescriptor::Fd(fd) => return Ok(JobFd::Borrowed(*fd)),
         PathOrFileDescriptor::Path(path) => path,
     };
-    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut buf = bun_paths::Path::new();
     let path_z = path.slice_z(&mut buf);
     let flags = flags | O::NONBLOCK | O::CLOEXEC;
     let opened = creating_parents(&mut mkdirp, path_z.as_bytes(), || {

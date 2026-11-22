@@ -4,7 +4,7 @@ use bun_core::{Global, Output};
 use bun_install::package_manager_real::{
     PackageManager, get_cache_directory, populate_package_cache,
 };
-use bun_paths::string_paths::without_trailing_slash_windows_path;
+use bun_paths::without_trailing_sep;
 
 use crate::cli::Command;
 
@@ -64,7 +64,7 @@ pub(crate) fn exec(
     Output::print_start_end_stdout(start_time, bun_core::time::nano_timestamp());
     bun_core::pretty!("<r>\n");
 
-    let cache_dir = without_trailing_slash_windows_path(&get_cache_directory(pm).path);
+    let cache_dir = without_trailing_sep(&get_cache_directory(pm).path);
     bun_core::prettyln!("<d>Cache: {}<r>", BStr::new(cache_dir));
     Output::flush();
 

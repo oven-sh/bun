@@ -488,10 +488,7 @@ impl WindowsNamedPipe {
         if path[path.len() - 1] == 0 {
             return self.connect(ZStr::from_slice_with_nul(path), ssl_ctx);
         }
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let len = path.len().min(path_buf.len() - 1);
-        path_buf[..len].copy_from_slice(&path[..len]);
-        self.connect(ZStr::nul_terminate(&mut path_buf, len), ssl_ctx)
+        self.connect(&bun_paths::Path::from(path), ssl_ctx)
     }
 
     /// `extern "C"` trampoline matching `uv_connect_cb` (`Pipe::connect`'s

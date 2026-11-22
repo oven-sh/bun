@@ -4,7 +4,7 @@ import { featureNamed, model } from "../bundler/compile-trim-features";
 import { without } from "./harness/capabilities";
 import { run } from "./harness/run";
 import { sharedBuilds, type Build } from "./harness/shared-builds";
-import { test as oneAtATime } from "./supported";
+import { describe, test } from "./supported";
 import { readRemovedFeatures } from "./trimmed-against-whole/removed-features";
 
 const text = `postMessage("ran")`;
@@ -46,7 +46,6 @@ worker.on("error", error => console.log("eval: true of node:worker_threads", "er
 
 // One build of each program writes the executable without --trim and the one with it, and serves every test. The tests run beside
 // one another, so both programs are built at once and their four executables start at once.
-const test = oneAtATime.skipIf(!!without("a Bun that trims")).concurrent;
 const { folder, buildWholeAndTrimmed } = sharedBuilds("worker-of-text", { ...files, ...filesWithTextMadeAtRunTime });
 const wholeAndTrimmed = (entry: string) => buildWholeAndTrimmed(entry, "--explain=trim");
 
@@ -70,45 +69,47 @@ function removedFrom(built: Build) {
   return model.features.filter(feature => indexes!.includes(feature.index)).map(feature => feature.name);
 }
 
-test("a trimmed executable reports the same for a Worker made from text as one that is not trimmed", async () => {
-  const ran = everyWorkerRan(
-    "a blob: URL message ran",
-    "a data: URL message ran",
-    "eval: true of node:worker_threads message ran",
-  );
-  expect(await reportedBy("program.js")).toEqual({ whole: ran, trimmed: ran });
-});
+describe.skipIf(!!without("a Bun that trims")).concurrent("a Worker made from text in a trimmed executable", () => {
+  test("a trimmed executable reports the same for a Worker made from text as one that is not trimmed", async () => {
+    const ran = everyWorkerRan(
+      "a blob: URL message ran",
+      "a data: URL message ran",
+      "eval: true of node:worker_threads message ran",
+    );
+    expect(await reportedBy("program.js")).toEqual({ whole: ran, trimmed: ran });
+  });
 
-test("a trimmed executable runs a Worker made from text that the build has not seen", async () => {
-  const ran = everyWorkerRan("a blob: URL message ran", "eval: true of node:worker_threads message ran");
-  expect(await reportedBy("made-at-run-time.js")).toEqual({ whole: ran, trimmed: ran });
-});
+  test("a trimmed executable runs a Worker made from text that the build has not seen", async () => {
+    const ran = everyWorkerRan("a blob: URL message ran", "eval: true of node:worker_threads message ran");
+    expect(await reportedBy("made-at-run-time.js")).toEqual({ whole: ran, trimmed: ran });
+  });
 
-test("a program that starts a Worker from text keeps the transpiler, and the build says why", async () => {
-  const report = async (entry: string) => {
-    const [whole, trimmed] = await wholeAndTrimmed(entry);
-    const [, saidOfTheTranspiler] =
-      /^aot: trim: (kept|removed) Bun\.Transpiler and the transpiler for code loaded at run time\b/m.exec(
-        trimmed.stderr,
-      ) ?? [];
-    const removed = removedFrom(trimmed);
-    return {
-      saidOfTheTranspiler,
-      saysWhy:
-        /^aot: trim: blocked by dynamic-import: the program starts a Worker from code that isn't in the executable\b/m.test(
+  test("a program that starts a Worker from text keeps the transpiler, and the build says why", async () => {
+    const report = async (entry: string) => {
+      const [whole, trimmed] = await wholeAndTrimmed(entry);
+      const [, saidOfTheTranspiler] =
+        /^aot: trim: (kept|removed) Bun\.Transpiler and the transpiler for code loaded at run time\b/m.exec(
           trimmed.stderr,
-        ),
-      // What the executables themselves record: --trim took features out, and the transpiler is none of them.
-      lacksTheTranspiler: removed.includes(featureNamed("RuntimeTranspiler")),
-      lacksMoreThanTheWholeOne: removed.length > removedFrom(whole).length,
+        ) ?? [];
+      const removed = removedFrom(trimmed);
+      return {
+        saidOfTheTranspiler,
+        saysWhy:
+          /^aot: trim: blocked by dynamic-import: the program starts a Worker from code that isn't in the executable\b/m.test(
+            trimmed.stderr,
+          ),
+        // What the executables themselves record: --trim took features out, and the transpiler is none of them.
+        lacksTheTranspiler: removed.includes(featureNamed("RuntimeTranspiler")),
+        lacksMoreThanTheWholeOne: removed.length > removedFrom(whole).length,
+      };
     };
-  };
-  const keepsItAndSaysWhy = {
-    saidOfTheTranspiler: "kept",
-    saysWhy: true,
-    lacksTheTranspiler: false,
-    lacksMoreThanTheWholeOne: true,
-  };
-  expect(await report("made-at-run-time.js")).toEqual(keepsItAndSaysWhy);
-  expect(await report("program.js")).toEqual(keepsItAndSaysWhy);
+    const keepsItAndSaysWhy = {
+      saidOfTheTranspiler: "kept",
+      saysWhy: true,
+      lacksTheTranspiler: false,
+      lacksMoreThanTheWholeOne: true,
+    };
+    expect(await report("made-at-run-time.js")).toEqual(keepsItAndSaysWhy);
+    expect(await report("program.js")).toEqual(keepsItAndSaysWhy);
+  });
 });

@@ -54,7 +54,7 @@ describe.each([
     180_000,
   );
 
-  test.skipIf(!libLLVM)("a library that calls operator new with an alignment of 4 loads", async () => {
+  test.concurrent.skipIf(!libLLVM)("a library that calls operator new with an alignment of 4 loads", async () => {
     await using child = Bun.spawn({
       cmd: [
         bunExe(),

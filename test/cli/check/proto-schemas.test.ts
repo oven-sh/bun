@@ -145,7 +145,7 @@ test.concurrent.each(["bun", "browser"] as const)(
     for (const output of outputs.filter(output => output.kind === "sourcemap")) {
       const { sources, sourcesContent } = await output.json();
       sources.forEach((source: string, index: number) => {
-        files[relative(root, resolve(source)) + ".ts"] = sourcesContent[index];
+        files[relative(root, resolve(source)).replaceAll("\\", "/") + ".ts"] = sourcesContent[index];
       });
     }
     expect(Object.keys(files)).toHaveLength(6);

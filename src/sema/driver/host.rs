@@ -1489,7 +1489,11 @@ impl Disk {
     }
 
     fn compile_schema(&self, path: &[u8], text: &[u8]) -> Cow<'static, [u8]> {
-        let read = |path: &[u8]| Some(self.read_as_written(&from_native(path))?.into_owned());
+        // `already_read` has what a schema compiles to, not the schema.
+        let read = |path: &[u8]| match self.read_as_written(&from_native(path)) {
+            Some(text) => Ok(Some(text.into_owned())),
+            None => bun_protobuf::read_from_disk(path),
+        };
         let options = bun_protobuf::Options {
             target: bun_protobuf::Target::Bun,
             read: &read,

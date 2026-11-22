@@ -2,6 +2,7 @@
 const { validateFunction, validateInteger, validateNumber, validateObject } = require("internal/validators");
 
 const acceptCall: (request: Request) => boolean = $bindgen("grpc_binding.bind.ts", "acceptCall");
+const extendTimeout: (request: Request, seconds: number) => void = $bindgen("grpc_binding.bind.ts", "extendTimeout");
 const writeStatus: (request: Request, code: number, message: string, trailers: Headers | undefined) => void = $bindgen(
   "grpc_binding.bind.ts",
   "writeStatus",
@@ -556,6 +557,8 @@ class ServerCall {
     const header = this.request.headers.get("grpc-timeout");
     if (header === null) return;
     const timeout = parseTimeout(header);
+    // The timer of a socket ticks every 4 seconds.
+    extendTimeout(this.request, Math.min(Math.ceil(timeout / 1000) + 4, 255));
     if (timeout > longestTimer) return;
     const deadline = (this.#deadline = new AbortController());
     this.#timer = setTimeout(() => {
@@ -639,9 +642,8 @@ class ServerCall {
   }
 }
 
-async function* readRequests(body: ReadableStream<Uint8Array> | null, parser: MessageParser) {
-  if (body === null) return;
-  const reader = body.getReader();
+async function* readRequests(reader: ReadableStreamDefaultReader<Uint8Array> | undefined, parser: MessageParser) {
+  if (reader === undefined) return;
   while (true) {
     let result;
     try {
@@ -695,14 +697,13 @@ function route(requestStream: boolean, responseStream: boolean, handler: Handler
 
     const call = new ServerCall(request, server, onError);
     try {
+      // Locked at once, so that only what limits each message reads it.
+      const reader = request.body?.getReader() as ReadableStreamDefaultReader<Uint8Array> | undefined;
       if (handler === undefined) throw new GrpcError(Status.UNIMPLEMENTED, "The method is not implemented");
       call.startDeadline();
       if (responseStream) call.watchForCancel();
-      const requests = readRequests(request.body, new MessageParser(headers, limit));
+      const requests = readRequests(reader, new MessageParser(headers, limit));
       const input = requestStream ? requests : await call.wait(onlyRequest(requests));
-      // From here on the deadline is what limits the call.
-      server.timeout(request, 0);
-
       const output = await call.wait(handler(input, call.context));
       if (!responseStream) {
         const response = call.respond(output as Frame);

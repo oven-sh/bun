@@ -2219,7 +2219,7 @@ pub mod parse_worker {
 
         if loader == Loader::Proto {
             let read = |path: &[u8]| match worker_ctx.file_map.and_then(|files| files.get(path)) {
-                Some(contents) => Some(contents.to_vec()),
+                Some(contents) => Ok(Some(contents.to_vec())),
                 None => options::read_imported_schema(path, worker_ctx.bun_watcher.as_deref()),
             };
             let schema_options = bun_protobuf::Options {

@@ -206,9 +206,11 @@ impl AnyRequestContext {
     }
 
     pub(crate) fn lift_request_stream_limit(self) {
-        dispatch!(self, (), |_T, ctx| {
-            ctx.flags.set_request_stream_is_unbounded(true)
-        })
+        dispatch!(self, (), |_T, ctx| ctx.lift_request_stream_limit())
+    }
+
+    pub(crate) fn extend_timeout(self, seconds: c_uint) {
+        dispatch!(self, (), |_T, ctx| ctx.extend_timeout(seconds))
     }
 
     pub(crate) fn set_cookies(self, cookie_map: Option<*mut CookieMap>) {

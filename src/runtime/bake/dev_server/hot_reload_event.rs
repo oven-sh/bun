@@ -116,16 +116,17 @@ impl HotReloadEvent {
         }
 
         let changed_file_paths = self.files.keys();
-        bun_core::handle_oom(
-            dev.graphs
-                .server
-                .invalidate(changed_file_paths, entry_points),
-        );
-        bun_core::handle_oom(
-            dev.graphs
-                .client
-                .invalidate(changed_file_paths, entry_points),
-        );
+        let is_schema = |path: &[u8]| dev.server_transpiler.options.is_schema_by_name(path);
+        bun_core::handle_oom(dev.graphs.server.invalidate(
+            changed_file_paths,
+            &is_schema,
+            entry_points,
+        ));
+        bun_core::handle_oom(dev.graphs.client.invalidate(
+            changed_file_paths,
+            &is_schema,
+            entry_points,
+        ));
 
         if entry_points.set.count() == 0 {
             bun_core::debug_warn!("nothing to bundle");

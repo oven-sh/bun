@@ -171,7 +171,7 @@ export default b.declarations(
   extendAll(["Bodies", "Headers"], "Request.prototype.headers", "Response.prototype.headers"),
   extendAll(
     ["Bodies", "Headers"],
-    ...nativeBindings("Bindgen", "grpc_binding.bind.ts", "acceptCall", "takeTrailers", "writeStatus"),
+    ...nativeBindings("Bindgen", "grpc_binding.bind.ts", "acceptCall", "extendTimeout", "takeTrailers", "writeStatus"),
   ),
   extendAll(["Bodies", ...abortSignalFeatures], "Request.prototype.signal"),
   extendAll(["Bodies", "FsStats"], "Blob.prototype.stat"),

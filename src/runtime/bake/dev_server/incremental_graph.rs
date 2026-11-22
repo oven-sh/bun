@@ -1665,9 +1665,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub(crate) fn invalidate(
         &mut self,
         paths: &[Box<[u8]>],
+        is_schema: &dyn Fn(&[u8]) -> bool,
         entry_points: &mut EntryPointList,
     ) -> Result<(), crate::Error> {
-        let is_schema = |path: &[u8]| path.ends_with(b".proto");
         let of_paths = paths.iter().filter(|path| !is_schema(path));
         let mut changed: Vec<usize> = of_paths
             .filter_map(|path| self.bundled_files.get_index(path))

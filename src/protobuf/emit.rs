@@ -32,6 +32,7 @@ const RESERVED_IDENTIFIERS: &[&str] = &[
     "Routes",
     "Server",
     "String",
+    "Symbol",
     "TextDecoder",
     "TextEncoder",
     "TypeError",

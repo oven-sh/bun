@@ -150,7 +150,18 @@ Greeter.routes(greeter, {
 
 `maxReceiveMessageLength` limits each request message, after decompression. The default is 4 MiB.
 
-`idleTimeout` does not end a call once its handler runs, and `maxRequestBodySize` applies only to a request that has a `Content-Length` header. The deadline from the client limits how long a call takes.
+`maxRequestBodySize` applies only to a request that has a `Content-Length` header, so a stream of requests can be any length.
+
+[`idleTimeout`](/runtime/http/server#idletimeout) closes a connection on which no call has sent or received a message for 10 seconds. A call that has a deadline extends that to its deadline, up to 255 seconds. For a call that can be silent for longer, turn the timeout off in its handler.
+
+```ts
+Greeter.routes({
+  async *watch(request, context) {
+    context.server.timeout(context.request, 0);
+    yield* changes(context.signal);
+  },
+});
+```
 
 ---
 

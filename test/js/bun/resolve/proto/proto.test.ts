@@ -398,6 +398,7 @@ describe("encode", () => {
     [Maps, { byInt32: new Map([[1, 1]]) }, "Expected a plain object, received object"],
     [Maps, { byUint64: "abc" }, 'Expected a plain object, received "abc"'],
     [Outer, { point: "abc" }, 'Expected a message, received "abc"'],
+    [names.Symbol, { entries: new Map() }, "Expected a plain object, received object"],
     [names.Empty, undefined, "Expected a message, received undefined"],
     [Required, {}, "Missing required field fixture.v2.Required.id"],
   ] as [any, object, string][])("refuses a value: %#", (type, message, error) => {
@@ -497,6 +498,17 @@ describe("a mistake in a schema", () => {
     );
     expect(stderr).toContain("3 | message = 1;");
     expect(stderr).toMatch(/error: Expected .* but found "="\n\s+at .*b\.proto:3:9/);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("an import that cannot be read is not looked for further up", async () => {
+    const files = {
+      "app/a.proto": `${proto3}import "b.proto";`,
+      "app/b.proto/file": "",
+      "b.proto": proto3,
+    };
+    const { stderr, exitCode } = await run(files, "-p", `require("./app/a.proto")`);
+    expect(stderr).toMatch(/error: Cannot read ".*b\.proto": E[A-Z]+\n\s+at .*a\.proto:2:8/);
     expect(exitCode).toBe(1);
   });
 

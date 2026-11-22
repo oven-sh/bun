@@ -282,7 +282,10 @@ impl<'a> PluginModules<'a> {
             None => self.schemas.insert_ref(path.to_vec(), OnceLock::new()),
         };
         let compiled = cell.get_or_init(|| {
-            let read = |path: &[u8]| Some(self.disk.read(&from_native(path))?.into_owned());
+            let read = |path: &[u8]| match self.disk.read(&from_native(path)) {
+                Some(text) => Ok(Some(text.into_owned())),
+                None => bun_protobuf::read_from_disk(path),
+            };
             let mut log = Log::init();
             let options = bun_protobuf::Options {
                 target: bun_protobuf::Target::Bun,

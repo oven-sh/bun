@@ -32,6 +32,10 @@ enum Uint8Array {
   toString = 0;
 }
 
+message Symbol {
+  map<string, string> entries = 1;
+}
+
 message Client {}
 
 message Server {}

@@ -1518,10 +1518,12 @@ dependencies = [
 name = "bun_protobuf"
 version = "0.0.0"
 dependencies = [
+ "bstr",
  "bun_ast",
  "bun_core",
  "bun_paths",
  "bun_sys",
+ "thiserror",
 ]
 
 [[package]]

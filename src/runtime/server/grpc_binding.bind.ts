@@ -4,6 +4,7 @@ import { Request, Response } from "../webcore/response.bind.ts";
 export default b.module({ rustPath: "crate::server::grpc_binding" });
 
 export const acceptCall = b.fn({ args: { request: Request }, returns: b.bool });
+export const extendTimeout = b.fn({ args: { request: Request, seconds: b.u32 } });
 export const writeStatus = b.fn({
   args: { request: Request, code: b.u32, message: b.string.utf8, trailers: b.any },
   capability: "js",

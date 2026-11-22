@@ -2610,9 +2610,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     });
 
     test("every request that waits for one connection fails with it", async () => {
-      const server = Bun.serve({ port: 0, fetch: () => new Response() });
-      const { url } = server;
-      await server.stop(true);
+      const url = "http://127.0.0.1:1/";
       const codes = Array.from({ length: 3 }, () => fetch(url, { protocol: "http2" }).catch(error => error.code));
       expect(await Promise.all(codes)).toEqual(Array(3).fill("ECONNREFUSED"));
     });

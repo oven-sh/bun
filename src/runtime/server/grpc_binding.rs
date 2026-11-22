@@ -19,6 +19,10 @@ pub(crate) fn accept_call(request: &Request) -> bool {
     is_http2
 }
 
+pub(crate) fn extend_timeout(request: &Request, seconds: u32) {
+    request.request_context.get().extend_timeout(seconds);
+}
+
 /// Makes the trailers of the response to `request`.
 pub(crate) fn write_status<'a>(
     cx: &mut JsScope<'a>,

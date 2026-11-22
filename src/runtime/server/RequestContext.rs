@@ -3888,8 +3888,12 @@ where
                 .get()
                 .saturating_add(chunk.len());
             this.request_body_streamed_len.set(streamed_len);
+            let is_pulled = |bytes: &WebCore::ByteStream| {
+                bytes.buffer_action.get().is_none() && bytes.sink.get().is_none()
+            };
             if streamed_len > server.config().max_request_body_size
-                && !this.flags.request_stream_is_unbounded()
+                && !(this.flags.request_stream_is_unbounded()
+                    && readable.ptr.bytes().is_some_and(|it| is_pulled(&it)))
             {
                 this.resp
                     .get()
@@ -4255,6 +4259,22 @@ where
         match self.live_resp()? {
             uws::AnyResponse::H2(response) => Some(response),
             _ => None,
+        }
+    }
+
+    pub(crate) fn lift_request_stream_limit(&self) {
+        let stream = self.request_body_readable_stream_ref.get().get();
+        let global = self.server().global_this();
+        // After `request.clone()` the bytes also go to a reader that nothing holds to a limit.
+        if !stream.is_some_and(|it| it.is_disturbed_or_locked(global)) {
+            self.flags.set_request_stream_is_unbounded(true);
+        }
+    }
+
+    pub(crate) fn extend_timeout(&self, seconds: c_uint) {
+        let idle_timeout = c_uint::from(self.server().config().idle_timeout);
+        if idle_timeout != 0 && seconds > idle_timeout {
+            self.set_timeout(seconds);
         }
     }
 

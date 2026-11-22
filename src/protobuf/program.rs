@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use bstr::BStr;
 use bun_core::strings;
 use bun_paths::Path;
 
 use crate::schema::{Enum, Features, File, Message, Name, Types};
-use crate::{Error, Failure, parser};
+use crate::{Error, Failure, Read, parser};
 
 macro_rules! well_known_files {
     ($($name:literal),*) => {
@@ -62,32 +63,39 @@ fn locate(index: usize, origin: &Origin, text: &[u8], failure: Failure) -> Error
 /// protoc looks an import up in its `-I` directories. Every directory above the importer stands in for them.
 fn find_import(
     importer: &Origin,
-    import: &str,
-    read: &dyn Fn(&[u8]) -> Option<Vec<u8>>,
-) -> Option<(Origin, Vec<u8>)> {
+    import: &Name,
+    read: &dyn Fn(&[u8]) -> Read,
+) -> Result<Option<(Origin, Vec<u8>)>, Failure> {
+    let name = import.text.as_bytes();
     if let Origin::Disk(importer) = importer
         && bun_paths::is_absolute(importer)
-        && !bun_paths::is_absolute(import.as_bytes())
-        && !strings::contains_char(import.as_bytes(), 0)
+        && !bun_paths::is_absolute(name)
+        && !strings::contains_char(name, 0)
     {
         for directory in bun_paths::ancestors(importer).skip(1) {
-            let path = Path::join(&[directory, import.as_bytes()]);
-            let path = path.as_bytes().to_vec();
-            if path != *importer
-                && let Some(text) = read(&path)
-            {
-                return Some((Origin::Disk(path), text));
+            let path = Path::join(&[directory, name]).as_bytes().to_vec();
+            if path == *importer {
+                continue;
+            }
+            match read(&path) {
+                Ok(Some(text)) => return Ok(Some((Origin::Disk(path), text))),
+                Ok(None) => {}
+                Err(reason) => {
+                    let (path, reason) = (BStr::new(&path), BStr::new(reason));
+                    let message = format!("Cannot read \"{path}\": {reason}");
+                    return Err(Failure::new(import.span, message));
+                }
             }
         }
     }
-    let (name, text) = WELL_KNOWN_FILES.iter().find(|(name, _)| *name == import)?;
-    Some((Origin::WellKnown(name), text.as_bytes().to_vec()))
+    let well_known = WELL_KNOWN_FILES.iter().find(|it| it.0 == import.text);
+    Ok(well_known.map(|(name, text)| (Origin::WellKnown(name), text.as_bytes().to_vec())))
 }
 
 pub(crate) fn load(
     path: &[u8],
     text: &[u8],
-    read: &dyn Fn(&[u8]) -> Option<Vec<u8>>,
+    read: &dyn Fn(&[u8]) -> Read,
 ) -> Result<Vec<LoadedFile>, Error> {
     let origin = Origin::Disk(path.to_vec());
     let schema = parser::parse(text).map_err(|failure| locate(ROOT, &origin, text, failure))?;
@@ -105,9 +113,12 @@ pub(crate) fn load(
         let mut imports = Vec::new();
         for index in 0..files[next].schema.imports.len() {
             let import = &files[next].schema.imports[index];
-            let found = (is_emitted || import.is_public)
-                .then(|| find_import(&files[importer].origin, &import.path.text, read))
-                .flatten();
+            let found = match is_emitted || import.is_public {
+                true => find_import(&files[importer].origin, &import.path, read),
+                false => Ok(None),
+            };
+            let LoadedFile { origin, text, .. } = &files[next];
+            let found = found.map_err(|failure| locate(next, origin, text, failure))?;
             let Some((origin, text)) = found else {
                 imports.push(None);
                 continue;

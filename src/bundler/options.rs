@@ -1122,14 +1122,15 @@ impl Default for ResolveFileExtensionsGroup {
 pub(crate) fn read_imported_schema(
     path: &[u8],
     watcher: Option<&bun_watcher::Watcher>,
-) -> Option<Vec<u8>> {
-    let text = bun_protobuf::read_from_disk(path)?;
+) -> bun_protobuf::Read {
+    let read = bun_protobuf::read_from_disk(path);
     if let Some(watcher) = watcher
+        && !matches!(read, Ok(None))
         && !strings::contains(path, b"node_modules")
     {
         watcher.add_file_by_path_slow(path);
     }
-    Some(text)
+    read
 }
 
 pub fn loaders_from_transform_options(
@@ -1834,7 +1835,7 @@ impl<'a> BundleOptions<'a> {
         self.loaders.get(ext).copied().unwrap_or(Loader::File)
     }
 
-    pub(crate) fn is_schema_by_name(&self, path: &[u8]) -> bool {
+    pub fn is_schema_by_name(&self, path: &[u8]) -> bool {
         self.loader(bun_paths::extension(path)) == Loader::Proto
     }
 

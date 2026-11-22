@@ -366,9 +366,7 @@ describe.concurrent("errors", () => {
   });
 
   test("nothing listens", async () => {
-    const server = Bun.serve({ port: 0, fetch: () => new Response() });
-    const { url } = server;
-    await server.stop(true);
+    const url = "http://127.0.0.1:1/";
     const error = await failure(new Echo.Client(url).unary({}));
     expect(error).toMatchObject({ code: Status.UNAVAILABLE, cause: { code: "ECONNREFUSED" } });
 
@@ -475,6 +473,37 @@ describe.concurrent("deadlines and cancellation", () => {
     expect(await failure(it.client.unary({}, { signal: controller.signal }))).toMatchObject({ code: Status.CANCELLED });
   });
 
+  // The timer of a socket ticks every 4 seconds.
+  test("idleTimeout ends a silent call, unless it has a deadline or its handler says otherwise", async () => {
+    const release = Promise.withResolvers<void>();
+    await using it = serve(
+      {
+        async unary(request: any, context: any) {
+          if (request.text === "lifted") context.server.timeout(context.request, 0);
+          await release.promise;
+          return request;
+        },
+        clientStream: echo.clientStream,
+      },
+      {},
+      { idleTimeout: 1 },
+    );
+    const sessions = Array.from({ length: 4 }, () => new Bun.FetchSession());
+    const [a, b, c, d] = sessions.map(({ fetch }) => new Echo.Client(it.server.url, { fetch }));
+    try {
+      const kept = [a.unary({ text: "deadline" }, { timeout: 60_000 }), b.unary({ text: "lifted" })];
+      const silence = { [Symbol.asyncIterator]: () => ({ next: () => new Promise<never>(() => {}) }) };
+      // One after the other, so that the calls that are kept outlast two ticks.
+      expect(await failure(c.unary({}))).toMatchObject({ code: Status.UNAVAILABLE });
+      expect(await failure(d.clientStream(silence))).toMatchObject({ code: Status.UNAVAILABLE });
+      release.resolve();
+      expect((await Promise.all(kept)).map(message => message.text)).toEqual(["deadline", "lifted"]);
+    } finally {
+      release.resolve();
+      for (const session of sessions) session.close();
+    }
+  }, 30_000);
+
   test("an iterator that waits for its next message is closed when the call ends", async () => {
     const closed = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
     const waiting = ({ resolve }: (typeof closed)[0]) => ({
@@ -548,6 +577,28 @@ describe.concurrent("sizes", () => {
     await using it = serve(echo, {}, { maxRequestBodySize: 1 << 20 });
     const requests = Array.from({ length: 4 }, () => ({ number: 1, blob: megabyte }));
     expect((await it.client.clientStream(requests)).number).toBe(4);
+  });
+
+  test("nothing else can read a body that maxRequestBodySize does not limit", async () => {
+    await using it = serve({
+      clientStream: (_: any, { request }: any) => request.arrayBuffer().catch((error: any) => ({ text: error.code })),
+    });
+    expect((await it.client.clientStream([{}])).text).toBe("ERR_BODY_ALREADY_USED");
+
+    const cloned = Promise.withResolvers<unknown>();
+    const { POST } = Echo.routes(echo)["/test.v1.Echo/ClientStream"];
+    await using server = Bun.serve({
+      port: 0,
+      http2: true,
+      maxRequestBodySize: 1 << 20,
+      fetch(request, server) {
+        cloned.resolve(failure(request.clone().arrayBuffer()));
+        return POST(request, server);
+      },
+    });
+    const requests = Array.from({ length: 4 }, () => ({ blob: megabyte }));
+    await failure(new Echo.Client(server.url).clientStream(requests));
+    expect(await cloned.promise).toMatchObject({ message: "Request body exceeded maxRequestBodySize" });
   });
 
   test("a slow reader holds the handler back", async () => {

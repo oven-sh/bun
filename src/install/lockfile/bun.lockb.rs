@@ -156,7 +156,7 @@ pub(crate) fn save(
     *end_pos = stream.get_pos()?;
     stream.write_int_le(0u64)?;
 
-    if cfg!(debug_assertions) {
+    if cfg!(all(windows, debug_assertions)) {
         for res in this.packages.items_resolution() {
             let path = match res.tag {
                 ResolutionTag::Folder => res.folder(),
@@ -165,10 +165,7 @@ pub(crate) fn save(
                 ResolutionTag::Workspace => res.workspace(),
                 _ => continue,
             };
-            debug_assert!(!strings::contains_char(
-                this.str(path),
-                bun_paths::SEP_WINDOWS
-            ));
+            debug_assert!(!strings::contains_char(this.str(path), b'\\'));
         }
     }
 

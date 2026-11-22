@@ -311,25 +311,28 @@ pub mod api {
         /// Resolves `path` against `dir`, the directory of the config file that sets it or the
         /// directory it was typed in. As in npm, `~` and `~/<rest>` expand to the home directory.
         pub fn resolve_path(dir: &[u8], path: &[u8]) -> Box<[u8]> {
-            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+            use bun_paths::portable;
 
             let home = bun_core::env_var::HOME.get_not_empty();
             if let ([b'~', rest @ ..], Some(home)) = (path, home)
-                && rest
-                    .first()
-                    .is_none_or(|&c| bun_core::path_sep::is_sep_any(c))
+                && rest.first().is_none_or(|&c| portable::is_sep(c))
             {
-                return [home, rest].concat().into();
+                return [home, &portable::from_portable_rooted(rest)]
+                    .concat()
+                    .into();
             }
             // An empty path means the option is unset, so it must stay empty.
             if path.is_empty() || bun_paths::is_absolute(path) || !bun_paths::is_absolute(dir) {
                 return path.into();
             }
-            let mut buf = bun_paths::path_buffer_pool::get();
-            // A joined path that does not fit in `buf` could not be opened anyway, so keep `path`.
-            join_abs_string_buf_checked::<platform::Auto>(dir, &mut buf[..], &[path])
-                .unwrap_or(path)
-                .into()
+            let mut resolved = bun_paths::Path::resolve(&[dir, path]);
+            // As an import, `./scanner/` is the directory and `./scanner` can be `scanner.ts`.
+            resolved.copy_trailing_sep_from(path);
+            // A path that is too long could not be opened anyway, so keep `path`.
+            if resolved.len() > bun_paths::MAX_PATH_BYTES {
+                return path.into();
+            }
+            resolved.as_bytes().into()
         }
     }
 

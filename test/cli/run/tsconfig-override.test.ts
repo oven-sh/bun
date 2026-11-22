@@ -3,6 +3,33 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "node:path";
 
 describe("bun run --tsconfig-override", () => {
+  const pathsTo = (file: string) => JSON.stringify({ compilerOptions: { paths: { which: [file] } } });
+  test
+    .skipIf(isWindows)
+    .each([
+      [{ "ts\\c.json": pathsTo("./real.ts") }],
+      [{ "ts/c.json": pathsTo("../real.ts"), "ts\\c.json": pathsTo("./decoy.ts") }],
+    ])("a backslash separates unless that leads nowhere: %j", async files => {
+    await using dir = tempDir("run-tsconfig-override-backslash", {
+      "index.ts": `import which from "which"; console.log(which);`,
+      "real.ts": `export default "real";`,
+      "decoy.ts": `export default "decoy";`,
+      ...files,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--tsconfig-override", "ts\\c.json", "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("real\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("should use custom tsconfig for path resolution", async () => {
     await using dir = tempDir("run-tsconfig-override", {
       "index.ts": `

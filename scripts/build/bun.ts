@@ -792,7 +792,7 @@ function emitDuplicateSymbolCheck(
   const objdump = cfg.windows ? cfg.objdump! : undefined;
   // The report is always written; $out is the stamp, written only on success.
   n.rule("duplicate_symbols", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} duplicates ${q(nm)} $out.rsp ${q(report)}${objdump !== undefined ? ` ${q(objdump)}` : ""}`,
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} duplicates ${q(nm)} $out.rsp ${q(report)}${objdump !== undefined ? ` ${q(objdump)} ${cfg.arch}` : ""}`,
     description: `check ${exeName} link inputs for duplicate definitions`,
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",

@@ -19,6 +19,7 @@ import { webkit } from "../../../scripts/build/deps/webkit.ts";
 import { computeDepFlags, computeFlags } from "../../../scripts/build/flags.ts";
 import { rustTarget } from "../../../scripts/build/rust.ts";
 import type { DirectBuild } from "../../../scripts/build/source.ts";
+import { arm64PointerLoads, weakReferencesToVariables } from "../../../scripts/build/verify-binary.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -192,5 +193,71 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     // reject with "inconsistent LTO Unit splitting". WPD falls back to
     // index-only mode (still devirtualizes, just without the hybrid split).
     expect(linuxFlags.cxxflags).toContain("-fno-split-lto-unit");
+  });
+});
+
+describe("the check for weak references that LLVM miscompiles on arm64", () => {
+  /** Code at 0x140001000 and 0x140003000, data at 0x140002000. `instructions` begin the second section of code. */
+  function image(instructions: number[]): Buffer {
+    const bytes = Buffer.alloc(0x800);
+    const header = 0x40;
+    bytes.writeUInt32LE(header, 0x3c);
+    bytes.writeUInt16LE(3, header + 6);
+    bytes.writeUInt16LE(0xf0, header + 20);
+    bytes.writeBigUInt64LE(0x140000000n, header + 48);
+    [0x60000020, 0x40000040, 0x60000020].forEach((characteristics, index) => {
+      const section = header + 24 + 0xf0 + index * 40;
+      bytes.writeUInt32LE(0x100, section + 8);
+      bytes.writeUInt32LE(0x1000 * (index + 1), section + 12);
+      bytes.writeUInt32LE(0x200, section + 16);
+      bytes.writeUInt32LE(0x200 * (index + 1), section + 20);
+      bytes.writeUInt32LE(characteristics, section + 36);
+    });
+    instructions.forEach((instruction, index) => bytes.writeUInt32LE(instruction, 0x600 + index * 4));
+    return bytes;
+  }
+  const adrpX1 = { thisPage: 0x90000001, data: 0xf0ffffe1, otherCode: 0xd0ffffe1 };
+  const ldrX1 = 0xf9401421; // ldr x1, [x1, #0x28]
+  const movX2 = 0xaa0003e2; // mov x2, x0
+
+  test.each([
+    ["a slot", [adrpX1.data, ldrX1], 1, []],
+    ["a function", [adrpX1.thisPage, ldrX1], 1, ["0x140003004 loads from 0x140003028"]],
+    ["a function before it", [adrpX1.otherCode, ldrX1], 1, ["0x140003004 loads from 0x140001028"]],
+    ["a function, later", [adrpX1.thisPage, movX2, movX2, ldrX1], 1, ["0x14000300c loads from 0x140003028"]],
+    [
+      "a function, much later",
+      [adrpX1.thisPage, ...Array(24).fill(movX2), ldrX1],
+      1,
+      ["0x140003064 loads from 0x140003028"],
+    ],
+    [
+      "a function, behind a branch and a vector register",
+      [adrpX1.thisPage, 0x54000041 /* b.ne */, 0xfd400041 /* ldr d1, [x2] */, ldrX1],
+      1,
+      ["0x14000300c loads from 0x140003028"],
+    ],
+    ["what the register holds next", [adrpX1.thisPage, 0xaa0003e1 /* mov x1, x0 */, ldrX1], 0, []],
+    ["nothing", [adrpX1.thisPage, 0x9100a021 /* add x1, x1, #0x28 */], 0, []],
+  ])("a load from %s", (_, instructions, pointerLoads, fromCode) => {
+    expect(arm64PointerLoads(image(instructions))).toEqual({ pointerLoads, fromCode });
+  });
+
+  test.each(["\n", "\r\n"])("a reference to a variable, with lines that end in %j", end => {
+    const references = ["variable", "constant", "func", "native", "missing"].map(
+      name => `C:\\a.lib:a.obj:                  (undefined) weak external ${name}`,
+    );
+    const definitions = [
+      "b.obj: ---------------- (LTO,DATA) external variable",
+      "b.obj: ---------------- (LTO,RODATA) weak external constant",
+      "b.obj: ---------------- (LTO,CODE) external func",
+      "b.obj: ---------------- (LTO,DATA) external strong",
+      "b.obj:                  (undefined) external strong",
+      "c.obj: 00000000 00000000 R native",
+    ];
+    expect(weakReferencesToVariables([references.join(end) + end, definitions.join(end) + end])).toEqual([
+      "variable in C:\\a.lib:a.obj",
+      "constant in C:\\a.lib:a.obj",
+    ]);
   });
 });

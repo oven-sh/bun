@@ -6,7 +6,7 @@ use bun_core::String as BunString;
 use bun_core::{Environment, Global};
 use bun_crash_handler as crash_handler;
 
-use crate::generated_bindgen::crash_handler_jsc::FeatureData;
+use crate::generated_bindgen::crash_handler_jsc::{FaultState, FeatureData};
 
 pub(crate) fn get_mach_o_image_zero_offset() -> Option<f64> {
     #[cfg(not(target_os = "macos"))]
@@ -240,6 +240,86 @@ pub(crate) fn stack_trace_starts_at_signed_return_address() -> Option<bool> {
     }
     #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
     {
+        None
+    }
+}
+
+/// Whether the stack trace of a fault in `state` has the return address that the state holds for the function at the fault, and then the callers of this function. `None` where the processor has no such state, and for a trace that is neither.
+pub(crate) fn fault_walk_starts_at_caller(state: FaultState) -> Option<bool> {
+    #[cfg(all(unix, any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        use bun_core::debug::{capture_from_fault, frame_address, return_address_of_frame};
+
+        /// x86-64: `call rax` ends it.
+        static CODE: [u8; 16] = [
+            0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+            0xff, 0xd0,
+        ];
+        const LENGTH_OF_CALL: usize = 2;
+        const NOT_MAPPED: usize = 8;
+        let behind_call = CODE.as_ptr_range().end.addr();
+        let fp = frame_address();
+        // SAFETY: `fp` is the frame record of this function.
+        let caller = unsafe { return_address_of_frame(fp) };
+
+        // Which word is what a call pushed, and what `pc`, the fault address and x30 are.
+        let (pushed, pc, fault_address, link_register) = match state {
+            FaultState::CallOfZero => (behind_call, 0, Some(0), behind_call),
+            FaultState::CallOfAddressThatCannotRun => {
+                (behind_call, NOT_MAPPED, Some(NOT_MAPPED), behind_call)
+            }
+            FaultState::FaultOnData => (behind_call, NOT_MAPPED, Some(2 * NOT_MAPPED), behind_call),
+            FaultState::SignalWithoutFaultAddress => (behind_call, 0, None, behind_call),
+            FaultState::ReturnToAddressThatCannotRun => {
+                (behind_call, NOT_MAPPED, Some(NOT_MAPPED), NOT_MAPPED)
+            }
+            FaultState::LinkRegisterOfZero if cfg!(target_arch = "aarch64") => {
+                (behind_call, NOT_MAPPED, Some(NOT_MAPPED), 0)
+            }
+            FaultState::LinkRegisterOfFrameRecord if cfg!(target_arch = "aarch64") => {
+                (behind_call, NOT_MAPPED, Some(NOT_MAPPED), caller)
+            }
+            FaultState::WordThatNoCallPushed if cfg!(target_arch = "x86_64") => {
+                (behind_call - LENGTH_OF_CALL, 0, Some(0), 0)
+            }
+            FaultState::WordBelowEveryCall if cfg!(target_arch = "x86_64") => (1, 0, Some(0), 0),
+            FaultState::StackThatCannotBeRead if cfg!(target_arch = "x86_64") => (0, 0, Some(0), 0),
+            _ => return None,
+        };
+
+        // x86-64: a call leaves the stack pointer at the second word, and a return at the first.
+        #[repr(align(16))]
+        struct Stack([usize; 2]);
+        let stack = Stack([pushed; 2]);
+        let [at_return, at_call] = &core::hint::black_box(&stack).0;
+        let sp = match state {
+            FaultState::ReturnToAddressThatCannotRun => {
+                core::ptr::from_ref(at_return).expose_provenance()
+            }
+            FaultState::StackThatCannotBeRead => NOT_MAPPED,
+            _ => core::ptr::from_ref(at_call).expose_provenance(),
+        };
+        let link_register = cfg!(target_arch = "aarch64").then_some(link_register);
+
+        let mut trace = [0usize; 3];
+        let found = capture_from_fault(
+            pc,
+            pc.wrapping_add(1),
+            fp,
+            sp,
+            fault_address,
+            link_register,
+            &mut trace,
+        );
+        match (found.starts_at_caller, trace) {
+            (true, [_, first, second]) if first == behind_call && second == caller => Some(true),
+            (false, [_, first, second]) if first == caller && second != caller => Some(false),
+            _ => None,
+        }
+    }
+    #[cfg(not(all(unix, any(target_arch = "x86_64", target_arch = "aarch64"))))]
+    {
+        let _ = state;
         None
     }
 }

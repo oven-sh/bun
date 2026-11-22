@@ -82,6 +82,9 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
 const loadFromLowAddress = Buffer.from([0x8b, 0x04, 0x25, 0x18, 0x00, 0x00, 0x00]);
 // `ud2`: what compiled code traps with.
 const illegalInstruction = Buffer.from([0x0f, 0x0b]);
+// `nop; xor eax, eax; call rax` and `push 8; pop rax; call rax`: a call of an address where nothing can run, as long as a near call.
+const callOfZero = Buffer.from([0x90, 0x31, 0xc0, 0xff, 0xd0]);
+const callOfEight = Buffer.from([0x6a, 0x08, 0x58, 0xff, 0xd0]);
 
 class Executable {
   bytes: Buffer;
@@ -169,14 +172,17 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
     expect(await run([join(cwd, "app")], cwd)).toEqual({ stdout: "started\ntotal 23\n", stderr: "", exitCode: 0 });
     return { id: id!, executable: new Executable(join(cwd, "app")) };
   }
-  async function crash(cwd: string, id: string) {
+  /** What the processor could not run, where the fault is not the planted load: nothing is at that address. */
+  async function crash(cwd: string, id: string, notFetched?: "0x0" | "0x8") {
     const { stdout, stderr, exitCode } = await run([join(cwd, "planted")], cwd);
     expect(stdout).toBe("started\n");
     expect(exitCode).not.toBe(0);
-    expect(stderr).toContain("Segmentation fault at address 0x18\n");
+    expect(stderr).toContain(`Segmentation fault at address ${notFetched ?? "0x18"}\n`);
     expect(stderr.split("\n")).toContain("Build ID: " + id);
     // What the processor held: the planted instruction itself, and no value that says where anything was loaded.
-    expect(stderr).toMatch(/^Code at rip: 8b 04 25 18 00 00 00( [0-9a-f]{2})*$/m);
+    expect(stderr).toMatch(
+      notFetched ? /^Code at rip: not readable$/m : /^Code at rip: 8b 04 25 18 00 00 00( [0-9a-f]{2})*$/m,
+    );
     const registers = stderr.match(/^Registers:((?: r[a-z0-9]+=\S+){17})$/m)?.[1];
     expect(registers).toBeString();
     for (const [, name, value] of registers!.matchAll(/ (\w+)=(\S+)/g)) {
@@ -185,7 +191,7 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
       );
     }
     expect(registers).toMatch(/ rsp=stack\+0x0 /);
-    expect(registers).toMatch(/ rip=code\+0x[0-9a-f]+$/);
+    expect(registers).toMatch(notFetched ? new RegExp(` rip=${notFetched}$`) : / rip=code\+0x[0-9a-f]+$/);
     const link = stderr.match(/^ (\S*\/\d+\.\d+\.\d+\/\S+)$/m)?.[1];
     expect(link).toBeString();
     const printed = framesOf(stderr.slice(stderr.indexOf("Compiled JavaScript on the stack:\n")));
@@ -260,6 +266,54 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
       "total app.ts:11:43",
       "checkout app.ts:23:23",
     ]);
+  });
+
+  // The call of priceOf becomes a call of an address where nothing can run. Nothing of a function there has run, so it has
+  // no frame, and the report starts at the function that called.
+  test("a call of an address where nothing can run: the function that called and all its callers", async () => {
+    using dir = tempDir("aot-crash-in-compiled-code", files);
+    const { id, executable } = await build(String(dir));
+    const calls = executable.returnAddressesOfCallsOf("priceOf").map(behind => behind - callOfZero.length);
+    for (const [call, address] of [
+      [callOfZero, "0x0"],
+      [callOfEight, "0x8"],
+    ] as const) {
+      executable.writeWithFaultAt(calls, join(String(dir), "planted"), call);
+      expect(await crash(String(dir), id, address)).toEqual([
+        "lineTotal app.ts:17:17",
+        "total app.ts:11:43",
+        "checkout app.ts:23:23",
+      ]);
+    }
+  });
+
+  // A call in tail position whose result changes form is a plain call, and a frame that has made one is not shown once
+  // what it called runs. What this one called has not run.
+  test("a call in tail position of an address where nothing can run: the function that called is there", async () => {
+    using dir = tempDir("aot-crash-in-compiled-code", {
+      "app.ts": `import { whole } from "./whole.ts";
+
+function half(n: number): number {
+  if (process.argv.length > 99) return half(n) + 1;
+  return n > 0 ? whole(n) : 0.5;
+}
+
+function outer(n: number): number {
+  return process.argv.length > 99 ? outer(n) + 1 : half(n) + 1;
+}
+
+console.log("started");
+console.log("total " + (outer(process.argv.length) + 20));
+`,
+      "whole.ts": `export function whole(n: number): number {
+  return (process.argv.length > 99 ? whole(n) + 1 : n) | 0;
+}
+`,
+    });
+    const { id, executable } = await build(String(dir));
+    const calls = executable.returnAddressesOfCallsOf("whole").map(behind => behind - callOfZero.length);
+    executable.writeWithFaultAt(calls, join(String(dir), "planted"), callOfZero);
+    expect(await crash(String(dir), id, "0x0")).toEqual(["half app.ts:5:18", "outer app.ts:9:52", " app.ts:13:25"]);
   });
 });
 

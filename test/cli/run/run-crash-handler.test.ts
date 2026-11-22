@@ -66,6 +66,93 @@ test.if(hasPointerAuthentication)("a stack trace takes the signature off a retur
   expect(crash_handler.stackTraceStartsAtSignedReturnAddress()).toBe(true);
 });
 
+// The instruction at an address where nothing can run is not fetched, and no frame record names the function that called
+// it or jumped to it. On AArch64 x30 does, and on x86-64 the word that the call pushed. A return leaves neither.
+// Each state is the registers of such a fault, and the answer is whether the stack trace starts at that function.
+describe.if(isPosix)("the stack trace of a fault at an address that cannot be run", () => {
+  test.each([
+    ["a call of 0", "callOfZero", true],
+    ["a call of another address that cannot be run", "callOfAddressThatCannotRun", true],
+    ["a fault on data", "faultOnData", false],
+    ["a signal without a fault address", "signalWithoutFaultAddress", false],
+    ["a return to an address that cannot be run", "returnToAddressThatCannotRun", false],
+  ])("%s", (_, state, startsAtCaller) => {
+    expect(crash_handler.faultWalkStartsAtCaller(state)).toBe(startsAtCaller);
+  });
+
+  // What x30 holds where no call has set it.
+  test.if(isArm64).each([
+    ["a link register of 0", "linkRegisterOfZero"],
+    ["a link register that the frame record holds, in a function that has run", "linkRegisterOfFrameRecord"],
+  ])("%s", (_, state) => {
+    expect(crash_handler.faultWalkStartsAtCaller(state)).toBe(false);
+  });
+
+  // What the stack pointer is at where no call has pushed it.
+  test.if(process.arch === "x64").each([
+    ["a word on the stack that no call instruction ends at", "wordThatNoCallPushed"],
+    ["a word on the stack below 8", "wordBelowEveryCall"],
+    ["a stack pointer that cannot be read", "stackThatCannotBeRead"],
+  ])("%s", (_, state) => {
+    expect(crash_handler.faultWalkStartsAtCaller(state)).toBe(false);
+  });
+
+  // The same through the signal handler, with the registers that the kernel saved. C code that bun:ffi compiles calls
+  // the address. No image holds the address, that code, or the thunk that called it: the report starts with as many
+  // frames that it cannot place as `unplaced` says. The second is the C code, and without it there is one less.
+  async function callOf(target: string, ...args: string[]) {
+    const call = `new (require("bun:ffi").CFunction)({ ptr: ${target}, args: [], returns: "void" })()`;
+    await using proc = Bun.spawn({
+      cmd: withoutCoreDump([bunExe(), "-e", call, "--debug-crash-handler-use-trace-string", ...args]),
+      env: noReportEnv,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // After the version: the platform, the command, the format and 7 characters of commit, two VLQs of feature bits,
+    // and the frames, where `_` is one that no image holds.
+    const unplaced = stderr.match(/\/\d+\.\d+\.\d+\/.{10}(?:[g-z0-9+/]*[A-Za-f]){2}(_*)/)?.[1].length;
+    return { reason: stderr.match(/^panic\(main thread\): (.*) at address 0x/m)?.[1], unplaced, exitCode };
+  }
+  // bun:ffi needs memory that it can write and run, and ASAN answers a fault itself.
+  const takesRealFaults = (isLinux || process.platform === "darwin") && !isASAN && !!without("a hardened build");
+
+  test.if(takesRealFaults)("a real call of an address where nothing is mapped", async () => {
+    expect(await callOf("8")).toEqual({
+      reason: "Segmentation fault",
+      unplaced: 3,
+      exitCode: 128 + osConstants.signals.SIGSEGV,
+    });
+  });
+
+  // macOS raises SIGBUS for what is mapped and cannot be run.
+  test.if(takesRealFaults)("a real call of memory that holds data", async () => {
+    const signal = isLinux ? "SIGSEGV" : "SIGBUS";
+    expect(await callOf(`require("bun:ffi").ptr(new Uint8Array(64))`)).toEqual({
+      reason: isLinux ? "Segmentation fault" : "Bus error",
+      unplaced: 3,
+      exitCode: 128 + osConstants.signals[signal],
+    });
+  });
+
+  // Linux raises SIGBUS with BUS_ADRERR for a page that its file does not hold. Code that is running faults like this
+  // when its file is cut, so x30 is not taken for the return address of what runs there. x86-64 looks at the stack.
+  test.if(takesRealFaults && isGlibc)("a real call of a page that its file does not hold", async () => {
+    using dir = tempDir("crash-call-of-page-without-file", { "empty": "" });
+    const mapped = `(() => {
+      const { mmap } = require("bun:ffi").dlopen("libc.so.6", {
+        mmap: { args: ["ptr", "usize", "i32", "i32", "i32", "i64"], returns: "ptr" },
+      }).symbols;
+      // PROT_READ | PROT_EXEC, MAP_PRIVATE
+      return mmap(null, 16384, 1 | 4, 2, require("fs").openSync(process.argv.at(-1), "r"), 0);
+    })()`;
+    expect(await callOf(mapped, path.join(String(dir), "empty"))).toEqual({
+      reason: "Bus error",
+      unplaced: isArm64 ? 2 : 3,
+      exitCode: 128 + osConstants.signals.SIGBUS,
+    });
+  });
+});
+
 // The program finds the return addresses that `descend` has left on the stack and changes the bits where a signature goes.
 describe.if(hasPointerAuthentication && !isASAN && !unsupported)("signed return addresses of compiled code", () => {
   const program = `import { read, toArrayBuffer } from "bun:ffi";

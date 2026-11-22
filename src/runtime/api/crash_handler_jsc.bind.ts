@@ -10,6 +10,19 @@ export const FeatureData = b.dictionary({
   generated_at: b.u64,
 });
 
+export const FaultState = b.enumeration([
+  "callOfZero",
+  "callOfAddressThatCannotRun",
+  "faultOnData",
+  "signalWithoutFaultAddress",
+  "returnToAddressThatCannotRun",
+  "linkRegisterOfZero",
+  "linkRegisterOfFrameRecord",
+  "wordThatNoCallPushed",
+  "wordBelowEveryCall",
+  "stackThatCannotBeRead",
+]);
+
 export const crashHandler = b.namespace({
   getMachOImageZeroOffset: { returns: b.f64.optional, length: 1 },
   getFeatureData: { returns: FeatureData, length: 1 },
@@ -27,4 +40,5 @@ export const crashHandler = b.namespace({
   trap: { length: 1 },
   raiseIgnoringPanicHandler: { length: 1 },
   stackTraceStartsAtSignedReturnAddress: { returns: b.bool.optional },
+  faultWalkStartsAtCaller: { args: { state: FaultState }, returns: b.bool.optional },
 });

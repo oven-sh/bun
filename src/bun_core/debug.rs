@@ -338,7 +338,8 @@ pub fn note_compiled_code() {
 fn is_behind_call(address: usize, mut load: impl FnMut(usize) -> Option<usize>) -> bool {
     const OPCODE_OF_NEAR_CALL: u8 = 0xe8;
     const OPCODE_OF_GROUP_5: u8 = 0xff;
-    let Some(bytes) = load(address - core::mem::size_of::<usize>()).map(usize::to_le_bytes) else {
+    let before = address.checked_sub(core::mem::size_of::<usize>());
+    let Some(bytes) = before.and_then(&mut load).map(usize::to_le_bytes) else {
         return false;
     };
     let calls_through =
@@ -366,6 +367,52 @@ fn caller_by_frame_record(
         fp.checked_add(2 * WORD)?,
         caller_fp,
     ))
+}
+
+/// The registers of the caller of a function that has not run its first instruction, given those there: (pc, sp, fp). `None` where a return led there.
+#[cfg(not(windows))]
+fn caller_at_function_entry(
+    pc: usize,
+    sp: usize,
+    fp: usize,
+    link_register: Option<usize>,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> Option<(usize, usize, usize)> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let return_address = strip_return_address_signature(link_register?);
+        let in_frame_record = fp.checked_add(StackIterator::PC_OFFSET).and_then(&mut load);
+        // A return jumps to x30, and a function that has run without a call still has there what its frame record holds.
+        if return_address == 0
+            || return_address == strip_return_address_signature(pc)
+            || in_frame_record.map(strip_return_address_signature) == Some(return_address)
+        {
+            return None;
+        }
+        Some((return_address, sp, fp))
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        const WORD: usize = core::mem::size_of::<usize>();
+        let _ = (pc, link_register);
+        // A call pushes one word onto a stack that the ABI aligns to 16 bytes, and a return pops it.
+        if sp % (2 * WORD) != WORD {
+            return None;
+        }
+        let return_address = load(sp)?;
+        // No table says what code that compiled functions share has on the stack, so the walk does not start in it.
+        let is_in_stub =
+            compiled_frame_at_return_address(return_address).is_some_and(|frame| frame.is_in_stub);
+        if is_in_stub || !is_behind_call(return_address, &mut load) {
+            return None;
+        }
+        Some((return_address, sp.checked_add(WORD)?, fp))
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        let _ = (pc, sp, fp, link_register, &mut load);
+        None
+    }
 }
 
 /// Through how many frames the registers of one lead, that one counted, up to `most`.
@@ -786,6 +833,15 @@ pub fn capture_from_context(
     n
 }
 
+/// The addresses that `capture_from_fault` wrote.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, Default)]
+pub struct FaultTrace {
+    pub len: usize,
+    /// The second address is where the function goes on that called the first or jumped to it. What it called has not run.
+    pub starts_at_caller: bool,
+}
+
 #[cfg(not(windows))]
 fn walk(mut it: StackIterator, out: &mut [usize]) -> usize {
     let mut n = 0usize;
@@ -805,23 +861,41 @@ fn walk(mut it: StackIterator, out: &mut [usize]) -> usize {
 /// frame record: where the fault lies in one, the frame-pointer chain starts at a caller far up the stack, and the callers in
 /// between are found from the stack pointer and the tables. `behind_pc` lies behind the start of the instruction at `pc` and
 /// not behind its end: the tables are asked about return addresses.
+/// `fault_address` is what a fault could not read, write or run. Where it is `pc`, the instruction there was not fetched, and the walk starts at the function that called it or jumped to it. `link_register` is x30 at the fault, if it can be the return address of that function.
 #[cfg(not(windows))]
 pub fn capture_from_fault(
     pc: usize,
     behind_pc: usize,
     fp: usize,
     sp: usize,
+    fault_address: Option<usize>,
+    link_register: Option<usize>,
     out: &mut [usize],
-) -> usize {
+) -> FaultTrace {
     if out.is_empty() {
-        return 0;
+        return FaultTrace::default();
     }
     // Without FEAT_FPAC a return address that fails to authenticate gets bits in that place, and the return to it faults.
     out[0] = strip_return_address_signature(pc);
+    if fault_address == Some(pc) {
+        let mut ma = MemoryAccessor::INIT;
+        let load = |address| ma.load_usize(address);
+        if let Some((pc, sp, fp)) = caller_at_function_entry(pc, sp, fp, link_register, load) {
+            // A return address lies behind its call.
+            let callers = capture_from_fault(pc, pc, fp, sp, None, None, &mut out[1..]);
+            return FaultTrace {
+                len: 1 + callers.len,
+                starts_at_caller: true,
+            };
+        }
+    }
     let mut it = StackIterator::init(fp);
     if cfg!(target_arch = "x86_64") {
         it.returned_to = Some((behind_pc, sp));
         it.is_at_fault = true;
     }
-    1 + walk(it, &mut out[1..])
+    FaultTrace {
+        len: 1 + walk(it, &mut out[1..]),
+        starts_at_caller: false,
+    }
 }

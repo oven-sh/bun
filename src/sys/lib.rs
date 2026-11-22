@@ -7817,8 +7817,8 @@ pub mod elf {
             if context.address < info.dlpi_addr as usize {
                 return 0;
             }
-            // musl lists an object without program headers if none of its `PT_LOAD` segments holds them.
-            if info.dlpi_phdr.is_null() {
+            // musl lists no headers for an object if no `PT_LOAD` holds them. A file can put them at an odd address.
+            if info.dlpi_phdr.is_null() || !info.dlpi_phdr.is_aligned() {
                 return 0;
             }
             // SAFETY: dlpi_phdr points to dlpi_phnum entries.

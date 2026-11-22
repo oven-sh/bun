@@ -784,82 +784,95 @@ int eventfd(unsigned int initval, int flags) {
   });
 });
 
-// musl lists a library whose program headers lie outside of its PT_LOAD segments with a null `dlpi_phdr`. glibc keeps
-// a copy of the headers, so the preloaded library lists itself as musl would, and says so on stdout once it has failed.
-// Only a build that checks the preconditions of unsafe Rust functions stops at the null pointer.
-test.skipIf(!isLinux || !cc || !(isDebug || isASAN))(
-  "the trace string is written when the loader lists a library without program headers",
-  async () => {
-    using dir = tempDir("crash-report-no-program-headers", {
-      "library.c": /* c */ `
+// A loader can list a library with program headers that are not a slice. musl lists none, with a null `dlpi_phdr`, if
+// no PT_LOAD segment of the library holds them. glibc lists them at the address that the file gives, which can be odd.
+// Once it has failed, the preloaded library lists itself in one of these ways and says so on stdout.
+// Only a build that checks the preconditions of unsafe Rust functions stops at such a pointer.
+describe.skipIf(!isLinux || !cc || !(isDebug || isASAN))(
+  "the trace string is written when the loader lists a library",
+  () => {
+    const library = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <link.h>
 #include <stddef.h>
+#include <string.h>
 #include <unistd.h>
 
 typedef int (*visitor)(struct dl_phdr_info *, size_t, void *);
 struct walk { visitor visit; void *data; };
 
 __attribute__((weak)) void napi_fatal_error(const char *, size_t, const char *, size_t);
-static int has_failed;
+static enum { AS_THE_LOADER_DOES, WITHOUT_PROGRAM_HEADERS, AT_AN_ODD_ADDRESS } listing;
+static int has_said_so;
+static _Alignas(ElfW(Phdr)) char odd[1 + 65535 * sizeof(ElfW(Phdr))];
 
-static int without_own_headers(struct dl_phdr_info *object, size_t size, void *data) {
+static int list(struct dl_phdr_info *object, size_t size, void *data) {
   struct walk *walk = data;
   struct dl_phdr_info listed = *object;
   Dl_info self;
-  if (dladdr(&has_failed, &self) && (void *) object->dlpi_addr == self.dli_fbase) {
-    listed.dlpi_phdr = NULL;
-    listed.dlpi_phnum = 0;
-    if (has_failed == 1) {
-      has_failed = 2;
-      write(1, "listed without program headers\\n", 31);
+  if (listing && dladdr(&listing, &self) && (void *) object->dlpi_addr == self.dli_fbase) {
+    const char *how = "listed without program headers\\n";
+    if (listing == WITHOUT_PROGRAM_HEADERS) {
+      listed.dlpi_phdr = NULL;
+      listed.dlpi_phnum = 0;
+    } else {
+      how = "listed with program headers at an odd address\\n";
+      memcpy(odd + 1, object->dlpi_phdr, object->dlpi_phnum * sizeof(ElfW(Phdr)));
+      listed.dlpi_phdr = (void *) (odd + 1);
     }
+    if (!has_said_so++) write(1, how, strlen(how));
   }
   return walk->visit(&listed, size, walk->data);
 }
 
 int dl_iterate_phdr(visitor visit, void *data) {
   struct walk walk = { visit, data };
-  return ((int (*)(visitor, void *)) dlsym(RTLD_NEXT, "dl_iterate_phdr"))(without_own_headers, &walk);
+  return ((int (*)(visitor, void *)) dlsym(RTLD_NEXT, "dl_iterate_phdr"))(list, &walk);
 }
 
-void fail(void) {
-  has_failed = 1;
+void fail(int at_an_odd_address) {
+  listing = at_an_odd_address ? AT_AN_ODD_ADDRESS : WITHOUT_PROGRAM_HEADERS;
   napi_fatal_error("library.c", (size_t) -1, "failed", (size_t) -1);
 }
-`,
-      "app.js": `
-        const { dlopen } = require("bun:ffi");
-        dlopen(process.argv[2], { fail: { args: [], returns: "void" } }).symbols.fail();
-      `,
-    });
-    const library = path.join(String(dir), "library.so");
-    await using compile = Bun.spawn({
-      cmd: [cc!, "-shared", "-fPIC", "-o", library, "library.c", "-ldl"],
-      cwd: String(dir),
-      env: bunEnv,
-      stderr: "inherit",
-    });
-    expect(await compile.exited).toBe(0);
+`;
+    const app = `
+      const { dlopen } = require("bun:ffi");
+      dlopen(process.argv[2], { fail: { args: ["i32"], returns: "void" } }).symbols.fail(Number(process.argv[3]));
+    `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "app.js", library, "--debug-crash-handler-use-trace-string"],
-      cwd: String(dir),
-      env: {
-        ...noReportEnv,
-        LD_PRELOAD: [library, bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
-        BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    test.concurrent.each([
+      ["without program headers", 0],
+      ["with program headers at an odd address", 1],
+    ])("%s", async (how, atAnOddAddress) => {
+      using dir = tempDir("crash-report-program-headers", { "library.c": library, "app.js": app });
+      const libraryPath = path.join(String(dir), "library.so");
+      await using compile = Bun.spawn({
+        cmd: [cc!, "-shared", "-fPIC", "-o", libraryPath, "library.c", "-ldl"],
+        cwd: String(dir),
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      expect(await compile.exited).toBe(0);
 
-    expect(stdout).toBe("listed without program headers\n");
-    // "NAPI FATAL ERROR: library.c failed"
-    expect(stderr).toMatch(/A0eNrzcwzwVHBzDHH0UXANCvIPslLIyUwqSiyq1EtWSEvMzElNAQCs\/wrA\s/);
-    expect(proc.signalCode).toBe("SIGABRT");
-    expect(exitCode).not.toBe(0);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "app.js", libraryPath, String(atAnOddAddress), "--debug-crash-handler-use-trace-string"],
+        cwd: String(dir),
+        env: {
+          ...noReportEnv,
+          LD_PRELOAD: [libraryPath, bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
+          BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe(`listed ${how}\n`);
+      // "NAPI FATAL ERROR: library.c failed"
+      expect(stderr).toMatch(/A0eNrzcwzwVHBzDHH0UXANCvIPslLIyUwqSiyq1EtWSEvMzElNAQCs\/wrA\s/);
+      expect(proc.signalCode).toBe("SIGABRT");
+      expect(exitCode).not.toBe(0);
+    });
   },
 );
 

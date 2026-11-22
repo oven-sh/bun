@@ -19,7 +19,7 @@ use crate::packet::{
     MIN_RESET_LEN, Opened, SPIN_BIT, Sealed,
 };
 use crate::path::{Addresses, without_zone};
-use crate::stream_id::Side;
+use crate::stream_id::{Direction, Side};
 use crate::time::{Duration, Instant};
 
 const MAX_COALESCED: usize = 8;
@@ -130,14 +130,7 @@ impl Connection {
                         path.on_received(len);
                     }
                     self.restart_idle_timer(now);
-                    let soon = now + self.expected_pause;
-                    if self.spaces.data.received.unacked_eliciting > 0
-                        || self.expected_pause == self.keep_alive_period
-                    {
-                        self.timers.set(Timer::KeepAlive, soon);
-                    } else if self.timers.get(Timer::KeepAlive) > soon {
-                        (self.timers).set(Timer::KeepAlive, now + self.keep_alive_period);
-                    }
+                    (self.timers).set(Timer::KeepAlive, now + self.keep_alive_period);
                     self.has_sent_since_receiving = false;
                     if self.pto_count > 1 {
                         self.on_sign_of_life();
@@ -474,6 +467,7 @@ impl Connection {
             space.received.gap_at = arrival.now;
         }
         let (mut is_eliciting, mut is_probing, mut has_ack) = (false, true, false);
+        let mut has_id = false;
         let mut rest = packet.payload;
         while !rest.is_empty() && self.is_receiving() {
             let frame = Frame::read(&mut rest)?;
@@ -488,6 +482,7 @@ impl Connection {
             }
             is_eliciting |= frame.is_ack_eliciting();
             is_probing &= frame.is_probing();
+            has_id |= matches!(frame, Frame::NewConnectionId { .. });
             if matches!(frame, Frame::Ack(_)) && core::mem::replace(&mut has_ack, true) {
                 self.streams.state.add_load(Load::Light);
             }
@@ -502,11 +497,19 @@ impl Connection {
                 }
             }
         }
-        if !(arrival.is_current_path && self.candidates.is_empty()) && is_largest && !is_probing {
-            if *arrival.from != self.path.addresses && self.side.is_server() {
+        if !(arrival.is_current_path && self.candidates.is_empty()) && is_largest {
+            // RFC 9000 §9. A client that does not know of its new address may have nothing but an ID to repeat.
+            if (!is_probing || has_id)
+                && *arrival.from != self.path.addresses
+                && self.side.is_server()
+            {
                 self.candidate(arrival.now, arrival.from, arrival.destination, true, shared)?;
             }
-            self.on_peer_moved(arrival.now, arrival.from, shared)?;
+            if !is_probing {
+                self.on_peer_moved(arrival.now, arrival.from, shared)?;
+            } else if has_id && self.side.is_server() {
+                self.challenge_current_path(arrival.now, arrival.from);
+            }
         }
         Ok(true)
     }
@@ -544,7 +547,9 @@ impl Connection {
                 data,
                 fin,
             } => {
-                (self.silence.is_over, self.silence.was_datagram) = (true, false);
+                if self.http3.is_none() || id.direction() == Direction::Bidirectional {
+                    (self.silence.is_over, self.silence.was_datagram) = (true, false);
+                }
                 return self.on_stream(id, offset, data, fin, arrival.is_early, shared);
             }
             Frame::Ack(ack) => {

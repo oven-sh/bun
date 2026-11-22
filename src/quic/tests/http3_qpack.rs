@@ -24,7 +24,7 @@ fn acknowledges_insertions_and_sections() {
         for byte in bytes(&[CAPACITY, INSERT_AB, INSERT_CD].concat()) {
             raw.write_encoder(&show_hex(&[byte]));
         }
-        assert_eq!(raw.read_decoder(), "increment 1, increment 1");
+        assert_eq!(raw.read_decoder(), "increment 2");
         raw.write_http3(0, &headers(&raw, "0200", "80"), false);
         assert_eq!(raw.read_decoder(), "ack 0");
         raw.write_http3(0, "headers #03811110", true);
@@ -40,11 +40,29 @@ fn instructions_wait_for_a_packet() {
     raw.write_encoder(&format!("{CAPACITY}, {INSERT_AB}"));
     raw.connection().acknowledge();
     raw.forget();
-    assert_eq!((raw.wait(), raw.frames()), (5, "stream 7 1 #01".into()));
+    assert_eq!((raw.wait(), raw.frames()), (1000, "stream 7 1 #01".into()));
     raw.write_encoder(INSERT_CD);
     raw.peer.send_headers(0, OK);
     assert_eq!(raw.frames(), "stream 7 2 #01, stream 0 0 #01030000d9");
-    assert!(raw.sleeps_for() > 5);
+    raw.send("ack");
+    assert!(raw.sleeps_for() > 1000);
+}
+
+#[test]
+fn instructions_do_not_wait_for_long_if_the_encoder_needs_them() {
+    for (insertions, sections, delay) in [(15, 32, 1000), (16, 0, 5), (1, 33, 5)] {
+        let mut raw = Raw::http3(Client).connected_with("");
+        raw.write_encoder(&format!(
+            "{CAPACITY}, {}",
+            vec![INSERT_AB; insertions].join(", ")
+        ));
+        for id in (0..).step_by(4).take(sections) {
+            raw.write_http3(id, &headers(&raw, "0200", "80"), false);
+        }
+        raw.connection().acknowledge();
+        raw.forget();
+        assert_eq!(raw.wait(), delay);
+    }
 }
 
 #[test]

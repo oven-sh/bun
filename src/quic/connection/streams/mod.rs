@@ -88,6 +88,8 @@ pub(crate) struct State {
     pub(super) owed: Control,
     /// The application has read or written.
     pub(super) made_progress: bool,
+    /// All that was written to a stream has been acknowledged, and the peer has yet to finish its side.
+    pub(super) has_asked: bool,
     /// Something has arrived without what precedes it.
     pub(super) misses_data: bool,
     /// See [`Self::add_load`].

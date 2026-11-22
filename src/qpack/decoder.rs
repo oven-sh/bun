@@ -6,6 +6,7 @@ use crate::input::{Input, MAX_INTEGER_LEN, Stop, read_instructions};
 use crate::{Error, Result, static_table};
 
 const MIN_BUFFER_LEN: usize = 1024;
+const FEW_INSTRUCTIONS_LEN: usize = 32;
 
 /// All names are stored.
 type Table = DynamicTable<About>;
@@ -38,6 +39,8 @@ pub struct Decoder {
     insert_count: usize,
     /// As [`Self::instructions`] leave it.
     known_received_count: usize,
+    /// Of the entries since [`Self::instructions`] were asked for.
+    unreported_size: usize,
     max_table_capacity: usize,
     max_blocked_streams: usize,
     /// The next in line comes last.
@@ -79,6 +82,7 @@ impl Decoder {
             table,
             insert_count: 0,
             known_received_count: 0,
+            unreported_size: 0,
             max_table_capacity: max_table_capacity as usize,
             max_blocked_streams: max_blocked_streams as usize,
             blocked: Vec::new(),
@@ -144,7 +148,8 @@ impl Decoder {
                 (Name::Stored(start, len), &[][..], entry.links)
             }
         };
-        self.table.insert(name, value, about).ok_or(Stop::Invalid)?;
+        let place = self.table.insert(name, value, about).ok_or(Stop::Invalid)?;
+        self.unreported_size += entry_size(place.stored().1 as usize, 0);
         self.insert_count += 1;
         Ok(())
     }
@@ -250,9 +255,21 @@ impl Decoder {
         }
     }
 
+    #[inline]
+    pub fn has_instructions(&self) -> bool {
+        !self.instructions.is_empty() || self.known_received_count != self.insert_count
+    }
+
+    /// Whether the encoder may have to do without the table until it has them (RFC 9204 §2.1.1 and §2.1.2).
+    pub fn has_pressing_instructions(&self) -> bool {
+        self.instructions.len() > FEW_INSTRUCTIONS_LEN
+            || self.unreported_size > self.table.max_size() / 8
+    }
+
     /// What is due on the decoder stream, for the caller to drain from the start and to keep within bounds.
     #[inline]
     pub fn instructions(&mut self) -> &mut Vec<u8> {
+        self.unreported_size = 0;
         let increment = self.insert_count - self.known_received_count;
         if increment != 0 {
             integer::write(0x00, 6, increment, |byte| self.instructions.push(byte));

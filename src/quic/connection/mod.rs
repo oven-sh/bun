@@ -53,7 +53,6 @@ use crate::token_bucket::TokenBucket;
 use crate::transport_parameters::TransportParameters;
 use crate::version::Version;
 
-const EXPECTED_PAUSE: Duration = Duration::from_secs(1);
 const MIN_IDLE_TIMEOUT_TO_KEEP_ALIVE: Duration = Duration::from_secs(2);
 const NEW_PATHS: TokenBucket = TokenBucket::new(1.0, 16.0);
 const TOLERATED_LOAD: TokenBucket = TokenBucket::new(330.0, 10_000.0);
@@ -164,8 +163,6 @@ pub struct Connection {
     progress_timeout: Duration,
     keep_alive: KeepAlive,
     keep_alive_period: Duration,
-    /// In its place after an ack-eliciting packet, as more may be on the way to an address that is gone.
-    expected_pause: Duration,
 
     streams: Streams,
     datagrams: Datagrams,
@@ -282,7 +279,6 @@ impl Connection {
             progress_timeout: config.progress_timeout,
             keep_alive: config.keep_alive,
             keep_alive_period: Duration::MAX,
-            expected_pause: Duration::MAX,
             streams: Streams::new(side, &local, &config, u64::from_ne_bytes(seed)),
             datagrams: Datagrams::default(),
             http3: None,
@@ -449,18 +445,14 @@ impl Connection {
     }
 
     fn start_keep_alive(&mut self, now: Instant) {
-        (self.keep_alive_period, self.expected_pause) = match self.keep_alive {
-            KeepAlive::Every(period) if !period.is_zero() => (period, period),
+        self.keep_alive_period = match self.keep_alive {
+            KeepAlive::Every(period) if !period.is_zero() => period,
             KeepAlive::WhileStreamsAreOpen
                 if self.idle_timeout >= MIN_IDLE_TIMEOUT_TO_KEEP_ALIVE =>
             {
-                let period = self.idle_timeout / 2;
-                match self.side {
-                    Side::Client => (period, EXPECTED_PAUSE),
-                    Side::Server => (period, period),
-                }
+                self.idle_timeout / 2
             }
-            _ => (Duration::MAX, Duration::MAX),
+            _ => Duration::MAX,
         };
         (self.timers).set(Timer::KeepAlive, now + self.keep_alive_period);
     }

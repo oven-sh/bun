@@ -229,7 +229,7 @@ fn nothing_goes_with_a_probe_of_the_mtu() {
     let mut raw = Raw::client().with("max_udp_payload_size=").connected();
     raw.request_packets(&"a".repeat(9));
     let id = raw.peer.open(Unidirectional);
-    raw.peer.send(id, b"b", false);
+    raw.peer.send(id, &[0; 1500], false);
     raw.lose();
     for _ in 0..25 {
         raw.request_packets(&"a".repeat(10));
@@ -240,7 +240,7 @@ fn nothing_goes_with_a_probe_of_the_mtu() {
     raw.peer.send(id, &[0; 2000], false);
     raw.waits = false;
     raw.send("ack");
-    let runs = [(1000, 1472, 1472), (1000, 2068, 1200)];
+    let runs = [(1000, 1472, 1472), (1000, 2400, 1200)];
     assert_eq!(raw.runs(&mut Batch::default(), 100), runs);
 }
 

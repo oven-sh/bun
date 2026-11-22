@@ -1288,6 +1288,24 @@ mod decoder_instructions {
     }
 
     #[test]
+    fn instructions_become_pressing() {
+        let state = |it: &Decoder| (it.has_instructions(), it.has_pressing_instructions());
+        let mut decoder = decoder_after("3fe11f");
+        assert_eq!(state(&decoder), (false, false));
+        for (len, is_pressing) in [(479, false), (480, true)] {
+            let entry = [hex("4161"), integer(0x00, 7, len), vec![b'b'; len]];
+            feed(&mut decoder, &entry.concat()).unwrap();
+            assert_eq!(state(&decoder), (true, is_pressing));
+            decoder.instructions().clear();
+            assert_eq!(state(&decoder), (false, false));
+        }
+        (0..32).for_each(|_| decoder.cancel_stream(0));
+        assert_eq!(state(&decoder), (true, false));
+        decoder.cancel_stream(0);
+        assert_eq!(state(&decoder), (true, true));
+    }
+
+    #[test]
     fn nothing_is_due_without_a_table() {
         let mut decoder = Decoder::new(0, 0);
         decoder.cancel_stream(0);

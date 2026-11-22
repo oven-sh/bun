@@ -563,7 +563,10 @@ impl Connection {
             && self.spaces.data.next_number >= PACKETS_BEFORE_MTU_PROBE
             && self.phase == Phase::Confirmed
             && self.pto_count == 0
-            && (self.has_frames() || self.spaces.data.received.is_ack_due)
+            && match self.has_frames() {
+                true => self.has_use_for_larger_packets(),
+                false => self.spaces.data.received.is_ack_due,
+            }
             && self.may_send(now)
             && let out = &mut batch.bytes
             && let start = out.len()
@@ -577,6 +580,12 @@ impl Connection {
             self.send(now, &draft.end(out), out);
             batch.commit(&self.path.addresses, start, 0);
         }
+    }
+
+    fn has_use_for_larger_packets(&self) -> bool {
+        self.streams.state.unsent() > u64::from(self.path.mtu.current) * 7 / 8
+            || self.streams.state.has_lost_data()
+            || self.has_datagrams()
     }
 
     /// These packets are not sent again, and have no part in congestion control (RFC 9000 §8.2.1 and §9.4).

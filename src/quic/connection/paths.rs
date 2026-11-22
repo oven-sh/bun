@@ -371,12 +371,16 @@ impl Connection {
             if !candidate.is_challenged() {
                 candidate.challenge(now);
             }
-            // RFC 9000 §9.3.3.
-            if !self.path.is_challenged() && self.path.addresses.peer != to.peer {
-                self.path.challenge(now);
-            }
+            self.challenge_current_path(now, to);
         }
         Ok(())
+    }
+
+    /// RFC 9000 §9.3.3.
+    pub(super) fn challenge_current_path(&mut self, now: Instant, other: &Addresses) {
+        if !self.path.is_challenged() && self.path.addresses.peer != other.peer {
+            self.path.challenge(now);
+        }
     }
 
     /// There is no point in sending more on the current path.

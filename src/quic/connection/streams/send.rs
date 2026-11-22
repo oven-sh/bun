@@ -418,9 +418,13 @@ impl State {
         }
     }
 
+    pub(crate) fn has_lost_data(&self) -> bool {
+        !self.lost.is_empty()
+    }
+
     /// Whether there is something that other streams may depend on.
     pub(crate) fn has_urgent_frames(&self) -> bool {
-        !self.lost.is_empty() || self.sendable.front().is_some_and(|it| it.0 == 0)
+        self.has_lost_data() || self.sendable.front().is_some_and(|it| it.0 == 0)
     }
 
     #[inline]
@@ -604,9 +608,12 @@ impl Streams {
         if fin {
             stream.flags.insert(Flags::FIN_ACKED);
         }
-        if stream.flags.contains(Flags::FIN_ACKED) && stream.send.is_acked() {
-            stream.flags.insert(Flags::SEND_DONE);
-            self.remove_if_finished(id);
+        if stream.send.is_acked() {
+            self.state.has_asked |= !stream.flags.contains(Flags::READ_DONE);
+            if stream.flags.contains(Flags::FIN_ACKED) {
+                stream.flags.insert(Flags::SEND_DONE);
+                self.remove_if_finished(id);
+            }
         }
     }
 

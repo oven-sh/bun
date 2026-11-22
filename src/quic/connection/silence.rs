@@ -4,8 +4,10 @@ use super::Connection;
 use super::timers::Timer;
 use crate::time::{Duration, Instant};
 
+/// How many it takes to know the pace of the server.
 const MIN_DELIVERIES: u32 = 20;
-const MIN_PAUSES_PER_IDLE_TIMEOUT: u64 = 8;
+const USUAL_PATIENCE: Duration = Duration::from_secs(1);
+const WAITS_PER_IDLE_TIMEOUT: u64 = 4;
 
 #[derive(Default)]
 pub(super) struct Silence {
@@ -14,10 +16,12 @@ pub(super) struct Silence {
     /// It needs no stream.
     pub(super) was_datagram: bool,
     deliveries: u32,
-    delivered_at: Option<Instant>,
-    /// Between two deliveries. It fades with each one.
+    /// The last delivery, or a request after it.
+    since: Option<Instant>,
+    /// It fades with each delivery.
     longest_pause: Duration,
-    /// As of the last delivery.
+    patience: Duration,
+    /// As of the last delivery or request.
     idle_at: Instant,
     /// From which packet on an acknowledgment is an answer. Loss recovery knows nothing of these packets.
     awaited: Option<u64>,
@@ -25,34 +29,59 @@ pub(super) struct Silence {
     pub(super) owes_ping: bool,
 }
 
+impl Silence {
+    #[inline]
+    fn on_delivery(&mut self, now: Instant) {
+        let pause = now - self.since.replace(now).unwrap_or(now);
+        self.longest_pause = pause.max(self.longest_pause * 15 / 16);
+        self.deliveries = self.deliveries.saturating_add(1);
+        let plenty = self.longest_pause * 2;
+        self.patience = if pause * 2 > USUAL_PATIENCE {
+            plenty.min(USUAL_PATIENCE.max((self.idle_at - now) / WAITS_PER_IDLE_TIMEOUT))
+        } else if self.deliveries >= MIN_DELIVERIES {
+            plenty.min(USUAL_PATIENCE)
+        } else {
+            USUAL_PATIENCE
+        };
+    }
+}
+
 impl Connection {
     /// After a client has read what there is.
     #[inline]
     pub(super) fn listen(&mut self, now: Instant) {
+        let expects_data = self.expects_data();
+        let has_asked = core::mem::take(&mut self.streams.state.has_asked);
         let silence = &mut self.silence;
         let is_over = core::mem::take(&mut silence.is_over);
-        let is_answered = silence.awaited <= self.spaces.data.sent.largest_acked;
-        if match silence.awaited {
-            Some(_) => is_answered || is_over && silence.timeouts > 0,
-            None => is_over,
-        } {
-            (silence.awaited, silence.owes_ping) = (None, false);
-            self.timers.stop(Timer::Silence);
+        if is_over || has_asked {
+            silence.idle_at = self.timers.get(Timer::Idle);
         }
         if is_over {
-            let pause = now - silence.delivered_at.unwrap_or(now);
-            let pause = pause.max(silence.longest_pause * 15 / 16);
-            let expects_more = silence.was_datagram || self.streams.table.has_application_streams();
-            silence.delivered_at = expects_more.then_some(now);
-            silence.longest_pause = pause;
-            silence.idle_at = self.timers.get(Timer::Idle);
-            silence.deliveries = silence.deliveries.saturating_add(1);
-            silence.timeouts = 0;
-            if silence.awaited.is_none()
-                && silence.deliveries >= MIN_DELIVERIES
-                && now + pause * MIN_PAUSES_PER_IDLE_TIMEOUT <= silence.idle_at
+            silence.on_delivery(now);
+        }
+        if has_asked {
+            silence.since = silence.since.and(Some(now));
+            silence.patience = match is_over || self.timers.is_set(Timer::Silence) {
+                true => silence.patience.min(USUAL_PATIENCE),
+                false => USUAL_PATIENCE,
+            };
+        }
+        if !expects_data {
+            silence.since = None;
+        }
+        if match silence.awaited {
+            Some(_) => {
+                silence.awaited <= self.spaces.data.sent.largest_acked
+                    || is_over && silence.timeouts > 0
+            }
+            None => is_over || has_asked || !expects_data,
+        } {
+            (silence.awaited, silence.timeouts, silence.owes_ping) = (None, 0, false);
+            match expects_data && now + silence.patience * WAITS_PER_IDLE_TIMEOUT <= silence.idle_at
             {
-                self.set_silence_timer(now, pause * 2);
+                true => self.set_silence_timer(now, self.silence.patience),
+                false => self.timers.stop(Timer::Silence),
             }
         }
     }
@@ -67,17 +96,24 @@ impl Connection {
     }
 
     pub(super) fn break_silence(&mut self, now: Instant) {
+        let expects_data = self.expects_data();
         let (silence, space) = (&mut self.silence, &self.spaces.data);
-        if now >= silence.idle_at
-            || !self.streams.table.has_application_streams() && !silence.was_datagram
-        {
-            (silence.awaited, silence.delivered_at) = (None, None);
+        if now >= silence.idle_at || !expects_data {
+            (silence.awaited, silence.since) = (None, None);
             return;
         }
-        silence.awaited.get_or_insert(space.next_number);
+        if silence.awaited.is_none() {
+            silence.awaited = Some(space.next_number);
+            silence.patience = USUAL_PATIENCE.max(silence.patience * 2);
+        }
         silence.timeouts += 1;
         silence.owes_ping = !space.sent.has_in_flight();
         self.set_silence_timer(now, Duration::ZERO);
+    }
+
+    #[inline]
+    fn expects_data(&self) -> bool {
+        self.silence.was_datagram || self.streams.table.has_application_streams()
     }
 
     #[inline]

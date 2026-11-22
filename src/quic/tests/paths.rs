@@ -131,6 +131,25 @@ fn only_the_largest_packet_number_moves_a_connection() {
 }
 
 #[test]
+fn validates_an_address_from_which_only_an_id_has_come() {
+    let mut raw = Raw::client().connected();
+    raw.send_as(2, "ping");
+    raw.forget();
+    raw.move_to(NEW);
+    raw.send_as(1, &new_id(1, 0));
+    assert_eq!(raw.packets(), format!("{OLD} 1[ack 0-2]"));
+    raw.send_as(3, "padding 5");
+    assert_eq!(raw.packets(), "");
+    raw.send_as(4, &format!("{}, padding 5", new_id(2, 0)));
+    let challenges = format!("{OLD} 1[path_challenge]; 1[path_challenge]");
+    assert_eq!(raw.packets(), challenges);
+    raw.send_expanded("respond");
+    assert_eq!(raw.events(), "");
+    raw.send("ack");
+    assert_eq!(raw.events(), format!("path {OLD} to {NEW}"));
+}
+
+#[test]
 fn needs_a_new_id_if_the_client_uses_one() {
     let mut raw = Raw::client().connected();
     raw.use_id(1);

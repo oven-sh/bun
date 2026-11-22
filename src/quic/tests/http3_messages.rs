@@ -299,6 +299,8 @@ fn the_peer_gives_up() {
     let mut raw = Raw::http3(Server).exchange();
     raw.send("reset_stream 0 0x10b 0, reset_stream 0 0x10b 0");
     assert_eq!(raw.events(), "0 reset 0x10b, 0 closed");
+    assert_eq!(raw.read_decoder(), "");
+    raw.request(GET);
     assert_eq!(raw.read_decoder(), "cancel 0");
 
     let mut raw = Raw::http3(Client).exchange();
@@ -395,10 +397,10 @@ fn closing_cancels_what_is_unfinished() {
     let reset = format!("reset_stream 4 0x10c {len}");
     let frames = format!("stop_sending 0 0x100, {reset}, stop_sending 4 0x100, stream 6 1 @D");
     assert_eq!(raw.frames(), frames);
-    assert_eq!(raw.read_decoder(), "cancel 0, cancel 4");
     raw.send("ack");
     assert_eq!(raw.frames(), "application_close 0x100");
     assert_eq!(raw.events(), "0 closed, 4 closed, closed: Local");
+    assert_eq!(raw.read_decoder(), "cancel 0, cancel 4");
 
     let mut raw = Raw::http3(Client).connected_with("");
     raw.peer.echoes = true;

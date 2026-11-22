@@ -491,7 +491,7 @@ fn a_stream_that_has_ended_does_not_say_it_again() {
     raw.forget();
     raw.advance(1000);
     assert_eq!(raw.connection().stats().packets_lost, 1);
-    assert_eq!(raw.frames(), "");
+    assert_eq!(raw.frames(), "ping");
 }
 
 #[test]

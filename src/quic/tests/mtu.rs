@@ -133,13 +133,34 @@ fn no_probe_while_nothing_is_acknowledged() {
 }
 
 #[test]
-fn no_probe_on_its_own() {
+fn no_probe_on_its_own_or_ahead_of_a_short_message() {
     let mut raw = client().warmed_up();
     raw.send("ack");
     assert_eq!(raw.sizes(), []);
     let id = raw.peer.open(Unidirectional);
+    for (len, is_probing) in [(1050, false), (1051, true)] {
+        raw.peer.send(id, &filler(0, len), false);
+        assert_eq!(raw.sizes()[0] == 1472, is_probing);
+    }
+}
+
+#[test]
+fn probe_ahead_of_what_is_sent_again() {
+    let mut raw = client().warmed_up();
+    let id = raw.peer.open(Unidirectional);
     raw.peer.send(id, b"c", false);
+    raw.lose();
+    raw.request_packets("def");
+    raw.send("ack");
     assert_eq!(raw.frames(), "ping, stream 11 0 c");
+}
+
+#[test]
+fn probe_ahead_of_datagram_frames() {
+    let mut raw = client().with("max_datagram_frame_size=100").warmed_up();
+    raw.send("ack");
+    raw.connection().send_datagram(1, vec![0]);
+    assert_eq!(raw.frames(), "ping, datagram #00");
 }
 
 #[test]

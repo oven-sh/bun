@@ -16,7 +16,8 @@ use crate::stream_id::{Direction, Side, StreamId};
 use crate::time::{Duration, Instant};
 
 const MAX_UNACKED_INSTRUCTIONS_LEN: u64 = 64 * 1024;
-const MAX_INSTRUCTION_DELAY: Duration = Duration::from_millis(5);
+const MAX_INSTRUCTION_DELAY: Duration = Duration::from_secs(1);
+const MAX_PRESSING_INSTRUCTION_DELAY: Duration = Duration::from_millis(5);
 const MAX_ORIGIN_FRAMES: u8 = 16;
 const MAX_EARLY_PRIORITIES: usize = 128;
 
@@ -91,14 +92,22 @@ impl Connection {
     /// They are not worth a packet of their own, for a while.
     #[inline]
     pub(super) fn bundle_qpack_instructions(&mut self, now: Instant) -> Result {
-        if (self.http3.as_mut()).is_none_or(|it| it.decoder.instructions().is_empty()) {
+        let decoder = self.http3.as_ref().map(|it| &it.decoder);
+        let Some(decoder) = decoder.filter(|it| it.has_instructions()) else {
             return Ok(());
-        }
+        };
         if self.has_frames() {
             return self.send_qpack_instructions();
         }
         let deadline = self.timers.get(Timer::Qpack);
-        (self.timers).set(Timer::Qpack, deadline.min(now + MAX_INSTRUCTION_DELAY));
+        let deadline = if decoder.has_pressing_instructions() {
+            deadline.min(now + MAX_PRESSING_INSTRUCTION_DELAY)
+        } else if self.streams.table.has_application_streams() {
+            deadline.min(now + MAX_INSTRUCTION_DELAY)
+        } else {
+            Instant::NEVER
+        };
+        self.timers.set(Timer::Qpack, deadline);
         Ok(())
     }
 

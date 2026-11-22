@@ -240,9 +240,9 @@ impl Bbr {
             self.update_excess_acked(now, feedback.acked);
         }
         // Loss alone does not tell that there is a queue.
-        let is_congested = feedback.is_overflow
-            || feedback.lost > 0
-                && rtt.latest.as_micros() > Gain::PROBE_UP.of(self.min_rtt.as_micros());
+        let has_met_queue = feedback.lost > 0
+            && rtt.latest.as_micros() > Gain::PROBE_UP.of(self.min_rtt.as_micros());
+        let is_congested = feedback.is_overflow || has_met_queue;
         self.update_recovery(feedback, is_round_start, is_congested);
         if let Some(recovery) = &mut self.recovery {
             if feedback.is_persistent_congestion {
@@ -261,12 +261,13 @@ impl Bbr {
             0 => INITIAL_WINDOW,
             capacity => capacity,
         };
-        self.was_congested_in_cycle |= is_congested;
-        self.advance_phase(now, feedback, min_rtt, capacity, is_congested);
+        let holds_cycle = has_met_queue || feedback.is_overflow && !feedback.loses_starts;
+        self.was_congested_in_cycle |= holds_cycle;
+        self.advance_phase(now, feedback, min_rtt, capacity, holds_cycle);
         if !self.is_pipe_filled {
             let has_queue = rtt.smoothed.as_micros() > Gain::PROBE_UP.of(min_rtt.as_micros());
             if is_round_start {
-                self.check_pipe_filled(capacity, has_queue);
+                self.check_pipe_filled(capacity, has_queue, feedback.loses_starts);
             }
             self.acked_in_round += feedback.acked;
             self.lost_in_round += feedback.lost;
@@ -399,7 +400,7 @@ impl Bbr {
     }
 
     /// §4.3.2.2, and draft-ietf-ccwg-bbr-06 §5.3.1.3 for those that never send for three rounds on end.
-    fn check_pipe_filled(&mut self, capacity: u64, has_queue: bool) {
+    fn check_pipe_filled(&mut self, capacity: u64, has_queue: bool, loses_starts: bool) {
         let acked = core::mem::take(&mut self.acked_in_round);
         let lost = core::mem::take(&mut self.lost_in_round);
         let len = acked + lost;
@@ -428,7 +429,7 @@ impl Bbr {
                     && !(has_lost_many && is_share_high),
             );
         }
-        if self.clear_rounds >= CLEAR_ROUNDS << u8::from(self.limited_len > 0) {
+        if self.clear_rounds >= CLEAR_ROUNDS << u8::from(self.limited_len > 0 && !loses_starts) {
             (self.clear_rounds, self.rounds_without_growth) = (0, 0);
         }
         if !self.is_last_sample_limited {

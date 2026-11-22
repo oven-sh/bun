@@ -25,6 +25,8 @@ const MAX_WINDOW: u64 = 16 * 1024 * 1024;
 /// To lose their ends is what happens to bursts that are too long for a queue. It takes this many packets to tell, no
 /// more than `OVERFLOW_SPAN` bursts apart.
 const OVERFLOW_LEN: u64 = 3;
+/// How many count at once. More than that is what an outage comes to.
+const MAX_LOST_STARTS: u8 = 2;
 const OVERFLOW_SPAN: u64 = 4;
 const MICROS_PER_SECOND: u64 = 1_000_000;
 
@@ -76,6 +78,9 @@ struct Feedback {
     lost: u64,
     newest_lost: u64,
     is_overflow: bool,
+    lost_starts: u8,
+    /// See [`Pacer::loses_starts`].
+    loses_starts: bool,
     is_persistent_congestion: bool,
     /// What remains.
     in_flight: u64,
@@ -313,7 +318,8 @@ impl Controller {
     #[inline]
     pub(crate) fn on_lost(&mut self, flight: &Flight, ends_burst: bool) {
         if self.discard(flight) {
-            if flight.place == Place::FirstAfterGap {
+            if flight.place == Place::FirstAfterGap && self.feedback.lost_starts < MAX_LOST_STARTS {
+                self.feedback.lost_starts += 1;
                 // The gap may have been the time that the system took to send.
                 self.pacer.on_start_settled(!self.spread.is_on);
             }
@@ -362,6 +368,7 @@ impl Controller {
             in_flight: self.in_flight,
             prior_in_flight: self.prior_in_flight,
             last_sent: self.last_sent,
+            loses_starts: self.pacer.loses_starts(),
             ..core::mem::take(&mut self.feedback)
         };
         if feedback.acked == 0 && feedback.lost == 0 {

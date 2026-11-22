@@ -26,6 +26,8 @@ const STARTS_AVERAGED: u32 = 512;
 /// The shares of lost starts, in millionths, at which a queue is taken to be shared, and at which it is not any more.
 const SHARED_ABOVE: u32 = 10_000;
 const SHARED_DOWN_TO: u32 = 3_000;
+/// The share from which on the ends get lost often enough by chance.
+const LOSSY_ABOVE: u32 = 30_000;
 const MIN_SHARED_QUANTUM: u64 = 4096;
 const MAX_SHARED_OVERFLOWS: u32 = 2;
 const FRACTION_BITS: u32 = 24;
@@ -172,7 +174,7 @@ impl Pacer {
         if !is_recovering {
             self.burst_tokens = BURST;
         }
-        if self.overflows > 0 {
+        if self.overflows > 0 && !self.loses_starts() {
             self.shorten_burst();
         }
     }
@@ -224,6 +226,12 @@ impl Pacer {
                 true => SHARED_DOWN_TO,
                 false => SHARED_ABOVE,
             };
+    }
+
+    /// Whether an overflow may just as well be none.
+    #[inline]
+    pub(super) fn loses_starts(&self) -> bool {
+        self.lost_starts > LOSSY_ABOVE
     }
 
     pub(super) fn on_feedback(&mut self, has_loss: bool) {

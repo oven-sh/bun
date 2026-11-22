@@ -425,8 +425,11 @@ fn pacer_allows_a_burst_after_a_pause() {
     pacer.on_feedback(true);
     assert_eq!(pace(&mut pacer, START), (1, millis(5)));
     pacer.on_overflow(true, 0);
-    pacer.on_idle_restart(START, false);
-    assert_eq!(pace(&mut pacer, START), (6, millis(5)));
+    for (lost_starts, burst) in [(0, 6), (15, 6), (1, 11)] {
+        (0..lost_starts).for_each(|_| pacer.on_start_settled(true));
+        pacer.on_idle_restart(START, false);
+        assert_eq!(pace(&mut pacer, START), (burst, millis(5)));
+    }
 }
 
 #[test]
@@ -685,6 +688,16 @@ fn bursts_that_lose_their_ends_overflow_a_queue() {
             overflows += u32::from(core::mem::take(&mut feedback.is_overflow));
         }
         assert_eq!(overflows, expected, "{bursts:?}");
+    }
+}
+
+#[test]
+fn few_of_the_starts_that_are_lost_at_once_count() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    for outages in 1..=8 {
+        (0..50).for_each(|_| _ = sender.wait(millis(10)).send(1));
+        sender.feedback(50, 0);
+        assert_eq!(sender.controller.pacer.loses_starts(), outages == 8);
     }
 }
 
@@ -1800,6 +1813,22 @@ fn bbr_forgets_rounds_without_growth_if_as_much_gets_through() {
 }
 
 #[test]
+fn bbr_forgets_rounds_without_growth_as_usual_if_bursts_lose_their_starts() {
+    for (limited, is_over) in [(7, true), (8, false)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        (0..32).for_each(|_| sender.controller.pacer.on_start_settled(true));
+        sender.rounds_of(60, 3, millis(10));
+        for round in 0..limited {
+            sender.run_dry().send(60).wait(millis(10)).feedback(0, 15);
+            sender.controller.feedback.is_overflow = round == 2;
+            sender.feedback(usize::from(round == 2), usize::MAX);
+        }
+        sender.rounds_of(60, 2, millis(10));
+        assert_eq!(sender.pacing_rate() < 100 * 100 * SEGMENT, is_over);
+    }
+}
+
+#[test]
 fn bbr_starts_up_for_longer_if_recovery_holds_it_back() {
     for (rounds, is_over) in [
         (&[8, 8, 8][..], false),
@@ -2158,6 +2187,37 @@ fn bbr_does_not_get_closer_to_a_probe_by_sending_little_after_a_queue() {
             sender.feedback(0, usize::MAX);
             assert_eq!(rounds_until_probe(&mut sender, 1), Some(5));
         }
+    }
+}
+
+#[test]
+fn bbr_keeps_cycling_after_an_overflow_if_bursts_lose_their_starts() {
+    for (lost_starts, rtt, expected) in
+        [(0, 12_500, None), (32, 12_500, Some(5)), (32, 12_501, None)]
+    {
+        let mut sender = bbr_probing();
+        (0..lost_starts).for_each(|_| sender.controller.pacer.on_start_settled(true));
+        sender.send(75).wait(micros(rtt)).feedback(0, 1);
+        sender.controller.feedback.is_overflow = true;
+        sender.feedback(1, 1).feedback(0, usize::MAX);
+        let rounds_until_probe =
+            (0..20).position(|_| gain(sender.run_dry().rounds_of(29, 1, millis(11))) == 125);
+        assert_eq!(rounds_until_probe, expected);
+    }
+}
+
+#[test]
+fn bbr_waits_for_a_probe_that_starts_with_an_overflow_if_bursts_lose_their_starts() {
+    for (lost_starts, expected) in [(0, 75), (32, 125)] {
+        let mut sender = bbr_probing();
+        sender.send(66).wait(millis(13)).feedback(1, usize::MAX);
+        sender.rounds_of(66, 6, millis(11));
+        (0..lost_starts).for_each(|_| sender.controller.pacer.on_start_settled(true));
+        sender.send(66).wait(millis(11));
+        sender.controller.feedback.is_overflow = true;
+        assert_eq!(gain(sender.feedback(1, usize::MAX)), 125);
+        let after = gain(sender.run_dry().rounds_of(1, 1, millis(11)));
+        assert_eq!(after, expected);
     }
 }
 

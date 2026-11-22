@@ -142,6 +142,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/shell/` - Cross-platform shell implementation
 - `src/css/` - CSS parser and processor
 - `src/http/` - HTTP client + `websocket_client/` (WebSocket, deflate)
+- `src/icu/` - the part of ICU's C API that JavaScriptCore, WTF and Bun call (not on macOS); the headers and the data come with WebKit
 - `src/zstd/` - zstd (`decoder/` and `encoder/` are crates of their own)
 - `src/sql/` - SQL database integrations (Postgres, MySQL, SQLite)
 - `src/bake/` - Server-side rendering / dev server framework

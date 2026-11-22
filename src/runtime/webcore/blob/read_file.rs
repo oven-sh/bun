@@ -374,7 +374,7 @@ impl ReadFileUV {
     }
 
     fn open(self: Box<Self>) {
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = bun_paths::Path::new();
         let path = self.file_store.pathlike.path().slice_z(&mut buf).as_ptr();
 
         let loop_ = self.loop_;

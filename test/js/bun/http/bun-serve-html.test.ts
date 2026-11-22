@@ -1,6 +1,6 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isDebug, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -2053,4 +2053,55 @@ describe("production headers and import.meta.env", () => {
     );
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
+});
+
+test.concurrent.skipIf(isWindows).each([
+  ["../web", "../web/index.html"],
+  ["./a\\b", "a\\\\b/index.html"],
+])("dev server entry module id matches when the cwd contains a backslash (page in %s)", async (pages, id) => {
+  const cwd = "a\\b";
+  using dir = tempDir("html-backslash", {
+    [join(cwd, pages, "index.html")]: `<script type="module" src="./main.js"></script>`,
+    [join(cwd, pages, "main.js")]: `console.log("main");`,
+    [join(cwd, "serve.ts")]: `
+      import { join } from "node:path";
+      const { default: page } = await import(join(import.meta.dir, ${JSON.stringify(pages)}, "index.html"));
+      using server = Bun.serve({ port: 0, development: true, routes: { "/": page } });
+      const [, src] = (await (await fetch(server.url)).text()).match(/src="([^"]+)"/);
+      const bundle = await (await fetch(new URL(src, server.url))).text();
+      console.log(bundle.match(/main: "(.+)"/)[1], bundle.match(/"(.+\\.html)": \\[/)[1]);
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(join(String(dir), cwd));
+  expect({ stdout, exitCode }, stderr).toEqual({ stdout: `${id} ${id}`, exitCode: 0 });
+});
+
+test.concurrent.skipIf(isWindows).each([
+  ["c\\", "script"],
+  [".\\c\\", "script"],
+  ["\\c\\", "script"],
+  ["c\\..\\", "asset"],
+  ["..\\", "asset"],
+  ["c\\d/", "asset"],
+])("a bundled server with chunks whose names start with %s serves the %s", async (prefix, file) => {
+  using dir = tempDir("html-naming-backslash", {
+    "index.html": `<script type="module" src="./main.js"></script>`,
+    "main.js": `import asset from "./asset.bin"; console.log(asset);`,
+    "asset.bin": "",
+    "server.ts": `
+        import page from "./index.html";
+        using server = Bun.serve({ port: 0, routes: { "/": page } });
+        const [, src] = (await (await fetch(server.url)).text()).match(/src="([^"]+)"/);
+        const script = new URL(src, server.url);
+        const [, asset] = (await (await fetch(script)).text()).match(/"([^"]+\\.bin)"/);
+        console.log((await fetch(new URL(${file === "asset" ? "asset" : "script"}, script))).status);
+      `,
+  });
+  await Bun.build({
+    entrypoints: [join(String(dir), "server.ts")],
+    outdir: join(String(dir), "out"),
+    target: "bun",
+    naming: { entry: "serve.[ext]", chunk: prefix + "[name]-[hash].[ext]" },
+  });
+  expect(await bunRun(join(String(dir), "out", "serve.js"))).toSpawn("200");
 });

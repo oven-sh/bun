@@ -583,18 +583,18 @@ impl RewriterPipe {
             BunString::EMPTY,
             false,
         ));
-        let result_ref = result.this_ptr();
         this.response.set(Some(result.clone()));
 
-        result_ref.set_init(
+        result.set_init(
             original.get_method(),
             original.get_init_status_code(),
             original.get_init_status_text().clone(),
         );
 
-        result_ref.set_init_headers(headers);
+        result.set_init_headers(headers);
 
-        let response_js_value = Response::to_js(result, &this.global);
+        let result = result.wrap(&this.global);
+        let response_js_value = result.to_js();
 
         let transform = js_HTMLRewriterTransform::wrap(pipe, cx.global());
         transform.set_js_ref_weak();
@@ -606,7 +606,7 @@ impl RewriterPipe {
             js_HTMLRewriterTransform::handlers_set_cached(cell, cx.global(), handlers);
         }
 
-        result_ref.set_url(original.url().clone());
+        result.set_url(original.url().clone());
 
         let value = original.get_body_value();
         let owned_readable_stream = original.get_body_readable_stream();
@@ -618,7 +618,6 @@ impl RewriterPipe {
             return Err(cx.global().throw_value(err));
         }
 
-        response_js_value.ensure_still_alive();
         Ok(response_js_value)
     }
 

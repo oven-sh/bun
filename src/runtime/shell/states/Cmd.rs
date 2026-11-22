@@ -428,8 +428,7 @@ impl Cmd {
 
         // Resolve argv[0] via PATH (`bun_which::which`).
         let resolved: Option<Vec<u8>> = {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            match bun_which::which(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
+            match bun_which::which(spawn_args.path, spawn_args.cwd, &first_arg) {
                 Some(z) => Some(z.as_bytes().to_vec()),
                 None if &first_arg[..] == b"bun" || &first_arg[..] == b"bun-debug" => {
                     bun_core::self_exe_path()
@@ -597,12 +596,12 @@ impl Cmd {
 
         if did_exit_immediately {
             // `watch()` failed → process already gone.
-            let process = subproc.proc().this_ptr();
+            let process = subproc.proc();
+            let mut rusage = crate::api::bun::process::rusage_zeroed();
             if let Some(status) = process.status() {
-                let rusage = crate::api::bun::process::rusage_zeroed();
-                bun_spawn::Process::on_exit(process, status.clone(), &rusage);
-            } else {
-                bun_spawn::Process::wait(process, false);
+                process.on_exit(status.clone()).dispatch(&rusage);
+            } else if let Some(exit) = process.wait(false, &mut rusage) {
+                exit.dispatch(&rusage);
             }
         }
 

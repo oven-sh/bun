@@ -24,7 +24,7 @@ use crate::run_command::{ConfigureEnvOptions, RunCommand};
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as spawn, Rusage, SpawnOptions, SpawnProcessResult, Status, event_loop_handle_to_ctx,
+    self as spawn, SpawnOptions, SpawnProcessResult, Status, event_loop_handle_to_ctx,
 };
 use bun_collections::index_sort;
 use bun_dotenv::Loader as DotEnvLoader;
@@ -268,23 +268,16 @@ impl<'a> ProcessHandle<'a> {
             end_time: None,
         });
         let self_ptr = std::ptr::from_mut::<Self>(self);
-        // Not a borrow of the slot, which the exit handler borrows again.
-        let process = self.process.as_ref().unwrap().process.this_ptr();
+        let process = &self.process.as_ref().unwrap().process;
         // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
         // it lives for the whole event loop and outlives `process`.
         process.set_exit_handler(unsafe {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::MultiRunHandle, self_ptr)
         });
 
-        match spawn::Process::watch_or_reap(process) {
-            Ok(_) => {}
-            Err(err) => {
-                if !process.has_exited() {
-                    // SAFETY: all-zero is a valid Rusage (POD C struct)
-                    let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    spawn::Process::on_exit(process, Status::Err(err), &rusage);
-                }
-            }
+        let mut rusage = bun_core::ffi::zeroed();
+        if let Some(exit) = process.watch_or_exit(&mut rusage) {
+            exit.dispatch(&rusage);
         }
 
         Ok(())
@@ -660,8 +653,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
         // If it looks like a file path, prefix with bun executable
         let is_file = !raw_name.is_empty()
             && (raw_name[0] == b'.'
-                || raw_name[0] == b'/'
-                || (cfg!(windows) && raw_name[0] == b'\\')
+                || bun_paths::is_sep(raw_name[0])
                 || has_runnable_extension(raw_name));
         let command_z: Box<[u8]> = if is_file {
             let bun_path: &[u8] = bun::self_exe_path().map(|z| z.as_bytes()).unwrap_or(b"bun");

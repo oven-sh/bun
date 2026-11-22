@@ -11,7 +11,6 @@ use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
-use bun_paths::resolve_path;
 use bun_sys::{self, Fd};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
@@ -412,14 +411,14 @@ impl BuildCommand {
 
                     if outfile == b"index" {
                         outfile = bun_paths::basename(
-                            bun_core::dirname(&first_entry_point).unwrap_or(b"index"),
+                            bun_paths::dirname(&first_entry_point).unwrap_or(b"index"),
                         );
                         was_renamed_from_index = outfile != b"index";
                     }
 
                     if outfile == b"bun" {
                         outfile = bun_paths::basename(
-                            bun_core::dirname(&first_entry_point).unwrap_or(b"bun"),
+                            bun_paths::dirname(&first_entry_point).unwrap_or(b"bun"),
                         );
                     }
                 }
@@ -474,18 +473,7 @@ impl BuildCommand {
                     break 'brk2 &ctx.bundler_options.root_dir;
                 }
 
-                if this_transpiler.options.entry_points.len() == 1 {
-                    break 'brk2 bun_core::dirname(&this_transpiler.options.entry_points[0])
-                        .unwrap_or(b".");
-                }
-
-                let entries: Vec<&[u8]> = this_transpiler
-                    .options
-                    .entry_points
-                    .iter()
-                    .map(|s| &**s)
-                    .collect();
-                resolve_path::get_if_exists_longest_common_path(&entries).unwrap_or(b".")
+                options::default_root_dir(&this_transpiler.options.entry_points)
             };
 
             // `bun_sys::Dir` is the owning RAII
@@ -648,15 +636,9 @@ impl BuildCommand {
                 && !outfile.is_empty()
                 && !ctx.bundler_options.compile
             {
-                let mut entry_naming = Vec::<u8>::new();
-                write!(
-                    &mut entry_naming,
-                    "./{}",
-                    bstr::BStr::new(bun_paths::basename(outfile))
-                )
-                .expect("unreachable");
-                this_transpiler.options.entry_naming = entry_naming.into_boxed_slice();
-                if let Some(dir) = bun_core::dirname(outfile) {
+                this_transpiler.options.entry_naming =
+                    strings::concat(&[b"./", bun_paths::basename(outfile)]);
+                if let Some(dir) = bun_paths::dirname(outfile) {
                     ctx.bundler_options.outdir = dir.into();
                 }
                 // resolver.opts.entry_naming — field does not exist on the
@@ -847,7 +829,7 @@ impl BuildCommand {
                         && matches!(output_files[0].value, options::OutputFileValue::Buffer { .. }));
 
             if output_dir.is_empty() && !outfile.is_empty() && will_be_one_file {
-                output_dir = bun_core::dirname(outfile).unwrap_or(b".");
+                output_dir = bun_paths::dirname(outfile).unwrap_or(b".");
                 // With --compile, the bundler already named the entry point's chunk after the outfile.
                 if !ctx.bundler_options.compile {
                     output_files[0].dest_path = bun_paths::basename(outfile).into();
@@ -870,7 +852,7 @@ impl BuildCommand {
 
             let mut root_path: &[u8] = output_dir;
             if root_path.is_empty() && ctx.args.entry_points.len() == 1 {
-                root_path = bun_core::dirname(&ctx.args.entry_points[0]).unwrap_or(b".");
+                root_path = bun_paths::dirname(&ctx.args.entry_points[0]).unwrap_or(b".");
             }
 
             let root_dir = if root_path.is_empty() || root_path == b"." {
@@ -889,23 +871,15 @@ impl BuildCommand {
                 }
             };
 
-            let mut all_paths: Vec<&[u8]> = vec![&[] as &[u8]; output_files.len()];
             let mut max_path_len: usize = 0;
-            for (dest, src) in all_paths.iter_mut().zip(output_files.iter()) {
-                *dest = &src.dest_path;
-            }
-            debug_assert_eq!(all_paths.len(), output_files.len());
-
-            let from_path = resolve_path::longest_common_path(&all_paths);
-
             let mut size_padding: usize = 0;
 
+            let is_narrow = summary_ignores_dot_slash(output_files);
+
             for f in output_files.iter() {
+                let padding = 2 + usize::from(f.dest_path.starts_with(b"./") && !is_narrow);
                 max_path_len =
-                    max_path_len.max(from_path.len().max(f.dest_path.len()) + 2 - from_path.len());
-                // A file that is listed beside the bundle's own may lack the prefix that those share.
-                max_path_len =
-                    max_path_len.max(strings::trim_prefix(&f.dest_path, b"./").len() + 2);
+                    max_path_len.max(strings::trim_prefix(&f.dest_path, b"./").len() + padding);
                 size_padding = size_padding.max(bun_fmt::count(format_args!(
                     "{}",
                     bun_fmt::size(f.size, Default::default())
@@ -938,11 +912,8 @@ impl BuildCommand {
                     outfile = &outfile_owned;
                 } else if was_renamed_from_index && outfile != b"index" {
                     // If we're going to fail due to EISDIR, we should instead pick a different name.
-                    let mut zbuf = bun_paths::path_buffer_pool::get();
-                    let n = outfile.len().min(zbuf.0.len() - 1);
-                    zbuf.0[..n].copy_from_slice(&outfile[..n]);
-                    let z = bun_core::ZStr::nul_terminate(&mut zbuf, n);
-                    if bun_sys::directory_exists_at(root_dir.fd, z).unwrap_or(false) {
+                    let path = bun_paths::Path::from(outfile);
+                    if bun_sys::directory_exists_at(root_dir.fd, &path).unwrap_or(false) {
                         outfile = b"index";
                     }
                 }
@@ -1094,19 +1065,15 @@ impl BuildCommand {
                             // root_dir already points to the outfile's parent directory,
                             // so use map_basename (not a path with directory components)
                             // to avoid writing to a doubled directory path.
-                            let mut pathbuf = bun_paths::path_buffer_pool::get();
-                            match bun_sys::write_file_with_path_buffer(
-                                &mut pathbuf,
-                                &bun_sys::WriteFileArgs {
-                                    data: bun_sys::WriteFileData::Buffer {
-                                        buffer: sourcemap_bytes,
-                                    },
-                                    encoding: bun_sys::WriteFileEncoding::Buffer,
-                                    dirfd: root_dir.fd,
-                                    file: bun_sys::PathOrFileDescriptor::Path(map_basename),
-                                    ..Default::default()
+                            match bun_sys::write_file(&bun_sys::WriteFileArgs {
+                                data: bun_sys::WriteFileData::Buffer {
+                                    buffer: sourcemap_bytes,
                                 },
-                            ) {
+                                encoding: bun_sys::WriteFileEncoding::Buffer,
+                                dirfd: root_dir.fd,
+                                file: bun_sys::PathOrFileDescriptor::Path(map_basename),
+                                ..Default::default()
+                            }) {
                                 Err(err) => {
                                     Output::err(
                                         err,
@@ -1308,6 +1275,22 @@ impl BuildCommand {
     }
 }
 
+/// Otherwise the column of names is one wider.
+fn summary_ignores_dot_slash(outputs: &[options::OutputFile]) -> bool {
+    let paths = || outputs.iter().map(|f| &f.dest_path[..]);
+    if outputs.len() <= 8 {
+        return paths().all(|path| path.starts_with(b"./"));
+    }
+    let (first, mut index) = (&outputs[0].dest_path, 0);
+    let shortest = paths().map(<[u8]>::len).min().unwrap_or(0);
+    paths().skip(1).any(|other| {
+        while index + 1 < shortest && first[index] == other[index] {
+            index += 1;
+        }
+        index > 0 && bun_paths::is_sep(first[index])
+    })
+}
+
 pub(crate) fn compile_outfile(outfile: &[u8]) -> &[u8] {
     if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
         b"index"
@@ -1422,7 +1405,7 @@ pub(crate) fn collect_compile_assets(
         if !f.output_kind.is_file_in_standalone_mode() {
             continue;
         }
-        let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());
+        let _ = seen.put(bun_paths::without_leading_dot_slash(&f.dest_path), ());
     }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
@@ -1452,15 +1435,8 @@ pub(crate) fn collect_compile_assets(
         };
 
     let cwd = Fd::cwd();
-    let mut zbuf = bun_paths::path_buffer_pool::get();
     for asset in assets {
-        let asset_trimmed: &[u8] = {
-            let mut a: &[u8] = asset;
-            while matches!(a.last(), Some(b'/') | Some(b'\\')) {
-                a = &a[..a.len() - 1];
-            }
-            a
-        };
+        let asset_trimmed = bun_paths::without_trailing_sep(asset);
         let base = bun_paths::basename(asset_trimmed);
         if base.is_empty() || base == b"." || base == b".." {
             return fail(
@@ -1474,17 +1450,14 @@ pub(crate) fn collect_compile_assets(
             ));
         }
 
-        if asset_trimmed.len() >= zbuf.len() || strings::index_of_char(asset_trimmed, 0).is_some() {
+        if strings::contains_char(asset_trimmed, 0) {
             return fail(
                 bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                     .with_path(asset),
             );
         }
-        let n = asset_trimmed.len();
-        zbuf[..n].copy_from_slice(asset_trimmed);
-        let asset_z = bun_core::ZStr::nul_terminate(&mut zbuf, n);
 
-        let st = match bun_sys::stat(asset_z) {
+        let st = match bun_sys::stat(&bun_paths::Path::from(asset_trimmed)) {
             Ok(st) => st,
             Err(e) => return fail(e.with_path(asset)),
         };
@@ -1509,22 +1482,9 @@ pub(crate) fn collect_compile_assets(
                 }
                 #[cfg(windows)]
                 let (rel, bytes) = {
-                    let mut rel_buf = bun_paths::path_buffer_pool::get();
-                    let rel_z = bun_paths::string_paths::from_w_path(
-                        &mut rel_buf[..],
-                        entry.path.as_slice(),
-                    );
-                    let mut rel = rel_z.as_bytes().to_vec();
-                    for b in rel.iter_mut() {
-                        if *b == b'\\' {
-                            *b = b'/';
-                        }
-                    }
-                    let mut base_buf = bun_paths::path_buffer_pool::get();
-                    let base_z = bun_paths::string_paths::from_w_path(
-                        &mut base_buf[..],
-                        entry.basename.as_slice(),
-                    );
+                    let rel = bun_paths::Path::from(entry.path.as_slice()).into_portable();
+                    let rel = rel.to_vec();
+                    let base_z = bun_paths::Path::from(entry.basename.as_slice());
                     let bytes = match bun_sys::File::read_from(entry.dir, base_z.as_bytes()) {
                         Ok(b) => b,
                         Err(e) => return fail(e.with_path(&rel)),

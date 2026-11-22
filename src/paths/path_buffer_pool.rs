@@ -13,6 +13,7 @@
 
 use core::cell::RefCell;
 use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 use core::ops::{Deref, DerefMut};
 
 use bun_core::{PathBuffer, WPathBuffer};
@@ -89,12 +90,12 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
         let buf = T::with_pool(|p| p.borrow_mut().pop())
             .flatten()
             .unwrap_or_else(T::new_boxed);
-        PoolGuard { buf: Some(buf) }
+        PoolGuard {
+            buf: ManuallyDrop::new(buf),
+        }
     }
 
-    /// Manual return path. Prefer dropping
-    /// the `PoolGuard` instead.
-    pub fn put(buf: Box<T>) {
+    fn put(buf: Box<T>) {
         // Dropped when the pool is full or TLS is gone.
         let _ = T::with_pool(|p| {
             let mut p = p.borrow_mut();
@@ -107,73 +108,37 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
 
 /// RAII guard returned by `PathBufferPoolT::get()`.
 pub struct PoolGuard<T: PoolStorage> {
-    buf: Option<Box<T>>,
+    buf: ManuallyDrop<Box<T>>,
 }
 
 impl<T: PoolStorage> Deref for PoolGuard<T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
-        // SAFETY-ish: `buf` is always `Some` until `Drop`.
-        self.buf.as_deref().unwrap()
+        &self.buf
     }
 }
 
 impl<T: PoolStorage> DerefMut for PoolGuard<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
-        self.buf.as_deref_mut().unwrap()
-    }
-}
-
-/// Lets a struct that embeds a `Guard` `#[derive(Default)]`.
-impl<T: PoolStorage> Default for PoolGuard<T> {
-    #[inline]
-    fn default() -> Self {
-        PathBufferPoolT::<T>::get()
+        &mut self.buf
     }
 }
 
 impl<T: PoolStorage> Drop for PoolGuard<T> {
     fn drop(&mut self) {
-        if let Some(buf) = self.buf.take() {
-            PathBufferPoolT::<T>::put(buf);
-        }
+        // SAFETY: `buf` is not used again.
+        PathBufferPoolT::<T>::put(unsafe { ManuallyDrop::take(&mut self.buf) });
     }
 }
-
-impl<T: PoolStorage> PoolGuard<T> {
-    /// Extract the `Box` without returning it to the pool; the owner `put`s it later.
-    #[inline]
-    pub fn into_box(mut self) -> Box<T> {
-        self.buf.take().unwrap()
-    }
-}
-
-#[allow(non_camel_case_types)]
-pub type path_buffer_pool = PathBufferPoolT<PathBuffer>;
-#[allow(non_camel_case_types)]
-pub type w_path_buffer_pool = PathBufferPoolT<WPathBuffer>;
 
 /// `bun.path_buffer_pool.get()` — convenience wrapper returning the RAII guard.
-/// `Path<U>` callers store this in a `ManuallyDrop` and explicitly `put` on
-/// reset, so also expose `into_box`/free `put`.
 pub type Guard = PoolGuard<PathBuffer>;
 #[inline(never)]
 pub fn get() -> PoolGuard<PathBuffer> {
     PathBufferPoolT::<PathBuffer>::get()
 }
-#[inline]
-pub fn put(buf: Box<PathBuffer>) {
-    PathBufferPoolT::<PathBuffer>::put(buf)
-}
-
-#[cfg(windows)]
-#[allow(non_camel_case_types)]
-pub type os_path_buffer_pool = w_path_buffer_pool;
-#[cfg(not(windows))]
-#[allow(non_camel_case_types)]
-pub type os_path_buffer_pool = path_buffer_pool;
 
 #[cfg(test)]
 mod tests {
@@ -215,7 +180,7 @@ mod tests {
     #[test]
     fn wide_pool_is_separate_and_zeroed() {
         U16_POOL.with(|p| p.borrow_mut().clear());
-        let w = w_path_buffer_pool::get();
+        let w = crate::w_path_buffer_pool::get();
         assert!(w.iter().all(|&unit| unit == 0));
         assert_eq!(w.len(), bun_core::PATH_MAX_WIDE);
     }

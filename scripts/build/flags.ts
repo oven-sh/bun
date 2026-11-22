@@ -966,6 +966,11 @@ export const defines: Flag[] = [
     when: c => c.darwin,
     desc: "Disable ICU symbol renaming (using system ICU)",
   },
+  {
+    flag: "BUN_SYSTEM_ICU=1",
+    when: usesIcuOfLinuxSystem,
+    desc: "src/icu is empty, so ICU's version is not checked against it",
+  },
 
   // ─── Feature toggles ───
   {
@@ -1690,6 +1695,16 @@ export const linkerFlags: Flag[] = [
  */
 export function rustLtoInLink(c: Config): boolean {
   return c.release && !c.asan && c.rustLto;
+}
+
+/** The static ICU of a local WebKit (deps/webkit.ts). */
+export function linuxIcuRoot(c: Config): string | undefined {
+  return c.linux && c.abi !== "android" ? process.env.BUN_ICU_ROOT || undefined : undefined;
+}
+
+/** The system's ICU can have any version, so bun links its code too, in place of src/icu. */
+export function usesIcuOfLinuxSystem(c: Config): boolean {
+  return c.linux && c.abi !== "android" && c.webkit === "local" && linuxIcuRoot(c) === undefined;
 }
 
 /** The link optimises bitcode: the C/C++'s (`lto`), the Rust crates', or both. */

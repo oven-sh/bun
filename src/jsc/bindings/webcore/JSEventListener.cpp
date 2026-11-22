@@ -150,6 +150,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtExceptionNextTick, (JSC::JSGlobal
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+// What a listener left on `scope`. An error is reported as uncaught. The VM's termination, from the listener or from the
+// handlers of that report, ends the dispatch of `event`: EventTarget::innerInvokeEventListeners enters no more listeners.
+static NEVER_INLINE void reportThrownByListener(VM& vm, TopExceptionScope& scope, Event& event, JSGlobalObject* lexicalGlobalObject)
+{
+    auto* exception = scope.exception();
+    if (Bun::clearExceptionOrTakeTermination(vm, scope)) {
+        event.target()->uncaughtExceptionInEventHandler();
+        reportException(lexicalGlobalObject, exception);
+        if (!scope.exception()) [[likely]]
+            return;
+    }
+    event.stopImmediatePropagation();
+}
+
 void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext, Event& event)
 {
     if (scriptExecutionContext.isJSExecutionForbidden())
@@ -190,16 +204,15 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
         handleEventFunction = jsFunction->get(lexicalGlobalObject, WebCore::builtinNames(vm).handleEventPublicName());
         if (scope.exception()) [[unlikely]] {
-            auto* exception = scope.exception();
-            (void)scope.tryClearException();
-            event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, exception);
+            reportThrownByListener(vm, scope, event, lexicalGlobalObject);
             return;
         }
         callData = getCallData(handleEventFunction);
         if (callData.type == CallData::Type::None) {
             event.target()->uncaughtExceptionInEventHandler();
             reportException(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "'handleEvent' property of event listener should be callable"_s));
+            if (scope.exception()) [[unlikely]]
+                event.stopImmediatePropagation();
             return;
         }
     }
@@ -221,32 +234,21 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             return jsNull();
         return toJS(lexicalGlobalObject, globalObject, *currentTarget);
     }();
-    NakedPtr<JSC::Exception> uncaughtException;
-    JSValue retval = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, handleEventFunction, callData, thisValue, args, uncaughtException);
+    JSValue retval = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, handleEventFunction, callData, thisValue, args);
 
     // InspectorInstrumentation::didCallFunction(&scriptExecutionContext);
 
-    auto handleExceptionIfNeeded = [&](JSC::Exception* exception) -> bool {
-        if (exception) {
-            event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, exception);
-            return true;
-        }
-        return false;
-    };
-
-    if (handleExceptionIfNeeded(uncaughtException))
+    if (scope.exception()) [[unlikely]] {
+        reportThrownByListener(vm, scope, event, lexicalGlobalObject);
         return;
+    }
 
     // Node handles promises in the return value and throws an uncaught exception on nextTick if it rejects.
     // See event_target.js function addCatch in node
     if (retval.isObject()) {
         auto then = retval.get(lexicalGlobalObject, vm.propertyNames->then);
         if (scope.exception()) [[unlikely]] {
-            auto* exception = scope.exception();
-            (void)scope.tryClearException();
-            event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, exception);
+            reportThrownByListener(vm, scope, event, lexicalGlobalObject);
             return;
         }
         if (then.isCallable()) {
@@ -255,10 +257,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             arglist.append(JSValue(JSC::JSFunction::create(vm, lexicalGlobalObject, 1, String(), jsFunctionEmitUncaughtExceptionNextTick, ImplementationVisibility::Public, NoIntrinsic))); // err => process.nextTick(() => throw err)
             JSC::call(lexicalGlobalObject, then, retval, arglist, "Promise.then is not callable"_s);
             if (scope.exception()) [[unlikely]] {
-                auto* exception = scope.exception();
-                (void)scope.tryClearException();
-                event.target()->uncaughtExceptionInEventHandler();
-                reportException(lexicalGlobalObject, exception);
+                reportThrownByListener(vm, scope, event, lexicalGlobalObject);
                 return;
             }
         }

@@ -170,6 +170,7 @@ private:
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);
     void releaseSourceObserverCounts();
+    bool terminationIsPending() const;
 
     void applyFlags(uint8_t flags) { m_flags |= flags; }
     void setIsDependent(bool isDependent)

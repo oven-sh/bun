@@ -1,0 +1,6 @@
+{
+  "src/jsc/bindings/NodeVM.cpp": 1,
+  "src/jsc/bindings/NodeVM.h": 1,
+  "src/jsc/bindings/NodeVMScript.cpp": 3,
+  "src/jsc/bindings/NodeVMScript.h": 1
+}

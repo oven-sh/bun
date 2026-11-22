@@ -82,7 +82,6 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include "PathInlines.h"
-#include "wtf/NakedPtr.h"
 #include "wtf/URL.h"
 #include "wtf/text/StringImpl.h"
 #include "JSCommonJSExtensions.h"
@@ -307,16 +306,11 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         Bun::putDirectNamed(vm, globalObject, "__filename"_s, filename);
         Bun::putDirectNamed(vm, globalObject, "__dirname"_s, dirname);
 
-        // The 3-arg JSC::evaluate overload catches the exception into a
-        // discarded NakedPtr (Completion.h), so a require() failure or any
-        // throw in an eval-entry body would vanish and the process would
-        // exit 0 silently. Use the out-param overload and rethrow.
-        WTF::NakedPtr<JSC::Exception> returnedException;
-        JSValue result = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
-        if (returnedException) [[unlikely]] {
-            scope.throwException(globalObject, returnedException.get());
-            return false;
-        }
+        // JSC::evaluate() catches what the body throws (the 3-arg overload then discards it), so a
+        // require() failure or any throw in an eval-entry body would vanish and the process would
+        // exit 0 silently. Bun::evaluateProgram() leaves it pending.
+        JSValue result = Bun::evaluateProgram(globalObject, code, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, false);
         ASSERT(result);
 
         Bun__VM__setEntryPointEvalResultCJS(globalObject->bunVM(), JSValue::encode(result));
@@ -345,15 +339,10 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     }
 #endif
 
-    // Same out-param pattern as the eval-entry path above: the 3-arg
-    // overload would swallow the exception, leaving the misleading
-    // "function wrapper" TypeError below instead of the real error.
-    WTF::NakedPtr<JSC::Exception> wrapperException;
-    JSValue fnValue = sharedWrapper ? JSValue(JSFunction::create(vm, globalObject, sharedWrapper, moduleObject->moduleGraph()->overlay())) : JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
-    if (wrapperException) [[unlikely]] {
-        scope.throwException(globalObject, wrapperException.get());
-        return false;
-    }
+    // As on the eval-entry path above: JSC::evaluate() would swallow the exception, leaving the
+    // misleading "function wrapper" TypeError below instead of the real error.
+    JSValue fnValue = sharedWrapper ? JSValue(JSFunction::create(vm, globalObject, sharedWrapper, moduleObject->moduleGraph()->overlay())) : Bun::evaluateProgram(globalObject, code, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, false);
     ASSERT(fnValue);
 
     // A graph's module: the wrapper closes over the graph's overlay instead of the global scope.
@@ -1017,7 +1006,6 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     String dirnameString = dirnameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    WTF::NakedPtr<JSC::Exception> exception;
     evaluateCommonJSModuleOnce(
         vm,
         uncheckedDowncast<Zig::GlobalObject>(globalObject),

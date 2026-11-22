@@ -1,6 +1,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "BunBuiltinNames.h"
+#include "BunClientData.h"
 #include "JavaScriptCore/CallData.h"
 #include "WebCoreJSBuiltins.h"
 #include "JavaScriptCore/JSPromise.h"
@@ -39,11 +40,13 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
     args.append(paramInformation);
     args.append(styles);
 
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::profiledCall(global, JSC::ProfilingReason::API, cb, callData, JSC::jsUndefined(), args, returnedException);
-    if (returnedException) [[unlikely]] {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto result = JSC::profiledCall(global, JSC::ProfilingReason::API, cb, callData, JSC::jsUndefined(), args);
+    if (auto* exception = scope.exception()) [[unlikely]] {
         // This should be impossible because it returns a promise.
-        return JSC::JSPromise::rejectedPromise(global, returnedException->value());
+        JSC::JSValue thrown = exception->value();
+        (void)Bun::clearExceptionOrTakeTermination(vm, scope);
+        return JSC::JSPromise::rejectedPromise(global, thrown);
     }
     return uncheckedDowncast<JSC::JSPromise>(result);
 }

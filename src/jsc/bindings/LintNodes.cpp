@@ -1218,16 +1218,20 @@ extern "C" bool Bun__Lint__deferRequires(JSGlobalObject* globalObject, const Lat
 {
     auto& vm = getVM(globalObject);
     auto code = makeSource(StringImpl::createWithoutCopying(std::span { source, length }), SourceOrigin {}, SourceTaintedOrigin::Untainted, "bun-lint-plugins.js"_s, TextPosition(), SourceProviderSourceType::Program, SourceProvenance::Static);
-    NakedPtr<JSC::Exception> exception;
-    JSValue program = JSC::evaluate(globalObject, code, jsUndefined(), exception);
-    if (exception)
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue program = Bun::evaluateProgram(globalObject, code, jsUndefined());
+    if (scope.exception()) [[unlikely]] {
+        (void)Bun::clearExceptionOrTakeTermination(vm, scope);
         return false;
+    }
     MarkedArgumentBuffer arguments;
     for (auto function : { jsLintIsLoadingChanged, jsLintIsCaught, jsLintIsLoading, jsLintIsOfKnownPackage, jsLintTextsOfCallees, jsLintMakeLazy, jsLintIsLazy, jsLintIsPlain, jsLintMakeAllLazy, jsLintSetWantsWhole })
         arguments.append(JSFunction::create(vm, globalObject, 0, String(), function, ImplementationVisibility::Private));
-    JSValue make = JSC::call(globalObject, program, getCallData(program), jsUndefined(), arguments, exception);
-    if (exception)
+    JSValue make = JSC::call(globalObject, program, getCallData(program), jsUndefined(), arguments);
+    if (scope.exception()) [[unlikely]] {
+        (void)Bun::clearExceptionOrTakeTermination(vm, scope);
         return false;
+    }
     globalObject->putDirect(vm, WebCore::builtinNames(vm).dataPrivateName(), make, PropertyAttribute::DontEnum | 0);
     return true;
 }

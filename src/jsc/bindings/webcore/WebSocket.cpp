@@ -52,7 +52,6 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/HashSet.h>
 #include <wtf/HexNumber.h>
-#include <wtf/NakedPtr.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
@@ -840,6 +839,15 @@ void WebSocket::dispatchEvent(Event& event)
 
 JSC::JSValue WebSocket::callHandler(const JSC::Identifier& name, const JSC::ArgList& arguments)
 {
+    // The client calls handlers in a row (a Close frame: `write`, `conclude`, `end`). A node:vm timeout leaves the gate
+    // open, so this is what keeps the next handler from being entered over its termination.
+    if (auto* context = scriptExecutionContext(); context && context->vm().hasPendingTerminationException()) [[unlikely]]
+        return {};
+    return callHandlerWithNothingPending(name, arguments);
+}
+
+JSC::JSValue WebSocket::callHandlerWithNothingPending(const JSC::Identifier& name, const JSC::ArgList& arguments)
+{
     RefPtr context = scriptExecutionContext();
     if (!context || context->isJSExecutionForbidden())
         return {};
@@ -859,10 +867,11 @@ JSC::JSValue WebSocket::callHandler(const JSC::Identifier& name, const JSC::ArgL
     JSC::EnsureStillAliveScope protectedWrapper(wrapper);
     AsyncContextScope asyncContext(globalObject, m_asyncContext.getValue());
     Bun::ModuleGraphContextScope moduleGraphContext(*context);
-    NakedPtr<JSC::Exception> exception;
-    JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::Other, function, callData, wrapper->m_owner.get(), arguments, exception);
-    if (exception) {
-        reportException(globalObject, exception.get());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::Other, function, callData, wrapper->m_owner.get(), arguments);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        if (Bun::clearExceptionOrTakeTermination(vm, scope))
+            reportException(globalObject, exception);
         return {};
     }
     return result;
@@ -874,8 +883,9 @@ void WebSocket::callHandlerWithBuffer(const JSC::Identifier& name, std::span<con
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     JSC::JSUint8Array* buffer = createBuffer(globalObject, bytes);
     if (!buffer || scope.exception()) [[unlikely]] {
-        scope.clearExceptionExceptTermination();
-        reportFailure({ "Failed to allocate memory"_s, {}, {} });
+        // A termination here is the one a handler before this one left pending: the frame is dropped, nothing is entered.
+        if (scope.clearExceptionExceptTermination())
+            reportFailure({ "Failed to allocate memory"_s, {}, {} });
         return;
     }
 
@@ -883,7 +893,7 @@ void WebSocket::callHandlerWithBuffer(const JSC::Identifier& name, std::span<con
     arguments.append(buffer);
     if (secondArgument)
         arguments.append(secondArgument);
-    callHandler(name, arguments);
+    callHandlerWithNothingPending(name, arguments);
 }
 
 void* WebSocket::didConnect()
@@ -1019,7 +1029,8 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             JSUint8Array* buffer = createBuffer(scriptExecutionContext()->jsGlobalObject(), binaryData);
 
             if (!buffer || scope.exception()) [[unlikely]] {
-                scope.clearExceptionExceptTermination();
+                if (!scope.clearExceptionExceptTermination())
+                    return;
 
                 ErrorEvent::Init errorInit;
                 errorInit.message = "Failed to allocate memory for binary data"_s;

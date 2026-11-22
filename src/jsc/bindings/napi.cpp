@@ -71,7 +71,6 @@
 #include "napi_external.h"
 #include "wtf/Assertions.h"
 #include "wtf/Compiler.h"
-#include "wtf/NakedPtr.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "wtf/text/ASCIIFastPath.h"
@@ -3035,11 +3034,14 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
 
     JSC::SourceCode sourceCode = makeSource(code, SourceOrigin(), SourceTaintedOrigin::Untainted);
 
-    NakedPtr<Exception> returnedException;
-    JSValue value = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), returnedException);
+    JSValue value = Bun::evaluateProgram(globalObject, sourceCode, globalObject->globalThis());
 
-    if (returnedException) {
-        env->scheduleException(returnedException->value());
+    if (auto* exception = throwScope.exception()) [[unlikely]] {
+        JSValue thrown = exception->value();
+        // The VM's termination is not an error value for the addon: it stays pending for the script beneath.
+        if (!throwScope.tryClearException())
+            return napi_set_last_error(env, napi_pending_exception);
+        env->scheduleException(thrown);
         return napi_set_last_error(env, napi_generic_failure);
     }
 

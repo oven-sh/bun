@@ -197,10 +197,11 @@ impl TestContext {
         errors.push(global, error)
     }
 
-    pub(crate) fn abort_signal(this_value: JSValue, global: &JSGlobalObject) {
+    pub(crate) fn abort_signal(this_value: JSValue, global: &JSGlobalObject) -> JsResult<()> {
         if let Some(signal) = js::signal_get_cached(this_value).as_ref().and_then(AbortSignal::from_js) {
-            signal.signal(global, CommonAbortReason::Timeout);
+            signal.signal(global, CommonAbortReason::Timeout)?;
         }
+        Ok(())
     }
 
     pub(crate) fn get_task(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -259,7 +260,7 @@ impl TestContext {
         let signal = AbortSignal::create(global);
         if self.with_running(this_value, |_, sequence| sequence.result.get().is_timeout()) == Some(true) {
             js::signal_set_cached(this_value, global, signal);
-            Self::abort_signal(this_value, global);
+            Self::abort_signal(this_value, global)?;
         }
         Ok(signal)
     }

@@ -741,14 +741,10 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
     args.append(jsString(vm, String(commonJSDefaultWrapperEnd)));
 
     auto scope = DECLARE_THROW_SCOPE(vm);
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::profiledCall(global, JSC::ProfilingReason::API, cb, callData, JSC::jsUndefined(), args, returnedException);
-    if (returnedException) {
-        // The builtin does not throw on its own; what comes back is a
-        // termination (or stack exhaustion) that the getter's caller must see.
-        JSC::throwException(global, scope, returnedException.get());
-        return {};
-    }
+    auto result = JSC::profiledCall(global, JSC::ProfilingReason::API, cb, callData, JSC::jsUndefined(), args);
+    // The builtin does not throw on its own; what is pending is a
+    // termination (or stack exhaustion) that the getter's caller must see.
+    RETURN_IF_EXCEPTION(scope, {});
     ASSERT(result.isCell());
     return JSC::JSValue::encode(result);
 }

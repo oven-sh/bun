@@ -7468,6 +7468,25 @@ bool Bun::takeTerminationOutsideScript(JSC::VM& vm, JSC::TopExceptionScope& scop
     return true;
 }
 
+bool Bun::clearExceptionOrTakeTermination(JSC::VM& vm, JSC::TopExceptionScope& scope)
+{
+    if (scope.tryClearException()) [[likely]]
+        return true;
+    takeTerminationOutsideScript(vm, scope);
+    return false;
+}
+
+JSC::JSValue Bun::evaluateProgram(JSC::JSGlobalObject* globalObject, const JSC::SourceCode& source, JSC::JSValue thisValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!thisValue || thisValue.isUndefinedOrNull())
+        thisValue = globalObject;
+    auto* thisObject = uncheckedDowncast<JSC::JSObject>(thisValue.toThis(globalObject, JSC::ECMAMode::sloppy()));
+    RELEASE_AND_RETURN(scope, vm.interpreter.executeProgram(source, globalObject, thisObject));
+}
+
 extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -7596,21 +7615,14 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
         // What was typed at the terminal, or Bun's own text (`bun lint`): never a JavaScript value.
         JSC::SourceProvenance::Static);
 
-    WTF::NakedPtr<JSC::Exception> evalException;
-    JSC::JSValue result = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), evalException);
+    JSC::JSValue result = Bun::evaluateProgram(globalObject, sourceCode, globalObject->globalThis());
 
-    if (evalException) {
-        *exception = JSC::JSValue::encode(evalException->value());
-        // Set _error on the globalObject directly (not globalThis proxy)
-        Bun::putDirectNamed(vm, globalObject, "_error"_s, evalException->value());
+    if (auto* thrown = scope.exception()) {
+        JSC::JSValue value = thrown->value();
         scope.clearException();
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    if (scope.exception()) {
-        *exception = JSC::JSValue::encode(scope.exception()->value());
+        *exception = JSC::JSValue::encode(value);
         // Set _error on the globalObject directly (not globalThis proxy)
-        Bun::putDirectNamed(vm, globalObject, "_error"_s, scope.exception()->value());
+        Bun::putDirectNamed(vm, globalObject, "_error"_s, value);
         scope.clearException();
         return JSC::JSValue::encode(JSC::jsUndefined());
     }

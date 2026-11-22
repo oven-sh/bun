@@ -176,10 +176,19 @@ void AbortSignal::markAborted(JSC::JSValue reason)
     cancelTimer();
 }
 
+// A native callback, an abort algorithm or a listener can leave the VM's termination pending beneath script. The steps
+// that come after it enter no script: they are skipped, as the termination skips the rest of Node's abort loop.
+bool AbortSignal::terminationIsPending() const
+{
+    auto* context = scriptExecutionContext();
+    return context && context->vm().hasPendingTerminationException();
+}
+
 void AbortSignal::runAbortSteps()
 {
     auto reason = m_reason.getValue();
     ASSERT(reason);
+    bool terminated = false;
 
     auto callbacks = std::exchange(m_native_callbacks, {});
     m_nativeCallbacksBeingDispatched = &callbacks;
@@ -188,6 +197,8 @@ void AbortSignal::runAbortSteps()
         if (!func)
             continue;
         func(ctx, JSC::JSValue::encode(reason));
+        if ((terminated = terminationIsPending())) [[unlikely]]
+            break;
     }
     m_nativeCallbacksBeingDispatched = nullptr;
 
@@ -201,11 +212,14 @@ void AbortSignal::runAbortSteps()
         Locker locker { m_abortAlgorithmsLock };
         abortAlgorithms = std::exchange(m_abortAlgorithms, {});
     }
-    for (auto& pair : abortAlgorithms)
-        pair.second->handleEvent(reason);
+    for (auto& pair : abortAlgorithms) {
+        if (terminated) [[unlikely]]
+            break;
+        terminated = pair.second->handleEvent(reason).type() == CallbackResultType::ExceptionThrown && terminationIsPending();
+    }
 
     // 3. Fire an event named abort at signal.
-    if (hasEventListeners(eventNames().abortEvent))
+    if (!terminated && hasEventListeners(eventNames().abortEvent))
         dispatchEvent(Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No));
     setIsFiringEventListeners(false);
 }
@@ -238,8 +252,13 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     runAbortSteps();
 
     // 6. For each dependentSignal of dependentSignalsToAbort, run the abort steps for dependentSignal.
-    for (auto& dependentSignal : dependentSignalsToAbort)
+    for (auto& dependentSignal : dependentSignalsToAbort) {
+        if (terminationIsPending()) [[unlikely]] {
+            dependentSignal->setIsFiringEventListeners(false);
+            continue;
+        }
         dependentSignal->runAbortSteps();
+    }
 }
 
 void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason)

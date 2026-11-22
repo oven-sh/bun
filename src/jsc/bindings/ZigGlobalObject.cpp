@@ -3339,13 +3339,9 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
     JSC::MarkedArgumentBuffer args;
     args.append(console);
     JSC::CallData callData = JSC::getCallData(createConsoleConstructor);
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, createConsoleConstructor, callData, console, args, returnedException);
-    if (returnedException) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        throwException(globalObject, scope, returnedException.get());
-        return {};
-    }
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, createConsoleConstructor, callData, console, args);
+    RETURN_IF_EXCEPTION(scope, {});
     // A program compiled ahead of time may have made the member immutable.
     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     console->putDirect(vm, property, result, 0);

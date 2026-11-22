@@ -2492,12 +2492,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionWithImplementation, __att
     RETURN_IF_EXCEPTION(scope, {});
 
     MarkedArgumentBuffer args;
-    NakedPtr<JSC::Exception> exception;
-    JSValue returnValue = JSC::call(globalObject, callback, callData, jsUndefined(), args, exception);
-    if (exception) [[unlikely]] {
-        throwException(globalObject, scope, exception.get());
-        return {};
-    }
+    JSValue returnValue = JSC::call(globalObject, callback, callData, jsUndefined(), args);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (auto promise = tryJSDynamicCast<JSC::JSPromise*>(returnValue)) {
         auto capability = JSC::JSPromise::createNewPromiseCapability(globalObject, globalObject->promiseConstructor());

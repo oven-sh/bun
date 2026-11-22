@@ -16,6 +16,7 @@ struct BunVmHandleRef {
 };
 namespace JSC {
 class TopExceptionScope;
+class SourceCode;
 }
 namespace Bun {
 // A TerminationException that has unwound past the outermost script frame (!vm.isEntered()) is the VM's stop arriving
@@ -23,8 +24,13 @@ namespace Bun {
 // execution (WebCore's forbidExecution() at the same point). Beneath script it stays pending for JSC to unwind. True if
 // taken. bindings.cpp.
 bool takeTerminationOutsideScript(JSC::VM&, JSC::TopExceptionScope&);
+// False when what native-called script threw is the VM's stop, not its error: takeTerminationOutsideScript() has run. Else cleared.
+bool clearExceptionOrTakeTermination(JSC::VM&, JSC::TopExceptionScope&);
+// JSC::evaluate() without its catch: what the program throws stays pending. JSC's overloads clear it, a termination too.
+JSC::JSValue evaluateProgram(JSC::JSGlobalObject*, const JSC::SourceCode&, JSC::JSValue thisValue);
 }
 extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject*);
+extern "C" void JSC__JSGlobalObject__throwTerminationException(JSC::JSGlobalObject*); // bindings.cpp
 
 namespace WebCore {
 class WorkerMessagingProxy;

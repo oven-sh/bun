@@ -175,15 +175,16 @@ test.concurrent.each(modes)(
 
 // With the GC timer off Bun requests no collection of its own. On Windows x64
 // the server of "plugin setup rejection" is then never collected, and no root
-// reaches it: #49413 has the heap snapshot and the stack word. So that lane
-// only has to show that no root holds the server.
+// reaches it: #49413 has the heap snapshot and the stack word. So that case
+// only has to show there that no root holds the server.
+const staysUncollected = (mode: string) => isWindows && !isArm64 && mode === "plugin setup rejection";
 test.concurrent.each(modes)(
   "nothing holds a server whose HTML route was parked in its %s once the route is done, with the GC timer off",
   mode =>
     runFixture(
       mode,
       { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
-      { collectedAfterwards: isWindows && !isArm64 ? expect.any(Boolean) : true },
+      { collectedAfterwards: staysUncollected(mode) ? expect.any(Boolean) : true },
     ),
   ceiling,
 );

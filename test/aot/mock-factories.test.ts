@@ -150,7 +150,10 @@ async function said(dir: string, ...flags: string[]) {
     BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: oneThread,
     BUN_DEBUG_TEST_AOT_WORDS: "TestRunSaysItsForm",
   };
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, ...inWorkers, "./t"], dir, env);
+  // The workers hold nearly all the memory of a run: what they hold counts as the run's own, and is held to the limit of ./harness/memory-limit.ts.
+  const withWorkers = true;
+  const command = [bunExe(), "test", ...flags, ...inWorkers, "./t"];
+  const { stdout, stderr, exitCode } = await run(command, dir, env, undefined, withWorkers);
   // What a run that failed says beside the answers, the passes and the names of the test files.
   const beside = stderr.split("\n").filter(line => !/^(\| |\(pass\) |t\/|$)/.test(line));
   if (exitCode !== 0) console.error(beside.slice(-200).join("\n"));
@@ -170,6 +173,7 @@ async function said(dir: string, ...flags: string[]) {
 
 const dir = tempDir("aot-mock-factories", files);
 afterAll(() => dir[Symbol.dispose]());
+// The limit is for a debug build on few processors: on three the case takes 261 s.
 test("what each case prints", async () => {
   const [plain, compiled] = [await said(String(dir)), await said(String(dir), "--aot")];
   expect(plain.answers.size).toBe(numberOfCases);
@@ -199,4 +203,4 @@ test("what each case prints", async () => {
     plain: whole,
     compiled: { ...whole, compiled: numberOfCases },
   });
-});
+}, 600_000);

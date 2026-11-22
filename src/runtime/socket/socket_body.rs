@@ -525,6 +525,31 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.buffered_data_for_node_net.get().capacity() + ssl_cost
     }
 
+    /// Keeps `bytes[sent..]` for the socket to take later: by reference for a Buffer on plain TCP, as Node does.
+    #[cold]
+    fn keep_unsent(&self, chunk: &BlobOrStringOrBuffer, bytes: &[u8], sent: usize) {
+        self.buffered_data_for_node_net.with_mut(|unsent| {
+            // A Windows named pipe is not `Connected`.
+            if !SSL
+                && matches!(self.socket.get().socket, uws::InternalSocket::Connected(_))
+                && let BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::Buffer(chunk)) = chunk
+                && unsent.hold(chunk.buffer.value, bytes, sent)
+            {
+                return;
+            }
+            unsent.append_slice(&bytes[sent..]);
+        });
+    }
+
+    /// Lets go of a held chunk that this socket cannot send any more. `bytesWritten` goes on counting its bytes.
+    fn abandon_held_write(&self) {
+        let unsent = self
+            .buffered_data_for_node_net
+            .with_mut(|b| b.release_held());
+        self.bytes_written
+            .set(self.bytes_written.get() + unsent as u64);
+    }
+
     /// On `false` the rejected `callback` (and the ref it holds) is dropped.
     pub(crate) fn attach_native_callback(&self, callback: NativeCallbacks) -> bool {
         if !matches!(self.native_callback.get(), NativeCallbacks::None) {
@@ -2021,6 +2046,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
         let this = native_ref.this_ptr();
         this.latest_session.set(None);
+        this.abandon_held_write();
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -2874,12 +2900,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         log!("writeOrEnd {}", bytes.len());
         let wrote = self.write_maybe_corked(bytes);
         let uwrote: usize = usize::try_from(wrote.max(0)).expect("int cast");
-        if buffer_unwritten_data {
-            let remaining = &bytes[uwrote..];
-            if !remaining.is_empty() {
-                self.buffered_data_for_node_net
-                    .with_mut(|b| b.append_slice(remaining));
-            }
+        if buffer_unwritten_data && uwrote < bytes.len() {
+            self.keep_unsent(&buffer, bytes, uwrote);
         }
 
         WriteResult::Success {
@@ -3397,6 +3419,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         let original_data: JSValue =
             Self::data_get_cached(self.get_this_value(global)).unwrap_or(JSValue::UNDEFINED);
         original_data.ensure_still_alive();
+        // The TLS socket takes the fd: what this one did not send is not sent.
+        self.abandon_held_write();
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             self.poll_ref.disable();
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));

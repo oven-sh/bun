@@ -124,6 +124,13 @@ unsafe extern "C" {
     // `RefCounted<ArrayBuffer>` count mutation is interior to the opaque cell.
     safe fn JSC__ArrayBuffer__ref(self_: &JSCArrayBuffer);
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
+    // safe: by-value `JSValue`, and `bytes` is only compared; null unless the range is in the ArrayBuffer of `v`.
+    safe fn JSC__JSValue__pinAndRefArrayBuffer(
+        v: JSValue,
+        bytes: *const u8,
+        length: usize,
+    ) -> Option<ptr::NonNull<JSCArrayBuffer>>;
+    fn JSC__ArrayBuffer__unpinAndDeref(buffer: ptr::NonNull<JSCArrayBuffer>);
     // safe: by-value `JSValue`; no-op for non-buffer values.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     // safe: by-value `JSValue`; false for non-buffer values.
@@ -680,6 +687,45 @@ impl Drop for PinnedArrayBuffer {
 
 // SAFETY: a pin and GC protection on a heap cell; constructed and dropped on the JS thread.
 unsafe impl crate::job::JsAffine for PinnedArrayBuffer {}
+
+// ──────────────────────────────────────────────────────────────────────────
+// RetainedArrayBuffer
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Bytes of a typed array or DataView that stay where they are after the view is collected: its ArrayBuffer is pinned and ref'd until `Drop`.
+pub struct RetainedArrayBuffer {
+    buffer: ptr::NonNull<JSCArrayBuffer>,
+    bytes: *const [u8],
+}
+
+impl RetainedArrayBuffer {
+    /// `None` unless `bytes` are in the ArrayBuffer of `view` and a pin keeps them mapped (see [`ArrayBuffer::can_be_freed_while_pinned`]).
+    pub fn new(view: JSValue, bytes: &[u8]) -> Option<Self> {
+        let buffer = JSC__JSValue__pinAndRefArrayBuffer(view, bytes.as_ptr(), bytes.len())?;
+        Some(Self { buffer, bytes })
+    }
+
+    #[inline]
+    pub fn byte_slice(&self) -> &[u8] {
+        // SAFETY: `new` checked the range, the ref keeps the ArrayBuffer, and JS cannot detach or
+        // move the contents of a pinned or shared one.
+        unsafe { &*self.bytes }
+    }
+
+    /// Drops the first `n` bytes.
+    #[inline]
+    pub fn advance(&mut self, n: usize) {
+        let rest: *const [u8] = &self.byte_slice()[n..];
+        self.bytes = rest;
+    }
+}
+
+impl Drop for RetainedArrayBuffer {
+    fn drop(&mut self) {
+        // SAFETY: the ArrayBuffer that `new` pinned and took a ref on, on the JS thread.
+        unsafe { JSC__ArrayBuffer__unpinAndDeref(self.buffer) };
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // BinaryType

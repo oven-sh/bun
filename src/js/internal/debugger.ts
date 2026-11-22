@@ -58,6 +58,7 @@ class SocketFramer {
       $debug("local:", data);
     }
 
+    // `$write` copies what it did not send of a buffer this small, so the next message can reuse it.
     socketFramerMessageLengthBuffer.writeUInt32BE(Buffer.byteLength(data), 0);
     socket.$write(socketFramerMessageLengthBuffer);
     socket.$write(data);

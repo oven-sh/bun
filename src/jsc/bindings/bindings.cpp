@@ -4203,6 +4203,31 @@ CPP_DECL bool JSC__JSValue__canBeFreedWhilePinned(JSC::EncodedJSValue v)
     return buf && !buf->isShared() && (buf->isResizableOrGrowableShared() || buf->isWasmMemory());
 }
 
+// See `RetainedArrayBuffer` in array_buffer.rs.
+CPP_DECL JSC::ArrayBuffer* JSC__JSValue__pinAndRefArrayBuffer(JSC::EncodedJSValue v, const uint8_t* bytes, size_t length)
+{
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(JSC::JSValue::decode(v));
+    // possiblySharedBuffer() moves the bytes of a FastTypedArray.
+    if (!view || view->isDetached() || view->mode() == JSC::FastTypedArray)
+        return nullptr;
+    auto* buf = view->possiblySharedBuffer();
+    if (!buf || buf->isDetached() || buf->isResizableOrGrowableShared() || buf->isWasmMemory())
+        return nullptr;
+    auto* data = static_cast<const uint8_t*>(buf->data());
+    if (bytes < data || length > buf->byteLength() || static_cast<size_t>(bytes - data) > buf->byteLength() - length)
+        return nullptr;
+    if (!buf->isShared())
+        buf->pin();
+    buf->ref();
+    return buf;
+}
+CPP_DECL void JSC__ArrayBuffer__unpinAndDeref(JSC::ArrayBuffer* buf)
+{
+    if (!buf->isShared())
+        buf->unpin();
+    buf->deref();
+}
+
 // Returns the WebAssembly.Memory that `v` is a view of and sets `out_offset` to where `v` starts in it.
 // Returns empty if `v` isn't a view of a non-shared memory or that memory was collected.
 // A fixed-length buffer doesn't point to its memory, so this checks every live one.

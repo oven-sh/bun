@@ -1,16 +1,18 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import net from "node:net";
+import { join } from "node:path";
 import { bytesWrittenUntil, patterned, receive } from "./unsent-bytes-helpers";
 
 // Windows uses the libuv eventing backend; bsd_recv/bsd_send are still the
 // chokepoints there but errno semantics differ. Land POSIX coverage first.
 const skip = !fault.available() || isWindows;
 
-afterEach(() => fault.clear());
+// clear() throws on a build without fault injection, and the last describe runs on every build.
+if (fault.available()) afterEach(() => fault.clear());
 
 async function connectedPair(onServerSocket?: (s: net.Socket) => void) {
   const server = net.createServer();
@@ -468,6 +470,10 @@ describe.skipIf(skip)("node:net seeded syscall fuzz", () => {
 // A short send leaves the rest of the chunk in the handle's queue of unsent
 // bytes, and each writable event sends more of it.
 describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => {
+  // The queue copies the rest of a string at any size. The rest of a Buffer is sent from the Buffer itself when
+  // it is more than 16 KiB (the next describe), and the queue allocates nothing for it.
+  const asString = (bytes: Buffer) => bytes.toString("latin1");
+
   for (const side of ["client", "server"] as const) {
     test(`a write that writable events drain arrives intact (${side} writer)`, async () => {
       using p = await connectedPair();
@@ -480,7 +486,7 @@ describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => 
 
       fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
       const { promise: written, resolve, reject } = Promise.withResolvers<void>();
-      writer.write(payload, err => (err ? reject(err) : resolve()));
+      writer.write(asString(payload), "latin1", err => (err ? reject(err) : resolve()));
       const queued = estimateShallowMemoryUsageOf(handle) - idle;
       const bytesWritten = await bytesWrittenUntil(written, handle);
       const allocatedAfterDrain = estimateShallowMemoryUsageOf(handle) - idle;
@@ -547,7 +553,7 @@ describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => 
 
     fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
     fault.set({ syscall: "writev", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
-    (p.client as any)._write(first, "buffer", () => {});
+    (p.client as any)._write(asString(first), "latin1", () => {});
     // The write itself sent 1,024 bytes. What arrives beyond them left in a writable event.
     while (state.received <= 1024) await once(p.serverSock, "data");
     const { promise: written, resolve, reject } = Promise.withResolvers<void>();
@@ -577,7 +583,7 @@ describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => 
     const idle = estimateShallowMemoryUsageOf(handle);
 
     fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
-    (p.client as any)._write(payload, "buffer", () => {});
+    (p.client as any)._write(asString(payload), "latin1", () => {});
     const queuedTail = estimateShallowMemoryUsageOf(handle) - idle;
     const errors: Error[] = [];
     // Each of these sends 1,024 bytes more of the tail. The queue frees its
@@ -621,7 +627,7 @@ describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => 
 
     fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: 1, fd: handle.fd });
     fault.set({ syscall: "writev", action: "short", bytes: first.length - 1024 + 4096, repeat: 1, fd: handle.fd });
-    (p.client as any)._write(first, "buffer", () => {});
+    (p.client as any)._write(asString(first), "latin1", () => {});
     const allocatedBefore = estimateShallowMemoryUsageOf(handle) - idle;
     const { promise: written, resolve, reject } = Promise.withResolvers<void>();
     (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
@@ -654,7 +660,7 @@ describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => 
 
     fault.set({ syscall: "send", action: "short", bytes: 4096, repeat: -1, fd: handle.fd });
     fault.set({ syscall: "writev", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
-    (p.client as any)._write(first, "buffer", () => {});
+    (p.client as any)._write(asString(first), "latin1", () => {});
     while (state.received <= (first.length * 3) / 4) await once(p.serverSock, "data");
     const allocatedBefore = estimateShallowMemoryUsageOf(handle) - idle;
     const { promise: written, resolve, reject } = Promise.withResolvers<void>();
@@ -693,8 +699,10 @@ describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => 
       const last = i === count - 1;
       // An empty queue holds no allocation.
       if (i > 0 && estimateShallowMemoryUsageOf(handle) === idle) emptied++;
-      (p.client as any)._write(expected.subarray(i * chunk, (i + 1) * chunk), "buffer", (err?: Error | null) =>
-        err ? reject(err) : last && resolve(),
+      (p.client as any)._write(
+        expected.toString("latin1", i * chunk, (i + 1) * chunk),
+        "latin1",
+        (err?: Error | null) => (err ? reject(err) : last && resolve()),
       );
       peak = Math.max(peak, estimateShallowMemoryUsageOf(handle) - idle);
       while ((i + 1) * chunk - state.received > 4 * chunk) await once(p.serverSock, "data");
@@ -726,7 +734,7 @@ describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => 
       });
 
       fault.set({ syscall: "send", action: "short", bytes: bytesPerSend, repeat: -1, fd: handle.fd });
-      p.client.write(Buffer.alloc(queued, 0x61));
+      p.client.write(asString(Buffer.alloc(queued, 0x61)), "latin1");
       const before = process.cpuUsage();
       await sent;
       const { user, system } = process.cpuUsage(before);
@@ -745,5 +753,581 @@ describe.skipIf(skip)("node:net queue of unsent bytes under short sends", () => 
       largeTimes.push(await cpuTimeOfSends(large));
     }
     expect(Math.min(...largeTimes) / Math.min(...smallTimes)).toBeLessThan(5);
+  });
+});
+
+// What a plain TCP socket did not take of a Buffer is sent from the Buffer itself, as in Node: the handle pins the
+// ArrayBuffer, keeps a reference to it, and copies nothing. A short send leaves such a rest behind at any size.
+describe.skipIf(skip)("node:net sends the unsent rest of a Buffer from the Buffer", () => {
+  const LENGTH = 256 * 1024;
+  const SENT = 4096;
+  // A rest is sent from the Buffer when it is more than this.
+  const MIN_HELD = 16 * 1024;
+  // What the handle allocated for unsent bytes.
+  const copiedBy = (handle: object, idle: number) => estimateShallowMemoryUsageOf(handle) - idle;
+  // transfer() gives the bytes of a pinned ArrayBuffer to a copy and leaves it attached.
+  const detachedByTransfer = (buffer: Buffer<ArrayBuffer>) => {
+    if (!buffer.buffer.detached) buffer.buffer.transfer();
+    return buffer.buffer.detached;
+  };
+
+  async function collectingPair() {
+    const received: Buffer[] = [];
+    return Object.assign(await connectedPair(s => s.on("data", (c: Buffer) => received.push(c))), { received });
+  }
+
+  function shortSend(socket: net.Socket, sent: number, repeat = 1) {
+    fault.set({ syscall: "send", action: "short", bytes: sent, repeat, fd: (socket as any)._handle.fd });
+  }
+
+  function writeAfterShortSend(socket: net.Socket, chunk: Buffer, sent: number) {
+    shortSend(socket, sent);
+    return new Promise<void>((resolve, reject) => socket.write(chunk, err => (err ? reject(err) : resolve())));
+  }
+
+  test("the rest is sent from the caller's memory, which is pinned and not copied", async () => {
+    using p = await collectingPair();
+    const handle = (p.client as any)._handle;
+    const idle = estimateShallowMemoryUsageOf(handle);
+    // The chunk is a small part of a larger ArrayBuffer: nothing outside of it is sent.
+    const chunk = Buffer.alloc(4 * LENGTH, "x")
+      .subarray(LENGTH, 2 * LENGTH)
+      .fill("a");
+
+    const written = writeAfterShortSend(p.client, chunk, SENT);
+    const pending = {
+      copied: copiedBy(handle, idle),
+      bytesWritten: p.client.bytesWritten,
+      writableLength: p.client.writableLength,
+      detachedByTransfer: detachedByTransfer(chunk),
+    };
+    // The peer gets what is in the Buffer when the socket takes it.
+    chunk.fill("b");
+    await written;
+    const drained = { copied: copiedBy(handle, idle), detachedByTransfer: detachedByTransfer(chunk) };
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    const all = Buffer.concat(p.received);
+    expect({
+      pending,
+      drained,
+      length: all.length,
+      sentAtWrite: all.subarray(0, SENT).equals(Buffer.alloc(SENT, "a")),
+      sentLater: all.subarray(SENT).equals(Buffer.alloc(LENGTH - SENT, "b")),
+    }).toEqual({
+      pending: { copied: 0, bytesWritten: LENGTH, writableLength: LENGTH, detachedByTransfer: false },
+      drained: { copied: 0, detachedByTransfer: true },
+      length: LENGTH,
+      sentAtWrite: true,
+      sentLater: true,
+    });
+  });
+
+  for (const side of ["client", "server"] as const) {
+    test(`writable events send the rest in parts (${side} writer)`, async () => {
+      using p = await connectedPair();
+      const writer = side === "client" ? p.client : p.serverSock;
+      const reader = side === "client" ? p.serverSock : p.client;
+      const handle = (writer as any)._handle;
+      const payload = patterned(1024 * 1024);
+      const state = receive(reader, payload);
+      const idle = estimateShallowMemoryUsageOf(handle);
+
+      fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+      const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+      writer.write(payload, err => (err ? reject(err) : resolve()));
+      const copied = copiedBy(handle, idle);
+      const bytesWritten = await bytesWrittenUntil(written, handle);
+      writer.end();
+      await once(reader, "end");
+
+      expect({ copied, bytesWritten, ...state }).toEqual({
+        copied: 0,
+        bytesWritten: [payload.length],
+        received: payload.length,
+        intact: true,
+      });
+    });
+  }
+
+  // The handle sends from where the bytes are. A pending write makes each of these give the new owner a copy and
+  // leave the ArrayBuffer attached.
+  test.each(["transfer", "structuredClone", "postMessage"] as const)(
+    "%s() of the ArrayBuffer does not move the bytes that the socket has to send",
+    async how => {
+      using p = await collectingPair();
+      const chunk = patterned(LENGTH);
+      const expected = Buffer.from(chunk);
+
+      const written = writeAfterShortSend(p.client, chunk, SENT);
+      if (how === "postMessage") {
+        const { port1, port2 } = new MessageChannel();
+        port1.postMessage(chunk.buffer, [chunk.buffer]);
+        port1.close();
+        port2.close();
+      } else {
+        const moved =
+          how === "transfer" ? chunk.buffer.transfer() : structuredClone(chunk.buffer, { transfer: [chunk.buffer] });
+        // What the new owner writes does not reach the peer.
+        new Uint8Array(moved).fill(0);
+      }
+      const attached = !chunk.buffer.detached;
+      await written;
+      p.client.end();
+      await once(p.serverSock, "end");
+
+      expect({ attached, intact: Buffer.concat(p.received).equals(expected) }).toEqual({
+        attached: true,
+        intact: true,
+      });
+    },
+  );
+
+  test.each([
+    { rest: MIN_HELD, of: MIN_HELD + SENT, from: "a copy" },
+    { rest: MIN_HELD + 1, of: MIN_HELD + 1 + SENT, from: "the Buffer" },
+  ])("a rest of $rest bytes of $of is sent from $from", async ({ rest, of, from }) => {
+    using p = await collectingPair();
+    const handle = (p.client as any)._handle;
+    const idle = estimateShallowMemoryUsageOf(handle);
+    const chunk = Buffer.alloc(of, "a");
+
+    const written = writeAfterShortSend(p.client, chunk, of - rest);
+    const copied = copiedBy(handle, idle);
+    chunk.fill("b");
+    await written;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    const all = Buffer.concat(p.received);
+    const held = from === "the Buffer";
+    expect({
+      copied,
+      length: all.length,
+      sentLater: all.subarray(of - rest).equals(Buffer.alloc(rest, held ? "b" : "a")),
+    }).toEqual({ copied: held ? 0 : rest, length: of, sentLater: true });
+  });
+
+  // write() returns true for a chunk below the high-water mark, whatever the socket took of it.
+  test("the rest comes from the Buffer until the write callback, also when write() returned true", async () => {
+    using p = await collectingPair();
+    const chunk = Buffer.alloc(40 * 1024, "a");
+    expect(chunk.length).toBeLessThan(p.client.writableHighWaterMark);
+
+    shortSend(p.client, SENT);
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    const flushed = p.client.write(chunk, err => (err ? reject(err) : resolve()));
+    const writableLength = p.client.writableLength;
+    chunk.fill("b");
+    await written;
+    // The socket took every byte before it ran the callback.
+    chunk.fill("c");
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    const all = Buffer.concat(p.received);
+    expect({
+      flushed,
+      writableLength,
+      length: all.length,
+      sentAtWrite: all.subarray(0, SENT).equals(Buffer.alloc(SENT, "a")),
+      sentLater: all.subarray(SENT).equals(Buffer.alloc(chunk.length - SENT, "b")),
+    }).toEqual({
+      flushed: true,
+      writableLength: chunk.length,
+      length: chunk.length,
+      sentAtWrite: true,
+      sentLater: true,
+    });
+  });
+
+  test("the bytes of a Buffer that the caller dropped stay until the socket took them", async () => {
+    const ROUNDS = 20;
+    const DROPPED = 64 * 1024;
+    const SHORT_SENDS = 3;
+    const received: Buffer[] = [];
+    let total = 0;
+    let onData = () => {};
+    using p = await connectedPair(s =>
+      s.on("data", (c: Buffer) => {
+        received.push(c);
+        total += c.length;
+        onData();
+      }),
+    );
+    const fd = (p.client as any)._handle.fd;
+    // Nothing but the handle refers to the Buffer once this returns. A write callback would: its scope has the Buffer.
+    function writeDropped(round: number) {
+      fault.set({ syscall: "send", action: "short", bytes: 1, repeat: SHORT_SENDS, fd });
+      p.client.write(Buffer.alloc(DROPPED, round));
+    }
+    // The memory of a Buffer that a collection freed goes to these.
+    const reused: Buffer[] = [];
+    let collectedBetweenSends = 0;
+    for (let round = 0; round < ROUNDS; round++) {
+      onData = () => {
+        const sent = total - round * DROPPED;
+        if (sent < SHORT_SENDS) collectedBetweenSends++;
+        Bun.gc(true);
+        reused[0] = Buffer.alloc(DROPPED, 0xff);
+        reused[1] = Buffer.alloc(DROPPED, 0xff);
+      };
+      writeDropped(round);
+      await once(p.client, "drain");
+    }
+    onData = () => {};
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    const all = Buffer.concat(received);
+    const wrong: number[] = [];
+    for (let round = 0; round < ROUNDS; round++) {
+      const part = all.subarray(round * DROPPED, (round + 1) * DROPPED);
+      if (!part.equals(Buffer.alloc(DROPPED, round))) wrong.push(round);
+    }
+    expect({ length: all.length, wrong }).toEqual({ length: ROUNDS * DROPPED, wrong: [] });
+    // Each round had a collection while the socket held a rest that it had sent a part of.
+    expect(collectedBetweenSends).toBeGreaterThanOrEqual(ROUNDS);
+  });
+
+  test("a socket that closes lets go of the Buffer", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const chunk = Buffer.alloc(LENGTH, "a");
+    // The callback gets the error of a write that the close cancelled.
+    writeAfterShortSend(p.client, chunk, SENT).catch(() => {});
+    const pinned = !detachedByTransfer(chunk);
+    p.client.destroy();
+    await once(p.client, "close");
+    // bytesWritten counts the bytes that the socket did not send, as it does for a copy of them.
+    expect({
+      pinned,
+      bytesWritten: p.client.bytesWritten,
+      handleBytesWritten: handle.bytesWritten,
+      detachedByTransfer: detachedByTransfer(chunk),
+    }).toEqual({ pinned: true, bytesWritten: LENGTH, handleBytesWritten: LENGTH, detachedByTransfer: true });
+  });
+
+  test("a send that fails for the rest lets go of the Buffer", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const chunk = Buffer.alloc(LENGTH, "a");
+    const failed = once(p.client, "error") as Promise<[NodeJS.ErrnoException]>;
+    writeAfterShortSend(p.client, chunk, SENT).catch(() => {});
+    const pinned = !detachedByTransfer(chunk);
+    // The next send is the one of the rest, from a writable event.
+    fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: 1, fd: handle.fd });
+    const [error] = await failed;
+    expect({ pinned, code: error.code, detachedByTransfer: detachedByTransfer(chunk) }).toEqual({
+      pinned: true,
+      code: "EPIPE",
+      detachedByTransfer: true,
+    });
+  });
+
+  // net.Socket upgrades no handle that has a write pending. A program that has the handle can.
+  test("a handle that is upgraded to TLS lets go of the Buffer", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    // The net.Socket learns from its next write that the handle is gone.
+    p.client.on("error", () => {});
+    const chunk = Buffer.alloc(LENGTH, "a");
+    writeAfterShortSend(p.client, chunk, SENT).catch(() => {});
+    const pinned = !detachedByTransfer(chunk);
+    const [, secure] = handle.upgradeTLS({ tls: true, data: {}, socket: { data() {}, close() {}, error() {} } });
+    try {
+      expect({ pinned, bytesWritten: handle.bytesWritten, detachedByTransfer: detachedByTransfer(chunk) }).toEqual({
+        pinned: true,
+        bytesWritten: LENGTH,
+        detachedByTransfer: true,
+      });
+    } finally {
+      secure.terminate();
+    }
+  });
+
+  // Node writes the second chunk from its own memory too. Here it goes out behind a copy of the first one's rest.
+  // The Writable holds a second write() until the first completes, so both are Socket.prototype._write itself,
+  // which keeps the callback of the last one.
+  test("a chunk that follows a held Buffer is sent after it", async () => {
+    using p = await collectingPair();
+    const handle = (p.client as any)._handle;
+    const idle = estimateShallowMemoryUsageOf(handle);
+    const first = Buffer.alloc(LENGTH, "a");
+    const second = Buffer.alloc(LENGTH / 4, "b");
+
+    shortSend(p.client, SENT);
+    (p.client as any)._write(first, "buffer", () => {});
+    fault.set({ syscall: "writev", action: "short", bytes: 1, repeat: 1, fd: handle.fd });
+    const written = new Promise<void>((resolve, reject) =>
+      (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve())),
+    );
+    const queued = { copied: copiedBy(handle, idle), detachedByTransfer: detachedByTransfer(first) };
+    await written;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({
+      queued,
+      intact: Buffer.concat(p.received).equals(Buffer.concat([Buffer.alloc(LENGTH, "a"), second])),
+    }).toEqual({
+      queued: { copied: LENGTH - SENT - 1 + second.length, detachedByTransfer: true },
+      intact: true,
+    });
+  });
+
+  test("a chunk that follows a held Buffer that writable events partly sent arrives in order", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(LENGTH);
+    const second = patterned(4 * LENGTH, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    fault.set({ syscall: "writev", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(first, "buffer", () => {});
+    // The write itself sent 1,024 bytes. What arrives beyond them left in a writable event.
+    while (state.received <= 1024) await once(p.serverSock, "data");
+    const heldBefore = copiedBy(handle, idle) === 0 && handle.bytesWritten === first.length;
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+    const bytesWritten = await bytesWrittenUntil(written, handle);
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ heldBefore, bytesWritten, copiedAfterDrain: copiedBy(handle, idle), ...state }).toEqual({
+      heldBefore: true,
+      bytesWritten: [expected.length],
+      copiedAfterDrain: 0,
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  // net.ts retries a pending write with "". Such a write sends from the Buffer and does not make the handle copy it.
+  test("an empty write behind a held Buffer sends from the Buffer", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const payload = patterned(41 * 1024);
+    const state = receive(p.serverSock, payload);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(payload, "buffer", () => {});
+    const errors: Error[] = [];
+    let copied = 0;
+    // Each of these sends 1,024 bytes more, and the last one takes the last byte.
+    for (let i = 0; i < 40; i++) {
+      copied += copiedBy(handle, idle);
+      (p.client as any)._write(Buffer.alloc(0), "buffer", (err?: Error | null) => {
+        if (err) errors.push(err);
+      });
+    }
+    expect({ copied, bytesWritten: handle.bytesWritten, errors }).toEqual({
+      copied: 0,
+      bytesWritten: payload.length,
+      errors: [],
+    });
+
+    p.client.end();
+    await once(p.serverSock, "end");
+    expect({ errors, ...state }).toEqual({ errors: [], received: payload.length, intact: true });
+  });
+
+  // The toString() of an encoding runs inside the native write, after that write found nothing queued. A write
+  // that starts there queues its rest first.
+  test.each([
+    { outer: "Buffer", inner: "Buffer" },
+    { outer: "Buffer", inner: "string" },
+    { outer: "string", inner: "Buffer" },
+  ] as const)("a $inner write that starts inside a $outer write loses no bytes", async ({ outer, inner }) => {
+    using p = await collectingPair();
+    const socket = p.client as any;
+    const a = Buffer.alloc(LENGTH, "a");
+    const b = Buffer.alloc(LENGTH, "b");
+    const argumentsOf = (kind: "Buffer" | "string", bytes: Buffer) =>
+      kind === "Buffer" ? ([bytes, "buffer"] as const) : ([bytes.toString("latin1"), "latin1"] as const);
+    const [outerChunk, outerEncoding] = argumentsOf(outer, a);
+    const [innerChunk, innerEncoding] = argumentsOf(inner, b);
+
+    // Each of the two writes sends 4,096 bytes and keeps its rest.
+    shortSend(p.client, SENT, 2);
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    let entered = false;
+    const encoding = {
+      toString() {
+        if (!entered) {
+          entered = true;
+          socket._write(innerChunk, innerEncoding, (err?: Error | null) => (err ? reject(err) : resolve()));
+        }
+        return outerEncoding;
+      },
+    };
+    // net.ts fails the callback of a write that overlaps another one. The handle has the bytes of both.
+    socket._write(outerChunk, encoding, () => {});
+    await written;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    // The order of the four parts on the wire is not what this test is about.
+    const all = Buffer.concat(p.received);
+    expect({ entered, length: all.length, everyByte: all.sort().equals(Buffer.concat([a, b]).sort()) }).toEqual({
+      entered: true,
+      length: 2 * LENGTH,
+      everyByte: true,
+    });
+  });
+
+  // Socket.prototype._write gets a Buffer from the Writable. A caller of _write can pass any view.
+  test("the rest of a DataView is sent from it", async () => {
+    using p = await collectingPair();
+    const handle = (p.client as any)._handle;
+    const idle = estimateShallowMemoryUsageOf(handle);
+    const bytes = new Uint8Array(LENGTH).fill(0x61);
+
+    shortSend(p.client, SENT);
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(new DataView(bytes.buffer), "buffer", (err?: Error | null) =>
+      err ? reject(err) : resolve(),
+    );
+    const copied = copiedBy(handle, idle);
+    bytes.fill(0x62);
+    await written;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    const all = Buffer.concat(p.received);
+    expect({
+      copied,
+      length: all.length,
+      sentLater: all.subarray(SENT).equals(Buffer.alloc(LENGTH - SENT, "b")),
+    }).toEqual({ copied: 0, length: LENGTH, sentLater: true });
+  });
+
+  // A SharedArrayBuffer of a fixed length is never detached and never moves.
+  test("the rest of a Buffer over a SharedArrayBuffer is sent from it", async () => {
+    using p = await collectingPair();
+    const handle = (p.client as any)._handle;
+    const idle = estimateShallowMemoryUsageOf(handle);
+    const chunk = Buffer.from(new SharedArrayBuffer(LENGTH)).fill("a");
+
+    const written = writeAfterShortSend(p.client, chunk, SENT);
+    const copied = copiedBy(handle, idle);
+    chunk.fill("b");
+    await written;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    const all = Buffer.concat(p.received);
+    expect({
+      copied,
+      length: all.length,
+      sentLater: all.subarray(SENT).equals(Buffer.alloc(LENGTH - SENT, "b")),
+    }).toEqual({ copied: 0, length: LENGTH, sentLater: true });
+  });
+
+  // A pin does not keep the bytes of the first two where they are: resize() gives the pages that it trims back to
+  // the system, and grow() moves the bytes of a WebAssembly.Memory. The other two can grow without a limit while
+  // the handle keeps them alive.
+  test.each([
+    "resizable ArrayBuffer",
+    "WebAssembly.Memory",
+    "growable SharedArrayBuffer",
+    "shared WebAssembly.Memory",
+  ] as const)("the rest of a Buffer over a %s is copied", async kind => {
+    using p = await collectingPair();
+    const handle = (p.client as any)._handle;
+    const idle = estimateShallowMemoryUsageOf(handle);
+    let backing: ArrayBuffer | SharedArrayBuffer;
+    let change: () => void;
+    if (kind === "resizable ArrayBuffer") {
+      const resizable = (backing = new ArrayBuffer(LENGTH, { maxByteLength: LENGTH }));
+      change = () => resizable.resize(16);
+    } else if (kind === "growable SharedArrayBuffer") {
+      const growable = (backing = new SharedArrayBuffer(LENGTH, { maxByteLength: 2 * LENGTH }));
+      change = () => growable.grow(2 * LENGTH);
+    } else {
+      const shared = kind === "shared WebAssembly.Memory";
+      const memory = new WebAssembly.Memory({ initial: LENGTH / 65536, maximum: LENGTH / 65536 + 1, shared });
+      backing = memory.buffer;
+      change = () => void memory.grow(1);
+    }
+    const chunk = Buffer.from(backing, 0, LENGTH).fill("a");
+
+    const written = writeAfterShortSend(p.client, chunk, SENT);
+    const copied = copiedBy(handle, idle);
+    change();
+    chunk.fill("b");
+    await written;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ copied, intact: Buffer.concat(p.received).equals(Buffer.alloc(LENGTH, "a")) }).toEqual({
+      copied: LENGTH - SENT,
+      intact: true,
+    });
+  });
+});
+
+// The same without an injected fault, on every platform and build: the kernel takes a part of a 24 MiB Buffer from
+// a socket whose peer is not reading yet. Node.js v26.3.0 prints the same for each scenario of the fixture.
+describe("a Buffer write that the kernel takes a part of", () => {
+  const SIZE = 24 * 1024 * 1024;
+  // The last write() of the fixture returned with its Buffer pending. On Windows a write that the first send took
+  // whole goes before it.
+  const delivered = (writes: number) => ({
+    writes,
+    callbacks: writes,
+    callbackError: null,
+    error: null,
+    flushed: false,
+    writableLength: SIZE,
+    bytesWritten: writes * SIZE,
+    received: writes * SIZE,
+    intact: true,
+  });
+
+  async function run(transport: "net" | "tls", scenario: string, env: Record<string, string | undefined> = bunEnv) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "node-net-pending-write-fixture.js"), transport, scenario],
+      env: { ...env, PENDING_WRITE_TLS: JSON.stringify(tlsCert) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (!stdout) throw new Error(`the fixture printed nothing and exited with ${exitCode}:\n${stderr}`);
+    const { fromCallerAfterWrite, ...result } = JSON.parse(stdout);
+    return { result, fromCallerAfterWrite, exitCode };
+  }
+
+  test.concurrent("a plain TCP socket sends the rest from the caller's Buffer", async () => {
+    const { result, fromCallerAfterWrite, exitCode } = await run("net", "mutate");
+    expect(result).toEqual(delivered(result.writes));
+    expect(fromCallerAfterWrite).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+  });
+
+  // Node copies what it writes to TLS.
+  test.concurrent("a TLS socket sends the bytes as they were at write()", async () => {
+    expect(await run("tls", "mutate")).toEqual({ result: delivered(1), fromCallerAfterWrite: 0, exitCode: 0 });
+  });
+
+  // The rest of the Buffer is more than the process can allocate at once. ASAN's cap makes that certain:
+  // it refuses native allocations above 8 MiB, and JavaScriptCore's own allocator holds the Buffer.
+  test.concurrent.skipIf(!isASAN)("the rest of the Buffer needs no memory", async () => {
+    const { result, exitCode } = await run("net", "deliver", {
+      ...bunEnv,
+      WebKitMallocForceEnabled: "1",
+      // ASAN prints a warning for each allocation that it refuses. LeakSanitizer cannot see through JSC cells.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=8", "detect_leaks=0"]
+        .filter(Boolean)
+        .join(":"),
+    });
+    expect(result).toEqual(delivered(result.writes));
+    expect(exitCode).toBe(0);
   });
 });

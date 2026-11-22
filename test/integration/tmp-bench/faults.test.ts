@@ -219,8 +219,6 @@ describe.concurrent.skipIf(!isWindows)("refused", () => {
       `process.stdin.setRawMode(true); require("tty"); process.stdin.on("data", () => {}); const undo = fail("GetProcAddress", 0, 127); process.stdin.once("data", undo); ${heard}`,
       "a",
     ],
-    ["peek: gone", `fail("PeekConsoleInputW", 0, 109); ${heard}`, "a\r"],
-    ["peek", `fail("PeekConsoleInputW", 0, 5); ${heard}`, "a\r"],
     ["line: gone", `fail("ReadConsoleW", 0, 233); ${heard}`, "a\r"],
     ["line", `fail("ReadConsoleW", 0, 5); ${heard}`, "a\r"],
     ["line: choked", `setTimeout(fail("ReadConsoleW", 0, 87), 300); ${heard}`, "a\r"],

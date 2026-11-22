@@ -147,7 +147,7 @@ impl Port {
     pub fn new() -> Result<Rc<Port>, Win32Error> {
         Ok(Rc::new(Port {
             shared: Arc::new(Shared {
-                handle: sys::create_port()?,
+                handle: sys::create_port(u32::MAX)?,
                 bell: Bell::default(),
                 is_wake_posted: AtomicBool::new(false),
                 is_parked: AtomicBool::new(false),

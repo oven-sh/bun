@@ -579,7 +579,15 @@ describe.concurrent("in a terminal", () => {
       SetConsoleCP: { args: ["u32"], returns: "i32" },
       SetConsoleOutputCP: { args: ["u32"], returns: "i32" },
       WriteConsoleInputW: { args: ["i64", "ptr", "u32", "ptr"], returns: "i32" },
+      SetConsoleActiveScreenBuffer: { args: ["i64"], returns: "i32" },
+      WaitForSingleObject: { args: ["i64", "u32"], returns: "u32" },
+      ReadConsoleOutputCharacterW: { args: ["i64", "ptr", "u32", "u32", "ptr"], returns: "i32" },
     }).symbols;
+    const screenHas = text => {
+      const line = new Uint16Array(80);
+      k32.ReadConsoleOutputCharacterW(k32.GetStdHandle(-11), line, 80, 0, new Uint32Array(1));
+      return String.fromCharCode(...line).includes(text);
+    };
     // A CI agent starts the tests with Ctrl+C ignored, which is inherited.
     if (k32) k32.SetConsoleCtrlHandler(null, 0);
   `;
@@ -1211,6 +1219,91 @@ describe.concurrent("in a terminal", () => {
       expect(await child.next()).toBe("ready");
       child.type(keys);
       await child.gets(expected);
+    });
+
+    // microsoft/terminal#18816
+    it.each([
+      ["the line before it", ``],
+      ["raw mode", `process.stdin.setRawMode(true).setRawMode(false);`],
+      ["pause()", `process.stdin.pause(); await Bun.sleep(0); process.stdin.resume();`],
+    ])("a line arrives that is typed right after %s", async (_, before) => {
+      await using child = await start(`
+        const ready = async () => { ${before} say("ready"); };
+        report(process.stdin).on("data", ready);
+        ready();
+      `);
+      for (let i = 0, deadline = Date.now() + 1000; i < 300 && Date.now() < deadline; i++) {
+        expect(await child.next()).toBe("ready");
+        child.type("a");
+        for (const end = performance.now() + (i % 16) / 100; performance.now() < end;);
+        child.type("\r");
+        await child.gets("a\r\n");
+      }
+    });
+
+    it("a line is echoed while the script is busy", async () => {
+      await using child = await start(`
+        report(process.stdin);
+        await turns();
+        say("ready", () => { while (!screenHas("abc")) Bun.sleepSync(1); say("echoed"); });
+      `);
+      expect(await child.next()).toBe("ready");
+      child.type("abc");
+      expect(await child.next()).toBe("echoed");
+    });
+
+    it("a line is echoed after raw mode while the script is busy", async () => {
+      await using child = await start(`
+        report(process.stdin.setRawMode(true));
+        await turns();
+        process.stdin.setRawMode(false);
+        await turns();
+        say("ready", () => { while (!screenHas("abc")) Bun.sleepSync(1); say("echoed"); });
+      `);
+      expect(await child.next()).toBe("ready");
+      child.type("abc");
+      expect(await child.next()).toBe("echoed");
+    });
+
+    it("pause() is not the end of the input for another process", async () => {
+      await using child = await start(
+        `
+          const inner = Bun.spawn(["cmd.exe", "/d", "/v:on", "/c", "ask.cmd"], { stdio: ["inherit", "pipe", "inherit"] });
+          await heard();
+          process.stdin.resume();
+          await turns();
+          process.stdin.pause();
+          await turns();
+          say("paused");
+          say(await inner.stdout.text());
+        `,
+        { "ask.cmd": "@echo asks 1>&2\r\n@set /p line=\r\n@echo [!line!]\r\n" },
+      );
+      await child.shows("asks");
+      for (const deadline = Date.now() + 4000; !child.screen().includes("#") && Date.now() < deadline;) {
+        child.type("#");
+        await Bun.sleep(10);
+      }
+      child.tell();
+      expect(await child.next()).toBe("paused");
+      child.type("c\r");
+      expect(await child.next()).toStartWith("[#");
+    });
+
+    it.each([false, true])("a change of the screen buffer does not keep the process busy (raw: %p)", async raw => {
+      await using child = await start(`
+        const input = k32.GetStdHandle(-10);
+        k32.WriteConsoleInputW(input, new Uint16Array(10).fill(8, 0, 1), 1, new Uint32Array(1));
+        k32.SetConsoleActiveScreenBuffer(k32.GetStdHandle(-11));
+        say(k32.WaitForSingleObject(input, 0));
+        report(process.stdin.setRawMode(${raw}));
+        while (k32.WaitForSingleObject(input, 0) === 0) await Bun.sleep(1);
+        say("reset");
+      `);
+      expect(await child.next()).toBe(0);
+      expect(await child.next()).toBe("reset");
+      child.type("a\r");
+      await child.gets(raw ? "a\r" : "a\r\n");
     });
 
     it("the wait for a line ends with the console", async () => {

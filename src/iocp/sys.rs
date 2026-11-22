@@ -209,8 +209,8 @@ pub(crate) fn open_afd_device() -> Result<OwnedHandle, Win32Error> {
     }
 }
 
-pub(crate) fn create_port() -> Result<OwnedHandle, Win32Error> {
-    let port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, ptr::null_mut(), 0, DWORD::MAX);
+pub(crate) fn create_port(max_running: DWORD) -> Result<OwnedHandle, Win32Error> {
+    let port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, ptr::null_mut(), 0, max_running);
     // SAFETY: a new handle, or null.
     OwnedHandle::try_from(unsafe { HandleOrNull::from_raw_handle(port) })
         .map_err(|_| Win32Error::get())

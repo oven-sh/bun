@@ -27,12 +27,6 @@ struct ReadControl {
 #[link(name = "kernel32")]
 unsafe extern "system" {
     safe fn GetNumberOfConsoleInputEvents(console: HANDLE, count: &mut DWORD) -> BOOL;
-    fn PeekConsoleInputW(
-        console: HANDLE,
-        records: *mut InputRecord,
-        len: DWORD,
-        read: &mut DWORD,
-    ) -> BOOL;
     fn ReadConsoleInputW(
         console: HANDLE,
         records: *mut InputRecord,
@@ -85,11 +79,6 @@ fn host_process_id() -> Option<DWORD> {
     super::NT_SUCCESS(status).then_some((id & !3) as DWORD)
 }
 
-/// Signalled when the console is gone, which its handles are not.
-pub fn open_host_process() -> Option<OwnedHandle> {
-    super::OpenProcess(super::SYNCHRONIZE, host_process_id()?).ok()
-}
-
 /// Keeps the thread, and calls `changed` on it when the size of the window may have changed.
 pub fn watch_layout(changed: impl Fn()) {
     type Callback = extern "system" fn(HANDLE, u32, HANDLE, i32, i32, u32, u32);
@@ -139,24 +128,6 @@ pub fn is_input(console: HANDLE) -> bool {
     GetNumberOfConsoleInputEvents(console, &mut 0) != 0
 }
 
-/// Leaves them in the queue.
-pub fn peek_records(
-    input: HANDLE,
-    records: &mut [InputRecord],
-) -> Result<&[InputRecord], Win32Error> {
-    let mut read = 0;
-    // SAFETY: `records` has the length that is passed.
-    check(unsafe {
-        PeekConsoleInputW(
-            input,
-            records.as_mut_ptr(),
-            records.len() as DWORD,
-            &mut read,
-        )
-    })?;
-    Ok(&records[..records.len().min(read as usize)])
-}
-
 /// Does not wait for any.
 pub fn read_records(
     input: HANDLE,
@@ -194,9 +165,12 @@ pub fn read_records(
     Ok(&records[..read.min(len) as usize])
 }
 
-pub fn write_records(input: HANDLE, records: &[InputRecord]) -> Result<(), Win32Error> {
+/// Returns how many are in the queue for it.
+pub fn write_records(input: HANDLE, records: &[InputRecord]) -> Result<usize, Win32Error> {
+    let (len, mut written) = (records.len() as DWORD, 0);
     // SAFETY: `records` has the length that is passed.
-    check(unsafe { WriteConsoleInputW(input, records.as_ptr(), records.len() as DWORD, &mut 0) })
+    check(unsafe { WriteConsoleInputW(input, records.as_ptr(), len, &mut written) })?;
+    Ok(written as usize)
 }
 
 /// Waits for a line, or for the control character `wake`, which is then in the text. Empty after Ctrl+C.

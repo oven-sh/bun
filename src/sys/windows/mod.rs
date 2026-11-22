@@ -493,11 +493,10 @@ pub fn reset_event(event: &OwnedHandle) {
     kernel32::ResetEvent(event.as_raw_handle());
 }
 
-/// Returns the index of the first that is signalled.
-pub fn wait_for_any(handles: &[BorrowedHandle<'_>]) -> usize {
+pub fn wait_for_any(handles: &[BorrowedHandle<'_>]) {
     let (count, handles) = (handles.len() as DWORD, handles.as_ptr().cast());
     // SAFETY: a `BorrowedHandle` has the layout of a `HANDLE`.
-    unsafe { kernel32::WaitForMultipleObjects(count, handles, FALSE, INFINITE) as usize }
+    unsafe { kernel32::WaitForMultipleObjects(count, handles, FALSE, INFINITE) };
 }
 
 /// What the C runtime has for a descriptor that is closed, or without a console.

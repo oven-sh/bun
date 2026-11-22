@@ -72,10 +72,10 @@ static WINDOW_SIZE: Guarded<Option<(u16, u16)>> = Guarded::new(None);
 pub(crate) fn check_window_size() -> bool {
     static OUTPUT: OnceLock<Option<OwnedHandle>> = OnceLock::new();
     let output = OUTPUT.get_or_init(|| console::open(bun_core::wstr!("CONOUT$")).ok());
+    let mut last = WINDOW_SIZE.lock();
     let size = (output.as_ref()).and_then(|output| console::window_size(output.as_raw_handle()));
     let Some(size) = size else { return false };
-    let last = WINDOW_SIZE.lock().replace(size);
-    if last.is_some_and(|last| last != size) {
+    if last.replace(size).is_some_and(|last| last != size) {
         raise(SIGWINCH);
     }
     true
@@ -87,7 +87,7 @@ fn watch_window_size() {
     ONCE.call_once(|| {
         *WINDOW_SIZE.lock() = None;
         if check_window_size() {
-            bun_iocp::blocking::spawn(|| console::watch_layout(|| _ = check_window_size()));
+            bun_iocp::blocking::spawn_endless(|| console::watch_layout(|| _ = check_window_size()));
         }
     });
 }

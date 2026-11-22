@@ -2,7 +2,7 @@
 
 /// `INPUT_RECORD`, as a `KEY_EVENT_RECORD`.
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct InputRecord {
     pub event_type: u16,
     pub is_key_down: i32,
@@ -17,6 +17,7 @@ const _: () = assert!(size_of::<InputRecord>() == 20);
 
 pub const KEY_EVENT: u16 = 1;
 pub const WINDOW_BUFFER_SIZE_EVENT: u16 = 4;
+pub const MENU_EVENT: u16 = 8;
 
 const RIGHT_ALT: u32 = 0x1;
 const LEFT_ALT: u32 = 0x2;

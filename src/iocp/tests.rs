@@ -2,6 +2,7 @@
 
 use core::cell::{Cell, RefCell};
 use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 use std::io::{Read as _, Write as _};
 use std::net::{Shutdown, TcpListener, TcpStream};
@@ -14,7 +15,7 @@ use bun_sys::windows::{self as w, NTSTATUS, PipeDirection, PipeMode};
 use bun_threading::fifo_pool::{Config, FifoPool, has_new_thread, on_new_thread};
 use bun_threading::spin::has_other_cpu;
 
-use crate::blocking::{self, Cancel};
+use crate::blocking::{self, Cancel, Turnstile};
 use crate::faults::{self, Call, fail, intercept};
 use crate::sys;
 use crate::{
@@ -329,6 +330,34 @@ fn a_blocked_thread_can_be_interrupted() {
             assert!(result.is_none_or(|it| it == Err(bun_sys::E::ECANCELED)));
         }
     }
+}
+
+#[test]
+fn a_turnstile_opens_once_the_other_thread_waits() {
+    if !has_wait_packets() {
+        return;
+    }
+    let event = w::CreateEventW().unwrap();
+    let open = |turnstile: &Turnstile| {
+        turnstile.admit();
+        turnstile.admit_after(event.as_handle());
+        w::set_event(&event);
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_millis(30) {}
+    };
+    // The wait for a page of code counts too.
+    open(&Turnstile::new().unwrap());
+    let (turnstile, is_running) = (Turnstile::new().unwrap(), AtomicBool::new(true));
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            for _ in 0..2 {
+                turnstile.wait();
+                assert!(!is_running.load(Ordering::SeqCst));
+            }
+        });
+        open(&turnstile);
+        is_running.store(false, Ordering::SeqCst);
+    });
 }
 
 fn connected() -> (TcpStream, TcpStream) {

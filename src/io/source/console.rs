@@ -4,14 +4,16 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use std::os::windows::io::{AsHandle as _, AsRawHandle as _, OwnedHandle};
 use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
-use bun_iocp::blocking::{self, Cancel};
+use bun_iocp::blocking::{self, Cancel, Turnstile};
 use bun_iocp::{Port, Remote, Request};
 use bun_ptr::OptionCellExt as _;
 use bun_sys::windows::{self as w, HANDLE, Win32Error, console};
 use bun_sys::windows_format::key_input::{self, InputRecord, Utf16Decoder};
 use bun_sys::{self as sys, E, Fd, File, Tag};
-use bun_threading::{Condition, Guarded};
+use bun_threading::guarded::GuardedLock;
+use bun_threading::{Condition, Guarded, Mutex};
 
 use super::Payload;
 use super::endpoint::{Endpoint, HasEndpoint};
@@ -23,10 +25,8 @@ use crate::pipe_writer::WriteEvent;
 /// A process has one console, and every handle to its input takes from the same queue.
 struct Input {
     handle: OwnedHandle,
-    /// Ends `Line::Waiting`.
-    stop: OwnedHandle,
-    /// An AppContainer may not open it.
-    host: Option<OwnedHandle>,
+    /// From `read_line` to `watch_lines`.
+    turnstile: Turnstile,
 }
 
 impl Input {
@@ -38,8 +38,7 @@ impl Input {
         }
         let input = Input {
             handle: open_input().or_else(|_| w::duplicate_handle(handle))?,
-            stop: w::CreateEventW()?,
-            host: console::open_host_process(),
+            turnstile: Turnstile::new()?,
         };
         Ok(INPUT.get_or_init(|| input))
     }
@@ -48,10 +47,17 @@ impl Input {
         self.handle.as_raw_handle()
     }
 
-    /// For a record or `stop`. `true` if the console is gone instead.
-    fn wait(&self, host: &OwnedHandle) -> bool {
-        let handles = [&self.stop, host, &self.handle];
-        w::wait_for_any(&handles.map(OwnedHandle::as_handle)) == 1
+    fn is_signalled(&self) -> bool {
+        w::kernel32::WaitForSingleObject(self.raw(), 0) == 0
+    }
+
+    /// The console passes its queue on to a read that waits, and who takes the last record resets the handle.
+    fn write_ignored(&self) -> Result<usize, Win32Error> {
+        let record = InputRecord {
+            event_type: key_input::MENU_EVENT,
+            ..Default::default()
+        };
+        console::write_records(self.raw(), &[record])
     }
 }
 
@@ -63,15 +69,17 @@ static IS_RAW: AtomicBool = AtomicBool::new(false);
 
 enum Line {
     Idle,
-    /// For the first key.
-    Waiting,
+    Starting,
     /// The console goes on with a cancelled read until the handle is closed, so it takes a handle of our own to cancel.
     Reading(Option<Cancel>),
 }
 
 struct Shared {
     line: Line,
-    /// Who is told that `line` is idle again, by the address of its `Inner`.
+    /// How many times it was `Line::Reading`.
+    reads: usize,
+    is_watched: bool,
+    /// Who is told that `line` is idle again or raw mode is over, by the address of its `Inner`.
     readers: Vec<(usize, Remote<()>)>,
     /// Taken from the console, and not handed to a reader yet.
     text: Vec<u8>,
@@ -85,6 +93,8 @@ struct Shared {
 
 static SHARED: Guarded<Shared> = Guarded::new(Shared {
     line: Line::Idle,
+    reads: 0,
+    is_watched: false,
     readers: Vec::new(),
     text: Vec::new(),
     end: None,
@@ -96,6 +106,19 @@ static LINE_IS_IDLE: Condition = Condition::new();
 
 /// Ends a read without an echo, or an entry in the history.
 const WAKE: u16 = 0x1E;
+const END: u16 = 0x23;
+
+/// Unlike a key that was pressed, it has no scan code.
+fn key(virtual_key: u16, character: u16) -> InputRecord {
+    InputRecord {
+        event_type: key_input::KEY_EVENT,
+        is_key_down: 1,
+        repeat_count: 1,
+        virtual_key,
+        character,
+        ..Default::default()
+    }
+}
 
 impl Shared {
     fn is_reading(&self) -> bool {
@@ -127,9 +150,14 @@ impl Shared {
                 Ok(records) => records,
                 Err(err) => return self.fail(err),
             };
+            // A change of the screen buffer empties the queue and leaves the handle signalled.
+            if records.is_empty() && input.is_signalled() {
+                let _ = input.write_ignored();
+            }
             for record in records {
                 is_resized |= record.event_type == key_input::WINDOW_BUFFER_SIZE_EVENT;
-                if !(record.is_input() && self.take_wake(record.character)) {
+                let is_ours = *record == key(END, 0) && self.wakes > 0;
+                if !is_ours && !(record.is_input() && self.take_wake(record.character)) {
                     key_input::translate(record, &mut self.decoder, &mut self.text);
                 }
             }
@@ -140,29 +168,6 @@ impl Shared {
         if is_resized {
             crate::console_signals::check_window_size();
         }
-    }
-
-    /// The handle stays signalled for as long as any record is in the queue, so this drops those that start no line.
-    fn has_key(&mut self, input: &Input) -> Result<bool, Win32Error> {
-        let mut records = [InputRecord::default(); 16];
-        let peeked = console::peek_records(input.raw(), &mut records)?;
-        let count = peeked.len();
-        let is_stale_wake = |record: &InputRecord| record.character == WAKE && self.wakes > 0;
-        if peeked.iter().any(|it| it.is_input() && !is_stale_wake(it)) {
-            return Ok(true);
-        }
-        if count == 0 {
-            return Ok(false);
-        }
-        for record in console::read_records(input.raw(), &mut records[..count])? {
-            if record.event_type == key_input::WINDOW_BUFFER_SIZE_EVENT {
-                crate::console_signals::check_window_size();
-            } else if record.is_input() && !self.take_wake(record.character) {
-                // Another process has taken what was ahead of it.
-                console::write_records(input.raw(), &[*record])?;
-            }
-        }
-        Ok(false)
     }
 
     fn add_line(&mut self, line: &[u16]) {
@@ -179,42 +184,44 @@ impl Shared {
     }
 }
 
-fn read_line(input: &Input, mut is_wanted_now: bool) {
-    let mut shared = loop {
-        let is_gone = !is_wanted_now && input.host.as_ref().is_some_and(|host| input.wait(host));
-        let mut shared = SHARED.lock();
-        w::reset_event(&input.stop);
-        if shared.readers.is_empty() || IS_RAW.load(Ordering::SeqCst) {
-            break shared;
+/// A console before microsoft/terminal#18816 sits on a key that comes while it sets up a read, until the next record.
+fn watch_lines(input: &Input) {
+    let mut was_signalled_in = None;
+    loop {
+        input.turnstile.wait();
+        let shared = SHARED.lock();
+        let read = (shared.is_reading() && !shared.readers.is_empty()).then_some(shared.reads);
+        drop(shared);
+        if read.is_none() || (read == was_signalled_in && input.write_ignored().is_err()) {
+            continue;
         }
-        // A script that is running may have left the input to a child, or be about to pause.
-        let is_wanted = core::mem::take(&mut is_wanted_now)
-            || (shared.readers.iter()).any(|(_, reader)| reader.is_port_idle());
-        let has_key = match input.host {
-            _ if is_gone => Err(Win32Error::BROKEN_PIPE),
-            Some(_) => shared.has_key(input),
-            // Only the read itself ends with the console.
-            None => Ok(true),
-        };
-        match has_key {
-            Ok(true) if !is_wanted => break shared,
-            Ok(true) => {}
-            Ok(false) => continue,
-            Err(err) => {
-                shared.fail(err);
-                break shared;
-            }
+        input.turnstile.admit_after(input.handle.as_handle());
+        // The console answers in order, so it has seen the read by the time it has answered this.
+        let is_signalled = console::is_input(input.raw()) && input.is_signalled();
+        was_signalled_in = read.filter(|_| is_signalled);
+        if !is_signalled {
+            // The read drops the record that tells.
+            crate::console_signals::check_window_size();
         }
+    }
+}
+
+fn read_line(input: &'static Input) {
+    // Older consoles take no more keys once it is full.
+    let mut buffer = vec![0; 8192];
+    let capacity = buffer.len();
+    let mut shared = SHARED.lock();
+    if !shared.readers.is_empty() && !IS_RAW.load(Ordering::SeqCst) {
         let own = shared.line_handle.take().or_else(|| open_input().ok());
         let cancel = Cancel::default();
+        shared.is_watched = shared.is_watched || blocking::spawn_endless(|| watch_lines(input));
+        input.turnstile.admit();
+        shared.reads += 1;
         shared.line = Line::Reading(own.is_some().then(|| cancel.clone()));
         drop(shared);
 
         let handle = own.as_ref().unwrap_or(&input.handle).as_raw_handle();
-        // Older consoles take no more keys once it is full.
-        let mut buffer = vec![0; 8192];
-        let capacity = buffer.len();
-        break loop {
+        shared = loop {
             let line = cancel.run(|| console::read_text(handle, &mut buffer, WAKE));
             let line = line.unwrap_or(Ok(&[]));
             let mut shared = SHARED.lock();
@@ -233,11 +240,15 @@ fn read_line(input: &Input, mut is_wanted_now: bool) {
                 break shared;
             }
         };
-    };
+    }
     shared.line = Line::Idle;
+    LINE_IS_IDLE.notify_all();
+    tell_readers(shared);
+}
+
+fn tell_readers(mut shared: GuardedLock<'_, Shared, Mutex>) {
     let readers = core::mem::take(&mut shared.readers);
     drop(shared);
-    LINE_IS_IDLE.notify_all();
     // The newest gets the line.
     for (_, reader) in readers.into_iter().rev() {
         reader.complete(());
@@ -246,29 +257,27 @@ fn read_line(input: &Input, mut is_wanted_now: bool) {
 
 /// What the read returns is kept for the next reader, also if it does not end now.
 fn stop_line(input: &Input) {
-    const PATIENCE_NS: u64 = 50_000_000;
-    let wake = InputRecord {
-        event_type: key_input::KEY_EVENT,
-        is_key_down: 1,
-        repeat_count: 1,
-        character: WAKE,
-        ..Default::default()
-    };
+    const PATIENCE: Duration = Duration::from_millis(50);
     let mut shared = SHARED.lock();
-    if let Line::Waiting = shared.line {
-        return w::set_event(&input.stop);
-    }
+    let Line::Reading(cancel) = &shared.line else {
+        return;
+    };
+    // `WAKE` takes the place of what follows the cursor. End would be text where the console makes escape sequences.
+    let is_vt = |mode| mode & w::ENABLE_VIRTUAL_TERMINAL_INPUT != 0;
+    let first = usize::from(console::mode(input.raw()).is_ok_and(is_vt));
+    let write = || console::write_records(input.raw(), &[key(END, 0), key(0, WAKE)][first..]);
     // The first key only resumes output that is paused.
-    for _ in 0..2 {
-        if !shared.is_reading() || console::write_records(input.raw(), &[wake]).is_err() {
-            break;
-        }
+    if write().is_ok_and(|count| count > 0 || write().is_ok()) {
         shared.wakes += 1;
-        let _ = LINE_IS_IDLE.timed_wait_guarded(&mut shared, PATIENCE_NS);
-    }
-    if let Line::Reading(Some(cancel)) = &shared.line {
+    } else if let Some(cancel) = cancel {
+        // This ends the reads of other processes too.
         cancel.cancel();
-        let _ = LINE_IS_IDLE.timed_wait_guarded(&mut shared, PATIENCE_NS);
+    }
+    let deadline = Instant::now() + PATIENCE;
+    while shared.is_reading()
+        && let Some(left) = deadline.checked_duration_since(Instant::now())
+    {
+        let _ = LINE_IS_IDLE.timed_wait_guarded(&mut shared, left.as_nanos() as u64);
     }
 }
 
@@ -295,19 +304,24 @@ fn set_mode(handle: HANDLE, mode: Mode) -> sys::Result<()> {
         Mode::Raw => w::ENABLE_WINDOW_INPUT,
         Mode::RawVt => w::ENABLE_WINDOW_INPUT | VT,
     };
-    let was_raw = IS_RAW.swap(mode != Mode::Normal, Ordering::SeqCst);
+    // No line is begun while the console is in another mode.
+    let was_raw = IS_RAW.fetch_or(mode != Mode::Normal, Ordering::SeqCst);
     if mode != Mode::Normal {
         stop_line(input);
     }
     // Other processes change it too.
     let is_set = console::mode(input.raw()).is_ok_and(|it| (it ^ flags) & (COOKED | VT) == 0);
-    if is_set {
-        return Ok(());
+    if !is_set {
+        console::set_mode(input.raw(), flags)
+            .or_else(|_| console::set_mode(input.raw(), flags & !VT))
+            .inspect_err(|_| IS_RAW.store(was_raw, Ordering::SeqCst))
+            .map_err(error)?;
     }
-    console::set_mode(input.raw(), flags)
-        .or_else(|_| console::set_mode(input.raw(), flags & !VT))
-        .inspect_err(|_| IS_RAW.store(was_raw, Ordering::SeqCst))
-        .map_err(error)
+    if mode == Mode::Normal && was_raw {
+        IS_RAW.store(false, Ordering::SeqCst);
+        tell_readers(SHARED.lock());
+    }
+    Ok(())
 }
 
 /// `mode` is a `uv_tty_mode_t`. Returns an error number of Node.js.
@@ -341,7 +355,8 @@ struct Inner {
     file: File,
     is_input: OnceCell<bool>,
     read: Cell<Option<Request>>,
-    is_reading_line: Cell<bool>,
+    /// For the entry in `Shared::readers`.
+    news: Cell<Option<Request>>,
     write: Cell<Option<Request>>,
     /// The start of a character that the next write has the rest of.
     incomplete: Cell<Vec<u8>>,
@@ -355,7 +370,7 @@ impl Console {
             file,
             is_input: OnceCell::new(),
             read: Cell::new(None),
-            is_reading_line: Cell::new(false),
+            news: Cell::new(None),
             write: Cell::new(None),
             incomplete: Cell::default(),
             last_written: Cell::new(0),
@@ -384,7 +399,7 @@ impl Console {
     /// Starts in the next turn of the loop, by when the script may have paused or changed the mode.
     pub(super) fn read(&self, max_len: usize) {
         self.0.endpoint.set_wanted(Some(max_len));
-        if !self.0.read.is_some() {
+        if !self.0.read.is_some() && !self.0.news.is_some() {
             let start = self.0.on_read(|this| this.continue_reading(false));
             self.0
                 .read
@@ -395,7 +410,7 @@ impl Console {
     pub(super) fn pause(&self) {
         self.0.endpoint.set_wanted(None);
         self.0.read.take();
-        if self.0.is_reading_line.take()
+        if self.0.news.take().is_some()
             && let Ok(input) = Input::get(self.fd().native())
         {
             let mut shared = SHARED.lock();
@@ -476,13 +491,13 @@ impl Inner {
         out
     }
 
-    /// The callback of the request in `read`.
+    /// The callback of the request in `read` or `news`.
     fn on_read(self: &Rc<Self>, f: impl FnOnce(Rc<Self>) + 'static) -> impl FnOnce() + 'static {
         let this = Rc::downgrade(self);
         move || {
             if let Some(this) = Weak::upgrade(&this) {
                 this.read.take();
-                this.is_reading_line.set(false);
+                this.news.take();
                 f(this);
             }
         }
@@ -507,7 +522,8 @@ impl Inner {
             Ok(input) => input,
             Err(err) => return Some(ReadEvent::Err(sys::Error::from_win32(err, Tag::recv))),
         };
-        let mut shared = SHARED.lock();
+        let (mut shared, address) = (SHARED.lock(), Rc::as_ptr(self).addr());
+        shared.readers.retain(|reader| reader.0 != address);
         let reads_keys = IS_RAW.load(Ordering::SeqCst) && !shared.is_reading();
         if reads_keys && has_waited {
             shared.read_keys(input);
@@ -521,22 +537,20 @@ impl Inner {
             return Some(end);
         }
 
-        let done = self.on_read(|this| this.continue_reading(true));
+        let done = || self.on_read(|this| this.continue_reading(true));
         if reads_keys {
-            match Request::wait(&self.endpoint.port, input.handle.as_handle(), done) {
+            match Request::wait(&self.endpoint.port, input.handle.as_handle(), done()) {
                 Ok(request) => self.read.set(Some(request)),
                 Err(_) => return error(E::ENOMEM),
             }
-            return None;
+        } else if let Line::Idle = shared.line {
+            blocking::spawn(|| read_line(input));
+            shared.line = Line::Starting;
         }
-        if let Line::Idle = shared.line {
-            blocking::spawn(move || read_line(input, has_waited));
-            shared.line = Line::Waiting;
-        }
+        let done = done();
         let (request, remote) = Request::remote(&self.endpoint.port, |()| done());
-        shared.readers.push((Rc::as_ptr(self).addr(), remote));
-        self.read.set(Some(request));
-        self.is_reading_line.set(true);
+        shared.readers.push((address, remote));
+        self.news.set(Some(request));
         None
     }
 }

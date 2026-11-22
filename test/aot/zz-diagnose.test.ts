@@ -14,6 +14,9 @@ const variants: Record<string, string> = {
   capture: withDiag(captured) + "report(watched);\n",
   snapshot: withDiag(captured.replace(last, "takeSnapshot();\n" + last)) + "report(watched);\n",
   late: program.replace(last, `const { report } = await import("./diag.mjs");\n` + last) + "report(watched);\n",
+  lateSnapshot:
+    program.replace(last, `const { report, takeSnapshot } = await import("./diag.mjs");\ntakeSnapshot();\n` + last) +
+    "report(watched);\n",
   control:
     withDiag(
       captured

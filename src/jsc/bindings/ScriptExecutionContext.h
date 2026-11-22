@@ -121,8 +121,7 @@ public:
     void globalObjectDestroyed();
 
     bool isJSExecutionForbidden();
-    // isJSExecutionForbidden(), or a termination is unwinding the script beneath (JSVMClientData::mustNotEnterScript):
-    // what a frame reads before it calls script.
+    // isJSExecutionForbidden() or a pending termination (JSVMClientData::mustNotEnterScript): what a frame reads before it calls script.
     bool mustNotEnterScript();
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {

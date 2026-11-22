@@ -23,9 +23,7 @@ namespace Bun {
 // execution (WebCore's forbidExecution() at the same point). Beneath script it stays pending for JSC to unwind. True if
 // taken. bindings.cpp.
 bool takeTerminationOutsideScript(JSC::VM&, JSC::TopExceptionScope&);
-// For a native frame that calls script and reports what it threw (a dispatcher, a loop). True: an error, now cleared.
-// False: the VM's termination, which is not the callee's error, and takeTerminationOutsideScript() has run. A frame that
-// hands the exception to its own caller takes nothing: RETURN_IF_EXCEPTION there.
+// For a frame that calls script and reports what it threw: true for an error (now cleared), false for the VM's termination (takeTerminationOutsideScript() has run).
 bool clearExceptionOrTakeTermination(JSC::VM&, JSC::TopExceptionScope&);
 }
 extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject*);
@@ -93,8 +91,7 @@ namespace Zig {
 class GlobalObject;
 }
 namespace Bun {
-// What JSC's NakedPtr<Exception> overloads of call() tell ahead-of-time compiled code while their callee runs: a native
-// frame at this depth takes what the callee throws. For a frame that takes it from the plain overload instead.
+// Tells ahead-of-time compiled code that this native frame takes what the callee throws, as JSC's NakedPtr<Exception> overload of call() does.
 class NativeCatcherScope {
 public:
     ALWAYS_INLINE explicit NativeCatcherScope(JSC::VM& vm)
@@ -306,8 +303,7 @@ public:
     // Stopping: the stop has been requested (any thread; `!scriptAllowed()`). Stopped: it has been carried out on
     // this thread and JSC forbids execution. Either way no script may be entered on this VM.
     ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
-    // What a native frame reads before it calls script: isStoppingOrStopped(), or a termination is unwinding the script
-    // beneath that frame (a node:vm timeout leaves the gate open) and no script is entered over it.
+    // What a native frame reads before it calls script: a node:vm timeout leaves the gate open, and no script is entered over its termination.
     ALWAYS_INLINE bool mustNotEnterScript(const JSC::VM& vm) const { return isStoppingOrStopped(vm) || vm.hasPendingTerminationException(); }
     Bun::JSCTaskScheduler deferredWorkTimer;
 

@@ -480,8 +480,7 @@ WorkerMessagingProxy::ErrorForWorkerObject WorkerMessagingProxy::serializeErrorF
     if (m_options.kind != WorkerOptions::Kind::Node)
         return {};
 
-    // The structured clone (which can run script through getters even in NonThrowing mode) and the `code`
-    // read leave no error behind. A termination stays pending: the dispatch that follows enters no listener over it.
+    // The clone and the `code` read can run script through getters: an error is cleared, a termination stays pending for the dispatch that follows.
     auto& vm = JSC::getVM(&workerGlobalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 

@@ -15,9 +15,29 @@ const MAX_ASLEEP: u16 = 256;
 /// So many waits in a row that outlast the limit end a phase awake.
 const MAX_MISSES: u8 = 2;
 
+/// `available_parallelism` ignores the affinity.
+#[cfg(windows)]
+fn is_on_one_cpu() -> bool {
+    use bun_sys::windows::{BOOL, GetCurrentProcess, HANDLE};
+    unsafe extern "system" {
+        safe fn GetProcessAffinityMask(
+            hProcess: HANDLE,
+            lpProcessAffinityMask: &mut usize,
+            lpSystemAffinityMask: &mut usize,
+        ) -> BOOL;
+    }
+    let (mut process, mut system) = (0, 0);
+    GetProcessAffinityMask(GetCurrentProcess(), &mut process, &mut system);
+    process.is_power_of_two()
+}
+
+#[cfg(not(windows))]
+fn is_on_one_cpu() -> bool {
+    !std::thread::available_parallelism().is_ok_and(|count| count.get() > 1)
+}
+
 pub fn has_other_cpu() -> bool {
-    static ANSWER: LazyLock<bool> =
-        LazyLock::new(|| std::thread::available_parallelism().is_ok_and(|count| count.get() > 1));
+    static ANSWER: LazyLock<bool> = LazyLock::new(|| !is_on_one_cpu());
     *ANSWER
 }
 

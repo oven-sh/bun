@@ -24,6 +24,15 @@ const STREAM_SIZE: usize = 2 * BUSY_SIZE;
 /// For one event.
 const MAX_READS: usize = 32;
 
+/// A read that finds less right after another one is on the heels of the writer, and only gets in its way.
+const LITTLE: usize = 8 * 1024;
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Gather {
+    Everything,
+    UntilLittleComes,
+}
+
 /// An end of a pipe, for a reader, a writer or both. It is closed with the last clone.
 #[derive(Clone)]
 pub struct Pipe(Rc<Inner>);
@@ -211,7 +220,7 @@ impl Pipe {
                 this.endpoint.recycle(core::mem::take(&mut data));
             }
             let enough = data.len() + MAX_AVAILABLE;
-            this.add_what_followed(&mut data, enough);
+            this.add_what_followed(&mut data, enough, Gather::Everything);
             if data.is_empty() {
                 this.continue_reading(Take::OnceThereIsSome);
                 return None;
@@ -398,7 +407,7 @@ impl Inner {
     }
 
     /// A read that was waiting ends with the first write, which tends to have company. This leaves the next read waiting.
-    fn add_what_followed(self: &Rc<Self>, data: &mut Vec<u8>, enough: usize) {
+    fn add_what_followed(self: &Rc<Self>, data: &mut Vec<u8>, enough: usize, gather: Gather) {
         let (Some(wanted), Some(Io::Overlapped(file)), false) = (
             self.endpoint.wanted(),
             self.io.get(),
@@ -406,10 +415,13 @@ impl Inner {
         ) else {
             return;
         };
-        let mut reads = 0;
+        let (mut reads, mut last_len) = (0, LITTLE);
         while data.len() < wanted {
             let started = self.read_overlapped(file, wanted - data.len());
             reads += 1;
+            if last_len < LITTLE && gather == Gather::UntilLittleComes {
+                return self.started_read(started.inspect(Request::postpone));
+            }
             if data.len() >= enough || reads == MAX_READS {
                 return self.started_read(started);
             }
@@ -418,6 +430,10 @@ impl Inner {
                 Ok(Ok(more)) => {
                     self.size_next_read(&more.buffer);
                     data.extend_from_slice(&more.buffer);
+                    last_len = more.buffer.len();
+                    if data.len() >= BUSY_SIZE {
+                        self.endpoint.port.expect_more();
+                    }
                     self.endpoint.recycle(more.buffer);
                 }
                 Ok(Err(pending)) => return self.started_read(Ok(pending)),
@@ -459,7 +475,12 @@ impl Inner {
                 self.endpoint.port.did_receive();
             }
             if !(is_much && self.read_rest_of_long_write(buffer.len())) {
-                self.add_what_followed(&mut buffer, BUSY_SIZE);
+                let gather =
+                    match self.takes_long_writes_whole.get() || self.endpoint.port.is_slow() {
+                        true => Gather::Everything,
+                        false => Gather::UntilLittleComes,
+                    };
+                self.add_what_followed(&mut buffer, BUSY_SIZE, gather);
             }
             self.endpoint.hold(ReadEvent::Data(buffer));
             return self.report_read();

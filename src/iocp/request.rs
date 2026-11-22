@@ -353,6 +353,13 @@ impl Request {
         Ok(completion)
     }
 
+    /// If it ended in the call that started it a moment ago, the callback waits for the next turn.
+    pub fn postpone(&self) {
+        if let Some(packet) = self.port.take_back(self.token) {
+            self.port.defer_to_next_turn(packet);
+        }
+    }
+
     /// Cancels a request on a pipe, and returns how it has ended in place of the callback.
     pub fn finish_now(self) -> Result<Completion, Request> {
         const MILLISECOND: Timeout = Timeout::After(10_000);

@@ -230,6 +230,12 @@ impl Port {
         self.expects_more.set(true);
     }
 
+    /// Whether it is long from one turn to the next.
+    pub fn is_slow(&self) -> bool {
+        const SLOW_NS: u64 = 500_000;
+        now_ns().saturating_sub(self.busy_since_ns.get()) > SLOW_NS
+    }
+
     pub fn did_send(&self) {
         self.has_sent.set(true);
     }
@@ -281,11 +287,12 @@ impl Port {
     }
 
     /// Spares the loop a turn for what was deferred a moment ago.
-    pub(crate) fn take_back(&self, read: Token) {
+    pub(crate) fn take_back(&self, read: Token) -> Option<Packet> {
         let address = (key::INPUT, read.to_raw());
         let taken = (self.deferred.borrow_mut())
             .pop_back_if(|packet| (packet.key, packet.context) == address);
         (self.inputs).update(|count| count - usize::from(taken.is_some()));
+        taken
     }
 
     pub(crate) fn delay(&self, key: usize, token: Token, delay_ns: u64) {

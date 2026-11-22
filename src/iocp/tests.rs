@@ -322,6 +322,24 @@ fn an_end_waits_for_what_was_written_before() {
 }
 
 #[test]
+fn what_is_postponed_waits_for_the_next_turn() {
+    let port = Port::new().unwrap();
+    let (file, peer) = pipe(&port, AsyncFile::exclusive);
+    let (slot, read) = (Slot::default(), Rc::new(Cell::new(None)));
+    let (into, keep) = (Rc::clone(&slot), Rc::clone(&read));
+    peer.write_all(b"x").unwrap();
+    let _first = Request::defer(&port, move || {
+        let request = start_read(&file, &into);
+        request.postpone();
+        keep.set(Some((request, file)));
+    });
+    turn(&port, Duration::from_secs(10));
+    assert!(slot.borrow().is_none());
+    turn(&port, Duration::from_secs(10));
+    assert!(slot.borrow().is_some());
+}
+
+#[test]
 fn signals_delays_and_other_threads() {
     let port = Port::new().unwrap();
     let log = Rc::new(RefCell::new(Vec::new()));

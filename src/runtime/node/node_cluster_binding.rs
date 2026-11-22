@@ -70,7 +70,7 @@ pub(crate) fn handle_internal_message_child(
 
 pub(crate) fn send_helper_primary<'a>(
     cx: &mut JsScope<'a>,
-    process_handle: Option<&Subprocess>,
+    process_handle: Option<&bun_ptr::RefPtr<Subprocess>>,
     message: JsLocal<'a, JSObject>,
     handle: Option<JsLocal<'a, JSObject>>,
     callback: Option<JsLocal<'a, Callable>>,
@@ -181,7 +181,7 @@ pub(crate) fn send_helper_primary<'a>(
 
 pub(crate) fn on_internal_message_primary<'a>(
     cx: &mut JsScope<'a>,
-    handle: Option<&Subprocess>,
+    handle: Option<&bun_ptr::RefPtr<Subprocess>>,
     worker: JsLocal<'a>,
     callback: JsLocal<'a>,
 ) {

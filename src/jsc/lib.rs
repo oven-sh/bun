@@ -16,6 +16,7 @@
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
 #![feature(adt_const_params)]
+#![feature(arbitrary_self_types)]
 #![feature(core_io_borrowed_buf)]
 // `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
 // per-callback statics — bare `__thread`/`.tbss` instead of the
@@ -221,12 +222,9 @@ pub trait ConsoleFormatter {
         cell: JSType,
     ) -> JsResult<()>;
 
-    /// `formatter.indent += 1` — bump nesting level for the duration of a
-    /// `{ … }` block. Paired with [`indent_dec`]. Prefer [`IndentScope`] over
-    /// calling this pair manually when the indented region contains `?` early
-    /// returns.
+    /// For [`IndentScope`].
     fn indent_inc(&mut self);
-    /// Saturating decrement of the nesting level.
+    /// For [`IndentScope`]. Saturates.
     fn indent_dec(&mut self);
     /// Shorthand for [`IndentScope::new`]. Shadow the binding for the indented
     /// block; the guard `Deref`s to `&mut Self` so method calls auto-deref, and
@@ -969,11 +967,6 @@ impl<'a, T, const MAPPED: bool> WrapperGuard<'a, T, MAPPED> {
     /// The pointer that the wrapper holds. After [`map`](Self::map), and for the `Blob` of a `BuildArtifact`, the address of the part.
     pub fn as_ptr(&self) -> *mut T {
         self.native.as_ptr()
-    }
-
-    /// Shadows [`bun_ptr::AsCtxPtr::as_ctx_ptr`], which is the address of `self`.
-    pub fn as_ctx_ptr(&self) -> *mut T {
-        self.as_ptr()
     }
 }
 impl<T, const MAPPED: bool> core::ops::Deref for WrapperGuard<'_, T, MAPPED> {

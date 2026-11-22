@@ -67,77 +67,77 @@ impl PipeReader {
         let result = unsafe { (*this).reader.read((*this).event_loop, Some(event)) };
         if !matches!(result, ReadResult::Pending) {
             // SAFETY: fn contract.
-            Self::on_read_result(&unsafe { RefPtr::init_ref(this) }, result);
+            unsafe { RefPtr::init_ref(this) }.on_read_result(result);
         }
     }
 
-    pub(crate) fn read_all(this: &RefPtr<Self>) {
-        if this.process.get().is_some() {
-            Self::on_read_result(this, this.reader.read(this.event_loop, None));
+    pub(crate) fn read_all(self: &RefPtr<Self>) {
+        if self.process.get().is_some() {
+            self.on_read_result(self.reader.read(self.event_loop, None));
         }
     }
 
     /// `read_all` for a reader that may be paused.
-    pub(crate) fn resume(this: &RefPtr<Self>) {
-        if !this.reader.is_done() {
-            Self::on_read_result(this, this.reader.unpause());
-            Self::read_all(this);
+    pub(crate) fn resume(self: &RefPtr<Self>) {
+        if !self.reader.is_done() {
+            self.on_read_result(self.reader.unpause());
+            self.read_all();
         }
     }
 
     /// What `read_all` does on POSIX.
     #[cfg(windows)]
-    pub(crate) fn read_available(this: &RefPtr<Self>) {
-        if let Some(event) = this.reader.take_available() {
-            Self::on_read_result(this, this.reader.read(this.event_loop, Some(event)));
+    pub(crate) fn read_available(self: &RefPtr<Self>) {
+        if let Some(event) = self.reader.take_available() {
+            self.on_read_result(self.reader.read(self.event_loop, Some(event)));
         }
     }
 
-    pub(crate) fn start(this: &RefPtr<Self>, lazy: bool) {
-        this.start_ref.set(Some(this.clone()));
-        (this.reader).update_flags(|f| f.insert(ReaderFlags::SOCKET | ReaderFlags::NONBLOCKING));
-        let pipe = this.stdio_result.take().unwrap();
+    pub(crate) fn start(self: &RefPtr<Self>, lazy: bool) {
+        self.start_ref.set(Some(self.clone()));
+        (self.reader).update_flags(|f| f.insert(ReaderFlags::SOCKET | ReaderFlags::NONBLOCKING));
+        let pipe = self.stdio_result.take().unwrap();
         if lazy {
             // Until JS first pulls, so that the child blocks on the pipe.
-            return this.reader.set_own_pipe(this.event_loop, pipe);
+            return self.reader.set_own_pipe(self.event_loop, pipe);
         }
-        let started = this.reader.start_own_pipe(this.event_loop, pipe);
-        Self::on_read_result(this, started.unwrap_or_else(ReadResult::Err));
+        let started = self.reader.start_own_pipe(self.event_loop, pipe);
+        self.on_read_result(started.unwrap_or_else(ReadResult::Err));
     }
 
-    fn on_read_result(this: &RefPtr<Self>, result: ReadResult) {
+    fn on_read_result(self: &RefPtr<Self>, result: ReadResult) {
         let output = match result {
             ReadResult::Pending => return,
-            ReadResult::Done => Readable::Buffer(this.reader.take_buffer().into_boxed_slice()),
+            ReadResult::Done => Readable::Buffer(self.reader.take_buffer().into_boxed_slice()),
             ReadResult::Err(err) => {
-                let bytes = this.reader.take_buffer().into_boxed_slice();
+                let bytes = self.reader.take_buffer().into_boxed_slice();
                 // Release the fd now, as EOF does, so a child still writing gets EPIPE.
-                this.reader.deinit();
+                self.reader.deinit();
                 Readable::Errored(bytes, err)
             }
         };
-        this.start_ref.set(None);
-        if let Some(process) = this.process.take() {
-            process.on_output_read(this, output);
+        self.start_ref.set(None);
+        if let Some(process) = self.process.take() {
+            process.on_output_read(self, output);
         }
     }
 
-    pub(super) fn inject_error(this: &RefPtr<Self>, err: bun_sys::Error) {
-        Self::on_read_result(this, ReadResult::Err(err));
+    pub(super) fn inject_error(self: &RefPtr<Self>, err: bun_sys::Error) {
+        self.on_read_result(ReadResult::Err(err));
     }
 
     pub(crate) fn update_ref(&self, add: bool) {
         self.reader.update_ref(add);
     }
 
-    pub(crate) fn watch(this: &RefPtr<Self>) {
-        if !this.reader.is_done() {
-            Self::on_read_result(this, this.reader.watch(this.event_loop));
+    pub(crate) fn watch(self: &RefPtr<Self>) {
+        if !self.reader.is_done() {
+            self.on_read_result(self.reader.watch(self.event_loop));
         }
     }
 
-    pub(crate) fn close(this: &RefPtr<Self>) {
-        Self::on_read_result(this, this.reader.close());
+    pub(crate) fn close(self: &RefPtr<Self>) {
+        self.on_read_result(self.reader.close());
     }
 
     pub(crate) fn to_js(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {

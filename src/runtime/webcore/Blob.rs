@@ -858,7 +858,7 @@ impl BlobExt for Blob {
         {
             writer.write_str(" {\n")?;
             {
-                formatter.indent_inc();
+                let mut formatter = formatter.indented();
 
                 if show_name {
                     formatter.write_indent(writer)?;
@@ -914,8 +914,6 @@ impl BlobExt for Blob {
                         self.last_modified.get(),
                     )?;
                 }
-
-                formatter.indent_dec();
             }
             formatter.write_indent(writer)?;
             writer.write_str("}")?;
@@ -1200,7 +1198,7 @@ impl BlobExt for Blob {
 
         // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
         let mut readable_stream = readable_stream;
-        match webcore::FileSink::pipe_stream(&file_sink, &mut readable_stream, cx.global()) {
+        match file_sink.pipe_stream(&mut readable_stream, cx.global()) {
             Ok(promise) => Ok(promise),
             Err(err) => {
                 Ok(JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js())
@@ -1299,7 +1297,7 @@ impl BlobExt for Blob {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
         match start_file_sink(&cx, &store.data.as_file().pathlike, Default::default()) {
-            Ok(sink) => Ok(webcore::FileSink::to_js(sink, global_this)),
+            Ok(sink) => Ok(sink.to_js(global_this)),
             Err(err) => Err(global_this.throw_value(err.to_js(global_this))),
         }
     }

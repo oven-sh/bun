@@ -13,7 +13,6 @@ pub(crate) use crate::server::SavedRequest;
 
 pub(crate) use crate::socket;
 pub(crate) use crate::socket::Listener;
-pub(crate) use crate::socket::NewSocket;
 pub(crate) use crate::socket::SocketAddress;
 
 pub(crate) use crate::crypto;

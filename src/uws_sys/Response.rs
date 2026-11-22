@@ -17,7 +17,7 @@ use crate::thunk;
 use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
 use bun_core::{BoundedArray, Fd};
-use bun_ptr::ThisPtr;
+use bun_ptr::{AnyRefCounted, RefPtr};
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
 /// Remote socket address as returned by uWS. The IP text is copied into
@@ -1047,35 +1047,17 @@ impl AnyResponse {
         }
     }
 
-    /// [`on_writable`](Self::on_writable) for a handler owned by an
-    /// intrusively-refcounted `U`: the registrant passes the `ThisPtr` it was
-    /// dispatched with and keeps a ref on `U` until it clears the handler, so
-    /// the trampoline can hand the handler a `ThisPtr` again.
-    pub fn on_writable_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
+    /// The registrant keeps a ref on `owner` until it clears the handler, which gets a ref of its own.
+    pub fn on_aborted_ref<U: AnyRefCounted + 'static, H>(self, _handler: H, owner: &RefPtr<U>)
     where
-        H: Fn(ThisPtr<U>, u64, AnyResponse) -> bool + Copy + 'static,
-    {
-        self.on_writable(
-            |u: *mut U, off, any| {
-                // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
-                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, off, any)
-            },
-            this.as_ptr(),
-        )
-    }
-
-    /// [`on_aborted`](Self::on_aborted) counterpart of
-    /// [`on_writable_this`](Self::on_writable_this).
-    pub fn on_aborted_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
-    where
-        H: Fn(ThisPtr<U>, AnyResponse) + Copy + 'static,
+        H: Fn(RefPtr<U>, AnyResponse) + Copy + 'static,
     {
         self.on_aborted(
             |u: *mut U, any| {
-                // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
-                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, any)
+                // SAFETY: `u` is the pointer registered below; the registrant holds a ref on it until the handler is cleared.
+                thunk::zst::<H>()(unsafe { RefPtr::init_ref(u) }, any)
             },
-            this.as_ptr(),
+            owner.as_ptr(),
         )
     }
 

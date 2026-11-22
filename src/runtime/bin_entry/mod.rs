@@ -38,8 +38,9 @@ mod c_abi_exports;
 // (`sys_epoll_pwait2`, …) reach the linker.
 use bun_platform as _;
 
-// Likewise, for the allocator and for what the hook of ICU calls.
+// Likewise, for the allocator, for ICU and for what its hook calls.
 use bun_global_allocator as _;
+use bun_icu as _;
 use bun_icu_data as _;
 
 use bun_core::Global;
@@ -169,8 +170,6 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
-    use_mimalloc_in_dependencies();
-
     // SIGPIPE/SIGXFSZ → SIG_IGN.
     // SAFETY: `SIGPIPE`/`SIGXFSZ` are valid signal numbers and `SIG_IGN` is a
     // valid disposition; called once on the main thread before any other
@@ -226,25 +225,4 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn pregrow_fd_table() {
     let _ = bun_sys::dup_at_least(bun_sys::Fd::stdin(), 1023).map(bun_sys::CloseOnDrop::new);
-}
-
-/// Point the bundled C/C++ dependencies that have an allocator hook at
-/// mimalloc, so the whole process shares one allocator (and, on Windows, one
-/// policy for transient commit-limit failures instead of the UCRT heap's
-/// immediate NULL). Runs first thing in `main()`: these hooks only swap
-/// function pointers, so nothing may have allocated through the library yet.
-///
-/// The two dependencies not switched here:
-/// - c-ares: `ares_library_init_mem(.., mi_malloc, mi_free, mi_realloc)` in
-///   `bun_cares_sys`, because it is part of the (lazy) library init.
-/// - BoringSSL: link-time `OPENSSL_memory_alloc/free/get_size` and
-///   `OPENSSL_system_malloc/realloc/free` definitions in `bun_boringssl`
-///   (`BORINGSSL_REQUIRE_MEMORY_HOOKS`, off under ASAN).
-fn use_mimalloc_in_dependencies() {
-    // ICU: `u_setMemoryFunctions` (bun_icu_malloc.cpp; no-op under ASAN and
-    // on macOS, where ICU is the system libicucore).
-    unsafe extern "C" {
-        safe fn Bun__useMimallocForICU();
-    }
-    Bun__useMimallocForICU();
 }

@@ -147,7 +147,7 @@ impl WindowsNamedPipe {
     /// that way), which runs that task. A callback that uses `self` after it
     /// dispatched to a handler holds this guard, so the free waits until the
     /// callback is done. `inflight_write_ref` does the same around an in-flight write,
-    /// and `connect`/`open` around the connect.
+    /// and `connect` around the connect.
     ///
     /// Only for paths that cannot run after `on_close` released the
     /// connection's ref (reads stop and the wrapper goes away in
@@ -369,8 +369,6 @@ impl WindowsNamedPipe {
         pipe: Pipe,
         ssl_ctx: Option<&boringssl::OwnedSslCtx>,
     ) -> bun_sys::Result<()> {
-        let _keep_alive = self.keep_alive();
-
         if let Some(tls) = ssl_ctx {
             self.update_flags(|f| f.set(Flags::IS_SSL, true));
             match SSLWrapper::init_with_ctx(tls.clone(), false) {
@@ -407,7 +405,6 @@ impl WindowsNamedPipe {
         self.init_tls_wrapper(ssl_options, owned_ctx).transpose()?;
         let pipe = Pipe::open_duplex(self.vm.uws_loop().port(), fd)?;
 
-        let _keep_alive = self.keep_alive();
         self.on_connect(Ok(pipe));
         bun_sys::Result::Ok(())
     }

@@ -99,7 +99,7 @@ pub struct Subprocess<'a> {
     /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub(crate) weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
     /// Held for the stdin `FileSink`, which points back here.
-    pub(crate) stdin_sink_ref: JsCell<Option<RefPtr<Subprocess<'a>>>>,
+    pub(crate) stdin_sink_ref: Cell<Option<RefPtr<Subprocess<'a>>>>,
     /// Follows the `signal` option until `clear_abort_signal`; armed only in a
     /// `Bun.ModuleGraph` context, which kills it when disposed (children
     /// of the realm's own script are the process auto-killer's).
@@ -153,10 +153,8 @@ impl Subprocess<'_> {
         self.flags.set(v);
     }
 
-    pub(crate) fn hold_for_stdin_sink(&self) {
-        // SAFETY: `self` is the live heap allocation.
-        let this = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
-        self.stdin_sink_ref.set(Some(this));
+    pub(crate) fn hold_for_stdin_sink(self: &RefPtr<Self>) {
+        self.stdin_sink_ref.set(Some(self.clone()));
     }
 }
 
@@ -395,7 +393,7 @@ impl Subprocess<'_> {
         self.stderr.with_mut(|s| s.to_js(&cx.js_thread(), exited))
     }
 
-    pub(crate) fn get_stdin(&self, cx: &mut JsScope<'_>) -> JSValue {
+    pub(crate) fn get_stdin(self: &RefPtr<Self>, cx: &mut JsScope<'_>) -> JSValue {
         // When terminal is used, stdin goes through the terminal
         if self.terminal.get().is_some() {
             return JSValue::NULL;
@@ -486,8 +484,8 @@ impl Subprocess<'_> {
         for out in [&self.stdout, &self.stderr] {
             if let Some(pipe) = out.get().pipe() {
                 #[cfg(windows)]
-                PipeReader::read_available(&pipe);
-                PipeReader::close(&pipe);
+                pipe.read_available();
+                pipe.close();
             }
         }
     }
@@ -700,7 +698,7 @@ impl Subprocess<'_> {
         // is moot once the direct child has exited.
         for out in [&self.stdout, &self.stderr] {
             if let Some(pipe) = out.get().pipe() {
-                PipeReader::resume(&pipe);
+                pipe.resume();
             }
         }
 
@@ -1093,7 +1091,7 @@ pub(crate) mod testing_apis {
         };
 
         let fake_err = bun_sys::Error::from_code(bun_sys::Errno::EBADF, bun_sys::Tag::read);
-        PipeReader::inject_error(&pipe, fake_err);
+        pipe.inject_error(fake_err);
         Ok(true)
     }
 

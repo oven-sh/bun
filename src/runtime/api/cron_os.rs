@@ -16,7 +16,7 @@ use bun_jsc::{
     JsCell, JsResult,
 };
 use bun_paths::Path;
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::RefPtr;
 use bun_removable_features::removable_body_behind_value;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self as sys, Fd, File};
@@ -187,7 +187,7 @@ impl OsJobs {
     }
 }
 
-/// `OsJobs` has the one ref. A function that takes a `ThisPtr` may release it.
+/// `OsJobs` holds it until `finish`.
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct OsJob {
     ref_count: Cell<u32>,
@@ -204,7 +204,7 @@ pub(crate) struct OsJob {
 bun_spawn::link_impl_ProcessExit! {
     Cron for OsJob => |this| {
         // SAFETY: a live job installed the handler, and its handle detaches it.
-        on_process_exit(status, _rusage) => OsJob::on_process_exit(ThisPtr::new(this), status),
+        on_process_exit(status, _rusage) => RefPtr::init_ref(this).on_process_exit(status),
     }
 }
 
@@ -222,28 +222,23 @@ impl OsJob {
         let owner = Owner::new(PollTag::Cron, job.as_ptr().cast());
         // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { job.output.set_owner(owner) };
-        let (this, promise) = (job.this_ptr(), job.promise.get().value());
-        (runtime_state().cron_os_jobs.0).with_mut(|jobs| jobs.push(job));
-        Self::run(this, first.map(Some));
+        let promise = job.promise.get().value();
+        (runtime_state().cron_os_jobs.0).with_mut(|jobs| jobs.push(job.clone()));
+        job.run(first.map(Some));
         promise
     }
 
-    fn run(this: ThisPtr<Self>, next: Next) {
-        let process = match next.and_then(|next| next.map(|c| this.spawn(c)).transpose()) {
+    fn run(self: &RefPtr<Self>, next: Next) {
+        let process = match next.and_then(|next| next.map(|c| self.spawn(c)).transpose()) {
             Ok(Some(process)) => process,
-            Ok(None) => return Self::finish(this, Ok(())),
-            Err(failure) => return Self::finish(this, Err(failure)),
+            Ok(None) => return self.finish(Ok(())),
+            Err(failure) => return self.finish(Err(failure)),
         };
-        process.set_exit_handler(this);
-        // `this` may be freed on every path but `Ok(false)`.
-        match process.watch_or_reap() {
-            Ok(false) => this.process.set(Some(process)),
-            Ok(true) => {}
-            Err(err) => {
-                if !process.has_exited() {
-                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed());
-                }
-            }
+        process.set_exit_owner(self);
+        let mut rusage = bun_core::ffi::zeroed();
+        match process.watch_or_exit(&mut rusage) {
+            Some(exit) => exit.dispatch(&rusage),
+            None => self.process.set(Some(process)),
         }
     }
 
@@ -305,22 +300,22 @@ impl OsJob {
         }
     }
 
-    pub(crate) fn on_io(this: ThisPtr<Self>, event: IoEvent) {
-        let read = this.output.read(bun_io::js_vm_ctx(), Some(event));
-        let Some(output) = this.take_output(read) else {
+    pub(crate) fn on_io(self: &RefPtr<Self>, event: IoEvent) {
+        let read = self.output.read(bun_io::js_vm_ctx(), Some(event));
+        let Some(output) = self.take_output(read) else {
             return;
         };
-        match this.step.take() {
-            Some((step, Child::Running)) => this.step.set(Some((step, Child::OutputEnded(output)))),
-            Some((step, Child::Exited(exit))) => Self::end_step(this, step, exit, output),
+        match self.step.take() {
+            Some((step, Child::Running)) => self.step.set(Some((step, Child::OutputEnded(output)))),
+            Some((step, Child::Exited(exit))) => self.end_step(step, exit, output),
             other @ (Some((_, Child::OutputEnded(_))) | None) => {
                 debug_assert!(false, "the output ended twice");
-                this.step.set(other);
+                self.step.set(other);
             }
         }
     }
 
-    fn on_process_exit(this: ThisPtr<Self>, status: Status) {
+    fn on_process_exit(self: &RefPtr<Self>, status: Status) {
         let exit = match status {
             Status::Running => return,
             Status::Exited(exited) if exited.code == 0 => Ok(()),
@@ -328,31 +323,30 @@ impl OsJob {
             Status::Signaled(signal) => Err(Failure::Signaled(signal)),
             Status::Err(err) => Err(Failure::Wait(err)),
         };
-        match this.step.take() {
-            Some((step, Child::Running)) => this.step.set(Some((step, Child::Exited(exit)))),
-            Some((step, Child::OutputEnded(output))) => Self::end_step(this, step, exit, output),
+        match self.step.take() {
+            Some((step, Child::Running)) => self.step.set(Some((step, Child::Exited(exit)))),
+            Some((step, Child::OutputEnded(output))) => self.end_step(step, exit, output),
             other @ (Some((_, Child::Exited(_))) | None) => {
                 debug_assert!(false, "the child exited twice");
-                this.step.set(other);
+                self.step.set(other);
             }
         }
     }
 
     fn end_step(
-        this: ThisPtr<Self>,
+        self: &RefPtr<Self>,
         step: Step,
         exit: Result<(), Failure>,
         output: sys::Result<Vec<u8>>,
     ) {
-        this.process.set(None);
-        Self::run(this, after(step, exit, output));
+        self.process.set(None);
+        self.run(after(step, exit, output));
     }
 
-    fn finish(this: ThisPtr<Self>, result: Result<(), Failure>) {
+    fn finish(self: &RefPtr<Self>, result: Result<(), Failure>) {
         let _entered = VirtualMachine::get().enter_event_loop_scope();
-        // Dropped before the scope ends, which is where the reactions run.
         let Some(job) = runtime_state().cron_os_jobs.0.with_mut(|jobs| {
-            let i = jobs.iter().position(|job| job.as_ptr() == this.as_ptr())?;
+            let i = jobs.iter().position(|job| job.as_ptr() == self.as_ptr())?;
             Some(jobs.swap_remove(i))
         }) else {
             return;

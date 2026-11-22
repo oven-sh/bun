@@ -22,7 +22,7 @@ use bun_io::ParentDeathWatchdog;
 use bun_io::{FilePoll, KeepAlive, OwnedFilePoll};
 #[cfg(windows)]
 use bun_iocp::{Hold, Request};
-use bun_ptr::{JsCell, RefPtr, ThisPtr};
+use bun_ptr::{JsCell, RefPtr};
 #[cfg(windows)]
 use bun_sys::windows as w;
 #[cfg(windows)]
@@ -91,16 +91,27 @@ const PROCESS_POLL_ONE_SHOT: bool = !cfg!(any(target_os = "linux", target_os = "
 
 pub use crate::{ProcessExit, ProcessExitHandler, ProcessExitKind};
 
-#[inline]
-fn call_exit_handler(h: ProcessExitHandler, status: Status, rusage: &Rusage) {
-    let Some(h) = h else { return };
-    if h.owner().is_null() {
-        return;
-    }
-    h.on_process_exit(status, rusage);
+/// An exit that is left to report. It does not borrow the process, which the handler may free.
+#[must_use]
+pub struct PendingExit {
+    handler: ProcessExitHandler,
+    status: Status,
+    /// Open until the handler has returned.
+    #[cfg(windows)]
+    _handle: Option<OwnedHandle>,
 }
 
-/// Shared borrows only. What may free the process, or hands out its address, takes a `ThisPtr`.
+impl PendingExit {
+    pub fn dispatch(self, rusage: &Rusage) {
+        let Some(h) = self.handler else { return };
+        if h.owner().is_null() {
+            return;
+        }
+        h.on_process_exit(self.status, rusage);
+    }
+}
+
+/// Shared borrows only. What hands out its address takes a `&RefPtr`.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct Process {
     pub pid: PidT,
@@ -158,28 +169,13 @@ impl core::ops::Deref for ProcessHandle {
 
 impl ProcessHandle {
     /// Dispatch this process's exit to `owner` (see the type-level contract).
-    pub fn set_exit_handler<T: crate::ProcessExitOwner>(&self, owner: bun_ptr::ThisPtr<T>) {
-        // SAFETY: `owner` is live now (`ThisPtr` invariant) and, per the
-        // type-level contract, for every dispatch.
+    pub fn set_exit_owner<T>(&self, owner: &RefPtr<T>)
+    where
+        T: crate::ProcessExitOwner + bun_ptr::AnyRefCounted,
+    {
+        // SAFETY: `owner` is live now and, per the type-level contract, for every dispatch.
         let h = unsafe { ProcessExit::of(owner.as_ptr()) };
         self.0.set_exit_handler(h);
-    }
-
-    pub fn watch(&self) -> bun_sys::Result<()> {
-        Process::watch(self.this_ptr())
-    }
-
-    /// See [`Process::watch_or_reap`]; may synchronously run the exit handler,
-    /// so call this on a handle the handler does not re-borrow (a local, not
-    /// the owner's slot).
-    pub fn watch_or_reap(&self) -> bun_sys::Result<bool> {
-        Process::watch_or_reap(self.this_ptr())
-    }
-
-    /// See [`Process::on_exit`]; runs the exit handler (same rule as
-    /// [`watch_or_reap`](Self::watch_or_reap)).
-    pub fn on_exit(&self, status: Status, rusage: &Rusage) {
-        Process::on_exit(self.this_ptr(), status, rusage)
     }
 }
 
@@ -233,79 +229,72 @@ pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_io::EventLoopCtx
 impl Process {
     // has_exited / has_killed live in the always-on impl above.
 
-    /// May free `this`.
-    pub fn on_exit(this: ThisPtr<Self>, status: Status, rusage: &Rusage) {
+    pub fn on_exit(&self, status: Status) -> PendingExit {
         debug_assert!(!matches!(status, Status::Running));
-        let exit_handler = this.exit_handler.get();
-        let _ = this.status.set(status.clone());
-        // Open until the handler has returned.
-        #[cfg(windows)]
-        let _handle = this.handle.take();
-        this.detach();
-        call_exit_handler(exit_handler, status, rusage);
+        let _ = self.status.set(status.clone());
+        let exit = PendingExit {
+            handler: self.exit_handler.get(),
+            status,
+            #[cfg(windows)]
+            _handle: self.handle.take(),
+        };
+        self.detach();
+        exit
     }
 
-    /// May free `this`. Returns whether it has exited.
+    /// After a `None`, call [`Self::rewatch_or_reap`].
     #[cfg(unix)]
-    fn wait_posix(this: ThisPtr<Self>, sync_: bool) -> bool {
-        let mut rusage = rusage_zeroed();
+    #[must_use]
+    pub fn wait_posix(&self, sync_: bool, rusage: &mut Rusage) -> Option<PendingExit> {
         let waitpid_result = posix_spawn::wait4(
-            this.pid,
+            self.pid,
             if sync_ { 0 } else { libc::WNOHANG as u32 },
-            Some(&mut rusage),
+            Some(rusage),
         );
-        Self::on_wait_pid(this, &waitpid_result, &rusage)
+        self.on_wait_pid(&waitpid_result)
     }
 
-    /// May free `this`.
-    pub fn wait(this: ThisPtr<Self>, sync_: bool) {
+    #[must_use]
+    pub fn wait(self: &RefPtr<Self>, sync_: bool, rusage: &mut Rusage) -> Option<PendingExit> {
         #[cfg(unix)]
-        Self::wait_posix(this, sync_);
+        return self
+            .wait_posix(sync_, rusage)
+            .or_else(|| self.rewatch_or_reap(rusage));
         #[cfg(windows)]
-        Self::wait_windows(this, sync_);
+        return self.wait_windows(sync_, rusage);
     }
 
-    /// May free `this`. Returns whether it has exited.
     #[cfg(unix)]
-    fn on_wait_pid(
-        this: ThisPtr<Self>,
-        waitpid_result: &bun_sys::Result<WaitPidResult>,
-        rusage: &Rusage,
-    ) -> bool {
+    #[must_use]
+    fn on_wait_pid(&self, waitpid_result: &bun_sys::Result<WaitPidResult>) -> Option<PendingExit> {
         // `kill_and_reap` leaves the reaping to a thread on macOS, and its caller has reported the exit by now.
-        if this.has_exited() {
-            return true;
+        if self.has_exited() {
+            return None;
         }
-        let pid = this.pid;
-        let mut rusage_result = *rusage;
+        Status::from(self.pid, waitpid_result).map(|status| self.on_exit(status))
+    }
 
-        let status: Option<Status> = Status::from(pid, waitpid_result).or_else(|| 'brk: {
-            match Self::rewatch_posix(this) {
-                Ok(()) => {}
-                Err(err_) => {
-                    #[cfg(target_os = "macos")]
-                    if err_.get_errno() == bun_sys::E::ESRCH {
-                        // ESRCH with nothing to reap: the child has started to exit (`proc_find` fails from then on)
-                        // but isn't a zombie yet. That can last: see `reap_on_thread`.
-                        if Self::reap_on_thread(this).is_ok() {
-                            break 'brk None;
-                        }
-                        // No thread could start. Try once more, then report the error rather than block the loop.
-                        let retry =
-                            posix_spawn::wait4(pid, libc::WNOHANG as u32, Some(&mut rusage_result));
-                        break 'brk Status::from(pid, &retry).or(Some(Status::Err(err_)));
-                    }
-                    break 'brk Some(
-                        Self::kill_and_reap(this, &mut rusage_result).unwrap_or(Status::Err(err_)),
-                    );
-                }
+    #[cfg(unix)]
+    #[must_use]
+    pub fn rewatch_or_reap(self: &RefPtr<Self>, rusage: &mut Rusage) -> Option<PendingExit> {
+        if self.has_exited() {
+            return None;
+        }
+        let err_ = self.rewatch_posix().err()?;
+        #[cfg(target_os = "macos")]
+        if err_.get_errno() == bun_sys::E::ESRCH {
+            // ESRCH with nothing to reap: the child has started to exit (`proc_find` fails from then on)
+            // but isn't a zombie yet. That can last: see `reap_on_thread`.
+            if self.reap_on_thread().is_ok() {
+                return None;
             }
-            None
-        });
-
-        let Some(status) = status else { return false };
-        Self::on_exit(this, status, &rusage_result);
-        true
+            // No thread could start. Try once more, then report the error rather than block the loop.
+            let retry = posix_spawn::wait4(self.pid, libc::WNOHANG as u32, Some(rusage));
+            let status = Status::from(self.pid, &retry).unwrap_or(Status::Err(err_));
+            return Some(self.on_exit(status));
+        }
+        let status = self.kill_and_reap(rusage).unwrap_or(Status::Err(err_));
+        Some(self.on_exit(status))
     }
 
     /// Waits for a child that is exiting on a thread of its own, and delivers the result to this loop.
@@ -313,74 +302,78 @@ impl Process {
     /// A blocking `wait4` here can deadlock. The session leader of a pty drains its controlling terminal while it
     /// exits (`ttywait` in xnu's `proc_exit`), before it can be reaped, and this loop is what reads the pty's master.
     #[cfg(target_os = "macos")]
-    fn reap_on_thread(this: ThisPtr<Self>) -> Result<(), std::io::Error> {
-        if this.is_on_waiter_thread() {
+    fn reap_on_thread(self: &RefPtr<Self>) -> Result<(), std::io::Error> {
+        if self.is_on_waiter_thread() {
             return Ok(());
         }
-        this.leave_to_waiter_thread();
-        waiter_thread_posix::reap_on_thread(RefPtr::from_this(this))
-            .inspect_err(|_| this.detach_poller())
+        self.leave_to_waiter_thread();
+        waiter_thread_posix::reap_on_thread(self.clone()).inspect_err(|_| self.detach_poller())
     }
 
-    /// May free `this`, if it returns `Ok(true)`.
-    pub fn watch_or_reap(this: ThisPtr<Self>) -> bun_sys::Result<bool> {
-        if let Some(status) = this.status() {
-            let zeroed = rusage_zeroed();
-            Self::on_exit(this, status.clone(), &zeroed);
-            return Ok(true);
+    /// As [`Self::watch_or_reap`], with its error as the exit.
+    #[must_use]
+    pub fn watch_or_exit(self: &RefPtr<Self>, rusage: &mut Rusage) -> Option<PendingExit> {
+        self.watch_or_reap(rusage)
+            .unwrap_or_else(|err| Some(self.on_exit(Status::Err(err))))
+    }
+
+    pub fn watch_or_reap(
+        self: &RefPtr<Self>,
+        rusage: &mut Rusage,
+    ) -> bun_sys::Result<Option<PendingExit>> {
+        if let Some(status) = self.status() {
+            return Ok(Some(self.on_exit(status.clone())));
         }
 
-        match Self::watch(this) {
+        match self.watch() {
             Err(err) => {
                 #[cfg(unix)]
                 if err.get_errno() == bun_sys::E::ESRCH {
                     // Not blocking on macOS, so a child that is still exiting goes to `reap_on_thread`.
-                    return Ok(Self::wait_posix(this, cfg!(not(target_os = "macos"))));
+                    return Ok(self.wait(cfg!(not(target_os = "macos")), rusage));
                 }
-                let mut rusage = rusage_zeroed();
-                if let Some(status) = Self::kill_and_reap(this, &mut rusage) {
-                    Self::on_exit(this, status, &rusage);
-                    return Ok(true);
+                if let Some(status) = self.kill_and_reap(rusage) {
+                    return Ok(Some(self.on_exit(status)));
                 }
                 // The pid may be another process's from here on, and `kill` leaves alone what is not watched.
                 #[cfg(unix)]
-                this.close();
+                self.close();
                 Err(err)
             }
-            Ok(()) => Ok(false),
+            Ok(()) => Ok(None),
         }
     }
 
     /// On `Err` it is left running.
-    pub fn watch(this: ThisPtr<Self>) -> bun_sys::Result<()> {
+    pub fn watch(self: &RefPtr<Self>) -> bun_sys::Result<()> {
         #[cfg(windows)]
-        return Self::watch_windows(this);
+        return self.watch_windows();
 
         #[cfg(unix)]
         {
             if WaiterThread::should_use_waiter_thread() {
                 WaiterThread::start()?;
-                this.leave_to_waiter_thread();
-                WaiterThread::append(RefPtr::from_this(this));
+                self.leave_to_waiter_thread();
+                WaiterThread::append(self.clone());
                 return Ok(());
             }
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            let Some(watchfd) = this.pidfd.get().as_ref().map(|file| file.fd().native()) else {
-                debug_assert!(this.has_exited());
+            let Some(watchfd) = self.pidfd.get().as_ref().map(|file| file.fd().native()) else {
+                debug_assert!(self.has_exited());
                 return Err(bun_sys::Error::from_code(
                     bun_sys::E::ESRCH,
                     bun_sys::Tag::pidfd_open,
                 ));
             };
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            let watchfd = this.pid;
+            let watchfd = self.pid;
 
-            let poll = match this.poller.replace(Poller::Detached) {
+            let poll = match self.poller.replace(Poller::Detached) {
                 Poller::Fd(poll) => poll,
                 Poller::WaiterThread(_) | Poller::Detached => {
-                    let owner = bun_io::Owner::new(bun_io::PollTag::Process, this.as_ptr().cast());
-                    let ctx = this.event_loop_ctx();
+                    let owner = bun_io::Owner::new(bun_io::PollTag::Process, self.as_ptr().cast());
+                    let ctx = self.event_loop_ctx();
                     // SAFETY: the poll becomes a field of its owner.
                     unsafe { OwnedFilePoll::new(ctx, Fd::from_native(watchfd), owner) }
                 }
@@ -390,26 +383,26 @@ impl Process {
             let registered = poll
                 .register(bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT)
                 .inspect_err(|_| poll.disable_keeping_process_alive());
-            this.poller.set(Poller::Fd(poll));
+            self.poller.set(Poller::Fd(poll));
             registered
         }
     }
 
     #[cfg(unix)]
-    fn rewatch_posix(this: ThisPtr<Self>) -> bun_sys::Result<()> {
+    fn rewatch_posix(self: &RefPtr<Self>) -> bun_sys::Result<()> {
         if WaiterThread::should_use_waiter_thread() {
             WaiterThread::start()?;
-            this.leave_to_waiter_thread();
-            WaiterThread::append(RefPtr::from_this(this));
+            self.leave_to_waiter_thread();
+            WaiterThread::append(self.clone());
             return Ok(());
         }
         // A `reap_on_thread` thread is waiting for this pid already, and its result will arrive.
         #[cfg(target_os = "macos")]
-        if this.is_on_waiter_thread() {
+        if self.is_on_waiter_thread() {
             return Ok(());
         }
 
-        this.with_poll(|fd| fd.register(bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT))
+        self.with_poll(|fd| fd.register(bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT))
         .expect(
             "Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.",
         )
@@ -481,23 +474,23 @@ impl Process {
     #[cfg(unix)]
     #[cold]
     #[inline(never)]
-    pub fn kill_and_reap(this: ThisPtr<Self>, rusage: &mut Rusage) -> Option<Status> {
+    pub fn kill_and_reap(self: &RefPtr<Self>, rusage: &mut Rusage) -> Option<Status> {
         // Reaped already, so the pid may be another process's by now.
-        if this.has_exited() {
+        if self.has_exited() {
             return None;
         }
-        this.send_signal(libc::SIGKILL as u8).ok()?;
+        self.send_signal(libc::SIGKILL as u8).ok()?;
         // Blocking here has the deadlock of `reap_on_thread` too: a killed child drains its terminal like any other.
         #[cfg(target_os = "macos")]
         let Some(status) = Status::from(
-            this.pid,
-            &posix_spawn::wait4(this.pid, libc::WNOHANG as u32, Some(rusage)),
+            self.pid,
+            &posix_spawn::wait4(self.pid, libc::WNOHANG as u32, Some(rusage)),
         ) else {
-            let _ = Self::reap_on_thread(this);
+            let _ = self.reap_on_thread();
             return None;
         };
         #[cfg(not(target_os = "macos"))]
-        let status = Status::from(this.pid, &posix_spawn::wait4(this.pid, 0, Some(rusage)))?;
+        let status = Status::from(self.pid, &posix_spawn::wait4(self.pid, 0, Some(rusage)))?;
         match status {
             Status::Signaled(signal) if signal == libc::SIGKILL as u8 => None,
             status @ (Status::Exited(_) | Status::Signaled(_)) => Some(status),
@@ -681,51 +674,50 @@ impl Process {
 
 #[cfg(windows)]
 impl Process {
-    fn watch_windows(this: ThisPtr<Self>) -> bun_sys::Result<()> {
-        let Some(handle) = this.handle.get() else {
+    fn watch_windows(self: &RefPtr<Self>) -> bun_sys::Result<()> {
+        let Some(handle) = self.handle.get() else {
             return Ok(());
         };
-        if this.watch.get().is_none() {
+        if self.watch.get().is_none() {
             // A port that shuts down drops it without a call, and not every owner is dropped with its thread.
-            let process = scopeguard::guard(RefPtr::from_this(this), |process| {
+            let process = scopeguard::guard(self.clone(), |process| {
                 if process.watch.take().is_some() {
                     process.handle.set(None);
                 }
             });
-            let on_exit = move || Self::report_exit(process.this_ptr());
-            let port = this.event_loop.loop_().port();
+            let on_exit = move || {
+                let mut rusage = rusage_zeroed();
+                if let Some(exit) = process.take_exit(&mut rusage) {
+                    exit.dispatch(&rusage);
+                }
+            };
+            let port = self.event_loop.loop_().port();
             let Ok(exit) = Request::wait(port, handle.as_handle(), on_exit) else {
                 let (errno, tag) = (bun_sys::E::ENOMEM, bun_sys::Tag::uv_spawn);
                 return Err(bun_sys::Error::from_code(errno, tag));
             };
             let hold = Hold::new(port);
-            this.watch.set(Some(Watch { _exit: exit, hold }));
+            self.watch.set(Some(Watch { _exit: exit, hold }));
         }
-        this.set_hold(true);
+        self.set_hold(true);
         Ok(())
     }
 
-    /// May free `this`.
-    fn wait_windows(this: ThisPtr<Self>, sync_: bool) {
-        let Some(handle) = this.os_handle() else {
-            return;
-        };
+    fn wait_windows(self: &RefPtr<Self>, sync_: bool, rusage: &mut Rusage) -> Option<PendingExit> {
         let timeout = if sync_ { w::INFINITE } else { 0 };
-        if w::kernel32::WaitForSingleObject(handle, timeout) == 0 {
-            Self::report_exit(this);
-        } else if let Err(err) = Self::watch_windows(this) {
-            let mut rusage = rusage_zeroed();
-            let status = Self::kill_and_reap(this, &mut rusage).unwrap_or(Status::Err(err));
-            Self::on_exit(this, status, &rusage);
+        if w::kernel32::WaitForSingleObject(self.os_handle()?, timeout) == 0 {
+            return self.take_exit(rusage);
         }
+        let err = self.watch_windows().err()?;
+        let status = self.kill_and_reap(rusage).unwrap_or(Status::Err(err));
+        Some(self.on_exit(status))
     }
 
-    /// May free `this`.
-    fn report_exit(this: ThisPtr<Self>) {
-        let Some(handle) = this.os_handle() else {
-            return;
-        };
-        Self::on_exit(this, this.final_status(handle), &process_rusage(handle));
+    /// Once it has ended.
+    fn take_exit(&self, rusage: &mut Rusage) -> Option<PendingExit> {
+        let handle = self.os_handle()?;
+        *rusage = process_rusage(handle);
+        Some(self.on_exit(self.final_status(handle)))
     }
 
     fn final_status(&self, handle: w::HANDLE) -> Status {
@@ -736,15 +728,15 @@ impl Process {
     }
 
     /// As on POSIX, but there is nothing to reap.
-    pub fn kill_and_reap(this: ThisPtr<Self>, rusage: &mut Rusage) -> Option<Status> {
-        let handle = this.os_handle()?;
-        if this.signal.get() == 0 {
+    pub fn kill_and_reap(&self, rusage: &mut Rusage) -> Option<Status> {
+        let handle = self.os_handle()?;
+        if self.signal.get() == 0 {
             // `None` if this is what ends it, or if it is still there.
             windows_process::kill(handle, 9).err()?;
             windows_process::kill(handle, 0).err()?;
         }
         *rusage = process_rusage(handle);
-        Some(this.final_status(handle)).filter(|status| !matches!(status, Status::Err(_)))
+        Some(self.final_status(handle)).filter(|status| !matches!(status, Status::Err(_)))
     }
 
     fn set_hold(&self, value: bool) {
@@ -856,8 +848,8 @@ pub mod waiter_thread_posix {
             self.run_from_main_thread();
         }
 
-        pub(crate) fn run_from_main_thread(self) {
-            T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &self.rusage);
+        pub(crate) fn run_from_main_thread(mut self) {
+            T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &mut self.rusage);
         }
     }
 
@@ -877,7 +869,7 @@ pub mod waiter_thread_posix {
         }
 
         pub(crate) fn run_from_main_thread(self) {
-            T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &rusage_zeroed());
+            T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &mut rusage_zeroed());
         }
 
         /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
@@ -900,9 +892,9 @@ pub mod waiter_thread_posix {
         /// The poster for a JS-owned process (see `Process::js_poster`).
         fn js_poster(&self) -> Option<&bun_event_loop::JsPoster>;
         fn on_wait_pid_from_waiter_thread(
-            this: RefPtr<Self>,
+            self: RefPtr<Self>,
             result: &bun_sys::Result<WaitPidResult>,
-            rusage: &Rusage,
+            rusage: &mut Rusage,
         );
     }
 
@@ -921,14 +913,17 @@ pub mod waiter_thread_posix {
             self.js_poster.as_ref()
         }
         fn on_wait_pid_from_waiter_thread(
-            this: RefPtr<Self>,
+            self: RefPtr<Self>,
             result: &bun_sys::Result<WaitPidResult>,
-            rusage: &Rusage,
+            rusage: &mut Rusage,
         ) {
-            if this.is_on_waiter_thread() {
-                this.detach_poller();
+            if self.is_on_waiter_thread() {
+                self.detach_poller();
             }
-            Process::on_wait_pid(this.this_ptr(), result, rusage);
+            let exit = self.on_wait_pid(result);
+            if let Some(exit) = exit.or_else(|| self.rewatch_or_reap(rusage)) {
+                exit.dispatch(rusage);
+            }
         }
     }
 

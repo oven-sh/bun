@@ -6,7 +6,7 @@ use bun_io::FileType;
 use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, Chunk, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::JsCell;
-use bun_ptr::RefPtr;
+use bun_ptr::{OptionCellExt as _, RefPtr};
 use bun_sys::{self as sys, Fd};
 
 use crate::webcore::SinkHandle;
@@ -32,7 +32,7 @@ pub struct FileReader {
     pub(crate) max_size: Option<usize>,
     pub(crate) started: Cell<bool>,
     /// Held while a read can complete from the event loop, until the reader is done.
-    pub(crate) io_ref: JsCell<Option<RefPtr<Source>>>,
+    pub(crate) io_ref: Cell<Option<RefPtr<Source>>>,
     pub(crate) event_loop: Cell<EventLoopHandle>,
     pub(crate) lazy: JsCell<Lazy>,
     pub(crate) buffered: JsCell<Vec<u8>>,
@@ -58,7 +58,7 @@ impl Default for FileReader {
             start_offset: None,
             max_size: None,
             started: Cell::new(false),
-            io_ref: JsCell::new(None),
+            io_ref: Cell::new(None),
             // Sentinel only; never dispatched (callers must overwrite before use).
             event_loop: Cell::new(EventLoopHandle::init(core::ptr::null_mut())),
             lazy: JsCell::new(Lazy::None),
@@ -334,7 +334,7 @@ impl FileReader {
             #[cfg(unix)]
             {
                 if !self.started.get()
-                    && self.io_ref.get().is_none()
+                    && self.io_ref.is_none()
                     && self.reader.has_flag(ReaderFlags::POLLABLE)
                     && !self.reader.is_done()
                 {
@@ -346,7 +346,7 @@ impl FileReader {
                 // Non-lazy fromPipe path (Bun.spawn stdout/stderr): hold a
                 // ref so the source is not finalized while it is read.
                 if !self.started.get()
-                    && self.io_ref.get().is_none()
+                    && self.io_ref.is_none()
                     && self.reader.has_source()
                     && !self.reader.is_done()
                 {
@@ -879,8 +879,8 @@ impl readable_stream::SourceContext for FileReader {
     }
 
     fn wrapper_finalized(&self) {
-        debug_assert!(!(self.done.get() && self.io_ref.get().is_some()));
-        if self.done.get() || self.io_ref.get().is_none() {
+        debug_assert!(!(self.done.get() && self.io_ref.is_some()));
+        if self.done.get() || self.io_ref.is_none() {
             return;
         }
         self.done.set(true);

@@ -3,7 +3,7 @@ use core::ffi::{c_char, c_void};
 use std::rc::Rc;
 
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{self as bun_process, Process, SpawnOptions, Status};
+use crate::api::bun::process::{self as bun_process, SpawnOptions, Status};
 use crate::api::bun::subprocess as JscSubprocess;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
@@ -327,10 +327,9 @@ impl ShellSubprocess {
             }
         }
         // Nothing reports its exit from here on, so nothing would reap it either.
-        let _ = Process::kill_and_reap(
-            subproc.proc().this_ptr(),
-            &mut bun_core::ffi::zeroed::<bun_spawn::Rusage>(),
-        );
+        let _ = subproc
+            .proc()
+            .kill_and_reap(&mut bun_core::ffi::zeroed::<bun_spawn::Rusage>());
         subproc.proc().set_exit_handler_default();
         // Dropping `subproc` runs `ShellSubprocess::drop` → `finalize_sync`.
     }
@@ -545,10 +544,9 @@ impl ShellSubprocess {
         // below are scoped so no borrow of the Subprocess spans the
         // re-entrant `watch`/`start`/`read_all` calls.
         unsafe {
-            Process::set_exit_handler(
-                (*subprocess).proc(),
-                bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess),
-            );
+            let handler =
+                bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess);
+            (*subprocess).proc().set_exit_handler(handler);
         }
         if let Some(id) = cmd_parent.interp.context.get() {
             // Freed already (the graph was collected): `interrupted()` ends the script.

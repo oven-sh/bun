@@ -17,8 +17,8 @@ use bun_jsc::{
     CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult,
     VirtualMachineRef as VirtualMachine,
 };
-use bun_jsc::{JsCell, JsCellRefExt as _};
-use bun_ptr::{RefPtr, ThisPtr, ThreadSafeRefCount};
+use bun_jsc::{JsCell, JsCellRefExt as _, WrapperGuard};
+use bun_ptr::{RefPtr, ThreadSafeRefCount};
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
 
@@ -76,10 +76,11 @@ pub(crate) struct FSWatcher {
 
 bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ not yet detached).
-    let this = unsafe { &*this };
-    match cause {
-        bun_jsc::AbortCause::Signal(reason) => this.emit_abort(reason),
-        bun_jsc::AbortCause::ContextStopped(_) => this.close_without_event(),
+    unsafe {
+        match cause {
+            bun_jsc::AbortCause::Signal(reason) => RefPtr::init_ref(this).emit_abort(reason),
+            bun_jsc::AbortCause::ContextStopped(_) => (*this).close_without_event(),
+        }
     }
 });
 
@@ -155,34 +156,34 @@ impl FSWatchTask {
 }
 
 impl FSWatcher {
-    fn append_event(this: ThisPtr<Self>, event: Event) {
-        if this.pending_events.get().len() == 8 {
-            Self::enqueue_events(this);
+    fn append_event(self: &RefPtr<Self>, event: Event) {
+        if self.pending_events.get().len() == 8 {
+            self.enqueue_events();
         }
-        this.pending_events
+        self.pending_events
             .with_mut(|events| events.append_assume_capacity(event));
     }
 
-    fn enqueue_abort(this: ThisPtr<Self>) {
-        Self::append_event(this, Event::Abort);
-        Self::enqueue_events(this);
+    fn enqueue_abort(self: &RefPtr<Self>) {
+        self.append_event(Event::Abort);
+        self.enqueue_events();
     }
 
-    fn enqueue_events(this: ThisPtr<Self>) {
-        if this.pending_events.get().is_empty() {
+    fn enqueue_events(self: &RefPtr<Self>) {
+        if self.pending_events.get().is_empty() {
             return;
         }
-        let Some(ctx) = Self::ref_task(this) else {
-            this.pending_events.with_mut(Events::clear);
+        let Some(ctx) = self.ref_task() else {
+            self.pending_events.with_mut(Events::clear);
             return;
         };
         let batch = Box::new(FSWatchTask {
-            events: this.pending_events.take(),
+            events: self.pending_events.take(),
             concurrent_task: ConcurrentTask::default(),
             ctx,
         });
         let _ =
-            (this.handle).post_intrusive(this.loop_kind, batch, |batch| &mut batch.concurrent_task);
+            (self.handle).post_intrusive(self.loop_kind, batch, |batch| &mut batch.concurrent_task);
     }
 }
 
@@ -246,21 +247,22 @@ unsafe extern "C" {
 impl FSWatcher {
     /// Recover the `FSWatcher` from the `*mut c_void` userdata stashed in `init`.
     ///
-    /// Centralises the set-once `Option<*mut c_void> → ThisPtr` cast so the
+    /// Centralises the set-once `Option<*mut c_void> → &RefPtr` cast so the
     /// watcher-backend callbacks (`on_path_update`, `on_update_end`)
     /// stay safe at the call site. R-2: deref as shared — all `FSWatcher`
     /// mutation goes through `Cell`/`JsCell`.
     #[inline]
-    fn from_ctx(ctx: Option<*mut c_void>) -> ThisPtr<FSWatcher> {
+    fn from_ctx(ctx: &Option<*mut c_void>) -> &RefPtr<FSWatcher> {
         // SAFETY: ctx was registered as `*mut FSWatcher` cast to `*mut c_void`
         // in `init`. The FSWatcher is heap-stable and
         // outlives every watcher callback — it owns the `path_watcher`
-        // registration, which is dropped before the FSWatcher in `finalize`.
-        unsafe { ThisPtr::new(ctx.unwrap().cast::<FSWatcher>()) }
+        // registration, which is dropped before the wrapper's ref in `finalize`.
+        // `RefPtr` is a transparent pointer.
+        unsafe { &*core::ptr::from_ref(ctx.as_ref().unwrap()).cast() }
     }
 
     pub(crate) fn on_path_update(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
-        let this = Self::from_ctx(ctx);
+        let this = Self::from_ctx(&ctx);
 
         if this.verbose {
             match &event {
@@ -281,15 +283,15 @@ impl FSWatcher {
             }
         }
 
-        Self::append_event(this, event);
+        this.append_event(event);
     }
 
     pub(crate) fn on_update_end(ctx: Option<*mut c_void>) {
-        let this = Self::from_ctx(ctx);
+        let this = Self::from_ctx(&ctx);
         if this.verbose {
             Output::flush();
         }
-        Self::enqueue_events(this);
+        this.enqueue_events();
     }
 }
 
@@ -418,32 +420,35 @@ impl<'a> Arguments<'a> {
 }
 
 impl FSWatcher {
-    /// The GC wrapper takes over `this`.
-    fn init_js(this: RefPtr<Self>, listener: JSValue) {
-        let this_ref = this.this_ptr();
-        if this_ref.persistent.get() {
-            let vm_ctx = this_ref.ctx.loop_ctx();
-            this_ref.poll_ref.ref_(vm_ctx);
+    /// The GC wrapper takes over `self`.
+    fn init_js(
+        self: RefPtr<Self>,
+        global: &JSGlobalObject,
+        listener: JSValue,
+    ) -> WrapperGuard<'_, Self> {
+        if self.persistent.get() {
+            let vm_ctx = self.ctx.loop_ctx();
+            self.poll_ref.ref_(vm_ctx);
         }
 
-        let wrapper = js::wrap(this, &this_ref.global_this);
-        wrapper.set_js_ref_strong(&this_ref.global_this);
-        let js_this = wrapper.to_js();
-        js::listener_set_cached(js_this, &this_ref.global_this, listener);
-
-        if let Some(s) = this_ref.signal.get() {
+        if let Some(s) = self.signal.get() {
             // already aborted?
             if s.aborted() {
                 // safely abort next tick
-                Self::enqueue_abort(this_ref);
+                self.enqueue_abort();
             } else {
                 // SAFETY: this is the live boxed FSWatcher; `detach()` disarms the handle.
-                unsafe { bun_jsc::AbortHandle::follow_owner(this_ref.as_ptr(), s.clone()) };
+                unsafe { bun_jsc::AbortHandle::follow_owner(self.as_ptr(), s.clone()) };
             }
         }
+
+        let this = js::wrap(self, global);
+        this.set_js_ref_strong(global);
+        js::listener_set_cached(this.to_js(), global, listener);
+        this
     }
 
-    pub(crate) fn emit_if_aborted(&self) {
+    pub(crate) fn emit_if_aborted(self: &RefPtr<Self>) {
         let reason = match self.signal.get() {
             Some(s) if s.aborted() => Some(s.js_reason(&self.global_this)),
             _ => None,
@@ -460,13 +465,10 @@ impl FSWatcher {
     /// `Cell::get()` after the callback observes that write because
     /// `UnsafeCell` suppresses `noalias` on `&Self`; the trailing
     /// `self.close()` then no-ops.
-    pub(crate) fn emit_abort(&self, err: JSValue) {
+    pub(crate) fn emit_abort(self: &RefPtr<Self>, err: JSValue) {
         if self.closed.get() {
             return;
         }
-        // SAFETY: `self` is live. Once the listener closes it, only this ref keeps it alive.
-        let guard = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
-
         err.ensure_still_alive();
         let js_this = self.js_this.try_get();
         if let Some(js_this) = js_this {
@@ -498,12 +500,11 @@ impl FSWatcher {
         }
 
         self.close();
-        drop(guard);
     }
 
     /// As with an abort, the error is not thrown if nothing listens for it.
     #[cfg(windows)]
-    fn emit_deleted(&self, errno: bun_sys::E) {
+    fn emit_deleted(self: &RefPtr<Self>, errno: bun_sys::E) {
         if !self.closed.get() {
             let err = bun_sys::Error::from_code(errno, bun_sys::Tag::watch);
             self.emit_abort(err.to_js(&self.global_this));
@@ -630,10 +631,10 @@ impl FSWatcher {
 
     // this can be called from Watcher Thread or JS Context Thread
     /// Never the last ref on the watcher thread: `finalize` detaches the watcher before the wrapper's ref is dropped.
-    fn ref_task(this: ThisPtr<Self>) -> Option<RefPtr<Self>> {
+    fn ref_task(self: &RefPtr<Self>) -> Option<RefPtr<Self>> {
         // Serialises the read of `closed` against the JS thread's `close()`.
-        let _guard = this.mutex.lock_guard();
-        (!this.closed.get()).then(|| RefPtr::from_this(this))
+        let _guard = self.mutex.lock_guard();
+        (!self.closed.get()).then(|| self.clone())
     }
 
     pub(crate) fn close(&self) {
@@ -749,13 +750,12 @@ impl FSWatcher {
             abort_handle: bun_jsc::AbortHandle::for_owner::<FSWatcher>(),
         });
         let ctx = watcher.as_ptr();
-        let ctx_ref = watcher.this_ptr();
 
-        ctx_ref.path_watcher.set(if !is_aborted {
+        watcher.path_watcher.set(if !is_aborted {
             match path_watcher::watch(vm_ref, file_path, args.recursive, ctx.cast()) {
                 Ok(r) => Some(r),
                 Err(err) => {
-                    ctx_ref.detach();
+                    watcher.detach();
                     return Err(bun_sys::Error {
                         errno: err.errno,
                         syscall: bun_sys::Tag::watch,
@@ -767,12 +767,10 @@ impl FSWatcher {
         } else {
             None
         });
-        FSWatcher::init_js(
-            watcher,
-            args.listener.with_async_context_if_needed(args.global_this),
-        );
+        let listener = args.listener.with_async_context_if_needed(args.global_this);
+        let watcher = watcher.init_js(args.global_this, listener);
         // SAFETY: `ctx` is heap-allocated; `detach()` disarms it before it is finalized.
         unsafe { bun_jsc::AbortHandle::arm_owner(ctx, args.context) };
-        Ok(ctx_ref.js_this.get_or_undefined())
+        Ok(watcher.js_this.get_or_undefined())
     }
 }

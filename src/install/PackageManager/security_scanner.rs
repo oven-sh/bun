@@ -24,8 +24,8 @@ use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{PipeState, StaticPipeWriter, StdioResult};
 use bun_spawn::{
-    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage,
-    SpawnOptions, Status, Stdio,
+    self as spawn, Exited, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions,
+    Status, Stdio,
 };
 #[cfg(unix)]
 use bun_sys::Fd;
@@ -913,7 +913,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.on_read_result(result);
 
         let process = spawned.to_process_handle(event_loop);
-        let process = self.process.insert(process).this_ptr();
 
         let owner = Owner::new(
             PollTag::SecurityScanWriter,
@@ -932,14 +931,16 @@ impl<'a> SecurityScanSubprocess<'a> {
             }
         }
 
-        // SAFETY: dropping `self` detaches `process`. `self` is not used again in this frame.
+        // SAFETY: dropping `self` detaches `process`, which becomes its field.
         let handler =
             unsafe { ProcessExit::new(ProcessExitKind::SecurityScan, core::ptr::from_mut(self)) };
         process.set_exit_handler(handler);
 
-        // May re-enter `on_process_exit` synchronously (already-exited child).
-        if Process::watch_or_reap(process).is_err() {
-            return Err(crate::Error::ProcessWatchFailed);
+        let mut rusage = bun_core::ffi::zeroed();
+        match self.process.insert(process).watch_or_reap(&mut rusage) {
+            Ok(None) => {}
+            Ok(Some(exit)) => exit.dispatch(&rusage),
+            Err(_) => return Err(crate::Error::ProcessWatchFailed),
         }
 
         Ok(())

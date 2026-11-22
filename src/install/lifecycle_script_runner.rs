@@ -14,9 +14,7 @@ use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 
 use bun_core::{CStrList, CStrRef, CStringList, ZStr};
 use bun_spawn::SpawnResultExt as _;
-use bun_spawn::{
-    Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions, SpawnResult, Status,
-};
+use bun_spawn::{ProcessExit, ProcessExitKind, ProcessHandle, SpawnOptions, SpawnResult, Status};
 use bun_sys::Fd;
 
 bun_output::declare_scope!(Script, visible);
@@ -714,19 +712,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let event_loop = (*this).event_loop();
             let process = (*this)
                 .process
-                .insert(spawned.to_process_handle(event_loop))
-                .this_ptr();
+                .insert(spawned.to_process_handle(event_loop));
             process.set_exit_handler(ProcessExit::new(ProcessExitKind::LifecycleScript, this));
 
-            if let Err(err) = Process::watch_or_reap(process) {
-                if !process.has_exited() {
-                    // SAFETY: all-zero is a valid Rusage (#[repr(C)] POD).
-                    Process::on_exit(
-                        process,
-                        Status::Err(err),
-                        &bun_core::ffi::zeroed::<Rusage>(),
-                    );
-                }
+            let mut rusage = bun_core::ffi::zeroed();
+            if let Some(exit) = process.watch_or_exit(&mut rusage) {
+                exit.dispatch(&rusage);
             }
         }
     }

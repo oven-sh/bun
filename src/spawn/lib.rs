@@ -11,6 +11,8 @@
 //! (`ThreadSafeRefCount`), `bun_io` (`BufferedWriter`), `bun_event_loop`,
 //! `bun_threading`, and on Windows `bun_iocp` — none of which depend back on this crate, so no cycle.
 
+#![feature(arbitrary_self_types)]
+
 // ──────────────────────────────────────────────────────────────────────────
 // Module layout
 // ──────────────────────────────────────────────────────────────────────────

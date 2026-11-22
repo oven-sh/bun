@@ -7,7 +7,7 @@
 use std::os::windows::io::{AsHandle, OwnedHandle};
 
 use crate::api::bun::process::{
-    self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio,
+    self as spawn, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio,
 };
 use bun_core::{self, Output};
 use bun_io::max_buf::Kind;
@@ -173,18 +173,18 @@ impl Worker {
             return Err(crate::Error::ChannelAdoptFailed);
         }
 
-        let process = this.process.as_ref().expect("set above").this_ptr();
         this.alive = true;
+        let worker = &raw mut **this;
+        let process = this.process.as_ref().expect("set above");
         // SAFETY: `this` is the live `Box<Worker>` slot in
         // `Coordinator.workers`; it outlives `process`.
         process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::TestParallelWorker,
-                &raw mut **this,
-            )
+            bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::TestParallelWorker, worker)
         });
-        match Process::watch_or_reap(process) {
-            Ok(_) => {}
+        let mut rusage = bun_core::ffi::zeroed();
+        match process.watch_or_reap(&mut rusage) {
+            Ok(None) => {}
+            Ok(Some(exit)) => exit.dispatch(&rusage),
             Err(e) => {
                 // Resource cleanup is handled by the function-scope errdefer.
                 this.alive = false;

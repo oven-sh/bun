@@ -595,11 +595,11 @@ impl Lockfile {
         log: &mut bun_ast::Log,
     ) -> LoadResult {
         let result = self.read_from_dir(ATTEMPT_LOADING_FROM_OTHER_LOCKFILE, dir, manager, log);
-        crate::error::exit_if_out_of_memory();
         if matches!(result, LoadResult::Ok(_)) {
             self.convert_windows_paths(dir).unwrap_or_oom();
             self.rebase_folder_dependencies().unwrap_or_oom();
         }
+        crate::error::exit_if_out_of_memory();
         result
     }
 

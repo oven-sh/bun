@@ -1667,6 +1667,15 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
   const member = (at: string) => ({
     [at + "/package.json"]: manifestOf("a", { optionalDependencies: { bar: "^1.0.0" } }),
   });
+  const patch = "diff --git a/b b/b\nnew file mode 100644\n--- /dev/null\n+++ b/b\n@@ -0,0 +1 @@\n+b\n";
+  const withPatchFor = (...names: string[]) =>
+    project({
+      "package.json": root({
+        optionalDependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
+        patchedDependencies: Object.fromEntries(names.map(name => [name + "@1.0.0", "a\\b"])),
+      }),
+      "a\\b": patch,
+    });
   /** The lockfile has `built`, which has a script, `patched`, which has a patch, and `bar`. */
   async function several(linker: string, ...args: string[]) {
     const manifest = manifestOf("built", { dependencies: { bar: "1.0.0", patched: "1.0.0" } });
@@ -1678,7 +1687,7 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
         patchedDependencies: { "patched@1.0.0": "patch" },
       }),
       "built.tgz": await tarball({ "package/package.json": manifest, "package/binding.gyp": "{}" }, 1),
-      "patch": "diff --git a/b b/b\nnew file mode 100644\n--- /dev/null\n+++ b/b\n@@ -0,0 +1 @@\n+b\n",
+      patch,
     };
     return {
       ...(await after(project(files, undefined, linker), ["install", "--lockfile-only"])),
@@ -1784,6 +1793,11 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       ...project({}, undefined, "isolated"),
       args: ["install", "--backend=copyfile"],
     }),
+    "a registry, with a patch": () => ({ ...withPatchFor("bar"), next: ["node_modules/bar/b"] }),
+    "a registry, for `bun pm hash`": async () => {
+      const files = { "package.json": root({ workspaces: ["*"] }), ...member("a\\b") };
+      return { ...(await after(project(files), ["install", "--lockfile-only"])), args: ["pm", "hash"] };
+    },
     "the cache": () => offline(project()),
     "the cache, in place": async () => ({ ...(await offline(project())), next: ["node_modules/bar/lib/a"] }),
     "several": () => several("hoisted"),
@@ -1942,6 +1956,8 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
     ["a registry, over what another linker installed", "ENOMEM rename *bar", "rename"],
     ["a registry, out of the global store", "ENOMEM stat */.bun/bar@1.0.0", "lstat"],
     ["a registry, as a copy, isolated", "ENOMEM chmod */cli.js", "fchmod"],
+    ["a registry, with a patch", "ENOMEM access ROOT/a?b", "access", []],
+    ["a registry, for `bun pm hash`", "ENOMEM access a?b", "access"],
     ["the cache", "ENOMEM access *@@@1/package.json", "access"],
     ["the cache, in place", "ENOMEM mkdir [.l]*", "mkdir"],
     ["several", "ENOMEM socket *", "recv"],
@@ -2033,6 +2049,20 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       ...fails("stat"),
       said: ["error: failed to link bin due to error ENOMEM"],
     });
+  });
+
+  it.skipIf(!failSyscall)("fails `bun patch --commit`, and keeps the patch of another package", async () => {
+    using app = await after(
+      await after(withPatchFor("bar", "baz"), ["install"]),
+      ["patch", "bar"],
+      "node_modules/bar/b",
+    );
+    const args = ["patch", "--commit", "node_modules/bar"];
+    expect(await withoutCall({ ...app, args }, "ENOMEM access a?b 2")).toEqual({
+      ...fails("access"),
+      saved: "something",
+    });
+    expect(existsSync(app.path("a\\b"))).toBeTrue();
   });
 
   it.skipIf(!failSyscall).each(["bar", "bar@http://127.0.0.1:PORT/bar.tgz"])(

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, Heap, tempDir } from "harness";
+import { bunEnv, bunExe, Heap, isArm64, isWindows, tempDir } from "harness";
 
 // An HTML route served without the DevServer bundles on its first request. The
 // plugin load and the build finish on later event-loop turns and call back into
@@ -13,8 +13,8 @@ import { bunEnv, bunExe, Heap, tempDir } from "harness";
 //
 // The fixture parks the route inside the plugin (argv[2] picks where), drops
 // the only client, calls stop(true), drops the server, and reports whether
-// stop() settled while the route was still parked, and what holds the server
-// once the route is done.
+// stop() settled while the route was still parked, whether the server was
+// collected once the route is done, and what holds a server that was not.
 const fixture = {
   "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
   "index.html": `<!DOCTYPE html><html><head></head><body><script type="module" src="./entry.ts"></script></body></html>`,
@@ -61,15 +61,14 @@ const fixture = {
       return collected;
     }
 
-    // The way from a root to the server, or null. A server that was not
-    // finalized is not held for that alone: the collector also marks what a
-    // stale word of the native stack points at, and the heap snapshot has no
-    // such root (#43224).
+    // The way from a root to the server, or null when no root reaches it. The
+    // heap snapshot lists every root but the words of the native stack, which
+    // the collector also marks from.
     let serverAddress = 0n;
     let heap: any;
     async function whatHoldsTheServer(): Promise<string | null> {
       // From a timer, so that the caller is suspended and its frame is in the heap.
-      heap = new Promise(resolve => setTimeout(() => resolve(new Heap({ followers: false })), 0));
+      heap = new Promise(resolve => setTimeout(() => resolve(new Heap()), 0));
       heap = await heap;
       return heap.pathTo(serverAddress) ?? null;
     }
@@ -111,13 +110,15 @@ const fixture = {
     const heldWhileParkedBy = process.argv[3] === "while parked" ? await whatHoldsTheServer() : undefined;
     release.resolve();
     await stopped;
+    const collectedAfterwards = await collectServer();
     console.log(
       JSON.stringify({
         fetch: fetchResult,
         pendingRequestsWhileParked,
         stopBeforeRelease,
         heldWhileParkedBy,
-        heldAfterwardsBy: (await collectServer()) ? null : await whatHoldsTheServer(),
+        collectedAfterwards,
+        heldAfterwardsBy: collectedAfterwards ? null : await whatHoldsTheServer(),
       }),
     );
   `,
@@ -126,7 +127,13 @@ const fixture = {
 const modes = ["build", "plugin setup", "plugin setup rejection"];
 
 // `heldWhileParkedBy` makes the fixture also report what holds the server while the route is parked.
-async function runFixture(mode: string, env = bunEnv, heldWhileParkedBy?: unknown) {
+type Expected = { collectedAfterwards?: unknown; heldWhileParkedBy?: unknown };
+
+async function runFixture(
+  mode: string,
+  env = bunEnv,
+  { collectedAfterwards = true, heldWhileParkedBy }: Expected = {},
+) {
   using dir = tempDir("serve-html-build-holds-server", fixture);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "run.ts", mode, heldWhileParkedBy ? "while parked" : "afterwards"],
@@ -141,6 +148,7 @@ async function runFixture(mode: string, env = bunEnv, heldWhileParkedBy?: unknow
     fetch: "AbortError",
     pendingRequestsWhileParked: 1,
     stopBeforeRelease: "pending",
+    collectedAfterwards,
     heldAfterwardsBy: null,
   };
   // A crash (the ASAN report) replaces the fixture's report in the assertion.
@@ -165,23 +173,26 @@ test.concurrent.each(modes)(
   ceiling,
 );
 
-// With the GC timer off Bun asks for no collection of its own. On Windows x64 a
-// word in the frame of libuv's uv_run then still refers to the fixture's
-// finished stopWhileParked(), no collection frees the server, and the snapshot
-// is what says that nothing holds it.
+// With the GC timer off Bun requests no collection of its own. On Windows x64
+// the server of "plugin setup rejection" is then never collected, and no root
+// reaches it: #49413 has the heap snapshot and the stack word. So that lane
+// only has to show that no root holds the server.
 test.concurrent.each(modes)(
   "nothing holds a server whose HTML route was parked in its %s once the route is done, with the GC timer off",
-  mode => runFixture(mode, { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" }),
+  mode =>
+    runFixture(
+      mode,
+      { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+      { collectedAfterwards: isWindows && !isArm64 ? expect.any(Boolean) : true },
+    ),
   ceiling,
 );
 
 test.concurrent(
   "the snapshot lists the strong handle that holds the server of a parked route",
   () =>
-    runFixture(
-      "build",
-      bunEnv,
-      expect.stringMatching(/^root\(StrongHandles\) StrongRootBlock -Internal:\d+-> HTTPServer$/),
-    ),
+    runFixture("build", bunEnv, {
+      heldWhileParkedBy: expect.stringMatching(/^root\(StrongHandles\) StrongRootBlock -Internal:\d+-> HTTPServer$/),
+    }),
   ceiling,
 );

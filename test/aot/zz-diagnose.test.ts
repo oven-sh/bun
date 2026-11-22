@@ -70,7 +70,7 @@ test.skipIf(!(isWindows && process.arch === "arm64") && !process.env.ZZ_DIAGNOSE
       }
       return `${symbols[from][1].slice(0, 110)}+0x${(rva - symbols[from][0]).toString(16)}`;
     };
-    const rounds = Number(process.env.ZZ_DIAGNOSE ?? 50);
+    const rounds = Number(process.env.ZZ_DIAGNOSE ?? 120);
     for (const name of process.env.ZZ_ONLY?.split(",") ?? Object.keys(variants)) {
       const exe = join(String(dir), name + (isWindows ? ".exe" : ""));
       const built = Bun.spawnSync([bunExe(), "build", "--compile", "--aot", `./${name}.mjs`, "--outfile", exe], {

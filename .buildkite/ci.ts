@@ -1696,7 +1696,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
 
   const { skipBuilds, forceBuilds } = options;
 
-  let buildId: string | undefined = "01a200ef-06f4-4cf9-a3a3-4e6542e54a7e";
+  let buildId: string | undefined;
   if (skipBuilds && !forceBuilds) {
     const lastBuild = await getLastSuccessfulBuild();
     if (lastBuild) {

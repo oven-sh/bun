@@ -1939,6 +1939,14 @@ impl VirtualMachine {
             && !bun_removable_features::is_removed(bun_removable_features::Feature::Worker)
     }
 
+    /// Whether `bun test` takes this VM's uncaught errors ahead of its `process` listeners. It does
+    /// for every VM without a Worker (the test files' VM, a macro's VM on a pool thread, the
+    /// debugger's VM): on the other path such a VM can end the process. A Worker has its own
+    /// `process` and takes that path.
+    fn bun_test_takes_unhandled_errors(&self) -> bool {
+        isBunTest.load(core::sync::atomic::Ordering::Relaxed) && self.worker.get().is_none()
+    }
+
     pub fn uncaught_exception(
         &self,
         global_object: &JSGlobalObject,
@@ -1958,7 +1966,7 @@ impl VirtualMachine {
             return true;
         }
 
-        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+        if self.bun_test_takes_unhandled_errors() {
             // What a listener throws comes back here, and is the runner's.
             if self.is_running_vitest_entry.get() && !self.is_handling_uncaught_exception.get() {
                 let _handling = self.is_handling_uncaught_exception.raise_for_scope();
@@ -4137,7 +4145,7 @@ impl VirtualMachine {
             return;
         }
 
-        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+        if self.bun_test_takes_unhandled_errors() {
             if self.is_running_vitest_entry.get()
                 && Bun__handleUnhandledRejection(global_object, reason, promise) > 0
             {

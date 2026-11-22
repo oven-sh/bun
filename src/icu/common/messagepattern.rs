@@ -491,10 +491,10 @@ impl Parser<'_> {
         index + self.text.slice(index..).iter().take_while(is_part).count()
     }
 
-    fn add_part(&mut self, part_type: PartType, index: usize, limit: usize) {
+    fn add_part(&mut self, part_type: PartType, start: usize, limit: usize) {
         self.parts.add(Part {
             part_type,
-            index: index as u32,
+            index: start as u32,
             limit: limit as u32,
         });
     }

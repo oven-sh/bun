@@ -228,6 +228,67 @@ sk{
         sentence{"absent.brk"}
     }
 }
+-- character-names/make.sh --
+mkdir -p icudt79l/curr
+genrb -q -e UTF-8 -s . -d icudt79l/curr root.txt
+bun names.js
+-- character-names/names.js --
+const u16 = (...numbers) => Buffer.from(new Uint16Array(numbers).buffer);
+const u32 = (...numbers) => Buffer.from(new Uint32Array(numbers).buffer);
+const join = (...parts) => Buffer.concat(parts.map(part => Buffer.from(part)));
+const pad = part => join(part, Buffer.alloc(-part.length & 3));
+
+// The bytes 2 and 3 are tokens, and 1 begins a token of two bytes.
+const tokens = Array(0x102).fill(0xffff);
+Object.assign(tokens, { 1: 0xfffe, 2: 0, 3: 7, 0x101: 13 });
+const names = {
+  0x24: "DOLLAR\x03",
+  0x31: "\x02ONE",
+  0x32: "\x02TWO;;;PAIR",
+  0x37: "\x02SEVEN",
+  0x39: "A NAME OF MORE-THAN ELEVEN LETTERS -NINE",
+  0x46: "\x01\x01F",
+  0xa3: "STERLING OR POUND\x03",
+  0xa5: "YEN\x03",
+};
+function group(number) {
+  const lines = Array.from({ length: 32 }, (_, line) => names[number * 32 + line] ?? "");
+  const lengths = lines.map(({ length }) => (length < 12 ? length : 0xc0 + length - 12).toString(16)).join("");
+  return join(Buffer.from(lengths + "0".repeat(lengths.length % 2), "hex"), ...lines);
+}
+const groups = [1, 2, 5].map(group);
+const range = (start, end, type, variant, rest) => join(u32(start, end), [type, variant], u16(12 + rest.length), rest);
+
+const parts = [
+  pad(u16(tokens.length, ...tokens)),
+  pad(join("DIGIT \0 SIGN\0LATIN CAPITAL LETTER \0")),
+  pad(u16(3, 1, 0, 0, 2, 0, groups[0].length, 5, 0, groups[0].length + groups[1].length)),
+  pad(join(...groups)),
+  join(
+    u32(2),
+    range(0x9e6, 0x9ef, 1, 2, pad(join(u16(2, 5), "BENGALI \0LOW\0HIGH\0A\0B\0C\0D\0\0"))),
+    range(0x20a0, 0x20bf, 0, 4, pad(join("CURRENCY-\0"))),
+  ),
+];
+let offset = 16;
+const offsets = parts.slice(0, 4).map(part => (offset += part.length));
+const header = join(u16(32), [0xda, 0x27], u16(20, 0), [0, 0, 2, 0], "unam", [1, 0, 0, 0], Buffer.alloc(12));
+await Bun.write("icudt79l/unames.icu", join(header, u32(...offsets), ...parts));
+-- character-names/root.txt --
+root{
+    currencySpacing{
+        afterCurrency{
+            currencyMatch{"[\\N{DOLLAR SIGN}\\N{latin capital letter f}\\N{CURRENCY-20AC}\\N{<currency symbol-20B9>}]"}
+            insertBetween{"_"}
+            surroundingMatch{"[\\N{DIGIT ONE}[:Name=PAIR:]\\N{a_name-of more than eleven letters -nine}]"}
+        }
+        beforeCurrency{
+            currencyMatch{"[[:Name=sterling or pound sign:] \\N{currency-20ac} C U]"}
+            insertBetween{"~"}
+            surroundingMatch{"[\\N{BENGALI LOWB}\\N{BENGALI HIGHA}\\N{BENGALI HIGH}\\p{na=digitone}]"}
+        }
+    }
+}
 -- collation-bare-root/coll/res_index.txt --
 res_index:table(nofallback){
     InstalledLocales{
@@ -2264,6 +2325,34 @@ sv{
         SentenceBreak:array{ "t.ex.", "t.o.m.", "Dr.", "osv.", "s.", "\U0001D54F.", "Dr." }
     }
 }
+-- set-each-property/make.sh --
+mkdir -p icudt79l/curr work
+currencies=$(tr ' ' '\n' < symbols.txt | sed 's/:\(.*\)/{"\1","x",{"¤0",".",","}}/')
+printf '%s\n' "root{Currencies{$currencies}}" > work/root.txt
+genrb -q -e UTF-8 -s work -d icudt79l/curr root.txt
+for pair in $(cat properties.txt); do
+  rule="currencyMatch{\"[:${pair#*:}:]\"} insertBetween{\"_\"} surroundingMatch{\"[:Any:]\"}"
+  echo "${pair%%:*}{currencySpacing{afterCurrency{$rule} beforeCurrency{$rule}}}" > work/${pair%%:*}.txt
+  genrb -q -s work -d icudt79l/curr ${pair%%:*}.txt
+done
+rm -r work
+-- set-each-property/properties.txt --
+af:AHex ak:Alpha am:Bidi_C as:Bidi_M ba:Dash be:DI bg:Dep bm:Dia bn:Ext bo:Comp_Ex br:Gr_Base ca:Gr_Ext ce:Gr_Link
+cs:Hex cv:Hyphen cy:IDC da:IDS de:Ideo dz:IDSB ee:IDST el:Join_C en:LOE eo:Lower es:Math et:NChar eu:QMark fa:Radical
+fi:SD fo:Term fr:UIdeo fy:Upper ga:WSpace gd:XIDC gl:XIDS gu:Sensitive gv:STerm ha:VS he:nfdinert hr:nfkdinert
+hu:nfcinert hy:nfkcinert ia:segstart id:Pat_Syn ie:Pat_WS ig:alnum ii:blank is:graph it:print ja:xdigit jv:Cased ka:CI
+ki:CWL kk:CWU kl:CWT km:CWCF kn:CWCM ko:CWKCF ku:Emoji kw:EPres ky:EMod lb:EBase lg:EComp ln:RI lo:PCM lt:ExtPict
+lu:Basic_Emoji lv:RGI_Emoji mg:IDSU mi:ID_Compat_Math_Start mk:ID_Compat_Math_Continue ml:MCM mn:bc=AL mr:blk=Arabic
+ms:ccc=230 mt:dt=compat my:ea=W nd:gc=Lt ne:jg=Alef nl:jt=R oc:lb=ID om:nt=Digit or:sc=Hang os:hst=LV pl:hst=L
+ps:NFD_QC=N pt:NFKD_QC=N qu:NFC_QC=M rm:NFKC_QC=N rn:lccc=230 ro:tccc=230 ru:GCB=LV rw:SB=ST sa:WB=LE sc:bpt=o
+se:InPC=Top sg:InSC=Consonant si:vo=U sk:ID_Status=Allowed sl:ID_Type=Not_NFKC sn:InCB=Linker so:gcm=LC sq:nv=0.5
+st:age=3.2 sv:scx=Hira sw:Assigned ta:ASCII te:Greek tg:Alpha=No
+-- set-each-property/symbols.txt --
+QAA:\u0041 QAB:\u0069 QAC:\u00AA QAD:\u00AD QAE:\u00B2 QAF:\u00B7 QAG:\u00BD QAH:\u00DF QAI:\u00E9 QAJ:\u0149
+QAK:\u01C5 QAL:\u0301 QAM:\u03A3 QAN:\u0600 QAO:\u0627 QAP:\u0654 QAQ:\u0915 QAR:\u0947 QAS:\u094D QAT:\u0958
+QAU:\u0E40 QAV:\u1100 QAW:\u1161 QAX:\u200D QAY:\u200E QAZ:\u2014 QBA:\u201C QBB:\u2202 QBC:\u2E80 QBD:\u2FF0
+QBE:\u2FF2 QBF:\u2FFE QBG:\u3002 QBH:\u3042 QBI:\u30FC QBJ:\u4E00 QBK:\uAC00 QBL:\uFDD0 QBM:\uFE0F QBN:\uFF21
+QBO:\U0001F1E6 QBP:\U0001F3FB QBQ:\U0001F44D QBR:\U000E0001 QBS:\u0378 QBT:\u0028 QBU:\u0009 QBV:\u0020
 -- set-properties/make.sh --
 mkdir -p icudt79l/curr
 genrb -q -e UTF-8 -s . -d icudt79l/curr root.txt

@@ -86,7 +86,7 @@ fn collation_data_size(index: impl Fn(usize) -> usize) -> usize {
     }
 }
 
-/// Returns the length that the item states, or 0 if the format is not known.
+/// Returns the length that the item states, or 0 if the format is not known. The linked data have no `unames.icu`.
 /// SAFETY: `item` is an item of the package.
 unsafe fn stated_length(item: *const u8) -> usize {
     // SAFETY: an item with the magic bytes has a header. The formats start with `int32_t indexes[]`, and have the

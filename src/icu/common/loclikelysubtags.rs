@@ -157,9 +157,12 @@ fn read_aliases<const N: usize>(
 }
 
 /// An entry has the script code in the high byte, then two digits for the region and three for the language.
-fn language_and_region_digits(encoded: i32) -> (usize, usize) {
-    let digits = (encoded & 0x00ff_ffff) as usize;
-    (digits % (27 * 27 * 27), digits / (27 * 27 * 27) % (27 * 27))
+fn language_digits(encoded: i32) -> usize {
+    (encoded & 0x00ff_ffff) as usize % (27 * 27 * 27)
+}
+
+fn region_digits(encoded: i32) -> usize {
+    (encoded & 0x00ff_ffff) as usize / (27 * 27 * 27) % (27 * 27)
 }
 
 // ICU4C: loclikelysubtags.cpp, LikelySubtagsData::readLSREncodedStrings
@@ -171,7 +174,7 @@ fn check_lsr_numbers(
 ) -> Result<(), UErrorCode> {
     let mut has_met = [false; 27];
     for encoded in numbers.iter().filter(|encoded| !matches!(encoded, 0 | 1)) {
-        let (language, region) = language_and_region_digits(encoded);
+        let (language, region) = (language_digits(encoded), region_digits(encoded));
         if language.is_multiple_of(27) || (language / 27).is_multiple_of(27) {
             return Err(U_INVARIANT_CONVERSION_ERROR);
         }
@@ -326,7 +329,7 @@ impl LikelySubtags {
             Some(1) => return MaximizedLsr::new(b"skip", b"script", b""),
             Some(encoded) => encoded,
         };
-        let (language, region) = language_and_region_digits(encoded);
+        let (language, region) = (language_digits(encoded), region_digits(encoded));
         let script = uscript_get_short_name((encoded >> 24) & 0xff);
         let short = Lsr {
             language: decode_letters(language, b'a' - 1),

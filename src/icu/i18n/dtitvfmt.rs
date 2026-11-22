@@ -102,6 +102,7 @@ impl BestPatterns<'_> {
         try_to_vec(&pattern)
     }
 
+    #[cfg_attr(mordant, allow(defaulted_failure))] // Only some intervals use these patterns.
     fn get_or_empty(&self, skeleton: &[u16]) -> Vec<u16> {
         self.get(skeleton).unwrap_or_default()
     }

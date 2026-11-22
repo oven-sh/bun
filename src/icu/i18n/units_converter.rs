@@ -266,11 +266,11 @@ pub(crate) enum Mapping {
 }
 
 /// Returns a NaN `amount` unchanged: which of two NaN operands survives an operation depends on the compiler.
-fn scale(amount: f64, num: f64, den: f64) -> f64 {
+fn scale(amount: f64, factor: f64, divisor: f64) -> f64 {
     if amount.is_nan() {
         amount
     } else {
-        amount * num / den
+        amount * factor / divisor
     }
 }
 

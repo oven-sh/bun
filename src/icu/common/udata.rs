@@ -222,9 +222,10 @@ fn read_item_file(
         return Ok(None);
     };
     let mut header = [0; 24];
-    ok_or_oom(file.pread_all(&mut header, 0));
-    if !UDataInfo::with_header_size(&header).is_some_and(|(info, _)| accepts(&info)) {
-        return oom_checked(()).and(Err(U_INVALID_FORMAT_ERROR));
+    if ok_or_oom(file.pread_all(&mut header, 0)).is_none() {
+        return oom_checked(None);
+    } else if !UDataInfo::with_header_size(&header).is_some_and(|(info, _)| accepts(&info)) {
+        return Err(U_INVALID_FORMAT_ERROR);
     }
     let mut contents = memory::try_filled(0, size)?;
     if ok_or_oom(file.pread_all(&mut contents, 0)) != Some(size) {

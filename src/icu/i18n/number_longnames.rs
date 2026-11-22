@@ -234,6 +234,7 @@ struct DerivedComponents([Option<SmallChars>; 2]);
 
 impl DerivedComponents {
     /// Both values are empty if the data are missing.
+    #[cfg_attr(mordant, allow(defaulted_failure))]
     fn new(components: &Components, feature: &[u8], structure: &[u8]) -> Self {
         let values = Self::load(components, feature, structure).unwrap_or_default();
         Self(values.map(|value| {

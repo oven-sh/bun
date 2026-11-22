@@ -904,6 +904,7 @@ impl OuterWalks {
 
     /// Replaces `walk`, which has led to `target`, with the first one that has keys left.
     #[cold]
+    #[cfg_attr(mordant, allow(error_collapsed_to_bool))] // A target that is not remembered only costs time.
     fn leave(&mut self, walk: &mut AliasWalk, target: ResourceValue) {
         const REMEMBER_FROM: u32 = 64;
         while let Some(outer) = walk.is_done().then(|| self.walks.pop()).flatten() {
